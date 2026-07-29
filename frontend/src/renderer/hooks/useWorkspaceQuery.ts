@@ -1,9 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
+import { cloudDevReady, fetchCloudDevJSON } from "../lib/cloud-dev";
 import { mockWorkspaces } from "../lib/mock-data";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { captureRendererEvent } from "../lib/telemetry";
+import { useUiStore } from "../stores/ui-store";
 import {
 	type PRState,
 	type PullRequestFacts,
@@ -62,15 +64,42 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 
 	if (projectsError || sessionsError) throw projectsError ?? sessionsError;
 
-	return (projectsData?.projects ?? []).map((project) => {
+	const local = mapWorkspaceSummaries(projectsData?.projects ?? [], sessionsData?.sessions ?? []);
+	const cloudDev = useUiStore.getState().cloudDev;
+	if (!cloudDevReady(cloudDev)) return local;
+	try {
+		const [cloudProjectsData, cloudSessionsData] = await Promise.all([
+			fetchCloudDevJSON<components["schemas"]["ListProjectsResponse"]>(cloudDev, "/api/v1/projects"),
+			fetchCloudDevJSON<components["schemas"]["ListSessionsResponse"]>(cloudDev, "/api/v1/sessions"),
+		]);
+		return [
+			...local,
+			...mapWorkspaceSummaries(cloudProjectsData.projects ?? [], cloudSessionsData.sessions ?? [], {
+				cloud: true,
+			}),
+		];
+	} catch (error) {
+		void captureRendererEvent("ao.renderer.cloud_dev_fetch_failed", {
+			error_category: error instanceof TypeError ? "network_error" : "request_error",
+		});
+		return local;
+	}
+}
+
+function mapWorkspaceSummaries(
+	projects: components["schemas"]["ProjectSummary"][],
+	sessions: components["schemas"]["ControllersSessionView"][],
+	options: { cloud?: boolean } = {},
+): WorkspaceSummary[] {
+	return projects.map((project) => {
 		const kind = toProjectKind(project.kind);
 		return {
 			id: project.id,
-			name: project.name,
+			name: options.cloud ? `${project.name} (Cloud)` : project.name,
 			kind,
 			path: project.path,
 			orchestratorAgent: project.orchestratorAgent ? toAgentProvider(project.orchestratorAgent) : undefined,
-			sessions: (sessionsData?.sessions ?? [])
+			sessions: sessions
 				.filter((session) => session.projectId === project.id)
 				.map((session) => {
 					const status = toSessionStatus(session.status, session.isTerminated);
@@ -82,9 +111,9 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 					}
 					return {
 						id: session.id,
-						terminalHandleId: session.terminalHandleId,
+						terminalHandleId: options.cloud ? undefined : session.terminalHandleId,
 						workspaceId: project.id,
-						workspaceName: project.name,
+						workspaceName: options.cloud ? `${project.name} (Cloud)` : project.name,
 						title: session.displayName ?? session.issueId ?? session.id,
 						issueId: session.issueId,
 						provider: toAgentProvider(session.harness),

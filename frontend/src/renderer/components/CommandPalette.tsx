@@ -194,12 +194,13 @@ export function CommandPalette() {
 	);
 
 	const handleTaskCreated = useCallback(
-		async (sessionId: string) => {
+		async (sessionId: string, createdProjectId?: string) => {
 			if (!newTaskProjectId) return;
+			const targetProjectId = createdProjectId ?? newTaskProjectId;
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId: newTaskProjectId, sessionId },
+				params: { projectId: targetProjectId, sessionId },
 			});
 		},
 		[navigate, newTaskProjectId, queryClient],
@@ -320,7 +321,7 @@ export function CommandPalette() {
 			<NewTaskDialog
 				open={isNewTaskOpen}
 				projectId={newTaskProjectId}
-				onCreated={(sessionId) => void handleTaskCreated(sessionId)}
+				onCreated={(sessionId, createdProjectId) => void handleTaskCreated(sessionId, createdProjectId)}
 				onOpenChange={setIsNewTaskOpen}
 			/>
 

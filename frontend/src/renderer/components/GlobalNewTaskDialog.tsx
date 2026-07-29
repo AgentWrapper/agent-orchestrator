@@ -30,12 +30,13 @@ export function GlobalNewTaskDialog() {
 		setOpen(true);
 	}, [newTaskRequest, open]);
 
-	const handleCreated = async (sessionId: string) => {
+	const handleCreated = async (sessionId: string, createdProjectId?: string) => {
 		if (!projectId) return;
+		const targetProjectId = createdProjectId ?? projectId;
 		await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		void navigate({
 			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId, sessionId },
+			params: { projectId: targetProjectId, sessionId },
 		});
 	};
 
@@ -43,7 +44,7 @@ export function GlobalNewTaskDialog() {
 		<NewTaskDialog
 			open={open}
 			projectId={projectId}
-			onCreated={(sessionId) => void handleCreated(sessionId)}
+			onCreated={(sessionId, createdProjectId) => void handleCreated(sessionId, createdProjectId)}
 			onOpenChange={setOpen}
 		/>
 	);

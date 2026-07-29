@@ -8,18 +8,20 @@ import { Label } from "./ui/label";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { cloudDevReady, spawnCloudDevSession } from "../lib/cloud-dev";
 import { captureRendererEvent } from "../lib/telemetry";
 import type { AgentProvider } from "../types/workspace";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useImageAttachments } from "../hooks/useImageAttachments";
 import { cn } from "../lib/utils";
+import { useUiStore } from "../stores/ui-store";
 
 type Project = components["schemas"]["Project"];
 
 type NewTaskDialogProps = {
 	open: boolean;
 	projectId?: string;
-	onCreated: (sessionId: string) => void;
+	onCreated: (sessionId: string, projectId?: string) => void;
 	onOpenChange: (open: boolean) => void;
 };
 
@@ -38,6 +40,9 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 	const [error, setError] = useState<string | undefined>();
 	const [isDragging, setIsDragging] = useState(false);
 	const fileInputRef = useRef<HTMLInputElement>(null);
+	const cloudDev = useUiStore((state) => state.cloudDev);
+	const cloudEnabled = cloudDev.enabled;
+	const cloudTaskMode = cloudDevReady(cloudDev);
 	const {
 		attachments,
 		error: attachmentError,
@@ -67,7 +72,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 		mutationFn: refreshAgents,
 		onSuccess: (next) => queryClient.setQueryData(agentsQueryKey, next),
 	});
-	const defaultWorkerAgent = projectQuery.data?.config?.worker?.agent ?? "";
+	const defaultWorkerAgent = cloudTaskMode ? cloudDev.workerAgent : (projectQuery.data?.config?.worker?.agent ?? "");
 	const isScratchProject = projectQuery.data?.kind === "scratch";
 	const agentCatalog = agentsQuery.data;
 
@@ -102,17 +107,23 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 			setError("Title and brief are required.");
 			return;
 		}
+		if (cloudEnabled && !cloudTaskMode) {
+			setError("AO Cloud settings are incomplete.");
+			return;
+		}
 
 		setIsSubmitting(true);
 		setError(undefined);
-		void captureRendererEvent("ao.renderer.task_create_requested", { project_id: projectId });
+		const spawnProjectId = cloudTaskMode ? cloudDev.projectId.trim() : projectId;
+		void captureRendererEvent("ao.renderer.task_create_requested", { project_id: spawnProjectId });
 		try {
 			const body: components["schemas"]["SpawnSessionRequest"] = {
-				projectId,
+				projectId: spawnProjectId,
 				kind: "worker",
 				harness: agentTouched && agent ? (agent as AgentProvider) : undefined,
 				issueId: cleanTitle,
 				prompt: cleanPrompt,
+				displayName: cleanTitle.slice(0, 20),
 			};
 			if (!isScratchProject && cleanBranch) {
 				body.branch = cleanBranch;
@@ -120,16 +131,20 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 			if (attachments.length > 0) {
 				body.attachments = toPayload();
 			}
-			const { data, error: apiError } = await apiClient.POST("/api/v1/sessions", {
-				body,
-			});
-			if (apiError) throw new Error(apiErrorMessage(apiError, "Unable to start task"));
+			let data: components["schemas"]["SpawnSessionResponse"] | undefined;
+			if (cloudTaskMode) {
+				data = await spawnCloudDevSession(cloudDev, body);
+			} else {
+				const { data: localData, error: apiError } = await apiClient.POST("/api/v1/sessions", { body });
+				if (apiError) throw new Error(apiErrorMessage(apiError, "Unable to start task"));
+				data = localData;
+			}
 			if (!data?.session?.id) throw new Error("Task creation returned no session");
-			void captureRendererEvent("ao.renderer.task_create_succeeded", { project_id: projectId });
-			onCreated(data.session.id);
+			void captureRendererEvent("ao.renderer.task_create_succeeded", { project_id: spawnProjectId });
+			onCreated(data.session.id, data.session.projectId ?? spawnProjectId);
 			onOpenChange(false);
 		} catch (err) {
-			void captureRendererEvent("ao.renderer.task_create_failed", { project_id: projectId });
+			void captureRendererEvent("ao.renderer.task_create_failed", { project_id: spawnProjectId });
 			void queryClient.invalidateQueries({ queryKey: agentsQueryKey });
 			setError(err instanceof Error ? err.message : "Unable to start task");
 		} finally {
@@ -169,7 +184,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 						<div className="min-w-0">
 							<Dialog.Title className="text-subtitle font-semibold text-foreground">New task</Dialog.Title>
 							<Dialog.Description className="mt-1 text-xs text-muted-foreground">
-								Start a worker directly from this project.
+								Start a {cloudEnabled ? "cloud" : "local"} worker directly from this project.
 							</Dialog.Description>
 						</div>
 						<Dialog.Close asChild>

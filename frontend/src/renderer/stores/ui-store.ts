@@ -26,6 +26,20 @@ export type InspectorSessionState = {
 	browserUnseen?: boolean;
 };
 
+export type CloudDevSettings = {
+	enabled: boolean;
+	apiBaseUrl: string;
+	accessToken: string;
+	orgId: string;
+	projectId: string;
+	repoUrl: string;
+	defaultBranch: string;
+	workerAgent: string;
+	permissions: string;
+	devAuthEmail: string;
+	devAuthName: string;
+};
+
 // Selection (which project/session is open) now lives in the URL — the router
 // is the single source of truth, read via route params. This store holds only
 // ephemeral UI: theme, sidebar collapse, command palette, per-session inspector
@@ -42,6 +56,7 @@ type UiState = {
 	resolvedTheme: Theme;
 	/** When true, developer-only surfaces (e.g. Feature Releases) are revealed. Default off. */
 	developerMode: boolean;
+	cloudDev: CloudDevSettings;
 	restartingProjectIds: ReadonlySet<string>;
 	orchestratorReplacementErrors: Record<string, string>;
 	orchestratorStartupErrors: Record<string, string>;
@@ -72,6 +87,7 @@ type UiState = {
 	setWorkbenchTab: (tab: WorkbenchTab) => void;
 	setThemePreference: (theme: ThemePreference) => void;
 	setDeveloperMode: (enabled: boolean) => void;
+	setCloudDev: (patch: Partial<CloudDevSettings>) => void;
 	/** Refresh resolvedTheme from OS without writing light/dark to storage. */
 	syncSystemTheme: () => void;
 	toggleSidebar: () => void;
@@ -96,7 +112,22 @@ type UiState = {
 
 const sidebarStorageKey = "ao.sidebar.open";
 const developerModeStorageKey = "ao.developerMode";
+const cloudDevStorageKey = "ao.cloudDev";
 const sessionTabsStorageKey = "ao.sessionTabs";
+
+export const defaultCloudDevSettings: CloudDevSettings = {
+	enabled: false,
+	apiBaseUrl: "http://127.0.0.1:3011",
+	accessToken: "",
+	orgId: "",
+	projectId: "agent-orchestrator",
+	repoUrl: "https://github.com/Untrivial-ai/agent-orchestrator.git",
+	defaultBranch: "main",
+	workerAgent: "claude-code",
+	permissions: "bypass-permissions",
+	devAuthEmail: "dev@example.com",
+	devAuthName: "AO Cloud Dev",
+};
 
 function getLocalStorage() {
 	if (typeof window === "undefined" || !window.localStorage) return null;
@@ -109,6 +140,26 @@ function initialSidebarOpen() {
 
 function initialDeveloperMode() {
 	return getLocalStorage()?.getItem(developerModeStorageKey) === "true";
+}
+
+function initialCloudDevSettings(): CloudDevSettings {
+	const raw = getLocalStorage()?.getItem(cloudDevStorageKey);
+	if (!raw) return defaultCloudDevSettings;
+	try {
+		const parsed = JSON.parse(raw) as Partial<CloudDevSettings>;
+		return {
+			...defaultCloudDevSettings,
+			...Object.fromEntries(
+				Object.entries(parsed).filter(([, value]) => typeof value === "string" || typeof value === "boolean"),
+			),
+		};
+	} catch {
+		return defaultCloudDevSettings;
+	}
+}
+
+function storeCloudDev(settings: CloudDevSettings) {
+	getLocalStorage()?.setItem(cloudDevStorageKey, JSON.stringify(settings));
 }
 
 function initialSessionTabs(): Record<string, string[]> {
@@ -148,6 +199,7 @@ export const useUiStore = create<UiState>((set) => ({
 	themePreference: initialThemePreference,
 	resolvedTheme: resolveTheme(initialThemePreference),
 	developerMode: initialDeveloperMode(),
+	cloudDev: initialCloudDevSettings(),
 	restartingProjectIds: new Set<string>(),
 	orchestratorReplacementErrors: {},
 	orchestratorStartupErrors: {},
@@ -165,6 +217,12 @@ export const useUiStore = create<UiState>((set) => ({
 		getLocalStorage()?.setItem(developerModeStorageKey, String(developerMode));
 		set({ developerMode });
 	},
+	setCloudDev: (patch) =>
+		set((state) => {
+			const cloudDev = { ...state.cloudDev, ...patch };
+			storeCloudDev(cloudDev);
+			return { cloudDev };
+		}),
 	syncSystemTheme: () =>
 		set((state) => {
 			if (state.themePreference !== "system") return state;

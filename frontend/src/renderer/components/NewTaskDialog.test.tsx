@@ -2,11 +2,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { defaultCloudDevSettings, useUiStore } from "../stores/ui-store";
 import { NewTaskDialog } from "./NewTaskDialog";
 
-const { getMock, postMock } = vi.hoisted(() => ({
+const { getMock, postMock, spawnCloudDevSessionMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	postMock: vi.fn(),
+	spawnCloudDevSessionMock: vi.fn(),
 }));
 
 vi.mock("../lib/api-client", () => ({
@@ -23,6 +25,14 @@ vi.mock("../lib/api-client", () => ({
 		return fallback;
 	},
 }));
+
+vi.mock("../lib/cloud-dev", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../lib/cloud-dev")>();
+	return {
+		...actual,
+		spawnCloudDevSession: (...args: unknown[]) => spawnCloudDevSessionMock(...args),
+	};
+});
 
 function renderDialog() {
 	const onCreated = vi.fn();
@@ -44,6 +54,8 @@ async function waitForAgentCatalog() {
 }
 
 beforeEach(() => {
+	localStorage.clear();
+	useUiStore.setState({ cloudDev: defaultCloudDevSettings });
 	getMock.mockReset().mockImplementation(async (path: string) => {
 		if (path === "/api/v1/agents") {
 			return {
@@ -72,6 +84,7 @@ beforeEach(() => {
 		};
 	});
 	postMock.mockReset().mockResolvedValue({ data: { session: { id: "task-1" } }, error: undefined });
+	spawnCloudDevSessionMock.mockReset();
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -107,11 +120,49 @@ describe("NewTaskDialog", () => {
 				harness: undefined,
 				issueId: "Fix fallback renderer",
 				prompt: "Restore the fallback renderer after WebGL init fails.",
+				displayName: "Fix fallback renderer",
 			},
 		});
-		expect(onCreated).toHaveBeenCalledWith("task-1");
+		expect(onCreated).toHaveBeenCalledWith("task-1", "proj-1");
 		expect(onOpenChange).toHaveBeenCalledWith(false);
 	}, 20_000);
+
+	it("spawns through AO Cloud when the dev cloud setting is enabled", async () => {
+		useUiStore.setState({
+			cloudDev: {
+				...defaultCloudDevSettings,
+				enabled: true,
+				apiBaseUrl: "http://127.0.0.1:3011",
+				accessToken: "token",
+				orgId: "org-1",
+				projectId: "cloud-proj",
+				workerAgent: "claude-code",
+			},
+		});
+		spawnCloudDevSessionMock.mockResolvedValue({
+			session: { id: "cloud-1", projectId: "cloud-proj" },
+			promptBytes: 1,
+			systemPromptBytes: 1,
+		});
+		const { onCreated } = renderDialog();
+		const user = userEvent.setup();
+		await waitForAgentCatalog();
+
+		await user.type(screen.getByLabelText("Title"), "Cloud task");
+		await user.type(screen.getByLabelText("Brief"), "Run this in Daytona.");
+		await user.click(screen.getByRole("button", { name: "Start task" }));
+
+		await waitFor(() => expect(spawnCloudDevSessionMock).toHaveBeenCalledTimes(1));
+		expect(postMock).not.toHaveBeenCalledWith("/api/v1/sessions", expect.anything());
+		expect(spawnCloudDevSessionMock.mock.calls[0][1]).toMatchObject({
+			projectId: "cloud-proj",
+			kind: "worker",
+			issueId: "Cloud task",
+			prompt: "Run this in Daytona.",
+			displayName: "Cloud task",
+		});
+		expect(onCreated).toHaveBeenCalledWith("cloud-1", "cloud-proj");
+	});
 
 	it("sends the chosen harness when the user overrides the default", async () => {
 		renderDialog();
