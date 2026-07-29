@@ -88,6 +88,14 @@ type SCMChanged struct {
 	Review bool
 }
 
+// SCMIdentity describes the account authenticated with the SCM provider.
+type SCMIdentity struct {
+	// Login is the provider login/name of the authenticated account.
+	Login string
+	// Human is true when the provider identifies the account as a human user.
+	Human bool
+}
+
 // SCMPRObservation carries provider-neutral PR metadata.
 type SCMPRObservation struct {
 	// URL is the canonical PR URL used as the persistence key.

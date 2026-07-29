@@ -75,6 +75,10 @@ type credentialChecker interface {
 	SCMCredentialsAvailable(ctx context.Context) (bool, error)
 }
 
+type authenticatedIdentityProvider interface {
+	AuthenticatedIdentity(ctx context.Context) (ports.SCMIdentity, error)
+}
+
 // Config holds optional observer knobs. Zero values use production defaults.
 type Config struct {
 	// Tick is the fast PR/CI polling interval. Zero uses DefaultTickInterval.
@@ -714,6 +718,7 @@ func pendingRepoRefreshes(guards map[string]repoGuardState) map[string]bool {
 // NotModified against a known ETag are skipped, since nothing new can have
 // appeared since the last poll.
 func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRepo, subjects map[string]*subject, guards map[string]repoGuardState, now time.Time, markRepoFailed func(ports.SCMRepo)) {
+	identity, identityKnown := o.authenticatedIdentity(ctx)
 	byRepo := map[string][]sessionRepo{}
 	repos := map[string]ports.SCMRepo{}
 	for _, sr := range sessionRepos {
@@ -739,6 +744,9 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 		}
 		for _, pr := range pulls {
 			if pr.Number <= 0 || pr.SourceBranch == "" {
+				continue
+			}
+			if identityKnown && !strings.EqualFold(strings.TrimSpace(pr.Author), identity.Login) {
 				continue
 			}
 			key := prKey(repo, pr.Number)
@@ -794,6 +802,24 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 	}
 }
 
+func (o *Observer) authenticatedIdentity(ctx context.Context) (ports.SCMIdentity, bool) {
+	provider, ok := o.provider.(authenticatedIdentityProvider)
+	if !ok {
+		return ports.SCMIdentity{}, false
+	}
+	identity, err := provider.AuthenticatedIdentity(ctx)
+	if err != nil {
+		o.logger.Debug("scm observer: authenticated identity unavailable; preserving branch-based discovery", "err", err)
+		return ports.SCMIdentity{}, false
+	}
+	identity.Login = strings.TrimSpace(identity.Login)
+	if !identity.Human || identity.Login == "" {
+		o.logger.Debug("scm observer: authenticated human identity unavailable; preserving branch-based discovery")
+		return ports.SCMIdentity{}, false
+	}
+	return identity, true
+}
+
 // matchSession picks the session that owns sourceBranch. A session owns the
 // branch when it is an exact match or a stacked descendant ("branch/..."). The
 // default worker branch is a leaf named "<namespace>/root"; for that shape the
@@ -821,6 +847,11 @@ func candidatesForHeadRepo(candidates []sessionRepo, headRepo string) []sessionR
 }
 
 func matchSession(candidates []sessionRepo, sourceBranch string) (sessionRepo, bool) {
+	for _, sr := range candidates {
+		if sr.branch != "" && sr.branch == sourceBranch {
+			return sr, true
+		}
+	}
 	var best sessionRepo
 	bestLen := -1
 	for _, sr := range candidates {
