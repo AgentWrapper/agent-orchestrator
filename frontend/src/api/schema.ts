@@ -986,6 +986,7 @@ export interface components {
         ListReviewsResponse: {
             reviewerHandleId: string;
             reviews: components["schemas"]["PRReviewState"][];
+            runs: components["schemas"]["ReviewRun"][];
         };
         ListSessionPRsResponse: {
             prs: components["schemas"]["SessionPRSummary"][];

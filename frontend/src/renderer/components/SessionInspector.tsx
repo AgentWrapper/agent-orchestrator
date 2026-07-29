@@ -42,6 +42,7 @@ import { Switch } from "./ui/switch";
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
+type ReviewRunFacts = components["schemas"]["ReviewRun"];
 type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
 
 export type InspectorView = "summary" | "reviews" | "browser" | "files";
@@ -723,7 +724,7 @@ function ReviewsView({
 				params: { path: { sessionId: session.id } },
 			});
 			if (error) throw new Error(apiErrorMessage(error, "Unable to load reviews"));
-			return data ?? ({ reviewerHandleId: "", reviews: [] } satisfies ReviewsResponse);
+			return data ?? ({ reviewerHandleId: "", reviews: [], runs: [] } satisfies ReviewsResponse);
 		},
 	});
 	const agentsQuery = useQuery(agentsQueryOptions);
@@ -827,6 +828,7 @@ function ReviewsView({
 					onTrigger={() => triggerReview.mutate()}
 					reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
 					reviewStates={reviewStates}
+					runs={reviewsQuery.data?.runs ?? []}
 					notice={reviewNotice}
 					agentCatalog={agentsQuery.data}
 					reviewerOverride={reviewerOverride}
@@ -927,9 +929,7 @@ const MOCK_RUNNING_PR = 322;
 const MOCK_STALE_PR = 324;
 
 function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
-	return {
-		reviewerHandleId: `${session.id}-reviewer`,
-		reviews: sortedPRs(session).map((pr, index) => {
+	const states: PRReviewState[] = sortedPRs(session).map((pr, index) => {
 			const targetSha = `demo${pr.number}${index}`;
 			const reviewedAt = new Date(Date.now() - (index + 1) * 11 * 60 * 1000).toISOString();
 			const latestRun =
@@ -1012,8 +1012,39 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 				targetSha,
 				title: mockReviewTitle(pr.number),
 			};
-		}),
-	};
+	});
+	// Earlier passes, so the history control has something to open. Two reviewers
+	// on the same PR is the case the control exists for.
+	const runs: ReviewRunFacts[] = states.flatMap((state) => {
+		const base = {
+			batchId: `demo-batch-${session.id}`,
+			githubReviewId: "",
+			prUrl: state.prUrl,
+			reviewId: `demo-review-${state.prNumber}`,
+			sessionId: session.id,
+			status: "delivered",
+			targetSha: state.targetSha,
+		};
+		return [
+			{
+				...base,
+				id: `demo-hist-${state.prNumber}-a`,
+				harness: "codex",
+				verdict: "changes_requested",
+				body: "Earlier codex pass asked for tests around the discount edge cases.",
+				createdAt: new Date(Date.now() - 55 * 60 * 1000).toISOString(),
+			},
+			{
+				...base,
+				id: `demo-hist-${state.prNumber}-b`,
+				harness: "claude-code",
+				verdict: "approved",
+				body: "Earlier claude-code pass found nothing blocking.",
+				createdAt: new Date(Date.now() - 95 * 60 * 1000).toISOString(),
+			},
+		];
+	});
+	return { reviewerHandleId: `${session.id}-reviewer`, reviews: states, runs };
 }
 
 function mockReviewTitle(prNumber: number): string {
@@ -1037,6 +1068,7 @@ function ReviewPanel({
 	session,
 	config,
 	reviewStates,
+	runs,
 	reviewerHandleId,
 	isLoading,
 	isTriggering,
@@ -1057,6 +1089,7 @@ function ReviewPanel({
 	session: WorkspaceSession;
 	config?: ProjectConfig;
 	reviewStates: PRReviewState[];
+	runs: ReviewRunFacts[];
 	reviewerHandleId: string;
 	isLoading: boolean;
 	isTriggering: boolean;
@@ -1097,6 +1130,20 @@ function ReviewPanel({
 		if (!terminalEnabled) return;
 		onOpenTerminal?.({ handleId: reviewerHandleId, harness });
 	};
+	// The two runs a PR's state already shows are not history; drop them so the
+	// control only offers passes you cannot otherwise see.
+	const shownRunIds = new Set(
+		openReviewStates.flatMap((state) => [state.latestRun?.id, state.previousRun?.id].filter(Boolean) as string[]),
+	);
+	const earlierRunsByPR = new Map<string, ReviewRunFacts[]>();
+	for (const run of runs) {
+		if (shownRunIds.has(run.id)) continue;
+		earlierRunsByPR.set(run.prUrl, [...(earlierRunsByPR.get(run.prUrl) ?? []), run]);
+	}
+	for (const [, list] of earlierRunsByPR) {
+		list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+	}
+
 	const runDisabled =
 		isTriggering ||
 		openReviewStates.length === 0 ||
@@ -1144,6 +1191,7 @@ function ReviewPanel({
 							title={reviewState.title?.trim() || `PR #${reviewState.prNumber}`}
 						>
 							<AoReviewRow reviewState={reviewState} />
+							<ReviewHistory runs={earlierRunsByPR.get(reviewState.prUrl) ?? []} />
 						</ReviewDisclosure>
 					))
 				)}
@@ -1363,6 +1411,72 @@ function githubVerdict(verdict: string): { label: string; tone: "neutral" | "run
 		default:
 			return { label: "Commented", tone: "neutral" };
 	}
+}
+
+/**
+ * Earlier passes for one PR, newest first, grouped by the reviewer that ran
+ * them. Switching the agent otherwise loses the previous one's verdict: the
+ * review state carries only the current and previous run, so a third pass pushes
+ * the first out entirely.
+ */
+function ReviewHistory({ runs }: { runs: ReviewRunFacts[] }) {
+	const [open, setOpen] = useState(false);
+	if (runs.length === 0) return null;
+
+	const byHarness = new Map<string, ReviewRunFacts[]>();
+	for (const run of runs) {
+		const harness = run.harness || "reviewer";
+		byHarness.set(harness, [...(byHarness.get(harness) ?? []), run]);
+	}
+
+	return (
+		<div className="flex flex-col gap-2">
+			<button
+				aria-expanded={open}
+				className="inline-flex items-center gap-1.5 self-start text-2xs font-medium text-passive transition-colors hover:text-foreground"
+				onClick={() => setOpen((current) => !current)}
+				type="button"
+			>
+				{open ? (
+					<ChevronDown aria-hidden="true" className="size-icon-2xs shrink-0" />
+				) : (
+					<ChevronRight aria-hidden="true" className="size-icon-2xs shrink-0" />
+				)}
+				{`Earlier ${runs.length === 1 ? "pass" : "passes"} (${runs.length})`}
+			</button>
+			{open ? (
+				<div className="flex flex-col gap-3">
+					{[...byHarness.entries()].map(([harness, harnessRuns]) => (
+						<div className="flex min-w-0 flex-col gap-1.5" key={harness}>
+							<span className="inline-flex min-w-0 items-center gap-1.5">
+								<AgentAvatar className="size-icon-sm" decorative provider={harness} />
+								<span className="truncate text-2xs font-medium text-foreground">{harness}</span>
+							</span>
+							{harnessRuns.map((run) => {
+								const verdict = runReviewVerdict(run);
+								const body = run.status === "cancelled" || run.status === "failed" ? "" : run.body?.trim();
+								return (
+									<div className="flex min-w-0 flex-col gap-1 pl-5" key={run.id}>
+										<span className="inline-flex min-w-0 items-center gap-2">
+											<VerdictBadge label={verdict.label} tone={verdict.tone} />
+											<span className="shrink-0 font-mono text-micro text-passive">
+												{formatTimeCompact(run.createdAt)}
+											</span>
+										</span>
+										{body ? (
+											<p className="m-0 line-clamp-3 whitespace-pre-wrap break-words text-micro leading-relaxed text-passive">
+												{body}
+											</p>
+										) : null}
+									</div>
+								);
+							})}
+						</div>
+					))}
+				</div>
+			) : null}
+		</div>
+	);
 }
 
 function aoReviewMeta(reviewState: PRReviewState): string {

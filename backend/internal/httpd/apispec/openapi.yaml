@@ -2728,9 +2728,14 @@ components:
           items:
             $ref: '#/components/schemas/PRReviewState'
           type: array
+        runs:
+          items:
+            $ref: '#/components/schemas/ReviewRun'
+          type: array
       required:
       - reviewerHandleId
       - reviews
+      - runs
       type: object
     ListSessionPRsResponse:
       properties:

@@ -20,6 +20,10 @@ import (
 type ListReviewsResponse struct {
 	ReviewerHandleID string                     `json:"reviewerHandleId"`
 	Reviews          []reviewcore.PRReviewState `json:"reviews"`
+	// Runs is every recorded pass for this session, newest first. Reviews only
+	// carries the current and previous run per PR, which cannot answer "what did
+	// the other reviewer say" once a third pass has run.
+	Runs []domain.ReviewRun `json:"runs"`
 }
 
 // ReviewRunResponse is the body of submit (200). It carries the run plus the
@@ -91,7 +95,11 @@ func (c *ReviewsController) list(w http.ResponseWriter, r *http.Request) {
 	if reviews == nil {
 		reviews = []reviewcore.PRReviewState{}
 	}
-	envelope.WriteJSON(w, http.StatusOK, ListReviewsResponse{ReviewerHandleID: res.ReviewerHandleID, Reviews: reviews})
+	runs := res.Runs
+	if runs == nil {
+		runs = []domain.ReviewRun{}
+	}
+	envelope.WriteJSON(w, http.StatusOK, ListReviewsResponse{ReviewerHandleID: res.ReviewerHandleID, Reviews: reviews, Runs: runs})
 }
 
 func (c *ReviewsController) trigger(w http.ResponseWriter, r *http.Request) {
