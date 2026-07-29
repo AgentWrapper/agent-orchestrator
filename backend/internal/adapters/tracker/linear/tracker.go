@@ -119,6 +119,7 @@ func (t *Tracker) List(ctx context.Context, scope domain.TrackerScope, filter do
 		return nil, err
 	}
 	query := listQuery(kind)
+	filterInput := serverFilter(filter)
 	var (
 		after   any
 		issues  []domain.Issue
@@ -127,9 +128,10 @@ func (t *Tracker) List(ctx context.Context, scope domain.TrackerScope, filter do
 	for page := 0; page < maxListPages; page++ {
 		var data listData
 		if err := t.do(ctx, query, map[string]any{
-			"scope": scopeID,
-			"first": defaultPageSize,
-			"after": after,
+			"scope":  scopeID,
+			"first":  defaultPageSize,
+			"after":  after,
+			"filter": filterInput,
 		}, &data); err != nil {
 			return nil, err
 		}
@@ -297,6 +299,34 @@ func matchesFilter(issue domain.Issue, filter domain.ListFilter) bool {
 	}
 }
 
+func serverFilter(filter domain.ListFilter) map[string]any {
+	out := make(map[string]any)
+	switch filter.State {
+	case domain.ListOpen:
+		out["state"] = map[string]any{"type": map[string]any{"nin": []string{"completed", "canceled"}}}
+	case domain.ListClosed:
+		out["state"] = map[string]any{"type": map[string]any{"in": []string{"completed", "canceled"}}}
+	}
+	switch assignee := strings.TrimSpace(filter.Assignee); {
+	case assignee == "*":
+		out["assignee"] = map[string]any{"null": false}
+	case strings.EqualFold(assignee, "none"):
+		out["assignee"] = map[string]any{"null": true}
+	case assignee != "":
+		out["assignee"] = map[string]any{"name": map[string]any{"eqIgnoreCase": assignee}}
+	}
+	if len(filter.Labels) > 0 {
+		labels := make([]any, 0, len(filter.Labels))
+		for _, label := range filter.Labels {
+			labels = append(labels, map[string]any{
+				"labels": map[string]any{"name": map[string]any{"eqIgnoreCase": strings.TrimSpace(label)}},
+			})
+		}
+		out["and"] = labels
+	}
+	return out
+}
+
 func containsFold(values []string, needle string) bool {
 	for _, value := range values {
 		if strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(needle)) {
@@ -316,9 +346,9 @@ func parseScope(native string) (kind, id string, err error) {
 }
 
 func listQuery(kind string) string {
-	return `query Issues($scope: String!, $first: Int!, $after: String) {
+	return `query Issues($scope: String!, $first: Int!, $after: String, $filter: IssueFilter) {
 		` + kind + `(id: $scope) {
-			issues(first: $first, after: $after) {
+			issues(first: $first, after: $after, filter: $filter) {
 				nodes {` + issueFields + `}
 				pageInfo { hasNextPage endCursor }
 			}
@@ -329,7 +359,10 @@ func listQuery(kind string) string {
 type graphqlEnvelope struct {
 	Data   json.RawMessage `json:"data"`
 	Errors []struct {
-		Message string `json:"message"`
+		Message    string `json:"message"`
+		Extensions struct {
+			Code string `json:"code"`
+		} `json:"extensions"`
 	} `json:"errors"`
 }
 
@@ -359,24 +392,26 @@ func (t *Tracker) do(ctx context.Context, query string, variables map[string]any
 	case http.StatusTooManyRequests:
 		return ErrRateLimited
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("linear tracker: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
-	}
 	var envelope graphqlEnvelope
-	if err := json.Unmarshal(payload, &envelope); err != nil {
-		return fmt.Errorf("linear tracker: decode response: %w", err)
-	}
-	if len(envelope.Errors) > 0 {
+	decodeErr := json.Unmarshal(payload, &envelope)
+	if decodeErr == nil && len(envelope.Errors) > 0 {
 		message := envelope.Errors[0].Message
 		lower := strings.ToLower(message)
+		code := strings.ToLower(envelope.Errors[0].Extensions.Code)
 		switch {
-		case strings.Contains(lower, "auth"), strings.Contains(lower, "unauthorized"), strings.Contains(lower, "api key"):
-			return fmt.Errorf("%w: %s", ErrAuthFailed, message)
-		case strings.Contains(lower, "rate limit"):
+		case code == "ratelimited", strings.Contains(lower, "rate limit"):
 			return fmt.Errorf("%w: %s", ErrRateLimited, message)
+		case strings.Contains(code, "auth"), strings.Contains(lower, "auth"), strings.Contains(lower, "unauthorized"), strings.Contains(lower, "api key"):
+			return fmt.Errorf("%w: %s", ErrAuthFailed, message)
 		default:
 			return fmt.Errorf("linear tracker: graphql: %s", message)
 		}
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("linear tracker: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
+	}
+	if decodeErr != nil {
+		return fmt.Errorf("linear tracker: decode response: %w", decodeErr)
 	}
 	if err := json.Unmarshal(envelope.Data, out); err != nil {
 		return fmt.Errorf("linear tracker: decode data: %w", err)

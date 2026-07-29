@@ -147,8 +147,23 @@ func TestListTeamScopePaginatesAndAppliesFilters(t *testing.T) {
 		if !strings.Contains(req.Query, "team(id: $scope)") {
 			t.Errorf("query = %q, want team scope", req.Query)
 		}
+		if !strings.Contains(req.Query, "filter: $filter") {
+			t.Errorf("query = %q, want server-side issue filter", req.Query)
+		}
 		if req.Variables["scope"] != "team-id" {
 			t.Errorf("scope = %#v, want team-id", req.Variables["scope"])
+		}
+		wantFilter := map[string]any{
+			"state": map[string]any{"type": map[string]any{"nin": []any{"completed", "canceled"}}},
+			"assignee": map[string]any{
+				"name": map[string]any{"eqIgnoreCase": "Alice"},
+			},
+			"and": []any{
+				map[string]any{"labels": map[string]any{"name": map[string]any{"eqIgnoreCase": "agent-ready"}}},
+			},
+		}
+		if got := req.Variables["filter"]; !reflect.DeepEqual(got, wantFilter) {
+			t.Errorf("filter = %#v, want %#v", got, wantFilter)
 		}
 		if req.Variables["after"] == nil {
 			_, _ = io.WriteString(w, `{"data":{"team":{"issues":{
@@ -234,9 +249,10 @@ func TestGraphQLErrorsAreClassified(t *testing.T) {
 			t.Fatalf("Preflight error = %v, want ErrAuthFailed", err)
 		}
 	})
-	t.Run("rate limited", func(t *testing.T) {
+	t.Run("graphql rate limited", func(t *testing.T) {
 		f := newFakeLinear(t, func(w http.ResponseWriter, _ *http.Request, _ graphqlRequest) {
-			http.Error(w, "slow down", http.StatusTooManyRequests)
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"errors":[{"message":"Rate limit exceeded","extensions":{"code":"RATELIMITED"}}]}`)
 		})
 		if _, err := f.tracker(t).Get(context.Background(), domain.TrackerID{
 			Provider: domain.TrackerProviderLinear,
