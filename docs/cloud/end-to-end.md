@@ -196,7 +196,11 @@ read tcp 172.20.0.11:58424->3.134.125.175:443: read: connection reset by peer
 ```
 
 The ngrok and localtunnel URLs both served `/healthz` from the maintainer
-machine, but reset from the Daytona sandbox. Until a tunnel or deployed
+machine, but reset from the Daytona sandbox. A follow-up isolated ngrok test
+served only a local `/healthz` endpoint, then launched a disposable Daytona
+session that ran `curl` against the fresh ngrok URL; the sandbox again reported
+`curl: (35) Recv failure: Connection reset by peer`, while local requests to
+the same URL returned `HTTP/2 200`. Until a tunnel or deployed
 `AO_CLOUD_API_BASE` is reachable from Daytona, the final activity transition
 cannot complete; the session remains `no_signal` even though Claude ran.
 
@@ -211,7 +215,6 @@ npm run frontend:typecheck
 PASS
 ```
 
-Maintainer still needs to provide the Daytona API key, Claude Code token, and a
-tunnel or deployed cloud URL reachable from Daytona. For production auth
-validation, provide real Google OAuth client credentials; until then, use
-`AO_CLOUD_DEV_AUTH=1`.
+Maintainer still needs to provide a tunnel or deployed cloud URL reachable from
+Daytona. For production auth validation, provide real Google OAuth client
+credentials; until then, use `AO_CLOUD_DEV_AUTH=1`.
