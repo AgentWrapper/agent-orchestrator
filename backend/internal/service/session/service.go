@@ -103,6 +103,7 @@ type scmProvider interface {
 	ParseRepository(remote string) (ports.SCMRepo, bool)
 	FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error)
 	FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (ports.SCMReviewObservation, error)
+	ResolveReviewThread(ctx context.Context, threadID string) error
 }
 
 // Service is the controller-facing session service. It delegates command-side

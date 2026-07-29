@@ -811,7 +811,7 @@ describe("SessionInspector reviews tab", () => {
 		},
 	);
 
-	it("lists PR reviewers and the unresolved count in the Pull request pane", async () => {
+	it("lists PR reviewers and resolves their threads through the session route", async () => {
 		mockCommonGets([], "reviewer-pane", [reviewState(3, "up_to_date", "sha-1")]);
 		const previous = getMock.getMockImplementation()!;
 		getMock.mockImplementation(async (path: string, opts?: unknown) => {
@@ -844,7 +844,17 @@ describe("SessionInspector reviews tab", () => {
 											reviewUrl: "https://example.com/pr/3#pullrequestreview-1",
 										},
 									],
-									unresolvedBy: [{ reviewerId: "maya", count: 2, links: [] }],
+									unresolvedBy: [
+										{
+											reviewerId: "maya",
+											count: 2,
+											// Two comments, one thread: the button resolves threads, not comments.
+											links: [
+												{ threadId: "T1", file: "a.ts", line: 3 },
+												{ threadId: "T1", file: "a.ts", line: 9 },
+											],
+										},
+									],
 								},
 							},
 						],
@@ -860,9 +870,13 @@ describe("SessionInspector reviews tab", () => {
 		expect(await screen.findByText("maya")).toBeInTheDocument();
 		expect(screen.getByText("Tear down the listener on unmount.")).toBeInTheDocument();
 		expect(screen.getByText(/2 unresolved/)).toBeInTheDocument();
-		// Resolving is not offered while pr.ActionManager is nil in production and
-		// the route answers 501 — the count is information, not an action.
-		expect(screen.queryByRole("button", { name: /Resolve/ })).not.toBeInTheDocument();
+
+		postMock.mockResolvedValue({ data: { ok: true, resolved: 1 } });
+		await userEvent.click(screen.getByRole("button", { name: "Resolve 1 thread" }));
+		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/prs/{prNumber}/resolve-comments", {
+			params: { path: { sessionId: "sess-1", prNumber: 3 } },
+			body: { commentIds: ["T1"] },
+		});
 	});
 
 	it("hides the previous verdict after the current head review completes", async () => {

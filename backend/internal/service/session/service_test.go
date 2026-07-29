@@ -1238,6 +1238,16 @@ type fakeSCM struct {
 	review    ports.SCMReviewObservation
 	fetchErr  error
 	reviewErr error
+	// resolved records the thread ids passed to ResolveReviewThread, in order.
+	resolved   *[]string
+	resolveErr error
+}
+
+func (f fakeSCM) ResolveReviewThread(_ context.Context, threadID string) error {
+	if f.resolved != nil {
+		*f.resolved = append(*f.resolved, threadID)
+	}
+	return f.resolveErr
 }
 
 func (f fakeSCM) ParseRepository(remote string) (ports.SCMRepo, bool) {

@@ -711,6 +711,14 @@ type DevImportProjectsResponse struct {
 	Report devimport.Report `json:"report"`
 }
 
+// SessionPRNumberParam is the {sessionId}+{prNumber} pair addressing one of a
+// session's pull requests. PR numbers are only unique within a repository, so a
+// PR is addressed by the session that owns it rather than by number alone.
+type SessionPRNumberParam struct {
+	SessionID string `path:"sessionId" description:"Session identifier, e.g. project-1."`
+	PRNumber  int    `path:"prNumber" description:"Pull request number within the session's repository."`
+}
+
 // PRIDParam is the {id} path parameter shared by the /prs/{id} routes.
 type PRIDParam struct {
 	ID string `path:"id" description:"PR number."`

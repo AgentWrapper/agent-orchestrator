@@ -37,6 +37,10 @@ type fakeSessionService struct {
 	claimErr        error
 	listPRErr       error
 	workspaceErr    error
+	resolvedPR      int
+	resolvedThreads []string
+	resolvedCount   int
+	resolveErr      error
 }
 
 func newFakeSessionService() *fakeSessionService {
@@ -184,6 +188,18 @@ func (f *fakeSessionService) ListPRs(_ context.Context, id domain.SessionID) ([]
 		return nil, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
 	}
 	return []domain.PRFacts{{URL: "https://github.com/aoagents/agent-orchestrator/pull/142", Number: 142, CI: domain.CIPassing, Review: domain.ReviewRequired, Mergeability: domain.MergeMergeable, UpdatedAt: time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)}}, nil
+}
+
+func (f *fakeSessionService) ResolvePRComments(_ context.Context, _ domain.SessionID, prNumber int, threadIDs []string) (int, error) {
+	f.resolvedPR = prNumber
+	f.resolvedThreads = threadIDs
+	if f.resolveErr != nil {
+		return 0, f.resolveErr
+	}
+	if len(threadIDs) > 0 {
+		return len(threadIDs), nil
+	}
+	return f.resolvedCount, nil
 }
 
 func (f *fakeSessionService) ListPRSummaries(_ context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error) {

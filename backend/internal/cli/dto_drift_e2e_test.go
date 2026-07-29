@@ -108,6 +108,10 @@ func (f *fakeSessionService) Send(context.Context, domain.SessionID, string) err
 	return nil
 }
 
+func (f *fakeSessionService) ResolvePRComments(context.Context, domain.SessionID, int, []string) (int, error) {
+	return 0, nil
+}
+
 func (f *fakeSessionService) ListPRSummaries(context.Context, domain.SessionID) ([]sessionsvc.PRSummary, error) {
 	return nil, nil
 }

@@ -871,6 +871,22 @@ func sessionOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/prs/{prNumber}/resolve-comments",
+			id: "resolveSessionPRComments", tag: "sessions",
+			summary:    "Resolve review threads on one of a session's pull requests",
+			pathParams: []any{controllers.SessionPRNumberParam{}},
+			// Optional: an empty body resolves every unresolved human thread.
+			reqBody:         controllers.ResolveCommentsRequest{},
+			optionalReqBody: true,
+			resps: []respUnit{
+				{http.StatusOK, controllers.ResolveCommentsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusServiceUnavailable, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/pr/claim", id: "claimSessionPR", tag: "sessions",
 			summary:    "Claim an existing pull request for a session",
 			pathParams: []any{controllers.SessionIDParam{}},
