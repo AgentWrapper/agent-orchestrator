@@ -11,6 +11,7 @@ import { SettingsPanel } from "./settings/SettingsPanel";
 import { SettingsSection } from "./settings/SettingsSection";
 import { UpdatesSection } from "./settings/UpdatesSection";
 import { KeyboardShortcutsSettingsDialog } from "./settings/KeyboardShortcutsSettingsDialog";
+import { ShellTopbar } from "./ShellTopbar";
 
 export function GlobalSettingsForm() {
 	const navigate = useNavigate();
@@ -21,7 +22,8 @@ export function GlobalSettingsForm() {
 	return (
 		<>
 			<SettingsPageShell>
-				<SettingsPanel onClose={() => navigate({ to: "/" })}>
+				<ShellTopbar surfaceOverride="global-settings" />
+				<SettingsPanel onClose={() => navigate({ to: "/" })} showHeader={false}>
 					<GeneralSettingsSection onConnectMobile={() => setMobileOpen(true)} />
 					<SettingsSection title="Preferences">
 						<SettingsLinkRow

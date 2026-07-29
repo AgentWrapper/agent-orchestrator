@@ -7,6 +7,7 @@ import {
 	ChevronRight,
 	Files as FilesIcon,
 	GitPullRequest,
+	PanelRightClose,
 	Play,
 	Shield,
 	Terminal,
@@ -18,10 +19,10 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
-import { clearTerminateSessionState, useTerminateSession } from "../hooks/useTerminateSession";
+import { useTerminateSession } from "../hooks/useTerminateSession";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
-import { canonicalTrackerIssueId, findProjectOrchestrator, sortedPRs } from "../types/workspace";
+import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
@@ -33,8 +34,9 @@ import { cn } from "../lib/utils";
 import { PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
 import { StatusPill } from "./StatusPill";
 import { CodexIcon } from "./icons";
-import { SessionTerminationPopover } from "./SessionTerminationPopover";
+import { SessionTerminationDialog } from "./SessionTerminationDialog";
 import { Switch } from "./ui/switch";
+import { TopbarButton } from "./TopbarButton";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -149,6 +151,7 @@ export function SessionInspector({
 	browserAnnotationQueue,
 	isInspectorVisible = true,
 	onToggleBrowserPopOut,
+	onToggleVisibility,
 	onOpenFiles,
 	filesView,
 	browserView,
@@ -161,6 +164,7 @@ export function SessionInspector({
 	browserAnnotationQueue?: BrowserAnnotationQueueModel;
 	isInspectorVisible?: boolean;
 	onToggleBrowserPopOut?: (next: boolean) => void;
+	onToggleVisibility?: () => void;
 	onOpenFiles?: () => void;
 	filesView?: ReactNode;
 	browserView?: BrowserViewModel;
@@ -192,40 +196,63 @@ export function SessionInspector({
 
 	return (
 		<aside className={inspectorShellClass} aria-label="Session inspector">
-			<div className="flex h-inspector-tabs shrink-0 items-center gap-1 border-b border-border px-2.5" role="tablist">
-				{VIEWS.map((entry) => (
-					<button
-						aria-label={entry.label}
-						key={entry.id}
-						type="button"
-						role="tab"
-						aria-selected={view === entry.id}
-						className={cn(
-							"inline-flex h-control-md shrink-0 items-center justify-center gap-1.5 rounded-md px-1.5 text-sm-md font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
-							view === entry.id && "bg-interactive-active text-foreground",
-						)}
-						onClick={() => setView(entry.id)}
-						title={entry.label}
-					>
-						<span className="relative inline-flex shrink-0 [&_svg]:size-icon-md">
-							{entry.icon}
-							{entry.id === "browser" && browserUnseen ? (
-								<span aria-hidden="true" className="absolute -right-1 -top-1 inline-flex size-dot-sm">
-									{/* Pinging halo + solid core: a glowing beacon that draws the eye to
-									    a link that arrived in the terminal, cleared once the tab opens. */}
-									<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
-									<span className="relative inline-flex size-dot-sm rounded-full bg-primary ring-2 ring-background" />
+			<div
+				className={cn(
+					"session-inspector__topbar flex h-topbar-primary shrink-0 items-center border-b border-border",
+					isInspectorVisible ? "gap-1 pl-2.5" : "justify-center",
+				)}
+			>
+				{isInspectorVisible ? (
+					<div className="flex min-w-0 flex-1 items-center gap-1" role="tablist">
+						{VIEWS.map((entry) => (
+							<button
+								aria-label={entry.label}
+								key={entry.id}
+								type="button"
+								role="tab"
+								aria-selected={view === entry.id}
+								className={cn(
+									"relative inline-flex h-control-md shrink-0 items-center justify-center gap-1.5 rounded-md px-1.5 font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
+									view === entry.id && "bg-interactive-active text-foreground",
+								)}
+								onClick={() => setView(entry.id)}
+								title={entry.label}
+							>
+								<span className="inline-flex shrink-0 @min-[316px]/inspector:hidden [&_svg]:size-icon-md">
+									{entry.icon}
 								</span>
-							) : null}
-						</span>
-						<span className="truncate @max-[350px]/inspector:hidden">{entry.label}</span>
-					</button>
-				))}
+								<span className="truncate text-caption @max-[315px]/inspector:hidden">{entry.label}</span>
+								{entry.id === "browser" && browserUnseen ? (
+									<span aria-hidden="true" className="absolute right-0 top-0 inline-flex size-dot-sm">
+										{/* Pinging halo + solid core: a glowing beacon that draws the eye to
+										    a link that arrived in the terminal, cleared once the tab opens. */}
+										<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+										<span className="relative inline-flex size-dot-sm rounded-full bg-primary ring-2 ring-background" />
+									</span>
+								) : null}
+							</button>
+						))}
+					</div>
+				) : null}
+				{isInspectorVisible ? (
+					<TopbarButton
+						aria-expanded="true"
+						aria-label="Close inspector panel"
+						className="session-inspector__toggle ml-1.5 shrink-0 border border-transparent focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
+						onClick={onToggleVisibility}
+						title="Close inspector · ⌘⇧B"
+						variant="icon"
+					>
+						<PanelRightClose className="size-icon-lg" aria-hidden="true" />
+					</TopbarButton>
+				) : null}
 			</div>
 
 			<div
+				aria-hidden={!isInspectorVisible}
 				className={cn(
 					inspectorBodyClass,
+					!isInspectorVisible && "invisible pointer-events-none",
 					// The Browser tab renders its own bordered panel edge-to-edge, so
 					// drop the body padding for it (except when popped out, where the
 					// body only holds the "return to panel" empty state).
@@ -234,6 +261,7 @@ export function SessionInspector({
 						"p-0 overflow-hidden [&>[role=tabpanel]]:border-0 [&>[role=tabpanel]]:rounded-none",
 					view === "files" && "p-0 overflow-hidden [&>[role=tabpanel]]:h-full",
 				)}
+				inert={!isInspectorVisible}
 			>
 				{view === "summary" ? <SummaryView session={session} /> : null}
 				{view === "reviews" ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
@@ -287,23 +315,21 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 	const prSectionTitle = prSummaries.length > 1 ? `Pull requests (${prSummaries.length})` : "Pull request";
 	const issueId = canonicalTrackerIssueId(session.issueId);
 
-	const hasPRs = prSummaries.length > 0;
-	const showCompletion =
-		session.kind !== "orchestrator" && (hasPRs || session.status === "merged");
-
 	return (
 		<div role="tabpanel">
-			{hasPRs ? (
-				<Section title={prSectionTitle}>
+			<Section title={prSectionTitle}>
+				{prSummaries.length === 0 ? (
+					<p className={inspectorEmptyClass}>No pull request opened yet.</p>
+				) : (
 					<div className="flex flex-col gap-1.5">
 						{prSummaries.map((pr) => (
 							<PRSummaryCard key={pr.number} pr={pr} />
 						))}
 					</div>
-				</Section>
-			) : null}
+				)}
+			</Section>
 
-			{showCompletion ? <CompletionControls session={session} /> : null}
+			{session.kind !== "orchestrator" ? <CompletionControls session={session} /> : null}
 
 			<Section title="Activity">
 				<ActivityTimeline prs={prSummaries} session={session} />
@@ -379,7 +405,15 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const [confirmOpen, setConfirmOpen] = useState(false);
-	const terminate = useTerminateSession();
+	const terminate = useTerminateSession({
+		onSuccess: (terminated) => {
+			setConfirmOpen(false);
+			void navigate({
+				to: "/projects/$projectId",
+				params: { projectId: terminated.workspaceId },
+			});
+		},
+	});
 	const policy = useMutation({
 		mutationFn: async (terminateOnPrMerge: boolean) => {
 			if (usePreviewData) return;
@@ -405,22 +439,8 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 		},
 	});
 	const policyError = policy.error instanceof Error ? policy.error.message : null;
+	const terminateError = terminate.error instanceof Error ? terminate.error.message : null;
 	const canTerminateNow = session.status === "merged";
-
-	const confirmTermination = () => {
-		const workspaces = queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey) ?? [];
-		const orchestrator = findProjectOrchestrator(workspaces, session.workspaceId);
-		setConfirmOpen(false);
-		terminate.mutate(session);
-		if (orchestrator) {
-			void navigate({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId: session.workspaceId, sessionId: orchestrator.id },
-			});
-			return;
-		}
-		void navigate({ to: "/projects/$projectId", params: { projectId: session.workspaceId } });
-	};
 
 	if (session.isTerminated === true) return null;
 
@@ -429,22 +449,17 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 			{canTerminateNow ? (
 				<div className="flex items-center justify-between gap-3 py-1">
 					<span className="min-w-0 text-xs font-medium text-settings-label">Terminate</span>
-					<SessionTerminationPopover
-						onConfirm={confirmTermination}
-						onOpenChange={setConfirmOpen}
-						open={confirmOpen}
-						session={session}
-						trigger={
-							<button
-								aria-label="Terminate session"
-								className="inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-								onClick={() => clearTerminateSessionState(queryClient, session.id)}
-								type="button"
-							>
-								<Trash2 className="size-icon-sm" aria-hidden="true" />
-							</button>
-						}
-					/>
+					<button
+						aria-label="Terminate session"
+						className="inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+						onClick={() => {
+							terminate.reset();
+							setConfirmOpen(true);
+						}}
+						type="button"
+					>
+						<Trash2 className="size-icon-sm" aria-hidden="true" />
+					</button>
 				</div>
 			) : (
 				<>
@@ -467,6 +482,16 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 					) : null}
 				</>
 			)}
+			<SessionTerminationDialog
+				busy={terminate.isPending}
+				error={terminateError}
+				onConfirm={() => terminate.mutate(session)}
+				onOpenChange={(open) => {
+					if (!terminate.isPending) setConfirmOpen(open);
+				}}
+				open={confirmOpen}
+				session={session}
+			/>
 		</Section>
 	);
 }
@@ -660,7 +685,11 @@ function latestMergedTime(prs: SessionPRSummary[]): string | null {
 
 type ScmTimelineState = "ci_failed" | "changes_requested" | "conflict";
 
-const CONFLICT_PILL = { label: "Conflict", tone: "var(--color-danger)", breathe: false };
+const CONFLICT_PILL = {
+	label: "Conflict",
+	tone: "var(--color-danger)",
+	breathe: false,
+};
 
 function InspectorActivityPill({ activity }: { activity?: WorkspaceSession["activity"] }) {
 	return <TimelinePill {...getAgentActivityView(activity)} />;
@@ -746,7 +775,9 @@ function ReviewsView({
 			setReviewNotice(null);
 		},
 		onSuccess: ({ data, reused }) => {
-			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });
+			void queryClient.invalidateQueries({
+				queryKey: ["session-reviews", session.id],
+			});
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			const started = data?.reviews?.find((review) => review.status === "running" && review.latestRun);
 			if (reused || !started?.latestRun) {
@@ -768,7 +799,9 @@ function ReviewsView({
 		},
 		onSuccess: () => {
 			setReviewNotice(null);
-			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });
+			void queryClient.invalidateQueries({
+				queryKey: ["session-reviews", session.id],
+			});
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		},
 	});
@@ -1044,7 +1077,9 @@ function AoReviewRow({ reviewState }: { reviewState: PRReviewState }) {
 	return (
 		<div className={cn("flex min-w-0 flex-col gap-2", reviewState.status === "ineligible" && "opacity-70")}>
 			<VerdictBadge label={verdict.label} tone={verdict.tone} />
-			{summary ? <p className="whitespace-pre-wrap break-words text-2xs leading-relaxed text-passive">{summary}</p> : null}
+			{summary ? (
+				<p className="whitespace-pre-wrap break-words text-2xs leading-relaxed text-passive">{summary}</p>
+			) : null}
 			{reviewUrl ? (
 				<a
 					className="inline-flex items-center gap-0.5 self-start text-2xs font-medium text-passive no-underline transition-colors hover:text-foreground"

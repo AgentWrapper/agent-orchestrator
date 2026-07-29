@@ -154,11 +154,13 @@ function ShellLayout() {
 	const isSettingsRoute =
 		Boolean(matchRoute({ to: "/settings", fuzzy: true })) ||
 		Boolean(matchRoute({ to: "/projects/$projectId/settings", fuzzy: true }));
-	// Welcome/settings always self-frame. Platforms that hide the shell-owned
-	// topbar (macOS) use the same full-height inset; session actions mount
-	// inside SessionView.
+	const isTerminalsRoute = Boolean(matchRoute({ to: "/terminals", fuzzy: true }));
+	const isSessionRoute = Boolean(routeParams.sessionId);
+	const isWorkspaceCanvas = isSessionRoute || (!isWelcomeBoard && !isSettingsRoute && !isTerminalsRoute);
+	// Welcome/settings always self-frame. Sessions own their header inside the
+	// terminal column on every platform so it ends at the inspector divider.
 	const selfFramedCenterPanel = isWelcomeBoard || isSettingsRoute;
-	const hideShellTopbar = selfFramedCenterPanel || shellTopbarHiddenByPlatform;
+	const hideShellTopbar = selfFramedCenterPanel || isSessionRoute || shellTopbarHiddenByPlatform;
 	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
 	const orchestratorReplacementErrors = useUiStore((state) => state.orchestratorReplacementErrors);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
@@ -609,16 +611,18 @@ function ShellLayout() {
 				open={isKeyboardShortcutsSettingsOpen}
 				onOpenChange={setIsKeyboardShortcutsSettingsOpen}
 			/>
-			{/* Shell chrome: Win/Linux hang the sidebar under a topbar. macOS uses a
-          titlebar strip above the off-canvas sidebar. Session and board actions
-          render inside the center panel when the shell topbar is hidden. */}
+			{/* Shell chrome: Windows supplies a custom native-menu titlebar.
+          macOS/Linux use the fixed TitlebarNav cluster, with session and board
+          actions rendered inside the center panel. */}
 			<div className={cn("flex h-screen min-h-0 flex-col bg-sidebar text-foreground", isWindows && "platform-windows")}>
 				{/* Windows-only custom title bar (sidebar toggle + File/Edit/View/…
             menu); paints the chrome the frameless window drops. Renders null on
             macOS/Linux. */}
 				<WindowTitlebar onSidebarPreviewEnter={previewSidebar} />
 				{/* App routes render their topbar inside the framed panel, matching the board chrome across platforms while leaving OS titlebars native. */}
-				{!framedAppTopbar && !hideShellTopbar ? <ShellTopbar /> : null}
+				{!framedAppTopbar && !hideShellTopbar ? (
+					<ShellTopbar surfaceOverride={isTerminalsRoute ? "standalone-terminals" : undefined} />
+				) : null}
 				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
             call the store directly) stay in sync. --sidebar-width chains to
             the drag-resizable --ao-sidebar-w set on :root by useResizable. */}
@@ -655,25 +659,25 @@ function ShellLayout() {
 					/>
 					<main className={cn("flex min-w-0 flex-1 flex-col overflow-x-hidden", !isSidebarOpen && "sidebar-hidden")}>
 						<div className="min-h-0 flex-1 overflow-x-hidden">
-							{/* Board/session routes render inside the same inset box the welcome board and settings paint for themselves, so every screen sits within the app's outer boundary. */}
+							{/* Board/session canvases run edge-to-edge. Welcome, settings,
+							    and terminals retain the quieter inset application frame. */}
 							{hideShellTopbar ? (
 								selfFramedCenterPanel ? (
 									<Outlet />
 								) : (
-									// Platform hides shell topbar: full-height panel; session mounts actions in-panel.
-									<CenterPanelShell>
+									<CenterPanelShell variant={isWorkspaceCanvas ? "workspace" : "framed"}>
 										<Outlet />
 									</CenterPanelShell>
 								)
 							) : framedAppTopbar ? (
-								<CenterPanelShell>
-									<ShellTopbar />
+								<CenterPanelShell variant={isWorkspaceCanvas ? "workspace" : "framed"}>
+									<ShellTopbar surfaceOverride={isTerminalsRoute ? "standalone-terminals" : undefined} />
 									<div className="flex min-h-0 flex-1 flex-col">
 										<Outlet />
 									</div>
 								</CenterPanelShell>
 							) : (
-								<CenterPanelShell>
+								<CenterPanelShell variant={isWorkspaceCanvas ? "workspace" : "framed"}>
 									<Outlet />
 								</CenterPanelShell>
 							)}

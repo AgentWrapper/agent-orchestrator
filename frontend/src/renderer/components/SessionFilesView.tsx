@@ -164,13 +164,13 @@ export function SessionFilesView({
 			className="flex h-full min-h-0 flex-col bg-background text-foreground"
 			aria-label="Session files"
 		>
-			<header className="flex h-11 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-1.5">
+			<header className="flex h-topbar-secondary shrink-0 items-center gap-0.5 border-b border-border bg-surface px-1.5">
 				{searchOpen ? (
 					<label className="relative mr-auto min-w-0 flex-1 max-w-[280px]">
 						<Search className="pointer-events-none absolute left-2.5 top-1/2 size-icon-sm -translate-y-1/2 text-passive" />
 						<Input
 							autoFocus
-							className="h-8 pl-8 font-mono text-xs"
+							className="h-control-md pl-8 font-mono text-xs"
 							onChange={(event) => setFilter(event.target.value)}
 							placeholder="Search changed files"
 							value={filter}

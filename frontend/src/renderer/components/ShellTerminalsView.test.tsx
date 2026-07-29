@@ -13,6 +13,7 @@ vi.mock("../lib/shell-context", () => ({
 }));
 
 vi.mock("./TerminalPane", () => ({ TerminalPane: () => <div>terminal body</div> }));
+vi.mock("./ShellTopbar", () => ({ ShellTopbar: () => null }));
 
 describe("ShellTerminalsView", () => {
 	it("points the empty state at the visible plus tab-strip control", () => {

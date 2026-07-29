@@ -6,7 +6,7 @@ import {
 	Check,
 	Copy,
 	GitBranch,
-	LoaderCircle,
+	LayoutDashboard,
 	Plus,
 	RotateCcw,
 	RotateCw,
@@ -33,18 +33,13 @@ import {
 } from "../lib/session-presentation";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { useRestoreSession } from "../hooks/useRestoreSession";
-import {
-	clearTerminateSessionState,
-	useTerminateSession,
-	useTerminateSessionState,
-} from "../hooks/useTerminateSession";
+import { useTerminateSession } from "../hooks/useTerminateSession";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyStates";
 import { OrchestratorIcon } from "./icons";
-import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { AgentAvatar } from "./AgentAvatar";
-import { TopbarButton, TopbarKillError, topbarProjectLabelClass } from "./TopbarButton";
+import { TopbarButton, TopbarKillError } from "./TopbarButton";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
@@ -56,9 +51,12 @@ import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/
 import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
-import { SessionTerminationPopover } from "./SessionTerminationPopover";
+import { SessionTerminationDialog } from "./SessionTerminationDialog";
 import { DaemonStartupLoader } from "./DaemonStartupLoader";
 import { useShellMaybe } from "../lib/shell-context";
+import { ReverbTopbar } from "./topbar/ReverbTopbar";
+import { TopbarActivityStatus } from "./topbar/TopbarActivityStatus";
+import type { ReverbTopbarModel } from "./topbar/topbar-model";
 
 type SessionsBoardProps = {
 	/** When set, the board shows only this project's sessions. */
@@ -76,7 +74,6 @@ function isArchivedSession(session: WorkspaceSession): boolean {
 
 const isMac = isMacPlatform();
 const dragStyle = isMac ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined;
-const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
 export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const navigate = useNavigate();
@@ -91,8 +88,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const all = workspaceQuery.data ?? [];
 	const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
 	const workspace = projectId ? workspaces[0] : undefined;
-	// Same crumb as ShellTopbar: project name in scope, else root-board "Board".
-	const boardLabel = workspace?.name ?? (projectId ? "" : "Board");
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
 	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity).label : undefined;
@@ -109,6 +104,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
 	const health = workspace ? orchestratorHealth(workspace, isProjectRestarting) : { state: "ok" as const };
 	const visibleSpawnError = spawnError ?? orchestratorStartupError;
+	const orchestratorTooltip = isProjectRestarting
+		? "Restarting orchestrator"
+		: isSpawning
+			? "Spawning orchestrator"
+			: orchestrator
+				? "Open orchestrator"
+				: "Spawn orchestrator";
 	// The board instance survives project-to-project navigation (same route,
 	// new param), so a spawn failure must not follow the user to another board.
 	useEffect(() => setSpawnError(null), [projectId]);
@@ -153,13 +155,15 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const [restoringSessionId, setRestoringSessionId] = useState<string | undefined>();
 	const [restoreErrors, setRestoreErrors] = useState<Record<string, string>>({});
 	const [restoreUnavailableSession, setRestoreUnavailableSession] = useState<WorkspaceSession | undefined>();
-	const terminateSession = useTerminateSession();
+	const [terminationSession, setTerminationSession] = useState<WorkspaceSession | undefined>();
+	const terminateSession = useTerminateSession({ onSuccess: () => setTerminationSession(undefined) });
 	const activeProjectIdRef = useRef(projectId);
 	activeProjectIdRef.current = projectId;
 	useEffect(() => {
 		setRestoringSessionId(undefined);
 		setRestoreErrors({});
 		setRestoreUnavailableSession(undefined);
+		setTerminationSession(undefined);
 	}, [projectId]);
 
 	const openSession = (session: WorkspaceSession) =>
@@ -250,62 +254,77 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	const actions = projectId ? (
 		<>
-			{boardOwnsNotificationCenter ? <NotificationCenter /> : null}
-			{visibleSpawnError && !showProjectEmpty && (
-				<TopbarKillError className="max-w-content-max truncate" title={visibleSpawnError}>
-					{visibleSpawnError}
-				</TopbarKillError>
-			)}
-			<TopbarButton
-				aria-label="New task"
-				disabled={isProjectRestarting}
-				onClick={() => projectId && requestNewTask(projectId)}
-				variant="accent"
-			>
-				<Plus className="size-icon-md" aria-hidden="true" />
-				New task
-			</TopbarButton>
-			<TopbarButton
-				aria-label={orchestratorActivityLabel ? `Orchestrator, ${orchestratorActivityLabel}` : "Spawn Orchestrator"}
-				disabled={isSpawning || isProjectRestarting}
-				onClick={() => void openOrchestrator()}
-				variant="primary"
-			>
-				<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
-				{orchestrator ? <OrchestratorActivityIndicator session={orchestrator} /> : null}
-				{isProjectRestarting
-					? "Restarting..."
-					: isSpawning
-						? "Spawning..."
-						: orchestrator
-							? "Orchestrator"
-							: "Spawn Orchestrator"}
-			</TopbarButton>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<span className="inline-flex">
+						<TopbarButton
+							aria-label="New task"
+							disabled={isProjectRestarting}
+							onClick={() => projectId && requestNewTask(projectId)}
+							variant="icon"
+						>
+							<Plus className="size-icon-md" aria-hidden="true" />
+						</TopbarButton>
+					</span>
+				</TooltipTrigger>
+				<TooltipContent side="bottom">New task</TooltipContent>
+			</Tooltip>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<span className="inline-flex">
+						<TopbarButton
+							aria-label={
+								orchestratorActivityLabel ? `Orchestrator, ${orchestratorActivityLabel}` : "Spawn Orchestrator"
+							}
+							disabled={isSpawning || isProjectRestarting}
+							onClick={() => void openOrchestrator()}
+							variant="icon"
+						>
+							<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
+						</TopbarButton>
+					</span>
+				</TooltipTrigger>
+				<TooltipContent side="bottom">{orchestratorTooltip}</TooltipContent>
+			</Tooltip>
 		</>
-	) : boardOwnsNotificationCenter ? (
-		<NotificationCenter />
 	) : undefined;
+	const model: ReverbTopbarModel = projectId
+		? {
+				surface: "project-board",
+				breadcrumbs: [{ id: "board", label: "Board" }],
+			}
+		: {
+				surface: "global-board",
+				breadcrumbs: [{ id: "board", label: "Board" }],
+			};
+	const orchestratorContext = orchestrator ? (
+		<div className="reverb-topbar__state-content">
+			<OrchestratorIcon className="size-icon-md shrink-0" aria-hidden="true" />
+			<span className="reverb-topbar__state-label">Orchestrator</span>
+			<TopbarActivityStatus activity={orchestrator.activity} />
+		</div>
+	) : null;
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="board">
-			{/* macOS: shell topbar is hidden on board routes, so the project/"Board"
-			    crumb + New task / Orchestrator / bell live in this in-panel row.
-			    Win/Linux keep the crumb and actions in the framed ShellTopbar.
-			    Welcome skips the row — a dangling "Board" above the import
-			    chooser was review feedback on #2432. */}
-			{!showWelcome && !showStartup && boardActionsInPanel && (boardLabel || actions) ? (
-				<div
-					className="center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 border-b border-border-strong pr-4.5"
-					style={dragStyle}
-				>
-					{boardLabel ? <span className={topbarProjectLabelClass}>{boardLabel}</span> : null}
-					<div className="min-w-0 flex-1" />
-					{actions ? (
-						<div className="flex shrink-0 items-center gap-2" style={noDragStyle}>
-							{actions}
-						</div>
-					) : null}
-				</div>
+			{/* macOS/Linux keep board actions inside the center panel. Welcome
+			    and daemon startup intentionally skip the workspace bar. */}
+			{!showWelcome && !showStartup && boardActionsInPanel ? (
+				<ReverbTopbar
+					actions={actions}
+					context={orchestratorContext}
+					dragStyle={dragStyle}
+					error={
+						visibleSpawnError && !showProjectEmpty ? (
+							<TopbarKillError className="max-w-content-max truncate" title={visibleSpawnError}>
+								{visibleSpawnError}
+							</TopbarKillError>
+						) : null
+					}
+					leadingIcon={<LayoutDashboard className="size-icon-md" />}
+					model={model}
+					utilities={boardOwnsNotificationCenter ? <NotificationCenter /> : null}
+				/>
 			) : null}
 
 			<div className="min-h-0 flex-1 overflow-hidden">
@@ -352,7 +371,10 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 									col={col}
 									sessions={byZone.get(col.zone) ?? []}
 									onOpen={openSession}
-									onTerminate={(session) => terminateSession.mutate(session)}
+									onTerminate={(session) => {
+										terminateSession.reset();
+										setTerminationSession(session);
+									}}
 								/>
 							))}
 						</div>
@@ -424,6 +446,16 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					}}
 				/>
 			)}
+			<SessionTerminationDialog
+				busy={terminateSession.isPending}
+				error={terminateSession.error instanceof Error ? terminateSession.error.message : null}
+				onConfirm={() => terminationSession && terminateSession.mutate(terminationSession)}
+				onOpenChange={(open) => {
+					if (!open && !terminateSession.isPending) setTerminationSession(undefined);
+				}}
+				open={terminationSession !== undefined}
+				session={terminationSession}
+			/>
 		</div>
 	);
 }
@@ -749,14 +781,11 @@ function SessionCard({
 	onTerminate?: () => void;
 	interactive?: boolean;
 }) {
-	const queryClient = useQueryClient();
-	const [confirmOpen, setConfirmOpen] = useState(false);
 	const badge = getSessionStatusView(session.status);
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
-	const termination = useTerminateSessionState(session.id);
 	const showTerminate = interactive && session.isTerminated !== true && onTerminate;
 	const keepTerminateVisible = session.status === "merged";
 	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -786,39 +815,23 @@ function SessionCard({
 			data-session-id={session.id}
 		>
 			{showTerminate ? (
-				<SessionTerminationPopover
-					onConfirm={() => {
-						setConfirmOpen(false);
+				<button
+					aria-label={`Terminate ${session.title}`}
+					className={cn(
+						"absolute right-2 top-1.5 z-10 inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-[color,background-color,opacity] hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+						keepTerminateVisible
+							? "opacity-100"
+							: "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
+					)}
+					onClick={(event) => {
+						event.stopPropagation();
 						onTerminate();
 					}}
-					onOpenChange={setConfirmOpen}
-					open={confirmOpen}
-					session={session}
-					trigger={
-						<button
-							aria-label={termination.isPending ? `Killing ${session.title}` : `Terminate ${session.title}`}
-							className={cn(
-								"absolute right-2 top-1.5 z-10 inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-[color,background-color,opacity] hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-								keepTerminateVisible || termination.isPending
-									? "opacity-100"
-									: "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
-							)}
-							onClick={(event) => {
-								event.stopPropagation();
-								clearTerminateSessionState(queryClient, session.id);
-							}}
-							disabled={termination.isPending}
-							title={termination.isPending ? "Killing session" : "Terminate session"}
-							type="button"
-						>
-							{termination.isPending ? (
-								<LoaderCircle className="size-icon-sm animate-spin" aria-hidden="true" />
-							) : (
-								<Trash2 className="size-icon-sm" aria-hidden="true" />
-							)}
-						</button>
-					}
-				/>
+					title="Terminate session"
+					type="button"
+				>
+					<Trash2 className="size-icon-sm" aria-hidden="true" />
+				</button>
 			) : null}
 			<div className="flex items-start gap-2.5 px-3.5 pb-2.5 pt-3">
 				<AgentAvatar className="mt-0.5" provider={session.provider} />
@@ -843,7 +856,9 @@ function SessionCard({
 			<div aria-hidden="true" className="mx-3.5 my-px h-px bg-border" />
 			<div className="flex flex-col gap-1.5 px-3.5 py-2">
 				<div className="flex items-center justify-between gap-2">
-					<span className={cn("inline-flex min-w-0 items-center gap-1.5 truncate text-2xs font-medium", badge.className)}>
+					<span
+						className={cn("inline-flex min-w-0 items-center gap-1.5 truncate text-2xs font-medium", badge.className)}
+					>
 						<span className="size-dot-sm shrink-0 rounded-full bg-current" />
 						{badge.label}
 					</span>
@@ -870,11 +885,6 @@ function SessionCard({
 					</span>
 				)}
 			</div>
-			{termination.error ? (
-				<div className="border-t border-border px-3.5 py-1.5 text-2xs text-destructive" role="alert">
-					{termination.error}
-				</div>
-			) : null}
 		</div>
 	);
 }
@@ -919,9 +929,7 @@ function ArchiveSessionItem({
 		<div className="flex min-h-28 flex-col overflow-hidden rounded-md border border-border bg-surface" role="listitem">
 			<div className="flex min-w-0 items-center gap-2 px-3 pt-2">
 				<ArchiveStatus badge={badge} />
-				<span className="ml-auto shrink-0 font-mono text-2xs text-passive">
-					{formatTimeCompact(session.updatedAt)}
-				</span>
+				<span className="ml-auto shrink-0 font-mono text-2xs text-passive">{formatTimeCompact(session.updatedAt)}</span>
 				{restoreButton}
 			</div>
 			<div className="min-h-0 flex-1 px-3 pb-2 pt-1.5 text-left">
