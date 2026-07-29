@@ -2,6 +2,7 @@ package usage
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -343,6 +344,100 @@ func TestCollectorBackfillDiscoversClaudeSubagentSources(t *testing.T) {
 		sources[1].Kind != domain.UsageSourceClaudeSubagent ||
 		sources[1].SubagentID != "sub-7" {
 		t.Fatalf("sources=%+v", sources)
+	}
+}
+
+func TestCollectorSubagentStopReactivatesCompletedSource(t *testing.T) {
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessClaudeCode, "claude-late", false)
+	root := filepath.Join(t.TempDir(), "projects")
+	subagentPath := filepath.Join(root, "workspace", "claude-late", "subagents", "agent-sub-late.jsonl")
+	initial := []byte(`{"type":"assistant"}` + "\n")
+	writeUsageFixture(t, subagentPath, string(initial))
+	now := time.Now().UTC()
+	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
+		SessionID:    session.ID,
+		Harness:      session.Harness,
+		NativeRootID: "claude-late",
+		State:        domain.UsageBindingComplete,
+		FirstSeenAt:  now,
+		LastSeenAt:   now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := SourceIdentity(subagentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedSubagentPath, err := filepath.EvalSymlinks(subagentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := store.InsertUsageSource(context.Background(), domain.UsageSourceRecord{
+		BindingID:       binding.ID,
+		Kind:            domain.UsageSourceClaudeSubagent,
+		NativeSessionID: "claude-late",
+		SubagentID:      "sub-late",
+		ArtifactPath:    resolvedSubagentPath,
+		FileIdentity:    identity,
+		ByteOffset:      int64(len(initial)),
+		ParserVersion:   ClaudeJSONLParserVersion,
+		State:           domain.UsageSourceComplete,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(subagentPath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString(`{"type":"assistant","late":true}` + "\n"); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	collector := NewCollector(store, SourceRoots{ClaudeProjects: root}, nil)
+	if err := collector.RecordHook(context.Background(), session.ID, HookSignal{
+		Event:                  "subagent-stop",
+		NativeSessionID:        "claude-late",
+		SubagentID:             "sub-late",
+		SubagentTranscriptPath: subagentPath,
+	}); err != nil {
+		t.Fatalf("record subagent stop: %v", err)
+	}
+
+	gotBinding, _, err := store.GetUsageBinding(context.Background(), session.ID, session.Harness, "claude-late")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotSource, ok, err := store.GetUsageSourceForIngestion(context.Background(), source.ID)
+	if err != nil || !ok {
+		t.Fatalf("source ok=%v err=%v", ok, err)
+	}
+	if gotBinding.State != domain.UsageBindingFinalizing || gotSource.Source.State != domain.UsageSourceActive {
+		t.Fatalf("binding/source states=%s/%s", gotBinding.State, gotSource.Source.State)
+	}
+}
+
+func TestDiscoverClaudeSubagentPathsReturnsAllSources(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "claude-many.jsonl")
+	writeUsageFixture(t, mainPath, "{}\n")
+	for index := 0; index < 129; index++ {
+		path := filepath.Join(root, "claude-many", "subagents", fmt.Sprintf("agent-%03d.jsonl", index))
+		writeUsageFixture(t, path, "{}\n")
+	}
+
+	paths := discoverClaudeSubagentPaths(mainPath)
+	if len(paths) != 129 {
+		t.Fatalf("discovered %d subagent paths, want 129", len(paths))
 	}
 }
 

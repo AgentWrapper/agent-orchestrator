@@ -233,7 +233,7 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 			path,
 			signal.ModelID,
 			now,
-			finalizing,
+			finalizing || signal.Event == "subagent-stop",
 		)
 		if err != nil {
 			c.notifySourceInventory(true)
@@ -572,9 +572,6 @@ func discoverClaudeSubagentPaths(mainPath string) []string {
 		}
 		return left.ModTime().Before(right.ModTime())
 	})
-	if len(paths) > 128 {
-		paths = paths[len(paths)-128:]
-	}
 	return paths
 }
 

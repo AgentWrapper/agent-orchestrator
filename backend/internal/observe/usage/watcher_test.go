@@ -30,6 +30,32 @@ func TestTranscriptWatcherExistingRootWrite(t *testing.T) {
 	assertNoTranscriptEvent(t, watcher.Events(), ignored)
 }
 
+func TestTranscriptWatcherResolvesSymlinkedRoot(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "transcripts")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "linked-transcripts")
+	if err := os.Symlink(root, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	watcher, cancel := startTranscriptWatcher(t, link)
+	defer stopTranscriptWatcher(t, watcher, cancel)
+	waitForWatchedDirectory(t, watcher, resolvedRoot)
+
+	transcript := filepath.Join(resolvedRoot, "session.jsonl")
+	if err := os.WriteFile(transcript, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waitForTranscriptEvent(t, watcher.Events(), transcript)
+}
+
 func TestTranscriptWatcherAddsNestedDirectories(t *testing.T) {
 	root := t.TempDir()
 	watcher, cancel := startTranscriptWatcher(t, root)
