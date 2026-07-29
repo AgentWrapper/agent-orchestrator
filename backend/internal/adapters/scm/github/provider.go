@@ -11,6 +11,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -41,8 +42,11 @@ type ProviderOptions struct {
 // loop in v1 — the loop is a follow-up PR (#35); this adapter is the
 // observation primitive that loop will call.
 type Provider struct {
-	client *Client
-	logger *slog.Logger
+	client           *Client
+	logger           *slog.Logger
+	identityMu       sync.Mutex
+	identity         ports.SCMIdentity
+	identityResolved bool
 }
 
 // NewProvider returns a Provider. If opts.Client is supplied it is used
@@ -89,6 +93,33 @@ func (p *Provider) SCMCredentialsAvailable(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// AuthenticatedIdentity returns the account associated with the active GitHub
+// token. Successful results are cached for the provider's lifetime.
+func (p *Provider) AuthenticatedIdentity(ctx context.Context) (ports.SCMIdentity, error) {
+	p.identityMu.Lock()
+	defer p.identityMu.Unlock()
+	if p.identityResolved {
+		return p.identity, nil
+	}
+	resp, err := p.client.doREST(ctx, http.MethodGet, "/user", nil, nil)
+	if err != nil {
+		return ports.SCMIdentity{}, err
+	}
+	var user struct {
+		Login string `json:"login"`
+		Type  string `json:"type"`
+	}
+	if err := json.Unmarshal(resp.Body, &user); err != nil {
+		return ports.SCMIdentity{}, fmt.Errorf("github scm: decode authenticated user: %w", err)
+	}
+	p.identity = ports.SCMIdentity{
+		Login: strings.TrimSpace(user.Login),
+		Human: strings.EqualFold(strings.TrimSpace(user.Type), "User"),
+	}
+	p.identityResolved = true
+	return p.identity, nil
 }
 
 // Observe fetches the current state of one PR by its github.com URL and
