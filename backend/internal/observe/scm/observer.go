@@ -75,10 +75,6 @@ type credentialChecker interface {
 	SCMCredentialsAvailable(ctx context.Context) (bool, error)
 }
 
-type authenticatedIdentityProvider interface {
-	AuthenticatedIdentity(ctx context.Context) (ports.SCMIdentity, error)
-}
-
 // Config holds optional observer knobs. Zero values use production defaults.
 type Config struct {
 	// Tick is the fast PR/CI polling interval. Zero uses DefaultTickInterval.
@@ -91,6 +87,8 @@ type Config struct {
 	Logger *slog.Logger
 	// CacheMax bounds each in-memory ETag/review cache. Zero uses DefaultCacheMax.
 	CacheMax int
+	// IdentityResolver resolves the active SCM account lazily. Nil preserves branch-based discovery.
+	IdentityResolver ports.SCMIdentityResolver
 }
 
 // ObserverCache stores provider ETags and review polling timestamps in memory.
@@ -156,6 +154,8 @@ type Observer struct {
 	credentialsChecked bool
 	// disabled is set after the credential gate reports unavailable credentials.
 	disabled bool
+	// identityResolver is the explicitly wired source of the active SCM account.
+	identityResolver ports.SCMIdentityResolver
 	// Cache holds bounded in-memory provider ETags and review poll timestamps.
 	Cache ObserverCache
 }
@@ -163,7 +163,7 @@ type Observer struct {
 // New constructs an Observer with default cadence/cache settings for zero
 // values in cfg.
 func New(provider Provider, store Store, lifecycle Lifecycle, cfg Config) *Observer {
-	o := &Observer{provider: provider, store: store, lifecycle: lifecycle, tick: cfg.Tick, reviewInterval: cfg.ReviewInterval, clock: cfg.Clock, logger: cfg.Logger, Cache: newCache(cfg.CacheMax)}
+	o := &Observer{provider: provider, store: store, lifecycle: lifecycle, tick: cfg.Tick, reviewInterval: cfg.ReviewInterval, clock: cfg.Clock, logger: cfg.Logger, identityResolver: cfg.IdentityResolver, Cache: newCache(cfg.CacheMax)}
 	if o.tick <= 0 {
 		o.tick = DefaultTickInterval
 	}
@@ -803,11 +803,10 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 }
 
 func (o *Observer) authenticatedIdentity(ctx context.Context) (ports.SCMIdentity, bool) {
-	provider, ok := o.provider.(authenticatedIdentityProvider)
-	if !ok {
+	if o.identityResolver == nil {
 		return ports.SCMIdentity{}, false
 	}
-	identity, err := provider.AuthenticatedIdentity(ctx)
+	identity, err := o.identityResolver.AuthenticatedIdentity(ctx)
 	if err != nil {
 		o.logger.Debug("scm observer: authenticated identity unavailable; preserving branch-based discovery", "err", err)
 		return ports.SCMIdentity{}, false

@@ -5,6 +5,7 @@
 package ports
 
 import (
+	"context"
 	"errors"
 	"time"
 )
@@ -94,6 +95,12 @@ type SCMIdentity struct {
 	Login string
 	// Human is true when the provider identifies the account as a human user.
 	Human bool
+}
+
+// SCMIdentityResolver lazily resolves the account authenticated with the
+// active SCM provider.
+type SCMIdentityResolver interface {
+	AuthenticatedIdentity(ctx context.Context) (SCMIdentity, error)
 }
 
 // SCMPRObservation carries provider-neutral PR metadata.

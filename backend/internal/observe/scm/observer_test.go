@@ -142,6 +142,17 @@ type fakeProvider struct {
 	identityCalls    int
 }
 
+type fakeIdentityResolver struct {
+	identity ports.SCMIdentity
+	err      error
+	calls    int
+}
+
+func (r *fakeIdentityResolver) AuthenticatedIdentity(context.Context) (ports.SCMIdentity, error) {
+	r.calls++
+	return r.identity, r.err
+}
+
 func (p *fakeProvider) AuthenticatedIdentity(context.Context) (ports.SCMIdentity, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -236,7 +247,7 @@ func (l *fakeLifecycle) ApplySCMObservation(_ context.Context, _ domain.SessionI
 }
 
 func newTestObserver(store *fakeStore, provider *fakeProvider, lc Lifecycle, now time.Time) *Observer {
-	return New(provider, store, lc, Config{Clock: func() time.Time { return now }, Tick: time.Hour, Logger: quietSlog(), CacheMax: 128})
+	return New(provider, store, lc, Config{Clock: func() time.Time { return now }, Tick: time.Hour, Logger: quietSlog(), CacheMax: 128, IdentityResolver: provider})
 }
 
 func TestDispatchOrderIsDeterministic(t *testing.T) {
@@ -565,11 +576,20 @@ func TestPoll_DiscoversOnlyPRsFromAuthenticatedHuman(t *testing.T) {
 			{URL: "https://github.com/o/r/pull/2", Number: 2, SourceBranch: "feat", HeadRepo: "o/r", TargetBranch: "main", HeadSHA: "sha2", Author: "ALICE"},
 		}},
 		observations: map[string]ports.SCMObservation{prKey(testRepo, 2): testObs(2)},
-		identity:     ports.SCMIdentity{Login: "alice", Human: true},
 	}
-	obs := newTestObserver(store, provider, &fakeLifecycle{}, time.Unix(1, 0).UTC())
+	identity := &fakeIdentityResolver{identity: ports.SCMIdentity{Login: "alice", Human: true}}
+	obs := New(provider, store, &fakeLifecycle{}, Config{
+		Clock:            func() time.Time { return time.Unix(1, 0).UTC() },
+		Tick:             time.Hour,
+		Logger:           quietSlog(),
+		CacheMax:         128,
+		IdentityResolver: identity,
+	})
 	if err := obs.Poll(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	if identity.calls != 1 {
+		t.Fatalf("identity resolver calls = %d, want 1", identity.calls)
 	}
 	if len(provider.fetchBatches) != 1 || len(provider.fetchBatches[0]) != 1 || provider.fetchBatches[0][0].Number != 2 {
 		t.Fatalf("fetched PRs = %#v, want only authenticated author's PR #2", provider.fetchBatches)
