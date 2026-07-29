@@ -100,20 +100,24 @@ func (s *Store) ConsumeRefreshToken(ctx context.Context, tokenHash string, now t
 		return auth.User{}, nil, false, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	var user auth.User
+	var userID string
 	err = tx.QueryRowContext(ctx, `
-SELECT u.id, u.email
-FROM api_tokens t
-JOIN users u ON u.id = t.user_id
-WHERE t.token_hash = $1 AND t.kind = 'refresh' AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at > $2)
-`, tokenHash, now.UTC()).Scan(&user.ID, &user.Email)
+UPDATE api_tokens
+SET revoked_at = $2
+WHERE token_hash = $1
+  AND kind = 'refresh'
+  AND revoked_at IS NULL
+  AND (expires_at IS NULL OR expires_at > $2)
+RETURNING user_id
+`, tokenHash, now.UTC()).Scan(&userID)
 	if noRows(err) {
 		return auth.User{}, nil, false, nil
 	}
 	if err != nil {
 		return auth.User{}, nil, false, fmt.Errorf("consume refresh token: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE api_tokens SET revoked_at = $1 WHERE token_hash = $2`, now.UTC(), tokenHash); err != nil {
+	var user auth.User
+	if err := tx.QueryRowContext(ctx, `SELECT id, email FROM users WHERE id = $1`, userID).Scan(&user.ID, &user.Email); err != nil {
 		return auth.User{}, nil, false, err
 	}
 	orgs, err := listUserOrgs(ctx, tx, user.ID)
@@ -141,7 +145,7 @@ func (s *Store) ApproveDeviceCode(ctx context.Context, userID, userCode string, 
 	res, err := s.db.ExecContext(ctx, `
 UPDATE devices
 SET approved_user_id = $1, approved_at = $2
-WHERE user_code = $3 AND consumed_at IS NULL AND expires_at > $2
+WHERE user_code = $3 AND approved_at IS NULL AND consumed_at IS NULL AND expires_at > $2
 `, userID, now.UTC(), userCode)
 	if err != nil {
 		return false, fmt.Errorf("approve device code: %w", err)
@@ -157,17 +161,21 @@ func (s *Store) PollDeviceCode(ctx context.Context, deviceCodeHash string, now t
 	}
 	defer func() { _ = tx.Rollback() }()
 	var code auth.DeviceCode
+	var approvedUserID sql.NullString
 	var approvedAt, consumedAt sql.NullTime
 	err = tx.QueryRowContext(ctx, `
 SELECT id, device_code_hash, user_code, client_name, approved_user_id, approved_at, consumed_at, expires_at, created_at
 FROM devices
 WHERE device_code_hash = $1 AND expires_at > $2 AND consumed_at IS NULL
-`, deviceCodeHash, now.UTC()).Scan(&code.ID, &code.DeviceCodeHash, &code.UserCode, &code.ClientName, &code.ApprovedUserID, &approvedAt, &consumedAt, &code.ExpiresAt, &code.CreatedAt)
+`, deviceCodeHash, now.UTC()).Scan(&code.ID, &code.DeviceCodeHash, &code.UserCode, &code.ClientName, &approvedUserID, &approvedAt, &consumedAt, &code.ExpiresAt, &code.CreatedAt)
 	if noRows(err) {
 		return auth.DeviceCode{}, auth.User{}, nil, false, nil
 	}
 	if err != nil {
 		return auth.DeviceCode{}, auth.User{}, nil, false, fmt.Errorf("poll device code: %w", err)
+	}
+	if approvedUserID.Valid {
+		code.ApprovedUserID = approvedUserID.String
 	}
 	if approvedAt.Valid {
 		code.ApprovedAt = approvedAt.Time
@@ -193,6 +201,21 @@ WHERE device_code_hash = $1 AND expires_at > $2 AND consumed_at IS NULL
 		return auth.DeviceCode{}, auth.User{}, nil, false, err
 	}
 	return code, user, orgs, true, nil
+}
+
+// IsOrgMember verifies current membership rather than trusting token contents.
+func (s *Store) IsOrgMember(ctx context.Context, userID, orgID string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx, `
+SELECT EXISTS (
+	SELECT 1 FROM org_members
+	WHERE user_id = $1 AND org_id = $2
+)
+`, userID, orgID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check org membership: %w", err)
+	}
+	return exists, nil
 }
 
 type queryer interface {

@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/tenancy"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 )
 
@@ -47,6 +48,15 @@ func (h *Handler) googleLogin(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteError(w, r, err)
 		return
 	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     "ao_oauth_state",
+		Value:    state,
+		Path:     "/auth/google/callback",
+		MaxAge:   int((10 * time.Minute).Seconds()),
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
 	http.Redirect(w, r, h.Google.AuthCodeURL(state), http.StatusFound)
 }
 
@@ -55,6 +65,21 @@ func (h *Handler) googleCallback(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "AUTH_NOT_CONFIGURED", "Cloud auth is not configured", nil)
 		return
 	}
+	state := strings.TrimSpace(r.URL.Query().Get("state"))
+	cookie, err := r.Cookie("ao_oauth_state")
+	if state == "" || err != nil || cookie.Value == "" || cookie.Value != state {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "OAUTH_STATE_INVALID", "OAuth state is invalid or expired", nil)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     "ao_oauth_state",
+		Value:    "",
+		Path:     "/auth/google/callback",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
 	code := strings.TrimSpace(r.URL.Query().Get("code"))
 	if code == "" {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "CODE_REQUIRED", "code is required", nil)
@@ -132,14 +157,19 @@ func (h *Handler) deviceCode(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) deviceApprove(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		UserID   string `json:"userId"`
 		UserCode string `json:"userCode"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
 	}
-	ok, err := h.Store.ApproveDeviceCode(r.Context(), strings.TrimSpace(in.UserID), strings.TrimSpace(in.UserCode), h.now())
+	claims, ok := h.accessClaims(w, r)
+	if !ok {
+		return
+	}
+	ok, err := h.Store.ApproveDeviceCode(r.Context(), claims.Subject, strings.TrimSpace(in.UserCode), h.now())
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -149,6 +179,24 @@ func (h *Handler) deviceApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) accessClaims(w http.ResponseWriter, r *http.Request) (tenancy.Claims, bool) {
+	if h.Issuer == nil {
+		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "AUTH_NOT_CONFIGURED", "Cloud auth is not configured", nil)
+		return tenancy.Claims{}, false
+	}
+	token := bearerToken(r)
+	if token == "" {
+		envelope.WriteAPIError(w, r, http.StatusUnauthorized, "unauthorized", "ACCESS_TOKEN_REQUIRED", "Missing bearer access token", nil)
+		return tenancy.Claims{}, false
+	}
+	claims, err := h.Issuer.VerifyAccessToken(token)
+	if err != nil {
+		envelope.WriteAPIError(w, r, http.StatusUnauthorized, "unauthorized", "ACCESS_TOKEN_INVALID", "Invalid bearer access token", nil)
+		return tenancy.Claims{}, false
+	}
+	return claims, true
 }
 
 func (h *Handler) deviceToken(w http.ResponseWriter, r *http.Request) {
@@ -212,4 +260,12 @@ func randomUserCode() (string, error) {
 		code = code[:8]
 	}
 	return code, nil
+}
+
+func bearerToken(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	if !strings.HasPrefix(h, "Bearer ") {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
 }

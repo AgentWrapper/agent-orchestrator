@@ -14,26 +14,17 @@ func (s *Store) EventsAfter(ctx context.Context, after int64, limit int) ([]cdc.
 	if limit <= 0 {
 		limit = 512
 	}
-	orgID, scoped := currentOrg(ctx)
-	query := `
-SELECT seq, org_id, project_id, session_id, event_type, payload, created_at
-FROM change_log
-WHERE seq > $1
-ORDER BY seq
-LIMIT $2
-`
-	args := []any{after, limit}
-	if scoped {
-		query = `
+	orgID, err := tenancy.OrgIDFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
 SELECT seq, org_id, project_id, session_id, event_type, payload, created_at
 FROM change_log
 WHERE org_id = $1 AND seq > $2
 ORDER BY seq
 LIMIT $3
-`
-		args = []any{orgID, after, limit}
-	}
-	rows, err := s.db.QueryContext(ctx, query, args...)
+`, orgID, after, limit)
 	if err != nil {
 		return nil, fmt.Errorf("read change_log: %w", err)
 	}
@@ -56,21 +47,14 @@ LIMIT $3
 }
 
 func (s *Store) LatestSeq(ctx context.Context) (int64, error) {
-	orgID, scoped := currentOrg(ctx)
-	var seq int64
-	var err error
-	if scoped {
-		err = s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) FROM change_log WHERE org_id = $1`, orgID).Scan(&seq)
-	} else {
-		err = s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) FROM change_log`).Scan(&seq)
+	orgID, err := tenancy.OrgIDFromContext(ctx)
+	if err != nil {
+		return 0, err
 	}
+	var seq int64
+	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) FROM change_log WHERE org_id = $1`, orgID).Scan(&seq)
 	if err != nil {
 		return 0, fmt.Errorf("max change_log seq: %w", err)
 	}
 	return seq, nil
-}
-
-func currentOrg(ctx context.Context) (string, bool) {
-	scope, ok := tenancy.ScopeFromContext(ctx)
-	return scope.OrgID, ok && scope.OrgID != ""
 }

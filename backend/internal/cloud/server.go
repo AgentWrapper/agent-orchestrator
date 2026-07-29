@@ -17,6 +17,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/auth"
+	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/credentials"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/secrets"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/tenancy"
@@ -47,14 +48,16 @@ func Run() error {
 	if err != nil {
 		return err
 	}
-	if _, err := secrets.NewLocalEnvelopeManager(cfg.SecretKey, "local-dev"); err != nil {
+	secretManager, err := secrets.NewLocalEnvelopeManager(cfg.SecretKey, "local-dev")
+	if err != nil {
 		return err
 	}
+	credentialSvc := credentials.New(store, secretManager)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	handler := NewHandler(cfg, store, issuer)
+	handler := NewHandler(cfg, store, issuer, credentialSvc)
 	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 	ln, err := net.Listen("tcp", cfg.Addr())
 	if err != nil {
@@ -85,7 +88,7 @@ func Run() error {
 
 // NewHandler builds the cloud HTTP surface. Tests call this directly with an
 // ephemeral Postgres store.
-func NewHandler(cfg Config, store *postgres.Store, issuer *auth.Issuer) http.Handler {
+func NewHandler(cfg Config, store *postgres.Store, issuer *auth.Issuer, credentialSvc *credentials.Service) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
@@ -114,7 +117,10 @@ func NewHandler(cfg Config, store *postgres.Store, issuer *auth.Issuer) http.Han
 		},
 	})
 	r.Group(func(r chi.Router) {
-		r.Use(tenancy.Middleware(issuer))
+		r.Use(tenancy.Middleware(issuer, store))
+		if credentialSvc != nil {
+			r.Post("/api/v1/agent-credentials", credentialSvc.CreateHTTP)
+		}
 		api.Register(r)
 	})
 	return r
