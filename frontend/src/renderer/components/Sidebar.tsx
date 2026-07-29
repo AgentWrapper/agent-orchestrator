@@ -919,14 +919,14 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 				}}
 				tooltip={isCollapsed ? "Search" : undefined}
 				className={cn(
-					SECTION_ROW_CLASS,
-					// Icon + label share one light gray like the Codex nav ref (~#dedede).
-					"bg-transparent text-foreground/80 hover:bg-interactive-hover! hover:text-foreground [&_svg]:size-icon-sm!",
-					"group-data-[collapsible=icon]:size-control-form! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0!",
+					// Filled search trigger (Cursor-style): icon + label.
+					"h-8 gap-2 rounded-lg bg-muted px-2.5 text-sm font-normal text-muted-foreground",
+					"hover:bg-interactive-hover! hover:text-foreground active:bg-interactive-hover! [&_svg]:size-icon-sm!",
+					"group-data-[collapsible=icon]:size-control-form! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:hover:bg-interactive-hover!",
 				)}
 			>
 				<Search strokeWidth={1.75} aria-hidden="true" />
-				<span className="sidebar-expanded-chrome min-w-0 truncate leading-none group-data-[collapsible=icon]:hidden">
+				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-left leading-none group-data-[collapsible=icon]:hidden">
 					Search
 				</span>
 			</SidebarMenuButton>
