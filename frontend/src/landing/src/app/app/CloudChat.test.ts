@@ -50,6 +50,7 @@ function deferred<T>() {
 function testAPI(overrides: Record<string, unknown> = {}) {
   return {
     chatEvents: vi.fn().mockResolvedValue({ events: [] }),
+    activeTurn: vi.fn().mockResolvedValue({ turn: null }),
     streamEvents: vi.fn(
       (_sessionId: string, _after: number, signal: AbortSignal) =>
         new Promise<void>((resolve) => {
@@ -206,6 +207,7 @@ it("loads durable replay before showing the empty state", async () => {
     0,
     expect.any(AbortSignal),
     expect.any(Function),
+    expect.any(Function),
   );
 });
 
@@ -225,6 +227,17 @@ it("shows worker startup instead of thinking for a disconnected runtime", async 
 
   expect(await screen.findByText("Starting secure worker…")).toBeInTheDocument();
   expect(screen.queryByText("Thinking…")).not.toBeInTheDocument();
+});
+
+it("probes the durable turn and reconnects when the window regains focus", async () => {
+  const api = testAPI();
+  render(createElement(CloudChat, { api, session }));
+  expect(await screen.findByText("Ready for a task")).toBeInTheDocument();
+
+  window.dispatchEvent(new Event("focus"));
+
+  await waitFor(() => expect(api.activeTurn).toHaveBeenCalledWith("session-one"));
+  await waitFor(() => expect(api.streamEvents).toHaveBeenCalledTimes(2));
 });
 
 it("replays messages, locks the composer, and interrupts an active turn", async () => {

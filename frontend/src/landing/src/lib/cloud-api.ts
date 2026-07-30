@@ -38,8 +38,28 @@ export interface CloudSession {
     | "terminated";
   capabilities?: string[];
   runtimeConnected: boolean;
+  activeTurn?: CloudTurn;
   isTerminated: boolean;
   createdAt: string;
+}
+
+export interface CloudTurn {
+  id: string;
+  sessionId: string;
+  userMessageSequence: number;
+  attemptCount: number;
+  state:
+    | "queued"
+    | "provisioning"
+    | "running"
+    | "cancel_requested"
+    | "completed"
+    | "failed";
+  errorMessage?: string;
+  startedAt?: string;
+  completedAt?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface CloudEvent {
@@ -114,6 +134,12 @@ export class CloudAPI {
     return this.request<{ sessions: CloudSession[] }>("/api/cloud/v1/sessions");
   }
 
+  async activeTurn(sessionId: string) {
+    return this.request<{ turn: CloudTurn | null }>(
+      `/api/cloud/v1/sessions/${encodeURIComponent(sessionId)}/active-turn`,
+    );
+  }
+
   async createSession(
     input: {
       projectId: string;
@@ -171,6 +197,7 @@ export class CloudAPI {
     after: number,
     signal: AbortSignal,
     onEvent: (event: CloudEvent) => void,
+    onActivity?: () => void,
   ) {
     const target = new URL(
       `/api/cloud/v1/sessions/${encodeURIComponent(sessionId)}/events`,
@@ -204,6 +231,7 @@ export class CloudAPI {
     try {
       while (!signal.aborted) {
         const { value, done } = await reader.read();
+        if (value && value.byteLength > 0) onActivity?.();
         buffer += decoder.decode(value, { stream: !done }).replaceAll("\r\n", "\n");
         let boundary = buffer.indexOf("\n\n");
         while (boundary >= 0) {

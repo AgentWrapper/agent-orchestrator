@@ -74,6 +74,19 @@ func TestCreateSessionIsIdempotentAndEventsAreOrdered(t *testing.T) {
 	if second.Session.ID != first.Session.ID {
 		t.Fatalf("idempotent session ID = %q, want %q", second.Session.ID, first.Session.ID)
 	}
+	initialTurn, err := store.GetActiveTurn(ctx, account.ID, first.Session.ID)
+	if err != nil || initialTurn == nil || initialTurn.State != "provisioning" {
+		t.Fatalf("initial turn = %#v, error = %v", initialTurn, err)
+	}
+	if _, err := store.TransitionActiveTurn(
+		ctx,
+		account.ID,
+		first.Session.ID,
+		"completed",
+		"",
+	); err != nil {
+		t.Fatal(err)
+	}
 	beforeHeartbeat, err := store.GetSession(ctx, account.ID, first.Session.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -141,6 +154,20 @@ func TestCreateSessionIsIdempotentAndEventsAreOrdered(t *testing.T) {
 	if !messageCreated || message.Type != "chat.user_message" {
 		t.Fatalf("AppendUserMessage(first) = %#v created=%v", message, messageCreated)
 	}
+	activeTurn, err := store.GetActiveTurn(ctx, account.ID, first.Session.ID)
+	if err != nil || activeTurn == nil || activeTurn.State != "queued" ||
+		activeTurn.UserMessageSequence != message.Sequence {
+		t.Fatalf("queued turn = %#v, error = %v", activeTurn, err)
+	}
+	if _, _, err := store.AppendUserMessage(
+		ctx,
+		account.ID,
+		first.Session.ID,
+		uuid.NewString(),
+		"overlapping task",
+	); !errors.Is(err, ErrActiveTurn) {
+		t.Fatalf("AppendUserMessage(active turn) error = %v, want ErrActiveTurn", err)
+	}
 	retriedMessage, messageCreated, err := store.AppendUserMessage(
 		ctx,
 		account.ID,
@@ -171,6 +198,65 @@ func TestCreateSessionIsIdempotentAndEventsAreOrdered(t *testing.T) {
 		chatEvents[0].Type != "chat.user_message" ||
 		chatEvents[1].Sequence != message.Sequence {
 		t.Fatalf("ChatEventsAfter() = %#v", chatEvents)
+	}
+	activePrompts, err := store.ActivePromptEventsAfter(ctx, account.ID, first.Session.ID, 0, 500)
+	if err != nil || len(activePrompts) != 1 || activePrompts[0].Sequence != message.Sequence {
+		t.Fatalf("ActivePromptEventsAfter() = %#v, error = %v", activePrompts, err)
+	}
+	if _, err := store.TransitionActiveTurn(
+		ctx,
+		account.ID,
+		first.Session.ID,
+		"running",
+		"",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ClaimActiveTurn(
+		ctx,
+		account.ID,
+		first.Session.ID,
+		message.Sequence,
+		10,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if sequence, err := store.PrepareActiveTurnForWorker(
+		ctx,
+		account.ID,
+		first.Session.ID,
+		10,
+	); err != nil || sequence != 0 {
+		t.Fatalf("same-worker retry sequence = %d, error = %v", sequence, err)
+	}
+	retrySequence, err := store.PrepareActiveTurnForWorker(
+		ctx,
+		account.ID,
+		first.Session.ID,
+		11,
+	)
+	if err != nil || retrySequence != message.Sequence {
+		t.Fatalf("replacement retry sequence = %d, error = %v", retrySequence, err)
+	}
+	replacementTurn, err := store.GetActiveTurn(ctx, account.ID, first.Session.ID)
+	if err != nil || replacementTurn == nil ||
+		replacementTurn.State != "provisioning" ||
+		replacementTurn.WorkerEpoch != 0 ||
+		replacementTurn.AttemptCount != 1 {
+		t.Fatalf("replacement turn = %#v, error = %v", replacementTurn, err)
+	}
+	if _, err := store.TransitionActiveTurn(
+		ctx,
+		account.ID,
+		first.Session.ID,
+		"completed",
+		"",
+	); err != nil {
+		t.Fatal(err)
+	}
+	activePrompts, err = store.ActivePromptEventsAfter(ctx, account.ID, first.Session.ID, 0, 500)
+	if err != nil || len(activePrompts) != 0 {
+		t.Fatalf("terminal ActivePromptEventsAfter() = %#v, error = %v", activePrompts, err)
 	}
 	acknowledgement, err := json.Marshal(map[string]int64{"sequence": message.Sequence})
 	if err != nil {

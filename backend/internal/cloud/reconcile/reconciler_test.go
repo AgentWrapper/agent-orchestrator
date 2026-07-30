@@ -59,14 +59,15 @@ func (f *fakeStore) AppendEvent(
 
 type fakeProvider struct {
 	created cloudsandbox.Spec
+	current cloudsandbox.Environment
 }
 
 func (f *fakeProvider) Create(_ context.Context, spec cloudsandbox.Spec) (cloudsandbox.Environment, error) {
 	f.created = spec
 	return cloudsandbox.Environment{ID: "provider-one", State: "creating"}, nil
 }
-func (*fakeProvider) Get(context.Context, cloudsandbox.ID) (cloudsandbox.Environment, error) {
-	return cloudsandbox.Environment{}, nil
+func (f *fakeProvider) Get(context.Context, cloudsandbox.ID) (cloudsandbox.Environment, error) {
+	return f.current, nil
 }
 func (*fakeProvider) FindBySession(context.Context, clouddomain.SessionID) (cloudsandbox.Environment, bool, error) {
 	return cloudsandbox.Environment{}, false, nil
@@ -217,5 +218,36 @@ func TestBakedWorkerProviderDoesNotRequireBootstrapCapability(t *testing.T) {
 	}
 	if store.state != "bootstrapping" || store.id != "provider-one" {
 		t.Fatalf("observation = %q %q", store.state, store.id)
+	}
+}
+
+func TestDestroyedProviderEnvironmentIsClearedForReprovisioning(t *testing.T) {
+	store := &fakeStore{claimed: []clouddomain.Sandbox{{
+		SessionID:             "session-one",
+		AccountID:             "account-one",
+		Provider:              "fly",
+		ProviderEnvironmentID: "destroyed-machine",
+		DesiredState:          "running",
+		ObservedState:         "provisioning",
+	}}}
+	provider := &fakeProvider{current: cloudsandbox.Environment{
+		ID:    "destroyed-machine",
+		State: "deleted",
+	}}
+	reconciler := New(
+		store,
+		fakeResolver{provider: provider},
+		"https://cloud.example",
+		"stable",
+		time.Second,
+		nil,
+		nil,
+	)
+
+	if err := reconciler.reconcileOnce(context.Background()); err != nil {
+		t.Fatalf("reconcileOnce() error = %v", err)
+	}
+	if store.state != "requested" || store.id != "" {
+		t.Fatalf("observation = %q %q, want requested with cleared provider ID", store.state, store.id)
 	}
 }

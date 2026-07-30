@@ -9,7 +9,7 @@ they do not synchronize databases, daemons, or sessions.
 ```mermaid
 flowchart LR
     Web[Web app] -->|Supabase JWT + HTTPS/SSE| CP[AO Cloud control plane]
-    CP --> DB[(Supabase Postgres)]
+    CP --> DB[(Supabase Postgres: sessions, turns, events)]
     CP -->|desired/observed reconciliation| Provider[Fly Machines or Daytona]
     Provider --> VM[One isolated sandbox per session]
     VM --> Worker[AO worker]
@@ -32,7 +32,7 @@ flowchart LR
 - **Postgres (Supabase):** durable source of truth. All application tables use
   the `ao_` prefix. It stores desired and observed lifecycle state, encrypted
   provider credentials, ordered session events, command idempotency, worker
-  leases, SCM facts, and provider environment IDs.
+  leases, first-class turns, SCM facts, and provider environment IDs.
 - **Sandbox provider:** Fly Machines is the deployed provider. Daytona remains
   behind the same provider contract. Each active session gets one isolated
   VM/container and one persistent workspace disk.
@@ -68,6 +68,11 @@ LCM is a reconciliation loop, not a chain of UI-side provisioning calls:
 7. Missing or deleted provider environments are cleared and safely
    reprovisioned with a new one-time ticket.
 
+Fly may continue returning a destroyed Machine by ID after removing it from the
+active Machines list. The reconciler treats both provider `deleted` responses
+and 404s as terminal infrastructure state, clears the stale provider ID, and
+creates a replacement when durable intent is still `running`.
+
 The database therefore keeps durable intent while Fly/Daytona is disposable.
 Provider calls are retried, reconciliation uses leases for multi-instance
 safety, and a failed probe is not treated as proof that user state is dead.
@@ -90,16 +95,36 @@ refresh path—not the worker, lifecycle, chat, or frontend contracts.
 
 ## Chat, durability, and reconnects
 
-1. The control plane commits every user message with an idempotency key before
-   attempting worker delivery.
-2. The worker command WebSocket replays unacknowledged prompts in sequence.
-3. A worker acknowledges a prompt only when the provider process accepts it.
-4. Provider output is normalized and appended as ordered `chat.*` events.
-5. The browser first replays all stored events, then uses authenticated SSE for
+1. The control plane atomically commits every user message and its `ao_turns`
+   row before attempting worker delivery. The message payload carries the turn
+   ID.
+2. A partial unique index permits only one `queued`, `provisioning`, `running`,
+   or `cancel_requested` turn per session. Concurrent browser, retry, and
+   orchestrator requests therefore cannot start duplicate agent runs. The turn
+   also records its claiming worker epoch and attempt count.
+3. Turn state moves through `queued` → `provisioning` → `running` and ends as
+   `completed` or `failed`. Interrupt first records `cancel_requested`.
+4. Session-list/Kanban status, the in-chat startup loader, composer locking,
+   interruption, and prompt replay read this durable turn instead of guessing
+   from browser-local state.
+5. The worker command WebSocket replays only unacknowledged prompts belonging
+   to unfinished turns, in sequence. Terminal turns are never executed again
+   after worker replacement. If an unfinished turn was claimed by an older
+   worker epoch, the replacement atomically returns it to `provisioning` and
+   replays that turn once. Application-level keepalives preserve the command
+   stream through hosted reverse proxies.
+6. A worker acknowledges a prompt only when the provider process accepts it.
+7. Provider output is normalized and appended as ordered `chat.*` events. The
+   control plane attaches the current turn ID before commit.
+8. The browser first replays all stored events, then uses authenticated SSE for
    live wakeups and drains Postgres in sequence order.
-6. Refreshes, browser closes, Render reconnects, and worker reconnects do not
-   lose the conversation.
-7. Interrupt creates a control-plane event and sends a turn-scoped command.
+9. Browser focus, tab visibility, and network-online events immediately probe
+   the active turn and reconnect from the last committed sequence. Missing SSE
+   activity beyond the keepalive window is treated as stale and triggers the
+   same recovery path.
+10. Refreshes, browser closes, Render reconnects, and worker reconnects do not
+   lose the conversation or duplicate a completed turn.
+11. Interrupt creates a control-plane event and sends a turn-scoped command.
    Claude receives its structured interrupt request; Codex/Cursor cancel only
    the active process; PTY fallback receives Ctrl-C. The long-lived worker and
    later prompts survive.

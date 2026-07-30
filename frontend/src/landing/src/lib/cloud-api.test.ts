@@ -35,12 +35,14 @@ it("streams replayed and live SSE events with authenticated fetch", async () => 
     accessToken: "access-token",
   });
   const events: CloudEvent[] = [];
+  const onActivity = vi.fn();
 
   await api.streamEvents(
     "session-one",
     4,
     new AbortController().signal,
     (event) => events.push(event),
+    onActivity,
   );
 
   expect(events).toEqual([
@@ -50,6 +52,7 @@ it("streams replayed and live SSE events with authenticated fetch", async () => 
       payload: { text: "Hello" },
     }),
   ]);
+  expect(onActivity).toHaveBeenCalled();
   const [request, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
   expect(request.toString()).toBe(
     "https://cloud.example.com/api/cloud/v1/sessions/session-one/events?after=4",

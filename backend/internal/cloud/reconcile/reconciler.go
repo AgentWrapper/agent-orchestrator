@@ -141,6 +141,10 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, sandbox clouddomain.S
 	}
 	if sandbox.DesiredState == "running" {
 		switch environment.State {
+		case "deleted":
+			return r.observe(ctx, sandbox, "", "requested", "provider environment was destroyed", 2*time.Second)
+		case "deleting":
+			return r.observe(ctx, sandbox, string(environment.ID), "deleting", "", 2*time.Second)
 		case "stopped", "archived":
 			if err := provider.Start(ctx, environment.ID); err != nil {
 				return r.fail(ctx, sandbox, err)

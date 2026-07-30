@@ -387,6 +387,19 @@ func TestChatMessageAuthIdempotencyAndWorkerReplay(t *testing.T) {
 		t.Fatalf("initial chat events = %#v, error = %v", initialEvents, err)
 	}
 	initialEvent := initialEvents[0]
+	initialTurn, err := store.GetActiveTurn(ctx, account.ID, created.Session.ID)
+	if err != nil || initialTurn == nil || initialTurn.State != "provisioning" {
+		t.Fatalf("initial durable turn = %#v, error = %v", initialTurn, err)
+	}
+	if _, err := store.TransitionActiveTurn(
+		ctx,
+		account.ID,
+		created.Session.ID,
+		"completed",
+		"",
+	); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.SetSandboxDesiredState(
 		ctx,
 		account.ID,
@@ -470,6 +483,19 @@ func TestChatMessageAuthIdempotencyAndWorkerReplay(t *testing.T) {
 	if retryBody.Event.Sequence != firstBody.Event.Sequence ||
 		string(retryBody.Event.Payload) != string(firstBody.Event.Payload) {
 		t.Fatalf("retry event = %#v, want %#v", retryBody.Event, firstBody.Event)
+	}
+	activeConflict := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		path,
+		"user-one",
+		map[string]string{"text": "overlapping turn"},
+		map[string]string{"Idempotency-Key": uuid.NewString()},
+	)
+	activeConflict.Body.Close()
+	if activeConflict.StatusCode != http.StatusConflict {
+		t.Fatalf("active turn status = %d, want 409", activeConflict.StatusCode)
 	}
 	conflict := requestJSON(
 		t,
@@ -577,7 +603,6 @@ func TestChatMessageAuthIdempotencyAndWorkerReplay(t *testing.T) {
 		sequence int64
 		text     string
 	}{
-		{sequence: initialEvent.Sequence, text: "initial task"},
 		{sequence: firstBody.Event.Sequence, text: "hello Claude"},
 	} {
 		_, encodedCommand, readErr := socket.Read(ctx)
@@ -1122,6 +1147,24 @@ func TestBrowserInterruptAndWorkerTurnActivity(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer socket.Close(websocket.StatusNormalClosure, "test complete")
+	if _, _, err := store.AppendUserMessage(
+		ctx,
+		account.ID,
+		session.Session.ID,
+		uuid.NewString(),
+		"long running task",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.TransitionActiveTurn(
+		ctx,
+		account.ID,
+		session.Session.ID,
+		"running",
+		"",
+	); err != nil {
+		t.Fatal(err)
+	}
 
 	interrupt := requestJSON(
 		t,
@@ -1140,8 +1183,10 @@ func TestBrowserInterruptAndWorkerTurnActivity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if interruptedSession.ActivityState != "idle" {
-		t.Fatalf("interrupt activity = %q, want idle", interruptedSession.ActivityState)
+	if interruptedSession.ActivityState != "active" ||
+		interruptedSession.ActiveTurn == nil ||
+		interruptedSession.ActiveTurn.State != "cancel_requested" {
+		t.Fatalf("interrupt session = %#v, want active cancellation", interruptedSession)
 	}
 	_, encodedCommand, err := socket.Read(ctx)
 	if err != nil {

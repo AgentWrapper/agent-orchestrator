@@ -38,6 +38,10 @@ type store interface {
 	CreateSession(context.Context, clouddomain.AccountID, cloudpostgres.CreateSessionInput) (cloudpostgres.CreateSessionResult, error)
 	ListSessions(context.Context, clouddomain.AccountID) ([]clouddomain.Session, error)
 	GetSession(context.Context, clouddomain.AccountID, clouddomain.SessionID) (clouddomain.Session, error)
+	GetActiveTurn(context.Context, clouddomain.AccountID, clouddomain.SessionID) (*clouddomain.Turn, error)
+	TransitionActiveTurn(context.Context, clouddomain.AccountID, clouddomain.SessionID, string, string) (*clouddomain.Turn, error)
+	ClaimActiveTurn(context.Context, clouddomain.AccountID, clouddomain.SessionID, int64, int64) error
+	PrepareActiveTurnForWorker(context.Context, clouddomain.AccountID, clouddomain.SessionID, int64) (int64, error)
 	GetSandbox(context.Context, clouddomain.AccountID, clouddomain.SessionID) (clouddomain.Sandbox, error)
 	SetSandboxDesiredState(context.Context, clouddomain.AccountID, clouddomain.SessionID, string) error
 	ConsumeAccessTicket(context.Context, string, string) (cloudpostgres.ConsumedTicket, error)
@@ -160,6 +164,7 @@ func (s *Server) routes() http.Handler {
 			protected.Get("/sessions", s.listSessions)
 			protected.Post("/sessions", s.createSession)
 			protected.Get("/sessions/{sessionId}", s.getSession)
+			protected.Get("/sessions/{sessionId}/active-turn", s.activeTurn)
 			protected.Post("/sessions/{sessionId}/desired-state", s.setDesiredState)
 			protected.Get("/sessions/{sessionId}/chat-events", s.chatEvents)
 			protected.Post("/sessions/{sessionId}/messages", s.sendMessage)
@@ -388,6 +393,14 @@ func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"session": session})
 }
 
+func (s *Server) activeTurn(w http.ResponseWriter, r *http.Request) {
+	_, session, ok := s.authorizedSession(w, r, "read active turn")
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"turn": session.ActiveTurn})
+}
+
 func (s *Server) chatEvents(w http.ResponseWriter, r *http.Request) {
 	account, _ := accountFromContext(r.Context())
 	sessionID := clouddomain.SessionID(chi.URLParam(r, "sessionId"))
@@ -454,6 +467,10 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "Idempotency-Key was already used for another command.")
 		return
 	}
+	if errors.Is(err, cloudpostgres.ErrActiveTurn) {
+		writeError(w, r, http.StatusConflict, "TURN_ACTIVE", "The cloud session already has a response in progress.")
+		return
+	}
 	if err != nil {
 		s.internalError(w, r, "append cloud message", err)
 		return
@@ -501,13 +518,17 @@ func (s *Server) wakeSessionForMessage(
 			return err
 		}
 	}
+	if _, err := s.store.TransitionActiveTurn(ctx, accountID, sessionID, "provisioning", ""); err != nil {
+		return err
+	}
 	return s.store.UpdateSessionActivity(ctx, accountID, sessionID, "active")
 }
 
 func (s *Server) interruptSession(w http.ResponseWriter, r *http.Request) {
 	account, _ := accountFromContext(r.Context())
 	sessionID := clouddomain.SessionID(chi.URLParam(r, "sessionId"))
-	if _, err := s.store.GetSession(r.Context(), account.ID, sessionID); err != nil {
+	session, err := s.store.GetSession(r.Context(), account.ID, sessionID)
+	if err != nil {
 		if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
 			writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The cloud session does not exist.")
 			return
@@ -515,7 +536,11 @@ func (s *Server) interruptSession(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "authorize cloud interrupt", err)
 		return
 	}
-	payload, _ := json.Marshal(map[string]string{"source": "browser"})
+	payloadData := map[string]string{"source": "browser"}
+	if session.ActiveTurn != nil {
+		payloadData["turnId"] = session.ActiveTurn.ID
+	}
+	payload, _ := json.Marshal(payloadData)
 	event, err := s.events.Append(
 		r.Context(),
 		account.ID,
@@ -527,7 +552,29 @@ func (s *Server) interruptSession(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "append interrupt request", err)
 		return
 	}
-	if err := s.store.UpdateSessionActivity(r.Context(), account.ID, sessionID, "idle"); err != nil {
+	nextState := "cancel_requested"
+	if !session.RuntimeConnected {
+		nextState = "completed"
+	}
+	if _, err := s.store.TransitionActiveTurn(
+		r.Context(),
+		account.ID,
+		sessionID,
+		nextState,
+		"",
+	); err != nil {
+		s.internalError(w, r, "request turn cancellation", err)
+		return
+	}
+	if !session.RuntimeConnected {
+		if err := s.store.UpdateSessionActivity(r.Context(), account.ID, sessionID, "idle"); err != nil {
+			s.internalError(w, r, "update offline interrupt activity", err)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"event": event})
+		return
+	}
+	if err := s.store.UpdateSessionActivity(r.Context(), account.ID, sessionID, "active"); err != nil {
 		s.internalError(w, r, "update interrupt activity", err)
 		return
 	}
@@ -542,22 +589,38 @@ func (s *Server) interruptSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) sessionSCM(w http.ResponseWriter, r *http.Request) {
-	account, _ := accountFromContext(r.Context())
-	sessionID := clouddomain.SessionID(chi.URLParam(r, "sessionId"))
-	if _, err := s.store.GetSession(r.Context(), account.ID, sessionID); err != nil {
-		if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
-			writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The cloud session does not exist.")
-			return
-		}
-		s.internalError(w, r, "authorize cloud SCM read", err)
+	account, session, ok := s.authorizedSession(w, r, "read cloud SCM")
+	if !ok {
 		return
 	}
-	scm, err := s.store.SessionSCM(r.Context(), account.ID, sessionID)
+	scm, err := s.store.SessionSCM(r.Context(), account.ID, session.ID)
 	if err != nil {
 		s.internalError(w, r, "read cloud SCM", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"scm": scm})
+}
+
+func (s *Server) authorizedSession(
+	w http.ResponseWriter,
+	r *http.Request,
+	action string,
+) (clouddomain.Account, clouddomain.Session, bool) {
+	account, _ := accountFromContext(r.Context())
+	session, err := s.store.GetSession(
+		r.Context(),
+		account.ID,
+		clouddomain.SessionID(chi.URLParam(r, "sessionId")),
+	)
+	if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
+		writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The cloud session does not exist.")
+		return clouddomain.Account{}, clouddomain.Session{}, false
+	}
+	if err != nil {
+		s.internalError(w, r, action, err)
+		return clouddomain.Account{}, clouddomain.Session{}, false
+	}
+	return account, session, true
 }
 
 func (s *Server) setDesiredState(w http.ResponseWriter, r *http.Request) {
@@ -963,6 +1026,10 @@ func (s *Server) workerSendMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "Idempotency-Key was already used for another command.")
 		return
 	}
+	if errors.Is(err, cloudpostgres.ErrActiveTurn) {
+		writeError(w, r, http.StatusConflict, "TURN_ACTIVE", "The target session already has a response in progress.")
+		return
+	}
 	if err != nil {
 		s.internalError(w, r, "append orchestrated message", err)
 		return
@@ -1040,6 +1107,44 @@ func (s *Server) workerEvent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "INVALID_EVENT_TYPE", "Worker event type is not allowed.")
 		return
 	}
+	var activeTurn *clouddomain.Turn
+	if strings.HasPrefix(input.Type, "chat.") {
+		var err error
+		activeTurn, err = s.store.GetActiveTurn(r.Context(), claims.AccountID, claims.SessionID)
+		if err != nil {
+			s.internalError(w, r, "load worker event turn", err)
+			return
+		}
+		if activeTurn != nil {
+			payload := make(map[string]any)
+			if len(input.Payload) > 0 && json.Unmarshal(input.Payload, &payload) != nil {
+				writeError(w, r, http.StatusBadRequest, "INVALID_CHAT_EVENT", "Chat event payload must be a JSON object.")
+				return
+			}
+			payload["turnId"] = activeTurn.ID
+			input.Payload, _ = json.Marshal(payload)
+		}
+	}
+	if input.Type == "worker.prompt_accepted" {
+		var acknowledgement struct {
+			Sequence int64 `json:"sequence"`
+		}
+		if json.Unmarshal(input.Payload, &acknowledgement) != nil ||
+			acknowledgement.Sequence <= 0 {
+			writeError(w, r, http.StatusBadRequest, "INVALID_PROMPT_ACKNOWLEDGEMENT", "Prompt acknowledgement is invalid.")
+			return
+		}
+		if err := s.store.ClaimActiveTurn(
+			r.Context(),
+			claims.AccountID,
+			claims.SessionID,
+			acknowledgement.Sequence,
+			claims.Epoch,
+		); err != nil {
+			s.internalError(w, r, "claim durable chat turn", err)
+			return
+		}
+	}
 	if input.Type == "agent.activity" {
 		var activity struct {
 			State       string `json:"state"`
@@ -1069,6 +1174,28 @@ func (s *Server) workerEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	switch input.Type {
 	case "chat.turn_started":
+		if activeTurn != nil {
+			if err := s.store.ClaimActiveTurn(
+				r.Context(),
+				claims.AccountID,
+				claims.SessionID,
+				activeTurn.UserMessageSequence,
+				claims.Epoch,
+			); err != nil {
+				s.internalError(w, r, "claim started chat turn", err)
+				return
+			}
+		}
+		if _, err := s.store.TransitionActiveTurn(
+			r.Context(),
+			claims.AccountID,
+			claims.SessionID,
+			"running",
+			"",
+		); err != nil {
+			s.internalError(w, r, "start durable chat turn", err)
+			return
+		}
 		if err := s.store.UpdateSessionActivity(
 			r.Context(),
 			claims.AccountID,
@@ -1078,7 +1205,33 @@ func (s *Server) workerEvent(w http.ResponseWriter, r *http.Request) {
 			s.internalError(w, r, "update chat turn activity", err)
 			return
 		}
-	case "chat.turn_completed", "chat.turn_interrupted":
+	case "chat.turn_completed", "chat.turn_interrupted", "chat.turn_aborted":
+		state := "completed"
+		errorMessage := ""
+		switch input.Type {
+		case "chat.turn_completed":
+			var completion struct {
+				IsError bool   `json:"isError"`
+				Error   string `json:"error"`
+			}
+			if json.Unmarshal(input.Payload, &completion) == nil && completion.IsError {
+				state = "failed"
+				errorMessage = completion.Error
+			}
+		case "chat.turn_aborted":
+			state = "failed"
+			errorMessage = "agent turn aborted"
+		}
+		if _, err := s.store.TransitionActiveTurn(
+			r.Context(),
+			claims.AccountID,
+			claims.SessionID,
+			state,
+			errorMessage,
+		); err != nil {
+			s.internalError(w, r, "finish durable chat turn", err)
+			return
+		}
 		if err := s.store.UpdateSessionActivity(
 			r.Context(),
 			claims.AccountID,
@@ -1159,8 +1312,33 @@ func (s *Server) workerConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	replayedAfter := max(after, accepted, interrupted)
+	retrySequence, err := s.store.PrepareActiveTurnForWorker(
+		r.Context(),
+		claims.AccountID,
+		claims.SessionID,
+		claims.Epoch,
+	)
+	if err != nil {
+		return
+	}
+	if retrySequence > 0 && retrySequence <= replayedAfter {
+		replayedAfter = retrySequence - 1
+	}
 	if err := s.writePromptReplay(r.Context(), socket, claims, &replayedAfter); err != nil {
 		return
+	}
+	activeTurn, err := s.store.GetActiveTurn(r.Context(), claims.AccountID, claims.SessionID)
+	if err != nil {
+		return
+	}
+	if activeTurn != nil && activeTurn.State == "cancel_requested" {
+		encoded, _ := json.Marshal(cloudworkerhub.Command{
+			Type:     "interrupt",
+			Sequence: interrupted,
+		})
+		if err := socket.Write(r.Context(), websocket.MessageText, encoded); err != nil {
+			return
+		}
 	}
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
@@ -1184,10 +1362,8 @@ func (s *Server) workerConnect(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case <-ticker.C:
-			pingCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-			err := socket.Ping(pingCtx)
-			cancel()
-			if err != nil {
+			encoded, _ := json.Marshal(cloudworkerhub.Command{Type: "keepalive"})
+			if err := socket.Write(r.Context(), websocket.MessageText, encoded); err != nil {
 				return
 			}
 		}
@@ -1201,7 +1377,7 @@ func (s *Server) writePromptReplay(
 	replayedAfter *int64,
 ) error {
 	for {
-		replayed, err := s.events.ReplayChat(
+		replayed, err := s.events.ReplayActivePrompts(
 			ctx,
 			claims.AccountID,
 			claims.SessionID,
@@ -1214,9 +1390,6 @@ func (s *Server) writePromptReplay(
 		for _, event := range replayed {
 			if event.Sequence > *replayedAfter {
 				*replayedAfter = event.Sequence
-			}
-			if event.Type != "chat.user_message" {
-				continue
 			}
 			var payload struct {
 				Text string `json:"text"`

@@ -253,7 +253,19 @@ export default function CloudAppPage() {
     if (!api) return;
     void refresh();
     const timer = window.setInterval(() => void refresh(), 2000);
-    return () => window.clearInterval(timer);
+    const refreshNow = () => void refresh();
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") refreshNow();
+    };
+    window.addEventListener("focus", refreshNow);
+    window.addEventListener("online", refreshNow);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshNow);
+      window.removeEventListener("online", refreshNow);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
   }, [api, refresh]);
 
   const selectedProject = projects.find(({ id }) => id === selectedProjectId);

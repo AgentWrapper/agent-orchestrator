@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	// Register pgx with database/sql for goose migrations.
@@ -375,24 +376,49 @@ func (s *Store) CreateSession(
 		return CreateSessionResult{}, err
 	}
 	if strings.TrimSpace(input.Prompt) != "" {
+		turnID := uuid.NewString()
 		promptPayload, marshalErr := json.Marshal(map[string]any{
 			"id":      commandID,
 			"text":    input.Prompt,
 			"initial": true,
+			"turnId":  turnID,
 		})
 		if marshalErr != nil {
 			return CreateSessionResult{}, fmt.Errorf("encode initial user message: %w", marshalErr)
 		}
-		if _, err := appendEventTx(
+		promptEvent, err := appendEventTx(
 			ctx,
 			tx,
 			accountID,
 			session.ID,
 			"chat.user_message",
 			promptPayload,
-		); err != nil {
+		)
+		if err != nil {
 			return CreateSessionResult{}, err
 		}
+		turn, err := scanTurn(tx.QueryRow(ctx, `
+			INSERT INTO ao_turns (
+				id, account_id, session_id, user_message_sequence, state
+			)
+			VALUES ($1, $2, $3, $4, 'provisioning')
+			RETURNING id, account_id, session_id, user_message_sequence, state,
+				worker_epoch, attempt_count, error_message, started_at, completed_at,
+				created_at, updated_at
+		`, turnID, accountID, session.ID, promptEvent.Sequence))
+		if err != nil {
+			return CreateSessionResult{}, fmt.Errorf("insert initial durable turn: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE ao_sessions
+			SET activity_state = 'active', updated_at = now()
+			WHERE id = $1
+		`, session.ID); err != nil {
+			return CreateSessionResult{}, fmt.Errorf("activate initial cloud turn: %w", err)
+		}
+		session.ActivityState = "active"
+		session.ActiveTurn = &turn
+		session.Status = "working"
 	}
 
 	resultJSON, _ := json.Marshal(map[string]any{"sessionId": session.ID})
@@ -520,6 +546,11 @@ func (s *Store) ListSessions(
 		return nil, err
 	}
 	for index := range sessions {
+		activeTurn, err := s.GetActiveTurn(ctx, accountID, sessions[index].ID)
+		if err != nil {
+			return nil, err
+		}
+		sessions[index].ActiveTurn = activeTurn
 		status, err := s.sessionStatus(ctx, accountID, sessions[index])
 		if err != nil {
 			return nil, err
@@ -553,6 +584,11 @@ func (s *Store) GetSession(
 	if err := tx.Commit(ctx); err != nil {
 		return clouddomain.Session{}, fmt.Errorf("commit get session: %w", err)
 	}
+	activeTurn, err := s.GetActiveTurn(ctx, accountID, session.ID)
+	if err != nil {
+		return clouddomain.Session{}, err
+	}
+	session.ActiveTurn = activeTurn
 	status, err := s.sessionStatus(ctx, accountID, session)
 	if err != nil {
 		return clouddomain.Session{}, err
@@ -629,6 +665,9 @@ func deriveCloudStatus(
 	switch session.ActivityState {
 	case "waiting_input", "blocked":
 		return "needs_input"
+	}
+	if session.ActiveTurn != nil {
+		return "working"
 	}
 	switch {
 	case prState == "merged":
@@ -766,7 +805,12 @@ func (s *Store) AppendUserMessage(
 		return clouddomain.Event{}, false, fmt.Errorf("insert user message command: %w", err)
 	}
 
-	payload, err := json.Marshal(map[string]string{"id": commandID, "text": text})
+	turnID := uuid.NewString()
+	payload, err := json.Marshal(map[string]string{
+		"id":     commandID,
+		"text":   text,
+		"turnId": turnID,
+	})
 	if err != nil {
 		return clouddomain.Event{}, false, fmt.Errorf("encode user message event: %w", err)
 	}
@@ -774,7 +818,23 @@ func (s *Store) AppendUserMessage(
 	if err != nil {
 		return clouddomain.Event{}, false, err
 	}
-	result, err := json.Marshal(map[string]int64{"eventSequence": event.Sequence})
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO ao_turns (
+			id, account_id, session_id, user_message_sequence, state
+		)
+		VALUES ($1, $2, $3, $4, 'queued')
+	`, turnID, accountID, sessionID, event.Sequence); err != nil {
+		var postgresError *pgconn.PgError
+		if errors.As(err, &postgresError) &&
+			postgresError.ConstraintName == "ao_turns_one_active_per_session" {
+			return clouddomain.Event{}, false, ErrActiveTurn
+		}
+		return clouddomain.Event{}, false, fmt.Errorf("insert durable turn: %w", err)
+	}
+	result, err := json.Marshal(map[string]any{
+		"eventSequence": event.Sequence,
+		"turnId":        turnID,
+	})
 	if err != nil {
 		return clouddomain.Event{}, false, fmt.Errorf("encode user message result: %w", err)
 	}
@@ -892,6 +952,42 @@ func (s *Store) ChatEventsAfter(
 	}
 	defer rows.Close()
 	return scanEvents(rows, "chat event")
+}
+
+// ActivePromptEventsAfter returns legacy prompts and prompts whose durable
+// turn is still unfinished. Terminal turns must never replay to a new worker.
+func (s *Store) ActivePromptEventsAfter(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+	after int64,
+	limit int,
+) ([]clouddomain.Event, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 500
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT event.session_id, event.sequence, event.type, event.payload, event.created_at
+		FROM ao_events event
+		LEFT JOIN ao_turns turn
+			ON turn.session_id = event.session_id
+			AND turn.user_message_sequence = event.sequence
+		WHERE event.account_id = $1
+			AND event.session_id = $2
+			AND event.sequence > $3
+			AND event.type = 'chat.user_message'
+			AND (
+				turn.id IS NULL
+				OR turn.state = ANY($5)
+			)
+		ORDER BY event.sequence
+		LIMIT $4
+	`, accountID, sessionID, after, limit, activeTurnStates)
+	if err != nil {
+		return nil, fmt.Errorf("replay active prompt events: %w", err)
+	}
+	defer rows.Close()
+	return scanEvents(rows, "active prompt event")
 }
 
 func scanEvents(rows pgx.Rows, description string) ([]clouddomain.Event, error) {
@@ -1165,4 +1261,6 @@ var (
 	ErrInvalidTicket = errors.New("cloud access ticket is invalid or expired")
 	// ErrIdempotencyConflict indicates that a key was already used for another command.
 	ErrIdempotencyConflict = errors.New("cloud idempotency key conflicts with an existing command")
+	// ErrActiveTurn indicates that a session already has unfinished work.
+	ErrActiveTurn = errors.New("cloud session already has an active turn")
 )

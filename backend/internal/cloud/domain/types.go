@@ -55,9 +55,26 @@ type Session struct {
 	AgentSessionID   string    `json:"agentSessionId,omitempty"`
 	Capabilities     []string  `json:"capabilities,omitempty"`
 	RuntimeConnected bool      `json:"runtimeConnected"`
+	ActiveTurn       *Turn     `json:"activeTurn,omitempty"`
 	Status           string    `json:"status"`
 	CreatedAt        time.Time `json:"createdAt"`
 	UpdatedAt        time.Time `json:"updatedAt"`
+}
+
+// Turn is one durable user-message-to-agent-response lifecycle.
+type Turn struct {
+	ID                  string     `json:"id"`
+	AccountID           AccountID  `json:"accountId"`
+	SessionID           SessionID  `json:"sessionId"`
+	UserMessageSequence int64      `json:"userMessageSequence"`
+	State               string     `json:"state"`
+	WorkerEpoch         int64      `json:"-"`
+	AttemptCount        int        `json:"attemptCount"`
+	ErrorMessage        string     `json:"errorMessage,omitempty"`
+	StartedAt           *time.Time `json:"startedAt,omitempty"`
+	CompletedAt         *time.Time `json:"completedAt,omitempty"`
+	CreatedAt           time.Time  `json:"createdAt"`
+	UpdatedAt           time.Time  `json:"updatedAt"`
 }
 
 // ResourceProfile specifies sandbox compute and storage capacity.

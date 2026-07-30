@@ -11,11 +11,16 @@ import {
   Square,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { CloudAPI, type CloudEvent, type CloudSession } from "@/lib/cloud-api";
+import {
+  CloudAPI,
+  type CloudEvent,
+  type CloudSession,
+  type CloudTurn,
+} from "@/lib/cloud-api";
 
 interface CloudChatProps {
   api: CloudAPI;
@@ -296,10 +301,11 @@ export function deriveTimeline(events: CloudEvent[]): TimelineEntry[] {
   return timeline;
 }
 
-export function deriveTurnState(events: CloudEvent[]) {
+export function deriveTurnState(events: CloudEvent[], turnId?: string) {
   let turnActive = false;
   let awaitingInput = false;
   for (const event of events) {
+    if (turnId && event.payload.turnId !== turnId) continue;
     switch (event.type) {
       case "chat.user_message":
       case "chat.turn_started":
@@ -395,7 +401,14 @@ export function CloudChat({
   const [interrupting, setInterrupting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [replaySessionId, setReplaySessionId] = useState<string | null>(null);
+  const [activeTurn, setActiveTurn] = useState<CloudTurn | null>(
+    session.activeTurn ?? null,
+  );
+  const [reconnectNonce, setReconnectNonce] = useState(0);
   const latestSequence = useRef(0);
+  const loadedSessionId = useRef<string | null>(null);
+  const lastStreamActivity = useRef(Date.now());
+  const turnProbeInFlight = useRef(false);
   const draftValue = useRef("");
   const retryIdempotencyKey = useRef<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -403,19 +416,28 @@ export function CloudChat({
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    setActiveTurn(session.activeTurn ?? null);
+  }, [session.activeTurn]);
+
+  useEffect(() => {
     const controller = new AbortController();
-    latestSequence.current = 0;
-    retryIdempotencyKey.current = null;
-    followOutput.current = true;
-    setEvents([]);
-    setPending([]);
-    draftValue.current = "";
-    setDraft("");
-    setError(null);
-    setReplaySessionId(null);
-    setInterrupting(false);
+    const isNewSession = loadedSessionId.current !== session.id;
+    if (isNewSession) {
+      loadedSessionId.current = session.id;
+      latestSequence.current = 0;
+      retryIdempotencyKey.current = null;
+      followOutput.current = true;
+      setEvents([]);
+      setPending([]);
+      draftValue.current = "";
+      setDraft("");
+      setError(null);
+      setReplaySessionId(null);
+      setInterrupting(false);
+    }
     const connect = async () => {
-      try {
+      if (isNewSession) {
+        try {
         let replayAfter = 0;
         let replayed: CloudEvent[] = [];
         for (;;) {
@@ -443,13 +465,15 @@ export function CloudChat({
             ? `Could not load conversation history. ${replayError.message}`
             : "Could not load conversation history.",
         );
-      } finally {
-        if (!controller.signal.aborted) setReplaySessionId(session.id);
+        } finally {
+          if (!controller.signal.aborted) setReplaySessionId(session.id);
+        }
       }
 
       let retryDelay = 500;
       while (!controller.signal.aborted) {
         try {
+          lastStreamActivity.current = Date.now();
           await api.streamEvents(
             session.id,
             latestSequence.current,
@@ -461,9 +485,33 @@ export function CloudChat({
               );
               if (event.type.startsWith("chat.")) {
                 setEvents((current) => mergeEvents(current, [event]));
+                const eventTurnID =
+                  typeof event.payload.turnId === "string"
+                    ? event.payload.turnId
+                    : null;
+                if (eventTurnID) {
+                  if (event.type === "chat.turn_started") {
+                    setActiveTurn((current) =>
+                      current?.id === eventTurnID
+                        ? { ...current, state: "running" }
+                        : current,
+                    );
+                  } else if (
+                    event.type === "chat.turn_completed" ||
+                    event.type === "chat.turn_interrupted" ||
+                    event.type === "chat.turn_aborted"
+                  ) {
+                    setActiveTurn((current) =>
+                      current?.id === eventTurnID ? null : current,
+                    );
+                  }
+                }
               }
               setError(null);
               retryDelay = 500;
+            },
+            () => {
+              lastStreamActivity.current = Date.now();
             },
           );
           if (!controller.signal.aborted) {
@@ -483,7 +531,47 @@ export function CloudChat({
     };
     void connect();
     return () => controller.abort();
+  }, [api, reconnectNonce, session.id]);
+
+  const probeTurnAndReconnect = useCallback(async () => {
+    if (turnProbeInFlight.current) return;
+    turnProbeInFlight.current = true;
+    try {
+      const { turn } = await api.activeTurn(session.id);
+      setActiveTurn(turn);
+    } catch {
+      // The durable event replay remains authoritative if the status probe
+      // fails during a transient network transition.
+    } finally {
+      turnProbeInFlight.current = false;
+      lastStreamActivity.current = Date.now();
+      setReconnectNonce((current) => current + 1);
+    }
   }, [api, session.id]);
+
+  useEffect(() => {
+    const reconnect = () => void probeTurnAndReconnect();
+    const reconnectWhenVisible = () => {
+      if (document.visibilityState === "visible") reconnect();
+    };
+    window.addEventListener("focus", reconnect);
+    window.addEventListener("online", reconnect);
+    document.addEventListener("visibilitychange", reconnectWhenVisible);
+    return () => {
+      window.removeEventListener("focus", reconnect);
+      window.removeEventListener("online", reconnect);
+      document.removeEventListener("visibilitychange", reconnectWhenVisible);
+    };
+  }, [probeTurnAndReconnect]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (Date.now() - lastStreamActivity.current > 35_000) {
+        void probeTurnAndReconnect();
+      }
+    }, 5_000);
+    return () => window.clearInterval(timer);
+  }, [probeTurnAndReconnect]);
 
   useEffect(() => {
     if (followOutput.current) {
@@ -492,10 +580,17 @@ export function CloudChat({
   }, [events, pending]);
 
   const timeline = useMemo(() => deriveTimeline(events), [events]);
-  const turnState = useMemo(() => deriveTurnState(events), [events]);
+  const turnState = useMemo(
+    () => deriveTurnState(events, activeTurn?.id),
+    [activeTurn?.id, events],
+  );
   const replayReady = replaySessionId === session.id;
   const responseActive =
-    replayReady && (sending || pending.length > 0 || turnState.turnActive);
+    replayReady &&
+    (sending ||
+      pending.length > 0 ||
+      activeTurn !== null ||
+      turnState.turnActive);
   const hasUserMessage =
     pending.length > 0 ||
     events.some((event) => event.type === "chat.user_message");
@@ -525,6 +620,18 @@ export function CloudChat({
     try {
       const { event } = await api.sendMessage(session.id, text, id);
       setEvents((current) => mergeEvents(current, [event]));
+      if (typeof event.payload.turnId === "string") {
+        const now = new Date().toISOString();
+        setActiveTurn({
+          id: event.payload.turnId,
+          sessionId: session.id,
+          userMessageSequence: event.sequence,
+          state: "provisioning",
+          attemptCount: 0,
+          createdAt: event.createdAt ?? now,
+          updatedAt: now,
+        });
+      }
       setPending((current) => current.filter((message) => message.id !== id));
       retryIdempotencyKey.current = null;
       setError(null);
@@ -553,6 +660,11 @@ export function CloudChat({
     try {
       const { event } = await api.interruptSession(session.id);
       setEvents((current) => mergeEvents(current, [event]));
+      setActiveTurn((current) =>
+        session.runtimeConnected && current
+          ? { ...current, state: "cancel_requested" }
+          : null,
+      );
       setError(null);
     } catch (interruptError) {
       setError(
@@ -761,7 +873,18 @@ export function CloudChat({
                   </div>
                 </div>
               ))}
-              {hasUserMessage && !structuredRuntimeReady && responseActive ? (
+              {activeTurn?.state === "cancel_requested" ? (
+                <div
+                  className="ml-9 flex min-h-8 items-center gap-2 text-xs"
+                  role="status"
+                  aria-live="polite"
+                >
+                  <ThinkingWave />
+                  <ShimmerLabel>Stopping response…</ShimmerLabel>
+                </div>
+              ) : hasUserMessage &&
+                !structuredRuntimeReady &&
+                responseActive ? (
                 <div
                   className="ml-9 flex min-h-8 items-center gap-2 text-xs"
                   role="status"
@@ -827,7 +950,9 @@ export function CloudChat({
               <button
                 type="button"
                 onClick={() => void interrupt()}
-                disabled={interrupting}
+                disabled={
+                  interrupting || activeTurn?.state === "cancel_requested"
+                }
                 aria-label="Interrupt response"
                 title="Interrupt response"
                 className="grid size-11 shrink-0 place-items-center rounded-lg border border-white/15 bg-[#22252b] text-[#f4f5f7] transition-[background-color,transform,opacity] hover:bg-[#2a2e35] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4d8dff] active:scale-95 disabled:cursor-wait disabled:opacity-50 motion-reduce:transition-none sm:size-8"

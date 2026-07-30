@@ -256,6 +256,8 @@ func (r *Runner) commandLoop(
 				return err
 			case "resize":
 				return pty.Setsize(terminal, &pty.Winsize{Rows: command.Rows, Cols: command.Cols})
+			case "keepalive":
+				return nil
 			case "interrupt":
 				writeMu.Lock()
 				_, err := terminal.Write([]byte{3})

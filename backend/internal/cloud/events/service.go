@@ -15,6 +15,7 @@ type store interface {
 	AppendUserMessage(context.Context, clouddomain.AccountID, clouddomain.SessionID, string, string) (clouddomain.Event, bool, error)
 	EventsAfter(context.Context, clouddomain.AccountID, clouddomain.SessionID, int64, int) ([]clouddomain.Event, error)
 	ChatEventsAfter(context.Context, clouddomain.AccountID, clouddomain.SessionID, int64, int) ([]clouddomain.Event, error)
+	ActivePromptEventsAfter(context.Context, clouddomain.AccountID, clouddomain.SessionID, int64, int) ([]clouddomain.Event, error)
 }
 
 // Service appends durable events and fans them out to live subscribers.
@@ -89,6 +90,17 @@ func (s *Service) ReplayChat(
 	limit int,
 ) ([]clouddomain.Event, error) {
 	return s.store.ChatEventsAfter(ctx, accountID, sessionID, after, limit)
+}
+
+// ReplayActivePrompts returns only prompts still owned by an unfinished turn.
+func (s *Service) ReplayActivePrompts(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+	after int64,
+	limit int,
+) ([]clouddomain.Event, error) {
+	return s.store.ActivePromptEventsAfter(ctx, accountID, sessionID, after, limit)
 }
 
 // Subscribe registers a live event callback and returns its unsubscribe function.
