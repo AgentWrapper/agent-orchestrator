@@ -952,13 +952,13 @@ function ReviewPanel({
 	const reviewHasRun = reviewRunning || Boolean(latest);
 	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
 	const autoReviewEnabled = config?.autoReviewPullRequests === true;
+	const showReviewAction = reviewRunning || !autoReviewEnabled;
 	const openReviewerTerminal = () => {
 		if (!terminalEnabled) return;
 		onOpenTerminal?.({ handleId: reviewerHandleId, harness });
 	};
 	const runDisabled =
 		isTriggering ||
-		autoReviewEnabled ||
 		openReviewStates.length === 0 ||
 		openReviewStates.every((reviewState) => reviewState.status === "ineligible");
 
@@ -998,17 +998,19 @@ function ReviewPanel({
 				)}
 			</div>
 			<div className="-mx-4 -mb-3 mt-3 flex items-center justify-center gap-1 border-t border-border px-4 pb-3 pt-3">
-				<Button
-					className={cn("gap-1.5 [&_svg]:size-icon-sm", reviewRunning ? "text-error" : "text-success")}
-					disabled={reviewRunning ? isCancelling : runDisabled}
-					onClick={reviewRunning ? onCancel : onTrigger}
-					size="sm"
-					type="button"
-					variant="ghost"
-				>
-					{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
-					{reviewRunning ? (isCancelling ? "Cancelling..." : "Cancel review") : runAction}
-				</Button>
+				{showReviewAction ? (
+					<Button
+						className={cn("gap-1.5 [&_svg]:size-icon-sm", reviewRunning ? "text-error" : "text-success")}
+						disabled={reviewRunning ? isCancelling : runDisabled}
+						onClick={reviewRunning ? onCancel : onTrigger}
+						size="sm"
+						type="button"
+						variant="ghost"
+					>
+						{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
+						{reviewRunning ? (isCancelling ? "Cancelling..." : "Cancel review") : runAction}
+					</Button>
+				) : null}
 				{reviewHasRun ? (
 					<Button
 						className="gap-1.5 [&_svg]:size-icon-sm"
@@ -1029,6 +1031,9 @@ function ReviewPanel({
 
 function aoReviewMeta(reviewState: PRReviewState): string {
 	const displayRun = reviewState.latestRun ?? reviewState.previousRun;
+	if (reviewState.status === "running") {
+		return `#${reviewState.prNumber} · Reviewing...`;
+	}
 	if (displayRun?.createdAt) {
 		return `#${reviewState.prNumber} · ${formatTimeCompact(displayRun.createdAt)}`;
 	}

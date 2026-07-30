@@ -764,10 +764,43 @@ describe("SessionInspector reviews tab", () => {
 		const autoReviewStatus = await screen.findByText("Auto-review on");
 		expect(autoReviewStatus).toBeInTheDocument();
 		expect(autoReviewStatus.closest("p")?.querySelector("svg")).toBeNull();
-		const runReview = screen.getByRole("button", { name: "Run review" });
-		expect(runReview).toBeDisabled();
-		await userEvent.click(runReview);
-		expect(postMock).not.toHaveBeenCalled();
+		expect(screen.queryByRole("button", { name: "Run review" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Re-run review" })).not.toBeInTheDocument();
+	});
+
+	it("shows reviewing status and cancel action while auto-review is running", async () => {
+		const runningReview = { ...approvedReview, status: "running", verdict: "", body: "" };
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/sessions/{sessionId}/reviews") {
+				return { data: { reviewerHandleId: "reviewer-pane", reviews: [{ ...reviewState(3, "running"), latestRun: runningReview }] } };
+			}
+			if (path === "/api/v1/projects/{id}") {
+				return {
+					data: {
+						status: "ok",
+						project: {
+							id: "ws-1",
+							kind: "git",
+							name: "my-app",
+							path: "/repo",
+							repo: "my-app",
+							defaultBranch: "main",
+							config: { reviewers: [{ harness: "codex" }], autoReviewPullRequests: true },
+						},
+					},
+				};
+			}
+			return { data: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+
+		expect(await screen.findByText("#3 · Reviewing...")).toBeInTheDocument();
+		expect(screen.getAllByText("Reviewing...").length).toBeGreaterThan(0);
+		expect(screen.getByRole("button", { name: "Cancel review" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Re-run review" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Run review" })).not.toBeInTheDocument();
 	});
 
 	it("places not-run status beside the PR number without an aggregate status chip", async () => {
