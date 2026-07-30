@@ -86,7 +86,7 @@ const HOVER_ACTION_CLASS =
 
 // Shared nav-row chrome (Codex-style): inset pill hover/selected, 14px type, no accent bar.
 const NAV_ROW_CLASS =
-	"h-9 gap-2.5 rounded-lg px-2.5 text-sm font-medium text-muted-foreground transition-[background-color,color] hover:bg-interactive-hover hover:text-foreground active:bg-interactive-hover active:text-foreground data-[active=true]:bg-interactive-active data-[active=true]:font-medium data-[active=true]:text-foreground";
+	"h-9 gap-2.5 rounded-lg px-2.5 text-sm font-medium text-muted-foreground transition-[background-color,color,transform] duration-[100ms] ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.98] active:bg-interactive-hover active:text-foreground data-[active=true]:bg-interactive-active data-[active=true]:font-medium data-[active=true]:text-foreground";
 
 // Search + Pinned/Projects section chrome: same type, icon, and row size.
 const SECTION_ROW_CLASS =

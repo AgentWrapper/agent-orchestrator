@@ -18,7 +18,7 @@ export function ContextMenuContent({
 					"z-overlay min-w-[10rem] overflow-hidden rounded-lg border border-border bg-card p-[3px] text-popover-foreground",
 					"flex flex-col gap-px",
 					"shadow-[0_8px_32px_rgba(0,0,0,0.28),0_2px_8px_rgba(0,0,0,0.18)]",
-					"data-[state=open]:animate-overlay-in",
+					"data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out",
 					className,
 				)}
 				{...props}
