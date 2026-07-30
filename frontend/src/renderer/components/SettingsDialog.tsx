@@ -53,7 +53,7 @@ export function SettingsDialog() {
 							<div className="flex h-14 shrink-0 items-center px-2">
 								<span className="px-2.5 text-sm font-semibold text-foreground">Settings</span>
 							</div>
-							<nav aria-label="Settings sections" className="flex flex-col gap-0.5 p-2">
+							<nav aria-label="Settings sections" className="flex flex-col gap-1 p-1">
 								{isProjectSettings ? (
 									<SettingsNavItem active icon={MonitorCog} label="Project" onClick={() => undefined} />
 								) : (
