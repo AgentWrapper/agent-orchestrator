@@ -803,7 +803,12 @@ function ReviewsView({
 	const reviewStates = reviewsQuery.data?.reviews ?? [];
 	const scmSummary = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, scmSummary.data);
-	const githubReviews = prSummaries.filter((pr) => pr.state === "open" && (pr.review?.reviews?.length ?? 0) > 0);
+	const githubReviews = prSummaries.filter(
+		(pr) =>
+			pr.state === "open" &&
+			((pr.review?.reviews?.length ?? 0) > 0 ||
+				(pr.review?.unresolvedBy ?? []).some((reviewer) => reviewer.count > 0)),
+	);
 	const unresolvedTotal = prSummaries
 		.filter((pr) => pr.state === "open")
 		.reduce((total, pr) => total + (pr.review?.unresolvedBy ?? []).reduce((n, r) => n + r.count, 0), 0);
@@ -1105,6 +1110,9 @@ function ReviewPanel({
 	onCancel: () => void;
 	onOpenTerminal?: OpenReviewerTerminal;
 }) {
+	const [activeReviewer, setActiveReviewer] = useState("");
+	const [followedReviewer, setFollowedReviewer] = useState("");
+
 	if (sortedPRs(session).length === 0) {
 		return <p className={inspectorEmptyClass}>No pull request opened yet.</p>;
 	}
@@ -1160,8 +1168,6 @@ function ReviewPanel({
 		if (!reviewerTabs.includes(name)) reviewerTabs.push(name);
 	}
 	const newestReviewer = reviewerTabs[0] ?? "";
-	const [activeReviewer, setActiveReviewer] = useState(newestReviewer);
-	const [followedReviewer, setFollowedReviewer] = useState(newestReviewer);
 	// Running a new agent should land you on its tab, synced during render so no
 	// frame shows the tab you were reading before.
 	if (newestReviewer !== followedReviewer) {

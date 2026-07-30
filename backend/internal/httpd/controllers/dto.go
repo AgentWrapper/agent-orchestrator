@@ -483,9 +483,6 @@ type SessionPRReviewCommentLink struct {
 	URL  string `json:"url,omitempty"`
 	File string `json:"file,omitempty"`
 	Line int    `json:"line,omitempty"`
-	// ThreadID addresses the review thread for resolution; several comments can
-	// share one, so clients dedupe before acting on it.
-	ThreadID string `json:"threadId,omitempty"`
 }
 
 // SessionPRMergeabilitySummary is the mergeability block for a session PR summary.
@@ -557,7 +554,7 @@ func newSessionPRReviewSummary(in sessionsvc.PRReviewSummary) SessionPRReviewSum
 	for _, reviewer := range in.UnresolvedBy {
 		links := make([]SessionPRReviewCommentLink, 0, len(reviewer.Links))
 		for _, link := range reviewer.Links {
-			links = append(links, SessionPRReviewCommentLink{URL: link.URL, File: link.File, Line: link.Line, ThreadID: link.ThreadID})
+			links = append(links, SessionPRReviewCommentLink{URL: link.URL, File: link.File, Line: link.Line})
 		}
 		reviewers = append(reviewers, SessionPRUnresolvedReviewer{ReviewerID: reviewer.ReviewerID, Count: reviewer.Count, Links: links, ReviewURL: reviewer.ReviewURL, IsBot: reviewer.IsBot})
 	}

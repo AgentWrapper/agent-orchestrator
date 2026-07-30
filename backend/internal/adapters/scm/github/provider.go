@@ -767,39 +767,3 @@ func scrubError(err error) string {
 	msg = strings.ReplaceAll(msg, "\r", " ")
 	return strings.TrimSpace(msg)
 }
-
-// ---------------------------------------------------------------------------
-// GraphQL: resolve a review thread
-// ---------------------------------------------------------------------------
-
-// resolveReviewThreadMutation marks one review thread resolved. threadId is the
-// GraphQL node id already carried on PRCommentObservation.ThreadID, so callers
-// resolve exactly the threads they observed rather than re-deriving them.
-const resolveReviewThreadMutation = `mutation($threadId:ID!){
-  resolveReviewThread(input:{threadId:$threadId}){
-    thread{ id isResolved }
-  }
-}`
-
-// ResolveReviewThread resolves a single review thread on a pull request.
-// Resolving an already-resolved thread is a no-op on GitHub's side, so callers
-// may safely retry.
-func (p *Provider) ResolveReviewThread(ctx context.Context, threadID string) error {
-	threadID = strings.TrimSpace(threadID)
-	if threadID == "" {
-		return fmt.Errorf("github scm: resolve review thread: %w", errors.New("empty thread id"))
-	}
-	data, err := p.client.doGraphQL(ctx, resolveReviewThreadMutation, map[string]any{"threadId": threadID})
-	if err != nil {
-		return fmt.Errorf("github scm: resolve review thread %s: %w", threadID, err)
-	}
-	payload, _ := data["resolveReviewThread"].(map[string]any)
-	thread, _ := payload["thread"].(map[string]any)
-	if thread == nil {
-		return fmt.Errorf("github scm: resolve review thread %s: %w", threadID, ErrNotFound)
-	}
-	if !boolv(thread["isResolved"]) {
-		return fmt.Errorf("github scm: thread %s still unresolved after mutation", threadID)
-	}
-	return nil
-}

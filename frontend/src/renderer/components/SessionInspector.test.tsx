@@ -839,7 +839,7 @@ describe("SessionInspector reviews tab", () => {
 		},
 	);
 
-	it("lists PR reviewers and resolves their threads through the session route", async () => {
+	it("shows PRs with unresolved comments but no decisive review", async () => {
 		mockCommonGets([], "reviewer-pane", [reviewState(3, "up_to_date", "sha-1")]);
 		const previous = getMock.getMockImplementation()!;
 		getMock.mockImplementation(async (path: string, opts?: unknown) => {
@@ -863,23 +863,14 @@ describe("SessionInspector reviews tab", () => {
 								review: {
 									decision: "changes_requested",
 									hasUnresolvedHumanComments: true,
-									reviews: [
-										{
-											reviewerId: "maya",
-											verdict: "changes_requested",
-											submittedAt: "2026-01-01T00:00:00Z",
-											body: "Tear down the listener on unmount.",
-											reviewUrl: "https://example.com/pr/3#pullrequestreview-1",
-										},
-									],
+									reviews: [],
 									unresolvedBy: [
 										{
 											reviewerId: "maya",
 											count: 2,
-											// Two comments, one thread: the button resolves threads, not comments.
 											links: [
-												{ threadId: "T1", file: "a.ts", line: 3 },
-												{ threadId: "T1", file: "a.ts", line: 9 },
+												{ file: "a.ts", line: 3 },
+												{ file: "a.ts", line: 9 },
 											],
 										},
 									],
@@ -895,11 +886,9 @@ describe("SessionInspector reviews tab", () => {
 		await openReviewsTab();
 
 		// Both sources sit in one panel now, so the PR reviews need no navigation.
-		expect(await screen.findByText("maya")).toBeInTheDocument();
-		expect(screen.getByText("Tear down the listener on unmount.")).toBeInTheDocument();
+		expect((await screen.findAllByText("Reviewable change 3")).length).toBeGreaterThan(0);
 		expect(screen.getByText(/2 unresolved/)).toBeInTheDocument();
-
-		expect(screen.queryByRole("button", { name: /Resolve .*thread/ })).not.toBeInTheDocument();
+		expect(screen.queryByText("No one has reviewed this pull request yet.")).not.toBeInTheDocument();
 	});
 
 	it("sends the chosen reviewer as a one-off override", async () => {
