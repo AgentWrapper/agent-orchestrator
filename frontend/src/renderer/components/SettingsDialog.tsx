@@ -51,10 +51,7 @@ export function SettingsDialog() {
 					<div className="flex h-full min-h-0">
 						{/* Sidebar — same bg as the app sidebar */}
 						<aside className="flex w-48 shrink-0 flex-col border-r border-(--color-border-settings-dialog-header) bg-sidebar">
-							<div className="flex h-14 shrink-0 items-center border-b border-(--color-border-settings-dialog-header) px-3">
-								<span className="px-1 text-sm font-semibold text-foreground">Settings</span>
-							</div>
-							<nav aria-label="Settings sections" className="flex flex-col gap-1 p-1">
+							<nav aria-label="Settings sections" className="flex flex-col gap-0.5 p-2 pt-[calc(3.5rem+0.5rem)]">
 								{isProjectSettings ? (
 									<SettingsNavItem active icon={MonitorCog} label="Project" onClick={() => undefined} />
 								) : (
