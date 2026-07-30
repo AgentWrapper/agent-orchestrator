@@ -1,4 +1,3 @@
-import { useNavigate } from "@tanstack/react-router";
 import { PanelLeft } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useResolvedTheme, useUiStore } from "../stores/ui-store";
@@ -71,19 +70,21 @@ export function WindowTitlebar({
 }: {
 	onSidebarPreviewEnter?: React.PointerEventHandler<HTMLButtonElement>;
 }) {
-	const navigate = useNavigate();
 	const theme = useResolvedTheme();
-	const { isSidebarOpen, toggleSidebar } = useUiStore();
+	const { isSidebarOpen, toggleSidebar, openGlobalSettings } = useUiStore();
 	const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
 
 	// Electron draws the min/max/close overlay natively and can't read our CSS, so
 	// push theme-matched colours to it whenever the theme changes.
 	useEffect(() => {
 		if (!isWindows) return;
-		// Keep in sync with --color-bg-sidebar (tokens.css) — the titlebar paints
-		// that colour, so the native buttons must match it.
+		// Native titlebar controls live outside the document, so Electron cannot
+		// consume CSS custom properties. These are the corresponding supplied
+		// sidebar/background tokens for each theme.
 		const overlay =
-			theme === "light" ? { color: "#fcfcfc", symbolColor: "#3f444c" } : { color: "#17181c", symbolColor: "#c7ccd4" };
+			theme === "light"
+				? { color: "oklch(0.985 0 0)", symbolColor: "oklch(0.21 0.006 285.885)" }
+				: { color: "oklch(0.21 0.006 285.885)", symbolColor: "oklch(0.985 0 0)" };
 		void window.ao?.window?.setOverlay(overlay);
 	}, [theme]);
 
@@ -118,7 +119,7 @@ export function WindowTitlebar({
 			</button>
 			<nav aria-label="Application menu" className="window-titlebar__menus">
 				<TopMenu id="file" label="File" openMenu={openMenu} setOpenMenu={setOpenMenu}>
-					<DropdownMenuItem onSelect={() => void navigate({ to: "/settings" })}>Settings</DropdownMenuItem>
+					<DropdownMenuItem onSelect={openGlobalSettings}>Settings</DropdownMenuItem>
 					<DropdownMenuSeparator />
 					<DropdownMenuItem onSelect={act("app.quit")}>
 						Quit
@@ -176,7 +177,7 @@ export function WindowTitlebar({
 
 				<TopMenu id="window" label="Window" openMenu={openMenu} setOpenMenu={setOpenMenu}>
 					<DropdownMenuItem onSelect={act("window.minimize")}>Minimize</DropdownMenuItem>
-					<DropdownMenuItem onSelect={act("window.maximize")}>Maximize / Restore</DropdownMenuItem>
+					<DropdownMenuItem onSelect={act("window.maximize")}>Maximize</DropdownMenuItem>
 					<DropdownMenuItem onSelect={act("window.close")}>Close</DropdownMenuItem>
 				</TopMenu>
 

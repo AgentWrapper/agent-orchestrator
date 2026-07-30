@@ -1,6 +1,9 @@
 @import "tailwindcss";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
 @import "../styles/tokens.css";
 
+@custom-variant dark (&:is(.dark *, :root:not([data-theme="light"]) *));
 @custom-media --layout-narrow (width <= 680px); /* --breakpoint-layout-narrow */
 
 /*
@@ -12,6 +15,7 @@
 @theme inline {
 	--font-sans: var(--font-family-base);
 	--font-mono: var(--font-family-mono);
+	--font-heading: var(--font-family-base);
 
 	/* Typography — align Tailwind text-* with token scale */
 	--text-xs: var(--font-size-sm);
@@ -36,9 +40,14 @@
 	--radius-sm: var(--radius-sm);
 	--radius-md: var(--radius-md);
 	--radius-lg: var(--radius-lg);
+	--radius-xl: calc(var(--radius) * 1.4);
+	--radius-2xl: calc(var(--radius) * 1.8);
+	--radius-3xl: calc(var(--radius) * 2.2);
+	--radius-4xl: calc(var(--radius) * 2.6);
 	--radius-panel: var(--radius-panel);
 	--radius-welcome-panel: var(--radius-welcome-panel);
 	--radius-agents-sheet: var(--radius-agents-sheet);
+	--radius-swatch: var(--radius-swatch);
 	--radius-full: var(--radius-full);
 
 	/* Breakpoints — for Tailwind max-* variants */
@@ -95,11 +104,13 @@
 	--color-popover-foreground: var(--color-text-primary);
 	--color-input: var(--bridge-border);
 	--color-sidebar: var(--color-bg-sidebar);
-	--color-sidebar-foreground: var(--color-text-muted);
-	--color-sidebar-accent: var(--color-bg-tertiary);
-	--color-sidebar-accent-foreground: var(--color-text-primary);
-	--color-sidebar-border: var(--bridge-border);
-	--color-sidebar-ring: var(--bridge-accent);
+	--color-sidebar-foreground: var(--sidebar-foreground);
+	--color-sidebar-primary: var(--sidebar-primary);
+	--color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+	--color-sidebar-accent: var(--sidebar-accent);
+	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+	--color-sidebar-border: var(--sidebar-border);
+	--color-sidebar-ring: var(--sidebar-ring);
 	--color-terminal: var(--color-bg-terminal);
 	--color-terminal-dim: var(--color-text-terminal-dim);
 	--color-scrim: var(--bridge-scrim);
@@ -209,23 +220,29 @@
 	--spacing-kv-label: var(--size-kv-label);
 	--spacing-branch-chip: var(--size-branch-chip);
 
-	--color-muted: var(--color-bg-tertiary);
-	--color-muted-foreground: var(--color-text-muted);
+	--color-muted: var(--muted);
+	--color-muted-foreground: var(--muted-foreground);
 	--color-passive: var(--color-text-passive);
-	--color-secondary: var(--color-bg-tertiary);
+	--color-secondary: var(--secondary);
+	--color-secondary-foreground: var(--secondary-foreground);
 
-	--color-primary: var(--bridge-accent);
-	--color-primary-foreground: var(--bridge-accent-fg);
-	--color-accent: var(--bridge-accent);
-	--color-accent-foreground: var(--bridge-accent-fg);
+	--color-primary: var(--primary);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-accent: var(--accent);
+	--color-accent-foreground: var(--accent-foreground);
 	--color-accent-weak: var(--bridge-accent-weak);
 	--color-accent-dim: var(--bridge-accent-dim);
 	--color-accent-strong: var(--bridge-accent-strong);
 	--color-danger-strong: var(--bridge-danger-strong);
-	--color-ring: var(--bridge-accent);
+	--color-ring: var(--ring);
 
-	--color-border: var(--bridge-border);
+	--color-border: var(--border);
 	--color-border-strong: var(--bridge-border-strong);
+	--color-chart-1: var(--chart-1);
+	--color-chart-2: var(--chart-2);
+	--color-chart-3: var(--chart-3);
+	--color-chart-4: var(--chart-4);
+	--color-chart-5: var(--chart-5);
 
 	--color-working: var(--bridge-working);
 	--color-success: var(--bridge-success);
@@ -249,8 +266,11 @@
 	--color-interactive-active: var(--bridge-interactive-active);
 
 	--animate-status-pulse: status-pulse 1.8s ease-in-out infinite;
-	--animate-overlay-in: overlay-in 150ms ease-out;
-	--animate-modal-in: modal-in 150ms ease-out;
+	--animate-overlay-in: overlay-in 110ms ease-out;
+	--animate-modal-in: modal-in 110ms cubic-bezier(0.23, 1, 0.32, 1);
+	/* Exits are shorter than entries: the system is responding, not deciding. */
+	--animate-overlay-out: overlay-out 80ms ease-in;
+	--animate-modal-out: modal-out 80ms cubic-bezier(0.4, 0, 1, 1);
 }
 
 /* Full-viewport modal/sheet scrim — dim + blur everything behind pop panels. */
@@ -418,19 +438,6 @@
 	padding: 0;
 }
 
-/* Board and session routes are workspaces rather than cards: the center pane
- * meets the sidebar directly and the single left border becomes the column
- * separator. Settings and first-run surfaces keep the inset frame above. */
-.center-panel-shell.center-panel-shell--workspace {
-	padding: 0;
-	background: var(--color-bg-primary);
-}
-
-.center-panel-shell--workspace .center-panel-surface {
-	border-width: 0 0 0 1px;
-	border-radius: 0;
-}
-
 .center-panel-titlebar {
 	padding-left: 1.125rem; /* matches former px-4.5 */
 }
@@ -459,14 +466,6 @@
 	);
 }
 
-.center-panel-shell--workspace.center-panel-shell--titlebar-clearance .center-panel-titlebar {
-	padding-left: var(--size-titlebar-content-offset);
-}
-
-.center-panel-shell--workspace.center-panel-shell--linux.center-panel-shell--titlebar-clearance .center-panel-titlebar {
-	padding-left: var(--size-titlebar-content-offset-linux);
-}
-
 /* Windows: the frameless window's custom titlebar already supplies top chrome,
  * so drop the framed panel's top inset to give content more height. */
 .platform-windows .center-panel-shell {
@@ -480,7 +479,7 @@
  * for the new component. */
 .reverb-topbar {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+	grid-template-columns: minmax(0, 1fr) auto;
 	width: 100%;
 	height: var(--size-topbar-primary);
 	min-height: var(--size-topbar-primary);
@@ -582,80 +581,6 @@
 	flex: 0 0 auto;
 	align-items: center;
 	color: var(--color-text-topbar-passive);
-}
-
-.reverb-topbar__state {
-	display: flex;
-	width: clamp(var(--size-topbar-state-min), 34cqi, var(--size-topbar-state-max));
-	min-width: var(--size-topbar-state-min);
-	height: var(--size-topbar-control);
-	flex: 0 1 var(--size-topbar-state-max);
-	align-items: center;
-	justify-content: center;
-	gap: var(--space-2);
-	overflow: hidden;
-	border: 1px solid var(--color-border-topbar);
-	border-radius: var(--radius-topbar-context);
-	background: var(--color-bg-topbar-context);
-	padding-inline: var(--space-3);
-	box-shadow:
-		inset 0 1px 0 rgb(255 255 255 / 0.025),
-		0 1px 0 rgb(0 0 0 / 0.16);
-	color: var(--color-text-topbar-muted);
-	white-space: nowrap;
-}
-
-.reverb-topbar__state--empty {
-	width: 0;
-	min-width: 0;
-	border: 0;
-	padding: 0;
-	box-shadow: none;
-	visibility: hidden;
-}
-
-.reverb-topbar__state-content {
-	display: flex;
-	min-width: 0;
-	width: 100%;
-	align-items: center;
-	justify-content: center;
-	gap: var(--space-2);
-}
-
-.reverb-topbar__state-label {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	font-size: var(--font-size-sm-md);
-	white-space: nowrap;
-}
-
-.reverb-topbar__status-dot {
-	width: var(--size-dot-sm);
-	height: var(--size-dot-sm);
-	flex: 0 0 var(--size-dot-sm);
-	border-radius: var(--radius-full);
-	background: currentColor;
-}
-
-.reverb-topbar__state-divider {
-	width: 1px;
-	height: calc(var(--size-topbar-control) - var(--space-3));
-	flex: 0 0 1px;
-	margin-inline: var(--space-1);
-	background: var(--color-border-topbar);
-}
-
-.reverb-topbar__activity {
-	display: inline-flex;
-	flex: 0 0 auto;
-	align-items: center;
-	gap: var(--space-1_5);
-	font-size: var(--font-size-sm-md);
-	font-weight: var(--font-weight-medium);
-	line-height: 1;
-	white-space: nowrap;
 }
 
 .reverb-topbar__trailing,
@@ -793,12 +718,6 @@
 		max-width: 100%;
 	}
 
-	.reverb-topbar__state {
-		width: clamp(7rem, 28cqi, 13rem);
-		min-width: 7rem;
-		padding-inline: var(--space-2);
-	}
-
 	.reverb-topbar [data-priority="secondary"] [data-compact-label] {
 		display: none;
 	}
@@ -828,13 +747,6 @@
 
 	.reverb-topbar__context {
 		max-width: none;
-		flex-basis: auto;
-	}
-
-	.reverb-topbar__state {
-		width: auto;
-		max-width: 9rem;
-		min-width: 0;
 		flex-basis: auto;
 	}
 
@@ -1291,6 +1203,12 @@ select {
 	height: 4px;
 }
 
+/* Lane scrollers reserve the scrollbar on both edges, so cards keep the same
+   width and inset whether or not the lane happens to overflow. */
+.board-lane-scroller {
+	scrollbar-gutter: stable both-edges;
+}
+
 .board-scrollbar::-webkit-scrollbar-button {
 	display: none;
 	width: 0;
@@ -1438,7 +1356,7 @@ select {
 
 .ao-startup-logo {
 	animation: ao-startup-logo-breathe 3.2s ease-in-out infinite;
-	filter: drop-shadow(0 7px 20px rgb(0 0 0 / 0.28));
+	filter: drop-shadow(0 7px 20px color-mix(in oklch, var(--background) 28%, transparent));
 }
 
 .ao-startup-status {
@@ -1480,6 +1398,26 @@ select {
 	to {
 		opacity: 1;
 		scale: 1;
+	}
+}
+
+@keyframes overlay-out {
+	from {
+		opacity: 1;
+	}
+	to {
+		opacity: 0;
+	}
+}
+
+@keyframes modal-out {
+	from {
+		opacity: 1;
+		scale: 1;
+	}
+	to {
+		opacity: 0;
+		scale: 0.97;
 	}
 }
 
@@ -1611,7 +1549,10 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	min-height: 0;
 	flex-direction: column;
 	overflow: hidden;
-	background: var(--bg);
+	/* The inspector owns the whole right column, including the space around
+	   its cards. The former legacy --bg variable is undefined in the token
+	   system, leaving this layer transparent and exposing dark panel strips. */
+	background: var(--color-bg-secondary);
 }
 
 .session-inspector__tabs {
@@ -1724,7 +1665,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	border-bottom: 1px solid var(--border);
 	background: var(--term-bg);
 	padding: 0 14px;
-	font-family: var(--font-mono);
 }
 
 .reviewer-terminal-header__back {
@@ -1768,8 +1708,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	padding: 0 9px;
 	font-size: 11px;
 	font-weight: 700;
-	color: #8bdc75;
-	text-transform: uppercase;
+	color: var(--color-success-bright);
 }
 
 :root[data-theme="light"] .reviewer-terminal-header__role {
@@ -1784,17 +1723,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	font-size: 13px;
 	font-weight: 650;
 	color: var(--fg);
-}
-
-/* Collapse/expand animation for the inspector panel: rrp v4 drives panel
- * sizes via flex-grow, which is animatable. Suppress it while the separator
- * is actively dragged so resizing tracks the pointer 1:1. */
-.session-split #inspector[data-panel] {
-	transition: flex-grow 0.2s linear;
-}
-
-.session-split:has([data-separator="active"]) #inspector[data-panel] {
-	transition: none;
 }
 
 .session-inspector__topbar {
@@ -1824,7 +1752,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	margin-bottom: 11px;
 	font-size: 10.5px;
 	font-weight: 600;
-	text-transform: uppercase;
 	letter-spacing: 0.09em;
 	color: var(--fg-passive);
 }
@@ -1880,7 +1807,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	min-width: 0;
 	align-items: center;
 	gap: 8px;
-	font-family: var(--font-mono);
 	font-size: 13px;
 	font-weight: 700;
 	color: var(--fg);
@@ -1960,7 +1886,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	min-width: 0;
 	align-items: center;
 	gap: 8px;
-	font-family: var(--font-mono);
 	font-size: 12.5px;
 	font-weight: 600;
 	color: var(--fg);
@@ -2093,7 +2018,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 .reviewer-card__action--primary {
 	border-color: color-mix(in srgb, var(--green) 42%, transparent);
 	background: color-mix(in srgb, var(--green) 10%, transparent);
-	color: #8bdc75;
+	color: var(--color-success-bright);
 }
 
 .reviewer-card__action--danger {
@@ -2204,7 +2129,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 
 .reviewer-row__number {
 	grid-column: 1;
-	font-family: var(--font-mono);
 	font-size: 11px;
 	color: var(--fg-passive);
 }
@@ -2276,8 +2200,8 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 }
 
 .inspector-kv__v--mono {
-	font-family: var(--font-mono);
 	font-size: 11.5px;
+	font-variant-numeric: tabular-nums;
 }
 
 @container (max-width: 300px) {
@@ -2404,7 +2328,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 .inspector-timeline__ets {
 	font-size: 10.5px;
 	color: var(--fg-passive);
-	font-family: var(--font-mono);
+	font-variant-numeric: tabular-nums;
 	margin-top: 2px;
 }
 
@@ -2489,7 +2413,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 .browser-panel__url-input {
 	height: 29px;
 	padding-left: 29px;
-	font-family: var(--font-mono);
 	font-size: 12px;
 }
 
@@ -2515,7 +2438,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	place-items: center;
 	padding: 20px;
 	text-align: center;
-	font-family: var(--font-mono);
 	font-size: 12px;
 	color: var(--fg-passive);
 	pointer-events: none;

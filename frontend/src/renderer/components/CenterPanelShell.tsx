@@ -20,15 +20,12 @@ export function CenterPanelShell({
 	className,
 	children,
 	titlebarAlign = true,
-	variant = "framed",
 }: {
 	/** Extra classes on the outer frame. */
 	className?: string;
 	children: ReactNode;
 	/** When false, keep the default panel insets (Settings). */
 	titlebarAlign?: boolean;
-	/** Board/session workspaces run edge-to-edge; settings/welcome retain the inset frame. */
-	variant?: "framed" | "workspace";
 }) {
 	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
 	const isFullScreen = useWindowFullScreen();
@@ -39,7 +36,6 @@ export function CenterPanelShell({
 		<div
 			className={cn(
 				"center-panel-shell",
-				variant === "workspace" && "center-panel-shell--workspace",
 				align && "center-panel-shell--mac",
 				// Linux has no traffic lights, so the sidebar-closed title clears the
 				// cluster at its own left edge rather than the macOS offset.

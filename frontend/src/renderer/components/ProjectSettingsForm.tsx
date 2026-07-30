@@ -1,5 +1,4 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import {
 	Bot,
@@ -31,11 +30,8 @@ import { newestActiveOrchestrator } from "../types/workspace";
 import { AgentAvatar } from "./AgentAvatar";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeNeedsRule } from "./IntakeFields";
-import { ShellTopbar } from "./ShellTopbar";
 import { AgentSelectMenuItem } from "./settings/AgentSelectMenuItem";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
-import { SettingsPageShell } from "./settings/SettingsPageShell";
-import { SettingsPanel } from "./settings/SettingsPanel";
 import { SettingsRow } from "./settings/SettingsRow";
 import { SettingsSection } from "./settings/SettingsSection";
 
@@ -55,9 +51,7 @@ const KNOWN_REVIEWER_HARNESS_IDS = new Set(["claude-code", "codex", "opencode"])
 const projectQueryKey = (id: string) => ["project", id] as const;
 
 export function ProjectSettingsForm({ projectId }: { projectId: string }) {
-	const navigate = useNavigate();
 	const queryClient = useQueryClient();
-	const closeSettings = () => navigate({ to: "/projects/$projectId", params: { projectId } });
 
 	const query = useQuery({
 		queryKey: projectQueryKey(projectId),
@@ -72,25 +66,20 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 	});
 
 	return (
-		<SettingsPageShell>
-			<ShellTopbar surfaceOverride="project-settings" />
-			<SettingsPanel onClose={closeSettings} showHeader={false}>
-				{query.isLoading ? (
-					<p className="text-sm text-settings-muted">Loading project settings…</p>
-				) : query.isError || !query.data ? (
-					<p className="text-sm text-error">
-						{query.error instanceof Error ? query.error.message : "Could not load project."}
-					</p>
-				) : (
-					<SettingsBody
-						key={projectId}
-						project={query.data}
-						onSaved={() => queryClient.invalidateQueries({ queryKey: workspaceQueryKey })}
-						projectId={projectId}
-					/>
-				)}
-			</SettingsPanel>
-		</SettingsPageShell>
+		<div aria-label="Project settings" data-testid="project-settings">
+			{query.isLoading ? (
+				<p className="text-sm text-settings-muted">Loading project settings…</p>
+			) : query.isError || !query.data ? (
+				<p className="text-sm text-error">{query.error instanceof Error ? query.error.message : "Could not load project."}</p>
+			) : (
+				<SettingsBody
+					key={projectId}
+					project={query.data}
+					onSaved={() => queryClient.invalidateQueries({ queryKey: workspaceQueryKey })}
+					projectId={projectId}
+				/>
+			)}
+		</div>
 	);
 }
 

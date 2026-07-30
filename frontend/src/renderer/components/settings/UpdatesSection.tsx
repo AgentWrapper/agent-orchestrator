@@ -41,7 +41,7 @@ function nextUpdateRequestId(): string {
 	return `feature-update-${updateRequestSequence}`;
 }
 
-export function UpdatesSection() {
+export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) {
 	const queryClient = useQueryClient();
 	const query = useQuery({
 		queryKey: updateSettingsQueryKey,
@@ -182,7 +182,7 @@ export function UpdatesSection() {
 
 	return (
 		<>
-			<SettingsSection title="Updates" sectionId="updates">
+			<SettingsSection title="Updates" sectionId="updates" titleHidden={titleHidden}>
 				{featurePr != null && (
 					<div className="flex flex-col gap-2">
 						<div className="settings-row-bar h-auto min-h-(--size-settings-row) flex-wrap gap-2">
@@ -318,7 +318,7 @@ function FeatureBuildsSelect({
 								PR #{build.pr}: {build.title}
 							</span>
 							<div className="flex min-w-0 items-center gap-1.5">
-								<span className="min-w-0 truncate font-mono text-caption text-passive">{build.buildId}</span>
+								<span className="min-w-0 truncate text-caption text-passive">{build.buildId}</span>
 								<Badge variant={isStale ? "warning" : "neutral"} className="h-3.5 px-1 text-[9px] leading-none">
 									{ageLabel}
 								</Badge>

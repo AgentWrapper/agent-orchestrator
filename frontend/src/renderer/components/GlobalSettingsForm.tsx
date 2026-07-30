@@ -1,4 +1,3 @@
-import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { Keyboard, Mail } from "lucide-react";
 import { ConnectMobileModal } from "./ConnectMobileModal";
@@ -6,39 +5,52 @@ import { DeveloperModeSection } from "./settings/DeveloperModeSection";
 import { GeneralSettingsSection } from "./settings/GeneralSettingsSection";
 import { ReportProblemDialog } from "./settings/ReportProblemDialog";
 import { SettingsLinkRow } from "./settings/SettingsRow";
-import { SettingsPageShell } from "./settings/SettingsPageShell";
-import { SettingsPanel } from "./settings/SettingsPanel";
 import { SettingsSection } from "./settings/SettingsSection";
 import { UpdatesSection } from "./settings/UpdatesSection";
 import { KeyboardShortcutsSettingsDialog } from "./settings/KeyboardShortcutsSettingsDialog";
-import { ShellTopbar } from "./ShellTopbar";
 
-export function GlobalSettingsForm() {
-	const navigate = useNavigate();
+export type GlobalSettingsSection = "general" | "updates" | "developer" | "help" | "all";
+
+export function GlobalSettingsForm({ section = "all" }: { section?: GlobalSettingsSection }) {
 	const [mobileOpen, setMobileOpen] = useState(false);
 	const [reportProblemOpen, setReportProblemOpen] = useState(false);
 	const [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false);
+	// One section per page means the dialog header already names it, so the
+	// page's leading heading would just repeat that title.
+	const leadingTitleHidden = section !== "all";
 
 	return (
 		<>
-			<SettingsPageShell>
-				<ShellTopbar surfaceOverride="global-settings" />
-				<SettingsPanel onClose={() => navigate({ to: "/" })} showHeader={false}>
-					<GeneralSettingsSection onConnectMobile={() => setMobileOpen(true)} />
-					<SettingsSection title="Preferences">
-						<SettingsLinkRow
-							icon={Keyboard}
-							label="Keyboard shortcuts"
-							onClick={() => setKeyboardShortcutsOpen(true)}
+			<div
+				aria-label="Settings"
+				className="flex w-full flex-col gap-(--size-settings-section-gap)"
+				data-testid="settings-page"
+			>
+				{(section === "all" || section === "general") && (
+					<>
+						<GeneralSettingsSection
+							onConnectMobile={() => setMobileOpen(true)}
+							titleHidden={leadingTitleHidden}
 						/>
-					</SettingsSection>
-					<UpdatesSection />
-					<DeveloperModeSection />
-					<SettingsSection title="Get help">
+						<SettingsSection title="Preferences">
+							<SettingsLinkRow
+								icon={Keyboard}
+								label="Keyboard shortcuts"
+								onClick={() => setKeyboardShortcutsOpen(true)}
+							/>
+						</SettingsSection>
+					</>
+				)}
+				{(section === "all" || section === "updates") && <UpdatesSection titleHidden={leadingTitleHidden} />}
+				{(section === "all" || section === "developer") && (
+					<DeveloperModeSection titleHidden={leadingTitleHidden} />
+				)}
+				{(section === "all" || section === "help") && (
+					<SettingsSection title="Get help" titleHidden={leadingTitleHidden}>
 						<SettingsLinkRow icon={Mail} label="Report a problem" onClick={() => setReportProblemOpen(true)} />
 					</SettingsSection>
-				</SettingsPanel>
-			</SettingsPageShell>
+				)}
+			</div>
 			<ConnectMobileModal open={mobileOpen} onOpenChange={setMobileOpen} />
 			<ReportProblemDialog open={reportProblemOpen} onOpenChange={setReportProblemOpen} />
 			<KeyboardShortcutsSettingsDialog

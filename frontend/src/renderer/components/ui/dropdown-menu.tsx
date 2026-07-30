@@ -53,7 +53,7 @@ export function DropdownMenuLabel({
 	return (
 		<DropdownMenuPrimitive.Label
 			className={cn(
-				"px-2 py-1.5 font-mono text-micro uppercase tracking-wide-xl text-passive",
+				"px-2 py-1.5 text-micro tracking-wide text-passive",
 				inset && "pl-8",
 				className,
 			)}
@@ -70,5 +70,5 @@ export function DropdownMenuSeparator({
 }
 
 export function DropdownMenuShortcut({ className, ...props }: React.ComponentProps<"span">) {
-	return <span className={cn("ml-auto font-mono text-micro tracking-wide-md text-passive", className)} {...props} />;
+	return <span className={cn("ml-auto text-micro tracking-wide-md text-passive", className)} {...props} />;
 }

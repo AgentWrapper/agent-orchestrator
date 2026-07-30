@@ -73,7 +73,7 @@ function DaemonFailureContent({ status }: { status: DaemonStatus }) {
 					{canRestart ? (
 						<button
 							type="button"
-							className="mt-2 inline-flex h-control-md items-center rounded-md bg-accent-strong px-3 font-semibold text-accent-foreground transition-[filter,opacity] hover:brightness-110 disabled:cursor-wait disabled:opacity-60"
+							className="mt-2 inline-flex h-control-md items-center rounded-md bg-primary px-3 font-semibold text-primary-foreground transition-[filter,opacity] hover:brightness-110 disabled:cursor-wait disabled:opacity-60"
 							disabled={restarting}
 							onClick={() => void restartDaemon()}
 						>

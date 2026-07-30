@@ -396,7 +396,7 @@ export function BrowserPanelView({
 					/>
 					<Input
 						aria-label="Browser URL"
-						className="h-control-sm! pl-6 font-mono text-caption"
+						className="h-control-sm! pl-6 text-caption"
 						onChange={(event) => setUrlInput(event.target.value)}
 						placeholder="localhost:5173"
 						value={urlInput}
@@ -419,7 +419,7 @@ export function BrowserPanelView({
 							variant="ghost"
 						>
 							<Layers3 aria-hidden="true" className="size-icon-base" />
-							<span className="font-mono text-caption">{tabs.length}</span>
+							<span className="text-caption tabular-nums">{tabs.length}</span>
 						</Button>
 					</DropdownMenuTrigger>
 					<DropdownMenuContent align="end" className="w-72" sideOffset={8}>
@@ -438,7 +438,7 @@ export function BrowserPanelView({
 										</span>
 										<span className="min-w-0 flex-1">
 											<span className="block truncate text-xs text-foreground">{label.title}</span>
-											<span className="block truncate font-mono text-caption text-passive">{label.subtitle}</span>
+											<span className="block truncate text-caption text-passive">{label.subtitle}</span>
 										</span>
 									</DropdownMenuItem>
 									<DropdownMenuItem
@@ -479,7 +479,7 @@ export function BrowserPanelView({
 				) : null}
 				{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
 				{navState.url === "" ? (
-					<div className="pointer-events-none absolute inset-0 grid place-items-center p-5 text-center font-mono text-xs text-passive">
+					<div className="pointer-events-none absolute inset-0 grid place-items-center p-5 text-center text-xs text-passive">
 						<p>Enter a URL or click one in the terminal.</p>
 					</div>
 				) : null}
@@ -527,7 +527,7 @@ function StaticPreview({ url }: { url: string }) {
 	return (
 		<div className="absolute inset-0 overflow-auto bg-preview text-preview-foreground">
 			<div className="border-b border-preview bg-surface px-4 py-3">
-				<div className="text-caption font-semibold uppercase tracking-wide-md text-preview-muted">AO Preview</div>
+				<div className="text-caption font-semibold tracking-wide text-preview-muted">Preview</div>
 				<div className="mt-1 truncate font-mono text-xs text-preview-link">{url}</div>
 			</div>
 			<div className="mx-auto max-w-preview-max px-5 py-6">
@@ -552,7 +552,7 @@ function StaticPreview({ url }: { url: string }) {
 							["Latency", "42 ms"],
 						].map(([label, value]) => (
 							<div key={label} className="rounded-md border border-preview-tile bg-preview-tile p-3">
-								<div className="text-caption font-medium uppercase tracking-wide text-preview-muted">{label}</div>
+								<div className="text-caption font-medium tracking-wide text-preview-muted">{label}</div>
 								<div className="mt-1 text-subtitle font-semibold text-preview-heading">{value}</div>
 							</div>
 						))}

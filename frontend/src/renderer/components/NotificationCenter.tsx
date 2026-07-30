@@ -195,7 +195,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 				<Bell className="size-icon-lg" aria-hidden="true" />
 			)}
 			{unreadCount > 0 ? (
-				<span className="pointer-events-none absolute right-px top-px grid h-3 min-w-3 place-items-center rounded-full bg-accent px-0.5 font-mono text-[7px] font-semibold leading-none text-accent-foreground shadow-sm ring-1 ring-background">
+				<span className="pointer-events-none absolute right-px top-px grid h-3 min-w-3 place-items-center rounded-full bg-accent px-0.5 text-[7px] font-semibold leading-none text-accent-foreground shadow-sm ring-1 ring-background">
 					{unreadCount > 99 ? "99+" : unreadCount}
 				</span>
 			) : null}
@@ -335,7 +335,7 @@ function NotificationTab({
 			{typeof count === "number" && count > 0 ? (
 				<span
 					className={cn(
-						"relative -top-1 grid min-w-4 place-items-center rounded-full px-1 font-mono text-[9px] leading-4",
+						"relative -top-1 grid min-w-4 place-items-center rounded-full px-1 text-[9px] leading-4",
 						active ? "bg-foreground text-background" : "bg-surface text-muted-foreground",
 					)}
 				>
@@ -401,7 +401,7 @@ function NotificationItem({
 						<span className="min-w-0 flex-1 break-words text-control font-medium leading-snug text-foreground transition-colors group-hover:text-accent">
 							{notification.title}
 						</span>
-						<time className="shrink-0 font-mono text-[9px] text-passive" dateTime={notification.createdAt}>
+						<time className="shrink-0 text-[9px] text-passive" dateTime={notification.createdAt}>
 							{formatTimeCompact(notification.createdAt)}
 						</time>
 					</span>

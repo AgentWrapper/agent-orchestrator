@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUiStore } from "../stores/ui-store";
-import type { SessionActivityState, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
+import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { ShellTopbar, TopbarKillButton } from "./ShellTopbar";
 import { TooltipProvider } from "./ui/tooltip";
 
@@ -186,70 +186,23 @@ beforeEach(() => {
 	useUiStore.setState({ inspectorSessions: {} });
 });
 
-describe("ShellTopbar activity status", () => {
-	it.each([
-		["active", "Working"],
-		["idle", "Idle"],
-		["waiting_input", "Input Needed"],
-		["exited", "Exited"],
-	] as const)("renders %s activity as %s", (state: SessionActivityState, label) => {
-		renderTopbar(
-			sessionWith({
-				activity: { state, lastActivityAt: "2026-06-10T00:00:00Z" },
-			}),
-		);
+describe("ShellTopbar identity", () => {
+	it("leaves the center of the bar empty", () => {
+		renderTopbar(sessionWith({ activity: { state: "active", lastActivityAt: "2026-06-10T00:00:00Z" } }));
 
-		expect(screen.getByText(label)).toBeInTheDocument();
-	});
-
-	it("separates the worktree from a plain, non-pill activity label", () => {
-		renderTopbar(sessionWith());
-
-		const status = screen.getByText("Working");
-		expect(status).toHaveClass("reverb-topbar__activity");
-		expect(status.previousElementSibling).toHaveClass("reverb-topbar__state-divider");
-		expect(status).not.toHaveClass("rounded-md");
-	});
-
-	it.each([
-		["ci_failed", "idle", "Idle", "CI failed"],
-		["mergeable", "active", "Working", "Ready"],
-		["merged", "exited", "Exited", "Done"],
-		["changes_requested", "waiting_input", "Input Needed", "Needs input"],
-	] as const)("ignores derived %s topbar status in favor of activity", (status, state, label, hidden) => {
-		renderTopbar(
-			sessionWith({
-				status,
-				activity: { state, lastActivityAt: "2026-06-10T00:00:00Z" },
-			}),
-		);
-
-		expect(screen.getByText(label)).toBeInTheDocument();
-		expect(screen.queryByText(hidden)).not.toBeInTheDocument();
-	});
-
-	it("uses a compact unknown state when activity is missing or unknown", () => {
-		const first = renderTopbar(sessionWith({ activity: undefined }));
-		expect(screen.getByText("Unknown")).toBeInTheDocument();
-
-		first.unmount();
-		renderTopbar(sessionWith({ activity: { state: "unknown", lastActivityAt: "" } }));
-		expect(screen.getByText("Unknown")).toBeInTheDocument();
-	});
-
-	it("does not synthesize branch text for branchless sessions", () => {
-		renderTopbar(sessionWith({ branch: undefined }));
-
-		expect(screen.queryByText("session/sess-1")).not.toBeInTheDocument();
-		expect(screen.getByText("Working")).toBeInTheDocument();
+		// The context pill that carried branch and activity is gone; the bar is
+		// breadcrumbs plus trailing controls.
+		expect(screen.queryByText("Working")).not.toBeInTheDocument();
+		expect(screen.queryByText("ao/sess-1")).not.toBeInTheDocument();
+		expect(document.querySelector(".reverb-topbar__state")).toBeNull();
 	});
 });
 
 describe("ShellTopbar orchestrator actions", () => {
 	it.each([
-		["active", "Working", true],
-		["waiting_input", "Input Needed", false],
-	] as const)("shows %s orchestrator activity in the project-board context", (state, label, pulses) => {
+		["active", "Working"],
+		["waiting_input", "Input Needed"],
+	] as const)("keeps the orchestrator control on a project board with %s activity", (state, label) => {
 		renderTopbarSessions(
 			[
 				{
@@ -260,12 +213,9 @@ describe("ShellTopbar orchestrator actions", () => {
 			"",
 		);
 
-		const status = screen.getByText(label);
-		const indicator = status.querySelector("span");
 		expect(screen.getByRole("button", { name: "Orchestrator" })).toBeInTheDocument();
-		expect(indicator).toHaveClass("reverb-topbar__status-dot");
-		if (pulses) expect(indicator).toHaveClass("animate-status-pulse");
-		if (!pulses) expect(indicator).not.toHaveClass("animate-status-pulse");
+		// Activity no longer has a surface in the bar.
+		expect(screen.queryByText(label)).not.toBeInTheDocument();
 	});
 
 	it("keeps orchestrator-session actions compact and explains them on hover", async () => {
@@ -311,10 +261,7 @@ describe("ShellTopbar orchestrator actions", () => {
 
 		await userEvent.click(screen.getByRole("button", { name: "Open orchestrator" }));
 
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/settings",
-			params: { projectId: "proj-1" },
-		});
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
 		expect(spawnMock).not.toHaveBeenCalled();
 	});
 });
@@ -355,7 +302,7 @@ describe("ShellTopbar route variants", () => {
 		expect(navigateMock).toHaveBeenCalledWith({ to: "/" });
 	});
 
-	it("renders compact project settings context without a redundant Board action", () => {
+	it("renders the project settings identity without a redundant Board action", () => {
 		paramsMock.projectId = "proj-1";
 		useWorkspaceQueryMock.mockReturnValue({
 			data: [
@@ -374,7 +321,8 @@ describe("ShellTopbar route variants", () => {
 		renderSurface("project-settings");
 
 		expect(screen.getByText("my-app")).toBeInTheDocument();
-		expect(screen.getByText("/repo/my-app")).toHaveClass("reverb-topbar__state-label", "font-mono");
+		// The repo path lived in the removed context pill.
+		expect(screen.queryByText("/repo/my-app")).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Back to Board" })).not.toBeInTheDocument();
 	});
 

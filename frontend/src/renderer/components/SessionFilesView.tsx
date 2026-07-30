@@ -161,14 +161,14 @@ export function SessionFilesView({
 						<Search className="pointer-events-none absolute left-2.5 top-1/2 size-icon-sm -translate-y-1/2 text-passive" />
 						<Input
 							autoFocus
-							className="h-control-md pl-8 font-mono text-xs"
+							className="h-control-md pl-8 text-xs"
 							onChange={(event) => setFilter(event.target.value)}
 							placeholder="Search changed files"
 							value={filter}
 						/>
 					</label>
 				) : (
-					<span className="mr-auto min-w-0 truncate pl-1.5 font-mono text-caption text-passive">
+					<span className="mr-auto min-w-0 truncate pl-1.5 text-caption text-passive">
 						{changedCount === 1 ? "1 file" : `${changedCount} files`}
 					</span>
 				)}
@@ -367,7 +367,7 @@ function ReviewFileCard({
 						<ChevronRight className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
 					)}
 					<StatusMark status={file.status} />
-					<span className="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-foreground">{file.path}</span>
+					<span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{file.path}</span>
 					<ChangeBadges additions={file.additions} deletions={file.deletions} />
 				</button>
 				<CopyPathButton path={file.path} />
@@ -758,7 +758,7 @@ function DiffLineSegments({ add, segments }: { add: boolean; segments: DiffSegme
 
 function ChangeBadges({ additions, deletions }: { additions: number; deletions: number }) {
 	return (
-		<span className="flex shrink-0 items-center gap-1 font-mono text-xs font-semibold">
+		<span className="flex shrink-0 items-center gap-1 text-xs font-semibold tabular-nums">
 			{additions > 0 ? <span className="rounded bg-success/20 px-1.5 py-0.5 text-success">+{additions}</span> : null}
 			{deletions > 0 ? <span className="rounded bg-error/20 px-1.5 py-0.5 text-error">-{deletions}</span> : null}
 		</span>
@@ -789,7 +789,7 @@ function StatusMark({ status }: { status: WorkspaceFileStatus }) {
 	return (
 		<span
 			className={cn(
-				"inline-flex size-5 shrink-0 items-center justify-center rounded border font-mono text-micro font-semibold",
+				"inline-flex size-5 shrink-0 items-center justify-center rounded border text-micro font-semibold",
 				statusTone[status],
 			)}
 			title={status}

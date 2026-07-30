@@ -78,8 +78,8 @@ describe("WindowTitlebar", () => {
 
 		await waitFor(() =>
 			expect(window.ao!.window.setOverlay).toHaveBeenCalledWith({
-				color: "#17181c",
-				symbolColor: "#c7ccd4",
+				color: "oklch(0.21 0.006 285.885)",
+				symbolColor: "oklch(0.985 0 0)",
 			}),
 		);
 
@@ -87,20 +87,20 @@ describe("WindowTitlebar", () => {
 
 		await waitFor(() =>
 			expect(window.ao!.window.setOverlay).toHaveBeenLastCalledWith({
-				color: "#fcfcfc",
-				symbolColor: "#3f444c",
+				color: "oklch(0.985 0 0)",
+				symbolColor: "oklch(0.21 0.006 285.885)",
 			}),
 		);
 	});
 
-	it("navigates to renderer-owned settings from the File menu", async () => {
+	it("opens renderer-owned settings from the File menu", async () => {
 		const user = userEvent.setup();
 		render(<WindowTitlebar />);
 
 		await user.click(screen.getByRole("button", { name: "File" }));
 		await user.click(await screen.findByRole("menuitem", { name: "Settings" }));
 
-		expect(navigateMock).toHaveBeenCalledWith({ to: "/settings" });
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "global" });
 	});
 
 	it("dispatches native menu actions to the main-process bridge", async () => {

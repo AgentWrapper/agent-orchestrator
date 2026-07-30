@@ -6,7 +6,6 @@ import type { ReverbTopbarModel } from "./topbar-model";
 export interface ReverbTopbarProps {
 	model: ReverbTopbarModel;
 	leadingIcon?: ReactNode;
-	context?: ReactNode;
 	error?: ReactNode;
 	actions?: ReactNode;
 	utilities?: ReactNode;
@@ -30,7 +29,6 @@ function interactiveStyleFor(dragStyle: CSSProperties | undefined): CSSPropertie
 export function ReverbTopbar({
 	model,
 	leadingIcon,
-	context,
 	error,
 	actions,
 	utilities,
@@ -47,7 +45,7 @@ export function ReverbTopbar({
 		<header
 			aria-label={model.ariaLabel ?? "Reverb workspace"}
 			className={cn(
-				"reverb-topbar center-panel-titlebar grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 border-b border-border z-chrome",
+				"reverb-topbar center-panel-titlebar grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border z-chrome",
 				className,
 			)}
 			data-surface={model.surface}
@@ -122,19 +120,6 @@ export function ReverbTopbar({
 					</nav>
 				) : null}
 			</div>
-
-			{context ? (
-				<div
-					aria-label={model.contextAriaLabel ?? "Current context"}
-					className="reverb-topbar__state min-w-0"
-					role="group"
-					style={noDragStyle}
-				>
-					{context}
-				</div>
-			) : (
-				<div aria-hidden="true" className="reverb-topbar__state reverb-topbar__state--empty" />
-			)}
 
 			<div className="reverb-topbar__trailing flex min-w-0 items-center justify-end">
 				{error ? (

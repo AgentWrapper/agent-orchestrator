@@ -12,13 +12,12 @@ import {
 export type CommandGroupId = "current" | "attention" | "projects" | "sessions" | "prs" | "global";
 
 export type NavigateTarget =
-	| { to: "/settings" }
 	| { to: "/projects/$projectId"; params: { projectId: string } }
-	| { to: "/projects/$projectId/settings"; params: { projectId: string } }
 	| { to: "/projects/$projectId/sessions/$sessionId"; params: { projectId: string; sessionId: string } };
 
 export type CommandAction =
 	| { kind: "navigate"; target: NavigateTarget }
+	| { kind: "open-settings"; projectId?: string }
 	| { kind: "open-new-task"; projectId: string }
 	| { kind: "open-new-project" }
 	| { kind: "open-orchestrator"; projectId: string }
@@ -135,8 +134,8 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 			subtitle: currentProject.name,
 			keywords: ["settings", "config", currentProject.name],
 			action: {
-				kind: "navigate",
-				target: { to: "/projects/$projectId/settings", params: { projectId: currentProject.id } },
+				kind: "open-settings",
+				projectId: currentProject.id,
 			},
 		});
 	}
@@ -229,7 +228,7 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 		group: "global",
 		title: "Global settings",
 		keywords: ["settings", "preferences", "config"],
-		action: { kind: "navigate", target: { to: "/settings" } },
+		action: { kind: "open-settings" },
 	});
 	items.push({
 		id: "global-theme",
