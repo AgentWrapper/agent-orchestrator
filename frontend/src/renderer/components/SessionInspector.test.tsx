@@ -658,7 +658,16 @@ describe("SessionInspector tabs", () => {
 });
 
 describe("SessionInspector reviews tab", () => {
-	const openReviewsTab = async () => userEvent.click(screen.getByRole("tab", { name: /Reviews/ }));
+	// PR rows start collapsed, so opening the tab alone shows only their titles.
+	// Reveal every row, since these tests are about what a review says.
+	const openReviewsTab = async () => {
+		await userEvent.click(screen.getByRole("tab", { name: /Reviews/ }));
+		// Rows arrive with the reviews query, so wait for them before expanding.
+		const rows = await screen.findAllByTestId("review-pr-row").catch(() => []);
+		for (const row of rows) {
+			if (row.getAttribute("aria-expanded") === "false") await userEvent.click(row);
+		}
+	};
 
 	it("triggers a review and opens the returned reviewer terminal", async () => {
 		mockCommonGets([], "", [reviewState(3, "needs_review")]);
@@ -714,7 +723,7 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(<SessionInspector session={sessionWithProvider([pr(3, "open")], "codex")} />);
 		await openReviewsTab();
 
-		expect(await screen.findByText("claude-code")).toBeInTheDocument();
+		expect(await screen.findByRole("button", { name: /Default reviewer agent/ })).toHaveTextContent("claude-code");
 		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
 	});
 
@@ -739,16 +748,12 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open"), pr(4, "open"), pr(5, "draft")])} />);
 		await openReviewsTab();
 
-		// The reviewer names the panel and also has its own tab, so it appears twice.
-		expect(screen.getAllByText("codex").length).toBeGreaterThan(0);
+		expect(screen.getByRole("button", { name: /Default reviewer agent/ })).toHaveTextContent("codex");
 		expect(await screen.findByText("Reviewable change 3")).toBeInTheDocument();
 		expect(screen.getByText("#3 · Not run")).toBeInTheDocument();
 		expect(screen.getByText("Reviewable change 4")).toBeInTheDocument();
 		expect(screen.queryByText("Reviewable change 5")).not.toBeInTheDocument();
-		// PR #3 is expanded by default, so its verdict is visible.
 		expect(screen.getAllByText("Not run")).not.toHaveLength(0);
-		// PR #4 is collapsed by default — expand it to reveal its verdict.
-		await userEvent.click(screen.getByRole("button", { name: /Reviewable change 4/ }));
 		expect(screen.getAllByText("Approved")).not.toHaveLength(0);
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Run" })).not.toBeInTheDocument();
@@ -890,7 +895,7 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsTab();
 
-		await userEvent.click(await screen.findByRole("button", { name: /Reviewer agent/ }));
+		await userEvent.click(await screen.findByRole("button", { name: /Default reviewer agent/ }));
 		await userEvent.click(await screen.findByRole("menuitem", { name: /opencode/ }));
 		await userEvent.click(screen.getByRole("button", { name: "Run review" }));
 
@@ -1079,7 +1084,7 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsTab();
 
-		expect(await screen.findByText("codex")).toBeInTheDocument();
+		expect(await screen.findByRole("button", { name: /Default reviewer agent/ })).toHaveTextContent("codex");
 		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
 		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
 		expect(screen.queryByText("review session")).not.toBeInTheDocument();
@@ -1092,7 +1097,7 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsTab();
 
-		expect(await screen.findByText("codex")).toBeInTheDocument();
+		expect(await screen.findByRole("button", { name: /Default reviewer agent/ })).toHaveTextContent("codex");
 		expect(screen.queryByText("Pull request reviews")).not.toBeInTheDocument();
 	});
 

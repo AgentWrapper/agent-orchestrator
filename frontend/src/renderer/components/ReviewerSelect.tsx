@@ -20,6 +20,9 @@ export function ReviewerSelect({
 	// The same picker serves the project default and a one-off override for the
 	// next run, so the caller names it.
 	ariaLabel = "Default reviewer agent",
+	// Naming what "project default" resolves to matters when nothing has run yet
+	// and no reviewer tab exists to say it.
+	defaultHarness,
 	disabled = false,
 	authorized,
 	installed,
@@ -28,6 +31,7 @@ export function ReviewerSelect({
 	value: string;
 	onChange: (value: string) => void;
 	ariaLabel?: string;
+	defaultHarness?: string;
 	disabled?: boolean;
 	authorized?: components["schemas"]["AgentInfo"][];
 	installed?: components["schemas"]["AgentInfo"][];
@@ -47,8 +51,13 @@ export function ReviewerSelect({
 		fallbackAgents,
 	});
 
+	// The trigger shows the agent that will actually run, since "project default"
+	// names the setting rather than answering the question. The menu keeps the
+	// longer wording, where there is room for it.
+	const defaultLabel = defaultHarness ? `Project default (${defaultHarness})` : "Project default";
+	const triggerDefaultLabel = defaultHarness || "Project default";
 	const menuOptions = [
-		{ value: "__default__", label: "Project default" },
+		{ value: "__default__", label: defaultLabel },
 		...options.map((agent) => ({ value: agent.id, label: agent.label, disabled: agent.disabled })),
 	];
 	const selectedValue = value || "__default__";
@@ -66,8 +75,12 @@ export function ReviewerSelect({
 				<>
 					{selected && selected.value !== "__default__" ? (
 						<AgentAvatar provider={selected.value} className="size-icon-lg" />
+					) : defaultHarness ? (
+						<AgentAvatar provider={defaultHarness} className="size-icon-lg" />
 					) : null}
-					<span className="min-w-0 truncate">{selected?.label ?? "Project default"}</span>
+					<span className="min-w-0 truncate">
+						{selected && selected.value !== "__default__" ? selected.label : triggerDefaultLabel}
+					</span>
 				</>
 			)}
 			renderMenuItem={(option, selected) => {

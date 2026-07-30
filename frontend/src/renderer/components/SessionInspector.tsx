@@ -9,6 +9,7 @@ import {
 	Files as FilesIcon,
 	GitPullRequest,
 	Play,
+	ScanEye,
 	Terminal,
 	Trash2,
 	Loader2,
@@ -37,6 +38,7 @@ import { StatusPill } from "./StatusPill";
 import { SessionTerminationDialog } from "./SessionTerminationDialog";
 import { ReviewerSelect } from "./ReviewerSelect";
 import { agentsQueryOptions } from "../hooks/useAgentsQuery";
+import { SettingsRow } from "./settings/SettingsRow";
 import { Switch } from "./ui/switch";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
@@ -887,6 +889,7 @@ function ReviewDisclosure({
 		<div className="py-2 first:pt-0.5 last:pb-0.5">
 			<button
 				aria-expanded={open}
+				data-testid="review-pr-row"
 				className="-mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition-colors hover:bg-interactive-hover/30"
 				onClick={() => setOpen((current) => !current)}
 				type="button"
@@ -1189,34 +1192,25 @@ function ReviewPanel({
 					{notice}
 				</p>
 			) : null}
-			{/* The reviewer is named once. Once a tab exists it carries the name, so
-			    repeating it here said the same thing twice; before anything has run
-			    there is no tab, and the panel would otherwise never say who reviews. */}
-			<div className="flex min-w-0 items-center gap-2.5">
-				{reviewerTabs.length === 0 ? (
-					<>
-						<AgentAvatar className="size-icon-lg shrink-0" decorative provider={harness} />
-						<span className="min-w-0 flex-1 truncate text-sm-md font-semibold leading-tight text-foreground">
-							{harness}
-						</span>
-					</>
-				) : (
-					<span className="flex-1" />
-				)}
-				<div className="shrink-0">
-					<ReviewerSelect
-						ariaLabel="Reviewer agent"
-						authorized={agentCatalog?.authorized}
-						disabled={reviewRunning}
-						installed={agentCatalog?.installed}
-						onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
-						supported={agentCatalog?.supported}
-						value={reviewerOverride}
-					/>
-				</div>
-			</div>
+			{/* Named as a setting: it chooses who reviews next, which is a different
+			    question from the tabs below, which choose whose review you are
+			    reading. Unlabelled and adjacent, the two read as one control. */}
+			<SettingsRow className="-mx-1" icon={ScanEye} label="Reviewer">
+				<ReviewerSelect
+					ariaLabel="Default reviewer agent"
+					authorized={agentCatalog?.authorized}
+					defaultHarness={harness}
+					disabled={reviewRunning}
+					installed={agentCatalog?.installed}
+					onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
+					supported={agentCatalog?.supported}
+					value={reviewerOverride}
+				/>
+			</SettingsRow>
 			{reviewerTabs.length > 0 ? (
-				<div className="flex min-w-0 flex-wrap items-center gap-1" role="tablist" aria-label="Reviewers">
+				<div className="flex min-w-0 flex-col gap-1.5">
+					<span className="text-micro font-medium uppercase tracking-wide-sm text-passive">Reviewed by</span>
+					<div className="flex min-w-0 flex-wrap items-center gap-1" role="tablist" aria-label="Reviewers">
 					{reviewerTabs.map((name) => (
 						<button
 							aria-selected={name === selectedReviewer}
@@ -1234,18 +1228,19 @@ function ReviewPanel({
 							<AgentAvatar className="size-icon-sm" decorative provider={name} />
 							<span className="truncate">{name}</span>
 						</button>
-					))}
+						))}
+					</div>
 				</div>
 			) : null}
 			<div className="flex flex-col divide-y divide-border">
 				{openReviewStates.length === 0 ? (
 					<p className={cn(inspectorEmptyClass, "py-1")}>No open pull requests to review.</p>
 				) : (
-					openReviewStates.map((reviewState, index) => (
+					openReviewStates.map((reviewState) => (
 						<ReviewDisclosure
 							key={`${reviewState.prUrl}:${reviewState.targetSha}`}
-							collapsible={openReviewStates.length > 1}
-							defaultOpen={index === 0}
+							collapsible
+							defaultOpen={false}
 							meta={aoReviewMeta(reviewState)}
 							title={reviewState.title?.trim() || `PR #${reviewState.prNumber}`}
 						>
