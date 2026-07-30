@@ -659,7 +659,12 @@
 		background-color var(--duration-fast) ease,
 		border-color var(--duration-fast) ease,
 		color var(--duration-fast) ease,
-		filter var(--duration-fast) ease;
+		filter var(--duration-fast) ease,
+		transform 100ms ease-out;
+}
+
+.reverb-topbar .reverb-topbar__control:active:not(:disabled) {
+	transform: scale(0.92);
 }
 
 .reverb-topbar .reverb-topbar__control:hover:not(:disabled) {

@@ -836,8 +836,8 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 				aria-current={active ? "page" : undefined}
 				aria-label={`Open ${session.title}`}
 				className={cn(
-					"relative flex h-8 w-full items-center gap-2 rounded-lg px-2.5 py-0 pr-7 text-left text-sm outline-hidden transition-[background-color,color]",
-					"hover:bg-interactive-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+			"relative flex h-8 w-full items-center gap-2 rounded-lg px-2.5 py-0 pr-7 text-left text-sm outline-hidden transition-[background-color,color,transform] duration-[100ms] ease-out",
+				"hover:bg-interactive-hover hover:text-foreground active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-sidebar-ring",
 					active && "bg-interactive-active text-foreground",
 				)}
 				onClick={onOpen}
