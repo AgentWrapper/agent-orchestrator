@@ -421,10 +421,10 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 				{label}
 			</Label>
 			<Select value={value} onValueChange={onChange} disabled={disabled}>
-				<SelectTrigger
-					id={id}
-					size="sm"
-					className={cn("w-full text-control", triggerClassName)}
+			<SelectTrigger
+				id={id}
+				size="sm"
+				className={cn("w-full", triggerClassName)}
 					aria-label={label}
 					aria-invalid={invalid || undefined}
 				>
