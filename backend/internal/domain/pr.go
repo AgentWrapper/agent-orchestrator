@@ -215,7 +215,7 @@ func (r MergeReadiness) ReadyToMerge() bool {
 	if r.Review == ReviewChangesRequest || r.UnresolvedComments {
 		return false
 	}
-	return Mergeability(r.Mergeability) == MergeMergeable
+	return r.Mergeability == MergeMergeable
 }
 
 // MergeReadinessOf projects stored PR facts into the shared readiness rule.
