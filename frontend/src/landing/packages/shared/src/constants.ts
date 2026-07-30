@@ -8,8 +8,8 @@ export const COMPANY = {
   STATUS_URL: "https://status.aoagents.dev",
   TRUST_URL: "https://aoagents.dev/privacy/",
   MAIL_TO: "mailto:hello@aoagents.dev",
-  X_URL: "https://twitter.com/aoagents",
-  LINKEDIN_URL: "https://linkedin.com/company/aoagents",
+  X_URL: "https://x.com/aoagents",
+  LINKEDIN_URL: "https://www.linkedin.com/company/agent-orchestrator",
   YOUTUBE_URL: "https://youtube.com/@aoagents",
   DISCORD_URL: "https://discord.com/invite/UZv7JjxbwG",
   EMAIL_DOMAIN: "@aoagents.dev",
@@ -47,7 +47,7 @@ export const DOWNLOAD_URL_LINUX = "https://github.com/AgentWrapper/agent-orchest
 
 export const AGENT_HARNESSES = 23;
 export const TAGLINE = "Stop babysitting agents. Start merging real work.";
-export const HERO_SUBHEADLINE = "Run a fleet of coding agents while keeping branches, reviews, and CI failures managable.";
+export const HERO_SUBHEADLINE = "Run a fleet of coding agents while keeping branches, reviews, and CI failures manageable.";
 export const HERO_SECONDARY_SUBHEADLINE = "Isolated workspaces for Claude Code, Codex, and any CLI agent. Review every change from one dashboard. Free and open source.";
 
 export const NAV_ITEMS = [
