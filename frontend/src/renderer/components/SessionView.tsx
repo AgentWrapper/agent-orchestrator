@@ -50,8 +50,9 @@ type SessionViewProps = {
 // ShellTopbar above this view; when the platform hides the shell topbar
 // (macOS), the same topbar mounts here so the outer panel stays full-height.
 // Rendered by both the project-scoped and cross-project session routes.
-// TerminalPane owns the terminal lifetime and remounts by terminal handle so
-// each session gets a clean xterm/mux binding.
+// The persistent shell cache owns terminal lifetime by logical session + handle:
+// route switches retain an exact viewport, while a replacement handle gets a
+// clean xterm/mux binding.
 //
 // The split is shadcn's resizable (react-resizable-panels v4) with a fully
 // collapsible inspector: the panel is `collapsible` and driven to 0% via the
@@ -107,7 +108,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			{
 				onSuccess: (shell) => {
 					setActiveShellTerminal(shell.handleId);
-					setTerminalTarget({ kind: "shell", handleId: shell.handleId, title: shell.title });
+					setTerminalTarget({
+						generation: shell.createdAt,
+						kind: "shell",
+						handleId: shell.handleId,
+						title: shell.title,
+					});
 				},
 			},
 		);
@@ -118,7 +124,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			const shell = shellTerminals.find((s) => s.handleId === handleId);
 			if (!shell) return;
 			setActiveShellTerminal(shell.handleId);
-			setTerminalTarget({ kind: "shell", handleId: shell.handleId, title: shell.title });
+			setTerminalTarget({
+				generation: shell.createdAt,
+				kind: "shell",
+				handleId: shell.handleId,
+				title: shell.title,
+			});
 		},
 		[shellTerminals, setActiveShellTerminal],
 	);
@@ -152,9 +163,17 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		const shell = shellTerminals.find((s) => s.handleId === activeShellTerminalHandleId);
 		if (!shell) return;
 		setTerminalTarget((current) =>
-			current.kind === "shell" && current.handleId === shell.handleId
+			current.kind === "shell" &&
+			current.handleId === shell.handleId &&
+			current.generation === shell.createdAt &&
+			current.title === shell.title
 				? current
-				: { kind: "shell", handleId: shell.handleId, title: shell.title },
+				: {
+						generation: shell.createdAt,
+						kind: "shell",
+						handleId: shell.handleId,
+						title: shell.title,
+					},
 		);
 	}, [activeShellTerminalHandleId, shellTerminals]);
 

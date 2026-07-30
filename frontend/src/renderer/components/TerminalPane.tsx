@@ -1,17 +1,34 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { RotateCcw } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+	createContext,
+	useCallback,
+	useContext,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+	type ReactNode,
+} from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import type { TerminalTarget } from "../types/terminal";
 import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import { useUiStore, type Theme } from "../stores/ui-store";
-import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
+import {
+	useTerminalSession,
+	type AttachableTerminal,
+	type TerminalSessionState,
+	type TerminalViewportAnchor,
+} from "../hooks/useTerminalSession";
 import { apiClient } from "../lib/api-client";
 import { createUrlWatcher, type UrlWatcher } from "../lib/detect-urls";
 import { cn } from "../lib/utils";
-import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { useRestoreSession } from "../hooks/useRestoreSession";
+import { useShellTerminals } from "../hooks/useShellTerminals";
 import { XtermTerminal } from "./XtermTerminal";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 
@@ -23,7 +40,514 @@ type TerminalPaneProps = {
 	fontSize: number;
 };
 
+type TerminalCacheDescriptor = {
+	cacheKey: string;
+	generation?: string;
+	handleId: string;
+	kind: "reviewer" | "shell" | "worker";
+	ownerKey: string;
+	sessionId?: string;
+};
+
+type CachedTerminalEntry = TerminalCacheDescriptor & {
+	activationId: number;
+	activationPhase: "parked" | "preparing" | "visible";
+	container: HTMLDivElement;
+	fatalMessage?: string;
+	props: TerminalPaneProps;
+	terminal?: AttachableTerminal;
+	viewportAnchor?: TerminalViewportAnchor;
+};
+
+type ActiveTerminalEntry = {
+	key: string;
+	slot: HTMLDivElement;
+};
+
+type TerminalCacheController = {
+	activate: (descriptor: TerminalCacheDescriptor, props: TerminalPaneProps, slot: HTMLDivElement) => void;
+	deactivate: (cacheKey: string, slot: HTMLDivElement) => void;
+	update: (cacheKey: string, props: TerminalPaneProps) => void;
+};
+
+const TerminalCacheContext = createContext<TerminalCacheController | null>(null);
+
+function terminalTargetMatches(left?: TerminalTarget, right?: TerminalTarget): boolean {
+	if (left === right) return true;
+	if (!left || !right || left.kind !== right.kind) return false;
+	if (left.kind === "worker" && right.kind === "worker") return true;
+	if (left.kind === "reviewer" && right.kind === "reviewer") {
+		return left.handleId === right.handleId && left.harness === right.harness;
+	}
+	if (left.kind === "shell" && right.kind === "shell") {
+		return (
+			left.handleId === right.handleId &&
+			left.generation === right.generation &&
+			left.title === right.title
+		);
+	}
+	return false;
+}
+
+function terminalPropsMatch(left: TerminalPaneProps, right: TerminalPaneProps): boolean {
+	return (
+		left.session === right.session &&
+		left.theme === right.theme &&
+		left.daemonReady === right.daemonReady &&
+		left.fontSize === right.fontSize &&
+		terminalTargetMatches(left.terminalTarget, right.terminalTarget)
+	);
+}
+
+function cacheDescriptor(
+	session: WorkspaceSession | undefined,
+	terminalTarget: TerminalTarget | undefined,
+): TerminalCacheDescriptor | null {
+	if (terminalTarget?.kind === "shell") {
+		const ownerKey = `shell:${session?.id ?? "standalone"}:${terminalTarget.handleId}`;
+		return {
+			cacheKey: `${ownerKey}|handle:${terminalTarget.handleId}|generation:${terminalTarget.generation}`,
+			generation: terminalTarget.generation,
+			handleId: terminalTarget.handleId,
+			kind: "shell",
+			ownerKey,
+			sessionId: session?.id,
+		};
+	}
+
+	const handleId =
+		terminalTarget?.kind === "reviewer" ? terminalTarget.handleId : session?.terminalHandleId;
+	if (!session?.id || !handleId) return null;
+	const kind = terminalTarget?.kind === "reviewer" ? "reviewer" : "worker";
+	const ownerKey = `session:${session.id}:${kind}`;
+	return {
+		cacheKey: `${ownerKey}|handle:${handleId}`,
+		handleId,
+		kind,
+		ownerKey,
+		sessionId: session.id,
+	};
+}
+
+function blurTerminal(container: HTMLElement): void {
+	const active = document.activeElement;
+	if (active instanceof HTMLElement && container.contains(active)) {
+		active.blur();
+	}
+}
+
+function setTerminalPhase(
+	entry: CachedTerminalEntry,
+	phase: CachedTerminalEntry["activationPhase"],
+): void {
+	entry.activationPhase = phase;
+	entry.container.dataset.terminalActivationPhase = phase;
+	const visible = phase === "visible";
+	entry.container.inert = !visible;
+	if (visible) {
+		entry.container.removeAttribute("aria-hidden");
+		entry.container.style.pointerEvents = "";
+	} else {
+		entry.container.setAttribute("aria-hidden", "true");
+		entry.container.style.pointerEvents = "none";
+		entry.container.style.visibility = "hidden";
+	}
+}
+
+function parkTerminal(entry: CachedTerminalEntry, parking: HTMLDivElement): void {
+	entry.activationId += 1;
+	entry.viewportAnchor = entry.terminal?.captureViewportAnchor();
+	const rect = entry.container.getBoundingClientRect();
+	if (rect.width > 0) entry.container.style.width = `${rect.width}px`;
+	if (rect.height > 0) entry.container.style.height = `${rect.height}px`;
+	blurTerminal(entry.container);
+	setTerminalPhase(entry, "parked");
+	parking.appendChild(entry.container);
+}
+
+function showTerminal(entry: CachedTerminalEntry, slot: HTMLDivElement): void {
+	entry.activationId += 1;
+	setTerminalPhase(entry, entry.viewportAnchor ? "preparing" : "visible");
+	if (entry.activationPhase === "visible") entry.container.style.visibility = "";
+	entry.container.style.width = "100%";
+	entry.container.style.height = "100%";
+	slot.appendChild(entry.container);
+}
+
+function revealTerminal(entry: CachedTerminalEntry): void {
+	entry.viewportAnchor = undefined;
+	setTerminalPhase(entry, "visible");
+	// Visibility is the final mutation: logical xterm state, DOM scrollTop,
+	// accessibility, and pointer state are all settled before a pixel can paint.
+	entry.container.style.visibility = "";
+}
+
+function CachedTerminalPortal({
+	active,
+	entry,
+	onFatal,
+	onPrepared,
+	onTerminalReady,
+}: {
+	active: boolean;
+	entry: CachedTerminalEntry;
+	onFatal: (cacheKey: string, message: string) => void;
+	onPrepared: (cacheKey: string, activationId: number) => void;
+	onTerminalReady: (cacheKey: string, terminal: AttachableTerminal) => void;
+}) {
+	const handleFatal = useCallback(
+		(message: string) => onFatal(entry.cacheKey, message),
+		[entry.cacheKey, onFatal],
+	);
+	const handleTerminalReady = useCallback(
+		(terminal: AttachableTerminal) => {
+			onTerminalReady(entry.cacheKey, terminal);
+		},
+		[entry.cacheKey, onTerminalReady],
+	);
+	useLayoutEffect(() => {
+		const terminal = entry.terminal;
+		const anchor = entry.viewportAnchor;
+		if (!active || entry.activationPhase !== "preparing" || !terminal || !anchor) return;
+		const activationId = entry.activationId;
+		let current = true;
+		void terminal.prepareForActivation(anchor).then(() => {
+			if (current) onPrepared(entry.cacheKey, activationId);
+		});
+		return () => {
+			current = false;
+		};
+	}, [
+		active,
+		entry,
+		entry.activationId,
+		entry.activationPhase,
+		entry.terminal,
+		entry.viewportAnchor,
+		onPrepared,
+	]);
+	return createPortal(
+		entry.fatalMessage ? (
+			<div
+				className="grid h-full place-items-center bg-terminal p-4 font-mono text-xs text-muted-foreground"
+				data-testid="terminal-fatal-state"
+			>
+				Terminal error: {entry.fatalMessage}
+			</div>
+		) : (
+			<AttachedTerminal
+				{...entry.props}
+				isVisible={active}
+				onFatal={handleFatal}
+				onTerminalReady={handleTerminalReady}
+			/>
+		),
+		entry.container,
+		entry.cacheKey,
+	);
+}
+
+/**
+ * Owns retained terminal renderers above the routed SessionView. Portal
+ * containers never change; only the containers themselves move between the
+ * active pane slot and an off-screen parking lot, so React, xterm, and the
+ * terminal attachment all keep the same lifetime.
+ */
+export function TerminalCacheProvider({
+	children,
+	daemonReady,
+	theme,
+}: {
+	children: ReactNode;
+	daemonReady: boolean;
+	theme: Theme;
+}) {
+	const workspaceQuery = useWorkspaceQuery();
+	const shellTerminalsQuery = useShellTerminals();
+	const entriesRef = useRef(new Map<string, CachedTerminalEntry>());
+	const activeRef = useRef<ActiveTerminalEntry | null>(null);
+	const parkingRef = useRef<HTMLDivElement | null>(null);
+	const [, setRevision] = useState(0);
+
+	const rerender = useCallback(() => setRevision((current) => current + 1), []);
+
+	const removeEntry = useCallback(
+		(cacheKey: string) => {
+			const entry = entriesRef.current.get(cacheKey);
+			if (!entry) return;
+			const active = activeRef.current;
+			if (active?.key === cacheKey) {
+				blurTerminal(entry.container);
+				setTerminalPhase(entry, "parked");
+				activeRef.current = null;
+			}
+			entriesRef.current.delete(cacheKey);
+			entry.container.remove();
+			rerender();
+		},
+		[rerender],
+	);
+
+	const activate = useCallback(
+		(descriptor: TerminalCacheDescriptor, props: TerminalPaneProps, slot: HTMLDivElement) => {
+			const parking = parkingRef.current;
+			if (!parking) return;
+
+			const previous = activeRef.current;
+			if (previous && previous.key !== descriptor.cacheKey) {
+				const previousEntry = entriesRef.current.get(previous.key);
+				if (previousEntry) {
+					parkTerminal(previousEntry, parking);
+					if (previousEntry.fatalMessage) {
+						entriesRef.current.delete(previous.key);
+						previousEntry.container.remove();
+					}
+				}
+			}
+
+			// A logical terminal can have only one generation. A replacement
+			// handle immediately disposes the retained renderer and writer for the
+			// old generation, even if an opaque handle is later reused elsewhere.
+			for (const entry of entriesRef.current.values()) {
+				if (entry.ownerKey === descriptor.ownerKey && entry.cacheKey !== descriptor.cacheKey) {
+					if (activeRef.current?.key === entry.cacheKey) parkTerminal(entry, parking);
+					entriesRef.current.delete(entry.cacheKey);
+					entry.container.remove();
+				}
+			}
+
+			let entry = entriesRef.current.get(descriptor.cacheKey);
+			if (!entry) {
+				const container = document.createElement("div");
+				container.className = "h-full min-h-0 w-full overflow-hidden";
+				container.style.position = "relative";
+				container.dataset.terminalCacheKey = descriptor.cacheKey;
+				entry = {
+					...descriptor,
+					activationId: 0,
+					activationPhase: "parked",
+					container,
+					props,
+				};
+				entriesRef.current.set(entry.cacheKey, entry);
+			} else {
+				entry.props = props;
+			}
+			showTerminal(entry, slot);
+			activeRef.current = { key: entry.cacheKey, slot };
+			rerender();
+		},
+		[rerender],
+	);
+
+	const deactivate = useCallback(
+		(cacheKey: string, slot: HTMLDivElement) => {
+			const active = activeRef.current;
+			if (active?.key !== cacheKey || active.slot !== slot) return;
+			const entry = entriesRef.current.get(cacheKey);
+			const parking = parkingRef.current;
+			activeRef.current = null;
+			if (!entry) return;
+			if (entry.fatalMessage || !parking) {
+				entriesRef.current.delete(cacheKey);
+				entry.container.remove();
+				rerender();
+				return;
+			}
+			parkTerminal(entry, parking);
+			rerender();
+		},
+		[rerender],
+	);
+
+	const update = useCallback(
+		(cacheKey: string, props: TerminalPaneProps) => {
+			const entry = entriesRef.current.get(cacheKey);
+			if (!entry || terminalPropsMatch(entry.props, props)) return;
+			entry.props = props;
+			rerender();
+		},
+		[rerender],
+	);
+
+	const markFatal = useCallback(
+		(cacheKey: string, message: string) => {
+			const entry = entriesRef.current.get(cacheKey);
+			if (!entry) return;
+			if (activeRef.current?.key !== cacheKey) {
+				removeEntry(cacheKey);
+				return;
+			}
+			// Keep a lightweight error surface in the active slot, but unmount
+			// xterm/useTerminalSession immediately so a fatal pane owns no renderer,
+			// socket, writer, input handler, or resize handler.
+			entry.fatalMessage = message;
+			entry.terminal = undefined;
+			rerender();
+		},
+		[removeEntry, rerender],
+	);
+
+	const markTerminalReady = useCallback(
+		(cacheKey: string, terminal: AttachableTerminal) => {
+			const entry = entriesRef.current.get(cacheKey);
+			if (!entry) return;
+			entry.terminal = terminal;
+			rerender();
+		},
+		[rerender],
+	);
+
+	const markPrepared = useCallback((cacheKey: string, activationId: number) => {
+		const entry = entriesRef.current.get(cacheKey);
+		if (
+			!entry ||
+			entry.activationId !== activationId ||
+			entry.activationPhase !== "preparing" ||
+			activeRef.current?.key !== cacheKey
+		) {
+			return;
+		}
+		revealTerminal(entry);
+	}, []);
+
+	// Daemon readiness and theme are shell-wide. Parked entries must observe
+	// them too so reconnect and rendering behavior never depends on the route
+	// that happened to be active when they were parked.
+	useEffect(() => {
+		let changed = false;
+		for (const entry of entriesRef.current.values()) {
+			if (entry.props.daemonReady === daemonReady && entry.props.theme === theme) continue;
+			entry.props = { ...entry.props, daemonReady, theme };
+			changed = true;
+		}
+		if (changed) rerender();
+	}, [daemonReady, rerender, theme]);
+
+	// Project/session teardown is an ownership boundary, not an LRU event.
+	// Dispose retained terminal clients as soon as the authoritative workspace
+	// snapshot no longer contains their logical session.
+	useEffect(() => {
+		if (!workspaceQuery.isSuccess) return;
+		const sessions = new Map(
+			(workspaceQuery.data ?? []).flatMap((workspace) =>
+				workspace.sessions.map((session) => [session.id, session] as const),
+			),
+		);
+		for (const entry of entriesRef.current.values()) {
+			const session = entry.sessionId ? sessions.get(entry.sessionId) : undefined;
+			if (entry.sessionId && !session) {
+				removeEntry(entry.cacheKey);
+				continue;
+			}
+			if (
+				entry.kind === "worker" &&
+				session &&
+				session.terminalHandleId !== entry.handleId
+			) {
+				removeEntry(entry.cacheKey);
+				continue;
+			}
+			if (session && entry.props.session !== session) {
+				entry.props = { ...entry.props, session };
+				rerender();
+			}
+		}
+	}, [removeEntry, workspaceQuery.data, workspaceQuery.isSuccess]);
+
+	// Shell handles have their own lifecycle outside WorkspaceSession. Closing a
+	// shell must close its retained mux writer even if it was parked.
+	useEffect(() => {
+		if (!shellTerminalsQuery.isSuccess) return;
+		const shells = new Map(
+			(shellTerminalsQuery.data ?? []).map((terminal) => [terminal.handleId, terminal] as const),
+		);
+		for (const entry of entriesRef.current.values()) {
+			if (entry.kind !== "shell") continue;
+			const shell = shells.get(entry.handleId);
+			if (!shell || shell.createdAt !== entry.generation) {
+				removeEntry(entry.cacheKey);
+				continue;
+			}
+			const target = entry.props.terminalTarget;
+			if (target?.kind === "shell" && target.title !== shell.title) {
+				entry.props = {
+					...entry.props,
+					terminalTarget: { ...target, title: shell.title },
+				};
+				rerender();
+			}
+		}
+	}, [removeEntry, shellTerminalsQuery.data, shellTerminalsQuery.isSuccess]);
+
+	// The provider is the final shell ownership boundary. React disposes the
+	// portals; remove their externally-created host nodes as well.
+	useEffect(
+		() => () => {
+			activeRef.current = null;
+			for (const entry of entriesRef.current.values()) entry.container.remove();
+			entriesRef.current.clear();
+		},
+		[],
+	);
+
+	const controller = useMemo<TerminalCacheController>(
+		() => ({ activate, deactivate, update }),
+		[activate, deactivate, update],
+	);
+
+	return (
+		<TerminalCacheContext.Provider value={controller}>
+			<div
+				ref={parkingRef}
+				aria-hidden="true"
+				className="pointer-events-none invisible fixed top-0 -left-[100000px]"
+				data-testid="terminal-cache-parking"
+			/>
+			{/* The parking ref must commit before routed children run their layout
+			    effects; those effects synchronously move the active container into
+			    the pane slot before the browser can paint. */}
+			{children}
+			{[...entriesRef.current.values()].map((entry) => (
+				<CachedTerminalPortal
+					active={activeRef.current?.key === entry.cacheKey}
+					entry={entry}
+					key={entry.cacheKey}
+					onFatal={markFatal}
+					onPrepared={markPrepared}
+					onTerminalReady={markTerminalReady}
+				/>
+			))}
+		</TerminalCacheContext.Provider>
+	);
+}
+
+function CachedTerminalSlot({
+	descriptor,
+	props,
+}: {
+	descriptor: TerminalCacheDescriptor;
+	props: TerminalPaneProps;
+}) {
+	const cache = useContext(TerminalCacheContext);
+	const slotRef = useRef<HTMLDivElement | null>(null);
+
+	useLayoutEffect(() => {
+		const slot = slotRef.current;
+		if (!cache || !slot) return;
+		cache.activate(descriptor, props, slot);
+		return () => cache.deactivate(descriptor.cacheKey, slot);
+	}, [cache, descriptor.cacheKey, descriptor.handleId, descriptor.kind, descriptor.ownerKey, descriptor.sessionId]);
+
+	useLayoutEffect(() => {
+		cache?.update(descriptor.cacheKey, props);
+	}, [cache, descriptor.cacheKey, props]);
+
+	return <div className="h-full min-h-0 w-full" data-testid="session-terminal-slot" ref={slotRef} />;
+}
+
 export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
+	const cache = useContext(TerminalCacheContext);
 	const terminalKey =
 		terminalTarget?.kind === "reviewer" || terminalTarget?.kind === "shell"
 			? terminalTarget.handleId
@@ -78,6 +602,12 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 				))}
 			</pre>
 		);
+	}
+
+	const props = { session, theme, daemonReady, terminalTarget, fontSize };
+	const descriptor = cacheDescriptor(session, terminalTarget);
+	if (cache && descriptor) {
+		return <CachedTerminalSlot descriptor={descriptor} props={props} />;
 	}
 
 	return (
@@ -222,15 +752,28 @@ function bannerText(state: TerminalSessionState, t: TFunction, error?: string): 
 	return undefined;
 }
 
-function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
+function AttachedTerminal({
+	session,
+	theme,
+	daemonReady,
+	terminalTarget,
+	fontSize,
+	isVisible = true,
+	onFatal,
+	onTerminalReady,
+}: TerminalPaneProps & {
+	isVisible?: boolean;
+	onFatal?: (message: string) => void;
+	onTerminalReady?: (terminal: AttachableTerminal) => void;
+}) {
 	const { t } = useTranslation();
 	const attachSession =
 		session && terminalTarget?.kind === "reviewer"
 			? { ...session, terminalHandleId: terminalTarget.handleId }
 			: session;
-	// One terminal instance per handle-scoped pane lifetime. TerminalPane keys this
-	// component by terminal handle, so session switches get a fresh xterm + mux
-	// hook state instead of reusing a potentially stale screen/input binding.
+	// One terminal instance per logical-terminal + handle generation. The shell
+	// cache retains this component across route switches; a replacement handle
+	// gets a new component rather than inheriting stale screen/input state.
 	const [terminal, setTerminal] = useState<AttachableTerminal | null>(null);
 	const [initFailed, setInitFailed] = useState(false);
 	const [isRestoring, setIsRestoring] = useState(false);
@@ -264,6 +807,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	);
 	const { attach, state, error, replaySettled } = useTerminalSession(attachSession, {
 		daemonReady,
+		isVisible,
 		shellTerminalHandleId,
 		onOutput: watchLinks ? handleOutput : undefined,
 	});
@@ -281,10 +825,20 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const handleReady = useCallback((handle: AttachableTerminal) => {
 		setTerminal(handle);
 	}, []);
+	useLayoutEffect(() => {
+		if (terminal) onTerminalReady?.(terminal);
+	}, [onTerminalReady, terminal]);
 	const handleInitError = useCallback((err: unknown) => {
 		console.error("xterm failed to initialize", err);
 		setInitFailed(true);
 	}, []);
+	useEffect(() => {
+		if (initFailed) {
+			onFatal?.("renderer initialization failed");
+			return;
+		}
+		if (state === "error") onFatal?.(error ?? "connection failed");
+	}, [error, initFailed, onFatal, state]);
 	const setInspectorViewForSession = useUiStore((state) => state.setInspectorView);
 	const setInspectorOpenForSession = useUiStore((state) => state.setInspectorOpen);
 	const handleLinkOpen = useCallback(
@@ -407,6 +961,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 				<XtermTerminal
 					ariaLabel={terminalTarget?.kind === "shell" ? t("terminal.shellAria") : t("terminal.sessionAria")}
 					fontSize={fontSize}
+					isVisible={isVisible}
 					onError={handleInitError}
 					onLinkOpen={handleLinkOpen}
 					onReady={handleReady}

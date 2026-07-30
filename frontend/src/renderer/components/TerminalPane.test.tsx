@@ -1,16 +1,38 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useEffect, useRef } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { shellTerminalsQueryKey, type ShellTerminal } from "../hooks/useShellTerminals";
+import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import type { AttachableTerminal } from "../hooks/useTerminalSession";
+import type { TerminalTarget } from "../types/terminal";
 import type { WorkspaceSession } from "../types/workspace";
-import { TerminalPane, providerScrollsByKeyboard } from "./TerminalPane";
+import {
+	TerminalCacheProvider,
+	TerminalPane,
+	providerScrollsByKeyboard,
+} from "./TerminalPane";
 
-const { postMock, terminalError, terminalState, replaySettled } = vi.hoisted(() => ({
-	postMock: vi.fn(),
-	terminalError: { value: undefined as string | undefined },
-	terminalState: { value: "idle" },
-	replaySettled: { value: true },
-}));
+const {
+	attachMock,
+	postMock,
+	terminalError,
+	terminalState,
+	replaySettled,
+	xtermMounts,
+	xtermUnmounts,
+} = vi.hoisted(
+	() => ({
+		attachMock: vi.fn(() => vi.fn()),
+		postMock: vi.fn(),
+		terminalError: { value: undefined as string | undefined },
+		terminalState: { value: "idle" },
+		replaySettled: { value: true },
+		xtermMounts: { value: 0 },
+		xtermUnmounts: { value: 0 },
+	}),
+);
 let terminalLinkHandler: ((uri: string) => void) | undefined;
 
 vi.mock("../lib/api-client", () => ({
@@ -19,15 +41,40 @@ vi.mock("../lib/api-client", () => ({
 }));
 
 vi.mock("./XtermTerminal", () => ({
-	XtermTerminal: (props: { onLinkOpen?: (uri: string) => void }) => {
+	XtermTerminal: (props: {
+		onLinkOpen?: (uri: string) => void;
+		onReady?: (terminal: AttachableTerminal) => void;
+	}) => {
 		terminalLinkHandler = props.onLinkOpen;
-		return <div data-testid="xterm" />;
+		const instance = useRef(0);
+		if (instance.current === 0) {
+			xtermMounts.value += 1;
+			instance.current = xtermMounts.value;
+		}
+		useEffect(() => {
+			const disposable = { dispose: vi.fn() };
+			props.onReady?.({
+				cols: 80,
+				rows: 24,
+				write: vi.fn((_data, done) => done?.()),
+				writeln: vi.fn(),
+				captureViewportAnchor: vi.fn(() => ({ atBottom: true, viewportY: 137 })),
+				prepareForActivation: vi.fn(async () => undefined),
+				clear: vi.fn(),
+				onUserInput: vi.fn(() => disposable),
+				onResize: vi.fn(() => disposable),
+			});
+			return () => {
+				xtermUnmounts.value += 1;
+			};
+		}, []);
+		return <div data-testid="xterm" data-xterm-instance={instance.current} tabIndex={-1} />;
 	},
 }));
 
 vi.mock("../hooks/useTerminalSession", () => ({
 	useTerminalSession: () => ({
-		attach: vi.fn(),
+		attach: attachMock,
 		state: terminalState.value,
 		error: terminalError.value,
 		replaySettled: replaySettled.value,
@@ -61,6 +108,9 @@ beforeEach(() => {
 	terminalState.value = "idle";
 	replaySettled.value = true;
 	terminalLinkHandler = undefined;
+	attachMock.mockClear();
+	xtermMounts.value = 0;
+	xtermUnmounts.value = 0;
 });
 
 function renderPane(session?: WorkspaceSession) {
@@ -79,6 +129,69 @@ function renderPane(session?: WorkspaceSession) {
 			window.ao = previousAO;
 		},
 	};
+}
+
+function workspaceWithSessions(sessions: WorkspaceSession[]) {
+	return [
+		{
+			id: "proj-1",
+			name: "my-app",
+			kind: "single_repo" as const,
+			path: "/repo/my-app",
+			type: "main" as const,
+			sessions,
+		},
+	];
+}
+
+function renderCachedPane({
+	session,
+	sessions,
+	shellTerminals = [],
+	terminalTarget,
+}: {
+	session?: WorkspaceSession;
+	sessions: WorkspaceSession[];
+	shellTerminals?: ShellTerminal[];
+	terminalTarget?: TerminalTarget;
+}) {
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	queryClient.setQueryData(workspaceQueryKey, workspaceWithSessions(sessions));
+	queryClient.setQueryData(shellTerminalsQueryKey, shellTerminals);
+	const previousAO = window.ao;
+	window.ao = {} as typeof window.ao;
+
+	const tree = (nextSession?: WorkspaceSession, nextTarget?: TerminalTarget, showPane = true) => (
+		<QueryClientProvider client={queryClient}>
+			<TerminalCacheProvider daemonReady theme="dark">
+				{showPane ? (
+					<TerminalPane
+						daemonReady
+						fontSize={12}
+						session={nextSession}
+						terminalTarget={nextTarget}
+						theme="dark"
+					/>
+				) : (
+					<div data-testid="away" />
+				)}
+			</TerminalCacheProvider>
+		</QueryClientProvider>
+	);
+	const result = render(tree(session, terminalTarget));
+	return {
+		...result,
+		queryClient,
+		show: (nextSession?: WorkspaceSession, nextTarget?: TerminalTarget) =>
+			result.rerender(tree(nextSession, nextTarget)),
+		restore: () => {
+			window.ao = previousAO;
+		},
+	};
+}
+
+function activeXterm(): HTMLElement {
+	return within(screen.getByTestId("session-terminal-slot")).getByTestId("xterm");
 }
 
 describe("TerminalPane empty states", () => {
@@ -187,6 +300,132 @@ describe("TerminalPane replay cover", () => {
 		try {
 			expect(screen.getByText("Starting session")).toBeInTheDocument();
 			expect(screen.queryByTestId("terminal-replay-cover")).not.toBeInTheDocument();
+		} finally {
+			view.restore();
+		}
+	});
+});
+
+describe("TerminalCacheProvider", () => {
+	const sessionA = { ...worker, id: "sess-a", title: "session A", terminalHandleId: "handle-a" };
+	const sessionB = { ...worker, id: "sess-b", title: "session B", terminalHandleId: "handle-b" };
+
+	it("removes externally-created terminal hosts when the shell provider unmounts", async () => {
+		const view = renderCachedPane({ session: sessionA, sessions: [sessionA, sessionB] });
+		try {
+			await waitFor(() => activeXterm());
+			view.show(sessionB);
+			await waitFor(() => expect(screen.getAllByTestId("xterm")).toHaveLength(2));
+			view.unmount();
+			expect(document.querySelectorAll("[data-terminal-cache-key]")).toHaveLength(0);
+			expect(xtermUnmounts.value).toBe(2);
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("disposes an old handle generation instead of reusing its terminal state", async () => {
+		const replacement = { ...sessionA, terminalHandleId: "handle-a-generation-2" };
+		const view = renderCachedPane({ session: sessionA, sessions: [sessionA] });
+		try {
+			const oldGeneration = await waitFor(() => activeXterm());
+			act(() => {
+				view.queryClient.setQueryData(workspaceQueryKey, workspaceWithSessions([replacement]));
+			});
+			view.show(replacement);
+
+			await waitFor(() => expect(oldGeneration.isConnected).toBe(false));
+			expect(activeXterm()).not.toBe(oldGeneration);
+			expect(xtermMounts.value).toBe(2);
+			await waitFor(() => expect(xtermUnmounts.value).toBe(1));
+			expect(attachMock).toHaveBeenCalledTimes(2);
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("disposes parked entries when their session is removed", async () => {
+		const view = renderCachedPane({ session: sessionA, sessions: [sessionA, sessionB] });
+		try {
+			const terminalA = await waitFor(() => activeXterm());
+			view.show(sessionB);
+			await waitFor(() => expect(activeXterm()).not.toBe(terminalA));
+			act(() => {
+				view.queryClient.setQueryData(workspaceQueryKey, workspaceWithSessions([sessionB]));
+			});
+
+			await waitFor(() => expect(terminalA.isConnected).toBe(false));
+			await waitFor(() => expect(xtermUnmounts.value).toBe(1));
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("disposes a retained generation when its authoritative handle disappears", async () => {
+		const view = renderCachedPane({ session: sessionA, sessions: [sessionA] });
+		try {
+			const terminalA = await waitFor(() => activeXterm());
+			const withoutHandle = { ...sessionA, terminalHandleId: undefined };
+			act(() => {
+				view.queryClient.setQueryData(workspaceQueryKey, workspaceWithSessions([withoutHandle]));
+			});
+
+			await waitFor(() => expect(terminalA.isConnected).toBe(false));
+			await waitFor(() => expect(xtermUnmounts.value).toBe(1));
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("disposes a parked shell when the shell lifecycle removes its handle", async () => {
+		const shell: ShellTerminal = {
+			handleId: "shell-handle",
+			sessionId: sessionA.id,
+			workingDir: "/repo/my-app",
+			title: "scratch",
+			createdAt: "2026-07-30T00:00:00Z",
+		};
+		const shellTarget: TerminalTarget = {
+			generation: shell.createdAt,
+			kind: "shell",
+			handleId: shell.handleId,
+			title: shell.title,
+		};
+		const view = renderCachedPane({
+			session: sessionA,
+			sessions: [sessionA],
+			shellTerminals: [shell],
+			terminalTarget: shellTarget,
+		});
+		try {
+			const shellXterm = await waitFor(() => activeXterm());
+			view.show(sessionA, { kind: "worker" });
+			await waitFor(() => expect(activeXterm()).not.toBe(shellXterm));
+			act(() => {
+				view.queryClient.setQueryData(shellTerminalsQueryKey, []);
+			});
+
+			await waitFor(() => expect(shellXterm.isConnected).toBe(false));
+			await waitFor(() => expect(xtermUnmounts.value).toBe(1));
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("does not retain a terminal after a fatal attachment error", async () => {
+		terminalState.value = "error";
+		terminalError.value = "attach failed";
+		const view = renderCachedPane({ session: sessionA, sessions: [sessionA, sessionB] });
+		try {
+			await waitFor(() => expect(screen.getByText("Terminal error: attach failed")).toBeInTheDocument());
+			await waitFor(() => expect(xtermUnmounts.value).toBe(1));
+			expect(xtermMounts.value).toBe(1);
+			terminalState.value = "attached";
+			terminalError.value = undefined;
+			view.show(sessionB);
+
+			await waitFor(() => activeXterm());
+			expect(xtermMounts.value).toBe(2);
 		} finally {
 			view.restore();
 		}

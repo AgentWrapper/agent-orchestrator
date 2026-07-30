@@ -111,6 +111,8 @@ function createFakeTerminal(): FakeTerminal {
 			done?.();
 		},
 		writeln: (line) => terminal.lines.push(line),
+		captureViewportAnchor: () => ({ atBottom: true, viewportY: 0 }),
+		prepareForActivation: async () => undefined,
 		clear: () => {
 			terminal.clears += 1;
 		},
@@ -132,7 +134,11 @@ function createFakeTerminal(): FakeTerminal {
 	return terminal;
 }
 
-function setup({ daemonReady = true, attachedSession = session as WorkspaceSession | undefined } = {}) {
+function setup({
+	daemonReady = true,
+	attachedSession = session as WorkspaceSession | undefined,
+	isVisible = true,
+} = {}) {
 	const muxes: FakeMux[] = [];
 	const createMux = () => {
 		const fake = createFakeMux();
@@ -145,8 +151,9 @@ function setup({ daemonReady = true, attachedSession = session as WorkspaceSessi
 		<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 	);
 	const view = renderHook(
-		({ daemonReady: ready }) => useTerminalSession(attachedSession, { daemonReady: ready, createMux }),
-		{ initialProps: { daemonReady }, wrapper },
+		({ daemonReady: ready, isVisible: visible = true }: { daemonReady: boolean; isVisible?: boolean }) =>
+			useTerminalSession(attachedSession, { daemonReady: ready, createMux, isVisible: visible }),
+		{ initialProps: { daemonReady, isVisible }, wrapper },
 	);
 	const terminal = createFakeTerminal();
 	let detach: () => void = () => undefined;
@@ -218,6 +225,35 @@ describe("useTerminalSession", () => {
 			["handle-1", "\x1b[1;5D"],
 			["handle-1", "\x1b[<64;1;1M"],
 		]);
+	});
+
+	it("keeps receiving output while hidden without accepting input or resizing the PTY", () => {
+		const { view, terminal, muxes } = setup();
+		act(() => muxes[0].emitOpened("handle-1"));
+		const initialResizes = muxes[0].resizes.length;
+
+		// Queue resize work while visible, then park the terminal before either
+		// stage fires. Hiding must cancel both the debounce and re-assert.
+		terminal.emitResize(120, 40);
+		view.rerender({ daemonReady: true, isVisible: false });
+		terminal.typeKeys("hidden input");
+		terminal.paste("hidden paste");
+		terminal.emitResize(140, 50);
+		act(() => muxes[0].emitData("handle-1", "output while hidden"));
+		act(() => void vi.advanceTimersByTime(500));
+
+		expect(muxes[0].inputs).toEqual([]);
+		expect(muxes[0].resizes).toHaveLength(initialResizes);
+		expect(terminal.lines).toContain("output while hidden");
+		expect(muxes).toHaveLength(1);
+
+		// The same attachment becomes interactive again on return.
+		view.rerender({ daemonReady: true, isVisible: true });
+		terminal.typeKeys("visible\r");
+		terminal.emitResize(150, 55);
+		act(() => void vi.advanceTimersByTime(100));
+		expect(muxes[0].inputs).toEqual([["handle-1", "visible\r"]]);
+		expect(muxes[0].resizes.slice(initialResizes)).toEqual([["handle-1", 150, 55]]);
 	});
 
 	it("collapses a drag's burst of grid changes into one trailing PTY resize, then re-asserts it", () => {
@@ -511,7 +547,7 @@ describe("useTerminalSession", () => {
 			expect(muxes).toHaveLength(1);
 
 			// Daemon goes away before the server ever acks the open.
-			view.rerender({ daemonReady: false });
+		view.rerender({ daemonReady: false, isVisible: true });
 
 			// Well past REPLAY_CAP_MS and REPLAY_FIRST_BYTE_MS, and still covered:
 			// both are armed from `opened`, so neither is running. This is what
@@ -538,7 +574,7 @@ describe("useTerminalSession", () => {
 			// The cap is armed from `opened`, so it never started. The `closed`
 			// handler clears the open timeout and scheduleReattach declines to
 			// retry while the daemon is down — leaving no timer to lift the cover.
-			view.rerender({ daemonReady: false });
+		view.rerender({ daemonReady: false, isVisible: true });
 			act(() => muxes[0].emitConnection("closed"));
 			act(() => void vi.advanceTimersByTime(120_000));
 
@@ -631,6 +667,7 @@ describe("useTerminalSession", () => {
 		act(() => muxes[0].emitExit("handle-1"));
 		expect(view.result.current.state).toBe("exited");
 		expect(terminal.lines.some((line) => line.includes("[process exited]"))).toBe(true);
+		expect(muxes[0].disposed).toBe(true);
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: workspaceQueryKey });
 	});
 
@@ -750,6 +787,7 @@ describe("useTerminalSession", () => {
 		act(() => muxes[0].emitError("handle-1", "no such pane"));
 		expect(view.result.current.state).toBe("error");
 		expect(view.result.current.error).toBe("no such pane");
+		expect(muxes[0].disposed).toBe(true);
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: workspaceQueryKey });
 		act(() => muxes[0].emitConnection("closed"));
 		act(() => void vi.advanceTimersByTime(60_000));
@@ -814,7 +852,7 @@ describe("useTerminalSession", () => {
 		expect(view.result.current.state).toBe("reattaching");
 		act(() => void vi.advanceTimersByTime(60_000));
 		expect(muxes).toHaveLength(0); // no initial attach or retries against a dead daemon
-		view.rerender({ daemonReady: true });
+		view.rerender({ daemonReady: true, isVisible: true });
 		expect(muxes).toHaveLength(1); // connects immediately, without backoff debt
 		act(() => muxes[0].emitOpened("handle-1"));
 		expect(view.result.current.state).toBe("attached");

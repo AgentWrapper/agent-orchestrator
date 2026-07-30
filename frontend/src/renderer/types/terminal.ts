@@ -9,6 +9,8 @@ export type TerminalTarget =
 	// so unlike "worker" and "reviewer" it carries its own handle and never
 	// reads from the selected session.
 	| {
+			/** Shell creation identity; prevents a reused handle inheriting old state. */
+			generation: string;
 			kind: "shell";
 			handleId: string;
 			title: string;

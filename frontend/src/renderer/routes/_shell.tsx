@@ -14,6 +14,7 @@ import { Sidebar } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
 import { TitlebarNav } from "../components/TitlebarNav";
 import { WindowTitlebar } from "../components/WindowTitlebar";
+import { TerminalCacheProvider } from "../components/TerminalPane";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useOpenShellTerminal } from "../hooks/useShellTerminals";
@@ -588,27 +589,36 @@ function ShellLayout() {
 	useEffect(
 		() =>
 			aoBridge.app.onFocusTerminalShortcut(() => {
-				document.querySelector<HTMLElement>(".xterm-helper-textarea")?.focus();
+				document
+					.querySelector<HTMLElement>(
+						"[data-terminal-activation-phase='visible'] .xterm-helper-textarea, " +
+							"[data-testid='session-terminal-slot'] .xterm-helper-textarea",
+					)
+					?.focus();
 			}),
 		[],
 	);
 
 	return (
 		<ShellProvider value={{ daemonStatus, workspaceStartupState, createProject, initializeProjectRepository }}>
-			<NotificationRuntime />
-			<GlobalNewTaskDialog />
-			<KeyboardShortcutsDialog
-				open={isKeyboardShortcutsOpen}
-				onOpenChange={setIsKeyboardShortcutsOpen}
-				onCustomize={() => {
-					setIsKeyboardShortcutsOpen(false);
-					setIsKeyboardShortcutsSettingsOpen(true);
-				}}
-			/>
-			<KeyboardShortcutsSettingsDialog
-				open={isKeyboardShortcutsSettingsOpen}
-				onOpenChange={setIsKeyboardShortcutsSettingsOpen}
-			/>
+			<TerminalCacheProvider
+				daemonReady={daemonStatus.state === "ready"}
+				theme={resolvedTheme}
+			>
+				<NotificationRuntime />
+				<GlobalNewTaskDialog />
+				<KeyboardShortcutsDialog
+					open={isKeyboardShortcutsOpen}
+					onOpenChange={setIsKeyboardShortcutsOpen}
+					onCustomize={() => {
+						setIsKeyboardShortcutsOpen(false);
+						setIsKeyboardShortcutsSettingsOpen(true);
+					}}
+				/>
+				<KeyboardShortcutsSettingsDialog
+					open={isKeyboardShortcutsSettingsOpen}
+					onOpenChange={setIsKeyboardShortcutsSettingsOpen}
+				/>
 			{/* Shell chrome: Win/Linux hang the sidebar under a topbar. macOS uses a
           titlebar strip above the off-canvas sidebar. Session and board actions
           render inside the center panel when the shell topbar is hidden. */}
@@ -719,7 +729,8 @@ function ShellLayout() {
 					workspaces={workspaces}
 				/>
 				<CommandPalette />
-			</div>
+				</div>
+			</TerminalCacheProvider>
 		</ShellProvider>
 	);
 }

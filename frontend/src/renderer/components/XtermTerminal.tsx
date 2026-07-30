@@ -3,9 +3,9 @@
 // Design rules (the reason this component exists):
 //  - The mount effect is dependency-free: the terminal instance is created once
 //    per mount and NEVER torn down because a callback identity changed.
-//    TerminalPane chooses the mount lifetime; it keys mounts by terminal handle
-//    so session switches get a clean surface, while same-handle reconnects reuse
-//    the mounted renderer.
+//    TerminalPane's shell-owned cache chooses the mount lifetime: retained
+//    handle generations survive route switches, replacement handles get a clean
+//    surface, and same-handle reconnects reuse the mounted renderer.
 //  - Nothing writes into the buffer at mount. Status/empty-state belongs to DOM
 //    chrome around the terminal, not inside it. Writing before layout settles
 //    is what crashed xterm's Viewport (`dimensions` of a zero-sized renderer).
@@ -19,16 +19,20 @@
 //    itself only fires onResize when the grid actually changed, so repeated
 //    fits don't spam the PTY.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Terminal, type IMarker } from "@xterm/xterm";
 import { useTranslation } from "react-i18next";
-import { Terminal } from "@xterm/xterm";
 import { CanvasAddon } from "@xterm/addon-canvas";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
-import type { AttachableTerminal, TerminalUserInputSource } from "../hooks/useTerminalSession";
+import type {
+	AttachableTerminal,
+	TerminalUserInputSource,
+	TerminalViewportAnchor,
+} from "../hooks/useTerminalSession";
 import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
 import { openLinkInSystemBrowser } from "../lib/external-link-policy";
@@ -58,6 +62,8 @@ export type XtermTerminalProps = {
 	onError?: (error: unknown) => void;
 	/** Called after a terminal hyperlink is opened in the OS browser. */
 	onLinkOpen?: (uri: string) => void;
+	/** Hidden retained terminals keep parsing output but expose no UI overlays. */
+	isVisible?: boolean;
 	/**
 	 * The terminal is open in the DOM and ready to be attached to a PTY. The
 	 * handle stays valid until unmount; cols/rows are live getters.
@@ -176,7 +182,14 @@ type XtermInternal = Terminal & {
 			enable: () => void;
 			shouldForceSelection: (event: MouseEvent) => boolean;
 		};
+		viewport?: {
+			syncScrollArea: (immediate?: boolean) => void;
+		};
 	};
+};
+
+type DevXtermHost = HTMLDivElement & {
+	__aoXtermForTest?: Terminal;
 };
 
 type TerminalContextMenuState = {
@@ -269,9 +282,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		[setContextMenuOpen],
 	);
 
-	useEffect(() => {
-		callbacksRef.current = props;
-	});
+	callbacksRef.current = props;
 
 	useEffect(() => {
 		const term = termRef.current;
@@ -371,6 +382,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		term.loadAddon(new SearchAddon());
 
 		term.open(host);
+		// Browser integration tests need to wait on xterm's buffer state, not
+		// infer it from a hidden viewport element whose scrollTop can lag.
+		// Vite removes this development-only seam from packaged builds.
+		if (import.meta.env.DEV) {
+			(host as DevXtermHost).__aoXtermForTest = term;
+		}
 		loadRenderer(term);
 		term.options.macOptionClickForcesSelection = true;
 		forceSelectionMode(term);
@@ -532,6 +549,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		});
 
 		const fitTerminal = () => {
+			// Parked terminals keep their last measured box and continue parsing
+			// output, but must not refit or emit PTY resizes while hidden.
+			if (callbacksRef.current.isVisible === false) return;
 			try {
 				fit.fit();
 			} catch {
@@ -722,6 +742,87 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		host.addEventListener("dragover", dragOverInput);
 		host.addEventListener("drop", dropInput);
 
+		let cancelActivationPreparation: (() => void) | null = null;
+		let nextViewportMarkerId = 0;
+		const viewportMarkers = new Map<number, IMarker>();
+		const captureViewportAnchor = (): TerminalViewportAnchor => {
+			const buffer = term.buffer.active;
+			const atBottom = buffer.viewportY === buffer.baseY;
+			if (atBottom) return { atBottom, viewportY: buffer.viewportY };
+			const marker = term.registerMarker(buffer.viewportY - (buffer.baseY + buffer.cursorY));
+			const markerId = ++nextViewportMarkerId;
+			viewportMarkers.set(markerId, marker);
+			marker.onDispose(() => viewportMarkers.delete(markerId));
+			return { atBottom, markerId, viewportY: buffer.viewportY };
+		};
+		const prepareForActivation = (anchor: TerminalViewportAnchor): Promise<void> => {
+			cancelActivationPreparation?.();
+			return new Promise((resolve) => {
+				const marker = anchor.markerId ? viewportMarkers.get(anchor.markerId) : undefined;
+				let firstFrame: number | null = null;
+				let paintFrame: number | null = null;
+				let renderListener: { dispose: () => void } | null = null;
+				let finished = false;
+				const finish = () => {
+					if (finished) return;
+					finished = true;
+					renderListener?.dispose();
+					if (firstFrame !== null) cancelAnimationFrame(firstFrame);
+					if (paintFrame !== null) cancelAnimationFrame(paintFrame);
+					if (cancelActivationPreparation === finish) cancelActivationPreparation = null;
+					marker?.dispose();
+					resolve();
+				};
+				cancelActivationPreparation = finish;
+
+				const restoreAnchor = () => {
+					if (anchor.atBottom) {
+						term.scrollToBottom();
+						const viewport = host.querySelector<HTMLElement>(".xterm-viewport");
+						if (viewport) viewport.scrollTop = viewport.scrollHeight;
+					} else {
+						const anchorLine = marker && !marker.isDisposed ? marker.line : anchor.viewportY;
+						term.scrollToLine(Math.min(anchorLine, term.buffer.active.baseY));
+					}
+					// scrollToLine is intentionally a no-op when xterm's logical
+					// viewport already equals the target. While parked, however,
+					// the offscreen DOM scrollbar can still be stale. Force the
+					// xterm viewport service to map ydisp to pixels before reveal.
+					(term as XtermInternal)._core?.viewport?.syncScrollArea(true);
+				};
+
+				// Only fit when reparenting actually changes the terminal grid.
+				// This runs while the retained container is visibility:hidden, so
+				// any xterm reflow and PTY resize repaint remain non-visible.
+				const proposed = fit.proposeDimensions();
+				if (
+					proposed?.cols &&
+					proposed.rows &&
+					(proposed.cols !== term.cols || proposed.rows !== term.rows)
+				) {
+					fitTerminal();
+				}
+				restoreAnchor();
+
+				renderListener = term.onRender(() => {
+					renderListener?.dispose();
+					renderListener = null;
+					firstFrame = requestAnimationFrame(() => {
+						firstFrame = null;
+						// DOM scrollTop can lag xterm's logical viewport while the
+						// renderer is parked. Reconcile after the render commit,
+						// then keep the container hidden through one paint boundary.
+						restoreAnchor();
+						paintFrame = requestAnimationFrame(() => {
+							paintFrame = null;
+							finish();
+						});
+					});
+				});
+				term.refresh(0, Math.max(0, term.rows - 1));
+			});
+		};
+
 		// Live cols/rows getters: the owner reads the current grid at attach time,
 		// not a snapshot taken at ready time (the first fit may not have run yet).
 		const handle: AttachableTerminal = {
@@ -736,6 +837,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// pane at the replay's settled scroll position (issue #3160).
 			write: (data, done) => term.write(data, done),
 			writeln: (line) => term.writeln(line),
+			captureViewportAnchor,
+			prepareForActivation,
 			clear: () => term.write(CLEAR_SEQUENCE),
 			onUserInput: (listener) => {
 				userInputListeners.add(listener);
@@ -746,6 +849,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		callbacksRef.current.onReady?.(handle);
 
 		return () => {
+			delete (host as DevXtermHost).__aoXtermForTest;
 			termRef.current = null;
 			fitRef.current = null;
 			cancelAnimationFrame(raf);
@@ -762,6 +866,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			host.removeEventListener("dragover", dragOverInput);
 			host.removeEventListener("drop", dropInput);
 			contextMenuActionsRef.current = null;
+			cancelActivationPreparation?.();
+			for (const marker of viewportMarkers.values()) marker.dispose();
+			viewportMarkers.clear();
 			clearSuppressNativePaste();
 			keyInput.dispose();
 			userInputListeners.clear();
@@ -773,6 +880,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			}
 		};
 	}, []);
+
+	useLayoutEffect(() => {
+		if (props.isVisible === false) setContextMenuOpen(false);
+	}, [props.isVisible, setContextMenuOpen]);
 
 	return (
 		<>

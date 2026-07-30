@@ -26,6 +26,13 @@ import { workspaceQueryKey } from "./useWorkspaceQuery";
  */
 export type TerminalUserInputSource = "keyboard" | "paste" | "composition" | "shortcut" | "wheel";
 
+export type TerminalViewportAnchor = {
+	atBottom: boolean;
+	/** Opaque xterm marker that follows the top line through buffer reflow. */
+	markerId?: number;
+	viewportY: number;
+};
+
 export type AttachableTerminal = {
 	cols: number;
 	rows: number;
@@ -36,6 +43,14 @@ export type AttachableTerminal = {
 	 */
 	write: (data: Uint8Array, done?: () => void) => void;
 	writeln: (line: string) => void;
+	/** Capture logical buffer state; parked DOM scroll metrics may be stale. */
+	captureViewportAnchor: () => TerminalViewportAnchor;
+	/**
+	 * Reconcile a retained viewport while its container is still non-visible.
+	 * Resolves only after xterm has rendered the anchor and crossed a paint
+	 * boundary, so the owner can reveal without exposing an intermediate row.
+	 */
+	prepareForActivation: (anchor: TerminalViewportAnchor) => Promise<void>;
 	/**
 	 * Erase screen + scrollback and home the cursor, preserving terminal modes.
 	 * Never a full reset (RIS): that would drop zellij's mouse-tracking mode
@@ -58,6 +73,11 @@ export type TerminalSessionState =
 export type UseTerminalSessionOptions = {
 	/** Gates auto-reattach: when false, a dropped socket waits instead of retrying. */
 	daemonReady: boolean;
+	/**
+	 * False while a retained terminal is parked off screen. Output and transport
+	 * recovery continue, but hidden panes cannot send user input or PTY resizes.
+	 */
+	isVisible?: boolean;
 	/** Test seam: build the mux client. Defaults to a fresh socket against the current API base. */
 	createMux?: () => TerminalMux;
 	/**
@@ -432,6 +452,9 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				flushReplay();
 				terminal.writeln("\r\n\x1b[2m[process exited]\x1b[0m");
 				transition("exited");
+				// Preserve xterm scrollback, but release the attachment: an exited
+				// pane has no reason to keep a WebSocket/client writer alive.
+				teardownMux();
 				invalidateWorkspaces();
 			}),
 			mux.onError(handle, (message) => {
@@ -442,6 +465,10 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				terminal.writeln(`\r\n\x1b[2m[terminal error] ${message}\x1b[0m`);
 				setError(message);
 				transition("error");
+				// Pane errors are terminal for this attachment. Keep the renderer
+				// and its error text inspectable while disposing the failed socket;
+				// an explicit session restore can create a fresh attachment later.
+				teardownMux();
 				void captureRendererEvent("ao.renderer.terminal_attach_failed", { reason: "pane_error" });
 				invalidateWorkspaces();
 			}),
@@ -463,7 +490,11 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			}),
 		);
 		const input = terminal.onUserInput((data) => {
-			if (!isCurrentAttachment(generation, handle, mux) || !r.inputReady) {
+			if (
+				!isCurrentAttachment(generation, handle, mux) ||
+				!r.inputReady ||
+				optionsRef.current.isVisible === false
+			) {
 				return;
 			}
 			// Input is accepted from `opened`, which lands before the replay — so a
@@ -491,11 +522,13 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			r.reassertTimer = setTimeout(() => {
 				r.reassertTimer = null;
 				if (!isCurrentAttachment(generation, handle, mux)) return;
+				if (optionsRef.current.isVisible === false) return;
 				mux.resize(handle, cols, rows);
 			}, RESIZE_REASSERT_MS);
 		};
 		const resize = terminal.onResize(({ cols, rows }) => {
 			if (!isCurrentAttachment(generation, handle, mux)) return;
+			if (optionsRef.current.isVisible === false) return;
 			if (r.resizeTimer) clearTimeout(r.resizeTimer);
 			// A newer grid supersedes any pending re-assert of the old one.
 			if (r.reassertTimer) {
@@ -506,6 +539,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			r.resizeTimer = setTimeout(() => {
 				r.resizeTimer = null;
 				if (!isCurrentAttachment(generation, handle, mux)) return;
+				if (optionsRef.current.isVisible === false) return;
 				mux.resize(handle, cols, rows);
 				// The backend answers every resize frame with an explicit SIGWINCH,
 				// so the re-assert costs a full application repaint ~250ms later.
@@ -646,6 +680,24 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		r.attempts = 0;
 		connect();
 	}, [daemonReady, connect]);
+
+	// A parked cache entry keeps parsing output, but it must be inert as a PTY
+	// client. Cancel resize work queued while it was visible; returning to a
+	// differently sized slot makes FitAddon emit the authoritative new grid.
+	const isVisible = options.isVisible !== false;
+	useEffect(() => {
+		if (isVisible) return;
+		const r = runtime.current;
+		if (r.resizeTimer) {
+			clearTimeout(r.resizeTimer);
+			r.resizeTimer = null;
+		}
+		if (r.reassertTimer) {
+			clearTimeout(r.reassertTimer);
+			r.reassertTimer = null;
+		}
+		r.replayPendingReassert = null;
+	}, [isVisible]);
 
 	useEffect(() => {
 		const r = runtime.current;
