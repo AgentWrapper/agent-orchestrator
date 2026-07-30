@@ -18,7 +18,6 @@ import (
 	"github.com/google/uuid"
 
 	cloudworkerhub "github.com/aoagents/agent-orchestrator/backend/internal/cloud/workerhub"
-	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 const (
@@ -29,7 +28,6 @@ const (
 func (r *Runner) runStructuredClaude(
 	ctx context.Context,
 	adapterArgv []string,
-	launchConfig ports.LaunchConfig,
 	environment []string,
 ) error {
 	existingSessionID := r.bootstrap.Launch.Session.AgentSessionID
@@ -69,15 +67,6 @@ func (r *Runner) runStructuredClaude(
 	})
 
 	writer := &claudeInputWriter{writer: stdin, sessionID: sessionID}
-	if r.bootstrap.Launch.Session.AgentSessionID == "" &&
-		strings.TrimSpace(launchConfig.Prompt) != "" {
-		if err := writer.Prompt(launchConfig.Prompt, 0); err != nil {
-			cancel()
-			_ = command.Wait()
-			return fmt.Errorf("deliver initial Claude prompt: %w", err)
-		}
-	}
-
 	heartbeatCtx, cancelHeartbeat := context.WithCancel(runCtx)
 	var heartbeatWG sync.WaitGroup
 	heartbeatWG.Add(1)

@@ -87,7 +87,6 @@ func (r *Runner) runStructuredTurns(
 	harness string,
 	mode string,
 	argv0 string,
-	initialPrompt string,
 	runTurn structuredTurnRunner,
 ) error {
 	runCtx, cancel := context.WithCancel(ctx)
@@ -131,9 +130,6 @@ func (r *Runner) runStructuredTurns(
 
 	sessionID := r.bootstrap.Launch.Session.AgentSessionID
 	nextPrompt := structuredPrompt{}
-	if sessionID == "" && strings.TrimSpace(initialPrompt) != "" {
-		nextPrompt.text = initialPrompt
-	}
 	for {
 		if nextPrompt.text == "" {
 			select {

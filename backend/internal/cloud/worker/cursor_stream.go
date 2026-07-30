@@ -13,7 +13,6 @@ import (
 func (r *Runner) runStructuredCursor(
 	ctx context.Context,
 	adapterArgv []string,
-	launchConfigPrompt string,
 	environment []string,
 ) error {
 	baseArgv, err := structuredCursorArgv(adapterArgv)
@@ -26,7 +25,6 @@ func (r *Runner) runStructuredCursor(
 		"cursor",
 		"stream-json",
 		filepath.Base(baseArgv[0]),
-		launchConfigPrompt,
 		func(turnCtx context.Context, prompt, sessionID string, sequence int64) (string, error) {
 			return r.runCursorTurn(
 				turnCtx,

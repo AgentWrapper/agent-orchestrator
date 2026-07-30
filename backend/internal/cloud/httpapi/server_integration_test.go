@@ -376,11 +376,17 @@ func TestChatMessageAuthIdempotencyAndWorkerReplay(t *testing.T) {
 		Kind:           "worker",
 		Harness:        "fake",
 		DisplayName:    "chat-e2e",
+		Prompt:         "initial task",
 		Resource:       clouddomain.DefaultResourceProfile(),
 	})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
+	initialEvents, err := store.ChatEventsAfter(ctx, account.ID, created.Session.ID, 0, 10)
+	if err != nil || len(initialEvents) != 1 {
+		t.Fatalf("initial chat events = %#v, error = %v", initialEvents, err)
+	}
+	initialEvent := initialEvents[0]
 	path := "/api/cloud/v1/sessions/" + string(created.Session.ID) + "/messages"
 	key := uuid.NewString()
 	unauthorized := requestJSON(
@@ -485,7 +491,7 @@ func TestChatMessageAuthIdempotencyAndWorkerReplay(t *testing.T) {
 	if err := json.NewDecoder(eventsResponse.Body).Decode(&eventsBody); err != nil {
 		t.Fatalf("decode chat events: %v", err)
 	}
-	if len(eventsBody.Events) != 1 || eventsBody.Events[0].Sequence != firstBody.Event.Sequence {
+	if len(eventsBody.Events) != 1 || eventsBody.Events[0].Sequence != initialEvent.Sequence {
 		t.Fatalf("chat events = %#v", eventsBody.Events)
 	}
 
@@ -545,22 +551,30 @@ func TestChatMessageAuthIdempotencyAndWorkerReplay(t *testing.T) {
 		t.Fatalf("dial worker socket: %v", err)
 	}
 	defer socket.Close(websocket.StatusNormalClosure, "test complete")
-	_, encodedCommand, err := socket.Read(ctx)
-	if err != nil {
-		t.Fatalf("read replayed prompt: %v", err)
-	}
-	var command cloudworkerhub.Command
-	if err := json.Unmarshal(encodedCommand, &command); err != nil {
-		t.Fatalf("decode replayed prompt: %v", err)
-	}
-	decodedPrompt, err := base64.StdEncoding.DecodeString(command.Data)
-	if err != nil {
-		t.Fatalf("decode prompt data: %v", err)
-	}
-	if command.Type != "prompt" ||
-		command.Sequence != firstBody.Event.Sequence ||
-		string(decodedPrompt) != "hello Claude" {
-		t.Fatalf("replayed prompt command = %#v text=%q", command, decodedPrompt)
+	for _, expected := range []struct {
+		sequence int64
+		text     string
+	}{
+		{sequence: initialEvent.Sequence, text: "initial task"},
+		{sequence: firstBody.Event.Sequence, text: "hello Claude"},
+	} {
+		_, encodedCommand, readErr := socket.Read(ctx)
+		if readErr != nil {
+			t.Fatalf("read replayed prompt: %v", readErr)
+		}
+		var command cloudworkerhub.Command
+		if err := json.Unmarshal(encodedCommand, &command); err != nil {
+			t.Fatalf("decode replayed prompt: %v", err)
+		}
+		decodedPrompt, err := base64.StdEncoding.DecodeString(command.Data)
+		if err != nil {
+			t.Fatalf("decode prompt data: %v", err)
+		}
+		if command.Type != "prompt" ||
+			command.Sequence != expected.sequence ||
+			string(decodedPrompt) != expected.text {
+			t.Fatalf("replayed prompt command = %#v text=%q", command, decodedPrompt)
+		}
 	}
 }
 

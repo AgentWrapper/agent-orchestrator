@@ -117,15 +117,15 @@ func (r *Runner) Run(ctx context.Context) error {
 	switch r.bootstrap.Launch.Session.Harness {
 	case "claude-code":
 		if structuredRuntimeEnabled("claude-code") {
-			return r.runStructuredClaude(ctx, argv, launchConfig, runtimeEnvironment)
+			return r.runStructuredClaude(ctx, argv, runtimeEnvironment)
 		}
 	case "codex":
 		if structuredRuntimeEnabled("codex") {
-			return r.runStructuredCodex(ctx, argv, launchConfig.Prompt, runtimeEnvironment)
+			return r.runStructuredCodex(ctx, argv, runtimeEnvironment)
 		}
 	case "cursor":
 		if structuredRuntimeEnabled("cursor") {
-			return r.runStructuredCursor(ctx, argv, launchConfig.Prompt, runtimeEnvironment)
+			return r.runStructuredCursor(ctx, argv, runtimeEnvironment)
 		}
 	}
 	return r.runInteractiveAgent(ctx, argv, launchConfig, strategy, runtimeEnvironment)

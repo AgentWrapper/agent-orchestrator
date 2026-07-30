@@ -1172,12 +1172,10 @@ func (s *Server) writePromptReplay(
 				continue
 			}
 			var payload struct {
-				Text    string `json:"text"`
-				Initial bool   `json:"initial"`
+				Text string `json:"text"`
 			}
 			if json.Unmarshal(event.Payload, &payload) != nil ||
-				payload.Text == "" ||
-				payload.Initial {
+				payload.Text == "" {
 				continue
 			}
 			command := cloudworkerhub.Command{
