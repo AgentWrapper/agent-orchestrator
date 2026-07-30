@@ -2,6 +2,8 @@ package localgh
 
 import (
 	"context"
+	"encoding/base64"
+	"strings"
 	"testing"
 )
 
@@ -26,5 +28,17 @@ func TestStaticTokenSource(t *testing.T) {
 	}
 	if token != "hosted-token" {
 		t.Fatalf("Token() = %q", token)
+	}
+}
+
+func TestGitHubGitAuthorizationUsesBasicTokenCredentials(t *testing.T) {
+	header := githubGitAuthorization("secret-token")
+	encoded := strings.TrimPrefix(header, "Basic ")
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("DecodeString() error = %v", err)
+	}
+	if string(decoded) != "x-access-token:secret-token" {
+		t.Fatalf("credentials = %q", decoded)
 	}
 }

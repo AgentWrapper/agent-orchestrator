@@ -2,6 +2,7 @@ package localgh
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/http/httputil"
@@ -29,7 +30,7 @@ func (c *Client) ProxyRepository(
 			request.Out.URL.Host = "github.com"
 			request.Out.URL.Path = targetPath
 			request.Out.Host = "github.com"
-			request.Out.Header.Set("Authorization", "Bearer "+token)
+			request.Out.Header.Set("Authorization", githubGitAuthorization(token))
 			request.Out.Header.Set("User-Agent", "ao-cloud-local-git-proxy")
 		},
 		ErrorHandler: func(writer http.ResponseWriter, _ *http.Request, proxyErr error) {
@@ -38,6 +39,11 @@ func (c *Client) ProxyRepository(
 	}
 	proxy.ServeHTTP(w, r)
 	return nil
+}
+
+func githubGitAuthorization(token string) string {
+	credentials := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
+	return "Basic " + credentials
 }
 
 // ParseRepositoryURL extracts an owner and repository from a GitHub URL.
