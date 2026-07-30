@@ -204,17 +204,7 @@ function Sidebar({
 			: side === "left" ? "-100%" : "100%"
 		: "0%";
 	const sidebarSpring = { type: "spring", stiffness: 420, damping: 40, mass: 0.6 } as const;
-
-	// Suppress animation for the very first state change (startup snap from
-	// collapsed → expanded). After that, all user-triggered toggles animate normally.
-	const suppressNextRef = React.useRef(true);
-	const prevStateRef = React.useRef(state);
-	let activeTransition: typeof sidebarSpring | { duration: number } = sidebarSpring;
-	if (suppressNextRef.current && prevStateRef.current !== state) {
-		activeTransition = { duration: 0 };
-		suppressNextRef.current = false;
-	}
-	prevStateRef.current = state;
+	const activeTransition = sidebarSpring;
 
 	// Target width for the gap placeholder. Animating the actual width (not a
 	// visual-only layout override) lets the flex sibling <main> follow naturally.
