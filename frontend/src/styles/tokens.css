@@ -23,9 +23,9 @@
 	   so the preset's .dark values are the default application values. */
 	--background: oklch(0.185 0.006 285.885);
 	--foreground: oklch(0.985 0 0);
-	--card: oklch(0.185 0.006 285.885);
+	--card: oklch(0.24 0.008 285.885);
 	--card-foreground: oklch(0.985 0 0);
-	--popover: oklch(0.21 0.006 285.885);
+	--popover: oklch(0.28 0.008 285.885);
 	--popover-foreground: oklch(0.985 0 0);
 	--primary: oklch(0.92 0.004 286.32);
 	--primary-foreground: oklch(0.21 0.006 285.885);
