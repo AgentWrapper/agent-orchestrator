@@ -14,7 +14,7 @@ import {
 	Settings,
 	Trash2,
 } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import type { UpdateStatus } from "../../main/update-settings";
 import {
 	hasConfiguredOrchestratorAgent,
@@ -515,6 +515,14 @@ function ProjectItem({
 		}
 	};
 
+	// Folder icon always toggles disclosure, even when another project is
+	// selected — without this, collapsing a non-active project required a
+	// select click then a second click (felt like a double-click).
+	const onFolderClick = (event: MouseEvent) => {
+		event.stopPropagation();
+		onToggle();
+	};
+
 	const removeProject = () => {
 		setRemoveError(null);
 		setConfirmOpen(true);
@@ -553,11 +561,18 @@ function ProjectItem({
 					"group-data-[collapsible=icon]:size-control-board! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:font-semibold",
 				)}
 			>
-				{expanded ? (
-					<FolderOpen className="shrink-0 group-data-[collapsible=icon]:hidden" strokeWidth={1.75} aria-hidden="true" />
-				) : (
-					<Folder className="shrink-0 group-data-[collapsible=icon]:hidden" strokeWidth={1.75} aria-hidden="true" />
-				)}
+				<span
+					aria-hidden="true"
+					className="shrink-0 group-data-[collapsible=icon]:hidden"
+					data-project-folder=""
+					onClick={onFolderClick}
+				>
+					{expanded ? (
+						<FolderOpen strokeWidth={1.75} aria-hidden="true" />
+					) : (
+						<Folder strokeWidth={1.75} aria-hidden="true" />
+					)}
+				</span>
 				<span className="hidden group-data-[collapsible=icon]:block">{workspace.name.charAt(0).toUpperCase()}</span>
 				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">
 					{workspace.name}
