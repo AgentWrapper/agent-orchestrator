@@ -107,12 +107,16 @@ export function CloudTerminal({ api, sessionId }: CloudTerminalProps) {
         });
         socket.addEventListener("message", (event) => {
           const message = JSON.parse(String(event.data)) as {
-            type: "output" | "error";
+            type: "output" | "error" | "reset";
             data?: string;
             sequence?: number;
             message?: string;
           };
-          if (message.type === "output" && message.data) {
+          if (message.type === "reset") {
+            terminal.reset();
+            terminal.clear();
+            lastSequence = Math.max(lastSequence, message.sequence ?? 0);
+          } else if (message.type === "output" && message.data) {
             terminal.write(base64ToBytes(message.data));
             lastSequence = Math.max(lastSequence, message.sequence ?? 0);
           } else if (message.type === "error" && message.message) {

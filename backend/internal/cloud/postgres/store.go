@@ -702,6 +702,24 @@ func (s *Store) EventsAfter(
 	return events, rows.Err()
 }
 
+// LatestEventSequenceByType returns the newest matching session event sequence.
+func (s *Store) LatestEventSequenceByType(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+	eventType string,
+) (int64, error) {
+	var sequence int64
+	if err := s.pool.QueryRow(ctx, `
+		SELECT COALESCE(MAX(sequence), 0)
+		FROM ao_events
+		WHERE account_id = $1 AND session_id = $2 AND type = $3
+	`, accountID, sessionID, eventType).Scan(&sequence); err != nil {
+		return 0, fmt.Errorf("load latest event sequence: %w", err)
+	}
+	return sequence, nil
+}
+
 // IssueAccessTicket creates a short-lived, single-use session ticket.
 func (s *Store) IssueAccessTicket(
 	ctx context.Context,

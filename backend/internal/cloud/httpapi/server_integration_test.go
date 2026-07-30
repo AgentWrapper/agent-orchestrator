@@ -67,6 +67,12 @@ func integrationAPI(t *testing.T) (*httptest.Server, *cloudpostgres.Store) {
 		"http://127.0.0.1:5174",
 		nil,
 	)
+	credentialServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	t.Cleanup(credentialServer.Close)
+	api.agentCredentials = newAgentCredentialValidator(credentialServer.Client())
+	api.agentCredentials.anthropicBaseURL = credentialServer.URL
 	server := httptest.NewServer(api.Handler())
 	t.Cleanup(server.Close)
 	return server, store
@@ -290,6 +296,17 @@ func TestWorkerAndBrowserTerminalReplayLiveRouting(t *testing.T) {
 		t.Fatalf("dial terminal socket: %v", err)
 	}
 	defer terminalSocket.Close(websocket.StatusNormalClosure, "test complete")
+	_, resetMessageData, err := terminalSocket.Read(ctx)
+	if err != nil {
+		t.Fatalf("read terminal reset: %v", err)
+	}
+	var resetMessage terminalServerMessage
+	if err := json.Unmarshal(resetMessageData, &resetMessage); err != nil {
+		t.Fatalf("decode terminal reset: %v", err)
+	}
+	if resetMessage.Type != "reset" || resetMessage.Sequence <= 0 {
+		t.Fatalf("terminal reset = %#v", resetMessage)
+	}
 
 	output := base64.StdEncoding.EncodeToString([]byte("worker output"))
 	eventResponse := requestJSON(

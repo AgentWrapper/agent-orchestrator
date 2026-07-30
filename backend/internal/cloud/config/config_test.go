@@ -59,7 +59,7 @@ func TestLoadAcceptsFlyWithoutDaytonaKey(t *testing.T) {
 	t.Setenv("AO_FLY_API_TOKEN", "fly-token")
 	t.Setenv("AO_FLY_APP", "ao-workers")
 	t.Setenv("AO_FLY_REGION", "bom")
-	t.Setenv("AO_FLY_WORKER_IMAGE", "registry.fly.io/ao-workers:worker")
+	t.Setenv("AO_FLY_WORKER_IMAGE", "")
 	t.Setenv("AO_ENCRYPTION_KEY", "0000000000000000000000000000000000000000000000000000000000000000")
 	t.Setenv("AO_WORKER_SIGNING_KEY", "1111111111111111111111111111111111111111111111111111111111111111")
 
@@ -69,5 +69,8 @@ func TestLoadAcceptsFlyWithoutDaytonaKey(t *testing.T) {
 	}
 	if cfg.SandboxProvider != "fly" || cfg.FlyRegion != "bom" {
 		t.Fatalf("Fly config = %#v", cfg)
+	}
+	if cfg.FlyWorkerImage != defaultFlyWorkerImage {
+		t.Fatalf("FlyWorkerImage = %q", cfg.FlyWorkerImage)
 	}
 }

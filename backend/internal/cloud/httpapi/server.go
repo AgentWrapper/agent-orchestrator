@@ -44,6 +44,7 @@ type store interface {
 	WorkerLaunchSpec(context.Context, clouddomain.AccountID, clouddomain.SessionID) (cloudpostgres.WorkerLaunchSpec, error)
 	UpdateSessionActivity(context.Context, clouddomain.AccountID, clouddomain.SessionID, string) error
 	WorkerConnectionCurrent(context.Context, clouddomain.AccountID, clouddomain.SessionID, string, int64) (bool, error)
+	LatestEventSequenceByType(context.Context, clouddomain.AccountID, clouddomain.SessionID, string) (int64, error)
 	UpsertProviderConnection(context.Context, clouddomain.AccountID, string, string, []byte, []byte, json.RawMessage) (cloudpostgres.ProviderConnection, error)
 	ListProviderConnections(context.Context, clouddomain.AccountID) ([]cloudpostgres.ProviderConnection, error)
 	ProviderConnectionSecretByProvider(context.Context, clouddomain.AccountID, string, string) ([]byte, []byte, json.RawMessage, error)
@@ -54,20 +55,21 @@ type store interface {
 
 // Server serves the authenticated AO Cloud HTTP and WebSocket APIs.
 type Server struct {
-	store           store
-	events          *cloudevents.Service
-	auth            *cloudauth.Verifier
-	workerTokens    *cloudworker.TokenManager
-	secretCipher    *cloudsecrets.Cipher
-	sandboxProvider string
-	daytonaAPIURL   string
-	daytonaTarget   string
-	workerHub       *cloudworkerhub.Hub
-	localGitHub     *cloudlocalgh.Client
-	webOrigin       string
-	webOriginHost   string
-	log             *slog.Logger
-	handler         http.Handler
+	store            store
+	events           *cloudevents.Service
+	auth             *cloudauth.Verifier
+	workerTokens     *cloudworker.TokenManager
+	secretCipher     *cloudsecrets.Cipher
+	agentCredentials *agentCredentialValidator
+	sandboxProvider  string
+	daytonaAPIURL    string
+	daytonaTarget    string
+	workerHub        *cloudworkerhub.Hub
+	localGitHub      *cloudlocalgh.Client
+	webOrigin        string
+	webOriginHost    string
+	log              *slog.Logger
+	handler          http.Handler
 }
 
 // New creates an AO Cloud API server.
@@ -88,18 +90,19 @@ func New(
 		log = slog.Default()
 	}
 	server := &Server{
-		store:           store,
-		events:          events,
-		auth:            auth,
-		workerTokens:    workerTokens,
-		secretCipher:    secretCipher,
-		sandboxProvider: sandboxProvider,
-		daytonaAPIURL:   strings.TrimRight(daytonaAPIURL, "/"),
-		daytonaTarget:   daytonaTarget,
-		workerHub:       workerHub,
-		localGitHub:     localGitHub,
-		webOrigin:       strings.TrimRight(webOrigin, "/"),
-		log:             log,
+		store:            store,
+		events:           events,
+		auth:             auth,
+		workerTokens:     workerTokens,
+		secretCipher:     secretCipher,
+		agentCredentials: newAgentCredentialValidator(nil),
+		sandboxProvider:  sandboxProvider,
+		daytonaAPIURL:    strings.TrimRight(daytonaAPIURL, "/"),
+		daytonaTarget:    daytonaTarget,
+		workerHub:        workerHub,
+		localGitHub:      localGitHub,
+		webOrigin:        strings.TrimRight(webOrigin, "/"),
+		log:              log,
 	}
 	if parsed, err := url.Parse(server.webOrigin); err == nil {
 		server.webOriginHost = parsed.Host
@@ -822,7 +825,7 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	live := make(chan clouddomain.Event, 1024)
 	unsubscribe := s.events.Subscribe(ticket.AccountID, ticket.SessionID, func(event clouddomain.Event) {
-		if event.Type != "terminal.output" {
+		if event.Type != "terminal.output" && event.Type != "worker.connected" {
 			return
 		}
 		select {
@@ -833,6 +836,24 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 	})
 	defer unsubscribe()
 
+	resetSequence, err := s.store.LatestEventSequenceByType(
+		ctx,
+		ticket.AccountID,
+		ticket.SessionID,
+		"worker.connected",
+	)
+	if err != nil {
+		return
+	}
+	if resetSequence > after {
+		if err := writeTerminalMessage(ctx, socket, terminalServerMessage{
+			Type:     "reset",
+			Sequence: resetSequence,
+		}); err != nil {
+			return
+		}
+		after = resetSequence
+	}
 	sent := after
 	for {
 		replayed, err := s.events.Replay(ctx, ticket.AccountID, ticket.SessionID, sent, 500)
@@ -882,8 +903,21 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 		case <-readErrors:
 			return
 		case event := <-live:
-			if err := writeTerminalEvent(ctx, socket, event, &sent); err != nil {
-				return
+			if event.Type == "worker.connected" {
+				if event.Sequence <= sent {
+					continue
+				}
+				if err := writeTerminalMessage(ctx, socket, terminalServerMessage{
+					Type:     "reset",
+					Sequence: event.Sequence,
+				}); err != nil {
+					return
+				}
+				sent = event.Sequence
+			} else {
+				if err := writeTerminalEvent(ctx, socket, event, &sent); err != nil {
+					return
+				}
 			}
 		case command := <-clientCommands:
 			workerCommand, err := validateTerminalCommand(command)
@@ -1000,6 +1034,29 @@ func (s *Server) putAgentConnection(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(secret) == 0 || len(secret) > maxAgentCredentialBytes {
 		writeError(w, r, http.StatusBadRequest, "INVALID_AGENT_CREDENTIAL", "A non-empty coding-agent credential of at most 64 KiB is required.")
+		return
+	}
+	validateCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	validationErr := s.agentCredentials.Validate(validateCtx, agent, input.CredentialType, secret)
+	cancel()
+	if errors.Is(validationErr, errInvalidAgentCredential) {
+		writeError(
+			w,
+			r,
+			http.StatusBadRequest,
+			"AGENT_CONNECTION_INVALID",
+			"The coding-agent provider rejected this credential. Generate a fresh credential and try again.",
+		)
+		return
+	}
+	if validationErr != nil {
+		writeError(
+			w,
+			r,
+			http.StatusBadGateway,
+			"AGENT_CONNECTION_VALIDATION_UNAVAILABLE",
+			"AO Cloud could not validate this credential with the provider.",
+		)
 		return
 	}
 	associatedData := string(account.ID) + ":" + agent + ":default"

@@ -133,10 +133,11 @@ AO_FLY_API_URL=https://api.machines.dev/v1
 AO_FLY_API_TOKEN=<org- or app-scoped token>
 AO_FLY_APP=<worker app>
 AO_FLY_REGION=<region>
-AO_FLY_WORKER_IMAGE=registry.fly.io/<worker app>:<tag>
 ```
 
 Publish `ao-cloud/docker/worker.Dockerfile` to the Fly app's private registry.
+AO defaults to `registry.fly.io/ao-workers-nihal-2026:stable`; use the optional
+`AO_FLY_WORKER_IMAGE` override only for another Fly app or a rollback.
 The image entrypoint prepares the mounted workspace as root, then drops to the
 unprivileged `ao` user before starting the worker. Pausing suspends the Machine
 so the one-time bootstrap credential is never reused.

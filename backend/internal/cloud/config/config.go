@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+const defaultFlyWorkerImage = "registry.fly.io/ao-workers-nihal-2026:stable"
+
 // Config contains the AO Cloud process configuration.
 type Config struct {
 	ListenAddr            string
@@ -68,7 +70,7 @@ func Load() (Config, error) {
 		FlyAPIToken:           strings.TrimSpace(os.Getenv("AO_FLY_API_TOKEN")),
 		FlyApp:                strings.TrimSpace(os.Getenv("AO_FLY_APP")),
 		FlyRegion:             envOr("AO_FLY_REGION", "iad"),
-		FlyWorkerImage:        strings.TrimSpace(os.Getenv("AO_FLY_WORKER_IMAGE")),
+		FlyWorkerImage:        envOr("AO_FLY_WORKER_IMAGE", defaultFlyWorkerImage),
 		EncryptionKey:         encryptionKey,
 		WorkerSigningKey:      workerSigningKey,
 		ReconcileInterval:     2 * time.Second,
@@ -118,11 +120,10 @@ func (c Config) Validate() error {
 			return fmt.Errorf("AO_DAYTONA_TARGET must be us or eu, got %q", c.DaytonaTarget)
 		}
 	case "fly":
-		missingFly := make([]string, 0, 3)
+		missingFly := make([]string, 0, 2)
 		for name, value := range map[string]string{
-			"AO_FLY_API_TOKEN":    c.FlyAPIToken,
-			"AO_FLY_APP":          c.FlyApp,
-			"AO_FLY_WORKER_IMAGE": c.FlyWorkerImage,
+			"AO_FLY_API_TOKEN": c.FlyAPIToken,
+			"AO_FLY_APP":       c.FlyApp,
 		} {
 			if strings.TrimSpace(value) == "" {
 				missingFly = append(missingFly, name)
