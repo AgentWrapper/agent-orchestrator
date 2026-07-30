@@ -55,6 +55,7 @@ var lanControlBlockedPrefixes = []string{
 	"/internal/",
 	"/api/v1/mobile",
 	"/api/v1/dev",
+	"/api/v1/browser",
 }
 
 // lanControlBlock returns 404 for any request whose path is, or is nested
@@ -76,6 +77,9 @@ func lanControlBlock(next http.Handler) http.Handler {
 // beneath it ("/api/v1/mobile/status") but must not catch unrelated siblings
 // such as "/api/v1/mobileapp".
 func isLANControlBlockedPath(path string) bool {
+	if strings.HasPrefix(path, "/api/v1/sessions/") && strings.HasSuffix(strings.TrimSuffix(path, "/"), "/preview/server") {
+		return true
+	}
 	for _, prefix := range lanControlBlockedPrefixes {
 		trimmed := prefix
 		if len(trimmed) > 1 && trimmed[len(trimmed)-1] == '/' {

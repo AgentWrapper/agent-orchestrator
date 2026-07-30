@@ -48,7 +48,7 @@ export function Footer() {
                 { href: `${COMPANY.DOCS_URL}/architecture/`, label: "Architecture", external: true },
                 { href: `${COMPANY.DOCS_URL}/plugins/`, label: "Plugins", external: true },
                 { href: `${COMPANY.GITHUB_URL}/releases`, label: "Releases", external: true },
-                { href: "/privacy", label: "Privacy" },
+                { href: "/privacy/", label: "Privacy" },
               ]}
             />
 
