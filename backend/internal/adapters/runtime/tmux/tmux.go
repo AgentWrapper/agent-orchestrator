@@ -31,8 +31,15 @@ const (
 	defaultEnterDelay = 300 * time.Millisecond
 	// defaultReapGrace is how long Destroy waits between SIGTERM and SIGKILL when
 	// reaping a pane's leftover background processes, giving them a chance to
-	// exit cleanly (release ports) before being forced (issue #2523).
+	// exit cleanly (release ports) before being forced (issue #2523). It is a
+	// ceiling, not a fixed wait: reapPollInterval decides how soon a pane that
+	// is already empty lets Destroy return.
 	defaultReapGrace = 5 * time.Second
+	// reapPollInterval is how often the reap rechecks for survivors while the
+	// grace runs. A plain shell exits within a tick or two, so Destroy returns
+	// in roughly this long instead of always burning the full grace — which the
+	// DELETE handler blocks on, and the user sees as a tab that will not close.
+	reapPollInterval = 50 * time.Millisecond
 )
 
 var sessionIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
@@ -78,36 +85,93 @@ type runner interface {
 // SIGKILLs survivors. Best-effort: `pkill` is absent on Windows, where tmux is
 // never the runtime, so the calls simply no-op there.
 func killSessionsByPID(ctx context.Context, pids []int, grace time.Duration) {
+	reapPaneSessions(ctx, pids, grace, signalSessions, sessionsHaveProcesses)
+}
+
+// reapPaneSessions is killSessionsByPID's logic with the pkill/pgrep calls
+// injected, so the SIGTERM → wait → SIGKILL sequence is testable without real
+// processes.
+func reapPaneSessions(
+	ctx context.Context,
+	pids []int,
+	grace time.Duration,
+	signal func(ctx context.Context, pids []int, sig string) bool,
+	hasProcesses func(ctx context.Context, pids []int) bool,
+) {
 	if len(pids) == 0 {
 		return
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), grace+5*time.Second)
 	defer cancel()
 
-	signalSessions(cleanupCtx, pids, "-TERM")
-	if !sessionsHaveProcesses(cleanupCtx, pids) {
+	// `-s` is a Linux procps extension; BSD/macOS pkill rejects it outright. When
+	// the platform cannot signal by session id, no amount of waiting reaps
+	// anything — the SIGTERM never landed and the SIGKILL would not either — so
+	// return instead of blocking the caller for the whole grace. Destroy runs
+	// inside the shell-terminal DELETE handler, and that dead wait was the
+	// several-second delay users saw when closing a terminal on macOS.
+	if !signal(cleanupCtx, pids, "-TERM") {
+		return
+	}
+	if !hasProcesses(cleanupCtx, pids) {
 		return
 	}
 
-	timer := time.NewTimer(grace)
-	defer timer.Stop()
-	select {
-	case <-cleanupCtx.Done():
-		return
-	case <-timer.C:
+	// Poll rather than sleep the whole grace. Callers block on this (Destroy runs
+	// inside the shell-terminal DELETE handler), and the common case — an
+	// interactive shell with nothing behind it — is empty almost immediately. A
+	// process that really needs the time still gets the full grace before SIGKILL.
+	deadline := time.NewTimer(grace)
+	defer deadline.Stop()
+	ticker := time.NewTicker(reapPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-cleanupCtx.Done():
+			return
+		case <-ticker.C:
+			if !hasProcesses(cleanupCtx, pids) {
+				return
+			}
+		case <-deadline.C:
+			if !hasProcesses(cleanupCtx, pids) {
+				return
+			}
+			signal(cleanupCtx, pids, "-KILL")
+			return
+		}
 	}
-	if !sessionsHaveProcesses(cleanupCtx, pids) {
-		return
-	}
-	signalSessions(cleanupCtx, pids, "-KILL")
 }
 
 // signalSessions sends a pkill signal flag (e.g. "-TERM") to every process in
-// each pane session, matched by session id via `pkill -s`.
-func signalSessions(ctx context.Context, pids []int, sig string) {
+// each pane session, matched by session id via `pkill -s`. It reports whether
+// the platform supports signalling by session id at all: exit 2 is a usage
+// error on both procps and BSD pkill, which is how macOS answers `-s`, and
+// there the call reaches no process.
+func signalSessions(ctx context.Context, pids []int, sig string) bool {
+	supported := false
 	for _, pid := range pids {
-		_ = exec.CommandContext(ctx, "pkill", sig, "-s", strconv.Itoa(pid)).Run()
+		err := exec.CommandContext(ctx, "pkill", sig, "-s", strconv.Itoa(pid)).Run()
+		if !isUnsupportedMatcher(err) {
+			supported = true
+		}
 	}
+	return supported
+}
+
+// isUnsupportedMatcher reports whether a pgrep/pkill invocation failed because
+// the platform rejects the matcher itself (exit 2, a usage error) rather than
+// because nothing matched (exit 1) or the process is missing entirely.
+func isUnsupportedMatcher(err error) bool {
+	if err == nil {
+		return false
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode() >= 2
+	}
+	// pkill/pgrep absent (Windows, minimal containers): equally unusable.
+	return true
 }
 
 // sessionsHaveProcesses reports whether any process remains in the pane

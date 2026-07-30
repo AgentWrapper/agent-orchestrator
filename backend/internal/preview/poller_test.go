@@ -38,7 +38,7 @@ func (f *fakePreviewSessions) SetPreview(_ context.Context, id domain.SessionID,
 	return domain.Session{}, nil
 }
 
-func TestPollerSetsPreviewWhenActiveWorkerEntryAppears(t *testing.T) {
+func TestPollerDoesNotOpenUntargetedWorkerEntry(t *testing.T) {
 	workspace := t.TempDir()
 	writeFile(t, filepath.Join(workspace, "index.html"), "<main>hello</main>")
 	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
@@ -48,16 +48,13 @@ func TestPollerSetsPreviewWhenActiveWorkerEntryAppears(t *testing.T) {
 		t.Fatalf("Poll: %v", err)
 	}
 
-	assertSets(t, svc.sets, previewSet{
-		id:  "ao-1",
-		url: mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "index.html"),
-	})
+	assertSets(t, svc.sets)
 }
 
-func TestPollerUsesFirstExistingEntrypoint(t *testing.T) {
+func TestPollerNormalizesExplicitWorkspaceEntrypoint(t *testing.T) {
 	workspace := t.TempDir()
 	writeFile(t, filepath.Join(workspace, "dist", "index.html"), "<main>dist</main>")
-	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "dist/index.html")}}
 	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
 
 	if err := poller.Poll(context.Background()); err != nil {
@@ -70,11 +67,11 @@ func TestPollerUsesFirstExistingEntrypoint(t *testing.T) {
 	})
 }
 
-func TestPollerPreservesEntrypointPriority(t *testing.T) {
+func TestPollerDoesNotReplaceExplicitEntrypointWithAnotherStaticFile(t *testing.T) {
 	workspace := t.TempDir()
 	writeFile(t, filepath.Join(workspace, "public", "index.html"), "<main>public</main>")
 	writeFile(t, filepath.Join(workspace, "dist", "index.html"), "<main>dist</main>")
-	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "dist/index.html")}}
 	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
 
 	if err := poller.Poll(context.Background()); err != nil {
@@ -83,7 +80,7 @@ func TestPollerPreservesEntrypointPriority(t *testing.T) {
 
 	assertSets(t, svc.sets, previewSet{
 		id:  "ao-1",
-		url: mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "public/index.html"),
+		url: mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "dist/index.html"),
 	})
 }
 
@@ -91,7 +88,7 @@ func TestPollerRefreshesOnlyWhenEntrypointChanges(t *testing.T) {
 	workspace := t.TempDir()
 	entry := filepath.Join(workspace, "index.html")
 	writeFile(t, entry, "<main>v1</main>")
-	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "index.html")}}
 	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
 
 	if err := poller.Poll(context.Background()); err != nil {
@@ -122,10 +119,10 @@ func TestPollerRediscoverEntryAfterDeleteAndRecreate(t *testing.T) {
 	workspace := t.TempDir()
 	entry := filepath.Join(workspace, "index.html")
 	writeFile(t, entry, "<main>v1</main>")
-	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "index.html")}}
 	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
 
-	// First poll discovers the entry and sets the preview.
+	// First poll normalizes the explicitly selected workspace entry.
 	if err := poller.Poll(context.Background()); err != nil {
 		t.Fatalf("first Poll: %v", err)
 	}
@@ -147,9 +144,16 @@ func TestPollerRediscoverEntryAfterDeleteAndRecreate(t *testing.T) {
 	}
 
 	// Recreate the entry — poller must re-discover.
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("third Poll (still deleted): %v", err)
+	}
+	if len(svc.sets) != 2 {
+		t.Fatalf("sets while entry remains deleted = %#v, want no repeated clear", svc.sets)
+	}
+
 	writeFile(t, entry, "<main>v2</main>")
 	if err := poller.Poll(context.Background()); err != nil {
-		t.Fatalf("third Poll (recreate): %v", err)
+		t.Fatalf("fourth Poll (recreate): %v", err)
 	}
 	if len(svc.sets) != 3 {
 		t.Fatalf("sets after recreate = %#v, want 3 sets (discover + clear + rediscover)", svc.sets)

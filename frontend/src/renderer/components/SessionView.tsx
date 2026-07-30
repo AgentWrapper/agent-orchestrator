@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useNavigate } from "@tanstack/react-router";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
@@ -19,7 +18,7 @@ import {
 } from "../hooks/useShellTerminals";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { hidesShellTopbar } from "../lib/platform";
-import { isOrchestratorSession, sessionIsActive, workerSessions, type WorkspaceSession } from "../types/workspace";
+import { isOrchestratorSession, sessionIsActive } from "../types/workspace";
 import type { TerminalTarget } from "../types/terminal";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
 
@@ -27,7 +26,6 @@ const INSPECTOR_MIN_PERCENT = 22;
 const INSPECTOR_MAX_PERCENT = 45;
 const inspectorSplitStorageKey = "ao.inspector.split";
 const shellTopbarHiddenByPlatform = hidesShellTopbar();
-const emptySessionTabIds: string[] = [];
 
 function initialSplitPercent(): number {
 	const raw = typeof window === "undefined" ? null : window.localStorage?.getItem(inspectorSplitStorageKey);
@@ -45,7 +43,6 @@ function previewRevealKey(previewUrl?: string, previewRevision?: number): string
 
 type SessionViewProps = {
 	sessionId: string;
-	tabOwnerSessionId?: string;
 };
 
 // The session detail screen: terminal + git rail. On Win/Linux the shell owns
@@ -60,8 +57,7 @@ type SessionViewProps = {
 // imperative API from the ui-store (topbar button / ⌘⇧B), animated by the
 // flex-grow transition in styles.css. Content keeps a stable min-width inside
 // the clipped panel so nothing reflows mid-animation; split width persists.
-export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) {
-	const navigate = useNavigate();
+export function SessionView({ sessionId }: SessionViewProps) {
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const theme = useResolvedTheme();
@@ -80,62 +76,13 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
-	const allSessions = workspaces.flatMap((workspace) => workspace.sessions);
-	const tabOwnerSession = allSessions.find((candidate) => candidate.id === tabOwnerSessionId) ?? session;
-	const ownerSessionId = tabOwnerSession?.id ?? sessionId;
-	const storedSessionTabIds = useUiStore((state) => state.sessionTabsByOwner[ownerSessionId] ?? emptySessionTabIds);
-	const addSessionTab = useUiStore((state) => state.addSessionTab);
-	const removeSessionTab = useUiStore((state) => state.removeSessionTab);
-	const availableSessions = workspaces.flatMap((workspace) =>
-		workerSessions(workspace.sessions).filter((candidate) => candidate.isTerminated !== true),
-	);
-	const projectSessions = tabOwnerSession
-		? [
-				tabOwnerSession,
-				...storedSessionTabIds
-					.map((tabId) => allSessions.find((candidate) => candidate.id === tabId))
-					.filter((projectSession): projectSession is WorkspaceSession =>
-						Boolean(projectSession && projectSession.isTerminated !== true && projectSession.id !== tabOwnerSession.id),
-					),
-			]
-		: [];
-	if (session && !projectSessions.some((projectSession) => projectSession.id === session.id)) {
-		projectSessions.push(session);
-	}
-	const selectProjectSession = useCallback(
-		(projectSession: WorkspaceSession) => {
-			void navigate({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId: projectSession.workspaceId, sessionId: projectSession.id },
-				search: projectSession.id === ownerSessionId ? {} : { tabOwner: ownerSessionId },
-			});
-		},
-		[navigate, ownerSessionId],
-	);
-	const addProjectSession = useCallback(
-		(projectSession: WorkspaceSession) => {
-			addSessionTab(ownerSessionId, projectSession.id);
-			selectProjectSession(projectSession);
-		},
-		[addSessionTab, ownerSessionId, selectProjectSession],
-	);
-	const closeProjectSession = useCallback(
-		(projectSession: WorkspaceSession) => {
-			removeSessionTab(ownerSessionId, projectSession.id);
-			if (projectSession.id === sessionId && tabOwnerSession) selectProjectSession(tabOwnerSession);
-		},
-		[ownerSessionId, removeSessionTab, selectProjectSession, sessionId, tabOwnerSession],
-	);
 
-	// Shell terminals opened inside a session live beside its pane as extra tabs.
-	//
-	// Scope shells to the tab layout's originating session. Navigating to a
-	// pinned worker keeps the owner's shell tabs; opening that worker directly
-	// from the sidebar uses its own separate shell set.
+	// Shell terminals opened inside a session live beside its pane as extra tabs,
+	// scoped to the session on screen so each session has its own shell set.
 	const allShellTerminals = useShellTerminals().data ?? [];
 	const shellTerminals = useMemo(
-		() => allShellTerminals.filter((shell) => shell.sessionId === ownerSessionId),
-		[allShellTerminals, ownerSessionId],
+		() => allShellTerminals.filter((shell) => shell.sessionId === sessionId),
+		[allShellTerminals, sessionId],
 	);
 	const openShellTerminal = useOpenShellTerminal();
 	const closeShellTerminal = useCloseShellTerminal();
@@ -149,9 +96,12 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 		[renameShellTerminal],
 	);
 
+	// Scoped to the session on screen so the daemon roots the shell in that
+	// session's worktree (the project id is only the fallback when the session's
+	// workspace can no longer be resolved).
 	const addShellTerminal = useCallback(() => {
 		openShellTerminal.mutate(
-			{ projectId: tabOwnerSession?.workspaceId, sessionId: ownerSessionId },
+			{ projectId: session?.workspaceId, sessionId },
 			{
 				onSuccess: (shell) => {
 					setActiveShellTerminal(shell.handleId);
@@ -159,7 +109,7 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 				},
 			},
 		);
-	}, [openShellTerminal, ownerSessionId, setActiveShellTerminal, tabOwnerSession?.workspaceId]);
+	}, [openShellTerminal, sessionId, session?.workspaceId, setActiveShellTerminal]);
 
 	const selectShellTerminal = useCallback(
 		(handleId: string) => {
@@ -422,21 +372,15 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
 				<ResizablePanel defaultSize="72%" id="terminal" minSize="45%">
 					<CenterPane
-						availableProjectSessions={availableSessions.filter((candidate) => candidate.id !== tabOwnerSession?.id)}
 						daemonReady={daemonStatus.state === "ready"}
-						onAddProjectSession={addProjectSession}
-						onCloseProjectSession={closeProjectSession}
 						onCloseShellTerminal={closeShellTerminalByHandle}
 						onNewShellTerminal={addShellTerminal}
 						onRenameShellTerminal={renameShellTerminalByHandle}
-						onSelectProjectSession={selectProjectSession}
 						onSelectSessionTerminal={selectSessionTerminal}
 						onSelectShellTerminal={selectShellTerminal}
 						onSelectWorkerTerminal={selectSessionTerminal}
 						session={session}
-						projectSessions={projectSessions}
 						shellTerminals={shellTerminals}
-						tabOwnerSessionId={ownerSessionId}
 						terminalTarget={terminalTarget}
 						theme={theme}
 					/>

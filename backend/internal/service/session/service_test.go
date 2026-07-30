@@ -25,6 +25,16 @@ func (f *fakeTelemetrySink) Emit(_ context.Context, ev ports.TelemetryEvent) {
 }
 func (f *fakeTelemetrySink) Close(context.Context) error { return nil }
 
+type fakeReengagement struct {
+	completed domain.SessionID
+	err       error
+}
+
+func (f *fakeReengagement) Complete(_ context.Context, id domain.SessionID) error {
+	f.completed = id
+	return f.err
+}
+
 type fakeStore struct {
 	sessions map[domain.SessionID]domain.SessionRecord
 	pr       map[domain.SessionID]domain.PRFacts
@@ -279,6 +289,28 @@ func TestSessionSetTerminateOnPRMergePersistsPolicy(t *testing.T) {
 func TestSessionSetTerminateOnPRMergeUnknownSession(t *testing.T) {
 	if _, err := (&Service{store: newFakeStore()}).SetTerminateOnPRMerge(context.Background(), "ghost-1", true); err == nil {
 		t.Fatal("expected missing session error")
+	}
+}
+
+func TestCompleteOrchestrator(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator}
+	reengagement := &fakeReengagement{}
+	svc := NewWithDeps(Deps{Store: st, Reengagement: reengagement})
+	if err := svc.CompleteOrchestrator(context.Background(), "mer-orch"); err != nil {
+		t.Fatal(err)
+	}
+	if reengagement.completed != "mer-orch" {
+		t.Fatalf("completed = %q, want mer-orch", reengagement.completed)
+	}
+}
+
+func TestCompleteOrchestratorRejectsWorker(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	err := NewWithDeps(Deps{Store: st, Reengagement: &fakeReengagement{}}).CompleteOrchestrator(context.Background(), "mer-1")
+	if err == nil {
+		t.Fatal("expected worker rejection")
 	}
 }
 
