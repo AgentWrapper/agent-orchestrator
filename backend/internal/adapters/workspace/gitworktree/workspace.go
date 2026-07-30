@@ -634,11 +634,34 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 			return ports.WorkspaceInfo{}, err
 		}
 		if !missing {
-			branch := rec.Branch
-			if branch == "" {
-				branch = cfg.Branch
+			if _, err := w.run(ctx, w.binary, revParseHeadArgs(path)...); err != nil {
+				if !rec.Locked || rec.LockReason != "initializing" {
+					return ports.WorkspaceInfo{}, fmt.Errorf(
+						"gitworktree: refusing to restore registered worktree %q because HEAD is not ready: %w",
+						path, err,
+					)
+				}
+				if cleanupErr := w.removeIncompleteInitialization(ctx, repo, rec); cleanupErr != nil {
+					return ports.WorkspaceInfo{}, errors.Join(
+						fmt.Errorf("gitworktree: registered worktree %q is not ready: %w", path, err),
+						cleanupErr,
+					)
+				}
+				if rec.Branch != "" {
+					recreateBranch = rec.Branch
+				}
+			} else {
+				branch := rec.Branch
+				if branch == "" {
+					branch = cfg.Branch
+				}
+				return ports.WorkspaceInfo{Path: path, Branch: branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: repo}, nil
 			}
-			return ports.WorkspaceInfo{Path: path, Branch: branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: repo}, nil
+		} else {
+			branch := rec.Branch
+			if branch != "" {
+				recreateBranch = branch
+			}
 		}
 		// The registration outlived its directory (issue #2775: a session's git
 		// worktree registration and DB row survived a deletion that removed only
@@ -649,9 +672,6 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 		// instantly with no diagnostic. addWorktree re-registers the stale path
 		// itself via `worktree add --force`; the registration is left in place
 		// until then.
-		if rec.Branch != "" {
-			recreateBranch = rec.Branch
-		}
 	}
 	if nonEmpty, err := pathExistsNonEmpty(path); err != nil {
 		return ports.WorkspaceInfo{}, err
@@ -851,6 +871,9 @@ func (w *Workspace) removeIncompleteInitialization(ctx context.Context, repo str
 	if !rec.Locked || rec.LockReason != "initializing" {
 		return fmt.Errorf("gitworktree: refusing to remove worktree %q without an initializing lock", rec.Path)
 	}
+	if err := ensureInitializationHusk(rec.Path); err != nil {
+		return err
+	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 	if _, err := w.run(cleanupCtx, w.binary, worktreeUnlockArgs(repo, rec.Path)...); err != nil {
@@ -858,6 +881,20 @@ func (w *Workspace) removeIncompleteInitialization(ctx context.Context, repo str
 	}
 	if _, err := w.run(cleanupCtx, w.binary, worktreeForceRemoveArgs(repo, rec.Path)...); err != nil {
 		return fmt.Errorf("gitworktree: remove incomplete initialization %q: %w", rec.Path, err)
+	}
+	return nil
+}
+
+func ensureInitializationHusk(path string) error {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return fmt.Errorf("gitworktree: inspect incomplete initialization %q: %w", path, err)
+	}
+	if len(entries) != 1 || entries[0].Name() != ".git" || entries[0].IsDir() {
+		return fmt.Errorf(
+			"gitworktree: refusing to remove incomplete initialization %q because it contains files that must be preserved",
+			path,
+		)
 	}
 	return nil
 }
