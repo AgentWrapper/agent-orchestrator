@@ -562,7 +562,7 @@ func applyWorkspaceTextEditCandidate(root string, id domain.SessionID, oldText, 
 		result.Message = "Workspace path is not supported for inline text edits"
 		return result, nil
 	}
-	file, info, err := confinedWorkspaceFile(root, rel)
+	file, _, err := confinedWorkspaceFile(root, rel)
 	if err != nil {
 		if workspaceTextEditFileNotFound(err) {
 			result.Status = WorkspaceTextEditConflict
@@ -606,8 +606,19 @@ func applyWorkspaceTextEditCandidate(root string, id domain.SessionID, oldText, 
 	}
 	result.Line = line
 	updated := content[:index] + newText + content[index+len(oldText):]
-	if err := writeWorkspaceTextFile(file, updated, info.Mode().Perm()); err != nil {
+	applied, err := writeWorkspaceTextFileIfUnchanged(file, content, updated)
+	if err != nil {
+		if workspaceTextEditFileNotFound(err) {
+			result.Status = WorkspaceTextEditConflict
+			result.Message = "Selected source file no longer exists"
+			return result, nil
+		}
 		return WorkspaceTextEditResult{}, err
+	}
+	if !applied {
+		result.Status = WorkspaceTextEditConflict
+		result.Message = "Selected source text no longer matches"
+		return result, nil
 	}
 	result.Status = WorkspaceTextEditApplied
 	return result, nil
@@ -656,11 +667,11 @@ func workspaceTextSnippet(content string, index, matchLen int) string {
 	return snippet
 }
 
-func writeWorkspaceTextFile(file, content string, mode fs.FileMode) error {
+func writeWorkspaceTextFileIfUnchanged(file, snapshot, content string) (bool, error) {
 	dir := filepath.Dir(file)
 	temp, err := os.CreateTemp(dir, ".ao-text-edit-*")
 	if err != nil {
-		return err
+		return false, err
 	}
 	tempName := temp.Name()
 	cleanup := true
@@ -671,19 +682,30 @@ func writeWorkspaceTextFile(file, content string, mode fs.FileMode) error {
 	}()
 	if _, err := temp.WriteString(content); err != nil {
 		_ = temp.Close()
-		return err
+		return false, err
 	}
 	if err := temp.Close(); err != nil {
-		return err
+		return false, err
 	}
-	if err := os.Chmod(tempName, mode); err != nil {
-		return err
+	current, binary, truncated, err := readWorkspaceTextFile(file, maxWorkspaceFileBytes)
+	if err != nil {
+		return false, err
+	}
+	if binary || truncated || current != snapshot {
+		return false, nil
+	}
+	info, err := os.Stat(file)
+	if err != nil {
+		return false, err
+	}
+	if err := os.Chmod(tempName, info.Mode().Perm()); err != nil {
+		return false, err
 	}
 	if err := os.Rename(tempName, file); err != nil {
-		return err
+		return false, err
 	}
 	cleanup = false
-	return nil
+	return true, nil
 }
 
 func workspaceTextEditFileNotFound(err error) bool {

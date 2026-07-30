@@ -480,6 +480,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const previous = session.tabs.get(session.activeTabId);
 		if (previous && previous !== next) {
 			invalidateRefs(previous);
+			cancelTextEdit(options, previous, "disabled");
 			previous.view.setVisible?.(false);
 			previous.view.setBounds(OFFSCREEN_BOUNDS);
 		}

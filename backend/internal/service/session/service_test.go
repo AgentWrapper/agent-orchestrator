@@ -414,6 +414,34 @@ func TestApplyWorkspaceTextEditUniqueSourceMatch(t *testing.T) {
 	}
 }
 
+func TestWriteWorkspaceTextFileIfUnchangedRejectsChangedSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "App.tsx")
+	snapshot := "<h1>Draft copy</h1>\n"
+	concurrent := "<h1>Concurrent copy</h1>\n"
+	if err := os.WriteFile(file, []byte(snapshot), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte(concurrent), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	applied, err := writeWorkspaceTextFileIfUnchanged(file, snapshot, "<h1>Published copy</h1>\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied {
+		t.Fatal("applied stale snapshot, want conflict")
+	}
+	got, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != concurrent {
+		t.Fatalf("content = %q, want concurrent content preserved", got)
+	}
+}
+
 func TestApplyWorkspaceTextEditAmbiguousMatchReturnsCandidates(t *testing.T) {
 	repo := newWorkspaceRepo(t)
 	writeWorkspaceFile(t, repo, "src/Footer.tsx", "export function Footer() {\n\treturn <span>Draft copy</span>;\n}\n")
