@@ -15,6 +15,7 @@ var ctx = context.Background()
 
 type fakeStore struct {
 	sessions   map[domain.SessionID]domain.SessionRecord
+	projects   map[string]domain.ProjectRecord
 	prs        map[domain.SessionID][]domain.PullRequest
 	signatures map[string]string
 
@@ -24,7 +25,7 @@ type fakeStore struct {
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, prs: map[domain.SessionID][]domain.PullRequest{}, signatures: map[string]string{}}
+	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, projects: map[string]domain.ProjectRecord{}, prs: map[domain.SessionID][]domain.PullRequest{}, signatures: map[string]string{}}
 }
 
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
@@ -37,6 +38,11 @@ func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]
 		return nil, f.listPRsErr
 	}
 	return f.prs[id], nil
+}
+
+func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
+	rec, ok := f.projects[id]
+	return rec, ok, nil
 }
 
 func (f *fakeStore) ListSessions(_ context.Context, project domain.ProjectID) ([]domain.SessionRecord, error) {
@@ -891,6 +897,88 @@ func TestSCMObservationUsesPRHeadWhenCIHeadMissing(t *testing.T) {
 	}
 	if len(msg.msgs) != 2 {
 		t.Fatalf("want separate CI nudges for distinct PR heads when CI head is absent, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+}
+
+func TestSCMObservation_AutoReviewTriggersWhenProjectEnabled(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Kind = domain.KindWorker
+	st.sessions["mer-1"] = rec
+	st.projects["mer"] = domain.ProjectRecord{
+		ID:     "mer",
+		Config: domain.ProjectConfig{AutoReviewPullRequests: true},
+	}
+	var triggered []domain.SessionID
+	m.SetAutoReviewTrigger(func(_ context.Context, workerID domain.SessionID) error {
+		triggered = append(triggered, workerID)
+		return nil
+	})
+
+	o := ports.SCMObservation{
+		Fetched: true,
+		PR:      ports.SCMPRObservation{URL: "pr1", Number: 1, HeadSHA: "c1"},
+	}
+	if err := m.ApplySCMObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(triggered) != 1 || triggered[0] != "mer-1" {
+		t.Fatalf("auto-review trigger = %v, want mer-1", triggered)
+	}
+}
+
+func TestSCMObservation_AutoReviewRequiresProjectOptIn(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Kind = domain.KindWorker
+	st.sessions["mer-1"] = rec
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	calls := 0
+	m.SetAutoReviewTrigger(func(context.Context, domain.SessionID) error {
+		calls++
+		return nil
+	})
+
+	o := ports.SCMObservation{
+		Fetched: true,
+		PR:      ports.SCMPRObservation{URL: "pr1", Number: 1, HeadSHA: "c1"},
+	}
+	if err := m.ApplySCMObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+
+	if calls != 0 {
+		t.Fatalf("auto-review trigger calls = %d, want 0", calls)
+	}
+}
+
+func TestSCMObservation_AutoReviewSkipsDraftAndClosedPRs(t *testing.T) {
+	for _, pr := range []ports.SCMPRObservation{
+		{URL: "draft", Number: 1, Draft: true},
+		{URL: "closed", Number: 2, Closed: true},
+		{URL: "merged", Number: 3, Merged: true},
+	} {
+		m, st, _ := newManager()
+		rec := working("mer-1")
+		rec.Kind = domain.KindWorker
+		st.sessions["mer-1"] = rec
+		st.projects["mer"] = domain.ProjectRecord{
+			ID:     "mer",
+			Config: domain.ProjectConfig{AutoReviewPullRequests: true},
+		}
+		calls := 0
+		m.SetAutoReviewTrigger(func(context.Context, domain.SessionID) error {
+			calls++
+			return nil
+		})
+
+		if err := m.ApplySCMObservation(ctx, "mer-1", ports.SCMObservation{Fetched: true, PR: pr}); err != nil {
+			t.Fatalf("ApplySCMObservation(%s): %v", pr.URL, err)
+		}
+		if calls != 0 {
+			t.Fatalf("auto-review trigger calls for %s = %d, want 0", pr.URL, calls)
+		}
 	}
 }
 

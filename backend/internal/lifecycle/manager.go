@@ -20,6 +20,7 @@ import (
 type sessionStore interface {
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
+	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 	// ListSessions returns every session in a project. The dispatcher reads it
 	// to resolve the current orchestrator at delivery time.
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
@@ -93,6 +94,7 @@ type Manager struct {
 	// completionTerminator is late-bound because Session Manager itself depends
 	// on this lifecycle reducer. It is required before the SCM observer starts.
 	completionTerminator sessionTerminator
+	autoReview           func(context.Context, domain.SessionID) error
 
 	mu        sync.Mutex
 	window    time.Duration
@@ -147,6 +149,15 @@ func (m *Manager) SetCompletionTerminator(terminator sessionTerminator) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.completionTerminator = terminator
+}
+
+// SetAutoReviewTrigger late-binds the review service after both lifecycle and
+// review services are constructed. SCM observations call it only for projects
+// that opt in through ProjectConfig.AutoReviewPullRequests.
+func (m *Manager) SetAutoReviewTrigger(trigger func(context.Context, domain.SessionID) error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.autoReview = trigger
 }
 
 // PrepareLaunch registers a supervised generation before the runtime starts.

@@ -2986,6 +2986,8 @@ components:
           type: string
         agentRulesFile:
           type: string
+        autoReviewPullRequests:
+          type: boolean
         defaultBranch:
           type: string
         env:

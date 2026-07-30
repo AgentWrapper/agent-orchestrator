@@ -37,6 +37,7 @@ import { SettingsPageShell } from "./settings/SettingsPageShell";
 import { SettingsPanel } from "./settings/SettingsPanel";
 import { SettingsRow } from "./settings/SettingsRow";
 import { SettingsSection } from "./settings/SettingsSection";
+import { Switch } from "./ui/switch";
 
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
@@ -109,6 +110,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		model: config.agentConfig?.model ?? "",
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
+		autoReviewPullRequests: config.autoReviewPullRequests ?? false,
 		intakeEnabled: intake.enabled ?? false,
 		intakeRepo: intake.repo ?? "",
 		intakeAssignee: intake.assignee ?? "",
@@ -167,6 +169,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 							permissions: form.permissions || undefined,
 						}),
 						reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
+						autoReviewPullRequests: form.autoReviewPullRequests || undefined,
 						trackerIntake: buildIntake(intakeForm),
 					};
 			const { error } = await apiClient.PUT("/api/v1/projects/{id}", {
@@ -362,6 +365,13 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 							installed={agentCatalog?.installed}
 							supported={agentCatalog?.supported}
 							disabled={agentsQuery.isFetching && agentCatalog === undefined}
+						/>
+					</SettingsRow>
+					<SettingsRow icon={Shield} label="Auto-review pull requests">
+						<Switch
+							aria-label="Auto-review pull requests"
+							checked={form.autoReviewPullRequests}
+							onCheckedChange={(checked) => setForm((f) => ({ ...f, autoReviewPullRequests: checked }))}
 						/>
 					</SettingsRow>
 				</SettingsSection>
@@ -584,7 +594,13 @@ function projectKindLabel(kind: string): string {
 }
 
 function scratchSupportedConfig(config: ProjectConfig): ProjectConfig {
-	const { defaultBranch: _defaultBranch, reviewers: _reviewers, trackerIntake: _trackerIntake, ...supported } = config;
+	const {
+		defaultBranch: _defaultBranch,
+		reviewers: _reviewers,
+		autoReviewPullRequests: _autoReviewPullRequests,
+		trackerIntake: _trackerIntake,
+		...supported
+	} = config;
 	return supported;
 }
 

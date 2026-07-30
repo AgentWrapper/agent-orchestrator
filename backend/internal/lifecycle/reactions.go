@@ -356,12 +356,39 @@ func (m *Manager) ApplySCMObservation(ctx context.Context, id domain.SessionID, 
 	if err := m.ApplyPRObservation(ctx, id, scmToPRObservation(o)); err != nil {
 		return err
 	}
+	if err := m.maybeTriggerAutoReview(ctx, id, o); err != nil {
+		return err
+	}
 	intent, err := m.notificationIntentForCurrentSCM(ctx, id, o)
 	if err != nil {
 		return err
 	}
 	m.emitNotification(ctx, intent)
 	return nil
+}
+
+func (m *Manager) maybeTriggerAutoReview(ctx context.Context, id domain.SessionID, o ports.SCMObservation) error {
+	if o.PR.Merged || o.PR.Closed || o.PR.Draft {
+		return nil
+	}
+	m.mu.Lock()
+	trigger := m.autoReview
+	m.mu.Unlock()
+	if trigger == nil {
+		return nil
+	}
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil || !ok {
+		return err
+	}
+	if rec.IsTerminated || rec.Kind != domain.KindWorker {
+		return nil
+	}
+	project, ok, err := m.store.GetProject(ctx, string(rec.ProjectID))
+	if err != nil || !ok || !project.Config.AutoReviewPullRequests {
+		return err
+	}
+	return trigger(ctx, id)
 }
 
 func (m *Manager) notificationIntentForCurrentSCM(ctx context.Context, id domain.SessionID, o ports.SCMObservation) (*ports.NotificationIntent, error) {

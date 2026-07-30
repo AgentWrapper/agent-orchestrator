@@ -221,6 +221,10 @@ func (s *lifecycleStore) UpdateSession(_ context.Context, rec domain.SessionReco
 	return nil
 }
 
+func (s *lifecycleStore) GetProject(_ context.Context, _ string) (domain.ProjectRecord, bool, error) {
+	return domain.ProjectRecord{}, false, nil
+}
+
 func (s *lifecycleStore) ListPRsBySession(_ context.Context, _ domain.SessionID) ([]domain.PullRequest, error) {
 	return nil, nil
 }

@@ -1096,6 +1096,7 @@ export interface components {
             agentConfig?: components["schemas"]["AgentConfig"];
             agentRules?: string;
             agentRulesFile?: string;
+            autoReviewPullRequests?: boolean;
             defaultBranch?: string;
             env?: {
                 [key: string]: string;

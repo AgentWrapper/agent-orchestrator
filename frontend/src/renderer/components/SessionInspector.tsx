@@ -969,6 +969,12 @@ function ReviewPanel({
 				</p>
 			) : null}
 			<p className={cn(inspectorEmptyClass, "inline-flex min-w-0 items-center gap-1.5")}>
+				<Shield className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
+				<span className="truncate font-medium text-foreground">
+					{config?.autoReviewPullRequests === true ? "Auto-review on" : "Auto-review off"}
+				</span>
+			</p>
+			<p className={cn(inspectorEmptyClass, "inline-flex min-w-0 items-center gap-1.5")}>
 				<ReviewerHarnessIcon className="size-icon-sm shrink-0 text-passive" harness={harness} />
 				<span className="truncate font-mono font-medium text-foreground">{harness}</span>
 			</p>

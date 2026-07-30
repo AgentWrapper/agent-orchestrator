@@ -715,6 +715,36 @@ describe("SessionInspector reviews tab", () => {
 		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
 	});
 
+	it("shows whether auto-review is enabled for the project", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/sessions/{sessionId}/reviews") {
+				return { data: { reviewerHandleId: "", reviews: [reviewState(3, "needs_review")] } };
+			}
+			if (path === "/api/v1/projects/{id}") {
+				return {
+					data: {
+						status: "ok",
+						project: {
+							id: "ws-1",
+							kind: "git",
+							name: "my-app",
+							path: "/repo",
+							repo: "my-app",
+							defaultBranch: "main",
+							config: { reviewers: [{ harness: "codex" }], autoReviewPullRequests: true },
+						},
+					},
+				};
+			}
+			return { data: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+
+		expect(await screen.findByText("Auto-review on")).toBeInTheDocument();
+	});
+
 	it("places not-run status beside the PR number without an aggregate status chip", async () => {
 		mockCommonGets([], "", [reviewState(3, "needs_review", "abc123")]);
 
