@@ -55,6 +55,7 @@ import {
   syncCloudTerminalConnections,
 } from "@/lib/cloud-terminal-pool";
 import { useAuth } from "../auth/AuthProvider";
+import { PrismLogoGrid } from "../auth/PrismLogoGrid";
 import { CloudChat } from "./CloudChat";
 import { CloudInspector, type CloudInspectorTab } from "./CloudInspector";
 import { CloudTerminal } from "./CloudTerminal";
@@ -188,6 +189,7 @@ export default function CloudAppPage() {
   const [selectionRestored, setSelectionRestored] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(defaultSidebarWidth);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarRevealed, setSidebarRevealed] = useState(false);
   const [collapsedProjectIds, setCollapsedProjectIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -381,6 +383,19 @@ export default function CloudAppPage() {
       JSON.stringify([...collapsedProjectIds]),
     );
   }, [collapsedProjectIds, selectionRestored]);
+
+  useEffect(() => {
+    if (initialLoading) {
+      setSidebarRevealed(false);
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      setSidebarCollapsed(false);
+      window.localStorage.setItem(cloudSidebarCollapsedKey, "false");
+      setSidebarRevealed(true);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [initialLoading]);
 
   const connectedWorkspaceSessionIDs = useMemo(
     () =>
@@ -762,11 +777,19 @@ export default function CloudAppPage() {
         className="grid h-full transition-[grid-template-columns] duration-200 ease-out motion-reduce:transition-none"
         style={{
           gridTemplateColumns: `${
-            sidebarCollapsed ? collapsedSidebarWidth : sidebarWidth
+            sidebarRevealed
+              ? sidebarCollapsed
+                ? collapsedSidebarWidth
+                : sidebarWidth
+              : 0
           }px minmax(0, 1fr)`,
         }}
       >
-        <aside className="relative flex min-h-0 flex-col overflow-hidden bg-[#17181c]">
+        <aside
+          className="relative flex min-h-0 flex-col overflow-hidden bg-[#17181c]"
+          aria-hidden={!sidebarRevealed}
+          inert={!sidebarRevealed}
+        >
           <div
             className={`flex h-11 shrink-0 items-center ${
               sidebarCollapsed ? "justify-center px-1.5" : "gap-2 px-3"
@@ -1043,6 +1066,7 @@ export default function CloudAppPage() {
         </aside>
 
         <section className="flex min-h-0 min-w-0 flex-col border-l border-white/[0.06] bg-[#0a0b0d]">
+          {!(view === "board" && !selectedProjectId) ? (
           <header className="relative flex h-14 shrink-0 items-center gap-3 border-b border-white/10 px-4">
             <div className="min-w-0">
               <h1 className="flex min-w-0 items-center gap-1.5 truncate text-sm font-medium">
@@ -1159,6 +1183,7 @@ export default function CloudAppPage() {
               </div>
             ) : null}
           </header>
+          ) : null}
 
           {error && (
             <div
@@ -1171,11 +1196,8 @@ export default function CloudAppPage() {
 
           <div className="min-h-0 flex-1">
             {initialLoading ? (
-              <div className="grid h-full place-items-center">
-                <div className="flex items-center gap-2 text-sm text-[#9ba1aa]">
-                  <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" />
-                  Loading cloud workspace…
-                </div>
+              <div className="grid h-full place-items-center bg-[#08090b]">
+                <PrismLogoGrid variant="loader" />
               </div>
             ) : view === "settings" ? (
               <CloudSettings

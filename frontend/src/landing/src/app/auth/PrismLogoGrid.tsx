@@ -26,6 +26,7 @@ interface GridScene {
   offsetX: number;
   offsetY: number;
   cells: GlyphCell[];
+  compact: boolean;
 }
 
 function randomReveal(row: number, column: number) {
@@ -37,6 +38,7 @@ function randomReveal(row: number, column: number) {
 function createScene(
   canvas: HTMLCanvasElement,
   image: HTMLImageElement | null,
+  compact: boolean,
 ): GridScene | null {
   const bounds = canvas.getBoundingClientRect();
   const width = Math.max(1, Math.round(bounds.width));
@@ -49,10 +51,12 @@ function createScene(
   if (!context) return null;
   context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
 
-  const cellSize = Math.max(
-    minimumCellSize,
-    Math.min(maximumCellSize, Math.round(width / 18)),
-  );
+  const cellSize = compact
+    ? Math.max(6, Math.min(9, Math.round(width / 22)))
+    : Math.max(
+        minimumCellSize,
+        Math.min(maximumCellSize, Math.round(width / 18)),
+      );
   const offsetX = (width % cellSize) / 2;
   const offsetY = (height % cellSize) / 2;
   const scene = {
@@ -63,6 +67,7 @@ function createScene(
     offsetX,
     offsetY,
     cells: [] as GlyphCell[],
+    compact,
   };
   if (!image?.complete || image.naturalWidth === 0) return scene;
 
@@ -74,13 +79,16 @@ function createScene(
   });
   if (!sampleContext) return scene;
 
-  const logoSize = Math.min(width * 0.67, height * 0.7, 590);
+  const logoSize = compact
+    ? Math.min(width * 0.76, height * 0.76)
+    : Math.min(width * 0.67, height * 0.7, 590);
   const logoLeft = (width - logoSize) / 2;
   const logoTop = (height - logoSize) / 2;
   sampleContext.drawImage(image, logoLeft, logoTop, logoSize, logoSize);
   const pixels = sampleContext.getImageData(0, 0, width, height).data;
 
   let row = -1;
+  const sampleStep = compact ? 1 : 3;
   for (let top = offsetY - cellSize; top < height + cellSize; top += cellSize) {
     let column = -1;
     for (
@@ -100,8 +108,8 @@ function createScene(
       const startY = Math.max(0, Math.floor(top));
       const endY = Math.min(height, Math.ceil(top + cellSize));
 
-      for (let y = startY; y < endY; y += 3) {
-        for (let x = startX; x < endX; x += 3) {
+      for (let y = startY; y < endY; y += sampleStep) {
+        for (let x = startX; x < endX; x += sampleStep) {
           totalSamples += 1;
           const index = (y * width + x) * 4;
           const pixelAlpha = pixels[index + 3] / 255;
@@ -115,7 +123,7 @@ function createScene(
       }
 
       const coverage = visibleSamples / Math.max(1, totalSamples);
-      if (coverage < 0.045 || alpha === 0) continue;
+      if (coverage < (compact ? 0.018 : 0.045) || alpha === 0) continue;
 
       scene.cells.push({
         left: Math.round(left),
@@ -124,7 +132,9 @@ function createScene(
         red: Math.round(red / alpha),
         green: Math.round(green / alpha),
         blue: Math.round(blue / alpha),
-        opacity: Math.min(0.94, 0.36 + coverage * 1.35),
+        opacity: compact
+          ? Math.min(0.98, 0.5 + coverage * 1.6)
+          : Math.min(0.94, 0.36 + coverage * 1.35),
         revealAt: randomReveal(row, column) * 0.72,
       });
     }
@@ -134,21 +144,16 @@ function createScene(
 }
 
 function paintScene(scene: GridScene, progress: number) {
-  const {
-    context,
-    width,
-    height,
-    cellSize,
-    offsetX,
-    offsetY,
-    cells,
-  } = scene;
+  const { context, width, height, cellSize, offsetX, offsetY, cells, compact } =
+    scene;
   context.clearRect(0, 0, width, height);
   context.fillStyle = "#08090b";
   context.fillRect(0, 0, width, height);
 
   context.beginPath();
-  context.strokeStyle = "rgba(221, 231, 244, 0.055)";
+  context.strokeStyle = compact
+    ? "rgba(221, 231, 244, 0)"
+    : "rgba(221, 231, 244, 0.055)";
   context.lineWidth = 1;
   for (let x = offsetX; x <= width; x += cellSize) {
     context.moveTo(Math.round(x) + 0.5, 0);
@@ -180,8 +185,13 @@ function paintScene(scene: GridScene, progress: number) {
   }
 }
 
-export function PrismLogoGrid() {
+export function PrismLogoGrid({
+  variant = "hero",
+}: {
+  variant?: "hero" | "loader";
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const compact = variant === "loader";
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -198,27 +208,35 @@ export function PrismLogoGrid() {
 
     const animate = (now: number) => {
       if (!scene || startedAt === null) return;
-      lastProgress = reduceMotion
-        ? 1
-        : Math.min(1, (now - startedAt) / revealDuration);
+      if (reduceMotion) {
+        lastProgress = 1;
+      } else if (compact) {
+        const phase = (now - startedAt) % 1_800;
+        if (phase < 650) lastProgress = phase / 650;
+        else if (phase < 1_000) lastProgress = 1;
+        else if (phase < 1_650) lastProgress = 1 - (phase - 1_000) / 650;
+        else lastProgress = 0;
+      } else {
+        lastProgress = Math.min(1, (now - startedAt) / revealDuration);
+      }
       paintScene(scene, lastProgress);
-      if (lastProgress < 1) {
+      if (compact || lastProgress < 1) {
         frame = window.requestAnimationFrame(animate);
       }
     };
 
     const rebuild = () => {
       window.cancelAnimationFrame(frame);
-      scene = createScene(canvas, image);
+      scene = createScene(canvas, image, compact);
       if (!scene) return;
       paintScene(scene, lastProgress);
-      if (startedAt !== null && lastProgress < 1) {
+      if (startedAt !== null && (compact || lastProgress < 1)) {
         frame = window.requestAnimationFrame(animate);
       }
     };
 
     const reveal = () => {
-      scene = createScene(canvas, image);
+      scene = createScene(canvas, image, compact);
       if (!scene) return;
       startedAt = performance.now();
       lastProgress = reduceMotion ? 1 : 0;
@@ -236,7 +254,27 @@ export function PrismLogoGrid() {
       image.removeEventListener("load", reveal);
       resizeObserver.disconnect();
     };
-  }, []);
+  }, [compact]);
+
+  if (compact) {
+    return (
+      <div
+        className="relative size-40 overflow-hidden bg-[#08090b]"
+        role="status"
+        aria-label="Loading cloud workspace"
+      >
+        <canvas
+          ref={canvasRef}
+          className="pointer-events-none block size-full"
+          aria-hidden="true"
+        />
+        <div
+          className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_28%,rgba(8,9,11,0.24)_72%,#08090b_100%)]"
+          aria-hidden="true"
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="auth-grid-enter relative h-full min-h-0 overflow-hidden bg-[#08090b]">
