@@ -57,7 +57,7 @@ function removeListeners(): void {
 }
 
 function handlePointerMove(event: PointerEvent): void {
-	if (!enabled || isOverlayEvent(event)) return;
+	if (!enabled || selectedContext || isOverlayEvent(event)) return;
 	const target = annotationTarget(event.target);
 	if (!target || target === selectedElement) return;
 	selectedElement = target;
@@ -67,6 +67,12 @@ function handlePointerMove(event: PointerEvent): void {
 
 function handleClick(event: MouseEvent): void {
 	if (!enabled || isOverlayEvent(event)) return;
+	if (selectedContext) {
+		event.preventDefault();
+		event.stopPropagation();
+		event.stopImmediatePropagation();
+		return;
+	}
 	const target = annotationTarget(event.target);
 	if (!target) return;
 	event.preventDefault();
