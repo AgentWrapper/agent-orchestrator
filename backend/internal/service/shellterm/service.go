@@ -233,6 +233,23 @@ func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInp
 		return ShellTerminal{}, fmt.Errorf("open shell terminal: handle id: %w", err)
 	}
 
+	// Resolve the tab name BEFORE the runtime exists. This reads the store, and
+	// a store failure after Create would strand a PTY that nothing can find:
+	// no row means neither shutdown nor the app-run reaper can ever destroy it.
+	// Doing it here means the only failure that can leave a runtime behind is
+	// the insert below, which already rolls back.
+	//
+	// Counting is safe: the session gate is held for the whole open, so two
+	// concurrent opens for one session cannot pick the same number.
+	title := shellTerminalTitle(workingDir)
+	if in.SessionID != "" {
+		ordinal, err := s.nextSessionTerminalOrdinal(ctx, in.SessionID)
+		if err != nil {
+			return ShellTerminal{}, err
+		}
+		title = sessionShellTerminalTitle(ordinal)
+	}
+
 	// SessionID is the runtime adapters' name for "what to call this PTY"; it
 	// is not a session row and no sessions record is ever created. The
 	// shellterm- prefix keeps the two namespaces disjoint.
@@ -243,17 +260,6 @@ func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInp
 	})
 	if err != nil {
 		return ShellTerminal{}, fmt.Errorf("open shell terminal %s: runtime: %w", handleID, err)
-	}
-
-	title := shellTerminalTitle(workingDir)
-	if in.SessionID != "" {
-		// Safe to count here: the session gate is held for the whole open, so
-		// two concurrent opens for one session cannot pick the same number.
-		ordinal, err := s.nextSessionTerminalOrdinal(ctx, in.SessionID)
-		if err != nil {
-			return ShellTerminal{}, err
-		}
-		title = sessionShellTerminalTitle(ordinal)
 	}
 
 	rec := ShellTerminalRecord{

@@ -13,6 +13,7 @@ import { useBrowserView } from "../hooks/useBrowserView";
 import {
 	useCloseShellTerminal,
 	useOpenShellTerminal,
+	useRefreshShellTerminals,
 	useRenameShellTerminal,
 	useShellTerminals,
 } from "../hooks/useShellTerminals";
@@ -87,6 +88,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	);
 	const openShellTerminal = useOpenShellTerminal();
 	const closeShellTerminal = useCloseShellTerminal();
+	const refreshShellTerminals = useRefreshShellTerminals();
 	const renameShellTerminal = useRenameShellTerminal();
 	const activeShellTerminalHandleId = useUiStore((state) => state.activeShellTerminalHandleId);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
@@ -130,6 +132,20 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			closeShellTerminal.mutate(handleId);
 		},
 		[closeShellTerminal, activeShellTerminalHandleId, setActiveShellTerminal],
+	);
+
+	// A pane reporting "exited" is a hint, not proof: the attach loop reports it
+	// after giving up on a failing liveness probe too. Drop the dead view but
+	// let the daemon decide whether the shell itself is really gone.
+	const handleShellExited = useCallback(
+		(handleId: string) => {
+			setTerminalTarget((current) =>
+				current.kind === "shell" && current.handleId === handleId ? { kind: "worker" } : current,
+			);
+			if (activeShellTerminalHandleId === handleId) setActiveShellTerminal(null);
+			refreshShellTerminals();
+		},
+		[activeShellTerminalHandleId, refreshShellTerminals, setActiveShellTerminal],
 	);
 
 	// Selecting the session's own pane also drops the active shell, so the effect
@@ -372,7 +388,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					<CenterPane
 						daemonReady={daemonStatus.state === "ready"}
 						onCloseShellTerminal={closeShellTerminalByHandle}
-						onShellExited={closeShellTerminalByHandle}
+						onShellExited={handleShellExited}
 						onNewShellTerminal={addShellTerminal}
 						onRenameShellTerminal={renameShellTerminalByHandle}
 						onSelectSessionTerminal={selectSessionTerminal}

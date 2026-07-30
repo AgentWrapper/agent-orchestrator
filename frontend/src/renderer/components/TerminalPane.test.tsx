@@ -371,10 +371,12 @@ describe("terminal link preview", () => {
 	});
 });
 
-// A shell whose PTY exits can never be attached again, so its tab is retired
-// rather than parked in the strip showing "TERMINAL ENDED". Nothing else tells
-// the client: the shell list is only refetched around this client's own
-// open/close, so without this the dead tab sat there until the next mutation.
+// A shell whose PTY exits should not sit in the strip showing "TERMINAL ENDED":
+// nothing else tells the client, since the shell list is only refetched around
+// this client's own open/close. The pane reports the exit as a HINT — it is not
+// proof of death, because the attach loop reports the same "exited" after it
+// gives up on a failing liveness probe — so the callers re-check with the
+// daemon rather than closing anything.
 describe("TerminalPane shell exit", () => {
 	function renderShellPane(onShellExited: (handleId: string) => void, state: string) {
 		terminalState.value = state;
@@ -395,7 +397,7 @@ describe("TerminalPane shell exit", () => {
 		return { ...result, restore: () => { window.ao = previousAO; } };
 	}
 
-	it("retires the tab when the shell's PTY exits", async () => {
+	it("reports the exit once so the caller can re-check with the daemon", async () => {
 		const onShellExited = vi.fn();
 		const { restore } = renderShellPane(onShellExited, "exited");
 		await waitFor(() => expect(onShellExited).toHaveBeenCalledWith("sh-a"));

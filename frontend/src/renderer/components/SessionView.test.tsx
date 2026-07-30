@@ -208,11 +208,13 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 }));
 // Standalone shell terminals are orthogonal to the split under test, and their
 // real hooks would need a QueryClientProvider this suite deliberately omits.
+const refreshShellTerminalsMock = vi.fn();
 vi.mock("../hooks/useShellTerminals", () => ({
 	useShellTerminals: () => ({ data: shellTerminalsState.data, isLoading: false }),
 	useOpenShellTerminal: () => ({ mutate: vi.fn() }),
 	useCloseShellTerminal: () => ({ mutate: vi.fn() }),
 	useRenameShellTerminal: () => ({ mutate: vi.fn() }),
+	useRefreshShellTerminals: () => refreshShellTerminalsMock,
 }));
 
 // jsdom has no layout engine, so the real react-resizable-panels would never

@@ -1,7 +1,12 @@
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { useEffect } from "react";
 import { useOverflowScroll } from "../hooks/useOverflowScroll";
-import { useCloseShellTerminal, useRenameShellTerminal, useShellTerminals } from "../hooks/useShellTerminals";
+import {
+	useCloseShellTerminal,
+	useRefreshShellTerminals,
+	useRenameShellTerminal,
+	useShellTerminals,
+} from "../hooks/useShellTerminals";
 import { useShell } from "../lib/shell-context";
 import { cn } from "../lib/utils";
 import { useResolvedTheme, useUiStore } from "../stores/ui-store";
@@ -22,6 +27,7 @@ export function ShellTerminalsView() {
 	// shells belong to that session's tab strip, not this global list.
 	const shellTerminals = (useShellTerminals().data ?? []).filter((s) => !s.sessionId);
 	const closeShellTerminal = useCloseShellTerminal();
+	const refreshShellTerminals = useRefreshShellTerminals();
 	const renameShellTerminal = useRenameShellTerminal();
 	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
 	const activeHandleId = useUiStore((state) => state.activeShellTerminalHandleId);
@@ -107,7 +113,7 @@ export function ShellTerminalsView() {
 					<TerminalPane
 						daemonReady={daemonStatus.state === "ready"}
 						fontSize={12}
-						onShellExited={(handleId) => closeShellTerminal.mutate(handleId)}
+						onShellExited={() => refreshShellTerminals()}
 						terminalTarget={{ kind: "shell", handleId: active.handleId, title: active.title }}
 						theme={theme}
 					/>

@@ -283,10 +283,19 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 		!isSessionActive;
 
 	// A shell whose PTY exits leaves a tab that can never be attached again, so
-	// retire it instead of parking a dead pane in the strip. Reported once per
-	// pane: the component is keyed by handle, so a later shell on the same tab
-	// mounts fresh. Only for shells — a session pane that ends still has a row,
-	// a status, and a restore path, so its tab must stay.
+	// retire it instead of parking a dead pane in the strip.
+	//
+	// This is a HINT, never a close. "exited" does not prove the shell died:
+	// attachment.fail() reaches the same markExited() after the liveness probe
+	// or the attach itself errors past the retry cap, and a probe error is not
+	// proof of death. Destroying on that would kill a live shell and whatever
+	// is running in it. So this only asks the daemon to re-check — its list
+	// prunes a shell it can confirm is gone and deliberately KEEPS one whose
+	// probe errored.
+	//
+	// Reported once per pane: the component is keyed by handle, so a later
+	// shell on the same tab mounts fresh. Only for shells — a session pane that
+	// ends still has a row, a status, and a restore path, so its tab must stay.
 	const reportedShellExitRef = useRef(false);
 	useEffect(() => {
 		if (state !== "exited") return;

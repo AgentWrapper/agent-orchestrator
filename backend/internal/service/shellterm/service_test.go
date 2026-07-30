@@ -66,8 +66,9 @@ func (f *fakeShellRuntime) IsAlive(_ context.Context, handle ports.RuntimeHandle
 
 // fakeShellTerminalStore is an in-memory Store keyed by handle id.
 type fakeShellTerminalStore struct {
-	records   []ShellTerminalRecord
-	insertErr error
+	records      []ShellTerminalRecord
+	insertErr    error
+	bySessionErr error
 }
 
 func (f *fakeShellTerminalStore) InsertShellTerminal(_ context.Context, rec ShellTerminalRecord) error {
@@ -108,6 +109,9 @@ func (f *fakeShellTerminalStore) SelectShellTerminalsByAppRunID(_ context.Contex
 }
 
 func (f *fakeShellTerminalStore) SelectShellTerminalsBySessionID(_ context.Context, sessionID domain.SessionID) ([]ShellTerminalRecord, error) {
+	if f.bySessionErr != nil {
+		return nil, f.bySessionErr
+	}
 	var out []ShellTerminalRecord
 	for _, rec := range f.records {
 		if rec.SessionID == sessionID {
@@ -1176,5 +1180,34 @@ func TestNextSessionTerminalOrdinalStartsAtOne(t *testing.T) {
 	}
 	if got != 1 {
 		t.Errorf("first ordinal = %d, want 1", got)
+	}
+}
+
+// Regression: the tab ordinal is read from the store, and that read used to
+// happen AFTER runtime.Create. A store failure there returned with a live PTY
+// and no row pointing at it, so neither shutdown nor the app-run reaper could
+// ever find it — a tmux session leaked for the life of the machine. The lookup
+// now runs before Create, so this failure cannot strand a runtime at all.
+func TestOpenShellTerminalLeavesNoRuntimeWhenOrdinalLookupFails(t *testing.T) {
+	rt := newFakeShellRuntime()
+	st := &fakeShellTerminalStore{bySessionErr: errors.New("store unavailable")}
+	sessions := &fakeSessionWorkspaceLocator{
+		sessions: map[domain.SessionID]fakeSessionWorkspace{
+			"sess-1": {workspacePath: "/wt/sess-1", projectID: "proj"},
+		},
+	}
+	svc := newTestServiceWithSessions(rt, st, &fakeProjectRootLocator{}, sessions)
+
+	_, err := svc.OpenShellTerminal(context.Background(), OpenShellTerminalInput{SessionID: "sess-1"})
+	if err == nil {
+		t.Fatal("a store failure while naming the tab must fail the open")
+	}
+	// The point of the fix: no PTY was ever spawned, so there is nothing to leak
+	// and nothing to roll back.
+	if len(rt.created) != 0 {
+		t.Fatalf("runtime.Create called %d times; the ordinal lookup must happen first", len(rt.created))
+	}
+	if len(st.records) != 0 {
+		t.Fatalf("store holds %d records after a failed open, want 0", len(st.records))
 	}
 }

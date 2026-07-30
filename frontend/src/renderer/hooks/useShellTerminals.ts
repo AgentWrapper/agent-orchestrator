@@ -4,6 +4,7 @@
 // must not invalidate session state when they come and go.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
 import { mockShellTerminals } from "../lib/mock-data";
@@ -77,6 +78,22 @@ export const shellTerminalsQueryOptions = {
 
 export function useShellTerminals() {
 	return useQuery(shellTerminalsQueryOptions);
+}
+
+/**
+ * Asks the daemon to re-check its shell list. Used when a pane reports that its
+ * PTY ended: that signal is not proof of death (the attach loop reports the
+ * same "exited" after it gives up on a failing liveness probe), so the client
+ * must not close anything itself. The daemon's list prunes only shells it can
+ * confirm are gone and keeps ones whose probe errored, which is exactly the
+ * conservative rule this needs.
+ */
+export function useRefreshShellTerminals() {
+	const queryClient = useQueryClient();
+	return useCallback(
+		() => void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey }),
+		[queryClient],
+	);
 }
 
 export type OpenShellTerminalInput = { projectId?: string; sessionId?: string };
