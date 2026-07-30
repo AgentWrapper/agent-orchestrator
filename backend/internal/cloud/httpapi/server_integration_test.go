@@ -27,6 +27,14 @@ import (
 
 func integrationAPI(t *testing.T) (*httptest.Server, *cloudpostgres.Store) {
 	t.Helper()
+	server, store, _ := integrationAPIWithServer(t)
+	return server, store
+}
+
+func integrationAPIWithServer(
+	t *testing.T,
+) (*httptest.Server, *cloudpostgres.Store, *Server) {
+	t.Helper()
 	databaseURL := os.Getenv("AO_CLOUD_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("AO_CLOUD_TEST_DATABASE_URL is not set")
@@ -75,7 +83,7 @@ func integrationAPI(t *testing.T) (*httptest.Server, *cloudpostgres.Store) {
 	api.agentCredentials.anthropicBaseURL = credentialServer.URL
 	server := httptest.NewServer(api.Handler())
 	t.Cleanup(server.Close)
-	return server, store
+	return server, store, api
 }
 
 func tokenID(token string) string {
@@ -355,7 +363,8 @@ func TestWorkerAndBrowserTerminalReplayLiveRouting(t *testing.T) {
 }
 
 func TestChatMessageAuthIdempotencyAndWorkerReplay(t *testing.T) {
-	server, store := integrationAPI(t)
+	server, store, api := integrationAPIWithServer(t)
+	api.workerReplayWait = 25 * time.Millisecond
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	account, err := store.EnsureAccount(ctx, tokenID("user-one"), "User One")
@@ -622,6 +631,42 @@ func TestChatMessageAuthIdempotencyAndWorkerReplay(t *testing.T) {
 			string(decodedPrompt) != expected.text {
 			t.Fatalf("replayed prompt command = %#v text=%q", command, decodedPrompt)
 		}
+	}
+	if _, err := store.TransitionActiveTurn(
+		ctx,
+		account.ID,
+		created.Session.ID,
+		"completed",
+		"",
+	); err != nil {
+		t.Fatalf("complete first replayed turn: %v", err)
+	}
+	followUp, _, err := store.AppendUserMessage(
+		ctx,
+		account.ID,
+		created.Session.ID,
+		uuid.NewString(),
+		"periodic replay",
+	)
+	if err != nil {
+		t.Fatalf("append follow-up without live notification: %v", err)
+	}
+	_, encodedCommand, err := socket.Read(ctx)
+	if err != nil {
+		t.Fatalf("read periodically replayed prompt: %v", err)
+	}
+	var command cloudworkerhub.Command
+	if err := json.Unmarshal(encodedCommand, &command); err != nil {
+		t.Fatalf("decode periodically replayed prompt: %v", err)
+	}
+	decodedPrompt, err := base64.StdEncoding.DecodeString(command.Data)
+	if err != nil {
+		t.Fatalf("decode periodically replayed prompt data: %v", err)
+	}
+	if command.Type != "prompt" ||
+		command.Sequence != followUp.Sequence ||
+		string(decodedPrompt) != "periodic replay" {
+		t.Fatalf("periodically replayed prompt = %#v text=%q", command, decodedPrompt)
 	}
 }
 

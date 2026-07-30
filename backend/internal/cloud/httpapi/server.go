@@ -72,6 +72,8 @@ type Server struct {
 	daytonaAPIURL    string
 	daytonaTarget    string
 	workerHub        *cloudworkerhub.Hub
+	workerReplayWait time.Duration
+	workerWriteWait  time.Duration
 	localGitHub      *cloudlocalgh.Client
 	webOrigin        string
 	webOriginHost    string
@@ -107,6 +109,8 @@ func New(
 		daytonaAPIURL:    strings.TrimRight(daytonaAPIURL, "/"),
 		daytonaTarget:    daytonaTarget,
 		workerHub:        workerHub,
+		workerReplayWait: 20 * time.Second,
+		workerWriteWait:  10 * time.Second,
 		localGitHub:      localGitHub,
 		webOrigin:        strings.TrimRight(webOrigin, "/"),
 		log:              log,
@@ -1336,11 +1340,11 @@ func (s *Server) workerConnect(w http.ResponseWriter, r *http.Request) {
 			Type:     "interrupt",
 			Sequence: interrupted,
 		})
-		if err := socket.Write(r.Context(), websocket.MessageText, encoded); err != nil {
+		if err := s.writeWorkerSocket(r.Context(), socket, encoded); err != nil {
 			return
 		}
 	}
-	ticker := time.NewTicker(20 * time.Second)
+	ticker := time.NewTicker(s.workerReplayWait)
 	defer ticker.Stop()
 	for {
 		select {
@@ -1358,12 +1362,15 @@ func (s *Server) workerConnect(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			encoded, _ := json.Marshal(command)
-			if err := socket.Write(r.Context(), websocket.MessageText, encoded); err != nil {
+			if err := s.writeWorkerSocket(r.Context(), socket, encoded); err != nil {
 				return
 			}
 		case <-ticker.C:
+			if err := s.writePromptReplay(r.Context(), socket, claims, &replayedAfter); err != nil {
+				return
+			}
 			encoded, _ := json.Marshal(cloudworkerhub.Command{Type: "keepalive"})
-			if err := socket.Write(r.Context(), websocket.MessageText, encoded); err != nil {
+			if err := s.writeWorkerSocket(r.Context(), socket, encoded); err != nil {
 				return
 			}
 		}
@@ -1388,14 +1395,14 @@ func (s *Server) writePromptReplay(
 			return err
 		}
 		for _, event := range replayed {
-			if event.Sequence > *replayedAfter {
-				*replayedAfter = event.Sequence
-			}
 			var payload struct {
 				Text string `json:"text"`
 			}
 			if json.Unmarshal(event.Payload, &payload) != nil ||
 				payload.Text == "" {
+				if event.Sequence > *replayedAfter {
+					*replayedAfter = event.Sequence
+				}
 				continue
 			}
 			command := cloudworkerhub.Command{
@@ -1407,14 +1414,27 @@ func (s *Server) writePromptReplay(
 			if marshalErr != nil {
 				return marshalErr
 			}
-			if err := socket.Write(ctx, websocket.MessageText, encoded); err != nil {
+			if err := s.writeWorkerSocket(ctx, socket, encoded); err != nil {
 				return err
+			}
+			if event.Sequence > *replayedAfter {
+				*replayedAfter = event.Sequence
 			}
 		}
 		if len(replayed) < 500 {
 			return nil
 		}
 	}
+}
+
+func (s *Server) writeWorkerSocket(
+	ctx context.Context,
+	socket *websocket.Conn,
+	payload []byte,
+) error {
+	writeCtx, cancel := context.WithTimeout(ctx, s.workerWriteWait)
+	defer cancel()
+	return socket.Write(writeCtx, websocket.MessageText, payload)
 }
 
 func (s *Server) issueTerminalTicket(w http.ResponseWriter, r *http.Request) {

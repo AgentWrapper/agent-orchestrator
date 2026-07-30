@@ -1,9 +1,13 @@
 import { createElement } from "react";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, it, vi } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 
 import { type CloudEvent, type CloudSession, CloudAPI } from "@/lib/cloud-api";
+import {
+  clearChatEventCache,
+  mergeChatEventCache,
+} from "@/lib/cloud-chat-cache";
 import { CloudChat, deriveTimeline, deriveTurnState } from "./CloudChat";
 
 function event(
@@ -60,6 +64,8 @@ function testAPI(overrides: Record<string, unknown> = {}) {
     ...overrides,
   } as unknown as CloudAPI;
 }
+
+beforeEach(() => clearChatEventCache());
 
 it("keeps only conversational content and actionable events in the timeline", () => {
   const timeline = deriveTimeline([
@@ -205,6 +211,20 @@ it("loads durable replay before showing the empty state", async () => {
     expect.any(Function),
     expect.any(Function),
   );
+});
+
+it("shows prefetched conversation history without another replay request", async () => {
+  mergeChatEventCache(
+    session.id,
+    [event(1, "chat.assistant_delta", { text: "Already loaded" })],
+    true,
+  );
+  const api = testAPI();
+
+  render(createElement(CloudChat, { api, session }));
+
+  expect(await screen.findByText("Already loaded")).toBeInTheDocument();
+  expect(api.chatEvents).not.toHaveBeenCalled();
 });
 
 it("retries initial history replay when focus reconnects during loading", async () => {

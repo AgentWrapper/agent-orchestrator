@@ -21,6 +21,10 @@ import {
   type CloudSession,
   type CloudTurn,
 } from "@/lib/cloud-api";
+import {
+  mergeChatEventCache,
+  readChatEventCache,
+} from "@/lib/cloud-chat-cache";
 
 interface CloudChatProps {
   api: CloudAPI;
@@ -426,17 +430,21 @@ export function CloudChat({
     const controller = new AbortController();
     const isNewSession = loadedSessionId.current !== session.id;
     if (isNewSession) {
+      const cached = readChatEventCache(session.id);
       loadedSessionId.current = session.id;
-      historyLoadedSessionId.current = null;
-      latestSequence.current = 0;
+      historyLoadedSessionId.current = cached.hydrated ? session.id : null;
+      latestSequence.current = cached.events.reduce(
+        (latest, event) => Math.max(latest, event.sequence),
+        0,
+      );
       retryIdempotencyKey.current = null;
       followOutput.current = true;
-      setEvents([]);
+      setEvents(cached.events);
       setPending([]);
       draftValue.current = "";
       setDraft("");
       setError(null);
-      setReplaySessionId(null);
+      setReplaySessionId(cached.hydrated ? session.id : null);
       setInterrupting(false);
     }
     const needsHistoryReplay = historyLoadedSessionId.current !== session.id;
@@ -462,7 +470,8 @@ export function CloudChat({
             (latest, event) => Math.max(latest, event.sequence),
             0,
           );
-          setEvents(chatEvents);
+          const cached = mergeChatEventCache(session.id, chatEvents, true);
+          setEvents(cached.events);
         } catch (replayError) {
           if (controller.signal.aborted) return;
           setError(
@@ -492,6 +501,7 @@ export function CloudChat({
                 event.sequence,
               );
               if (event.type.startsWith("chat.")) {
+                mergeChatEventCache(session.id, [event]);
                 setEvents((current) => mergeEvents(current, [event]));
                 const eventTurnID =
                   typeof event.payload.turnId === "string"

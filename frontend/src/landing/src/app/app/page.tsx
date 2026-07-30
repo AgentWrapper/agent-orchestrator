@@ -38,6 +38,10 @@ import {
   connectedAgentIDs,
   defaultConnectedAgent,
 } from "@/lib/cloud-agent-connections";
+import {
+  prefetchChatEvents,
+  pruneChatEventCache,
+} from "@/lib/cloud-chat-cache";
 import { useAuth } from "../auth/AuthProvider";
 import { CloudChat } from "./CloudChat";
 import { CloudTerminal } from "./CloudTerminal";
@@ -230,6 +234,22 @@ export default function CloudAppPage() {
         ]);
         setProjects(projectData.projects);
         setSessions(sessionData.sessions);
+        const sessionIDs = new Set(sessionData.sessions.map(({ id }) => id));
+        pruneChatEventCache(sessionIDs);
+        void Promise.allSettled(
+          sessionData.sessions
+            .filter(({ harness }) => structuredChatHarnesses.has(harness))
+            .map((cloudSession) =>
+              prefetchChatEvents(
+                api,
+                cloudSession.id,
+                cloudSession.status === "working" ||
+                  cloudSession.activeTurn !== undefined
+                  ? 1_000
+                  : 5_000,
+              ),
+            ),
+        );
         setRepositories(repositoryData.repositories);
         setConnections(connectionData.providerConnections);
         setSandboxProvider(runtimeData.sandboxProvider);
@@ -372,6 +392,47 @@ export default function CloudAppPage() {
         crypto.randomUUID(),
       ),
     );
+  };
+
+  const createProjectAndPrewarmOrchestrator = async (input: {
+    displayName: string;
+    repositoryUrl: string;
+    defaultBranch: string;
+  }) => {
+    if (!api) return;
+    setLoading(true);
+    try {
+      const { project } = await api.createProject(input);
+      let orchestrator: CloudSession | null = null;
+      if (defaultAgent) {
+        const result = await api.createSession(
+          {
+            projectId: project.id,
+            kind: "orchestrator",
+            harness: defaultAgent,
+            displayName: "Orchestrator",
+            prompt: "",
+            providerConnectionId: daytonaConnections[0]?.id,
+          },
+          crypto.randomUUID(),
+        );
+        orchestrator = result.session;
+      }
+      await refresh();
+      setSelectedProjectId(project.id);
+      setSelectedSessionId(orchestrator?.id ?? null);
+      setView(orchestrator ? "session" : "board");
+      setShowProjectForm(false);
+      setError(null);
+    } catch (operationError) {
+      setError(
+        operationError instanceof Error
+          ? operationError.message
+          : "Could not create and start the project orchestrator.",
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
   const beginSidebarResize = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -795,12 +856,9 @@ export default function CloudAppPage() {
       {showProjectForm && (
         <ProjectForm
           repositories={repositories}
+          loading={loading}
           onClose={() => setShowProjectForm(false)}
-          onSubmit={(input) =>
-            run(() => api.createProject(input)).then(() =>
-              setShowProjectForm(false),
-            )
-          }
+          onSubmit={createProjectAndPrewarmOrchestrator}
         />
       )}
       {showSessionForm && selectedProjectId && (
@@ -1300,10 +1358,12 @@ function Overlay({
 
 function ProjectForm({
   repositories,
+  loading,
   onClose,
   onSubmit,
 }: {
   repositories: CloudRepository[];
+  loading: boolean;
   onClose: () => void;
   onSubmit: (input: {
     displayName: string;
@@ -1336,6 +1396,7 @@ function ProjectForm({
             className={`${field} mt-1.5`}
             value={repositoryURL}
             onChange={(event) => setRepositoryURL(event.target.value)}
+            disabled={loading}
           >
             {repositories.map((repository) => (
               <option value={repository.url} key={repository.url}>
@@ -1351,11 +1412,20 @@ function ProjectForm({
           </p>
         )}
         <div className="flex justify-end gap-2">
-          <button type="button" className={button} onClick={onClose}>
+          <button
+            type="button"
+            className={button}
+            onClick={onClose}
+            disabled={loading}
+          >
             Cancel
           </button>
-          <button type="submit" className={primaryButton} disabled={!selected}>
-            Add project
+          <button
+            type="submit"
+            className={primaryButton}
+            disabled={!selected || loading}
+          >
+            {loading ? "Starting…" : "Add project"}
           </button>
         </div>
       </form>
