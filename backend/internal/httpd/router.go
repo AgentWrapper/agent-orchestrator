@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -183,18 +184,17 @@ func mountTelemetry(r chi.Router, cfg config.Config, sink ports.EventSink) {
 			envelope.WriteAPIError(w, req, http.StatusBadRequest, "bad_request", "COMMAND_PATH_REQUIRED", "commandPath is required", nil)
 			return
 		}
-		commandPath := telemetrymeta.NormalizeCommandPath(body.CommandPath)
-		actorType := telemetrymeta.CLIActorType(body.ActorType, commandPath)
+		actorType := cliActorType(body.ActorType, body.CommandPath)
 		if actorType == "system" {
 			w.WriteHeader(http.StatusAccepted)
 			return
 		}
-		if telemetrymeta.IsRoutineInternalCLICommand(commandPath) {
+		if isRoutineInternalCLICommand(body.CommandPath) {
 			w.WriteHeader(http.StatusAccepted)
 			return
 		}
 
-		if now := time.Now(); cliTelemetry.reserveInvoked(now, actorType, commandPath) {
+		if now := time.Now(); cliTelemetry.reserveInvoked(now, actorType, body.CommandPath) {
 			sink.Emit(req.Context(), ports.TelemetryEvent{
 				Name:       "ao.cli.invoked",
 				Source:     "cli",
@@ -203,7 +203,7 @@ func mountTelemetry(r chi.Router, cfg config.Config, sink ports.EventSink) {
 				RequestID:  middleware.GetReqID(req.Context()),
 				Payload: map[string]any{
 					"command":      body.Command,
-					"command_path": commandPath,
+					"command_path": body.CommandPath,
 					"actor_type":   actorType,
 				},
 			})
@@ -219,7 +219,7 @@ func mountTelemetry(r chi.Router, cfg config.Config, sink ports.EventSink) {
 					Payload: map[string]any{
 						"channel":      "cli",
 						"command":      body.Command,
-						"command_path": commandPath,
+						"command_path": body.CommandPath,
 						"actor_type":   actorType,
 					},
 				})
@@ -265,6 +265,39 @@ func mountTelemetry(r chi.Router, cfg config.Config, sink ports.EventSink) {
 		})
 		w.WriteHeader(http.StatusAccepted)
 	})
+}
+
+func isRoutineInternalCLICommand(commandPath string) bool {
+	switch strings.TrimSpace(commandPath) {
+	case "ao status",
+		"ao session ls",
+		"ao session get",
+		"ao project ls",
+		"ao project get",
+		"ao orchestrator ls",
+		"ao hooks",
+		"ao pty-host":
+		return true
+	default:
+		return false
+	}
+}
+
+func cliActorType(actorType, commandPath string) string {
+	switch actorType {
+	case "agent", "user":
+		return actorType
+	case "system":
+		return "system"
+	}
+	switch commandPath {
+	case "ao hooks":
+		return "agent"
+	case "ao daemon", "ao start", "ao completion", "ao help", "ao pty-host":
+		return "system"
+	default:
+		return "user"
+	}
 }
 
 // localControlRequest reports whether a control request is a trusted local
