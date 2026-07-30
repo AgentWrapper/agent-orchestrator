@@ -952,7 +952,6 @@ function ReviewPanel({
 	const reviewHasRun = reviewRunning || Boolean(latest);
 	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
 	const autoReviewEnabled = config?.autoReviewPullRequests === true;
-	const showReviewAction = reviewRunning || !autoReviewEnabled;
 	const openReviewerTerminal = () => {
 		if (!terminalEnabled) return;
 		onOpenTerminal?.({ handleId: reviewerHandleId, harness });
@@ -998,19 +997,17 @@ function ReviewPanel({
 				)}
 			</div>
 			<div className="-mx-4 -mb-3 mt-3 flex items-center justify-center gap-1 border-t border-border px-4 pb-3 pt-3">
-				{showReviewAction ? (
-					<Button
-						className={cn("gap-1.5 [&_svg]:size-icon-sm", reviewRunning ? "text-error" : "text-success")}
-						disabled={reviewRunning ? isCancelling : runDisabled}
-						onClick={reviewRunning ? onCancel : onTrigger}
-						size="sm"
-						type="button"
-						variant="ghost"
-					>
-						{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
-						{reviewRunning ? (isCancelling ? "Cancelling..." : "Cancel review") : runAction}
-					</Button>
-				) : null}
+				<Button
+					className={cn("gap-1.5 [&_svg]:size-icon-sm", reviewRunning ? "text-error" : "text-success")}
+					disabled={reviewRunning ? isCancelling : runDisabled}
+					onClick={reviewRunning ? onCancel : onTrigger}
+					size="sm"
+					type="button"
+					variant="ghost"
+				>
+					{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
+					{reviewRunning ? (isCancelling ? "Cancelling..." : "Cancel review") : runAction}
+				</Button>
 				{reviewHasRun ? (
 					<Button
 						className="gap-1.5 [&_svg]:size-icon-sm"

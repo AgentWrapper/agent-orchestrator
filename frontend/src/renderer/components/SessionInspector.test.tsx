@@ -764,7 +764,7 @@ describe("SessionInspector reviews tab", () => {
 		const autoReviewStatus = await screen.findByText("Auto-review on");
 		expect(autoReviewStatus).toBeInTheDocument();
 		expect(autoReviewStatus.closest("p")?.querySelector("svg")).toBeNull();
-		expect(screen.queryByRole("button", { name: "Run review" })).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Run review" })).toBeEnabled();
 		expect(screen.queryByRole("button", { name: "Re-run review" })).not.toBeInTheDocument();
 	});
 
