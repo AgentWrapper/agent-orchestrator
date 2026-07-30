@@ -18,12 +18,6 @@ const worker = {
 	updatedAt: "2026-06-10T00:00:00Z",
 	prs: [],
 } satisfies WorkspaceSession;
-const secondWorker = {
-	...worker,
-	id: "sess-2",
-	title: "review the change",
-	branch: "ao/sess-2",
-} satisfies WorkspaceSession;
 
 describe("CenterPane toolbar session label", () => {
 	const makeShells = (count: number) =>
@@ -40,102 +34,27 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
 	});
 
-	it("renders project sessions as tabs and opens a sibling session", () => {
-		const onSelectProjectSession = vi.fn();
-		render(
-			<CenterPane
-				session={worker}
-				projectSessions={[worker, secondWorker]}
-				onSelectProjectSession={onSelectProjectSession}
-				theme="dark"
-				daemonReady
-			/>,
-		);
-
-		expect(screen.getByRole("button", { name: "do the thing" })).toHaveAttribute("aria-current", "true");
-		fireEvent.click(screen.getByRole("button", { name: "review the change" }));
-		expect(onSelectProjectSession).toHaveBeenCalledWith(secondWorker);
-	});
-
-	it("opens a terminal on left click without showing the launcher", () => {
+	// One click, one terminal. #3138 put this behind a dropdown whose first item
+	// was "Terminal", so the everyday action cost two clicks.
+	it("opens a terminal on a single click, with no menu in between", () => {
 		const onNewShellTerminal = vi.fn();
-		render(
-			<CenterPane
-				session={worker}
-				projectSessions={[worker]}
-				availableProjectSessions={[secondWorker]}
-				onNewShellTerminal={onNewShellTerminal}
-				theme="dark"
-				daemonReady
-			/>,
-		);
+		render(<CenterPane session={worker} onNewShellTerminal={onNewShellTerminal} theme="dark" daemonReady />);
 
-		const trigger = screen.getByRole("button", { name: "New terminal" });
-		fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
-		fireEvent.click(trigger);
+		fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
 
 		expect(onNewShellTerminal).toHaveBeenCalledOnce();
-		expect(screen.queryByRole("menuitem", { name: /review the change/ })).not.toBeInTheDocument();
+		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 	});
 
-	it("adds workers and terminals through the right-click launcher", () => {
-		const onAddProjectSession = vi.fn();
-		const onNewShellTerminal = vi.fn();
-		render(
-			<CenterPane
-				session={worker}
-				projectSessions={[worker]}
-				availableProjectSessions={[secondWorker]}
-				onAddProjectSession={onAddProjectSession}
-				onNewShellTerminal={onNewShellTerminal}
-				theme="dark"
-				daemonReady
-			/>,
-		);
+	// The strip belongs to one session: its own tab, then the shells it opened.
+	// No other session can be pinned in, and the session's own tab has no X —
+	// ending a session is the topbar's Kill, not a stray click here.
+	it("shows the session as a single unclosable tab", () => {
+		render(<CenterPane session={worker} theme="dark" daemonReady />);
 
-		expect(screen.queryByRole("button", { name: "review the change" })).not.toBeInTheDocument();
-		fireEvent.contextMenu(screen.getByRole("button", { name: "New terminal" }));
-		fireEvent.click(screen.getByRole("menuitem", { name: /review the change/ }));
-		expect(onAddProjectSession).toHaveBeenCalledWith(secondWorker);
-
-		fireEvent.contextMenu(screen.getByRole("button", { name: "New terminal" }));
-		fireEvent.click(screen.getByRole("menuitem", { name: "Terminal" }));
-		expect(onNewShellTerminal).toHaveBeenCalledOnce();
-	});
-
-	it("limits a large session list, then expands it into a searchable scroll area", () => {
-		const sessions = Array.from({ length: 7 }, (_, index) => ({
-			...secondWorker,
-			id: `sess-${index + 2}`,
-			title: `Worker ${index + 1}`,
-		}));
-		render(
-			<CenterPane
-				session={worker}
-				projectSessions={[worker]}
-				availableProjectSessions={sessions}
-				theme="dark"
-				daemonReady
-			/>,
-		);
-
-		fireEvent.contextMenu(screen.getByRole("button", { name: "New terminal" }));
-		const search = screen.getByRole("textbox", { name: "Search sessions" });
-		const terminal = screen.getByRole("menuitem", { name: "Terminal" });
-		expect(terminal.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-		expect(screen.getByRole("menuitem", { name: /Worker 5/ })).toBeInTheDocument();
-		expect(screen.queryByRole("menuitem", { name: /Worker 6/ })).not.toBeInTheDocument();
-
-		fireEvent.click(screen.getByRole("menuitem", { name: "Show all sessions" }));
-		const lastSession = screen.getByRole("menuitem", { name: /Worker 7/ });
-		expect(lastSession).toBeInTheDocument();
-		expect(lastSession.parentElement).toHaveClass("h-52", "overflow-y-auto");
-
-		fireEvent.change(screen.getByRole("textbox", { name: "Search sessions" }), {
-			target: { value: "Worker 7" },
-		});
-		expect(screen.getByRole("menuitem", { name: /Worker 7/ })).toBeInTheDocument();
-		expect(screen.queryByRole("menuitem", { name: /Worker 1/ })).not.toBeInTheDocument();
+		const sessionTab = screen.getByRole("button", { name: "do the thing" });
+		expect(sessionTab).toHaveAttribute("aria-current", "true");
+		expect(screen.queryByRole("button", { name: /^Close session tab/ })).not.toBeInTheDocument();
 	});
 
 	it("shows 'Orchestrator' for an orchestrator session", () => {

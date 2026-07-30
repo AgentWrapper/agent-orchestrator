@@ -16,7 +16,6 @@ const shellMocks = vi.hoisted(() => {
 		nextSessionListener: undefined as (() => void) | undefined,
 		focusTerminalListener: undefined as (() => void) | undefined,
 		routeParams: {} as { projectId?: string; sessionId?: string },
-		routeSearch: {} as { tabOwner?: string },
 		workspaces: [] as WorkspaceSummary[],
 		workspaceQuery: {
 			data: [] as WorkspaceSummary[],
@@ -88,7 +87,6 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
 	useMatchRoute: () => () => false,
 	useNavigate: () => shellMocks.navigate,
 	useParams: () => shellMocks.state.routeParams,
-	useSearch: () => shellMocks.state.routeSearch,
 }));
 
 vi.mock("../lib/bridge", () => ({
@@ -262,7 +260,6 @@ beforeEach(() => {
 	shellMocks.state.nextSessionListener = undefined;
 	shellMocks.state.focusTerminalListener = undefined;
 	shellMocks.state.routeParams = {};
-	shellMocks.state.routeSearch = {};
 	shellMocks.state.workspaces = workspaces;
 	shellMocks.state.workspaceQuery = {
 		data: workspaces,
@@ -453,19 +450,6 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 	// session's own worktree instead of the registered project root.
 	it("scopes the terminal to the session in scope", async () => {
 		shellMocks.state.routeParams = { sessionId: "sess-1" };
-		await renderShell();
-
-		pressNewShellTerminal();
-
-		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith(
-			expect.objectContaining({ projectId: "proj-1", sessionId: "sess-1" }),
-			expect.anything(),
-		);
-	});
-
-	it("scopes the terminal to the originating session while viewing one of its pinned tabs", async () => {
-		shellMocks.state.routeParams = { projectId: "proj-2", sessionId: "sess-cross" };
-		shellMocks.state.routeSearch = { tabOwner: "sess-1" };
 		await renderShell();
 
 		pressNewShellTerminal();

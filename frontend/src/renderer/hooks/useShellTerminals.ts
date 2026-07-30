@@ -117,8 +117,19 @@ export function useCloseShellTerminal() {
 			});
 			if (error) throw error;
 		},
+		// Drop the tab before the request goes out. The daemon's DELETE reaps the
+		// pane's leftover processes before it answers, so waiting on the round
+		// trip left a dead tab on screen for seconds after the click.
+		onMutate: async (handleId) => {
+			await queryClient.cancelQueries({ queryKey: shellTerminalsQueryKey });
+			queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current) =>
+				(current ?? []).filter((shell) => shell.handleId !== handleId),
+			);
+		},
 		// Settled, not success: a close that 404s means the daemon already lost
-		// the shell, and the stale tab still needs to disappear.
+		// the shell, and the stale tab still needs to disappear. This refetch is
+		// also the rollback — a close that genuinely failed leaves the shell in
+		// the daemon's list, so it comes straight back into the strip.
 		onSettled: () => {
 			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
 		},
