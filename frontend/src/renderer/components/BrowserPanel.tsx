@@ -1,11 +1,29 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowLeft, ArrowRight, Globe2, Maximize2, Minimize2, MousePointer2, RefreshCw, X } from "lucide-react";
+import {
+	ArrowLeft,
+	ArrowRight,
+	Check,
+	Globe2,
+	Layers3,
+	Maximize2,
+	Minimize2,
+	MousePointer2,
+	RefreshCw,
+	X,
+} from "lucide-react";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useBrowserView, type BrowserViewModel } from "../hooks/useBrowserView";
 import { formatBrowserAnnotationMessage, type BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
 import type { WorkspaceSession } from "../types/workspace";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuLabel,
+	DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 import { cn } from "../lib/utils";
 
 type BrowserPanelProps = {
@@ -44,9 +62,12 @@ export function useBrowserAnnotationQueue({
 	const annotationSendingRef = useRef(false);
 	const sessionIdRef = useRef(sessionId ?? "");
 	const generationRef = useRef(0);
+	const sentTimerRef = useRef<number | null>(null);
 
 	const resetQueue = useCallback(() => {
 		generationRef.current += 1;
+		if (sentTimerRef.current !== null) window.clearTimeout(sentTimerRef.current);
+		sentTimerRef.current = null;
 		annotationQueueRef.current = [];
 		annotationSendingRef.current = false;
 		setState({ status: "idle", error: "", queuedCount: 0 });
@@ -97,7 +118,17 @@ export function useBrowserAnnotationQueue({
 
 				const queuedCount = annotationQueueRef.current.length;
 				setState({ status: queuedCount > 0 ? "queued" : "sent", error: "", queuedCount });
-				if (queuedCount > 0) drainAnnotationQueue();
+				if (queuedCount > 0) {
+					drainAnnotationQueue();
+				} else {
+					if (sentTimerRef.current !== null) window.clearTimeout(sentTimerRef.current);
+					sentTimerRef.current = window.setTimeout(() => {
+						sentTimerRef.current = null;
+						setState((current) =>
+							current.status === "sent" ? { status: "idle", error: "", queuedCount: 0 } : current,
+						);
+					}, 2_000);
+				}
 			}
 		})();
 	}, []);
@@ -111,6 +142,13 @@ export function useBrowserAnnotationQueue({
 		if (navUrl) return;
 		resetQueue();
 	}, [navUrl, resetQueue]);
+
+	useEffect(
+		() => () => {
+			if (sentTimerRef.current !== null) window.clearTimeout(sentTimerRef.current);
+		},
+		[],
+	);
 
 	const beginPicking = useCallback(() => {
 		setState((current) => ({ ...current, status: "picking", error: "" }));
@@ -196,6 +234,12 @@ export function BrowserPanelView({
 		goForward,
 		reload,
 		stop,
+		tabs,
+		activeTabId,
+		tabNotice,
+		selectTab,
+		closeTab,
+		agentBrowserActive,
 		annotationMode,
 		setAnnotationMode,
 	} = browserView;
@@ -340,6 +384,10 @@ export function BrowserPanelView({
 					>
 						{annotationStatusLabel}
 					</span>
+				) : agentBrowserActive ? (
+					<span className="browser-panel__annotation-status" role="status" aria-live="polite">
+						Agent using browser
+					</span>
 				) : null}
 				<div className="relative min-w-0 flex-1">
 					<Globe2
@@ -348,12 +396,65 @@ export function BrowserPanelView({
 					/>
 					<Input
 						aria-label="Browser URL"
-						className="h-control-sm! pl-6 font-mono text-caption"
+						className="h-control-sm! pl-6 text-caption"
 						onChange={(event) => setUrlInput(event.target.value)}
 						placeholder="localhost:5173"
 						value={urlInput}
 					/>
 				</div>
+				{tabNotice ? (
+					<span className="max-w-24 truncate text-caption text-accent" role="status">
+						{tabNotice}
+					</span>
+				) : null}
+				<DropdownMenu modal={false}>
+					<DropdownMenuTrigger asChild>
+						<Button
+							aria-label={`Browser tabs (${tabs.length})`}
+							className={cn("gap-1 px-2", tabs.length > 1 && "bg-accent-weak text-accent")}
+							disabled={tabs.length === 0}
+							size="sm"
+							title={`${tabs.length} browser ${tabs.length === 1 ? "tab" : "tabs"}`}
+							type="button"
+							variant="ghost"
+						>
+							<Layers3 aria-hidden="true" className="size-icon-base" />
+							<span className="text-caption tabular-nums">{tabs.length}</span>
+						</Button>
+					</DropdownMenuTrigger>
+					<DropdownMenuContent align="end" className="w-72" sideOffset={8}>
+						<DropdownMenuLabel>Browser tabs</DropdownMenuLabel>
+						{tabs.map((tab) => {
+							const label = browserTabLabel(tab.title, tab.url);
+							return (
+								<div className="flex min-w-0 items-center gap-0.5" key={tab.id}>
+									<DropdownMenuItem
+										className="min-w-0 flex-1 py-2"
+										onSelect={() => void selectTab(tab.id)}
+										textValue={`${label.title} ${label.subtitle}`}
+									>
+										<span className="flex size-4 shrink-0 items-center justify-center">
+											{tab.id === activeTabId ? <Check aria-hidden="true" className="text-accent" /> : null}
+										</span>
+										<span className="min-w-0 flex-1">
+											<span className="block truncate text-xs text-foreground">{label.title}</span>
+											<span className="block truncate text-caption text-passive">{label.subtitle}</span>
+										</span>
+									</DropdownMenuItem>
+									<DropdownMenuItem
+										aria-label={`Close tab ${label.title}`}
+										className="size-8 shrink-0 justify-center px-0"
+										disabled={tabs.length === 1}
+										onSelect={() => void closeTab(tab.id)}
+										title={tabs.length === 1 ? "The only tab cannot be closed" : `Close ${label.title}`}
+									>
+										<X aria-hidden="true" className="size-icon-sm" />
+									</DropdownMenuItem>
+								</div>
+							);
+						})}
+					</DropdownMenuContent>
+				</DropdownMenu>
 				<Button
 					aria-label={poppedOut ? "Return to panel" : "Pop out"}
 					className="size-control-sm!"
@@ -378,7 +479,7 @@ export function BrowserPanelView({
 				) : null}
 				{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
 				{navState.url === "" ? (
-					<div className="pointer-events-none absolute inset-0 grid place-items-center p-5 text-center font-mono text-xs text-passive">
+					<div className="pointer-events-none absolute inset-0 grid place-items-center p-5 text-center text-xs text-passive">
 						<p>Enter a URL or click one in the terminal.</p>
 					</div>
 				) : null}
@@ -398,6 +499,18 @@ export function BrowserPanelView({
 	);
 }
 
+function browserTabLabel(title: string, url: string): { title: string; subtitle: string } {
+	const cleanTitle = title.trim();
+	if (!url) return { title: cleanTitle || "New tab", subtitle: "Blank page" };
+	try {
+		const parsed = new URL(url);
+		const subtitle = parsed.protocol === "file:" ? parsed.pathname.split("/").filter(Boolean).at(-1) || url : parsed.host;
+		return { title: cleanTitle || subtitle, subtitle };
+	} catch {
+		return { title: cleanTitle || url, subtitle: url };
+	}
+}
+
 function MirrorVideo({ stream }: { stream: MediaStream }) {
 	const attach = useCallback(
 		(node: HTMLVideoElement | null) => {
@@ -414,7 +527,7 @@ function StaticPreview({ url }: { url: string }) {
 	return (
 		<div className="absolute inset-0 overflow-auto bg-preview text-preview-foreground">
 			<div className="border-b border-preview bg-surface px-4 py-3">
-				<div className="text-caption font-semibold uppercase tracking-wide-md text-preview-muted">AO Preview</div>
+				<div className="text-caption font-semibold tracking-wide text-preview-muted">Preview</div>
 				<div className="mt-1 truncate font-mono text-xs text-preview-link">{url}</div>
 			</div>
 			<div className="mx-auto max-w-preview-max px-5 py-6">
@@ -439,7 +552,7 @@ function StaticPreview({ url }: { url: string }) {
 							["Latency", "42 ms"],
 						].map(([label, value]) => (
 							<div key={label} className="rounded-md border border-preview-tile bg-preview-tile p-3">
-								<div className="text-caption font-medium uppercase tracking-wide text-preview-muted">{label}</div>
+								<div className="text-caption font-medium tracking-wide text-preview-muted">{label}</div>
 								<div className="mt-1 text-subtitle font-semibold text-preview-heading">{value}</div>
 							</div>
 						))}

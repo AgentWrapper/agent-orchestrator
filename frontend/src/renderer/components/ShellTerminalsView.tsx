@@ -48,8 +48,8 @@ export function ShellTerminalsView() {
 		<div className="flex h-full min-h-0 flex-col text-foreground">
 			{shellTopbarHiddenByPlatform ? <ShellTopbar surfaceOverride="standalone-terminals" /> : null}
 			<div className="flex h-inspector-tabs shrink-0 items-center gap-3 border-b border-border px-5">
-				<span className="shrink-0 font-mono text-caption font-semibold uppercase tracking-wide-lg text-muted-foreground">
-					TERMINALS
+				<span className="shrink-0 text-caption font-semibold tracking-wide text-muted-foreground">
+					Terminals
 				</span>
 				<button
 					aria-label="Scroll tabs left"
@@ -116,7 +116,7 @@ export function ShellTerminalsView() {
 						theme={theme}
 					/>
 				) : (
-					<div className="grid h-full place-items-center bg-terminal font-mono text-control">
+					<div className="grid h-full place-items-center bg-terminal text-control">
 						<div className="text-center">
 							<div className="text-terminal">No terminals open</div>
 							<div className="mt-2 text-terminal-dim">

@@ -136,7 +136,6 @@ describe("GlobalSettingsForm", () => {
 	it("renders the Figma settings sections", async () => {
 		renderForm();
 		expect(await screen.findByLabelText("Settings")).toBeInTheDocument();
-		expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
 		expect(screen.getByText("General")).toBeInTheDocument();
 		expect(screen.getByText("Updates")).toBeInTheDocument();
 		expect(screen.getByRole("switch", { name: "Developer Mode" })).toBeInTheDocument();
@@ -144,14 +143,14 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.getByRole("button", { name: "Report a problem" })).toBeInTheDocument();
 	});
 
-	it("closes settings with Escape", async () => {
+	it("leaves Escape handling to its settings dialog", async () => {
 		const user = userEvent.setup();
 		renderForm();
 		await screen.findByLabelText("Settings");
 
 		await user.keyboard("{Escape}");
 
-		expect(navigateMock).toHaveBeenCalledWith({ to: "/" });
+		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
 	it("lets an open settings dialog consume Escape first", async () => {

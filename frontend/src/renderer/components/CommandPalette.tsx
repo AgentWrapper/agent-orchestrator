@@ -40,6 +40,8 @@ export function CommandPalette() {
 	const setThemePreference = useUiStore((s) => s.setThemePreference);
 	const isOpen = useUiStore((s) => s.isCommandPaletteOpen);
 	const setOpen = useUiStore((s) => s.setCommandPaletteOpen);
+	const openGlobalSettings = useUiStore((s) => s.openGlobalSettings);
+	const openProjectSettings = useUiStore((s) => s.openProjectSettings);
 	const restartingProjectIds = useUiStore((s) => s.restartingProjectIds);
 
 	const [query, setQuery] = useState("");
@@ -88,13 +90,7 @@ export function CommandPalette() {
 	const navigateToTarget = useCallback(
 		(target: NavigateTarget) => {
 			switch (target.to) {
-				case "/settings":
-					void navigate({ to: "/settings" });
-					break;
 				case "/projects/$projectId":
-					void navigate({ to: target.to, params: target.params });
-					break;
-				case "/projects/$projectId/settings":
 					void navigate({ to: target.to, params: target.params });
 					break;
 				case "/projects/$projectId/sessions/$sessionId":
@@ -126,7 +122,7 @@ export function CommandPalette() {
 			const workspace = workspaces.find((candidate) => candidate.id === projectId);
 			if (!hasConfiguredOrchestratorAgent(workspace)) {
 				if (workspace) {
-					navigateToTarget({ to: "/projects/$projectId/settings", params: { projectId } });
+					openProjectSettings(projectId);
 					closePalette();
 				}
 				return;
@@ -136,7 +132,7 @@ export function CommandPalette() {
 			navigateToTarget({ to: "/projects/$projectId/sessions/$sessionId", params: { projectId, sessionId } });
 			closePalette();
 		},
-		[workspaces, navigateToTarget, queryClient, closePalette, blockedByRestart],
+		[workspaces, navigateToTarget, openProjectSettings, queryClient, closePalette, blockedByRestart],
 	);
 
 	const runAction = useCallback(
@@ -150,6 +146,11 @@ export function CommandPalette() {
 				switch (action.kind) {
 					case "navigate":
 						navigateToTarget(action.target);
+						closePalette();
+						break;
+					case "open-settings":
+						if (action.projectId) openProjectSettings(action.projectId);
+						else openGlobalSettings();
 						closePalette();
 						break;
 					case "toggle-theme":
@@ -181,7 +182,15 @@ export function CommandPalette() {
 				setPendingId(null);
 			}
 		},
-		[navigateToTarget, closePalette, toggleTheme, openOrchestrator, blockedByRestart],
+		[
+			navigateToTarget,
+			closePalette,
+			openGlobalSettings,
+			openProjectSettings,
+			toggleTheme,
+			openOrchestrator,
+			blockedByRestart,
+		],
 	);
 
 	const onSelectItem = useCallback(

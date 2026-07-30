@@ -207,7 +207,7 @@ export function CenterPane({
 										/>
 									);
 								})
-							: !session && <span className="font-mono text-control text-passive">No session</span>}
+							: !session && <span className="text-control text-passive">No session</span>}
 						{shellTerminals.map((shell) => (
 							<ShellTerminalTab
 								key={shell.handleId}
@@ -325,11 +325,11 @@ export function CenterPane({
 						<ChevronLeft aria-hidden="true" className="size-icon-lg" />
 						<span>agent</span>
 					</button>
-					<span className="inline-flex items-center gap-1.5 font-mono text-xs font-semibold text-success-bright">
+					<span className="inline-flex items-center gap-1.5 text-xs font-semibold text-success-bright">
 						<Shield aria-hidden="true" className="size-icon-lg" />
 						Reviewer
 					</span>
-					<span className="ml-auto truncate font-mono text-xs text-passive">{target.harness}</span>
+					<span className="ml-auto truncate text-xs text-passive">{target.harness}</span>
 				</div>
 			) : null}
 			<div className="relative min-h-0 flex-1">
@@ -342,7 +342,7 @@ export function CenterPane({
 				/>
 				{/* Display controls float over the terminal's top-right corner with no
 				    chrome of their own, so they read as part of the terminal itself. */}
-				<div className="absolute right-3 top-2 z-10 flex shrink-0 items-center gap-3 font-mono text-passive/70">
+				<div className="absolute right-3 top-2 z-10 flex shrink-0 items-center gap-3 text-passive/70">
 					<button
 						aria-label="Decrease terminal font size"
 						className="inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color,opacity] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-passive"
@@ -410,7 +410,7 @@ function SessionPaneTab({ label, isActive, onSelect, onClose }: SessionPaneTabPr
 				ref={ref}
 				aria-current={isActive}
 				className={cn(
-					"session-pane-tab__label min-w-flex-min max-w-shell-tab-max truncate font-mono font-semibold transition-colors",
+					"session-pane-tab__label min-w-flex-min max-w-shell-tab-max truncate font-semibold transition-colors",
 					isActive ? "text-foreground" : "text-passive/60 hover:text-passive",
 				)}
 				onClick={onSelect}

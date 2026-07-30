@@ -41,7 +41,7 @@ export function SettingsPanel({
 						<div className="flex min-w-0 items-baseline gap-3">
 							<h1 className="text-settings-heading font-bold text-settings-title">Settings</h1>
 							{subtitle ? (
-								<span className="truncate font-mono text-md-sm text-settings-muted" title={subtitle}>
+								<span className="truncate text-md-sm text-settings-muted" title={subtitle}>
 									{subtitle}
 								</span>
 							) : null}

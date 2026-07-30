@@ -8,6 +8,7 @@ import { NotificationRuntime } from "../components/NotificationCenter";
 import { GlobalNewTaskDialog } from "../components/GlobalNewTaskDialog";
 import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
 import { KeyboardShortcutsSettingsDialog } from "../components/settings/KeyboardShortcutsSettingsDialog";
+import { SettingsDialog } from "../components/SettingsDialog";
 import { ShellTopbar } from "../components/ShellTopbar";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
 import { Sidebar } from "../components/Sidebar";
@@ -92,7 +93,7 @@ function ShellLayout() {
 	const [workspaceStartupState, setWorkspaceStartupState] = useState<"loading" | "ready" | "error">("loading");
 	const workspaceStartupBaselineRef = useRef(0);
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);
-	const { themePreference, resolvedTheme, isSidebarOpen, toggleSidebar } = useUiStore();
+	const { themePreference, resolvedTheme, isSidebarOpen, toggleSidebar, openGlobalSettings } = useUiStore();
 	const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const requestCreateProject = useUiStore((state) => state.requestCreateProject);
@@ -151,16 +152,12 @@ function ShellLayout() {
 		workspaceStartupState === "ready" &&
 		workspaceQuery.isSuccess &&
 		workspaces.length === 0;
-	const isSettingsRoute =
-		Boolean(matchRoute({ to: "/settings", fuzzy: true })) ||
-		Boolean(matchRoute({ to: "/projects/$projectId/settings", fuzzy: true }));
 	const isTerminalsRoute = Boolean(matchRoute({ to: "/terminals", fuzzy: true }));
-	const isSessionRoute = Boolean(routeParams.sessionId);
-	const isWorkspaceCanvas = isSessionRoute || (!isWelcomeBoard && !isSettingsRoute && !isTerminalsRoute);
-	// Welcome/settings always self-frame. Sessions own their header inside the
-	// terminal column on every platform so it ends at the inspector divider.
-	const selfFramedCenterPanel = isWelcomeBoard || isSettingsRoute;
-	const hideShellTopbar = selfFramedCenterPanel || isSessionRoute || shellTopbarHiddenByPlatform;
+	// Welcome self-frames. Every other route sits inside the inset panel with
+	// its topbar at the panel's top edge; platforms that hide the shell-owned
+	// topbar (macOS/Linux) mount the same bar inside the route.
+	const selfFramedCenterPanel = isWelcomeBoard;
+	const hideShellTopbar = selfFramedCenterPanel || shellTopbarHiddenByPlatform;
 	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
 	const orchestratorReplacementErrors = useUiStore((state) => state.orchestratorReplacementErrors);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
@@ -576,7 +573,7 @@ function ShellLayout() {
 		setActiveShellTerminal,
 	]);
 
-	useEffect(() => aoBridge.app.onOpenSettingsShortcut(() => void navigate({ to: "/settings" })), [navigate]);
+	useEffect(() => aoBridge.app.onOpenSettingsShortcut(openGlobalSettings), [openGlobalSettings]);
 
 	useEffect(() => {
 		const disposePrevious = aoBridge.app.onPreviousSessionShortcut(() => navigateSession(-1));
@@ -611,6 +608,7 @@ function ShellLayout() {
 				open={isKeyboardShortcutsSettingsOpen}
 				onOpenChange={setIsKeyboardShortcutsSettingsOpen}
 			/>
+			<SettingsDialog />
 			{/* Shell chrome: Windows supplies a custom native-menu titlebar.
           macOS/Linux use the fixed TitlebarNav cluster, with session and board
           actions rendered inside the center panel. */}
@@ -659,25 +657,27 @@ function ShellLayout() {
 					/>
 					<main className={cn("flex min-w-0 flex-1 flex-col overflow-x-hidden", !isSidebarOpen && "sidebar-hidden")}>
 						<div className="min-h-0 flex-1 overflow-x-hidden">
-							{/* Board/session canvases run edge-to-edge. Welcome, settings,
-							    and terminals retain the quieter inset application frame. */}
+							{/* Every route renders inside the same inset panel the welcome
+							    board paints for itself, so each screen sits within the app's
+							    outer boundary. */}
 							{hideShellTopbar ? (
 								selfFramedCenterPanel ? (
 									<Outlet />
 								) : (
-									<CenterPanelShell variant={isWorkspaceCanvas ? "workspace" : "framed"}>
+									// Platform hides shell topbar: full-height panel; the route mounts its own bar.
+									<CenterPanelShell>
 										<Outlet />
 									</CenterPanelShell>
 								)
 							) : framedAppTopbar ? (
-								<CenterPanelShell variant={isWorkspaceCanvas ? "workspace" : "framed"}>
+								<CenterPanelShell>
 									<ShellTopbar surfaceOverride={isTerminalsRoute ? "standalone-terminals" : undefined} />
 									<div className="flex min-h-0 flex-1 flex-col">
 										<Outlet />
 									</div>
 								</CenterPanelShell>
 							) : (
-								<CenterPanelShell variant={isWorkspaceCanvas ? "workspace" : "framed"}>
+								<CenterPanelShell>
 									<Outlet />
 								</CenterPanelShell>
 							)}

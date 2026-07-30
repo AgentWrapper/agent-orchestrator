@@ -20,17 +20,8 @@ import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 
-type WorkspaceCompareMode = "base" | "head_fallback";
-type WorkspaceFileSummary = components["schemas"]["WorkspaceFileSummary"] & {
-	previousPath?: string;
-};
-type WorkspaceFileDetail = components["schemas"]["WorkspaceFileResponse"] & {
-	previousPath?: string;
-	compareMode?: WorkspaceCompareMode;
-};
-type WorkspaceFilesResponse = components["schemas"]["ListWorkspaceFilesResponse"] & {
-	compareMode?: WorkspaceCompareMode;
-};
+type WorkspaceFileSummary = components["schemas"]["WorkspaceFileSummary"];
+type WorkspaceFileDetail = components["schemas"]["WorkspaceFileResponse"];
 type WorkspaceFileStatus = WorkspaceFileSummary["status"];
 
 type SessionFilesViewProps = {
@@ -80,7 +71,7 @@ export function SessionFilesView({
 				params: { path: { sessionId } },
 			});
 			if (error) throw new Error(apiErrorMessage(error, "Unable to load workspace files"));
-			return (data ?? { sessionId, files: [], truncated: false }) as WorkspaceFilesResponse;
+			return data ?? { sessionId, files: [], truncated: false };
 		},
 	});
 	const files = filesQuery.data?.files ?? emptyFiles;
@@ -103,7 +94,7 @@ export function SessionFilesView({
 	const visibleFiles = useMemo(
 		() =>
 			normalizedFilter
-				? changedFiles.filter((file) => fileSearchText(file).includes(normalizedFilter))
+				? changedFiles.filter((file) => file.path.toLowerCase().includes(normalizedFilter))
 				: changedFiles,
 		[changedFiles, normalizedFilter],
 	);
@@ -170,14 +161,14 @@ export function SessionFilesView({
 						<Search className="pointer-events-none absolute left-2.5 top-1/2 size-icon-sm -translate-y-1/2 text-passive" />
 						<Input
 							autoFocus
-							className="h-control-md pl-8 font-mono text-xs"
+							className="h-control-md pl-8 text-xs"
 							onChange={(event) => setFilter(event.target.value)}
 							placeholder="Search changed files"
 							value={filter}
 						/>
 					</label>
 				) : (
-					<span className="mr-auto min-w-0 truncate pl-1.5 font-mono text-caption text-passive">
+					<span className="mr-auto min-w-0 truncate pl-1.5 text-caption text-passive">
 						{changedCount === 1 ? "1 file" : `${changedCount} files`}
 					</span>
 				)}
@@ -263,9 +254,8 @@ export function SessionFilesView({
 			</header>
 
 			<div className="min-h-0 flex-1 overflow-auto bg-background">
-				<div className={cn("flex w-full flex-col px-0 py-1", !isMaximized && "mx-auto max-w-[1200px]")}>
+				<div className="mx-auto flex w-full max-w-[1200px] flex-col px-0 py-1">
 					<ReviewFileList
-						compareMode={filesQuery.data?.compareMode}
 						error={filesQuery.error}
 						expandedPaths={expandedPaths}
 						files={visibleFiles}
@@ -283,7 +273,6 @@ export function SessionFilesView({
 }
 
 function ReviewFileList({
-	compareMode,
 	error,
 	expandedPaths,
 	files,
@@ -294,7 +283,6 @@ function ReviewFileList({
 	split,
 	wrap,
 }: {
-	compareMode?: WorkspaceCompareMode;
 	error: Error | null;
 	expandedPaths: Set<string>;
 	files: WorkspaceFileSummary[];
@@ -314,7 +302,7 @@ function ReviewFileList({
 		);
 	}
 	if (files.length === 0) {
-		return <PanelMessage>{emptyFilesMessage(compareMode)}</PanelMessage>;
+		return <PanelMessage>No changed files found.</PanelMessage>;
 	}
 	return (
 		<ul className="session-files-review-list overflow-hidden border-y border-border/70">
@@ -367,7 +355,7 @@ function ReviewFileCard({
 				<button
 					aria-controls={`workspace-diff-${file.path}`}
 					aria-expanded={expanded}
-					aria-label={`${expanded ? "Collapse" : "Expand"} ${fileLabel(file)}`}
+					aria-label={`${expanded ? "Collapse" : "Expand"} ${file.path}`}
 					className="flex min-w-0 flex-1 items-center gap-2 px-3 py-1.5 text-left"
 					data-file-toggle=""
 					onClick={onToggle}
@@ -379,7 +367,7 @@ function ReviewFileCard({
 						<ChevronRight className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
 					)}
 					<StatusMark status={file.status} />
-					<FilePathLabel file={file} />
+					<span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{file.path}</span>
 					<ChangeBadges additions={file.additions} deletions={file.deletions} />
 				</button>
 				<CopyPathButton path={file.path} />
@@ -425,37 +413,6 @@ function CopyPathButton({ path }: { path: string }) {
 	);
 }
 
-function FilePathLabel({ file }: { file: WorkspaceFileSummary }) {
-	if (!file.previousPath) {
-		return <span className="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-foreground">{file.path}</span>;
-	}
-	return (
-		<span className="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-foreground">
-			<span className="text-passive line-through decoration-border">{file.previousPath}</span>
-			<span className="px-1 text-passive">-&gt;</span>
-			<span>{file.path}</span>
-		</span>
-	);
-}
-
-function fileLabel(file: WorkspaceFileSummary): string {
-	return file.previousPath ? `${file.previousPath} -> ${file.path}` : file.path;
-}
-
-function fileSearchText(file: WorkspaceFileSummary): string {
-	return fileLabel(file).toLowerCase();
-}
-
-function emptyFilesMessage(compareMode?: WorkspaceCompareMode): string {
-	if (compareMode === "head_fallback") return "No changes against HEAD.";
-	if (compareMode === "base") return "No changes against base.";
-	return "No changed files found.";
-}
-
-function emptyDiffMessage(compareMode?: WorkspaceCompareMode): string {
-	return compareMode === "base" ? "No changes against base." : "No changes against HEAD.";
-}
-
 async function loadWorkspaceFile(sessionId: string, path: string) {
 	const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/workspace/file", {
 		params: { path: { sessionId }, query: { path } },
@@ -471,7 +428,7 @@ function ReviewDiffBody({ detail, split, wrap }: { detail: WorkspaceFileDetail; 
 	}
 	const rows = parseUnifiedDiff(detail.diff);
 	if (rows.length === 0) {
-		return <PanelMessage>{emptyDiffMessage(detail.compareMode)}</PanelMessage>;
+		return <PanelMessage>No changes against HEAD.</PanelMessage>;
 	}
 	return <DiffView rows={rows} split={split} truncated={detail.diffTruncated} wrap={wrap} />;
 }
@@ -801,7 +758,7 @@ function DiffLineSegments({ add, segments }: { add: boolean; segments: DiffSegme
 
 function ChangeBadges({ additions, deletions }: { additions: number; deletions: number }) {
 	return (
-		<span className="flex shrink-0 items-center gap-1 font-mono text-xs font-semibold">
+		<span className="flex shrink-0 items-center gap-1 text-xs font-semibold tabular-nums">
 			{additions > 0 ? <span className="rounded bg-success/20 px-1.5 py-0.5 text-success">+{additions}</span> : null}
 			{deletions > 0 ? <span className="rounded bg-error/20 px-1.5 py-0.5 text-error">-{deletions}</span> : null}
 		</span>
@@ -832,7 +789,7 @@ function StatusMark({ status }: { status: WorkspaceFileStatus }) {
 	return (
 		<span
 			className={cn(
-				"inline-flex size-5 shrink-0 items-center justify-center rounded border font-mono text-micro font-semibold",
+				"inline-flex size-5 shrink-0 items-center justify-center rounded border text-micro font-semibold",
 				statusTone[status],
 			)}
 			title={status}

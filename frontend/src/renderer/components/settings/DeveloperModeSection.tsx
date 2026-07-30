@@ -6,12 +6,12 @@ import { SettingsSection } from "./SettingsSection";
 
 // Single opt-in toggle that reveals developer-only surfaces (currently the
 // Feature Releases update channel). Persisted via the ui-store, defaults off.
-export function DeveloperModeSection() {
+export function DeveloperModeSection({ titleHidden }: { titleHidden?: boolean }) {
 	const developerMode = useUiStore((state) => state.developerMode);
 	const setDeveloperMode = useUiStore((state) => state.setDeveloperMode);
 
 	return (
-		<SettingsSection title="Developer Mode" sectionId="developer-mode">
+		<SettingsSection title="Developer Mode" sectionId="developer-mode" titleHidden={titleHidden}>
 			<SettingsRow icon={Wrench} label="Developer Mode">
 				<Switch aria-label="Developer Mode" checked={developerMode} onCheckedChange={setDeveloperMode} />
 			</SettingsRow>

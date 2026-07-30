@@ -50,7 +50,7 @@ export function KeyboardShortcutsDialog({
 						if (shortcuts.length === 0) return null;
 						return (
 							<section className="border-b border-border py-4 last:border-b-0" key={category}>
-								<h2 className="mb-2 font-mono text-micro font-semibold uppercase tracking-wide-lg text-passive">
+								<h2 className="mb-2 text-micro font-semibold tracking-wide text-passive">
 									{category}
 								</h2>
 								<div className="flex flex-col">
@@ -68,7 +68,7 @@ export function KeyboardShortcutsDialog({
 														>
 															{keys.map((key) => (
 																<kbd
-																	className="inline-flex min-w-7 items-center justify-center rounded-sm border border-border-strong bg-surface px-1.5 py-1 font-mono text-caption font-medium text-muted-foreground shadow-sm"
+																	className="inline-flex min-w-7 items-center justify-center rounded-sm border border-border-strong bg-surface px-1.5 py-1 text-caption font-medium text-muted-foreground shadow-sm"
 																	key={key}
 																>
 																	{key}

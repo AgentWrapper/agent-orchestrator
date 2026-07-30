@@ -1,0 +1,125 @@
+import { CircleHelp, MonitorCog, RefreshCw, Settings2, Wrench, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { GlobalSettingsForm, type GlobalSettingsSection } from "./GlobalSettingsForm";
+import { ProjectSettingsForm } from "./ProjectSettingsForm";
+import {
+	Dialog,
+	DialogClose,
+	DialogContent,
+	DialogDescription,
+	DialogHeader,
+	DialogTitle,
+	settingsDialogBodyClass,
+	settingsDialogContentClass,
+	settingsDialogHeaderClass,
+} from "./ui/dialog";
+import { type SettingsModal, useUiStore } from "../stores/ui-store";
+import { cn } from "../lib/utils";
+
+const globalSections: Array<{ id: Exclude<GlobalSettingsSection, "all">; label: string; icon: typeof Settings2 }> = [
+	{ id: "general", label: "General", icon: Settings2 },
+	{ id: "updates", label: "Updates", icon: RefreshCw },
+	{ id: "developer", label: "Developer", icon: Wrench },
+	{ id: "help", label: "Help", icon: CircleHelp },
+];
+
+export function SettingsDialog() {
+	const settingsModal = useUiStore((state) => state.settingsModal);
+	const closeSettings = useUiStore((state) => state.closeSettings);
+	const [displaySettings, setDisplaySettings] = useState<SettingsModal | null>(settingsModal);
+	const isProjectSettings = displaySettings?.scope === "project";
+	const [activeSection, setActiveSection] = useState<Exclude<GlobalSettingsSection, "all">>("general");
+	const activeLabel = isProjectSettings
+		? "Project"
+		: globalSections.find((section) => section.id === activeSection)?.label ?? "General";
+
+	useEffect(() => {
+		if (settingsModal) setDisplaySettings(settingsModal);
+		if (settingsModal?.scope === "global") setActiveSection("general");
+	}, [settingsModal]);
+
+	return (
+		<Dialog open={settingsModal !== null} onOpenChange={(open) => !open && closeSettings()}>
+			{displaySettings ? (
+				<DialogContent
+					className={cn(
+						settingsDialogContentClass,
+						"h-(--size-settings-dialog-height) w-(--size-settings-dialog-wide) max-h-none origin-center",
+					)}
+					showCloseButton={false}
+				>
+					<div className="flex min-h-0 flex-1 overflow-hidden">
+						<aside className="flex w-44 shrink-0 flex-col border-r border-(--color-border-settings-dialog-header) bg-muted/35">
+							<div className="flex h-14 shrink-0 items-center px-2">
+								<span className="px-2.5 text-sm font-semibold text-foreground">Settings</span>
+							</div>
+							<nav aria-label="Settings sections" className="flex flex-col gap-0.5 p-2">
+								{isProjectSettings ? (
+									<SettingsNavItem active icon={MonitorCog} label="Project" onClick={() => undefined} />
+								) : (
+									globalSections.map(({ id, label, icon }) => (
+										<SettingsNavItem
+											active={activeSection === id}
+											icon={icon}
+											key={id}
+											label={label}
+											onClick={() => setActiveSection(id)}
+										/>
+									))
+								)}
+							</nav>
+						</aside>
+						<div className="flex min-w-0 flex-1 flex-col bg-settings-dialog">
+							<DialogHeader className={cn(settingsDialogHeaderClass, "flex h-14 flex-row items-center justify-between border-b p-3")}>
+								<DialogTitle className="text-sm font-semibold text-settings-title">{activeLabel}</DialogTitle>
+								<DialogDescription className="sr-only">
+									{isProjectSettings ? "Manage this project’s settings." : `Manage ${activeLabel.toLowerCase()} settings.`}
+								</DialogDescription>
+								<DialogClose
+									aria-label="Close settings"
+									className="grid size-8 place-items-center rounded-md text-muted-foreground transition-[background-color,color] hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								>
+									<X aria-hidden="true" className="size-4" />
+								</DialogClose>
+							</DialogHeader>
+							<div className={cn(settingsDialogBodyClass, "flex-1 px-6 pt-5")}>
+								{displaySettings.scope === "project" ? (
+									<ProjectSettingsForm projectId={displaySettings.projectId} />
+								) : (
+									<GlobalSettingsForm section={activeSection} />
+								)}
+							</div>
+						</div>
+					</div>
+				</DialogContent>
+			) : null}
+		</Dialog>
+	);
+}
+
+function SettingsNavItem({
+	active,
+	icon: Icon,
+	label,
+	onClick,
+}: {
+	active: boolean;
+	icon: typeof Settings2;
+	label: string;
+	onClick: () => void;
+}) {
+	return (
+		<button
+			aria-current={active ? "page" : undefined}
+			className={cn(
+				"flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-left text-xs font-medium transition-[background-color,color] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+				active ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:bg-card/70 hover:text-foreground",
+			)}
+			onClick={onClick}
+			type="button"
+		>
+			<Icon aria-hidden="true" className="size-4 shrink-0" />
+			{label}
+		</button>
+	);
+}

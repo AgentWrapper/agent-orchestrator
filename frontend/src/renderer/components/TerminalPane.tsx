@@ -355,7 +355,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 
 	if (initFailed) {
 		return (
-			<div className="grid h-full place-items-center bg-terminal p-4 font-mono text-xs text-muted-foreground">
+			<div className="grid h-full place-items-center bg-terminal p-4 text-xs text-muted-foreground">
 				Terminal failed to initialize on this GPU/driver. Restart the app to retry.
 			</div>
 		);
@@ -411,7 +411,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					theme={theme}
 				/>
 				{showEmptyState && (
-					<div className="absolute inset-0 grid place-items-center bg-terminal font-mono text-control">
+					<div className="absolute inset-0 grid place-items-center bg-terminal text-control">
 						<div className="text-center">
 							<div className="text-terminal">{emptyStateTitle}</div>
 							<div className="mt-2 text-terminal-dim">{emptyStateMessage}</div>
@@ -420,7 +420,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 				)}
 				{showReplayCover && <ReplayCover />}
 				{banner && (
-					<div className="absolute inset-x-3 top-2 rounded-md border border-border bg-surface/95 px-3 py-1.5 font-mono text-caption text-muted-foreground">
+					<div className="absolute inset-x-3 top-2 rounded-md border border-border bg-surface/95 px-3 py-1.5 text-caption text-muted-foreground">
 						{banner}
 					</div>
 				)}
@@ -459,7 +459,7 @@ function ReplayCover() {
 			className="pointer-events-none absolute inset-0 grid place-items-center bg-terminal"
 			data-testid="terminal-replay-cover"
 		>
-			{showLabel && <div className="font-mono text-caption text-terminal-dim">Loading latest output…</div>}
+			{showLabel && <div className="text-caption text-terminal-dim">Loading latest output…</div>}
 		</div>
 	);
 }
@@ -485,7 +485,7 @@ function TerminalEndedStrip({ canRestore, error, isRestoring, onRestore, variant
 		<div className="shrink-0 border-b border-border bg-surface/80 px-4 py-2">
 			<div className="flex min-h-control-board items-center gap-3">
 				<div className="min-w-0 flex-1">
-					<div className="font-mono text-caption font-medium uppercase tracking-wide-md text-muted-foreground">
+					<div className="text-caption font-medium tracking-wide text-muted-foreground">
 						Terminal ended
 					</div>
 					<div className="mt-0.5 truncate text-xs text-muted-foreground">{message}</div>

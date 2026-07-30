@@ -137,7 +137,7 @@ export function MigrationSection() {
 						{query.isLoading ? (
 							<span className="text-passive">Checking…</span>
 						) : available ? (
-							<span className="font-mono text-caption text-foreground">{legacyRoot || "found"}</span>
+							<span className="text-caption text-foreground">{legacyRoot || "found"}</span>
 						) : (
 							<span className="text-passive">None found</span>
 						)}

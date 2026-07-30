@@ -11,12 +11,18 @@ const THEME_OPTIONS = [
 	{ value: "system", label: "System", icon: <Monitor className="size-icon-lg" aria-hidden="true" /> },
 ] satisfies SettingsOption<ThemePreference>[];
 
-export function GeneralSettingsSection({ onConnectMobile }: { onConnectMobile: () => void }) {
+export function GeneralSettingsSection({
+	onConnectMobile,
+	titleHidden,
+}: {
+	onConnectMobile: () => void;
+	titleHidden?: boolean;
+}) {
 	const themePreference = useUiStore((state) => state.themePreference);
 	const setThemePreference = useUiStore((state) => state.setThemePreference);
 
 	return (
-		<SettingsSection title="General">
+		<SettingsSection title="General" titleHidden={titleHidden}>
 			<SettingsRow icon={Palette} label="Theme">
 				<SettingsOptionMenu
 					aria-label="Theme"

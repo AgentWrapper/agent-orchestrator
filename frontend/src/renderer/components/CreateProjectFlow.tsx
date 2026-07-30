@@ -526,7 +526,7 @@ function CreateProjectFolderDialog({
 								<div className="flex items-center gap-3 rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-3">
 									<Folder className="size-5 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />
 									<div className="min-w-0 flex-1">
-										<div className="truncate font-mono text-[14px] font-semibold text-[var(--color-text-import-title)]">
+										<div className="truncate text-[14px] font-semibold text-[var(--color-text-import-title)]">
 											{displayImportPath(scan.path)}
 										</div>
 										<div className="mt-0.5 text-[12px] text-[var(--color-text-import-muted)]">
@@ -540,7 +540,7 @@ function CreateProjectFolderDialog({
 
 								{error && (
 									<div className="rounded-lg border border-destructive/40 bg-destructive/10">
-										<div className="border-b border-destructive/30 px-4 py-3 font-mono text-[12px] font-semibold uppercase tracking-[0.12em] text-destructive">
+										<div className="border-b border-destructive/30 px-4 py-3 text-[12px] font-semibold tracking-wide text-destructive">
 											<span className="mr-2 inline-block size-2 rounded-full bg-destructive" aria-hidden="true" />
 											Import failed · {isWorkspace ? "workspace" : "project"} not registered
 										</div>
@@ -626,11 +626,11 @@ function ImportRepoRow({ failed = false, repo }: { failed?: boolean; repo: Impor
 			)}
 			<div className="min-w-0 flex-1">
 				<div className="truncate text-[14px] font-semibold text-[var(--color-text-import-title)]">{repo.name}</div>
-				<div className="mt-0.5 truncate font-mono text-[12px] text-[var(--color-text-import-muted)]">
+				<div className="mt-0.5 truncate text-[12px] text-[var(--color-text-import-muted)]">
 					{displayImportPath(repo.path)}
 				</div>
 			</div>
-			<div className="hidden max-w-[260px] shrink-0 truncate text-right font-mono text-[12px] text-[var(--color-text-import-muted)] sm:block">
+			<div className="hidden max-w-[260px] shrink-0 truncate text-right text-[12px] text-[var(--color-text-import-muted)] sm:block">
 				{failed ? (repo.reason ?? "Repository cannot be imported") : `${repo.branch} ${remoteDisplay(repo.remote)}`}
 			</div>
 		</div>

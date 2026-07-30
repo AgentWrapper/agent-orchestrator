@@ -16,11 +16,10 @@ sections below — where they conflict, **agent-orchestrator wins**. Do not re-f
 - **Reference (the user's own app):** `~/Projects/agent-orchestrator/packages/web/src`
   — `app/globals.css`, `app/mc-board.css`, `app/mc-sidebar.css`,
   `components/{ProjectSidebar,Dashboard,SessionCard,SessionDetailHeader,SessionInspector,StatusBadge}.tsx`.
-- **Palette (live in `frontend/src/renderer/styles.css` `:root`):** `--bg #0a0b0d`,
-  `--bg-1 #15171b`, `--fg #f4f5f7`, `--fg-muted #9ba1aa`, `--fg-passive #646a73`,
-  hairline white-alpha borders, accent `--accent #4d8dff`; status: working=orange
-  `#f59f4c`, needs-you=amber `#e8c14a`, mergeable=green `#74b98a`, fail=red `#ef6b6b`.
-  The sidebar rail is the cooler `#08090b`.
+- **Palette (live in `frontend/src/styles/tokens.css`):** shadcn `base-luma` with
+  the `olive` base (`b6tOz2I0x` preset), expressed in OKLCH for both themes.
+  Product status colors and the terminal palette remain independent semantic
+  signals; the dark sidebar primary remains the preset's blue live edge.
 - **Cloned surfaces:** the four-column gradient kanban board, the `ProjectSidebar`
   (brand + project disclosure + nested session rows + Settings menu footer), the
   session topbar (Kanban back button + identity + breathing `StatusBadge` pill), and
@@ -29,8 +28,8 @@ sections below — where they conflict, **agent-orchestrator wins**. Do not re-f
 - **Build with shadcn primitives** where a component fits (`components/ui/*`:
   dropdown-menu, select, card, table, tooltip, …); agent-orchestrator's own
   hand-rolled CSS components are structure/behaviour reference only.
-- The one carried-over divergence still holds: the **accent is refined blue**, and
-  the **terminal keeps its own palette**. Everything else tracks agent-orchestrator.
+- The terminal keeps its own palette. Everything else tracks the selected
+  shadcn preset and agent-orchestrator's product structure.
 - **Approved divergence (2026-06-10):** on macOS, a titlebar cluster (sidebar toggle +
   back/forward history arrows, `TitlebarNav`) lives in the sidebar header below the
   traffic lights — the web reference has no window chrome, so no analogue exists.
@@ -48,6 +47,115 @@ resizable`, react-resizable-panels v4 `collapsible` panel + imperative API,
   On macOS the shell topbar is hidden (in-panel actions) and the sidebar is
   full-height; traffic-light clearance uses `--size-traffic-light-clearance` for
   both the sidebar header pad and the window-drag strip.
+
+## The contract (read this before adding any value)
+
+Everything below this heading is the enforceable part of the design system. It is
+numbers, not adjectives, so it can be checked in review and in CI. Sections
+further down describe product structure and history; where they disagree with the
+contract, **the contract wins**.
+
+**The one rule:** if you need a value that is not on a scale below, change the
+scale — do not add an exception. A token names a **role** it plays
+(`--color-border-strong`, `--size-control-md`), never a **place** it appears
+(`--radius-settings-row`). A place-named token can only ever have one caller,
+which is how a token layer grows to 438 properties and stops constraining
+anything.
+
+Current state and the gap to this contract are measured in
+[`frontend/docs/ui-system-audit.md`](frontend/docs/ui-system-audit.md). Items
+marked **target** are not fully true in the code yet.
+
+### Type — five sizes (target)
+
+| Utility      | Size | Use                             |
+| ------------ | ---- | ------------------------------- |
+| `text-micro` | 10px | counts, keycaps, dense metadata |
+| `text-2xs`   | 11px | secondary labels                |
+| `text-xs`    | 12px | default UI text                 |
+| `text-sm`    | 14px | emphasis, card and row titles   |
+| `text-base`  | 16px | dialog titles, the rare heading |
+
+Weights: 400 normal, 500 medium, 600 for a card title. No half-pixel sizes, no
+`text-[13px]` literals. Anything above 16px is a single-surface decision and stays
+a local class, not a global token. Geist Sans for all UI; Geist Mono only for
+literal code and terminal output.
+
+### Radius — one base, derived steps (target)
+
+| Utility          | Value | Use                                           |
+| ---------------- | ----- | --------------------------------------------- |
+| `rounded-swatch` | 2px   | status squares (the only sub-scale exception) |
+| `rounded-xs`     | 4px   | scrollbars, tiny chips                        |
+| `rounded-sm`     | 6px   | inputs, small controls                        |
+| `rounded-md`     | 8px   | buttons, rows, menu items                     |
+| `rounded-lg`     | 10px  | cards, panels                                 |
+| `rounded-xl`     | 14px  | modals, sheets                                |
+| `rounded-full`   | pill  | badges, avatars, dots                         |
+
+7px, 12px, 16px, 17px, and 20px are not reachable from the base and must not be
+reintroduced.
+
+### Spacing — 4px base, Tailwind scale only
+
+`1`=4 · `1.5`=6 · `2`=8 · `2.5`=10 · `3`=12 · `4`=16 · `5`=20 · `6`=24. Control
+heights `h-6` 24px xs · `h-7` 28px sm · `h-8` 32px default. No `p-[19px]`.
+
+Within a container, outer padding and the gap between its items are the same
+value unless there is a stated reason.
+
+### Color — roles, never literals
+
+Use the semantic roles in `frontend/src/styles/tokens.css`: `--color-bg-*`,
+`--color-text-*`, `--color-border-*`, `--color-accent-*`, `--color-status-*`. No
+raw hex in the renderer. Board and topbar status hues (working blue, needs-you
+orange, in-review yellow, ready green) come from `--color-status-*` and are
+defined once for both themes.
+
+### Motion — three durations, two easings (target)
+
+`fast` 100ms · `normal` 150ms · `slow` 240ms. Enter `ease-out`, exit `ease-in`;
+exits are shorter than entries. Status pulse 1.8s loop is the one expressive
+exception. Never animate layout or text. Honour `motion-reduce`.
+
+### Control recipe — what goes with what
+
+Scales alone don't produce consistency; the combinations have to be fixed too.
+Pick the row by control height and take the whole row. This is what stops
+"which radius goes on a 28px button" from being re-decided per component.
+
+| Height     | Radius           | Padding x | Gap       | Icon | Text       |
+| ---------- | ---------------- | --------- | --------- | ---- | ---------- |
+| 24px `h-6` | `rounded-sm` 6px | `px-2`    | `gap-1.5` | 13px | `text-2xs` |
+| 28px `h-7` | `rounded-md` 8px | `px-2.5`  | `gap-2`   | 14px | `text-xs`  |
+| 32px `h-8` | `rounded-md` 8px | `px-3`    | `gap-2`   | 16px | `text-xs`  |
+| 36px+ rows | `rounded-md` 8px | `px-3`    | `gap-2`   | 16px | `text-sm`  |
+
+A square icon-only control uses the same radius and drops the padding to a
+centred grid. Radius never exceeds a quarter of the control height — that is the
+line between "rounded rectangle" and "accidental pill".
+
+### Alignment
+
+- **Text-bearing controls are left-aligned.** `justify-center` is for icon-only
+  controls. A centred label in a full-width row is a bug, not a style.
+- **Icon and label are optically centred** on the text, not the box: `flex
+items-center` with the icon at `shrink-0`.
+- **Sibling rows share a left edge.** A row's icon column, a section heading, and
+  the row content below it all start at the same x.
+- **Numbers that update in place use `tabular-nums`** so they don't jitter.
+
+### Components — compose, do not re-roll
+
+Build from `components/ui/*`. One `Button` with variants, one `Badge`, one row
+primitive. A raw `<button>` outside `components/ui/` is a bug: it re-specifies
+height, padding, radius, hover, focus, and disabled state, and each of those is a
+chance to diverge. Icons are lucide only.
+
+### Copy
+
+Sentence case everywhere — never all caps, not even for labels. No slashes as
+separators (use `·`). Short labels; no explanatory sentences in chrome.
 
 ## Product Context
 
@@ -106,18 +214,17 @@ list of independent sessions. Grounded in the daemon
 
 ## Typography
 
-System fonts only — no custom/Google fonts, zero font payload.
+The renderer bundles the variable Geist families locally; it makes no Google
+Fonts or other runtime font requests.
 
-- **UI / body / display:** `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-Oxygen, Ubuntu, Cantarell, "Fira Sans", "Helvetica Neue", sans-serif` (San Francisco
-  on macOS).
-- **Mono / terminal / code / eyebrow labels:** `Menlo, Monaco, Consolas,
-"Liberation Mono", "Courier New", monospace`.
-- **Eyebrow labels** (section titles, dialog titles, the rail "PROJECTS" header):
-  mono, **uppercase**, `letter-spacing: .12–.14em`, `--foreground-passive`.
-- **Scale:** 14px base UI / sidebar (`text-sm`, weight 400) · 12px secondary + labels
-  (`text-xs`) · 13px code/mono/terminal · 11px tiny · 10px micro + badges · 9px sidebar
-  badge label. Buttons are `font-normal` (400), not bold.
+- **UI / body / display:** `Geist Variable`, then system sans fallbacks.
+- **Mono / terminal / code:** `Geist Mono Variable`, then the existing Nerd Font
+  and system mono fallbacks. **Mono is for literal code and terminal output only**
+  — no mono in UI chrome (labels, counts, timestamps, paths). Use
+  `tabular-nums` where numbers need to align.
+- **Superseded (2026-07-30):** eyebrow labels are no longer mono or uppercase, and
+  the old six-step scale is replaced by the five sizes in _The contract_. All-caps
+  is banned everywhere by explicit user rule.
 
 ## Color
 
@@ -164,7 +271,15 @@ and meaningful. Values are sRGB approximations of the reference's `color(display
 - **Red** = `ci_failed` / destructive.
 - These map 1:1 to the daemon's derived statuses.
 
-### Status indicator (no text badges)
+### Status indicator
+
+> **Superseded in part (2026-07-30):** the board pairs a 8px `rounded-swatch`
+> colour square with a text label, matching the landing hero's board preview. The
+> topbar shows no status at all — its centre context pill (branch/orchestrator +
+> activity) was removed the same day, leaving breadcrumbs on the left and controls
+> on the right. Session activity now reaches assistive tech through the
+> orchestrator control's accessible name. The glyph rules below still govern the
+> side rail's Workers list.
 
 Session status is a single ~14px glyph in one fixed slot, never a text pill/badge:
 
@@ -209,8 +324,8 @@ left rail stay name-only — no glyph.)
   status). Worker → the **Git review rail**: `Changed N` → All files / Discard all / Stage
   all → file rows (`+adds −dels`, stage toggle) → `Commit message` + `Description` →
   **Commit & Push** (primary blue) → branch + `Create PR`.
-- **Border radius:** `sm` 4px (scrollbar) · `md` 6px (buttons, inputs, toggles) ·
-  `lg` 8px (rows, cards, panels) · `xl` 12px (modals) · `full` (badges/pills/dots).
+- **Border radius:** see _The contract_ (the values above were the 2026-06-09
+  reference scale and no longer match the token base).
 - **Icons:** **lucide** only. No emoji.
 
 ### Topbar
@@ -245,29 +360,38 @@ mirrors the reference exactly. Launching from a project row pre-fills the Projec
 - **Approach:** minimal-functional. The one expressive exception: a status dot/spinner
   pulse on active/working sessions (opacity breathe) so "alive" is glanceable. Never
   animate text or layout.
-- **Easing:** enter `ease-out`, exit `ease-in`, move `ease-in-out`.
-- **Duration:** micro 80ms · short 160ms · medium 240ms · status pulse 1.8s loop ·
-  modal enter ~150ms fade+zoom-95.
+- **Easing and duration:** see _The contract_. Modals are 110ms in / 80ms out,
+  opacity + scale; the exit is deliberately shorter than the entrance.
 
 ## Implementation notes
 
-- The renderer (`frontend/src/renderer/styles.css`) currently uses **Inter** and a
-  grayscale-blue theme. Migrate to this system: drop the Inter `font-family`, adopt the
-  system stack, and replace the token values with the neutral ramp + blue accent above.
-- Keep tokens as CSS custom properties under `:root` (dark) and `:root[data-theme="light"]`.
+- **Stale (2026-07-30):** the Inter → system-stack migration note that used to sit
+  here is done and wrong twice over — the renderer bundles Geist, not Inter, and
+  not the system stack. Typography is governed by _The contract_.
+- Keep tokens as CSS custom properties under `.dark` and `:root[data-theme="light"]`
+  in `frontend/src/styles/tokens.css`.
+- Current drift from the contract, with counts and a migration sequence:
+  [`frontend/docs/ui-system-audit.md`](frontend/docs/ui-system-audit.md).
 - A faithful HTML reference of all of the above (both views + topbar + spawn modal,
   light/dark) is saved under
   `~/.gstack/projects/aoagents-agent-orchestrator/designs/design-system-20260609/`.
 
 ## Decisions Log
 
-| Date       | Decision                                                               | Rationale                                                                                          |
-| ---------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| 2026-06-09 | Match the reference's visual language exactly                          | User direction; the reference is the demonstrated model for this app's UI.                         |
-| 2026-06-09 | System font, not a custom typeface (e.g. Geist)                        | The reference uses the system stack; fidelity + native feel + zero font payload over brand type.   |
-| 2026-06-09 | Refined **blue** accent, not the reference's jade green                | User's explicit pick; blue for primary/active/focus, terminal stays green.                         |
-| 2026-06-09 | Single global **Orchestrator** anchor, orchestrator-first default view | The one real difference from the reference; orchestrator is the human-facing coordinator.          |
-| 2026-06-09 | **Name-only** worker rows                                              | User direction; status/branch/diff live in panes + topbar, not the row.                            |
-| 2026-06-09 | Removed **Library** from the rail footer                               | User direction; footer is Search + Settings only.                                                  |
-| 2026-06-09 | Topbar right = PR/CI pill + view toggles + ⋯ menu (worker)             | Surfaces the actionable PR/CI state from the daemon; desktop-tool precedent.                       |
-| 2026-06-09 | Spawn modal mirrors the reference's Create Task                        | Consistency with the reference; mapped to `ao spawn` params.                                       |
+| Date       | Decision                                                                | Rationale                                                                                        |
+| ---------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| 2026-06-09 | Match the reference's visual language exactly                           | User direction; the reference is the demonstrated model for this app's UI.                       |
+| 2026-06-09 | System font, not a custom typeface (e.g. Geist)                         | The reference uses the system stack; fidelity + native feel + zero font payload over brand type. |
+| 2026-06-09 | Refined **blue** accent, not the reference's jade green                 | User's explicit pick; blue for primary/active/focus, terminal stays green.                       |
+| 2026-06-09 | Single global **Orchestrator** anchor, orchestrator-first default view  | The one real difference from the reference; orchestrator is the human-facing coordinator.        |
+| 2026-06-09 | **Name-only** worker rows                                               | User direction; status/branch/diff live in panes + topbar, not the row.                          |
+| 2026-06-09 | Removed **Library** from the rail footer                                | User direction; footer is Search + Settings only.                                                |
+| 2026-06-09 | Topbar right = PR/CI pill + view toggles + ⋯ menu (worker)              | Surfaces the actionable PR/CI state from the daemon; desktop-tool precedent.                     |
+| 2026-06-09 | Spawn modal mirrors the reference's Create Task                         | Consistency with the reference; mapped to `ao spawn` params.                                     |
+| 2026-07-30 | Sentence case everywhere; no all-caps labels, no slash separators       | User direction; all-caps eyebrows read as shouting in dense chrome.                              |
+| 2026-07-30 | Geist Sans for all UI chrome; mono only for code and terminal output    | User direction; mono in labels made the chrome look like output.                                 |
+| 2026-07-30 | Board lane colours + swatch headers cloned from the landing hero        | User direction; the marketing preview is the demonstrated target for the board.                  |
+| 2026-07-30 | Added _The contract_: enforceable numeric scales at the top of this doc | The doc had drifted from the code; prose rules don't hold, checkable numbers do.                 |
+| 2026-07-30 | Removed the topbar's centre context pill                                | User direction; a bordered card floating in the bar competed with the page it heads.             |
+| 2026-07-30 | Hairlines dropped to 7% white (dark) / oklch 0.945 (light)              | User direction; borders were reading as decoration rather than separation.                       |
+| 2026-07-30 | Sidebar projects start collapsed, but always list the open session      | User direction; the rail stays scannable without ever hiding where you are.                      |
