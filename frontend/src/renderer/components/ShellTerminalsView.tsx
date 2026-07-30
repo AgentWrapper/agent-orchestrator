@@ -47,66 +47,66 @@ export function ShellTerminalsView() {
 	return (
 		<div className="flex h-full min-h-0 flex-col text-foreground">
 			{shellTopbarHiddenByPlatform ? <ShellTopbar surfaceOverride="standalone-terminals" /> : null}
-			<div className="flex h-inspector-tabs shrink-0 items-center gap-3 border-b border-border px-5">
-				<span className="shrink-0 text-caption font-semibold tracking-wide text-muted-foreground">
-					Terminals
-				</span>
-				<button
-					aria-label="Scroll tabs left"
-					className={cn(
-						"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
-						!tabsOverflow.canScrollLeft && "invisible",
-					)}
-					disabled={!tabsOverflow.canScrollLeft}
-					onClick={() => tabsOverflow.scrollByDirection(-1)}
-					title="Scroll tabs left"
-					type="button"
-				>
-					<ChevronLeft aria-hidden="true" className="size-icon-md" />
-				</button>
-				{/* Tabs shrink and truncate down to a minimum width; beyond that the
-				    strip scrolls and edge chevrons reveal the overflow. */}
-				<div
-					ref={tabsOverflow.ref}
-					className="scrollbar-none flex min-w-flex-min flex-1 items-center gap-3 overflow-x-auto"
-				>
-					{shellTerminals.map((shell) => {
-						const isActive = shell.handleId === active?.handleId;
-						return (
-							<ShellTerminalTab
-								key={shell.handleId}
-								isActive={isActive}
-								onClose={() => closeShellTerminal.mutate(shell.handleId)}
-								onRename={(title) => renameShellTerminal.mutate({ handleId: shell.handleId, title })}
-								onSelect={() => setActiveShellTerminal(shell.handleId)}
-								shell={shell}
-							/>
-						);
-					})}
-				</div>
-				<button
-					aria-label="Scroll tabs right"
-					className={cn(
-						"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
-						!tabsOverflow.canScrollRight && "invisible",
-					)}
-					disabled={!tabsOverflow.canScrollRight}
-					onClick={() => tabsOverflow.scrollByDirection(1)}
-					title="Scroll tabs right"
-					type="button"
-				>
-					<ChevronRight aria-hidden="true" className="size-icon-md" />
-				</button>
-				<button
-					aria-label="New terminal"
-					className="ml-auto inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
-					onClick={requestNewShellTerminal}
-					title="New terminal (Ctrl+Shift+`)"
-					type="button"
-				>
-					<Plus aria-hidden="true" className="size-icon-md" />
-				</button>
+		<div className="flex h-inspector-tabs shrink-0 items-center gap-1.5 border-b border-border px-1.5">
+			<span className="shrink-0 text-caption font-semibold tracking-wide text-muted-foreground">
+				Terminals
+			</span>
+			<button
+				aria-label="Scroll tabs left"
+				className={cn(
+					"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
+					!tabsOverflow.canScrollLeft && "invisible",
+				)}
+				disabled={!tabsOverflow.canScrollLeft}
+				onClick={() => tabsOverflow.scrollByDirection(-1)}
+				title="Scroll tabs left"
+				type="button"
+			>
+				<ChevronLeft aria-hidden="true" className="size-icon-md" />
+			</button>
+			{/* Tabs shrink and truncate down to a minimum width; beyond that the
+			    strip scrolls and edge chevrons reveal the overflow. */}
+			<div
+				ref={tabsOverflow.ref}
+				className="scrollbar-none flex min-w-flex-min flex-1 items-center gap-1.5 overflow-x-auto"
+			>
+				{shellTerminals.map((shell) => {
+					const isActive = shell.handleId === active?.handleId;
+					return (
+						<ShellTerminalTab
+							key={shell.handleId}
+							isActive={isActive}
+							onClose={() => closeShellTerminal.mutate(shell.handleId)}
+							onRename={(title) => renameShellTerminal.mutate({ handleId: shell.handleId, title })}
+							onSelect={() => setActiveShellTerminal(shell.handleId)}
+							shell={shell}
+						/>
+					);
+				})}
 			</div>
+			<button
+				aria-label="Scroll tabs right"
+				className={cn(
+					"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
+					!tabsOverflow.canScrollRight && "invisible",
+				)}
+				disabled={!tabsOverflow.canScrollRight}
+				onClick={() => tabsOverflow.scrollByDirection(1)}
+				title="Scroll tabs right"
+				type="button"
+			>
+				<ChevronRight aria-hidden="true" className="size-icon-md" />
+			</button>
+			<button
+				aria-label="New terminal"
+				className="ml-auto inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+				onClick={requestNewShellTerminal}
+				title="New terminal (Ctrl+Shift+`)"
+				type="button"
+			>
+				<Plus aria-hidden="true" className="size-icon-md" />
+			</button>
+		</div>
 			<div className="min-h-0 flex-1">
 				{active ? (
 					<TerminalPane

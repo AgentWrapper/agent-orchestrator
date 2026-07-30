@@ -169,27 +169,27 @@ export function CenterPane({
 			className="terminal-pane-frame flex h-full min-h-0 min-w-flex-min flex-col px-px"
 			onWheelCapture={handleWheelZoom}
 		>
-			<div className="flex h-inspector-tabs shrink-0 items-center border-b border-border px-1.5">
-				<div className="flex min-w-flex-min flex-1 items-center gap-3">
-					<button
-						aria-label="Scroll tabs left"
-						className={cn(
-							"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
-							!tabsOverflow.canScrollLeft && "hidden",
-						)}
-						disabled={!tabsOverflow.canScrollLeft}
-						onClick={() => tabsOverflow.scrollByDirection(-1)}
-						title="Scroll tabs left"
-						type="button"
-					>
-						<ChevronLeft aria-hidden="true" className="size-icon-md" />
-					</button>
-					{/* Each originating session owns a private set of pinned worker and
-					    shell tabs. The + menu is the only way to add to that layout. */}
-					<div
-						ref={tabsOverflow.ref}
-						className="scrollbar-none flex min-w-flex-min flex-1 items-center gap-3 overflow-x-auto"
-					>
+		<div className="flex h-inspector-tabs shrink-0 items-center gap-1.5 border-b border-border px-1.5">
+			<div className="flex min-w-flex-min flex-1 items-center gap-1.5">
+				<button
+					aria-label="Scroll tabs left"
+					className={cn(
+						"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
+						!tabsOverflow.canScrollLeft && "hidden",
+					)}
+					disabled={!tabsOverflow.canScrollLeft}
+					onClick={() => tabsOverflow.scrollByDirection(-1)}
+					title="Scroll tabs left"
+					type="button"
+				>
+					<ChevronLeft aria-hidden="true" className="size-icon-md" />
+				</button>
+				{/* Each originating session owns a private set of pinned worker and
+				    shell tabs. The + menu is the only way to add to that layout. */}
+				<div
+					ref={tabsOverflow.ref}
+					className="scrollbar-none flex min-w-flex-min flex-1 items-center gap-1.5 overflow-x-auto"
+				>
 						{sessionTabs.length > 0
 							? sessionTabs.map((projectSession) => {
 									const isCurrent = projectSession.id === session?.id;
@@ -219,39 +219,39 @@ export function CenterPane({
 							/>
 						))}
 					</div>
-					<button
-						aria-label="Scroll tabs right"
-						className={cn(
-							"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
-							!tabsOverflow.canScrollRight && "hidden",
-						)}
-						disabled={!tabsOverflow.canScrollRight}
-						onClick={() => tabsOverflow.scrollByDirection(1)}
-						title="Scroll tabs right"
-						type="button"
-					>
-						<ChevronRight aria-hidden="true" className="size-icon-md" />
-					</button>
-					<DropdownMenu
-						open={isTabLauncherOpen}
-						onOpenChange={(open) => {
-							setIsTabLauncherOpen(open);
-							if (!open) {
-								setShowAllSessions(false);
-								setSessionSearch("");
-							}
-						}}
-					>
-						<DropdownMenuTrigger asChild>
-							<button
-								aria-label="Add tab"
-								className="inline-flex h-control-sm shrink-0 items-center gap-px rounded-sm px-1 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
-								title="Add tab"
-								type="button"
-							>
-								<Plus aria-hidden="true" className="size-icon-md" />
-							</button>
-						</DropdownMenuTrigger>
+				<button
+					aria-label="Scroll tabs right"
+					className={cn(
+						"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
+						!tabsOverflow.canScrollRight && "hidden",
+					)}
+					disabled={!tabsOverflow.canScrollRight}
+					onClick={() => tabsOverflow.scrollByDirection(1)}
+					title="Scroll tabs right"
+					type="button"
+				>
+					<ChevronRight aria-hidden="true" className="size-icon-md" />
+				</button>
+				<DropdownMenu
+					open={isTabLauncherOpen}
+					onOpenChange={(open) => {
+						setIsTabLauncherOpen(open);
+						if (!open) {
+							setShowAllSessions(false);
+							setSessionSearch("");
+						}
+					}}
+				>
+					<DropdownMenuTrigger asChild>
+						<button
+							aria-label="Add tab"
+							className="inline-flex h-control-sm shrink-0 items-center gap-px rounded-sm px-1 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+							title="Add tab"
+							type="button"
+						>
+							<Plus aria-hidden="true" className="size-icon-md" />
+						</button>
+					</DropdownMenuTrigger>
 						<DropdownMenuContent align="start" className="w-72">
 							<DropdownMenuItem onSelect={onNewShellTerminal}>
 								<TerminalIcon aria-hidden="true" />
@@ -402,7 +402,7 @@ function SessionPaneTab({ label, isActive, onSelect, onClose }: SessionPaneTabPr
 	return (
 		<span
 			className={cn(
-				"session-pane-tab group inline-flex items-center rounded-md transition-colors",
+				"session-pane-tab group inline-flex min-w-shell-tab-min items-center gap-1.5 rounded-md px-2 py-1.5 transition-colors",
 				isActive ? "bg-interactive-active" : "hover:bg-interactive-hover/60",
 			)}
 		>
