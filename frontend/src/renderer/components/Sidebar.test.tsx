@@ -161,7 +161,9 @@ function renderSidebar({
 async function expandProject(name = "Project One") {
 	const row = screen.getByText(name).closest("button");
 	if (!row) throw new Error(`Project row button not found for ${name}`);
-	await userEvent.click(row);
+	const folderIcon = row.querySelector("[data-project-folder]");
+	if (!folderIcon) throw new Error(`Folder icon not found in project row for ${name}`);
+	await userEvent.click(folderIcon);
 }
 
 async function chooseOption(trigger: HTMLElement, optionName: string) {
