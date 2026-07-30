@@ -4,8 +4,8 @@
   "identifier": "dev.agent-orchestrator.desktop",
   "version": "0.1.0",
   "build": {
-    "beforeDevCommand": "npm run dev:web",
-    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev:web -- --port 1420 --strictPort",
+    "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run build:renderer:tauri",
     "frontendDist": "../dist-tauri"
   },
