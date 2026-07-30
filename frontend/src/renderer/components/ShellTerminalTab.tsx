@@ -17,9 +17,9 @@ type ShellTerminalTabProps = {
 
 // One standalone-shell tab, shared by the session pane's tab strip (CenterPane)
 // and the standalone /terminals screen (ShellTerminalsView) so the two never
-// drift. The open tab gets the rounded background highlight used by the
-// inspector rail tabs; the full title only becomes the hover tooltip when the
-// strip truncates it; the close control appears on hover/focus.
+// drift. The active tab gets a bright accent bottom border. The full title only
+// becomes the hover tooltip when the strip truncates it; the close control
+// appears on hover/focus.
 //
 // Renaming happens inline with the platform's native gesture: double-click on
 // macOS/Linux, right-click on Windows. Enter or blur commits, Escape cancels,
@@ -90,8 +90,8 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 	return (
 		<span
 			className={cn(
-				"group inline-flex min-w-shell-tab-min items-center gap-1.5 rounded-md px-2 py-1.5 transition-colors",
-				isActive ? "bg-interactive-active" : "hover:bg-interactive-hover/60",
+				"group inline-flex h-full min-w-shell-tab-min items-center gap-1.5 px-2 pt-1.5 pb-[calc(var(--spacing-1)-1px)] transition-colors border-b-2 -mb-px",
+				isActive ? "border-accent text-foreground" : "border-transparent hover:bg-interactive-hover/60",
 			)}
 			{...containerRenameHandlers}
 		>
