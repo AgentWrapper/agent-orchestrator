@@ -99,6 +99,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						activity,
 						previewUrl: session.previewUrl,
 						previewRevision: session.previewRevision,
+						previewRefreshRevision: session.previewRefreshRevision,
 						prs: (session.prs ?? []).map(toPullRequestFacts),
 					};
 				}),

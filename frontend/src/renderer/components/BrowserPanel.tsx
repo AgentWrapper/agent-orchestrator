@@ -3,6 +3,7 @@ import {
 	ArrowLeft,
 	ArrowRight,
 	Check,
+	ExternalLink,
 	Globe2,
 	Layers3,
 	Maximize2,
@@ -24,6 +25,7 @@ import {
 	DropdownMenuLabel,
 	DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
+import { openLinkInSystemBrowser } from "../lib/external-link-policy";
 import { cn } from "../lib/utils";
 
 type BrowserPanelProps = {
@@ -200,6 +202,7 @@ export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: Bro
 		poppedOut,
 		previewUrl: session.previewUrl,
 		previewRevision: session.previewRevision,
+		previewRefreshRevision: session.previewRefreshRevision,
 	});
 	const annotationQueue = useBrowserAnnotationQueue({
 		sessionId: session.id,
@@ -279,6 +282,16 @@ export function BrowserPanelView({
 		event.preventDefault();
 		const nextURL = urlInput.trim();
 		if (nextURL) void navigate(nextURL);
+	};
+
+	const openExternally = () => {
+		const url = navState.url.trim();
+		if (!url) return;
+		if (window.ao?.app.openExternal) {
+			void openLinkInSystemBrowser(url);
+			return;
+		}
+		window.open(url, "_blank", "noopener,noreferrer");
 	};
 
 	const toggleAnnotationMode = async () => {
@@ -513,6 +526,16 @@ export function BrowserPanelView({
 						})}
 					</DropdownMenuContent>
 				</DropdownMenu>
+				<Button
+					aria-label="Open externally"
+					disabled={!navState.url}
+					onClick={openExternally}
+					size="icon-sm"
+					type="button"
+					variant="ghost"
+				>
+					<ExternalLink aria-hidden="true" className="size-icon-base" />
+				</Button>
 				<Button
 					aria-label={poppedOut ? "Return to panel" : "Pop out"}
 					disabled={!canPopOut}

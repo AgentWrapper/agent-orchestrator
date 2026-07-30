@@ -55,7 +55,7 @@ export type XtermTerminalProps = {
 	paneScrollsByKeyboard?: boolean;
 	/** Terminal construction failed; the owner decides how to surface it. */
 	onError?: (error: unknown) => void;
-	/** Called after a terminal hyperlink is opened in the OS browser. */
+	/** Called when a terminal web link should open in AO's Browser panel. */
 	onLinkOpen?: (uri: string) => void;
 	/**
 	 * The terminal is open in the DOM and ready to be attached to a PTY. The
@@ -291,16 +291,21 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		const host = hostRef.current;
 		if (!host) return undefined;
 		const activateLink = (event: MouseEvent, uri: string) => {
-			// Left-click on a web link opens it inside the AO Browser panel (the
-			// parent decides how). Non-web schemes (mailto:, etc.) still go to the OS
-			// via the main process's window-open handler. Right-click to open a web
-			// link in the system browser instead — see the context menu below.
+			// Left-click on a web link opens it inside AO's Browser when the
+			// parent provides one; terminals without a Browser inspector fall back
+			// to the system browser. Non-web schemes (mailto:, etc.) still go to the
+			// OS via the main process's window-open handler.
 			if (isWebLink(uri)) {
 				if (event.altKey) {
 					void openLinkInSystemBrowser(uri);
 					return;
 				}
-				callbacksRef.current.onLinkOpen?.(uri);
+				const onLinkOpen = callbacksRef.current.onLinkOpen;
+				if (onLinkOpen) {
+					onLinkOpen(uri);
+				} else {
+					void openLinkInSystemBrowser(uri);
+				}
 				return;
 			}
 			window.open(uri, "_blank", "noopener");
@@ -812,10 +817,23 @@ export function XtermTerminal(props: XtermTerminalProps) {
 								onSelect={() => {
 									const { link } = contextMenu;
 									setContextMenuOpen(false);
-									if (link) void aoBridge.app.openExternal(link);
+									if (link) void openLinkInSystemBrowser(link);
 								}}
 							>
 								Open in system browser
+							</DropdownMenuItem>
+							<DropdownMenuItem
+								onSelect={() => {
+									const { link } = contextMenu;
+									setContextMenuOpen(false);
+									if (link) {
+										void aoBridge.clipboard
+											.writeText(link)
+											.catch((error) => console.warn("Unable to copy terminal link", error));
+									}
+								}}
+							>
+								Copy link
 							</DropdownMenuItem>
 							<DropdownMenuSeparator />
 						</>

@@ -224,6 +224,28 @@ describe("XtermTerminal", () => {
 		expect(trigger.style.top).toBe("88px");
 	});
 
+	it("offers system browser and copy actions for a web link", async () => {
+		const onLinkOpen = vi.fn();
+		const openExternal = vi.fn().mockResolvedValue(undefined);
+		window.ao!.app.openExternal = openExternal;
+		const { container } = render(<XtermTerminal onLinkOpen={onLinkOpen} theme="dark" />);
+		const host = container.firstElementChild!;
+		const linkHandler = state.lastTerminal!.options.linkHandler as {
+			hover: (event: MouseEvent, uri: string) => void;
+		};
+		const link = "https://example.com/docs";
+
+		linkHandler.hover({} as MouseEvent, link);
+		fireEvent.contextMenu(host);
+		fireEvent.click(await screen.findByText("Open in system browser"));
+		await waitFor(() => expect(openExternal).toHaveBeenCalledWith(link));
+		expect(onLinkOpen).not.toHaveBeenCalled();
+
+		fireEvent.contextMenu(host);
+		fireEvent.click(await screen.findByText("Copy link"));
+		await waitFor(() => expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith(link));
+	});
+
 	it("runs context menu copy, select all, and clear against the xterm instance", async () => {
 		const { container } = render(<XtermTerminal theme="dark" />);
 		const host = container.firstElementChild!;
@@ -753,6 +775,17 @@ describe("XtermTerminal", () => {
 		expect(onLinkOpen).toHaveBeenCalledWith("https://example.com");
 		expect(open).not.toHaveBeenCalled();
 		open.mockRestore();
+	});
+
+	it("opens web links in the system browser when no AO browser handler is available", () => {
+		const openExternal = vi.fn().mockResolvedValue(undefined);
+		window.ao!.app.openExternal = openExternal;
+		render(<XtermTerminal theme="dark" />);
+
+		expect(state.linkHandler).toBeTypeOf("function");
+		state.linkHandler!({} as MouseEvent, "https://example.com");
+
+		expect(openExternal).toHaveBeenCalledWith("https://example.com");
 	});
 
 	it("routes OSC 8 web links to the AO browser without a system-browser window", () => {

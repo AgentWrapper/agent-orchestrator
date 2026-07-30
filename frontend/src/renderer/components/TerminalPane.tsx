@@ -21,6 +21,8 @@ type TerminalPaneProps = {
 	fontSize: number;
 };
 
+const previewRequestTimeoutMs = 10_000;
+
 export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
 	const terminalKey =
 		terminalTarget?.kind === "reviewer" || terminalTarget?.kind === "shell"
@@ -238,16 +240,86 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	// A shell pane has no session, so it hands the hook its handle directly
 	// instead of reading one off `attachSession`.
 	const shellTerminalHandleId = terminalTarget?.kind === "shell" ? terminalTarget.handleId : undefined;
-	// Glow the Browser tab when the agent prints a URL in this worker's terminal
-	// (e.g. a pushed-PR link). Detection only badges — the user still chooses to
-	// open it — and is skipped while they are already looking at the Browser tab.
+	const isSessionActive = session ? sessionIsActive(session) : false;
+	const setInspectorViewForSession = useUiStore((state) => state.setInspectorView);
+	const setInspectorOpenForSession = useUiStore((state) => state.setInspectorOpen);
+	const pendingPreviewRef = useRef<{ sessionId: string; url: string } | null>(null);
+	const previewRequestRunningRef = useRef(false);
+	const previewAbortRef = useRef<AbortController | null>(null);
+	useEffect(
+		() => () => {
+			pendingPreviewRef.current = null;
+			previewAbortRef.current?.abort();
+		},
+		[],
+	);
+	const openLinkInBrowser = useCallback(
+		(uri: string) => {
+			if (!session?.id || session.kind !== "worker" || !isSessionActive) return;
+			try {
+				const url = new URL(uri);
+				if (url.protocol !== "http:" && url.protocol !== "https:") return;
+			} catch {
+				return;
+			}
+			const linkSessionId = session.id;
+			setInspectorViewForSession(linkSessionId, "browser");
+			setInspectorOpenForSession(linkSessionId, true);
+			// Serialize writes and coalesce queued clicks to their latest target.
+			// Timeout and unmount cleanup keep stale requests from blocking links.
+			pendingPreviewRef.current = { sessionId: linkSessionId, url: uri };
+			if (previewRequestRunningRef.current) return;
+			previewRequestRunningRef.current = true;
+			void (async () => {
+				try {
+					while (pendingPreviewRef.current) {
+						const next = pendingPreviewRef.current;
+						pendingPreviewRef.current = null;
+						const controller = new AbortController();
+						previewAbortRef.current = controller;
+						const timeout = window.setTimeout(() => controller.abort(), previewRequestTimeoutMs);
+						let succeeded = false;
+						try {
+							const { error: previewError } = await apiClient.POST("/api/v1/sessions/{sessionId}/preview", {
+								params: { path: { sessionId: next.sessionId } },
+								body: { url: next.url },
+								signal: controller.signal,
+							});
+							if (previewError) {
+								console.warn("Unable to open terminal link in Browser preview", previewError);
+								continue;
+							}
+							succeeded = true;
+						} catch (error) {
+							if (!controller.signal.aborted) {
+								console.warn("Unable to open terminal link in Browser preview", error);
+							}
+						} finally {
+							window.clearTimeout(timeout);
+						}
+						if (succeeded) {
+							void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+						}
+					}
+				} finally {
+					previewAbortRef.current = null;
+					previewRequestRunningRef.current = false;
+				}
+			})();
+		},
+		[isSessionActive, queryClient, session?.id, session?.kind, setInspectorOpenForSession, setInspectorViewForSession],
+	);
+	// Terminal output only signals that a link exists. Navigation is reserved
+	// for explicit clicks and file-change previews completed by the worker.
 	const watchLinks = Boolean(session?.id && session.kind === "worker" && terminalTarget?.kind !== "shell");
 	const urlWatcherRef = useRef<UrlWatcher | null>(null);
+	const urlWatcherSessionRef = useRef<string | null>(null);
 	const handleOutput = useCallback(
 		(text: string) => {
 			const sessionId = session?.id;
 			if (!sessionId) return;
-			if (!urlWatcherRef.current) {
+			if (!urlWatcherRef.current || urlWatcherSessionRef.current !== sessionId) {
+				urlWatcherSessionRef.current = sessionId;
 				urlWatcherRef.current = createUrlWatcher(() => {
 					const store = useUiStore.getState();
 					const current = store.inspectorSessions[sessionId];
@@ -267,7 +339,6 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const handleId = shellTerminalHandleId ?? attachSession?.terminalHandleId;
 	const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : session?.provider;
 	const hadAttachmentRef = useRef(false);
-	const isSessionActive = session ? sessionIsActive(session) : false;
 	// A standalone shell is never restorable: there is no session row to restore.
 	const canRestoreSession =
 		terminalTarget?.kind !== "reviewer" &&
@@ -282,39 +353,9 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 		console.error("xterm failed to initialize", err);
 		setInitFailed(true);
 	}, []);
-	const setInspectorViewForSession = useUiStore((state) => state.setInspectorView);
-	const setInspectorOpenForSession = useUiStore((state) => state.setInspectorOpen);
 	const handleLinkOpen = useCallback(
-		(uri: string) => {
-			if (!session?.id || session.kind !== "worker" || !isSessionActive) return;
-			try {
-				const url = new URL(uri);
-				if (url.protocol !== "http:" && url.protocol !== "https:") return;
-			} catch {
-				return;
-			}
-			const linkSessionId = session.id;
-			// A left-click is an explicit request to view the link, so open the
-			// Browser tab now (unlike a passive `ao preview`, which only badges it).
-			setInspectorViewForSession(linkSessionId, "browser");
-			setInspectorOpenForSession(linkSessionId, true);
-			void (async () => {
-				try {
-					const { error: previewError } = await apiClient.POST("/api/v1/sessions/{sessionId}/preview", {
-						params: { path: { sessionId: linkSessionId } },
-						body: { url: uri },
-					});
-					if (previewError) {
-						console.warn("Unable to open terminal link in Browser preview", previewError);
-						return;
-					}
-					await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-				} catch (error) {
-					console.warn("Unable to open terminal link in Browser preview", error);
-				}
-			})();
-		},
-		[isSessionActive, queryClient, session?.id, session?.kind, setInspectorOpenForSession, setInspectorViewForSession],
+		(uri: string) => openLinkInBrowser(uri),
+		[openLinkInBrowser],
 	);
 	const restoreSession = useCallback(async () => {
 		if (!session?.id || !canRestoreSession || isRestoring) return;
@@ -405,7 +446,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					ariaLabel={terminalTarget?.kind === "shell" ? "Shell terminal" : "Session terminal"}
 					fontSize={fontSize}
 					onError={handleInitError}
-					onLinkOpen={handleLinkOpen}
+					onLinkOpen={watchLinks && isSessionActive ? handleLinkOpen : undefined}
 					onReady={handleReady}
 					paneScrollsByKeyboard={providerScrollsByKeyboard(provider)}
 					theme={theme}

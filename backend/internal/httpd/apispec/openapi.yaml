@@ -2790,6 +2790,9 @@ components:
           type: string
         kind:
           type: string
+        previewRefreshRevision:
+          format: int64
+          type: integer
         previewRevision:
           format: int64
           type: integer

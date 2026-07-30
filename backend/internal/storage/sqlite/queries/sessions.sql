@@ -7,9 +7,9 @@ INSERT INTO sessions (
     activity_state, activity_last_at, first_signal_at, is_terminated,
     branch, workspace_path, workspace_repo_path, runtime_handle_id,
     runtime_launch_id, agent_session_id, prompt,
-    preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation,
+    preview_url, preview_revision, preview_refresh_revision, terminate_on_pr_merge, cleanup_generation,
     created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: UpdateSession :exec
 UPDATE sessions SET
@@ -17,7 +17,7 @@ UPDATE sessions SET
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, workspace_repo_path = ?, runtime_handle_id = ?,
     runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
-    preview_url = ?, preview_revision = ?, terminate_on_pr_merge = ?,
+    preview_url = ?, preview_revision = ?, preview_refresh_revision = ?, terminate_on_pr_merge = ?,
     cleanup_generation = ?, updated_at = ?
 WHERE id = ?;
 
@@ -27,7 +27,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge
+    workspace_repo_path, terminate_on_pr_merge, preview_refresh_revision
 FROM sessions WHERE id = ?;
 
 -- name: ListSessionsByProject :many
@@ -36,7 +36,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge
+    workspace_repo_path, terminate_on_pr_merge, preview_refresh_revision
 FROM sessions WHERE project_id = ? ORDER BY num;
 
 -- name: ListAllSessions :many
@@ -45,7 +45,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge
+    workspace_repo_path, terminate_on_pr_merge, preview_refresh_revision
 FROM sessions ORDER BY project_id, num;
 
 
@@ -57,6 +57,17 @@ UPDATE sessions SET display_name = ?, updated_at = ? WHERE id = ?;
 -- so a repeated `ao preview <same-url>` still trips the sessions_cdc_update
 -- trigger and the desktop browser panel re-navigates / refreshes.
 UPDATE sessions SET preview_url = ?, preview_revision = preview_revision + 1, updated_at = ? WHERE id = ?;
+
+-- name: CompareAndSetSessionPreviewURL :one
+UPDATE sessions
+SET preview_url = ?, preview_revision = preview_revision + 1, updated_at = ?
+WHERE id = ? AND preview_url = ? AND preview_revision = ?
+RETURNING preview_revision;
+
+-- name: RefreshSessionPreview :execrows
+UPDATE sessions
+SET preview_refresh_revision = preview_refresh_revision + 1, updated_at = ?
+WHERE id = ? AND preview_url = ? AND preview_revision = ?;
 
 -- name: SetSessionTerminateOnPRMerge :execrows
 UPDATE sessions SET terminate_on_pr_merge = ?, updated_at = ? WHERE id = ?;

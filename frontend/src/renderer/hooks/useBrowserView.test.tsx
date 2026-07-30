@@ -749,6 +749,38 @@ describe("useBrowserView", () => {
 		expect(bridge.navigate).toHaveBeenCalledTimes(3);
 	});
 
+	it("reloads the current page on a static refresh without navigating back to the selected target", async () => {
+		const bridge = setupBridge();
+		const { rerender } = renderHook(
+			({ previewRefreshRevision }) =>
+				useBrowserView({
+					sessionId: "sess-1",
+					active: true,
+					poppedOut: false,
+					previewUrl: "http://localhost:5173/",
+					previewRevision: 1,
+					previewRefreshRevision,
+				}),
+			{ initialProps: { previewRefreshRevision: 0 } },
+		);
+
+		await waitFor(() => expect(bridge.navigate).toHaveBeenCalledTimes(1));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:5173/settings",
+				title: "Settings",
+				canGoBack: true,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
+
+		rerender({ previewRefreshRevision: 1 });
+		await waitFor(() => expect(bridge.reload).toHaveBeenCalledWith("42:sess-1"));
+		expect(bridge.navigate).toHaveBeenCalledTimes(1);
+	});
+
 	it("navigates each worker to its own target when sessions share a revision number", async () => {
 		const bridge = setupBridge();
 		const { rerender } = renderHook(

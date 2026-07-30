@@ -22,6 +22,8 @@ type Store interface {
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
 	RenameSession(ctx context.Context, id domain.SessionID, displayName string, updatedAt time.Time) (bool, error)
 	SetSessionPreviewURL(ctx context.Context, id domain.SessionID, previewURL string, updatedAt time.Time) (bool, error)
+	CompareAndSetSessionPreviewURL(ctx context.Context, id domain.SessionID, expectedURL string, expectedRevision int64, previewURL string, updatedAt time.Time) (int64, bool, error)
+	RefreshSessionPreview(ctx context.Context, id domain.SessionID, expectedURL string, expectedRevision int64, updatedAt time.Time) (bool, error)
 	SetSessionTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool, updatedAt time.Time) (bool, error)
 	GetDisplayPRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, bool, error)
 	ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
@@ -534,6 +536,47 @@ func (s *Service) SetPreview(ctx context.Context, id domain.SessionID, previewUR
 		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
 	}
 	return s.Get(ctx, id)
+}
+
+// CompareAndSetPreview updates the preview target only while it still matches
+// the snapshot observed by an automatic reconciler. A false result is a benign
+// concurrent change (or a deleted session), so callers must leave the newer
+// target untouched.
+func (s *Service) CompareAndSetPreview(
+	ctx context.Context,
+	id domain.SessionID,
+	expectedURL string,
+	expectedRevision int64,
+	previewURL string,
+) (int64, bool, error) {
+	revision, updated, err := s.store.CompareAndSetSessionPreviewURL(
+		ctx, id, expectedURL, expectedRevision, previewURL, time.Now().UTC(),
+	)
+	if err != nil {
+		return 0, false, fmt.Errorf("compare and set preview url %s: %w", id, err)
+	}
+	if !updated {
+		return 0, false, nil
+	}
+	return revision, true, nil
+}
+
+// RefreshPreview signals that static preview content changed without changing
+// the selected target. The URL and target revision guard prevent a stale poll
+// from refreshing a preview the user has since replaced or cleared.
+func (s *Service) RefreshPreview(
+	ctx context.Context,
+	id domain.SessionID,
+	expectedURL string,
+	expectedRevision int64,
+) (bool, error) {
+	updated, err := s.store.RefreshSessionPreview(
+		ctx, id, expectedURL, expectedRevision, time.Now().UTC(),
+	)
+	if err != nil {
+		return false, fmt.Errorf("refresh preview %s: %w", id, err)
+	}
+	return updated, nil
 }
 
 // SetTerminateOnPRMerge persists the user's merge-completion lifecycle policy

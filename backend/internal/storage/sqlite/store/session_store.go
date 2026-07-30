@@ -76,6 +76,57 @@ func (s *Store) SetSessionPreviewURL(ctx context.Context, id domain.SessionID, p
 	return rows > 0, nil
 }
 
+// CompareAndSetSessionPreviewURL updates the selected target only if both its
+// URL and selection revision still match the caller's snapshot.
+func (s *Store) CompareAndSetSessionPreviewURL(
+	ctx context.Context,
+	id domain.SessionID,
+	expectedURL string,
+	expectedRevision int64,
+	previewURL string,
+	updatedAt time.Time,
+) (int64, bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	revision, err := s.qw.CompareAndSetSessionPreviewURL(ctx, gen.CompareAndSetSessionPreviewURLParams{
+		ID:              id,
+		PreviewURL:      previewURL,
+		UpdatedAt:       updatedAt,
+		PreviewURL_2:    expectedURL,
+		PreviewRevision: expectedRevision,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("compare and set preview url for session %s: %w", id, err)
+	}
+	return revision, true, nil
+}
+
+// RefreshSessionPreview bumps the content-refresh counter only if the selected
+// target still matches the caller's snapshot.
+func (s *Store) RefreshSessionPreview(
+	ctx context.Context,
+	id domain.SessionID,
+	expectedURL string,
+	expectedRevision int64,
+	updatedAt time.Time,
+) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.RefreshSessionPreview(ctx, gen.RefreshSessionPreviewParams{
+		ID:              id,
+		PreviewURL:      expectedURL,
+		PreviewRevision: expectedRevision,
+		UpdatedAt:       updatedAt,
+	})
+	if err != nil {
+		return false, fmt.Errorf("refresh preview for session %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
 // SetSessionTerminateOnPRMerge updates the user's merge-completion lifecycle
 // policy. It returns ok=false when the session id does not exist.
 func (s *Store) SetSessionTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool, updatedAt time.Time) (bool, error) {
@@ -220,15 +271,16 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 		IsTerminated:       row.IsTerminated,
 		TerminateOnPRMerge: row.TerminateOnPRMerge,
 		Metadata: domain.SessionMetadata{
-			Branch:            row.Branch,
-			WorkspacePath:     row.WorkspacePath,
-			WorkspaceRepoPath: row.WorkspaceRepoPath,
-			RuntimeHandleID:   row.RuntimeHandleID,
-			RuntimeLaunchID:   row.RuntimeLaunchID,
-			AgentSessionID:    row.AgentSessionID,
-			Prompt:            row.Prompt,
-			PreviewURL:        row.PreviewURL,
-			PreviewRevision:   row.PreviewRevision,
+			Branch:                 row.Branch,
+			WorkspacePath:          row.WorkspacePath,
+			WorkspaceRepoPath:      row.WorkspaceRepoPath,
+			RuntimeHandleID:        row.RuntimeHandleID,
+			RuntimeLaunchID:        row.RuntimeLaunchID,
+			AgentSessionID:         row.AgentSessionID,
+			Prompt:                 row.Prompt,
+			PreviewURL:             row.PreviewURL,
+			PreviewRevision:        row.PreviewRevision,
+			PreviewRefreshRevision: row.PreviewRefreshRevision,
 		},
 		CleanupGeneration: row.CleanupGeneration,
 		CreatedAt:         row.CreatedAt,
@@ -239,57 +291,59 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams {
 	activity := normalActivity(rec.Activity, rec.CreatedAt)
 	return gen.InsertSessionParams{
-		ID:                 rec.ID,
-		ProjectID:          rec.ProjectID,
-		Num:                num,
-		IssueID:            rec.IssueID,
-		Kind:               rec.Kind,
-		Harness:            rec.Harness,
-		DisplayName:        rec.DisplayName,
-		ActivityState:      activity.State,
-		ActivityLastAt:     activity.LastActivityAt,
-		FirstSignalAt:      timeToNullTime(rec.FirstSignalAt),
-		IsTerminated:       rec.IsTerminated,
-		Branch:             rec.Metadata.Branch,
-		WorkspacePath:      rec.Metadata.WorkspacePath,
-		WorkspaceRepoPath:  rec.Metadata.WorkspaceRepoPath,
-		RuntimeHandleID:    rec.Metadata.RuntimeHandleID,
-		RuntimeLaunchID:    rec.Metadata.RuntimeLaunchID,
-		AgentSessionID:     rec.Metadata.AgentSessionID,
-		Prompt:             rec.Metadata.Prompt,
-		PreviewURL:         rec.Metadata.PreviewURL,
-		PreviewRevision:    rec.Metadata.PreviewRevision,
-		TerminateOnPRMerge: rec.TerminateOnPRMerge,
-		CleanupGeneration:  rec.CleanupGeneration,
-		CreatedAt:          rec.CreatedAt,
-		UpdatedAt:          rec.UpdatedAt,
+		ID:                     rec.ID,
+		ProjectID:              rec.ProjectID,
+		Num:                    num,
+		IssueID:                rec.IssueID,
+		Kind:                   rec.Kind,
+		Harness:                rec.Harness,
+		DisplayName:            rec.DisplayName,
+		ActivityState:          activity.State,
+		ActivityLastAt:         activity.LastActivityAt,
+		FirstSignalAt:          timeToNullTime(rec.FirstSignalAt),
+		IsTerminated:           rec.IsTerminated,
+		Branch:                 rec.Metadata.Branch,
+		WorkspacePath:          rec.Metadata.WorkspacePath,
+		WorkspaceRepoPath:      rec.Metadata.WorkspaceRepoPath,
+		RuntimeHandleID:        rec.Metadata.RuntimeHandleID,
+		RuntimeLaunchID:        rec.Metadata.RuntimeLaunchID,
+		AgentSessionID:         rec.Metadata.AgentSessionID,
+		Prompt:                 rec.Metadata.Prompt,
+		PreviewURL:             rec.Metadata.PreviewURL,
+		PreviewRevision:        rec.Metadata.PreviewRevision,
+		PreviewRefreshRevision: rec.Metadata.PreviewRefreshRevision,
+		TerminateOnPRMerge:     rec.TerminateOnPRMerge,
+		CleanupGeneration:      rec.CleanupGeneration,
+		CreatedAt:              rec.CreatedAt,
+		UpdatedAt:              rec.UpdatedAt,
 	}
 }
 
 func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 	activity := normalActivity(rec.Activity, rec.UpdatedAt)
 	return gen.UpdateSessionParams{
-		ID:                 rec.ID,
-		IssueID:            rec.IssueID,
-		Kind:               rec.Kind,
-		Harness:            rec.Harness,
-		DisplayName:        rec.DisplayName,
-		ActivityState:      activity.State,
-		ActivityLastAt:     activity.LastActivityAt,
-		FirstSignalAt:      timeToNullTime(rec.FirstSignalAt),
-		IsTerminated:       rec.IsTerminated,
-		Branch:             rec.Metadata.Branch,
-		WorkspacePath:      rec.Metadata.WorkspacePath,
-		WorkspaceRepoPath:  rec.Metadata.WorkspaceRepoPath,
-		RuntimeHandleID:    rec.Metadata.RuntimeHandleID,
-		RuntimeLaunchID:    rec.Metadata.RuntimeLaunchID,
-		AgentSessionID:     rec.Metadata.AgentSessionID,
-		Prompt:             rec.Metadata.Prompt,
-		PreviewURL:         rec.Metadata.PreviewURL,
-		PreviewRevision:    rec.Metadata.PreviewRevision,
-		TerminateOnPRMerge: rec.TerminateOnPRMerge,
-		CleanupGeneration:  rec.CleanupGeneration,
-		UpdatedAt:          rec.UpdatedAt,
+		ID:                     rec.ID,
+		IssueID:                rec.IssueID,
+		Kind:                   rec.Kind,
+		Harness:                rec.Harness,
+		DisplayName:            rec.DisplayName,
+		ActivityState:          activity.State,
+		ActivityLastAt:         activity.LastActivityAt,
+		FirstSignalAt:          timeToNullTime(rec.FirstSignalAt),
+		IsTerminated:           rec.IsTerminated,
+		Branch:                 rec.Metadata.Branch,
+		WorkspacePath:          rec.Metadata.WorkspacePath,
+		WorkspaceRepoPath:      rec.Metadata.WorkspaceRepoPath,
+		RuntimeHandleID:        rec.Metadata.RuntimeHandleID,
+		RuntimeLaunchID:        rec.Metadata.RuntimeLaunchID,
+		AgentSessionID:         rec.Metadata.AgentSessionID,
+		Prompt:                 rec.Metadata.Prompt,
+		PreviewURL:             rec.Metadata.PreviewURL,
+		PreviewRevision:        rec.Metadata.PreviewRevision,
+		PreviewRefreshRevision: rec.Metadata.PreviewRefreshRevision,
+		TerminateOnPRMerge:     rec.TerminateOnPRMerge,
+		CleanupGeneration:      rec.CleanupGeneration,
+		UpdatedAt:              rec.UpdatedAt,
 	}
 }
 

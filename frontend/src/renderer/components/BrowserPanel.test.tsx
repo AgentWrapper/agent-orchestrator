@@ -112,6 +112,7 @@ function PersistentBrowserPanelView({
 		poppedOut: false,
 		previewUrl: currentSession.previewUrl,
 		previewRevision: currentSession.previewRevision,
+		previewRefreshRevision: currentSession.previewRefreshRevision,
 	});
 	const annotationQueue = useBrowserAnnotationQueue({
 		sessionId: currentSession.id,
@@ -218,6 +219,23 @@ describe("BrowserPanel", () => {
 		expect(hookState.goBack).toHaveBeenCalled();
 		expect(screen.getByRole("button", { name: /forward/i })).toBeDisabled();
 		expect(hookState.stop).toHaveBeenCalled();
+	});
+
+	it("opens the current page externally", async () => {
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/settings",
+		};
+		const openExternal = vi.spyOn(window.ao!.app, "openExternal").mockResolvedValue(undefined);
+		try {
+			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+			await userEvent.click(screen.getByRole("button", { name: /open externally/i }));
+
+			expect(openExternal).toHaveBeenCalledWith("http://localhost:5173/settings");
+		} finally {
+			openExternal.mockRestore();
+		}
 	});
 
 	it("shows a compact tab count and lets the user select and close tabs", async () => {

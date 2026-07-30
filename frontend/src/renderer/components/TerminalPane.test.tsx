@@ -3,6 +3,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession } from "../types/workspace";
+import { useUiStore } from "../stores/ui-store";
 import { TerminalPane, providerScrollsByKeyboard } from "./TerminalPane";
 
 const { postMock, terminalError, terminalState, replaySettled } = vi.hoisted(() => ({
@@ -12,6 +13,7 @@ const { postMock, terminalError, terminalState, replaySettled } = vi.hoisted(() 
 	replaySettled: { value: true },
 }));
 let terminalLinkHandler: ((uri: string) => void) | undefined;
+let terminalOutputHandler: ((text: string) => void) | undefined;
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: { POST: (...args: unknown[]) => postMock(...args) },
@@ -26,12 +28,18 @@ vi.mock("./XtermTerminal", () => ({
 }));
 
 vi.mock("../hooks/useTerminalSession", () => ({
-	useTerminalSession: () => ({
-		attach: vi.fn(),
-		state: terminalState.value,
-		error: terminalError.value,
-		replaySettled: replaySettled.value,
-	}),
+	useTerminalSession: (
+		_session: WorkspaceSession | undefined,
+		options: { onOutput?: (text: string) => void },
+	) => {
+		terminalOutputHandler = options.onOutput;
+		return {
+			attach: vi.fn(),
+			state: terminalState.value,
+			error: terminalError.value,
+			replaySettled: replaySettled.value,
+		};
+	},
 }));
 
 const worker = {
@@ -61,6 +69,8 @@ beforeEach(() => {
 	terminalState.value = "idle";
 	replaySettled.value = true;
 	terminalLinkHandler = undefined;
+	terminalOutputHandler = undefined;
+	useUiStore.setState({ inspectorSessions: {} });
 });
 
 function renderPane(session?: WorkspaceSession) {
@@ -79,6 +89,14 @@ function renderPane(session?: WorkspaceSession) {
 			window.ao = previousAO;
 		},
 	};
+}
+
+function previewRequest(url: string) {
+	return expect.objectContaining({
+		params: { path: { sessionId: "sess-1" } },
+		body: { url },
+		signal: expect.any(AbortSignal),
+	});
 }
 
 describe("TerminalPane empty states", () => {
@@ -252,6 +270,139 @@ describe("providerScrollsByKeyboard", () => {
 });
 
 describe("terminal link preview", () => {
+	it("signals a live loopback output URL without opening the Browser", () => {
+		const view = renderPane(worker);
+		try {
+			expect(terminalOutputHandler).toBeTypeOf("function");
+			act(() => terminalOutputHandler?.("ready at http://localhost:3000/app\n"));
+
+			expect(postMock).not.toHaveBeenCalled();
+			expect(useUiStore.getState().inspectorSessions["sess-1"]).toMatchObject({
+				browserUnseen: true,
+			});
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("does not navigate for a loopback URL followed by terminal activity text", () => {
+		const view = renderPane(worker);
+		try {
+			act(() => terminalOutputHandler?.("http://localhost:4000/app"));
+			act(() => terminalOutputHandler?.(".5WWo•Wor•Work•WorkiSd\n"));
+
+			expect(postMock).not.toHaveBeenCalled();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("serializes multiple explicitly clicked links in terminal order", async () => {
+		let resolveFirst!: (value: { data: Record<string, never> }) => void;
+		postMock
+			.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						resolveFirst = resolve;
+					}),
+			)
+			.mockResolvedValueOnce({ data: {} });
+		const view = renderPane(worker);
+		try {
+			act(() => {
+				terminalLinkHandler?.("http://localhost:3000");
+				terminalLinkHandler?.("http://localhost:4000");
+				terminalLinkHandler?.("http://localhost:5000");
+			});
+
+			await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+			expect(postMock).toHaveBeenNthCalledWith(
+				1,
+				"/api/v1/sessions/{sessionId}/preview",
+				previewRequest("http://localhost:3000"),
+			);
+
+			resolveFirst({ data: {} });
+			await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+			expect(postMock).toHaveBeenNthCalledWith(
+				2,
+				"/api/v1/sessions/{sessionId}/preview",
+				previewRequest("http://localhost:5000"),
+			);
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("cancels the active preview request and drops queued links on unmount", async () => {
+		let resolveFirst!: (value: { data: Record<string, never> }) => void;
+		postMock.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					resolveFirst = resolve;
+				}),
+		);
+		const view = renderPane(worker);
+		try {
+			act(() => {
+				terminalLinkHandler?.("http://localhost:3000");
+				terminalLinkHandler?.("http://localhost:4000");
+			});
+			await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+
+			view.unmount();
+			const request = postMock.mock.calls[0]?.[1] as { signal: AbortSignal };
+			expect(request.signal.aborted).toBe(true);
+			await act(async () => resolveFirst({ data: {} }));
+			expect(postMock).toHaveBeenCalledTimes(1);
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("does not auto-open a loopback URL from terminal output", () => {
+		const view = renderPane(worker);
+		try {
+			act(() => terminalOutputHandler?.("old http://localhost:3000/app\n"));
+			expect(postMock).not.toHaveBeenCalled();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("does not auto-open AO's own static preview URL from terminal output", () => {
+		const view = renderPane(worker);
+		try {
+			act(() =>
+				terminalOutputHandler?.("http://ao-preview.mftwk3tu.localhost:3002/test/cli/README.md\n"),
+			);
+			expect(postMock).not.toHaveBeenCalled();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("does not navigate when a deferred URL completes in later output", () => {
+		const view = renderPane(worker);
+		try {
+			act(() => terminalOutputHandler?.("old http://localhost:3000/app"));
+			act(() => terminalOutputHandler?.("live output\n"));
+			expect(postMock).not.toHaveBeenCalled();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("does not auto-open an external URL printed in live output", () => {
+		const view = renderPane(worker);
+		try {
+			act(() => terminalOutputHandler?.("PR https://github.com/org/repo/pull/42\n"));
+			expect(postMock).not.toHaveBeenCalled();
+		} finally {
+			view.restore();
+		}
+	});
+
 	it.each(["http://localhost:3000/simple", "https://app.localhost:5173", "http://127.0.0.1:8080", "http://[::1]:4173"])(
 		"mirrors worker loopback link %s into the session Browser preview",
 		async (url) => {
@@ -261,10 +412,10 @@ describe("terminal link preview", () => {
 				act(() => terminalLinkHandler?.(url));
 
 				await waitFor(() =>
-					expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/preview", {
-						params: { path: { sessionId: "sess-1" } },
-						body: { url },
-					}),
+					expect(postMock).toHaveBeenCalledWith(
+						"/api/v1/sessions/{sessionId}/preview",
+						previewRequest(url),
+					),
 				);
 			} finally {
 				view.restore();
@@ -277,10 +428,10 @@ describe("terminal link preview", () => {
 		try {
 			act(() => terminalLinkHandler?.("https://example.com/pull/42"));
 			await waitFor(() =>
-				expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/preview", {
-					params: { path: { sessionId: "sess-1" } },
-					body: { url: "https://example.com/pull/42" },
-				}),
+				expect(postMock).toHaveBeenCalledWith(
+					"/api/v1/sessions/{sessionId}/preview",
+					previewRequest("https://example.com/pull/42"),
+				),
 			);
 		} finally {
 			view.restore();
@@ -300,6 +451,7 @@ describe("terminal link preview", () => {
 	it("does not POST without a selected session", () => {
 		const view = renderPane();
 		try {
+			expect(terminalLinkHandler).toBeUndefined();
 			act(() => terminalLinkHandler?.("http://localhost:3000"));
 			expect(postMock).not.toHaveBeenCalled();
 		} finally {
@@ -310,6 +462,7 @@ describe("terminal link preview", () => {
 	it("does not mirror orchestrator links because orchestrators have no Browser inspector", () => {
 		const view = renderPane(orchestrator);
 		try {
+			expect(terminalLinkHandler).toBeUndefined();
 			act(() => terminalLinkHandler?.("http://localhost:3000"));
 			expect(postMock).not.toHaveBeenCalled();
 		} finally {
@@ -320,6 +473,7 @@ describe("terminal link preview", () => {
 	it("does not mirror links for terminated workers because their Browser inspector is cleared", () => {
 		const view = renderPane({ ...worker, status: "terminated" });
 		try {
+			expect(terminalLinkHandler).toBeUndefined();
 			act(() => terminalLinkHandler?.("http://localhost:3000"));
 			expect(postMock).not.toHaveBeenCalled();
 		} finally {
@@ -330,6 +484,7 @@ describe("terminal link preview", () => {
 	it("does not mirror links for merged workers whose session is terminated", () => {
 		const view = renderPane({ ...worker, status: "merged", isTerminated: true });
 		try {
+			expect(terminalLinkHandler).toBeUndefined();
 			act(() => terminalLinkHandler?.("http://localhost:3000"));
 			expect(postMock).not.toHaveBeenCalled();
 		} finally {
