@@ -14,7 +14,10 @@ export function ContextMenuContent({
 		<ContextMenuPrimitive.Portal>
 			<ContextMenuPrimitive.Content
 				className={cn(
-					"z-overlay min-w-[10rem] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md",
+					// brighter than sidebar/page: card sits one step above background
+					"z-overlay min-w-[10rem] overflow-hidden rounded-lg border border-border bg-card p-[3px] text-popover-foreground",
+					"flex flex-col gap-px",
+					"shadow-[0_8px_32px_rgba(0,0,0,0.28),0_2px_8px_rgba(0,0,0,0.18)]",
 					"data-[state=open]:animate-overlay-in",
 					className,
 				)}
@@ -33,7 +36,7 @@ export function ContextMenuItem({
 		<ContextMenuPrimitive.Item
 			className={cn(
 				"relative flex cursor-default select-none items-center gap-2.5 rounded-md px-2 py-1.5 text-control outline-none transition-colors",
-				"text-muted-foreground focus:bg-surface focus:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+				"text-muted-foreground focus:bg-interactive-hover focus:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
 				"[&_svg]:size-icon-lg [&_svg]:shrink-0 [&_svg]:text-passive",
 				inset && "pl-8",
 				className,
