@@ -170,6 +170,11 @@ func (s *Store) CreateProject(
 		&project.UpdatedAt,
 	)
 	if err != nil {
+		var postgresError *pgconn.PgError
+		if errors.As(err, &postgresError) &&
+			postgresError.ConstraintName == "ao_projects_account_id_repository_url_key" {
+			return clouddomain.Project{}, ErrProjectExists
+		}
 		return clouddomain.Project{}, fmt.Errorf("create project: %w", err)
 	}
 	return project, nil
@@ -311,6 +316,11 @@ func (s *Store) CreateSession(
 		return CreateSessionResult{}, ErrProjectNotFound
 	}
 	if err != nil {
+		var postgresError *pgconn.PgError
+		if errors.As(err, &postgresError) &&
+			postgresError.ConstraintName == "ao_sessions_one_active_orchestrator" {
+			return CreateSessionResult{}, ErrActiveOrchestrator
+		}
 		return CreateSessionResult{}, fmt.Errorf("insert session: %w", err)
 	}
 	session.Status = deriveCloudStatus(session, "", "", "", "")
@@ -1255,8 +1265,12 @@ func slug(value string) string {
 var (
 	// ErrProjectNotFound indicates that an account-owned project does not exist.
 	ErrProjectNotFound = errors.New("cloud project not found")
+	// ErrProjectExists indicates that a repository is already registered to an account.
+	ErrProjectExists = errors.New("cloud project already exists")
 	// ErrSessionNotFound indicates that an account-owned session does not exist.
 	ErrSessionNotFound = errors.New("cloud session not found")
+	// ErrActiveOrchestrator indicates that a project already has a live orchestrator.
+	ErrActiveOrchestrator = errors.New("cloud project already has an active orchestrator")
 	// ErrInvalidTicket indicates that an access ticket is invalid or expired.
 	ErrInvalidTicket = errors.New("cloud access ticket is invalid or expired")
 	// ErrIdempotencyConflict indicates that a key was already used for another command.

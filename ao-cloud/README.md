@@ -7,7 +7,7 @@ loopback daemon, SQLite, worktrees, and Electron lifecycle unchanged.
 ## Components
 
 ```text
-Vercel web app
+Cloud web app
     → Render ao-cloud
     → Supabase Auth + PostgreSQL
     → Fly Machine or Daytona sandbox per session
@@ -119,7 +119,7 @@ multi-user production launch.
 
 ## Daytona
 
-The default AO-managed provider uses:
+When `AO_SANDBOX_PROVIDER=daytona`, the adapter uses:
 
 ```text
 DAYTONA_API_URL=https://app.daytona.io/api
@@ -220,14 +220,16 @@ https://YOUR-VERCEL-DOMAIN/auth/callback
 
 to the Supabase Auth redirect allowlist.
 
-## Current external blockers
+## Current deployed test profile
 
-- No Supabase PostgreSQL connection URL/password was supplied, so hosted schema
-  migration cannot yet be applied or verified; local PostgreSQL is verified.
-- Daytona lifecycle create/get/delete is verified, as are worker upload and
-  launch mechanics. The tested Daytona sandbox reset all outbound HTTPS
-  connections, including `example.com`, despite `networkBlockAll=false`; an
-  outbound worker connection requires that provider egress issue to clear or
-  the control plane to be tested from a provider-reachable production URL.
-- Render and Vercel account access has not been supplied, so deployment itself
-  remains an operator step.
+- Render hosts the live control plane.
+- Supabase hosts authentication and the migrated PostgreSQL `ao_*` schema.
+- Fly Machines is the active sandbox provider.
+- The worker image is published to the Fly private registry.
+- The cloud web app is verified locally against the hosted control plane;
+  production web hosting remains a release decision.
+- Daytona remains available behind the provider contract, but its earlier
+  restricted-tier account blocked worker egress and is not the active provider.
+
+See [`CURRENT_ARCHITECTURE.md`](CURRENT_ARCHITECTURE.md) for the exact runtime
+and [`../docs/TODO-CLOUD.md`](../docs/TODO-CLOUD.md) for production gaps.

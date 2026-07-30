@@ -9,6 +9,7 @@ import { TileWordmark } from "./TileWordmark";
 export function Footer() {
   const pathname = usePathname();
   if (pathname === "/download") return null;
+  if (pathname === "/auth" || pathname.startsWith("/auth/")) return null;
   if (pathname === "/app" || pathname.startsWith("/app/")) return null;
   // Docs pages are full-height with their own sidebar/TOC — no marketing footer.
   if (pathname === "/docs" || pathname.startsWith("/docs/")) return null;

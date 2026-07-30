@@ -324,7 +324,7 @@ it("shows worker startup instead of thinking for a disconnected runtime", async 
   expect(screen.queryByText("Thinking…")).not.toBeInTheDocument();
 });
 
-it("rotates VM startup copy every 3.5 seconds", async () => {
+it("rotates VM startup copy every 4 seconds", async () => {
   vi.useFakeTimers();
   try {
     const api = testAPI({
@@ -343,11 +343,54 @@ it("rotates VM startup copy every 3.5 seconds", async () => {
     });
     expect(screen.getByText("Waking up the VM…")).toBeInTheDocument();
 
-    act(() => vi.advanceTimersByTime(3_500));
+    act(() => vi.advanceTimersByTime(4_000));
 
     expect(
       screen.getByText("The VM was fast asleep. One moment…"),
     ).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("rotates thinking copy every 4 seconds with an animated wave", async () => {
+  vi.useFakeTimers();
+  try {
+    const api = testAPI({
+      chatEvents: vi.fn().mockResolvedValue({
+        events: [event(1, "chat.user_message", { text: "Keep going" })],
+      }),
+    });
+    const { container } = render(
+      createElement(CloudChat, {
+        api,
+        session: {
+          ...session,
+          activeTurn: {
+            id: "turn-thinking",
+            sessionId: session.id,
+            userMessageSequence: 1,
+            state: "running",
+            attemptCount: 1,
+            createdAt: "2026-07-30T00:00:00Z",
+            updatedAt: "2026-07-30T00:00:00Z",
+          },
+        },
+      }),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Thinking…")).toBeInTheDocument();
+    expect(
+      screen.getByRole("status", { name: "Agent is thinking" }),
+    ).toBeInTheDocument();
+    expect(container.querySelector(".cloud-thinking-wave")).not.toBeNull();
+    expect(container.querySelector(".cloud-thinking-wave-icon")).not.toBeNull();
+
+    act(() => vi.advanceTimersByTime(4_000));
+
+    expect(screen.getByText("Tracing the next move…")).toBeInTheDocument();
   } finally {
     vi.useRealTimers();
   }

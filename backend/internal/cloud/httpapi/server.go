@@ -291,6 +291,10 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		DefaultBranch: input.DefaultBranch,
 		Config:        input.Config,
 	})
+	if errors.Is(err, cloudpostgres.ErrProjectExists) {
+		writeError(w, r, http.StatusConflict, "PROJECT_EXISTS", "This repository is already registered.")
+		return
+	}
 	if err != nil {
 		s.internalError(w, r, "create project", err)
 		return
@@ -389,6 +393,10 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if errors.Is(err, cloudpostgres.ErrProviderConnectionNotFound) {
 		writeError(w, r, http.StatusBadRequest, "PROVIDER_CONNECTION_NOT_FOUND", "The selected Daytona connection does not exist.")
+		return
+	}
+	if errors.Is(err, cloudpostgres.ErrActiveOrchestrator) {
+		writeError(w, r, http.StatusConflict, "ORCHESTRATOR_EXISTS", "This project already has an active orchestrator.")
 		return
 	}
 	if err != nil {

@@ -149,6 +149,15 @@ func TestAuthenticatedProjectAndIdempotentSessionFlow(t *testing.T) {
 	if err := json.NewDecoder(projectResponse.Body).Decode(&projectBody); err != nil {
 		t.Fatalf("decode project response: %v", err)
 	}
+	duplicateProject := requestJSON(t, server, http.MethodPost, "/api/cloud/v1/projects", "user-one", map[string]any{
+		"displayName":   "AO Cloud duplicate",
+		"repositoryUrl": repositoryURL,
+		"defaultBranch": "main",
+	}, nil)
+	defer duplicateProject.Body.Close()
+	if duplicateProject.StatusCode != http.StatusConflict {
+		t.Fatalf("duplicate project status = %d, want 409", duplicateProject.StatusCode)
+	}
 
 	idempotencyKey := uuid.NewString()
 	sessionInput := map[string]any{
@@ -191,6 +200,27 @@ func TestAuthenticatedProjectAndIdempotentSessionFlow(t *testing.T) {
 	}
 	if secondBody.Session.ID != firstBody.Session.ID {
 		t.Fatalf("session IDs = %q and %q", firstBody.Session.ID, secondBody.Session.ID)
+	}
+	orchestratorInput := map[string]any{
+		"projectId":   projectBody.Project.ID,
+		"kind":        "orchestrator",
+		"harness":     "fake",
+		"displayName": "Orchestrator",
+		"prompt":      "",
+	}
+	orchestrator := requestJSON(t, server, http.MethodPost, "/api/cloud/v1/sessions", "user-one", orchestratorInput, map[string]string{
+		"Idempotency-Key": uuid.NewString(),
+	})
+	defer orchestrator.Body.Close()
+	if orchestrator.StatusCode != http.StatusCreated {
+		t.Fatalf("orchestrator status = %d", orchestrator.StatusCode)
+	}
+	duplicateOrchestrator := requestJSON(t, server, http.MethodPost, "/api/cloud/v1/sessions", "user-one", orchestratorInput, map[string]string{
+		"Idempotency-Key": uuid.NewString(),
+	})
+	defer duplicateOrchestrator.Body.Close()
+	if duplicateOrchestrator.StatusCode != http.StatusConflict {
+		t.Fatalf("duplicate orchestrator status = %d, want 409", duplicateOrchestrator.StatusCode)
 	}
 
 	otherUser := requestJSON(

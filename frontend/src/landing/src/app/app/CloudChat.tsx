@@ -1,5 +1,6 @@
 "use client";
 
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   ArrowUp,
   Check,
@@ -368,22 +369,34 @@ function displayToolValue(value: unknown) {
 }
 
 function ThinkingWave() {
+  const reduceMotion = useReducedMotion();
   const path = "M1 8c4.5-8 8.5 8 15 0s10.5 8 15 0";
+  const alternatePath = "M1 8c4.5 8 8.5-8 15 0s10.5-8 15 0";
   return (
     <svg
       aria-hidden="true"
       viewBox="0 0 32 16"
-      className="h-3 w-5 shrink-0 overflow-visible"
+      className="cloud-thinking-wave-icon h-3 w-5 shrink-0 overflow-visible"
       fill="none"
     >
       <path d={path} stroke="#4b5058" strokeWidth="1.5" strokeLinecap="round" />
-      <path
+      <motion.path
         d={path}
         pathLength="1"
         stroke="#8eb6ff"
         strokeWidth="1.75"
         strokeLinecap="round"
         className="cloud-thinking-wave"
+        animate={reduceMotion ? undefined : { d: [path, alternatePath, path] }}
+        transition={
+          reduceMotion
+            ? undefined
+            : {
+                duration: 1.8,
+                ease: "easeInOut",
+                repeat: Number.POSITIVE_INFINITY,
+              }
+        }
       />
     </svg>
   );
@@ -405,21 +418,59 @@ const vmStartupMessages = [
   "Booting the tiny cloud workshop…",
 ];
 
-function RotatingVMStartupLabel() {
+const thinkingMessages = [
+  "Thinking…",
+  "Tracing the next move…",
+  "Putting the pieces together…",
+  "Checking the sharp edges…",
+  "Working through the details…",
+];
+
+const statusMessageInterval = 4_000;
+
+function RotatingStatusLabel({ messages }: { messages: string[] }) {
   const [messageIndex, setMessageIndex] = useState(0);
+  const reduceMotion = useReducedMotion();
   useEffect(() => {
     const timer = window.setInterval(
-      () =>
-        setMessageIndex((current) => (current + 1) % vmStartupMessages.length),
-      3_500,
+      () => setMessageIndex((current) => (current + 1) % messages.length),
+      statusMessageInterval,
     );
     return () => window.clearInterval(timer);
-  }, []);
+  }, [messages.length]);
   return (
-    <span key={messageIndex} className="cloud-startup-copy" aria-hidden="true">
-      <ShimmerLabel>{vmStartupMessages[messageIndex]}</ShimmerLabel>
+    <span
+      className="relative inline-grid min-h-4 overflow-hidden align-middle"
+      aria-hidden="true"
+    >
+      <AnimatePresence initial={false} mode="popLayout">
+        <motion.span
+          key={messageIndex}
+          className="col-start-1 row-start-1 whitespace-nowrap"
+          initial={
+            reduceMotion ? false : { opacity: 0, y: 5, filter: "blur(4px)" }
+          }
+          animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+          exit={
+            reduceMotion
+              ? { opacity: 0 }
+              : { opacity: 0, y: -5, filter: "blur(4px)" }
+          }
+          transition={{ duration: reduceMotion ? 0 : 0.42, ease: "easeOut" }}
+        >
+          <ShimmerLabel>{messages[messageIndex]}</ShimmerLabel>
+        </motion.span>
+      </AnimatePresence>
     </span>
   );
+}
+
+function RotatingVMStartupLabel() {
+  return <RotatingStatusLabel messages={vmStartupMessages} />;
+}
+
+function RotatingThinkingLabel() {
+  return <RotatingStatusLabel messages={thinkingMessages} />;
 }
 
 const harnessNames: Record<string, string> = {
@@ -999,9 +1050,10 @@ export function CloudChat({
                   className="ml-9 flex min-h-8 items-center gap-2 text-xs"
                   role="status"
                   aria-live="polite"
+                  aria-label="Agent is thinking"
                 >
                   <ThinkingWave />
-                  <ShimmerLabel>Thinking…</ShimmerLabel>
+                  <RotatingThinkingLabel />
                 </div>
               ) : null}
               <div ref={endRef} />

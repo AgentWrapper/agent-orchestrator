@@ -3,13 +3,15 @@
 > Implementation plan and acceptance contract for adding AO Cloud without
 > regressing the existing local product.
 
-Status: **implementation in progress**
+Status: **working deployed test vertical slice; production hardening remains**
 
 Branch: `feat/cloud-agent-v1`
 
-This document records the requested V1 scope, the current repository baseline,
-the architecture that follows from it, the external services needed, and the
-questions that must be answered before implementation begins. It supplements
+This document records the original V1 scope, repository baseline, architecture,
+and acceptance plan. The implementation has moved beyond several planning-era
+assumptions. The concise source of truth for what exists now is
+[`ao-cloud/CURRENT_ARCHITECTURE.md`](../ao-cloud/CURRENT_ARCHITECTURE.md), and
+remaining work is tracked in [`TODO-CLOUD.md`](TODO-CLOUD.md). It supplements
 [`Cloud Agent Plan Nihal.md`](Cloud%20Agent%20Plan%20Nihal.md), which contains
 the longer decision history and competitive research.
 
@@ -34,8 +36,22 @@ Implemented on `feat/cloud-agent-v1`:
   and xterm terminal surface;
 - control-plane and complete three-agent worker images;
 - Render and Vercel deployment configuration/documentation.
+- a deployed Fly Machines adapter with one Machine and encrypted persistent
+  volume per session, while retaining Daytona behind the provider contract;
+- structured Claude Code, Codex, and Cursor runtimes normalized into canonical
+  `chat.*` events, with PTY retained as a capability-gated fallback;
+- durable `ao_turns` with one active turn per session, worker-epoch claiming,
+  cancellation, replacement replay, and ordered prompt acknowledgement;
+- the cloud-aware worker `ao spawn`, `ao send`, and `ao status` commands used by
+  orchestrators for durable delegation;
+- project-time orchestrator prewarming and message-time sandbox wake/recreate;
+- focus/online/stale-stream reconnect probes and turn-aware event replay;
+- in-memory, sequence-aware browser chat prefetch with shared in-flight replay
+  and immediate multi-session Kanban activity;
+- structured HTTP latency, durable-turn, worker lifecycle, and sandbox lifecycle
+  logs deployed to Render.
 
-Verified locally:
+Verified locally and in the deployed test environment:
 
 - PostgreSQL migrations, command idempotency, account isolation, RLS, ordered
   event replay, one-use grants, worker epoch fencing, and bidirectional terminal
@@ -44,16 +60,26 @@ Verified locally:
 - worker binary upload and launch in a real Daytona sandbox;
 - Go cloud packages, browser auth tests, TypeScript checks, static Next.js build,
   and both Docker images.
+- hosted Supabase migrations and durable state;
+- Render control-plane deployment and live readiness;
+- real Fly Machine provisioning, worker bootstrap, structured agent turns,
+  orchestrator-created workers, follow-up prompts, reconnect, and cleanup;
+- full repository Go tests/lint, focused race tests, cloud web typecheck/tests,
+  and production Next.js build after the latest cache/state/logging changes.
 
-External completion blockers:
+Current production gaps:
 
-- a Supabase PostgreSQL connection URL/password was not supplied, so the hosted
-  schema cannot yet be applied or verified;
-- the tested Daytona sandbox reset all outbound HTTPS connections, including
-  `example.com`, despite `networkBlockAll=false`, preventing its worker from
-  reaching a local tunnel;
-- Render/Vercel access and a production image registry/snapshot have not been
-  supplied.
+- production GitHub App installation auth still needs to replace the temporary
+  deployment token behind the Git proxy;
+- cloud files/diffs, previews, notifications, and complete PR/review actions
+  still need parity work;
+- automated project deletion/orphan sweeping and worker-image rollout are not
+  yet productized;
+- quotas, cost controls, KMS rotation, egress policy, complete observability,
+  backup/restore, security review, and multi-user production testing remain;
+- Daytona remains implemented but was blocked on the earlier account's outbound
+  network tier, so Fly Machines is the deployed test provider;
+- the browser app still needs its final production hosting/release decision.
 
 ## TL;DR
 

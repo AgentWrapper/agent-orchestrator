@@ -2,7 +2,8 @@
 
 > A decision record for the AO cloud-agent architecture discussed after the
 > review of the existing Daytona and Docker branches, expanded with the
-> self-hosted AWS direction and competitive research completed on 2026-07-29.
+> self-hosted AWS direction, competitive research, and the deployed Cloud V1
+> implementation through 2026-07-30.
 
 This document has three purposes:
 
@@ -12,13 +13,74 @@ This document has three purposes:
 3. Compare Factory Droid, Conductor, Orca, T3 Code, and Superset, then identify
    the strongest reusable patterns for AO.
 
-This is not an implementation specification yet. Items in the final section
-must be resolved before implementation details are treated as final.
+This began as a planning document. AO now has a working hosted test vertical
+slice, so planning-era recommendations below must not be mistaken for current
+facts. Read [`../ao-cloud/CURRENT_ARCHITECTURE.md`](../ao-cloud/CURRENT_ARCHITECTURE.md)
+for the exact implementation and [`TODO-CLOUD.md`](TODO-CLOUD.md) for remaining
+work.
 
 The competitor sections distinguish between behavior verified in public source
 code and behavior described only in vendor documentation. Factory Droid and
 Conductor do not provide public implementation repositories for the relevant
 cloud systems, so no private internals are assumed.
+
+## 2026-07-30 implementation update
+
+The current vertical slice implements:
+
+- Supabase user authentication and account-scoped PostgreSQL `ao_*` tables;
+- a separately deployed Render control plane;
+- one Fly Machine plus encrypted persistent volume per orchestrator/worker
+  session, with Daytona retained behind the same sandbox-provider interface;
+- a headless AO worker running Claude Code, Codex, or Cursor;
+- structured, durable `chat.*` events and first-class `ao_turns`;
+- replay, SSE, stale-stream/focus/online reconnect, prompt acknowledgement,
+  interruption, worker replacement, and browser-close survival;
+- project-time orchestrator prewarming and durable worker delegation through
+  cloud `ao spawn/send/status`;
+- a scoped Git smart-HTTP proxy using a temporary deployment credential source;
+- a cloud web UI with session-isolated chat state, background prefetch,
+  immediate multi-session status, and PTY only as fallback;
+- safe structured Render logs for request latency, turn queueing, worker
+  lifecycle, and VM lifecycle.
+
+The rough architecture notes are resolved as follows:
+
+- **“Fork existing contracts with auth + user args for cloud”:** do not fork
+  every contract or add user arguments to local DTOs. Reuse semantic contracts;
+  cloud auth middleware supplies account identity to cloud-only services.
+- **“AO Cloud service”:** implemented as a modular Go control plane plus
+  Postgres, reconciliation, worker hub, SCM proxy, and provider adapters.
+- **“Local to both / web to only cloud / app to only cloud”:** the browser is
+  cloud-only today; Electron and the normal `ao` CLI are local-only today.
+  Cloud workers use a separate cloud-aware `ao` CLI. Electron may gain a cloud
+  transport later, but it is not cloud-only.
+- **“Single place to define local + cloud API”:** shared semantics and agent
+  adapters are defined once, while local-only and cloud-only wire operations
+  remain typed extensions. The local API is generated; generating the cloud
+  client from a cloud schema is still a tracked maintenance task.
+- **“Daytona abstractions configurable in the UI”:** LCM depends on a sandbox
+  provider port. Fly and Daytona adapters exist. Settings reflects the deployed
+  provider; Daytona deployments accept encrypted user-owned credentials while
+  Fly credentials remain operator-managed.
+- **“Local agent talks to local API / cloud agent talks to cloud API”:**
+  implemented exactly. Neither agent transport falls through to the other
+  authority.
+- **“No syncing”:** confirmed. SQLite/local sessions and Postgres/cloud sessions
+  do not replicate.
+- **“Extract to another repository later”:** boundaries support it, but Go
+  `internal` packages intentionally keep shared code in one repository today.
+  Extraction requires a versioned shared module and compatibility suites.
+- **“Keep a cloud fork open source”:** there is no duplicate cloud fork. Open
+  source/commercial packaging is a later product decision; duplicate code would
+  create unnecessary maintenance now.
+- **“LCM / SCM”:** LCM is desired-versus-observed sandbox reconciliation. SCM is
+  repository authorization, Git proxying, and normalized PR/check/review facts.
+  Both are detailed in the current-architecture document.
+- **“Cmd+Shift+N creates a worktree”:** not implemented as a shared shortcut.
+  Local new-task creation may create a worktree; cloud new-task creation creates
+  a durable session, clone, branch, and sandbox. A future shortcut should invoke
+  high-level “new task,” not expose local worktree mechanics to cloud.
 
 ## TL;DR
 

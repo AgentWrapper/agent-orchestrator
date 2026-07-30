@@ -30,6 +30,16 @@ it("removes marketing navigation from the authenticated cloud app", () => {
   expect(container).toBeEmptyDOMElement();
 });
 
+it("removes marketing navigation from authentication", () => {
+  usePathname.mockReturnValue("/auth");
+
+  const { container } = render(
+    <Header ctaButtons={<button>Download</button>} />,
+  );
+
+  expect(container).toBeEmptyDOMElement();
+});
+
 it("keeps marketing navigation on the public site", () => {
   usePathname.mockReturnValue("/");
 

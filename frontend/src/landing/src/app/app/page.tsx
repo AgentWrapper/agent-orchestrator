@@ -876,13 +876,16 @@ export default function CloudAppPage() {
                 sessions={visibleSessions}
                 projects={projects}
                 activeSessionIds={activeChatSessionIds}
+                orchestrator={selectedProjectOrchestrator}
                 onSelect={(cloudSession) => {
                   setSelectedProjectId(cloudSession.projectId);
                   setSelectedSessionId(cloudSession.id);
                   setView("session");
                 }}
                 onCreateOrchestrator={
-                  selectedProjectId && defaultAgent
+                  selectedProjectId &&
+                  defaultAgent &&
+                  !selectedProjectOrchestrator
                     ? startOrchestrator
                     : undefined
                 }
@@ -972,10 +975,63 @@ function CloudRuntimeConnecting({ session }: { session: CloudSession }) {
   );
 }
 
-function SessionBoard({
+function RepositorySetupIndicator() {
+  const stages = [
+    { label: "Secure VM", icon: Cloud },
+    { label: "Repository", icon: FolderGit2 },
+    { label: "Orchestrator", icon: OrchestratorIcon },
+  ];
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-16 z-20 flex justify-center px-4">
+      <div
+        className="w-full max-w-md rounded-xl border border-white/10 bg-[#111317]/95 p-4 shadow-[0_18px_60px_rgba(0,0,0,0.38)] backdrop-blur"
+        role="status"
+        aria-label="Preparing repository on the cloud VM"
+      >
+        <div className="flex items-center gap-2">
+          <LoaderCircle
+            className="size-3.5 animate-spin text-[#4d8dff] motion-reduce:animate-none"
+            aria-hidden="true"
+          />
+          <p className="text-sm font-medium text-[#f4f5f7]">
+            Preparing the orchestrator workspace
+          </p>
+        </div>
+        <p className="mt-1.5 text-xs leading-5 text-[#646a73]">
+          Provisioning an isolated VM, cloning the repository, and starting the
+          agent runtime.
+        </p>
+        <div className="relative mt-4 grid grid-cols-3">
+          <span className="absolute left-[16.67%] right-[16.67%] top-3 h-px overflow-hidden bg-white/10">
+            <span className="block h-full w-1/3 animate-[cloud-progress_1.8s_ease-in-out_infinite] bg-[#4d8dff]/80 motion-reduce:animate-none" />
+          </span>
+          {stages.map(({ label, icon: Icon }, index) => (
+            <div
+              key={label}
+              className="relative z-10 flex flex-col items-center gap-1.5"
+            >
+              <span
+                className="cloud-repository-stage grid size-6 place-items-center rounded-md border border-white/10 bg-[#17191e] text-[#8eb6ff] motion-reduce:animate-none"
+                style={{ animationDelay: `${index * 600}ms` }}
+              >
+                <Icon className="size-3.5" aria-hidden="true" />
+              </span>
+              <span className="font-mono text-[9px] uppercase tracking-[0.06em] text-[#646a73]">
+                {label}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function SessionBoard({
   sessions,
   projects,
   activeSessionIds,
+  orchestrator,
   onSelect,
   onCreateOrchestrator,
   agentAvailable,
@@ -985,6 +1041,7 @@ function SessionBoard({
   sessions: CloudSession[];
   projects: CloudProject[];
   activeSessionIds: Set<string>;
+  orchestrator?: CloudSession;
   onSelect: (session: CloudSession) => void;
   onCreateOrchestrator?: () => void;
   agentAvailable: boolean;
@@ -1029,7 +1086,7 @@ function SessionBoard({
       ),
     ],
   ] as const;
-  if (sessions.length === 0) {
+  if (sessions.length === 0 && !orchestrator) {
     return (
       <div className="grid h-full place-items-center px-6 text-center">
         <div className="max-w-sm">
@@ -1066,6 +1123,11 @@ function SessionBoard({
   return (
     <div className="relative grid h-full min-h-0 min-w-[64rem] grid-cols-4 divide-x divide-white/10 overflow-x-auto xl:min-w-0">
       <div className="pointer-events-none absolute inset-x-0 top-12 z-10 border-t border-white/10" />
+      {orchestrator &&
+      !orchestrator.runtimeConnected &&
+      !orchestrator.isTerminated ? (
+        <RepositorySetupIndicator />
+      ) : null}
       {columns.map(([title, dot, items]) => (
         <section
           key={title}

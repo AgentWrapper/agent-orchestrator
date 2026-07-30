@@ -38,6 +38,8 @@ export function Header({ ctaButtons }: HeaderProps) {
   // transparent instead of turning solid on scroll.
   if (
     pathname === "/download" ||
+    pathname === "/auth" ||
+    pathname.startsWith("/auth/") ||
     pathname === "/app" ||
     pathname.startsWith("/app/")
   )

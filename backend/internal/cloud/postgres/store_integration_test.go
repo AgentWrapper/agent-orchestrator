@@ -317,6 +317,46 @@ func TestCreateSessionIsIdempotentAndEventsAreOrdered(t *testing.T) {
 	}
 }
 
+func TestProjectAndOrchestratorConflictsAreTyped(t *testing.T) {
+	store := integrationStore(t)
+	ctx := context.Background()
+	account, err := store.EnsureAccount(ctx, uuid.NewString(), "Conflict Tester")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repositoryURL := "https://github.com/example/" + uuid.NewString()
+	project, err := store.CreateProject(ctx, account.ID, CreateProjectInput{
+		DisplayName:   "Conflict Test",
+		RepositoryURL: repositoryURL,
+		DefaultBranch: "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProject(ctx, account.ID, CreateProjectInput{
+		DisplayName:   "Duplicate",
+		RepositoryURL: repositoryURL,
+		DefaultBranch: "main",
+	}); !errors.Is(err, ErrProjectExists) {
+		t.Fatalf("CreateProject(duplicate) error = %v, want ErrProjectExists", err)
+	}
+	input := CreateSessionInput{
+		IdempotencyKey: uuid.NewString(),
+		ProjectID:      project.ID,
+		Kind:           "orchestrator",
+		Harness:        "fake",
+		DisplayName:    "Orchestrator",
+		Resource:       clouddomain.DefaultResourceProfile(),
+	}
+	if _, err := store.CreateSession(ctx, account.ID, input); err != nil {
+		t.Fatal(err)
+	}
+	input.IdempotencyKey = uuid.NewString()
+	if _, err := store.CreateSession(ctx, account.ID, input); !errors.Is(err, ErrActiveOrchestrator) {
+		t.Fatalf("CreateSession(duplicate orchestrator) error = %v, want ErrActiveOrchestrator", err)
+	}
+}
+
 func TestDeletedSandboxCanBeRequestedAgain(t *testing.T) {
 	store := integrationStore(t)
 	ctx := context.Background()
