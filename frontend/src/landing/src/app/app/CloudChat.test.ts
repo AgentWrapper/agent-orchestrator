@@ -259,10 +259,40 @@ it("shows worker startup instead of thinking for a disconnected runtime", async 
     }),
   );
 
+  expect(await screen.findByText("Waking up the VM…")).toBeInTheDocument();
   expect(
-    await screen.findByText("Starting secure worker…"),
+    screen.getByRole("status", { name: "Starting secure worker" }),
   ).toBeInTheDocument();
   expect(screen.queryByText("Thinking…")).not.toBeInTheDocument();
+});
+
+it("rotates VM startup copy every 3.5 seconds", async () => {
+  vi.useFakeTimers();
+  try {
+    const api = testAPI({
+      chatEvents: vi.fn().mockResolvedValue({
+        events: [event(1, "chat.user_message", { text: "Wake up" })],
+      }),
+    });
+    render(
+      createElement(CloudChat, {
+        api,
+        session: { ...session, runtimeConnected: false },
+      }),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Waking up the VM…")).toBeInTheDocument();
+
+    act(() => vi.advanceTimersByTime(3_500));
+
+    expect(
+      screen.getByText("The VM was fast asleep. One moment…"),
+    ).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("probes the durable turn and reconnects when the window regains focus", async () => {

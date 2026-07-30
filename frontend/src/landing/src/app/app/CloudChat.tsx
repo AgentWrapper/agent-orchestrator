@@ -367,19 +367,22 @@ function displayToolValue(value: unknown) {
 }
 
 function ThinkingWave() {
+  const path = "M1 8c4.5-8 8.5 8 15 0s10.5 8 15 0";
   return (
     <svg
       aria-hidden="true"
       viewBox="0 0 32 16"
-      className="h-3 w-5 shrink-0 overflow-visible text-[#9ba1aa]"
+      className="h-3 w-5 shrink-0 overflow-visible"
       fill="none"
     >
+      <path d={path} stroke="#4b5058" strokeWidth="1.5" strokeLinecap="round" />
       <path
-        d="M1 8c4.5-8 8.5 8 15 0s10.5 8 15 0"
-        stroke="currentColor"
-        strokeWidth="1.5"
+        d={path}
+        pathLength="1"
+        stroke="#8eb6ff"
+        strokeWidth="1.75"
         strokeLinecap="round"
-        className="animate-pulse motion-reduce:animate-none"
+        className="cloud-thinking-wave"
       />
     </svg>
   );
@@ -389,6 +392,31 @@ function ShimmerLabel({ children }: { children: string }) {
   return (
     <span className="animate-[cloud-shimmer_1.8s_ease-in-out_infinite] bg-gradient-to-r from-[#646a73] via-[#c5cad1] to-[#646a73] bg-[length:200%_100%] bg-clip-text text-transparent motion-reduce:animate-none">
       {children}
+    </span>
+  );
+}
+
+const vmStartupMessages = [
+  "Waking up the VM…",
+  "The VM was fast asleep. One moment…",
+  "Pulling a fresh workspace off the shelf…",
+  "Giving the worker its morning coffee…",
+  "Booting the tiny cloud workshop…",
+];
+
+function RotatingVMStartupLabel() {
+  const [messageIndex, setMessageIndex] = useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(
+      () =>
+        setMessageIndex((current) => (current + 1) % vmStartupMessages.length),
+      3_500,
+    );
+    return () => window.clearInterval(timer);
+  }, []);
+  return (
+    <span key={messageIndex} className="cloud-startup-copy" aria-hidden="true">
+      <ShimmerLabel>{vmStartupMessages[messageIndex]}</ShimmerLabel>
     </span>
   );
 }
@@ -911,9 +939,10 @@ export function CloudChat({
                   className="ml-9 flex min-h-8 items-center gap-2 text-xs"
                   role="status"
                   aria-live="polite"
+                  aria-label="Starting secure worker"
                 >
                   <ThinkingWave />
-                  <ShimmerLabel>Starting secure worker…</ShimmerLabel>
+                  <RotatingVMStartupLabel />
                 </div>
               ) : responseActive && !visibleWorkInProgress ? (
                 <div

@@ -35,6 +35,51 @@
   }
 }
 
+@keyframes cloud-thinking-wave {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -1;
+  }
+}
+
+.cloud-thinking-wave {
+  animation: cloud-thinking-wave 1.15s linear infinite;
+  stroke-dasharray: 0.22 0.78;
+}
+
+@keyframes cloud-startup-copy {
+  0% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  8%,
+  88% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.cloud-startup-copy {
+  animation: cloud-startup-copy 3.5s cubic-bezier(0.25, 1, 0.5, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cloud-thinking-wave,
+  .cloud-startup-copy {
+    animation: none;
+  }
+
+  .cloud-thinking-wave {
+    stroke-dasharray: none;
+  }
+}
+
 /*
  * Blog code blocks - force dark theme
  * Note: !important is required to override Shiki's inline styles
