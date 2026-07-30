@@ -162,7 +162,7 @@ describe("NewTaskDialog", () => {
 			projectId: "cloud-proj",
 			kind: "worker",
 			issueId: "Cloud task",
-			prompt: "Run this in Daytona.",
+			prompt: "Task title: Cloud task\n\nTask brief:\nRun this in Daytona.",
 			displayName: "Cloud task",
 		});
 		expect(onCreated).toHaveBeenCalledWith("cloud-1", "cloud-proj");

@@ -25,6 +25,10 @@ type NewTaskDialogProps = {
 	onOpenChange: (open: boolean) => void;
 };
 
+function cloudTaskPrompt(title: string, brief: string): string {
+	return `Task title: ${title}\n\nTask brief:\n${brief}`;
+}
+
 export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewTaskDialogProps) {
 	const queryClient = useQueryClient();
 	const titleId = useId();
@@ -123,7 +127,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 				kind: "worker",
 				harness: agentTouched && agent ? (agent as AgentProvider) : undefined,
 				issueId: cleanTitle,
-				prompt: cleanPrompt,
+				prompt: cloudTaskMode ? cloudTaskPrompt(cleanTitle, cleanPrompt) : cleanPrompt,
 				displayName: cleanTitle.slice(0, 20),
 			};
 			if (!isScratchProject && cleanBranch) {
