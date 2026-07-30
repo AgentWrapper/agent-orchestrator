@@ -47,7 +47,7 @@ func TestOpenCodeLocalAuthStatusAuthorizedWithAuthFile(t *testing.T) {
 	}
 }
 
-func TestOpenCodeLocalAuthStatusUnauthorizedWithEmptyAuthFile(t *testing.T) {
+func TestOpenCodeLocalAuthStatusUnknownWithEmptyAuthFile(t *testing.T) {
 	clearOpenCodeAuthEnv(t)
 	writeOpenCodeAuthFile(t, `{}`)
 
@@ -55,8 +55,8 @@ func TestOpenCodeLocalAuthStatusUnauthorizedWithEmptyAuthFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || status != ports.AgentAuthStatusUnauthorized {
-		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnauthorized)
+	if !ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnknown)
 	}
 }
 
@@ -165,7 +165,7 @@ func TestOpenCodeLocalAuthStatusAuthorizedWithControlDBAccount(t *testing.T) {
 	}
 }
 
-func TestOpenCodeLocalAuthStatusUnauthorizedWithEmptyDBAccounts(t *testing.T) {
+func TestOpenCodeLocalAuthStatusUnknownWithEmptyDBAccounts(t *testing.T) {
 	clearOpenCodeAuthEnv(t)
 	dataDir := writeOpenCodeDB(t, func(db *sql.DB) {
 		if _, err := db.Exec(`
@@ -205,8 +205,30 @@ func TestOpenCodeLocalAuthStatusUnauthorizedWithEmptyDBAccounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || status != ports.AgentAuthStatusUnauthorized {
-		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnauthorized)
+	if !ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnknown)
+	}
+}
+
+func TestOpenCodeAuthStatusUnknownWithZeroCredentials(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	clearOpenCodeAuthEnv(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	binary := filepath.Join(t.TempDir(), "opencode")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nprintf '0 credentials\\n'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	status, err := (&Plugin{resolvedBinary: binary}).AuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("AuthStatus = %q, want %q", status, ports.AgentAuthStatusUnknown)
 	}
 }
 
