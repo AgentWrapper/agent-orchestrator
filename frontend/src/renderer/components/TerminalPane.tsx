@@ -364,11 +364,17 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const banner = bannerText(state, error);
 	const showEmptyState = !handleId;
 	// Cover xterm while the attachment buffers the initial replay, so the pane
-	// appears already drawn at the tail instead of visibly scrolling down to it
-	// (issue #3160). Deliberately NOT the empty state above: that renders a
-	// centered "Starting session" card, and flashing it on every session switch
-	// would be worse than the scroll it replaces.
-	const showReplayCover = Boolean(handleId) && !replaySettled;
+	// appears already drawn at the tail instead of visibly scrolling down to it.
+	// Deliberately NOT the empty state above: that renders a centered "Starting
+	// session" card, and flashing it on every session switch would be worse than
+	// the scroll it replaces.
+	// Only while a replay is actually imminent. Gating on the state as well as
+	// the gate keeps the cover from reappearing over a pane that is visibly
+	// disconnected: an open timeout lifts it, the backoff reconnect would
+	// otherwise pull it straight back down, and the "reattaching" banner already
+	// explains that window better than a blank overlay does.
+	const showReplayCover =
+		Boolean(handleId) && !replaySettled && (state === "connecting" || state === "attached");
 	const showEndedState = state === "exited" || canRestoreSession;
 	const emptyStateTitle = session ? "Starting session" : "Agent Orchestrator";
 	const emptyStateMessage = session
@@ -446,7 +452,13 @@ function ReplayCover() {
 		return () => window.clearTimeout(timer);
 	}, []);
 	return (
-		<div className="absolute inset-0 grid place-items-center bg-terminal" data-testid="terminal-replay-cover">
+		// pointer-events-none: the cover is purely visual and xterm underneath is
+		// live the whole time, so clicks, selection and wheel must pass through
+		// rather than being swallowed for the length of the gate.
+		<div
+			className="pointer-events-none absolute inset-0 grid place-items-center bg-terminal"
+			data-testid="terminal-replay-cover"
+		>
 			{showLabel && <div className="font-mono text-caption text-terminal-dim">Loading latest output…</div>}
 		</div>
 	);

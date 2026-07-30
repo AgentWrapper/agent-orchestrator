@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,7 @@ type fakeRunner struct {
 	calls   []runnerCall
 	outputs [][]byte
 	err     error
+	hook    func(context.Context, int) error
 }
 
 type runnerCall struct {
@@ -29,12 +31,17 @@ type runnerCall struct {
 	args []string
 }
 
-func (f *fakeRunner) Run(_ context.Context, env []string, name string, args ...string) ([]byte, error) {
+func (f *fakeRunner) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	f.calls = append(f.calls, runnerCall{env: append([]string(nil), env...), name: name, args: append([]string(nil), args...)})
 	var out []byte
 	if len(f.outputs) > 0 {
 		out = f.outputs[0]
 		f.outputs = f.outputs[1:]
+	}
+	if f.hook != nil {
+		if err := f.hook(ctx, len(f.calls)); err != nil {
+			return out, err
+		}
 	}
 	if f.err != nil {
 		return out, f.err
@@ -991,6 +998,72 @@ func TestSendMessageEnterSurvivesCallerCancel(t *testing.T) {
 	}
 }
 
+func TestSendMessageRemainingChunksSurviveCallerCancel(t *testing.T) {
+	r, fr := newTestRuntime(5)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	secondChunkStarted := make(chan struct{})
+	callerCancelled := make(chan struct{})
+	go func() {
+		<-secondChunkStarted
+		cancel()
+		close(callerCancelled)
+	}()
+	fr.hook = func(runCtx context.Context, call int) error {
+		if call != 2 {
+			return nil
+		}
+		close(secondChunkStarted)
+		<-callerCancelled
+		return runCtx.Err()
+	}
+
+	if err := r.SendMessage(ctx, ports.RuntimeHandle{ID: "sess-1"}, "helloworld"); err != nil {
+		t.Fatalf("SendMessage cancelled after first chunk: %v", err)
+	}
+	if ctx.Err() != context.Canceled {
+		t.Fatalf("caller context error = %v, want context.Canceled", ctx.Err())
+	}
+	if len(fr.calls) != 3 {
+		t.Fatalf("calls = %d, want 3 (two chunks + Enter)", len(fr.calls))
+	}
+	if got, want := fr.calls[1].args, sendKeysLiteralArgs("sess-1", "world"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("chunk 2 args = %#v, want %#v", got, want)
+	}
+	if got, want := fr.calls[2].args, sendEnterArgs("sess-1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("Enter args = %#v, want %#v", got, want)
+	}
+}
+
+func TestSendMessageCompletionBudgetScalesWithChunks(t *testing.T) {
+	const commandTimeout = 5 * time.Second
+	const enterDelay = 300 * time.Millisecond
+	if got, want := sendCompletionBudget(1, commandTimeout, enterDelay), 5*time.Second+enterDelay; got != want {
+		t.Fatalf("single-chunk completion budget = %s, want %s", got, want)
+	}
+	if got, want := sendCompletionBudget(4, commandTimeout, enterDelay), 20*time.Second+enterDelay; got != want {
+		t.Fatalf("four-chunk completion budget = %s, want %s", got, want)
+	}
+}
+
+func TestSendMessageCancellationBeforeFirstChunkAborts(t *testing.T) {
+	r, fr := newTestRuntime(5)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	fr.hook = func(runCtx context.Context, _ int) error {
+		return runCtx.Err()
+	}
+
+	err := r.SendMessage(ctx, ports.RuntimeHandle{ID: "sess-1"}, "helloworld")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("SendMessage error = %v, want context.Canceled", err)
+	}
+	if len(fr.calls) != 1 {
+		t.Fatalf("calls = %d, want 1 (first chunk attempt only)", len(fr.calls))
+	}
+}
+
 func TestInterruptSendsCtrlC(t *testing.T) {
 	r, fr := newTestRuntime(0)
 	if err := r.Interrupt(context.Background(), ports.RuntimeHandle{ID: "sess-1"}); err != nil {
@@ -1135,4 +1208,117 @@ func TestTrimTrailingBlankLines(t *testing.T) {
 	if got := trimTrailingBlankLines(""); got != "" {
 		t.Fatalf("trimTrailingBlankLines empty = %q", got)
 	}
+}
+
+// -- reap tests --
+
+// The reap used to sleep the whole grace before rechecking, and Destroy blocks
+// the shell-terminal DELETE handler, so closing a plain terminal took the full
+// 5s no matter how fast the shell exited. Polling must return as soon as the
+// pane session is empty.
+func TestReapPaneSessionsReturnsAsSoonAsSessionsAreEmpty(t *testing.T) {
+	grace := 3 * time.Second
+	var signals []string
+	calls := 0
+	hasProcesses := func(context.Context, []int) bool {
+		calls++
+		// Alive for the SIGTERM check, gone by the first poll.
+		return calls == 1
+	}
+
+	start := time.Now()
+	reapPaneSessions(context.Background(), []int{4242}, grace,
+		func(_ context.Context, _ []int, sig string) bool { signals = append(signals, sig); return true },
+		hasProcesses,
+	)
+	elapsed := time.Since(start)
+
+	if elapsed >= grace {
+		t.Fatalf("reap took %v, want well under the %v grace", elapsed, grace)
+	}
+	if !reflect.DeepEqual(signals, []string{"-TERM"}) {
+		t.Fatalf("signals = %#v, want just -TERM: a process that already exited must not be SIGKILLed", signals)
+	}
+}
+
+// The grace still exists for what it was added for (issue #2523): a dev server
+// a worker backgrounded gets the full window to release its ports, and is only
+// then forced.
+func TestReapPaneSessionsSigkillsSurvivorsAfterGrace(t *testing.T) {
+	grace := 150 * time.Millisecond
+	var signals []string
+
+	start := time.Now()
+	reapPaneSessions(context.Background(), []int{4242}, grace,
+		func(_ context.Context, _ []int, sig string) bool { signals = append(signals, sig); return true },
+		func(context.Context, []int) bool { return true },
+	)
+	elapsed := time.Since(start)
+
+	if elapsed < grace {
+		t.Fatalf("reap took %v, want at least the %v grace before forcing", elapsed, grace)
+	}
+	if !reflect.DeepEqual(signals, []string{"-TERM", "-KILL"}) {
+		t.Fatalf("signals = %#v, want -TERM then -KILL", signals)
+	}
+}
+
+// An empty pane list means there is nothing to reap; signalling anything there
+// would be pkill against no session at all.
+func TestReapPaneSessionsIgnoresEmptyPidList(t *testing.T) {
+	called := false
+	reapPaneSessions(context.Background(), nil, time.Second,
+		func(context.Context, []int, string) bool { called = true; return true },
+		func(context.Context, []int) bool { return true },
+	)
+	if called {
+		t.Fatal("no pane sessions should mean no signals sent")
+	}
+}
+
+// Regression: macOS pkill/pgrep have no `-s` (session id) matcher — it is a
+// Linux procps extension — so every signal and probe failed with a usage error
+// and the probe's conservative "assume survivors" kept the full grace running.
+// The reap accomplished nothing and cost 5s on every close.
+func TestReapPaneSessionsSkipsWaitWhenSessionMatcherUnsupported(t *testing.T) {
+	grace := 3 * time.Second
+	probed := false
+
+	start := time.Now()
+	reapPaneSessions(context.Background(), []int{4242}, grace,
+		func(context.Context, []int, string) bool { return false },
+		func(context.Context, []int) bool { probed = true; return true },
+	)
+	elapsed := time.Since(start)
+
+	if elapsed >= grace {
+		t.Fatalf("reap took %v; a platform that cannot signal by session id must not wait out the grace", elapsed)
+	}
+	if probed {
+		t.Fatal("no point probing for survivors when the matcher itself is unsupported")
+	}
+}
+
+func TestIsUnsupportedMatcher(t *testing.T) {
+	if isUnsupportedMatcher(nil) {
+		t.Fatal("a successful match is supported")
+	}
+	if isUnsupportedMatcher(exitCodeErr(t, 1)) {
+		t.Fatal("exit 1 means nothing matched, which is a supported outcome")
+	}
+	if !isUnsupportedMatcher(exitCodeErr(t, 2)) {
+		t.Fatal("exit 2 is a usage error: the matcher is unsupported")
+	}
+	if !isUnsupportedMatcher(errors.New("exec: \"pkill\": executable file not found")) {
+		t.Fatal("a missing pkill is equally unusable")
+	}
+}
+
+func exitCodeErr(t *testing.T, code int) error {
+	t.Helper()
+	err := exec.Command("sh", "-c", "exit "+strconv.Itoa(code)).Run()
+	if err == nil {
+		t.Fatalf("sh -c 'exit %d' should fail", code)
+	}
+	return err
 }

@@ -9,7 +9,6 @@ export function GET() {
 	const content = `# Default: open to all crawlers
 User-Agent: *
 Allow: /
-Allow: /api/llms.txt
 Disallow: /api/
 Disallow: /_next/
 
