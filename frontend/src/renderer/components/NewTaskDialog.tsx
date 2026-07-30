@@ -225,7 +225,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 							>
 								<textarea
 									id={promptId}
-									className="min-h-textarea-min w-full resize-y rounded-md bg-transparent px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+									className="min-h-textarea-min w-full resize-none rounded-md bg-transparent px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground"
 									placeholder="Describe the change, constraints, and expected verification. Paste or drop images to attach them."
 									value={prompt}
 									onChange={(event) => setPrompt(event.target.value)}
