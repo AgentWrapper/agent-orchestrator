@@ -1192,7 +1192,7 @@ describe("Sidebar", () => {
 		expect(screen.getByLabelText("Open second task")).toBeInTheDocument();
 	});
 
-	it("keeps the open session listed under its collapsed project", () => {
+	it("hides all sessions when project is collapsed", () => {
 		mockParams.projectId = "proj-1";
 		mockParams.sessionId = "proj-1-2";
 		renderSidebar({
@@ -1204,10 +1204,9 @@ describe("Sidebar", () => {
 			],
 		});
 
-		// Collapsed, so only the session you are in shows — the sidebar never hides
-		// your current location.
+		// Project starts collapsed — no sessions visible regardless of active session.
 		expect(screen.getByText("Project One").closest("button")).toHaveAttribute("aria-expanded", "false");
-		expect(screen.getByLabelText("Open second task")).toBeInTheDocument();
+		expect(screen.queryByLabelText("Open second task")).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Open fix login")).not.toBeInTheDocument();
 	});
 

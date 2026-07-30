@@ -289,17 +289,16 @@ export function Sidebar({
 				</SidebarGroup>
 			) : null}
 
-			{/* Pinned — collapsible; body empty until pin functionality lands. */}
-			<div className="sidebar-expanded-chrome flex shrink-0 flex-col group-data-[collapsible=icon]:hidden">
-				<SectionDisclosure
-					icon={<Pin strokeWidth={1.75} aria-hidden="true" />}
-					label="Pinned"
-					open={pinnedOpen}
-					onToggle={() => setPinnedOpen((v) => !v)}
-					className="mb-1"
-				/>
-				{pinnedOpen ? <div className="pb-2" /> : null}
-			</div>
+		{/* Pinned — collapsible; no body until pin functionality lands. */}
+		<div className="sidebar-expanded-chrome flex shrink-0 flex-col group-data-[collapsible=icon]:hidden">
+			<SectionDisclosure
+				icon={<Pin strokeWidth={1.75} aria-hidden="true" />}
+				label="Pinned"
+				open={pinnedOpen}
+				onToggle={() => setPinnedOpen((v) => !v)}
+				className="mb-1"
+			/>
+		</div>
 
 			{/* Projects — collapsible section; + sits inside the same hover pill. */}
 			<div className="sidebar-expanded-chrome flex shrink-0 pb-1.5 group-data-[collapsible=icon]:hidden">
@@ -325,36 +324,43 @@ export function Sidebar({
 			</div>
 		</div>
 
-		<SidebarContent className="scrollbar-none gap-0 px-2 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
-			{/* Collapsed rail still lists projects even when expanded Projects section is closed. */}
-			{(projectsOpen || isCollapsed) && (
-				<SidebarGroup className="p-0">
-					{/* Tree (project-sidebar__tree) */}
-					<SidebarGroupContent>
-						{workspaceError ? (
-							<div className="sidebar-expanded-chrome px-2.5 py-3 group-data-[collapsible=icon]:hidden">
-								<p className="text-sm text-foreground">Could not load projects.</p>
-								<p className="mt-1 text-caption text-passive">{workspaceError}</p>
-							</div>
-						) : workspaces.length === 0 ? null : (
-							<SidebarMenu className="gap-0.5 group-data-[collapsible=icon]:gap-1">
-								{workspaces.map((workspace) => (
-									<ProjectItem
-										key={workspace.id}
-										workspace={workspace}
-										expanded={expandedIds.has(workspace.id)}
-										selection={selection}
-										onToggle={() => toggleExpanded(workspace.id)}
-										onRemoveProject={onRemoveProject}
-									/>
-								))}
-								{isCollapsed && <CreateProjectListItem />}
-							</SidebarMenu>
-						)}
-					</SidebarGroupContent>
-				</SidebarGroup>
-			)}
-		</SidebarContent>
+	<SidebarContent className="scrollbar-none gap-0 px-2 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
+		{/* Collapsed rail always shows project icons; expanded sidebar animates
+		    the project tree in/out when the Projects section is toggled. */}
+		<motion.div
+			animate={{ height: isCollapsed || projectsOpen ? "auto" : 0 }}
+			initial={false}
+			transition={{ duration: 0.2, ease: [0.25, 0.46, 0.45, 0.94] }}
+			style={{ overflow: "hidden" }}
+			className="w-full"
+		>
+			<SidebarGroup className="p-0">
+				{/* Tree (project-sidebar__tree) */}
+				<SidebarGroupContent>
+					{workspaceError ? (
+						<div className="sidebar-expanded-chrome px-2.5 py-3 group-data-[collapsible=icon]:hidden">
+							<p className="text-sm text-foreground">Could not load projects.</p>
+							<p className="mt-1 text-caption text-passive">{workspaceError}</p>
+						</div>
+					) : workspaces.length === 0 ? null : (
+						<SidebarMenu className="gap-0.5 group-data-[collapsible=icon]:gap-1">
+							{workspaces.map((workspace) => (
+								<ProjectItem
+									key={workspace.id}
+									workspace={workspace}
+									expanded={expandedIds.has(workspace.id)}
+									selection={selection}
+									onToggle={() => toggleExpanded(workspace.id)}
+									onRemoveProject={onRemoveProject}
+								/>
+							))}
+							{isCollapsed && <CreateProjectListItem />}
+						</SidebarMenu>
+					)}
+				</SidebarGroupContent>
+			</SidebarGroup>
+		</motion.div>
+	</SidebarContent>
 
 			{/* Footer — Settings opens the global settings page directly.
 			    Bottom margin clears the framed center-panel inset and sits the
@@ -385,7 +391,7 @@ export function Sidebar({
 				<RestartToUpdateRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
 				<button
 					aria-label="Settings"
-					className={cn(NAV_ROW_CLASS, "flex h-row-md w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0")}
+					className={cn(NAV_ROW_CLASS, "flex w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0")}
 					onClick={() => selection.goGlobalSettings()}
 					tabIndex={isCollapsed ? -1 : 0}
 					type="button"
@@ -467,9 +473,6 @@ function ProjectItem({
 	// Only termination removes a worker from the sidebar; archived sessions stay
 	// reachable through SessionsBoard.
 	const sessions = workerSessions(workspace.sessions).filter((session) => session.isTerminated !== true);
-	// A collapsed project still lists the session you are in, so the sidebar never
-	// hides your current location behind a disclosure triangle.
-	const visibleSessions = expanded ? sessions : sessions.filter((session) => session.id === selection.activeSessionId);
 	// The project's live orchestrator (if any) backs the hover Orchestrator
 	// button: navigate to it when present, otherwise spawn one first.
 	const orchestrator = newestActiveOrchestrator(workspace.sessions);
@@ -637,30 +640,31 @@ function ProjectItem({
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</div>
-			{/* project-sidebar__sessions: each session row animates in/out when the
-          project expands or collapses. */}
-			{visibleSessions.length > 0 && (
-				<SidebarMenuSub className="sidebar-expanded-chrome mx-0 ml-3.5 translate-x-0 gap-0 border-l-0 px-0 py-1">
-					<AnimatePresence initial={false}>
-						{visibleSessions.map((session) => (
-							<motion.div
+		{/* project-sidebar__sessions: entire list animates in/out as a block. */}
+		<AnimatePresence initial={false}>
+			{expanded && sessions.length > 0 && (
+				<motion.div
+					key="sessions"
+					initial={{ height: 0 }}
+					animate={{ height: "auto" }}
+					exit={{ height: 0 }}
+					transition={{ duration: 0.18, ease: [0.25, 0.46, 0.45, 0.94] }}
+					style={{ overflow: "hidden" }}
+					className="sidebar-expanded-chrome"
+				>
+					<SidebarMenuSub className="mx-0 ml-3.5 translate-x-0 gap-0 border-l-0 px-0 py-1">
+						{sessions.map((session) => (
+							<SessionRow
 								key={session.id}
-								initial={{ height: 0, opacity: 0 }}
-								animate={{ height: "auto", opacity: 1 }}
-								exit={{ height: 0, opacity: 0 }}
-								transition={{ duration: 0.16, ease: [0.25, 0.46, 0.45, 0.94] }}
-								style={{ overflow: "hidden" }}
-							>
-								<SessionRow
-									session={session}
-									active={selection.activeSessionId === session.id}
-									onOpen={() => selection.goSession(workspace.id, session.id)}
-								/>
-							</motion.div>
+								session={session}
+								active={selection.activeSessionId === session.id}
+								onOpen={() => selection.goSession(workspace.id, session.id)}
+							/>
 						))}
-					</AnimatePresence>
-				</SidebarMenuSub>
+					</SidebarMenuSub>
+				</motion.div>
 			)}
+		</AnimatePresence>
 			<ConfirmDialog
 				open={confirmOpen}
 				onOpenChange={(open) => {
