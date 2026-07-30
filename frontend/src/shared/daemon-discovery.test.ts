@@ -71,6 +71,24 @@ describe("parseRunFile", () => {
 		});
 	});
 
+	it("parses the backend-published browser runtime contract", () => {
+		expect(
+			parseRunFile(
+				JSON.stringify({
+					pid: 4242,
+					port: 3037,
+					browserRuntimeToken: "token",
+					browserRuntimeAddress: String.raw`\\.\pipe\ao-browser-dev`,
+				}),
+			),
+		).toEqual(
+			expect.objectContaining({
+				browserRuntimeToken: "token",
+				browserRuntimeAddress: String.raw`\\.\pipe\ao-browser-dev`,
+			}),
+		);
+	});
+
 	it("returns null for malformed JSON", () => {
 		expect(parseRunFile("{not json")).toBeNull();
 		expect(parseRunFile("")).toBeNull();

@@ -26,8 +26,8 @@ export async function GET() {
 			"",
 			"## Docs",
 			"",
-			`- [Documentation](${docsUrl})`,
-			`- [Getting Started](${docsUrl}/getting-started)`,
+			`- [Documentation](${docsUrl}/)`,
+			`- [Quickstart](${docsUrl}/quickstart/)`,
 			`- [GitHub](${COMPANY.GITHUB_URL})`,
 		].join("\n"),
 	);
@@ -43,7 +43,7 @@ export async function GET() {
 				...comparisons.flatMap((page) => [
 					`## ${page.title}`,
 					"",
-					`URL: ${baseUrl}/compare/${page.slug}`,
+					`URL: ${baseUrl}/compare/${page.slug}/`,
 					"",
 					stripMdxSyntax(page.content),
 					"",
@@ -63,7 +63,7 @@ export async function GET() {
 				...posts.flatMap((post) => [
 					`## ${post.title}`,
 					"",
-					`URL: ${baseUrl}/blog/${post.slug}`,
+					`URL: ${baseUrl}/blog/${post.slug}/`,
 					`Date: ${post.date}`,
 					`Author: ${post.author.name}`,
 					"",

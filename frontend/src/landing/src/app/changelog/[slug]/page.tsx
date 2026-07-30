@@ -29,13 +29,13 @@ export async function generateMetadata({
       title: `${entry.title} | Agent Orchestrator`,
       description: entry.description,
       url: entry.url,
-      images: ["/opengraph-image"],
+      images: ["/og-image.png"],
     },
     twitter: {
       card: "summary_large_image",
       title: `${entry.title} | Agent Orchestrator`,
       description: entry.description,
-      images: ["/opengraph-image"],
+      images: ["/og-image.png"],
     },
   };
 }

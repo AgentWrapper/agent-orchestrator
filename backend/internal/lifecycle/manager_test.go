@@ -1626,6 +1626,60 @@ type fakeNotificationSink struct {
 	err     error
 }
 
+type fakeReengagementTracker struct {
+	before domain.SessionRecord
+	after  domain.SessionRecord
+	event  string
+	calls  int
+}
+
+func (f *fakeReengagementTracker) ObserveActivity(_ context.Context, before, after domain.SessionRecord, event string) {
+	f.before = before
+	f.after = after
+	f.event = event
+	f.calls++
+}
+
+func TestActivity_ForwardsSameStateToolProgressToReengagement(t *testing.T) {
+	now := time.Now().UTC()
+	st := newFakeStore()
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Activity:      domain.Activity{State: domain.ActivityActive, LastActivityAt: now},
+		FirstSignalAt: now,
+	}
+	tracker := &fakeReengagementTracker{}
+	m := New(st, nil, WithOrchestratorReengagement(tracker))
+	if err := m.ApplyActivitySignal(context.Background(), "mer-orch", ports.ActivitySignal{
+		Valid: true, State: domain.ActivityActive, Event: "post-tool-use", Timestamp: now.Add(time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if tracker.calls != 1 || tracker.event != "post-tool-use" {
+		t.Fatalf("tracker = %#v", tracker)
+	}
+}
+
+func TestActivity_ForwardsIdleTransitionToReengagement(t *testing.T) {
+	now := time.Now().UTC()
+	st := newFakeStore()
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Activity:      domain.Activity{State: domain.ActivityActive, LastActivityAt: now},
+		FirstSignalAt: now,
+	}
+	tracker := &fakeReengagementTracker{}
+	m := New(st, nil, WithOrchestratorReengagement(tracker))
+	if err := m.ApplyActivitySignal(context.Background(), "mer-orch", ports.ActivitySignal{
+		Valid: true, State: domain.ActivityIdle, Event: "stop", Timestamp: now.Add(time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if tracker.calls != 1 || tracker.before.Activity.State != domain.ActivityActive || tracker.after.Activity.State != domain.ActivityIdle {
+		t.Fatalf("tracker = %#v", tracker)
+	}
+}
+
 func (f *fakeNotificationSink) Notify(_ context.Context, intent ports.NotificationIntent) error {
 	f.intents = append(f.intents, intent)
 	return f.err
