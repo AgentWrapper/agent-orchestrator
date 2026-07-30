@@ -8,6 +8,7 @@ import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import type { AttachableTerminal } from "../hooks/useTerminalSession";
 import type { TerminalTarget } from "../types/terminal";
 import type { WorkspaceSession } from "../types/workspace";
+import { useUiStore } from "../stores/ui-store";
 import {
 	TerminalCacheProvider,
 	TerminalPane,
@@ -20,6 +21,7 @@ const {
 	terminalError,
 	terminalState,
 	replaySettled,
+	terminalOutputHandlers,
 	xtermMounts,
 	xtermUnmounts,
 } = vi.hoisted(
@@ -29,6 +31,7 @@ const {
 		terminalError: { value: undefined as string | undefined },
 		terminalState: { value: "idle" },
 		replaySettled: { value: true },
+		terminalOutputHandlers: new Map<string, (text: string) => void>(),
 		xtermMounts: { value: 0 },
 		xtermUnmounts: { value: 0 },
 	}),
@@ -73,12 +76,18 @@ vi.mock("./XtermTerminal", () => ({
 }));
 
 vi.mock("../hooks/useTerminalSession", () => ({
-	useTerminalSession: () => ({
-		attach: attachMock,
-		state: terminalState.value,
-		error: terminalError.value,
-		replaySettled: replaySettled.value,
-	}),
+	useTerminalSession: (
+		session: WorkspaceSession | undefined,
+		options: { onOutput?: (text: string) => void },
+	) => {
+		if (session?.id && options.onOutput) terminalOutputHandlers.set(session.id, options.onOutput);
+		return {
+			attach: attachMock,
+			state: terminalState.value,
+			error: terminalError.value,
+			replaySettled: replaySettled.value,
+		};
+	},
 }));
 
 const worker = {
@@ -108,9 +117,11 @@ beforeEach(() => {
 	terminalState.value = "idle";
 	replaySettled.value = true;
 	terminalLinkHandler = undefined;
+	terminalOutputHandlers.clear();
 	attachMock.mockClear();
 	xtermMounts.value = 0;
 	xtermUnmounts.value = 0;
+	useUiStore.setState({ inspectorSessions: {} });
 });
 
 function renderPane(session?: WorkspaceSession) {
@@ -389,6 +400,7 @@ describe("TerminalCacheProvider", () => {
 			generation: shell.createdAt,
 			kind: "shell",
 			handleId: shell.handleId,
+			sessionId: sessionA.id,
 			title: shell.title,
 		};
 		const view = renderCachedPane({
@@ -412,13 +424,64 @@ describe("TerminalCacheProvider", () => {
 		}
 	});
 
-	it("does not retain a terminal after a fatal attachment error", async () => {
+	it("rejects a reviewer target retained from the previous route before assigning cache ownership", async () => {
+		const staleTarget = {
+			generation: "review-batch-a",
+			handleId: "review-handle-a",
+			harness: "codex",
+			kind: "reviewer",
+			sessionId: sessionA.id,
+		} as unknown as TerminalTarget;
+		const view = renderCachedPane({
+			session: sessionB,
+			sessions: [sessionA, sessionB],
+			terminalTarget: staleTarget,
+		});
+		try {
+			await waitFor(() => activeXterm());
+			const keys = [...document.querySelectorAll<HTMLElement>("[data-terminal-cache-key]")].map(
+				(element) => element.dataset.terminalCacheKey,
+			);
+			expect(keys).toContain(`session:${sessionB.id}:worker|handle:${sessionB.terminalHandleId}`);
+			expect(keys.some((key) => key?.includes("review-handle-a"))).toBe(false);
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("replaces an exited reviewer renderer when its run generation changes", async () => {
+		const reviewer = (generation: string) =>
+			({
+				generation,
+				handleId: "stable-reviewer-handle",
+				harness: "codex",
+				kind: "reviewer",
+				sessionId: sessionA.id,
+			}) as unknown as TerminalTarget;
+		const view = renderCachedPane({
+			session: sessionA,
+			sessions: [sessionA],
+			terminalTarget: reviewer("batch-1"),
+		});
+		try {
+			const first = await waitFor(() => activeXterm());
+			view.show(sessionA, reviewer("batch-2"));
+			await waitFor(() => expect(activeXterm()).not.toBe(first));
+			expect(first.isConnected).toBe(false);
+			expect(xtermMounts.value).toBe(2);
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("keeps an attachment error inspectable until the pane leaves", async () => {
 		terminalState.value = "error";
 		terminalError.value = "attach failed";
 		const view = renderCachedPane({ session: sessionA, sessions: [sessionA, sessionB] });
 		try {
 			await waitFor(() => expect(screen.getByText("Terminal error: attach failed")).toBeInTheDocument());
-			await waitFor(() => expect(xtermUnmounts.value).toBe(1));
+			expect(activeXterm()).toBeInTheDocument();
+			expect(xtermUnmounts.value).toBe(0);
 			expect(xtermMounts.value).toBe(1);
 			terminalState.value = "attached";
 			terminalError.value = undefined;
@@ -465,6 +528,48 @@ describe("terminal restore", () => {
 		});
 		try {
 			expect(screen.getByRole("button", { name: "Restore session" })).toBeInTheDocument();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("preserves Restore controls after a cached attachment reports a fatal pane error", async () => {
+		terminalState.value = "error";
+		terminalError.value = "terminal handle missing";
+		const terminated = {
+			...worker,
+			status: "terminated",
+			terminalHandleId: "term-1",
+		} satisfies WorkspaceSession;
+		const view = renderCachedPane({ session: terminated, sessions: [terminated] });
+		try {
+			expect(await screen.findByRole("button", { name: "Restore session" })).toBeInTheDocument();
+			expect(screen.getByTestId("xterm")).toBeInTheDocument();
+			expect(screen.getByText("Terminal error: terminal handle missing")).toBeInTheDocument();
+		} finally {
+			view.restore();
+		}
+	});
+});
+
+describe("terminal output notifications", () => {
+	it("badges a parked session even when its persisted inspector view is Browser", async () => {
+		const sessionA = { ...worker, id: "sess-a", terminalHandleId: "handle-a" };
+		const sessionB = { ...worker, id: "sess-b", terminalHandleId: "handle-b" };
+		useUiStore.getState().setInspectorOpen(sessionA.id, true);
+		useUiStore.getState().setInspectorView(sessionA.id, "browser");
+		const view = renderCachedPane({ session: sessionA, sessions: [sessionA, sessionB] });
+		try {
+			await waitFor(() => expect(terminalOutputHandlers.get(sessionA.id)).toBeTypeOf("function"));
+			view.show(sessionB);
+			await waitFor(() =>
+				expect(document.querySelector(`[data-terminal-cache-key^="session:${sessionA.id}:worker|"]`)).toHaveAttribute(
+					"aria-hidden",
+					"true",
+				),
+			);
+			act(() => terminalOutputHandlers.get(sessionA.id)?.("https://example.com/background\n"));
+			expect(useUiStore.getState().inspectorSessions[sessionA.id]?.browserUnseen).toBe(true);
 		} finally {
 			view.restore();
 		}

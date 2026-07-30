@@ -50,7 +50,10 @@ export type AttachableTerminal = {
 	 * Resolves only after xterm has rendered the anchor and crossed a paint
 	 * boundary, so the owner can reveal without exposing an intermediate row.
 	 */
-	prepareForActivation: (anchor: TerminalViewportAnchor) => Promise<void>;
+	prepareForActivation: (
+		anchor: TerminalViewportAnchor,
+		onGridChanged?: (cols: number, rows: number) => void,
+	) => Promise<void>;
 	/**
 	 * Erase screen + scrollback and home the cursor, preserving terminal modes.
 	 * Never a full reset (RIS): that would drop zellij's mouse-tracking mode
@@ -188,7 +191,6 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		// debounce without either clobbering the other (see scheduleReassert).
 		reassertTimer: null as ReturnType<typeof setTimeout> | null,
 		attempts: 0,
-		firstAttach: true,
 		generation: 0,
 		inputReady: false,
 		detached: true,
@@ -569,17 +571,6 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			() => resize.dispose(),
 		);
 
-		// Connection status is chrome (the pane's banner), never buffer content —
-		// the PTY owns the buffer. Each open spawns a fresh server-side `zellij
-		// attach` (backend internal/terminal/attachment.go) that answers with its
-		// init handshake + a full repaint; clear the stale screen so the repaint
-		// lands on a blank grid. Screen-clear only, never reset(): RIS would drop
-		// zellij's mouse-tracking mode until the handshake lands.
-		if (!r.firstAttach) {
-			terminal.clear();
-		}
-		r.firstAttach = false;
-
 		// Open the replay gate before the pane can produce any output. It cannot
 		// wait for `opened`: the daemon fires onOpen from setPTY and only then
 		// starts copyOut (attachment.go), so `attached` arrives before the first
@@ -637,7 +628,6 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			r.handle = handle;
 			r.detached = false;
 			r.attempts = 0;
-			r.firstAttach = true;
 			setError(undefined);
 			if (handle) {
 				if (optionsRef.current.daemonReady) {
@@ -669,6 +659,25 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		},
 		[connect, teardownMux, transition],
 	);
+
+	// Activation-only grid synchronization. A parked terminal suppresses normal
+	// ResizeObserver traffic, but a deliberate hidden fit during reparenting must
+	// update the PTY before the correct frame is revealed. Send exactly once and
+	// cancel delayed work for the superseded grid.
+	const syncSize = useCallback((cols: number, rows: number) => {
+		const r = runtime.current;
+		if (r.detached || !r.mux || !r.handle) return;
+		if (r.resizeTimer) {
+			clearTimeout(r.resizeTimer);
+			r.resizeTimer = null;
+		}
+		if (r.reassertTimer) {
+			clearTimeout(r.reassertTimer);
+			r.reassertTimer = null;
+		}
+		r.replayPendingReassert = null;
+		r.mux.resize(r.handle, cols, rows);
+	}, []);
 
 	// Daemon came back while we were waiting: reconnect immediately, without
 	// backoff debt from attempts made against the dead daemon.
@@ -744,5 +753,5 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		[teardownMux],
 	);
 
-	return { attach, state, error, replaySettled };
+	return { attach, state, error, replaySettled, syncSize };
 }

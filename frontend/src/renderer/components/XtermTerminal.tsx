@@ -182,9 +182,6 @@ type XtermInternal = Terminal & {
 			enable: () => void;
 			shouldForceSelection: (event: MouseEvent) => boolean;
 		};
-		viewport?: {
-			syncScrollArea: (immediate?: boolean) => void;
-		};
 	};
 };
 
@@ -755,7 +752,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			marker.onDispose(() => viewportMarkers.delete(markerId));
 			return { atBottom, markerId, viewportY: buffer.viewportY };
 		};
-		const prepareForActivation = (anchor: TerminalViewportAnchor): Promise<void> => {
+		const prepareForActivation = (
+			anchor: TerminalViewportAnchor,
+			onGridChanged?: (cols: number, rows: number) => void,
+		): Promise<void> => {
 			cancelActivationPreparation?.();
 			return new Promise((resolve) => {
 				const marker = anchor.markerId ? viewportMarkers.get(anchor.markerId) : undefined;
@@ -776,19 +776,24 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				cancelActivationPreparation = finish;
 
 				const restoreAnchor = () => {
+					const buffer = term.buffer.active;
 					if (anchor.atBottom) {
 						term.scrollToBottom();
-						const viewport = host.querySelector<HTMLElement>(".xterm-viewport");
-						if (viewport) viewport.scrollTop = viewport.scrollHeight;
 					} else {
-						const anchorLine = marker && !marker.isDisposed ? marker.line : anchor.viewportY;
-						term.scrollToLine(Math.min(anchorLine, term.buffer.active.baseY));
+						// Once xterm trims the marker's line, that content no
+						// longer exists. Clamp to the oldest retained line instead
+						// of applying the stale numeric row to unrelated content.
+						const anchorLine = marker && !marker.isDisposed ? marker.line : 0;
+						term.scrollToLine(Math.min(anchorLine, buffer.baseY));
 					}
 					// scrollToLine is intentionally a no-op when xterm's logical
 					// viewport already equals the target. While parked, however,
-					// the offscreen DOM scrollbar can still be stale. Force the
-					// xterm viewport service to map ydisp to pixels before reveal.
-					(term as XtermInternal)._core?.viewport?.syncScrollArea(true);
+					// the offscreen DOM scrollbar can still be stale. Synchronize
+					// the public viewport element from canonical xterm state.
+					const viewport = host.querySelector<HTMLElement>(".xterm-viewport");
+					if (!viewport) return;
+					const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+					viewport.scrollTop = buffer.baseY > 0 ? maxScrollTop * (buffer.viewportY / buffer.baseY) : 0;
 				};
 
 				// Only fit when reparenting actually changes the terminal grid.
@@ -800,7 +805,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					proposed.rows &&
 					(proposed.cols !== term.cols || proposed.rows !== term.rows)
 				) {
-					fitTerminal();
+					// Preparing is intentionally non-interactive, so the regular
+					// fit guard rejects hidden work. This one controlled fit is the
+					// activation transaction; report its new grid immediately so
+					// the PTY can repaint before reveal.
+					fit.fit();
+					onGridChanged?.(term.cols, term.rows);
 				}
 				restoreAnchor();
 

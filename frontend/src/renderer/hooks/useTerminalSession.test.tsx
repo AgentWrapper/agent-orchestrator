@@ -794,7 +794,7 @@ describe("useTerminalSession", () => {
 		expect(muxes).toHaveLength(1);
 	});
 
-	it("reattaches with a fresh mux after a socket drop, clearing the stale screen", () => {
+	it("reattaches with a fresh mux after a socket drop without clearing retained state", () => {
 		const { view, terminal, muxes } = setup();
 		act(() => muxes[0].emitOpened("handle-1"));
 		act(() => muxes[0].emitConnection("closed"));
@@ -802,7 +802,7 @@ describe("useTerminalSession", () => {
 		act(() => void vi.advanceTimersByTime(500));
 		expect(muxes).toHaveLength(2);
 		expect(muxes[0].disposed).toBe(true);
-		expect(terminal.clears).toBe(1); // the fresh zellij attach repaints over a blank grid
+		expect(terminal.clears).toBe(0);
 		expect(muxes[1].opens).toEqual([["handle-1", 80, 24]]);
 		act(() => muxes[1].emitOpened("handle-1"));
 		expect(view.result.current.state).toBe("attached");

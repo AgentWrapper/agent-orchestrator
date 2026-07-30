@@ -42,7 +42,7 @@ import type { MessageKey } from "../i18n";
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
-type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
+type OpenReviewerTerminal = (target: { generation: string; handleId: string; harness: string }) => void;
 
 export type InspectorView = "summary" | "reviews" | "browser" | "files";
 
@@ -774,7 +774,11 @@ function ReviewsView({
 			}
 			if (data?.reviewerHandleId) {
 				const harness = started.latestRun.harness || "reviewer";
-				onOpenReviewerTerminal?.({ handleId: data.reviewerHandleId, harness });
+				onOpenReviewerTerminal?.({
+					generation: started.latestRun.batchId || started.latestRun.id,
+					handleId: data.reviewerHandleId,
+					harness,
+				});
 			}
 		},
 	});
@@ -975,7 +979,11 @@ function ReviewPanel({
 	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
 	const openReviewerTerminal = () => {
 		if (!terminalEnabled) return;
-		onOpenTerminal?.({ handleId: reviewerHandleId, harness });
+		onOpenTerminal?.({
+			generation: latest?.batchId || latest?.id || reviewerHandleId,
+			handleId: reviewerHandleId,
+			harness,
+		});
 	};
 	const runDisabled =
 		isTriggering ||

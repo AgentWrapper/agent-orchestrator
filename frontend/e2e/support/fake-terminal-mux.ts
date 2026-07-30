@@ -177,12 +177,14 @@ export async function installFakeTerminalMux(
 				sockets: sockets.filter(
 					(socket) => socket.isTerminalMux && socket.readyState < FakeWebSocket.CLOSED,
 				).length,
-				writers: sockets.filter(
-					(socket) =>
-						socket.isTerminalMux &&
-						socket.readyState < FakeWebSocket.CLOSED &&
-						socket.attachmentCount > 0,
-				).length,
+				writers: sockets.reduce(
+					(total, socket) =>
+						total +
+						(socket.isTerminalMux && socket.readyState < FakeWebSocket.CLOSED
+							? socket.attachmentCount
+							: 0),
+					0,
+				),
 			}),
 		};
 	}, initialReplay);

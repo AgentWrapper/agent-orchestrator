@@ -238,7 +238,7 @@ test.describe("retained terminal viewport", () => {
 			expect(sixStats.opens[handle]).toBe(1);
 			expect(sixStats.closes[handle] ?? 0).toBe(0);
 		}
-		expect(sixStats.sockets).toBe(6);
+		expect(sixStats.sockets).toBe(1);
 		expect(sixStats.writers).toBe(6);
 
 		// A real width change reflows xterm's buffer. The retained top-line
@@ -373,6 +373,20 @@ test.describe("retained terminal viewport", () => {
 		await installHarness(page);
 		const originalViewport = activeViewport(page);
 		await originalViewport.evaluate((element) => element.setAttribute("data-reconnect-instance", "a"));
+		await activeTerminal(page).locator(".xterm-screen").hover();
+		await page.mouse.wheel(0, -1_400);
+		await expect.poll(() => activeBufferAtBottom(page)).toBe(false);
+		const retainedReconnectState = await activeTerminal(page)
+			.locator("[aria-label='Session terminal']")
+			.evaluate((element) => {
+				const terminal = (element as HTMLElement & { __aoXtermForTest?: TestXterm }).__aoXtermForTest!;
+				terminal.selectLines(125, 125);
+				return {
+					selection: terminal.getSelection(),
+					topLine: terminal.buffer.active.getLine(terminal.buffer.active.viewportY)?.translateToString(true),
+					viewportY: terminal.buffer.active.viewportY,
+				};
+			});
 
 		// A hidden terminal stays connected for output but cannot accept
 		// keyboard/paste input; only the active B pane receives it.
@@ -393,14 +407,29 @@ test.describe("retained terminal viewport", () => {
 		await openSession(page, sessionA.title);
 		await expect(activeViewport(page)).toHaveAttribute("data-reconnect-instance", "a");
 		await page.evaluate((handleId) => window.__aoFakeTerminalMux!.disconnect(handleId), handleA);
-		await expect(page.getByText("Terminal disconnected — reattaching…")).toBeVisible();
+		await expect(activeTerminal(page).getByText("Terminal disconnected — reattaching…")).toBeVisible();
 		await expect.poll(async () => (await muxStats(page)).opens[handleA] ?? 0).toBe(2);
+		await expect.poll(async () => (await muxStats(page)).opens[handleB] ?? 0).toBe(2);
+		await expect.poll(async () => (await muxStats(page)).opens[handleC] ?? 0).toBe(2);
 		await expect(page.getByTestId("terminal-replay-cover")).toHaveCount(0);
 		await expect(activeViewport(page)).toHaveAttribute("data-reconnect-instance", "a");
+		const afterReconnect = await activeTerminal(page)
+			.locator("[aria-label='Session terminal']")
+			.evaluate((element) => {
+				const terminal = (element as HTMLElement & { __aoXtermForTest?: TestXterm }).__aoXtermForTest!;
+				return {
+					selection: terminal.getSelection(),
+					topLine: terminal.buffer.active.getLine(terminal.buffer.active.viewportY)?.translateToString(true),
+					viewportY: terminal.buffer.active.viewportY,
+				};
+			});
+		expect(afterReconnect.viewportY).toBe(retainedReconnectState.viewportY);
+		expect(afterReconnect.topLine).toBe(retainedReconnectState.topLine);
+		expect(afterReconnect.selection).toBe(retainedReconnectState.selection);
 		expect((await muxStats(page)).opens[handleA]).toBe(2);
 		const reconnectStats = await muxStats(page);
 		expect(reconnectStats.writers).toBe(3); // Exactly one writer for each retained A/B/C attachment.
-		expect(reconnectStats.sockets).toBe(3);
+		expect(reconnectStats.sockets).toBe(1);
 
 		// Authoritative session removal is a hard lifecycle boundary, not an LRU
 		// event: every retained renderer and mux must be disposed.
@@ -409,6 +438,54 @@ test.describe("retained terminal viewport", () => {
 		}, [sessionA.id, sessionB.id, sessionC.id]);
 		await expect.poll(async () => (await muxStats(page)).writers).toBe(0);
 		await expect.poll(async () => (await muxStats(page)).sockets).toBe(0);
+	});
+
+	test("clamps an evicted historical anchor to the oldest retained line without exposing an intermediate frame", async ({
+		page,
+	}) => {
+		await installHarness(page);
+		await activeTerminal(page).locator(".xterm-screen").hover();
+		await page.mouse.wheel(0, -100_000);
+		await expect.poll(() => activeBufferAtBottom(page)).toBe(false);
+
+		await openSession(page, sessionB.title);
+		const parkedA = page.locator(`[data-terminal-cache-key^="session:${sessionA.id}:worker|"]`);
+		await page.evaluate((handleId) => {
+			window.__aoFakeTerminalMux!.emit(
+				handleId,
+				"\r\n" +
+					Array.from({ length: 5_300 }, (_, index) => `A eviction output ${String(index).padStart(4, "0")}`).join(
+						"\r\n",
+					),
+			);
+		}, handleA);
+		await expect
+			.poll(() =>
+				parkedA.locator("[aria-label='Session terminal']").evaluate((element) => {
+					const terminal = (element as HTMLElement & { __aoXtermForTest?: TestXterm }).__aoXtermForTest!;
+					return terminal.buffer.active.baseY;
+				}),
+			)
+			.toBeGreaterThanOrEqual(5_000);
+
+		await observeNextReveal(parkedA);
+		await openSession(page, sessionA.title);
+		const restored = await activeTerminal(page)
+			.locator("[aria-label='Session terminal']")
+			.evaluate((element) => {
+				const terminal = (element as HTMLElement & { __aoXtermForTest?: TestXterm }).__aoXtermForTest!;
+				return {
+					topLine: terminal.buffer.active.getLine(0)?.translateToString(true),
+					viewportY: terminal.buffer.active.viewportY,
+				};
+			});
+		expect(restored.viewportY).toBe(0);
+		expect(restored.topLine).toContain("A eviction output");
+		const samples = await revealSamples(page);
+		expect(samples.length).toBeGreaterThan(0);
+		for (const sample of samples) {
+			expect(sample.viewportY).toBe(0);
+		}
 	});
 
 	test("replaces a retained xterm when the logical sessions terminal handle generation changes", async ({ page }) => {

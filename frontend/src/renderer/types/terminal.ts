@@ -1,9 +1,12 @@
 export type TerminalTarget =
 	| { kind: "worker" }
 	| {
+			/** Review batch identity; the stable handle can be reused by a new runtime. */
+			generation: string;
 			kind: "reviewer";
 			handleId: string;
 			harness: string;
+			sessionId: string;
 	  }
 	// A standalone shell the user opened by hand — no agent session behind it,
 	// so unlike "worker" and "reviewer" it carries its own handle and never
@@ -13,5 +16,12 @@ export type TerminalTarget =
 			generation: string;
 			kind: "shell";
 			handleId: string;
+			/** Undefined only for a standalone shell outside a session route. */
+			sessionId?: string;
 			title: string;
 	  };
+
+export function terminalTargetBelongsToSession(target: TerminalTarget, sessionId: string | undefined): boolean {
+	if (target.kind === "worker") return true;
+	return target.sessionId === sessionId;
+}

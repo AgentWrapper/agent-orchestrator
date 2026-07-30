@@ -107,6 +107,16 @@ export type TerminalMux = {
 	dispose: () => void;
 };
 
+export type TerminalMuxPool = {
+	/**
+	 * Acquire an independently disposable attachment lease over the shared
+	 * browser-to-daemon mux socket.
+	 */
+	acquire: () => TerminalMux;
+	/** Release the current shared socket and every listener (the pool stays reusable). */
+	dispose: () => void;
+};
+
 const PING_INTERVAL_MS = 20_000;
 
 function subscribeById<T>(map: Map<string, Set<T>>, id: string, listener: T): () => void {
@@ -240,5 +250,115 @@ export function createTerminalMux(url: string, WebSocketImpl: typeof WebSocket =
 			return () => connectionListeners.delete(listener);
 		},
 		dispose,
+	};
+}
+
+/**
+ * Share the mux transport without sharing attachment ownership.
+ *
+ * The daemon protocol already multiplexes frames by terminal id. A lease keeps
+ * listener and cleanup ownership local to one useTerminalSession instance while
+ * avoiding one WebSocket and ping timer per retained xterm. The last lease
+ * closes the underlying client. A socket-level failure retires that client so
+ * reconnecting leases converge on one replacement socket.
+ */
+export function createTerminalMuxPool(createMux: () => TerminalMux): TerminalMuxPool {
+	type Connection = {
+		closed: boolean;
+		disposed: boolean;
+		mux: TerminalMux;
+		refs: number;
+		unsubscribeState: () => void;
+	};
+
+	const connections = new Set<Connection>();
+	let current: Connection | null = null;
+
+	const disposeConnection = (connection: Connection) => {
+		if (connection.disposed) return;
+		connection.disposed = true;
+		connection.closed = true;
+		if (current === connection) current = null;
+		connections.delete(connection);
+		connection.unsubscribeState();
+		connection.mux.dispose();
+	};
+
+	const newConnection = (): Connection => {
+		const mux = createMux();
+		const connection: Connection = {
+			closed: false,
+			disposed: false,
+			mux,
+			refs: 0,
+			unsubscribeState: () => undefined,
+		};
+		connection.unsubscribeState = mux.onConnectionChange((state) => {
+			if (state !== "closed") return;
+			connection.closed = true;
+			if (current === connection) current = null;
+			if (connection.refs === 0) disposeConnection(connection);
+		});
+		connections.add(connection);
+		current = connection;
+		return connection;
+	};
+
+	const acquire = (): TerminalMux => {
+		const connection = current && !current.closed && !current.disposed ? current : newConnection();
+		connection.refs += 1;
+		let released = false;
+		const subscriptions = new Set<() => void>();
+
+		const subscribe = (register: () => () => void): (() => void) => {
+			if (released || connection.closed || connection.disposed) return () => undefined;
+			const unsubscribe = register();
+			let subscribed = true;
+			const dispose = () => {
+				if (!subscribed) return;
+				subscribed = false;
+				subscriptions.delete(dispose);
+				unsubscribe();
+			};
+			subscriptions.add(dispose);
+			return dispose;
+		};
+
+		const dispose = () => {
+			if (released) return;
+			released = true;
+			for (const unsubscribe of [...subscriptions]) unsubscribe();
+			connection.refs -= 1;
+			if (connection.refs === 0) disposeConnection(connection);
+		};
+
+		return {
+			open: (id, cols, rows) => {
+				if (!released && !connection.closed && !connection.disposed) connection.mux.open(id, cols, rows);
+			},
+			sendInput: (id, input) => {
+				if (!released && !connection.closed && !connection.disposed) connection.mux.sendInput(id, input);
+			},
+			resize: (id, cols, rows) => {
+				if (!released && !connection.closed && !connection.disposed) connection.mux.resize(id, cols, rows);
+			},
+			close: (id) => {
+				if (!released && !connection.closed && !connection.disposed) connection.mux.close(id);
+			},
+			onData: (id, listener) => subscribe(() => connection.mux.onData(id, listener)),
+			onExit: (id, listener) => subscribe(() => connection.mux.onExit(id, listener)),
+			onOpened: (id, listener) => subscribe(() => connection.mux.onOpened(id, listener)),
+			onError: (id, listener) => subscribe(() => connection.mux.onError(id, listener)),
+			onConnectionChange: (listener) => subscribe(() => connection.mux.onConnectionChange(listener)),
+			dispose,
+		};
+	};
+
+	return {
+		acquire,
+		dispose: () => {
+			current = null;
+			for (const connection of [...connections]) disposeConnection(connection);
+		},
 	};
 }

@@ -710,7 +710,11 @@ describe("SessionInspector reviews tab", () => {
 				params: { path: { sessionId: "sess-1" } },
 			}),
 		);
-		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-pane", harness: "codex" });
+		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({
+			generation: "run-1",
+			handleId: "reviewer-pane",
+			harness: "codex",
+		});
 	});
 
 	it("shows claude-code as the default reviewer before a run exists", async () => {

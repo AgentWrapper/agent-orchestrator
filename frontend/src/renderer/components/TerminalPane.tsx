@@ -14,7 +14,7 @@ import {
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import type { TerminalTarget } from "../types/terminal";
+import { terminalTargetBelongsToSession, type TerminalTarget } from "../types/terminal";
 import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import { useUiStore, type Theme } from "../stores/ui-store";
 import {
@@ -23,8 +23,15 @@ import {
 	type TerminalSessionState,
 	type TerminalViewportAnchor,
 } from "../hooks/useTerminalSession";
-import { apiClient } from "../lib/api-client";
+import { apiClient, getApiBaseUrl } from "../lib/api-client";
 import { createUrlWatcher, type UrlWatcher } from "../lib/detect-urls";
+import {
+	createTerminalMux,
+	createTerminalMuxPool,
+	muxUrlFromApiBase,
+	type TerminalMux,
+	type TerminalMuxPool,
+} from "../lib/terminal-mux";
 import { cn } from "../lib/utils";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { useRestoreSession } from "../hooks/useRestoreSession";
@@ -38,6 +45,8 @@ type TerminalPaneProps = {
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
 	fontSize: number;
+	/** Provider-owned shared transport lease factory. */
+	createMux?: () => TerminalMux;
 };
 
 type TerminalCacheDescriptor = {
@@ -51,9 +60,9 @@ type TerminalCacheDescriptor = {
 
 type CachedTerminalEntry = TerminalCacheDescriptor & {
 	activationId: number;
-	activationPhase: "parked" | "preparing" | "visible";
+	activationPhase: "parked" | "preparing" | "ready" | "visible";
 	container: HTMLDivElement;
-	fatalMessage?: string;
+	discardOnDeactivate?: boolean;
 	props: TerminalPaneProps;
 	terminal?: AttachableTerminal;
 	viewportAnchor?: TerminalViewportAnchor;
@@ -95,6 +104,7 @@ function terminalPropsMatch(left: TerminalPaneProps, right: TerminalPaneProps): 
 		left.theme === right.theme &&
 		left.daemonReady === right.daemonReady &&
 		left.fontSize === right.fontSize &&
+		left.createMux === right.createMux &&
 		terminalTargetMatches(left.terminalTarget, right.terminalTarget)
 	);
 }
@@ -104,6 +114,7 @@ function cacheDescriptor(
 	terminalTarget: TerminalTarget | undefined,
 ): TerminalCacheDescriptor | null {
 	if (terminalTarget?.kind === "shell") {
+		if (!terminalTargetBelongsToSession(terminalTarget, session?.id)) return null;
 		const ownerKey = `shell:${session?.id ?? "standalone"}:${terminalTarget.handleId}`;
 		return {
 			cacheKey: `${ownerKey}|handle:${terminalTarget.handleId}|generation:${terminalTarget.generation}`,
@@ -119,9 +130,14 @@ function cacheDescriptor(
 		terminalTarget?.kind === "reviewer" ? terminalTarget.handleId : session?.terminalHandleId;
 	if (!session?.id || !handleId) return null;
 	const kind = terminalTarget?.kind === "reviewer" ? "reviewer" : "worker";
+	if (terminalTarget?.kind === "reviewer" && terminalTarget.sessionId !== session.id) return null;
 	const ownerKey = `session:${session.id}:${kind}`;
 	return {
-		cacheKey: `${ownerKey}|handle:${handleId}`,
+		cacheKey:
+			terminalTarget?.kind === "reviewer"
+				? `${ownerKey}|handle:${handleId}|generation:${terminalTarget.generation}`
+				: `${ownerKey}|handle:${handleId}`,
+		generation: terminalTarget?.kind === "reviewer" ? terminalTarget.generation : undefined,
 		handleId,
 		kind,
 		ownerKey,
@@ -187,12 +203,14 @@ function CachedTerminalPortal({
 	entry,
 	onFatal,
 	onPrepared,
+	onReveal,
 	onTerminalReady,
 }: {
 	active: boolean;
 	entry: CachedTerminalEntry;
 	onFatal: (cacheKey: string, message: string) => void;
 	onPrepared: (cacheKey: string, activationId: number) => void;
+	onReveal: (cacheKey: string, activationId: number) => void;
 	onTerminalReady: (cacheKey: string, terminal: AttachableTerminal) => void;
 }) {
 	const handleFatal = useCallback(
@@ -226,22 +244,21 @@ function CachedTerminalPortal({
 		entry.viewportAnchor,
 		onPrepared,
 	]);
+	useLayoutEffect(() => {
+		if (!active || entry.activationPhase !== "ready") return;
+		onReveal(entry.cacheKey, entry.activationId);
+	}, [active, entry, entry.activationId, entry.activationPhase, onReveal]);
 	return createPortal(
-		entry.fatalMessage ? (
-			<div
-				className="grid h-full place-items-center bg-terminal p-4 font-mono text-xs text-muted-foreground"
-				data-testid="terminal-fatal-state"
-			>
-				Terminal error: {entry.fatalMessage}
-			</div>
-		) : (
-			<AttachedTerminal
-				{...entry.props}
-				isVisible={active}
-				onFatal={handleFatal}
-				onTerminalReady={handleTerminalReady}
-			/>
-		),
+		<AttachedTerminal
+			{...entry.props}
+			isVisible={
+				active &&
+				(entry.activationPhase === "ready" ||
+					entry.activationPhase === "visible")
+			}
+			onFatal={handleFatal}
+			onTerminalReady={handleTerminalReady}
+		/>,
 		entry.container,
 		entry.cacheKey,
 	);
@@ -267,6 +284,13 @@ export function TerminalCacheProvider({
 	const entriesRef = useRef(new Map<string, CachedTerminalEntry>());
 	const activeRef = useRef<ActiveTerminalEntry | null>(null);
 	const parkingRef = useRef<HTMLDivElement | null>(null);
+	const muxPoolRef = useRef<TerminalMuxPool | null>(null);
+	if (!muxPoolRef.current) {
+		muxPoolRef.current = createTerminalMuxPool(() =>
+			createTerminalMux(muxUrlFromApiBase(getApiBaseUrl())),
+		);
+	}
+	const muxPool = muxPoolRef.current;
 	const [, setRevision] = useState(0);
 
 	const rerender = useCallback(() => setRevision((current) => current + 1), []);
@@ -292,13 +316,14 @@ export function TerminalCacheProvider({
 		(descriptor: TerminalCacheDescriptor, props: TerminalPaneProps, slot: HTMLDivElement) => {
 			const parking = parkingRef.current;
 			if (!parking) return;
+			const cachedProps = { ...props, createMux: muxPool.acquire };
 
 			const previous = activeRef.current;
 			if (previous && previous.key !== descriptor.cacheKey) {
 				const previousEntry = entriesRef.current.get(previous.key);
 				if (previousEntry) {
 					parkTerminal(previousEntry, parking);
-					if (previousEntry.fatalMessage) {
+					if (previousEntry.discardOnDeactivate) {
 						entriesRef.current.delete(previous.key);
 						previousEntry.container.remove();
 					}
@@ -327,17 +352,17 @@ export function TerminalCacheProvider({
 					activationId: 0,
 					activationPhase: "parked",
 					container,
-					props,
+					props: cachedProps,
 				};
 				entriesRef.current.set(entry.cacheKey, entry);
 			} else {
-				entry.props = props;
+				entry.props = cachedProps;
 			}
 			showTerminal(entry, slot);
 			activeRef.current = { key: entry.cacheKey, slot };
 			rerender();
 		},
-		[rerender],
+		[muxPool, rerender],
 	);
 
 	const deactivate = useCallback(
@@ -348,7 +373,7 @@ export function TerminalCacheProvider({
 			const parking = parkingRef.current;
 			activeRef.current = null;
 			if (!entry) return;
-			if (entry.fatalMessage || !parking) {
+			if (entry.discardOnDeactivate || !parking) {
 				entriesRef.current.delete(cacheKey);
 				entry.container.remove();
 				rerender();
@@ -363,29 +388,28 @@ export function TerminalCacheProvider({
 	const update = useCallback(
 		(cacheKey: string, props: TerminalPaneProps) => {
 			const entry = entriesRef.current.get(cacheKey);
-			if (!entry || terminalPropsMatch(entry.props, props)) return;
-			entry.props = props;
+			const cachedProps = { ...props, createMux: muxPool.acquire };
+			if (!entry || terminalPropsMatch(entry.props, cachedProps)) return;
+			entry.props = cachedProps;
 			rerender();
 		},
-		[rerender],
+		[muxPool, rerender],
 	);
 
 	const markFatal = useCallback(
-		(cacheKey: string, message: string) => {
+		(cacheKey: string, _message: string) => {
 			const entry = entriesRef.current.get(cacheKey);
 			if (!entry) return;
 			if (activeRef.current?.key !== cacheKey) {
 				removeEntry(cacheKey);
 				return;
 			}
-			// Keep a lightweight error surface in the active slot, but unmount
-			// xterm/useTerminalSession immediately so a fatal pane owns no renderer,
-			// socket, writer, input handler, or resize handler.
-			entry.fatalMessage = message;
-			entry.terminal = undefined;
-			rerender();
+			// Renderer initialization failed. AttachedTerminal owns the visible
+			// error surface; mark the entry only so it is discarded when the user
+			// leaves instead of retaining an unusable renderer.
+			entry.discardOnDeactivate = true;
 		},
-		[removeEntry, rerender],
+		[removeEntry],
 	);
 
 	const markTerminalReady = useCallback(
@@ -398,12 +422,29 @@ export function TerminalCacheProvider({
 		[rerender],
 	);
 
-	const markPrepared = useCallback((cacheKey: string, activationId: number) => {
+	const markPrepared = useCallback(
+		(cacheKey: string, activationId: number) => {
+			const entry = entriesRef.current.get(cacheKey);
+			if (
+				!entry ||
+				entry.activationId !== activationId ||
+				entry.activationPhase !== "preparing" ||
+				activeRef.current?.key !== cacheKey
+			) {
+				return;
+			}
+			setTerminalPhase(entry, "ready");
+			rerender();
+		},
+		[rerender],
+	);
+
+	const markReveal = useCallback((cacheKey: string, activationId: number) => {
 		const entry = entriesRef.current.get(cacheKey);
 		if (
 			!entry ||
 			entry.activationId !== activationId ||
-			entry.activationPhase !== "preparing" ||
+			entry.activationPhase !== "ready" ||
 			activeRef.current?.key !== cacheKey
 		) {
 			return;
@@ -448,6 +489,10 @@ export function TerminalCacheProvider({
 				removeEntry(entry.cacheKey);
 				continue;
 			}
+			if (entry.kind === "reviewer" && session && entry.sessionId !== session.id) {
+				removeEntry(entry.cacheKey);
+				continue;
+			}
 			if (session && entry.props.session !== session) {
 				entry.props = { ...entry.props, session };
 				rerender();
@@ -465,7 +510,11 @@ export function TerminalCacheProvider({
 		for (const entry of entriesRef.current.values()) {
 			if (entry.kind !== "shell") continue;
 			const shell = shells.get(entry.handleId);
-			if (!shell || shell.createdAt !== entry.generation) {
+			if (
+				!shell ||
+				shell.createdAt !== entry.generation ||
+				shell.sessionId !== entry.sessionId
+			) {
 				removeEntry(entry.cacheKey);
 				continue;
 			}
@@ -487,8 +536,9 @@ export function TerminalCacheProvider({
 			activeRef.current = null;
 			for (const entry of entriesRef.current.values()) entry.container.remove();
 			entriesRef.current.clear();
+			muxPool.dispose();
 		},
-		[],
+		[muxPool],
 	);
 
 	const controller = useMemo<TerminalCacheController>(
@@ -515,6 +565,7 @@ export function TerminalCacheProvider({
 					key={entry.cacheKey}
 					onFatal={markFatal}
 					onPrepared={markPrepared}
+					onReveal={markReveal}
 					onTerminalReady={markTerminalReady}
 				/>
 			))}
@@ -546,7 +597,18 @@ function CachedTerminalSlot({
 	return <div className="h-full min-h-0 w-full" data-testid="session-terminal-slot" ref={slotRef} />;
 }
 
-export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
+export function TerminalPane({
+	session,
+	theme,
+	daemonReady,
+	terminalTarget: requestedTerminalTarget,
+	fontSize,
+}: TerminalPaneProps) {
+	const terminalTarget =
+		requestedTerminalTarget &&
+		terminalTargetBelongsToSession(requestedTerminalTarget, session?.id)
+			? requestedTerminalTarget
+			: ({ kind: "worker" } satisfies TerminalTarget);
 	const cache = useContext(TerminalCacheContext);
 	const terminalKey =
 		terminalTarget?.kind === "reviewer" || terminalTarget?.kind === "shell"
@@ -758,6 +820,7 @@ function AttachedTerminal({
 	daemonReady,
 	terminalTarget,
 	fontSize,
+	createMux,
 	isVisible = true,
 	onFatal,
 	onTerminalReady,
@@ -789,6 +852,8 @@ function AttachedTerminal({
 	// open it — and is skipped while they are already looking at the Browser tab.
 	const watchLinks = Boolean(session?.id && session.kind === "worker" && terminalTarget?.kind !== "shell");
 	const urlWatcherRef = useRef<UrlWatcher | null>(null);
+	const isVisibleRef = useRef(isVisible);
+	isVisibleRef.current = isVisible;
 	const handleOutput = useCallback(
 		(text: string) => {
 			const sessionId = session?.id;
@@ -797,7 +862,10 @@ function AttachedTerminal({
 				urlWatcherRef.current = createUrlWatcher(() => {
 					const store = useUiStore.getState();
 					const current = store.inspectorSessions[sessionId];
-					const viewingBrowser = (current?.isOpen ?? true) && (current?.view ?? "summary") === "browser";
+					const viewingBrowser =
+						isVisibleRef.current &&
+						(current?.isOpen ?? true) &&
+						(current?.view ?? "summary") === "browser";
 					if (!viewingBrowser) store.setBrowserUnseen(sessionId, true);
 				});
 			}
@@ -805,7 +873,8 @@ function AttachedTerminal({
 		},
 		[session?.id],
 	);
-	const { attach, state, error, replaySettled } = useTerminalSession(attachSession, {
+	const { attach, state, error, replaySettled, syncSize } = useTerminalSession(attachSession, {
+		createMux,
 		daemonReady,
 		isVisible,
 		shellTerminalHandleId,
@@ -813,7 +882,6 @@ function AttachedTerminal({
 	});
 	const handleId = shellTerminalHandleId ?? attachSession?.terminalHandleId;
 	const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : session?.provider;
-	const hadAttachmentRef = useRef(false);
 	const isSessionActive = session ? sessionIsActive(session) : false;
 	// A standalone shell is never restorable: there is no session row to restore.
 	const canRestoreSession =
@@ -822,9 +890,27 @@ function AttachedTerminal({
 		session !== undefined &&
 		!isSessionActive;
 
-	const handleReady = useCallback((handle: AttachableTerminal) => {
-		setTerminal(handle);
-	}, []);
+	const handleReady = useCallback(
+		(handle: AttachableTerminal) => {
+			const activationAwareHandle: AttachableTerminal = {
+				get cols() {
+					return handle.cols;
+				},
+				get rows() {
+					return handle.rows;
+				},
+				write: handle.write,
+				writeln: handle.writeln,
+				captureViewportAnchor: handle.captureViewportAnchor,
+				prepareForActivation: (anchor) => handle.prepareForActivation(anchor, syncSize),
+				clear: handle.clear,
+				onUserInput: handle.onUserInput,
+				onResize: handle.onResize,
+			};
+			setTerminal(activationAwareHandle);
+		},
+		[syncSize],
+	);
 	useLayoutEffect(() => {
 		if (terminal) onTerminalReady?.(terminal);
 	}, [onTerminalReady, terminal]);
@@ -837,8 +923,7 @@ function AttachedTerminal({
 			onFatal?.("renderer initialization failed");
 			return;
 		}
-		if (state === "error") onFatal?.(error ?? "connection failed");
-	}, [error, initFailed, onFatal, state]);
+	}, [initFailed, onFatal]);
 	const setInspectorViewForSession = useUiStore((state) => state.setInspectorView);
 	const setInspectorOpenForSession = useUiStore((state) => state.setInspectorOpen);
 	const handleLinkOpen = useCallback(
@@ -895,18 +980,6 @@ function AttachedTerminal({
 
 	useEffect(() => {
 		if (!terminal) return;
-		// Reuse means the previous session's screen would linger; clear before
-		// re-pointing. Screen-clear only, never reset(): every pane PTY is
-		// `zellij attach` with identical modes, so the previous session's mouse
-		// tracking stays valid while the new attach's handshake + repaint stream
-		// in — a full RIS would leave wheel scroll dead for that window (yyork's
-		// frozen-scroll regression, solved there the same way). Skipped on the
-		// very first attachment: the buffer is empty and the first fit may not
-		// have run yet.
-		if (hadAttachmentRef.current) {
-			terminal.clear();
-		}
-		hadAttachmentRef.current = true;
 		return attach(terminal);
 	}, [terminal, handleId, attach, attachSession?.id]);
 

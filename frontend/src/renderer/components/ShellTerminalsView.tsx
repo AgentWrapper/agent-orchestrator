@@ -113,6 +113,7 @@ export function ShellTerminalsView() {
 							generation: active.createdAt,
 							kind: "shell",
 							handleId: active.handleId,
+							sessionId: active.sessionId,
 							title: active.title,
 						}}
 						theme={theme}
