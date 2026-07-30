@@ -53,7 +53,7 @@
 	--sidebar-primary-foreground: oklch(0.985 0 0);
 	--sidebar-accent: oklch(0.274 0.006 286.033);
 	--sidebar-accent-foreground: oklch(0.985 0 0);
-	--sidebar-border: oklch(1 0 0 / 10%);
+	--sidebar-border: var(--border);
 	--sidebar-ring: oklch(0.552 0.016 285.938);
 
 	/* ═══════════════════════════════════════════════════════════════
@@ -294,8 +294,11 @@
 	/* Clears the macOS traffic-light row used by the fixed titlebar controls. */
 	--size-traffic-light-clearance: 40px;
 	--size-traffic-light-clearance-fullscreen: var(--space-2);
-	--size-resize-handle: 7px;
-	--size-resize-handle-offset: 3px;
+	/* Resize handle is flush with the sidebar right edge (offset 0) and wide
+	 * enough to cover the entire gap between sidebar and center panel surface,
+	 * making the whole inset area a drag zone rather than a narrow hotspot. */
+	--size-resize-handle: 12px;
+	--size-resize-handle-offset: 0px;
 	--size-kanban-glow: 130px;
 	--size-kv-label: 74px;
 	--size-notification-width: 460px;
@@ -356,13 +359,17 @@
 	--size-sidebar-project-actions: 84px;
 
 	/* Shared inset-panel geometry (welcome board + settings page) */
-	--size-center-panel-inset: 12px;
-	--size-center-panel-inline-inset: 8px;
-	--size-center-panel-bottom-inset: 6px;
+	--size-center-panel-inset: 24px;
+	--size-center-panel-inline-inset: 16px;
+	--size-center-panel-bottom-inset: 14px;
 	/* macOS frames the panel with one uniform inset on all four sides. It stays
 	 * near-flush so in-panel titles align with the fixed TitlebarNav row. */
-	--size-center-panel-inset-mac: 2px;
-	--radius-center-panel: 17px;
+	--size-center-panel-inset-mac: 6px;
+	/* Formula: inner = outer_window_radius - inset (nested corner alignment).
+	 * macOS window corner ≈ 12px; inset = 6px → inner = 6px.
+	 * Non-mac inset is larger so we pick a flat small value (8px) there. */
+	--radius-window: 12px;
+	--radius-center-panel: calc(var(--radius-window) - var(--size-center-panel-inset-mac));
 
 	/* Welcome / import radius alias (CreateProjectFlow rounded-welcome-panel) */
 	--color-border-welcome-panel: var(--border);
@@ -617,7 +624,7 @@
 	--sidebar-primary-foreground: oklch(0.985 0 0);
 	--sidebar-accent: oklch(0.967 0.001 286.375);
 	--sidebar-accent-foreground: oklch(0.21 0.006 285.885);
-	--sidebar-border: oklch(0.92 0.004 286.32);
+	--sidebar-border: var(--border);
 	--sidebar-ring: oklch(0.705 0.015 286.067);
 
 	--color-bg-primary: var(--background);

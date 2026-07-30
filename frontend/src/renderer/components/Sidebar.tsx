@@ -305,11 +305,17 @@ export function Sidebar({
 			{/* Footer — Settings opens the global settings page directly.
 			    Bottom margin clears the framed center-panel inset and sits the
 			    button on the same band as the board Archive row. */}
-			<SidebarFooter
-				className={cn(
-					"relative mt-auto gap-0 overflow-hidden px-2.5 pb-0 pt-1.5 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pb-0 group-data-[collapsible=icon]:pt-1.5",
-					isMac || isLinux ? "mb-3" : "mb-5",
-				)}
+		<SidebarFooter
+			className={cn(
+				// Padding uses the same center-panel inset tokens so the settings
+				// button's outer gap exactly matches the page-layout spacing on every
+				// side: bottom / left / right of the sidebar footer sit flush with the
+				// corresponding edges of the center-panel surface.
+				"relative mt-auto gap-0 overflow-hidden pt-1.5 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:pt-1.5",
+				isMac || isLinux
+					? "px-[var(--size-center-panel-inset-mac)] pb-[var(--size-center-panel-inset-mac)] group-data-[collapsible=icon]:px-[var(--size-center-panel-inset-mac)] group-data-[collapsible=icon]:pb-[var(--size-center-panel-inset-mac)]"
+					: "px-[var(--size-center-panel-inline-inset)] pb-[var(--size-center-panel-bottom-inset)] group-data-[collapsible=icon]:px-2 group-data-[collapsible=icon]:pb-[var(--size-center-panel-bottom-inset)]",
+			)}
 			>
 				{/* Always-present daemon status mirror for the smoke suite: no visible
 				    daemon-state copy is guaranteed to be mounted elsewhere. */}
