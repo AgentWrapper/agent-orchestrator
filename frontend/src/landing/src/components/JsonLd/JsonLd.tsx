@@ -34,6 +34,7 @@ export function OrganizationJsonLd() {
 	const schema = {
 		"@context": "https://schema.org",
 		"@type": "Organization",
+		"@id": `${COMPANY.MARKETING_URL}/#organization`,
 		name: COMPANY.NAME,
 		url: COMPANY.MARKETING_URL,
 		logo: `${COMPANY.MARKETING_URL}/ao-logo.svg`,
