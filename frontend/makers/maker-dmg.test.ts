@@ -165,12 +165,11 @@ describe("sealDmg", () => {
 		expect(commands).toEqual([]);
 	});
 
-	it("throws on a partial App Store Connect key trio", async () => {
-		// An incomplete trio resolves to no notary args at all, so with an identity
-		// set this is the signed-but-unnotarized case, not the local no-op.
+	it("throws on a partial App Store Connect key trio even without a signing identity", async () => {
 		await expect(
-			sealDmg(dmg, { APPLE_SIGNING_IDENTITY: "id", APPLE_API_KEY: "/tmp/key.p8", APPLE_API_KEY_ID: "KEYID" }),
-		).rejects.toThrow(/no notarization credentials/);
+			sealDmg(dmg, { APPLE_API_KEY: "/tmp/key.p8", APPLE_API_KEY_ID: "KEYID" }),
+		).rejects.toThrow(/incomplete App Store Connect credentials/);
+		expect(commands).toEqual([]);
 	});
 
 	it("signs, notarizes with a keychain profile, and staples", async () => {

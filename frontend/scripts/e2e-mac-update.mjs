@@ -102,14 +102,11 @@ export function parseArgs(argv) {
 	if (!opts.expectVersion) throw new UsageError("--expect-version is required");
 	if (!opts.app.endsWith(".app")) throw new UsageError(`--app must point at a .app bundle, got ${opts.app}`);
 	opts.stateDir ??= join(homedir(), ".ao");
-	// The run file is DELETED before each launch so the liveness poll cannot pass
-	// on a stale file. A typo'd --run-file would therefore delete something
-	// unrelated, so constrain it to the shape a run file actually has: an
-	// absolute path to a .json. rmSync without `recursive` already refuses
-	// directories, so this closes the remaining case.
+	// The run file is deleted before each launch so the liveness poll cannot pass
+	// on a stale file. It must be absolute; removeRunFile validates any existing
+	// target as an AO run-file handshake before deletion.
 	if (opts.runFile !== undefined) {
 		if (!isAbsolute(opts.runFile)) throw new UsageError(`--run-file must be an absolute path, got ${opts.runFile}`);
-		if (!opts.runFile.endsWith(".json")) throw new UsageError(`--run-file must end in .json, got ${opts.runFile}`);
 	}
 	if (!isAbsolute(opts.stateDir)) throw new UsageError(`--state-dir must be an absolute path, got ${opts.stateDir}`);
 	opts.runFile ??= join(opts.stateDir, "running.json");
@@ -223,6 +220,33 @@ export function seedUpdateSettings(settingsDir, channel) {
 	writeFileSync(join(settingsDir, "update-settings.json"), `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
 }
 
+// removeRunFile clears a stale daemon handshake without treating an arbitrary
+// JSON file as disposable harness state. The daemon always writes pid, port and
+// startedAt; require that complete shape whenever a target already exists.
+export function removeRunFile(runFile) {
+	if (!existsSync(runFile)) return;
+	let info;
+	try {
+		info = JSON.parse(readFileSync(runFile, "utf8"));
+	} catch {
+		throw new UsageError(`refusing to remove ${runFile}: existing file is not an AO running.json handshake`);
+	}
+	if (
+		typeof info !== "object" ||
+		info === null ||
+		!Number.isInteger(info.pid) ||
+		info.pid <= 0 ||
+		!Number.isInteger(info.port) ||
+		info.port < 1 ||
+		info.port > 65535 ||
+		typeof info.startedAt !== "string" ||
+		Number.isNaN(Date.parse(info.startedAt))
+	) {
+		throw new UsageError(`refusing to remove ${runFile}: existing file is not an AO running.json handshake`);
+	}
+	rmSync(runFile);
+}
+
 function quitApp(appName) {
 	try {
 		execFileSync("osascript", ["-e", `tell application "${appName}" to quit`], { stdio: "ignore" });
@@ -258,7 +282,7 @@ async function run(opts) {
 
 	const sentinel = join(tmpdir(), `ao-e2e-update-sentinel-${process.pid}.json`);
 	rmSync(sentinel, { force: true });
-	rmSync(opts.runFile, { force: true });
+	removeRunFile(opts.runFile);
 	seedUpdateSettings(opts.settingsDir, opts.channel);
 
 	// Launched as a child process rather than via `open` so the sentinel and the
@@ -293,7 +317,7 @@ async function run(opts) {
 	console.log(`installed bundle is now ${opts.expectVersion}`);
 
 	console.log("relaunching the updated app");
-	rmSync(opts.runFile, { force: true });
+	removeRunFile(opts.runFile);
 	// Same direct spawn as the first launch: the relaunched app must get the same
 	// AO_RUN_FILE/AO_DATA_DIR, or the liveness poll below watches a run file the
 	// app never writes. The executable name is re-read from the SWAPPED bundle,

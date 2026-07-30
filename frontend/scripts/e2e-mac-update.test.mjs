@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { assertSentinelCapable, launchEnv, parseArgs, seedUpdateSettings } from "./e2e-mac-update.mjs";
+import { assertSentinelCapable, launchEnv, parseArgs, removeRunFile, seedUpdateSettings } from "./e2e-mac-update.mjs";
 
 // The harness itself needs a real macOS runner, a real signed N-1 install and a
 // real published N feed, so it cannot run here. What IS testable anywhere is the
@@ -75,12 +75,21 @@ describe("e2e-mac-update parseArgs", () => {
 		expect(parseArgs([...required, "--state-dir", "/tmp/ao-e2e"]).dataDir).toBe(join("/tmp/ao-e2e", "data"));
 	});
 
-	// The run file is rm'd before each launch, so a typo'd flag must not be able
-	// to point the delete at something unrelated.
-	it("constrains --run-file to an absolute .json path", () => {
+	it("constrains --run-file to an absolute path", () => {
 		expect(() => parseArgs([...required, "--run-file", "run.json"])).toThrow(/absolute path/);
-		expect(() => parseArgs([...required, "--run-file", "/etc/hosts"])).toThrow(/must end in \.json/);
 		expect(() => parseArgs([...required, "--state-dir", "relative/dir"])).toThrow(/absolute path/);
+	});
+
+	it("refuses to delete an unrelated absolute JSON file passed as --run-file", () => {
+		const dir = mkdtempSync(join(tmpdir(), "ao-e2e-run-file-"));
+		const unrelated = join(dir, "package.json");
+		writeFileSync(unrelated, '{"name":"not-a-run-file"}\n');
+		try {
+			expect(() => removeRunFile(unrelated)).toThrow(/not an AO running\.json handshake/);
+			expect(readFileSync(unrelated, "utf8")).toContain("not-a-run-file");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });
 

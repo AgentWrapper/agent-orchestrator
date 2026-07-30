@@ -143,6 +143,17 @@ function resolveNotaryArgs(env: NodeJS.ProcessEnv): string[] | undefined {
 	return undefined;
 }
 
+function assertCompleteAppStoreConnectCredentials(env: NodeJS.ProcessEnv): void {
+	const credentials = [env.APPLE_API_KEY, env.APPLE_API_KEY_ID, env.APPLE_API_ISSUER];
+	const supplied = credentials.filter((credential) => credential !== undefined);
+	if (supplied.length === 0) return;
+	if (supplied.length === credentials.length && credentials.every((credential) => credential)) return;
+	throw new Error(
+		"[dmg] incomplete App Store Connect credentials; APPLE_API_KEY, APPLE_API_KEY_ID, and APPLE_API_ISSUER must " +
+			"all be set and non-empty. Refusing to publish a dmg with partial notarization credentials.",
+	);
+}
+
 /**
  * sealDmg signs, notarizes and staples one .dmg. Returns true when it actually
  * sealed the file, false for the deliberate unsigned no-op.
@@ -170,6 +181,9 @@ function resolveNotaryArgs(env: NodeJS.ProcessEnv): string[] | undefined {
  */
 export async function sealDmg(dmgPath: string, env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
 	const identity = resolveSigningIdentity(env);
+	// Validate this before the zero-credential no-op: an incomplete trio cannot
+	// be treated as equivalent to no notarization credentials.
+	assertCompleteAppStoreConnectCredentials(env);
 	const notaryArgs = resolveNotaryArgs(env);
 
 	if (!identity && !notaryArgs) {
