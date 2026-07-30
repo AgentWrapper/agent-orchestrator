@@ -2,6 +2,6 @@
 set -eu
 
 mkdir -p /workspace /home/ao/.ao/worker
-chown -R ao:ao /workspace /home/ao
+chown ao:ao /workspace
 
 exec gosu ao /usr/local/bin/ao-worker
