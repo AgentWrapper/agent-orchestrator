@@ -264,6 +264,8 @@
 	--size-topbar-secondary: 36px;
 	--size-topbar-control: 28px;
 	--size-toolbar: var(--size-topbar-primary);
+	/* Windows custom title bar (.window-titlebar) — keep in sync with TITLEBAR_HEIGHT in main.ts. */
+	--size-window-titlebar: 36px;
 	--size-inspector-tabs: var(--size-topbar-secondary);
 	--size-topbar-context-max: 32rem;
 	--space-topbar-x: 10px;
