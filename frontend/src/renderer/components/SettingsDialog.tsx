@@ -1,7 +1,7 @@
-import { CircleHelp, MonitorCog, RefreshCw, Settings2, Wrench, X } from "lucide-react";
+import { Bot, CircleHelp, GitBranch, Inbox, MonitorCog, RefreshCw, Settings2, Wrench, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { GlobalSettingsForm, type GlobalSettingsSection } from "./GlobalSettingsForm";
-import { ProjectSettingsForm } from "./ProjectSettingsForm";
+import { ProjectSettingsForm, type ProjectSettingsSection } from "./ProjectSettingsForm";
 import {
 	Dialog,
 	DialogClose,
@@ -23,19 +23,28 @@ const globalSections: Array<{ id: Exclude<GlobalSettingsSection, "all">; label: 
 	{ id: "help", label: "Help", icon: CircleHelp },
 ];
 
+const projectSections: Array<{ id: ProjectSettingsSection; label: string; icon: typeof Settings2 }> = [
+	{ id: "general", label: "General", icon: MonitorCog },
+	{ id: "agents", label: "Agents", icon: Bot },
+	{ id: "workflow", label: "Workflow", icon: GitBranch },
+	{ id: "intake", label: "Intake", icon: Inbox },
+];
+
 export function SettingsDialog() {
 	const settingsModal = useUiStore((state) => state.settingsModal);
 	const closeSettings = useUiStore((state) => state.closeSettings);
 	const [displaySettings, setDisplaySettings] = useState<SettingsModal | null>(settingsModal);
 	const isProjectSettings = displaySettings?.scope === "project";
 	const [activeSection, setActiveSection] = useState<Exclude<GlobalSettingsSection, "all">>("general");
+	const [activeProjectSection, setActiveProjectSection] = useState<ProjectSettingsSection>("general");
 	const activeLabel = isProjectSettings
-		? "Project"
-		: globalSections.find((section) => section.id === activeSection)?.label ?? "General";
+		? (projectSections.find((s) => s.id === activeProjectSection)?.label ?? "General")
+		: (globalSections.find((section) => section.id === activeSection)?.label ?? "General");
 
 	useEffect(() => {
 		if (settingsModal) setDisplaySettings(settingsModal);
 		if (settingsModal?.scope === "global") setActiveSection("general");
+		if (settingsModal?.scope === "project") setActiveProjectSection("general");
 	}, [settingsModal]);
 
 	return (
@@ -53,19 +62,27 @@ export function SettingsDialog() {
 						<aside className="flex w-48 shrink-0 flex-col border-r border-(--color-border-settings-dialog-header) bg-sidebar">
 							<p className="px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">Settings</p>
 							<nav aria-label="Settings sections" className="flex flex-col gap-0.5 p-2 pt-0">
-								{isProjectSettings ? (
-									<SettingsNavItem active icon={MonitorCog} label="Project" onClick={() => undefined} />
-								) : (
-									globalSections.map(({ id, label, icon }) => (
-										<SettingsNavItem
-											active={activeSection === id}
-											icon={icon}
-											key={id}
-											label={label}
-											onClick={() => setActiveSection(id)}
-										/>
-									))
-								)}
+						{isProjectSettings ? (
+								projectSections.map(({ id, label, icon }) => (
+									<SettingsNavItem
+										active={activeProjectSection === id}
+										icon={icon}
+										key={id}
+										label={label}
+										onClick={() => setActiveProjectSection(id)}
+									/>
+								))
+							) : (
+								globalSections.map(({ id, label, icon }) => (
+									<SettingsNavItem
+										active={activeSection === id}
+										icon={icon}
+										key={id}
+										label={label}
+										onClick={() => setActiveSection(id)}
+									/>
+								))
+							)}
 							</nav>
 						</aside>
 
@@ -84,11 +101,11 @@ export function SettingsDialog() {
 								</DialogClose>
 							</DialogHeader>
 							<div className={cn(settingsDialogBodyClass, "flex-1 overflow-y-auto px-6 pt-5")}>
-								{displaySettings.scope === "project" ? (
-									<ProjectSettingsForm projectId={displaySettings.projectId} />
-								) : (
-									<GlobalSettingsForm section={activeSection} />
-								)}
+							{displaySettings.scope === "project" ? (
+								<ProjectSettingsForm projectId={displaySettings.projectId} section={activeProjectSection} />
+							) : (
+								<GlobalSettingsForm section={activeSection} />
+							)}
 							</div>
 						</div>
 					</div>
