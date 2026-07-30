@@ -330,10 +330,19 @@ export function Sidebar({
 		<motion.div
 			animate={{ height: isCollapsed || projectsOpen ? "auto" : 0 }}
 			initial={false}
-			transition={{ duration: 0.2, ease: [0.25, 0.46, 0.45, 0.94] }}
+			transition={{ duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
 			style={{ overflow: "hidden" }}
 			className="w-full"
 		>
+			{/* Inner animator: slides up + fades out on collapse. */}
+			<motion.div
+				animate={{
+					y: isCollapsed || projectsOpen ? 0 : -20,
+					opacity: isCollapsed || projectsOpen ? 1 : 0,
+				}}
+				initial={false}
+				transition={{ duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
+			>
 			<SidebarGroup className="p-0">
 				{/* Tree (project-sidebar__tree) */}
 				<SidebarGroupContent>
@@ -343,9 +352,9 @@ export function Sidebar({
 							<p className="mt-1 text-caption text-passive">{workspaceError}</p>
 						</div>
 					) : workspaces.length === 0 ? null : (
-						<SidebarMenu className="gap-0.5 group-data-[collapsible=icon]:gap-1">
-							{workspaces.map((workspace) => (
-								<ProjectItem
+					<SidebarMenu className="gap-0.5 rounded-lg overflow-hidden group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:rounded-none group-data-[collapsible=icon]:overflow-visible">
+						{workspaces.map((workspace) => (
+							<ProjectItem
 									key={workspace.id}
 									workspace={workspace}
 									expanded={expandedIds.has(workspace.id)}
@@ -359,6 +368,7 @@ export function Sidebar({
 					)}
 				</SidebarGroupContent>
 			</SidebarGroup>
+			</motion.div>
 		</motion.div>
 	</SidebarContent>
 
@@ -502,12 +512,14 @@ function ProjectItem({
 	};
 
 	const onProjectClick = () => {
+		if (!expanded) {
+			onToggle();
+		}
 		selection.goProject(workspace.id);
 	};
 
-	// Folder icon always toggles disclosure, even when another project is
-	// selected — without this, collapsing a non-active project required a
-	// select click then a second click (felt like a double-click).
+	// Folder icon always toggles disclosure independently — lets you
+	// collapse a project without navigating away.
 	const onFolderClick = (event: MouseEvent) => {
 		event.stopPropagation();
 		onToggle();
@@ -640,17 +652,24 @@ function ProjectItem({
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</div>
-		{/* project-sidebar__sessions: entire list animates in/out as a block. */}
-		<AnimatePresence initial={false}>
-			{expanded && sessions.length > 0 && (
+	{/* project-sidebar__sessions: clip shrinks in height; inner content
+	    slides up on exit so it looks like rows move out the top. */}
+	<AnimatePresence initial={false}>
+		{expanded && sessions.length > 0 && (
+			<motion.div
+				key="sessions"
+				initial={{ height: 0 }}
+				animate={{ height: "auto" }}
+				exit={{ height: 0 }}
+				transition={{ duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
+				style={{ overflow: "hidden" }}
+				className="sidebar-expanded-chrome"
+			>
 				<motion.div
-					key="sessions"
-					initial={{ height: 0 }}
-					animate={{ height: "auto" }}
-					exit={{ height: 0 }}
-					transition={{ duration: 0.18, ease: [0.25, 0.46, 0.45, 0.94] }}
-					style={{ overflow: "hidden" }}
-					className="sidebar-expanded-chrome"
+					initial={{ y: -12, opacity: 0 }}
+					animate={{ y: 0, opacity: 1 }}
+					exit={{ y: -12, opacity: 0 }}
+					transition={{ duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
 				>
 					<SidebarMenuSub className="mx-0 ml-3.5 translate-x-0 gap-0 border-l-0 px-0 py-1">
 						{sessions.map((session) => (
@@ -663,8 +682,9 @@ function ProjectItem({
 						))}
 					</SidebarMenuSub>
 				</motion.div>
-			)}
-		</AnimatePresence>
+			</motion.div>
+		)}
+	</AnimatePresence>
 			<ConfirmDialog
 				open={confirmOpen}
 				onOpenChange={(open) => {
