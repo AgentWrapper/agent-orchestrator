@@ -38,11 +38,9 @@ function useCanGoForward(): boolean {
 export function TitlebarNav({
 	historyLocked = false,
 	isFullScreen = false,
-	onSidebarPreviewEnter,
 }: {
 	historyLocked?: boolean;
 	isFullScreen?: boolean;
-	onSidebarPreviewEnter?: React.PointerEventHandler<HTMLButtonElement>;
 }) {
 	const { isSidebarOpen, toggleSidebar } = useUiStore();
 	const router = useRouter();
@@ -68,12 +66,11 @@ export function TitlebarNav({
 			className={`fixed ${topClass} ${leftClass} z-titlebar flex h-traffic-light-clearance items-center gap-1`}
 			style={noDragStyle}
 		>
-			<TitlebarButton
-				label={isSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-				onClick={toggleSidebar}
-				onPointerEnter={onSidebarPreviewEnter}
-				title={`${isSidebarOpen ? "Collapse" : "Expand"} sidebar · ⌘B`}
-			>
+		<TitlebarButton
+			label={isSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+			onClick={toggleSidebar}
+			title={`${isSidebarOpen ? "Collapse" : "Expand"} sidebar · ⌘B`}
+		>
 				<PanelLeft className="size-icon-lg" aria-hidden="true" />
 			</TitlebarButton>
 			<TitlebarButton
@@ -102,7 +99,6 @@ function TitlebarButton({
 	disabled,
 	tabIndex,
 	onClick,
-	onPointerEnter,
 	children,
 }: {
 	label: string;
@@ -110,7 +106,6 @@ function TitlebarButton({
 	disabled?: boolean;
 	tabIndex?: number;
 	onClick: () => void;
-	onPointerEnter?: React.PointerEventHandler<HTMLButtonElement>;
 	children: React.ReactNode;
 }) {
 	return (
@@ -120,7 +115,6 @@ function TitlebarButton({
 			className="grid size-control-md place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent disabled:hover:text-passive"
 			disabled={disabled}
 			onClick={onClick}
-			onPointerEnter={onPointerEnter}
 			style={noDragStyle}
 			tabIndex={tabIndex}
 			title={title}
