@@ -43,7 +43,8 @@ export function hidesShellTopbar(): boolean {
 
 /**
  * Board New task / Orchestrator / bell render in the board body instead of the
- * framed shell topbar (macOS). Win/Linux keep those controls in the topbar.
+ * shell-owned topbar on macOS and Linux. Windows keeps those controls in the
+ * shell-mounted workspace bar.
  */
 export function usesBoardActionsInPanel(): boolean {
 	return hidesShellTopbar();

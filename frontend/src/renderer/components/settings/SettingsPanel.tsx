@@ -10,11 +10,13 @@ export function SettingsPanel({
 	children,
 	onClose,
 	subtitle,
+	showHeader = true,
 }: {
 	children: ReactNode;
 	onClose: () => void;
 	/** Optional path or context shown beside the title (project settings). */
 	subtitle?: string;
+	showHeader?: boolean;
 }) {
 	useEffect(() => {
 		const handleKeyDown = (event: KeyboardEvent) => {
@@ -34,19 +36,23 @@ export function SettingsPanel({
 			data-testid="settings-page"
 		>
 			<div className="flex w-full max-w-(--size-settings-content-width) flex-col items-stretch gap-(--size-settings-section-gap) px-(--size-settings-panel-padding-x) pb-(--size-settings-panel-padding-bottom) pt-(--size-settings-panel-padding-top)">
-				<div className="flex shrink-0 items-start justify-between gap-4 self-stretch">
-					<div className="flex min-w-0 items-baseline gap-3">
-						<h1 className="text-settings-heading font-bold text-settings-title">Settings</h1>
-						{subtitle ? (
-							<span className="truncate font-mono text-md-sm text-settings-muted" title={subtitle}>
-								{subtitle}
-							</span>
-						) : null}
+				{showHeader ? (
+					<div className="flex shrink-0 items-start justify-between gap-4 self-stretch">
+						<div className="flex min-w-0 items-baseline gap-3">
+							<h1 className="text-settings-heading font-bold text-settings-title">Settings</h1>
+							{subtitle ? (
+								<span className="truncate font-mono text-md-sm text-settings-muted" title={subtitle}>
+									{subtitle}
+								</span>
+							) : null}
+						</div>
+						<button type="button" onClick={onClose} className="settings-close-button" aria-label="Close settings">
+							<X className="size-5" aria-hidden="true" strokeWidth={2.25} />
+						</button>
 					</div>
-					<button type="button" onClick={onClose} className="settings-close-button" aria-label="Close settings">
-						<X className="size-5" aria-hidden="true" strokeWidth={2.25} />
-					</button>
-				</div>
+				) : (
+					<h1 className="sr-only">Settings</h1>
+				)}
 				{children}
 			</div>
 		</div>

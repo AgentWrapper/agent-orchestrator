@@ -31,6 +31,7 @@ import { newestActiveOrchestrator } from "../types/workspace";
 import { AgentAvatar } from "./AgentAvatar";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeNeedsRule } from "./IntakeFields";
+import { ShellTopbar } from "./ShellTopbar";
 import { AgentSelectMenuItem } from "./settings/AgentSelectMenuItem";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { SettingsPageShell } from "./settings/SettingsPageShell";
@@ -72,7 +73,8 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 
 	return (
 		<SettingsPageShell>
-			<SettingsPanel onClose={closeSettings} subtitle={query.data?.path}>
+			<ShellTopbar surfaceOverride="project-settings" />
+			<SettingsPanel onClose={closeSettings} showHeader={false}>
 				{query.isLoading ? (
 					<p className="text-sm text-settings-muted">Loading project settings…</p>
 				) : query.isError || !query.data ? (

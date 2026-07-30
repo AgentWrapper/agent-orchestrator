@@ -106,9 +106,7 @@ export function CenterPane({
 			)
 		: availableProjectSessions;
 	const expandedSessionList = showAllSessions || normalizedSessionSearch.length > 0;
-	const visibleSessions = expandedSessionList
-		? filteredSessions
-		: filteredSessions.slice(0, COMPACT_SESSION_LIMIT);
+	const visibleSessions = expandedSessionList ? filteredSessions : filteredSessions.slice(0, COMPACT_SESSION_LIMIT);
 	const tabOverflowWatch = `${sessionTabs.map((item) => item.id).join("|")}|${shellTerminals
 		.map((terminal) => terminal.handleId)
 		.join("|")}`;
@@ -168,19 +166,16 @@ export function CenterPane({
 	return (
 		<div
 			ref={paneRef}
-			className="terminal-pane-frame flex h-full min-h-0 min-w-flex-min flex-col"
+			className="terminal-pane-frame flex h-full min-h-0 min-w-flex-min flex-col px-px"
 			onWheelCapture={handleWheelZoom}
 		>
-			<div className="flex h-inspector-tabs shrink-0 items-center border-b border-border px-5">
+			<div className="flex h-inspector-tabs shrink-0 items-center border-b border-border px-1.5">
 				<div className="flex min-w-flex-min flex-1 items-center gap-3">
-					<span className="shrink-0 font-mono text-caption font-semibold uppercase tracking-wide-lg text-muted-foreground">
-						TERMINAL
-					</span>
 					<button
 						aria-label="Scroll tabs left"
 						className={cn(
 							"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
-							!tabsOverflow.canScrollLeft && "invisible",
+							!tabsOverflow.canScrollLeft && "hidden",
 						)}
 						disabled={!tabsOverflow.canScrollLeft}
 						onClick={() => tabsOverflow.scrollByDirection(-1)}
@@ -195,32 +190,24 @@ export function CenterPane({
 						ref={tabsOverflow.ref}
 						className="scrollbar-none flex min-w-flex-min flex-1 items-center gap-3 overflow-x-auto"
 					>
-						{sessionTabs.length > 0 ? (
-							sessionTabs.map((projectSession) => {
-								const isCurrent = projectSession.id === session?.id;
-								return (
-									<SessionPaneTab
-										key={projectSession.id}
-										isActive={isCurrent && target.kind !== "shell"}
-										label={
-											isOrchestratorSession(projectSession) ? "Orchestrator" : projectSession.title
-										}
-										onSelect={
-											isCurrent
-												? onSelectSessionTerminal
-												: () => onSelectProjectSession?.(projectSession)
-										}
-										onClose={
-											projectSession.id !== effectiveTabOwnerSessionId
-												? () => onCloseProjectSession?.(projectSession)
-												: undefined
-										}
-									/>
-								);
-							})
-						) : (
-							<SessionPaneTab isActive={target.kind !== "shell"} label="No session" />
-						)}
+						{sessionTabs.length > 0
+							? sessionTabs.map((projectSession) => {
+									const isCurrent = projectSession.id === session?.id;
+									return (
+										<SessionPaneTab
+											key={projectSession.id}
+											isActive={isCurrent && target.kind !== "shell"}
+											label={isOrchestratorSession(projectSession) ? "Orchestrator" : projectSession.title}
+											onSelect={isCurrent ? onSelectSessionTerminal : () => onSelectProjectSession?.(projectSession)}
+											onClose={
+												projectSession.id !== effectiveTabOwnerSessionId
+													? () => onCloseProjectSession?.(projectSession)
+													: undefined
+											}
+										/>
+									);
+								})
+							: !session && <span className="font-mono text-control text-passive">No session</span>}
 						{shellTerminals.map((shell) => (
 							<ShellTerminalTab
 								key={shell.handleId}
@@ -236,7 +223,7 @@ export function CenterPane({
 						aria-label="Scroll tabs right"
 						className={cn(
 							"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
-							!tabsOverflow.canScrollRight && "invisible",
+							!tabsOverflow.canScrollRight && "hidden",
 						)}
 						disabled={!tabsOverflow.canScrollRight}
 						onClick={() => tabsOverflow.scrollByDirection(1)}
@@ -415,7 +402,7 @@ function SessionPaneTab({ label, isActive, onSelect, onClose }: SessionPaneTabPr
 	return (
 		<span
 			className={cn(
-				"group inline-flex min-w-shell-tab-min items-center gap-1 rounded-md px-2 py-1 transition-colors",
+				"session-pane-tab group inline-flex items-center rounded-md transition-colors",
 				isActive ? "bg-interactive-active" : "hover:bg-interactive-hover/60",
 			)}
 		>
@@ -423,7 +410,7 @@ function SessionPaneTab({ label, isActive, onSelect, onClose }: SessionPaneTabPr
 				ref={ref}
 				aria-current={isActive}
 				className={cn(
-					"min-w-flex-min max-w-shell-tab-max truncate font-mono text-control font-semibold transition-colors",
+					"session-pane-tab__label min-w-flex-min max-w-shell-tab-max truncate font-mono font-semibold transition-colors",
 					isActive ? "text-foreground" : "text-passive/60 hover:text-passive",
 				)}
 				onClick={onSelect}
@@ -435,7 +422,7 @@ function SessionPaneTab({ label, isActive, onSelect, onClose }: SessionPaneTabPr
 			{onClose ? (
 				<button
 					aria-label={`Close session tab ${label}`}
-					className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-passive opacity-0 transition-[background,color,opacity] group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+					className="inline-flex size-control-xs shrink-0 items-center justify-center rounded-sm text-passive opacity-0 transition-[background,color,opacity] group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
 					onClick={(event) => {
 						event.stopPropagation();
 						onClose();

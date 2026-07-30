@@ -33,6 +33,8 @@ vi.mock("../lib/api-client", () => ({
 	},
 }));
 
+vi.mock("./ShellTopbar", () => ({ ShellTopbar: () => null }));
+
 import { ProjectSettingsForm } from "./ProjectSettingsForm";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import type { WorkspaceSummary } from "../types/workspace";
@@ -114,27 +116,6 @@ beforeEach(() => {
 });
 
 describe("ProjectSettingsForm", () => {
-	it("closes project settings with the close button", async () => {
-		mockProject({
-			id: "proj-1",
-			name: "Project One",
-			kind: "single_repo",
-			path: "/repo/project-one",
-			repo: "",
-			defaultBranch: "main",
-			config: {
-				worker: { agent: "codex" },
-				orchestrator: { agent: "claude-code" },
-			},
-		});
-
-		renderSettings();
-
-		await userEvent.click(await screen.findByRole("button", { name: "Close settings" }));
-
-		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
-	});
-
 	it("closes project settings with Escape", async () => {
 		mockProject({
 			id: "proj-1",

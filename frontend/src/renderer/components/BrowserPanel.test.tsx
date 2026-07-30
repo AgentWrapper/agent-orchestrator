@@ -172,6 +172,14 @@ describe("BrowserPanel", () => {
 	it("navigates to the entered URL on submit", async () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 		const input = screen.getByRole("textbox", { name: /browser url/i });
+		const toolbar = input.closest("form");
+		expect(input).toHaveClass("h-control-sm!", "pl-6", "text-caption");
+		expect(toolbar).toHaveClass("h-topbar-secondary", "gap-0.5", "px-1", "py-0.5");
+		for (const name of ["Back", "Forward", "Reload", "Annotate page", "Pop out"]) {
+			const button = screen.getByRole("button", { name });
+			expect(button).toHaveClass("size-control-sm!");
+			expect(button.querySelector("svg")).toHaveClass("size-icon-sm");
+		}
 
 		await userEvent.clear(input);
 		await userEvent.type(input, "localhost:5173{Enter}");

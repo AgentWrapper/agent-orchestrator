@@ -18,15 +18,15 @@ import {
 	useShellTerminals,
 } from "../hooks/useShellTerminals";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
-import { hidesShellTopbar } from "../lib/platform";
 import { isOrchestratorSession, sessionIsActive, workerSessions, type WorkspaceSession } from "../types/workspace";
 import type { TerminalTarget } from "../types/terminal";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
+import { cn } from "../lib/utils";
 
 const INSPECTOR_MIN_PERCENT = 22;
 const INSPECTOR_MAX_PERCENT = 45;
+const INSPECTOR_COLLAPSED_SIZE = "0%";
 const inspectorSplitStorageKey = "ao.inspector.split";
-const shellTopbarHiddenByPlatform = hidesShellTopbar();
 const emptySessionTabIds: string[] = [];
 
 function initialSplitPercent(): number {
@@ -48,9 +48,9 @@ type SessionViewProps = {
 	tabOwnerSessionId?: string;
 };
 
-// The session detail screen: terminal + git rail. On Win/Linux the shell owns
-// ShellTopbar above this view; when the platform hides the shell topbar
-// (macOS), the same topbar mounts here so the outer panel stays full-height.
+// The session detail screen: terminal + inspector rail. Its top chrome is
+// column-owned on every platform: ShellTopbar ends at the inspector divider,
+// while SessionInspector owns its tabs and persistent collapse control.
 // Rendered by both the project-scoped and cross-project session routes.
 // TerminalPane owns the terminal lifetime and remounts by terminal handle so
 // each session gets a clean xterm/mux binding.
@@ -58,8 +58,10 @@ type SessionViewProps = {
 // The split is shadcn's resizable (react-resizable-panels v4) with a fully
 // collapsible inspector: the panel is `collapsible` and driven to 0% via the
 // imperative API from the ui-store (topbar button / ⌘⇧B), animated by the
-// flex-grow transition in styles.css. Content keeps a stable min-width inside
-// the clipped panel so nothing reflows mid-animation; split width persists.
+// flex-grow transition in styles.css. The closed-only reopen button lives in
+// ShellTopbar so a full-height rail is not required. Content keeps a stable
+// min-width inside the clipped panel so nothing reflows mid-animation; split
+// width persists.
 export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) {
 	const navigate = useNavigate();
 	const workspaceQuery = useWorkspaceQuery();
@@ -75,7 +77,9 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 	const { daemonStatus } = useShell();
 	const inspectorRef = useRef<PanelImperativeHandle | null>(null);
 	const inspectorSeparatorRef = useRef<HTMLDivElement | null>(null);
-	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
+	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({
+		kind: "worker",
+	});
 	const [browserPoppedOut, setBrowserPoppedOut] = useState(false);
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
 
@@ -106,7 +110,10 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 		(projectSession: WorkspaceSession) => {
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId: projectSession.workspaceId, sessionId: projectSession.id },
+				params: {
+					projectId: projectSession.workspaceId,
+					sessionId: projectSession.id,
+				},
 				search: projectSession.id === ownerSessionId ? {} : { tabOwner: ownerSessionId },
 			});
 		},
@@ -155,7 +162,11 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 			{
 				onSuccess: (shell) => {
 					setActiveShellTerminal(shell.handleId);
-					setTerminalTarget({ kind: "shell", handleId: shell.handleId, title: shell.title });
+					setTerminalTarget({
+						kind: "shell",
+						handleId: shell.handleId,
+						title: shell.title,
+					});
 				},
 			},
 		);
@@ -166,7 +177,11 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 			const shell = shellTerminals.find((s) => s.handleId === handleId);
 			if (!shell) return;
 			setActiveShellTerminal(shell.handleId);
-			setTerminalTarget({ kind: "shell", handleId: shell.handleId, title: shell.title });
+			setTerminalTarget({
+				kind: "shell",
+				handleId: shell.handleId,
+				title: shell.title,
+			});
 		},
 		[shellTerminals, setActiveShellTerminal],
 	);
@@ -329,9 +344,9 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 	if (!hasInspector) {
 		inspectorDefaultSizeRef.current = null;
 	} else if (inspectorDefaultSizeRef.current === null) {
-		inspectorDefaultSizeRef.current = isInspectorOpen ? `${initialSplitPercent()}%` : "0%";
+		inspectorDefaultSizeRef.current = isInspectorOpen ? `${initialSplitPercent()}%` : INSPECTOR_COLLAPSED_SIZE;
 	}
-	const inspectorDefaultSize = inspectorDefaultSizeRef.current ?? "0%";
+	const inspectorDefaultSize = inspectorDefaultSizeRef.current ?? INSPECTOR_COLLAPSED_SIZE;
 
 	useEffect(() => {
 		if (!hasInspector) return;
@@ -358,9 +373,12 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 		if (!panel) return;
 		if (isInspectorOpen) {
 			panel.expand();
-			// expand() restores the "most recent" size, which is 0 when the panel
-			// mounted collapsed — fall back to the persisted split.
-			if (panel.getSize().asPercentage === 0) panel.resize(`${initialSplitPercent()}%`);
+			// expand() restores the "most recent" size, which can still be the
+			// zero-width collapsed size when the panel mounted closed — fall back
+			// to the persisted split.
+			if (panel.getSize().asPercentage === 0) {
+				panel.resize(`${initialSplitPercent()}%`);
+			}
 		} else {
 			panel.collapse();
 		}
@@ -408,47 +426,58 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 
 	if (!session && !workspaceQuery.isLoading) {
 		return (
-			<div className="grid h-full place-items-center p-6 text-center font-mono text-xs text-passive">
-				Session not found. It may have been cleaned up — pick another from the sidebar.
+			<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
+				<ShellTopbar />
+				<div className="grid min-h-0 flex-1 place-items-center p-6 text-center font-mono text-xs text-passive">
+					Session not found. It may have been cleaned up — pick another from the sidebar.
+				</div>
 			</div>
 		);
 	}
 
 	return (
 		<div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="session-detail">
-			{shellTopbarHiddenByPlatform ? <ShellTopbar /> : null}
 			<ResizablePanelGroup className="session-split min-h-0 flex-1" id="session-workspace" orientation="horizontal">
 				{/* react-resizable-panels v4: bare numbers are PIXELS; percentages must
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
 				<ResizablePanel defaultSize="72%" id="terminal" minSize="45%">
-					<CenterPane
-						availableProjectSessions={availableSessions.filter((candidate) => candidate.id !== tabOwnerSession?.id)}
-						daemonReady={daemonStatus.state === "ready"}
-						onAddProjectSession={addProjectSession}
-						onCloseProjectSession={closeProjectSession}
-						onCloseShellTerminal={closeShellTerminalByHandle}
-						onNewShellTerminal={addShellTerminal}
-						onRenameShellTerminal={renameShellTerminalByHandle}
-						onSelectProjectSession={selectProjectSession}
-						onSelectSessionTerminal={selectSessionTerminal}
-						onSelectShellTerminal={selectShellTerminal}
-						onSelectWorkerTerminal={selectSessionTerminal}
-						session={session}
-						projectSessions={projectSessions}
-						shellTerminals={shellTerminals}
-						tabOwnerSessionId={ownerSessionId}
-						terminalTarget={terminalTarget}
-						theme={theme}
-					/>
+					<div className="flex h-full min-h-0 flex-col">
+						<ShellTopbar />
+						<CenterPane
+							availableProjectSessions={availableSessions.filter((candidate) => candidate.id !== tabOwnerSession?.id)}
+							daemonReady={daemonStatus.state === "ready"}
+							onAddProjectSession={addProjectSession}
+							onCloseProjectSession={closeProjectSession}
+							onCloseShellTerminal={closeShellTerminalByHandle}
+							onNewShellTerminal={addShellTerminal}
+							onRenameShellTerminal={renameShellTerminalByHandle}
+							onSelectProjectSession={selectProjectSession}
+							onSelectSessionTerminal={selectSessionTerminal}
+							onSelectShellTerminal={selectShellTerminal}
+							onSelectWorkerTerminal={selectSessionTerminal}
+							session={session}
+							projectSessions={projectSessions}
+							shellTerminals={shellTerminals}
+							tabOwnerSessionId={ownerSessionId}
+							terminalTarget={terminalTarget}
+							theme={theme}
+						/>
+					</div>
 				</ResizablePanel>
 				{hasInspector ? (
 					<>
 						<ResizableHandle
-							className="w-1.75 cursor-col-resize touch-none bg-transparent after:w-px after:bg-border-strong hover:after:bg-border focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:after:bg-border data-[separator=active]:after:bg-border"
+							aria-hidden={!isInspectorOpen}
+							className={cn(
+								"w-1.75 cursor-col-resize touch-none bg-transparent after:w-px after:bg-border-strong hover:after:bg-border focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:after:bg-border data-[separator=active]:after:bg-border",
+								!isInspectorOpen && "pointer-events-none w-0 after:hidden",
+							)}
+							disabled={!isInspectorOpen}
 							elementRef={inspectorSeparatorRef}
 						/>
 						<ResizablePanel
-							aria-hidden={!isInspectorOpen}
+							aria-hidden={!isInspectorOpen || undefined}
+							collapsedSize={INSPECTOR_COLLAPSED_SIZE}
 							collapsible
 							defaultSize={inspectorDefaultSize}
 							id="inspector"
@@ -480,6 +509,7 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 										setTerminalTarget({ kind: "reviewer", handleId, harness })
 									}
 									onToggleBrowserPopOut={handleToggleBrowserPopOut}
+									onToggleVisibility={() => toggleInspector(sessionId)}
 									onViewChange={(next: InspectorView) => setInspectorViewForSession(sessionId, next)}
 									view={inspectorView}
 									browserView={browserView}

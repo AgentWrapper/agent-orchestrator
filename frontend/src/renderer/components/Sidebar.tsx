@@ -81,7 +81,7 @@ type SidebarProps = {
 	/** Render the expanded sidebar over content without reserving layout width. */
 	isOverlay?: boolean;
 	underTopbar?: boolean;
-	/** Chrome height to clear when underTopbar is set. Defaults to the 56px shell toolbar. */
+	/** Chrome height to clear when underTopbar is set. Defaults to the 40px Reverb workspace bar. */
 	topbarOffset?: "toolbar" | "titlebar";
 	onPreviewLeave?: () => void;
 	workspaceError?: string;
@@ -217,14 +217,14 @@ export function Sidebar({
 					: underTopbar
 						? topbarOffset === "titlebar"
 							? "top-9 h-[calc(100svh-2.25rem)]!"
-							: "top-14 h-[calc(100svh-3.5rem)]!"
+							: "top-10 h-[calc(100svh-2.5rem)]!"
 						: "top-0 h-svh!",
 			)}
 		>
 			<SidebarHeader
 				className={cn(
 					"gap-0 p-0 pl-1.5 pr-1.75 pt-1 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-1",
-					isOverlay && (topbarOffset === "titlebar" ? "pt-10!" : "pt-15!"),
+					isOverlay && (topbarOffset === "titlebar" ? "pt-10!" : "pt-11!"),
 				)}
 			>
 				{/* Brand (project-sidebar__brand); in the icon rail it becomes the old
