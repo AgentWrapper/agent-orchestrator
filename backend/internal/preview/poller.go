@@ -203,7 +203,7 @@ func (p *Poller) Poll(ctx context.Context) error {
 		// static preview is active. The fingerprint is rate-limited separately
 		// from the cheap entry metadata check.
 		state, changed := p.stateFor(entry, workspaceOwned && current == target, previous, seenBefore, now)
-		if !changed && !(seenBefore && previous.pending) {
+		if !changed && (!seenBefore || !previous.pending) {
 			p.seen[sess.ID] = state
 			continue
 		}
@@ -220,7 +220,7 @@ func (p *Poller) Poll(ctx context.Context) error {
 			p.seen[sess.ID] = state
 			continue
 		}
-		applied := false
+		var applied bool
 		if current == target && !restoringCleared {
 			applied, err = p.setter.RefreshPreview(
 				ctx,
