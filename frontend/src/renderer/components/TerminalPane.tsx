@@ -19,13 +19,38 @@ type TerminalPaneProps = {
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
 	fontSize: number;
+	/**
+	 * Fired once when a shell pane reports its PTY ended (the user typed `exit`,
+	 * killed the process — or the attach loop gave up). Nothing else tells the
+	 * client: the shell list is only refetched around this client's own
+	 * open/close.
+	 */
+	onShellExited?: (handleId: string) => void;
+	/**
+	 * Bumped to force a fresh attachment for the same handle. A pane that
+	 * reported "exited" holds that state forever, so when the daemon says the
+	 * shell is in fact still alive, the only way back to a live terminal is to
+	 * remount the attachment.
+	 */
+	attachEpoch?: number;
 };
 
-export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
-	const terminalKey =
+export function TerminalPane({
+	session,
+	theme,
+	daemonReady,
+	terminalTarget,
+	fontSize,
+	onShellExited,
+	attachEpoch = 0,
+}: TerminalPaneProps) {
+	const handleKey =
 		terminalTarget?.kind === "reviewer" || terminalTarget?.kind === "shell"
 			? terminalTarget.handleId
 			: (session?.terminalHandleId ?? "empty");
+	// The epoch is part of the key so a bump remounts the attachment for the
+	// same handle, which is what recovers a pane stuck on a false "exited".
+	const terminalKey = `${handleKey}:${attachEpoch}`;
 
 	if (!window.ao) {
 		// A standalone shell has no agent and no branch, so it previews as a plain
@@ -85,6 +110,7 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 			theme={theme}
 			daemonReady={daemonReady}
 			fontSize={fontSize}
+			onShellExited={onShellExited}
 			terminalTarget={terminalTarget}
 		/>
 	);
@@ -220,7 +246,7 @@ function bannerText(state: TerminalSessionState, error?: string): string | undef
 	return undefined;
 }
 
-function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
+function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSize, onShellExited }: TerminalPaneProps) {
 	const attachSession =
 		session && terminalTarget?.kind === "reviewer"
 			? { ...session, terminalHandleId: terminalTarget.handleId }
@@ -274,6 +300,29 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 		terminalTarget?.kind !== "shell" &&
 		session !== undefined &&
 		!isSessionActive;
+
+	// A shell whose PTY exits leaves a tab that can never be attached again, so
+	// retire it instead of parking a dead pane in the strip.
+	//
+	// This is a HINT, never a close. "exited" does not prove the shell died:
+	// attachment.fail() reaches the same markExited() after the liveness probe
+	// or the attach itself errors past the retry cap, and a probe error is not
+	// proof of death. Destroying on that would kill a live shell and whatever
+	// is running in it. So this only asks the daemon to re-check — its list
+	// prunes a shell it can confirm is gone and deliberately KEEPS one whose
+	// probe errored.
+	//
+	// Reported once per pane: the component is keyed by handle, so a later
+	// shell on the same tab mounts fresh. Only for shells — a session pane that
+	// ends still has a row, a status, and a restore path, so its tab must stay.
+	const reportedShellExitRef = useRef(false);
+	useEffect(() => {
+		if (state !== "exited") return;
+		if (terminalTarget?.kind !== "shell") return;
+		if (reportedShellExitRef.current) return;
+		reportedShellExitRef.current = true;
+		onShellExited?.(terminalTarget.handleId);
+	}, [state, terminalTarget, onShellExited]);
 
 	const handleReady = useCallback((handle: AttachableTerminal) => {
 		setTerminal(handle);

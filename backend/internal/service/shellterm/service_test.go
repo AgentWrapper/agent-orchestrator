@@ -66,8 +66,9 @@ func (f *fakeShellRuntime) IsAlive(_ context.Context, handle ports.RuntimeHandle
 
 // fakeShellTerminalStore is an in-memory Store keyed by handle id.
 type fakeShellTerminalStore struct {
-	records   []ShellTerminalRecord
-	insertErr error
+	records      []ShellTerminalRecord
+	insertErr    error
+	bySessionErr error
 }
 
 func (f *fakeShellTerminalStore) InsertShellTerminal(_ context.Context, rec ShellTerminalRecord) error {
@@ -108,6 +109,9 @@ func (f *fakeShellTerminalStore) SelectShellTerminalsByAppRunID(_ context.Contex
 }
 
 func (f *fakeShellTerminalStore) SelectShellTerminalsBySessionID(_ context.Context, sessionID domain.SessionID) ([]ShellTerminalRecord, error) {
+	if f.bySessionErr != nil {
+		return nil, f.bySessionErr
+	}
 	var out []ShellTerminalRecord
 	for _, rec := range f.records {
 		if rec.SessionID == sessionID {
@@ -1101,5 +1105,109 @@ func TestShellTerminalTitleFallsBackForRootlessPaths(t *testing.T) {
 	}
 	if got := shellTerminalTitle("/repos/portfolio"); got != "portfolio" {
 		t.Errorf("title = %q, want %q", got, "portfolio")
+	}
+}
+
+// Every shell in a session starts in that session's worktree, so naming tabs
+// after the directory put the identical label on all of them. Session tabs are
+// numbered instead; standalone tabs keep the directory, which is what tells
+// shells from different projects apart on /terminals.
+func TestSessionTerminalTitlesAreNumberedWithinTheSession(t *testing.T) {
+	if got := sessionShellTerminalTitle(1); got != "Terminal 1" {
+		t.Errorf("first session tab = %q, want %q", got, "Terminal 1")
+	}
+	if got := sessionShellTerminalTitle(3); got != "Terminal 3" {
+		t.Errorf("third session tab = %q, want %q", got, "Terminal 3")
+	}
+}
+
+func TestSessionTerminalOrdinalOnlyParsesGeneratedTitles(t *testing.T) {
+	for _, tc := range []struct {
+		title string
+		want  int
+		ok    bool
+	}{
+		{"Terminal 1", 1, true},
+		{"Terminal 12", 12, true},
+		{"Terminal 0", 0, false},     // never generated; 1-based
+		{"Terminal", 0, false},       // no number
+		{"Terminal x", 0, false},     // not a number
+		{"my build shell", 0, false}, // user rename stops reserving a number
+		{"portfolio", 0, false},      // a standalone tab's directory title
+	} {
+		got, ok := sessionTerminalOrdinal(tc.title)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("sessionTerminalOrdinal(%q) = (%d, %t), want (%d, %t)", tc.title, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+// Closing "Terminal 1" while "Terminal 2" is open must not hand the next tab a
+// name that is already on screen, so the ordinal comes from the highest in use
+// rather than the count.
+func TestNextSessionTerminalOrdinalSkipsNamesStillInUse(t *testing.T) {
+	st := &fakeShellTerminalStore{}
+	svc := newTestService(newFakeShellRuntime(), st, &fakeProjectRootLocator{})
+	ctx := context.Background()
+
+	for _, rec := range []ShellTerminalRecord{
+		{HandleID: "h-2", SessionID: "sess-1", Title: "Terminal 2"},
+		{HandleID: "h-9", SessionID: "sess-1", Title: "my build shell"},
+		{HandleID: "h-1", SessionID: "other", Title: "Terminal 7"},
+	} {
+		if err := st.InsertShellTerminal(ctx, rec); err != nil {
+			t.Fatalf("seed %s: %v", rec.HandleID, err)
+		}
+	}
+
+	got, err := svc.nextSessionTerminalOrdinal(ctx, "sess-1")
+	if err != nil {
+		t.Fatalf("nextSessionTerminalOrdinal: %v", err)
+	}
+	// 3, not 2 (Terminal 2 is still open) and not 8 (another session's tabs
+	// must not push this session's numbering along).
+	if got != 3 {
+		t.Errorf("next ordinal = %d, want 3", got)
+	}
+}
+
+func TestNextSessionTerminalOrdinalStartsAtOne(t *testing.T) {
+	svc := newTestService(newFakeShellRuntime(), &fakeShellTerminalStore{}, &fakeProjectRootLocator{})
+
+	got, err := svc.nextSessionTerminalOrdinal(context.Background(), "sess-empty")
+	if err != nil {
+		t.Fatalf("nextSessionTerminalOrdinal: %v", err)
+	}
+	if got != 1 {
+		t.Errorf("first ordinal = %d, want 1", got)
+	}
+}
+
+// Regression: the tab ordinal is read from the store, and that read used to
+// happen AFTER runtime.Create. A store failure there returned with a live PTY
+// and no row pointing at it, so neither shutdown nor the app-run reaper could
+// ever find it — a tmux session leaked for the life of the machine. The lookup
+// now runs before Create, so this failure cannot strand a runtime at all.
+func TestOpenShellTerminalLeavesNoRuntimeWhenOrdinalLookupFails(t *testing.T) {
+	rt := newFakeShellRuntime()
+	st := &fakeShellTerminalStore{bySessionErr: errors.New("store unavailable")}
+	sessions := &fakeSessionWorkspaceLocator{
+		sessions: map[domain.SessionID]fakeSessionWorkspace{
+			"sess-1": {workspacePath: "/wt/sess-1", projectID: "proj"},
+		},
+	}
+	svc := newTestServiceWithSessions(rt, st, &fakeProjectRootLocator{}, sessions)
+
+	_, err := svc.OpenShellTerminal(context.Background(), OpenShellTerminalInput{SessionID: "sess-1"})
+	if err == nil {
+		t.Fatal("a store failure while naming the tab must fail the open")
+	}
+	// The point of the fix: no PTY was ever spawned, so there is nothing to leak
+	// and nothing to roll back.
+	if len(rt.created) != 0 {
+		t.Fatalf("runtime.Create called %d times; the ordinal lookup must happen first", len(rt.created))
+	}
+	if len(st.records) != 0 {
+		t.Fatalf("store holds %d records after a failed open, want 0", len(st.records))
 	}
 }

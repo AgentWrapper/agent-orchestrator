@@ -370,3 +370,64 @@ describe("terminal link preview", () => {
 		}
 	});
 });
+
+// A shell whose PTY exits should not sit in the strip showing "TERMINAL ENDED":
+// nothing else tells the client, since the shell list is only refetched around
+// this client's own open/close. The pane reports the exit as a HINT — it is not
+// proof of death, because the attach loop reports the same "exited" after it
+// gives up on a failing liveness probe — so the callers re-check with the
+// daemon rather than closing anything.
+describe("TerminalPane shell exit", () => {
+	function renderShellPane(onShellExited: (handleId: string) => void, state: string) {
+		terminalState.value = state;
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const previousAO = window.ao;
+		window.ao = {} as typeof window.ao;
+		const result = render(
+			<QueryClientProvider client={queryClient}>
+				<TerminalPane
+					daemonReady
+					fontSize={12}
+					onShellExited={onShellExited}
+					terminalTarget={{ kind: "shell", handleId: "sh-a", title: "Terminal 1" }}
+					theme="dark"
+				/>
+			</QueryClientProvider>,
+		);
+		return { ...result, restore: () => { window.ao = previousAO; } };
+	}
+
+	it("reports the exit once so the caller can re-check with the daemon", async () => {
+		const onShellExited = vi.fn();
+		const { restore } = renderShellPane(onShellExited, "exited");
+		await waitFor(() => expect(onShellExited).toHaveBeenCalledWith("sh-a"));
+		expect(onShellExited).toHaveBeenCalledOnce();
+		restore();
+	});
+
+	it("leaves a live shell alone", async () => {
+		const onShellExited = vi.fn();
+		const { restore } = renderShellPane(onShellExited, "attached");
+		await waitFor(() => expect(screen.getByTestId("xterm")).toBeInTheDocument());
+		expect(onShellExited).not.toHaveBeenCalled();
+		restore();
+	});
+
+	// A session pane that ends still has a row, a status, and a restore path, so
+	// its tab must survive. Only shells are retired.
+	it("does not retire a session pane that ended", async () => {
+		const onShellExited = vi.fn();
+		terminalState.value = "exited";
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const previousAO = window.ao;
+		window.ao = {} as typeof window.ao;
+		render(
+			<QueryClientProvider client={queryClient}>
+				<TerminalPane daemonReady fontSize={12} onShellExited={onShellExited} session={worker} theme="dark" />
+			</QueryClientProvider>,
+		);
+		await waitFor(() => expect(screen.getByText("Terminal ended")).toBeInTheDocument());
+		expect(onShellExited).not.toHaveBeenCalled();
+		window.ao = previousAO;
+	});
+});

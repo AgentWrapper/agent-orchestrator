@@ -22,6 +22,10 @@ type CenterPaneProps = {
 	onSelectSessionTerminal?: () => void;
 	onSelectShellTerminal?: (handleId: string) => void;
 	onCloseShellTerminal?: (handleId: string) => void;
+	/** A shell pane reported its PTY ended; the owner re-checks with the daemon. */
+	onShellExited?: (handleId: string) => void;
+	/** Bumped to force a fresh attachment when a reported exit turns out false. */
+	attachEpoch?: number;
 	onRenameShellTerminal?: (handleId: string, title: string) => void;
 	/** Opens a new standalone shell tab (the "+" at the end of the tab bar). */
 	onNewShellTerminal?: () => void;
@@ -53,6 +57,8 @@ export function CenterPane({
 	onSelectSessionTerminal,
 	onSelectShellTerminal,
 	onCloseShellTerminal,
+	onShellExited,
+	attachEpoch,
 	onRenameShellTerminal,
 	onNewShellTerminal,
 }: CenterPaneProps) {
@@ -121,16 +127,17 @@ export function CenterPane({
 			className="terminal-pane-frame flex h-full min-h-0 min-w-flex-min flex-col"
 			onWheelCapture={handleWheelZoom}
 		>
-			<div className="flex h-inspector-tabs shrink-0 items-center border-b border-border px-5">
+			<div className="flex h-inspector-tabs shrink-0 items-center border-b border-border pl-2 pr-5">
+				{/* No "TERMINAL" heading: the tabs say what this is, and the label was
+				    spending the widest column in the strip to repeat it. */}
 				<div className="flex min-w-flex-min flex-1 items-center gap-3">
-					<span className="shrink-0 font-mono text-caption font-semibold uppercase tracking-wide-lg text-muted-foreground">
-						TERMINAL
-					</span>
 					<button
 						aria-label="Scroll tabs left"
 						className={cn(
-							"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
-							!tabsOverflow.canScrollLeft && "invisible",
+							"inline-flex shrink-0 items-center justify-center overflow-hidden rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none",
+							// visibility:hidden still reserves the box, which left a dead
+							// column where the strip should start. Collapse it instead.
+							tabsOverflow.canScrollLeft ? "size-control-sm" : "pointer-events-none size-0 opacity-0",
 						)}
 						disabled={!tabsOverflow.canScrollLeft}
 						onClick={() => tabsOverflow.scrollByDirection(-1)}
@@ -170,8 +177,8 @@ export function CenterPane({
 					<button
 						aria-label="Scroll tabs right"
 						className={cn(
-							"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
-							!tabsOverflow.canScrollRight && "invisible",
+							"inline-flex shrink-0 items-center justify-center overflow-hidden rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none",
+							tabsOverflow.canScrollRight ? "size-control-sm" : "pointer-events-none size-0 opacity-0",
 						)}
 						disabled={!tabsOverflow.canScrollRight}
 						onClick={() => tabsOverflow.scrollByDirection(1)}
@@ -216,6 +223,8 @@ export function CenterPane({
 				<TerminalPane
 					daemonReady={daemonReady}
 					fontSize={fontSize}
+					attachEpoch={attachEpoch}
+					onShellExited={onShellExited}
 					session={session}
 					terminalTarget={target}
 					theme={theme}
