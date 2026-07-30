@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { motion } from "motion/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -374,17 +375,11 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			</div>
 
 			{archived.length > 0 && (
-				<div className="shrink-0 border-t border-border px-3">
-					{/* agent-orchestrator's archive bar (Dashboard.tsx + globals.css):
-					    a full-width chevron + label + count toggle row. The button is
-					    37px (not the 35.5px its text-control implies) because the
-					    unlayered `button { font: inherit }` in styles.css outranks
-					    Tailwind's layered text utilities, leaving it at 14px/21px. */}
-					<div className={cn("flex items-center gap-2", archiveExpanded ? "min-h-11" : "min-h-row-md")}>
+				<div className="shrink-0 border-t border-border">
 						<button
 							aria-expanded={archiveExpanded}
 							aria-label={`Archive, ${archived.length} ${archived.length === 1 ? "session" : "sessions"}`}
-							className="group flex min-w-0 items-center gap-2 py-2 text-muted-foreground transition-colors hover:text-foreground"
+							className="group flex w-full min-w-0 items-center gap-2 px-3 py-2 text-muted-foreground transition-colors hover:text-foreground"
 							onClick={() => setArchiveExpanded((v) => !v)}
 							type="button"
 						>
@@ -404,11 +399,15 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 							<span className="text-2xs font-medium tracking-wide-sm">Archive</span>
 							<span className="ml-1.5 text-micro text-passive">{archived.length}</span>
 						</button>
-					</div>
-					{archiveExpanded && (
+					<motion.div
+						initial={false}
+						animate={{ height: archiveExpanded ? "auto" : 0 }}
+						transition={{ duration: 0.22, ease: [0.25, 0.46, 0.45, 0.94] }}
+						style={{ overflow: "hidden" }}
+					>
 						<div
 							aria-label="Archived sessions"
-							className="board-scrollbar grid max-h-[45vh] grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-2 overflow-y-auto pb-3"
+							className="board-scrollbar grid max-h-[45vh] grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-2 overflow-y-auto px-3 pb-3"
 							role="list"
 						>
 							{archived.map((s) => (
@@ -422,7 +421,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 								/>
 							))}
 						</div>
-					)}
+					</motion.div>
 				</div>
 			)}
 			{restoreUnavailableSession && (

@@ -250,7 +250,8 @@ function Sidebar({
 			animate={{ x: containerX }}
 			transition={activeTransition}
 				className={cn(
-					"fixed inset-y-0 z-chrome hidden h-svh w-(--sidebar-width) md:flex",
+					"fixed inset-y-0 hidden h-svh w-(--sidebar-width) md:flex",
+					overlay ? "z-sidebar-preview" : "z-chrome",
 					side === "left" ? "left-0" : "right-0",
 					variant === "floating" || variant === "inset"
 						? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"

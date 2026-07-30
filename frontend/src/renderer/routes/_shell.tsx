@@ -133,7 +133,6 @@ function ShellLayout() {
 	const [isKeyboardShortcutsSettingsOpen, setIsKeyboardShortcutsSettingsOpen] = useState(false);
 	const [isSidebarPeekOpen, setIsSidebarPeekOpen] = useState(false);
 	const [sidebarPeekReveal, setSidebarPeekReveal] = useState(0);
-	const sidebarPeekCloseTimerRef = useRef<number | undefined>(undefined);
 	const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	useEffect(() => {
 		document.addEventListener("click", handleModifierLinkClick);
@@ -165,27 +164,15 @@ function ShellLayout() {
 	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const replacementErrorProjectId = Object.keys(orchestratorReplacementErrors)[0] ?? null;
 
-	const cancelSidebarPeekClose = useCallback(() => {
-		if (sidebarPeekCloseTimerRef.current === undefined) return;
-		window.clearTimeout(sidebarPeekCloseTimerRef.current);
-		sidebarPeekCloseTimerRef.current = undefined;
-	}, []);
-
 	const previewSidebar = useCallback(() => {
 		if (isSidebarOpen) return;
-		cancelSidebarPeekClose();
 		setIsSidebarPeekOpen(true);
-	}, [cancelSidebarPeekClose, isSidebarOpen]);
+	}, [isSidebarOpen]);
 
-	const scheduleSidebarPeekClose = useCallback(() => {
-		if (isSidebarOpen) return;
-		cancelSidebarPeekClose();
-		sidebarPeekCloseTimerRef.current = window.setTimeout(() => {
-			setIsSidebarPeekOpen(false);
-			setSidebarPeekReveal(0);
-			sidebarPeekCloseTimerRef.current = undefined;
-		}, 140);
-	}, [cancelSidebarPeekClose, isSidebarOpen]);
+	const closeSidebarPeek = useCallback(() => {
+		setIsSidebarPeekOpen(false);
+		setSidebarPeekReveal(0);
+	}, []);
 
 	const navigateSession = useCallback(
 		(direction: -1 | 1) => {
@@ -443,38 +430,9 @@ function ShellLayout() {
 
 	useEffect(() => {
 		if (!isSidebarOpen) return;
-		cancelSidebarPeekClose();
-		setIsSidebarPeekOpen(false);
-	}, [cancelSidebarPeekClose, isSidebarOpen]);
+		closeSidebarPeek();
+	}, [isSidebarOpen]);
 
-	useEffect(() => cancelSidebarPeekClose, [cancelSidebarPeekClose]);
-
-	useEffect(() => {
-		if (!isSidebarPeekOpen || isSidebarOpen) return;
-
-		const handlePointerMove = (event: PointerEvent) => {
-			const target = event.target instanceof Element ? event.target : null;
-			const isInSidebarPortal = Boolean(target?.closest('[role="dialog"], [role="listbox"], [role="menu"]'));
-			const sidebar = document.querySelector<HTMLElement>('[data-slot="sidebar-container"]');
-			const bounds = sidebar?.getBoundingClientRect();
-			const isInSidebar = Boolean(
-				bounds &&
-				event.clientX >= bounds.left &&
-				event.clientX <= bounds.right &&
-				event.clientY >= bounds.top &&
-				event.clientY <= bounds.bottom,
-			);
-
-			if (isInSidebar || isInSidebarPortal) {
-				cancelSidebarPeekClose();
-				return;
-			}
-			scheduleSidebarPeekClose();
-		};
-
-		window.addEventListener("pointermove", handlePointerMove);
-		return () => window.removeEventListener("pointermove", handlePointerMove);
-	}, [cancelSidebarPeekClose, isSidebarOpen, isSidebarPeekOpen, scheduleSidebarPeekClose]);
 
 	useEffect(() => {
 		if (daemonStatus.state !== "ready" || !daemonStatus.port) return;
@@ -626,8 +584,7 @@ function ShellLayout() {
 					className="min-h-0 flex-1 overflow-x-hidden"
 					keyboardShortcut={false}
 					onOpenChange={(open) => {
-						cancelSidebarPeekClose();
-						setIsSidebarPeekOpen(false);
+						closeSidebarPeek();
 						if (open !== isSidebarOpen) toggleSidebar();
 					}}
 					open={isSidebarOpen || isSidebarPeekOpen}
@@ -645,7 +602,7 @@ function ShellLayout() {
 					hideEdgeBorder={isWelcomeBoard}
 					isOverlay={isSidebarPeekOpen && !isSidebarOpen}
 					peekReveal={sidebarPeekReveal}
-					onPreviewLeave={scheduleSidebarPeekClose}
+					onPreviewLeave={closeSidebarPeek}
 						underTopbar={isMac || isWindows || isLinux}
 						topbarOffset={isWindows ? "titlebar" : hideShellTopbar ? "trafficLights" : "toolbar"}
 						onCreateProject={createProject}
@@ -723,12 +680,10 @@ function ShellLayout() {
 								previewSidebar();
 							} else {
 								setSidebarPeekReveal(56);
-								scheduleSidebarPeekClose();
 							}
 						}}
 						onPointerLeave={() => {
 							setSidebarPeekReveal(0);
-							scheduleSidebarPeekClose();
 						}}
 					/>
 				)}
