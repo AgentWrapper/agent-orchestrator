@@ -22,8 +22,10 @@ type CenterPaneProps = {
 	onSelectSessionTerminal?: () => void;
 	onSelectShellTerminal?: (handleId: string) => void;
 	onCloseShellTerminal?: (handleId: string) => void;
-	/** A shell whose PTY exited on its own; its tab is retired. */
+	/** A shell pane reported its PTY ended; the owner re-checks with the daemon. */
 	onShellExited?: (handleId: string) => void;
+	/** Bumped to force a fresh attachment when a reported exit turns out false. */
+	attachEpoch?: number;
 	onRenameShellTerminal?: (handleId: string, title: string) => void;
 	/** Opens a new standalone shell tab (the "+" at the end of the tab bar). */
 	onNewShellTerminal?: () => void;
@@ -56,6 +58,7 @@ export function CenterPane({
 	onSelectShellTerminal,
 	onCloseShellTerminal,
 	onShellExited,
+	attachEpoch,
 	onRenameShellTerminal,
 	onNewShellTerminal,
 }: CenterPaneProps) {
@@ -220,6 +223,7 @@ export function CenterPane({
 				<TerminalPane
 					daemonReady={daemonReady}
 					fontSize={fontSize}
+					attachEpoch={attachEpoch}
 					onShellExited={onShellExited}
 					session={session}
 					terminalTarget={target}

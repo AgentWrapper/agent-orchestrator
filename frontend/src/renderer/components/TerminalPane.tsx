@@ -20,18 +20,37 @@ type TerminalPaneProps = {
 	terminalTarget?: TerminalTarget;
 	fontSize: number;
 	/**
-	 * Fired once when a shell pane's PTY exits on its own (the user typed
-	 * `exit`, or killed the process). Nothing else tells the client: the shell
-	 * list is only refetched around this client's own open/close.
+	 * Fired once when a shell pane reports its PTY ended (the user typed `exit`,
+	 * killed the process — or the attach loop gave up). Nothing else tells the
+	 * client: the shell list is only refetched around this client's own
+	 * open/close.
 	 */
 	onShellExited?: (handleId: string) => void;
+	/**
+	 * Bumped to force a fresh attachment for the same handle. A pane that
+	 * reported "exited" holds that state forever, so when the daemon says the
+	 * shell is in fact still alive, the only way back to a live terminal is to
+	 * remount the attachment.
+	 */
+	attachEpoch?: number;
 };
 
-export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize, onShellExited }: TerminalPaneProps) {
-	const terminalKey =
+export function TerminalPane({
+	session,
+	theme,
+	daemonReady,
+	terminalTarget,
+	fontSize,
+	onShellExited,
+	attachEpoch = 0,
+}: TerminalPaneProps) {
+	const handleKey =
 		terminalTarget?.kind === "reviewer" || terminalTarget?.kind === "shell"
 			? terminalTarget.handleId
 			: (session?.terminalHandleId ?? "empty");
+	// The epoch is part of the key so a bump remounts the attachment for the
+	// same handle, which is what recovers a pane stuck on a false "exited".
+	const terminalKey = `${handleKey}:${attachEpoch}`;
 
 	if (!window.ao) {
 		// A standalone shell has no agent and no branch, so it previews as a plain

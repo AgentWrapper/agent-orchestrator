@@ -89,6 +89,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const openShellTerminal = useOpenShellTerminal();
 	const closeShellTerminal = useCloseShellTerminal();
 	const refreshShellTerminals = useRefreshShellTerminals();
+	const [shellAttachEpochs, setShellAttachEpochs] = useState<Record<string, number>>({});
 	const renameShellTerminal = useRenameShellTerminal();
 	const activeShellTerminalHandleId = useUiStore((state) => state.activeShellTerminalHandleId);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
@@ -135,15 +136,27 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	);
 
 	// A pane reporting "exited" is a hint, not proof: the attach loop reports it
-	// after giving up on a failing liveness probe too. Drop the dead view but
-	// let the daemon decide whether the shell itself is really gone.
+	// after giving up on a failing liveness probe too. Ask the daemon, then act
+	// on its answer.
+	//
+	// Still in the list -> the shell is alive and this was an attachment
+	// failure. The pane holds "exited" forever once it lands there, so the tab
+	// would sit on "Terminal ended" telling the user to close a live shell.
+	// Bumping the epoch remounts the attachment and reconnects it instead.
+	//
+	// Gone from the list -> the daemon confirmed it died; give the pane back to
+	// the session.
 	const handleShellExited = useCallback(
-		(handleId: string) => {
+		async (handleId: string) => {
+			const shells = await refreshShellTerminals();
+			if (shells.some((shell) => shell.handleId === handleId)) {
+				setShellAttachEpochs((current) => ({ ...current, [handleId]: (current[handleId] ?? 0) + 1 }));
+				return;
+			}
 			setTerminalTarget((current) =>
 				current.kind === "shell" && current.handleId === handleId ? { kind: "worker" } : current,
 			);
 			if (activeShellTerminalHandleId === handleId) setActiveShellTerminal(null);
-			refreshShellTerminals();
 		},
 		[activeShellTerminalHandleId, refreshShellTerminals, setActiveShellTerminal],
 	);
@@ -388,6 +401,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					<CenterPane
 						daemonReady={daemonStatus.state === "ready"}
 						onCloseShellTerminal={closeShellTerminalByHandle}
+						attachEpoch={terminalTarget.kind === "shell" ? (shellAttachEpochs[terminalTarget.handleId] ?? 0) : 0}
 						onShellExited={handleShellExited}
 						onNewShellTerminal={addShellTerminal}
 						onRenameShellTerminal={renameShellTerminalByHandle}

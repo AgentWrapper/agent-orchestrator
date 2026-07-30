@@ -1,5 +1,5 @@
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useOverflowScroll } from "../hooks/useOverflowScroll";
 import {
 	useCloseShellTerminal,
@@ -28,6 +28,17 @@ export function ShellTerminalsView() {
 	const shellTerminals = (useShellTerminals().data ?? []).filter((s) => !s.sessionId);
 	const closeShellTerminal = useCloseShellTerminal();
 	const refreshShellTerminals = useRefreshShellTerminals();
+	const [attachEpochs, setAttachEpochs] = useState<Record<string, number>>({});
+	// See SessionView: "exited" is a hint. If the daemon still lists the shell it
+	// is alive and the pane must re-attach rather than sit on "Terminal ended".
+	const handleShellExited = useCallback(
+		async (handleId: string) => {
+			const shells = await refreshShellTerminals();
+			if (!shells.some((shell) => shell.handleId === handleId)) return;
+			setAttachEpochs((current) => ({ ...current, [handleId]: (current[handleId] ?? 0) + 1 }));
+		},
+		[refreshShellTerminals],
+	);
 	const renameShellTerminal = useRenameShellTerminal();
 	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
 	const activeHandleId = useUiStore((state) => state.activeShellTerminalHandleId);
@@ -113,7 +124,8 @@ export function ShellTerminalsView() {
 					<TerminalPane
 						daemonReady={daemonStatus.state === "ready"}
 						fontSize={12}
-						onShellExited={() => refreshShellTerminals()}
+						attachEpoch={active ? (attachEpochs[active.handleId] ?? 0) : 0}
+						onShellExited={handleShellExited}
 						terminalTarget={{ kind: "shell", handleId: active.handleId, title: active.title }}
 						theme={theme}
 					/>
