@@ -115,6 +115,48 @@ describe("SessionsBoard", () => {
 		expect(screen.getByRole("button", { name: "New task" })).toBeInTheDocument();
 	});
 
+	it.each([
+		["active", "Working", "bg-status-working", true],
+		["idle", "Idle", "bg-status-idle", false],
+	] as const)("shows %s orchestrator activity in the in-panel board toolbar", (state, label, tone, pulses) => {
+		boardActionsInPanelMock.mockReturnValue(true);
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "solkit-ui",
+					path: "/tmp/solkit-ui",
+					sessions: [
+						{
+							id: "orch-1",
+							workspaceId: "p1",
+							workspaceName: "solkit-ui",
+							title: "orchestrator",
+							provider: "codex",
+							kind: "orchestrator",
+							branch: "main",
+							status: "working",
+							activity: { state, lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+					],
+				},
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		const button = screen.getByRole("button", { name: `Orchestrator, ${label}` });
+		const indicator = button.querySelector("span.size-dot-sm") as HTMLElement;
+		expect(indicator).toHaveAttribute("aria-hidden", "true");
+		expect(indicator).toHaveClass(tone);
+		expect(indicator).toHaveClass(pulses ? "animate-status-pulse" : "size-dot-sm");
+		if (!pulses) expect(indicator).not.toHaveClass("animate-status-pulse");
+	});
+
 	it("shows the Board crumb on the root board when actions live in the panel", () => {
 		boardActionsInPanelMock.mockReturnValue(true);
 		workspaceQueryMock.mockReturnValue({
@@ -259,7 +301,7 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		const needsYouColumn = screen.getByText("Needs you").closest("section") as HTMLElement;
-		expect(needsYouColumn.firstElementChild).toHaveClass("py-2");
+		expect(needsYouColumn.firstElementChild).toHaveClass("h-12");
 		expect(within(needsYouColumn).getByText("agent-exited-task")).toBeInTheDocument();
 		expect(within(needsYouColumn).getByText("Exited").closest("span")).toHaveClass("text-status-exited");
 	});
@@ -319,13 +361,18 @@ describe("SessionsBoard", () => {
 
 		expect(within(workSummary).getByText("Idle").querySelector("span")).toHaveClass("bg-status-idle");
 		expect(within(workSummary).getByText("Working").querySelector("span")).toHaveClass("bg-status-working");
-		expect(workSummary.parentElement).toHaveClass("pb-2.5");
-		expect(workingRegion.firstElementChild).toHaveClass("pb-2.5");
+		expect(workSummary).toHaveClass("font-mono", "text-2xs", "uppercase");
+		expect(workSummary.parentElement).toHaveClass("h-12");
+		expect(workingRegion.firstElementChild).toHaveClass("py-2.5");
 		expect(within(workLane).getByLabelText("2 idle sessions")).toHaveTextContent("2");
 		expect(within(workLane).getByLabelText("1 working session")).toHaveTextContent("1");
 		expect(screen.queryByRole("button", { name: /idle sessions/i })).not.toBeInTheDocument();
-		expect(idleRegion).toHaveClass("flex-[3]");
-		expect(workingRegion).toHaveClass("flex-[2]", "rounded-t-(--radius-panel)", "border-t");
+		expect(workLane.querySelectorAll(".overflow-y-auto")).toHaveLength(1);
+		expect(idleRegion).toHaveClass("flex-none");
+		expect(idleRegion).not.toHaveClass("overflow-y-auto", "board-scrollbar");
+		expect(workingRegion).toHaveClass("flex-1", "border-t");
+		expect(workingRegion.className).not.toContain("rounded-t");
+		expect(workingRegion).not.toHaveClass("overflow-y-auto", "board-scrollbar");
 		expect(within(idleRegion).getByText("idle-no-pr-task")).toBeInTheDocument();
 		expect(within(idleRegion).getByText("second-idle-task")).toBeInTheDocument();
 		expect(within(workingRegion).getByText("active-task")).toBeInTheDocument();
@@ -336,6 +383,48 @@ describe("SessionsBoard", () => {
 		const badge = within(idleCard).getByText("Idle").closest("span");
 		expect(badge).toHaveClass("text-status-idle");
 		expect(badge).not.toHaveClass("text-status-working");
+	});
+
+	it("uses one shared scrollbar when a short idle section sits above many working sessions", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({
+						id: "s-idle",
+						title: "single-idle-task",
+						status: "idle",
+						activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
+					}),
+					...Array.from({ length: 7 }, (_, index) =>
+						boardSession({
+							id: `s-working-${index + 1}`,
+							title: `working-task-${index + 1}`,
+							status: "working",
+							activity: { state: "active", lastActivityAt: "2026-01-01T00:00:00Z" },
+						}),
+					),
+				]),
+			],
+			isError: false,
+		});
+
+		renderBoard("p1");
+
+		const workLane = screen.getByRole("region", { name: "Idle / Working sessions" });
+		const idleRegion = within(workLane).getByRole("region", { name: "Idle sessions" });
+		const workingRegion = within(workLane).getByRole("region", { name: "Working sessions" });
+		const laneScrollers = Array.from(workLane.querySelectorAll<HTMLElement>(".overflow-y-auto"));
+
+		expect(laneScrollers).toHaveLength(1);
+		expect(laneScrollers[0]).toHaveClass("board-scrollbar", "overflow-y-auto");
+		expect(laneScrollers[0]).toContainElement(idleRegion);
+		expect(laneScrollers[0]).toContainElement(workingRegion);
+		expect(idleRegion).toHaveClass("flex-none");
+		expect(workingRegion).toHaveClass("flex-1");
+		expect(idleRegion.querySelector(".overflow-y-auto")).not.toBeInTheDocument();
+		expect(workingRegion.querySelector(".overflow-y-auto")).not.toBeInTheDocument();
+		expect(within(idleRegion).getByText("single-idle-task")).toBeInTheDocument();
+		expect(within(workingRegion).getAllByTestId("board-session-card")).toHaveLength(7);
 	});
 
 	it("lets idle sessions fill the lane when no working sessions exist", () => {
@@ -394,6 +483,7 @@ describe("SessionsBoard", () => {
 		expect(within(workLane).queryByRole("region", { name: "Idle sessions" })).not.toBeInTheDocument();
 		expect(workingRegion).toHaveClass("flex-1");
 		expect(workingRegion).not.toHaveClass("flex-[2]", "border-t");
+		expect(workLane.querySelectorAll(".overflow-y-auto")).toHaveLength(1);
 		expect(within(workingRegion).getByText("first-working-task")).toBeInTheDocument();
 		expect(within(workingRegion).getByText("second-working-task")).toBeInTheDocument();
 	});
@@ -518,42 +608,25 @@ describe("SessionsBoard", () => {
 		).not.toBe(0);
 		expect(screen.getByRole("button", { name: "Restore dead worker" })).toBeInTheDocument();
 
-		// The row layout renders the same accessible logo (both archive layouts changed).
-		await userEvent.click(screen.getByRole("button", { name: "Rows" }));
-		const rowCard = within(screen.getByRole("list", { name: "Archived sessions" }))
-			.getByText("dead worker")
-			.closest<HTMLElement>("[role='listitem']");
-		expect(rowCard).not.toBeNull();
-		expect(within(rowCard!).getByRole("img", { name: "claude-code" })).toBeInTheDocument();
+		expect(screen.queryByRole("group", { name: "Archive layout" })).not.toBeInTheDocument();
 	});
 
-	it("switches between rows and columns and remembers the archive layout", async () => {
+	it("renders archived sessions as a grid even when rows were previously saved", async () => {
+		window.localStorage.setItem("ao.board.archive.layout", "rows");
 		workspaceQueryMock.mockReturnValue({
 			data: [workspaceWithSessions([terminatedSession()])],
 			isError: false,
 			isSuccess: true,
 		});
-		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-		const view = renderBoardWithClient(queryClient, "p1");
+		renderBoard("p1");
 
 		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
-		const layout = screen.getByRole("group", { name: "Archive layout" });
-		expect(within(layout).getByRole("button", { name: "Columns" })).toHaveAttribute("aria-pressed", "true");
-		expect(screen.getByRole("list", { name: "Archived sessions" })).toHaveClass("grid");
+		expect(screen.queryByRole("group", { name: "Archive layout" })).not.toBeInTheDocument();
+		const archive = screen.getByRole("list", { name: "Archived sessions" });
+		expect(archive).toHaveClass("grid");
 		const restore = screen.getByRole("button", { name: "Restore dead worker" });
 		expect(restore.parentElement).toContainElement(screen.getByText("Terminated"));
-
-		await userEvent.click(within(layout).getByRole("button", { name: "Rows" }));
-		expect(within(layout).getByRole("button", { name: "Rows" })).toHaveAttribute("aria-pressed", "true");
-		expect(screen.getByRole("list", { name: "Archived sessions" })).not.toHaveClass("grid");
 		expect(screen.queryByRole("button", { name: "Open dead worker" })).not.toBeInTheDocument();
-		expect(window.localStorage.getItem("ao.board.archive.layout")).toBe("rows");
-
-		view.unmount();
-		renderBoard("p1");
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
-		expect(screen.getByRole("button", { name: "Rows" })).toHaveAttribute("aria-pressed", "true");
-		expect(screen.getByRole("list", { name: "Archived sessions" })).not.toHaveClass("grid");
 	});
 
 	it("restores a terminated session, refreshes workspace data, and opens the restored terminal", async () => {
@@ -828,8 +901,12 @@ describe("SessionsBoard", () => {
 		const mergedRegion = within(mergeLane).getByRole("region", { name: "Merged sessions" });
 		expect(within(mergeLane).getByLabelText("1 ready to merge session")).toHaveTextContent("1");
 		expect(within(mergeLane).getByLabelText("1 merged session")).toHaveTextContent("1");
-		expect(readyRegion).toHaveClass("flex-[3]");
-		expect(mergedRegion).toHaveClass("flex-[2]", "rounded-t-(--radius-panel)", "border-t");
+		expect(mergeLane.querySelectorAll(".overflow-y-auto")).toHaveLength(1);
+		expect(readyRegion).toHaveClass("flex-none");
+		expect(readyRegion).not.toHaveClass("overflow-y-auto", "board-scrollbar");
+		expect(mergedRegion).toHaveClass("flex-1", "border-t");
+		expect(mergedRegion.className).not.toContain("rounded-t");
+		expect(mergedRegion).not.toHaveClass("overflow-y-auto", "board-scrollbar");
 		expect(within(readyRegion).getByText("ready worker")).toBeInTheDocument();
 		expect(within(mergedRegion).getByText("merged worker")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /archive/i })).not.toBeInTheDocument();
@@ -856,7 +933,7 @@ describe("SessionsBoard", () => {
 		const laneScrollers = screen
 			.getAllByTestId("board-column")
 			.flatMap((column) => Array.from(column.querySelectorAll<HTMLElement>(".overflow-y-auto")));
-		expect(laneScrollers).toHaveLength(6);
+		expect(laneScrollers).toHaveLength(4);
 		for (const scroller of laneScrollers) {
 			expect(scroller).toHaveClass("board-scrollbar", "overflow-y-auto");
 		}
@@ -924,17 +1001,51 @@ describe("SessionsBoard", () => {
 		await userEvent.click(terminateButton);
 		expect(navigateMock).not.toHaveBeenCalled();
 		const dialog = screen.getByRole("dialog", { name: "Terminate merged worker?" });
-		await userEvent.click(within(dialog).getByRole("button", { name: "Terminate session" }));
+		await userEvent.click(within(dialog).getByRole("button", { name: "Yes, terminate session" }));
 
 		await waitFor(() =>
 			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/kill", {
 				params: { path: { sessionId: "s-merged" } },
 			}),
 		);
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
-	it("keeps the merged-card confirmation open when termination fails", async () => {
+	it("keeps only the targeted card disabled while its termination is pending", async () => {
+		let finishKill!: (value: { data: { ok: boolean; sessionId: string }; error: undefined }) => void;
+		postMock.mockReturnValueOnce(
+			new Promise((resolve) => {
+				finishKill = resolve;
+			}),
+		);
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({ id: "s-one", title: "worker one", status: "working" }),
+					boardSession({ id: "s-two", title: "worker two", status: "merged" }),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: "Terminate worker one" }));
+		await userEvent.click(
+			within(screen.getByRole("dialog")).getByRole("button", { name: "Yes, terminate session" }),
+		);
+
+		expect(screen.getByRole("button", { name: "Killing worker one" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Killing worker one" })).toHaveClass("opacity-100");
+		expect(screen.getByRole("button", { name: "Terminate worker two" })).toBeEnabled();
+		expect(postMock).toHaveBeenCalledTimes(1);
+
+		finishKill({ data: { ok: true, sessionId: "s-one" }, error: undefined });
+		await waitFor(() => expect(screen.getByRole("button", { name: "Terminate worker one" })).toBeEnabled());
+	});
+
+	it("keeps the merged-card confirmation dismissed and surfaces termination failures", async () => {
 		postMock.mockResolvedValueOnce({ error: { message: "runtime failed" }, response: { status: 500 } });
 		workspaceQueryMock.mockReturnValue({
 			data: [workspaceWithSessions([boardSession({ id: "s-merged", title: "merged worker", status: "merged" })])],
@@ -944,10 +1055,14 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		await userEvent.click(screen.getByRole("button", { name: "Terminate merged worker" }));
-		await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Terminate session" }));
+		await userEvent.click(
+			within(screen.getByRole("dialog")).getByRole("button", { name: "Yes, terminate session" }),
+		);
 
-		expect(await screen.findByText("Failed to terminate session (500)")).toBeInTheDocument();
-		expect(screen.getByRole("dialog")).toBeInTheDocument();
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		expect(await screen.findByRole("alert")).toHaveTextContent("Failed to terminate session (500)");
+		expect(screen.getByRole("button", { name: "Terminate merged worker" })).toBeEnabled();
 	});
 });
 

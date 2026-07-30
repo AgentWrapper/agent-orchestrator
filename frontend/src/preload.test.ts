@@ -92,3 +92,13 @@ describe("preload application shortcut bridges", () => {
 		expect(electronMocks.off).toHaveBeenCalledWith(channel, wrapped);
 	});
 });
+
+describe("preload keybinding recording bridge", () => {
+	it("tells the main process when shortcut capture starts and stops", async () => {
+		await exposedBridge().keybindings.setRecording(true);
+		await exposedBridge().keybindings.setRecording(false);
+
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(1, "keybindings:setRecording", true);
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(2, "keybindings:setRecording", false);
+	});
+});

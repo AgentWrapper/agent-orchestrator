@@ -1,4 +1,4 @@
-import { COMPANY } from "@superset/shared/constants";
+import { COMPANY } from "@ao/shared/constants";
 import { ExternalLink } from "lucide-react";
 import type { Metadata } from "next";
 import { FaGithub } from "react-icons/fa";
@@ -21,19 +21,19 @@ export const metadata: Metadata = {
     description:
       "The latest updates, improvements, and new features in Agent Orchestrator.",
     url: "/changelog",
-    images: ["/opengraph-image"],
+    images: ["/og-image.png"],
   },
   twitter: {
     card: "summary_large_image",
     title: "Changelog | Agent Orchestrator",
     description:
       "The latest updates, improvements, and new features in Agent Orchestrator.",
-    images: ["/opengraph-image"],
+    images: ["/og-image.png"],
   },
 };
 
 export default async function ChangelogPage() {
-  const entries = getChangelogEntries();
+  const entries = await getChangelogEntries();
 
   return (
     <main className="relative min-h-screen">

@@ -6,7 +6,7 @@ export const COMPANY = {
   GITHUB_URL: "https://github.com/AgentWrapper/agent-orchestrator",
   GITHUB_REPO: "AgentWrapper/agent-orchestrator",
   STATUS_URL: "https://status.aoagents.dev",
-  TRUST_URL: "https://aoagents.dev/privacy",
+  TRUST_URL: "https://aoagents.dev/privacy/",
   MAIL_TO: "mailto:hello@aoagents.dev",
   X_URL: "https://twitter.com/aoagents",
   LINKEDIN_URL: "https://linkedin.com/company/aoagents",
@@ -33,13 +33,20 @@ export const PLATFORMS = {
 
 export const GITHUB_STARS_URL = "https://api.github.com/repos/AgentWrapper/agent-orchestrator";
 
+// macOS still points at the .zip on purpose. The .dmg first-install artifact is
+// built by frontend/makers/maker-dmg.ts, but no published release carries it yet,
+// so flipping these two links (and the two macOS rows in README.md) to
+// "...-darwin-{arch}.dmg" would 404 until a real release publishes both formats.
+// That flip is rollout step 6 in issue #3267 and must happen only after a real
+// release has been cut and the dmg verified. The .zip keeps publishing forever
+// either way, because electron-updater cannot auto-update from a .dmg.
 export const DOWNLOAD_URL_MAC_ARM64 = "https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-arm64.zip";
 export const DOWNLOAD_URL_MAC_X64 = "https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-x64.zip";
 export const DOWNLOAD_URL_WINDOWS = "https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-win32-x64.exe";
 export const DOWNLOAD_URL_LINUX = "https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.AppImage";
 
 export const AGENT_HARNESSES = 23;
-export const TAGLINE = "Turn agent chaos into managable work.";
+export const TAGLINE = "Stop babysitting agents. Start merging real work.";
 export const HERO_SUBHEADLINE = "Run a fleet of coding agents while keeping branches, reviews, and CI failures managable.";
 export const HERO_SECONDARY_SUBHEADLINE = "Isolated workspaces for Claude Code, Codex, and any CLI agent. Review every change from one dashboard. Free and open source.";
 

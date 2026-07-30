@@ -186,7 +186,7 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAgentResolver: %v", err)
 	}
-	svc, reviewSvc, lc, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, log)
+	svc, reviewSvc, lc, _, err := startSession(cfg, rt, store, lcm, nil, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestWiring_StartSessionSpawnsScratchWithoutGitRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAgentResolver: %v", err)
 	}
-	svc, _, _, _, err := startSession(cfg, runtime, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, log)
+	svc, _, _, _, err := startSession(cfg, runtime, store, lcm, nil, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken(t *testing.T) {
 	if agentsErr != nil {
 		t.Fatalf("buildAgentResolver: %v", agentsErr)
 	}
-	svc, _, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, log)
+	svc, _, _, _, err := startSession(cfg, rt, store, lcm, nil, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -361,7 +361,7 @@ func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
 	if agentsErr != nil {
 		t.Fatalf("buildAgentResolver: %v", agentsErr)
 	}
-	svc, _, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, log)
+	svc, _, _, _, err := startSession(cfg, rt, store, lcm, nil, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -632,6 +632,8 @@ func (f *fakeSessionLifecycle) RestoreAll(_ context.Context) error {
 	f.restoreAllCalled = true
 	return f.restoreErr
 }
+
+func (f *fakeSessionLifecycle) SetShellTerminalCloser(sessionmanager.ShellTerminalCloser) {}
 
 // TestWiring_SessionLifecycleInterfaceInvokedByDaemon asserts the
 // sessionLifecycle interface is satisfied by *sessionmanager.Manager (compile

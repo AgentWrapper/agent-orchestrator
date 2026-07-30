@@ -3,7 +3,7 @@
 	"name": "Catppuccin Latte",
 	"type": "light",
 	"author": "Catppuccin",
-	"description": "Catppuccin Latte theme for Superset",
+	"description": "Catppuccin Latte theme for Agent Orchestrator",
 	"ui": {
 		"background": "#eff1f5",
 		"foreground": "#4c4f69",

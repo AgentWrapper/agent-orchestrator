@@ -49,6 +49,7 @@ export const aoBridge: AoBridge =
 			}),
 			start: async () => ({ state: "starting" }),
 			stop: async () => ({ state: "stopped" }),
+			restart: async () => ({ state: "starting" }),
 			onStatus: () => () => undefined,
 		},
 		telemetry: {
@@ -112,11 +113,16 @@ export const aoBridge: AoBridge =
 				canGoForward: false,
 				isLoading: false,
 			}),
+			getTabs: async (viewId: string) => ({ viewId, activeTabId: "t1", tabs: [] }),
+			selectTab: async ({ viewId, tabId }) => ({ viewId, activeTabId: tabId, tabs: [] }),
+			closeTab: async ({ viewId }) => ({ viewId, activeTabId: "", tabs: [] }),
 			destroy: () => undefined,
 			capture: async () => "",
 			requestMirror: async () => false,
 			setAnnotationMode: async () => undefined,
 			onNavState: () => () => undefined,
+			onTabsState: () => () => undefined,
+			onAgentActivity: () => () => undefined,
 			onAnnotationSubmit: () => () => undefined,
 			onAnnotationCancel: () => () => undefined,
 		},
@@ -131,6 +137,11 @@ export const aoBridge: AoBridge =
 		updateSettings: {
 			get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
 			set: async () => undefined,
+		},
+		keybindings: {
+			get: async () => ({}),
+			set: async (overrides) => overrides,
+			setRecording: async () => undefined,
 		},
 		updates: {
 			getStatus: async () => ({ state: "idle" }),

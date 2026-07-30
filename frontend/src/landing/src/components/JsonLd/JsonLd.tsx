@@ -1,4 +1,4 @@
-import { COMPANY } from "@superset/shared/constants";
+import { COMPANY } from "@ao/shared/constants";
 
 function serializeJsonLd(schema: unknown): string {
 	const json = JSON.stringify(schema);
@@ -36,14 +36,13 @@ export function OrganizationJsonLd() {
 		"@type": "Organization",
 		name: COMPANY.NAME,
 		url: COMPANY.MARKETING_URL,
-		logo: `${COMPANY.MARKETING_URL}/logo.png`,
+		logo: `${COMPANY.MARKETING_URL}/ao-logo.svg`,
 		description: "Run 10+ parallel coding agents on your machine",
 		email: supportEmail,
 		contactPoint: {
 			"@type": "ContactPoint",
 			contactType: "customer support",
 			email: supportEmail,
-			url: `${COMPANY.MARKETING_URL}/contact`,
 			availableLanguage: "English",
 		},
 		address: {
@@ -54,7 +53,7 @@ export function OrganizationJsonLd() {
 		},
 		sameAs: [
 			COMPANY.GITHUB_URL,
-			"https://github.com/superset-sh",
+			"https://github.com/AgentWrapper",
 			COMPANY.X_URL,
 			COMPANY.LINKEDIN_URL,
 			COMPANY.YOUTUBE_URL,
@@ -124,7 +123,7 @@ export function ArticleJsonLd({
 			name: COMPANY.NAME,
 			logo: {
 				"@type": "ImageObject",
-				url: `${COMPANY.MARKETING_URL}/logo.png`,
+				url: `${COMPANY.MARKETING_URL}/ao-logo.svg`,
 			},
 		},
 		datePublished: publishedTime,
@@ -177,7 +176,7 @@ export function ComparisonJsonLd({
 			name: COMPANY.NAME,
 			logo: {
 				"@type": "ImageObject",
-				url: `${COMPANY.MARKETING_URL}/logo.png`,
+				url: `${COMPANY.MARKETING_URL}/ao-logo.svg`,
 			},
 		},
 		datePublished: publishedTime,

@@ -1,6 +1,6 @@
 "use client";
 
-import { COMPANY } from "@superset/shared/constants";
+import { COMPANY } from "@ao/shared/constants";
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import { usePathname } from "next/navigation";
@@ -9,6 +9,8 @@ import { TileWordmark } from "./TileWordmark";
 export function Footer() {
   const pathname = usePathname();
   if (pathname === "/download") return null;
+  // Docs pages are full-height with their own sidebar/TOC — no marketing footer.
+  if (pathname === "/docs" || pathname.startsWith("/docs/")) return null;
 
   return (
     <footer className="bg-card">
@@ -46,7 +48,7 @@ export function Footer() {
                 { href: `${COMPANY.DOCS_URL}/architecture/`, label: "Architecture", external: true },
                 { href: `${COMPANY.DOCS_URL}/plugins/`, label: "Plugins", external: true },
                 { href: `${COMPANY.GITHUB_URL}/releases`, label: "Releases", external: true },
-                { href: "/privacy", label: "Privacy" },
+                { href: "/privacy/", label: "Privacy" },
               ]}
             />
 

@@ -1,15 +1,15 @@
-import { COMPANY } from "@superset/shared/constants";
+import { COMPANY } from "@ao/shared/constants";
 import type { MetadataRoute } from "next";
 import { getBlogPosts } from "@/lib/blog";
 import { getChangelogEntries } from "@/lib/changelog";
 import { getComparisonPages } from "@/lib/compare";
+import { getAllDocSlugs } from "@/lib/docs";
 import { getAllLegalSlugs, getLegalPage } from "@/lib/legal";
-import { themeListings } from "@/lib/marketplace";
 import { getAllPeople } from "@/lib/people";
 
 export const dynamic = "force-static";
 
-export default function sitemap(): MetadataRoute.Sitemap {
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 	const baseUrl = COMPANY.MARKETING_URL;
 
 	const staticPages: MetadataRoute.Sitemap = [
@@ -20,64 +20,34 @@ export default function sitemap(): MetadataRoute.Sitemap {
 			priority: 1.0,
 		},
 		{
-			url: `${baseUrl}/marketplace`,
+			url: `${baseUrl}/download/`,
 			lastModified: new Date(),
 			changeFrequency: "weekly",
+			priority: 0.9,
+		},
+		{
+			url: `${baseUrl}/design-partners/`,
+			lastModified: new Date(),
+			changeFrequency: "monthly",
 			priority: 0.8,
 		},
 		{
-			url: `${baseUrl}/marketplace/themes`,
-			lastModified: new Date(),
-			changeFrequency: "weekly",
-			priority: 0.8,
+			url: `${baseUrl}/privacy/`,
+			lastModified: new Date("2026-07-30"),
+			changeFrequency: "yearly",
+			priority: 0.3,
 		},
 		{
-			url: `${baseUrl}/marketplace/agents`,
-			lastModified: new Date(),
-			changeFrequency: "weekly",
-			priority: 0.7,
-		},
-		{
-			url: `${baseUrl}/blog`,
+			url: `${baseUrl}/blog/`,
 			lastModified: new Date(),
 			changeFrequency: "daily",
 			priority: 0.9,
 		},
 		{
-			url: `${baseUrl}/changelog`,
+			url: `${baseUrl}/changelog/`,
 			lastModified: new Date(),
 			changeFrequency: "weekly",
 			priority: 0.9,
-		},
-		{
-			url: `${baseUrl}/pricing`,
-			lastModified: new Date(),
-			changeFrequency: "monthly",
-			priority: 0.9,
-		},
-		{
-			url: `${baseUrl}/team`,
-			lastModified: new Date(),
-			changeFrequency: "monthly",
-			priority: 0.8,
-		},
-		{
-			url: `${baseUrl}/join-us`,
-			lastModified: new Date(),
-			changeFrequency: "monthly",
-			priority: 0.7,
-		},
-		{
-			url: `${baseUrl}/compare`,
-			lastModified: new Date(),
-			changeFrequency: "weekly",
-			priority: 0.9,
-		},
-		{
-			url: `${baseUrl}/community`,
-			lastModified: new Date(),
-			changeFrequency: "monthly",
-			priority: 0.5,
 		},
 		{
 			url: `${baseUrl}/llms.txt`,
@@ -85,38 +55,20 @@ export default function sitemap(): MetadataRoute.Sitemap {
 			changeFrequency: "weekly",
 			priority: 0.3,
 		},
-		{
-			url: `${baseUrl}/enterprise`,
-			lastModified: new Date(),
-			changeFrequency: "monthly",
-			priority: 0.8,
-		},
-		{
-			url: `${baseUrl}/roadmap`,
-			lastModified: new Date(),
-			changeFrequency: "weekly",
-			priority: 0.7,
-		},
-		{
-			url: `${baseUrl}/contact`,
-			lastModified: new Date(),
-			changeFrequency: "monthly",
-			priority: 0.6,
-		},
 	];
 
 	const posts = getBlogPosts();
 	const blogPages: MetadataRoute.Sitemap = posts.map((post) => ({
-		url: `${baseUrl}/blog/${post.slug}`,
+		url: `${baseUrl}/blog/${post.slug}/`,
 		lastModified: new Date(post.date),
 		changeFrequency: "monthly" as const,
 		priority: 0.8,
 	}));
 
-	const changelogEntries = getChangelogEntries();
+	const changelogEntries = await getChangelogEntries();
 	const changelogPages: MetadataRoute.Sitemap = changelogEntries.map(
 		(entry) => ({
-			url: `${baseUrl}/changelog/${entry.slug}`,
+			url: `${baseUrl}/changelog/${entry.slug}/`,
 			lastModified: new Date(entry.date),
 			changeFrequency: "monthly" as const,
 			priority: 0.8,
@@ -125,7 +77,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
 
 	const people = getAllPeople();
 	const teamPages: MetadataRoute.Sitemap = people.map((person) => ({
-		url: `${baseUrl}/team/${person.id}`,
+		url: `${baseUrl}/team/${person.id}/`,
 		lastModified: new Date(),
 		changeFrequency: "monthly" as const,
 		priority: 0.7,
@@ -133,7 +85,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
 
 	const comparisonPages: MetadataRoute.Sitemap = getComparisonPages().map(
 		(page) => ({
-			url: `${baseUrl}/compare/${page.slug}`,
+			url: `${baseUrl}/compare/${page.slug}/`,
 			lastModified: new Date(page.lastUpdated || page.date),
 			changeFrequency: "weekly" as const,
 			priority: 0.9,
@@ -143,27 +95,27 @@ export default function sitemap(): MetadataRoute.Sitemap {
 	const legalPages: MetadataRoute.Sitemap = getAllLegalSlugs().map((slug) => {
 		const page = getLegalPage(slug);
 		return {
-			url: `${baseUrl}/${slug}`,
+			url: `${baseUrl}/${slug}/`,
 			lastModified: page?.lastUpdated ? new Date(page.lastUpdated) : new Date(),
 			changeFrequency: "yearly" as const,
 			priority: 0.3,
 		};
 	});
 
-	const themePages: MetadataRoute.Sitemap = themeListings.map((theme) => ({
-		url: `${baseUrl}/marketplace/themes/${theme.slug}`,
+	const docsPages: MetadataRoute.Sitemap = getAllDocSlugs().map((slug) => ({
+		url: `${baseUrl}/docs${slug.length ? `/${slug.join("/")}` : ""}/`,
 		lastModified: new Date(),
-		changeFrequency: "monthly" as const,
-		priority: 0.6,
+		changeFrequency: "weekly" as const,
+		priority: 0.7,
 	}));
 
 	return [
 		...staticPages,
+		...docsPages,
 		...blogPages,
 		...changelogPages,
 		...teamPages,
 		...comparisonPages,
 		...legalPages,
-		...themePages,
 	];
 }

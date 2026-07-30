@@ -1,6 +1,6 @@
 "use client";
 
-import { COMPANY } from "@superset/shared/constants";
+import Link from "next/link";
 import { track } from "@/lib/analytics";
 import { isMacPlatform, Platform, usePlatform } from "../../hooks/useOS";
 
@@ -8,8 +8,6 @@ interface DownloadButtonProps {
   size?: "sm" | "md";
   className?: string;
 }
-
-const RELEASES_URL = `${COMPANY.GITHUB_URL}/releases/latest`;
 
 type DownloadPlatform = "apple" | "windows" | "linux";
 
@@ -67,6 +65,25 @@ function getDownloadPlatform(platform: Platform): DownloadPlatform {
   return "apple";
 }
 
+function MonitorIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      viewBox="0 0 24 24"
+      className="size-4 shrink-0"
+      aria-hidden="true"
+    >
+      <rect x="2" y="3" width="20" height="14" rx="2" />
+      <path d="M8 21h8M12 17v4" />
+    </svg>
+  );
+}
+
 function PlatformIcon({ platform }: { platform: DownloadPlatform }) {
   if (platform === "windows") return <WindowsIcon />;
   if (platform === "linux") return <LinuxIcon />;
@@ -86,23 +103,29 @@ export function DownloadButton({
 }: DownloadButtonProps) {
   const { platform } = usePlatform();
   const downloadPlatform = getDownloadPlatform(platform);
+  // AO is a desktop app, so a phone can't run any build — point mobile visitors
+  // at the desktop download with a label that sets that expectation.
+  const isMobile = platform === Platform.Mobile;
   const sizeClasses =
     size === "sm"
       ? "h-8 px-3 text-sm"
       : "px-3 sm:px-6 py-2 sm:py-3 text-sm sm:text-base";
-  const label = getLabel(size, downloadPlatform);
+  const label = isMobile
+    ? size === "sm"
+      ? "Get for desktop"
+      : "Get AO for desktop"
+    : getLabel(size, downloadPlatform);
 
   const buttonClasses = `bg-foreground text-background ${sizeClasses} rounded-2xl tracking-[-0.5px] font-semibold hover:opacity-90 transition-opacity flex items-center gap-2 whitespace-nowrap shrink-0 ${className}`;
 
-  const openLatestRelease = () => {
-    track("download_clicked");
-    window.open(RELEASES_URL, "_blank", "noopener,noreferrer");
-  };
-
   return (
-    <button type="button" className={buttonClasses} onClick={openLatestRelease}>
-      <PlatformIcon platform={downloadPlatform} />
+    <Link
+      href="/download"
+      className={buttonClasses}
+      onClick={() => track("download_clicked")}
+    >
+      {isMobile ? <MonitorIcon /> : <PlatformIcon platform={downloadPlatform} />}
       {label}
-    </button>
+    </Link>
   );
 }

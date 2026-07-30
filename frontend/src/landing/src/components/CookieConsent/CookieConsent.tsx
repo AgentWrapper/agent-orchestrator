@@ -1,6 +1,6 @@
 "use client";
 
-import { Button } from "@superset/ui/button";
+import { Button } from "@ao/ui/button";
 import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
 import posthog from "posthog-js";
@@ -45,7 +45,7 @@ export function CookieConsent() {
 					</p>
 					<div className="mt-3 flex flex-wrap items-center justify-between gap-2">
 						<Button variant="link" asChild className="px-0">
-							<Link href="/privacy">Privacy policy</Link>
+							<Link href="/privacy/">Privacy policy</Link>
 						</Button>
 						<div className="flex items-center gap-2">
 							<Button variant="outline" onClick={handleOptOut}>

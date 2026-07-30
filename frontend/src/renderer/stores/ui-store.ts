@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { TerminalTarget } from "../types/terminal";
 import {
 	readStoredThemePreference,
 	resolveTheme,
@@ -33,6 +34,8 @@ type UiState = {
 	workbenchTab: WorkbenchTab;
 	isSidebarOpen: boolean;
 	inspectorSessions: Record<string, InspectorSessionState>;
+	/** Extra worker tabs pinned to each originating session's terminal strip. */
+	sessionTabsByOwner: Record<string, string[]>;
 	isCommandPaletteOpen: boolean;
 	themePreference: ThemePreference;
 	/** Resolved light/dark for React consumers; may track OS while preference is system. */
@@ -60,6 +63,12 @@ type UiState = {
 	// session view (tabs beside the session's pane) and the standalone terminals
 	// view read it, so whichever one is on screen shows the same shell.
 	activeShellTerminalHandleId: string | null;
+	// Which terminal each mounted session is actually showing. The session pane
+	// renders one terminal at a time, so opening a shell or the reviewer swaps
+	// the agent's terminal off screen even though the route still points at that
+	// session. Surfaces outside the session subtree (the notification runtime)
+	// need that distinction, and SessionView's own target is local state.
+	visibleTerminalKindBySession: Record<string, TerminalTarget["kind"]>;
 	setWorkbenchTab: (tab: WorkbenchTab) => void;
 	setThemePreference: (theme: ThemePreference) => void;
 	setDeveloperMode: (enabled: boolean) => void;
@@ -69,6 +78,8 @@ type UiState = {
 	setInspectorOpen: (sessionId: string, isOpen: boolean) => void;
 	toggleInspector: (sessionId: string) => void;
 	setInspectorView: (sessionId: string, view: InspectorView) => void;
+	addSessionTab: (ownerSessionId: string, sessionId: string) => void;
+	removeSessionTab: (ownerSessionId: string, sessionId: string) => void;
 	markInspectorPreviewSeen: (sessionId: string, previewKey: string) => void;
 	setBrowserUnseen: (sessionId: string, unseen: boolean) => void;
 	setCommandPaletteOpen: (open: boolean) => void;
@@ -79,10 +90,13 @@ type UiState = {
 	requestCreateProject: () => void;
 	requestNewShellTerminal: () => void;
 	setActiveShellTerminal: (handleId: string | null) => void;
+	setVisibleTerminalKind: (sessionId: string, kind: TerminalTarget["kind"]) => void;
+	clearVisibleTerminalKind: (sessionId: string) => void;
 };
 
 const sidebarStorageKey = "ao.sidebar.open";
 const developerModeStorageKey = "ao.developerMode";
+const sessionTabsStorageKey = "ao.sessionTabs";
 
 function getLocalStorage() {
 	if (typeof window === "undefined" || !window.localStorage) return null;
@@ -97,6 +111,28 @@ function initialDeveloperMode() {
 	return getLocalStorage()?.getItem(developerModeStorageKey) === "true";
 }
 
+function initialSessionTabs(): Record<string, string[]> {
+	const raw = getLocalStorage()?.getItem(sessionTabsStorageKey);
+	if (!raw) return {};
+	try {
+		const parsed = JSON.parse(raw) as unknown;
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+		return Object.fromEntries(
+			Object.entries(parsed).flatMap(([ownerSessionId, sessionIds]) =>
+				Array.isArray(sessionIds) && sessionIds.every((sessionId) => typeof sessionId === "string")
+					? [[ownerSessionId, sessionIds]]
+					: [],
+			),
+		);
+	} catch {
+		return {};
+	}
+}
+
+function storeSessionTabs(sessionTabsByOwner: Record<string, string[]>) {
+	getLocalStorage()?.setItem(sessionTabsStorageKey, JSON.stringify(sessionTabsByOwner));
+}
+
 function inspectorState(sessions: Record<string, InspectorSessionState>, sessionId: string): InspectorSessionState {
 	return sessions[sessionId] ?? { isOpen: true, view: "summary" };
 }
@@ -107,6 +143,7 @@ export const useUiStore = create<UiState>((set) => ({
 	workbenchTab: "changes",
 	isSidebarOpen: initialSidebarOpen(),
 	inspectorSessions: {},
+	sessionTabsByOwner: initialSessionTabs(),
 	isCommandPaletteOpen: false,
 	themePreference: initialThemePreference,
 	resolvedTheme: resolveTheme(initialThemePreference),
@@ -118,6 +155,7 @@ export const useUiStore = create<UiState>((set) => ({
 	createProjectNonce: 0,
 	newShellTerminalNonce: 0,
 	activeShellTerminalHandleId: null,
+	visibleTerminalKindBySession: {},
 	setWorkbenchTab: (workbenchTab) => set({ workbenchTab }),
 	setThemePreference: (themePreference) => {
 		getLocalStorage()?.setItem(themeStorageKey, themePreference);
@@ -170,6 +208,28 @@ export const useUiStore = create<UiState>((set) => ({
 					[sessionId]: { ...current, view, browserUnseen },
 				},
 			};
+		}),
+	addSessionTab: (ownerSessionId, sessionId) =>
+		set((state) => {
+			const current = state.sessionTabsByOwner[ownerSessionId] ?? [];
+			if (ownerSessionId === sessionId || current.includes(sessionId)) return state;
+			const sessionTabsByOwner = {
+				...state.sessionTabsByOwner,
+				[ownerSessionId]: [...current, sessionId],
+			};
+			storeSessionTabs(sessionTabsByOwner);
+			return { sessionTabsByOwner };
+		}),
+	removeSessionTab: (ownerSessionId, sessionId) =>
+		set((state) => {
+			const current = state.sessionTabsByOwner[ownerSessionId] ?? [];
+			if (!current.includes(sessionId)) return state;
+			const remaining = current.filter((id) => id !== sessionId);
+			const sessionTabsByOwner = { ...state.sessionTabsByOwner };
+			if (remaining.length > 0) sessionTabsByOwner[ownerSessionId] = remaining;
+			else delete sessionTabsByOwner[ownerSessionId];
+			storeSessionTabs(sessionTabsByOwner);
+			return { sessionTabsByOwner };
 		}),
 	markInspectorPreviewSeen: (sessionId, previewKey) =>
 		set((state) => {
@@ -228,6 +288,19 @@ export const useUiStore = create<UiState>((set) => ({
 	requestCreateProject: () => set((state) => ({ createProjectNonce: state.createProjectNonce + 1 })),
 	requestNewShellTerminal: () => set((state) => ({ newShellTerminalNonce: state.newShellTerminalNonce + 1 })),
 	setActiveShellTerminal: (activeShellTerminalHandleId) => set({ activeShellTerminalHandleId }),
+	setVisibleTerminalKind: (sessionId, kind) =>
+		set((state) =>
+			state.visibleTerminalKindBySession[sessionId] === kind
+				? state
+				: { visibleTerminalKindBySession: { ...state.visibleTerminalKindBySession, [sessionId]: kind } },
+		),
+	clearVisibleTerminalKind: (sessionId) =>
+		set((state) => {
+			if (!(sessionId in state.visibleTerminalKindBySession)) return state;
+			const visibleTerminalKindBySession = { ...state.visibleTerminalKindBySession };
+			delete visibleTerminalKindBySession[sessionId];
+			return { visibleTerminalKindBySession };
+		}),
 }));
 
 export function useResolvedTheme(): Theme {

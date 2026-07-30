@@ -24,6 +24,40 @@ on `main`; the PR-based flow below supersedes it.
   merge commit. Nightlies stamp the version at build time from the highest
   `desktop-v*` tag, so they are unaffected by whatever `main` currently carries.
 
+## Hard rule: exactly one publisher
+
+**Only the designated release conductor runs a real publish.** There is no ad
+hoc human-triggered publish outside that identity, on any channel, for any
+reason, including "just this once to test something".
+
+Why this is a rule and not a preference: between 22 and 24 Jul two different
+publishers emitted divergent macOS zip formats on alternating days. When the
+28-29 Jul signing incident hit, the evidence was unreadable, because builds
+differed for reasons that had nothing to do with the bug being investigated.
+Two days were spent chasing a false "the signing pipeline corrupts the seal"
+conclusion that a hand-run `unzip` had manufactured. A single publisher makes
+consecutive releases byte-comparable, so a real regression shows up as a real
+difference.
+
+What this means in practice:
+
+- The release conductor identity owns every publish that produces a
+  user-facing artifact: stable, nightly, and feature releases.
+- Approving a release run is a different act from publishing one. Any approver
+  on the list below can approve; only the conductor triggers.
+- If you need a build to test something, cut it on the fork dev loop (see
+  "Fork test releases" below). Never on the canonical repo.
+- If the conductor is unavailable, hand the role over explicitly and record the
+  handover. Do not publish "on their behalf" from a second identity.
+- If two artifacts for the same version ever exist and differ, treat every
+  conclusion drawn from either one as void until the divergence is explained.
+
+Verification of artifacts is a separate concern and is not owned by any single
+identity: anyone can and should run
+`frontend/scripts/verify-mac-artifact.sh <artifact>`, which is the only
+supported way to check a macOS artifact by hand. Do not type the checks out
+manually; that is how the 28-29 Jul misdiagnosis happened.
+
 ## Prerequisites
 
 - Push access to `AgentWrapper/agent-orchestrator` (the tag push is the trigger).
@@ -126,14 +160,34 @@ gh api repos/AgentWrapper/agent-orchestrator/releases/latest --jq '.tag_name'
 curl -sL https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/latest-mac.yml | head -3
 ```
 
-Expected assets (17): versioned installers for every platform
+Verify the macOS artifacts with the shared script rather than by hand:
+
+```bash
+gh release download vX.Y.Z -R AgentWrapper/agent-orchestrator \
+  --pattern 'agent-orchestrator-darwin-*.zip' --dir /tmp/relcheck
+frontend/scripts/verify-mac-artifact.sh /tmp/relcheck/agent-orchestrator-darwin-arm64.zip
+```
+
+It extracts with `ditto -x -k` (plain `unzip` breaks the seal and produces a
+convincing false failure) and runs `codesign --verify --deep --strict`,
+`spctl -a -vv -t exec` and `xcrun stapler validate`.
+
+Expected assets: versioned installers for every platform
 (`Agent.Orchestrator-darwin-{arm64,x64}-X.Y.Z.zip`, `Agent.Orchestrator.Setup.X.Y.Z.exe`,
-`Agent.Orchestrator-X.Y.Z.AppImage`, deb, rpm) plus their `.blockmap` sidecars,
-the five version-free aliases `ao start` fetches
+`Agent.Orchestrator-X.Y.Z.AppImage`, deb, rpm) plus `.blockmap` sidecars for
+Windows and Linux only (macOS ships none by policy since #3151, so mac clients
+always take the full-download path), the version-free aliases `ao start` fetches
 (`agent-orchestrator-darwin-arm64.zip`, `agent-orchestrator-darwin-x64.zip`,
 `agent-orchestrator-win32-x64.exe`, `agent-orchestrator-linux-x64.AppImage`,
 and the deb/rpm published under versioned names), and the electron-updater
 feeds `latest.yml`, `latest-mac.yml`, `latest-linux.yml`.
+
+Once the macOS dmg maker's output is published, each release additionally
+carries `Agent Orchestrator-X.Y.Z-{arm64,x64}.dmg` for first install. The dmg is
+purely additive: `MacUpdater` can only install an update from a zip
+(`findFile(files, "zip", ["pkg", "dmg"])`), so the macOS zip and
+`latest-mac.yml` keep publishing permanently. See issue #3267 for the rollout
+order, including when the download-page and README links flip from zip to dmg.
 
 If a platform leg fails, re-run the failed jobs from the Actions UI; the
 stable-alias upload steps use `--clobber`, so re-runs replace assets safely.

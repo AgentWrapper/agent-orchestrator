@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	APP_SHORTCUTS,
+	matchesAppShortcut,
 	matchesFocusTerminalShortcut,
 	matchesKeyboardShortcutsHelpShortcut,
 	matchesNextSessionShortcut,
@@ -8,7 +9,9 @@ import {
 	matchesNewShellTerminalShortcut,
 	matchesOpenSettingsShortcut,
 	matchesPreviousSessionShortcut,
-	shortcutKeys,
+	defaultShortcutBindings,
+	matchesShortcutBinding,
+	shortcutBindingValidationError,
 	type ShortcutChord,
 } from "./shortcuts";
 
@@ -126,10 +129,44 @@ describe("additional application shortcuts", () => {
 });
 
 describe("shortcut catalog", () => {
-	it("provides platform labels for every shortcut", () => {
+	it("provides runtime defaults for every shortcut on each platform", () => {
 		for (const shortcut of APP_SHORTCUTS) {
-			expect(shortcutKeys(shortcut, true).length).toBeGreaterThan(0);
-			expect(shortcutKeys(shortcut, false).length).toBeGreaterThan(0);
+			expect(defaultShortcutBindings(shortcut.id, true).length).toBeGreaterThan(0);
+			expect(defaultShortcutBindings(shortcut.id, false).length).toBeGreaterThan(0);
 		}
+	});
+
+	it("uses a user override instead of the default binding", () => {
+		const overrides = {
+			"focus-terminal": [chord({ key: "j", ctrl: true })],
+		};
+
+		expect(matchesAppShortcut("focus-terminal", chord({ key: "j", ctrl: true }), false, overrides)).toBe(true);
+		expect(matchesAppShortcut("focus-terminal", chord({ key: "t", ctrl: true, shift: true }), false, overrides)).toBe(
+			false,
+		);
+	});
+});
+
+describe("shortcut binding matching and validation", () => {
+	it("matches either the logical key or physical code when both are available", () => {
+		const candidate = chord({ key: "`", code: "Backquote", ctrl: true });
+
+		expect(matchesShortcutBinding(chord({ key: "`", code: "IntlBackslash", ctrl: true }), candidate)).toBe(true);
+		expect(matchesShortcutBinding(chord({ key: "§", code: "Backquote", ctrl: true }), candidate)).toBe(true);
+	});
+
+	it("requires a modifier and reserves terminal-critical control chords", () => {
+		expect(shortcutBindingValidationError(chord({ key: "F6" }), false)).not.toBeNull();
+		expect(shortcutBindingValidationError(chord({ key: "c", ctrl: true }), false)).not.toBeNull();
+		expect(shortcutBindingValidationError(chord({ key: "v", ctrl: true, shift: true }), false)).not.toBeNull();
+		expect(shortcutBindingValidationError(chord({ key: "d", ctrl: true }), false)).not.toBeNull();
+		expect(shortcutBindingValidationError(chord({ key: "j", ctrl: true }), false)).toBeNull();
+	});
+
+	it("reserves common platform window and editing chords", () => {
+		expect(shortcutBindingValidationError(chord({ key: "q", meta: true }), true)).not.toBeNull();
+		expect(shortcutBindingValidationError(chord({ key: "F4", alt: true }), false)).not.toBeNull();
+		expect(shortcutBindingValidationError(chord({ key: "j", meta: true }), true)).toBeNull();
 	});
 });

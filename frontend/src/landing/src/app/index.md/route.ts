@@ -1,4 +1,4 @@
-import { COMPANY } from "@superset/shared/constants";
+import { COMPANY } from "@ao/shared/constants";
 import { FAQ_ITEMS } from "@/app/components/FAQSection/constants";
 import {
   buildDeveloperResourcesSection,
@@ -28,11 +28,11 @@ export function GET() {
     "",
     "## Get started",
     "",
-    `- [Download](${baseUrl}/download)`,
-    `- [Documentation](${docsUrl})`,
+    `- [Download](${baseUrl}/download/)`,
+    `- [Documentation](${docsUrl}/)`,
     `- [GitHub](${COMPANY.GITHUB_URL})`,
-    `- [Blog](${baseUrl}/blog)`,
-    `- [Changelog](${baseUrl}/changelog)`,
+    `- [Blog](${baseUrl}/blog/)`,
+    `- [Changelog](${baseUrl}/changelog/)`,
     "",
     ...buildWhenToUseSection(),
     "",

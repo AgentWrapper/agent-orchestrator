@@ -132,7 +132,44 @@ type execRunner struct{}
 func (execRunner) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = append(append([]string(nil), os.Environ()...), env...)
+	// Run from a stable directory, not whatever the daemon process's cwd happens
+	// to be. The first tmux CLI call auto-starts tmux's persistent server, which
+	// inherits ITS launching process's cwd and keeps it for the server's entire
+	// lifetime, regardless of what any later `new-session -c <dir>` asks for
+	// (issue #2775). A packaged desktop build can start the daemon with its cwd
+	// inside a Squirrel/ShipIt staging directory that the very next auto-update
+	// deletes, permanently pinning the tmux server to a path that no longer
+	// exists. os.TempDir() outlives app bundle swaps and update staging dirs, so
+	// pinning here keeps the server cwd valid across the app's lifetime.
+	cmd.Dir = stableRunDir()
 	return cmd.CombinedOutput()
+}
+
+// stableRunDir returns the directory execRunner.Run pins the tmux CLI to.
+//
+// os.TempDir() is the preferred answer (see execRunner.Run), but it returns
+// $TMPDIR verbatim without checking that it exists. A stale or bogus TMPDIR
+// would then make exec fail with "chdir <dir>: no such file or directory" on
+// EVERY tmux command, taking the whole runtime down for exactly the reason
+// #2775 did: a cwd that no longer exists. So stat the candidates and degrade
+// rather than hard-fail. The last resort is the empty string, which leaves
+// cmd.Dir unset so the command inherits the daemon's own cwd: that is the
+// pre-fix behavior and merely risks the poisoned-server race the pin avoids,
+// which the retry in verifyPaneWorkingDirectory already tolerates.
+func stableRunDir() string {
+	candidates := []string{os.TempDir()}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, home)
+	}
+	for _, dir := range candidates {
+		if dir == "" {
+			continue
+		}
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			return dir
+		}
+	}
+	return ""
 }
 
 // New builds a tmux Runtime, filling unset Options with defaults: binary "tmux"
@@ -283,16 +320,54 @@ func (r *Runtime) Restart(ctx context.Context, handle ports.RuntimeHandle, cfg p
 	return handle, nil
 }
 
+// paneCwdVerifyAttempts and paneCwdVerifyRetryDelay bound how long Create
+// waits for the pane's working directory to settle before giving up.
+// buildLaunchCommand's `cd '<workspace>' || exit;` guard corrects a pane that
+// started in the tmux server's own (possibly poisoned) cwd, but only once the
+// pane's shell actually runs that cd. Measured live on 2026-07-25:
+// #{pane_current_path} sampled immediately after `new-session` was stale, and
+// the same probe sampled 50ms later was already correct. A single-shot check
+// therefore lost that race every time and turned a spawn that was actually
+// going to succeed into a hard failure (issue #2775): retrying gives the cd
+// guard the moment it needs to run.
+const (
+	paneCwdVerifyAttempts   = 5
+	paneCwdVerifyRetryDelay = 50 * time.Millisecond
+)
+
 func (r *Runtime) verifyPaneWorkingDirectory(ctx context.Context, id, want string) error {
-	out, err := r.run(ctx, paneCurrentPathArgs(id)...)
-	if err != nil {
-		return fmt.Errorf("tmux runtime: verify working directory %s: %w", id, err)
+	var lastErr error
+	for attempt := 0; attempt < paneCwdVerifyAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(paneCwdVerifyRetryDelay):
+			}
+		}
+		out, err := r.run(ctx, paneCurrentPathArgs(id)...)
+		if err != nil {
+			// A later transient probe failure (e.g. a one-off tmux CLI hiccup)
+			// must not overwrite an already-observed cwd mismatch: the mismatch
+			// is the classifiable, actionable error toAPIError maps via
+			// ports.ErrRuntimeWorkspaceCwdMismatch (Fix 4), and losing it here
+			// would silently regress that mapping back to a bare, unclassifiable
+			// 500 whenever the very last attempt happened to hit a probe error.
+			if !errors.Is(lastErr, ports.ErrRuntimeWorkspaceCwdMismatch) {
+				lastErr = fmt.Errorf("tmux runtime: verify working directory %s: %w", id, err)
+			}
+			continue
+		}
+		got := strings.TrimSpace(string(out))
+		if sameDirectory(got, want) {
+			return nil
+		}
+		lastErr = fmt.Errorf(
+			"%w: session %s started in %q, want %q (the worktree may be missing, or the tmux server may be pinned to a stale directory)",
+			ports.ErrRuntimeWorkspaceCwdMismatch, id, got, want,
+		)
 	}
-	got := strings.TrimSpace(string(out))
-	if sameDirectory(got, want) {
-		return nil
-	}
-	return fmt.Errorf("tmux runtime: session %s started in %q, want %q", id, got, want)
+	return lastErr
 }
 
 // Destroy kills the handle's tmux session and reaps the pane processes it
@@ -415,10 +490,24 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 	}
 	enterCtx := ctx
 	if message != "" {
-		for _, chunk := range chunks(message, r.chunkSize) {
-			if _, err := r.run(ctx, sendKeysLiteralArgs(id, chunk)...); err != nil {
+		messageChunks := chunks(message, r.chunkSize)
+		sendCtx := ctx
+		var finishCancel context.CancelFunc
+		for i, chunk := range messageChunks {
+			if _, err := r.run(sendCtx, sendKeysLiteralArgs(id, chunk)...); err != nil {
+				if finishCancel != nil {
+					finishCancel()
+				}
 				return fmt.Errorf("tmux runtime: send message %s: %w", id, err)
 			}
+			if i == 0 {
+				completionBudget := sendCompletionBudget(len(messageChunks), r.timeout, r.enterDelay)
+				enterCtx, finishCancel = context.WithTimeout(context.WithoutCancel(ctx), completionBudget)
+				sendCtx = enterCtx
+			}
+		}
+		if finishCancel != nil {
+			defer finishCancel()
 		}
 		// Give the target TUI a moment to accept the pasted text before the
 		// trailing Enter, mirroring conpty's ptyInputEnterDelay. Without it a
@@ -430,9 +519,9 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 		// the Enter are detached from the caller's cancellation (bounded by
 		// their own timeout instead): abandoning mid-pause would strand an
 		// unsubmitted draft that a retried send would then double-paste.
-		var cancel context.CancelFunc
-		enterCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), r.enterDelay+5*time.Second)
-		defer cancel()
+		// Errors reported by tmux after it accepts a chunk still return to the
+		// caller; they are not retried because AO cannot safely distinguish
+		// whether tmux applied the failed command.
 		if r.enterDelay > 0 {
 			select {
 			case <-enterCtx.Done():
@@ -445,6 +534,10 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 		return fmt.Errorf("tmux runtime: send enter %s: %w", id, err)
 	}
 	return nil
+}
+
+func sendCompletionBudget(chunkCount int, commandTimeout, enterDelay time.Duration) time.Duration {
+	return time.Duration(chunkCount)*commandTimeout + enterDelay
 }
 
 // Interrupt sends Ctrl-C to the foreground process without destroying the tmux

@@ -30,6 +30,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import type { AttachableTerminal, TerminalUserInputSource } from "../hooks/useTerminalSession";
 import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
+import { openLinkInSystemBrowser } from "../lib/external-link-policy";
 import { buildTerminalThemes } from "../lib/terminal-themes";
 import type { Theme } from "../stores/ui-store";
 import {
@@ -289,12 +290,16 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	useEffect(() => {
 		const host = hostRef.current;
 		if (!host) return undefined;
-		const activateLink = (_event: MouseEvent, uri: string) => {
+		const activateLink = (event: MouseEvent, uri: string) => {
 			// Left-click on a web link opens it inside the AO Browser panel (the
 			// parent decides how). Non-web schemes (mailto:, etc.) still go to the OS
 			// via the main process's window-open handler. Right-click to open a web
 			// link in the system browser instead — see the context menu below.
 			if (isWebLink(uri)) {
+				if (event.altKey) {
+					void openLinkInSystemBrowser(uri);
+					return;
+				}
 				callbacksRef.current.onLinkOpen?.(uri);
 				return;
 			}
@@ -724,7 +729,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			get rows() {
 				return term.rows;
 			},
-			write: (data) => term.write(data),
+			// Forward xterm's write callback: it fires once THIS chunk has been
+			// parsed into the buffer, which is what lets the attachment reveal the
+			// pane at the replay's settled scroll position (issue #3160).
+			write: (data, done) => term.write(data, done),
 			writeln: (line) => term.writeln(line),
 			clear: () => term.write(CLEAR_SEQUENCE),
 			onUserInput: (listener) => {

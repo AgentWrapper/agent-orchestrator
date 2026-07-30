@@ -25,6 +25,16 @@ func (f *fakeTelemetrySink) Emit(_ context.Context, ev ports.TelemetryEvent) {
 }
 func (f *fakeTelemetrySink) Close(context.Context) error { return nil }
 
+type fakeReengagement struct {
+	completed domain.SessionID
+	err       error
+}
+
+func (f *fakeReengagement) Complete(_ context.Context, id domain.SessionID) error {
+	f.completed = id
+	return f.err
+}
+
 type fakeStore struct {
 	sessions map[domain.SessionID]domain.SessionRecord
 	pr       map[domain.SessionID]domain.PRFacts
@@ -279,6 +289,28 @@ func TestSessionSetTerminateOnPRMergePersistsPolicy(t *testing.T) {
 func TestSessionSetTerminateOnPRMergeUnknownSession(t *testing.T) {
 	if _, err := (&Service{store: newFakeStore()}).SetTerminateOnPRMerge(context.Background(), "ghost-1", true); err == nil {
 		t.Fatal("expected missing session error")
+	}
+}
+
+func TestCompleteOrchestrator(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator}
+	reengagement := &fakeReengagement{}
+	svc := NewWithDeps(Deps{Store: st, Reengagement: reengagement})
+	if err := svc.CompleteOrchestrator(context.Background(), "mer-orch"); err != nil {
+		t.Fatal(err)
+	}
+	if reengagement.completed != "mer-orch" {
+		t.Fatalf("completed = %q, want mer-orch", reengagement.completed)
+	}
+}
+
+func TestCompleteOrchestratorRejectsWorker(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	err := NewWithDeps(Deps{Store: st, Reengagement: &fakeReengagement{}}).CompleteOrchestrator(context.Background(), "mer-1")
+	if err == nil {
+		t.Fatal("expected worker rejection")
 	}
 }
 
@@ -1051,6 +1083,8 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		{"invalid branch", fmt.Errorf("spawn mer-1: workspace: %w: \"bad!!\" (exit 1)", ports.ErrWorkspaceBranchInvalid), apierr.KindInvalid, "INVALID_BRANCH"},
 		{"agent binary not found", fmt.Errorf("spawn mer-1: %w", ports.ErrAgentBinaryNotFound), apierr.KindInvalid, "AGENT_BINARY_NOT_FOUND"},
 		{"runtime prerequisite missing", fmt.Errorf("spawn: %w: tmux required on macOS/Linux but not in PATH", ports.ErrRuntimePrerequisite), apierr.KindInvalid, "RUNTIME_PREREQUISITE_MISSING"},
+		{"runtime workspace cwd mismatch", fmt.Errorf("spawn mer-1: runtime: %w: session mer-1 started in \"/deleted/shipit\", want \"/tmp/ws\"", ports.ErrRuntimeWorkspaceCwdMismatch), apierr.KindConflict, "WORKSPACE_CWD_MISMATCH"},
+		{"workspace locked", fmt.Errorf("restore mer-1: %w: \"/tmp/ws\" (branch \"ao/mer-1\") is registered but its directory is missing", ports.ErrWorkspaceLocked), apierr.KindConflict, "WORKSPACE_LOCKED"},
 		{"unknown harness", fmt.Errorf("spawn: %w: %q", sessionmanager.ErrUnknownHarness, "bogus"), apierr.KindInvalid, "UNKNOWN_HARNESS"},
 		{"missing harness", fmt.Errorf("spawn: %w: configure project worker.agent or pass --harness", sessionmanager.ErrMissingHarness), apierr.KindInvalid, "AGENT_REQUIRED"},
 		{"awaiting decision", fmt.Errorf("send mer-1: %w", sessionmanager.ErrAwaitingDecision), apierr.KindConflict, "SESSION_AWAITING_DECISION"},
