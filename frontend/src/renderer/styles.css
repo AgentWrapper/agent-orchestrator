@@ -406,6 +406,8 @@
 	padding-right: var(--size-center-panel-inline-inset);
 	padding-bottom: var(--size-center-panel-bottom-inset);
 	padding-left: 0;
+	/* Match the sidebar spring settle time (~280ms). */
+	transition: padding 280ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
 @utility center-panel-surface {
@@ -419,6 +421,9 @@
 	border-radius: var(--radius-center-panel);
 	border: 1px solid var(--color-border-strong);
 	background-color: var(--color-bg-primary);
+	transition:
+		border-color 280ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
+		border-radius 280ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
 /* A fully hidden sidebar no longer contributes a left layout gutter. Restore
@@ -427,43 +432,38 @@
 	padding-left: var(--size-center-panel-inline-inset);
 }
 
-/* macOS + Linux: one uniform inset on every side (matches the near-flush top
- * that keeps Board/Terminal titles level with the fixed TitlebarNav). Two
- * classes so it also wins over the `.sidebar-hidden` left gutter above. */
+/* macOS + Linux: inset on all sides except left (flush with sidebar). */
 .center-panel-shell.center-panel-shell--mac {
-	padding: var(--size-center-panel-inset-mac);
+	padding-top: var(--size-center-panel-inset-mac);
+	padding-right: var(--size-center-panel-inset-mac);
+	padding-bottom: var(--size-center-panel-inset-mac);
+	padding-left: 0;
 }
 
 .center-panel-shell.center-panel-shell--mac.center-panel-shell--fullscreen {
 	padding: 0;
 }
 
-.center-panel-titlebar {
-	padding-left: 1.125rem; /* matches former px-4.5 */
+/* Sidebar closed on mac: content panel expands to fill the full window.
+ * Remove all padding and strip the surface border + radius so it's flush. */
+.sidebar-hidden .center-panel-shell.center-panel-shell--mac {
+	padding: 0;
+}
+
+.sidebar-hidden .center-panel-shell--mac .center-panel-surface {
+	border-color: transparent;
+	border-radius: 0;
+}
+
+/* Use specificity (0,2,0) so this beats `.reverb-topbar { padding-inline }` at (0,1,0).
+ * Motion animates --cp-titlebar-pl on the shell div; the topbar reads it here. */
+.center-panel-shell .center-panel-titlebar {
+	padding-left: var(--cp-titlebar-pl, 1.125rem);
 }
 
 .center-panel-shell--mac .center-panel-titlebar {
 	height: var(--size-traffic-light-clearance);
 	min-height: var(--size-traffic-light-clearance);
-}
-
-/* On macOS the titlebar controls stay fixed when the sidebar is off-canvas.
- * Pad the title past that cluster so it sits next to the buttons. Fullscreen
- * drops the traffic-light reserve so title sits next to the left-edge buttons. */
-.center-panel-shell--titlebar-clearance .center-panel-titlebar {
-	padding-left: calc(var(--size-titlebar-content-offset) - var(--size-center-panel-inset-mac));
-}
-
-/* Linux clears the cluster from its own left edge (no traffic-light row). */
-.center-panel-shell--linux.center-panel-shell--titlebar-clearance .center-panel-titlebar {
-	padding-left: calc(var(--size-titlebar-content-offset-linux) - var(--size-center-panel-inset-mac));
-}
-
-/* Fullscreen: the shell is flush, so measure from the cluster's own left edge. */
-.center-panel-shell--titlebar-clearance-fullscreen .center-panel-titlebar {
-	padding-left: calc(
-		var(--size-center-panel-inset) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
-	);
 }
 
 /* Windows: the frameless window's custom titlebar already supplies top chrome,

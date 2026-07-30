@@ -626,7 +626,7 @@ function ShellLayout() {
 				{/* Windows-only custom title bar (sidebar toggle + File/Edit/View/…
             menu); paints the chrome the frameless window drops. Renders null on
             macOS/Linux. */}
-				<WindowTitlebar onSidebarPreviewEnter={previewSidebar} />
+				<WindowTitlebar />
 				{/* App routes render their topbar inside the framed panel, matching the board chrome across platforms while leaving OS titlebars native. */}
 				{!framedAppTopbar && !hideShellTopbar ? (
 					<ShellTopbar surfaceOverride={isTerminalsRoute ? "standalone-terminals" : undefined} />
@@ -720,8 +720,19 @@ function ShellLayout() {
 					<TitlebarNav
 						historyLocked={isWelcomeBoard}
 						isFullScreen={isFullScreen}
-						onSidebarPreviewEnter={previewSidebar}
 					/>
+					{/* 10px invisible edge strip — the only trigger for the sidebar
+					    hover-preview. Rendered over everything on the left; pointer
+					    events are off while the sidebar is open so it never interferes
+					    with normal sidebar interactions. */}
+					{!isSidebarOpen && !isFullScreen && (isMac || isLinux) && (
+						<div
+							aria-hidden="true"
+							className="fixed inset-y-0 left-0 z-sidebar-preview w-[10px] pointer-events-auto"
+							onPointerEnter={previewSidebar}
+							onPointerLeave={scheduleSidebarPeekClose}
+						/>
+					)}
 				</SidebarProvider>
 				<OrchestratorReplacementDialog
 					error={replacementErrorProjectId ? orchestratorReplacementErrors[replacementErrorProjectId] : undefined}

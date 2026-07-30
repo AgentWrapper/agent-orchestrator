@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUiStore } from "../stores/ui-store";
@@ -43,13 +43,10 @@ beforeEach(() => {
 });
 
 describe("TitlebarNav", () => {
-	it("toggles the shared sidebar state and forwards the preview gesture", async () => {
-		const onSidebarPreviewEnter = vi.fn();
-		render(<TitlebarNav onSidebarPreviewEnter={onSidebarPreviewEnter} />);
+	it("toggles the shared sidebar state", async () => {
+		render(<TitlebarNav />);
 
 		const toggle = screen.getByRole("button", { name: "Collapse sidebar" });
-		fireEvent.pointerEnter(toggle);
-		expect(onSidebarPreviewEnter).toHaveBeenCalledTimes(1);
 
 		await userEvent.click(toggle);
 

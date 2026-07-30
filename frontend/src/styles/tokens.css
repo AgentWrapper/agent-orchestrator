@@ -21,9 +21,9 @@
 
 	/* shadcn base-luma / olive preset (b6tOz2I0x). The renderer is dark-first,
 	   so the preset's .dark values are the default application values. */
-	--background: oklch(0.141 0.005 285.823);
+	--background: oklch(0.185 0.006 285.885);
 	--foreground: oklch(0.985 0 0);
-	--card: oklch(0.21 0.006 285.885);
+	--card: oklch(0.185 0.006 285.885);
 	--card-foreground: oklch(0.985 0 0);
 	--popover: oklch(0.21 0.006 285.885);
 	--popover-foreground: oklch(0.985 0 0);
@@ -39,7 +39,7 @@
 	/* Hairlines separate, they do not decorate: below the shadcn dark default of
 	 * 10% so column rules and card edges recede behind content. */
 	--border: oklch(1 0 0 / 7%);
-	--input: oklch(1 0 0 / 12%);
+	--input: oklch(1 0 0 / 4%);
 	--ring: oklch(0.552 0.016 285.938);
 	--chart-1: oklch(0.871 0.006 286.286);
 	--chart-2: oklch(0.552 0.016 285.938);
@@ -47,7 +47,7 @@
 	--chart-4: oklch(0.37 0.013 285.805);
 	--chart-5: oklch(0.274 0.006 286.033);
 	--radius: 0.625rem;
-	--sidebar: oklch(0.21 0.006 285.885);
+	--sidebar: oklch(0.155 0.005 285.823);
 	--sidebar-foreground: oklch(0.985 0 0);
 	--sidebar-primary: oklch(0.488 0.243 264.376);
 	--sidebar-primary-foreground: oklch(0.985 0 0);
@@ -266,7 +266,7 @@
 	--size-toolbar: var(--size-topbar-primary);
 	--size-inspector-tabs: var(--size-topbar-secondary);
 	--size-topbar-context-max: 32rem;
-	--space-topbar-x: 20px;
+	--space-topbar-x: 10px;
 	--space-topbar-zone: 10px;
 	--space-topbar-group: 4px;
 	--radius-topbar-control: 7px;
@@ -294,11 +294,11 @@
 	/* Clears the macOS traffic-light row used by the fixed titlebar controls. */
 	--size-traffic-light-clearance: 40px;
 	--size-traffic-light-clearance-fullscreen: var(--space-2);
-	/* Resize handle is flush with the sidebar right edge (offset 0) and wide
-	 * enough to cover the entire gap between sidebar and center panel surface,
-	 * making the whole inset area a drag zone rather than a narrow hotspot. */
+	/* Resize handle straddles the sidebar-panel boundary: offset = half the width
+	 * so the hairline lands exactly at the junction and the drag zone covers 6px
+	 * on each side of it. */
 	--size-resize-handle: 12px;
-	--size-resize-handle-offset: 0px;
+	--size-resize-handle-offset: 6px;
 	--size-kanban-glow: 130px;
 	--size-kv-label: 74px;
 	--size-notification-width: 460px;
@@ -366,9 +366,8 @@
 	 * near-flush so in-panel titles align with the fixed TitlebarNav row. */
 	--size-center-panel-inset-mac: 6px;
 	/* Formula: inner = outer_window_radius - inset (nested corner alignment).
-	 * macOS window corner ≈ 12px; inset = 6px → inner = 6px.
-	 * Non-mac inset is larger so we pick a flat small value (8px) there. */
-	--radius-window: 12px;
+	 * macOS window corner ≈ 18px; inset = 6px → inner = 12px. */
+	--radius-window: 18px;
 	--radius-center-panel: calc(var(--radius-window) - var(--size-center-panel-inset-mac));
 
 	/* Welcome / import radius alias (CreateProjectFlow rounded-welcome-panel) */
@@ -594,9 +593,9 @@
 :root[data-theme="light"] {
 	color-scheme: light;
 
-	--background: oklch(1 0 0);
+	--background: oklch(0.985 0 0);
 	--foreground: oklch(0.141 0.005 285.823);
-	--card: oklch(1 0 0);
+	--card: oklch(0.985 0 0);
 	--card-foreground: oklch(0.141 0.005 285.823);
 	--popover: oklch(1 0 0);
 	--popover-foreground: oklch(0.141 0.005 285.823);
@@ -618,7 +617,7 @@
 	--chart-3: oklch(0.442 0.017 285.786);
 	--chart-4: oklch(0.37 0.013 285.805);
 	--chart-5: oklch(0.274 0.006 286.033);
-	--sidebar: oklch(0.985 0 0);
+	--sidebar: oklch(1 0 0);
 	--sidebar-foreground: oklch(0.141 0.005 285.823);
 	--sidebar-primary: oklch(0.21 0.006 285.885);
 	--sidebar-primary-foreground: oklch(0.985 0 0);

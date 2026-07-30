@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import { ChevronRight, LayoutDashboard, MoreVertical, Pencil, Plus, RefreshCw, Search, Settings, Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import type { UpdateStatus } from "../../main/update-settings";
 import { effectiveShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
 import {
@@ -195,19 +196,24 @@ export function Sidebar({
 			className={cn(
 				hideEdgeBorder ? "border-transparent" : "border-r-0 group-data-[side=left]:border-r-0",
 				isOverlay && "z-sidebar-preview shadow-2xl",
-				isOverlay
-					? "top-0 h-svh!"
-					: underTopbar
-						? topbarOffset === "titlebar"
-							? "top-9 h-[calc(100svh-2.25rem)]!"
-							: "top-10 h-[calc(100svh-2.5rem)]!"
-						: "top-0 h-svh!",
+				// macOS/Linux (toolbar offset): always full-height from top-0 so the
+				// sidebar background fills the traffic-light zone. Switching between
+				// overlay and normal would cause a top-0→top-10 snap mid-animation.
+				// Windows titlebar (custom chrome) still needs the offset.
+				underTopbar && topbarOffset === "titlebar"
+					? "top-9 h-[calc(100svh-2.25rem)]!"
+					: "top-0 h-svh!",
 			)}
 		>
 			<SidebarHeader
 				className={cn(
-					"gap-0 p-0 pl-1.5 pr-1.75 pt-1 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-1",
+					"gap-0 p-0 px-1.5 pt-1 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-1",
+					// Overlay (peek): Windows uses titlebar offset (36px); mac/linux uses
+					// traffic-light clearance (40px).
 					isOverlay && (topbarOffset === "titlebar" ? "pt-10!" : "pt-11!"),
+					// Non-overlay mac/linux: container is now top-0, so header content
+					// also needs to clear the traffic-light band.
+					!isOverlay && underTopbar && topbarOffset !== "titlebar" && "pt-10! group-data-[collapsible=icon]:pt-10!",
 				)}
 			>
 				{/* Brand (project-sidebar__brand); in the icon rail it becomes the old
@@ -251,7 +257,7 @@ export function Sidebar({
 			</SidebarHeader>
 
 			{/* Keep Search + Projects chrome fixed; only the project tree scrolls. */}
-			<div className="flex shrink-0 flex-col gap-0 pl-1.5 pr-1.75 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
+			<div className="flex shrink-0 flex-col gap-0 px-1.5 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
 				{commandPaletteEnabled ? (
 					<SidebarGroup className="p-0 pb-3">
 						<SidebarGroupContent>
@@ -274,7 +280,7 @@ export function Sidebar({
 				</div>
 			</div>
 
-			<SidebarContent className="scrollbar-none gap-0 pl-1.5 pr-1.75 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
+			<SidebarContent className="scrollbar-none gap-0 px-1.5 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
 				<SidebarGroup className="p-0">
 					{/* Tree (project-sidebar__tree) */}
 					<SidebarGroupContent>
@@ -362,12 +368,18 @@ export function Sidebar({
 				</div>
 			</SidebarFooter>
 
-			<ResizeHandle
-				className="group-data-[state=collapsed]:hidden"
-				onDoubleClick={onResizeDoubleClick}
-				onPointerDown={onResizePointerDown}
-				side="right"
-				style={noDragStyle}
+		<ResizeHandle
+			className={cn(
+				"group-data-[state=collapsed]:hidden",
+				// Keep 40px breathing room at top and bottom. The sidebar-container
+				// already starts 40px from the viewport top (titlebar clearance), so
+				// top-0 is correct; bottom-10 adds the matching 40px gap at the foot.
+				"bottom-10",
+			)}
+			onDoubleClick={onResizeDoubleClick}
+			onPointerDown={onResizePointerDown}
+			side="right"
+			style={noDragStyle}
 			/>
 			<SidebarRail
 				aria-label="Expand sidebar"
@@ -490,14 +502,17 @@ function ProjectItem({
 					"group-data-[collapsible=icon]:size-control-board! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:font-semibold",
 				)}
 			>
-				<ChevronRight
-					className={cn(
-						"size-icon-xs! shrink-0 text-passive transition-transform group-data-[collapsible=icon]:hidden",
-						expanded && "rotate-90",
-					)}
-					strokeWidth={2.5}
-					aria-hidden="true"
-				/>
+				<motion.span
+					animate={{ rotate: expanded ? 90 : 0 }}
+					transition={{ duration: 0.16, ease: [0.25, 0.46, 0.45, 0.94] }}
+					className="inline-flex shrink-0 group-data-[collapsible=icon]:hidden"
+				>
+					<ChevronRight
+						className="size-icon-xs! text-passive"
+						strokeWidth={2.5}
+						aria-hidden="true"
+					/>
+				</motion.span>
 				<span className="hidden group-data-[collapsible=icon]:block">{workspace.name.charAt(0).toUpperCase()}</span>
 				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">
 					{workspace.name}
@@ -575,18 +590,28 @@ function ProjectItem({
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</div>
-			{/* project-sidebar__sessions: indented under the project parent so worker
-          sessions read as children without adding a persistent guide rail. */}
+			{/* project-sidebar__sessions: each session row animates in/out when the
+          project expands or collapses. */}
 			{visibleSessions.length > 0 && (
 				<SidebarMenuSub className="sidebar-expanded-chrome mx-0 ml-3.5 translate-x-0 gap-0 border-l-0 px-0 py-1">
-					{visibleSessions.map((session) => (
-						<SessionRow
-							key={session.id}
-							session={session}
-							active={selection.activeSessionId === session.id}
-							onOpen={() => selection.goSession(workspace.id, session.id)}
-						/>
-					))}
+					<AnimatePresence initial={false}>
+						{visibleSessions.map((session) => (
+							<motion.div
+								key={session.id}
+								initial={{ height: 0, opacity: 0 }}
+								animate={{ height: "auto", opacity: 1 }}
+								exit={{ height: 0, opacity: 0 }}
+								transition={{ duration: 0.16, ease: [0.25, 0.46, 0.45, 0.94] }}
+								style={{ overflow: "hidden" }}
+							>
+								<SessionRow
+									session={session}
+									active={selection.activeSessionId === session.id}
+									onOpen={() => selection.goSession(workspace.id, session.id)}
+								/>
+							</motion.div>
+						))}
+					</AnimatePresence>
 				</SidebarMenuSub>
 			)}
 			<ConfirmDialog
