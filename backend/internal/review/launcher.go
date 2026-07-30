@@ -122,10 +122,28 @@ func reviewerHandleID(workerID domain.SessionID) string {
 	return "review-" + string(workerID)
 }
 
+// reviewerSessionID identifies the reviewer *conversation*, as opposed to the
+// terminal it runs in.
+//
+// The two used to be the same string, which broke every harness that derives a
+// stable agent session from it. Claude Code maps this id to a deterministic
+// --session-id, so a second review on the same worker asked it to start a new
+// session under an id it already had: "Session ID <uuid> is already in use", the
+// agent exited, and the pane fell back to a shell.
+//
+// Each pass is its own conversation, so the run id belongs here. The pane keeps
+// reviewerHandleID, so there is still one reviewer terminal per worker.
+func reviewerSessionID(workerID domain.SessionID, runID string) string {
+	if runID == "" {
+		return reviewerHandleID(workerID)
+	}
+	return reviewerHandleID(workerID) + "-" + runID
+}
+
 func (l *agentLauncher) invocation(spec LaunchSpec) ports.ReviewInvocation {
 	prompt, systemPrompt := reviewTexts(spec)
 	return ports.ReviewInvocation{
-		ReviewerID:      reviewerHandleID(spec.WorkerID),
+		ReviewerID:      reviewerSessionID(spec.WorkerID, spec.RunID),
 		RunID:           spec.RunID,
 		WorkerSessionID: spec.WorkerID,
 		PRURL:           spec.PRURL,
