@@ -92,6 +92,22 @@ func (s *Store) SetSessionTerminateOnPRMerge(ctx context.Context, id domain.Sess
 	return rows > 0, nil
 }
 
+// SetSessionReviewAutoInjectOff updates whether completed review findings are
+// delivered to this worker.
+func (s *Store) SetSessionReviewAutoInjectOff(ctx context.Context, id domain.SessionID, enabled bool, updatedAt time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.SetSessionReviewAutoInjectOff(ctx, gen.SetSessionReviewAutoInjectOffParams{
+		ID:                  id,
+		ReviewAutoInjectOff: enabled,
+		UpdatedAt:           updatedAt,
+	})
+	if err != nil {
+		return false, fmt.Errorf("set review auto-inject for session %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
 // DeleteSession removes a session row, but only if it is still in seed state
 // (no workspace, no runtime handle, no agent session id, no prompt, and not
 // already terminated). Rows that have observable spawn output are immutable
@@ -216,9 +232,10 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 			State:          row.ActivityState,
 			LastActivityAt: row.ActivityLastAt,
 		},
-		FirstSignalAt:      nullTimeToTime(row.FirstSignalAt),
-		IsTerminated:       row.IsTerminated,
-		TerminateOnPRMerge: row.TerminateOnPRMerge,
+		FirstSignalAt:       nullTimeToTime(row.FirstSignalAt),
+		IsTerminated:        row.IsTerminated,
+		TerminateOnPRMerge:  row.TerminateOnPRMerge,
+		ReviewAutoInjectOff: row.ReviewAutoInjectOff,
 		Metadata: domain.SessionMetadata{
 			Branch:            row.Branch,
 			WorkspacePath:     row.WorkspacePath,
@@ -239,57 +256,59 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams {
 	activity := normalActivity(rec.Activity, rec.CreatedAt)
 	return gen.InsertSessionParams{
-		ID:                 rec.ID,
-		ProjectID:          rec.ProjectID,
-		Num:                num,
-		IssueID:            rec.IssueID,
-		Kind:               rec.Kind,
-		Harness:            rec.Harness,
-		DisplayName:        rec.DisplayName,
-		ActivityState:      activity.State,
-		ActivityLastAt:     activity.LastActivityAt,
-		FirstSignalAt:      timeToNullTime(rec.FirstSignalAt),
-		IsTerminated:       rec.IsTerminated,
-		Branch:             rec.Metadata.Branch,
-		WorkspacePath:      rec.Metadata.WorkspacePath,
-		WorkspaceRepoPath:  rec.Metadata.WorkspaceRepoPath,
-		RuntimeHandleID:    rec.Metadata.RuntimeHandleID,
-		RuntimeLaunchID:    rec.Metadata.RuntimeLaunchID,
-		AgentSessionID:     rec.Metadata.AgentSessionID,
-		Prompt:             rec.Metadata.Prompt,
-		PreviewURL:         rec.Metadata.PreviewURL,
-		PreviewRevision:    rec.Metadata.PreviewRevision,
-		TerminateOnPRMerge: rec.TerminateOnPRMerge,
-		CleanupGeneration:  rec.CleanupGeneration,
-		CreatedAt:          rec.CreatedAt,
-		UpdatedAt:          rec.UpdatedAt,
+		ID:                  rec.ID,
+		ProjectID:           rec.ProjectID,
+		Num:                 num,
+		IssueID:             rec.IssueID,
+		Kind:                rec.Kind,
+		Harness:             rec.Harness,
+		DisplayName:         rec.DisplayName,
+		ActivityState:       activity.State,
+		ActivityLastAt:      activity.LastActivityAt,
+		FirstSignalAt:       timeToNullTime(rec.FirstSignalAt),
+		IsTerminated:        rec.IsTerminated,
+		Branch:              rec.Metadata.Branch,
+		WorkspacePath:       rec.Metadata.WorkspacePath,
+		WorkspaceRepoPath:   rec.Metadata.WorkspaceRepoPath,
+		RuntimeHandleID:     rec.Metadata.RuntimeHandleID,
+		RuntimeLaunchID:     rec.Metadata.RuntimeLaunchID,
+		AgentSessionID:      rec.Metadata.AgentSessionID,
+		Prompt:              rec.Metadata.Prompt,
+		PreviewURL:          rec.Metadata.PreviewURL,
+		PreviewRevision:     rec.Metadata.PreviewRevision,
+		TerminateOnPRMerge:  rec.TerminateOnPRMerge,
+		ReviewAutoInjectOff: rec.ReviewAutoInjectOff,
+		CleanupGeneration:   rec.CleanupGeneration,
+		CreatedAt:           rec.CreatedAt,
+		UpdatedAt:           rec.UpdatedAt,
 	}
 }
 
 func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 	activity := normalActivity(rec.Activity, rec.UpdatedAt)
 	return gen.UpdateSessionParams{
-		ID:                 rec.ID,
-		IssueID:            rec.IssueID,
-		Kind:               rec.Kind,
-		Harness:            rec.Harness,
-		DisplayName:        rec.DisplayName,
-		ActivityState:      activity.State,
-		ActivityLastAt:     activity.LastActivityAt,
-		FirstSignalAt:      timeToNullTime(rec.FirstSignalAt),
-		IsTerminated:       rec.IsTerminated,
-		Branch:             rec.Metadata.Branch,
-		WorkspacePath:      rec.Metadata.WorkspacePath,
-		WorkspaceRepoPath:  rec.Metadata.WorkspaceRepoPath,
-		RuntimeHandleID:    rec.Metadata.RuntimeHandleID,
-		RuntimeLaunchID:    rec.Metadata.RuntimeLaunchID,
-		AgentSessionID:     rec.Metadata.AgentSessionID,
-		Prompt:             rec.Metadata.Prompt,
-		PreviewURL:         rec.Metadata.PreviewURL,
-		PreviewRevision:    rec.Metadata.PreviewRevision,
-		TerminateOnPRMerge: rec.TerminateOnPRMerge,
-		CleanupGeneration:  rec.CleanupGeneration,
-		UpdatedAt:          rec.UpdatedAt,
+		ID:                  rec.ID,
+		IssueID:             rec.IssueID,
+		Kind:                rec.Kind,
+		Harness:             rec.Harness,
+		DisplayName:         rec.DisplayName,
+		ActivityState:       activity.State,
+		ActivityLastAt:      activity.LastActivityAt,
+		FirstSignalAt:       timeToNullTime(rec.FirstSignalAt),
+		IsTerminated:        rec.IsTerminated,
+		Branch:              rec.Metadata.Branch,
+		WorkspacePath:       rec.Metadata.WorkspacePath,
+		WorkspaceRepoPath:   rec.Metadata.WorkspaceRepoPath,
+		RuntimeHandleID:     rec.Metadata.RuntimeHandleID,
+		RuntimeLaunchID:     rec.Metadata.RuntimeLaunchID,
+		AgentSessionID:      rec.Metadata.AgentSessionID,
+		Prompt:              rec.Metadata.Prompt,
+		PreviewURL:          rec.Metadata.PreviewURL,
+		PreviewRevision:     rec.Metadata.PreviewRevision,
+		TerminateOnPRMerge:  rec.TerminateOnPRMerge,
+		ReviewAutoInjectOff: rec.ReviewAutoInjectOff,
+		CleanupGeneration:   rec.CleanupGeneration,
+		UpdatedAt:           rec.UpdatedAt,
 	}
 }
 

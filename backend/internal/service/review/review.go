@@ -263,18 +263,14 @@ func (s *Service) deliverSubmitted(ctx context.Context, workerID domain.SessionI
 	return delivered, nil
 }
 
-// autoInjectDisabled reports whether the worker's project opted out of handing
-// review findings to the agent.
+// autoInjectDisabled reports whether this worker opted out of receiving review
+// findings.
 func (s *Service) autoInjectDisabled(ctx context.Context, workerID domain.SessionID) (bool, error) {
 	worker, ok, err := s.store.GetSession(ctx, workerID)
 	if err != nil || !ok {
 		return false, err
 	}
-	proj, ok, err := s.store.GetProject(ctx, string(worker.ProjectID))
-	if err != nil || !ok {
-		return false, err
-	}
-	return proj.Config.ReviewAutoInjectOff, nil
+	return worker.ReviewAutoInjectOff, nil
 }
 
 func (s *Service) deliverableRuns(ctx context.Context, workerID domain.SessionID, runs []domain.ReviewRun) ([]domain.ReviewRun, error) {

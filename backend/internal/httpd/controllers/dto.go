@@ -307,6 +307,11 @@ type SetSessionMergePolicyRequest struct {
 	TerminateOnPRMerge bool `json:"terminateOnPrMerge"`
 }
 
+// SetSessionReviewPolicyRequest is the body of PATCH /api/v1/sessions/{sessionId}/review-policy.
+type SetSessionReviewPolicyRequest struct {
+	AutoInject bool `json:"autoInject"`
+}
+
 // RenameSessionResponse is the body of PATCH /api/v1/sessions/{sessionId}.
 type RenameSessionResponse struct {
 	OK          bool             `json:"ok"`
@@ -320,6 +325,14 @@ type SetSessionMergePolicyResponse struct {
 	SessionID          domain.SessionID `json:"sessionId"`
 	TerminateOnPRMerge bool             `json:"terminateOnPrMerge"`
 	Session            SessionView      `json:"session"`
+}
+
+// SetSessionReviewPolicyResponse is the body of PATCH /api/v1/sessions/{sessionId}/review-policy.
+type SetSessionReviewPolicyResponse struct {
+	OK         bool             `json:"ok"`
+	SessionID  domain.SessionID `json:"sessionId"`
+	AutoInject bool             `json:"autoInject"`
+	Session    SessionView      `json:"session"`
 }
 
 // RestoreSessionResponse is the body of POST /api/v1/sessions/{sessionId}/restore.
@@ -774,14 +787,6 @@ type DevImportProjectsRequest struct {
 // DevImportProjectsResponse is the body of POST /api/v1/dev/import-projects.
 type DevImportProjectsResponse struct {
 	Report devimport.Report `json:"report"`
-}
-
-// SessionPRNumberParam is the {sessionId}+{prNumber} pair addressing one of a
-// session's pull requests. PR numbers are only unique within a repository, so a
-// PR is addressed by the session that owns it rather than by number alone.
-type SessionPRNumberParam struct {
-	SessionID string `path:"sessionId" description:"Session identifier, e.g. project-1."`
-	PRNumber  int    `path:"prNumber" description:"Pull request number within the session's repository."`
 }
 
 // PRIDParam is the {id} path parameter shared by the /prs/{id} routes.

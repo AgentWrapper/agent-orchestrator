@@ -23,6 +23,7 @@ type Store interface {
 	RenameSession(ctx context.Context, id domain.SessionID, displayName string, updatedAt time.Time) (bool, error)
 	SetSessionPreviewURL(ctx context.Context, id domain.SessionID, previewURL string, updatedAt time.Time) (bool, error)
 	SetSessionTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool, updatedAt time.Time) (bool, error)
+	SetSessionReviewAutoInjectOff(ctx context.Context, id domain.SessionID, off bool, updatedAt time.Time) (bool, error)
 	GetDisplayPRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, bool, error)
 	ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
@@ -103,7 +104,6 @@ type scmProvider interface {
 	ParseRepository(remote string) (ports.SCMRepo, bool)
 	FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error)
 	FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (ports.SCMReviewObservation, error)
-	ResolveReviewThread(ctx context.Context, threadID string) error
 }
 
 type orchestratorReengagement interface {
@@ -543,6 +543,19 @@ func (s *Service) SetTerminateOnPRMerge(ctx context.Context, id domain.SessionID
 	updated, err := s.store.SetSessionTerminateOnPRMerge(ctx, id, terminate, time.Now().UTC())
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("set terminate-on-pr-merge %s: %w", id, err)
+	}
+	if !updated {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return s.Get(ctx, id)
+}
+
+// SetReviewAutoInject persists whether completed review findings are delivered
+// to this worker and returns the refreshed read model.
+func (s *Service) SetReviewAutoInject(ctx context.Context, id domain.SessionID, enabled bool) (domain.Session, error) {
+	updated, err := s.store.SetSessionReviewAutoInjectOff(ctx, id, !enabled, time.Now().UTC())
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("set review auto-inject %s: %w", id, err)
 	}
 	if !updated {
 		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")

@@ -169,6 +169,8 @@ var schemaNames = map[string]string{
 	"ControllersBrowserCommandResponse":           "BrowserCommandResponse",
 	"ControllersSetSessionMergePolicyRequest":     "SetSessionMergePolicyRequest",
 	"ControllersSetSessionMergePolicyResponse":    "SetSessionMergePolicyResponse",
+	"ControllersSetSessionReviewPolicyRequest":    "SetSessionReviewPolicyRequest",
+	"ControllersSetSessionReviewPolicyResponse":   "SetSessionReviewPolicyResponse",
 	"ControllersRenameSessionRequest":             "RenameSessionRequest",
 	"ControllersRenameSessionResponse":            "RenameSessionResponse",
 	"ControllersRestoreSessionResponse":           "RestoreSessionResponse",
@@ -962,22 +964,6 @@ func sessionOperations() []operation {
 			},
 		},
 		{
-			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/prs/{prNumber}/resolve-comments",
-			id: "resolveSessionPRComments", tag: "sessions",
-			summary:    "Resolve review threads on one of a session's pull requests",
-			pathParams: []any{controllers.SessionPRNumberParam{}},
-			// Optional: an empty body resolves every unresolved human thread.
-			reqBody:         controllers.ResolveCommentsRequest{},
-			optionalReqBody: true,
-			resps: []respUnit{
-				{http.StatusOK, controllers.ResolveCommentsResponse{}},
-				{http.StatusBadRequest, envelope.APIError{}},
-				{http.StatusNotFound, envelope.APIError{}},
-				{http.StatusServiceUnavailable, envelope.APIError{}},
-				{http.StatusNotImplemented, envelope.APIError{}},
-			},
-		},
-		{
 			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/pr/claim", id: "claimSessionPR", tag: "sessions",
 			summary:    "Claim an existing pull request for a session",
 			pathParams: []any{controllers.SessionIDParam{}},
@@ -1012,6 +998,19 @@ func sessionOperations() []operation {
 			reqBody:    controllers.SetSessionMergePolicyRequest{},
 			resps: []respUnit{
 				{http.StatusOK, controllers.SetSessionMergePolicyResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPatch, path: "/api/v1/sessions/{sessionId}/review-policy", id: "setSessionReviewPolicy", tag: "sessions",
+			summary:    "Configure whether completed review findings are sent to the session",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.SetSessionReviewPolicyRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SetSessionReviewPolicyResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},

@@ -75,10 +75,10 @@ type SessionService interface {
 	Rename(ctx context.Context, id domain.SessionID, displayName string) error
 	SetPreview(ctx context.Context, id domain.SessionID, previewURL string) (domain.Session, error)
 	SetTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool) (domain.Session, error)
+	SetReviewAutoInject(ctx context.Context, id domain.SessionID, enabled bool) (domain.Session, error)
 	CompleteOrchestrator(ctx context.Context, id domain.SessionID) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
 	ListPRSummaries(ctx context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error)
-	ResolvePRComments(ctx context.Context, id domain.SessionID, prNumber int, threadIDs []string) (int, error)
 	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
 	ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (sessionsvc.WorkspaceFiles, error)
 	GetWorkspaceFile(ctx context.Context, id domain.SessionID, path string) (sessionsvc.WorkspaceFileDetail, error)
@@ -133,9 +133,9 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Get("/sessions/{sessionId}/workspace/file", c.getWorkspaceFile)
 	r.Get("/sessions/{sessionId}/pr", c.listPRs)
 	r.Post("/sessions/{sessionId}/pr/claim", c.claimPR)
-	r.Post("/sessions/{sessionId}/prs/{prNumber}/resolve-comments", c.resolvePRComments)
 	r.Patch("/sessions/{sessionId}", c.rename)
 	r.Patch("/sessions/{sessionId}/merge-policy", c.setMergePolicy)
+	r.Patch("/sessions/{sessionId}/review-policy", c.setReviewPolicy)
 	r.Post("/sessions/{sessionId}/restore", c.restore)
 	r.Post("/sessions/{sessionId}/resume-agent", c.resumeAgent)
 	r.Post("/sessions/{sessionId}/kill", c.kill)
@@ -690,31 +690,6 @@ func (c *SessionsController) listPRs(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusOK, ListSessionPRsResponse{SessionID: sessionID(r), PRs: sessionPRSummaries(prs)})
 }
 
-func (c *SessionsController) resolvePRComments(w http.ResponseWriter, r *http.Request) {
-	const route = "/api/v1/sessions/{sessionId}/prs/{prNumber}/resolve-comments"
-	if c.Svc == nil {
-		apispec.NotImplemented(w, r, "POST", route)
-		return
-	}
-	prNumber, err := strconv.Atoi(chi.URLParam(r, "prNumber"))
-	if err != nil || prNumber <= 0 {
-		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_PR_NUMBER", "PR number must be a positive integer", nil)
-		return
-	}
-	// Body is optional: omitting it resolves every unresolved human thread.
-	var in ResolveCommentsRequest
-	if err := decodeJSON(r, &in); err != nil && !isEmptyBody(err) {
-		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
-		return
-	}
-	resolved, err := c.Svc.ResolvePRComments(r.Context(), sessionID(r), prNumber, in.CommentIDs)
-	if err != nil {
-		envelope.WriteError(w, r, err)
-		return
-	}
-	envelope.WriteJSON(w, http.StatusOK, ResolveCommentsResponse{OK: true, Resolved: resolved})
-}
-
 func (c *SessionsController) claimPR(w http.ResponseWriter, r *http.Request) {
 	if c.Svc == nil {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/pr/claim")
@@ -783,6 +758,29 @@ func (c *SessionsController) setMergePolicy(w http.ResponseWriter, r *http.Reque
 		SessionID:          sessionID(r),
 		TerminateOnPRMerge: in.TerminateOnPRMerge,
 		Session:            sessionView(sess),
+	})
+}
+
+func (c *SessionsController) setReviewPolicy(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "PATCH", "/api/v1/sessions/{sessionId}/review-policy")
+		return
+	}
+	var in SetSessionReviewPolicyRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	sess, err := c.Svc.SetReviewAutoInject(r.Context(), sessionID(r), in.AutoInject)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SetSessionReviewPolicyResponse{
+		OK:         true,
+		SessionID:  sessionID(r),
+		AutoInject: in.AutoInject,
+		Session:    sessionView(sess),
 	})
 }
 

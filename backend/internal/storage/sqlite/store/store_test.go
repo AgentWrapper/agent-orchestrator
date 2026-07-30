@@ -380,6 +380,42 @@ func TestSessionTerminateOnPRMergePolicyRoundTripAndCDC(t *testing.T) {
 	}
 }
 
+func TestSessionReviewAutoInjectPolicyRoundTripAndCDC(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "review-policy")
+	r, _ := s.CreateSession(ctx, sampleRecord("review-policy"))
+
+	base, _ := s.LatestSeq(ctx)
+	updatedAt := r.UpdatedAt.Add(time.Minute)
+	ok, err := s.SetSessionReviewAutoInjectOff(ctx, r.ID, true, updatedAt)
+	if err != nil || !ok {
+		t.Fatalf("disable review auto-inject: ok=%v err=%v", ok, err)
+	}
+	got, found, err := s.GetSession(ctx, r.ID)
+	if err != nil || !found {
+		t.Fatalf("get session: found=%v err=%v", found, err)
+	}
+	if !got.ReviewAutoInjectOff || !got.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("policy not persisted: %+v", got)
+	}
+
+	evs, err := s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 || string(evs[0].Type) != "session_updated" {
+		t.Fatalf("policy change events = %+v, want one session_updated", evs)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(evs[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if off, ok := payload["reviewAutoInjectOff"].(bool); !ok || !off {
+		t.Fatalf("reviewAutoInjectOff payload = %#v, want true", payload["reviewAutoInjectOff"])
+	}
+}
+
 func TestSessionRuntimeLaunchIDRoundTrip(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

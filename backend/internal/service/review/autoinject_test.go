@@ -10,9 +10,9 @@ import (
 )
 
 // Delivery is what "auto-inject" means: handing a completed review's findings to
-// the worker agent. It has always been unconditional, so the flag is an opt-out
-// and its absence must keep the old behaviour.
-func TestSubmitDeliveryHonoursTheProjectAutoInjectSetting(t *testing.T) {
+// the worker agent. It has always been unconditional, so the session flag is an
+// opt-out and its absence must keep the old behaviour.
+func TestSubmitDeliveryHonoursTheSessionAutoInjectSetting(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
 		off          bool
@@ -26,7 +26,7 @@ func TestSubmitDeliveryHonoursTheProjectAutoInjectSetting(t *testing.T) {
 				ok:      true,
 				run:     domain.ReviewRun{ID: "run-1", SessionID: "w-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning},
 				prs:     []domain.PullRequest{{URL: "pr1", HeadSHA: "sha1"}},
-				project: domain.ProjectRecord{Config: domain.ProjectConfig{ReviewAutoInjectOff: tc.off}},
+				session: domain.SessionRecord{ReviewAutoInjectOff: tc.off},
 			}
 			red := &fakeReducer{outcome: lifecycle.ReviewDeliverySent}
 			svc := New(nil, st, WithLifecycleReducer(red), WithClock(func() time.Time { return time.Unix(10, 0).UTC() }))

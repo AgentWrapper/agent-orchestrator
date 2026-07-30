@@ -3,7 +3,6 @@ import { useNavigate } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 import {
 	ArrowUpRight,
-	Check,
 	ChevronDown,
 	ChevronRight,
 	Files as FilesIcon,
@@ -776,22 +775,16 @@ function ReviewsView({
 			}
 		},
 	});
-	// Auto-inject is the existing behaviour — a completed review's findings are
-	// handed to the worker agent — so the stored flag is an opt-out and the switch
-	// shows its inverse.
-	const autoInjectOff = Boolean(projectConfigQuery.data?.reviewAutoInjectOff);
 	const setAutoInject = useMutation({
 		mutationFn: async (enabled: boolean) => {
-			const current = projectConfigQuery.data;
-			if (!current) return;
-			const { error } = await apiClient.PUT("/api/v1/projects/{id}/config", {
-				params: { path: { id: session.workspaceId } },
-				body: { config: { ...current, reviewAutoInjectOff: !enabled } },
+			const { error } = await apiClient.PATCH("/api/v1/sessions/{sessionId}/review-policy", {
+				params: { path: { sessionId: session.id } },
+				body: { autoInject: enabled },
 			});
 			if (error) throw new Error(apiErrorMessage(error, "Unable to save the review setting"));
 		},
 		onSuccess: () => {
-			void queryClient.invalidateQueries({ queryKey: ["project-config", session.workspaceId] });
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		},
 	});
 	const cancelReview = useMutation({
@@ -838,7 +831,7 @@ function ReviewsView({
 					agentCatalog={agentsQuery.data}
 					reviewerOverride={reviewerOverride}
 					onReviewerOverrideChange={setReviewerOverride}
-					autoInject={!autoInjectOff}
+					autoInject={!session.reviewAutoInjectOff}
 					autoInjectPending={setAutoInject.isPending}
 					autoInjectError={setAutoInject.error}
 					onAutoInjectChange={(next) => setAutoInject.mutate(next)}
@@ -849,7 +842,6 @@ function ReviewsView({
 				<GithubReviewPanel
 					isLoading={scmSummary.isLoading}
 					prs={githubReviews}
-					sessionId={session.id}
 					unresolvedTotal={unresolvedTotal}
 				/>
 			</Section>
@@ -1351,43 +1343,16 @@ function ReviewPanel({
 /**
  * Reviews left on the PR by humans and bots, as opposed to AO's own runs.
  *
- * Resolving goes through the session-scoped route: a PR number only identifies a
- * pull request together with the session that owns it, since numbers repeat
- * across repositories.
  */
 function GithubReviewPanel({
 	prs,
-	sessionId,
 	unresolvedTotal,
 	isLoading,
 }: {
 	prs: SessionPRSummary[];
-	sessionId: string;
 	unresolvedTotal: number;
 	isLoading: boolean;
 }) {
-	const queryClient = useQueryClient();
-	const [resolveError, setResolveError] = useState<string | null>(null);
-	const [resolvingPR, setResolvingPR] = useState<number | null>(null);
-	const resolveThreads = useMutation({
-		mutationFn: async ({ prNumber, threadIds }: { prNumber: number; threadIds: string[] }) => {
-			const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/prs/{prNumber}/resolve-comments", {
-				params: { path: { sessionId, prNumber } },
-				body: { commentIds: threadIds },
-			});
-			if (error) throw new Error(apiErrorMessage(error, "Unable to resolve review threads"));
-		},
-		onMutate: ({ prNumber }) => {
-			setResolveError(null);
-			setResolvingPR(prNumber);
-		},
-		onError: (error: unknown) => setResolveError(apiErrorMessage(error, "Unable to resolve review threads")),
-		onSettled: () => setResolvingPR(null),
-		onSuccess: () => {
-			void queryClient.invalidateQueries({ queryKey: ["session-scm-summary", sessionId] });
-			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-		},
-	});
 	if (isLoading) {
 		return <p className={inspectorEmptyClass}>Loading reviews...</p>;
 	}
@@ -1397,25 +1362,10 @@ function GithubReviewPanel({
 
 	return (
 		<div className="flex flex-col gap-3">
-			{resolveError ? (
-				<p className="m-0 rounded-md border border-error/28 bg-error/8 px-2.5 py-2 text-sm-md leading-normal text-error">
-					{resolveError}
-				</p>
-			) : null}
 			<div className="flex flex-col divide-y divide-border">
 				{prs.map((pr, index) => {
 					const entries = pr.review?.reviews ?? [];
 					const unresolved = (pr.review?.unresolvedBy ?? []).reduce((n, r) => n + r.count, 0);
-					// Several comments share a thread, and the mutation addresses
-					// threads, so collapse before counting the work.
-					const threadIds = [
-						...new Set(
-							(pr.review?.unresolvedBy ?? []).flatMap((reviewer) =>
-								reviewer.links.map((link) => link.threadId).filter((id): id is string => Boolean(id)),
-							),
-						),
-					];
-					const busy = resolvingPR === pr.number;
 					return (
 						<ReviewDisclosure
 							key={pr.number}
@@ -1427,21 +1377,6 @@ function GithubReviewPanel({
 							{entries.map((entry) => (
 								<GithubReviewRow entry={entry} key={`${entry.reviewerId}:${entry.submittedAt}`} />
 							))}
-							{threadIds.length > 0 ? (
-								<Button
-									className="gap-1.5 self-start [&_svg]:size-icon-sm"
-									disabled={busy}
-									onClick={() => resolveThreads.mutate({ prNumber: pr.number, threadIds })}
-									size="sm"
-									type="button"
-									variant="outline"
-								>
-									<Check aria-hidden="true" />
-									{busy
-										? "Resolving..."
-										: `Resolve ${threadIds.length} thread${threadIds.length === 1 ? "" : "s"}`}
-								</Button>
-							) : null}
 						</ReviewDisclosure>
 					);
 				})}

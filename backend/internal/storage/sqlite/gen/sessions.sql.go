@@ -19,7 +19,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge
+    workspace_repo_path, terminate_on_pr_merge, review_auto_inject_off
 FROM sessions WHERE id = ?
 `
 
@@ -51,6 +51,7 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.RuntimeLaunchID,
 		&i.WorkspaceRepoPath,
 		&i.TerminateOnPRMerge,
+		&i.ReviewAutoInjectOff,
 	)
 	return i, err
 }
@@ -61,36 +62,37 @@ INSERT INTO sessions (
     activity_state, activity_last_at, first_signal_at, is_terminated,
     branch, workspace_path, workspace_repo_path, runtime_handle_id,
     runtime_launch_id, agent_session_id, prompt,
-    preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation,
+    preview_url, preview_revision, terminate_on_pr_merge, review_auto_inject_off, cleanup_generation,
     created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSessionParams struct {
-	ID                 domain.SessionID
-	ProjectID          domain.ProjectID
-	Num                int64
-	IssueID            domain.IssueID
-	Kind               domain.SessionKind
-	Harness            domain.AgentHarness
-	DisplayName        string
-	ActivityState      domain.ActivityState
-	ActivityLastAt     time.Time
-	FirstSignalAt      sql.NullTime
-	IsTerminated       bool
-	Branch             string
-	WorkspacePath      string
-	WorkspaceRepoPath  string
-	RuntimeHandleID    string
-	RuntimeLaunchID    string
-	AgentSessionID     string
-	Prompt             string
-	PreviewURL         string
-	PreviewRevision    int64
-	TerminateOnPRMerge bool
-	CleanupGeneration  int64
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	ID                  domain.SessionID
+	ProjectID           domain.ProjectID
+	Num                 int64
+	IssueID             domain.IssueID
+	Kind                domain.SessionKind
+	Harness             domain.AgentHarness
+	DisplayName         string
+	ActivityState       domain.ActivityState
+	ActivityLastAt      time.Time
+	FirstSignalAt       sql.NullTime
+	IsTerminated        bool
+	Branch              string
+	WorkspacePath       string
+	WorkspaceRepoPath   string
+	RuntimeHandleID     string
+	RuntimeLaunchID     string
+	AgentSessionID      string
+	Prompt              string
+	PreviewURL          string
+	PreviewRevision     int64
+	TerminateOnPRMerge  bool
+	ReviewAutoInjectOff bool
+	CleanupGeneration   int64
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) error {
@@ -116,6 +118,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.PreviewURL,
 		arg.PreviewRevision,
 		arg.TerminateOnPRMerge,
+		arg.ReviewAutoInjectOff,
 		arg.CleanupGeneration,
 		arg.CreatedAt,
 		arg.UpdatedAt,
@@ -129,7 +132,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge
+    workspace_repo_path, terminate_on_pr_merge, review_auto_inject_off
 FROM sessions ORDER BY project_id, num
 `
 
@@ -167,6 +170,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.RuntimeLaunchID,
 			&i.WorkspaceRepoPath,
 			&i.TerminateOnPRMerge,
+			&i.ReviewAutoInjectOff,
 		); err != nil {
 			return nil, err
 		}
@@ -187,7 +191,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge
+    workspace_repo_path, terminate_on_pr_merge, review_auto_inject_off
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -225,6 +229,7 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.RuntimeLaunchID,
 			&i.WorkspaceRepoPath,
 			&i.TerminateOnPRMerge,
+			&i.ReviewAutoInjectOff,
 		); err != nil {
 			return nil, err
 		}
@@ -313,6 +318,24 @@ func (q *Queries) SetSessionPreviewURL(ctx context.Context, arg SetSessionPrevie
 	return result.RowsAffected()
 }
 
+const setSessionReviewAutoInjectOff = `-- name: SetSessionReviewAutoInjectOff :execrows
+UPDATE sessions SET review_auto_inject_off = ?, updated_at = ? WHERE id = ?
+`
+
+type SetSessionReviewAutoInjectOffParams struct {
+	ReviewAutoInjectOff bool
+	UpdatedAt           time.Time
+	ID                  domain.SessionID
+}
+
+func (q *Queries) SetSessionReviewAutoInjectOff(ctx context.Context, arg SetSessionReviewAutoInjectOffParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setSessionReviewAutoInjectOff, arg.ReviewAutoInjectOff, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const setSessionTerminateOnPRMerge = `-- name: SetSessionTerminateOnPRMerge :execrows
 UPDATE sessions SET terminate_on_pr_merge = ?, updated_at = ? WHERE id = ?
 `
@@ -337,33 +360,34 @@ UPDATE sessions SET
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, workspace_repo_path = ?, runtime_handle_id = ?,
     runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
-    preview_url = ?, preview_revision = ?, terminate_on_pr_merge = ?,
+    preview_url = ?, preview_revision = ?, terminate_on_pr_merge = ?, review_auto_inject_off = ?,
     cleanup_generation = ?, updated_at = ?
 WHERE id = ?
 `
 
 type UpdateSessionParams struct {
-	IssueID            domain.IssueID
-	Kind               domain.SessionKind
-	Harness            domain.AgentHarness
-	DisplayName        string
-	ActivityState      domain.ActivityState
-	ActivityLastAt     time.Time
-	FirstSignalAt      sql.NullTime
-	IsTerminated       bool
-	Branch             string
-	WorkspacePath      string
-	WorkspaceRepoPath  string
-	RuntimeHandleID    string
-	RuntimeLaunchID    string
-	AgentSessionID     string
-	Prompt             string
-	PreviewURL         string
-	PreviewRevision    int64
-	TerminateOnPRMerge bool
-	CleanupGeneration  int64
-	UpdatedAt          time.Time
-	ID                 domain.SessionID
+	IssueID             domain.IssueID
+	Kind                domain.SessionKind
+	Harness             domain.AgentHarness
+	DisplayName         string
+	ActivityState       domain.ActivityState
+	ActivityLastAt      time.Time
+	FirstSignalAt       sql.NullTime
+	IsTerminated        bool
+	Branch              string
+	WorkspacePath       string
+	WorkspaceRepoPath   string
+	RuntimeHandleID     string
+	RuntimeLaunchID     string
+	AgentSessionID      string
+	Prompt              string
+	PreviewURL          string
+	PreviewRevision     int64
+	TerminateOnPRMerge  bool
+	ReviewAutoInjectOff bool
+	CleanupGeneration   int64
+	UpdatedAt           time.Time
+	ID                  domain.SessionID
 }
 
 func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) error {
@@ -386,6 +410,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.PreviewURL,
 		arg.PreviewRevision,
 		arg.TerminateOnPRMerge,
+		arg.ReviewAutoInjectOff,
 		arg.CleanupGeneration,
 		arg.UpdatedAt,
 		arg.ID,

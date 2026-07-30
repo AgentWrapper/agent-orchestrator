@@ -104,16 +104,16 @@ func (f *fakeSessionService) SetTerminateOnPRMerge(context.Context, domain.Sessi
 	return domain.Session{}, nil
 }
 
+func (f *fakeSessionService) SetReviewAutoInject(context.Context, domain.SessionID, bool) (domain.Session, error) {
+	return domain.Session{}, nil
+}
+
 func (f *fakeSessionService) CompleteOrchestrator(context.Context, domain.SessionID) error {
 	return nil
 }
 
 func (f *fakeSessionService) Send(context.Context, domain.SessionID, string) error {
 	return nil
-}
-
-func (f *fakeSessionService) ResolvePRComments(context.Context, domain.SessionID, int, []string) (int, error) {
-	return 0, nil
 }
 
 func (f *fakeSessionService) ListPRSummaries(context.Context, domain.SessionID) ([]sessionsvc.PRSummary, error) {

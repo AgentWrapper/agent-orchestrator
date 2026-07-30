@@ -899,12 +899,7 @@ describe("SessionInspector reviews tab", () => {
 		expect(screen.getByText("Tear down the listener on unmount.")).toBeInTheDocument();
 		expect(screen.getByText(/2 unresolved/)).toBeInTheDocument();
 
-		postMock.mockResolvedValue({ data: { ok: true, resolved: 1 } });
-		await userEvent.click(screen.getByRole("button", { name: "Resolve 1 thread" }));
-		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/prs/{prNumber}/resolve-comments", {
-			params: { path: { sessionId: "sess-1", prNumber: 3 } },
-			body: { commentIds: ["T1"] },
-		});
+		expect(screen.queryByRole("button", { name: /Resolve .*thread/ })).not.toBeInTheDocument();
 	});
 
 	it("sends the chosen reviewer as a one-off override", async () => {
@@ -936,9 +931,9 @@ describe("SessionInspector reviews tab", () => {
 		expect(toggle).toBeChecked();
 
 		await userEvent.click(toggle);
-		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}/config", {
-			params: { path: { id: "ws-1" } },
-			body: { config: { reviewers: [{ harness: "codex" }], reviewAutoInjectOff: true } },
+		expect(patchMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/review-policy", {
+			params: { path: { sessionId: "sess-1" } },
+			body: { autoInject: false },
 		});
 	});
 

@@ -1957,63 +1957,6 @@ paths:
         preview
       tags:
       - sessions
-  /api/v1/sessions/{sessionId}/prs/{prNumber}/resolve-comments:
-    post:
-      operationId: resolveSessionPRComments
-      parameters:
-      - description: Session identifier, e.g. project-1.
-        in: path
-        name: sessionId
-        required: true
-        schema:
-          description: Session identifier, e.g. project-1.
-          type: string
-      - description: Pull request number within the session's repository.
-        in: path
-        name: prNumber
-        required: true
-        schema:
-          description: Pull request number within the session's repository.
-          type: integer
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ResolveCommentsRequest'
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ResolveCommentsResponse'
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Bad Request
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Found
-        "501":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Implemented
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Service Unavailable
-      summary: Resolve review threads on one of a session's pull requests
-      tags:
-      - sessions
   /api/v1/sessions/{sessionId}/restore:
     post:
       operationId: restoreSession
@@ -2096,6 +2039,57 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Resume an exited agent in its existing session
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/review-policy:
+    patch:
+      operationId: setSessionReviewPolicy
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetSessionReviewPolicyRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetSessionReviewPolicyResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Configure whether completed review findings are sent to the session
       tags:
       - sessions
   /api/v1/sessions/{sessionId}/reviews:
@@ -2868,6 +2862,8 @@ components:
           items:
             $ref: '#/components/schemas/SessionPRFacts'
           type: array
+        reviewAutoInjectOff:
+          type: boolean
         scmStatus:
           enum:
           - pr_open
@@ -2910,6 +2906,7 @@ components:
       - activity
       - isTerminated
       - terminateOnPrMerge
+      - reviewAutoInjectOff
       - createdAt
       - updatedAt
       - status
@@ -3486,8 +3483,6 @@ components:
           items:
             type: string
           type: array
-        reviewAutoInjectOff:
-          type: boolean
         reviewers:
           items:
             $ref: '#/components/schemas/DomainReviewerConfig'
@@ -4167,6 +4162,29 @@ components:
           description: Preview target URL. When empty, the daemon autodetects a static
             entry point in the session workspace.
           type: string
+      type: object
+    SetSessionReviewPolicyRequest:
+      properties:
+        autoInject:
+          type: boolean
+      required:
+      - autoInject
+      type: object
+    SetSessionReviewPolicyResponse:
+      properties:
+        autoInject:
+          type: boolean
+        ok:
+          type: boolean
+        session:
+          $ref: '#/components/schemas/ControllersSessionView'
+        sessionId:
+          type: string
+      required:
+      - ok
+      - sessionId
+      - autoInject
+      - session
       type: object
     ShellTerminalEnvelope:
       properties:

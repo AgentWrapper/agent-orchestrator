@@ -170,6 +170,17 @@ func (f *fakeStore) SetSessionTerminateOnPRMerge(_ context.Context, id domain.Se
 	return true, nil
 }
 
+func (f *fakeStore) SetSessionReviewAutoInjectOff(_ context.Context, id domain.SessionID, off bool, updatedAt time.Time) (bool, error) {
+	rec, ok := f.sessions[id]
+	if !ok {
+		return false, nil
+	}
+	rec.ReviewAutoInjectOff = off
+	rec.UpdatedAt = updatedAt
+	f.sessions[id] = rec
+	return true, nil
+}
+
 func (f *fakeStore) GetDisplayPRFactsForSession(_ context.Context, id domain.SessionID) (domain.PRFacts, bool, error) {
 	pr, ok := f.pr[id]
 	return pr, ok, nil
