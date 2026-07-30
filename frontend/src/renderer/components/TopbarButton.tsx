@@ -6,8 +6,11 @@ const topbarButtonVariants = cva(
 	{
 		variants: {
 			variant: {
+				// `bg-primary`/`text-primary-foreground` is the one pair guaranteed to
+				// contrast in both themes; `accent-foreground` is claimed by shadcn's
+				// `bg-accent` and does not pair with `accent-strong`.
 				primary:
-					"reverb-topbar__control--primary h-control-lg gap-1.5 rounded-md bg-accent-strong px-3.5 text-sm font-semibold leading-none text-accent-foreground hover:brightness-110 active:brightness-95",
+					"reverb-topbar__control--primary h-control-lg gap-1.5 rounded-md bg-primary px-3.5 text-sm font-semibold leading-none text-primary-foreground hover:brightness-110 active:brightness-95",
 				accent:
 					"reverb-topbar__control--accent h-control-lg gap-1.5 rounded-md border border-border px-3.5 text-sm font-semibold leading-none bg-raised text-muted-foreground hover:bg-surface hover:text-foreground",
 				icon: "reverb-topbar__control--icon grid size-topbar-control place-items-center rounded-md text-muted-foreground hover:bg-interactive-hover hover:text-foreground",

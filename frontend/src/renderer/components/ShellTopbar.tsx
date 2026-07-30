@@ -1,7 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
-	FolderGit2,
 	GitBranch,
 	LayoutDashboard,
 	PanelRightOpen,
@@ -25,7 +24,6 @@ import { OrchestratorIcon } from "./icons";
 import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { TopbarButton, TopbarKillError } from "./TopbarButton";
 import { ReverbTopbar } from "./topbar/ReverbTopbar";
-import { TopbarActivityStatus } from "./topbar/TopbarActivityStatus";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 const isMac = isMacPlatform();
@@ -57,6 +55,7 @@ export function ShellTopbar({
 	} = useReverbTopbarModel(surfaceOverride);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
+	const openProjectSettings = useUiStore((state) => state.openProjectSettings);
 	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
 	const isInspectorOpen = useUiStore((state) =>
 		currentSessionId ? (state.inspectorSessions[currentSessionId]?.isOpen ?? true) : true,
@@ -105,12 +104,7 @@ export function ShellTopbar({
 			return;
 		}
 		if (!hasConfiguredOrchestratorAgent(project)) {
-			if (project) {
-				void navigate({
-					to: "/projects/$projectId/settings",
-					params: { projectId },
-				});
-			}
+			if (project) openProjectSettings(projectId);
 			return;
 		}
 		setIsSpawning(true);
@@ -261,34 +255,6 @@ export function ShellTopbar({
 			</TopbarButton>
 		) : null;
 
-	const context =
-		isSessionRoute && session ? (
-			<div className="reverb-topbar__state-content">
-				{isOrchestrator ? (
-					<OrchestratorIcon className="size-icon-md shrink-0" aria-hidden="true" />
-				) : (
-					<GitBranch className="size-icon-md shrink-0" aria-hidden="true" />
-				)}
-				<span className="reverb-topbar__state-label truncate font-mono">
-					{isOrchestrator ? session.provider : (session.branch ?? session.provider)}
-				</span>
-				<TopbarActivityStatus activity={session.activity} />
-			</div>
-		) : isProjectBoardRoute && orchestrator ? (
-			<div className="reverb-topbar__state-content">
-				<OrchestratorIcon className="size-icon-md shrink-0" aria-hidden="true" />
-				<span className="reverb-topbar__state-label">Orchestrator</span>
-				<TopbarActivityStatus activity={orchestrator.activity} />
-			</div>
-		) : surfaceOverride === "project-settings" && project?.path ? (
-			<div className="reverb-topbar__state-content">
-				<FolderGit2 className="size-icon-md shrink-0" aria-hidden="true" />
-				<span className="reverb-topbar__state-label truncate font-mono" title={project.path}>
-					{project.path}
-				</span>
-			</div>
-		) : null;
-
 	const leadingIcon =
 		model.surface === "worker-session" ? (
 			<GitBranch className="size-icon-md" />
@@ -308,7 +274,6 @@ export function ShellTopbar({
 	return (
 		<ReverbTopbar
 			actions={standaloneActions ?? projectActions ?? sessionActions}
-			context={context}
 			dragStyle={dragStyle}
 			error={
 				boardSpawnError && (projectActions || (isSessionRoute && session && !isOrchestrator)) ? (

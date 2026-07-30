@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
+import { withDevBoardFixtures } from "../lib/dev-board-fixtures";
 import { mockWorkspaces } from "../lib/mock-data";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { captureRendererEvent } from "../lib/telemetry";
@@ -51,7 +52,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 			typeof window !== "undefined"
 				? (window as unknown as { __aoFakeAgent?: FakeAgentSeam }).__aoFakeAgent
 				: undefined;
-		return fake ? fake.snapshot() : mockWorkspaces;
+		return withDevBoardFixtures(fake ? fake.snapshot() : mockWorkspaces);
 	}
 	if (!hasTrustedApiBaseUrl()) {
 		throw new Error("AO daemon API is not ready");
@@ -62,7 +63,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 
 	if (projectsError || sessionsError) throw projectsError ?? sessionsError;
 
-	return (projectsData?.projects ?? []).map((project) => {
+	const projects: WorkspaceSummary[] = (projectsData?.projects ?? []).map((project) => {
 		const kind = toProjectKind(project.kind);
 		return {
 			id: project.id,
@@ -104,6 +105,8 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 				}),
 		};
 	});
+
+	return withDevBoardFixtures(projects);
 }
 
 // Shared so route loaders can prefetch via queryClient.ensureQueryData (paired

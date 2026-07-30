@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
+import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 
 const { navigateMock, spawnMock, workspaceQueryMock } = vi.hoisted(() => ({
@@ -66,10 +67,7 @@ describe("RestoreUnavailableDialog", () => {
 
 		await userEvent.click(screen.getByRole("button", { name: "Configure orchestrator agent" }));
 
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/settings",
-			params: { projectId: "proj-1" },
-		});
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
 		expect(onOpenChange).toHaveBeenCalledWith(false);
 		expect(spawnMock).not.toHaveBeenCalled();
 		expect(onRecreated).not.toHaveBeenCalled();

@@ -383,7 +383,7 @@ export function KeyboardShortcutsSettingsDialog({
 																className="inline-flex items-center rounded-md border border-(--color-border-settings-input) bg-(--color-bg-settings-input)"
 																key={`${candidate.key}-${index}`}
 															>
-																<kbd className="px-2 py-1.5 font-mono text-caption text-settings-label">
+																<kbd className="px-2 py-1.5 text-caption text-settings-label">
 																	{shortcutBindingLabel(candidate, isMac)}
 																</kbd>
 																<Tooltip>

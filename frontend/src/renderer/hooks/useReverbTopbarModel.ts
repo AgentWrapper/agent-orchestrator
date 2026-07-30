@@ -90,7 +90,6 @@ export function useReverbTopbarModel(surfaceOverride?: ReverbTopbarSurfaceOverri
 						},
 					]
 				: [{ id: "session-unavailable", label: "Session unavailable" }],
-			contextAriaLabel: session ? (isOrchestrator ? "Orchestrator activity" : "Worker context") : undefined,
 		};
 	} else if (isProjectBoardRoute) {
 		model = {

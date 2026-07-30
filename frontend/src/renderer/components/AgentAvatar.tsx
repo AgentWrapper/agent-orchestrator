@@ -89,7 +89,7 @@ export function AgentAvatar({ provider, className, decorative = false }: AgentAv
 			role="img"
 			aria-label={provider}
 			className={cn(
-				"inline-flex size-icon-xl shrink-0 items-center justify-center text-caption font-bold uppercase leading-none text-muted-foreground",
+				"inline-flex size-icon-xl shrink-0 items-center justify-center text-caption font-bold leading-none text-muted-foreground",
 				className,
 			)}
 			title={provider}

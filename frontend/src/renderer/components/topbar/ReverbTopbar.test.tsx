@@ -102,15 +102,13 @@ describe("ReverbTopbar", () => {
 		expect(container.querySelector(".reverb-topbar__breadcrumb-label")).toHaveClass("truncate");
 	});
 
-	it("keeps contextual state, route actions, errors, and utilities in distinct labelled zones", () => {
+	it("keeps route actions, errors, and utilities in distinct labelled zones", () => {
 		const { container } = render(
 			<ReverbTopbar
 				actions={<button type="button">New task</button>}
-				context={<span>Running</span>}
 				error={<span role="alert">Could not start</span>}
 				model={{
 					...projectBoardModel,
-					contextAriaLabel: "Session activity",
 					actionsAriaLabel: "Board actions",
 					utilitiesAriaLabel: "Workspace utilities",
 				}}
@@ -118,7 +116,6 @@ describe("ReverbTopbar", () => {
 			/>,
 		);
 
-		expect(screen.getByRole("group", { name: "Session activity" })).toHaveClass("reverb-topbar__state");
 		expect(screen.getByRole("group", { name: "Board actions" })).toContainElement(
 			screen.getByRole("button", { name: "New task" }),
 		);
@@ -129,13 +126,14 @@ describe("ReverbTopbar", () => {
 		expect(container.querySelector(".reverb-topbar__utility-separator")).toHaveAttribute("aria-hidden", "true");
 	});
 
-	it("omits empty controls and utility separation while retaining the layout state cell", () => {
+	it("omits empty controls and utility separation", () => {
 		const { container } = render(<ReverbTopbar model={projectBoardModel} />);
 
 		expect(screen.queryByRole("group", { name: "Page actions" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("group", { name: "Global utilities" })).not.toBeInTheDocument();
 		expect(container.querySelector(".reverb-topbar__utility-separator")).not.toBeInTheDocument();
-		expect(container.querySelector(".reverb-topbar__state--empty")).toHaveAttribute("aria-hidden", "true");
+		// The bar is breadcrumbs and trailing controls only — no center cell.
+		expect(container.querySelector(".reverb-topbar__state")).not.toBeInTheDocument();
 	});
 
 	it("accepts host layout classes and a platform drag style without making controls part of the drag region", () => {

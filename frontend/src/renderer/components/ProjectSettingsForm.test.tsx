@@ -116,7 +116,7 @@ beforeEach(() => {
 });
 
 describe("ProjectSettingsForm", () => {
-	it("closes project settings with Escape", async () => {
+	it("leaves Escape handling to its settings dialog", async () => {
 		mockProject({
 			id: "proj-1",
 			name: "Project One",
@@ -131,11 +131,11 @@ describe("ProjectSettingsForm", () => {
 		});
 
 		renderSettings();
-		await screen.findByLabelText("Settings");
+		await screen.findByLabelText("Project settings");
 
 		await userEvent.keyboard("{Escape}");
 
-		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
+		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
 	it("atomically saves the project display name and config without changing its stable ID", async () => {

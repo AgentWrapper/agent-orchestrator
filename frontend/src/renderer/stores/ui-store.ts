@@ -26,6 +26,13 @@ export type InspectorSessionState = {
 	browserUnseen?: boolean;
 };
 
+export type SettingsModal =
+	| { scope: "global" }
+	| {
+			scope: "project";
+			projectId: string;
+	  };
+
 // Selection (which project/session is open) now lives in the URL — the router
 // is the single source of truth, read via route params. This store holds only
 // ephemeral UI: theme, sidebar collapse, command palette, per-session inspector
@@ -35,6 +42,7 @@ type UiState = {
 	isSidebarOpen: boolean;
 	inspectorSessions: Record<string, InspectorSessionState>;
 	isCommandPaletteOpen: boolean;
+	settingsModal: SettingsModal | null;
 	themePreference: ThemePreference;
 	/** Resolved light/dark for React consumers; may track OS while preference is system. */
 	resolvedTheme: Theme;
@@ -79,6 +87,9 @@ type UiState = {
 	markInspectorPreviewSeen: (sessionId: string, previewKey: string) => void;
 	setBrowserUnseen: (sessionId: string, unseen: boolean) => void;
 	setCommandPaletteOpen: (open: boolean) => void;
+	openGlobalSettings: () => void;
+	openProjectSettings: (projectId: string) => void;
+	closeSettings: () => void;
 	setProjectRestarting: (projectId: string, restarting: boolean) => void;
 	setOrchestratorReplacementError: (projectId: string, message: string | null) => void;
 	setOrchestratorStartupError: (projectId: string, message: string | null) => void;
@@ -117,6 +128,7 @@ export const useUiStore = create<UiState>((set) => ({
 	isSidebarOpen: initialSidebarOpen(),
 	inspectorSessions: {},
 	isCommandPaletteOpen: false,
+	settingsModal: null,
 	themePreference: initialThemePreference,
 	resolvedTheme: resolveTheme(initialThemePreference),
 	developerMode: initialDeveloperMode(),
@@ -203,6 +215,9 @@ export const useUiStore = create<UiState>((set) => ({
 			};
 		}),
 	setCommandPaletteOpen: (isCommandPaletteOpen) => set({ isCommandPaletteOpen }),
+	openGlobalSettings: () => set({ settingsModal: { scope: "global" } }),
+	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),
+	closeSettings: () => set({ settingsModal: null }),
 	setProjectRestarting: (projectId, restarting) =>
 		set((state) => {
 			const restartingProjectIds = new Set(state.restartingProjectIds);

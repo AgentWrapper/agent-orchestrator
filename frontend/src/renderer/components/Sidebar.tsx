@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import { ChevronRight, LayoutDashboard, MoreVertical, Pencil, Plus, RefreshCw, Search, Settings, Trash2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { UpdateStatus } from "../../main/update-settings";
 import { effectiveShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
 import {
@@ -95,6 +95,8 @@ type SidebarProps = {
 // route params, and clicks navigate rather than mutate a store.
 function useSelection() {
 	const navigate = useNavigate();
+	const openGlobalSettings = useUiStore((state) => state.openGlobalSettings);
+	const openProjectSettings = useUiStore((state) => state.openProjectSettings);
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	const pathname = useRouterState({ select: (state) => state.location.pathname });
 	return {
@@ -102,8 +104,8 @@ function useSelection() {
 		activeProjectId: params.projectId,
 		activeSessionId: params.sessionId,
 		goHome: () => void navigate({ to: "/" }),
-		goGlobalSettings: () => void navigate({ to: "/settings" }),
-		goSettings: (projectId: string) => void navigate({ to: "/projects/$projectId/settings", params: { projectId } }),
+		goGlobalSettings: openGlobalSettings,
+		goSettings: openProjectSettings,
 		goProject: (projectId: string) => void navigate({ to: "/projects/$projectId", params: { projectId } }),
 		goSession: (projectId: string, sessionId: string) =>
 			void navigate({ to: "/projects/$projectId/sessions/$sessionId", params: { projectId, sessionId } }),
@@ -136,7 +138,6 @@ export function Sidebar({
 	const selection = useSelection();
 	const { state, setOpen } = useSidebar();
 	const isCollapsed = state === "collapsed";
-	const [expandedChromeVisible, setExpandedChromeVisible] = useState(!isCollapsed);
 	// One IPC subscription for both footer variants of the restart-to-update prompt.
 	const updateStatus = useUpdateStatus();
 	// Daemon status for the smoke suite's sr-only mirror in the footer. Null when
@@ -145,28 +146,11 @@ export function Sidebar({
 	const commandPaletteEnabled = useCommandPaletteEnabled();
 	const setCommandPaletteOpen = useUiStore((s) => s.setCommandPaletteOpen);
 
-	useEffect(() => {
-		if (isCollapsed) {
-			setExpandedChromeVisible(false);
-			return;
-		}
-
-		const reducedMotion =
-			typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-		if (reducedMotion) {
-			setExpandedChromeVisible(true);
-			return;
-		}
-
-		const timer = window.setTimeout(() => setExpandedChromeVisible(true), 160);
-		return () => window.clearTimeout(timer);
-	}, [isCollapsed]);
-
-	// Disclosure state: projects are expanded by default; a project id present in
-	// this set is collapsed (sessions hidden).
-	const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<string>>(() => new Set());
-	const toggleCollapsed = (id: string) =>
-		setCollapsedIds((prev) => {
+	// Disclosure state: projects start collapsed; a project id present in this set
+	// is expanded (all its sessions listed).
+	const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
+	const toggleExpanded = (id: string) =>
+		setExpandedIds((prev) => {
 			const next = new Set(prev);
 			next.has(id) ? next.delete(id) : next.add(id);
 			return next;
@@ -206,7 +190,6 @@ export function Sidebar({
 		// same chrome clearance, leaving the titlebar controls unobstructed.
 		<SidebarRoot
 			collapsible="offcanvas"
-			data-expanded-chrome={expandedChromeVisible ? "visible" : "hidden"}
 			onPointerLeave={onPreviewLeave}
 			overlay={isOverlay}
 			className={cn(
@@ -280,7 +263,7 @@ export function Sidebar({
 				) : null}
 				{/* Section label (project-sidebar__nav-label) */}
 				<div className="sidebar-expanded-chrome flex shrink-0 items-center justify-between px-1.5 pb-2 group-data-[collapsible=icon]:hidden">
-					<SidebarGroupLabel className="h-auto rounded-none p-0 text-2xs font-semibold uppercase tracking-wide-lg text-passive">
+					<SidebarGroupLabel className="h-auto rounded-none p-0 text-2xs font-semibold tracking-wide text-passive">
 						Projects
 					</SidebarGroupLabel>
 					<CreateProjectButton
@@ -306,9 +289,9 @@ export function Sidebar({
 									<ProjectItem
 										key={workspace.id}
 										workspace={workspace}
-										expanded={!collapsedIds.has(workspace.id)}
+										expanded={expandedIds.has(workspace.id)}
 										selection={selection}
-										onToggle={() => toggleCollapsed(workspace.id)}
+										onToggle={() => toggleExpanded(workspace.id)}
 										onRemoveProject={onRemoveProject}
 									/>
 								))}
@@ -342,7 +325,7 @@ export function Sidebar({
 					<RestartToUpdateRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
 					<button
 						aria-label="Settings"
-						className="flex w-full items-center justify-center gap-2.5 rounded-settings-row bg-interactive-hover px-2.5 py-2.5 text-control font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-lg [&_svg]:shrink-0"
+						className="flex w-full items-center justify-start gap-2 rounded-md bg-interactive-hover px-3 py-2.5 text-control font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-md [&_svg]:shrink-0"
 						onClick={() => selection.goGlobalSettings()}
 						tabIndex={isCollapsed ? -1 : 0}
 						type="button"
@@ -360,7 +343,7 @@ export function Sidebar({
 						<TooltipTrigger asChild>
 							<button
 								aria-label="Settings"
-								className="grid size-control-board place-items-center rounded-settings-row bg-interactive-hover text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
+								className="grid size-control-board place-items-center rounded-md bg-interactive-hover text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
 								onClick={() => selection.goGlobalSettings()}
 								tabIndex={isCollapsed ? 0 : -1}
 								type="button"
@@ -418,6 +401,9 @@ function ProjectItem({
 	// Only termination removes a worker from the sidebar; archived sessions stay
 	// reachable through SessionsBoard.
 	const sessions = workerSessions(workspace.sessions).filter((session) => session.isTerminated !== true);
+	// A collapsed project still lists the session you are in, so the sidebar never
+	// hides your current location behind a disclosure triangle.
+	const visibleSessions = expanded ? sessions : sessions.filter((session) => session.id === selection.activeSessionId);
 	// The project's live orchestrator (if any) backs the hover Orchestrator
 	// button: navigate to it when present, otherwise spawn one first.
 	const orchestrator = newestActiveOrchestrator(workspace.sessions);
@@ -585,9 +571,9 @@ function ProjectItem({
 			</div>
 			{/* project-sidebar__sessions: indented under the project parent so worker
           sessions read as children without adding a persistent guide rail. */}
-			{expanded && sessions.length > 0 && (
+			{visibleSessions.length > 0 && (
 				<SidebarMenuSub className="sidebar-expanded-chrome mx-0 ml-3.5 translate-x-0 gap-0 border-l-0 px-0 py-1">
-					{sessions.map((session) => (
+					{visibleSessions.map((session) => (
 						<SessionRow
 							key={session.id}
 							session={session}
@@ -738,7 +724,7 @@ function RestartToUpdateRow({ status, tabIndex }: { status: UpdateStatus; tabInd
 		<button
 			aria-label={`Restart to install update${status.version ? ` v${status.version}` : ""}`}
 			className={cn(
-				"flex w-full items-center gap-2.5 rounded-settings-row p-2.5 text-left text-control font-medium transition-colors",
+				"flex w-full items-center gap-2 rounded-md px-3 py-2.5 text-left text-control font-medium transition-colors",
 				escalated
 					? "border border-working/35 bg-working/12 text-working hover:bg-working/18 [&_svg]:text-working"
 					: "text-passive hover:bg-interactive-hover hover:text-foreground [&_svg]:text-passive",
@@ -813,7 +799,7 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 				}}
 				tooltip={isCollapsed ? `Search · ${shortcutLabel}` : undefined}
 				className={cn(
-					"h-control-form gap-2 rounded-settings-row bg-interactive-hover px-3 py-0 text-control font-medium text-muted-foreground",
+					"h-control-form gap-2 rounded-md bg-interactive-hover px-3 py-0 text-control font-medium text-muted-foreground",
 					"hover:bg-interactive-hover hover:text-foreground active:bg-interactive-hover active:text-foreground",
 					"[&>svg]:size-icon-md!",
 					"group-data-[collapsible=icon]:size-control-form! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0!",

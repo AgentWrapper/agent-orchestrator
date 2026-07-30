@@ -101,7 +101,7 @@ const { workspaces, workspaceQueryState, panels, shellTerminalsState } = vi.hois
 });
 
 // The terminal and inspector body pull in xterm/SSE machinery irrelevant to
-// the split under test. Keep a marker for the column-owned session topbar.
+// the split under test. Keep a marker for the panel-wide session topbar.
 vi.mock("./ShellTopbar", () => ({
 	ShellTopbar: () => <div data-testid="session-topbar" />,
 }));
@@ -552,11 +552,18 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-1" />);
 
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
-		expect(within(screen.getByTestId("panel-terminal")).getByTestId("session-topbar")).toBeInTheDocument();
+		// The shell owns the topbar here; on platforms that hide it (macOS/Linux)
+		// SessionView mounts it above the split. Either way it spans the framed
+		// panel and never lives inside the terminal column.
+		expect(within(screen.getByTestId("panel-terminal")).queryByTestId("session-topbar")).toBeNull();
 		expect(panelSizes("inspector")[0]).toBe("28%");
 		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("data-collapsible", "true");
 		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("data-collapsed-size", "0%");
-		expect(screen.getByTestId("resize-handle")).toBeInTheDocument();
+		expect(screen.getByTestId("resize-handle")).toHaveClass(
+			"w-px",
+			"bg-sidebar-border",
+		);
+		expect(screen.getByTestId("resize-handle").className).not.toContain("after:");
 		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("inert");
 		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
 		expect(screen.getByRole("button", { name: "Close inspector panel" })).toBeInTheDocument();
@@ -596,7 +603,7 @@ describe("SessionView", () => {
 		expect(screen.queryByRole("button", { name: "Open inspector panel" })).not.toBeInTheDocument();
 		expect(screen.getByTestId("resize-handle")).toHaveAttribute("data-disabled", "true");
 		expect(screen.getByTestId("resize-handle")).toHaveAttribute("aria-hidden", "true");
-		expect(screen.getByTestId("resize-handle")).toHaveClass("w-0", "pointer-events-none", "after:hidden");
+		expect(screen.getByTestId("resize-handle")).toHaveClass("w-0", "pointer-events-none");
 		expect(panels.get("inspector")!.handle.collapse).not.toHaveBeenCalled();
 	});
 

@@ -158,6 +158,7 @@ vi.mock("../components/WindowTitlebar", () => ({ WindowTitlebar: () => null }));
 vi.mock("../components/KeyboardShortcutsDialog", () => ({
 	KeyboardShortcutsDialog: ({ open }: { open: boolean }) => (open ? <div data-testid="keyboard-shortcuts" /> : null),
 }));
+vi.mock("../components/SettingsDialog", () => ({ SettingsDialog: () => null }));
 vi.mock("../lib/shell-context", () => ({
 	ShellProvider: ({ children, value }: PropsWithChildren<{ value?: { workspaceStartupState?: string } }>) => {
 		shellMocks.state.shellValue = value;
@@ -277,6 +278,7 @@ beforeEach(() => {
 	useUiStore.setState({
 		createProjectNonce: 0,
 		isSidebarOpen: true,
+		settingsModal: null,
 		newTaskRequest: null,
 		newShellTerminalNonce: 0,
 	});
@@ -536,7 +538,7 @@ describe("shell application shortcut subscriptions", () => {
 
 		act(() => shellMocks.state.openSettingsListener?.());
 
-		expect(shellMocks.navigate).toHaveBeenCalledWith({ to: "/settings" });
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "global" });
 	});
 
 	it("moves to the next active session in the current project", async () => {

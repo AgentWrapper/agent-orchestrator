@@ -404,21 +404,42 @@ func TestCreateLaunchCommandExportsEnvVars(t *testing.T) {
 	}
 }
 
-func TestBuildLaunchCommandPreservesExplicitNoColor(t *testing.T) {
+// A daemon launched from a coding agent or CI terminal inherits that context's
+// color-off variables, and a tmux pane inherits them again from the tmux server
+// even when the daemon's own environment is clean. Unsetting only NO_COLOR left
+// CI and COLOR to reach the agent, which rendered its TUI with no color at all.
+func TestBuildLaunchCommandUnsetsAmbientColorSuppressors(t *testing.T) {
 	launchCmd := buildLaunchCommand(ports.RuntimeConfig{
 		WorkspacePath: "/tmp/ws",
 		Argv:          []string{"myagent"},
-		Env:           map[string]string{"NO_COLOR": "1"},
 	})
 
-	if !strings.Contains(launchCmd, "export NO_COLOR='1';") {
-		t.Fatalf("launch command does not preserve configured NO_COLOR: %q", launchCmd)
+	for _, key := range []string{"CI", "COLOR", "FORCE_COLOR", "NO_COLOR"} {
+		if !strings.Contains(launchCmd, "unset "+key+";") {
+			t.Fatalf("launch command does not unset ambient %s: %q", key, launchCmd)
+		}
 	}
-	if strings.Contains(launchCmd, "unset NO_COLOR;") {
-		t.Fatalf("launch command unsets configured NO_COLOR: %q", launchCmd)
-	}
-	if !strings.Contains(launchCmd, "export COLORTERM='truecolor';") {
-		t.Fatalf("launch command does not advertise true color: %q", launchCmd)
+}
+
+func TestBuildLaunchCommandPreservesExplicitColorSuppressors(t *testing.T) {
+	for _, key := range []string{"CI", "COLOR", "FORCE_COLOR", "NO_COLOR"} {
+		t.Run(key, func(t *testing.T) {
+			launchCmd := buildLaunchCommand(ports.RuntimeConfig{
+				WorkspacePath: "/tmp/ws",
+				Argv:          []string{"myagent"},
+				Env:           map[string]string{key: "1"},
+			})
+
+			if !strings.Contains(launchCmd, "export "+key+"='1';") {
+				t.Fatalf("launch command does not preserve configured %s: %q", key, launchCmd)
+			}
+			if strings.Contains(launchCmd, "unset "+key+";") {
+				t.Fatalf("launch command unsets configured %s: %q", key, launchCmd)
+			}
+			if !strings.Contains(launchCmd, "export COLORTERM='truecolor';") {
+				t.Fatalf("launch command does not advertise true color: %q", launchCmd)
+			}
+		})
 	}
 }
 

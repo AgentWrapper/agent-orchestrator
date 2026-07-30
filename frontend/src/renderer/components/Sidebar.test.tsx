@@ -17,7 +17,7 @@ const { getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateS
 	() => ({
 		getMock: vi.fn(),
 		navigateMock: vi.fn(),
-		mockParams: { projectId: undefined as string | undefined },
+		mockParams: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
 		renameSessionMock: vi.fn().mockResolvedValue(undefined),
 		spawnMock: vi.fn(),
 		updateStatusMock: vi.fn(),
@@ -37,7 +37,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 	return {
 		...actual,
 		useNavigate: () => navigateMock,
-		useParams: () => ({}),
+		useParams: () => ({ ...mockParams }),
 		useRouterState: ({ select }: { select: (state: { location: { pathname: string } }) => unknown }) =>
 			select({ location: { pathname: "/" } }),
 	};
@@ -157,6 +157,13 @@ function renderSidebar({
 	return onRemoveProject;
 }
 
+/** Projects render collapsed; open one to list all of its sessions. */
+async function expandProject(name = "Project One") {
+	const row = screen.getByText(name).closest("button");
+	if (!row) throw new Error(`Project row button not found for ${name}`);
+	await userEvent.click(row);
+}
+
 async function chooseOption(trigger: HTMLElement, optionName: string) {
 	await userEvent.click(trigger);
 	await userEvent.click(await screen.findByRole("option", { name: optionName }));
@@ -228,6 +235,7 @@ beforeEach(() => {
 	spawnMock.mockReset();
 	updateStatusMock.mockReset().mockResolvedValue({ state: "idle" });
 	mockParams.projectId = undefined;
+	mockParams.sessionId = undefined;
 });
 
 afterEach(() => {
@@ -285,10 +293,7 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByRole("button", { name: "Spawn Project One orchestrator" }));
 
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/settings",
-			params: { projectId: "proj-1" },
-		});
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
 		expect(spawnMock).not.toHaveBeenCalled();
 	});
 
@@ -890,11 +895,11 @@ describe("Sidebar", () => {
 		);
 	});
 
-	it("navigates to settings when the footer Settings button is clicked", async () => {
+	it("opens settings when the footer Settings button is clicked", async () => {
 		const user = userEvent.setup();
 		renderSidebar();
 		await user.click(screen.getAllByRole("button", { name: "Settings" })[0]);
-		expect(navigateMock).toHaveBeenCalledWith({ to: "/settings" });
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "global" });
 	});
 
 	it("opens the command palette when Search is clicked", async () => {
@@ -938,6 +943,7 @@ describe("Sidebar", () => {
 		const user = userEvent.setup();
 		const workspaceWithSession = { ...workspace, sessions: [session] };
 		renderSidebar({ workspaces: [workspaceWithSession] });
+		await expandProject();
 
 		await user.click(screen.getByLabelText("Rename fix login"));
 		const input = screen.getByLabelText("Rename fix login");
@@ -951,6 +957,7 @@ describe("Sidebar", () => {
 		const user = userEvent.setup();
 		const workspaceWithSession = { ...workspace, sessions: [session] };
 		renderSidebar({ workspaces: [workspaceWithSession] });
+		await expandProject();
 
 		await user.click(screen.getByLabelText("Rename fix login"));
 		expect(screen.getByLabelText("Rename fix login")).toHaveAttribute("maxlength", "20");
@@ -960,6 +967,7 @@ describe("Sidebar", () => {
 		const user = userEvent.setup();
 		const workspaceWithSession = { ...workspace, sessions: [session] };
 		renderSidebar({ workspaces: [workspaceWithSession] });
+		await expandProject();
 
 		await user.click(screen.getByLabelText("Rename fix login"));
 		const input = screen.getByLabelText("Rename fix login");
@@ -1046,7 +1054,7 @@ describe("Sidebar", () => {
 		}
 	});
 
-	it("animates active sidebar dots using their PR context color", () => {
+	it("animates active sidebar dots using their PR context color", async () => {
 		renderSidebar({
 			workspaces: [
 				{
@@ -1107,6 +1115,8 @@ describe("Sidebar", () => {
 			],
 		});
 
+		await expandProject();
+
 		const sessionDot = (title: string) =>
 			screen.getByLabelText(`Open ${title}`).querySelector<HTMLElement>("span.rounded-full");
 
@@ -1126,7 +1136,7 @@ describe("Sidebar", () => {
 		expect(sessionDot("merged task")).toHaveClass("bg-status-merged", "animate-status-pulse");
 	});
 
-	it("renders a static gray dot for idle activity across session statuses", () => {
+	it("renders a static gray dot for idle activity across session statuses", async () => {
 		renderSidebar({
 			workspaces: [
 				{
@@ -1151,6 +1161,8 @@ describe("Sidebar", () => {
 			],
 		});
 
+		await expandProject();
+
 		const idleActivityDot = screen
 			.getByLabelText("Open idle activity task")
 			.querySelector<HTMLElement>("span.rounded-full");
@@ -1162,7 +1174,42 @@ describe("Sidebar", () => {
 		expect(idleDraftDot).not.toHaveClass("animate-status-pulse");
 	});
 
-	it("keeps merged sessions in the list until they are terminated", () => {
+	it("collapses projects on load and lists their sessions once opened", async () => {
+		const workspaceWithSessions = {
+			...workspace,
+			sessions: [session, { ...session, id: "proj-1-2", title: "second task" }],
+		};
+		renderSidebar({ workspaces: [workspaceWithSessions] });
+
+		expect(screen.queryByLabelText("Open fix login")).not.toBeInTheDocument();
+		expect(screen.queryByLabelText("Open second task")).not.toBeInTheDocument();
+
+		await expandProject();
+
+		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
+		expect(screen.getByLabelText("Open second task")).toBeInTheDocument();
+	});
+
+	it("keeps the open session listed under its collapsed project", () => {
+		mockParams.projectId = "proj-1";
+		mockParams.sessionId = "proj-1-2";
+		renderSidebar({
+			workspaces: [
+				{
+					...workspace,
+					sessions: [session, { ...session, id: "proj-1-2", title: "second task" }],
+				},
+			],
+		});
+
+		// Collapsed, so only the session you are in shows — the sidebar never hides
+		// your current location.
+		expect(screen.getByText("Project One").closest("button")).toHaveAttribute("aria-expanded", "false");
+		expect(screen.getByLabelText("Open second task")).toBeInTheDocument();
+		expect(screen.queryByLabelText("Open fix login")).not.toBeInTheDocument();
+	});
+
+	it("keeps merged sessions in the list until they are terminated", async () => {
 		renderSidebar({
 			workspaces: [
 				{
@@ -1174,6 +1221,8 @@ describe("Sidebar", () => {
 				},
 			],
 		});
+
+		await expandProject();
 
 		expect(screen.getByLabelText("Open merged live task")).toBeInTheDocument();
 		expect(screen.queryByLabelText("Open merged terminated task")).not.toBeInTheDocument();

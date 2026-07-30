@@ -39,7 +39,6 @@ export interface ReverbTopbarModel {
 	breadcrumbs: readonly ReverbTopbarBreadcrumb[];
 	ariaLabel?: string;
 	breadcrumbAriaLabel?: string;
-	contextAriaLabel?: string;
 	actionsAriaLabel?: string;
 	utilitiesAriaLabel?: string;
 }

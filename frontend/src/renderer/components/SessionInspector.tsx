@@ -117,7 +117,7 @@ const kvKeyClass = "w-kv-label shrink-0 text-settings-muted @max-[300px]/inspect
 
 const kvValueClass = "min-w-0 truncate text-settings-label @max-[300px]/inspector:w-full";
 
-const kvValueMonoClass = "font-mono text-sm-md";
+const kvValueMonoClass = "text-sm-md";
 
 const reviewerVerdictTone: Record<"neutral" | "running" | "success" | "danger", string> = {
 	neutral: "text-muted-foreground",
@@ -278,12 +278,11 @@ function Section({
 	surface?: boolean;
 	title: string;
 }) {
-	// Boxed sections match the settings page row surface (bg + radius) with the
-	// uppercase muted kicker kept inside the card, as in the inspector refs.
+	// Boxed sections share the application surface and type hierarchy.
 	return (
 		<section className={cn("mb-2.5 last:mb-0", className)} data-testid="inspector-section">
-			<div className="overflow-hidden rounded-settings-row bg-settings-row px-3.5 py-3">
-				<div className="mb-2 flex items-center justify-between gap-2 text-2xs font-bold uppercase tracking-settings-section text-settings-muted">
+			<div className="overflow-hidden rounded-lg bg-surface px-3.5 py-3">
+				<div className="mb-2 flex items-center justify-between gap-2 text-2xs font-semibold tracking-tight text-muted-foreground">
 					<span>{title}</span>
 					{action ?? null}
 				</div>
@@ -630,7 +629,7 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 						/>
 						<div className="text-xs leading-normal text-foreground [&_b]:font-semibold">{event.node}</div>
 					</div>
-					{event.ts ? <div className="mt-1 font-mono text-2xs text-passive">{event.ts}</div> : null}
+					{event.ts ? <div className="mt-1 text-2xs text-passive">{event.ts}</div> : null}
 				</div>
 			))}
 		</div>
@@ -844,7 +843,7 @@ function ReviewDisclosure({
 					<ChevronRight className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
 				)}
 				<span className="min-w-0 flex-1 truncate text-sm-md font-semibold text-foreground">{title}</span>
-				<span className="shrink-0 font-mono text-2xs text-passive">{meta}</span>
+				<span className="shrink-0 text-2xs text-passive">{meta}</span>
 			</button>
 			{open ? <div className="ml-2 mt-2.5 flex flex-col gap-4 border-l border-border/60 pl-3.5">{children}</div> : null}
 		</div>
@@ -996,7 +995,7 @@ function ReviewPanel({
 			) : null}
 			<p className={cn(inspectorEmptyClass, "inline-flex min-w-0 items-center gap-1.5")}>
 				<ReviewerHarnessIcon className="size-icon-sm shrink-0 text-passive" harness={harness} />
-				<span className="truncate font-mono font-medium text-foreground">{harness}</span>
+				<span className="truncate font-medium text-foreground">{harness}</span>
 			</p>
 			<div className="flex flex-col divide-y divide-border">
 				{openReviewStates.length === 0 ? (
