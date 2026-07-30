@@ -13,6 +13,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
+const defaultPublishTimeout = 2 * time.Second
+
 // Store is the write-side notification persistence boundary.
 type Store interface {
 	CreateNotification(ctx context.Context, rec domain.NotificationRecord) (domain.NotificationRecord, bool, error)
@@ -29,23 +31,34 @@ type Intent = ports.NotificationIntent
 // Manager validates lifecycle intents, enriches them into stored rows, persists
 // unread notifications, and publishes newly inserted rows to live subscribers.
 type Manager struct {
-	store     Store
-	publisher Publisher
-	clock     func() time.Time
-	newID     func() string
+	store          Store
+	publisher      Publisher
+	publishTimeout time.Duration
+	clock          func() time.Time
+	newID          func() string
 }
 
 // Deps configures a Manager.
 type Deps struct {
-	Store     Store
-	Publisher Publisher
-	Clock     func() time.Time
-	NewID     func() string
+	Store          Store
+	Publisher      Publisher
+	PublishTimeout time.Duration
+	Clock          func() time.Time
+	NewID          func() string
 }
 
 // New constructs a write-side notification manager.
 func New(d Deps) *Manager {
-	m := &Manager{store: d.Store, publisher: d.Publisher, clock: d.Clock, newID: d.NewID}
+	m := &Manager{
+		store:          d.Store,
+		publisher:      d.Publisher,
+		publishTimeout: d.PublishTimeout,
+		clock:          d.Clock,
+		newID:          d.NewID,
+	}
+	if m.publishTimeout <= 0 {
+		m.publishTimeout = defaultPublishTimeout
+	}
 	if m.clock == nil {
 		m.clock = time.Now
 	}
@@ -76,8 +89,28 @@ func (m *Manager) Notify(ctx context.Context, intent Intent) error {
 	if !inserted || m.publisher == nil {
 		return nil
 	}
-	if err := m.publisher.Publish(ctx, created); err != nil {
+	if err := m.publish(ctx, created); err != nil {
 		return fmt.Errorf("notify publish: %w", err)
 	}
 	return nil
+}
+
+func (m *Manager) publish(ctx context.Context, rec domain.NotificationRecord) error {
+	if m.publishTimeout <= 0 {
+		return m.publisher.Publish(ctx, rec)
+	}
+	pubCtx, cancel := context.WithTimeout(ctx, m.publishTimeout)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- m.publisher.Publish(pubCtx, rec)
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-pubCtx.Done():
+		return pubCtx.Err()
+	}
 }
