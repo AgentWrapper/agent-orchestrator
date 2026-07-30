@@ -59,6 +59,11 @@ func New() *Plugin {
 
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
+var _ ports.CompletedTurnResumeRequirement = (*Plugin)(nil)
+
+// RequiresCompletedTurnForResume reports that a hook-captured Goose session id
+// is only safe for native resume after Stop confirms the turn was persisted.
+func (p *Plugin) RequiresCompletedTurnForResume() bool { return true }
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {

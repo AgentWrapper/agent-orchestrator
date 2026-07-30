@@ -300,7 +300,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		return ports.RuntimeHandle{}, err
 	}
 
-	launchCmd := buildLaunchCommand(cfg)
+	launchCmd := buildLaunchCommand(cfg, id, r.binary)
 	args := newSessionArgs(id, cfg.WorkspacePath, r.shell, launchCmd)
 	if _, err := r.run(ctx, args...); err != nil {
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: create session %s: %w", id, err)
@@ -370,7 +370,7 @@ func (r *Runtime) Restart(ctx context.Context, handle ports.RuntimeHandle, cfg p
 		return ports.RuntimeHandle{}, err
 	}
 
-	launchCmd := buildLaunchCommand(cfg)
+	launchCmd := buildLaunchCommand(cfg, id, r.binary)
 	if _, err := r.run(ctx, respawnPaneArgs(id, cfg.WorkspacePath, r.shell, launchCmd)...); err != nil {
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: restart session %s: %w", id, err)
 	}
@@ -508,6 +508,33 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 		return false, fmt.Errorf("tmux runtime: probe session %s: %w", id, err)
 	}
 	return true, nil
+}
+
+// AgentExitStatus reads the AO-owned exit marker written after the launched
+// agent command exits. The tmux session itself may still be alive because AO
+// leaves an inspection shell open.
+func (r *Runtime) AgentExitStatus(ctx context.Context, handle ports.RuntimeHandle) (ports.AgentExitStatus, bool, error) {
+	id, err := handleID(handle)
+	if err != nil {
+		return ports.AgentExitStatus{}, false, err
+	}
+	out, err := r.run(ctx, showEnvArgs(id, agentExitEnvKey(id))...)
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return ports.AgentExitStatus{}, false, nil
+		}
+		return ports.AgentExitStatus{}, false, fmt.Errorf("tmux runtime: read agent exit status %s: %w", id, err)
+	}
+	_, value, ok := strings.Cut(strings.TrimSpace(string(out)), "=")
+	if !ok {
+		return ports.AgentExitStatus{}, false, nil
+	}
+	code, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return ports.AgentExitStatus{}, false, fmt.Errorf("tmux runtime: parse agent exit status %s: %w", id, err)
+	}
+	return ports.AgentExitStatus{Exited: true, ExitCode: code}, true, nil
 }
 
 // IsSupervisedProcessAlive reports whether the managed workload for ref is
@@ -992,7 +1019,7 @@ func shellQuote(s string) string {
 //
 // PATH from cfg.Env is exported last, after all other keys, so an explicit
 // override takes effect.
-func buildLaunchCommand(cfg ports.RuntimeConfig) string {
+func buildLaunchCommand(cfg ports.RuntimeConfig, runtimeID, tmuxBinary string) string {
 	path := cfg.Env["PATH"]
 	if path == "" {
 		path = getenv("PATH")
@@ -1002,6 +1029,11 @@ func buildLaunchCommand(cfg ports.RuntimeConfig) string {
 	b.WriteString("cd ")
 	b.WriteString(shellQuote(cfg.WorkspacePath))
 	b.WriteString(" || exit; ")
+	exitKey := agentExitEnvKey(runtimeID)
+	b.WriteString(shellQuote(tmuxBinary))
+	b.WriteString(" set-environment -u ")
+	b.WriteString(shellQuote(exitKey))
+	b.WriteString(" >/dev/null 2>&1 || true; ")
 	if _, configured := cfg.Env["NO_COLOR"]; !configured {
 		// The daemon may be launched from another agent or CI environment that
 		// sets NO_COLOR for its own captured output. Do not leak that ambient
@@ -1034,11 +1066,21 @@ func buildLaunchCommand(cfg ports.RuntimeConfig) string {
 		parts[i] = shellQuote(a)
 	}
 	b.WriteString(strings.Join(parts, " "))
+	b.WriteString("; ao_agent_exit=$?; ")
+	b.WriteString(shellQuote(tmuxBinary))
+	b.WriteString(" set-environment ")
+	b.WriteString(shellQuote(exitKey))
+	b.WriteString(` "$ao_agent_exit" >/dev/null 2>&1 || true`)
 	// Keep the tmux session alive after the agent exits so the operator can
 	// inspect the terminal. The shell variable expansion picks up $SHELL from
 	// the process env if set, otherwise falls back to /bin/sh.
 	b.WriteString(`; exec "${SHELL:-/bin/sh}" -i`)
 	return b.String()
+}
+
+func agentExitEnvKey(id string) string {
+	key := strings.ToUpper(strings.NewReplacer("-", "_", ".", "_", ":", "_").Replace(id))
+	return "AO_AGENT_EXIT_" + key
 }
 
 func sameDirectory(a, b string) bool {

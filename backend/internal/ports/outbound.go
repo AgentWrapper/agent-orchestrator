@@ -110,6 +110,19 @@ type RuntimeHandle struct {
 	ID string
 }
 
+// AgentExitStatus reports whether the AO-launched agent command has exited
+// inside a runtime that may keep an inspection shell alive afterward.
+type AgentExitStatus struct {
+	Exited   bool
+	ExitCode int
+}
+
+// AgentExitObserver is an optional runtime capability for detecting immediate
+// agent-command failure separately from runtime/container liveness.
+type AgentExitObserver interface {
+	AgentExitStatus(ctx context.Context, handle RuntimeHandle) (AgentExitStatus, bool, error)
+}
+
 // SupervisedProcessRef identifies the AO-owned supervisor belonging to one
 // managed agent launch. LaunchID fences process observations from older
 // spawn/restore generations of the same session.

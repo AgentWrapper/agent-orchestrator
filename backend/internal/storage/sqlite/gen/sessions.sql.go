@@ -19,7 +19,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge
+    workspace_repo_path, terminate_on_pr_merge, native_resume_ready
 FROM sessions WHERE id = ?
 `
 
@@ -51,6 +51,7 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.RuntimeLaunchID,
 		&i.WorkspaceRepoPath,
 		&i.TerminateOnPRMerge,
+		&i.NativeResumeReady,
 	)
 	return i, err
 }
@@ -60,10 +61,10 @@ INSERT INTO sessions (
     id, project_id, num, issue_id, kind, harness, display_name,
     activity_state, activity_last_at, first_signal_at, is_terminated,
     branch, workspace_path, workspace_repo_path, runtime_handle_id,
-    runtime_launch_id, agent_session_id, prompt,
+    runtime_launch_id, agent_session_id, native_resume_ready, prompt,
     preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation,
     created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSessionParams struct {
@@ -84,6 +85,7 @@ type InsertSessionParams struct {
 	RuntimeHandleID    string
 	RuntimeLaunchID    string
 	AgentSessionID     string
+	NativeResumeReady  bool
 	Prompt             string
 	PreviewURL         string
 	PreviewRevision    int64
@@ -112,6 +114,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.RuntimeHandleID,
 		arg.RuntimeLaunchID,
 		arg.AgentSessionID,
+		arg.NativeResumeReady,
 		arg.Prompt,
 		arg.PreviewURL,
 		arg.PreviewRevision,
@@ -129,7 +132,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge
+    workspace_repo_path, terminate_on_pr_merge, native_resume_ready
 FROM sessions ORDER BY project_id, num
 `
 
@@ -167,6 +170,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.RuntimeLaunchID,
 			&i.WorkspaceRepoPath,
 			&i.TerminateOnPRMerge,
+			&i.NativeResumeReady,
 		); err != nil {
 			return nil, err
 		}
@@ -187,7 +191,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge
+    workspace_repo_path, terminate_on_pr_merge, native_resume_ready
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -225,6 +229,7 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.RuntimeLaunchID,
 			&i.WorkspaceRepoPath,
 			&i.TerminateOnPRMerge,
+			&i.NativeResumeReady,
 		); err != nil {
 			return nil, err
 		}
@@ -336,7 +341,7 @@ UPDATE sessions SET
     issue_id = ?, kind = ?, harness = ?, display_name = ?,
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, workspace_repo_path = ?, runtime_handle_id = ?,
-    runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
+    runtime_launch_id = ?, agent_session_id = ?, native_resume_ready = ?, prompt = ?,
     preview_url = ?, preview_revision = ?, terminate_on_pr_merge = ?,
     cleanup_generation = ?, updated_at = ?
 WHERE id = ?
@@ -357,6 +362,7 @@ type UpdateSessionParams struct {
 	RuntimeHandleID    string
 	RuntimeLaunchID    string
 	AgentSessionID     string
+	NativeResumeReady  bool
 	Prompt             string
 	PreviewURL         string
 	PreviewRevision    int64
@@ -382,6 +388,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.RuntimeHandleID,
 		arg.RuntimeLaunchID,
 		arg.AgentSessionID,
+		arg.NativeResumeReady,
 		arg.Prompt,
 		arg.PreviewURL,
 		arg.PreviewRevision,

@@ -71,6 +71,12 @@ type AgentBinaryResolver interface {
 	ResolveBinary(ctx context.Context) (path string, err error)
 }
 
+// CompletedTurnResumeRequirement is an optional capability for adapters whose
+// native resume id is not durable until the agent's completed-turn hook lands.
+type CompletedTurnResumeRequirement interface {
+	RequiresCompletedTurnForResume() bool
+}
+
 // AgentExitDetectionMode describes how AO learns that an agent CLI process
 // ended while its terminal runtime remains alive.
 type AgentExitDetectionMode string

@@ -87,7 +87,7 @@ func sessionCommandServer(t *testing.T) (*httptest.Server, *sessionRequestLog) {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/kill":
 			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-1","freed":true}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/restore":
-			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-1","session":`+sessionJSON("demo-1", "demo", "worker", "idle", false)+`}`)
+			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-1","restoreMode":"saved_prompt","session":`+sessionJSON("demo-1", "demo", "worker", "idle", false)+`}`)
 		case r.Method == http.MethodPatch && r.URL.Path == "/api/v1/sessions/demo-1":
 			var req sessionRenameRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -283,6 +283,30 @@ func TestSessionRestore_SuccessWithProjectScope(t *testing.T) {
 	want := []string{"GET /api/v1/sessions/demo-1", "POST /api/v1/sessions/demo-1/restore"}
 	if got := log.all(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("requests = %#v, want %#v", got, want)
+	}
+}
+
+func TestSessionRestore_JSONIncludesRestoreMode(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, log := sessionCommandServer(t)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "session", "restore", "demo-1", "-p", "demo", "--json")
+	if err != nil {
+		t.Fatalf("session restore --json failed: %v\nstderr=%s", err, errOut)
+	}
+	var got restoreSessionResponse
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("restore JSON decode: %v\nout=%s", err, out)
+	}
+	if got.SessionID != "demo-1" || got.RestoreMode != "saved_prompt" || got.Session.ID != "demo-1" {
+		t.Fatalf("restore JSON = %+v, want session id and saved_prompt mode", got)
+	}
+	want := []string{"GET /api/v1/sessions/demo-1", "POST /api/v1/sessions/demo-1/restore"}
+	if gotLog := log.all(); !reflect.DeepEqual(gotLog, want) {
+		t.Fatalf("requests = %#v, want %#v", gotLog, want)
 	}
 }
 
