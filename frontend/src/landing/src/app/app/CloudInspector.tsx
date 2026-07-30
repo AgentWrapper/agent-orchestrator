@@ -21,6 +21,7 @@ import {
   CloudWorkspaceDiff,
   CloudWorkspaceEntry,
 } from "@/lib/cloud-api";
+import { getWorkspaceSnapshot } from "@/lib/cloud-workspace-cache";
 
 import { CloudTerminal } from "./CloudTerminal";
 
@@ -32,6 +33,7 @@ interface CloudInspectorProps {
   runtimeConnected: boolean;
   previewAddress?: string;
   tab: CloudInspectorTab;
+  open: boolean;
   width: number;
   onTabChange: (tab: CloudInspectorTab) => void;
   onWidthChange: (width: number) => void;
@@ -55,11 +57,16 @@ export function CloudInspector({
   runtimeConnected,
   previewAddress,
   tab,
+  open,
   width,
   onTabChange,
   onWidthChange,
   onClose,
 }: CloudInspectorProps) {
+  const [filePreviewAddress, setFilePreviewAddress] = useState("");
+  useEffect(() => {
+    if (previewAddress) setFilePreviewAddress("");
+  }, [previewAddress]);
   const startResize = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     const originX = event.clientX;
@@ -67,7 +74,10 @@ export function CloudInspector({
     const handleMove = (moveEvent: globalThis.PointerEvent) => {
       const maximum = Math.max(360, Math.floor(window.innerWidth * 0.7));
       onWidthChange(
-        Math.min(maximum, Math.max(320, originWidth + originX - moveEvent.clientX)),
+        Math.min(
+          maximum,
+          Math.max(320, originWidth + originX - moveEvent.clientX),
+        ),
       );
     };
     const stop = () => {
@@ -80,66 +90,97 @@ export function CloudInspector({
 
   return (
     <aside
-      className="relative flex h-full min-h-0 shrink-0 flex-col border-l border-[#24272d] bg-[#111316]"
-      style={{ width }}
+      className="relative h-full min-h-0 shrink-0 overflow-hidden bg-[#111316] transition-[width] duration-200 ease-out motion-reduce:transition-none"
+      style={{
+        width: open ? width : 0,
+        borderLeft: open ? "1px solid #24272d" : "0 solid transparent",
+      }}
       aria-label="Session inspector"
+      aria-hidden={!open}
+      inert={!open}
     >
-      <div
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize session inspector"
-        onPointerDown={startResize}
-        className="absolute inset-y-0 -left-1 z-20 w-2 cursor-col-resize touch-none"
-      />
-      <div className="flex h-10 shrink-0 items-center border-b border-[#24272d] px-1.5">
-        <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
-          {inspectorTabs.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => onTabChange(item.id)}
-                className={`flex h-7 shrink-0 items-center gap-1.5 rounded px-2 text-[11px] transition-colors ${
-                  tab === item.id
-                    ? "bg-[#262a31] text-[#eef0f3]"
-                    : "text-[#8f96a1] hover:bg-[#202329] hover:text-[#d9dce1]"
-                }`}
-                aria-pressed={tab === item.id}
-              >
-                <Icon className="size-3.5" />
-                {item.label}
-              </button>
-            );
-          })}
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="grid size-7 shrink-0 place-items-center rounded text-[#858c96] hover:bg-[#24272d] hover:text-[#e5e7eb]"
-          aria-label="Close inspector"
-          title="Close inspector"
-        >
-          <PanelRightClose className="size-3.5" />
-        </button>
-      </div>
-
-      <div className="min-h-0 flex-1">
-        {!runtimeConnected ? (
-          <InspectorUnavailable />
-        ) : tab === "terminal" ? (
-          <CloudTerminal api={api} sessionId={sessionId} />
-        ) : tab === "changes" ? (
-          <ChangesView api={api} sessionId={sessionId} />
-        ) : tab === "browser" ? (
-          <BrowserView
-            api={api}
-            sessionId={sessionId}
-            requestedAddress={previewAddress}
+      <div className="flex h-full min-h-0 flex-col" style={{ width }}>
+        {open ? (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize session inspector"
+            onPointerDown={startResize}
+            className="absolute inset-y-0 -left-1 z-20 w-2 cursor-col-resize touch-none"
           />
-        ) : (
-          <FilesView api={api} sessionId={sessionId} />
-        )}
+        ) : null}
+        <div className="flex h-10 shrink-0 items-center border-b border-[#24272d] px-1.5">
+          <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
+            {inspectorTabs.map((item) => {
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onTabChange(item.id)}
+                  className={`flex h-7 shrink-0 items-center gap-1.5 rounded px-2 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#5b8def] ${
+                    tab === item.id
+                      ? "bg-[#262a31] text-[#eef0f3]"
+                      : "text-[#8f96a1] hover:bg-[#202329] hover:text-[#d9dce1]"
+                  }`}
+                  aria-pressed={tab === item.id}
+                >
+                  <Icon className="size-3.5" aria-hidden="true" />
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid size-7 shrink-0 place-items-center rounded text-[#858c96] hover:bg-[#24272d] hover:text-[#e5e7eb] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#5b8def]"
+            aria-label="Close inspector"
+            title="Close inspector"
+          >
+            <PanelRightClose className="size-3.5" aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="relative min-h-0 flex-1">
+          {!runtimeConnected ? (
+            <InspectorUnavailable />
+          ) : (
+            <>
+              <div className={tab === "changes" ? "h-full" : "hidden"}>
+                <ChangesView api={api} sessionId={sessionId} />
+              </div>
+              <div className={tab === "browser" ? "h-full" : "hidden"}>
+                <BrowserView
+                  api={api}
+                  sessionId={sessionId}
+                  requestedAddress={filePreviewAddress || previewAddress}
+                />
+              </div>
+              <div
+                className={
+                  tab === "terminal"
+                    ? "h-full"
+                    : "pointer-events-none invisible absolute inset-0"
+                }
+              >
+                <CloudTerminal api={api} sessionId={sessionId} />
+              </div>
+              <div className={tab === "files" ? "h-full" : "hidden"}>
+                <FilesView
+                  api={api}
+                  sessionId={sessionId}
+                  onPreview={(path) => {
+                    setFilePreviewAddress(
+                      `file:///workspace/repository/${path.replace(/^\/+/, "")}`,
+                    );
+                    onTabChange("browser");
+                  }}
+                />
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </aside>
   );
@@ -150,80 +191,477 @@ function InspectorUnavailable() {
     <div className="grid h-full place-items-center px-8 text-center">
       <div>
         <LoaderCircle className="mx-auto mb-3 size-4 animate-spin text-[#6f9eff] motion-reduce:animate-none" />
-        <p className="text-xs text-[#c4c8cf]">Preparing workspace tools</p>
-        <p className="mt-1 text-[11px] leading-5 text-[#777e89]">
-          Terminal, files, changes, and previews connect when the worker is ready.
-        </p>
+        <p className="text-xs text-[#c4c8cf]">VM is loading…</p>
       </div>
     </div>
   );
 }
 
-function ChangesView({ api, sessionId }: { api: CloudAPI; sessionId: string }) {
-  const [diff, setDiff] = useState<CloudWorkspaceDiff | null>(null);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      setDiff(await api.workspaceDiff(sessionId));
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Could not load changes.");
-    } finally {
-      setLoading(false);
-    }
-  }, [api, sessionId]);
+type DiffLineKind = "context" | "addition" | "deletion" | "hunk" | "meta";
 
-  useEffect(() => void load(), [load]);
-  const patch = [diff?.staged, diff?.unstaged].filter(Boolean).join("\n");
+interface InspectorDiffLine {
+  kind: DiffLineKind;
+  content: string;
+  oldLine?: number;
+  newLine?: number;
+}
+
+interface InspectorDiffFile {
+  key: string;
+  path: string;
+  state: string;
+  additions: number;
+  deletions: number;
+  lines: InspectorDiffLine[];
+  detail?: string;
+}
+
+function ChangesView({ api, sessionId }: { api: CloudAPI; sessionId: string }) {
+  const cachedDiff = getWorkspaceSnapshot(sessionId)?.diff;
+  const [diff, setDiff] = useState<CloudWorkspaceDiff | null>(
+    cachedDiff ?? null,
+  );
+  const [files, setFiles] = useState<InspectorDiffFile[]>(() =>
+    cachedDiff ? parseWorkspaceDiff(cachedDiff) : [],
+  );
+  const [selectedKey, setSelectedKey] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(!cachedDiff);
+  const load = useCallback(
+    async (showLoading = true) => {
+      if (showLoading) setLoading(true);
+      setError("");
+      try {
+        const response = await api.workspaceDiff(sessionId);
+        const parsedFiles = parseWorkspaceDiff(response);
+        const representedPaths = new Set(parsedFiles.map((file) => file.path));
+        const statusOnlyFiles = await Promise.all(
+          parseGitStatus(response.status)
+            .filter((entry) => !representedPaths.has(entry.path))
+            .map(async (entry) => {
+              if (entry.code !== "??") {
+                return statusOnlyDiffFile(entry);
+              }
+              try {
+                const responseFile = await api.workspaceFile(
+                  sessionId,
+                  entry.path,
+                );
+                return untrackedDiffFile(entry.path, responseFile.content);
+              } catch (readError) {
+                return {
+                  ...statusOnlyDiffFile(entry),
+                  detail:
+                    readError instanceof Error
+                      ? readError.message
+                      : "Preview unavailable for this file.",
+                };
+              }
+            }),
+        );
+        const nextFiles = [...parsedFiles, ...statusOnlyFiles];
+        setDiff(response);
+        setFiles(nextFiles);
+        setSelectedKey((current) =>
+          nextFiles.some((file) => file.key === current)
+            ? current
+            : (nextFiles[0]?.key ?? ""),
+        );
+      } catch (loadError) {
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Could not load changes.",
+        );
+      } finally {
+        if (showLoading) setLoading(false);
+      }
+    },
+    [api, sessionId],
+  );
+
+  useEffect(() => {
+    void load();
+    const refreshTimer = window.setInterval(() => void load(false), 4_000);
+    return () => window.clearInterval(refreshTimer);
+  }, [load]);
+  const selectedFile =
+    files.find((file) => file.key === selectedKey) ?? files[0] ?? null;
+  const totals = files.reduce(
+    (summary, file) => ({
+      additions: summary.additions + file.additions,
+      deletions: summary.deletions + file.deletions,
+    }),
+    { additions: 0, deletions: 0 },
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <InspectorToolbar
-        label={diff?.status.trim() ? "Working tree" : "Changes"}
+        label="Changes"
         loading={loading}
-        onRefresh={load}
+        onRefresh={() => load()}
+        summary={
+          files.length
+            ? `${files.length} ${files.length === 1 ? "file" : "files"}`
+            : undefined
+        }
       />
       {error ? (
         <InspectorError message={error} />
       ) : loading && !diff ? (
         <InspectorLoading label="Reading Git changes…" />
-      ) : !diff?.status.trim() && !patch.trim() ? (
+      ) : files.length === 0 ? (
         <InspectorEmpty
           icon={GitCompareArrows}
           title="Working tree is clean"
           detail="Changes made by the worker will appear here."
         />
       ) : (
-        <div className="min-h-0 flex-1 overflow-auto">
-          {diff?.status.trim() ? (
-            <pre className="border-b border-[#24272d] px-3 py-2 font-mono text-[11px] leading-5 text-[#aeb4bd]">
-              {diff.status}
-            </pre>
-          ) : null}
-          <pre className="min-w-max px-3 py-3 font-mono text-[11px] leading-[1.65] text-[#b8bec7]">
-            {patch.split("\n").map((line, index) => (
-              <span
-                key={`${index}-${line}`}
-                className={`block ${
-                  line.startsWith("+") && !line.startsWith("+++")
-                    ? "bg-[#183523]/55 text-[#75d291]"
-                    : line.startsWith("-") && !line.startsWith("---")
-                      ? "bg-[#3b2024]/55 text-[#ef8a92]"
-                      : line.startsWith("@@")
-                        ? "text-[#7fa7ff]"
-                        : ""
-                }`}
+        <div className="min-h-0 flex-1 overflow-y-auto bg-[#0f1114]">
+          <div className="sticky top-0 z-10 flex h-9 items-center gap-2 border-b border-[#24272d] bg-[#111316]/95 px-3 backdrop-blur">
+            <span className="min-w-0 flex-1 text-[10px] font-medium uppercase tracking-[0.08em] text-[#777e89]">
+              Working Tree
+            </span>
+            {selectedKey ? (
+              <button
+                type="button"
+                onClick={() => setSelectedKey("")}
+                className="rounded px-1.5 py-1 text-[9px] text-[#7f8792] hover:bg-[#202329] hover:text-[#d9dce1] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#5b8def]"
               >
-                {line || " "}
-              </span>
-            ))}
-          </pre>
+                Collapse All
+              </button>
+            ) : null}
+            <DiffCount
+              additions={totals.additions}
+              deletions={totals.deletions}
+            />
+          </div>
+          <div>
+            {files.map((file) => {
+              const expanded =
+                selectedFile?.key === file.key && Boolean(selectedKey);
+              return (
+                <section key={file.key} className="border-b border-[#24272d]">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSelectedKey((current) =>
+                        current === file.key ? "" : file.key,
+                      )
+                    }
+                    className={`flex min-h-11 w-full items-center gap-2 px-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[#5b8def] ${
+                      expanded
+                        ? "bg-[#1b1e23] text-[#eef0f3]"
+                        : "bg-[#14161a] text-[#b6bbc3] hover:bg-[#1a1d22] hover:text-[#e1e4e8]"
+                    }`}
+                    aria-expanded={expanded}
+                    aria-label={`${expanded ? "Collapse" : "Expand"} ${file.path}, ${file.additions} additions, ${file.deletions} deletions`}
+                  >
+                    <ChevronRight
+                      className={`size-3.5 shrink-0 text-[#69717c] transition-transform duration-150 motion-reduce:transition-none ${
+                        expanded ? "rotate-90" : ""
+                      }`}
+                      aria-hidden="true"
+                    />
+                    <span
+                      className={`w-4 shrink-0 font-mono text-[10px] ${
+                        file.state === "Untracked"
+                          ? "text-[#7fa7ff]"
+                          : file.state === "Staged"
+                            ? "text-[#75d291]"
+                            : "text-[#d7aa61]"
+                      }`}
+                    >
+                      {diffStateGlyph(file.state)}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex min-w-0 items-baseline gap-1.5">
+                        <span className="truncate font-mono text-[11px] text-[#d8dce2]">
+                          {diffBaseName(file.path)}
+                        </span>
+                        {diffDirectory(file.path) ? (
+                          <span className="truncate font-mono text-[9px] text-[#626a75]">
+                            {diffDirectory(file.path)}
+                          </span>
+                        ) : null}
+                      </span>
+                    </span>
+                    <DiffCount
+                      additions={file.additions}
+                      deletions={file.deletions}
+                    />
+                    <span className="rounded border border-[#6d343a] bg-[#3a2024] px-1.5 py-0.5 text-[9px] text-[#e28a91]">
+                      {file.state}
+                    </span>
+                  </button>
+                  {expanded ? <DiffFileView file={file} /> : null}
+                </section>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
   );
+}
+
+function DiffFileView({ file }: { file: InspectorDiffFile }) {
+  return (
+    <div className="min-w-0 border-t border-[#24272d]">
+      {file.lines.length ? (
+        <div className="overflow-x-auto bg-[#0f1114] font-mono text-[11px] leading-5">
+          <div className="min-w-max py-1">
+            {file.lines.map((line, index) => (
+              <div
+                key={`${index}-${line.kind}-${line.oldLine ?? ""}-${line.newLine ?? ""}`}
+                className={`grid min-h-5 grid-cols-[42px_42px_20px_minmax(max-content,1fr)] ${
+                  line.kind === "addition"
+                    ? "bg-[#173321]/65 text-[#8bdda3]"
+                    : line.kind === "deletion"
+                      ? "bg-[#3a1e23]/65 text-[#f09aa1]"
+                      : line.kind === "hunk"
+                        ? "bg-[#18243b]/60 text-[#88aefc]"
+                        : line.kind === "meta"
+                          ? "text-[#737b87]"
+                          : "text-[#bdc2ca]"
+                }`}
+              >
+                <span className="select-none border-r border-[#25282e] px-2 text-right tabular-nums text-[#555d68]">
+                  {line.oldLine ?? ""}
+                </span>
+                <span className="select-none border-r border-[#25282e] px-2 text-right tabular-nums text-[#555d68]">
+                  {line.newLine ?? ""}
+                </span>
+                <span
+                  className="select-none text-center font-semibold"
+                  aria-hidden="true"
+                >
+                  {line.kind === "addition"
+                    ? "+"
+                    : line.kind === "deletion"
+                      ? "−"
+                      : ""}
+                </span>
+                <code className="whitespace-pre pr-4">
+                  {line.content || " "}
+                </code>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <InspectorEmpty
+          icon={File}
+          title="No textual diff available"
+          detail={
+            file.detail ??
+            "The file may be binary, empty, or only changed in metadata."
+          }
+        />
+      )}
+    </div>
+  );
+}
+
+function DiffCount({
+  additions,
+  deletions,
+}: {
+  additions: number;
+  deletions: number;
+}) {
+  return (
+    <span
+      className="flex shrink-0 items-center gap-1.5 font-mono text-[10px] tabular-nums"
+      aria-label={`${additions} additions and ${deletions} deletions`}
+    >
+      <span className="text-[#75d291]">+{additions}</span>
+      <span className="text-[#ef8a92]">−{deletions}</span>
+    </span>
+  );
+}
+
+function parseWorkspaceDiff(diff: CloudWorkspaceDiff): InspectorDiffFile[] {
+  return [
+    ...parseUnifiedDiff(diff.staged, "Staged"),
+    ...parseUnifiedDiff(diff.unstaged, "Unstaged"),
+  ];
+}
+
+function parseUnifiedDiff(patch: string, state: string): InspectorDiffFile[] {
+  if (!patch.trim()) return [];
+  return patch
+    .split(/(?=^diff --git )/m)
+    .filter((chunk) => chunk.startsWith("diff --git "))
+    .map((chunk, index) => {
+      const rawLines = chunk.split("\n");
+      const newPathLine = rawLines.find((line) => line.startsWith("+++ "));
+      const oldPathLine = rawLines.find((line) => line.startsWith("--- "));
+      const header = rawLines[0] ?? "";
+      const path =
+        normalizeDiffPath(newPathLine?.slice(4)) ??
+        normalizeDiffPath(oldPathLine?.slice(4)) ??
+        fallbackDiffPath(header) ??
+        `Changed file ${index + 1}`;
+      const lines = parseDiffLines(rawLines);
+      return {
+        key: `${state.toLowerCase()}:${path}:${index}`,
+        path,
+        state,
+        additions: lines.filter((line) => line.kind === "addition").length,
+        deletions: lines.filter((line) => line.kind === "deletion").length,
+        lines,
+      };
+    });
+}
+
+function parseDiffLines(rawLines: string[]): InspectorDiffLine[] {
+  const lines: InspectorDiffLine[] = [];
+  let oldLine = 0;
+  let newLine = 0;
+  let insideHunk = false;
+  for (const rawLine of rawLines) {
+    const hunk = rawLine.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/);
+    if (hunk) {
+      oldLine = Number(hunk[1]);
+      newLine = Number(hunk[2]);
+      insideHunk = true;
+      lines.push({ kind: "hunk", content: rawLine });
+      continue;
+    }
+    if (!insideHunk) {
+      if (
+        rawLine.startsWith("Binary files ") ||
+        rawLine.startsWith("GIT binary patch")
+      ) {
+        lines.push({ kind: "meta", content: rawLine });
+      }
+      continue;
+    }
+    if (rawLine.startsWith("\\ No newline")) {
+      lines.push({ kind: "meta", content: rawLine });
+    } else if (rawLine.startsWith("+")) {
+      lines.push({ kind: "addition", content: rawLine.slice(1), newLine });
+      newLine += 1;
+    } else if (rawLine.startsWith("-")) {
+      lines.push({ kind: "deletion", content: rawLine.slice(1), oldLine });
+      oldLine += 1;
+    } else if (rawLine.startsWith(" ")) {
+      lines.push({
+        kind: "context",
+        content: rawLine.slice(1),
+        oldLine,
+        newLine,
+      });
+      oldLine += 1;
+      newLine += 1;
+    }
+  }
+  return lines;
+}
+
+function parseGitStatus(status: string) {
+  return status
+    .split("\n")
+    .filter((line) => line.length >= 3)
+    .map((line) => {
+      const rawPath = line.slice(3).trim();
+      return {
+        code: line.slice(0, 2),
+        path: rawPath.includes(" -> ")
+          ? rawPath.split(" -> ").at(-1)!
+          : rawPath,
+      };
+    });
+}
+
+function statusOnlyDiffFile(entry: {
+  code: string;
+  path: string;
+}): InspectorDiffFile {
+  return {
+    key: `status:${entry.code}:${entry.path}`,
+    path: entry.path,
+    state: statusLabel(entry.code),
+    additions: 0,
+    deletions: 0,
+    lines: [],
+  };
+}
+
+function untrackedDiffFile(path: string, content: string): InspectorDiffFile {
+  const contentLines = content.endsWith("\n")
+    ? content.slice(0, -1).split("\n")
+    : content.split("\n");
+  const normalizedLines = content === "" ? [] : contentLines;
+  return {
+    key: `untracked:${path}`,
+    path,
+    state: "Untracked",
+    additions: normalizedLines.length,
+    deletions: 0,
+    lines: [
+      {
+        kind: "hunk",
+        content: `@@ -0,0 +1,${normalizedLines.length} @@`,
+      },
+      ...normalizedLines.map((line, index) => ({
+        kind: "addition" as const,
+        content: line,
+        newLine: index + 1,
+      })),
+    ],
+  };
+}
+
+function normalizeDiffPath(rawPath?: string) {
+  if (!rawPath) return null;
+  const withoutTimestamp = rawPath.split("\t")[0];
+  if (withoutTimestamp === "/dev/null") return null;
+  const unquoted =
+    withoutTimestamp.startsWith('"') && withoutTimestamp.endsWith('"')
+      ? safelyUnquoteGitPath(withoutTimestamp)
+      : withoutTimestamp;
+  return unquoted.replace(/^[ab]\//, "");
+}
+
+function safelyUnquoteGitPath(path: string) {
+  try {
+    return JSON.parse(path) as string;
+  } catch {
+    return path.slice(1, -1);
+  }
+}
+
+function fallbackDiffPath(header: string) {
+  const marker = header.lastIndexOf(" b/");
+  return marker >= 0 ? header.slice(marker + 3) : null;
+}
+
+function statusLabel(code: string) {
+  if (code === "??") return "Untracked";
+  if (code.includes("A")) return "Added";
+  if (code.includes("D")) return "Deleted";
+  if (code.includes("R")) return "Renamed";
+  return code[0] !== " " ? "Staged" : "Modified";
+}
+
+function diffStateGlyph(state: string) {
+  if (state === "Untracked") return "U";
+  if (state === "Added") return "A";
+  if (state === "Deleted") return "D";
+  if (state === "Renamed") return "R";
+  return "M";
+}
+
+function diffBaseName(path: string) {
+  return path.split("/").at(-1) ?? path;
+}
+
+function diffDirectory(path: string) {
+  const separator = path.lastIndexOf("/");
+  return separator >= 0 ? path.slice(0, separator + 1) : "";
 }
 
 function BrowserView({
@@ -248,10 +686,21 @@ function BrowserView({
       setError("");
       try {
         const parsed = parsePreviewAddress(target);
-        const response = await api.workspacePreviewTicket(sessionId, parsed.port);
-        setPreviewURL(
-          `${response.url}${parsed.pathname.replace(/^\/+/, "")}${parsed.search}`,
-        );
+        if (parsed.kind === "file") {
+          const response = await api.workspaceFilePreviewTicket(
+            sessionId,
+            parsed.path,
+          );
+          setPreviewURL(response.url);
+        } else {
+          const response = await api.workspacePreviewTicket(
+            sessionId,
+            parsed.port,
+          );
+          setPreviewURL(
+            `${response.url}${parsed.pathname.replace(/^\/+/, "")}${parsed.search}`,
+          );
+        }
         setLoadedAddress(parsed.href);
         setAddress(parsed.href);
       } catch (navigationError) {
@@ -305,7 +754,7 @@ function BrowserView({
             if (previewURL) setReloadKey((current) => current + 1);
             else void navigate(loadedAddress || address);
           }}
-          className="grid size-6 place-items-center rounded text-[#89909b] hover:bg-[#24272d] hover:text-[#e3e6ea]"
+          className="grid size-6 place-items-center rounded text-[#89909b] hover:bg-[#24272d] hover:text-[#e3e6ea] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#5b8def]"
           aria-label="Reload preview"
         >
           <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
@@ -314,8 +763,11 @@ function BrowserView({
           value={address}
           onChange={(event) => setAddress(event.target.value)}
           aria-label="Preview address"
-          className="h-7 min-w-0 flex-1 rounded-md border border-[#2a2e35] bg-[#181b20] px-2.5 font-mono text-[11px] text-[#d4d7dc] outline-none placeholder:text-[#636a74] focus:border-[#4d75c9]"
-          placeholder="http://localhost:3000"
+          name="preview-address"
+          autoComplete="off"
+          spellCheck={false}
+          className="h-7 min-w-0 flex-1 rounded-md border border-[#2a2e35] bg-[#181b20] px-2.5 font-mono text-[11px] text-[#d4d7dc] outline-none placeholder:text-[#636a74] focus-visible:border-[#4d75c9] focus-visible:ring-1 focus-visible:ring-[#4d75c9]"
+          placeholder="localhost:3000 or file:///workspace/repository/index.html"
         />
       </form>
       <div className="min-h-0 flex-1">
@@ -325,7 +777,7 @@ function BrowserView({
           <InspectorEmpty
             icon={Globe2}
             title="Open a worker preview"
-            detail="Start a server in the terminal, then enter its localhost URL above."
+            detail="Enter a localhost URL or a file path inside /workspace/repository."
           />
         ) : (
           <iframe
@@ -341,12 +793,25 @@ function BrowserView({
   );
 }
 
-function FilesView({ api, sessionId }: { api: CloudAPI; sessionId: string }) {
+function FilesView({
+  api,
+  sessionId,
+  onPreview,
+}: {
+  api: CloudAPI;
+  sessionId: string;
+  onPreview: (path: string) => void;
+}) {
+  const cachedRootEntries = getWorkspaceSnapshot(sessionId)?.rootEntries;
   const [path, setPath] = useState("");
-  const [entries, setEntries] = useState<CloudWorkspaceEntry[]>([]);
-  const [file, setFile] = useState<{ path: string; content: string } | null>(null);
+  const [entries, setEntries] = useState<CloudWorkspaceEntry[]>(() =>
+    sortWorkspaceEntries(cachedRootEntries ?? []),
+  );
+  const [file, setFile] = useState<{ path: string; content: string } | null>(
+    null,
+  );
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!cachedRootEntries);
 
   const loadDirectory = useCallback(
     async (target: string) => {
@@ -356,15 +821,13 @@ function FilesView({ api, sessionId }: { api: CloudAPI; sessionId: string }) {
       try {
         const response = await api.workspaceFiles(sessionId, target);
         setPath(response.path === "." ? "" : response.path);
-        setEntries(
-          [...response.entries].sort(
-            (left, right) =>
-              Number(right.isDir) - Number(left.isDir) ||
-              left.name.localeCompare(right.name),
-          ),
-        );
+        setEntries(sortWorkspaceEntries(response.entries));
       } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : "Could not load files.");
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Could not load files.",
+        );
       } finally {
         setLoading(false);
       }
@@ -373,6 +836,18 @@ function FilesView({ api, sessionId }: { api: CloudAPI; sessionId: string }) {
   );
 
   useEffect(() => void loadDirectory(""), [loadDirectory]);
+  useEffect(() => {
+    if (file) return;
+    const refreshTimer = window.setInterval(async () => {
+      try {
+        const response = await api.workspaceFiles(sessionId, path);
+        setEntries(sortWorkspaceEntries(response.entries));
+      } catch {
+        // Keep the last good directory visible during transient reconnects.
+      }
+    }, 5_000);
+    return () => window.clearInterval(refreshTimer);
+  }, [api, file, path, sessionId]);
 
   const openFile = async (entry: CloudWorkspaceEntry) => {
     if (entry.isDir) {
@@ -385,7 +860,9 @@ function FilesView({ api, sessionId }: { api: CloudAPI; sessionId: string }) {
       const response = await api.workspaceFile(sessionId, entry.path);
       setFile(response);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Could not open file.");
+      setError(
+        loadError instanceof Error ? loadError.message : "Could not open file.",
+      );
     } finally {
       setLoading(false);
     }
@@ -408,6 +885,15 @@ function FilesView({ api, sessionId }: { api: CloudAPI; sessionId: string }) {
                 modTime: "",
               })
             : void loadDirectory(path)
+        }
+        action={
+          file && /\.(?:html?|svg)$/i.test(file.path)
+            ? {
+                label: "Open in Browser",
+                icon: Globe2,
+                onClick: () => onPreview(file.path),
+              }
+            : undefined
         }
         back={
           file
@@ -459,12 +945,21 @@ function InspectorToolbar({
   loading,
   onRefresh,
   back,
+  summary,
+  action,
 }: {
   label: string;
   loading: boolean;
   onRefresh: () => void | Promise<void>;
   back?: () => void;
+  summary?: string;
+  action?: {
+    label: string;
+    icon: typeof Globe2;
+    onClick: () => void;
+  };
 }) {
+  const ActionIcon = action?.icon;
   return (
     <div className="flex h-9 shrink-0 items-center gap-1 border-b border-[#24272d] px-2">
       {back ? (
@@ -480,10 +975,26 @@ function InspectorToolbar({
       <span className="min-w-0 flex-1 truncate px-1 text-[10px] font-medium uppercase tracking-[0.06em] text-[#777e89]">
         {label}
       </span>
+      {summary ? (
+        <span className="font-mono text-[9px] tabular-nums text-[#69717c]">
+          {summary}
+        </span>
+      ) : null}
+      {action && ActionIcon ? (
+        <button
+          type="button"
+          onClick={action.onClick}
+          className="grid size-6 place-items-center rounded text-[#858c96] hover:bg-[#24272d] hover:text-[#e5e7eb] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#5b8def]"
+          aria-label={action.label}
+          title={action.label}
+        >
+          <ActionIcon className="size-3.5" aria-hidden="true" />
+        </button>
+      ) : null}
       <button
         type="button"
         onClick={() => void onRefresh()}
-        className="grid size-6 place-items-center rounded text-[#858c96] hover:bg-[#24272d] hover:text-[#e5e7eb]"
+        className="grid size-6 place-items-center rounded text-[#858c96] hover:bg-[#24272d] hover:text-[#e5e7eb] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#5b8def]"
         aria-label="Refresh"
       >
         <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
@@ -523,18 +1034,50 @@ function InspectorEmpty({
   return (
     <div className="grid h-full place-items-center px-8 text-center">
       <div>
-        <Icon className="mx-auto mb-3 size-5 text-[#555d68]" strokeWidth={1.5} />
+        <Icon
+          className="mx-auto mb-3 size-5 text-[#555d68]"
+          strokeWidth={1.5}
+        />
         <p className="text-xs text-[#bdc2ca]">{title}</p>
-        <p className="mt-1 max-w-56 text-[11px] leading-5 text-[#6f7681]">{detail}</p>
+        <p className="mt-1 max-w-56 text-[11px] leading-5 text-[#6f7681]">
+          {detail}
+        </p>
       </div>
     </div>
   );
 }
 
 function parsePreviewAddress(value: string) {
+  const trimmed = value.trim();
+  if (
+    trimmed.startsWith("file://") ||
+    trimmed === "/workspace/repository" ||
+    trimmed.startsWith("/workspace/repository/")
+  ) {
+    const parsed = trimmed.startsWith("file://")
+      ? new URL(trimmed)
+      : new URL(`file://${trimmed}`);
+    if (parsed.protocol !== "file:" || parsed.hostname) {
+      throw new Error("File previews must use the worker repository path.");
+    }
+    const repositoryRoot = "/workspace/repository/";
+    const decodedPath = decodeURIComponent(parsed.pathname);
+    if (!decodedPath.startsWith(repositoryRoot)) {
+      throw new Error("File previews must stay inside /workspace/repository.");
+    }
+    const relativePath = decodedPath.slice(repositoryRoot.length);
+    if (!relativePath || relativePath.split("/").includes("..")) {
+      throw new Error("Choose a file inside /workspace/repository.");
+    }
+    return {
+      kind: "file" as const,
+      path: relativePath,
+      href: `file://${repositoryRoot}${relativePath}`,
+    };
+  }
   const withProtocol = /^[a-z][a-z\d+.-]*:\/\//i.test(value)
-    ? value
-    : `http://${value}`;
+    ? trimmed
+    : `http://${trimmed}`;
   const parsed = new URL(withProtocol);
   if (!["localhost", "127.0.0.1", "0.0.0.0"].includes(parsed.hostname)) {
     throw new Error("Preview URLs must use localhost, 127.0.0.1, or 0.0.0.0.");
@@ -544,11 +1087,20 @@ function parsePreviewAddress(value: string) {
     throw new Error("Use a localhost port between 1024 and 65535.");
   }
   return {
+    kind: "server" as const,
     port,
     pathname: parsed.pathname,
     search: parsed.search,
     href: `http://localhost:${port}${parsed.pathname}${parsed.search}`,
   };
+}
+
+function sortWorkspaceEntries(entries: CloudWorkspaceEntry[]) {
+  return [...entries].sort(
+    (left, right) =>
+      Number(right.isDir) - Number(left.isDir) ||
+      left.name.localeCompare(right.name),
+  );
 }
 
 function formatBytes(value: number) {

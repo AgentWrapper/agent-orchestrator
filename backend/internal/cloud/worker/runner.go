@@ -623,7 +623,7 @@ Use --agent claude-code, --agent codex, or --agent cursor only when the user req
 
 Never use Claude's Agent tool, Task tool, general-purpose subagents, or background subagents for an AO worker request. Those are internal subprocesses and do not create an AO worker visible to the user.
 
-Use "ao status" to list durable project sessions, "ao inspect <worker>" for one current snapshot, "ao result <worker>" to read an already completed answer, and "ao send --session <id> --message <text>" for follow-up work.
+Use "ao status" to list durable project sessions and their Git branches, "ao inspect <worker>" for one current snapshot including its branch, "ao result <worker>" to read an already completed answer, and "ao send --session <id> --message <text>" for follow-up work.
 
 After delegating work, use "ao wait <worker>" to wait for the durable turn and read the worker's complete answer. If you spawn multiple workers, spawn all of them first so they run concurrently, then wait for each one. Do not claim delegated work is complete until you have read its result. Only skip waiting when the user explicitly asks for fire-and-forget delegation.
 

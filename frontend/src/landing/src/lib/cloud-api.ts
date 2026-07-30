@@ -255,7 +255,9 @@ export class CloudAPI {
       while (!signal.aborted) {
         const { value, done } = await reader.read();
         if (value && value.byteLength > 0) onActivity?.();
-        buffer += decoder.decode(value, { stream: !done }).replaceAll("\r\n", "\n");
+        buffer += decoder
+          .decode(value, { stream: !done })
+          .replaceAll("\r\n", "\n");
         let boundary = buffer.indexOf("\n\n");
         while (boundary >= 0) {
           const block = buffer.slice(0, boundary);
@@ -356,6 +358,13 @@ export class CloudAPI {
     return this.request<{ url: string; expiresAt: string }>(
       `/api/cloud/v1/sessions/${encodeURIComponent(sessionId)}/workspace/preview-ticket`,
       { method: "POST", body: { port } },
+    );
+  }
+
+  async workspaceFilePreviewTicket(sessionId: string, path: string) {
+    return this.request<{ url: string; expiresAt: string }>(
+      `/api/cloud/v1/sessions/${encodeURIComponent(sessionId)}/workspace/file-preview-ticket`,
+      { method: "POST", body: { path } },
     );
   }
 

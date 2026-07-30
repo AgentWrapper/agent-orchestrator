@@ -139,12 +139,13 @@ func newStatusCommand(getenv environment, httpClient *http.Client) *cobra.Comman
 			for _, session := range result.Sessions {
 				if _, err := fmt.Fprintf(
 					command.OutOrStdout(),
-					"%s\t%s\t%s\t%s\t%s\n",
+					"%s\t%s\t%s\t%s\t%s\tbranch=%s\n",
 					session.ID,
 					session.Status,
 					session.Kind,
 					session.Harness,
 					session.DisplayName,
+					session.Branch,
 				); err != nil {
 					return err
 				}
@@ -195,9 +196,10 @@ func newInspectCommand(getenv environment, httpClient *http.Client) *cobra.Comma
 			}
 			_, err = fmt.Fprintf(
 				command.OutOrStdout(),
-				"id: %s\nname: %s\nstatus: %s\nruntime: %s\nturn: %s\nattempts: %d\nresult: %s\n",
+				"id: %s\nname: %s\nbranch: %s\nstatus: %s\nruntime: %s\nturn: %s\nattempts: %d\nresult: %s\n",
 				inspection.Session.ID,
 				inspection.Session.DisplayName,
+				inspection.Session.Branch,
 				inspection.Session.Status,
 				connectedLabel(inspection.Session.RuntimeConnected),
 				turnState,

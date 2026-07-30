@@ -416,7 +416,7 @@ it("routes worker localhost links into the workspace browser", async () => {
     chatEvents: vi.fn().mockResolvedValue({
       events: [
         event(1, "chat.assistant_message", {
-          text: "[Open preview](http://localhost:4173/docs)",
+          text: "[Open preview](http://localhost:4173/docs)\n\n[Open file](file:///workspace/repository/index.html)",
         }),
       ],
     }),
@@ -426,6 +426,10 @@ it("routes worker localhost links into the workspace browser", async () => {
   await user.click(await screen.findByRole("link", { name: "Open preview" }));
 
   expect(onOpenPreview).toHaveBeenCalledWith("http://localhost:4173/docs");
+  await user.click(screen.getByRole("link", { name: "Open file" }));
+  expect(onOpenPreview).toHaveBeenCalledWith(
+    "file:///workspace/repository/index.html",
+  );
 });
 
 it("replays messages, locks the composer, and interrupts an active turn", async () => {

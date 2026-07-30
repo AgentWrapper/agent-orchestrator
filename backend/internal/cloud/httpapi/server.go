@@ -189,6 +189,7 @@ func (s *Server) routes() http.Handler {
 			protected.Get("/sessions/{sessionId}/workspace/diff", s.workspaceDiff)
 			protected.Post("/sessions/{sessionId}/workspace/preview", s.workspacePreview)
 			protected.Post("/sessions/{sessionId}/workspace/preview-ticket", s.issueWorkspacePreview)
+			protected.Post("/sessions/{sessionId}/workspace/file-preview-ticket", s.issueWorkspaceFilePreview)
 			protected.Post("/sessions/{sessionId}/terminal-ticket", s.issueTerminalTicket)
 			protected.Get("/provider-connections", s.listProviderConnections)
 			protected.Put("/provider-connections/daytona", s.putDaytonaConnection)

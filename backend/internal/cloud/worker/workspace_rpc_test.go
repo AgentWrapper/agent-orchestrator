@@ -100,6 +100,44 @@ func TestWorkspacePreviewOnlyReachesRequestedLocalhostPort(t *testing.T) {
 	}
 }
 
+func TestWorkspaceFilePreviewServesRepositoryAssets(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, "site"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(workspace, "site", "index.html"),
+		[]byte(`<img src="logo.png"><h1>AO preview</h1>`),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	runner := &Runner{workspaceDir: workspace}
+	response, err := runner.previewWorkspaceFile(workspaceRequest{
+		Path:   "site/index.html",
+		Method: http.MethodGet,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contentType, _ := response["contentType"].(string); !strings.Contains(contentType, "text/html") {
+		t.Fatalf("content type = %q", contentType)
+	}
+	encoded, _ := response["body"].(string)
+	body, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != `<img src="logo.png"><h1>AO preview</h1>` {
+		t.Fatalf("preview body = %q", body)
+	}
+	if _, err := runner.previewWorkspaceFile(workspaceRequest{
+		Path: "../outside.html",
+	}); err == nil {
+		t.Fatal("workspace file preview accepted a path escape")
+	}
+}
+
 func runWorkspaceTestCommand(t *testing.T, dir, name string, args ...string) {
 	t.Helper()
 	command := exec.Command(name, args...)

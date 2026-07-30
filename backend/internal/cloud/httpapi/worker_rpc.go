@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	pathpkg "path"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,7 @@ type workerRPCBroker struct {
 type previewToken struct {
 	SessionID clouddomain.SessionID
 	Port      int
+	FilePath  string
 	ExpiresAt time.Time
 }
 
@@ -45,6 +47,17 @@ func newPreviewTokenStore() *previewTokenStore {
 }
 
 func (s *previewTokenStore) issue(sessionID clouddomain.SessionID, port int) (string, time.Time) {
+	return s.issueToken(previewToken{SessionID: sessionID, Port: port})
+}
+
+func (s *previewTokenStore) issueFile(
+	sessionID clouddomain.SessionID,
+	filePath string,
+) (string, time.Time) {
+	return s.issueToken(previewToken{SessionID: sessionID, FilePath: filePath})
+}
+
+func (s *previewTokenStore) issueToken(value previewToken) (string, time.Time) {
 	now := time.Now()
 	expiresAt := now.Add(30 * time.Minute)
 	token := uuid.NewString()
@@ -54,11 +67,8 @@ func (s *previewTokenStore) issue(sessionID clouddomain.SessionID, port int) (st
 			delete(s.tokens, key)
 		}
 	}
-	s.tokens[token] = previewToken{
-		SessionID: sessionID,
-		Port:      port,
-		ExpiresAt: expiresAt,
-	}
+	value.ExpiresAt = expiresAt
+	s.tokens[token] = value
 	s.mu.Unlock()
 	return token, expiresAt
 }
@@ -212,25 +222,70 @@ func (s *Server) issueWorkspacePreview(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) issueWorkspaceFilePreview(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Path string `json:"path"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	input.Path = strings.TrimSpace(input.Path)
+	if input.Path == "" || strings.ContainsRune(input.Path, '\x00') {
+		writeError(w, r, http.StatusBadRequest, "INVALID_WORKSPACE_PATH", "path is required.")
+		return
+	}
+	_, session, ok := s.authorizedSession(w, r, "authorize workspace file preview")
+	if !ok {
+		return
+	}
+	if !session.RuntimeConnected {
+		writeError(w, r, http.StatusConflict, "WORKER_NOT_CONNECTED", "The worker is still starting.")
+		return
+	}
+	token, expiresAt := s.previewTokens.issueFile(session.ID, input.Path)
+	scheme := "http"
+	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"url":       fmt.Sprintf("%s://%s/api/cloud/v1/preview/%s/", scheme, r.Host, token),
+		"expiresAt": expiresAt.UTC(),
+	})
+}
+
 func (s *Server) workspacePreviewProxy(w http.ResponseWriter, r *http.Request) {
 	tokenValue, ok := s.previewTokens.get(chi.URLParam(r, "token"))
 	if !ok {
 		writeError(w, r, http.StatusUnauthorized, "INVALID_PREVIEW_TOKEN", "The preview link is invalid or expired.")
 		return
 	}
-	path := "/" + strings.TrimPrefix(chi.URLParam(r, "*"), "/")
+	requestPath := "/" + strings.TrimPrefix(chi.URLParam(r, "*"), "/")
 	if r.URL.RawQuery != "" {
-		path += "?" + r.URL.RawQuery
+		requestPath += "?" + r.URL.RawQuery
+	}
+	action := "preview"
+	input := map[string]any{
+		"port":   tokenValue.Port,
+		"path":   requestPath,
+		"method": r.Method,
+	}
+	if tokenValue.FilePath != "" {
+		action = "preview_file"
+		filePath := tokenValue.FilePath
+		relativeRequest := strings.TrimPrefix(chi.URLParam(r, "*"), "/")
+		if relativeRequest != "" {
+			filePath = pathpkg.Join(pathpkg.Dir(tokenValue.FilePath), relativeRequest)
+		}
+		input = map[string]any{
+			"path":   filePath,
+			"method": r.Method,
+		}
 	}
 	result, err := s.requestWorkspace(
 		r.Context(),
 		tokenValue.SessionID,
-		"preview",
-		map[string]any{
-			"port":   tokenValue.Port,
-			"path":   path,
-			"method": r.Method,
-		},
+		action,
+		input,
 	)
 	if err != nil {
 		writeError(w, r, http.StatusBadGateway, "WORKSPACE_PREVIEW_FAILED", err.Error())

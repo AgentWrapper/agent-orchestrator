@@ -1,0 +1,233 @@
+import { CloudAPI } from "@/lib/cloud-api";
+
+export type CloudTerminalConnectionState =
+  | "connecting"
+  | "connected"
+  | "disconnected"
+  | "error";
+
+export type CloudTerminalEvent =
+  | { type: "state"; state: CloudTerminalConnectionState }
+  | { type: "output"; data: Uint8Array }
+  | { type: "reset" };
+
+type Listener = (event: CloudTerminalEvent) => void;
+
+interface TerminalServerMessage {
+  type: "output" | "error" | "reset";
+  data?: string;
+  sequence?: number;
+}
+
+const maximumHistoryBytes = 4 << 20;
+
+class CloudTerminalConnection {
+  private socket: WebSocket | null = null;
+  private state: CloudTerminalConnectionState = "connecting";
+  private listeners = new Set<Listener>();
+  private history: Uint8Array[] = [];
+  private historyBytes = 0;
+  private lastSequence = 0;
+  private reconnectTimer: number | undefined;
+  private connectInFlight = false;
+  private closed = false;
+  private pendingInput: string[] = [];
+  private size = { rows: 24, cols: 80 };
+
+  constructor(
+    private readonly api: CloudAPI,
+    private readonly sessionId: string,
+  ) {
+    window.addEventListener("online", this.reconnectNow);
+    window.addEventListener("focus", this.reconnectNow);
+    void this.connect();
+  }
+
+  subscribe(listener: Listener) {
+    this.listeners.add(listener);
+    listener({ type: "state", state: this.state });
+    for (const data of this.history) listener({ type: "output", data });
+    return () => this.listeners.delete(listener);
+  }
+
+  sendInput(data: string) {
+    if (this.socket?.readyState !== WebSocket.OPEN) {
+      if (this.pendingInput.length < 256) this.pendingInput.push(data);
+      this.reconnectNow();
+      return;
+    }
+    this.socket.send(
+      JSON.stringify({ type: "input", data: bytesToBase64(data) }),
+    );
+  }
+
+  resize(rows: number, cols: number) {
+    this.size = { rows, cols };
+    this.sendResize();
+  }
+
+  close() {
+    this.closed = true;
+    if (this.reconnectTimer !== undefined) {
+      window.clearTimeout(this.reconnectTimer);
+    }
+    window.removeEventListener("online", this.reconnectNow);
+    window.removeEventListener("focus", this.reconnectNow);
+    this.socket?.close();
+    this.socket = null;
+    this.listeners.clear();
+  }
+
+  private emit(event: CloudTerminalEvent) {
+    for (const listener of this.listeners) listener(event);
+  }
+
+  private setState(state: CloudTerminalConnectionState) {
+    this.state = state;
+    this.emit({ type: "state", state });
+  }
+
+  private connect = async () => {
+    if (
+      this.closed ||
+      this.connectInFlight ||
+      this.socket?.readyState === WebSocket.OPEN ||
+      this.socket?.readyState === WebSocket.CONNECTING
+    ) {
+      return;
+    }
+    this.connectInFlight = true;
+    this.setState("connecting");
+    try {
+      const { ticket } = await this.api.terminalTicket(this.sessionId);
+      if (this.closed) return;
+      const socket = new WebSocket(
+        this.api.terminalURL(ticket, this.lastSequence),
+      );
+      this.socket = socket;
+      socket.addEventListener("open", () => {
+        if (this.socket !== socket || this.closed) return;
+        this.setState("connected");
+        this.sendResize();
+        while (this.pendingInput.length > 0) {
+          const input = this.pendingInput.shift();
+          if (input) this.sendInput(input);
+        }
+      });
+      socket.addEventListener("message", (event) => {
+        if (this.socket !== socket || this.closed) return;
+        const message = JSON.parse(String(event.data)) as TerminalServerMessage;
+        this.lastSequence = Math.max(this.lastSequence, message.sequence ?? 0);
+        if (message.type === "reset") {
+          this.history = [];
+          this.historyBytes = 0;
+          this.emit({ type: "reset" });
+          return;
+        }
+        if (message.type !== "output" || !message.data) return;
+        const data = base64ToBytes(message.data);
+        this.history.push(data);
+        this.historyBytes += data.byteLength;
+        while (
+          this.historyBytes > maximumHistoryBytes &&
+          this.history.length > 1
+        ) {
+          this.historyBytes -= this.history.shift()?.byteLength ?? 0;
+        }
+        this.emit({ type: "output", data });
+      });
+      socket.addEventListener("close", () => {
+        if (this.socket !== socket || this.closed) return;
+        this.socket = null;
+        this.setState("disconnected");
+        this.scheduleReconnect(1_000);
+      });
+      socket.addEventListener("error", () => {
+        if (this.socket === socket && !this.closed) this.setState("error");
+      });
+    } catch {
+      if (!this.closed) {
+        this.setState("error");
+        this.scheduleReconnect(2_000);
+      }
+    } finally {
+      this.connectInFlight = false;
+    }
+  };
+
+  private scheduleReconnect(delay: number) {
+    if (this.closed) return;
+    if (this.reconnectTimer !== undefined) {
+      window.clearTimeout(this.reconnectTimer);
+    }
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = undefined;
+      void this.connect();
+    }, delay);
+  }
+
+  private reconnectNow = () => {
+    if (this.socket?.readyState === WebSocket.OPEN || this.closed) return;
+    if (this.reconnectTimer !== undefined) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+    void this.connect();
+  };
+
+  private sendResize() {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(JSON.stringify({ type: "resize", ...this.size }));
+  }
+}
+
+let poolAPI: CloudAPI | null = null;
+const connections = new Map<string, CloudTerminalConnection>();
+
+export function ensureCloudTerminalConnection(
+  api: CloudAPI,
+  sessionId: string,
+) {
+  if (poolAPI && poolAPI !== api) clearCloudTerminalConnections();
+  poolAPI = api;
+  const existing = connections.get(sessionId);
+  if (existing) return existing;
+  const connection = new CloudTerminalConnection(api, sessionId);
+  connections.set(sessionId, connection);
+  return connection;
+}
+
+export function syncCloudTerminalConnections(
+  api: CloudAPI,
+  sessionIds: string[],
+) {
+  if (poolAPI && poolAPI !== api) clearCloudTerminalConnections();
+  poolAPI = api;
+  const active = new Set(sessionIds);
+  for (const sessionId of sessionIds) {
+    ensureCloudTerminalConnection(api, sessionId);
+  }
+  for (const [sessionId, connection] of connections) {
+    if (active.has(sessionId)) continue;
+    connection.close();
+    connections.delete(sessionId);
+  }
+}
+
+export function clearCloudTerminalConnections() {
+  for (const connection of connections.values()) connection.close();
+  connections.clear();
+  poolAPI = null;
+}
+
+function bytesToBase64(value: string) {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return window.btoa(binary);
+}
+
+function base64ToBytes(value: string) {
+  const binary = window.atob(value);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}

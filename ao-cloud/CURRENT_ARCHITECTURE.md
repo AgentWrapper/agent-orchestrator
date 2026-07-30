@@ -61,15 +61,16 @@ for the same repository project. New child sessions appear in the web UI
 because the control plane, not the VM, creates their durable rows.
 
 Worker completion uses the same durable turn and event records as the web app.
-`ao inspect <worker>` reads one current session/turn snapshot. `ao wait
-<worker>` polls that durable snapshot through transient control-plane restarts,
-then prints the complete normalized assistant answer when the latest turn
-reaches `completed`; a failed turn returns its partial answer and failure.
-`ao result <worker>` reads the already-finished answer without waiting. Worker
-names, full session IDs, and unambiguous ID prefixes are accepted. The
-orchestrator prompt requires waiting for delegated results unless the user
-explicitly requests fire-and-forget work, so it no longer has to repeatedly
-guess from `ao status`.
+`ao inspect <worker>` reads one current session/turn snapshot, including the
+worker's Git branch. `ao status` includes that branch on every project-session
+row. `ao wait <worker>` polls the durable snapshot through transient
+control-plane restarts, then prints the complete normalized assistant answer
+when the latest turn reaches `completed`; a failed turn returns its partial
+answer and failure. `ao result <worker>` reads the already-finished answer
+without waiting. Worker names, full session IDs, and unambiguous ID prefixes are
+accepted. The orchestrator prompt requires waiting for delegated results unless
+the user explicitly requests fire-and-forget work, so it no longer has to
+repeatedly guess from `ao status`.
 
 ## Which client talks to which authority
 
@@ -196,19 +197,29 @@ selected tab, width, and open state are browser preferences only.
 - **Terminal:** xterm requests a 60-second, single-use browser ticket, then
   connects over WebSocket. Input and resize commands travel through the
   control-plane worker hub to the independent repository shell. Output remains
-  sequence-numbered for reconnect replay.
+  sequence-numbered for reconnect replay. A page-level connection pool keeps
+  one terminal stream warm for every connected session, retains a bounded
+  in-memory output window across session/tab changes, and reconnects
+  immediately when the browser regains focus or network access.
 - **Changes and files:** authenticated browser requests become ephemeral
   `workspace_request` commands. The worker confines paths to the checked-out
   repository (including resolved symlinks), reads directories/files, or runs
   read-only Git status/diff commands. Responses return through an authenticated
-  worker endpoint and are never appended to the durable chat event log.
+  worker endpoint and are never appended to the durable chat event log. The
+  browser warms Git and root-directory snapshots for every connected session,
+  refreshes an open inspector in the background, and renders unified diffs with
+  explicit old/new line numbers and addition/deletion counts.
 - **Browser:** the worker can run a localhost HTTP server (Python 3 is included
   in the worker image). The browser first obtains a short-lived,
   capability-scoped preview URL. The control plane proxies only the selected
-  localhost port through the existing worker channel, rewrites common
+  localhost port (any explicit unprivileged port from 1024 through 65535)
+  through the existing worker channel, rewrites common
   root-relative HTML/CSS/JavaScript asset paths, strips the capability from
   request logs, and renders the result in a sandboxed iframe. Fly machines
-  remain private; no VM port is opened to the public internet.
+  remain private; no VM port is opened to the public internet. The same browser
+  can open `file:///workspace/repository/...` links through a separate
+  short-lived capability: the worker serves the selected repository file and
+  its relative assets without requiring the agent to launch an HTTP server.
 
 Inspector RPCs are in-memory live operations with bounded payloads and
 timeouts. Postgres remains authoritative for sessions, turns, and chat, while

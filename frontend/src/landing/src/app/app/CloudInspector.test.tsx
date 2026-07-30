@@ -6,6 +6,10 @@ import { expect, it, vi } from "vitest";
 import { CloudAPI } from "@/lib/cloud-api";
 import { CloudInspector, type CloudInspectorTab } from "./CloudInspector";
 
+vi.mock("./CloudTerminal", () => ({
+  CloudTerminal: () => <div>Persistent terminal</div>,
+}));
+
 function inspectorAPI() {
   return {
     workspaceDiff: vi.fn().mockResolvedValue({
@@ -35,6 +39,10 @@ function inspectorAPI() {
       url: "https://cloud.example/api/cloud/v1/preview/token/",
       expiresAt: "2026-07-30T01:00:00Z",
     }),
+    workspaceFilePreviewTicket: vi.fn().mockResolvedValue({
+      url: "https://cloud.example/api/cloud/v1/preview/file-token/",
+      expiresAt: "2026-07-30T01:00:00Z",
+    }),
   } as unknown as CloudAPI;
 }
 
@@ -46,6 +54,7 @@ function InspectorHarness({ api }: { api: CloudAPI }) {
       sessionId="session-one"
       runtimeConnected
       tab={tab}
+      open
       width={480}
       onTabChange={setTab}
       onWidthChange={vi.fn()}
@@ -78,6 +87,34 @@ it("switches between changes, files, and a capability-scoped browser preview", a
       "https://cloud.example/api/cloud/v1/preview/token/docs",
     ),
   );
+
+  await user.clear(address);
+  await user.type(address, "http://localhost:5002/dashboard");
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(api.workspacePreviewTicket).toHaveBeenLastCalledWith(
+      "session-one",
+      5002,
+    ),
+  );
+  expect(screen.getByTitle("Worker preview")).toHaveAttribute(
+    "src",
+    "https://cloud.example/api/cloud/v1/preview/token/dashboard",
+  );
+
+  await user.clear(address);
+  await user.type(address, "file:///workspace/repository/examples/index.html");
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(screen.getByTitle("Worker preview")).toHaveAttribute(
+      "src",
+      "https://cloud.example/api/cloud/v1/preview/file-token/",
+    ),
+  );
+  expect(api.workspaceFilePreviewTicket).toHaveBeenCalledWith(
+    "session-one",
+    "examples/index.html",
+  );
 });
 
 it("keeps workspace tools unavailable until the worker connects", () => {
@@ -87,6 +124,7 @@ it("keeps workspace tools unavailable until the worker connects", () => {
       sessionId="session-one"
       runtimeConnected={false}
       tab="terminal"
+      open
       width={480}
       onTabChange={vi.fn()}
       onWidthChange={vi.fn()}
@@ -94,5 +132,33 @@ it("keeps workspace tools unavailable until the worker connects", () => {
     />,
   );
 
-  expect(screen.getByText("Preparing workspace tools")).toBeInTheDocument();
+  expect(screen.getByText("VM is loading…")).toBeInTheDocument();
+  expect(
+    screen.queryByText(/Terminal, files, changes/),
+  ).not.toBeInTheDocument();
+});
+
+it("renders untracked files as readable additions with line numbers", async () => {
+  const api = inspectorAPI();
+  vi.mocked(api.workspaceDiff).mockResolvedValue({
+    status: "?? index.html\n",
+    staged: "",
+    unstaged: "",
+  });
+  vi.mocked(api.workspaceFile).mockResolvedValue({
+    path: "index.html",
+    content: "<main>\n  AO Cloud\n</main>\n",
+    size: 27,
+  });
+
+  render(<InspectorHarness api={api} />);
+
+  expect(
+    await screen.findByRole("button", {
+      name: /index\.html, 3 additions, 0 deletions/,
+    }),
+  ).toBeVisible();
+  expect(screen.getAllByText("+3").length).toBeGreaterThan(0);
+  expect(screen.getByText("AO Cloud")).toBeVisible();
+  expect(screen.getByText("Untracked")).toBeVisible();
 });

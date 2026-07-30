@@ -79,7 +79,7 @@ func TestSendAndStatusProtocols(t *testing.T) {
 			w.WriteHeader(http.StatusAccepted)
 		case r.Method == http.MethodGet &&
 			r.URL.Path == "/api/cloud/v1/worker/orchestrate/sessions":
-			_, _ = w.Write([]byte(`{"sessions":[{"id":"worker-one","status":"working","kind":"worker","harness":"cursor","displayName":"Worker"}]}`))
+			_, _ = w.Write([]byte(`{"sessions":[{"id":"worker-one","status":"working","kind":"worker","harness":"cursor","displayName":"Worker","branch":"ao/worker-one"}]}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -101,7 +101,10 @@ func TestSendAndStatusProtocols(t *testing.T) {
 	if err := status.Execute(); err != nil {
 		t.Fatalf("status Execute() error = %v", err)
 	}
-	if !strings.Contains(output.String(), "worker-one\tworking\tworker\tcursor\tWorker") {
+	if !strings.Contains(
+		output.String(),
+		"worker-one\tworking\tworker\tcursor\tWorker\tbranch=ao/worker-one",
+	) {
 		t.Fatalf("status output = %q", output.String())
 	}
 }
@@ -120,6 +123,7 @@ func TestInspectAndResultResolveWorkerNames(t *testing.T) {
 					"id":"worker-one",
 					"kind":"worker",
 					"displayName":"fixer",
+					"branch":"ao/fixer",
 					"status":"idle",
 					"runtimeConnected":true
 				},
@@ -141,6 +145,7 @@ func TestInspectAndResultResolveWorkerNames(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"id: worker-one",
+		"branch: ao/fixer",
 		"runtime: connected",
 		"turn: completed",
 		"result: available",

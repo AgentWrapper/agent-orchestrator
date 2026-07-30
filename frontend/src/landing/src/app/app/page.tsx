@@ -45,12 +45,17 @@ import {
   prefetchChatEvents,
   pruneChatEventCache,
 } from "@/lib/cloud-chat-cache";
+import {
+  removeWorkspaceSnapshots,
+  warmWorkspaceSession,
+} from "@/lib/cloud-workspace-cache";
+import {
+  clearCloudTerminalConnections,
+  syncCloudTerminalConnections,
+} from "@/lib/cloud-terminal-pool";
 import { useAuth } from "../auth/AuthProvider";
 import { CloudChat } from "./CloudChat";
-import {
-  CloudInspector,
-  type CloudInspectorTab,
-} from "./CloudInspector";
+import { CloudInspector, type CloudInspectorTab } from "./CloudInspector";
 import { CloudTerminal } from "./CloudTerminal";
 
 type View = "board" | "session" | "settings";
@@ -191,6 +196,7 @@ export default function CloudAppPage() {
   );
   const optimisticActiveAt = useRef(new Map<string, number>());
   const refreshInFlight = useRef<Promise<void> | null>(null);
+  const inspectorContext = useRef("");
 
   const handleChatTurnActiveChange = useCallback(
     (sessionId: string, active: boolean) => {
@@ -277,6 +283,41 @@ export default function CloudAppPage() {
       }),
     );
   }, [inspectorOpen, inspectorTab, inspectorWidth, selectionRestored]);
+
+  const connectedWorkspaceSessionIDs = useMemo(
+    () =>
+      sessions
+        .filter((cloudSession) => cloudSession.runtimeConnected)
+        .map((cloudSession) => cloudSession.id)
+        .sort(),
+    [sessions],
+  );
+  const connectedWorkspaceSessionKey = connectedWorkspaceSessionIDs.join(",");
+  useEffect(() => {
+    if (!api) return;
+    const activeSessionIDs = new Set(connectedWorkspaceSessionIDs);
+    removeWorkspaceSnapshots(activeSessionIDs);
+    const warmAll = () => {
+      for (const sessionID of connectedWorkspaceSessionIDs) {
+        void warmWorkspaceSession(api, sessionID);
+      }
+    };
+    warmAll();
+    const refreshTimer = window.setInterval(warmAll, 5_000);
+    return () => window.clearInterval(refreshTimer);
+    // The stable key avoids restarting this timer on every status refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, connectedWorkspaceSessionKey]);
+  useEffect(() => {
+    if (!api) {
+      clearCloudTerminalConnections();
+      return;
+    }
+    syncCloudTerminalConnections(api, connectedWorkspaceSessionIDs);
+    // The stable key avoids reconnecting every terminal on status refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, connectedWorkspaceSessionKey]);
+  useEffect(() => () => clearCloudTerminalConnections(), []);
 
   const refresh = useCallback(() => {
     if (!api) return Promise.resolve();
@@ -374,6 +415,14 @@ export default function CloudAppPage() {
 
   const selectedProject = projects.find(({ id }) => id === selectedProjectId);
   const selectedSession = sessions.find(({ id }) => id === selectedSessionId);
+  useEffect(() => {
+    const nextContext = `${view}:${selectedSession?.id ?? ""}`;
+    if (inspectorContext.current === nextContext) return;
+    inspectorContext.current = nextContext;
+    if (view === "session" && selectedSession?.kind === "orchestrator") {
+      setInspectorOpen(false);
+    }
+  }, [selectedSession?.id, selectedSession?.kind, view]);
   const structuredChatAvailable = selectedSession
     ? supportsStructuredChat(selectedSession)
     : false;
@@ -691,7 +740,9 @@ export default function CloudAppPage() {
           </button>
           <div
             className={`mt-4 flex items-center ${
-              sidebarCollapsed ? "justify-center px-1.5" : "justify-between px-3"
+              sidebarCollapsed
+                ? "justify-center px-1.5"
+                : "justify-between px-3"
             }`}
           >
             {!sidebarCollapsed ? (
@@ -924,11 +975,15 @@ export default function CloudAppPage() {
                     className={button}
                     onClick={() => setInspectorOpen((current) => !current)}
                     aria-label={
-                      inspectorOpen ? "Close session inspector" : "Open session inspector"
+                      inspectorOpen
+                        ? "Close session inspector"
+                        : "Open session inspector"
                     }
                     aria-expanded={inspectorOpen}
                     title={
-                      inspectorOpen ? "Close workspace tools" : "Open workspace tools"
+                      inspectorOpen
+                        ? "Close workspace tools"
+                        : "Open workspace tools"
                     }
                   >
                     <PanelRightOpen className="size-3.5" />
@@ -1025,23 +1080,23 @@ export default function CloudAppPage() {
                       }}
                     />
                   </div>
-                  {inspectorOpen ? (
-                    <CloudInspector
-                      api={api}
-                      sessionId={selectedSession.id}
-                      runtimeConnected={selectedSession.runtimeConnected}
-                      previewAddress={
-                        inspectorPreview?.sessionId === selectedSession.id
-                          ? inspectorPreview.url
-                          : undefined
-                      }
-                      tab={inspectorTab}
-                      width={inspectorWidth}
-                      onTabChange={setInspectorTab}
-                      onWidthChange={setInspectorWidth}
-                      onClose={() => setInspectorOpen(false)}
-                    />
-                  ) : null}
+                  <CloudInspector
+                    key={selectedSession.id}
+                    api={api}
+                    sessionId={selectedSession.id}
+                    runtimeConnected={selectedSession.runtimeConnected}
+                    previewAddress={
+                      inspectorPreview?.sessionId === selectedSession.id
+                        ? inspectorPreview.url
+                        : undefined
+                    }
+                    tab={inspectorTab}
+                    open={inspectorOpen}
+                    width={inspectorWidth}
+                    onTabChange={setInspectorTab}
+                    onWidthChange={setInspectorWidth}
+                    onClose={() => setInspectorOpen(false)}
+                  />
                 </div>
               ) : terminalRuntimeAvailable ? (
                 <CloudTerminal api={api} sessionId={selectedSession.id} />

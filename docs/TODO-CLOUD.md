@@ -17,6 +17,11 @@ must remain absent from the production UI until it has a real implementation.
 - [ ] Add a user-facing project/session delete flow that first persists sandbox
       delete intent, waits for provider confirmation, and only then removes
       project-owned database state
+- [ ] Add cloud session-management parity where semantics apply: rename,
+      terminate/delete, restore/resume, cleanup/archive, and cloud-specific
+      branch/merge policy. Do not expose local worktree-only operations in the
+      cloud UI; preserve desired/observed-state reconciliation for every
+      lifecycle mutation.
 - [ ] Add an orphan sweeper that compares AO labels in every configured
       provider with durable `ao_sandboxes` rows
 - [ ] Automate worker-image rollout and safe replacement instead of manually
@@ -41,6 +46,11 @@ must remain absent from the production UI until it has a real implementation.
       is currently local-only while the browser app is cloud-only
 - [ ] Add a runtime-neutral “new task” shortcut/command if `Cmd+Shift+N` parity
       is desired; cloud task creation must not expose local worktree details
+- [ ] Extend cloud worker support beyond Claude Code, Codex, and Cursor,
+      prioritizing local AO harnesses that have an approved cloud credential
+      flow and machine-readable or safely supported runtime protocol. Each
+      added harness must support authenticated launch, streaming, interruption,
+      reconnect, and resume—not just image installation.
 
 ## Organizations and collaboration
 

@@ -12,7 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import {
@@ -78,10 +78,23 @@ function friendlyName(value: string) {
 function isWorkerPreviewLink(value: string) {
   try {
     const target = new URL(value);
+    if (
+      target.protocol === "file:" &&
+      !target.hostname &&
+      target.pathname.startsWith("/workspace/repository/")
+    ) {
+      return true;
+    }
     return ["localhost", "127.0.0.1", "0.0.0.0"].includes(target.hostname);
   } catch {
     return false;
   }
+}
+
+function chatURLTransform(value: string) {
+  return value.startsWith("file:") && isWorkerPreviewLink(value)
+    ? value
+    : defaultUrlTransform(value);
 }
 
 function friendlyDetail(payload: Record<string, unknown>) {
@@ -893,6 +906,7 @@ export function CloudChat({
                       <div className="prose prose-invert min-w-0 max-w-none flex-1 text-sm leading-6 text-[#d7d7d2] prose-headings:mb-2 prose-headings:mt-4 prose-headings:text-[#f4f5f7] prose-p:my-2 prose-p:text-[#d7d7d2] prose-pre:border prose-pre:border-white/[0.06] prose-pre:bg-[#15171b] prose-code:text-[#d7d7d2] prose-code:before:content-none prose-code:after:content-none prose-li:text-[#d7d7d2] prose-strong:text-[#f4f5f7]">
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
+                          urlTransform={chatURLTransform}
                           components={{
                             a: ({ href, children }) => {
                               const previewLink =

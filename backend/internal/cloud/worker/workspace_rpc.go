@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"os"
@@ -146,9 +147,59 @@ func (r *Runner) runWorkspaceRequest(
 		return r.workspaceDiff(ctx)
 	case "preview":
 		return r.previewLocalhost(ctx, input)
+	case "preview_file":
+		return r.previewWorkspaceFile(input)
 	default:
 		return nil, fmt.Errorf("unsupported workspace action %q", action)
 	}
+}
+
+func (r *Runner) previewWorkspaceFile(input workspaceRequest) (map[string]any, error) {
+	method := strings.ToUpper(strings.TrimSpace(input.Method))
+	if method == "" {
+		method = http.MethodGet
+	}
+	if method != http.MethodGet && method != http.MethodHead {
+		return nil, errors.New("file preview only supports GET and HEAD")
+	}
+	fullPath, _, err := r.resolveWorkspacePath(input.Path)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]any{
+				"status":      http.StatusNotFound,
+				"contentType": "text/plain; charset=utf-8",
+				"body":        base64.StdEncoding.EncodeToString([]byte("File not found.")),
+			}, nil
+		}
+		return nil, fmt.Errorf("stat preview file: %w", err)
+	}
+	if info.IsDir() {
+		fullPath = filepath.Join(fullPath, "index.html")
+		info, err = os.Stat(fullPath)
+		if err != nil {
+			return nil, fmt.Errorf("open directory preview index: %w", err)
+		}
+	}
+	if info.Size() > maxPreviewBodyBytes {
+		return nil, errors.New("preview file exceeds the 4 MiB limit")
+	}
+	body, err := os.ReadFile(fullPath)
+	if err != nil {
+		return nil, fmt.Errorf("read preview file: %w", err)
+	}
+	contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(fullPath)))
+	if contentType == "" {
+		contentType = http.DetectContentType(body)
+	}
+	return map[string]any{
+		"status":      http.StatusOK,
+		"contentType": contentType,
+		"body":        base64.StdEncoding.EncodeToString(body),
+	}, nil
 }
 
 func (r *Runner) listWorkspace(path string) (map[string]any, error) {

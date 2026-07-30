@@ -3,6 +3,8 @@ package httpapi
 import (
 	"strings"
 	"testing"
+
+	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 )
 
 func TestRewritePreviewBodyKeepsAssetsInsideCapabilityRoute(t *testing.T) {
@@ -26,6 +28,34 @@ func TestRewritePreviewBodyKeepsAssetsInsideCapabilityRoute(t *testing.T) {
 	} {
 		if !strings.Contains(rewritten, expected) {
 			t.Fatalf("rewritten JavaScript %q does not contain %q", rewritten, expected)
+		}
+	}
+}
+
+func TestPreviewTokenCanScopeARepositoryFile(t *testing.T) {
+	store := newPreviewTokenStore()
+	sessionID := clouddomain.SessionID("session-one")
+	token, _ := store.issueFile(sessionID, "examples/index.html")
+	value, ok := store.get(token)
+	if !ok {
+		t.Fatal("issued file preview token was not found")
+	}
+	if value.SessionID != sessionID || value.FilePath != "examples/index.html" || value.Port != 0 {
+		t.Fatalf("file preview token = %#v", value)
+	}
+}
+
+func TestPreviewTokenPreservesRequestedPort(t *testing.T) {
+	store := newPreviewTokenStore()
+	sessionID := clouddomain.SessionID("session-one")
+	for _, port := range []int{5001, 5002, 65535} {
+		token, _ := store.issue(sessionID, port)
+		value, ok := store.get(token)
+		if !ok {
+			t.Fatalf("issued preview token for port %d was not found", port)
+		}
+		if value.Port != port {
+			t.Fatalf("preview token port = %d, want %d", value.Port, port)
 		}
 	}
 }

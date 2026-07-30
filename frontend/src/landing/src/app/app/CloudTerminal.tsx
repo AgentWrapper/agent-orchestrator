@@ -5,29 +5,20 @@ import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "react";
 
 import { CloudAPI } from "@/lib/cloud-api";
+import {
+  CloudTerminalConnectionState,
+  ensureCloudTerminalConnection,
+} from "@/lib/cloud-terminal-pool";
 
 interface CloudTerminalProps {
   api: CloudAPI;
   sessionId: string;
 }
 
-function bytesToBase64(value: string) {
-  const bytes = new TextEncoder().encode(value);
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return window.btoa(binary);
-}
-
-function base64ToBytes(value: string) {
-  const binary = window.atob(value);
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
-}
-
 export function CloudTerminal({ api, sessionId }: CloudTerminalProps) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const [connection, setConnection] = useState<
-    "connecting" | "connected" | "disconnected" | "error"
-  >("connecting");
+  const [connection, setConnection] =
+    useState<CloudTerminalConnectionState>("connecting");
 
   useEffect(() => {
     const host = hostRef.current;
@@ -70,111 +61,64 @@ export function CloudTerminal({ api, sessionId }: CloudTerminalProps) {
     terminal.open(host);
     fit.fit();
 
-    let active = true;
-    let socket: WebSocket | null = null;
-    let lastSequence = 0;
-    let reconnectTimer: number | undefined;
-    const pendingInput: string[] = [];
-
-    const sendResize = () => {
-      if (socket?.readyState !== WebSocket.OPEN) return;
-      socket.send(
-        JSON.stringify({
-          type: "resize",
-          rows: terminal.rows,
-          cols: terminal.cols,
-        }),
-      );
-    };
-
-    const connect = async () => {
-      if (!active) return;
-      setConnection("connecting");
-      try {
-        const { ticket } = await api.terminalTicket(sessionId);
-        if (!active) return;
-        socket = new WebSocket(api.terminalURL(ticket, lastSequence));
-        socket.addEventListener("open", () => {
-          setConnection("connected");
-          sendResize();
-          while (pendingInput.length > 0) {
-            const data = pendingInput.shift();
-            if (data)
-              socket?.send(
-                JSON.stringify({ type: "input", data: bytesToBase64(data) }),
-              );
-          }
-        });
-        socket.addEventListener("message", (event) => {
-          const message = JSON.parse(String(event.data)) as {
-            type: "output" | "error" | "reset";
-            data?: string;
-            sequence?: number;
-            message?: string;
-          };
-          if (message.type === "reset") {
-            terminal.reset();
-            terminal.clear();
-            lastSequence = Math.max(lastSequence, message.sequence ?? 0);
-          } else if (message.type === "output" && message.data) {
-            terminal.write(base64ToBytes(message.data));
-            lastSequence = Math.max(lastSequence, message.sequence ?? 0);
-          } else if (message.type === "error" && message.message) {
-            terminal.writeln(`\r\n\x1b[31m${message.message}\x1b[0m`);
-          }
-        });
-        socket.addEventListener("close", () => {
-          if (!active) return;
-          setConnection("disconnected");
-          reconnectTimer = window.setTimeout(() => void connect(), 1000);
-        });
-        socket.addEventListener("error", () => setConnection("error"));
-      } catch (error) {
-        if (!active) return;
-        setConnection("error");
-        terminal.writeln(
-          `\r\n\x1b[31m${error instanceof Error ? error.message : "Terminal connection failed."}\x1b[0m`,
-        );
-        reconnectTimer = window.setTimeout(() => void connect(), 2000);
+    const persistentConnection = ensureCloudTerminalConnection(api, sessionId);
+    const unsubscribe = persistentConnection.subscribe((event) => {
+      if (event.type === "state") {
+        setConnection(event.state);
+      } else if (event.type === "reset") {
+        terminal.reset();
+        terminal.clear();
+      } else {
+        terminal.write(event.data);
       }
-    };
-
-    const input = terminal.onData((data) => {
-      if (socket?.readyState !== WebSocket.OPEN) {
-        if (pendingInput.length < 256) pendingInput.push(data);
-        return;
-      }
-      socket.send(JSON.stringify({ type: "input", data: bytesToBase64(data) }));
     });
-    const resize = terminal.onResize(sendResize);
+    const input = terminal.onData((data) =>
+      persistentConnection.sendInput(data),
+    );
+    const resize = terminal.onResize(({ rows, cols }) =>
+      persistentConnection.resize(rows, cols),
+    );
     const observer = new ResizeObserver(() => {
       fit.fit();
-      sendResize();
+      persistentConnection.resize(terminal.rows, terminal.cols);
     });
     observer.observe(host);
-    void connect();
 
     return () => {
-      active = false;
-      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
       observer.disconnect();
+      unsubscribe();
       input.dispose();
       resize.dispose();
-      socket?.close();
       terminal.dispose();
     };
   }, [api, sessionId]);
 
   return (
     <div className="relative h-full min-h-0 bg-[#101317]">
-      {connection !== "connected" && (
+      {connection !== "connected" ? (
         <div
-          className="absolute right-3 top-2 z-10 rounded-md bg-[#15171b] px-2 py-1 font-mono text-[10px] uppercase tracking-[0.05em] text-[#9ba1aa]"
+          className="pointer-events-none absolute inset-0 z-10 grid place-items-center bg-[#101317]/92"
           aria-live="polite"
         >
-          {connection}
+          <div className="text-center">
+            <div className="relative mx-auto mb-3 size-8">
+              <span className="absolute inset-0 rounded-full border border-[#4d8dff]/20" />
+              <span className="absolute inset-1 animate-spin rounded-full border border-transparent border-t-[#6f9eff] motion-reduce:animate-none" />
+              <span className="absolute inset-3 rounded-full bg-[#6f9eff]/70" />
+            </div>
+            <p className="text-xs text-[#c4c8cf]">
+              {connection === "connecting"
+                ? "Connecting terminal…"
+                : connection === "disconnected"
+                  ? "Reconnecting terminal…"
+                  : "Retrying terminal…"}
+            </p>
+            <p className="mt-1 font-mono text-[10px] text-[#68717d]">
+              /workspace/repository
+            </p>
+          </div>
         </div>
-      )}
+      ) : null}
       <div ref={hostRef} className="h-full min-h-0 p-2" />
     </div>
   );
