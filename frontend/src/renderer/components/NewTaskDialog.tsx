@@ -163,8 +163,8 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-xl -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
+				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-xl -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out">
 					<div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
 						<div className="min-w-0">
 							<Dialog.Title className="text-subtitle font-semibold text-foreground">New task</Dialog.Title>
@@ -204,6 +204,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 								</label>
 								<button
 									type="button"
+									tabIndex={-1}
 									className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
 									onClick={() => fileInputRef.current?.click()}
 								>
@@ -213,8 +214,10 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 							</div>
 							<div
 								className={cn(
-									"rounded-md border border-border transition",
-									isDragging && "border-accent ring-2 ring-accent-weak",
+									// Match Input exactly: transparent border + input bg, focus-within ring
+									"rounded-md border border-transparent bg-input/50 transition-[color,box-shadow,background-color,border-color]",
+									"focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/30",
+									isDragging && "border-accent! ring-2 ring-ring/30",
 								)}
 								onDrop={handleDrop}
 								onDragOver={handleDragOver}
@@ -222,18 +225,12 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 							>
 								<textarea
 									id={promptId}
-									className="min-h-textarea-min w-full resize-y rounded-md bg-transparent px-3 py-2 text-control leading-relaxed text-foreground outline-none transition placeholder:text-passive focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent-weak"
+									className="min-h-textarea-min w-full resize-y rounded-md bg-transparent px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground"
 									placeholder="Describe the change, constraints, and expected verification. Paste or drop images to attach them."
 									value={prompt}
 									onChange={(event) => setPrompt(event.target.value)}
 									onPaste={handlePaste}
 									onKeyDown={(event) => {
-										// Chat-style, matching Claude Code / Codex. Submit affordances:
-										// plain Enter, and Cmd+Enter / Ctrl+Enter (common chat-send combos)
-										// which pass this guard because we only exclude Shift and Alt.
-										// Do NOT submit: Shift+Enter and Alt+Enter — both insert a newline
-										// (Alt is excluded so it can't submit by accident). Guard against IME
-										// composition so committing a CJK candidate with Enter doesn't submit.
 										if (event.key === "Enter" && !event.shiftKey && !event.altKey && !event.nativeEvent.isComposing) {
 											event.preventDefault();
 											event.currentTarget.form?.requestSubmit();
