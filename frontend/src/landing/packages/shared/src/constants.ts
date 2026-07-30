@@ -9,7 +9,7 @@ export const COMPANY = {
   TRUST_URL: "https://aoagents.dev/privacy/",
   MAIL_TO: "mailto:hello@aoagents.dev",
   X_URL: "https://x.com/aoagents",
-  LINKEDIN_URL: "https://linkedin.com/company/aoagents",
+  LINKEDIN_URL: "https://www.linkedin.com/company/agent-orchestrator",
   YOUTUBE_URL: "https://youtube.com/@aoagents",
   DISCORD_URL: "https://discord.com/invite/UZv7JjxbwG",
   EMAIL_DOMAIN: "@aoagents.dev",
