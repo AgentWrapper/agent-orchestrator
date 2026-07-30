@@ -8,7 +8,7 @@ import { Label } from "./ui/label";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
-import { cloudDevReady, spawnCloudDevSession } from "../lib/cloud-dev";
+import { cloudDevReady, isCloudDevAuthError, prepareCloudDevSettings, spawnCloudDevSession } from "../lib/cloud-dev";
 import { captureRendererEvent } from "../lib/telemetry";
 import type { AgentProvider } from "../types/workspace";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
@@ -41,6 +41,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 	const [isDragging, setIsDragging] = useState(false);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const cloudDev = useUiStore((state) => state.cloudDev);
+	const setCloudDev = useUiStore((state) => state.setCloudDev);
 	const cloudEnabled = cloudDev.enabled;
 	const cloudTaskMode = cloudDevReady(cloudDev);
 	const {
@@ -133,7 +134,14 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 			}
 			let data: components["schemas"]["SpawnSessionResponse"] | undefined;
 			if (cloudTaskMode) {
-				data = await spawnCloudDevSession(cloudDev, body);
+				try {
+					data = await spawnCloudDevSession(cloudDev, body);
+				} catch (error) {
+					if (!isCloudDevAuthError(error)) throw error;
+					const nextCloudDev = await prepareCloudDevSettings(cloudDev, { forceToken: true });
+					setCloudDev(nextCloudDev);
+					data = await spawnCloudDevSession(nextCloudDev, body);
+				}
 			} else {
 				const { data: localData, error: apiError } = await apiClient.POST("/api/v1/sessions", { body });
 				if (apiError) throw new Error(apiErrorMessage(apiError, "Unable to start task"));

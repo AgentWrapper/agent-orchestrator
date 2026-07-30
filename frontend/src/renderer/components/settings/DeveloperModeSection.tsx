@@ -1,6 +1,6 @@
 import { Cloud, KeyRound, Link, Mail, Shield, Tag, Wrench } from "lucide-react";
 import { useState } from "react";
-import { createCloudDevToken, registerCloudProject } from "../../lib/cloud-dev";
+import { prepareCloudDevSettings } from "../../lib/cloud-dev";
 import { useUiStore } from "../../stores/ui-store";
 import { Switch } from "../ui/switch";
 import { SettingsRow } from "./SettingsRow";
@@ -22,21 +22,10 @@ export function DeveloperModeSection() {
 		setCloudStatus(null);
 		setCloudError(null);
 		try {
-			let next = cloudDev;
-			if (!next.accessToken.trim() || !next.orgId.trim()) {
-				const token = await createCloudDevToken(next);
-				next = { ...next, ...token };
-				setCloudDev(token);
-			}
-			await registerCloudProject(next, {
-				id: next.projectId.trim(),
-				name: next.projectId.trim(),
-				repoUrl: next.repoUrl.trim(),
-				defaultBranch: next.defaultBranch.trim(),
-				workerAgent: next.workerAgent.trim(),
-				permissions: next.permissions.trim(),
+			const next = await prepareCloudDevSettings(cloudDev, {
+				forceToken: Boolean(cloudDev.accessToken.trim() && cloudDev.orgId.trim()),
 			});
-			setCloudDev({ enabled: true });
+			setCloudDev(next);
 			setCloudStatus("Cloud project ready.");
 		} catch (error) {
 			setCloudError(error instanceof Error ? error.message : "Could not prepare AO Cloud.");

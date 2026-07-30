@@ -22,6 +22,18 @@ type CloudDevTokenResponse = {
 	orgs?: Array<{ ID?: string; id?: string }>;
 };
 
+export class CloudDevError extends Error {
+	readonly code?: string;
+	readonly status: number;
+
+	constructor(message: string, status: number, code?: string) {
+		super(message);
+		this.name = "CloudDevError";
+		this.status = status;
+		this.code = code;
+	}
+}
+
 export function normalizeCloudBaseUrl(url: string): string {
 	return url.trim().replace(/\/+$/, "");
 }
@@ -34,6 +46,10 @@ export function cloudDevReady(settings: CloudDevSettings): boolean {
 		settings.orgId.trim() !== "" &&
 		settings.projectId.trim() !== ""
 	);
+}
+
+export function isCloudDevAuthError(error: unknown): boolean {
+	return error instanceof CloudDevError && error.status === 401;
 }
 
 export function cloudDevTerminalMuxURL(settings: CloudDevSettings): string {
@@ -60,6 +76,26 @@ export async function createCloudDevToken(settings: CloudDevSettings): Promise<{
 	const orgId = data.orgs?.[0]?.ID?.trim() || data.orgs?.[0]?.id?.trim() || "";
 	if (!accessToken || !orgId) throw new Error("ao-cloud dev auth returned no access token or org");
 	return { accessToken, orgId };
+}
+
+export async function prepareCloudDevSettings(
+	settings: CloudDevSettings,
+	options: { forceToken?: boolean } = {},
+): Promise<CloudDevSettings> {
+	let next = settings;
+	if (options.forceToken || !next.accessToken.trim() || !next.orgId.trim()) {
+		const token = await createCloudDevToken(next);
+		next = { ...next, ...token };
+	}
+	await registerCloudProject(next, {
+		id: next.projectId.trim(),
+		name: next.projectId.trim(),
+		repoUrl: next.repoUrl.trim(),
+		defaultBranch: next.defaultBranch.trim(),
+		workerAgent: next.workerAgent.trim(),
+		permissions: next.permissions.trim(),
+	});
+	return { ...next, enabled: true };
 }
 
 export async function registerCloudProject(settings: CloudDevSettings, input: CloudProjectInput): Promise<void> {
@@ -112,8 +148,21 @@ async function cloudFetch<T = unknown>(
 	});
 	const text = await response.text();
 	const data = text ? (JSON.parse(text) as T) : ({} as T);
-	if (!response.ok) throw new Error(cloudErrorMessage(data, `AO Cloud request failed (${response.status})`));
+	if (!response.ok) throw cloudError(data, response.status, `AO Cloud request failed (${response.status})`);
 	return data;
+}
+
+function cloudError(error: unknown, status: number, fallback: string): CloudDevError {
+	const code = cloudErrorCode(error);
+	return new CloudDevError(cloudErrorMessage(error, fallback), status, code);
+}
+
+function cloudErrorCode(error: unknown): string | undefined {
+	if (typeof error === "object" && error !== null) {
+		const body = error as { code?: unknown; message?: unknown };
+		return typeof body.code === "string" && body.code ? body.code : undefined;
+	}
+	return undefined;
 }
 
 function cloudErrorMessage(error: unknown, fallback: string): string {

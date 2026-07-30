@@ -3,11 +3,13 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultCloudDevSettings, useUiStore } from "../stores/ui-store";
+import { CloudDevError } from "../lib/cloud-dev";
 import { NewTaskDialog } from "./NewTaskDialog";
 
-const { getMock, postMock, spawnCloudDevSessionMock } = vi.hoisted(() => ({
+const { getMock, postMock, prepareCloudDevSettingsMock, spawnCloudDevSessionMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	postMock: vi.fn(),
+	prepareCloudDevSettingsMock: vi.fn(),
 	spawnCloudDevSessionMock: vi.fn(),
 }));
 
@@ -30,6 +32,7 @@ vi.mock("../lib/cloud-dev", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../lib/cloud-dev")>();
 	return {
 		...actual,
+		prepareCloudDevSettings: (...args: unknown[]) => prepareCloudDevSettingsMock(...args),
 		spawnCloudDevSession: (...args: unknown[]) => spawnCloudDevSessionMock(...args),
 	};
 });
@@ -84,6 +87,7 @@ beforeEach(() => {
 		};
 	});
 	postMock.mockReset().mockResolvedValue({ data: { session: { id: "task-1" } }, error: undefined });
+	prepareCloudDevSettingsMock.mockReset();
 	spawnCloudDevSessionMock.mockReset();
 });
 
@@ -162,6 +166,41 @@ describe("NewTaskDialog", () => {
 			displayName: "Cloud task",
 		});
 		expect(onCreated).toHaveBeenCalledWith("cloud-1", "cloud-proj");
+	});
+
+	it("refreshes stale cloud dev auth and retries the cloud spawn once", async () => {
+		const staleSettings = {
+			...defaultCloudDevSettings,
+			enabled: true,
+			apiBaseUrl: "http://127.0.0.1:3011",
+			accessToken: "stale-token",
+			orgId: "org-1",
+			projectId: "cloud-proj",
+			workerAgent: "claude-code",
+		};
+		const freshSettings = { ...staleSettings, accessToken: "fresh-token" };
+		useUiStore.setState({ cloudDev: staleSettings });
+		spawnCloudDevSessionMock
+			.mockRejectedValueOnce(new CloudDevError("Invalid bearer access token (ACCESS_TOKEN_INVALID)", 401, "ACCESS_TOKEN_INVALID"))
+			.mockResolvedValueOnce({
+				session: { id: "cloud-2", projectId: "cloud-proj" },
+				promptBytes: 1,
+				systemPromptBytes: 1,
+			});
+		prepareCloudDevSettingsMock.mockResolvedValue(freshSettings);
+		const { onCreated } = renderDialog();
+		const user = userEvent.setup();
+		await waitForAgentCatalog();
+
+		await user.type(screen.getByLabelText("Title"), "Cloud retry");
+		await user.type(screen.getByLabelText("Brief"), "Retry after auth refresh.");
+		await user.click(screen.getByRole("button", { name: "Start task" }));
+
+		await waitFor(() => expect(spawnCloudDevSessionMock).toHaveBeenCalledTimes(2));
+		expect(prepareCloudDevSettingsMock).toHaveBeenCalledWith(staleSettings, { forceToken: true });
+		expect(spawnCloudDevSessionMock.mock.calls[1][0]).toMatchObject({ accessToken: "fresh-token" });
+		expect(useUiStore.getState().cloudDev.accessToken).toBe("fresh-token");
+		expect(onCreated).toHaveBeenCalledWith("cloud-2", "cloud-proj");
 	});
 
 	it("sends the chosen harness when the user overrides the default", async () => {
