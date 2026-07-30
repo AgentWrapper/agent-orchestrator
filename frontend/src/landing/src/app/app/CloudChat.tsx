@@ -151,8 +151,14 @@ export function deriveTimeline(events: CloudEvent[]): TimelineEntry[] {
           text: payloadString(event.payload, "text"),
         });
         break;
+      case "chat.turn_started":
+        // Provider messages can interleave text blocks and tool calls. A new
+        // provider message is the narration boundary; a tool call is not.
+        finishAssistant();
+        break;
       case "chat.assistant_delta": {
         const text = payloadString(event.payload, "text");
+        if (!assistant && text.trim() === "") break;
         if (!assistant || !assistant.streaming) {
           assistant = {
             id: `assistant-${event.sequence}`,
@@ -187,7 +193,6 @@ export function deriveTimeline(events: CloudEvent[]): TimelineEntry[] {
         break;
       }
       case "chat.tool_started": {
-        finishAssistant();
         const toolId = eventIdentity(event) || `sequence-${event.sequence}`;
         const existing = tools.get(toolId);
         if (existing) {

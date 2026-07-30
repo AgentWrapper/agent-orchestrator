@@ -139,7 +139,8 @@ it("merges tool completion and output into its compact started row", () => {
       id: "tool-one",
       output: "file contents",
     }),
-    event(5, "chat.assistant_delta", { text: "The issue is here." }),
+    event(5, "chat.turn_started", {}),
+    event(6, "chat.assistant_delta", { text: "The issue is here." }),
   ]);
 
   expect(timeline.map(({ type }) => type)).toEqual([
@@ -155,6 +156,39 @@ it("merges tool completion and output into its compact started row", () => {
     input: { path: "src/app.ts" },
     output: "file contents",
   });
+});
+
+it("keeps interleaved tool calls from splitting assistant narration", () => {
+  const timeline = deriveTimeline([
+    event(1, "chat.turn_started", {}),
+    event(2, "chat.assistant_delta", { text: "I" }),
+    event(3, "chat.tool_started", { id: "read-one", name: "Read" }),
+    event(4, "chat.tool_completed", { id: "read-one" }),
+    event(5, "chat.assistant_delta", { text: "'ve launched agents and find" }),
+    event(6, "chat.tool_started", { id: "bash-one", name: "Bash" }),
+    event(7, "chat.tool_completed", { id: "bash-one" }),
+    event(8, "chat.assistant_delta", { text: "ings." }),
+  ]);
+
+  expect(timeline.map(({ type }) => type)).toEqual([
+    "assistant",
+    "tool",
+    "tool",
+  ]);
+  expect(timeline[0]).toMatchObject({
+    type: "assistant",
+    text: "I've launched agents and findings.",
+  });
+});
+
+it("does not render an empty assistant row for leading whitespace", () => {
+  const timeline = deriveTimeline([
+    event(1, "chat.turn_started", {}),
+    event(2, "chat.assistant_delta", { text: " " }),
+    event(3, "chat.tool_started", { id: "read-one", name: "Read" }),
+  ]);
+
+  expect(timeline.map(({ type }) => type)).toEqual(["tool"]);
 });
 
 it("derives active and awaiting states from chat events", () => {
