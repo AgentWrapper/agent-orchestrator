@@ -370,3 +370,62 @@ describe("terminal link preview", () => {
 		}
 	});
 });
+
+// A shell whose PTY exits can never be attached again, so its tab is retired
+// rather than parked in the strip showing "TERMINAL ENDED". Nothing else tells
+// the client: the shell list is only refetched around this client's own
+// open/close, so without this the dead tab sat there until the next mutation.
+describe("TerminalPane shell exit", () => {
+	function renderShellPane(onShellExited: (handleId: string) => void, state: string) {
+		terminalState.value = state;
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const previousAO = window.ao;
+		window.ao = {} as typeof window.ao;
+		const result = render(
+			<QueryClientProvider client={queryClient}>
+				<TerminalPane
+					daemonReady
+					fontSize={12}
+					onShellExited={onShellExited}
+					terminalTarget={{ kind: "shell", handleId: "sh-a", title: "Terminal 1" }}
+					theme="dark"
+				/>
+			</QueryClientProvider>,
+		);
+		return { ...result, restore: () => { window.ao = previousAO; } };
+	}
+
+	it("retires the tab when the shell's PTY exits", async () => {
+		const onShellExited = vi.fn();
+		const { restore } = renderShellPane(onShellExited, "exited");
+		await waitFor(() => expect(onShellExited).toHaveBeenCalledWith("sh-a"));
+		expect(onShellExited).toHaveBeenCalledOnce();
+		restore();
+	});
+
+	it("leaves a live shell alone", async () => {
+		const onShellExited = vi.fn();
+		const { restore } = renderShellPane(onShellExited, "attached");
+		await waitFor(() => expect(screen.getByTestId("xterm")).toBeInTheDocument());
+		expect(onShellExited).not.toHaveBeenCalled();
+		restore();
+	});
+
+	// A session pane that ends still has a row, a status, and a restore path, so
+	// its tab must survive. Only shells are retired.
+	it("does not retire a session pane that ended", async () => {
+		const onShellExited = vi.fn();
+		terminalState.value = "exited";
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const previousAO = window.ao;
+		window.ao = {} as typeof window.ao;
+		render(
+			<QueryClientProvider client={queryClient}>
+				<TerminalPane daemonReady fontSize={12} onShellExited={onShellExited} session={worker} theme="dark" />
+			</QueryClientProvider>,
+		);
+		await waitFor(() => expect(screen.getByText("Terminal ended")).toBeInTheDocument());
+		expect(onShellExited).not.toHaveBeenCalled();
+		window.ao = previousAO;
+	});
+});

@@ -40,6 +40,20 @@ function toShellTerminal(t: components["schemas"]["ShellTerminalResponse"]): She
 let previewShellTerminals: ShellTerminal[] = [...mockShellTerminals];
 let previewShellSeq = 0;
 
+// Same rule the daemon uses: one past the highest number already on screen for
+// this session, so closing "Terminal 1" does not hand the next tab that name
+// while "Terminal 2" is still open.
+function previewSessionTerminalTitle(sessionId: string): string {
+	const highest = previewShellTerminals
+		.filter((shell) => shell.sessionId === sessionId)
+		.reduce((max, shell) => {
+			const match = /^Terminal (\d+)$/.exec(shell.title);
+			const n = match ? Number(match[1]) : 0;
+			return n > max ? n : max;
+		}, 0);
+	return `Terminal ${highest + 1}`;
+}
+
 async function fetchShellTerminals(): Promise<ShellTerminal[]> {
 	if (usePreviewData) {
 		return previewShellTerminals;
@@ -78,12 +92,18 @@ export function useOpenShellTerminal() {
 		mutationFn: async ({ projectId, sessionId }: OpenShellTerminalInput = {}): Promise<ShellTerminal> => {
 			if (usePreviewData) {
 				previewShellSeq += 1;
+				// Mirror the daemon: a session's shells start in that session's
+				// worktree and are numbered within it, standalone shells start in
+				// the project root and are named after it. The mock used to stamp
+				// the project name on every tab, which is not what the app does.
 				const shell: ShellTerminal = {
 					handleId: `shellterm-preview-${previewShellSeq}`,
 					projectId,
 					sessionId,
-					workingDir: `/Users/demo/Projects/${projectId ?? "ao"}`,
-					title: projectId ?? "shell",
+					workingDir: sessionId
+						? `/Users/demo/.ao/data/worktrees/${projectId ?? "ao"}/${sessionId}`
+						: `/Users/demo/Projects/${projectId ?? "ao"}`,
+					title: sessionId ? previewSessionTerminalTitle(sessionId) : (projectId ?? "shell"),
 					createdAt: new Date().toISOString(),
 				};
 				previewShellTerminals = [...previewShellTerminals, shell];

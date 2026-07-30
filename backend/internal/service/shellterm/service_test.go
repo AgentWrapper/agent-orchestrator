@@ -1103,3 +1103,78 @@ func TestShellTerminalTitleFallsBackForRootlessPaths(t *testing.T) {
 		t.Errorf("title = %q, want %q", got, "portfolio")
 	}
 }
+
+// Every shell in a session starts in that session's worktree, so naming tabs
+// after the directory put the identical label on all of them. Session tabs are
+// numbered instead; standalone tabs keep the directory, which is what tells
+// shells from different projects apart on /terminals.
+func TestSessionTerminalTitlesAreNumberedWithinTheSession(t *testing.T) {
+	if got := sessionShellTerminalTitle(1); got != "Terminal 1" {
+		t.Errorf("first session tab = %q, want %q", got, "Terminal 1")
+	}
+	if got := sessionShellTerminalTitle(3); got != "Terminal 3" {
+		t.Errorf("third session tab = %q, want %q", got, "Terminal 3")
+	}
+}
+
+func TestSessionTerminalOrdinalOnlyParsesGeneratedTitles(t *testing.T) {
+	for _, tc := range []struct {
+		title string
+		want  int
+		ok    bool
+	}{
+		{"Terminal 1", 1, true},
+		{"Terminal 12", 12, true},
+		{"Terminal 0", 0, false},     // never generated; 1-based
+		{"Terminal", 0, false},       // no number
+		{"Terminal x", 0, false},     // not a number
+		{"my build shell", 0, false}, // user rename stops reserving a number
+		{"portfolio", 0, false},      // a standalone tab's directory title
+	} {
+		got, ok := sessionTerminalOrdinal(tc.title)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("sessionTerminalOrdinal(%q) = (%d, %t), want (%d, %t)", tc.title, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+// Closing "Terminal 1" while "Terminal 2" is open must not hand the next tab a
+// name that is already on screen, so the ordinal comes from the highest in use
+// rather than the count.
+func TestNextSessionTerminalOrdinalSkipsNamesStillInUse(t *testing.T) {
+	st := &fakeShellTerminalStore{}
+	svc := newTestService(newFakeShellRuntime(), st, &fakeProjectRootLocator{})
+	ctx := context.Background()
+
+	for _, rec := range []ShellTerminalRecord{
+		{HandleID: "h-2", SessionID: "sess-1", Title: "Terminal 2"},
+		{HandleID: "h-9", SessionID: "sess-1", Title: "my build shell"},
+		{HandleID: "h-1", SessionID: "other", Title: "Terminal 7"},
+	} {
+		if err := st.InsertShellTerminal(ctx, rec); err != nil {
+			t.Fatalf("seed %s: %v", rec.HandleID, err)
+		}
+	}
+
+	got, err := svc.nextSessionTerminalOrdinal(ctx, "sess-1")
+	if err != nil {
+		t.Fatalf("nextSessionTerminalOrdinal: %v", err)
+	}
+	// 3, not 2 (Terminal 2 is still open) and not 8 (another session's tabs
+	// must not push this session's numbering along).
+	if got != 3 {
+		t.Errorf("next ordinal = %d, want 3", got)
+	}
+}
+
+func TestNextSessionTerminalOrdinalStartsAtOne(t *testing.T) {
+	svc := newTestService(newFakeShellRuntime(), &fakeShellTerminalStore{}, &fakeProjectRootLocator{})
+
+	got, err := svc.nextSessionTerminalOrdinal(context.Background(), "sess-empty")
+	if err != nil {
+		t.Fatalf("nextSessionTerminalOrdinal: %v", err)
+	}
+	if got != 1 {
+		t.Errorf("first ordinal = %d, want 1", got)
+	}
+}

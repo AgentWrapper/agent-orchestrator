@@ -107,6 +107,7 @@ export function ShellTerminalsView() {
 					<TerminalPane
 						daemonReady={daemonStatus.state === "ready"}
 						fontSize={12}
+						onShellExited={(handleId) => closeShellTerminal.mutate(handleId)}
 						terminalTarget={{ kind: "shell", handleId: active.handleId, title: active.title }}
 						theme={theme}
 					/>

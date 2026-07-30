@@ -22,6 +22,8 @@ type CenterPaneProps = {
 	onSelectSessionTerminal?: () => void;
 	onSelectShellTerminal?: (handleId: string) => void;
 	onCloseShellTerminal?: (handleId: string) => void;
+	/** A shell whose PTY exited on its own; its tab is retired. */
+	onShellExited?: (handleId: string) => void;
 	onRenameShellTerminal?: (handleId: string, title: string) => void;
 	/** Opens a new standalone shell tab (the "+" at the end of the tab bar). */
 	onNewShellTerminal?: () => void;
@@ -53,6 +55,7 @@ export function CenterPane({
 	onSelectSessionTerminal,
 	onSelectShellTerminal,
 	onCloseShellTerminal,
+	onShellExited,
 	onRenameShellTerminal,
 	onNewShellTerminal,
 }: CenterPaneProps) {
@@ -216,6 +219,7 @@ export function CenterPane({
 				<TerminalPane
 					daemonReady={daemonReady}
 					fontSize={fontSize}
+					onShellExited={onShellExited}
 					session={session}
 					terminalTarget={target}
 					theme={theme}

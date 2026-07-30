@@ -245,6 +245,17 @@ func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInp
 		return ShellTerminal{}, fmt.Errorf("open shell terminal %s: runtime: %w", handleID, err)
 	}
 
+	title := shellTerminalTitle(workingDir)
+	if in.SessionID != "" {
+		// Safe to count here: the session gate is held for the whole open, so
+		// two concurrent opens for one session cannot pick the same number.
+		ordinal, err := s.nextSessionTerminalOrdinal(ctx, in.SessionID)
+		if err != nil {
+			return ShellTerminal{}, err
+		}
+		title = sessionShellTerminalTitle(ordinal)
+	}
+
 	rec := ShellTerminalRecord{
 		HandleID: handle.ID,
 		// The resolved project, not the requested one: a session-scoped open
@@ -253,7 +264,7 @@ func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInp
 		ProjectID:  projectID,
 		SessionID:  in.SessionID,
 		WorkingDir: workingDir,
-		Title:      shellTerminalTitle(workingDir),
+		Title:      title,
 		AppRunID:   s.appRunID,
 		CreatedAt:  s.now().UTC(),
 	}
@@ -498,6 +509,25 @@ func (s *Service) BeginSessionTeardown(ctx context.Context, sessionID domain.Ses
 // It also returns the project the shell ended up attributed to, which is not
 // always the requested one: a session-scoped open may carry no project id, and
 // the session's own project is what the persisted row should record.
+// nextSessionTerminalOrdinal picks the number for a session's next terminal
+// tab. It takes one past the highest number already in use rather than a count,
+// so closing "Terminal 1" while "Terminal 2" is open does not hand the next
+// tab a name that is already on screen. A tab the user renamed no longer
+// matches and simply stops reserving its number.
+func (s *Service) nextSessionTerminalOrdinal(ctx context.Context, sessionID domain.SessionID) (int, error) {
+	recs, err := s.store.SelectShellTerminalsBySessionID(ctx, sessionID)
+	if err != nil {
+		return 0, fmt.Errorf("open shell terminal: count terminals for session %s: %w", sessionID, err)
+	}
+	highest := 0
+	for _, rec := range recs {
+		if n, ok := sessionTerminalOrdinal(rec.Title); ok && n > highest {
+			highest = n
+		}
+	}
+	return highest + 1, nil
+}
+
 func (s *Service) resolveShellTerminalWorkingDir(ctx context.Context, projectID domain.ProjectID, sessionID domain.SessionID) (workingDir string, resolvedProjectID domain.ProjectID, err error) {
 	if sessionID != "" {
 		if s.sessions == nil {

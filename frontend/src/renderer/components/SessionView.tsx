@@ -372,6 +372,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					<CenterPane
 						daemonReady={daemonStatus.state === "ready"}
 						onCloseShellTerminal={closeShellTerminalByHandle}
+						onShellExited={closeShellTerminalByHandle}
 						onNewShellTerminal={addShellTerminal}
 						onRenameShellTerminal={renameShellTerminalByHandle}
 						onSelectSessionTerminal={selectSessionTerminal}

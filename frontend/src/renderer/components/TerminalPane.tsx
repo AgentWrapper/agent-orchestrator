@@ -19,9 +19,15 @@ type TerminalPaneProps = {
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
 	fontSize: number;
+	/**
+	 * Fired once when a shell pane's PTY exits on its own (the user typed
+	 * `exit`, or killed the process). Nothing else tells the client: the shell
+	 * list is only refetched around this client's own open/close.
+	 */
+	onShellExited?: (handleId: string) => void;
 };
 
-export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
+export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize, onShellExited }: TerminalPaneProps) {
 	const terminalKey =
 		terminalTarget?.kind === "reviewer" || terminalTarget?.kind === "shell"
 			? terminalTarget.handleId
@@ -85,6 +91,7 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 			theme={theme}
 			daemonReady={daemonReady}
 			fontSize={fontSize}
+			onShellExited={onShellExited}
 			terminalTarget={terminalTarget}
 		/>
 	);
@@ -220,7 +227,7 @@ function bannerText(state: TerminalSessionState, error?: string): string | undef
 	return undefined;
 }
 
-function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
+function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSize, onShellExited }: TerminalPaneProps) {
 	const attachSession =
 		session && terminalTarget?.kind === "reviewer"
 			? { ...session, terminalHandleId: terminalTarget.handleId }
@@ -274,6 +281,20 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 		terminalTarget?.kind !== "shell" &&
 		session !== undefined &&
 		!isSessionActive;
+
+	// A shell whose PTY exits leaves a tab that can never be attached again, so
+	// retire it instead of parking a dead pane in the strip. Reported once per
+	// pane: the component is keyed by handle, so a later shell on the same tab
+	// mounts fresh. Only for shells — a session pane that ends still has a row,
+	// a status, and a restore path, so its tab must stay.
+	const reportedShellExitRef = useRef(false);
+	useEffect(() => {
+		if (state !== "exited") return;
+		if (terminalTarget?.kind !== "shell") return;
+		if (reportedShellExitRef.current) return;
+		reportedShellExitRef.current = true;
+		onShellExited?.(terminalTarget.handleId);
+	}, [state, terminalTarget, onShellExited]);
 
 	const handleReady = useCallback((handle: AttachableTerminal) => {
 		setTerminal(handle);
