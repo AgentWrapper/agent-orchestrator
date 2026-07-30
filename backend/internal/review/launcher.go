@@ -300,8 +300,10 @@ func (l *agentLauncher) Alive(ctx context.Context, handleID string) (bool, error
 	command, err := inspector.ForegroundCommand(ctx, ports.RuntimeHandle{ID: handleID})
 	if err != nil {
 		// A failed probe is not proof of death: keep the pane rather than
-		// destroying a working reviewer over a transient tmux error.
-		return true, nil
+		// destroying a working reviewer over a transient tmux error. The probe
+		// only ever narrows a live answer, so swallowing its error leaves the
+		// caller with what IsAlive already said.
+		return true, nil //nolint:nilerr // probe failure means "cannot tell", not "dead"
 	}
 	if command == "" {
 		return true, nil
