@@ -2035,6 +2035,9 @@ func writeError(w http.ResponseWriter, r *http.Request, status int, code, messag
 }
 
 func (s *Server) internalError(w http.ResponseWriter, r *http.Request, operation string, err error) {
+	if r.Context().Err() != nil || errors.Is(err, context.Canceled) {
+		return
+	}
 	s.log.Error("AO Cloud request failed",
 		"operation", operation,
 		"request_id", middleware.GetReqID(r.Context()),

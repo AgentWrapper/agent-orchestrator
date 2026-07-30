@@ -285,9 +285,10 @@ export default function CloudAppPage() {
       kind === "orchestrator" &&
       !isTerminated,
   );
+  const workerSessions = sessions.filter(({ kind }) => kind === "worker");
   const visibleSessions = selectedProjectId
-    ? sessions.filter(({ projectId }) => projectId === selectedProjectId)
-    : sessions;
+    ? workerSessions.filter(({ projectId }) => projectId === selectedProjectId)
+    : workerSessions;
 
   useEffect(() => {
     if (initialLoading || !selectedSessionId) return;

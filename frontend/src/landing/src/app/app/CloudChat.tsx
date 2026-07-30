@@ -246,7 +246,9 @@ export function deriveTimeline(events: CloudEvent[]): TimelineEntry[] {
           (actionId ? actions.get(actionId) : undefined) ??
           [...actions.values()]
             .reverse()
-            .find((candidate) => candidate.kind === kind && !candidate.resolved);
+            .find(
+              (candidate) => candidate.kind === kind && !candidate.resolved,
+            );
         if (action) {
           action.resolved = true;
           action.detail = friendlyDetail(event.payload) ?? action.detail;
@@ -407,6 +409,7 @@ export function CloudChat({
   const [reconnectNonce, setReconnectNonce] = useState(0);
   const latestSequence = useRef(0);
   const loadedSessionId = useRef<string | null>(null);
+  const historyLoadedSessionId = useRef<string | null>(null);
   const lastStreamActivity = useRef(Date.now());
   const turnProbeInFlight = useRef(false);
   const draftValue = useRef("");
@@ -424,6 +427,7 @@ export function CloudChat({
     const isNewSession = loadedSessionId.current !== session.id;
     if (isNewSession) {
       loadedSessionId.current = session.id;
+      historyLoadedSessionId.current = null;
       latestSequence.current = 0;
       retryIdempotencyKey.current = null;
       followOutput.current = true;
@@ -435,38 +439,42 @@ export function CloudChat({
       setReplaySessionId(null);
       setInterrupting(false);
     }
+    const needsHistoryReplay = historyLoadedSessionId.current !== session.id;
     const connect = async () => {
-      if (isNewSession) {
+      if (needsHistoryReplay) {
         try {
-        let replayAfter = 0;
-        let replayed: CloudEvent[] = [];
-        for (;;) {
-          const replay = await api.chatEvents(session.id, replayAfter, 500);
-          replayed = mergeEvents(replayed, replay.events);
-          if (replay.events.length < 500) break;
-          replayAfter = replay.events.reduce(
-            (latest, event) => Math.max(latest, event.sequence),
-            replayAfter,
+          let replayAfter = 0;
+          let replayed: CloudEvent[] = [];
+          for (;;) {
+            const replay = await api.chatEvents(session.id, replayAfter, 500);
+            replayed = mergeEvents(replayed, replay.events);
+            if (replay.events.length < 500) break;
+            replayAfter = replay.events.reduce(
+              (latest, event) => Math.max(latest, event.sequence),
+              replayAfter,
+            );
+          }
+          if (controller.signal.aborted) return;
+          const chatEvents = replayed.filter((event) =>
+            event.type.startsWith("chat."),
           );
-        }
-        if (controller.signal.aborted) return;
-        const chatEvents = replayed.filter((event) =>
-          event.type.startsWith("chat."),
-        );
-        latestSequence.current = chatEvents.reduce(
-          (latest, event) => Math.max(latest, event.sequence),
-          0,
-        );
-        setEvents(chatEvents);
-      } catch (replayError) {
-        if (controller.signal.aborted) return;
-        setError(
-          replayError instanceof Error
-            ? `Could not load conversation history. ${replayError.message}`
-            : "Could not load conversation history.",
-        );
+          latestSequence.current = chatEvents.reduce(
+            (latest, event) => Math.max(latest, event.sequence),
+            0,
+          );
+          setEvents(chatEvents);
+        } catch (replayError) {
+          if (controller.signal.aborted) return;
+          setError(
+            replayError instanceof Error
+              ? `Could not load conversation history. ${replayError.message}`
+              : "Could not load conversation history.",
+          );
         } finally {
-          if (!controller.signal.aborted) setReplaySessionId(session.id);
+          if (!controller.signal.aborted) {
+            historyLoadedSessionId.current = session.id;
+            setReplaySessionId(session.id);
+          }
         }
       }
 
@@ -524,7 +532,9 @@ export function CloudChat({
               ? `${streamError.message} Reconnecting…`
               : "Live event stream disconnected. Reconnecting…",
           );
-          await new Promise((resolve) => window.setTimeout(resolve, retryDelay));
+          await new Promise((resolve) =>
+            window.setTimeout(resolve, retryDelay),
+          );
           retryDelay = Math.min(retryDelay * 2, 5_000);
         }
       }
@@ -759,12 +769,12 @@ export function CloudChat({
                     >
                       <summary
                         className={`flex min-h-11 list-none items-center gap-2 rounded-md pr-1 outline-none focus-visible:ring-2 focus-visible:ring-[#4d8dff]/70 sm:min-h-8 ${
-                          hasDetails
-                            ? "cursor-pointer"
-                            : "pointer-events-none"
+                          hasDetails ? "cursor-pointer" : "pointer-events-none"
                         }`}
                         aria-label={
-                          hasDetails ? `Show details for ${entry.name}` : undefined
+                          hasDetails
+                            ? `Show details for ${entry.name}`
+                            : undefined
                         }
                       >
                         {entry.status === "running" ? (
@@ -836,7 +846,9 @@ export function CloudChat({
                       )}
                       <div className="min-w-0">
                         <div className="text-xs font-medium text-[#d7d7d2]">
-                          {entry.resolved ? `${entry.label} · Resolved` : entry.label}
+                          {entry.resolved
+                            ? `${entry.label} · Resolved`
+                            : entry.label}
                         </div>
                         {entry.detail ? (
                           <p className="mt-1 break-words text-xs leading-5 text-[#9ba1aa]">

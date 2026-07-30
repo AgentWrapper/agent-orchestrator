@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
@@ -62,6 +63,23 @@ func TestStructuredRuntimeEnabled(t *testing.T) {
 	}
 	if structuredRuntimeEnabled("unsupported") {
 		t.Fatal("structuredRuntimeEnabled(unsupported) = true")
+	}
+}
+
+func TestOrchestratorSystemPromptRequiresDurableAOWorkers(t *testing.T) {
+	prompt := systemPrompt("orchestrator")
+	for _, required := range []string{
+		`ao spawn --name`,
+		`Never use Claude's Agent tool`,
+		`ao status`,
+		`ao send --session`,
+	} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("orchestrator prompt does not contain %q", required)
+		}
+	}
+	if prompt := systemPrompt("worker"); prompt != "" {
+		t.Fatalf("worker system prompt = %q, want empty", prompt)
 	}
 }
 

@@ -3,11 +3,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 
-import {
-  type CloudEvent,
-  type CloudSession,
-  CloudAPI,
-} from "@/lib/cloud-api";
+import { type CloudEvent, type CloudSession, CloudAPI } from "@/lib/cloud-api";
 import { CloudChat, deriveTimeline, deriveTurnState } from "./CloudChat";
 
 function event(
@@ -211,6 +207,24 @@ it("loads durable replay before showing the empty state", async () => {
   );
 });
 
+it("retries initial history replay when focus reconnects during loading", async () => {
+  const firstReplay = deferred<{ events: CloudEvent[] }>();
+  const chatEvents = vi
+    .fn()
+    .mockReturnValueOnce(firstReplay.promise)
+    .mockResolvedValue({ events: [] });
+  const api = testAPI({ chatEvents });
+
+  render(createElement(CloudChat, { api, session }));
+  expect(screen.getByText("Loading conversation…")).toBeInTheDocument();
+
+  await act(async () => window.dispatchEvent(new Event("focus")));
+
+  expect(await screen.findByText("Ready for a task")).toBeInTheDocument();
+  expect(chatEvents).toHaveBeenCalledTimes(2);
+  await act(async () => firstReplay.resolve({ events: [] }));
+});
+
 it("shows worker startup instead of thinking for a disconnected runtime", async () => {
   const api = testAPI({
     chatEvents: vi.fn().mockResolvedValue({
@@ -225,7 +239,9 @@ it("shows worker startup instead of thinking for a disconnected runtime", async 
     }),
   );
 
-  expect(await screen.findByText("Starting secure worker…")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Starting secure worker…"),
+  ).toBeInTheDocument();
   expect(screen.queryByText("Thinking…")).not.toBeInTheDocument();
 });
 
@@ -236,7 +252,9 @@ it("probes the durable turn and reconnects when the window regains focus", async
 
   window.dispatchEvent(new Event("focus"));
 
-  await waitFor(() => expect(api.activeTurn).toHaveBeenCalledWith("session-one"));
+  await waitFor(() =>
+    expect(api.activeTurn).toHaveBeenCalledWith("session-one"),
+  );
   await waitFor(() => expect(api.streamEvents).toHaveBeenCalledTimes(2));
 });
 
