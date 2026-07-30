@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ChevronRight,
   Cloud,
   FolderGit2,
   KeyRound,
@@ -69,6 +70,7 @@ interface SessionInspectorState {
 const cloudSelectionKey = "ao-cloud-selection";
 const cloudSidebarWidthKey = "ao-cloud-sidebar-width";
 const cloudSidebarCollapsedKey = "ao-cloud-sidebar-collapsed";
+const cloudProjectDisclosuresKey = "ao-cloud-project-disclosures";
 const cloudInspectorKey = "ao-cloud-inspector";
 const defaultSidebarWidth = 240;
 const collapsedSidebarWidth = 52;
@@ -186,6 +188,9 @@ export default function CloudAppPage() {
   const [selectionRestored, setSelectionRestored] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(defaultSidebarWidth);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [collapsedProjectIds, setCollapsedProjectIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [inspectorWidth, setInspectorWidth] = useState(480);
   const [sessionInspectors, setSessionInspectors] = useState<
     Record<string, SessionInspectorState>
@@ -271,6 +276,9 @@ export default function CloudAppPage() {
       const savedWidthValue = window.localStorage.getItem(cloudSidebarWidthKey);
       const savedCollapsed =
         window.localStorage.getItem(cloudSidebarCollapsedKey) === "true";
+      const savedProjectDisclosures = JSON.parse(
+        window.localStorage.getItem(cloudProjectDisclosuresKey) ?? "[]",
+      ) as unknown;
       const savedWidth =
         savedWidthValue === null ? Number.NaN : Number(savedWidthValue);
       const savedInspector = JSON.parse(
@@ -281,12 +289,9 @@ export default function CloudAppPage() {
         tab?: CloudInspectorTab;
         sessions?: Record<string, Partial<SessionInspectorState>>;
       };
-      if (savedSelection.projectId)
-        setSelectedProjectId(savedSelection.projectId);
-      if (savedSelection.sessionId) {
-        setSelectedSessionId(savedSelection.sessionId);
-        setView("session");
-      }
+      setSelectedProjectId(null);
+      setSelectedSessionId(null);
+      setView("board");
       if (Number.isFinite(savedWidth)) {
         setSidebarWidth(
           Math.min(
@@ -296,6 +301,12 @@ export default function CloudAppPage() {
         );
       }
       setSidebarCollapsed(savedCollapsed);
+      if (
+        Array.isArray(savedProjectDisclosures) &&
+        savedProjectDisclosures.every((value) => typeof value === "string")
+      ) {
+        setCollapsedProjectIds(new Set(savedProjectDisclosures));
+      }
       if (typeof savedInspector.width === "number") {
         setInspectorWidth(Math.min(900, Math.max(320, savedInspector.width)));
       }
@@ -362,6 +373,14 @@ export default function CloudAppPage() {
       }),
     );
   }, [inspectorWidth, selectionRestored, sessionInspectors]);
+
+  useEffect(() => {
+    if (!selectionRestored) return;
+    window.localStorage.setItem(
+      cloudProjectDisclosuresKey,
+      JSON.stringify([...collapsedProjectIds]),
+    );
+  }, [collapsedProjectIds, selectionRestored]);
 
   const connectedWorkspaceSessionIDs = useMemo(
     () =>
@@ -440,7 +459,7 @@ export default function CloudAppPage() {
         });
         const sessionIDs = new Set(sessionData.sessions.map(({ id }) => id));
         pruneChatEventCache(sessionIDs);
-        void Promise.allSettled(
+        await Promise.allSettled(
           sessionData.sessions
             .filter(({ harness }) => structuredChatHarnesses.has(harness))
             .map((cloudSession) =>
@@ -835,91 +854,124 @@ export default function CloudAppPage() {
               const projectSessions = sessions.filter(
                 ({ projectId }) => projectId === project.id,
               );
+              const expanded = !collapsedProjectIds.has(project.id);
+              const projectActive =
+                selectedProjectId === project.id && view === "board";
               return (
                 <div key={project.id} className="mb-1">
                   <button
                     className={`flex h-8 w-full items-center rounded-lg text-left text-sm ${
                       sidebarCollapsed ? "justify-center px-0" : "gap-2 px-2"
                     } ${
-                      selectedProjectId === project.id && view === "board"
+                      projectActive
                         ? "bg-white/[0.07] text-white"
                         : "text-[#9ba1aa] hover:bg-white/[0.04] hover:text-white"
                     }`}
                     onClick={() => {
+                      if (!expanded) {
+                        setCollapsedProjectIds((current) => {
+                          const next = new Set(current);
+                          next.delete(project.id);
+                          return next;
+                        });
+                      } else if (projectActive) {
+                        setCollapsedProjectIds((current) => {
+                          const next = new Set(current);
+                          next.add(project.id);
+                          return next;
+                        });
+                        return;
+                      }
                       setSelectedProjectId(project.id);
                       setSelectedSessionId(null);
                       setView("board");
                     }}
                     aria-label={project.displayName}
+                    aria-expanded={expanded}
                     title={sidebarCollapsed ? project.displayName : undefined}
                   >
-                    <FolderGit2 className="size-[15px] shrink-0" />
+                    {!sidebarCollapsed ? (
+                      <>
+                        <ChevronRight
+                          className={`size-3.5 shrink-0 text-[#646a73] transition-transform duration-150 motion-reduce:transition-none ${
+                            expanded ? "rotate-90" : ""
+                          }`}
+                          strokeWidth={2.5}
+                          aria-hidden="true"
+                        />
+                        <FolderGit2 className="size-[15px] shrink-0" />
+                      </>
+                    ) : (
+                      <FolderGit2 className="size-[15px] shrink-0" />
+                    )}
                     {!sidebarCollapsed ? (
                       <span className="truncate">{project.displayName}</span>
                     ) : null}
                   </button>
-                  <div
-                    className={
-                      sidebarCollapsed
-                        ? ""
-                        : "ml-[15px] border-l border-white/[0.06] pl-1.5"
-                    }
-                  >
-                    {projectSessions.map((cloudSession) => (
-                      <button
-                        key={cloudSession.id}
-                        className={`flex h-7 w-full items-center rounded-lg text-left text-[12px] ${
-                          sidebarCollapsed
-                            ? "justify-center px-0"
-                            : "gap-2 border-l-2 px-2"
-                        } ${
-                          selectedSessionId === cloudSession.id &&
-                          view === "session"
-                            ? "border-[#4d8dff] bg-white/[0.07] text-white"
-                            : "border-transparent text-[#9ba1aa] hover:bg-white/[0.04] hover:text-white"
-                        }`}
-                        onClick={() => {
-                          setSelectedProjectId(project.id);
-                          setSelectedSessionId(cloudSession.id);
-                          setView("session");
-                        }}
-                        aria-label={cloudSession.displayName}
-                        title={
-                          sidebarCollapsed
-                            ? cloudSession.displayName
-                            : undefined
-                        }
-                      >
-                        {cloudSession.kind === "orchestrator" ? (
-                          <OrchestratorIcon className="size-[14px] shrink-0" />
-                        ) : (
-                          <AgentAvatar
-                            agent={cloudSession.harness}
-                            className="size-[14px]"
-                          />
-                        )}
-                        {!sidebarCollapsed ? (
-                          <span className="truncate">
-                            {cloudSession.displayName}
-                          </span>
-                        ) : null}
-                        {!sidebarCollapsed &&
-                        activeChatSessionIds.has(cloudSession.id) ? (
-                          <LoaderCircle
-                            className="ml-auto size-3.5 shrink-0 animate-spin text-[#4d8dff] motion-reduce:animate-none"
-                            aria-label="Working"
-                          />
-                        ) : !sidebarCollapsed ? (
-                          <span
-                            className={`ml-auto size-1.5 shrink-0 rounded-full ${statusColor(
-                              cloudSession,
-                            )}`}
-                            aria-hidden="true"
-                          />
-                        ) : null}
-                      </button>
-                    ))}
-                  </div>
+                  {expanded ? (
+                    <div
+                      className={
+                        sidebarCollapsed
+                          ? ""
+                          : "ml-[15px] border-l border-white/[0.06] pl-1.5"
+                      }
+                    >
+                      {projectSessions.map((cloudSession) => (
+                        <button
+                          key={cloudSession.id}
+                          className={`flex h-7 w-full items-center rounded-lg text-left text-[12px] ${
+                            sidebarCollapsed
+                              ? "justify-center px-0"
+                              : "gap-2 border-l-2 px-2"
+                          } ${
+                            selectedSessionId === cloudSession.id &&
+                            view === "session"
+                              ? "border-[#4d8dff] bg-white/[0.07] text-white"
+                              : "border-transparent text-[#9ba1aa] hover:bg-white/[0.04] hover:text-white"
+                          }`}
+                          onClick={() => {
+                            setSelectedProjectId(project.id);
+                            setSelectedSessionId(cloudSession.id);
+                            setView("session");
+                          }}
+                          aria-label={cloudSession.displayName}
+                          title={
+                            sidebarCollapsed
+                              ? cloudSession.displayName
+                              : undefined
+                          }
+                        >
+                          {cloudSession.kind === "orchestrator" ? (
+                            <OrchestratorIcon className="size-[14px] shrink-0" />
+                          ) : (
+                            <AgentAvatar
+                              agent={cloudSession.harness}
+                              className="size-[14px]"
+                            />
+                          )}
+                          {!sidebarCollapsed ? (
+                            <span className="truncate">
+                              {cloudSession.displayName}
+                            </span>
+                          ) : null}
+                          {!sidebarCollapsed &&
+                          activeChatSessionIds.has(cloudSession.id) ? (
+                            <LoaderCircle
+                              className="ml-auto size-3.5 shrink-0 animate-spin text-[#4d8dff] motion-reduce:animate-none"
+                              aria-label="Working"
+                            />
+                          ) : !sidebarCollapsed ? (
+                            <span
+                              className={`ml-auto size-1.5 shrink-0 rounded-full ${statusColor(
+                                cloudSession,
+                              )}`}
+                              aria-hidden="true"
+                            />
+                          ) : null}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               );
             })}

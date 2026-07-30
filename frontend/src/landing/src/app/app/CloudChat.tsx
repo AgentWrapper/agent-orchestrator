@@ -581,6 +581,7 @@ function AssistantMessage({
         remarkPlugins={[remarkGfm]}
         urlTransform={chatURLTransform}
         components={{
+          p: ({ children }) => <p className="!my-0 [&+p]:!mt-2">{children}</p>,
           a: ({ href, children }) => {
             const previewLink = href && isWorkerPreviewLink(href);
             return (
