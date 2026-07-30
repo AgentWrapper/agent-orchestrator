@@ -303,6 +303,19 @@ export default function CloudAppPage() {
     }
   }, [initialLoading, selectedProjectId, selectedSessionId, sessions]);
 
+  useEffect(() => {
+    if (
+      initialLoading ||
+      !selectedProjectId ||
+      projects.some(({ id }) => id === selectedProjectId)
+    ) {
+      return;
+    }
+    setSelectedProjectId(null);
+    setSelectedSessionId(null);
+    setView("board");
+  }, [initialLoading, projects, selectedProjectId]);
+
   const run = async (operation: () => Promise<unknown>) => {
     setLoading(true);
     try {

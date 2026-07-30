@@ -101,6 +101,11 @@ func (r *Runner) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("build agent launch command: %w", err)
 	}
+	argv = restrictOrchestratorTools(
+		argv,
+		r.bootstrap.Launch.Session.Kind,
+		r.bootstrap.Launch.Session.Harness,
+	)
 	if len(argv) == 0 {
 		return errors.New("agent launch command is empty")
 	}
@@ -608,4 +613,21 @@ Use --agent claude-code, --agent codex, or --agent cursor only when the user req
 Never use Claude's Agent tool, Task tool, general-purpose subagents, or background subagents for an AO worker request. Those are internal subprocesses and do not create an AO worker visible to the user.
 
 Use "ao status" to list durable project sessions and "ao send --session <id> --message <text>" for follow-up work. Report the created worker name and session ID after ao spawn succeeds. Do not reason about sandbox providers, virtual machines, hosted databases, or worker routing; AO implements those details.`
+}
+
+func restrictOrchestratorTools(argv []string, kind, harness string) []string {
+	if kind != "orchestrator" || harness != "claude-code" || len(argv) == 0 {
+		return argv
+	}
+	const tools = "Bash,Read,Glob,Grep,WebFetch,WebSearch"
+	for index, argument := range argv {
+		if argument != "--" {
+			continue
+		}
+		result := make([]string, 0, len(argv)+2)
+		result = append(result, argv[:index]...)
+		result = append(result, "--tools", tools)
+		return append(result, argv[index:]...)
+	}
+	return append(argv, "--tools", tools)
 }

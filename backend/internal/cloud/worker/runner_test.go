@@ -83,6 +83,28 @@ func TestOrchestratorSystemPromptRequiresDurableAOWorkers(t *testing.T) {
 	}
 }
 
+func TestRestrictOrchestratorToolsRemovesClaudeAgentTool(t *testing.T) {
+	got := restrictOrchestratorTools(
+		[]string{"claude", "--permission-mode", "bypassPermissions", "--", "delegate this"},
+		"orchestrator",
+		"claude-code",
+	)
+	want := []string{
+		"claude",
+		"--permission-mode", "bypassPermissions",
+		"--tools", "Bash,Read,Glob,Grep,WebFetch,WebSearch",
+		"--", "delegate this",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("restricted argv = %#v, want %#v", got, want)
+	}
+
+	worker := []string{"claude", "--", "work"}
+	if got := restrictOrchestratorTools(worker, "worker", "claude-code"); !reflect.DeepEqual(got, worker) {
+		t.Fatalf("worker argv = %#v, want %#v", got, worker)
+	}
+}
+
 func readJSONObject(t *testing.T, path string) map[string]any {
 	t.Helper()
 	contents, err := os.ReadFile(path)
