@@ -393,7 +393,7 @@
 	--size-import-mode-illustration: 178px;
 
 	/* Settings */
-	--color-bg-settings-row: var(--card);
+	--color-bg-settings-row: transparent;
 	--color-bg-settings-menu: var(--popover);
 	--color-bg-settings-menu-selected: var(--accent);
 	--color-bg-settings-dialog: var(--popover);
@@ -430,8 +430,8 @@
 	--size-settings-dialog-wide: 920px;
 	--size-settings-dialog-height: 680px;
 	--size-settings-dialog-max-h: 680px;
-	--color-border-settings-dialog: oklch(1 0 0 / 7%);
-	--color-border-settings-dialog-header: oklch(1 0 0 / 7%);
+	--color-border-settings-dialog: oklch(1 0 0 / 3%);
+	--color-border-settings-dialog-header: oklch(1 0 0 / 3%);
 	--color-bg-settings-input: var(--input);
 	--color-border-settings-input: var(--color-border-settings-dialog);
 	--color-text-settings-input: var(--foreground);

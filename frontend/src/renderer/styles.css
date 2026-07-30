@@ -801,9 +801,9 @@
 	padding: var(--size-settings-row-padding);
 }
 
-/* Tailwind preflight clears button backgrounds; keep settings rows filled. */
+/* Tailwind preflight clears button backgrounds — transparent is the correct default. */
 button.settings-row-bar {
-	background-color: var(--color-bg-settings-row);
+	background-color: transparent;
 }
 
 @utility settings-menu-item {
