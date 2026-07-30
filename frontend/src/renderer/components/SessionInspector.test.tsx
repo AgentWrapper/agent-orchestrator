@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,6 +7,7 @@ import { SessionInspector } from "./SessionInspector";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import type { PRState, PullRequestFacts, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
+import { useUiStore } from "../stores/ui-store";
 
 const { getMock, navigateMock, patchMock, postMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
@@ -163,6 +164,7 @@ beforeEach(() => {
 	navigateMock.mockReset();
 	patchMock.mockReset();
 	postMock.mockReset();
+	useUiStore.setState({ inspectorSessions: {} });
 	getMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [] }, error: undefined });
 	patchMock.mockResolvedValue({ data: { ok: true }, error: undefined, response: { status: 200 } });
 	postMock.mockResolvedValue({ data: { ok: true, sessionId: "sess-1" }, error: undefined });
@@ -182,6 +184,20 @@ describe("SessionInspector tabs", () => {
 		expect(summaryTab).toHaveClass("h-control-md", "px-1.5");
 		expect(summaryTab).toHaveAttribute("title", "Summary");
 		expect(within(summaryTab).getByText("Summary")).toHaveClass("@max-[350px]/inspector:hidden");
+	});
+
+	it("shows the glow only while real browser activity is unseen", () => {
+		const currentSession = session([]);
+		const view = renderWithQuery(<SessionInspector session={currentSession} />);
+		expect(screen.queryByTestId("browser-unseen-indicator")).not.toBeInTheDocument();
+		view.unmount();
+
+		useUiStore.getState().setBrowserUnseen(currentSession.id, true);
+		renderWithQuery(<SessionInspector session={currentSession} />);
+		expect(screen.getByTestId("browser-unseen-indicator")).toBeInTheDocument();
+
+		act(() => useUiStore.getState().setInspectorView(currentSession.id, "browser"));
+		expect(screen.queryByTestId("browser-unseen-indicator")).not.toBeInTheDocument();
 	});
 
 	it("renders the supplied files view when the Files tab opens", async () => {

@@ -309,6 +309,8 @@ export function useBrowserView({
 		// ensuring a different worker so equal revision numbers cannot suppress
 		// that worker's own target.
 		previewTriggerRef.current = null;
+		setViewId("");
+		setNavState(EMPTY_NAV_STATE);
 		setTabsState(EMPTY_TABS_STATE);
 		setTabNotice("");
 		setAgentBrowserActive(false);

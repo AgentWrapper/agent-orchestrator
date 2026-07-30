@@ -6,7 +6,6 @@ import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import { useUiStore, type Theme } from "../stores/ui-store";
 import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
 import { apiClient } from "../lib/api-client";
-import { createUrlWatcher, type UrlWatcher } from "../lib/detect-urls";
 import { cn } from "../lib/utils";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { useRestoreSession } from "../hooks/useRestoreSession";
@@ -238,31 +237,9 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	// A shell pane has no session, so it hands the hook its handle directly
 	// instead of reading one off `attachSession`.
 	const shellTerminalHandleId = terminalTarget?.kind === "shell" ? terminalTarget.handleId : undefined;
-	// Glow the Browser tab when the agent prints a URL in this worker's terminal
-	// (e.g. a pushed-PR link). Detection only badges — the user still chooses to
-	// open it — and is skipped while they are already looking at the Browser tab.
-	const watchLinks = Boolean(session?.id && session.kind === "worker" && terminalTarget?.kind !== "shell");
-	const urlWatcherRef = useRef<UrlWatcher | null>(null);
-	const handleOutput = useCallback(
-		(text: string) => {
-			const sessionId = session?.id;
-			if (!sessionId) return;
-			if (!urlWatcherRef.current) {
-				urlWatcherRef.current = createUrlWatcher(() => {
-					const store = useUiStore.getState();
-					const current = store.inspectorSessions[sessionId];
-					const viewingBrowser = (current?.isOpen ?? true) && (current?.view ?? "summary") === "browser";
-					if (!viewingBrowser) store.setBrowserUnseen(sessionId, true);
-				});
-			}
-			urlWatcherRef.current.push(text);
-		},
-		[session?.id],
-	);
 	const { attach, state, error, replaySettled } = useTerminalSession(attachSession, {
 		daemonReady,
 		shellTerminalHandleId,
-		onOutput: watchLinks ? handleOutput : undefined,
 	});
 	const handleId = shellTerminalHandleId ?? attachSession?.terminalHandleId;
 	const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : session?.provider;
@@ -295,7 +272,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 			}
 			const linkSessionId = session.id;
 			// A left-click is an explicit request to view the link, so open the
-			// Browser tab now (unlike a passive `ao preview`, which only badges it).
+			// Browser tab immediately while the daemon persists the target.
 			setInspectorViewForSession(linkSessionId, "browser");
 			setInspectorOpenForSession(linkSessionId, true);
 			void (async () => {

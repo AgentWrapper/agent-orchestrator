@@ -67,6 +67,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const setInspectorViewForSession = useUiStore((state) => state.setInspectorView);
 	const markInspectorPreviewSeen = useUiStore((state) => state.markInspectorPreviewSeen);
+	const setBrowserContentRevealed = useUiStore((state) => state.setBrowserContentRevealed);
 	const setBrowserUnseen = useUiStore((state) => state.setBrowserUnseen);
 	const { daemonStatus } = useShell();
 	const inspectorRef = useRef<PanelImperativeHandle | null>(null);
@@ -187,6 +188,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		sessionId: session?.id,
 		navUrl: browserView.navState.url,
 	});
+	const browserUrl = browserView.navState.url.trim();
+	const hasBrowserContent = Boolean(previewUrl || browserUrl);
 
 	useLayoutEffect(() => {
 		setTerminalTarget({ kind: "worker" });
@@ -225,13 +228,34 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		setBrowserPoppedOut(next);
 	}, []);
 
-	// `ao preview` sets session.previewUrl (streamed over CDC); badge the inspector
-	// rail's Browser tab so the user can open it when they choose — we never steal
-	// focus by opening the rail ourselves. A left-click on a terminal link opens the
-	// tab explicitly (see TerminalPane) and is exempt from the badge because the tab
-	// is already the active view by the time the CDC echo arrives. Navigation alone
-	// must not badge an already-present preview target, so the first observed preview
-	// key for each session is baselined as "seen"; only a later revision/URL badges.
+	// Reveal the first real content in each non-empty browser lifecycle. Once the
+	// user leaves Browser, subsequent work respects that choice and uses the
+	// unseen indicator instead of repeatedly stealing the active inspector tab.
+	useEffect(() => {
+		if (!hasInspector) return;
+		const current = useUiStore.getState().inspectorSessions[sessionId];
+		if (!hasBrowserContent) {
+			if (current?.browserContentRevealed) setBrowserContentRevealed(sessionId, false);
+			else if (current?.browserUnseen) setBrowserUnseen(sessionId, false);
+			return;
+		}
+		if (current?.browserContentRevealed) return;
+		setBrowserContentRevealed(sessionId, true);
+		setInspectorViewForSession(sessionId, "browser");
+		setInspectorOpenForSession(sessionId, true);
+	}, [
+		hasBrowserContent,
+		hasInspector,
+		sessionId,
+		setBrowserContentRevealed,
+		setBrowserUnseen,
+		setInspectorOpenForSession,
+		setInspectorViewForSession,
+	]);
+
+	// `ao preview` is authoritative browser work, including a same-URL rerun
+	// whose revision advances. The first target is handled by the lifecycle
+	// effect above; later targets glow only while Browser is not visible.
 	useEffect(() => {
 		if (!hasInspector) return;
 		const previewKey = previewRevealKey(previewUrl, previewRevision);
@@ -243,13 +267,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		if (seenKey === previewKey) return;
 		markInspectorPreviewSeen(sessionId, previewKey);
 		if (!previewKey) return;
-		// Already looking at the Browser tab? Nothing to badge.
-		if (isInspectorOpen && inspectorView === "browser") return;
-		setBrowserUnseen(sessionId, true);
+		const current = useUiStore.getState().inspectorSessions[sessionId];
+		const viewingBrowser = (current?.isOpen ?? true) && (current?.view ?? "summary") === "browser";
+		if (current?.browserContentRevealed && !viewingBrowser) setBrowserUnseen(sessionId, true);
 	}, [
 		hasInspector,
-		inspectorView,
-		isInspectorOpen,
 		markInspectorPreviewSeen,
 		previewRevision,
 		previewUrl,
@@ -257,9 +279,26 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		setBrowserUnseen,
 	]);
 
-	// Keep the badge honest: clear it whenever the Browser tab is the open, active
-	// view (covers opening the rail while already parked on Browser, which
-	// setInspectorView's own clear does not see).
+	// Agent browser commands are genuine browser activity even when they do not
+	// navigate (fill, click, snapshot, etc.). When Browser is hidden, surface
+	// that activity as unseen rather than reopening the tab.
+	useEffect(() => {
+		if (!hasInspector || !browserView.agentBrowserActive || !hasBrowserContent) return;
+		const current = useUiStore.getState().inspectorSessions[sessionId];
+		const viewingBrowser = (current?.isOpen ?? true) && (current?.view ?? "summary") === "browser";
+		if (current?.browserContentRevealed && !viewingBrowser) setBrowserUnseen(sessionId, true);
+	}, [
+		browserView.agentBrowserActive,
+		hasBrowserContent,
+		hasInspector,
+		inspectorView,
+		isInspectorOpen,
+		sessionId,
+		setBrowserUnseen,
+	]);
+
+	// Opening Browser consumes the pending activity indicator, including the
+	// case where the inspector was collapsed while already parked on Browser.
 	useEffect(() => {
 		if (hasInspector && isInspectorOpen && inspectorView === "browser") {
 			setBrowserUnseen(sessionId, false);

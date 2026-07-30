@@ -61,12 +61,6 @@ export type UseTerminalSessionOptions = {
 	/** Test seam: build the mux client. Defaults to a fresh socket against the current API base. */
 	createMux?: () => TerminalMux;
 	/**
-	 * Observe decoded pane output (post-write). Callers use it to scan the stream
-	 * for signals like printed URLs; it must be cheap and side-effect-light since
-	 * it runs on every output chunk. Omit to skip decoding entirely.
-	 */
-	onOutput?: (text: string) => void;
-	/**
 	 * Attach to a standalone shell terminal (POST /api/v1/shell-terminals)
 	 * instead of a session's pane. When set it wins over `session`, which
 	 * callers pass as undefined for shell panes.
@@ -220,11 +214,9 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 
 	const teardownMux = useCallback(() => {
 		const r = runtime.current;
-		// Land anything still buffered before the attachment goes away. Dropping
-		// it would lose output that had already arrived — invisible on screen
-		// (the next attach clears and replays), but the onOutput watcher would
-		// never see it, so a URL printed in that window would never badge the
-		// Browser tab. No-ops when the gate is closed or already superseded.
+		// Land anything still buffered before the attachment goes away so output
+		// that already arrived is not discarded. No-ops when the gate is closed
+		// or this attachment has already been superseded.
 		r.flushReplay?.();
 		r.flushReplay = null;
 		clearReplayTimers();
@@ -319,14 +311,6 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		const mux = (optionsRef.current.createMux ?? defaultCreateMux)();
 		r.mux = mux;
 
-		// Streaming decoder so a multi-byte sequence split across chunks decodes
-		// correctly for onOutput. Only built when a caller is listening.
-		const outputDecoder = optionsRef.current.onOutput ? new TextDecoder() : null;
-
-		const emitOutput = (bytes: Uint8Array) => {
-			if (outputDecoder) optionsRef.current.onOutput?.(outputDecoder.decode(bytes, { stream: true }));
-		};
-
 		// End the initial-replay burst: concatenate everything buffered so far
 		// into one write so xterm parses it in a single pass (no intermediate
 		// paints), and uncover the pane once that write is parsed.
@@ -364,9 +348,6 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				replay.set(chunk, offset);
 				offset += chunk.length;
 			}
-			// Observers (the URL watcher) must still see the replay text, and see
-			// it once, in order — decode the joined buffer, not the pieces.
-			emitOutput(replay);
 			terminal.write(replay, () => {
 				if (!isCurrentAttachment(generation, handle, mux)) return;
 				setReplaySettled(true);
@@ -394,7 +375,6 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 					return;
 				}
 				terminal.write(bytes);
-				emitOutput(bytes);
 			}),
 			mux.onOpened(handle, () => {
 				if (!isCurrentAttachment(generation, handle, mux)) return;
