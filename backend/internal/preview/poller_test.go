@@ -38,7 +38,7 @@ func (f *fakePreviewSessions) SetPreview(_ context.Context, id domain.SessionID,
 	return domain.Session{}, nil
 }
 
-func TestPollerSetsPreviewWhenWorkerEntryAppearsAfterBaseline(t *testing.T) {
+func TestPollerDoesNotOpenUntargetedWorkerEntry(t *testing.T) {
 	workspace := t.TempDir()
 	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
 	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
@@ -51,95 +51,30 @@ func TestPollerSetsPreviewWhenWorkerEntryAppearsAfterBaseline(t *testing.T) {
 		t.Fatalf("creation Poll: %v", err)
 	}
 
-	assertSets(t, svc.sets, previewSet{
-		id:  "ao-1",
-		url: mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "index.html"),
-	})
+	assertSets(t, svc.sets)
 }
 
-func TestPollerDoesNotPreviewExistingEntryWithoutSessionChange(t *testing.T) {
+func TestPollerNormalizesExplicitWorkspaceEntrypoint(t *testing.T) {
 	workspace := t.TempDir()
-	writeFile(t, filepath.Join(workspace, "index.html"), "<main>existing</main>")
-	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
+	writeFile(t, filepath.Join(workspace, "dist", "index.html"), "<main>dist</main>")
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "dist/index.html")}}
 	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
 
 	if err := poller.Poll(context.Background()); err != nil {
-		t.Fatalf("first Poll: %v", err)
-	}
-	if err := poller.Poll(context.Background()); err != nil {
-		t.Fatalf("second Poll: %v", err)
-	}
-	assertSets(t, svc.sets)
-}
-
-func TestPollerBaselinesExistingMarkdownWhenWorkspaceMaterializes(t *testing.T) {
-	workspace := filepath.Join(t.TempDir(), "pending-worktree")
-	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
-	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
-
-	if err := poller.Poll(context.Background()); err != nil {
-		t.Fatalf("missing workspace Poll: %v", err)
-	}
-	writeFile(t, filepath.Join(workspace, "README.md"), "# Existing documentation")
-	if err := poller.Poll(context.Background()); err != nil {
-		t.Fatalf("materialized workspace Poll: %v", err)
-	}
-	assertSets(t, svc.sets)
-
-	entry := filepath.Join(workspace, "README.md")
-	writeFile(t, entry, "# Changed documentation")
-	nextMod := time.Now().Add(2 * time.Second)
-	if err := os.Chtimes(entry, nextMod, nextMod); err != nil {
-		t.Fatalf("chtimes markdown: %v", err)
-	}
-	if err := poller.Poll(context.Background()); err != nil {
-		t.Fatalf("changed markdown Poll: %v", err)
+		t.Fatalf("Poll: %v", err)
 	}
 	assertSets(t, svc.sets, previewSet{
 		id:  "ao-1",
-		url: mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "README.md"),
-	})
-}
-
-func TestPollerBaselinesFilesCreatedBeforeRuntimeLaunchIsCommitted(t *testing.T) {
-	workspace := t.TempDir()
-	sess := workerSession("ao-1", workspace, "")
-	sess.Metadata.RuntimeHandleID = ""
-	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{sess}}
-	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
-
-	if err := poller.Poll(context.Background()); err != nil {
-		t.Fatalf("seed session Poll: %v", err)
-	}
-	writeFile(t, filepath.Join(workspace, "README.md"), "# Existing documentation")
-	if err := poller.Poll(context.Background()); err != nil {
-		t.Fatalf("worktree population Poll: %v", err)
-	}
-
-	svc.sessions[0].Metadata.RuntimeHandleID = "ao-1"
-	if err := poller.Poll(context.Background()); err != nil {
-		t.Fatalf("launched session Poll: %v", err)
-	}
-	assertSets(t, svc.sets)
-
-	entry := filepath.Join(workspace, "README.md")
-	writeFile(t, entry, "# Changed documentation")
-	nextMod := time.Now().Add(2 * time.Second)
-	if err := os.Chtimes(entry, nextMod, nextMod); err != nil {
-		t.Fatalf("chtimes markdown: %v", err)
-	}
-	if err := poller.Poll(context.Background()); err != nil {
-		t.Fatalf("changed markdown Poll: %v", err)
-	}
-	assertSets(t, svc.sets, previewSet{
-		id:  "ao-1",
-		url: mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "README.md"),
+		url: mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "dist/index.html"),
 	})
 }
 
 func TestPollerDefersChangedEntryUntilWorkerFinishesActiveWork(t *testing.T) {
 	workspace := t.TempDir()
-	sess := workerSession("ao-1", workspace, "")
+	entry := filepath.Join(workspace, "index.html")
+	writeFile(t, entry, "<main>initial UI</main>")
+	target := mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "index.html")
+	sess := workerSession("ao-1", workspace, target)
 	sess.Activity.State = domain.ActivityActive
 	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{sess}}
 	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
@@ -147,7 +82,11 @@ func TestPollerDefersChangedEntryUntilWorkerFinishesActiveWork(t *testing.T) {
 	if err := poller.Poll(context.Background()); err != nil {
 		t.Fatalf("baseline Poll: %v", err)
 	}
-	writeFile(t, filepath.Join(workspace, "index.html"), "<main>finished UI</main>")
+	writeFile(t, entry, "<main>finished UI</main>")
+	nextMod := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(entry, nextMod, nextMod); err != nil {
+		t.Fatalf("chtimes entry: %v", err)
+	}
 	if err := poller.Poll(context.Background()); err != nil {
 		t.Fatalf("active Poll: %v", err)
 	}
@@ -159,13 +98,16 @@ func TestPollerDefersChangedEntryUntilWorkerFinishesActiveWork(t *testing.T) {
 	}
 	assertSets(t, svc.sets, previewSet{
 		id:  "ao-1",
-		url: mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "index.html"),
+		url: target,
 	})
 }
 
 func TestPollerDoesNotApplyPendingRefreshAfterExplicitPreviewChange(t *testing.T) {
 	workspace := t.TempDir()
-	sess := workerSession("ao-1", workspace, "")
+	entry := filepath.Join(workspace, "index.html")
+	writeFile(t, entry, "<main>initial UI</main>")
+	target := mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "index.html")
+	sess := workerSession("ao-1", workspace, target)
 	sess.Activity.State = domain.ActivityActive
 	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{sess}}
 	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
@@ -173,7 +115,11 @@ func TestPollerDoesNotApplyPendingRefreshAfterExplicitPreviewChange(t *testing.T
 	if err := poller.Poll(context.Background()); err != nil {
 		t.Fatalf("baseline Poll: %v", err)
 	}
-	writeFile(t, filepath.Join(workspace, "index.html"), "<main>finished UI</main>")
+	writeFile(t, entry, "<main>finished UI</main>")
+	nextMod := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(entry, nextMod, nextMod); err != nil {
+		t.Fatalf("chtimes entry: %v", err)
+	}
 	if err := poller.Poll(context.Background()); err != nil {
 		t.Fatalf("active Poll: %v", err)
 	}
@@ -187,42 +133,19 @@ func TestPollerDoesNotApplyPendingRefreshAfterExplicitPreviewChange(t *testing.T
 	assertSets(t, svc.sets)
 }
 
-func TestPollerUsesFirstExistingEntrypoint(t *testing.T) {
+func TestPollerDoesNotReplaceExplicitEntrypointWithAnotherStaticFile(t *testing.T) {
 	workspace := t.TempDir()
-	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
+	writeFile(t, filepath.Join(workspace, "public", "index.html"), "<main>public</main>")
+	writeFile(t, filepath.Join(workspace, "dist", "index.html"), "<main>dist</main>")
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "dist/index.html")}}
 	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
 
 	if err := poller.Poll(context.Background()); err != nil {
 		t.Fatalf("baseline Poll: %v", err)
 	}
-	writeFile(t, filepath.Join(workspace, "dist", "index.html"), "<main>dist</main>")
-	if err := poller.Poll(context.Background()); err != nil {
-		t.Fatalf("creation Poll: %v", err)
-	}
-
 	assertSets(t, svc.sets, previewSet{
 		id:  "ao-1",
 		url: mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "dist/index.html"),
-	})
-}
-
-func TestPollerPreservesEntrypointPriority(t *testing.T) {
-	workspace := t.TempDir()
-	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
-	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
-
-	if err := poller.Poll(context.Background()); err != nil {
-		t.Fatalf("baseline Poll: %v", err)
-	}
-	writeFile(t, filepath.Join(workspace, "public", "index.html"), "<main>public</main>")
-	writeFile(t, filepath.Join(workspace, "dist", "index.html"), "<main>dist</main>")
-	if err := poller.Poll(context.Background()); err != nil {
-		t.Fatalf("creation Poll: %v", err)
-	}
-
-	assertSets(t, svc.sets, previewSet{
-		id:  "ao-1",
-		url: mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "public/index.html"),
 	})
 }
 
@@ -230,7 +153,7 @@ func TestPollerRefreshesOnlyWhenEntrypointChanges(t *testing.T) {
 	workspace := t.TempDir()
 	entry := filepath.Join(workspace, "index.html")
 	writeFile(t, entry, "<main>v1</main>")
-	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "index.html")}}
 	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
 
 	if err := poller.Poll(context.Background()); err != nil {
@@ -239,8 +162,8 @@ func TestPollerRefreshesOnlyWhenEntrypointChanges(t *testing.T) {
 	if err := poller.Poll(context.Background()); err != nil {
 		t.Fatalf("second Poll: %v", err)
 	}
-	if len(svc.sets) != 0 {
-		t.Fatalf("sets after unchanged entry = %#v, want none", svc.sets)
+	if len(svc.sets) != 1 {
+		t.Fatalf("sets after unchanged entry = %#v, want one normalization", svc.sets)
 	}
 
 	writeFile(t, entry, "<main>v2 changed</main>")
@@ -252,8 +175,8 @@ func TestPollerRefreshesOnlyWhenEntrypointChanges(t *testing.T) {
 		t.Fatalf("third Poll: %v", err)
 	}
 
-	if len(svc.sets) != 1 {
-		t.Fatalf("sets after changed entry = %#v, want one refresh set", svc.sets)
+	if len(svc.sets) != 2 {
+		t.Fatalf("sets after changed entry = %#v, want normalization and refresh", svc.sets)
 	}
 }
 
@@ -299,7 +222,8 @@ func TestPollerRefreshesWhenMarkdownPreviewChanges(t *testing.T) {
 			workspace := t.TempDir()
 			entry := filepath.Join(workspace, "notes"+extension)
 			writeFile(t, entry, "# Version one")
-			svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
+			target := mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "notes"+extension)
+			svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, target)}}
 			poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
 
 			if err := poller.Poll(context.Background()); err != nil {
@@ -320,50 +244,11 @@ func TestPollerRefreshesWhenMarkdownPreviewChanges(t *testing.T) {
 			if len(svc.sets) != 1 {
 				t.Fatalf("sets after markdown change = %#v, want preview refresh", svc.sets)
 			}
-			if want := mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "notes"+extension); svc.sets[0].url != want {
-				t.Fatalf("refresh url = %q, want %q", svc.sets[0].url, want)
+			if svc.sets[0].url != target {
+				t.Fatalf("refresh url = %q, want %q", svc.sets[0].url, target)
 			}
 		})
 	}
-}
-
-func TestPollerShowsMarkdownCreatedAfterEmptyWorkspaceBaseline(t *testing.T) {
-	workspace := t.TempDir()
-	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
-	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
-
-	if err := poller.Poll(context.Background()); err != nil {
-		t.Fatalf("baseline Poll: %v", err)
-	}
-	writeFile(t, filepath.Join(workspace, "report.md"), "# New report")
-	if err := poller.Poll(context.Background()); err != nil {
-		t.Fatalf("creation Poll: %v", err)
-	}
-
-	assertSets(t, svc.sets, previewSet{
-		id:  "ao-1",
-		url: mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "report.md"),
-	})
-}
-
-func TestPollerShowsHTMLCreatedAfterExistingMarkdownBaseline(t *testing.T) {
-	workspace := t.TempDir()
-	writeFile(t, filepath.Join(workspace, "README.md"), "# Existing documentation")
-	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
-	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
-
-	if err := poller.Poll(context.Background()); err != nil {
-		t.Fatalf("baseline Poll: %v", err)
-	}
-	writeFile(t, filepath.Join(workspace, "index.html"), "<main>New UI</main>")
-	if err := poller.Poll(context.Background()); err != nil {
-		t.Fatalf("creation Poll: %v", err)
-	}
-
-	assertSets(t, svc.sets, previewSet{
-		id:  "ao-1",
-		url: mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "index.html"),
-	})
 }
 
 func TestPollerFingerprintsAssetsOnlyForActiveStaticPreview(t *testing.T) {
@@ -385,31 +270,6 @@ func TestPollerFingerprintsAssetsOnlyForActiveStaticPreview(t *testing.T) {
 	}
 	if got := poller.seen["ao-1"].signature; got != 0 {
 		t.Fatalf("external preview signature = %d, want no asset fingerprint", got)
-	}
-}
-
-func TestPollerDoesNotShowUnchangedMarkdownWhenSiblingAssetChanges(t *testing.T) {
-	workspace := t.TempDir()
-	writeFile(t, filepath.Join(workspace, "report.md"), "# Existing report")
-	asset := filepath.Join(workspace, "diagram.svg")
-	writeFile(t, asset, "<svg/>")
-	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
-	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
-
-	if err := poller.Poll(context.Background()); err != nil {
-		t.Fatalf("baseline Poll: %v", err)
-	}
-	writeFile(t, asset, "<svg><path/></svg>")
-	nextMod := time.Now().Add(2 * time.Second)
-	if err := os.Chtimes(asset, nextMod, nextMod); err != nil {
-		t.Fatalf("chtimes asset: %v", err)
-	}
-	if err := poller.Poll(context.Background()); err != nil {
-		t.Fatalf("asset Poll: %v", err)
-	}
-
-	if len(svc.sets) != 0 {
-		t.Fatalf("sets after sibling change = %#v, want unchanged markdown to remain hidden", svc.sets)
 	}
 }
 
@@ -494,9 +354,16 @@ func TestPollerRediscoverEntryAfterDeleteAndRecreate(t *testing.T) {
 	}
 
 	// Recreate the entry — poller must re-discover.
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("third Poll (still deleted): %v", err)
+	}
+	if len(svc.sets) != 1 {
+		t.Fatalf("sets while entry remains deleted = %#v, want no repeated clear", svc.sets)
+	}
+
 	writeFile(t, entry, "<main>v2</main>")
 	if err := poller.Poll(context.Background()); err != nil {
-		t.Fatalf("third Poll (recreate): %v", err)
+		t.Fatalf("fourth Poll (recreate): %v", err)
 	}
 	if len(svc.sets) != 2 {
 		t.Fatalf("sets after recreate = %#v, want clear + rediscover", svc.sets)
@@ -504,6 +371,34 @@ func TestPollerRediscoverEntryAfterDeleteAndRecreate(t *testing.T) {
 	if svc.sets[1].url != wantURL {
 		t.Fatalf("rediscovered set.url = %q, want %q", svc.sets[1].url, wantURL)
 	}
+}
+
+func TestPollerDoesNotRestoreDeletedEntryOverExplicitExternalPreview(t *testing.T) {
+	workspace := t.TempDir()
+	entry := filepath.Join(workspace, "index.html")
+	writeFile(t, entry, "<main>v1</main>")
+	target := mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "index.html")
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, target)}}
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
+
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("baseline Poll: %v", err)
+	}
+	if err := os.Remove(entry); err != nil {
+		t.Fatalf("remove index.html: %v", err)
+	}
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("delete Poll: %v", err)
+	}
+	assertSets(t, svc.sets, previewSet{id: "ao-1", url: ""})
+
+	svc.sessions[0].Metadata.PreviewURL = "http://127.0.0.1:4173/app"
+	svc.sessions[0].Metadata.PreviewRevision++
+	writeFile(t, entry, "<main>v2</main>")
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("external preview Poll: %v", err)
+	}
+	assertSets(t, svc.sets, previewSet{id: "ao-1", url: ""})
 }
 
 func TestPollerDoesNotRestoreClearedPreviewAfterRestart(t *testing.T) {

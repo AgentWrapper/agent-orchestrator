@@ -87,6 +87,8 @@ type Config struct {
 	Logger *slog.Logger
 	// CacheMax bounds each in-memory ETag/review cache. Zero uses DefaultCacheMax.
 	CacheMax int
+	// IdentityResolver resolves the active SCM account lazily. Nil preserves branch-based discovery.
+	IdentityResolver ports.SCMIdentityResolver
 }
 
 // ObserverCache stores provider ETags and review polling timestamps in memory.
@@ -152,6 +154,8 @@ type Observer struct {
 	credentialsChecked bool
 	// disabled is set after the credential gate reports unavailable credentials.
 	disabled bool
+	// identityResolver is the explicitly wired source of the active SCM account.
+	identityResolver ports.SCMIdentityResolver
 	// Cache holds bounded in-memory provider ETags and review poll timestamps.
 	Cache ObserverCache
 }
@@ -159,7 +163,7 @@ type Observer struct {
 // New constructs an Observer with default cadence/cache settings for zero
 // values in cfg.
 func New(provider Provider, store Store, lifecycle Lifecycle, cfg Config) *Observer {
-	o := &Observer{provider: provider, store: store, lifecycle: lifecycle, tick: cfg.Tick, reviewInterval: cfg.ReviewInterval, clock: cfg.Clock, logger: cfg.Logger, Cache: newCache(cfg.CacheMax)}
+	o := &Observer{provider: provider, store: store, lifecycle: lifecycle, tick: cfg.Tick, reviewInterval: cfg.ReviewInterval, clock: cfg.Clock, logger: cfg.Logger, identityResolver: cfg.IdentityResolver, Cache: newCache(cfg.CacheMax)}
 	if o.tick <= 0 {
 		o.tick = DefaultTickInterval
 	}
@@ -714,6 +718,7 @@ func pendingRepoRefreshes(guards map[string]repoGuardState) map[string]bool {
 // NotModified against a known ETag are skipped, since nothing new can have
 // appeared since the last poll.
 func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRepo, subjects map[string]*subject, guards map[string]repoGuardState, now time.Time, markRepoFailed func(ports.SCMRepo)) {
+	identity, identityKnown := o.authenticatedIdentity(ctx)
 	byRepo := map[string][]sessionRepo{}
 	repos := map[string]ports.SCMRepo{}
 	for _, sr := range sessionRepos {
@@ -739,6 +744,9 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 		}
 		for _, pr := range pulls {
 			if pr.Number <= 0 || pr.SourceBranch == "" {
+				continue
+			}
+			if identityKnown && !strings.EqualFold(strings.TrimSpace(pr.Author), identity.Login) {
 				continue
 			}
 			key := prKey(repo, pr.Number)
@@ -794,6 +802,23 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 	}
 }
 
+func (o *Observer) authenticatedIdentity(ctx context.Context) (ports.SCMIdentity, bool) {
+	if o.identityResolver == nil {
+		return ports.SCMIdentity{}, false
+	}
+	identity, err := o.identityResolver.AuthenticatedIdentity(ctx)
+	if err != nil {
+		o.logger.Debug("scm observer: authenticated identity unavailable; preserving branch-based discovery", "err", err)
+		return ports.SCMIdentity{}, false
+	}
+	identity.Login = strings.TrimSpace(identity.Login)
+	if !identity.Human || identity.Login == "" {
+		o.logger.Debug("scm observer: authenticated human identity unavailable; preserving branch-based discovery")
+		return ports.SCMIdentity{}, false
+	}
+	return identity, true
+}
+
 // matchSession picks the session that owns sourceBranch. A session owns the
 // branch when it is an exact match or a stacked descendant ("branch/..."). The
 // default worker branch is a leaf named "<namespace>/root"; for that shape the
@@ -821,6 +846,11 @@ func candidatesForHeadRepo(candidates []sessionRepo, headRepo string) []sessionR
 }
 
 func matchSession(candidates []sessionRepo, sourceBranch string) (sessionRepo, bool) {
+	for _, sr := range candidates {
+		if sr.branch != "" && sr.branch == sourceBranch {
+			return sr, true
+		}
+	}
 	var best sessionRepo
 	bestLen := -1
 	for _, sr := range candidates {

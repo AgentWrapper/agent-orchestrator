@@ -777,6 +777,17 @@ describe("XtermTerminal", () => {
 		open.mockRestore();
 	});
 
+	it("opens web links in the system browser when no AO browser handler is available", () => {
+		const openExternal = vi.fn().mockResolvedValue(undefined);
+		window.ao!.app.openExternal = openExternal;
+		render(<XtermTerminal theme="dark" />);
+
+		expect(state.linkHandler).toBeTypeOf("function");
+		state.linkHandler!({} as MouseEvent, "https://example.com");
+
+		expect(openExternal).toHaveBeenCalledWith("https://example.com");
+	});
+
 	it("routes OSC 8 web links to the AO browser without a system-browser window", () => {
 		const open = vi.spyOn(window, "open").mockReturnValue(null);
 		const onLinkOpen = vi.fn();

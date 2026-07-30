@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"time"
 
@@ -28,8 +27,10 @@ type PollerConfig struct {
 	Logger   *slog.Logger
 }
 
-// Poller watches active worker workspaces for static frontend entrypoints and
-// persists preview URL refreshes through the normal session service path.
+// Poller watches explicitly selected workspace previews and persists refreshes
+// through the normal session service path. It never chooses a preview for a
+// fresh worker: selection belongs to `ao preview`, a managed server start, or
+// deliberate user navigation.
 type Poller struct {
 	source   sessionPreviewSource
 	setter   previewSetter
@@ -44,27 +45,15 @@ type entryState struct {
 	signature    uint64
 	entryModUnix int64
 	entrySize    int64
-	// initializing marks the seed-session window before the runtime launch is
-	// committed. Git may be populating the worktree during this interval, so
-	// files that appear are inherited baseline content, not worker changes.
-	initializing bool
 	// pending records a relevant file change observed while the worker was
 	// active. The final target is persisted only after the worker reaches an
 	// end-of-work activity state.
 	pending                bool
 	pendingPreviewURL      string
 	pendingPreviewRevision int64
-	// missing baselines a workspace before any previewable file exists. A file
-	// created later is a real change, unlike a Markdown file already present
-	// when the daemon first observes the session.
-	missing bool
-	// workspaceMissing distinguishes an empty, materialized workspace from the
-	// short session-creation window before its worktree exists. Files inherited
-	// when the worktree first appears are baseline content, not session changes.
-	workspaceMissing bool
 	// cleared is set when the poller itself cleared the preview URL because the
-	// workspace entry was missing. When the file reappears, shouldRefresh uses
-	// this to re-discover even though the revision was bumped by the clear.
+	// explicitly selected workspace entry was missing. The retained path lets
+	// the poller restore that same entry if it reappears.
 	cleared bool
 }
 
@@ -132,49 +121,34 @@ func (p *Poller) Poll(ctx context.Context) error {
 		if sess.Kind != domain.KindWorker {
 			continue
 		}
-		if strings.TrimSpace(sess.Metadata.RuntimeHandleID) == "" {
-			p.seen[sess.ID] = entryState{initializing: true}
-			continue
-		}
 		storedEntry, workspaceOwned := StoredWorkspaceEntry(sess.Metadata.PreviewURL, sess.ID)
-		entry, ok := Entry{}, false
-		if workspaceOwned {
-			entry, ok = EntryAtPath(sess.Metadata.WorkspacePath, storedEntry)
-		}
-		if !ok {
-			// A session the user has never explicitly previewed
-			// (workspaceOwned == false) is only auto-previewed when it has a
-			// real static-frontend entrypoint (index.html variants). The
-			// mostRecentPreviewable .md/.html fallback is intentionally NOT
-			// applied here, otherwise every new session in a Markdown-rich repo
-			// auto-opens its browser to an arbitrary repo doc. Once a session
-			// has been explicitly previewed (workspaceOwned == true), full
-			// DiscoverEntry — including the document fallback — keeps the
-			// preview fresh. See issue #2859.
-			if workspaceOwned {
-				entry, ok = DiscoverEntry(sess.Metadata.WorkspacePath)
-			} else {
-				entry, ok = DiscoverWebEntrypoint(sess.Metadata.WorkspacePath)
-				if !ok {
-					// Track fallback documents without initially surfacing an
-					// arbitrary repo doc. A later creation or edit is a real
-					// session change and may then open the preview.
-					entry, ok = DiscoverEntry(sess.Metadata.WorkspacePath)
-				}
+		previous, seenBefore := p.seen[sess.ID]
+		restoringCleared := false
+		if !workspaceOwned {
+			// Only restore an entry after the poller itself cleared it because
+			// the selected file temporarily disappeared. A blank fresh session
+			// or an explicit user clear must remain blank.
+			if strings.TrimSpace(sess.Metadata.PreviewURL) != "" ||
+				!seenBefore ||
+				!previous.cleared ||
+				previous.path == "" {
+				delete(p.seen, sess.ID)
+				continue
 			}
+			storedEntry = previous.path
+			workspaceOwned = true
+			restoringCleared = true
 		}
+		entry, ok := EntryAtPath(sess.Metadata.WorkspacePath, storedEntry)
 		if !ok {
 			if workspaceOwned {
-				if _, err := p.setter.SetPreview(ctx, sess.ID, ""); err != nil {
-					p.logger.Error("preview poller: failed to clear stale preview",
-						"session", sess.ID, "err", err)
+				if !restoringCleared {
+					if _, err := p.setter.SetPreview(ctx, sess.ID, ""); err != nil {
+						p.logger.Error("preview poller: failed to clear stale preview",
+							"session", sess.ID, "err", err)
+					}
 				}
-				p.seen[sess.ID] = entryState{cleared: true}
-			} else if previous, exists := p.seen[sess.ID]; !exists || !previous.cleared {
-				p.seen[sess.ID] = entryState{
-					missing:          true,
-					workspaceMissing: !workspaceDirectoryExists(sess.Metadata.WorkspacePath),
-				}
+				p.seen[sess.ID] = entryState{path: storedEntry, cleared: true}
 			}
 			continue
 		}
@@ -189,20 +163,16 @@ func (p *Poller) Poll(ctx context.Context) error {
 		// static preview is active. Hidden entries and external dev servers do
 		// not need a full workspace walk on every poll.
 		state := stateFor(entry, workspaceOwned && current == target)
-		previous, seenBefore := p.seen[sess.ID]
 		if seenBefore && previous == state {
 			continue
 		}
-		entryChanged := seenBefore &&
-			(previous.path != state.path ||
-				previous.entryModUnix != state.entryModUnix ||
-				previous.entrySize != state.entrySize)
 		pending := seenBefore && previous.pending
-		if !p.shouldRefresh(sess, target, seenBefore, workspaceOwned, entryChanged, pending) {
+		if !p.shouldRefresh(sess, target, seenBefore, workspaceOwned, pending) {
 			p.seen[sess.ID] = state
 			continue
 		}
-		if !previewReady(sess.Activity.State) {
+		automaticRefresh := current == target || restoringCleared || pending
+		if automaticRefresh && !previewReady(sess.Activity.State) {
 			state.pending = true
 			state.pendingPreviewURL = current
 			state.pendingPreviewRevision = sess.Metadata.PreviewRevision
@@ -229,7 +199,6 @@ func (p *Poller) shouldRefresh(
 	target string,
 	seenBefore bool,
 	workspaceOwned bool,
-	entryChanged bool,
 	pending bool,
 ) bool {
 	if pending {
@@ -242,30 +211,12 @@ func (p *Poller) shouldRefresh(
 	}
 	current := strings.TrimSpace(sess.Metadata.PreviewURL)
 	if current == "" {
-		if !seenBefore {
-			return false
-		}
-		previous := p.seen[sess.ID]
-		if previous.initializing {
-			return false
-		}
-		if previous.workspaceMissing {
-			return false
-		}
-		if entryChanged {
-			return true
-		}
-		return previous.cleared || previous.missing
+		return seenBefore && p.seen[sess.ID].cleared
 	}
 	if current == target {
 		return seenBefore
 	}
 	return workspaceOwned
-}
-
-func workspaceDirectoryExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
 }
 
 func previewReady(state domain.ActivityState) bool {

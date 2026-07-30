@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import {
 	ArrowLeft,
 	ArrowRight,
+	Check,
 	ExternalLink,
 	Globe2,
+	Layers3,
 	Maximize2,
 	Minimize2,
 	MousePointer2,
@@ -16,6 +18,14 @@ import { formatBrowserAnnotationMessage, type BrowserAnnotationSubmitPayload } f
 import type { WorkspaceSession } from "../types/workspace";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuLabel,
+	DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
+import { openLinkInSystemBrowser } from "../lib/external-link-policy";
 import { cn } from "../lib/utils";
 
 type BrowserPanelProps = {
@@ -54,9 +64,12 @@ export function useBrowserAnnotationQueue({
 	const annotationSendingRef = useRef(false);
 	const sessionIdRef = useRef(sessionId ?? "");
 	const generationRef = useRef(0);
+	const sentTimerRef = useRef<number | null>(null);
 
 	const resetQueue = useCallback(() => {
 		generationRef.current += 1;
+		if (sentTimerRef.current !== null) window.clearTimeout(sentTimerRef.current);
+		sentTimerRef.current = null;
 		annotationQueueRef.current = [];
 		annotationSendingRef.current = false;
 		setState({ status: "idle", error: "", queuedCount: 0 });
@@ -107,7 +120,17 @@ export function useBrowserAnnotationQueue({
 
 				const queuedCount = annotationQueueRef.current.length;
 				setState({ status: queuedCount > 0 ? "queued" : "sent", error: "", queuedCount });
-				if (queuedCount > 0) drainAnnotationQueue();
+				if (queuedCount > 0) {
+					drainAnnotationQueue();
+				} else {
+					if (sentTimerRef.current !== null) window.clearTimeout(sentTimerRef.current);
+					sentTimerRef.current = window.setTimeout(() => {
+						sentTimerRef.current = null;
+						setState((current) =>
+							current.status === "sent" ? { status: "idle", error: "", queuedCount: 0 } : current,
+						);
+					}, 2_000);
+				}
 			}
 		})();
 	}, []);
@@ -121,6 +144,13 @@ export function useBrowserAnnotationQueue({
 		if (navUrl) return;
 		resetQueue();
 	}, [navUrl, resetQueue]);
+
+	useEffect(
+		() => () => {
+			if (sentTimerRef.current !== null) window.clearTimeout(sentTimerRef.current);
+		},
+		[],
+	);
 
 	const beginPicking = useCallback(() => {
 		setState((current) => ({ ...current, status: "picking", error: "" }));
@@ -206,6 +236,12 @@ export function BrowserPanelView({
 		goForward,
 		reload,
 		stop,
+		tabs,
+		activeTabId,
+		tabNotice,
+		selectTab,
+		closeTab,
+		agentBrowserActive,
 		annotationMode,
 		setAnnotationMode,
 	} = browserView;
@@ -245,7 +281,7 @@ export function BrowserPanelView({
 		const url = navState.url.trim();
 		if (!url) return;
 		if (window.ao?.app.openExternal) {
-			void window.ao.app.openExternal(url);
+			void openLinkInSystemBrowser(url);
 			return;
 		}
 		window.open(url, "_blank", "noopener,noreferrer");
@@ -357,6 +393,10 @@ export function BrowserPanelView({
 					>
 						{annotationStatusLabel}
 					</span>
+				) : agentBrowserActive ? (
+					<span className="browser-panel__annotation-status" role="status" aria-live="polite">
+						Agent using browser
+					</span>
 				) : null}
 				<div className="relative min-w-0 flex-1">
 					<Globe2
@@ -371,6 +411,59 @@ export function BrowserPanelView({
 						value={urlInput}
 					/>
 				</div>
+				{tabNotice ? (
+					<span className="max-w-24 truncate text-caption text-accent" role="status">
+						{tabNotice}
+					</span>
+				) : null}
+				<DropdownMenu modal={false}>
+					<DropdownMenuTrigger asChild>
+						<Button
+							aria-label={`Browser tabs (${tabs.length})`}
+							className={cn("gap-1 px-2", tabs.length > 1 && "bg-accent-weak text-accent")}
+							disabled={tabs.length === 0}
+							size="sm"
+							title={`${tabs.length} browser ${tabs.length === 1 ? "tab" : "tabs"}`}
+							type="button"
+							variant="ghost"
+						>
+							<Layers3 aria-hidden="true" className="size-icon-base" />
+							<span className="font-mono text-caption">{tabs.length}</span>
+						</Button>
+					</DropdownMenuTrigger>
+					<DropdownMenuContent align="end" className="w-72" sideOffset={8}>
+						<DropdownMenuLabel>Browser tabs</DropdownMenuLabel>
+						{tabs.map((tab) => {
+							const label = browserTabLabel(tab.title, tab.url);
+							return (
+								<div className="flex min-w-0 items-center gap-0.5" key={tab.id}>
+									<DropdownMenuItem
+										className="min-w-0 flex-1 py-2"
+										onSelect={() => void selectTab(tab.id)}
+										textValue={`${label.title} ${label.subtitle}`}
+									>
+										<span className="flex size-4 shrink-0 items-center justify-center">
+											{tab.id === activeTabId ? <Check aria-hidden="true" className="text-accent" /> : null}
+										</span>
+										<span className="min-w-0 flex-1">
+											<span className="block truncate text-xs text-foreground">{label.title}</span>
+											<span className="block truncate font-mono text-caption text-passive">{label.subtitle}</span>
+										</span>
+									</DropdownMenuItem>
+									<DropdownMenuItem
+										aria-label={`Close tab ${label.title}`}
+										className="size-8 shrink-0 justify-center px-0"
+										disabled={tabs.length === 1}
+										onSelect={() => void closeTab(tab.id)}
+										title={tabs.length === 1 ? "The only tab cannot be closed" : `Close ${label.title}`}
+									>
+										<X aria-hidden="true" className="size-icon-sm" />
+									</DropdownMenuItem>
+								</div>
+							);
+						})}
+					</DropdownMenuContent>
+				</DropdownMenu>
 				<Button
 					aria-label="Open externally"
 					disabled={!navState.url}
@@ -395,35 +488,45 @@ export function BrowserPanelView({
 					)}
 				</Button>
 			</form>
-			<div className="flex min-h-0 flex-1 overflow-hidden bg-surface">
-				<div className="relative h-full w-full min-w-0 overflow-hidden bg-background">
-					<div className="absolute inset-0 min-h-px min-w-px" ref={slotRef} />
-					{mirrorStream ? (
-						<MirrorVideo stream={mirrorStream} />
-					) : mirrorUrl ? (
-						<img alt="" className="absolute inset-0 h-full w-full object-cover" src={mirrorUrl} />
-					) : null}
-					{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
-					{navState.url === "" ? (
-						<div className="pointer-events-none absolute inset-0 grid place-items-center p-5 text-center font-mono text-xs text-passive">
-							<p>Enter a URL or click one in the terminal.</p>
-						</div>
-					) : null}
-					{navState.error ? (
-						<p
-							className={cn(
-								"absolute inset-x-2.5 bottom-2.5 m-0 border border-error/35 bg-error/8 px-2.5 py-2",
-								"rounded-md text-xs text-destructive",
-							)}
-							data-testid="browser-preview-error"
-						>
-							{navState.error}
-						</p>
-					) : null}
-				</div>
+			<div className="relative min-h-0 flex-1 overflow-hidden bg-background">
+				<div className="absolute inset-0 min-h-px min-w-px" ref={slotRef} />
+				{mirrorStream ? (
+					<MirrorVideo stream={mirrorStream} />
+				) : mirrorUrl ? (
+					<img alt="" className="absolute inset-0 h-full w-full object-cover" src={mirrorUrl} />
+				) : null}
+				{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
+				{navState.url === "" ? (
+					<div className="pointer-events-none absolute inset-0 grid place-items-center p-5 text-center font-mono text-xs text-passive">
+						<p>Enter a URL or click one in the terminal.</p>
+					</div>
+				) : null}
+				{navState.error ? (
+					<p
+						className={cn(
+							"absolute inset-x-2.5 bottom-2.5 m-0 border border-error/35 bg-error/8 px-2.5 py-2",
+							"rounded-md text-xs text-destructive",
+						)}
+						data-testid="browser-preview-error"
+					>
+						{navState.error}
+					</p>
+				) : null}
 			</div>
 		</div>
 	);
+}
+
+function browserTabLabel(title: string, url: string): { title: string; subtitle: string } {
+	const cleanTitle = title.trim();
+	if (!url) return { title: cleanTitle || "New tab", subtitle: "Blank page" };
+	try {
+		const parsed = new URL(url);
+		const subtitle = parsed.protocol === "file:" ? parsed.pathname.split("/").filter(Boolean).at(-1) || url : parsed.host;
+		return { title: cleanTitle || subtitle, subtitle };
+	} catch {
+		return { title: cleanTitle || url, subtitle: url };
+	}
 }
 
 function MirrorVideo({ stream }: { stream: MediaStream }) {
