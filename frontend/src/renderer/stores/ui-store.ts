@@ -2,18 +2,15 @@ import { create } from "zustand";
 import type { TerminalTarget } from "../types/terminal";
 import {
 	readStoredThemePreference,
-	readStoredThemeStyle,
 	resolveTheme,
 	systemTheme,
 	themeStorageKey,
-	themeStyleStorageKey,
 	type Theme,
 	type ThemePreference,
-	type ThemeStyle,
 } from "../lib/theme";
 
-export type { Theme, ThemePreference, ThemeStyle } from "../lib/theme";
-export { readStoredThemePreference, readStoredThemeStyle, resolveTheme } from "../lib/theme";
+export type { Theme, ThemePreference } from "../lib/theme";
+export { readStoredThemePreference, resolveTheme } from "../lib/theme";
 
 /** Worker detail view toggles — Changes (Git rail) is the default. */
 export type WorkbenchTab = "changes" | "files" | "terminal";
@@ -29,20 +26,6 @@ export type InspectorSessionState = {
 	browserUnseen?: boolean;
 };
 
-export type SettingsModal =
-	| { scope: "global" }
-	| {
-			scope: "project";
-			projectId: string;
-	  };
-
-export type DevSettings = {
-	/** Number of fixture sessions to generate per attention zone (0 = off). */
-	fixtureCount: number;
-	/** Number of minutes of random activity to spread sessions across. */
-	randomSpreadMinutes: number;
-};
-
 // Selection (which project/session is open) now lives in the URL — the router
 // is the single source of truth, read via route params. This store holds only
 // ephemeral UI: theme, sidebar collapse, command palette, per-session inspector
@@ -51,13 +34,8 @@ type UiState = {
 	workbenchTab: WorkbenchTab;
 	isSidebarOpen: boolean;
 	inspectorSessions: Record<string, InspectorSessionState>;
-	/** Extra worker tabs pinned to each originating session's terminal strip. */
-	sessionTabsByOwner: Record<string, string[]>;
 	isCommandPaletteOpen: boolean;
-	settingsModal: SettingsModal | null;
 	themePreference: ThemePreference;
-	/** Visual palette, independent of the light/dark themePreference above. */
-	themeStyle: ThemeStyle;
 	/** Resolved light/dark for React consumers; may track OS while preference is system. */
 	resolvedTheme: Theme;
 	/** When true, developer-only surfaces (e.g. Feature Releases) are revealed. Default off. */
@@ -89,12 +67,8 @@ type UiState = {
 	// session. Surfaces outside the session subtree (the notification runtime)
 	// need that distinction, and SessionView's own target is local state.
 	visibleTerminalKindBySession: Record<string, TerminalTarget["kind"]>;
-	// Dev Settings (only visible when import.meta.env.DEV is true).
-	// Toggle to control board fixture injection and board filler behaviour.
-	devSettings: DevSettings;
 	setWorkbenchTab: (tab: WorkbenchTab) => void;
 	setThemePreference: (theme: ThemePreference) => void;
-	setThemeStyle: (style: ThemeStyle) => void;
 	setDeveloperMode: (enabled: boolean) => void;
 	/** Refresh resolvedTheme from OS without writing light/dark to storage. */
 	syncSystemTheme: () => void;
@@ -102,14 +76,9 @@ type UiState = {
 	setInspectorOpen: (sessionId: string, isOpen: boolean) => void;
 	toggleInspector: (sessionId: string) => void;
 	setInspectorView: (sessionId: string, view: InspectorView) => void;
-	addSessionTab: (ownerSessionId: string, sessionId: string) => void;
-	removeSessionTab: (ownerSessionId: string, sessionId: string) => void;
 	markInspectorPreviewSeen: (sessionId: string, previewKey: string) => void;
 	setBrowserUnseen: (sessionId: string, unseen: boolean) => void;
 	setCommandPaletteOpen: (open: boolean) => void;
-	openGlobalSettings: () => void;
-	openProjectSettings: (projectId: string) => void;
-	closeSettings: () => void;
 	setProjectRestarting: (projectId: string, restarting: boolean) => void;
 	setOrchestratorReplacementError: (projectId: string, message: string | null) => void;
 	setOrchestratorStartupError: (projectId: string, message: string | null) => void;
@@ -119,14 +88,10 @@ type UiState = {
 	setActiveShellTerminal: (handleId: string | null) => void;
 	setVisibleTerminalKind: (sessionId: string, kind: TerminalTarget["kind"]) => void;
 	clearVisibleTerminalKind: (sessionId: string) => void;
-	setDevSettings: (devSettings: DevSettings) => void;
 };
 
 const sidebarStorageKey = "ao.sidebar.open";
 const developerModeStorageKey = "ao.developerMode";
-const sessionTabsStorageKey = "ao.sessionTabs";
-const devSettingsStorageKey = "ao.devSettings";
-const defaultDevSettings: DevSettings = { fixtureCount: 8, randomSpreadMinutes: 120 };
 
 function getLocalStorage() {
 	if (typeof window === "undefined" || !window.localStorage) return null;
@@ -141,61 +106,20 @@ function initialDeveloperMode() {
 	return getLocalStorage()?.getItem(developerModeStorageKey) === "true";
 }
 
-function initialDevSettings(): DevSettings {
-	try {
-		const raw = getLocalStorage()?.getItem(devSettingsStorageKey);
-		if (raw) {
-			const parsed = JSON.parse(raw) as Partial<DevSettings>;
-			return {
-				fixtureCount: typeof parsed.fixtureCount === "number" ? parsed.fixtureCount : defaultDevSettings.fixtureCount,
-				randomSpreadMinutes: typeof parsed.randomSpreadMinutes === "number" ? parsed.randomSpreadMinutes : defaultDevSettings.randomSpreadMinutes,
-			};
-		}
-	} catch { /* use defaults */ }
-	return defaultDevSettings;
-}
-
-function initialSessionTabs(): Record<string, string[]> {
-	const raw = getLocalStorage()?.getItem(sessionTabsStorageKey);
-	if (!raw) return {};
-	try {
-		const parsed = JSON.parse(raw) as unknown;
-		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-		return Object.fromEntries(
-			Object.entries(parsed).flatMap(([ownerSessionId, sessionIds]) =>
-				Array.isArray(sessionIds) && sessionIds.every((sessionId) => typeof sessionId === "string")
-					? [[ownerSessionId, sessionIds]]
-					: [],
-			),
-		);
-	} catch {
-		return {};
-	}
-}
-
-function storeSessionTabs(sessionTabsByOwner: Record<string, string[]>) {
-	getLocalStorage()?.setItem(sessionTabsStorageKey, JSON.stringify(sessionTabsByOwner));
-}
-
 function inspectorState(sessions: Record<string, InspectorSessionState>, sessionId: string): InspectorSessionState {
 	return sessions[sessionId] ?? { isOpen: true, view: "summary" };
 }
 
 const initialThemePreference = readStoredThemePreference();
-const initialThemeStyle = readStoredThemeStyle();
 
 export const useUiStore = create<UiState>((set) => ({
 	workbenchTab: "changes",
 	isSidebarOpen: initialSidebarOpen(),
 	inspectorSessions: {},
-	sessionTabsByOwner: initialSessionTabs(),
 	isCommandPaletteOpen: false,
-	settingsModal: null,
 	themePreference: initialThemePreference,
-	themeStyle: initialThemeStyle,
 	resolvedTheme: resolveTheme(initialThemePreference),
 	developerMode: initialDeveloperMode(),
-	devSettings: initialDevSettings(),
 	restartingProjectIds: new Set<string>(),
 	orchestratorReplacementErrors: {},
 	orchestratorStartupErrors: {},
@@ -209,17 +133,9 @@ export const useUiStore = create<UiState>((set) => ({
 		getLocalStorage()?.setItem(themeStorageKey, themePreference);
 		set({ themePreference, resolvedTheme: resolveTheme(themePreference) });
 	},
-	setThemeStyle: (themeStyle) => {
-		getLocalStorage()?.setItem(themeStyleStorageKey, themeStyle);
-		set({ themeStyle });
-	},
 	setDeveloperMode: (developerMode) => {
 		getLocalStorage()?.setItem(developerModeStorageKey, String(developerMode));
 		set({ developerMode });
-	},
-	setDevSettings: (devSettings) => {
-		getLocalStorage()?.setItem(devSettingsStorageKey, JSON.stringify(devSettings));
-		set({ devSettings });
 	},
 	syncSystemTheme: () =>
 		set((state) => {
@@ -265,28 +181,6 @@ export const useUiStore = create<UiState>((set) => ({
 				},
 			};
 		}),
-	addSessionTab: (ownerSessionId, sessionId) =>
-		set((state) => {
-			const current = state.sessionTabsByOwner[ownerSessionId] ?? [];
-			if (ownerSessionId === sessionId || current.includes(sessionId)) return state;
-			const sessionTabsByOwner = {
-				...state.sessionTabsByOwner,
-				[ownerSessionId]: [...current, sessionId],
-			};
-			storeSessionTabs(sessionTabsByOwner);
-			return { sessionTabsByOwner };
-		}),
-	removeSessionTab: (ownerSessionId, sessionId) =>
-		set((state) => {
-			const current = state.sessionTabsByOwner[ownerSessionId] ?? [];
-			if (!current.includes(sessionId)) return state;
-			const remaining = current.filter((id) => id !== sessionId);
-			const sessionTabsByOwner = { ...state.sessionTabsByOwner };
-			if (remaining.length > 0) sessionTabsByOwner[ownerSessionId] = remaining;
-			else delete sessionTabsByOwner[ownerSessionId];
-			storeSessionTabs(sessionTabsByOwner);
-			return { sessionTabsByOwner };
-		}),
 	markInspectorPreviewSeen: (sessionId, previewKey) =>
 		set((state) => {
 			const current = inspectorState(state.inspectorSessions, sessionId);
@@ -309,9 +203,6 @@ export const useUiStore = create<UiState>((set) => ({
 			};
 		}),
 	setCommandPaletteOpen: (isCommandPaletteOpen) => set({ isCommandPaletteOpen }),
-	openGlobalSettings: () => set({ settingsModal: { scope: "global" } }),
-	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),
-	closeSettings: () => set({ settingsModal: null }),
 	setProjectRestarting: (projectId, restarting) =>
 		set((state) => {
 			const restartingProjectIds = new Set(state.restartingProjectIds);
