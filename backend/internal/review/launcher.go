@@ -133,6 +133,7 @@ func (l *agentLauncher) invocation(spec LaunchSpec) ports.ReviewInvocation {
 		ReviewQueue:     spec.ReviewQueue,
 		ReviewIndex:     spec.ReviewIndex,
 		WorkspacePath:   spec.WorkspacePath,
+		DataDir:         l.dataDir,
 		Prompt:          prompt,
 		SystemPrompt:    systemPrompt,
 	}

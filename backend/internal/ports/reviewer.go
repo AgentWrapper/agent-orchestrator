@@ -66,6 +66,9 @@ type ReviewInvocation struct {
 	ReviewIndex int
 	// WorkspacePath is the worker's checkout the reviewer reads.
 	WorkspacePath string
+	// DataDir is AO's owned state root. Reviewer prelaunch hooks may use it for
+	// profile installation but must not write outside AO/workspace boundaries.
+	DataDir string
 	// Prompt and SystemPrompt are the review instructions AO authored centrally,
 	// mirroring the worker's LaunchConfig.Prompt / SystemPrompt split: SystemPrompt
 	// carries the standing reviewer role, Prompt the per-pass task. A prompt-driven
