@@ -363,6 +363,17 @@ describe("SessionFilesView", () => {
 		expect(maximizedList.parentElement).not.toHaveClass("max-w-[1200px]");
 	});
 
+	it("uses the full session panel width while maximized", async () => {
+		const { unmount } = renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		const railList = await screen.findByRole("list");
+		expect(railList.parentElement).toHaveClass("max-w-[1200px]");
+		unmount();
+
+		renderWithQuery(<SessionFilesView isMaximized onClose={vi.fn()} sessionId="sess-1" />);
+		const maximizedList = await screen.findByRole("list");
+		expect(maximizedList.parentElement).not.toHaveClass("max-w-[1200px]");
+	});
+
 	it("lets the caller toggle between rail and maximized layouts", async () => {
 		const onToggleMaximized = vi.fn();
 		renderWithQuery(<SessionFilesView onClose={vi.fn()} onToggleMaximized={onToggleMaximized} sessionId="sess-1" />);
