@@ -17,6 +17,7 @@ const REVIEWER_AGENT_PRIORITY_RANK = new Map<string, number>(
 export function ReviewerSelect({
 	value,
 	onChange,
+	triggerClassName,
 	// The same picker serves the project default and a one-off override for the
 	// next run, so the caller names it.
 	ariaLabel = "Default reviewer agent",
@@ -30,6 +31,7 @@ export function ReviewerSelect({
 }: {
 	value: string;
 	onChange: (value: string) => void;
+	triggerClassName?: string;
 	ariaLabel?: string;
 	defaultHarness?: string;
 	disabled?: boolean;
@@ -71,6 +73,7 @@ export function ReviewerSelect({
 			menuClassName="reviews-agent-menu-surface"
 			menuItemClassName="reviews-agent-menu-item"
 			menuAlign="start"
+			triggerClassName={triggerClassName}
 			onChange={(v) => onChange(v === "__default__" ? "" : v)}
 			renderTrigger={(selected) => (
 				<>

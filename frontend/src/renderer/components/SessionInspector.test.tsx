@@ -832,7 +832,7 @@ describe("SessionInspector reviews tab", () => {
 			// A run in flight gets its own live strip naming the harness, not just a
 			// word on the button.
 			if (status === "running") {
-				expect(screen.getByText("codex is reviewing this change…")).toBeInTheDocument();
+				expect(screen.getByText("Review in progress · codex")).toBeInTheDocument();
 			} else {
 				expect(screen.queryByText(/is reviewing this change/)).not.toBeInTheDocument();
 			}
@@ -949,8 +949,8 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open"), pr(4, "open")])} />);
 		await openReviewsTab();
 
-		expect(await screen.findByText("codex is reviewing this change…")).toBeInTheDocument();
-		expect(screen.queryByText("claude-code is reviewing this change…")).not.toBeInTheDocument();
+		expect(await screen.findByText("Review in progress · codex")).toBeInTheDocument();
+		expect(screen.queryByText("Review in progress · claude-code")).not.toBeInTheDocument();
 	});
 
 	it("filters review history by the selected harness while keeping PR context", async () => {
@@ -1014,7 +1014,7 @@ describe("SessionInspector reviews tab", () => {
 
 		// AO runs one reviewer per worker, so a second harness cannot start
 		// alongside it. Say so rather than silently ignoring the choice.
-		expect(await screen.findByText(/cancel it to review with a different agent/)).toBeInTheDocument();
+		expect(screen.getByText("Review in progress · codex")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: /Select reviewer agent/ })).toBeDisabled();
 	});
 

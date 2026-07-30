@@ -1193,15 +1193,9 @@ function ReviewPanel({
 					installed={agentCatalog?.installed}
 					onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
 					supported={agentCatalog?.supported}
+					triggerClassName="max-w-[10rem] shrink-0"
 					value={reviewerOverride}
 				/>
-				{reviewRunning ? (
-					// One reviewer at a time: a second harness would need its own pane,
-					// and the handle is per worker.
-					<span className="text-micro leading-snug text-passive">
-						{`${harness} is running. cancel it to review with a different agent.`}
-					</span>
-				) : null}
 			</div>
 			<div className="flex flex-col divide-y divide-border">
 				{openReviewStates.length === 0 ? (
@@ -1248,10 +1242,10 @@ function ReviewPanel({
 			{/* Running is the one state worth interrupting the panel for, so it gets a
 			    live strip above the actions rather than only a word on a button. */}
 			{reviewRunning ? (
-				<div className="-mx-4 mt-1 flex items-center gap-2 border-y border-border bg-working/8 px-4 py-2">
-					<Loader2 aria-hidden="true" className="size-icon-sm shrink-0 animate-spin text-working" />
-					<span className="min-w-0 flex-1 truncate text-2xs font-medium text-working">
-						{isCancelling ? "Cancelling review…" : `${harness} is reviewing this change…`}
+				<div className="-mx-4 mt-1 flex items-center gap-2 border-y border-border px-4 py-2">
+					<Loader2 aria-hidden="true" className="size-icon-sm shrink-0 animate-spin text-muted-foreground" />
+					<span className="min-w-0 flex-1 truncate text-2xs font-medium text-muted-foreground">
+						{isCancelling ? "Cancelling review…" : `Review in progress · ${harness}`}
 					</span>
 				</div>
 			) : null}
