@@ -87,7 +87,12 @@ func (s *Store) UpdateSandboxObservation(
 	providerEnvironmentID, observedState, lastError string,
 	reconcileAfter time.Time,
 ) error {
-	tag, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin sandbox observation: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx, `
 		UPDATE ao_sandboxes
 		SET provider_environment_id = NULLIF($3, ''),
 			observed_state = $4,
@@ -103,6 +108,18 @@ func (s *Store) UpdateSandboxObservation(
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrSandboxLeaseLost
+	}
+	if providerEnvironmentID == "" {
+		if _, err := tx.Exec(ctx, `
+			UPDATE ao_sessions
+			SET agent_session_id = '', updated_at = now()
+			WHERE id = $1
+		`, sessionID); err != nil {
+			return fmt.Errorf("reset provider session after sandbox loss: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit sandbox observation: %w", err)
 	}
 	return nil
 }

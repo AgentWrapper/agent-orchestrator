@@ -231,6 +231,14 @@ func TestDeletedSandboxCanBeRequestedAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := store.SetAgentSessionID(
+		ctx,
+		account.ID,
+		created.Session.ID,
+		"provider-session-on-deleted-volume",
+	); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := store.pool.Exec(ctx, `
 		UPDATE ao_sandboxes
 		SET desired_state = 'running',
@@ -276,5 +284,12 @@ func TestDeletedSandboxCanBeRequestedAgain(t *testing.T) {
 	}
 	if sandbox.ProviderEnvironmentID != "" || sandbox.ObservedState != "requested" {
 		t.Fatalf("reset sandbox = %#v", sandbox)
+	}
+	session, err := store.GetSession(ctx, account.ID, created.Session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.AgentSessionID != "" {
+		t.Fatalf("AgentSessionID = %q after sandbox loss", session.AgentSessionID)
 	}
 }
