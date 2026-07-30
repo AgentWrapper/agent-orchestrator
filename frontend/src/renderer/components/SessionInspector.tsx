@@ -7,7 +7,6 @@ import {
 	ChevronRight,
 	Files as FilesIcon,
 	GitPullRequest,
-	PanelRightClose,
 	Play,
 	Shield,
 	Terminal,
@@ -19,10 +18,10 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
-import { useTerminateSession } from "../hooks/useTerminateSession";
+import { clearTerminateSessionState, useTerminateSession } from "../hooks/useTerminateSession";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
-import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
+import { canonicalTrackerIssueId, findProjectOrchestrator, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
@@ -34,9 +33,8 @@ import { cn } from "../lib/utils";
 import { PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
 import { StatusPill } from "./StatusPill";
 import { CodexIcon } from "./icons";
-import { SessionTerminationDialog } from "./SessionTerminationDialog";
+import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { Switch } from "./ui/switch";
-import { TopbarButton } from "./TopbarButton";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -109,7 +107,7 @@ const kvKeyClass = "w-kv-label shrink-0 text-settings-muted @max-[300px]/inspect
 
 const kvValueClass = "min-w-0 truncate text-settings-label @max-[300px]/inspector:w-full";
 
-const kvValueMonoClass = "text-sm-md";
+const kvValueMonoClass = "font-mono text-sm-md";
 
 const reviewerVerdictTone: Record<"neutral" | "running" | "success" | "danger", string> = {
 	neutral: "text-muted-foreground",
@@ -151,7 +149,6 @@ export function SessionInspector({
 	browserAnnotationQueue,
 	isInspectorVisible = true,
 	onToggleBrowserPopOut,
-	onToggleVisibility,
 	onOpenFiles,
 	filesView,
 	browserView,
@@ -164,7 +161,6 @@ export function SessionInspector({
 	browserAnnotationQueue?: BrowserAnnotationQueueModel;
 	isInspectorVisible?: boolean;
 	onToggleBrowserPopOut?: (next: boolean) => void;
-	onToggleVisibility?: () => void;
 	onOpenFiles?: () => void;
 	filesView?: ReactNode;
 	browserView?: BrowserViewModel;
@@ -196,63 +192,40 @@ export function SessionInspector({
 
 	return (
 		<aside className={inspectorShellClass} aria-label="Session inspector">
-			<div
-				className={cn(
-					"session-inspector__topbar flex h-topbar-primary shrink-0 items-center border-b border-border",
-					isInspectorVisible ? "gap-1.5 px-1.5" : "justify-center",
-				)}
-			>
-				{isInspectorVisible ? (
-			<div className="flex min-w-0 flex-1 items-center gap-1.5" role="tablist">
-					{VIEWS.map((entry) => (
-						<button
-							aria-label={entry.label}
-							key={entry.id}
-							type="button"
-							role="tab"
-							aria-selected={view === entry.id}
-							className={cn(
-								"relative inline-flex h-control-md shrink-0 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
-								view === entry.id && "bg-interactive-active text-foreground",
-							)}
-							onClick={() => setView(entry.id)}
-							title={entry.label}
-						>
-								<span className="inline-flex shrink-0 @min-[316px]/inspector:hidden [&_svg]:size-icon-md">
-									{entry.icon}
+			<div className="flex h-inspector-tabs shrink-0 items-center gap-1 border-b border-border px-2.5" role="tablist">
+				{VIEWS.map((entry) => (
+					<button
+						aria-label={entry.label}
+						key={entry.id}
+						type="button"
+						role="tab"
+						aria-selected={view === entry.id}
+						className={cn(
+							"inline-flex h-control-md shrink-0 items-center justify-center gap-1.5 rounded-md px-1.5 text-sm-md font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
+							view === entry.id && "bg-interactive-active text-foreground",
+						)}
+						onClick={() => setView(entry.id)}
+						title={entry.label}
+					>
+						<span className="relative inline-flex shrink-0 [&_svg]:size-icon-md">
+							{entry.icon}
+							{entry.id === "browser" && browserUnseen ? (
+								<span aria-hidden="true" className="absolute -right-1 -top-1 inline-flex size-dot-sm">
+									{/* Pinging halo + solid core: a glowing beacon that draws the eye to
+									    a link that arrived in the terminal, cleared once the tab opens. */}
+									<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+									<span className="relative inline-flex size-dot-sm rounded-full bg-primary ring-2 ring-background" />
 								</span>
-								<span className="truncate text-caption @max-[315px]/inspector:hidden">{entry.label}</span>
-								{entry.id === "browser" && browserUnseen ? (
-									<span aria-hidden="true" className="absolute right-0 top-0 inline-flex size-dot-sm">
-										{/* Pinging halo + solid core: a glowing beacon that draws the eye to
-										    a link that arrived in the terminal, cleared once the tab opens. */}
-										<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
-										<span className="relative inline-flex size-dot-sm rounded-full bg-primary ring-2 ring-background" />
-									</span>
-								) : null}
-							</button>
-						))}
-					</div>
-				) : null}
-			{isInspectorVisible ? (
-				<TopbarButton
-					aria-expanded="true"
-					aria-label="Close inspector panel"
-					className="session-inspector__toggle ml-auto shrink-0 border border-transparent focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
-					onClick={onToggleVisibility}
-					title="Close inspector · ⌘⇧B"
-					variant="icon"
-				>
-					<PanelRightClose className="size-icon-lg" aria-hidden="true" />
-				</TopbarButton>
-			) : null}
+							) : null}
+						</span>
+						<span className="truncate @max-[350px]/inspector:hidden">{entry.label}</span>
+					</button>
+				))}
 			</div>
 
 			<div
-				aria-hidden={!isInspectorVisible}
 				className={cn(
 					inspectorBodyClass,
-					!isInspectorVisible && "invisible pointer-events-none",
 					// The Browser tab renders its own bordered panel edge-to-edge, so
 					// drop the body padding for it (except when popped out, where the
 					// body only holds the "return to panel" empty state).
@@ -261,7 +234,6 @@ export function SessionInspector({
 						"p-0 overflow-hidden [&>[role=tabpanel]]:border-0 [&>[role=tabpanel]]:rounded-none",
 					view === "files" && "p-0 overflow-hidden [&>[role=tabpanel]]:h-full",
 				)}
-				inert={!isInspectorVisible}
 			>
 				{view === "summary" ? <SummaryView session={session} /> : null}
 				{view === "reviews" ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
@@ -294,11 +266,12 @@ function Section({
 	surface?: boolean;
 	title: string;
 }) {
-	// Boxed sections share the application surface and type hierarchy.
+	// Boxed sections match the settings page row surface (bg + radius) with the
+	// uppercase muted kicker kept inside the card, as in the inspector refs.
 	return (
 		<section className={cn("mb-2.5 last:mb-0", className)} data-testid="inspector-section">
-			<div className="overflow-hidden rounded-lg bg-surface px-3.5 py-3">
-				<div className="mb-2 flex items-center justify-between gap-2 text-2xs font-semibold tracking-tight text-muted-foreground">
+			<div className="overflow-hidden rounded-settings-row bg-settings-row px-3.5 py-3">
+				<div className="mb-2 flex items-center justify-between gap-2 text-2xs font-bold uppercase tracking-settings-section text-settings-muted">
 					<span>{title}</span>
 					{action ?? null}
 				</div>
@@ -404,15 +377,7 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const [confirmOpen, setConfirmOpen] = useState(false);
-	const terminate = useTerminateSession({
-		onSuccess: (terminated) => {
-			setConfirmOpen(false);
-			void navigate({
-				to: "/projects/$projectId",
-				params: { projectId: terminated.workspaceId },
-			});
-		},
-	});
+	const terminate = useTerminateSession();
 	const policy = useMutation({
 		mutationFn: async (terminateOnPrMerge: boolean) => {
 			if (usePreviewData) return;
@@ -438,8 +403,22 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 		},
 	});
 	const policyError = policy.error instanceof Error ? policy.error.message : null;
-	const terminateError = terminate.error instanceof Error ? terminate.error.message : null;
 	const canTerminateNow = session.status === "merged";
+
+	const confirmTermination = () => {
+		const workspaces = queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey) ?? [];
+		const orchestrator = findProjectOrchestrator(workspaces, session.workspaceId);
+		setConfirmOpen(false);
+		terminate.mutate(session);
+		if (orchestrator) {
+			void navigate({
+				to: "/projects/$projectId/sessions/$sessionId",
+				params: { projectId: session.workspaceId, sessionId: orchestrator.id },
+			});
+			return;
+		}
+		void navigate({ to: "/projects/$projectId", params: { projectId: session.workspaceId } });
+	};
 
 	if (session.isTerminated === true) return null;
 
@@ -448,17 +427,22 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 			{canTerminateNow ? (
 				<div className="flex items-center justify-between gap-3 py-1">
 					<span className="min-w-0 text-xs font-medium text-settings-label">Terminate</span>
-					<button
-						aria-label="Terminate session"
-						className="inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-						onClick={() => {
-							terminate.reset();
-							setConfirmOpen(true);
-						}}
-						type="button"
-					>
-						<Trash2 className="size-icon-sm" aria-hidden="true" />
-					</button>
+					<SessionTerminationPopover
+						onConfirm={confirmTermination}
+						onOpenChange={setConfirmOpen}
+						open={confirmOpen}
+						session={session}
+						trigger={
+							<button
+								aria-label="Terminate session"
+								className="inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+								onClick={() => clearTerminateSessionState(queryClient, session.id)}
+								type="button"
+							>
+								<Trash2 className="size-icon-sm" aria-hidden="true" />
+							</button>
+						}
+					/>
 				</div>
 			) : (
 				<>
@@ -481,16 +465,6 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 					) : null}
 				</>
 			)}
-			<SessionTerminationDialog
-				busy={terminate.isPending}
-				error={terminateError}
-				onConfirm={() => terminate.mutate(session)}
-				onOpenChange={(open) => {
-					if (!terminate.isPending) setConfirmOpen(open);
-				}}
-				open={confirmOpen}
-				session={session}
-			/>
 		</Section>
 	);
 }
@@ -638,7 +612,7 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 						/>
 						<div className="text-xs leading-normal text-foreground [&_b]:font-semibold">{event.node}</div>
 					</div>
-					{event.ts ? <div className="mt-1 text-2xs text-passive">{event.ts}</div> : null}
+					{event.ts ? <div className="mt-1 font-mono text-2xs text-passive">{event.ts}</div> : null}
 				</div>
 			))}
 		</div>
@@ -684,11 +658,7 @@ function latestMergedTime(prs: SessionPRSummary[]): string | null {
 
 type ScmTimelineState = "ci_failed" | "changes_requested" | "conflict";
 
-const CONFLICT_PILL = {
-	label: "Conflict",
-	tone: "var(--color-danger)",
-	breathe: false,
-};
+const CONFLICT_PILL = { label: "Conflict", tone: "var(--color-danger)", breathe: false };
 
 function InspectorActivityPill({ activity }: { activity?: WorkspaceSession["activity"] }) {
 	return <TimelinePill {...getAgentActivityView(activity)} />;
@@ -774,9 +744,7 @@ function ReviewsView({
 			setReviewNotice(null);
 		},
 		onSuccess: ({ data, reused }) => {
-			void queryClient.invalidateQueries({
-				queryKey: ["session-reviews", session.id],
-			});
+			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			const started = data?.reviews?.find((review) => review.status === "running" && review.latestRun);
 			if (reused || !started?.latestRun) {
@@ -798,9 +766,7 @@ function ReviewsView({
 		},
 		onSuccess: () => {
 			setReviewNotice(null);
-			void queryClient.invalidateQueries({
-				queryKey: ["session-reviews", session.id],
-			});
+			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		},
 	});
@@ -857,7 +823,7 @@ function ReviewDisclosure({
 					<ChevronRight className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
 				)}
 				<span className="min-w-0 flex-1 truncate text-sm-md font-semibold text-foreground">{title}</span>
-				<span className="shrink-0 text-2xs text-passive">{meta}</span>
+				<span className="shrink-0 font-mono text-2xs text-passive">{meta}</span>
 			</button>
 			{open ? <div className="ml-2 mt-2.5 flex flex-col gap-4 border-l border-border/60 pl-3.5">{children}</div> : null}
 		</div>
@@ -1008,7 +974,7 @@ function ReviewPanel({
 			) : null}
 			<p className={cn(inspectorEmptyClass, "inline-flex min-w-0 items-center gap-1.5")}>
 				<ReviewerHarnessIcon className="size-icon-sm shrink-0 text-passive" harness={harness} />
-				<span className="truncate font-medium text-foreground">{harness}</span>
+				<span className="truncate font-mono font-medium text-foreground">{harness}</span>
 			</p>
 			<div className="flex flex-col divide-y divide-border">
 				{openReviewStates.length === 0 ? (
@@ -1076,9 +1042,7 @@ function AoReviewRow({ reviewState }: { reviewState: PRReviewState }) {
 	return (
 		<div className={cn("flex min-w-0 flex-col gap-2", reviewState.status === "ineligible" && "opacity-70")}>
 			<VerdictBadge label={verdict.label} tone={verdict.tone} />
-			{summary ? (
-				<p className="whitespace-pre-wrap break-words text-2xs leading-relaxed text-passive">{summary}</p>
-			) : null}
+			{summary ? <p className="whitespace-pre-wrap break-words text-2xs leading-relaxed text-passive">{summary}</p> : null}
 			{reviewUrl ? (
 				<a
 					className="inline-flex items-center gap-0.5 self-start text-2xs font-medium text-passive no-underline transition-colors hover:text-foreground"
