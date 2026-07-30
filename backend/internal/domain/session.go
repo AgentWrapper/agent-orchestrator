@@ -63,7 +63,11 @@ type SessionRecord struct {
 	// TerminateOnPRMerge is a user-controlled lifecycle policy. When enabled,
 	// completing the session's PR set through a merge tears down the session.
 	TerminateOnPRMerge bool            `json:"terminateOnPrMerge"`
-	Metadata           SessionMetadata `json:"-"`
+	// Model is the agent model override resolved for this session. Empty means
+	// the agent uses its own default. Persisted so ao session get can report
+	// the model the session actually resolved to (including per-spawn overrides).
+	Model              string           `json:"model,omitempty"`
+	Metadata           SessionMetadata  `json:"-"`
 	// CleanupGeneration is a monotonic counter bumped each time the session is
 	// un-terminated (spawn/restore). The terminal-resource reconciler stamps its
 	// durable cleanup facts with the generation they were written for so a

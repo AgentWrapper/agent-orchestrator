@@ -199,6 +199,7 @@ type Session struct {
 	RuntimeLaunchID    string
 	WorkspaceRepoPath  string
 	TerminateOnPRMerge bool
+	Model              string
 }
 
 type SessionCleanupFact struct {

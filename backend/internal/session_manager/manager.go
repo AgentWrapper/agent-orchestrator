@@ -469,6 +469,11 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
 	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
+	if cfg.Model != "" {
+		agentConfig.Model = cfg.Model
+	}
+	// Persist the resolved model so ao session get can report it.
+	rec.Model = agentConfig.Model
 	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
@@ -2253,6 +2258,7 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 		UpdatedAt:   now,
 		Harness:     cfg.Harness,
 		DisplayName: cfg.DisplayName,
+		Model:       cfg.Model,
 		Activity:    domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
 	}
 }
