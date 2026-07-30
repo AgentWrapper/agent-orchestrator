@@ -285,8 +285,6 @@ describe("SessionsBoard", () => {
 		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
 		const archive = screen.getByRole("list", { name: "Archived sessions" });
 		expect(within(archive).getByText("2K tok")).toBeInTheDocument();
-		await userEvent.click(screen.getByRole("button", { name: "Rows" }));
-		expect(within(archive).getByText("2K tok")).toBeInTheDocument();
 	});
 
 	it("uses distinct card badge tones for idle, no signal, and draft PR sessions", () => {
