@@ -2,7 +2,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import {
 	Bell,
-	BellRing,
 	Check,
 	CheckCheck,
 	CircleAlert,
@@ -189,13 +188,9 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 			style={style}
 			variant="icon"
 		>
+			<Bell className="size-icon-lg" aria-hidden="true" />
 			{unreadCount > 0 ? (
-				<BellRing className="size-icon-lg fill-current text-foreground" aria-hidden="true" />
-			) : (
-				<Bell className="size-icon-lg" aria-hidden="true" />
-			)}
-			{unreadCount > 0 ? (
-				<span className="pointer-events-none absolute right-px top-px grid h-3 min-w-3 place-items-center rounded-full bg-accent px-0.5 text-[7px] font-semibold leading-none text-accent-foreground shadow-sm ring-1 ring-background">
+				<span className="pointer-events-none absolute right-0 top-0 grid h-3.5 min-w-3.5 place-items-center rounded-full bg-red-500 px-0.5 text-[8px] font-bold leading-none text-white shadow-sm ring-1 ring-background">
 					{unreadCount > 99 ? "99+" : unreadCount}
 				</span>
 			) : null}

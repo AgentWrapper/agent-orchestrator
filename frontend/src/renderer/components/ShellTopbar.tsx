@@ -284,7 +284,7 @@ export function ShellTopbar({
 			}
 			leadingIcon={leadingIcon}
 			model={model}
-			separateUtilities={isOrchestrator || !isSessionRoute}
+			separateUtilities={false}
 			utilities={
 				<>
 					<NotificationCenter style={noDragStyle} />
