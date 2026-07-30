@@ -1134,6 +1134,7 @@ function ReviewPanel({
 		.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 	const latest = runningRun ?? newestRun;
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
+	const selectedReviewer = reviewerOverride || harness;
 	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
 	const reviewHasRun = reviewRunning || Boolean(latest);
@@ -1154,6 +1155,10 @@ function ReviewPanel({
 			if (fallback.length > 0) runsByPR.set(state.prUrl, fallback);
 		}
 	}
+	const filteredRunsByPR = new Map<string, ReviewRunFacts[]>();
+	for (const [prUrl, prRuns] of runsByPR) {
+		filteredRunsByPR.set(prUrl, prRuns.filter((run) => (run.harness || "reviewer") === selectedReviewer));
+	}
 
 	const runDisabled =
 		isTriggering ||
@@ -1172,11 +1177,14 @@ function ReviewPanel({
 					{notice}
 				</p>
 			) : null}
-			<div className="flex min-w-0 flex-col gap-1.5">
-				<span className="inline-flex items-center gap-1.5 text-micro font-medium uppercase tracking-wide-sm text-passive">
-					<ScanEye aria-hidden="true" className="size-icon-2xs shrink-0" />
-					Select reviewer agent
-				</span>
+			<div className="flex min-w-0 items-center justify-between gap-3">
+				<div className="min-w-0">
+					<span className="inline-flex items-center gap-1.5 text-micro font-medium uppercase tracking-wide-sm text-passive">
+						<ScanEye aria-hidden="true" className="size-icon-2xs shrink-0" />
+						Review history
+					</span>
+					<p className="m-0 mt-0.5 text-micro text-passive">Filter history and choose the agent for the next run.</p>
+				</div>
 				<ReviewerSelect
 					ariaLabel="Select reviewer agent"
 					authorized={agentCatalog?.authorized}
@@ -1209,7 +1217,9 @@ function ReviewPanel({
 						>
 							<ReviewerRuns
 								reviewState={reviewState}
-								runs={runsByPR.get(reviewState.prUrl) ?? []}
+								runs={filteredRunsByPR.get(reviewState.prUrl) ?? []}
+								reviewer={selectedReviewer}
+								hasAnyRuns={(runsByPR.get(reviewState.prUrl)?.length ?? 0) > 0}
 							/>
 						</ReviewDisclosure>
 					))
@@ -1376,7 +1386,20 @@ function githubVerdict(verdict: string): { label: string; tone: "neutral" | "run
 }
 
 /** Every recorded reviewer pass for one PR, newest first. */
-function ReviewerRuns({ reviewState, runs }: { reviewState: PRReviewState; runs: ReviewRunFacts[] }) {
+function ReviewerRuns({
+	reviewState,
+	runs,
+	reviewer,
+	hasAnyRuns,
+}: {
+	reviewState: PRReviewState;
+	runs: ReviewRunFacts[];
+	reviewer: string;
+	hasAnyRuns: boolean;
+}) {
+	if (runs.length === 0 && hasAnyRuns) {
+		return <p className={cn(inspectorEmptyClass, "m-0")}>{`${reviewer} has not reviewed this PR yet.`}</p>;
+	}
 	// Preserve the current-commit state when the only available run belongs to
 	// an older SHA. History must not make stale findings look current.
 	if (!reviewState.latestRun || runs.length === 0) return <AoReviewRow reviewState={reviewState} />;

@@ -68,8 +68,9 @@ export function ReviewerSelect({
 			value={selectedValue}
 			options={menuOptions}
 			disabled={disabled}
-			menuClassName="settings-agent-menu-surface"
-			menuItemClassName="settings-agent-menu-item"
+			menuClassName="reviews-agent-menu-surface"
+			menuItemClassName="reviews-agent-menu-item"
+			menuAlign="start"
 			onChange={(v) => onChange(v === "__default__" ? "" : v)}
 			renderTrigger={(selected) => (
 				<>

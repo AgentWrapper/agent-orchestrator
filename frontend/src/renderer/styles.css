@@ -520,6 +520,17 @@ button.settings-row-bar {
 	padding-block: var(--space-3);
 }
 
+@utility reviews-agent-menu-surface {
+	min-width: 13rem;
+	padding: var(--space-1_5);
+	gap: var(--space-1);
+}
+
+@utility reviews-agent-menu-item {
+	padding-inline: var(--space-2_5);
+	padding-block: var(--space-2);
+}
+
 @utility settings-field-label {
 	font-size: var(--font-size-base);
 	font-weight: var(--font-weight-medium);
