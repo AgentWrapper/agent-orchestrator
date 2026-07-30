@@ -164,10 +164,6 @@ function ShellLayout() {
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
 	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const replacementErrorProjectId = Object.keys(orchestratorReplacementErrors)[0] ?? null;
-	const isStartupLoading =
-		!usesPreviewWorkspaceData &&
-		!daemonStatus.code &&
-		(daemonStatus.state !== "ready" || workspaceStartupState === "loading");
 
 	const cancelSidebarPeekClose = useCallback(() => {
 		if (sidebarPeekCloseTimerRef.current === undefined) return;
@@ -634,7 +630,7 @@ function ShellLayout() {
 						setIsSidebarPeekOpen(false);
 						if (open !== isSidebarOpen) toggleSidebar();
 					}}
-					open={!isStartupLoading && (isSidebarOpen || isSidebarPeekOpen)}
+					open={isSidebarOpen || isSidebarPeekOpen}
 					style={
 						{
 							"--sidebar-width": "var(--ao-sidebar-w, var(--size-sidebar-default))",
