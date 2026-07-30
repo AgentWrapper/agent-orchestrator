@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent } from "react";
 import {
 	ArrowLeft,
 	ArrowRight,
@@ -239,7 +239,10 @@ export function BrowserPanelView({
 		tabNotice,
 		selectTab,
 		closeTab,
+		prepareForOverlay,
 		agentBrowserActive,
+		agentBrowserActivity,
+		visualTransition,
 		annotationMode,
 		setAnnotationMode,
 	} = browserView;
@@ -248,7 +251,10 @@ export function BrowserPanelView({
 		annotationQueue;
 	const showStaticPreview = !window.ao?.browser && navState.url !== "";
 	const canAnnotate = Boolean(window.ao?.browser && viewId && navState.url);
+	const canPopOut = poppedOut || Boolean(navState.url);
 	const canRetryAnnotation = status === "error" && queuedCount > 0;
+	const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
+	const tabsMenuWarmupRef = useRef<Promise<void> | null>(null);
 
 	useEffect(() => {
 		setUrlInput(navState.url);
@@ -294,6 +300,49 @@ export function BrowserPanelView({
 		}
 	};
 
+	const prepareTabsMenuFrame = useCallback(() => {
+		if (!tabsMenuWarmupRef.current) {
+			tabsMenuWarmupRef.current = prepareForOverlay().finally(() => {
+				tabsMenuWarmupRef.current = null;
+			});
+		}
+		return tabsMenuWarmupRef.current;
+	}, [prepareForOverlay]);
+
+	const warmTabsMenuFrame = useCallback(() => {
+		void prepareTabsMenuFrame();
+	}, [prepareTabsMenuFrame]);
+
+	const openTabsMenu = useCallback(async () => {
+		if (tabs.length === 0) return;
+		await prepareTabsMenuFrame();
+		setTabsMenuOpen(true);
+	}, [prepareTabsMenuFrame, tabs.length]);
+
+	const handleTabsMenuOpenChange = useCallback(
+		(next: boolean) => {
+			if (!next) {
+				setTabsMenuOpen(false);
+				return;
+			}
+			void openTabsMenu();
+		},
+		[openTabsMenu],
+	);
+
+	const handleTabsTriggerPointerDown = (event: PointerEvent<HTMLButtonElement>) => {
+		if (tabsMenuOpen || tabs.length === 0) return;
+		event.preventDefault();
+		void openTabsMenu();
+	};
+
+	const handleTabsTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+		if (tabsMenuOpen || tabs.length === 0) return;
+		if (event.key !== "Enter" && event.key !== " " && event.key !== "ArrowDown") return;
+		event.preventDefault();
+		void openTabsMenu();
+	};
+
 	const annotationStatusLabel =
 		status === "picking"
 			? "Pick element"
@@ -308,51 +357,55 @@ export function BrowserPanelView({
 						: status === "error"
 							? error
 							: "";
+	const agentStatusLabel = agentActivityLabel(agentBrowserActivity, agentBrowserActive);
 
 	return (
 		<div
-			className="flex h-full min-h-browser-min flex-col overflow-hidden rounded-lg border border-border bg-background"
+			className={cn(
+				"browser-panel flex h-full min-h-browser-min flex-col overflow-hidden rounded-lg border border-border bg-background",
+				poppedOut && "browser-panel--popped-out",
+				agentStatusLabel && "browser-panel--agent-active",
+			)}
 			data-testid="browser-panel"
+			data-transition={visualTransition?.kind}
 			role="tabpanel"
 		>
 			<form
-				className="flex h-topbar-secondary min-w-0 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-1 py-0.5"
+				className="browser-panel__toolbar flex shrink-0 min-w-0 items-center gap-1 border-b border-border bg-surface p-1.5"
+				data-testid="browser-toolbar"
 				onSubmit={submit}
 			>
 				<Button
 					aria-label="Back"
-					className="size-control-sm!"
 					disabled={!navState.canGoBack}
 					onClick={() => void goBack()}
 					size="icon-sm"
 					type="button"
 					variant="ghost"
 				>
-					<ArrowLeft aria-hidden="true" className="size-icon-sm" />
+					<ArrowLeft aria-hidden="true" className="size-icon-base" />
 				</Button>
 				<Button
 					aria-label="Forward"
-					className="size-control-sm!"
 					disabled={!navState.canGoForward}
 					onClick={() => void goForward()}
 					size="icon-sm"
 					type="button"
 					variant="ghost"
 				>
-					<ArrowRight aria-hidden="true" className="size-icon-sm" />
+					<ArrowRight aria-hidden="true" className="size-icon-base" />
 				</Button>
 				<Button
 					aria-label={navState.isLoading ? "Stop" : "Reload"}
-					className="size-control-sm!"
 					onClick={() => void (navState.isLoading ? stop() : reload())}
 					size="icon-sm"
 					type="button"
 					variant="ghost"
 				>
 					{navState.isLoading ? (
-						<X aria-hidden="true" className="size-icon-sm" />
+						<X aria-hidden="true" className="size-icon-base" />
 					) : (
-						<RefreshCw aria-hidden="true" className="size-icon-sm" />
+						<RefreshCw aria-hidden="true" className="size-icon-base" />
 					)}
 				</Button>
 				<Button
@@ -364,7 +417,7 @@ export function BrowserPanelView({
 								: "Annotate page"
 					}
 					aria-pressed={annotationMode || status === "picking"}
-					className="browser-panel__annotate-btn size-control-sm!"
+					className="browser-panel__annotate-btn"
 					disabled={!canAnnotate || status === "sending"}
 					onClick={() => void toggleAnnotationMode()}
 					size="icon-sm"
@@ -372,7 +425,7 @@ export function BrowserPanelView({
 					type="button"
 					variant="ghost"
 				>
-					<MousePointer2 aria-hidden="true" className="size-icon-sm" />
+					<MousePointer2 aria-hidden="true" className="h-4 w-4" />
 				</Button>
 				{annotationStatusLabel ? (
 					<span
@@ -384,19 +437,20 @@ export function BrowserPanelView({
 					>
 						{annotationStatusLabel}
 					</span>
-				) : agentBrowserActive ? (
+				) : agentStatusLabel ? (
 					<span className="browser-panel__annotation-status" role="status" aria-live="polite">
-						Agent using browser
+						{agentStatusLabel}
 					</span>
 				) : null}
-				<div className="relative min-w-0 flex-1">
-					<Globe2
-						aria-hidden="true"
-						className="pointer-events-none absolute left-1.75 top-1/2 size-icon-sm -translate-y-1/2 text-passive"
-					/>
+					<div className="browser-panel__url-wrap relative min-w-0 flex-1">
+						<Globe2
+							aria-hidden="true"
+							className="browser-panel__url-icon"
+							data-testid="browser-url-icon"
+						/>
 					<Input
 						aria-label="Browser URL"
-						className="h-control-sm! pl-6 text-caption"
+						className="browser-panel__url-input h-browser-url pl-browser-url font-mono text-xs"
 						onChange={(event) => setUrlInput(event.target.value)}
 						placeholder="localhost:5173"
 						value={urlInput}
@@ -407,19 +461,23 @@ export function BrowserPanelView({
 						{tabNotice}
 					</span>
 				) : null}
-				<DropdownMenu modal={false}>
+				<DropdownMenu modal={false} onOpenChange={handleTabsMenuOpenChange} open={tabsMenuOpen}>
 					<DropdownMenuTrigger asChild>
 						<Button
 							aria-label={`Browser tabs (${tabs.length})`}
-							className={cn("gap-1 px-2", tabs.length > 1 && "bg-accent-weak text-accent")}
+							className={cn("browser-panel__tabs-trigger gap-1 px-2", tabs.length > 1 && "bg-accent-weak text-accent")}
 							disabled={tabs.length === 0}
+							onFocus={warmTabsMenuFrame}
+							onKeyDown={handleTabsTriggerKeyDown}
+							onPointerDown={handleTabsTriggerPointerDown}
+							onPointerEnter={warmTabsMenuFrame}
 							size="sm"
 							title={`${tabs.length} browser ${tabs.length === 1 ? "tab" : "tabs"}`}
 							type="button"
 							variant="ghost"
 						>
 							<Layers3 aria-hidden="true" className="size-icon-base" />
-							<span className="text-caption tabular-nums">{tabs.length}</span>
+							<span className="font-mono text-caption">{tabs.length}</span>
 						</Button>
 					</DropdownMenuTrigger>
 					<DropdownMenuContent align="end" className="w-72" sideOffset={8}>
@@ -429,7 +487,7 @@ export function BrowserPanelView({
 							return (
 								<div className="flex min-w-0 items-center gap-0.5" key={tab.id}>
 									<DropdownMenuItem
-										className="min-w-0 flex-1 py-2"
+										className="min-w-0 flex-1 cursor-pointer py-2"
 										onSelect={() => void selectTab(tab.id)}
 										textValue={`${label.title} ${label.subtitle}`}
 									>
@@ -438,12 +496,12 @@ export function BrowserPanelView({
 										</span>
 										<span className="min-w-0 flex-1">
 											<span className="block truncate text-xs text-foreground">{label.title}</span>
-											<span className="block truncate text-caption text-passive">{label.subtitle}</span>
+											<span className="block truncate font-mono text-caption text-passive">{label.subtitle}</span>
 										</span>
 									</DropdownMenuItem>
 									<DropdownMenuItem
 										aria-label={`Close tab ${label.title}`}
-										className="size-8 shrink-0 justify-center px-0"
+										className="size-8 shrink-0 cursor-pointer justify-center px-0"
 										disabled={tabs.length === 1}
 										onSelect={() => void closeTab(tab.id)}
 										title={tabs.length === 1 ? "The only tab cannot be closed" : `Close ${label.title}`}
@@ -457,29 +515,44 @@ export function BrowserPanelView({
 				</DropdownMenu>
 				<Button
 					aria-label={poppedOut ? "Return to panel" : "Pop out"}
-					className="size-control-sm!"
-					onClick={() => onTogglePopOut(!poppedOut)}
+					disabled={!canPopOut}
+					onClick={() => {
+						if (!canPopOut) return;
+						onTogglePopOut(!poppedOut);
+					}}
 					size="icon-sm"
+					title={canPopOut ? undefined : "Open a page before maximizing the browser"}
 					type="button"
 					variant="ghost"
 				>
 					{poppedOut ? (
-						<Minimize2 aria-hidden="true" className="size-icon-sm" />
+						<Minimize2 aria-hidden="true" className="size-icon-base" />
 					) : (
-						<Maximize2 aria-hidden="true" className="size-icon-sm" />
+						<Maximize2 aria-hidden="true" className="size-icon-base" />
 					)}
 				</Button>
 			</form>
-			<div className="relative min-h-0 flex-1 overflow-hidden bg-background">
+			<div
+				className="browser-panel__viewport relative min-h-0 flex-1 overflow-hidden bg-background"
+				data-testid="browser-viewport"
+			>
 				<div className="absolute inset-0 min-h-px min-w-px" ref={slotRef} />
 				{mirrorStream ? (
 					<MirrorVideo stream={mirrorStream} />
 				) : mirrorUrl ? (
-					<img alt="" className="absolute inset-0 h-full w-full object-cover" src={mirrorUrl} />
+					<img alt="" className="absolute inset-0 h-full w-full object-fill" src={mirrorUrl} />
+				) : null}
+				{visualTransition ? (
+					<img
+						alt=""
+						className="browser-panel__transition-frame"
+						data-testid="browser-transition-frame"
+						src={visualTransition.snapshotUrl}
+					/>
 				) : null}
 				{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
 				{navState.url === "" ? (
-					<div className="pointer-events-none absolute inset-0 grid place-items-center p-5 text-center text-xs text-passive">
+					<div className="pointer-events-none absolute inset-0 grid place-items-center p-5 text-center font-mono text-xs text-passive">
 						<p>Enter a URL or click one in the terminal.</p>
 					</div>
 				) : null}
@@ -497,6 +570,49 @@ export function BrowserPanelView({
 			</div>
 		</div>
 	);
+}
+
+function agentActivityLabel(activity: BrowserViewModel["agentBrowserActivity"], active: boolean): string {
+	if (!active && !activity?.active) return "";
+	const action = activity?.active ? activity.action : "";
+	if (!action) return "Agent using browser";
+	return `Agent ${browserActionVerb(action)}`;
+}
+
+function browserActionVerb(action: string): string {
+	switch (action) {
+		case "click":
+			return "clicking";
+		case "fill":
+		case "type":
+			return "typing";
+		case "press":
+			return "pressing";
+		case "hover":
+			return "hovering";
+		case "scroll":
+			return "scrolling";
+		case "open":
+			return "opening";
+		case "wait":
+			return "waiting";
+		case "snapshot":
+			return "reading";
+		case "highlight":
+			return "highlighting";
+		case "unhighlight":
+			return "clearing highlight";
+		case "tab-new":
+			return "opening tab";
+		case "tab-select":
+			return "switching tabs";
+		case "tab-close":
+			return "closing tab";
+		case "tabs":
+			return "checking tabs";
+		default:
+			return "using browser";
+	}
 }
 
 function browserTabLabel(title: string, url: string): { title: string; subtitle: string } {
@@ -527,7 +643,7 @@ function StaticPreview({ url }: { url: string }) {
 	return (
 		<div className="absolute inset-0 overflow-auto bg-preview text-preview-foreground">
 			<div className="border-b border-preview bg-surface px-4 py-3">
-				<div className="text-caption font-semibold tracking-wide text-preview-muted">Preview</div>
+				<div className="text-caption font-semibold uppercase tracking-wide-md text-preview-muted">AO Preview</div>
 				<div className="mt-1 truncate font-mono text-xs text-preview-link">{url}</div>
 			</div>
 			<div className="mx-auto max-w-preview-max px-5 py-6">
@@ -552,7 +668,7 @@ function StaticPreview({ url }: { url: string }) {
 							["Latency", "42 ms"],
 						].map(([label, value]) => (
 							<div key={label} className="rounded-md border border-preview-tile bg-preview-tile p-3">
-								<div className="text-caption font-medium tracking-wide text-preview-muted">{label}</div>
+								<div className="text-caption font-medium uppercase tracking-wide text-preview-muted">{label}</div>
 								<div className="mt-1 text-subtitle font-semibold text-preview-heading">{value}</div>
 							</div>
 						))}
