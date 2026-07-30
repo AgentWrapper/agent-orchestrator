@@ -367,6 +367,17 @@ func (m *Manager) ApplySCMObservation(ctx context.Context, id domain.SessionID, 
 	return nil
 }
 
+// ApplyReviewerAutoStart evaluates only the reviewer auto-start policy. The SCM
+// observer uses this for unchanged open PR observations after the durable PR row
+// already exists, so enabling the project setting can start reviewers without
+// replaying unrelated CI/review/merge notification reactions.
+func (m *Manager) ApplyReviewerAutoStart(ctx context.Context, id domain.SessionID, o ports.SCMObservation) error {
+	if !o.Fetched {
+		return nil
+	}
+	return m.applyReviewerAutoStartPolicy(ctx, id, o)
+}
+
 func (m *Manager) applyReviewerAutoStartPolicy(ctx context.Context, id domain.SessionID, o ports.SCMObservation) error {
 	if o.PR.Merged || o.PR.Closed || o.PR.Draft {
 		return nil

@@ -71,6 +71,10 @@ type Lifecycle interface {
 	ApplySCMObservation(ctx context.Context, sessionID domain.SessionID, obs ports.SCMObservation) error
 }
 
+type reviewerAutoStartLifecycle interface {
+	ApplyReviewerAutoStart(ctx context.Context, sessionID domain.SessionID, obs ports.SCMObservation) error
+}
+
 type credentialChecker interface {
 	SCMCredentialsAvailable(ctx context.Context) (bool, error)
 }
@@ -367,6 +371,15 @@ func (o *Observer) Poll(ctx context.Context) error {
 		}
 		prepared := o.prepareForPersistence(obs, local, opts, now)
 		if !prepared.Changed.Metadata && !prepared.Changed.CI && !prepared.Changed.Review {
+			if o.lifecycle != nil && shouldNotifyReviewerAutoStart(prepared) {
+				if starter, ok := o.lifecycle.(reviewerAutoStartLifecycle); ok {
+					if err := starter.ApplyReviewerAutoStart(ctx, subj.session.ID, prepared); err != nil {
+						o.logger.Error("scm observer: reviewer auto-start failed", "session", subj.session.ID, "pr", firstNonEmpty(prepared.PR.URL, prepared.PR.HTMLURL, local.URL), "err", err)
+						markRepoRefreshFailed(subj.repo)
+						continue
+					}
+				}
+			}
 			prRefreshOK[key] = true
 			continue
 		}
@@ -1103,6 +1116,10 @@ func (o *Observer) prepareForPersistence(obs ports.SCMObservation, local domain.
 	obs.PR.State = firstNonEmpty(obs.PR.State, normalizePRState(obs.PR.Draft, obs.PR.Merged, obs.PR.Closed))
 	obs.ObservedAt = firstTime(obs.ObservedAt, now)
 	return obs
+}
+
+func shouldNotifyReviewerAutoStart(obs ports.SCMObservation) bool {
+	return obs.Fetched && obs.PR.URL != "" && obs.PR.HeadSHA != "" && !obs.PR.Merged && !obs.PR.Closed && !obs.PR.Draft
 }
 
 func domainFromObservation(sessionID domain.SessionID, obs ports.SCMObservation, local domain.PullRequest, opts persistenceOptions, now time.Time) (domain.PullRequest, []domain.PullRequestCheck, []domain.PullRequestReview, []domain.PullRequestReviewThread, []domain.PullRequestComment) {

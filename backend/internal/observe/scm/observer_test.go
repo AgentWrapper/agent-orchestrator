@@ -234,8 +234,10 @@ func (p *fakeProvider) FetchReviewThreads(_ context.Context, ref ports.SCMPRRef)
 }
 
 type fakeLifecycle struct {
-	observed []ports.SCMObservation
-	err      error
+	observed             []ports.SCMObservation
+	reviewerAutoStarted  []ports.SCMObservation
+	err                  error
+	reviewerAutoStartErr error
 }
 
 func (l *fakeLifecycle) ApplySCMObservation(_ context.Context, _ domain.SessionID, obs ports.SCMObservation) error {
@@ -243,6 +245,14 @@ func (l *fakeLifecycle) ApplySCMObservation(_ context.Context, _ domain.SessionI
 		return l.err
 	}
 	l.observed = append(l.observed, obs)
+	return nil
+}
+
+func (l *fakeLifecycle) ApplyReviewerAutoStart(_ context.Context, _ domain.SessionID, obs ports.SCMObservation) error {
+	if l.reviewerAutoStartErr != nil {
+		return l.reviewerAutoStartErr
+	}
+	l.reviewerAutoStarted = append(l.reviewerAutoStarted, obs)
 	return nil
 }
 
@@ -1134,6 +1144,32 @@ func TestPoll_UnchangedHashesDoNotWriteOrNotify(t *testing.T) {
 	}
 	if len(store.writes) != 0 || len(lc.observed) != 0 {
 		t.Fatalf("unchanged hashes wrote/notified: writes=%d observed=%d", len(store.writes), len(lc.observed))
+	}
+}
+
+func TestPoll_UnchangedHashesNotifyReviewerAutoStartWithPRHead(t *testing.T) {
+	store := testStoreWithSession()
+	obsValue := testObs(1)
+	local := knownPR(1)
+	local.MetadataHash = metadataSemanticHash(obsValue)
+	local.CIHash = ciSemanticHash(obsValue.CI)
+	local.ReviewHash = reviewSemanticHash(obsValue.Review)
+	store.prs["p-1"] = []domain.PullRequest{local}
+	provider := &fakeProvider{repoGuards: map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo"}}, observations: map[string]ports.SCMObservation{prKey(testRepo, 1): obsValue}}
+	lc := &fakeLifecycle{}
+	obs := newTestObserver(store, provider, lc, time.Unix(1, 0).UTC())
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.writes) != 0 || len(lc.observed) != 0 {
+		t.Fatalf("unchanged reviewer auto-start wrote/notified full lifecycle: writes=%d observed=%d", len(store.writes), len(lc.observed))
+	}
+	if len(lc.reviewerAutoStarted) != 1 {
+		t.Fatalf("reviewer auto-start evaluations = %d, want 1", len(lc.reviewerAutoStarted))
+	}
+	got := lc.reviewerAutoStarted[0]
+	if got.PR.URL != obsValue.PR.URL || got.PR.HeadSHA != obsValue.PR.HeadSHA {
+		t.Fatalf("reviewer auto-start observation PR/head = %s/%s, want %s/%s", got.PR.URL, got.PR.HeadSHA, obsValue.PR.URL, obsValue.PR.HeadSHA)
 	}
 }
 
