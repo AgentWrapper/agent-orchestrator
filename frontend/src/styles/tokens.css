@@ -427,10 +427,10 @@
 	--size-settings-footer-button-padding-x: 20px;
 	--color-settings-footer-button-primary-fg: var(--primary-foreground);
 	--size-settings-dialog: 575px;
-	--size-settings-dialog-wide: 860px;
-	--size-settings-dialog-height: 640px;
+	--size-settings-dialog-wide: 920px;
+	--size-settings-dialog-height: 680px;
 	--size-settings-dialog-max-h: 680px;
-	--color-border-settings-dialog: oklch(1 0 0 / 12%);
+	--color-border-settings-dialog: oklch(1 0 0 / 7%);
 	--color-border-settings-dialog-header: oklch(1 0 0 / 7%);
 	--color-bg-settings-input: var(--input);
 	--color-border-settings-input: var(--color-border-settings-dialog);
@@ -466,7 +466,7 @@
 	--leading-settings-mobile-warning: 15px;
 	--size-settings-action-height: 38px;
 	--radius-settings-action: 16px;
-	--radius-settings-dialog-lg: 20px;
+	--radius-settings-dialog-lg: 24px;
 	--shadow-settings-dialog: var(--elevation-xl);
 	--shadow-settings-qr: var(--elevation-md);
 

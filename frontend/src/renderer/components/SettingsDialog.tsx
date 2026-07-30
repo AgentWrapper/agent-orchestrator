@@ -44,16 +44,17 @@ export function SettingsDialog() {
 				<DialogContent
 					className={cn(
 						settingsDialogContentClass,
-						"h-(--size-settings-dialog-height) w-(--size-settings-dialog-wide) max-h-none origin-center",
+						"h-(--size-settings-dialog-height) w-(--size-settings-dialog-wide) max-h-none origin-center overflow-hidden p-0",
 					)}
 					showCloseButton={false}
 				>
-					<div className="flex min-h-0 flex-1 overflow-hidden">
-						<aside className="flex w-44 shrink-0 flex-col border-r border-(--color-border-settings-dialog-header) bg-muted/35">
-							<div className="flex h-14 shrink-0 items-center px-2">
-								<span className="px-2.5 text-sm font-semibold text-foreground">Settings</span>
+					<div className="flex h-full min-h-0">
+						{/* Sidebar — same bg as the app sidebar */}
+						<aside className="flex w-48 shrink-0 flex-col border-r border-(--color-border-settings-dialog-header) bg-sidebar">
+							<div className="flex h-14 shrink-0 items-center border-b border-(--color-border-settings-dialog-header) px-3">
+								<span className="px-1 text-sm font-semibold text-foreground">Settings</span>
 							</div>
-							<nav aria-label="Settings sections" className="flex flex-col gap-1 p-1">
+							<nav aria-label="Settings sections" className="flex flex-col gap-0.5 p-2">
 								{isProjectSettings ? (
 									<SettingsNavItem active icon={MonitorCog} label="Project" onClick={() => undefined} />
 								) : (
@@ -69,20 +70,22 @@ export function SettingsDialog() {
 								)}
 							</nav>
 						</aside>
-						<div className="flex min-w-0 flex-1 flex-col bg-settings-dialog">
-							<DialogHeader className={cn(settingsDialogHeaderClass, "flex h-14 flex-row items-center justify-between border-b p-3")}>
-								<DialogTitle className="text-sm font-semibold text-settings-title">{activeLabel}</DialogTitle>
+
+						{/* Main area — same bg as the app page */}
+						<div className="flex min-w-0 flex-1 flex-col bg-background">
+							<DialogHeader className={cn(settingsDialogHeaderClass, "flex h-14 shrink-0 flex-row items-center justify-between border-b border-(--color-border-settings-dialog-header) px-6")}>
+								<DialogTitle className="text-sm font-semibold text-foreground">{activeLabel}</DialogTitle>
 								<DialogDescription className="sr-only">
-									{isProjectSettings ? "Manage this project’s settings." : `Manage ${activeLabel.toLowerCase()} settings.`}
+									{isProjectSettings ? "Manage this project's settings." : `Manage ${activeLabel.toLowerCase()} settings.`}
 								</DialogDescription>
 								<DialogClose
 									aria-label="Close settings"
-									className="grid size-8 place-items-center rounded-md text-muted-foreground transition-[background-color,color] hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+									className="grid size-8 place-items-center rounded-md text-muted-foreground transition-[background-color,color] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 								>
 									<X aria-hidden="true" className="size-4" />
 								</DialogClose>
 							</DialogHeader>
-							<div className={cn(settingsDialogBodyClass, "flex-1 px-6 pt-5")}>
+							<div className={cn(settingsDialogBodyClass, "flex-1 overflow-y-auto px-6 pt-5")}>
 								{displaySettings.scope === "project" ? (
 									<ProjectSettingsForm projectId={displaySettings.projectId} />
 								) : (
@@ -112,8 +115,10 @@ function SettingsNavItem({
 		<button
 			aria-current={active ? "page" : undefined}
 			className={cn(
-				"flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-left text-xs font-medium transition-[background-color,color] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-				active ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:bg-card/70 hover:text-foreground",
+				"flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm font-medium transition-[background-color,color] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+				active
+					? "bg-interactive-active text-foreground"
+					: "text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
 			)}
 			onClick={onClick}
 			type="button"

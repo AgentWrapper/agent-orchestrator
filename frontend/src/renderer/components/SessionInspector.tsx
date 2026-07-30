@@ -199,25 +199,25 @@ export function SessionInspector({
 			<div
 				className={cn(
 					"session-inspector__topbar flex h-topbar-primary shrink-0 items-center border-b border-border",
-					isInspectorVisible ? "gap-1 pl-2.5" : "justify-center",
+					isInspectorVisible ? "gap-1.5 px-1.5" : "justify-center",
 				)}
 			>
 				{isInspectorVisible ? (
-					<div className="flex min-w-0 flex-1 items-center gap-1" role="tablist">
-						{VIEWS.map((entry) => (
-							<button
-								aria-label={entry.label}
-								key={entry.id}
-								type="button"
-								role="tab"
-								aria-selected={view === entry.id}
-								className={cn(
-									"relative inline-flex h-control-md shrink-0 items-center justify-center gap-1.5 rounded-md px-1.5 font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
-									view === entry.id && "bg-interactive-active text-foreground",
-								)}
-								onClick={() => setView(entry.id)}
-								title={entry.label}
-							>
+			<div className="flex min-w-0 flex-1 items-center gap-1.5" role="tablist">
+					{VIEWS.map((entry) => (
+						<button
+							aria-label={entry.label}
+							key={entry.id}
+							type="button"
+							role="tab"
+							aria-selected={view === entry.id}
+							className={cn(
+								"relative inline-flex h-control-md shrink-0 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
+								view === entry.id && "bg-interactive-active text-foreground",
+							)}
+							onClick={() => setView(entry.id)}
+							title={entry.label}
+						>
 								<span className="inline-flex shrink-0 @min-[316px]/inspector:hidden [&_svg]:size-icon-md">
 									{entry.icon}
 								</span>
@@ -234,18 +234,18 @@ export function SessionInspector({
 						))}
 					</div>
 				) : null}
-				{isInspectorVisible ? (
-					<TopbarButton
-						aria-expanded="true"
-						aria-label="Close inspector panel"
-						className="session-inspector__toggle ml-1.5 shrink-0 border border-transparent focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
-						onClick={onToggleVisibility}
-						title="Close inspector · ⌘⇧B"
-						variant="icon"
-					>
-						<PanelRightClose className="size-icon-lg" aria-hidden="true" />
-					</TopbarButton>
-				) : null}
+			{isInspectorVisible ? (
+				<TopbarButton
+					aria-expanded="true"
+					aria-label="Close inspector panel"
+					className="session-inspector__toggle ml-auto shrink-0 border border-transparent focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
+					onClick={onToggleVisibility}
+					title="Close inspector · ⌘⇧B"
+					variant="icon"
+				>
+					<PanelRightClose className="size-icon-lg" aria-hidden="true" />
+				</TopbarButton>
+			) : null}
 			</div>
 
 			<div
