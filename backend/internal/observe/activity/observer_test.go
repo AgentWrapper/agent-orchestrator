@@ -97,6 +97,51 @@ func TestPollReconcilesStaleCodexAtComposer(t *testing.T) {
 	}
 }
 
+func TestPollReconcilesStaleBlockedCodexAfterRejectedPermission(t *testing.T) {
+	now := time.Unix(500, 0).UTC()
+	session := activeSession(now, domain.HarnessCodex)
+	session.Activity.State = domain.ActivityBlocked
+	sink := &fakeSink{}
+	runtime := &fakeRuntime{output: "› Add tests\n\ngpt-5.6-sol low · ~/project\n"}
+	observer := New(
+		fakeSessions{rows: []domain.SessionRecord{session}},
+		sink,
+		runtime,
+		fakeAgents{domain.HarnessCodex: codex.New()},
+		Config{Clock: func() time.Time { return now }, Logger: testLogger()},
+	)
+
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.signals) != 1 || sink.signals[0].State != domain.ActivityIdle ||
+		sink.signals[0].Event != "terminal-idle" {
+		t.Fatalf("signals = %+v, want one terminal-idle signal", sink.signals)
+	}
+}
+
+func TestPollKeepsStaleBlockedCodexAtPermissionDialog(t *testing.T) {
+	now := time.Unix(500, 0).UTC()
+	session := activeSession(now, domain.HarnessCodex)
+	session.Activity.State = domain.ActivityBlocked
+	sink := &fakeSink{}
+	runtime := &fakeRuntime{output: "› 1. Approve once\n  2. Deny\nPress enter to confirm or esc to go back\n"}
+	observer := New(
+		fakeSessions{rows: []domain.SessionRecord{session}},
+		sink,
+		runtime,
+		fakeAgents{domain.HarnessCodex: codex.New()},
+		Config{Clock: func() time.Time { return now }, Logger: testLogger()},
+	)
+
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.signals) != 0 {
+		t.Fatalf("permission dialog emitted reconciliation: %+v", sink.signals)
+	}
+}
+
 func TestPollKeepsGenuineLongCodexTurnActive(t *testing.T) {
 	now := time.Unix(500, 0).UTC()
 	sink := &fakeSink{}

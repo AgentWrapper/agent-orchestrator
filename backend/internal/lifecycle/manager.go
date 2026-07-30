@@ -459,7 +459,8 @@ func isToolUseEvent(event string) bool {
 // dialog is gone: a prompt cannot be submitted while a dialog holds the
 // composer, and a turn cannot end (or the session exit) with one on screen.
 func isTurnBoundaryEvent(event string) bool {
-	return event == "user-prompt-submit" || event == "stop" || event == "session-end" || event == "process-exited"
+	return event == "user-prompt-submit" || event == "stop" || event == "session-end" ||
+		event == "process-exited" || event == "terminal-idle"
 }
 
 // applyToolPrecedenceLocked folds an event-tagged activity signal through the
@@ -538,7 +539,9 @@ func (m *Manager) applyToolPrecedenceLocked(id domain.SessionID, cur domain.Acti
 
 	case cur == domain.ActivityBlocked:
 		// Paused on a decision: only a turn boundary or the correlated post
-		// may change the state.
+		// may change the state. terminal-idle is emitted only after an adapter
+		// positively identifies its normal composer, so it also proves that a
+		// permission dialog is no longer on screen.
 		switch {
 		case isTurnBoundaryEvent(s.Event):
 			delete(m.flights, id)

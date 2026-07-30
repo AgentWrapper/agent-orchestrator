@@ -71,6 +71,17 @@ func TestToolPrecedence_ApprovedToolFailurePostAlsoClears(t *testing.T) {
 	}
 }
 
+func TestToolPrecedence_TerminalComposerClearsStaleBlocked(t *testing.T) {
+	m, st, _ := newManager()
+	seedSignaled(st, "mer-1", domain.ActivityActive)
+	blockOnDialog(t, m, st, "mer-1", "Bash", "toolu_1")
+
+	mustApply(t, m, "mer-1", sig(domain.ActivityIdle, "terminal-idle", "", ""))
+	if got := stateOf(st, "mer-1"); got != domain.ActivityIdle {
+		t.Fatalf("state after terminal composer = %q, want idle", got)
+	}
+}
+
 func TestToolPrecedence_SubagentTrafficDoesNotClearBlocked(t *testing.T) {
 	// The failure that reverted the naive mapping in PR #5's review: parallel
 	// subagent tool signals (same session id) land while the dialog is still

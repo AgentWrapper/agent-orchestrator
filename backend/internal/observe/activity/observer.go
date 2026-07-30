@@ -101,7 +101,8 @@ func (o *Observer) Poll(ctx context.Context) error {
 }
 
 func (o *Observer) reconcile(ctx context.Context, session domain.SessionRecord, now time.Time) {
-	if session.IsTerminated || session.Activity.State != domain.ActivityActive ||
+	if session.IsTerminated ||
+		(session.Activity.State != domain.ActivityActive && !session.Activity.State.NeedsInput()) ||
 		session.Activity.LastActivityAt.IsZero() || now.Sub(session.Activity.LastActivityAt) < o.staleAfter ||
 		session.Metadata.RuntimeHandleID == "" || o.agents == nil {
 		return
