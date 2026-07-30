@@ -287,21 +287,23 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 	const prSectionTitle = prSummaries.length > 1 ? `Pull requests (${prSummaries.length})` : "Pull request";
 	const issueId = canonicalTrackerIssueId(session.issueId);
 
+	const hasPRs = prSummaries.length > 0;
+	const showCompletion =
+		session.kind !== "orchestrator" && (hasPRs || session.status === "merged");
+
 	return (
 		<div role="tabpanel">
-			<Section title={prSectionTitle}>
-				{prSummaries.length === 0 ? (
-					<p className={inspectorEmptyClass}>No pull request opened yet.</p>
-				) : (
+			{hasPRs ? (
+				<Section title={prSectionTitle}>
 					<div className="flex flex-col gap-1.5">
 						{prSummaries.map((pr) => (
 							<PRSummaryCard key={pr.number} pr={pr} />
 						))}
 					</div>
-				)}
-			</Section>
+				</Section>
+			) : null}
 
-			{session.kind !== "orchestrator" ? <CompletionControls session={session} /> : null}
+			{showCompletion ? <CompletionControls session={session} /> : null}
 
 			<Section title="Activity">
 				<ActivityTimeline prs={prSummaries} session={session} />
