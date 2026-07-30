@@ -50,8 +50,8 @@ type ProjectConfig struct {
 	// triggered. It is configured independently of the Worker override; an empty
 	// list falls back to claude-code (see ResolveReviewerHarness).
 	Reviewers []ReviewerConfig `json:"reviewers,omitempty"`
-	// AutoReviewPullRequests controls whether SCM observations automatically
-	// start AO review runs for open PRs until the current head is approved.
+	// AutoReviewPullRequests controls whether the reviewer flow auto-starts for
+	// open PRs when SCM polling observes reviewable PR state.
 	AutoReviewPullRequests bool `json:"autoReviewPullRequests,omitempty"`
 
 	// TrackerIntake controls issue-driven worker spawning. It is opt-in and

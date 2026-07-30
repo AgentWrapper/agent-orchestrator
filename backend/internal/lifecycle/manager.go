@@ -94,7 +94,7 @@ type Manager struct {
 	// completionTerminator is late-bound because Session Manager itself depends
 	// on this lifecycle reducer. It is required before the SCM observer starts.
 	completionTerminator sessionTerminator
-	autoReview           func(context.Context, domain.SessionID) error
+	reviewerAutoStart    func(context.Context, domain.SessionID) error
 
 	mu        sync.Mutex
 	window    time.Duration
@@ -151,13 +151,13 @@ func (m *Manager) SetCompletionTerminator(terminator sessionTerminator) {
 	m.completionTerminator = terminator
 }
 
-// SetAutoReviewTrigger late-binds the review service after both lifecycle and
-// review services are constructed. SCM observations call it only for projects
-// that opt in through ProjectConfig.AutoReviewPullRequests.
-func (m *Manager) SetAutoReviewTrigger(trigger func(context.Context, domain.SessionID) error) {
+// SetReviewerAutoStart late-binds the reviewer service after both lifecycle and
+// review services are constructed. SCM polling is only the trigger point; the
+// invoked behavior belongs to the reviewer flow and uses its normal idempotency.
+func (m *Manager) SetReviewerAutoStart(trigger func(context.Context, domain.SessionID) error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.autoReview = trigger
+	m.reviewerAutoStart = trigger
 }
 
 // PrepareLaunch registers a supervised generation before the runtime starts.

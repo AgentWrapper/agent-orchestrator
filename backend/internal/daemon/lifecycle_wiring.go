@@ -223,7 +223,7 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir),
 	})
 	reviewSvc := reviewsvc.New(reviewEngine, store, reviewsvc.WithLifecycleReducer(lcm))
-	lcm.SetAutoReviewTrigger(func(ctx context.Context, workerID domain.SessionID) error {
+	lcm.SetReviewerAutoStart(func(ctx context.Context, workerID domain.SessionID) error {
 		_, err := reviewSvc.Trigger(ctx, workerID)
 		return err
 	})

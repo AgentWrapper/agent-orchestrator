@@ -356,7 +356,7 @@ func (m *Manager) ApplySCMObservation(ctx context.Context, id domain.SessionID, 
 	if err := m.ApplyPRObservation(ctx, id, scmToPRObservation(o)); err != nil {
 		return err
 	}
-	if err := m.maybeTriggerAutoReview(ctx, id, o); err != nil {
+	if err := m.maybeAutoStartReviewer(ctx, id, o); err != nil {
 		return err
 	}
 	intent, err := m.notificationIntentForCurrentSCM(ctx, id, o)
@@ -367,12 +367,12 @@ func (m *Manager) ApplySCMObservation(ctx context.Context, id domain.SessionID, 
 	return nil
 }
 
-func (m *Manager) maybeTriggerAutoReview(ctx context.Context, id domain.SessionID, o ports.SCMObservation) error {
+func (m *Manager) maybeAutoStartReviewer(ctx context.Context, id domain.SessionID, o ports.SCMObservation) error {
 	if o.PR.Merged || o.PR.Closed || o.PR.Draft {
 		return nil
 	}
 	m.mu.Lock()
-	trigger := m.autoReview
+	trigger := m.reviewerAutoStart
 	m.mu.Unlock()
 	if trigger == nil {
 		return nil

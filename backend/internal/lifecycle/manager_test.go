@@ -900,7 +900,7 @@ func TestSCMObservationUsesPRHeadWhenCIHeadMissing(t *testing.T) {
 	}
 }
 
-func TestSCMObservation_AutoReviewTriggersWhenProjectEnabled(t *testing.T) {
+func TestSCMObservation_AutoStartsReviewerWhenProjectEnabled(t *testing.T) {
 	m, st, _ := newManager()
 	rec := working("mer-1")
 	rec.Kind = domain.KindWorker
@@ -910,7 +910,7 @@ func TestSCMObservation_AutoReviewTriggersWhenProjectEnabled(t *testing.T) {
 		Config: domain.ProjectConfig{AutoReviewPullRequests: true},
 	}
 	var triggered []domain.SessionID
-	m.SetAutoReviewTrigger(func(_ context.Context, workerID domain.SessionID) error {
+	m.SetReviewerAutoStart(func(_ context.Context, workerID domain.SessionID) error {
 		triggered = append(triggered, workerID)
 		return nil
 	})
@@ -924,18 +924,18 @@ func TestSCMObservation_AutoReviewTriggersWhenProjectEnabled(t *testing.T) {
 	}
 
 	if len(triggered) != 1 || triggered[0] != "mer-1" {
-		t.Fatalf("auto-review trigger = %v, want mer-1", triggered)
+		t.Fatalf("reviewer auto-start trigger = %v, want mer-1", triggered)
 	}
 }
 
-func TestSCMObservation_AutoReviewRequiresProjectOptIn(t *testing.T) {
+func TestSCMObservation_ReviewerAutoStartRequiresProjectOptIn(t *testing.T) {
 	m, st, _ := newManager()
 	rec := working("mer-1")
 	rec.Kind = domain.KindWorker
 	st.sessions["mer-1"] = rec
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
 	calls := 0
-	m.SetAutoReviewTrigger(func(context.Context, domain.SessionID) error {
+	m.SetReviewerAutoStart(func(context.Context, domain.SessionID) error {
 		calls++
 		return nil
 	})
@@ -949,11 +949,11 @@ func TestSCMObservation_AutoReviewRequiresProjectOptIn(t *testing.T) {
 	}
 
 	if calls != 0 {
-		t.Fatalf("auto-review trigger calls = %d, want 0", calls)
+		t.Fatalf("reviewer auto-start calls = %d, want 0", calls)
 	}
 }
 
-func TestSCMObservation_AutoReviewSkipsDraftAndClosedPRs(t *testing.T) {
+func TestSCMObservation_ReviewerAutoStartSkipsDraftAndClosedPRs(t *testing.T) {
 	for _, pr := range []ports.SCMPRObservation{
 		{URL: "draft", Number: 1, Draft: true},
 		{URL: "closed", Number: 2, Closed: true},
@@ -968,7 +968,7 @@ func TestSCMObservation_AutoReviewSkipsDraftAndClosedPRs(t *testing.T) {
 			Config: domain.ProjectConfig{AutoReviewPullRequests: true},
 		}
 		calls := 0
-		m.SetAutoReviewTrigger(func(context.Context, domain.SessionID) error {
+		m.SetReviewerAutoStart(func(context.Context, domain.SessionID) error {
 			calls++
 			return nil
 		})
@@ -977,7 +977,7 @@ func TestSCMObservation_AutoReviewSkipsDraftAndClosedPRs(t *testing.T) {
 			t.Fatalf("ApplySCMObservation(%s): %v", pr.URL, err)
 		}
 		if calls != 0 {
-			t.Fatalf("auto-review trigger calls for %s = %d, want 0", pr.URL, calls)
+			t.Fatalf("reviewer auto-start calls for %s = %d, want 0", pr.URL, calls)
 		}
 	}
 }
