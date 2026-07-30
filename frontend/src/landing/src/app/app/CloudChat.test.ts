@@ -409,6 +409,25 @@ it("probes the durable turn and reconnects when the window regains focus", async
   await waitFor(() => expect(api.streamEvents).toHaveBeenCalledTimes(2));
 });
 
+it("routes worker localhost links into the workspace browser", async () => {
+  const user = userEvent.setup();
+  const onOpenPreview = vi.fn();
+  const api = testAPI({
+    chatEvents: vi.fn().mockResolvedValue({
+      events: [
+        event(1, "chat.assistant_message", {
+          text: "[Open preview](http://localhost:4173/docs)",
+        }),
+      ],
+    }),
+  });
+
+  render(createElement(CloudChat, { api, session, onOpenPreview }));
+  await user.click(await screen.findByRole("link", { name: "Open preview" }));
+
+  expect(onOpenPreview).toHaveBeenCalledWith("http://localhost:4173/docs");
+});
+
 it("replays messages, locks the composer, and interrupts an active turn", async () => {
   const api = testAPI({
     chatEvents: vi.fn().mockResolvedValue({

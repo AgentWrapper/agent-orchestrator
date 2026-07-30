@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -102,6 +103,104 @@ func TestSendAndStatusProtocols(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "worker-one\tworking\tworker\tcursor\tWorker") {
 		t.Fatalf("status output = %q", output.String())
+	}
+}
+
+func TestInspectAndResultResolveWorkerNames(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/cloud/v1/worker/orchestrate/sessions":
+			_, _ = w.Write([]byte(`{"sessions":[
+				{"id":"orchestrator-one","kind":"orchestrator","displayName":"Orchestrator"},
+				{"id":"worker-one","kind":"worker","displayName":"fixer"}
+			]}`))
+		case "/api/cloud/v1/worker/orchestrate/sessions/worker-one/inspection":
+			_, _ = w.Write([]byte(`{
+				"session":{
+					"id":"worker-one",
+					"kind":"worker",
+					"displayName":"fixer",
+					"status":"idle",
+					"runtimeConnected":true
+				},
+				"turn":{"id":"turn-one","state":"completed","attemptCount":1},
+				"result":"All tests pass.",
+				"resultAvailable":true
+			}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var inspectOutput bytes.Buffer
+	inspect := NewCommand(&inspectOutput, &inspectOutput, testEnvironment(server.URL), server.Client())
+	inspect.SetArgs([]string{"inspect", "fixer"})
+	if err := inspect.Execute(); err != nil {
+		t.Fatalf("inspect Execute() error = %v", err)
+	}
+	for _, expected := range []string{
+		"id: worker-one",
+		"runtime: connected",
+		"turn: completed",
+		"result: available",
+	} {
+		if !strings.Contains(inspectOutput.String(), expected) {
+			t.Fatalf("inspect output = %q, want %q", inspectOutput.String(), expected)
+		}
+	}
+
+	var resultOutput bytes.Buffer
+	result := NewCommand(&resultOutput, &resultOutput, testEnvironment(server.URL), server.Client())
+	result.SetArgs([]string{"result", "worker-one"})
+	if err := result.Execute(); err != nil {
+		t.Fatalf("result Execute() error = %v", err)
+	}
+	if resultOutput.String() != "All tests pass.\n" {
+		t.Fatalf("result output = %q", resultOutput.String())
+	}
+}
+
+func TestWaitPollsDurableTurnUntilResultIsAvailable(t *testing.T) {
+	var inspections atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/cloud/v1/worker/orchestrate/sessions":
+			_, _ = w.Write([]byte(`{"sessions":[{"id":"worker-one","kind":"worker","displayName":"fixer"}]}`))
+		case "/api/cloud/v1/worker/orchestrate/sessions/worker-one/inspection":
+			attempt := inspections.Add(1)
+			if attempt == 1 {
+				http.Error(w, "temporary deploy restart", http.StatusBadGateway)
+				return
+			}
+			if attempt < 4 {
+				_, _ = w.Write([]byte(`{
+					"session":{"id":"worker-one","kind":"worker","displayName":"fixer"},
+					"turn":{"id":"turn-one","state":"running"},
+					"resultAvailable":false
+				}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{
+				"session":{"id":"worker-one","kind":"worker","displayName":"fixer"},
+				"turn":{"id":"turn-one","state":"completed"},
+				"result":"Finished from durable events.",
+				"resultAvailable":true
+			}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var output bytes.Buffer
+	wait := NewCommand(&output, &output, testEnvironment(server.URL), server.Client())
+	wait.SetArgs([]string{"wait", "fixer", "--poll", "100ms", "--timeout", "2s"})
+	if err := wait.Execute(); err != nil {
+		t.Fatalf("wait Execute() error = %v", err)
+	}
+	if inspections.Load() != 4 || output.String() != "Finished from durable events.\n" {
+		t.Fatalf("inspections = %d, output = %q", inspections.Load(), output.String())
 	}
 }
 

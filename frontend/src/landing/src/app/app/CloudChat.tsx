@@ -32,6 +32,7 @@ interface CloudChatProps {
   api: CloudAPI;
   session: CloudSession;
   onTurnActiveChange?: (sessionId: string, active: boolean) => void;
+  onOpenPreview?: (url: string) => void;
 }
 
 type TimelineEntry =
@@ -72,6 +73,15 @@ function friendlyName(value: string) {
     .replaceAll("_", " ")
     .replaceAll(".", " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function isWorkerPreviewLink(value: string) {
+  try {
+    const target = new URL(value);
+    return ["localhost", "127.0.0.1", "0.0.0.0"].includes(target.hostname);
+  } catch {
+    return false;
+  }
 }
 
 function friendlyDetail(payload: Record<string, unknown>) {
@@ -521,6 +531,7 @@ export function CloudChat({
   api,
   session,
   onTurnActiveChange,
+  onOpenPreview,
 }: CloudChatProps) {
   const [initialCache] = useState(() => readChatEventCache(session.id));
   const [events, setEvents] = useState<CloudEvent[]>(initialCache.events);
@@ -880,7 +891,32 @@ export function CloudChat({
                         <ChatAgentAvatar session={session} className="size-4" />
                       </div>
                       <div className="prose prose-invert min-w-0 max-w-none flex-1 text-sm leading-6 text-[#d7d7d2] prose-headings:mb-2 prose-headings:mt-4 prose-headings:text-[#f4f5f7] prose-p:my-2 prose-p:text-[#d7d7d2] prose-pre:border prose-pre:border-white/[0.06] prose-pre:bg-[#15171b] prose-code:text-[#d7d7d2] prose-code:before:content-none prose-code:after:content-none prose-li:text-[#d7d7d2] prose-strong:text-[#f4f5f7]">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          components={{
+                            a: ({ href, children }) => {
+                              const previewLink =
+                                href && isWorkerPreviewLink(href);
+                              return (
+                                <a
+                                  href={href}
+                                  target={previewLink ? undefined : "_blank"}
+                                  rel={previewLink ? undefined : "noreferrer"}
+                                  onClick={
+                                    previewLink && onOpenPreview
+                                      ? (event) => {
+                                          event.preventDefault();
+                                          onOpenPreview(href);
+                                        }
+                                      : undefined
+                                  }
+                                >
+                                  {children}
+                                </a>
+                              );
+                            },
+                          }}
+                        >
                           {entry.text}
                         </ReactMarkdown>
                         {entry.streaming ? (

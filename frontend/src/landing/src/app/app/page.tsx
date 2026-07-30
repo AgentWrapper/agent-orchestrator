@@ -9,6 +9,7 @@ import {
   LogOut,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRightOpen,
   Play,
   Plus,
   Settings,
@@ -46,6 +47,10 @@ import {
 } from "@/lib/cloud-chat-cache";
 import { useAuth } from "../auth/AuthProvider";
 import { CloudChat } from "./CloudChat";
+import {
+  CloudInspector,
+  type CloudInspectorTab,
+} from "./CloudInspector";
 import { CloudTerminal } from "./CloudTerminal";
 
 type View = "board" | "session" | "settings";
@@ -53,6 +58,7 @@ type View = "board" | "session" | "settings";
 const cloudSelectionKey = "ao-cloud-selection";
 const cloudSidebarWidthKey = "ao-cloud-sidebar-width";
 const cloudSidebarCollapsedKey = "ao-cloud-sidebar-collapsed";
+const cloudInspectorKey = "ao-cloud-inspector";
 const defaultSidebarWidth = 240;
 const collapsedSidebarWidth = 52;
 const minimumSidebarWidth = 200;
@@ -169,6 +175,14 @@ export default function CloudAppPage() {
   const [selectionRestored, setSelectionRestored] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(defaultSidebarWidth);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [inspectorWidth, setInspectorWidth] = useState(480);
+  const [inspectorTab, setInspectorTab] =
+    useState<CloudInspectorTab>("terminal");
+  const [inspectorPreview, setInspectorPreview] = useState<{
+    sessionId: string;
+    url: string;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [showSessionForm, setShowSessionForm] = useState(false);
@@ -202,6 +216,13 @@ export default function CloudAppPage() {
         window.localStorage.getItem(cloudSidebarCollapsedKey) === "true";
       const savedWidth =
         savedWidthValue === null ? Number.NaN : Number(savedWidthValue);
+      const savedInspector = JSON.parse(
+        window.localStorage.getItem(cloudInspectorKey) ?? "{}",
+      ) as {
+        open?: boolean;
+        width?: number;
+        tab?: CloudInspectorTab;
+      };
       if (savedSelection.projectId)
         setSelectedProjectId(savedSelection.projectId);
       if (savedSelection.sessionId) {
@@ -217,6 +238,16 @@ export default function CloudAppPage() {
         );
       }
       setSidebarCollapsed(savedCollapsed);
+      setInspectorOpen(savedInspector.open === true);
+      if (typeof savedInspector.width === "number") {
+        setInspectorWidth(Math.min(900, Math.max(320, savedInspector.width)));
+      }
+      if (
+        savedInspector.tab &&
+        ["changes", "browser", "terminal", "files"].includes(savedInspector.tab)
+      ) {
+        setInspectorTab(savedInspector.tab);
+      }
     } catch {
       window.localStorage.removeItem(cloudSelectionKey);
     } finally {
@@ -234,6 +265,18 @@ export default function CloudAppPage() {
       }),
     );
   }, [selectedProjectId, selectedSessionId, selectionRestored]);
+
+  useEffect(() => {
+    if (!selectionRestored) return;
+    window.localStorage.setItem(
+      cloudInspectorKey,
+      JSON.stringify({
+        open: inspectorOpen,
+        width: inspectorWidth,
+        tab: inspectorTab,
+      }),
+    );
+  }, [inspectorOpen, inspectorTab, inspectorWidth, selectionRestored]);
 
   const refresh = useCallback(() => {
     if (!api) return Promise.resolve();
@@ -877,6 +920,19 @@ export default function CloudAppPage() {
                       ? "working"
                       : selectedSession.status.replaceAll("_", " ")}
                   </span>
+                  <button
+                    className={button}
+                    onClick={() => setInspectorOpen((current) => !current)}
+                    aria-label={
+                      inspectorOpen ? "Close session inspector" : "Open session inspector"
+                    }
+                    aria-expanded={inspectorOpen}
+                    title={
+                      inspectorOpen ? "Close workspace tools" : "Open workspace tools"
+                    }
+                  >
+                    <PanelRightOpen className="size-3.5" />
+                  </button>
                   {selectedSession.kind === "worker" ? (
                     <button
                       className={button}
@@ -952,12 +1008,41 @@ export default function CloudAppPage() {
               />
             ) : view === "session" && selectedSession ? (
               structuredChatAvailable ? (
-                <CloudChat
-                  key={selectedSession.id}
-                  api={api}
-                  session={selectedSession}
-                  onTurnActiveChange={handleChatTurnActiveChange}
-                />
+                <div className="flex h-full min-h-0 min-w-0">
+                  <div className="min-h-0 min-w-0 flex-1">
+                    <CloudChat
+                      key={selectedSession.id}
+                      api={api}
+                      session={selectedSession}
+                      onTurnActiveChange={handleChatTurnActiveChange}
+                      onOpenPreview={(url) => {
+                        setInspectorPreview({
+                          sessionId: selectedSession.id,
+                          url,
+                        });
+                        setInspectorTab("browser");
+                        setInspectorOpen(true);
+                      }}
+                    />
+                  </div>
+                  {inspectorOpen ? (
+                    <CloudInspector
+                      api={api}
+                      sessionId={selectedSession.id}
+                      runtimeConnected={selectedSession.runtimeConnected}
+                      previewAddress={
+                        inspectorPreview?.sessionId === selectedSession.id
+                          ? inspectorPreview.url
+                          : undefined
+                      }
+                      tab={inspectorTab}
+                      width={inspectorWidth}
+                      onTabChange={setInspectorTab}
+                      onWidthChange={setInspectorWidth}
+                      onClose={() => setInspectorOpen(false)}
+                    />
+                  ) : null}
+                </div>
               ) : terminalRuntimeAvailable ? (
                 <CloudTerminal api={api} sessionId={selectedSession.id} />
               ) : (

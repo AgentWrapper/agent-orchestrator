@@ -239,6 +239,9 @@ func (r *Runner) structuredCommandLoop(ctx context.Context, writer structuredPro
 		}
 		connectionStartedAt := time.Now()
 		err := r.client.RunCommandStream(ctx, highestPrompt.Load(), func(command cloudworkerhub.Command) error {
+			if r.dispatchWorkspaceCommand(ctx, command) {
+				return nil
+			}
 			before := highestPrompt.Load()
 			interrupted, err := handleStructuredCommand(command, writer, &highestPrompt)
 			if err != nil {

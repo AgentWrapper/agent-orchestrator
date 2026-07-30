@@ -31,6 +31,8 @@ type Runner struct {
 	workspaceDir      string
 	dataDir           string
 	credentialCommand func(context.Context, string, []string, io.Reader) error
+	shellTerminal     *os.File
+	shellWriteMu      sync.Mutex
 }
 
 // NewRunner creates a worker runner from bootstrap launch data.
@@ -119,6 +121,13 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 	runtimeEnvironment := append(os.Environ(), envList(hookEnvironment)...)
 	clearEnvironmentSecret(hookEnvironment, credentialEnvironmentName)
+	if structuredRuntimeEnabled(r.bootstrap.Launch.Session.Harness) {
+		stopShell, err := r.startWorkspaceShell(ctx, runtimeEnvironment)
+		if err != nil {
+			return err
+		}
+		defer stopShell()
+	}
 	switch r.bootstrap.Launch.Session.Harness {
 	case "claude-code":
 		if structuredRuntimeEnabled("claude-code") {
@@ -231,6 +240,9 @@ func (r *Runner) commandLoop(
 		connectionStartedAt := time.Now()
 		err := r.client.RunCommandStream(ctx, highestPrompt.Load(), func(command cloudworkerhub.Command) error {
 			switch command.Type {
+			case "workspace_request":
+				r.dispatchWorkspaceCommand(ctx, command)
+				return nil
 			case "input":
 				decoded, err := base64.StdEncoding.DecodeString(command.Data)
 				if err != nil {
@@ -382,10 +394,9 @@ func (r *Runner) heartbeatLoop(ctx context.Context) {
 
 func (r *Runner) runtimeCapabilities() []string {
 	capabilities := append([]string(nil), DefaultCapabilities...)
+	capabilities = append(capabilities, "runtime.pty.v1", "workspace.inspect.v1", "preview.http.v1")
 	if structuredRuntimeEnabled(r.bootstrap.Launch.Session.Harness) {
 		capabilities = append(capabilities, "chat.stream-json.v1")
-	} else {
-		capabilities = append(capabilities, "runtime.pty.v1")
 	}
 	return capabilities
 }
@@ -612,7 +623,11 @@ Use --agent claude-code, --agent codex, or --agent cursor only when the user req
 
 Never use Claude's Agent tool, Task tool, general-purpose subagents, or background subagents for an AO worker request. Those are internal subprocesses and do not create an AO worker visible to the user.
 
-Use "ao status" to list durable project sessions and "ao send --session <id> --message <text>" for follow-up work. Report the created worker name and session ID after ao spawn succeeds. Do not reason about sandbox providers, virtual machines, hosted databases, or worker routing; AO implements those details.`
+Use "ao status" to list durable project sessions, "ao inspect <worker>" for one current snapshot, "ao result <worker>" to read an already completed answer, and "ao send --session <id> --message <text>" for follow-up work.
+
+After delegating work, use "ao wait <worker>" to wait for the durable turn and read the worker's complete answer. If you spawn multiple workers, spawn all of them first so they run concurrently, then wait for each one. Do not claim delegated work is complete until you have read its result. Only skip waiting when the user explicitly asks for fire-and-forget delegation.
+
+Report the created worker name and session ID after ao spawn succeeds. Do not reason about sandbox providers, virtual machines, hosted databases, or worker routing; AO implements those details.`
 }
 
 func restrictOrchestratorTools(argv []string, kind, harness string) []string {

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,7 +46,14 @@ func NewCommand(stdout, stderr io.Writer, getenv environment, httpClient *http.C
 	root.SetOut(stdout)
 	root.SetErr(stderr)
 	root.SetVersionTemplate("ao {{.Version}}\n")
-	root.AddCommand(newSpawnCommand(getenv, httpClient), newSendCommand(getenv, httpClient), newStatusCommand(getenv, httpClient))
+	root.AddCommand(
+		newSpawnCommand(getenv, httpClient),
+		newSendCommand(getenv, httpClient),
+		newStatusCommand(getenv, httpClient),
+		newInspectCommand(getenv, httpClient),
+		newWaitCommand(getenv, httpClient),
+		newResultCommand(getenv, httpClient),
+	)
 	return root
 }
 
@@ -146,11 +154,261 @@ func newStatusCommand(getenv environment, httpClient *http.Client) *cobra.Comman
 	}
 }
 
+type inspection struct {
+	Session         clouddomain.Session `json:"session"`
+	Turn            *clouddomain.Turn   `json:"turn"`
+	Result          string              `json:"result"`
+	ResultAvailable bool                `json:"resultAvailable"`
+}
+
+func newInspectCommand(getenv environment, httpClient *http.Client) *cobra.Command {
+	return &cobra.Command{
+		Use:   "inspect <worker>",
+		Short: "Inspect a project worker and its latest turn",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			client, err := newClient(getenv, httpClient)
+			if err != nil {
+				return err
+			}
+			worker, err := client.resolveWorker(command.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			inspection, err := client.inspectWorker(command.Context(), worker.ID)
+			if err != nil {
+				return err
+			}
+			turnState := "none"
+			attempts := 0
+			if inspection.Turn != nil {
+				turnState = inspection.Turn.State
+				attempts = inspection.Turn.AttemptCount
+			}
+			resultState := "none"
+			if inspection.Turn != nil {
+				if inspection.ResultAvailable {
+					resultState = "available"
+				} else {
+					resultState = "pending"
+				}
+			}
+			_, err = fmt.Fprintf(
+				command.OutOrStdout(),
+				"id: %s\nname: %s\nstatus: %s\nruntime: %s\nturn: %s\nattempts: %d\nresult: %s\n",
+				inspection.Session.ID,
+				inspection.Session.DisplayName,
+				inspection.Session.Status,
+				connectedLabel(inspection.Session.RuntimeConnected),
+				turnState,
+				attempts,
+				resultState,
+			)
+			return err
+		},
+	}
+}
+
+func newResultCommand(getenv environment, httpClient *http.Client) *cobra.Command {
+	return &cobra.Command{
+		Use:   "result <worker>",
+		Short: "Print a worker's complete latest answer",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			client, err := newClient(getenv, httpClient)
+			if err != nil {
+				return err
+			}
+			worker, err := client.resolveWorker(command.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			current, err := client.inspectWorker(command.Context(), worker.ID)
+			if err != nil {
+				return err
+			}
+			return printWorkerResult(command.OutOrStdout(), current)
+		},
+	}
+}
+
+func newWaitCommand(getenv environment, httpClient *http.Client) *cobra.Command {
+	var timeout, interval time.Duration
+	command := &cobra.Command{
+		Use:   "wait <worker>",
+		Short: "Wait for a worker and print its complete answer",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			client, err := newClient(getenv, httpClient)
+			if err != nil {
+				return err
+			}
+			worker, err := client.resolveWorker(command.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			if timeout <= 0 {
+				return errors.New("timeout must be positive")
+			}
+			if interval < 100*time.Millisecond {
+				return errors.New("poll interval must be at least 100ms")
+			}
+			ctx, cancel := context.WithTimeout(command.Context(), timeout)
+			defer cancel()
+			for {
+				current, inspectErr := client.inspectWorker(ctx, worker.ID)
+				if inspectErr != nil {
+					var responseErr *responseError
+					if errors.As(inspectErr, &responseErr) &&
+						responseErr.statusCode >= http.StatusBadRequest &&
+						responseErr.statusCode < http.StatusInternalServerError {
+						return inspectErr
+					}
+					if waitErr := waitForPoll(ctx, interval, worker.ID); waitErr != nil {
+						return waitErr
+					}
+					continue
+				}
+				if current.ResultAvailable {
+					return printWorkerResult(command.OutOrStdout(), current)
+				}
+				if current.Turn == nil {
+					return fmt.Errorf("worker %s has no turn to wait for", worker.ID)
+				}
+				if waitErr := waitForPoll(ctx, interval, worker.ID); waitErr != nil {
+					return waitErr
+				}
+			}
+		},
+	}
+	command.Flags().DurationVar(&timeout, "timeout", 30*time.Minute, "maximum wait time")
+	command.Flags().DurationVar(&interval, "poll", time.Second, "status polling interval")
+	return command
+}
+
+func connectedLabel(connected bool) string {
+	if connected {
+		return "connected"
+	}
+	return "offline"
+}
+
+func waitForPoll(
+	ctx context.Context,
+	interval time.Duration,
+	workerID clouddomain.SessionID,
+) error {
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("timed out waiting for worker %s", workerID)
+		}
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func printWorkerResult(output io.Writer, current inspection) error {
+	if current.Turn == nil {
+		return fmt.Errorf("worker %s has no result", current.Session.ID)
+	}
+	if !current.ResultAvailable {
+		return fmt.Errorf(
+			"worker %s is still %s; use ao wait %s",
+			current.Session.ID,
+			current.Turn.State,
+			current.Session.ID,
+		)
+	}
+	if current.Result != "" {
+		if _, err := fmt.Fprintln(output, current.Result); err != nil {
+			return err
+		}
+	}
+	if current.Turn.State == "failed" {
+		reason := strings.TrimSpace(current.Turn.ErrorMessage)
+		if reason == "" {
+			reason = "worker turn failed"
+		}
+		return fmt.Errorf("worker %s failed: %s", current.Session.ID, reason)
+	}
+	return nil
+}
+
 type client struct {
 	baseURL string
 	token   string
 	session string
 	http    *http.Client
+}
+
+type responseError struct {
+	statusCode int
+	status     string
+	body       string
+}
+
+func (e *responseError) Error() string {
+	return fmt.Sprintf("AO Cloud returned %s: %s", e.status, e.body)
+}
+
+func (c *client) listSessions(ctx context.Context) ([]clouddomain.Session, error) {
+	var result struct {
+		Sessions []clouddomain.Session `json:"sessions"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/cloud/v1/worker/orchestrate/sessions", nil, &result, ""); err != nil {
+		return nil, err
+	}
+	return result.Sessions, nil
+}
+
+func (c *client) resolveWorker(ctx context.Context, reference string) (clouddomain.Session, error) {
+	sessions, err := c.listSessions(ctx)
+	if err != nil {
+		return clouddomain.Session{}, err
+	}
+	reference = strings.TrimSpace(reference)
+	for _, session := range sessions {
+		if session.Kind == "worker" && string(session.ID) == reference {
+			return session, nil
+		}
+	}
+	matches := make([]clouddomain.Session, 0, 1)
+	for _, session := range sessions {
+		if session.Kind != "worker" {
+			continue
+		}
+		if session.DisplayName == reference || strings.HasPrefix(string(session.ID), reference) {
+			matches = append(matches, session)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return clouddomain.Session{}, fmt.Errorf("project worker %q was not found", reference)
+	case 1:
+		return matches[0], nil
+	default:
+		return clouddomain.Session{}, fmt.Errorf("project worker %q is ambiguous; use its full session ID", reference)
+	}
+}
+
+func (c *client) inspectWorker(
+	ctx context.Context,
+	sessionID clouddomain.SessionID,
+) (inspection, error) {
+	var result inspection
+	err := c.do(
+		ctx,
+		http.MethodGet,
+		"/api/cloud/v1/worker/orchestrate/sessions/"+url.PathEscape(string(sessionID))+"/inspection",
+		nil,
+		&result,
+		"",
+	)
+	return result, err
 }
 
 func newClient(getenv environment, httpClient *http.Client) (*client, error) {
@@ -207,7 +465,11 @@ func (c *client) do(
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		payload, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
-		return fmt.Errorf("AO Cloud returned %s: %s", response.Status, strings.TrimSpace(string(payload)))
+		return &responseError{
+			statusCode: response.StatusCode,
+			status:     response.Status,
+			body:       strings.TrimSpace(string(payload)),
+		}
 	}
 	if output == nil || response.StatusCode == http.StatusNoContent {
 		_, _ = io.Copy(io.Discard, response.Body)

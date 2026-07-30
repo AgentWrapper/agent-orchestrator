@@ -446,6 +446,80 @@ func TestWorkerAndBrowserTerminalReplayLiveRouting(t *testing.T) {
 	if command.Type != "input" || command.Data != input {
 		t.Fatalf("worker command = %#v", command)
 	}
+
+	workspaceRequest, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		server.URL+"/api/cloud/v1/sessions/"+string(created.Session.ID)+"/workspace/files?path=",
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceRequest.Header.Set("Authorization", "Bearer user-one")
+	type workspaceHTTPResult struct {
+		response *http.Response
+		err      error
+	}
+	workspaceResult := make(chan workspaceHTTPResult, 1)
+	go func() {
+		response, requestErr := server.Client().Do(workspaceRequest)
+		workspaceResult <- workspaceHTTPResult{response: response, err: requestErr}
+	}()
+	_, workspaceCommandData, err := workerSocket.Read(ctx)
+	if err != nil {
+		t.Fatalf("read workspace command: %v", err)
+	}
+	var workspaceCommand cloudworkerhub.Command
+	if err := json.Unmarshal(workspaceCommandData, &workspaceCommand); err != nil {
+		t.Fatalf("decode workspace command: %v", err)
+	}
+	if workspaceCommand.Type != "workspace_request" ||
+		workspaceCommand.Action != "list" ||
+		workspaceCommand.RequestID == "" {
+		t.Fatalf("workspace command = %#v", workspaceCommand)
+	}
+	workspaceResponse := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/worker/workspace-response",
+		"",
+		map[string]any{
+			"requestId": workspaceCommand.RequestID,
+			"payload": map[string]any{
+				"path": "",
+				"entries": []map[string]any{{
+					"name": "README.md",
+					"path": "README.md",
+				}},
+			},
+		},
+		map[string]string{"Authorization": "Worker " + bootstrapBody.WorkerToken},
+	)
+	workspaceResponse.Body.Close()
+	if workspaceResponse.StatusCode != http.StatusNoContent {
+		t.Fatalf("workspace response status = %d", workspaceResponse.StatusCode)
+	}
+	result := <-workspaceResult
+	if result.err != nil {
+		t.Fatalf("workspace request failed: %v", result.err)
+	}
+	defer result.response.Body.Close()
+	if result.response.StatusCode != http.StatusOK {
+		t.Fatalf("workspace request status = %d", result.response.StatusCode)
+	}
+	var workspaceBody struct {
+		Entries []struct {
+			Name string `json:"name"`
+		} `json:"entries"`
+	}
+	if err := json.NewDecoder(result.response.Body).Decode(&workspaceBody); err != nil {
+		t.Fatal(err)
+	}
+	if len(workspaceBody.Entries) != 1 || workspaceBody.Entries[0].Name != "README.md" {
+		t.Fatalf("workspace body = %#v", workspaceBody)
+	}
 }
 
 func TestChatMessageAuthIdempotencyAndWorkerReplay(t *testing.T) {
@@ -1203,6 +1277,58 @@ func TestWorkerOrchestrationIsProjectScoped(t *testing.T) {
 	if len(listed.Sessions) != 2 {
 		t.Fatalf("listed sessions = %#v", listed.Sessions)
 	}
+	activeTurn, err := store.GetActiveTurn(ctx, account.ID, spawned.Session.ID)
+	if err != nil || activeTurn == nil {
+		t.Fatalf("spawned active turn = %#v, error = %v", activeTurn, err)
+	}
+	resultPayload, _ := json.Marshal(map[string]any{
+		"turnId": activeTurn.ID,
+		"text":   "The delegated tests pass.",
+	})
+	if _, err := store.AppendEvent(
+		ctx,
+		account.ID,
+		spawned.Session.ID,
+		"chat.assistant_message",
+		resultPayload,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.TransitionActiveTurn(
+		ctx,
+		account.ID,
+		spawned.Session.ID,
+		"completed",
+		"",
+	); err != nil {
+		t.Fatal(err)
+	}
+	inspect := requestJSON(
+		t,
+		server,
+		http.MethodGet,
+		"/api/cloud/v1/worker/orchestrate/sessions/"+string(spawned.Session.ID)+"/inspection",
+		"",
+		nil,
+		map[string]string{
+			"Authorization":   "Worker " + token,
+			"X-AO-Session-ID": string(parent.Session.ID),
+		},
+	)
+	defer inspect.Body.Close()
+	if inspect.StatusCode != http.StatusOK {
+		t.Fatalf("inspection status = %d", inspect.StatusCode)
+	}
+	var inspection workerInspectionResponse
+	if err := json.NewDecoder(inspect.Body).Decode(&inspection); err != nil {
+		t.Fatal(err)
+	}
+	if inspection.Turn == nil ||
+		inspection.Turn.State != "completed" ||
+		!inspection.ResultAvailable ||
+		inspection.Result != "The delegated tests pass." {
+		t.Fatalf("inspection = %#v", inspection)
+	}
 
 	otherProject, err := store.CreateProject(ctx, account.ID, cloudpostgres.CreateProjectInput{
 		DisplayName:   "Other",
@@ -1235,6 +1361,19 @@ func TestWorkerOrchestrationIsProjectScoped(t *testing.T) {
 	crossProject.Body.Close()
 	if crossProject.StatusCode != http.StatusNotFound {
 		t.Fatalf("cross-project send status = %d, want 404", crossProject.StatusCode)
+	}
+	crossProjectInspect := requestJSON(
+		t,
+		server,
+		http.MethodGet,
+		"/api/cloud/v1/worker/orchestrate/sessions/"+string(other.Session.ID)+"/inspection",
+		"",
+		nil,
+		headers,
+	)
+	crossProjectInspect.Body.Close()
+	if crossProjectInspect.StatusCode != http.StatusNotFound {
+		t.Fatalf("cross-project inspection status = %d, want 404", crossProjectInspect.StatusCode)
 	}
 }
 

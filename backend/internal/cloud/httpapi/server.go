@@ -39,6 +39,7 @@ type store interface {
 	ListSessions(context.Context, clouddomain.AccountID) ([]clouddomain.Session, error)
 	GetSession(context.Context, clouddomain.AccountID, clouddomain.SessionID) (clouddomain.Session, error)
 	GetActiveTurn(context.Context, clouddomain.AccountID, clouddomain.SessionID) (*clouddomain.Turn, error)
+	GetLatestTurn(context.Context, clouddomain.AccountID, clouddomain.SessionID) (*clouddomain.Turn, error)
 	TransitionActiveTurn(context.Context, clouddomain.AccountID, clouddomain.SessionID, string, string) (*clouddomain.Turn, error)
 	ClaimActiveTurn(context.Context, clouddomain.AccountID, clouddomain.SessionID, int64, int64) error
 	PrepareActiveTurnForWorker(context.Context, clouddomain.AccountID, clouddomain.SessionID, int64) (int64, error)
@@ -72,6 +73,8 @@ type Server struct {
 	daytonaAPIURL    string
 	daytonaTarget    string
 	workerHub        *cloudworkerhub.Hub
+	workerRPC        *workerRPCBroker
+	previewTokens    *previewTokenStore
 	workerReplayWait time.Duration
 	workerWriteWait  time.Duration
 	localGitHub      *cloudlocalgh.Client
@@ -109,6 +112,8 @@ func New(
 		daytonaAPIURL:    strings.TrimRight(daytonaAPIURL, "/"),
 		daytonaTarget:    daytonaTarget,
 		workerHub:        workerHub,
+		workerRPC:        newWorkerRPCBroker(),
+		previewTokens:    newPreviewTokenStore(),
 		workerReplayWait: 20 * time.Second,
 		workerWriteWait:  10 * time.Second,
 		localGitHub:      localGitHub,
@@ -149,14 +154,17 @@ func (s *Server) routes() http.Handler {
 	router.Route("/api/cloud/v1", func(api chi.Router) {
 		api.Post("/worker/bootstrap", s.workerBootstrap)
 		api.Get("/terminal", s.terminalSocket)
+		api.HandleFunc("/preview/{token}/*", s.workspacePreviewProxy)
 		api.Group(func(worker chi.Router) {
 			worker.Use(s.workerAuth)
 			worker.Post("/worker/heartbeat", s.workerHeartbeat)
 			worker.Post("/worker/events", s.workerEvent)
+			worker.Post("/worker/workspace-response", s.workerWorkspaceResponse)
 			worker.Get("/worker/connect", s.workerConnect)
 			worker.Get("/worker/orchestrate/sessions", s.workerListSessions)
 			worker.Post("/worker/orchestrate/sessions", s.workerCreateSession)
 			worker.Post("/worker/orchestrate/sessions/{sessionId}/messages", s.workerSendMessage)
+			worker.Get("/worker/orchestrate/sessions/{sessionId}/inspection", s.workerInspectSession)
 			worker.Handle("/git/{owner}/{repository}.git/*", http.HandlerFunc(s.gitProxy))
 		})
 
@@ -176,6 +184,11 @@ func (s *Server) routes() http.Handler {
 			protected.Post("/sessions/{sessionId}/interrupt", s.interruptSession)
 			protected.Get("/sessions/{sessionId}/events", s.streamEvents)
 			protected.Get("/sessions/{sessionId}/scm", s.sessionSCM)
+			protected.Get("/sessions/{sessionId}/workspace/files", s.workspaceFiles)
+			protected.Get("/sessions/{sessionId}/workspace/file", s.workspaceFile)
+			protected.Get("/sessions/{sessionId}/workspace/diff", s.workspaceDiff)
+			protected.Post("/sessions/{sessionId}/workspace/preview", s.workspacePreview)
+			protected.Post("/sessions/{sessionId}/workspace/preview-ticket", s.issueWorkspacePreview)
 			protected.Post("/sessions/{sessionId}/terminal-ticket", s.issueTerminalTicket)
 			protected.Get("/provider-connections", s.listProviderConnections)
 			protected.Put("/provider-connections/daytona", s.putDaytonaConnection)
@@ -203,10 +216,14 @@ func (s *Server) requestLogger(next http.Handler) http.Handler {
 		if routeContext := chi.RouteContext(r.Context()); routeContext != nil {
 			route = routeContext.RoutePattern()
 		}
+		logPath := r.URL.Path
+		if strings.HasPrefix(logPath, "/api/cloud/v1/preview/") {
+			logPath = "/api/cloud/v1/preview/[redacted]"
+		}
 		s.log.Info("AO Cloud request completed",
 			"request_id", middleware.GetReqID(r.Context()),
 			"method", r.Method,
-			"path", r.URL.Path,
+			"path", logPath,
 			"route", route,
 			"status", status,
 			"bytes", wrapped.BytesWritten(),
@@ -216,6 +233,9 @@ func (s *Server) requestLogger(next http.Handler) http.Handler {
 }
 
 func quietCloudRequest(path string) bool {
+	if strings.HasPrefix(path, "/api/cloud/v1/preview/") {
+		return true
+	}
 	switch path {
 	case "/healthz", "/readyz",
 		"/api/cloud/v1/worker/heartbeat",

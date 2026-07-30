@@ -72,6 +72,9 @@ func TestOrchestratorSystemPromptRequiresDurableAOWorkers(t *testing.T) {
 		`ao spawn --name`,
 		`Never use Claude's Agent tool`,
 		`ao status`,
+		`ao inspect <worker>`,
+		`ao wait <worker>`,
+		`ao result <worker>`,
 		`ao send --session`,
 	} {
 		if !strings.Contains(prompt, required) {

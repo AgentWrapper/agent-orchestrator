@@ -51,14 +51,25 @@ flowchart LR
   protocols. The worker translates provider-specific messages into AO's common
   `chat.*` event vocabulary.
 - **Cloud `ao` CLI:** a separate binary inside orchestrator sandboxes. The
-  commands `ao spawn`, `ao send`, and `ao status` call worker-authenticated
-  control-plane routes. They can operate only inside the orchestrator's account
-  and project.
+  commands `ao spawn`, `ao send`, `ao status`, `ao inspect`, `ao wait`, and
+  `ao result` call worker-authenticated control-plane routes. They can operate
+  only inside the orchestrator's account and project.
 
 An orchestrator is still a normal session and sandbox; its extra
 `worker:orchestrate` scope lets it create and coordinate child worker sessions
 for the same repository project. New child sessions appear in the web UI
 because the control plane, not the VM, creates their durable rows.
+
+Worker completion uses the same durable turn and event records as the web app.
+`ao inspect <worker>` reads one current session/turn snapshot. `ao wait
+<worker>` polls that durable snapshot through transient control-plane restarts,
+then prints the complete normalized assistant answer when the latest turn
+reaches `completed`; a failed turn returns its partial answer and failure.
+`ao result <worker>` reads the already-finished answer without waiting. Worker
+names, full session IDs, and unambiguous ID prefixes are accepted. The
+orchestrator prompt requires waiting for delegated results unless the user
+explicitly requests fire-and-forget work, so it no longer has to repeatedly
+guess from `ao status`.
 
 ## Which client talks to which authority
 
@@ -172,8 +183,37 @@ refresh path—not the worker, lifecycle, chat, or frontend contracts.
     later prompts survive.
 
 The web app shows structured chat whenever the worker advertises
-`chat.stream-json.v1`. It shows the PTY only for a runtime advertising
-`runtime.pty.v1`; terminal transport is a fallback, not the primary product UI.
+`chat.stream-json.v1`. Structured workers also launch an independent Bash PTY
+in the repository directory and advertise `runtime.pty.v1`; this shell does
+not replace or interfere with the agent process. Raw agent PTY remains only
+the fallback for harnesses without structured chat.
+
+### Workspace inspector: changes, browser, terminal, and files
+
+The session header opens a closed-by-default, resizable right inspector. Its
+selected tab, width, and open state are browser preferences only.
+
+- **Terminal:** xterm requests a 60-second, single-use browser ticket, then
+  connects over WebSocket. Input and resize commands travel through the
+  control-plane worker hub to the independent repository shell. Output remains
+  sequence-numbered for reconnect replay.
+- **Changes and files:** authenticated browser requests become ephemeral
+  `workspace_request` commands. The worker confines paths to the checked-out
+  repository (including resolved symlinks), reads directories/files, or runs
+  read-only Git status/diff commands. Responses return through an authenticated
+  worker endpoint and are never appended to the durable chat event log.
+- **Browser:** the worker can run a localhost HTTP server (Python 3 is included
+  in the worker image). The browser first obtains a short-lived,
+  capability-scoped preview URL. The control plane proxies only the selected
+  localhost port through the existing worker channel, rewrites common
+  root-relative HTML/CSS/JavaScript asset paths, strips the capability from
+  request logs, and renders the result in a sandboxed iframe. Fly machines
+  remain private; no VM port is opened to the public internet.
+
+Inspector RPCs are in-memory live operations with bounded payloads and
+timeouts. Postgres remains authoritative for sessions, turns, and chat, while
+the repository disk inside the VM remains authoritative for live files and
+diffs.
 
 ### Browser cache and fast navigation
 
@@ -276,8 +316,9 @@ the cloud TODO.
   LCM, SCM, worker protocol, provider adapters, secrets, and HTTP routes.
 - `backend/cmd/ao-cloud` is the hosted control-plane binary.
 - `backend/cmd/ao-worker` is the sandbox worker.
-- `backend/cmd/ao-cloud-agent` is the cloud-aware `ao spawn/send/status` CLI
-  installed in orchestrator environments.
+- `backend/cmd/ao-cloud-agent` is the cloud-aware
+  `ao spawn/send/status/inspect/wait/result` CLI installed in orchestrator
+  environments.
 - `ao-cloud/` owns deployment documentation and worker/control-plane images.
 - `frontend/src/landing/src/app/app/` is the authenticated cloud web surface.
 - The existing renderer and local backend remain local and are not imported

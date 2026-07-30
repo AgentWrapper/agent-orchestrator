@@ -70,6 +70,29 @@ export interface CloudEvent {
   createdAt: string;
 }
 
+export interface CloudWorkspaceEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  size: number;
+  mode: string;
+  modTime: string;
+}
+
+export interface CloudWorkspaceDiff {
+  status: string;
+  unstaged: string;
+  staged: string;
+}
+
+export interface CloudPreviewResponse {
+  status: number;
+  contentType: string;
+  location: string;
+  body: string;
+  url: string;
+}
+
 export interface ProviderConnection {
   id: string;
   provider: "daytona" | "claude-code" | "codex" | "cursor";
@@ -300,6 +323,40 @@ export class CloudAPI {
     target.searchParams.set("ticket", ticket);
     target.searchParams.set("after", String(after));
     return target.toString();
+  }
+
+  async workspaceFiles(sessionId: string, path = "") {
+    const query = new URLSearchParams({ path });
+    return this.request<{ path: string; entries: CloudWorkspaceEntry[] }>(
+      `/api/cloud/v1/sessions/${encodeURIComponent(sessionId)}/workspace/files?${query}`,
+    );
+  }
+
+  async workspaceFile(sessionId: string, path: string) {
+    const query = new URLSearchParams({ path });
+    return this.request<{ path: string; content: string; size: number }>(
+      `/api/cloud/v1/sessions/${encodeURIComponent(sessionId)}/workspace/file?${query}`,
+    );
+  }
+
+  async workspaceDiff(sessionId: string) {
+    return this.request<CloudWorkspaceDiff>(
+      `/api/cloud/v1/sessions/${encodeURIComponent(sessionId)}/workspace/diff`,
+    );
+  }
+
+  async workspacePreview(sessionId: string, port: number, path: string) {
+    return this.request<CloudPreviewResponse>(
+      `/api/cloud/v1/sessions/${encodeURIComponent(sessionId)}/workspace/preview`,
+      { method: "POST", body: { port, path, method: "GET" } },
+    );
+  }
+
+  async workspacePreviewTicket(sessionId: string, port: number) {
+    return this.request<{ url: string; expiresAt: string }>(
+      `/api/cloud/v1/sessions/${encodeURIComponent(sessionId)}/workspace/preview-ticket`,
+      { method: "POST", body: { port } },
+    );
   }
 
   private async request<T>(

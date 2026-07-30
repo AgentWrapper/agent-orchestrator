@@ -62,7 +62,7 @@ func (c *Client) Bootstrap(
 	capabilities []string,
 ) (BootstrapResponse, error) {
 	var response BootstrapResponse
-	err := c.do(ctx, http.MethodPost, "/api/cloud/v1/worker/bootstrap", "", map[string]any{
+	err := c.do(ctx, "/api/cloud/v1/worker/bootstrap", "", map[string]any{
 		"bootstrapToken": bootstrapToken,
 		"version":        version,
 		"capabilities":   capabilities,
@@ -79,7 +79,7 @@ func (c *Client) Heartbeat(ctx context.Context, version string, capabilities []s
 	var response struct {
 		WorkerToken string `json:"workerToken"`
 	}
-	if err := c.do(ctx, http.MethodPost, "/api/cloud/v1/worker/heartbeat", c.getToken(), map[string]any{
+	if err := c.do(ctx, "/api/cloud/v1/worker/heartbeat", c.getToken(), map[string]any{
 		"version":      version,
 		"capabilities": capabilities,
 	}, &response); err != nil {
@@ -93,9 +93,23 @@ func (c *Client) Heartbeat(ctx context.Context, version string, capabilities []s
 
 // Event publishes a worker event to AO Cloud.
 func (c *Client) Event(ctx context.Context, eventType string, payload any) error {
-	return c.do(ctx, http.MethodPost, "/api/cloud/v1/worker/events", c.getToken(), map[string]any{
+	return c.do(ctx, "/api/cloud/v1/worker/events", c.getToken(), map[string]any{
 		"type":    eventType,
 		"payload": payload,
+	}, nil)
+}
+
+// WorkspaceResponse returns a non-durable inspector response to AO Cloud.
+func (c *Client) WorkspaceResponse(
+	ctx context.Context,
+	requestID string,
+	payload any,
+	responseError string,
+) error {
+	return c.do(ctx, "/api/cloud/v1/worker/workspace-response", c.getToken(), map[string]any{
+		"requestId": requestID,
+		"payload":   payload,
+		"error":     responseError,
 	}, nil)
 }
 
@@ -154,12 +168,12 @@ func (c *Client) SetToken(token string) {
 	c.setToken(token)
 }
 
-func (c *Client) do(ctx context.Context, method, path, workerToken string, input, output any) error {
+func (c *Client) do(ctx context.Context, path, workerToken string, input, output any) error {
 	encoded, err := json.Marshal(input)
 	if err != nil {
 		return fmt.Errorf("encode cloud worker request: %w", err)
 	}
-	request, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bytes.NewReader(encoded))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(encoded))
 	if err != nil {
 		return fmt.Errorf("build cloud worker request: %w", err)
 	}

@@ -37,6 +37,32 @@ func (s *Store) GetActiveTurn(
 	return &turn, nil
 }
 
+// GetLatestTurn returns the newest turn for an account-owned session,
+// including terminal turns.
+func (s *Store) GetLatestTurn(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+) (*clouddomain.Turn, error) {
+	turn, err := scanTurn(s.pool.QueryRow(ctx, `
+		SELECT id, account_id, session_id, user_message_sequence, state,
+			worker_epoch, attempt_count, error_message, started_at, completed_at,
+			created_at, updated_at
+		FROM ao_turns
+		WHERE account_id = $1
+			AND session_id = $2
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, accountID, sessionID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load latest cloud turn: %w", err)
+	}
+	return &turn, nil
+}
+
 // TransitionActiveTurn moves the current turn forward without reviving a
 // terminal turn or regressing a running turn back to provisioning.
 func (s *Store) TransitionActiveTurn(
