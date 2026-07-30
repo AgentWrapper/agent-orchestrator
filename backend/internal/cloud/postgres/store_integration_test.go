@@ -203,3 +203,78 @@ func TestCreateSessionIsIdempotentAndEventsAreOrdered(t *testing.T) {
 		t.Fatalf("second ConsumeAccessTicket() error = %v, want ErrInvalidTicket", err)
 	}
 }
+
+func TestDeletedSandboxCanBeRequestedAgain(t *testing.T) {
+	store := integrationStore(t)
+	ctx := context.Background()
+	account, err := store.EnsureAccount(ctx, uuid.NewString(), "Lifecycle Tester")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, account.ID, CreateProjectInput{
+		DisplayName:   "Lifecycle",
+		RepositoryURL: "https://github.com/example/" + uuid.NewString(),
+		DefaultBranch: "main",
+		Config:        json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := store.CreateSession(ctx, account.ID, CreateSessionInput{
+		IdempotencyKey: uuid.NewString(),
+		ProjectID:      project.ID,
+		Kind:           "worker",
+		Harness:        "fake",
+		DisplayName:    "recreated-worker",
+		Resource:       clouddomain.DefaultResourceProfile(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.pool.Exec(ctx, `
+		UPDATE ao_sandboxes
+		SET desired_state = 'running',
+			observed_state = 'deleted',
+			provider_environment_id = 'deleted-environment',
+			reconcile_after = now(),
+			reconcile_lease_owner = '',
+			reconcile_lease_until = NULL
+		WHERE session_id = $1
+	`, created.Session.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	const owner = "lifecycle-test"
+	claimed, err := store.ClaimSandboxes(ctx, owner, 100, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, sandbox := range claimed {
+		if sandbox.SessionID == created.Session.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("running sandbox with deleted observation was not reclaimed")
+	}
+	if err := store.UpdateSandboxObservation(
+		ctx,
+		owner,
+		created.Session.ID,
+		"",
+		"requested",
+		"provider environment disappeared",
+		time.Now(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	sandbox, err := store.GetSandbox(ctx, account.ID, created.Session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sandbox.ProviderEnvironmentID != "" || sandbox.ObservedState != "requested" {
+		t.Fatalf("reset sandbox = %#v", sandbox)
+	}
+}

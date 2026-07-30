@@ -36,7 +36,10 @@ func (s *Store) ClaimSandboxes(
 					reconcile_lease_until IS NULL
 					OR reconcile_lease_until < now()
 				)
-				AND observed_state <> 'deleted'
+				AND (
+					observed_state <> 'deleted'
+					OR desired_state <> 'deleted'
+				)
 			ORDER BY reconcile_after, created_at
 			FOR UPDATE SKIP LOCKED
 			LIMIT $1
@@ -86,10 +89,7 @@ func (s *Store) UpdateSandboxObservation(
 ) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE ao_sandboxes
-		SET provider_environment_id = CASE
-				WHEN $3 = '' THEN provider_environment_id
-				ELSE $3
-			END,
+		SET provider_environment_id = NULLIF($3, ''),
 			observed_state = $4,
 			last_error = $5,
 			reconcile_after = $6,
