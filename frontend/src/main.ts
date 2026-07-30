@@ -97,7 +97,14 @@ if (process.platform === "win32") {
 // inside ~/.ao alongside the daemon's data dir and running.json. sessionData and
 // crashDumps derive from userData, so this one override reparents them all.
 // Must run before app ready.
-app.setPath("userData", path.join(os.homedir(), ".ao", "electron"));
+// Dev runs get their own profile under the same ~/.ao root: the packaged app
+// keeps this directory open, and two Chromium instances sharing one profile
+// corrupt its LevelDB stores. Mirrors how dev already isolates running.json and
+// the daemon data dir into ~/.ao/dev.
+app.setPath(
+	"userData",
+	app.isPackaged ? path.join(os.homedir(), ".ao", "electron") : path.join(os.homedir(), ".ao", "dev", "electron"),
+);
 
 let mainWindow: BrowserWindow | null = null;
 let daemonProcess: ChildProcess | null = null;
