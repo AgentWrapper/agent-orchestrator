@@ -389,13 +389,22 @@ func normalizeClaudeLine(line []byte, state *claudeStreamState) []normalizedChat
 			return nil
 		}
 		events := make([]normalizedChatEvent, 0)
-		var text, reasoning strings.Builder
 		for _, block := range message.Content {
 			switch block.Type {
 			case "text":
-				text.WriteString(block.Text)
+				if block.Text != "" && !state.sawTextDelta {
+					events = append(events, normalizedChatEvent{
+						eventType: "chat.assistant_message",
+						payload:   map[string]any{"text": block.Text},
+					})
+				}
 			case "thinking":
-				reasoning.WriteString(block.Thinking)
+				if block.Thinking != "" && !state.sawReasoningDelta {
+					events = append(events, normalizedChatEvent{
+						eventType: "chat.reasoning_message",
+						payload:   map[string]any{"text": block.Thinking},
+					})
+				}
 			case "tool_use":
 				if state.startedTools == nil {
 					state.startedTools = make(map[string]struct{})
@@ -416,18 +425,6 @@ func normalizeClaudeLine(line []byte, state *claudeStreamState) []normalizedChat
 					payload:   payload,
 				})
 			}
-		}
-		if reasoning.Len() > 0 && !state.sawReasoningDelta {
-			events = append(events, normalizedChatEvent{
-				eventType: "chat.reasoning_message",
-				payload:   map[string]any{"text": reasoning.String()},
-			})
-		}
-		if text.Len() > 0 && !state.sawTextDelta {
-			events = append(events, normalizedChatEvent{
-				eventType: "chat.assistant_message",
-				payload:   map[string]any{"text": text.String()},
-			})
 		}
 		return events
 	case "user":

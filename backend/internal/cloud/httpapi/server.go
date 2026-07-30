@@ -681,7 +681,10 @@ func (s *Server) authorizedSession(
 }
 
 func (s *Server) setDesiredState(w http.ResponseWriter, r *http.Request) {
-	account, _ := accountFromContext(r.Context())
+	account, session, ok := s.authorizedSession(w, r, "set cloud session desired state")
+	if !ok {
+		return
+	}
 	var input struct {
 		State string `json:"state"`
 	}
@@ -694,7 +697,11 @@ func (s *Server) setDesiredState(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "INVALID_DESIRED_STATE", "state must be running, paused, or deleted.")
 		return
 	}
-	sessionID := clouddomain.SessionID(chi.URLParam(r, "sessionId"))
+	if input.State == "deleted" && session.Kind != "worker" {
+		writeError(w, r, http.StatusConflict, "PROJECT_DELETE_REQUIRED", "Remove the project to delete its orchestrator.")
+		return
+	}
+	sessionID := session.ID
 	if err := s.store.SetSandboxDesiredState(r.Context(), account.ID, sessionID, input.State); err != nil {
 		if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
 			writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The cloud session does not exist.")
@@ -702,6 +709,22 @@ func (s *Server) setDesiredState(w http.ResponseWriter, r *http.Request) {
 		}
 		s.internalError(w, r, "set desired state", err)
 		return
+	}
+	if input.State == "deleted" {
+		if _, err := s.store.TransitionActiveTurn(
+			r.Context(),
+			account.ID,
+			sessionID,
+			"failed",
+			"Worker machine deleted.",
+		); err != nil {
+			s.internalError(w, r, "finish deleted worker turn", err)
+			return
+		}
+		if err := s.store.UpdateSessionActivity(r.Context(), account.ID, sessionID, "idle"); err != nil {
+			s.internalError(w, r, "reset deleted worker activity", err)
+			return
+		}
 	}
 	eventPayload, _ := json.Marshal(map[string]string{"state": input.State})
 	if _, err := s.events.Append(r.Context(), account.ID, sessionID, "sandbox.desired_state_changed", eventPayload); err != nil {

@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 const logoSource = "/ao-logo.svg";
 const minimumCellSize = 34;
 const maximumCellSize = 44;
-const revealDuration = 2_500;
+const revealDuration = 1_000;
 
 interface GlyphCell {
   left: number;

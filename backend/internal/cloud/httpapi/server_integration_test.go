@@ -215,12 +215,68 @@ func TestAuthenticatedProjectAndIdempotentSessionFlow(t *testing.T) {
 	if orchestrator.StatusCode != http.StatusCreated {
 		t.Fatalf("orchestrator status = %d", orchestrator.StatusCode)
 	}
+	var orchestratorBody struct {
+		Session struct {
+			ID string `json:"id"`
+		} `json:"session"`
+	}
+	if err := json.NewDecoder(orchestrator.Body).Decode(&orchestratorBody); err != nil {
+		t.Fatalf("decode orchestrator response: %v", err)
+	}
 	duplicateOrchestrator := requestJSON(t, server, http.MethodPost, "/api/cloud/v1/sessions", "user-one", orchestratorInput, map[string]string{
 		"Idempotency-Key": uuid.NewString(),
 	})
 	defer duplicateOrchestrator.Body.Close()
 	if duplicateOrchestrator.StatusCode != http.StatusConflict {
 		t.Fatalf("duplicate orchestrator status = %d, want 409", duplicateOrchestrator.StatusCode)
+	}
+	deleteOrchestrator := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/sessions/"+orchestratorBody.Session.ID+"/desired-state",
+		"user-one",
+		map[string]string{"state": "deleted"},
+		nil,
+	)
+	defer deleteOrchestrator.Body.Close()
+	if deleteOrchestrator.StatusCode != http.StatusConflict {
+		t.Fatalf("delete orchestrator status = %d, want 409", deleteOrchestrator.StatusCode)
+	}
+	deleteWorker := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/sessions/"+firstBody.Session.ID+"/desired-state",
+		"user-one",
+		map[string]string{"state": "deleted"},
+		nil,
+	)
+	defer deleteWorker.Body.Close()
+	if deleteWorker.StatusCode != http.StatusAccepted {
+		t.Fatalf("delete worker status = %d, want 202", deleteWorker.StatusCode)
+	}
+	deletedWorkerResponse := requestJSON(
+		t,
+		server,
+		http.MethodGet,
+		"/api/cloud/v1/sessions/"+firstBody.Session.ID,
+		"user-one",
+		nil,
+		nil,
+	)
+	defer deletedWorkerResponse.Body.Close()
+	if deletedWorkerResponse.StatusCode != http.StatusOK {
+		t.Fatalf("deleted worker status = %d, want 200", deletedWorkerResponse.StatusCode)
+	}
+	var deletedWorkerBody struct {
+		Session clouddomain.Session `json:"session"`
+	}
+	if err := json.NewDecoder(deletedWorkerResponse.Body).Decode(&deletedWorkerBody); err != nil {
+		t.Fatalf("decode deleted worker response: %v", err)
+	}
+	if deletedWorkerBody.Session.Status != "idle" || deletedWorkerBody.Session.ActiveTurn != nil {
+		t.Fatalf("deleted worker state = status %q turn %#v, want idle with no active turn", deletedWorkerBody.Session.Status, deletedWorkerBody.Session.ActiveTurn)
 	}
 
 	otherUser := requestJSON(

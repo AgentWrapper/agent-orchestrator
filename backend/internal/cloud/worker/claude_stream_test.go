@@ -201,6 +201,35 @@ func TestNormalizeClaudeAssistantCompleteIsSuppressedAfterDelta(t *testing.T) {
 	}
 }
 
+func TestNormalizeClaudeAssistantFallbackPreservesContentBlockOrder(t *testing.T) {
+	events := normalizeClaudeLine([]byte(`{
+		"type":"assistant",
+		"message":{"content":[
+			{"type":"text","text":"Let me check."},
+			{"type":"tool_use","id":"tool-read","name":"Read","input":{"path":"README.md"}},
+			{"type":"text","text":"Now I will verify it."},
+			{"type":"tool_use","id":"tool-bash","name":"Bash","input":{"command":"git status"}}
+		]}
+	}`), &claudeStreamState{})
+	eventTypes := make([]string, 0, len(events))
+	for _, event := range events {
+		eventTypes = append(eventTypes, event.eventType)
+	}
+	want := []string{
+		"chat.assistant_message",
+		"chat.tool_started",
+		"chat.assistant_message",
+		"chat.tool_started",
+	}
+	if !reflect.DeepEqual(eventTypes, want) {
+		t.Fatalf("event types = %#v, want %#v", eventTypes, want)
+	}
+	if events[0].payload["text"] != "Let me check." ||
+		events[2].payload["text"] != "Now I will verify it." {
+		t.Fatalf("assistant messages = %#v, %#v", events[0].payload, events[2].payload)
+	}
+}
+
 func TestNormalizeClaudeMalformedAndUnknownEventsAreIgnored(t *testing.T) {
 	state := &claudeStreamState{}
 	for _, line := range []string{

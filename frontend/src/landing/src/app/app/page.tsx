@@ -7,7 +7,8 @@ import {
   LayoutDashboard,
   LoaderCircle,
   LogOut,
-  Pause,
+  PanelLeftClose,
+  PanelLeftOpen,
   Play,
   Plus,
   Settings,
@@ -51,7 +52,9 @@ type View = "board" | "session" | "settings";
 
 const cloudSelectionKey = "ao-cloud-selection";
 const cloudSidebarWidthKey = "ao-cloud-sidebar-width";
+const cloudSidebarCollapsedKey = "ao-cloud-sidebar-collapsed";
 const defaultSidebarWidth = 240;
+const collapsedSidebarWidth = 52;
 const minimumSidebarWidth = 200;
 const maximumSidebarWidth = 420;
 const structuredChatHarnesses = new Set(["claude-code", "codex", "cursor"]);
@@ -165,6 +168,7 @@ export default function CloudAppPage() {
   const [initialLoading, setInitialLoading] = useState(true);
   const [selectionRestored, setSelectionRestored] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(defaultSidebarWidth);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [showSessionForm, setShowSessionForm] = useState(false);
@@ -194,6 +198,8 @@ export default function CloudAppPage() {
         window.localStorage.getItem(cloudSelectionKey) ?? "{}",
       ) as { projectId?: string; sessionId?: string };
       const savedWidthValue = window.localStorage.getItem(cloudSidebarWidthKey);
+      const savedCollapsed =
+        window.localStorage.getItem(cloudSidebarCollapsedKey) === "true";
       const savedWidth =
         savedWidthValue === null ? Number.NaN : Number(savedWidthValue);
       if (savedSelection.projectId)
@@ -210,6 +216,7 @@ export default function CloudAppPage() {
           ),
         );
       }
+      setSidebarCollapsed(savedCollapsed);
     } catch {
       window.localStorage.removeItem(cloudSelectionKey);
     } finally {
@@ -376,12 +383,14 @@ export default function CloudAppPage() {
       await operation();
       await refresh();
       setError(null);
+      return true;
     } catch (operationError) {
       setError(
         operationError instanceof Error
           ? operationError.message
           : "Cloud operation failed.",
       );
+      return false;
     } finally {
       setLoading(false);
     }
@@ -475,6 +484,34 @@ export default function CloudAppPage() {
     }
   };
 
+  const deleteSelectedWorkerMachine = async () => {
+    if (!api || !selectedSession || selectedSession.kind !== "worker") return;
+    const confirmed = window.confirm(
+      `Delete ${selectedSession.displayName}'s cloud machine and workspace volume?\n\nThe conversation remains available. Sending another message will provision a fresh machine.`,
+    );
+    if (!confirmed) return;
+    const deleted = await run(() =>
+      api.setDesiredState(selectedSession.id, "deleted"),
+    );
+    if (!deleted) return;
+    optimisticActiveAt.current.delete(selectedSession.id);
+    setActiveChatSessionIds((current) => {
+      const next = new Set(current);
+      next.delete(selectedSession.id);
+      return next;
+    });
+    setSelectedSessionId(null);
+    setView("board");
+  };
+
+  const toggleSidebar = () => {
+    setSidebarCollapsed((current) => {
+      const next = !current;
+      window.localStorage.setItem(cloudSidebarCollapsedKey, String(next));
+      return next;
+    });
+  };
+
   const beginSidebarResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     const startX = event.clientX;
@@ -540,28 +577,60 @@ export default function CloudAppPage() {
       aria-busy={loading || initialLoading}
     >
       <div
-        className="grid h-full"
+        className="grid h-full transition-[grid-template-columns] duration-200 ease-out motion-reduce:transition-none"
         style={{
-          gridTemplateColumns: `${sidebarWidth}px minmax(0, 1fr)`,
+          gridTemplateColumns: `${
+            sidebarCollapsed ? collapsedSidebarWidth : sidebarWidth
+          }px minmax(0, 1fr)`,
         }}
       >
-        <aside className="relative flex min-h-0 flex-col bg-[#17181c]">
-          <div className="flex h-11 shrink-0 items-center gap-2 px-3">
-            <img
-              src="/ao-logo.svg"
-              alt=""
-              aria-hidden="true"
-              className="size-[22px] rounded-md object-cover"
-            />
-            <span className="truncate text-sm font-semibold tracking-[-0.015em]">
-              Agent Orchestrator
-            </span>
-            <span className="ml-auto rounded-full border border-white/10 px-1.5 font-mono text-[9px] uppercase tracking-[0.08em] text-white/40">
-              Cloud
-            </span>
+        <aside className="relative flex min-h-0 flex-col overflow-hidden bg-[#17181c]">
+          <div
+            className={`flex h-11 shrink-0 items-center ${
+              sidebarCollapsed ? "justify-center px-1.5" : "gap-2 px-3"
+            }`}
+          >
+            {!sidebarCollapsed ? (
+              <>
+                <img
+                  src="/ao-logo.svg"
+                  alt=""
+                  aria-hidden="true"
+                  className="size-[22px] shrink-0 rounded-md object-cover"
+                />
+                <span className="min-w-0 flex-1 truncate text-sm font-semibold tracking-[-0.015em]">
+                  Agent Orchestrator
+                </span>
+                {sidebarWidth >= 280 ? (
+                  <span className="rounded-full border border-white/10 px-1.5 font-mono text-[9px] uppercase tracking-[0.08em] text-white/40">
+                    Cloud
+                  </span>
+                ) : null}
+              </>
+            ) : null}
+            <button
+              type="button"
+              className={`grid size-7 shrink-0 place-items-center rounded-md text-[#646a73] transition-colors hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4d8dff]/70 ${
+                sidebarCollapsed ? "" : "ml-auto"
+              }`}
+              onClick={toggleSidebar}
+              aria-label={
+                sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
+              }
+              aria-expanded={!sidebarCollapsed}
+              title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            >
+              {sidebarCollapsed ? (
+                <PanelLeftOpen className="size-[15px]" />
+              ) : (
+                <PanelLeftClose className="size-[15px]" />
+              )}
+            </button>
           </div>
           <button
-            className={`mx-1.5 flex h-8 items-center gap-2 rounded-lg px-2 text-left text-sm ${
+            className={`mx-1.5 flex h-8 shrink-0 items-center rounded-lg text-left text-sm ${
+              sidebarCollapsed ? "justify-center px-0" : "gap-2 px-2"
+            } ${
               !selectedProjectId && view === "board"
                 ? "bg-white/[0.07] text-white"
                 : "text-[#9ba1aa] hover:bg-white/[0.04] hover:text-white"
@@ -571,18 +640,27 @@ export default function CloudAppPage() {
               setSelectedSessionId(null);
               setView("board");
             }}
+            aria-label="Board"
+            title={sidebarCollapsed ? "Board" : undefined}
           >
-            <LayoutDashboard className="size-[15px]" />
-            Board
+            <LayoutDashboard className="size-[15px] shrink-0" />
+            {!sidebarCollapsed ? "Board" : null}
           </button>
-          <div className="mt-4 flex items-center justify-between px-3">
-            <span className="font-mono text-[10.5px] font-medium uppercase tracking-[0.05em] text-[#646a73]">
-              Projects
-            </span>
+          <div
+            className={`mt-4 flex items-center ${
+              sidebarCollapsed ? "justify-center px-1.5" : "justify-between px-3"
+            }`}
+          >
+            {!sidebarCollapsed ? (
+              <span className="font-mono text-[10.5px] font-medium uppercase tracking-[0.05em] text-[#646a73]">
+                Projects
+              </span>
+            ) : null}
             <button
               className="grid size-5 place-items-center rounded-md text-[#646a73] transition-colors hover:bg-white/[0.04] hover:text-white"
               onClick={() => setShowProjectForm(true)}
               aria-label="Add cloud project"
+              title={sidebarCollapsed ? "Add project" : undefined}
             >
               <Plus className="size-[15px]" />
             </button>
@@ -595,7 +673,9 @@ export default function CloudAppPage() {
               return (
                 <div key={project.id} className="mb-1">
                   <button
-                    className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm ${
+                    className={`flex h-8 w-full items-center rounded-lg text-left text-sm ${
+                      sidebarCollapsed ? "justify-center px-0" : "gap-2 px-2"
+                    } ${
                       selectedProjectId === project.id && view === "board"
                         ? "bg-white/[0.07] text-white"
                         : "text-[#9ba1aa] hover:bg-white/[0.04] hover:text-white"
@@ -605,15 +685,29 @@ export default function CloudAppPage() {
                       setSelectedSessionId(null);
                       setView("board");
                     }}
+                    aria-label={project.displayName}
+                    title={sidebarCollapsed ? project.displayName : undefined}
                   >
                     <FolderGit2 className="size-[15px] shrink-0" />
-                    <span className="truncate">{project.displayName}</span>
+                    {!sidebarCollapsed ? (
+                      <span className="truncate">{project.displayName}</span>
+                    ) : null}
                   </button>
-                  <div className="ml-[15px] border-l border-white/[0.06] pl-1.5">
+                  <div
+                    className={
+                      sidebarCollapsed
+                        ? ""
+                        : "ml-[15px] border-l border-white/[0.06] pl-1.5"
+                    }
+                  >
                     {projectSessions.map((cloudSession) => (
                       <button
                         key={cloudSession.id}
-                        className={`flex h-7 w-full items-center gap-2 rounded-lg border-l-2 px-2 text-left text-[12px] ${
+                        className={`flex h-7 w-full items-center rounded-lg text-left text-[12px] ${
+                          sidebarCollapsed
+                            ? "justify-center px-0"
+                            : "gap-2 border-l-2 px-2"
+                        } ${
                           selectedSessionId === cloudSession.id &&
                           view === "session"
                             ? "border-[#4d8dff] bg-white/[0.07] text-white"
@@ -624,6 +718,12 @@ export default function CloudAppPage() {
                           setSelectedSessionId(cloudSession.id);
                           setView("session");
                         }}
+                        aria-label={cloudSession.displayName}
+                        title={
+                          sidebarCollapsed
+                            ? cloudSession.displayName
+                            : undefined
+                        }
                       >
                         {cloudSession.kind === "orchestrator" ? (
                           <OrchestratorIcon className="size-[14px] shrink-0" />
@@ -633,22 +733,25 @@ export default function CloudAppPage() {
                             className="size-[14px]"
                           />
                         )}
-                        <span className="truncate">
-                          {cloudSession.displayName}
-                        </span>
-                        {activeChatSessionIds.has(cloudSession.id) ? (
+                        {!sidebarCollapsed ? (
+                          <span className="truncate">
+                            {cloudSession.displayName}
+                          </span>
+                        ) : null}
+                        {!sidebarCollapsed &&
+                        activeChatSessionIds.has(cloudSession.id) ? (
                           <LoaderCircle
                             className="ml-auto size-3.5 shrink-0 animate-spin text-[#4d8dff] motion-reduce:animate-none"
                             aria-label="Working"
                           />
-                        ) : (
+                        ) : !sidebarCollapsed ? (
                           <span
                             className={`ml-auto size-1.5 shrink-0 rounded-full ${statusColor(
                               cloudSession,
                             )}`}
                             aria-hidden="true"
                           />
-                        )}
+                        ) : null}
                       </button>
                     ))}
                   </div>
@@ -658,52 +761,68 @@ export default function CloudAppPage() {
           </div>
           <div className="border-t border-white/[0.06] p-1.5">
             <button
-              className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-sm text-[#9ba1aa] hover:bg-white/[0.04] hover:text-white"
+              className={`flex h-8 w-full items-center rounded-lg text-sm text-[#9ba1aa] hover:bg-white/[0.04] hover:text-white ${
+                sidebarCollapsed ? "justify-center px-0" : "gap-2 px-2"
+              }`}
               onClick={() => setView("settings")}
+              aria-label="Settings"
+              title={sidebarCollapsed ? "Settings" : undefined}
             >
-              <Settings className="size-[15px]" />
-              Settings
+              <Settings className="size-[15px] shrink-0" />
+              {!sidebarCollapsed ? "Settings" : null}
             </button>
             <button
-              className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-[12px] text-[#646a73] hover:bg-white/[0.04] hover:text-white"
+              className={`flex h-8 w-full items-center rounded-lg text-[12px] text-[#646a73] hover:bg-white/[0.04] hover:text-white ${
+                sidebarCollapsed ? "justify-center px-0" : "gap-2 px-2"
+              }`}
               onClick={() => void logout()}
+              aria-label="Log out"
+              title={
+                sidebarCollapsed
+                  ? `Log out ${session?.user.email ?? ""}`.trim()
+                  : undefined
+              }
             >
-              <LogOut className="size-[15px]" />
-              <span className="truncate">
-                {session?.user.email ?? "Logout"}
-              </span>
+              <LogOut className="size-[15px] shrink-0" />
+              {!sidebarCollapsed ? (
+                <span className="truncate">
+                  {session?.user.email ?? "Logout"}
+                </span>
+              ) : null}
             </button>
           </div>
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="Resize sidebar"
-            tabIndex={0}
-            className="absolute inset-y-0 right-0 z-20 w-1 cursor-col-resize bg-transparent transition-colors duration-150 hover:bg-[#4d8dff]/60 focus-visible:bg-[#4d8dff] focus-visible:outline-none motion-reduce:transition-none"
-            onPointerDown={beginSidebarResize}
-            onKeyDown={(event) => {
-              if (event.key !== "ArrowLeft" && event.key !== "ArrowRight")
-                return;
-              event.preventDefault();
-              const direction = event.key === "ArrowLeft" ? -1 : 1;
-              const nextWidth = Math.min(
-                maximumSidebarWidth,
-                Math.max(minimumSidebarWidth, sidebarWidth + direction * 16),
-              );
-              setSidebarWidth(nextWidth);
-              window.localStorage.setItem(
-                cloudSidebarWidthKey,
-                String(nextWidth),
-              );
-            }}
-            onDoubleClick={() => {
-              setSidebarWidth(defaultSidebarWidth);
-              window.localStorage.setItem(
-                cloudSidebarWidthKey,
-                String(defaultSidebarWidth),
-              );
-            }}
-          />
+          {!sidebarCollapsed ? (
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize sidebar"
+              tabIndex={0}
+              className="absolute inset-y-0 right-0 z-20 w-1 cursor-col-resize bg-transparent transition-colors duration-150 hover:bg-[#4d8dff]/60 focus-visible:bg-[#4d8dff] focus-visible:outline-none motion-reduce:transition-none"
+              onPointerDown={beginSidebarResize}
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowLeft" && event.key !== "ArrowRight")
+                  return;
+                event.preventDefault();
+                const direction = event.key === "ArrowLeft" ? -1 : 1;
+                const nextWidth = Math.min(
+                  maximumSidebarWidth,
+                  Math.max(minimumSidebarWidth, sidebarWidth + direction * 16),
+                );
+                setSidebarWidth(nextWidth);
+                window.localStorage.setItem(
+                  cloudSidebarWidthKey,
+                  String(nextWidth),
+                );
+              }}
+              onDoubleClick={() => {
+                setSidebarWidth(defaultSidebarWidth);
+                window.localStorage.setItem(
+                  cloudSidebarWidthKey,
+                  String(defaultSidebarWidth),
+                );
+              }}
+            />
+          ) : null}
         </aside>
 
         <section className="flex min-h-0 min-w-0 flex-col border-l border-white/[0.06] bg-[#0a0b0d]">
@@ -758,44 +877,17 @@ export default function CloudAppPage() {
                       ? "working"
                       : selectedSession.status.replaceAll("_", " ")}
                   </span>
-                  <button
-                    className={button}
-                    disabled={loading}
-                    onClick={() =>
-                      void run(() =>
-                        api.setDesiredState(selectedSession.id, "running"),
-                      )
-                    }
-                    aria-label="Run session"
-                  >
-                    <Play className="size-3.5" />
-                    <span className="hidden 2xl:inline">Run</span>
-                  </button>
-                  <button
-                    className={button}
-                    disabled={loading}
-                    onClick={() =>
-                      void run(() =>
-                        api.setDesiredState(selectedSession.id, "paused"),
-                      )
-                    }
-                    aria-label="Pause session"
-                  >
-                    <Pause className="size-3.5" />
-                    <span className="hidden 2xl:inline">Pause</span>
-                  </button>
-                  <button
-                    className={button}
-                    disabled={loading}
-                    onClick={() =>
-                      void run(() =>
-                        api.setDesiredState(selectedSession.id, "deleted"),
-                      )
-                    }
-                    aria-label={`Delete ${selectedSession.displayName}`}
-                  >
-                    <Trash2 className="size-3.5" />
-                  </button>
+                  {selectedSession.kind === "worker" ? (
+                    <button
+                      className={button}
+                      disabled={loading}
+                      onClick={() => void deleteSelectedWorkerMachine()}
+                      aria-label={`Delete ${selectedSession.displayName} machine`}
+                      title="Delete worker machine"
+                    >
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  ) : null}
                 </>
               ) : view === "board" && selectedProjectId ? (
                 <>
@@ -1207,7 +1299,7 @@ function CloudSettings({
   api: CloudAPI;
   connections: ProviderConnection[];
   sandboxProvider: "daytona" | "fly";
-  run: (operation: () => Promise<unknown>) => Promise<void>;
+  run: (operation: () => Promise<unknown>) => Promise<unknown>;
 }) {
   const [apiKey, setAPIKey] = useState("");
   const [target, setTarget] = useState<"us" | "eu">("us");
@@ -1349,7 +1441,7 @@ function AgentConnectionRow({
 }: {
   agent: (typeof CLOUD_AGENTS)[number];
   connection?: ProviderConnection;
-  run: (operation: () => Promise<unknown>) => Promise<void>;
+  run: (operation: () => Promise<unknown>) => Promise<unknown>;
   connect: (
     credentialType: AgentCredentialType,
     secret: string,
