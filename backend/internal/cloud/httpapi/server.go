@@ -38,6 +38,7 @@ type store interface {
 	CreateSession(context.Context, clouddomain.AccountID, cloudpostgres.CreateSessionInput) (cloudpostgres.CreateSessionResult, error)
 	ListSessions(context.Context, clouddomain.AccountID) ([]clouddomain.Session, error)
 	GetSession(context.Context, clouddomain.AccountID, clouddomain.SessionID) (clouddomain.Session, error)
+	GetSandbox(context.Context, clouddomain.AccountID, clouddomain.SessionID) (clouddomain.Sandbox, error)
 	SetSandboxDesiredState(context.Context, clouddomain.AccountID, clouddomain.SessionID, string) error
 	ConsumeAccessTicket(context.Context, string, string) (cloudpostgres.ConsumedTicket, error)
 	MarkWorkerSeen(context.Context, clouddomain.AccountID, clouddomain.SessionID, string, string, int64, []string) error
@@ -144,6 +145,9 @@ func (s *Server) routes() http.Handler {
 			worker.Post("/worker/heartbeat", s.workerHeartbeat)
 			worker.Post("/worker/events", s.workerEvent)
 			worker.Get("/worker/connect", s.workerConnect)
+			worker.Get("/worker/orchestrate/sessions", s.workerListSessions)
+			worker.Post("/worker/orchestrate/sessions", s.workerCreateSession)
+			worker.Post("/worker/orchestrate/sessions/{sessionId}/messages", s.workerSendMessage)
 			worker.Handle("/git/{owner}/{repository}.git/*", http.HandlerFunc(s.gitProxy))
 		})
 
@@ -159,6 +163,7 @@ func (s *Server) routes() http.Handler {
 			protected.Post("/sessions/{sessionId}/desired-state", s.setDesiredState)
 			protected.Get("/sessions/{sessionId}/chat-events", s.chatEvents)
 			protected.Post("/sessions/{sessionId}/messages", s.sendMessage)
+			protected.Post("/sessions/{sessionId}/interrupt", s.interruptSession)
 			protected.Get("/sessions/{sessionId}/events", s.streamEvents)
 			protected.Get("/sessions/{sessionId}/scm", s.sessionSCM)
 			protected.Post("/sessions/{sessionId}/terminal-ticket", s.issueTerminalTicket)
@@ -465,6 +470,43 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{"event": event})
 }
 
+func (s *Server) interruptSession(w http.ResponseWriter, r *http.Request) {
+	account, _ := accountFromContext(r.Context())
+	sessionID := clouddomain.SessionID(chi.URLParam(r, "sessionId"))
+	if _, err := s.store.GetSession(r.Context(), account.ID, sessionID); err != nil {
+		if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
+			writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The cloud session does not exist.")
+			return
+		}
+		s.internalError(w, r, "authorize cloud interrupt", err)
+		return
+	}
+	if err := s.store.UpdateSessionActivity(r.Context(), account.ID, sessionID, "active"); err != nil {
+		s.internalError(w, r, "update interrupt activity", err)
+		return
+	}
+	payload, _ := json.Marshal(map[string]string{"source": "browser"})
+	event, err := s.events.Append(
+		r.Context(),
+		account.ID,
+		sessionID,
+		"chat.interrupt_requested",
+		payload,
+	)
+	if err != nil {
+		s.internalError(w, r, "append interrupt request", err)
+		return
+	}
+	if err := s.workerHub.Send(sessionID, cloudworkerhub.Command{
+		Type:     "interrupt",
+		Sequence: event.Sequence,
+	}); err != nil {
+		writeError(w, r, http.StatusServiceUnavailable, "WORKER_BACKPRESSURE", "The interrupt was saved but worker delivery is temporarily unavailable.")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"event": event})
+}
+
 func (s *Server) sessionSCM(w http.ResponseWriter, r *http.Request) {
 	account, _ := accountFromContext(r.Context())
 	sessionID := clouddomain.SessionID(chi.URLParam(r, "sessionId"))
@@ -721,6 +763,191 @@ func workerFromContext(ctx context.Context) cloudworker.Claims {
 	return claims
 }
 
+func (s *Server) workerOrchestrator(
+	w http.ResponseWriter,
+	r *http.Request,
+) (cloudworker.Claims, clouddomain.Session, bool) {
+	claims := workerFromContext(r.Context())
+	if !cloudworker.HasScope(claims, "worker:orchestrate") {
+		writeError(w, r, http.StatusForbidden, "SCOPE_REQUIRED", "worker:orchestrate scope is required.")
+		return cloudworker.Claims{}, clouddomain.Session{}, false
+	}
+	if strings.TrimSpace(r.Header.Get("X-AO-Session-ID")) != string(claims.SessionID) {
+		writeError(w, r, http.StatusForbidden, "SESSION_ID_MISMATCH", "Worker session identity does not match its credential.")
+		return cloudworker.Claims{}, clouddomain.Session{}, false
+	}
+	session, err := s.store.GetSession(r.Context(), claims.AccountID, claims.SessionID)
+	if err != nil {
+		if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
+			writeError(w, r, http.StatusForbidden, "ORCHESTRATOR_REQUIRED", "Only an active orchestrator may coordinate workers.")
+			return cloudworker.Claims{}, clouddomain.Session{}, false
+		}
+		s.internalError(w, r, "authorize worker orchestration", err)
+		return cloudworker.Claims{}, clouddomain.Session{}, false
+	}
+	if session.Kind != "orchestrator" || session.IsTerminated {
+		writeError(w, r, http.StatusForbidden, "ORCHESTRATOR_REQUIRED", "Only an active orchestrator may coordinate workers.")
+		return cloudworker.Claims{}, clouddomain.Session{}, false
+	}
+	return claims, session, true
+}
+
+func (s *Server) workerCreateSession(w http.ResponseWriter, r *http.Request) {
+	claims, parent, ok := s.workerOrchestrator(w, r)
+	if !ok {
+		return
+	}
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if idempotencyKey == "" || len(idempotencyKey) > 200 {
+		writeError(w, r, http.StatusBadRequest, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required.")
+		return
+	}
+	var input struct {
+		DisplayName string `json:"displayName"`
+		Prompt      string `json:"prompt"`
+		Harness     string `json:"harness"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	input.DisplayName = strings.TrimSpace(input.DisplayName)
+	if input.DisplayName == "" || len(input.DisplayName) > 200 {
+		writeError(w, r, http.StatusBadRequest, "INVALID_SESSION", "displayName is required and must be at most 200 characters.")
+		return
+	}
+	if strings.TrimSpace(input.Prompt) == "" || len([]byte(input.Prompt)) > 64<<10 {
+		writeError(w, r, http.StatusBadRequest, "INVALID_PROMPT", "prompt must be non-empty and at most 64 KiB.")
+		return
+	}
+	input.Harness = strings.TrimSpace(input.Harness)
+	if input.Harness == "" {
+		input.Harness = parent.Harness
+	}
+	if !cloudWorkerHarness(input.Harness) {
+		writeError(w, r, http.StatusBadRequest, "INVALID_AGENT", "harness must be claude-code, codex, or cursor.")
+		return
+	}
+	credential, err := s.loadAgentCredential(r.Context(), claims.AccountID, input.Harness)
+	if credential != nil {
+		credential.Secret = ""
+	}
+	if errors.Is(err, errAgentConnectionRequired) {
+		writeError(w, r, http.StatusBadRequest, "AGENT_CONNECTION_REQUIRED", "Connect "+input.Harness+" before spawning this worker.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "validate spawned worker agent connection", err)
+		return
+	}
+	parentSandbox, err := s.store.GetSandbox(r.Context(), claims.AccountID, parent.ID)
+	if err != nil {
+		s.internalError(w, r, "load orchestrator sandbox", err)
+		return
+	}
+	result, err := s.store.CreateSession(r.Context(), claims.AccountID, cloudpostgres.CreateSessionInput{
+		IdempotencyKey:       idempotencyKey,
+		ProjectID:            parent.ProjectID,
+		Kind:                 "worker",
+		Harness:              input.Harness,
+		DisplayName:          input.DisplayName,
+		Prompt:               input.Prompt,
+		Resource:             parentSandbox.ResourceProfile,
+		Provider:             parentSandbox.Provider,
+		ProviderConnectionID: parentSandbox.ProviderConnectionID,
+	})
+	if errors.Is(err, cloudpostgres.ErrIdempotencyConflict) {
+		writeError(w, r, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "Idempotency-Key was already used for another command.")
+		return
+	}
+	if errors.Is(err, cloudpostgres.ErrProviderConnectionNotFound) {
+		writeError(w, r, http.StatusBadRequest, "PROVIDER_CONNECTION_NOT_FOUND", "The orchestrator sandbox provider connection is unavailable.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "spawn orchestrated worker", err)
+		return
+	}
+	status := http.StatusCreated
+	if !result.Created {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, result)
+}
+
+func (s *Server) workerListSessions(w http.ResponseWriter, r *http.Request) {
+	claims, parent, ok := s.workerOrchestrator(w, r)
+	if !ok {
+		return
+	}
+	sessions, err := s.store.ListSessions(r.Context(), claims.AccountID)
+	if err != nil {
+		s.internalError(w, r, "list orchestrated sessions", err)
+		return
+	}
+	projectSessions := make([]clouddomain.Session, 0, len(sessions))
+	for _, session := range sessions {
+		if session.ProjectID == parent.ProjectID {
+			projectSessions = append(projectSessions, session)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": projectSessions})
+}
+
+func (s *Server) workerSendMessage(w http.ResponseWriter, r *http.Request) {
+	claims, parent, ok := s.workerOrchestrator(w, r)
+	if !ok {
+		return
+	}
+	targetID := clouddomain.SessionID(chi.URLParam(r, "sessionId"))
+	target, err := s.store.GetSession(r.Context(), claims.AccountID, targetID)
+	if errors.Is(err, cloudpostgres.ErrSessionNotFound) ||
+		err == nil && target.ProjectID != parent.ProjectID {
+		writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The project session does not exist.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "authorize orchestrated message", err)
+		return
+	}
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if idempotencyKey == "" || len(idempotencyKey) > 200 {
+		writeError(w, r, http.StatusBadRequest, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required.")
+		return
+	}
+	var input struct {
+		Text string `json:"text"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if strings.TrimSpace(input.Text) == "" || len([]byte(input.Text)) > 64<<10 {
+		writeError(w, r, http.StatusBadRequest, "INVALID_MESSAGE", "text must be non-empty and at most 64 KiB.")
+		return
+	}
+	event, err := s.events.AppendUserMessage(r.Context(), claims.AccountID, targetID, idempotencyKey, input.Text)
+	if errors.Is(err, cloudpostgres.ErrIdempotencyConflict) {
+		writeError(w, r, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "Idempotency-Key was already used for another command.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "append orchestrated message", err)
+		return
+	}
+	if err := s.workerHub.Send(targetID, cloudworkerhub.Command{
+		Type:     "prompt",
+		Data:     base64.StdEncoding.EncodeToString([]byte(input.Text)),
+		Sequence: event.Sequence,
+	}); err != nil {
+		writeError(w, r, http.StatusServiceUnavailable, "WORKER_BACKPRESSURE", "The message was saved but worker delivery is temporarily unavailable.")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"event": event})
+}
+
+func cloudWorkerHarness(harness string) bool {
+	return harness == "claude-code" || harness == "codex" || harness == "cursor"
+}
+
 func (s *Server) workerHeartbeat(w http.ResponseWriter, r *http.Request) {
 	claims := workerFromContext(r.Context())
 	if !cloudworker.HasScope(claims, "worker:connect") {
@@ -800,6 +1027,28 @@ func (s *Server) workerEvent(w http.ResponseWriter, r *http.Request) {
 				s.internalError(w, r, "update worker activity", err)
 				return
 			}
+		}
+	}
+	switch input.Type {
+	case "chat.turn_started":
+		if err := s.store.UpdateSessionActivity(
+			r.Context(),
+			claims.AccountID,
+			claims.SessionID,
+			"active",
+		); err != nil {
+			s.internalError(w, r, "update chat turn activity", err)
+			return
+		}
+	case "chat.turn_completed", "chat.turn_interrupted":
+		if err := s.store.UpdateSessionActivity(
+			r.Context(),
+			claims.AccountID,
+			claims.SessionID,
+			"idle",
+		); err != nil {
+			s.internalError(w, r, "update chat turn activity", err)
+			return
 		}
 	}
 	if input.Type == "chat.session_started" {

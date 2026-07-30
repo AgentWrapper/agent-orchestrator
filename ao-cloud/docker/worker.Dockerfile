@@ -4,7 +4,8 @@ WORKDIR /src/backend
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 COPY backend/ ./
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/ao-worker ./cmd/ao-worker
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/ao-worker ./cmd/ao-worker \
+    && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/ao ./cmd/ao-cloud-agent
 
 FROM ubuntu:24.04
 ARG DEBIAN_FRONTEND=noninteractive
@@ -33,9 +34,9 @@ RUN curl -fsSL https://claude.ai/install.sh | bash \
 
 USER root
 COPY --from=build /out/ao-worker /usr/local/bin/ao-worker
+COPY --from=build /out/ao /usr/local/bin/ao
 COPY ao-cloud/docker/worker-entrypoint.sh /usr/local/bin/worker-entrypoint
-RUN chmod 0755 /usr/local/bin/worker-entrypoint \
-    && ln -s /usr/local/bin/ao-worker /usr/local/bin/ao
+RUN chmod 0755 /usr/local/bin/worker-entrypoint /usr/local/bin/ao
 
 USER root
 WORKDIR /workspace

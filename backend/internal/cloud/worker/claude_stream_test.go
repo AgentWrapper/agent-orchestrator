@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"sync/atomic"
 	"testing"
@@ -96,6 +97,36 @@ func TestClaudeInputWriterWritesDocumentedUserEnvelope(t *testing.T) {
 	}
 	if !bytes.HasSuffix(output.Bytes(), []byte("\n")) {
 		t.Fatal("prompt envelope is not newline-delimited")
+	}
+}
+
+func TestClaudeInputWriterWritesControlRequestInterrupt(t *testing.T) {
+	var output bytes.Buffer
+	writer := &claudeInputWriter{writer: &output, sessionID: "claude-session"}
+	interrupted, err := writer.Interrupt()
+	if err != nil {
+		t.Fatalf("Interrupt() error = %v", err)
+	}
+	if !interrupted {
+		t.Fatal("Interrupt() = false")
+	}
+	var envelope struct {
+		Type      string `json:"type"`
+		RequestID string `json:"request_id"`
+		Request   struct {
+			Subtype string `json:"subtype"`
+		} `json:"request"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &envelope); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if envelope.Type != "control_request" ||
+		envelope.RequestID == "" ||
+		envelope.Request.Subtype != "interrupt" {
+		t.Fatalf("envelope = %#v", envelope)
+	}
+	if !bytes.HasSuffix(output.Bytes(), []byte("\n")) {
+		t.Fatal("interrupt envelope is not newline-delimited")
 	}
 }
 
@@ -235,6 +266,18 @@ func TestNormalizeClaudeCanonicalLifecycleEvents(t *testing.T) {
 	}
 }
 
+func TestNormalizeClaudeHidesInternalSystemTelemetry(t *testing.T) {
+	for _, subtype := range []string{"hook_started", "hook_response", "thinking_tokens"} {
+		line := fmt.Sprintf(
+			`{"type":"system","subtype":%q,"session_id":"session-one"}`,
+			subtype,
+		)
+		if events := normalizeClaudeLine([]byte(line), &claudeStreamState{}); len(events) != 0 {
+			t.Fatalf("subtype %q produced events %#v", subtype, events)
+		}
+	}
+}
+
 func TestStructuredPromptCommandsAreRoutedAndDeduplicated(t *testing.T) {
 	var output bytes.Buffer
 	writer := &claudeInputWriter{writer: &output, sessionID: "claude-session"}
@@ -244,10 +287,10 @@ func TestStructuredPromptCommandsAreRoutedAndDeduplicated(t *testing.T) {
 		Data:     base64.StdEncoding.EncodeToString([]byte("hello")),
 		Sequence: 42,
 	}
-	if err := handleStructuredCommand(command, writer, &highest); err != nil {
+	if _, err := handleStructuredCommand(command, writer, &highest); err != nil {
 		t.Fatalf("handleStructuredCommand(first) error = %v", err)
 	}
-	if err := handleStructuredCommand(command, writer, &highest); err != nil {
+	if _, err := handleStructuredCommand(command, writer, &highest); err != nil {
 		t.Fatalf("handleStructuredCommand(duplicate) error = %v", err)
 	}
 	if highest.Load() != 42 {
@@ -256,7 +299,7 @@ func TestStructuredPromptCommandsAreRoutedAndDeduplicated(t *testing.T) {
 	if bytes.Count(output.Bytes(), []byte("\n")) != 1 {
 		t.Fatalf("prompt output = %q, want one envelope", output.String())
 	}
-	if err := handleStructuredCommand(
+	if _, err := handleStructuredCommand(
 		cloudworkerhub.Command{Type: "input", Data: command.Data},
 		writer,
 		&highest,

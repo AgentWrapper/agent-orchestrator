@@ -58,3 +58,34 @@ it("streams replayed and live SSE events with authenticated fetch", async () => 
     "Bearer access-token",
   );
 });
+
+it("interrupts an active cloud session", async () => {
+  const interruptEvent: CloudEvent = {
+    sessionId: "session one",
+    sequence: 8,
+    type: "chat.interrupt_requested",
+    payload: { source: "browser" },
+    createdAt: "2026-07-30T00:00:00Z",
+  };
+  const fetchMock = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ event: interruptEvent }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  const api = Object.assign(Object.create(CloudAPI.prototype) as CloudAPI, {
+    baseURL: "https://cloud.example.com",
+    accessToken: "access-token",
+  });
+
+  await expect(api.interruptSession("session one")).resolves.toEqual({
+    event: interruptEvent,
+  });
+
+  const [request, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+  expect(request).toBe(
+    "https://cloud.example.com/api/cloud/v1/sessions/session%20one/interrupt",
+  );
+  expect(init.method).toBe("POST");
+});

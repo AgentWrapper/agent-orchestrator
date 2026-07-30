@@ -149,6 +149,27 @@ func (s *Store) SetSandboxDesiredState(
 	return nil
 }
 
+// GetSandbox returns the account-owned sandbox for a session.
+func (s *Store) GetSandbox(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+) (clouddomain.Sandbox, error) {
+	sandbox, err := scanSandbox(s.pool.QueryRow(ctx, `
+		SELECT session_id, account_id, provider,
+			COALESCE(provider_environment_id, ''),
+			COALESCE(provider_connection_id::text, ''),
+			desired_state, observed_state, resource_profile, worker_last_seen_at,
+			last_error, reconcile_after, created_at, updated_at
+		FROM ao_sandboxes
+		WHERE account_id = $1 AND session_id = $2
+	`, accountID, sessionID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return clouddomain.Sandbox{}, ErrSessionNotFound
+	}
+	return sandbox, err
+}
+
 // MarkWorkerSeen records a worker heartbeat and its current connection epoch.
 func (s *Store) MarkWorkerSeen(
 	ctx context.Context,

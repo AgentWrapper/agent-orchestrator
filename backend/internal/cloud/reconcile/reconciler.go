@@ -207,7 +207,7 @@ func (r *Reconciler) provision(
 		sandbox.AccountID,
 		sandbox.SessionID,
 		"worker_bootstrap",
-		[]string{"worker:connect", "worker:event", "worker:terminal", "worker:git"},
+		[]string{"worker:connect", "worker:event", "worker:terminal", "worker:git", "worker:orchestrate"},
 		10*time.Minute,
 	)
 	if err != nil {

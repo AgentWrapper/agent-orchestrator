@@ -36,3 +36,23 @@ func TestSendQueuesWhileWorkerIsDisconnected(t *testing.T) {
 		t.Fatalf("command = %#v, want %#v", got, want)
 	}
 }
+
+func TestOldCleanupDoesNotCloseSameEpochReplacement(t *testing.T) {
+	hub := New()
+	oldCommands, unregisterOld := hub.Register("session-one", "worker-one", 1)
+	newCommands, unregisterNew := hub.Register("session-one", "worker-one", 1)
+	defer unregisterNew()
+
+	if _, ok := <-oldCommands; ok {
+		t.Fatal("old command channel remained open")
+	}
+	unregisterOld()
+
+	want := Command{Type: "interrupt"}
+	if err := hub.Send("session-one", want); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if got, ok := <-newCommands; !ok || got != want {
+		t.Fatalf("replacement command = %#v, open=%t, want %#v", got, ok, want)
+	}
+}

@@ -66,7 +66,10 @@ func (h *Hub) Register(
 	return commands, func() {
 		h.mu.Lock()
 		current, ok := h.connections[sessionID]
-		if ok && current.workerID == workerID && current.epoch == epoch {
+		if ok &&
+			current.workerID == workerID &&
+			current.epoch == epoch &&
+			current.commands == commands {
 			delete(h.connections, sessionID)
 			close(current.commands)
 		}

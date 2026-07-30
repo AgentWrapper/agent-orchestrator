@@ -158,6 +158,13 @@ export class CloudAPI {
     );
   }
 
+  async interruptSession(sessionId: string) {
+    return this.request<{ event: CloudEvent }>(
+      `/api/cloud/v1/sessions/${encodeURIComponent(sessionId)}/interrupt`,
+      { method: "POST", body: {} },
+    );
+  }
+
   async streamEvents(
     sessionId: string,
     after: number,

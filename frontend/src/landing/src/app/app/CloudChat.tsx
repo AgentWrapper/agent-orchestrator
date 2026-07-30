@@ -4,9 +4,12 @@ import {
   ArrowUp,
   Bot,
   Check,
+  ChevronRight,
+  CircleAlert,
+  HelpCircle,
   LoaderCircle,
-  Terminal,
-  Wrench,
+  Square,
+  X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -17,21 +20,35 @@ import { CloudAPI, type CloudEvent, type CloudSession } from "@/lib/cloud-api";
 interface CloudChatProps {
   api: CloudAPI;
   session: CloudSession;
+  onTurnActiveChange?: (sessionId: string, active: boolean) => void;
 }
 
 type TimelineEntry =
   | { id: string; type: "user"; text: string }
   | { id: string; type: "assistant"; text: string; streaming: boolean }
-  | { id: string; type: "reasoning"; text: string; streaming: boolean }
-  | { id: string; type: "tool"; name: string; input?: unknown }
-  | { id: string; type: "result"; error: boolean; label: string }
   | {
       id: string;
-      type: "event";
+      type: "tool";
+      toolId: string;
+      name: string;
+      status: "running" | "completed" | "failed";
+      input?: unknown;
+      output?: unknown;
+      inputText?: string;
+    }
+  | {
+      id: string;
+      type: "action";
+      kind: "approval" | "question";
       label: string;
       detail?: string;
-      payload: Record<string, unknown>;
-      tone: "neutral" | "warning" | "error" | "success";
+      resolved: boolean;
+    }
+  | {
+      id: string;
+      type: "notice";
+      message: string;
+      tone: "neutral" | "warning" | "error";
     };
 
 function payloadString(payload: Record<string, unknown>, key: string) {
@@ -39,37 +56,61 @@ function payloadString(payload: Record<string, unknown>, key: string) {
   return typeof value === "string" ? value : "";
 }
 
-function eventLabel(type: string) {
-  return type
-    .replace(/^chat\./, "")
+function friendlyName(value: string) {
+  return value
     .replaceAll("_", " ")
     .replaceAll(".", " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function eventTone(
-  type: string,
-): Extract<TimelineEntry, { type: "event" }>["tone"] {
-  if (type.includes("error") || type.includes("failed")) return "error";
-  if (
-    type.includes("approval") ||
-    type.includes("requested") ||
-    type.includes("warning")
-  )
-    return "warning";
-  if (type.includes("completed") || type.includes("resolved")) return "success";
-  return "neutral";
+function friendlyDetail(payload: Record<string, unknown>) {
+  return (
+    payloadString(payload, "question") ||
+    payloadString(payload, "prompt") ||
+    payloadString(payload, "message") ||
+    payloadString(payload, "detail") ||
+    payloadString(payload, "text") ||
+    undefined
+  );
+}
+
+function eventIdentity(event: CloudEvent) {
+  return (
+    payloadString(event.payload, "id") ||
+    payloadString(event.payload, "requestId") ||
+    payloadString(event.payload, "toolUseId")
+  );
+}
+
+function setToolInputFromDelta(
+  tool: Extract<TimelineEntry, { type: "tool" }>,
+  partialJSON: string,
+) {
+  tool.inputText = `${tool.inputText ?? ""}${partialJSON}`;
+  try {
+    tool.input = JSON.parse(tool.inputText) as unknown;
+  } catch {
+    // Partial input remains hidden until the user expands the tool row.
+  }
 }
 
 export function deriveTimeline(events: CloudEvent[]): TimelineEntry[] {
   const timeline: TimelineEntry[] = [];
   let assistant: Extract<TimelineEntry, { type: "assistant" }> | undefined;
-  let reasoning: Extract<TimelineEntry, { type: "reasoning" }> | undefined;
+  const tools = new Map<string, Extract<TimelineEntry, { type: "tool" }>>();
+  const actions = new Map<string, Extract<TimelineEntry, { type: "action" }>>();
+
+  const finishAssistant = () => {
+    if (assistant) assistant.streaming = false;
+    assistant = undefined;
+  };
+  const latestRunningTool = () =>
+    [...tools.values()].reverse().find(({ status }) => status === "running");
+
   for (const event of events) {
     switch (event.type) {
       case "chat.user_message":
-        assistant = undefined;
-        reasoning = undefined;
+        finishAssistant();
         timeline.push({
           id: `event-${event.sequence}`,
           type: "user",
@@ -106,78 +147,190 @@ export function deriveTimeline(events: CloudEvent[]): TimelineEntry[] {
         break;
       }
       case "chat.reasoning_delta": {
-        const text = payloadString(event.payload, "text");
-        if (!reasoning || !reasoning.streaming) {
-          reasoning = {
-            id: `reasoning-${event.sequence}`,
-            type: "reasoning",
-            text: "",
-            streaming: true,
-          };
-          timeline.push(reasoning);
-        }
-        reasoning.text += text;
         break;
       }
       case "chat.reasoning_message": {
-        const text = payloadString(event.payload, "text");
-        if (!reasoning || reasoning.text.trim() === "") {
-          reasoning = {
-            id: `reasoning-${event.sequence}`,
-            type: "reasoning",
-            text,
-            streaming: false,
-          };
-          timeline.push(reasoning);
-        } else {
-          reasoning.streaming = false;
+        break;
+      }
+      case "chat.tool_started": {
+        finishAssistant();
+        const toolId = eventIdentity(event) || `sequence-${event.sequence}`;
+        const existing = tools.get(toolId);
+        if (existing) {
+          existing.name =
+            payloadString(event.payload, "name") || existing.name || "Tool";
+          existing.input = event.payload.input ?? existing.input;
+          existing.status = "running";
+          break;
+        }
+        const tool: Extract<TimelineEntry, { type: "tool" }> = {
+          id: `tool-${event.sequence}`,
+          type: "tool",
+          toolId,
+          name: payloadString(event.payload, "name") || "Tool",
+          status: "running",
+          input: event.payload.input,
+        };
+        tools.set(toolId, tool);
+        timeline.push(tool);
+        break;
+      }
+      case "chat.tool_input_delta": {
+        const tool = tools.get(eventIdentity(event)) ?? latestRunningTool();
+        const partialJSON = payloadString(event.payload, "partialJson");
+        if (tool && partialJSON) setToolInputFromDelta(tool, partialJSON);
+        break;
+      }
+      case "chat.tool_progress":
+      case "chat.command_output":
+      case "chat.file_change_output": {
+        const tool = tools.get(eventIdentity(event)) ?? latestRunningTool();
+        if (tool && event.payload.output !== undefined) {
+          tool.output = event.payload.output;
         }
         break;
       }
-      case "chat.tool_started":
-        if (assistant) assistant.streaming = false;
-        if (reasoning) reasoning.streaming = false;
-        assistant = undefined;
-        reasoning = undefined;
+      case "chat.tool_completed":
+      case "chat.tool_failed": {
+        const toolId = eventIdentity(event) || `sequence-${event.sequence}`;
+        let tool = tools.get(toolId);
+        if (!tool) {
+          tool = {
+            id: `tool-${event.sequence}`,
+            type: "tool",
+            toolId,
+            name: payloadString(event.payload, "name") || "Tool",
+            status: "running",
+            input: event.payload.input,
+          };
+          tools.set(toolId, tool);
+          timeline.push(tool);
+        }
+        tool.status =
+          event.type === "chat.tool_failed" || event.payload.isError === true
+            ? "failed"
+            : "completed";
+        tool.output = event.payload.output;
+        break;
+      }
+      case "chat.approval_requested":
+      case "chat.user_input_requested": {
+        finishAssistant();
+        const kind =
+          event.type === "chat.approval_requested" ? "approval" : "question";
+        const actionId =
+          eventIdentity(event) || `${kind}-sequence-${event.sequence}`;
+        const action: Extract<TimelineEntry, { type: "action" }> = {
+          id: `action-${event.sequence}`,
+          type: "action",
+          kind,
+          label: kind === "approval" ? "Approval needed" : "Input needed",
+          detail: friendlyDetail(event.payload),
+          resolved: false,
+        };
+        actions.set(actionId, action);
+        timeline.push(action);
+        break;
+      }
+      case "chat.approval_resolved":
+      case "chat.user_input_resolved": {
+        const kind =
+          event.type === "chat.approval_resolved" ? "approval" : "question";
+        const actionId = eventIdentity(event);
+        const action =
+          (actionId ? actions.get(actionId) : undefined) ??
+          [...actions.values()]
+            .reverse()
+            .find((candidate) => candidate.kind === kind && !candidate.resolved);
+        if (action) {
+          action.resolved = true;
+          action.detail = friendlyDetail(event.payload) ?? action.detail;
+        }
+        break;
+      }
+      case "chat.warning":
+      case "chat.error": {
+        finishAssistant();
         timeline.push({
-          id: `tool-${event.sequence}`,
-          type: "tool",
-          name: payloadString(event.payload, "name") || "Tool",
-          input: event.payload.input,
+          id: `notice-${event.sequence}`,
+          type: "notice",
+          message:
+            friendlyDetail(event.payload) ??
+            (event.type === "chat.error"
+              ? "The response could not be completed."
+              : "The agent reported a warning."),
+          tone: event.type === "chat.error" ? "error" : "warning",
+        });
+        break;
+      }
+      case "chat.turn_aborted":
+      case "chat.turn_interrupted":
+        finishAssistant();
+        timeline.push({
+          id: `notice-${event.sequence}`,
+          type: "notice",
+          message: friendlyDetail(event.payload) ?? "Response stopped.",
+          tone: "neutral",
         });
         break;
       case "chat.turn_completed": {
-        if (assistant) assistant.streaming = false;
-        if (reasoning) reasoning.streaming = false;
-        const isError = event.payload.isError === true;
-        timeline.push({
-          id: `result-${event.sequence}`,
-          type: "result",
-          error: isError,
-          label: isError ? "Turn failed" : "Completed",
-        });
-        assistant = undefined;
-        reasoning = undefined;
+        finishAssistant();
+        if (event.payload.isError === true) {
+          timeline.push({
+            id: `notice-${event.sequence}`,
+            type: "notice",
+            message:
+              friendlyDetail(event.payload) ??
+              "The response could not be completed.",
+            tone: "error",
+          });
+        }
         break;
       }
       default:
-        if (event.type.startsWith("chat.")) {
-          timeline.push({
-            id: `event-${event.sequence}`,
-            type: "event",
-            label: eventLabel(event.type),
-            detail:
-              payloadString(event.payload, "detail") ||
-              payloadString(event.payload, "message") ||
-              payloadString(event.payload, "text") ||
-              undefined,
-            payload: event.payload,
-            tone: eventTone(event.type),
-          });
-        }
+        // Lifecycle, usage, session state, and unknown provider events are not
+        // conversation content and intentionally stay out of the timeline.
+        break;
     }
   }
   return timeline;
+}
+
+export function deriveTurnState(events: CloudEvent[]) {
+  let turnActive = false;
+  let awaitingInput = false;
+  for (const event of events) {
+    switch (event.type) {
+      case "chat.user_message":
+      case "chat.turn_started":
+      case "chat.assistant_delta":
+      case "chat.reasoning_delta":
+      case "chat.tool_started":
+      case "chat.tool_progress":
+      case "chat.tool_input_delta":
+        turnActive = true;
+        awaitingInput = false;
+        break;
+      case "chat.approval_requested":
+      case "chat.user_input_requested":
+        turnActive = false;
+        awaitingInput = true;
+        break;
+      case "chat.approval_resolved":
+      case "chat.user_input_resolved":
+        turnActive = true;
+        awaitingInput = false;
+        break;
+      case "chat.turn_completed":
+      case "chat.turn_aborted":
+      case "chat.turn_interrupted":
+      case "chat.error":
+        turnActive = false;
+        awaitingInput = false;
+        break;
+    }
+  }
+  return { turnActive, awaitingInput };
 }
 
 function mergeEvents(current: CloudEvent[], incoming: CloudEvent[]) {
@@ -191,14 +344,56 @@ function mergeEvents(current: CloudEvent[], incoming: CloudEvent[]) {
   );
 }
 
-export function CloudChat({ api, session }: CloudChatProps) {
+function displayToolValue(value: unknown) {
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return "Details are unavailable.";
+  }
+}
+
+function ThinkingWave() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 32 16"
+      className="h-3 w-5 shrink-0 overflow-visible text-[#9ba1aa]"
+      fill="none"
+    >
+      <path
+        d="M1 8c4.5-8 8.5 8 15 0s10.5 8 15 0"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        className="animate-pulse motion-reduce:animate-none"
+      />
+    </svg>
+  );
+}
+
+function ShimmerLabel({ children }: { children: string }) {
+  return (
+    <span className="animate-[cloud-shimmer_1.8s_ease-in-out_infinite] bg-gradient-to-r from-[#646a73] via-[#c5cad1] to-[#646a73] bg-[length:200%_100%] bg-clip-text text-transparent motion-reduce:animate-none">
+      {children}
+    </span>
+  );
+}
+
+export function CloudChat({
+  api,
+  session,
+  onTurnActiveChange,
+}: CloudChatProps) {
   const [events, setEvents] = useState<CloudEvent[]>([]);
   const [pending, setPending] = useState<Array<{ id: string; text: string }>>(
     [],
   );
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [interrupting, setInterrupting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [replaySessionId, setReplaySessionId] = useState<string | null>(null);
   const latestSequence = useRef(0);
   const draftValue = useRef("");
   const retryIdempotencyKey = useRef<string | null>(null);
@@ -216,7 +411,41 @@ export function CloudChat({ api, session }: CloudChatProps) {
     draftValue.current = "";
     setDraft("");
     setError(null);
+    setReplaySessionId(null);
+    setInterrupting(false);
     const connect = async () => {
+      try {
+        let replayAfter = 0;
+        let replayed: CloudEvent[] = [];
+        for (;;) {
+          const replay = await api.chatEvents(session.id, replayAfter, 500);
+          replayed = mergeEvents(replayed, replay.events);
+          if (replay.events.length < 500) break;
+          replayAfter = replay.events.reduce(
+            (latest, event) => Math.max(latest, event.sequence),
+            replayAfter,
+          );
+        }
+        if (controller.signal.aborted) return;
+        const chatEvents = replayed.filter((event) =>
+          event.type.startsWith("chat."),
+        );
+        latestSequence.current = chatEvents.reduce(
+          (latest, event) => Math.max(latest, event.sequence),
+          0,
+        );
+        setEvents(chatEvents);
+      } catch (replayError) {
+        if (controller.signal.aborted) return;
+        setError(
+          replayError instanceof Error
+            ? `Could not load conversation history. ${replayError.message}`
+            : "Could not load conversation history.",
+        );
+      } finally {
+        if (!controller.signal.aborted) setReplaySessionId(session.id);
+      }
+
       let retryDelay = 500;
       while (!controller.signal.aborted) {
         try {
@@ -257,15 +486,34 @@ export function CloudChat({ api, session }: CloudChatProps) {
 
   useEffect(() => {
     if (followOutput.current) {
-      endRef.current?.scrollIntoView({ block: "end" });
+      endRef.current?.scrollIntoView?.({ block: "end" });
     }
   }, [events, pending]);
 
   const timeline = useMemo(() => deriveTimeline(events), [events]);
+  const turnState = useMemo(() => deriveTurnState(events), [events]);
+  const replayReady = replaySessionId === session.id;
+  const responseActive =
+    replayReady && (sending || pending.length > 0 || turnState.turnActive);
+  const hasUserMessage =
+    pending.length > 0 ||
+    events.some((event) => event.type === "chat.user_message");
+  const structuredRuntimeReady =
+    session.capabilities?.includes("chat.stream-json.v1") === true;
+  const visibleWorkInProgress = timeline.some(
+    (entry) =>
+      (entry.type === "assistant" && entry.streaming) ||
+      (entry.type === "tool" && entry.status === "running"),
+  );
+
+  useEffect(() => {
+    onTurnActiveChange?.(session.id, responseActive);
+    return () => onTurnActiveChange?.(session.id, false);
+  }, [onTurnActiveChange, responseActive, session.id]);
 
   const submit = async () => {
     const text = draft.trim();
-    if (!text || sending) return;
+    if (!text || responseActive) return;
     const id = retryIdempotencyKey.current ?? crypto.randomUUID();
     followOutput.current = true;
     draftValue.current = "";
@@ -297,8 +545,23 @@ export function CloudChat({ api, session }: CloudChatProps) {
     }
   };
 
-  const isWorking =
-    session.status === "working" || session.activityState === "active";
+  const interrupt = async () => {
+    if (!responseActive || interrupting) return;
+    setInterrupting(true);
+    try {
+      const { event } = await api.interruptSession(session.id);
+      setEvents((current) => mergeEvents(current, [event]));
+      setError(null);
+    } catch (interruptError) {
+      setError(
+        interruptError instanceof Error
+          ? interruptError.message
+          : "Could not stop the response.",
+      );
+    } finally {
+      setInterrupting(false);
+    }
+  };
 
   return (
     <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-[#0a0b0d]">
@@ -313,8 +576,20 @@ export function CloudChat({ api, session }: CloudChatProps) {
             120;
         }}
       >
-        <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-5 py-6">
-          {timeline.length === 0 && pending.length === 0 ? (
+        <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col overflow-x-hidden px-4 py-6 sm:px-5">
+          {!replayReady ? (
+            <div
+              className="my-auto flex flex-col items-center py-16 text-center text-[#9ba1aa]"
+              role="status"
+              aria-live="polite"
+            >
+              <LoaderCircle
+                className="size-5 animate-spin text-[#4d8dff] motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+              <span className="mt-3 text-xs">Loading conversation…</span>
+            </div>
+          ) : timeline.length === 0 && pending.length === 0 ? (
             <div className="my-auto py-16 text-center">
               <Bot className="mx-auto size-5 text-[#4d8dff]" />
               <h2 className="mt-3 text-sm font-medium">Ready for a task</h2>
@@ -324,12 +599,12 @@ export function CloudChat({ api, session }: CloudChatProps) {
               </p>
             </div>
           ) : (
-            <div className="space-y-5">
+            <div className="min-w-0 space-y-5">
               {timeline.map((entry) => {
                 if (entry.type === "user") {
                   return (
                     <div key={entry.id} className="flex justify-end">
-                      <div className="max-w-[82%] rounded-xl bg-[#1b1d22] px-3.5 py-2.5 text-sm leading-6 text-[#f4f5f7]">
+                      <div className="max-w-[88%] overflow-hidden break-words rounded-xl bg-[#1b1d22] px-3.5 py-2.5 text-sm leading-6 text-[#f4f5f7] sm:max-w-[82%]">
                         {entry.text}
                       </div>
                     </div>
@@ -346,101 +621,161 @@ export function CloudChat({ api, session }: CloudChatProps) {
                           {entry.text}
                         </ReactMarkdown>
                         {entry.streaming ? (
-                          <span className="ml-1 inline-block size-1.5 animate-pulse rounded-full bg-[#36c2b4] motion-reduce:animate-none" />
+                          <span className="ml-1 inline-block size-1.5 animate-pulse rounded-full bg-[#4d8dff] motion-reduce:animate-none" />
                         ) : null}
                       </div>
                     </div>
                   );
                 }
-                if (entry.type === "reasoning") {
-                  return (
-                    <details
-                      key={entry.id}
-                      className="ml-9 rounded-lg border border-white/[0.05] bg-white/[0.015]"
-                    >
-                      <summary className="cursor-pointer px-3 py-2 text-xs text-[#646a73]">
-                        Reasoning{entry.streaming ? "…" : ""}
-                      </summary>
-                      <div className="whitespace-pre-wrap border-t border-white/[0.05] px-3 py-2.5 text-xs leading-5 text-[#9ba1aa]">
-                        {entry.text}
-                      </div>
-                    </details>
-                  );
-                }
                 if (entry.type === "tool") {
+                  const hasDetails =
+                    entry.input !== undefined ||
+                    entry.inputText !== undefined ||
+                    entry.output !== undefined;
+                  const label =
+                    entry.status === "running"
+                      ? `Running ${friendlyName(entry.name)}…`
+                      : entry.status === "failed"
+                        ? `${friendlyName(entry.name)} failed`
+                        : friendlyName(entry.name);
                   return (
                     <details
                       key={entry.id}
-                      className="group ml-9 rounded-lg border border-white/[0.06] bg-[#15171b]"
+                      className="group ml-9 max-w-[calc(100%-2.25rem)] text-xs text-[#9ba1aa]"
                     >
-                      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs text-[#9ba1aa]">
-                        <Wrench className="size-3.5" />
-                        <span className="font-medium text-[#d7d7d2]">
-                          {entry.name}
+                      <summary
+                        className={`flex min-h-11 list-none items-center gap-2 rounded-md pr-1 outline-none focus-visible:ring-2 focus-visible:ring-[#4d8dff]/70 sm:min-h-8 ${
+                          hasDetails
+                            ? "cursor-pointer"
+                            : "pointer-events-none"
+                        }`}
+                        aria-label={
+                          hasDetails ? `Show details for ${entry.name}` : undefined
+                        }
+                      >
+                        {entry.status === "running" ? (
+                          <ThinkingWave />
+                        ) : entry.status === "failed" ? (
+                          <X className="size-3.5 shrink-0 text-[#ef6b6b]" />
+                        ) : (
+                          <Check className="size-3.5 shrink-0 text-[#74b98a]" />
+                        )}
+                        <span
+                          className={
+                            entry.status === "failed"
+                              ? "font-medium text-[#ef8b8b]"
+                              : "font-medium"
+                          }
+                        >
+                          {entry.status === "running" ? (
+                            <ShimmerLabel>{label}</ShimmerLabel>
+                          ) : (
+                            label
+                          )}
                         </span>
-                        <span className="ml-auto text-[#646a73]">
-                          View input
-                        </span>
+                        {hasDetails ? (
+                          <ChevronRight className="ml-auto size-3.5 shrink-0 text-[#646a73] transition-transform group-open:rotate-90 motion-reduce:transition-none" />
+                        ) : null}
                       </summary>
-                      {entry.input !== undefined ? (
-                        <pre className="overflow-x-auto border-t border-white/[0.06] p-3 font-mono text-[11px] leading-5 text-[#9ba1aa]">
-                          {JSON.stringify(entry.input, null, 2)}
-                        </pre>
+                      {hasDetails ? (
+                        <div className="ml-7 border-l border-white/[0.08] pl-3">
+                          {entry.input !== undefined ||
+                          entry.inputText !== undefined ? (
+                            <div className="py-2">
+                              <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.08em] text-[#646a73]">
+                                Input
+                              </div>
+                              <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-[#9ba1aa]">
+                                {displayToolValue(
+                                  entry.input ?? entry.inputText,
+                                )}
+                              </pre>
+                            </div>
+                          ) : null}
+                          {entry.output !== undefined ? (
+                            <div className="border-t border-white/[0.06] py-2">
+                              <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.08em] text-[#646a73]">
+                                Output
+                              </div>
+                              <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-[#9ba1aa]">
+                                {displayToolValue(entry.output)}
+                              </pre>
+                            </div>
+                          ) : null}
+                        </div>
                       ) : null}
                     </details>
                   );
                 }
-                if (entry.type === "event") {
+                if (entry.type === "action") {
+                  const Icon =
+                    entry.kind === "approval" ? CircleAlert : HelpCircle;
+                  return (
+                    <div
+                      key={entry.id}
+                      className="ml-9 flex max-w-xl items-start gap-2.5 rounded-lg border border-[#e8c14a]/20 bg-[#e8c14a]/[0.05] px-3 py-2.5"
+                    >
+                      {entry.resolved ? (
+                        <Check className="mt-0.5 size-3.5 shrink-0 text-[#74b98a]" />
+                      ) : (
+                        <Icon className="mt-0.5 size-3.5 shrink-0 text-[#e8c14a]" />
+                      )}
+                      <div className="min-w-0">
+                        <div className="text-xs font-medium text-[#d7d7d2]">
+                          {entry.resolved ? `${entry.label} · Resolved` : entry.label}
+                        </div>
+                        {entry.detail ? (
+                          <p className="mt-1 break-words text-xs leading-5 text-[#9ba1aa]">
+                            {entry.detail}
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                }
+                if (entry.type === "notice") {
                   const toneClass = {
                     neutral: "text-[#9ba1aa]",
                     warning: "text-[#e8c14a]",
                     error: "text-[#ef6b6b]",
-                    success: "text-[#74b98a]",
                   }[entry.tone];
                   return (
-                    <details
+                    <div
                       key={entry.id}
-                      className="ml-9 rounded-lg border border-white/[0.05] bg-[#15171b]"
+                      className={`ml-9 flex items-start gap-2 text-xs leading-5 ${toneClass}`}
+                      role={entry.tone === "error" ? "alert" : "status"}
                     >
-                      <summary
-                        className={`cursor-pointer px-3 py-2 text-xs ${toneClass}`}
-                      >
-                        {entry.label}
-                        {entry.detail ? ` · ${entry.detail}` : ""}
-                      </summary>
-                      <pre className="overflow-x-auto border-t border-white/[0.05] p-3 font-mono text-[11px] leading-5 text-[#646a73]">
-                        {JSON.stringify(entry.payload, null, 2)}
-                      </pre>
-                    </details>
+                      <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
+                      <span className="break-words">{entry.message}</span>
+                    </div>
                   );
                 }
-                return (
-                  <div
-                    key={entry.id}
-                    className={`ml-9 flex items-center gap-2 text-[11px] ${
-                      entry.error ? "text-[#ef6b6b]" : "text-[#74b98a]"
-                    }`}
-                  >
-                    {entry.error ? (
-                      <Terminal className="size-3" />
-                    ) : (
-                      <Check className="size-3" />
-                    )}
-                    {entry.label}
-                  </div>
-                );
+                return null;
               })}
               {pending.map((message) => (
                 <div key={message.id} className="flex justify-end opacity-60">
-                  <div className="max-w-[82%] rounded-xl bg-[#1b1d22] px-3.5 py-2.5 text-sm leading-6">
+                  <div className="max-w-[88%] break-words rounded-xl bg-[#1b1d22] px-3.5 py-2.5 text-sm leading-6 sm:max-w-[82%]">
                     {message.text}
                   </div>
                 </div>
               ))}
-              {isWorking ? (
-                <div className="ml-9 flex items-center gap-2 text-xs text-[#646a73]">
-                  <LoaderCircle className="size-3.5 animate-spin text-[#36c2b4] motion-reduce:animate-none" />
-                  Working…
+              {hasUserMessage && !structuredRuntimeReady && responseActive ? (
+                <div
+                  className="ml-9 flex min-h-8 items-center gap-2 text-xs"
+                  role="status"
+                  aria-live="polite"
+                >
+                  <ThinkingWave />
+                  <ShimmerLabel>Starting secure worker…</ShimmerLabel>
+                </div>
+              ) : responseActive && !visibleWorkInProgress ? (
+                <div
+                  className="ml-9 flex min-h-8 items-center gap-2 text-xs"
+                  role="status"
+                  aria-live="polite"
+                >
+                  <ThinkingWave />
+                  <ShimmerLabel>Thinking…</ShimmerLabel>
                 </div>
               ) : null}
               <div ref={endRef} />
@@ -449,16 +784,18 @@ export function CloudChat({ api, session }: CloudChatProps) {
         </div>
       </div>
 
-      <div className="border-t border-white/[0.06] bg-[#0a0b0d] px-4 py-3">
+      <div className="border-t border-white/[0.06] bg-[#0a0b0d] px-3 py-3 sm:px-4">
         <div className="mx-auto max-w-3xl">
           {error ? (
             <p role="alert" className="mb-2 text-xs text-[#ef6b6b]">
               {error}
             </p>
           ) : null}
-          <div className="flex items-end gap-2 rounded-xl border border-white/10 bg-[#15171b] p-2 transition-colors focus-within:border-[#4d8dff]/60">
+          <div className="flex min-w-0 items-end gap-2 rounded-xl border border-white/10 bg-[#15171b] p-1.5 transition-colors focus-within:border-[#4d8dff]/60 sm:p-2">
             <textarea
               value={draft}
+              disabled={!replayReady || responseActive}
+              aria-label="Message the orchestrator"
               onChange={(event) => {
                 retryIdempotencyKey.current = null;
                 draftValue.current = event.target.value;
@@ -474,23 +811,43 @@ export function CloudChat({ api, session }: CloudChatProps) {
                   void submit();
                 }
               }}
-              placeholder="Tell the orchestrator what to build…"
-              className="max-h-48 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-5 text-[#f4f5f7] [field-sizing:content] outline-none placeholder:text-[#646a73]"
+              placeholder={
+                !replayReady
+                  ? "Loading conversation…"
+                  : responseActive
+                    ? "Response in progress…"
+                    : "Tell the orchestrator what to build…"
+              }
+              className="max-h-48 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-2 py-2.5 text-sm leading-5 text-[#f4f5f7] [field-sizing:content] outline-none placeholder:text-[#646a73] disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-10 sm:py-2"
               rows={1}
             />
-            <button
-              type="button"
-              onClick={() => void submit()}
-              disabled={!draft.trim() || sending}
-              aria-label="Send message"
-              className="grid size-8 shrink-0 place-items-center rounded-lg bg-[#4d8dff] text-white transition-[opacity,transform] hover:bg-[#397df0] active:scale-95 disabled:cursor-not-allowed disabled:opacity-35 motion-reduce:transition-none"
-            >
-              {sending ? (
-                <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" />
-              ) : (
+            {responseActive ? (
+              <button
+                type="button"
+                onClick={() => void interrupt()}
+                disabled={interrupting}
+                aria-label="Interrupt response"
+                title="Interrupt response"
+                className="grid size-11 shrink-0 place-items-center rounded-lg border border-white/15 bg-[#22252b] text-[#f4f5f7] transition-[background-color,transform,opacity] hover:bg-[#2a2e35] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4d8dff] active:scale-95 disabled:cursor-wait disabled:opacity-50 motion-reduce:transition-none sm:size-8"
+              >
+                {interrupting ? (
+                  <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" />
+                ) : (
+                  <Square className="size-3.5 fill-current" />
+                )}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void submit()}
+                disabled={!replayReady || !draft.trim()}
+                aria-label="Send message"
+                title="Send message"
+                className="grid size-11 shrink-0 place-items-center rounded-lg bg-[#4d8dff] text-white transition-[background-color,transform,opacity] hover:bg-[#397df0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8bb5ff] focus-visible:ring-offset-2 focus-visible:ring-offset-[#15171b] active:scale-95 disabled:cursor-not-allowed disabled:opacity-35 motion-reduce:transition-none sm:size-8"
+              >
                 <ArrowUp className="size-4" />
-              )}
-            </button>
+              </button>
+            )}
           </div>
           <p className="mt-1.5 px-2 text-[10px] text-[#646a73]">
             Enter to send · Shift+Enter for newline

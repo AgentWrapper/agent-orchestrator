@@ -26,6 +26,15 @@
   }
 }
 
+@keyframes cloud-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
 /*
  * Blog code blocks - force dark theme
  * Note: !important is required to override Shiki's inline styles

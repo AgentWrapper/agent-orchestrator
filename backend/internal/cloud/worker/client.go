@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -68,7 +70,7 @@ func (c *Client) Bootstrap(
 	if err != nil {
 		return BootstrapResponse{}, err
 	}
-	c.setToken(response.WorkerToken)
+	c.acceptToken(response.WorkerToken)
 	return response, nil
 }
 
@@ -84,7 +86,7 @@ func (c *Client) Heartbeat(ctx context.Context, version string, capabilities []s
 		return err
 	}
 	if response.WorkerToken != "" {
-		c.setToken(response.WorkerToken)
+		c.acceptToken(response.WorkerToken)
 	}
 	return nil
 }
@@ -188,6 +190,35 @@ func (c *Client) setToken(token string) {
 	c.mu.Lock()
 	c.token = token
 	c.mu.Unlock()
+}
+
+func (c *Client) acceptToken(token string) {
+	c.setToken(token)
+	dataDir := strings.TrimSpace(os.Getenv("AO_DATA_DIR"))
+	if dataDir == "" {
+		return
+	}
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return
+	}
+	temporary, err := os.CreateTemp(dataDir, ".worker-token-*")
+	if err != nil {
+		return
+	}
+	temporaryPath := temporary.Name()
+	defer func() { _ = os.Remove(temporaryPath) }()
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return
+	}
+	if _, err := temporary.WriteString(token); err != nil {
+		_ = temporary.Close()
+		return
+	}
+	if err := temporary.Close(); err != nil {
+		return
+	}
+	_ = os.Rename(temporaryPath, filepath.Join(dataDir, "worker-token"))
 }
 
 func (c *Client) getToken() string {

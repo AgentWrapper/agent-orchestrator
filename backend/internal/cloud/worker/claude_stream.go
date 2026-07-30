@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
 	cloudworkerhub "github.com/aoagents/agent-orchestrator/backend/internal/cloud/workerhub"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -176,6 +178,7 @@ type claudeInputWriter struct {
 
 type structuredPromptWriter interface {
 	Prompt(string, int64) error
+	Interrupt() (bool, error)
 	AcknowledgeOnWrite() bool
 }
 
@@ -208,6 +211,26 @@ func (w *claudeInputWriter) AcknowledgeOnWrite() bool {
 	return true
 }
 
+func (w *claudeInputWriter) Interrupt() (bool, error) {
+	envelope := map[string]any{
+		"type":       "control_request",
+		"request_id": uuid.NewString(),
+		"request": map[string]string{
+			"subtype": "interrupt",
+		},
+	}
+	encoded, err := json.Marshal(envelope)
+	if err != nil {
+		return false, fmt.Errorf("encode Claude interrupt: %w", err)
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if _, err := w.writer.Write(append(encoded, '\n')); err != nil {
+		return false, fmt.Errorf("write Claude interrupt: %w", err)
+	}
+	return true, nil
+}
+
 func (r *Runner) structuredCommandLoop(ctx context.Context, writer structuredPromptWriter) {
 	backoff := time.Second
 	var highestPrompt atomic.Int64
@@ -228,8 +251,12 @@ func (r *Runner) structuredCommandLoop(ctx context.Context, writer structuredPro
 		connectionStartedAt := time.Now()
 		err := r.client.RunCommandStream(ctx, highestPrompt.Load(), func(command cloudworkerhub.Command) error {
 			before := highestPrompt.Load()
-			if err := handleStructuredCommand(command, writer, &highestPrompt); err != nil {
+			interrupted, err := handleStructuredCommand(command, writer, &highestPrompt)
+			if err != nil {
 				return err
+			}
+			if interrupted {
+				return r.reportTurnInterrupted(ctx, command.Sequence)
 			}
 			if !writer.AcknowledgeOnWrite() ||
 				command.Sequence <= before ||
@@ -278,24 +305,27 @@ func handleStructuredCommand(
 	command cloudworkerhub.Command,
 	writer structuredPromptWriter,
 	highestPrompt *atomic.Int64,
-) error {
+) (bool, error) {
+	if command.Type == "interrupt" {
+		return writer.Interrupt()
+	}
 	if command.Type != "prompt" {
-		return nil
+		return false, nil
 	}
 	if command.Sequence > 0 && command.Sequence <= highestPrompt.Load() {
-		return nil
+		return false, nil
 	}
 	decoded, err := base64.StdEncoding.DecodeString(command.Data)
 	if err != nil || len(decoded) == 0 || len(decoded) > 64<<10 {
-		return errors.New("decode structured prompt")
+		return false, errors.New("decode structured prompt")
 	}
 	if err := writer.Prompt(string(decoded), command.Sequence); err != nil {
-		return err
+		return false, err
 	}
 	if command.Sequence > 0 {
 		highestPrompt.Store(command.Sequence)
 	}
-	return nil
+	return false, nil
 }
 
 type claudeStreamState struct {
@@ -334,14 +364,18 @@ func normalizeClaudeLine(line []byte, state *claudeStreamState) []normalizedChat
 	}
 	switch eventType {
 	case "system":
-		if rawString(root["subtype"]) == "compact_boundary" {
+		subtype := rawString(root["subtype"])
+		if subtype == "compact_boundary" {
 			return []normalizedChatEvent{{
 				eventType: "chat.context_compacted",
 				payload:   map[string]any{},
 			}}
 		}
+		if subtype != "init" {
+			return nil
+		}
 		payload := map[string]any{}
-		copyJSONField(payload, "subtype", root["subtype"])
+		payload["subtype"] = subtype
 		copyJSONField(payload, "sessionId", root["session_id"])
 		copyJSONField(payload, "model", root["model"])
 		copyJSONField(payload, "tools", root["tools"])

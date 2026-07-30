@@ -11,7 +11,7 @@
     "cloud:build-worker": "cd backend && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /tmp/ao-worker-linux-amd64 ./cmd/ao-worker",
     "cloud:server": "set -a; . ./.env.cloud.local; set +a; cd backend && go run ./cmd/ao-cloud",
     "cloud:web": "npm --prefix frontend/src/landing run dev -- --hostname 127.0.0.1 --port 5174",
-    "cloud:test": "set -a; . ./.env.cloud.local; set +a; cd backend && go test ./cmd/ao-cloud ./cmd/ao-worker ./internal/cloud/..."
+    "cloud:test": "set -a; . ./.env.cloud.local; set +a; cd backend && go test ./cmd/ao-cloud ./cmd/ao-worker ./cmd/ao-cloud-agent ./internal/cloud/..."
   },
   "devDependencies": {
     "openapi-typescript": "7.4.4"

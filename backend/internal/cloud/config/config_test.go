@@ -7,7 +7,10 @@ func TestLoadRequiresCloudSecrets(t *testing.T) {
 	t.Setenv("AO_DATABASE_DIRECT_URL", "")
 	t.Setenv("AO_SUPABASE_URL", "https://project.supabase.co")
 	t.Setenv("AO_SUPABASE_ANON_KEY", "anon")
+	t.Setenv("AO_SANDBOX_PROVIDER", "daytona")
 	t.Setenv("AO_DAYTONA_API_KEY", "daytona")
+	t.Setenv("AO_DAYTONA_TARGET", "")
+	t.Setenv("AO_DAYTONA_WORKER_SNAPSHOT", "")
 	t.Setenv("AO_ENCRYPTION_KEY", "0000000000000000000000000000000000000000000000000000000000000000")
 	t.Setenv("AO_WORKER_SIGNING_KEY", "1111111111111111111111111111111111111111111111111111111111111111")
 
@@ -40,6 +43,7 @@ func TestLoadRejectsInvalidTarget(t *testing.T) {
 	t.Setenv("AO_DATABASE_DIRECT_URL", "")
 	t.Setenv("AO_SUPABASE_URL", "https://project.supabase.co")
 	t.Setenv("AO_SUPABASE_ANON_KEY", "anon")
+	t.Setenv("AO_SANDBOX_PROVIDER", "daytona")
 	t.Setenv("AO_DAYTONA_API_KEY", "daytona")
 	t.Setenv("AO_DAYTONA_TARGET", "moon")
 	t.Setenv("AO_ENCRYPTION_KEY", "0000000000000000000000000000000000000000000000000000000000000000")

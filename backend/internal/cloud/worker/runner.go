@@ -256,6 +256,14 @@ func (r *Runner) commandLoop(
 				return err
 			case "resize":
 				return pty.Setsize(terminal, &pty.Winsize{Rows: command.Rows, Cols: command.Cols})
+			case "interrupt":
+				writeMu.Lock()
+				_, err := terminal.Write([]byte{3})
+				writeMu.Unlock()
+				if err != nil {
+					return err
+				}
+				return r.reportTurnInterrupted(ctx, command.Sequence)
 			default:
 				return fmt.Errorf("unsupported worker command %q", command.Type)
 			}

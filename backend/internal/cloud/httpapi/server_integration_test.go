@@ -886,3 +886,302 @@ func TestAgentConnectionGatesSessionAndBootstrapsCredential(t *testing.T) {
 		t.Fatalf("bootstrap agentCredential = %#v", bootstrapBody.AgentCredential)
 	}
 }
+
+func TestWorkerOrchestrationIsProjectScoped(t *testing.T) {
+	server, store := integrationAPI(t)
+	ctx := context.Background()
+	connection := requestJSON(
+		t,
+		server,
+		http.MethodPut,
+		"/api/cloud/v1/provider-connections/agents/cursor",
+		"user-one",
+		map[string]string{"credentialType": "api_key", "secret": "cursor-secret"},
+		nil,
+	)
+	connection.Body.Close()
+	if connection.StatusCode != http.StatusOK {
+		t.Fatalf("cursor connection status = %d", connection.StatusCode)
+	}
+	account, err := store.EnsureAccount(ctx, tokenID("user-one"), "User One")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, account.ID, cloudpostgres.CreateProjectInput{
+		DisplayName:   "Orchestration",
+		RepositoryURL: "https://github.com/example/" + uuid.NewString(),
+		DefaultBranch: "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, err := store.CreateSession(ctx, account.ID, cloudpostgres.CreateSessionInput{
+		IdempotencyKey: uuid.NewString(),
+		ProjectID:      project.ID,
+		Kind:           "orchestrator",
+		Harness:        "cursor",
+		DisplayName:    "orchestrator",
+		Resource:       clouddomain.DefaultResourceProfile(),
+		Provider:       "daytona",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unscopedToken := bootstrapWorker(t, server, store, account.ID, parent.Session.ID, []string{
+		"worker:connect",
+		"worker:event",
+		"worker:terminal",
+	})
+	unscoped := requestJSON(
+		t,
+		server,
+		http.MethodGet,
+		"/api/cloud/v1/worker/orchestrate/sessions",
+		"",
+		nil,
+		map[string]string{
+			"Authorization":   "Worker " + unscopedToken,
+			"X-AO-Session-ID": string(parent.Session.ID),
+		},
+	)
+	unscoped.Body.Close()
+	if unscoped.StatusCode != http.StatusForbidden {
+		t.Fatalf("unscoped orchestration status = %d, want 403", unscoped.StatusCode)
+	}
+	token := bootstrapWorker(t, server, store, account.ID, parent.Session.ID, []string{
+		"worker:connect",
+		"worker:event",
+		"worker:terminal",
+		"worker:orchestrate",
+	})
+	headers := map[string]string{
+		"Authorization":   "Worker " + token,
+		"X-AO-Session-ID": string(parent.Session.ID),
+		"Idempotency-Key": uuid.NewString(),
+	}
+	spawn := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/worker/orchestrate/sessions",
+		"",
+		map[string]string{
+			"displayName": "worker-one",
+			"prompt":      "fix the tests",
+		},
+		headers,
+	)
+	defer spawn.Body.Close()
+	if spawn.StatusCode != http.StatusCreated {
+		payload, _ := io.ReadAll(spawn.Body)
+		t.Fatalf("spawn status = %d: %s", spawn.StatusCode, payload)
+	}
+	var spawned cloudpostgres.CreateSessionResult
+	if err := json.NewDecoder(spawn.Body).Decode(&spawned); err != nil {
+		t.Fatal(err)
+	}
+	if spawned.Session.ProjectID != project.ID ||
+		spawned.Session.Harness != parent.Session.Harness ||
+		spawned.Sandbox.Provider != parent.Sandbox.Provider {
+		t.Fatalf("spawned result = %#v", spawned)
+	}
+
+	list := requestJSON(
+		t,
+		server,
+		http.MethodGet,
+		"/api/cloud/v1/worker/orchestrate/sessions",
+		"",
+		nil,
+		map[string]string{
+			"Authorization":   "Worker " + token,
+			"X-AO-Session-ID": string(parent.Session.ID),
+		},
+	)
+	defer list.Body.Close()
+	if list.StatusCode != http.StatusOK {
+		t.Fatalf("list status = %d", list.StatusCode)
+	}
+	var listed struct {
+		Sessions []clouddomain.Session `json:"sessions"`
+	}
+	if err := json.NewDecoder(list.Body).Decode(&listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Sessions) != 2 {
+		t.Fatalf("listed sessions = %#v", listed.Sessions)
+	}
+
+	otherProject, err := store.CreateProject(ctx, account.ID, cloudpostgres.CreateProjectInput{
+		DisplayName:   "Other",
+		RepositoryURL: "https://github.com/example/" + uuid.NewString(),
+		DefaultBranch: "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := store.CreateSession(ctx, account.ID, cloudpostgres.CreateSessionInput{
+		IdempotencyKey: uuid.NewString(),
+		ProjectID:      otherProject.ID,
+		Kind:           "worker",
+		Harness:        "fake",
+		DisplayName:    "other-worker",
+		Resource:       clouddomain.DefaultResourceProfile(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	crossProject := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/worker/orchestrate/sessions/"+string(other.Session.ID)+"/messages",
+		"",
+		map[string]string{"text": "not allowed"},
+		headers,
+	)
+	crossProject.Body.Close()
+	if crossProject.StatusCode != http.StatusNotFound {
+		t.Fatalf("cross-project send status = %d, want 404", crossProject.StatusCode)
+	}
+}
+
+func TestBrowserInterruptAndWorkerTurnActivity(t *testing.T) {
+	server, store := integrationAPI(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	account, err := store.EnsureAccount(ctx, tokenID("user-one"), "User One")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, account.ID, cloudpostgres.CreateProjectInput{
+		DisplayName:   "Interrupt",
+		RepositoryURL: "https://github.com/example/" + uuid.NewString(),
+		DefaultBranch: "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := store.CreateSession(ctx, account.ID, cloudpostgres.CreateSessionInput{
+		IdempotencyKey: uuid.NewString(),
+		ProjectID:      project.ID,
+		Kind:           "worker",
+		Harness:        "fake",
+		DisplayName:    "interrupt-worker",
+		Resource:       clouddomain.DefaultResourceProfile(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := bootstrapWorker(t, server, store, account.ID, session.Session.ID, []string{
+		"worker:connect",
+		"worker:event",
+		"worker:terminal",
+	})
+	workerURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/cloud/v1/worker/connect"
+	workerHeaders := http.Header{}
+	workerHeaders.Set("Authorization", "Worker "+token)
+	socket, _, err := websocket.Dial(ctx, workerURL, &websocket.DialOptions{HTTPHeader: workerHeaders})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer socket.Close(websocket.StatusNormalClosure, "test complete")
+
+	interrupt := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/sessions/"+string(session.Session.ID)+"/interrupt",
+		"user-one",
+		map[string]any{},
+		nil,
+	)
+	defer interrupt.Body.Close()
+	if interrupt.StatusCode != http.StatusAccepted {
+		t.Fatalf("interrupt status = %d", interrupt.StatusCode)
+	}
+	_, encodedCommand, err := socket.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var command cloudworkerhub.Command
+	if err := json.Unmarshal(encodedCommand, &command); err != nil {
+		t.Fatal(err)
+	}
+	if command.Type != "interrupt" || command.Sequence <= 0 {
+		t.Fatalf("interrupt command = %#v", command)
+	}
+
+	for _, event := range []struct {
+		eventType string
+		wantState string
+	}{
+		{eventType: "chat.turn_started", wantState: "active"},
+		{eventType: "chat.turn_interrupted", wantState: "idle"},
+		{eventType: "chat.turn_completed", wantState: "idle"},
+	} {
+		response := requestJSON(
+			t,
+			server,
+			http.MethodPost,
+			"/api/cloud/v1/worker/events",
+			"",
+			map[string]any{"type": event.eventType, "payload": map[string]any{}},
+			map[string]string{"Authorization": "Worker " + token},
+		)
+		response.Body.Close()
+		if response.StatusCode != http.StatusAccepted {
+			t.Fatalf("%s status = %d", event.eventType, response.StatusCode)
+		}
+		got, err := store.GetSession(ctx, account.ID, session.Session.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.ActivityState != event.wantState {
+			t.Fatalf("%s activity = %q, want %q", event.eventType, got.ActivityState, event.wantState)
+		}
+	}
+}
+
+func bootstrapWorker(
+	t *testing.T,
+	server *httptest.Server,
+	store *cloudpostgres.Store,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+	scopes []string,
+) string {
+	t.Helper()
+	ticket, err := store.IssueAccessTicket(
+		context.Background(),
+		accountID,
+		sessionID,
+		"worker_bootstrap",
+		scopes,
+		time.Minute,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/worker/bootstrap",
+		"",
+		map[string]any{"bootstrapToken": ticket, "version": "test", "capabilities": []string{"chat.stream-json.v1"}},
+		nil,
+	)
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		payload, _ := io.ReadAll(response.Body)
+		t.Fatalf("bootstrap status = %d: %s", response.StatusCode, payload)
+	}
+	var body struct {
+		WorkerToken string `json:"workerToken"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	return body.WorkerToken
+}

@@ -53,7 +53,7 @@ const structuredChatHarnesses = new Set(["claude-code", "codex", "cursor"]);
 
 function supportsStructuredChat(session: CloudSession) {
   return (
-    structuredChatHarnesses.has(session.harness) &&
+    structuredChatHarnesses.has(session.harness) ||
     session.capabilities?.includes("chat.stream-json.v1") === true
   );
 }
@@ -123,7 +123,7 @@ function statusColor(session: CloudSession) {
     session.status === "changes_requested"
   )
     return "bg-[#e8c14a]";
-  if (session.status === "working") return "bg-[#36c2b4]";
+  if (session.status === "working") return "bg-[#f59f4c]";
   if (session.status === "pr_open" || session.status === "review_pending")
     return "bg-[#5b8def]";
   return "bg-[#9ad97a]";
@@ -156,7 +156,19 @@ export default function CloudAppPage() {
   const [error, setError] = useState<string | null>(null);
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [showSessionForm, setShowSessionForm] = useState(false);
+  const [activeChatSessionId, setActiveChatSessionId] = useState<string | null>(
+    null,
+  );
   const refreshInFlight = useRef<Promise<void> | null>(null);
+
+  const handleChatTurnActiveChange = useCallback(
+    (sessionId: string, active: boolean) => {
+      setActiveChatSessionId((current) =>
+        active ? sessionId : current === sessionId ? null : current,
+      );
+    },
+    [],
+  );
 
   useEffect(() => {
     try {
@@ -251,11 +263,6 @@ export default function CloudAppPage() {
     : false;
   const terminalRuntimeAvailable =
     selectedSession?.capabilities?.includes("runtime.pty.v1") === true;
-  const runtimeConnecting =
-    selectedSession !== undefined &&
-    !selectedSession.isTerminated &&
-    !structuredChatAvailable &&
-    !terminalRuntimeAvailable;
   const daytonaConnections = connections.filter(
     ({ provider }) => provider === "daytona",
   );
@@ -333,7 +340,7 @@ export default function CloudAppPage() {
           kind: "orchestrator",
           harness: defaultAgent,
           displayName: "Orchestrator",
-          prompt: "Coordinate this project and wait for instructions.",
+          prompt: "",
           providerConnectionId: daytonaConnections[0]?.id,
         },
         crypto.randomUUID(),
@@ -502,10 +509,19 @@ export default function CloudAppPage() {
                         <span className="truncate">
                           {cloudSession.displayName}
                         </span>
-                        <span
-                          className={`ml-auto size-1.5 shrink-0 rounded-full ${statusColor(cloudSession)}`}
-                          aria-hidden="true"
-                        />
+                        {activeChatSessionId === cloudSession.id ? (
+                          <LoaderCircle
+                            className="ml-auto size-3.5 shrink-0 animate-spin text-[#4d8dff] motion-reduce:animate-none"
+                            aria-label="Working"
+                          />
+                        ) : (
+                          <span
+                            className={`ml-auto size-1.5 shrink-0 rounded-full ${statusColor(
+                              cloudSession,
+                            )}`}
+                            aria-hidden="true"
+                          />
+                        )}
                       </button>
                     ))}
                   </div>
@@ -598,10 +614,22 @@ export default function CloudAppPage() {
                     <span className="hidden xl:inline">Kanban</span>
                   </button>
                   <span className="mr-1 inline-flex h-7 items-center gap-1.5 rounded-md border border-white/10 px-2 font-mono text-[10px] uppercase tracking-[0.05em] text-[#9ba1aa]">
-                    <span
-                      className={`size-1.5 rounded-full ${statusColor(selectedSession)}`}
-                    />
-                    {selectedSession.status.replaceAll("_", " ")}
+                    {activeChatSessionId === selectedSession.id ? (
+                      <LoaderCircle
+                        className="size-3.5 animate-spin text-[#4d8dff] motion-reduce:animate-none"
+                        aria-hidden="true"
+                      />
+                    ) : (
+                      <span
+                        className={`size-1.5 rounded-full ${statusColor(
+                          selectedSession,
+                        )}`}
+                        aria-hidden="true"
+                      />
+                    )}
+                    {activeChatSessionId === selectedSession.id
+                      ? "working"
+                      : selectedSession.status.replaceAll("_", " ")}
                   </span>
                   <button
                     className={button}
@@ -705,11 +733,15 @@ export default function CloudAppPage() {
               />
             ) : view === "session" && selectedSession ? (
               structuredChatAvailable ? (
-                <CloudChat api={api} session={selectedSession} />
-              ) : runtimeConnecting ? (
-                <CloudRuntimeConnecting session={selectedSession} />
-              ) : (
+                <CloudChat
+                  api={api}
+                  session={selectedSession}
+                  onTurnActiveChange={handleChatTurnActiveChange}
+                />
+              ) : terminalRuntimeAvailable ? (
                 <CloudTerminal api={api} sessionId={selectedSession.id} />
+              ) : (
+                <CloudRuntimeConnecting session={selectedSession} />
               )
             ) : (
               <SessionBoard
@@ -932,9 +964,17 @@ function SessionBoard({
                   <span className="truncate text-sm font-medium">
                     {cloudSession.displayName}
                   </span>
-                  <span
-                    className={`ml-auto size-[7px] shrink-0 rounded-full ${statusColor(cloudSession)}`}
-                  />
+                  {cloudSession.status === "working" ? (
+                    <LoaderCircle
+                      className="ml-auto size-3.5 shrink-0 animate-spin text-[#4d8dff] motion-reduce:animate-none"
+                      aria-label="Working"
+                    />
+                  ) : (
+                    <span
+                      className={`ml-auto size-[7px] shrink-0 rounded-full ${statusColor(cloudSession)}`}
+                      aria-hidden="true"
+                    />
+                  )}
                 </div>
                 <div className="mt-3 flex items-center gap-2 font-mono text-[10px] text-[#646a73]">
                   <span className="min-w-0 flex-1 truncate">
