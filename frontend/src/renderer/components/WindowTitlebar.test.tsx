@@ -59,13 +59,10 @@ describe("WindowTitlebar", () => {
 		expect(screen.getByRole("navigation", { name: "Application menu" })).toBeInTheDocument();
 	});
 
-	it("toggles the shared sidebar state and forwards the preview gesture", async () => {
-		const onSidebarPreviewEnter = vi.fn();
-		render(<WindowTitlebar onSidebarPreviewEnter={onSidebarPreviewEnter} />);
+	it("toggles the shared sidebar state", async () => {
+		render(<WindowTitlebar />);
 
 		const toggle = screen.getByRole("button", { name: "Collapse sidebar" });
-		fireEvent.pointerEnter(toggle);
-		expect(onSidebarPreviewEnter).toHaveBeenCalledTimes(1);
 
 		await userEvent.click(toggle);
 

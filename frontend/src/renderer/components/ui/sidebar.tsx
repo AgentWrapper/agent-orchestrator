@@ -3,6 +3,7 @@
 import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { PanelLeftIcon } from "lucide-react";
+import { motion } from "motion/react";
 import { Slot } from "radix-ui";
 import { useTranslation } from "react-i18next";
 
@@ -190,6 +191,30 @@ function Sidebar({
 		);
 	}
 
+	const isOffcanvasCollapsed = state === "collapsed" && collapsible === "offcanvas";
+	const isIconCollapsed = state === "collapsed" && collapsible === "icon";
+	// translate X: -100% slides left sidebar fully off-screen, +100% for right
+	const containerX = isOffcanvasCollapsed ? (side === "left" ? "-100%" : "100%") : "0%";
+	const sidebarSpring = { type: "spring", stiffness: 280, damping: 32, mass: 0.8 } as const;
+
+	// Target width for the gap placeholder. Animating the actual width (not a
+	// visual-only layout override) lets the flex sibling <main> follow naturally.
+	const gapTargetWidth =
+		overlay || isOffcanvasCollapsed
+			? 0
+			: isIconCollapsed
+				? variant === "floating" || variant === "inset"
+					? "calc(var(--sidebar-width-icon) + 1rem)"
+					: "var(--sidebar-width-icon)"
+				: "var(--sidebar-width)";
+
+	// Several React HTML event types (onDrag, onAnimationStart, etc.) conflict
+	// with Motion's overloaded versions. Cast to unknown first to pass through
+	// without TypeScript complaints — no runtime impact since callers never
+	// pass these conflicting handlers to <Sidebar>.
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const motionSafeProps = props as any;
+
 	return (
 		<div
 			className="group peer hidden text-sidebar-foreground md:block"
@@ -200,33 +225,32 @@ function Sidebar({
 			data-side={side}
 			data-slot="sidebar"
 		>
-			{/* This is what handles the sidebar gap on desktop */}
-			<div
+			{/* Layout gap — width is animated directly so the flex sibling <main>
+			    expands/contracts in real-time without needing its own animation. */}
+			<motion.div
 				data-slot="sidebar-gap"
-				className={cn(
-					"relative w-(--sidebar-width) bg-transparent",
-					"group-data-[collapsible=offcanvas]:w-0",
-					"group-data-[overlay=true]:w-0!",
-					"group-data-[side=right]:rotate-180",
-					variant === "floating" || variant === "inset"
-						? "group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4)))]"
-						: "group-data-[collapsible=icon]:w-(--sidebar-width-icon)",
-				)}
+				initial={false}
+				animate={{ width: gapTargetWidth }}
+				transition={sidebarSpring}
+				className="relative shrink-0 bg-transparent"
 			/>
-			<div
+			{/* Container slides in/out via Motion x-transform (GPU-accelerated,
+			    no layout reflow). CSS left/right anchor stays fixed; position
+			    offset is driven entirely by the animated x value. */}
+			<motion.div
 				data-slot="sidebar-container"
+				initial={false}
+				animate={{ x: containerX }}
+				transition={sidebarSpring}
 				className={cn(
 					"fixed inset-y-0 z-chrome hidden h-svh w-(--sidebar-width) md:flex",
-					side === "left"
-						? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
-						: "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
-					// Adjust the padding for floating and inset variants.
+					side === "left" ? "left-0" : "right-0",
 					variant === "floating" || variant === "inset"
 						? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
 						: "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l",
 					className,
 				)}
-				{...props}
+				{...motionSafeProps}
 			>
 				<div
 					data-sidebar="sidebar"
@@ -235,7 +259,7 @@ function Sidebar({
 				>
 					{children}
 				</div>
-			</div>
+			</motion.div>
 		</div>
 	);
 }

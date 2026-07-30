@@ -85,3 +85,6 @@ e2e-artifacts/
 
 # Local pnpm artifacts
 pnpm-lock.yaml
+
+# Local session notes (not for the team)
+docs/REVAMP.md
