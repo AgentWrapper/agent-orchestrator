@@ -781,9 +781,9 @@ describe("SessionInspector reviews tab", () => {
 
 	it.each([
 		["needs_review", "changes_requested", "Not run on this commit", "Run review", true],
-		["running", "approved", "Reviewing...", "Cancel review", false],
+		["running", "approved", "Reviewing...", "Cancel review", true],
 	] as const)(
-		"shows only the latest available AO review run while the current head is %s",
+		"keeps the current AO review state clear while the current head is %s",
 		async (status, previousVerdict, runLabel, actionLabel, showsPreviousRun) => {
 			const current = {
 				...reviewState(3, status, "sha-current"),
@@ -813,20 +813,21 @@ describe("SessionInspector reviews tab", () => {
 
 			expect(await screen.findByText(runLabel)).toBeInTheDocument();
 			if (showsPreviousRun) {
-				expect(screen.queryByText("#3 · Not run")).not.toBeInTheDocument();
-				expect(screen.getByText(/^#3 · /)).toBeInTheDocument();
-				// The head moved on, so the old verdict must be labelled as previous
-				// rather than presented as the state of the current commit.
-				expect(screen.getByText(/Previous:/)).toBeInTheDocument();
-				expect(screen.getByText("Changes requested")).toBeInTheDocument();
 				expect(screen.getByText("Previous review summary with actionable detail.")).toBeInTheDocument();
-				expect(screen.getByRole("link", { name: "View previous review" })).toHaveAttribute(
+				if (status === "needs_review") {
+					expect(screen.queryByText("#3 · Not run")).not.toBeInTheDocument();
+					expect(screen.getByText(/^#3 · /)).toBeInTheDocument();
+					// The head moved on, so the old verdict must be labelled as previous
+					// rather than presented as the state of the current commit.
+					expect(screen.getByText(/Previous:/)).toBeInTheDocument();
+					expect(screen.getByText("Changes requested")).toBeInTheDocument();
+				} else {
+					expect(screen.getByText("earlier pass")).toBeInTheDocument();
+				}
+				expect(screen.getByRole("link", { name: status === "needs_review" ? "View previous review" : "View review" })).toHaveAttribute(
 					"href",
 					"https://example.com/pr/3#pullrequestreview-98765",
 				);
-			} else {
-				expect(screen.queryByText("Previous review summary with actionable detail.")).not.toBeInTheDocument();
-				expect(screen.queryByRole("link", { name: "View previous review" })).not.toBeInTheDocument();
 			}
 			// A run in flight gets its own live strip naming the harness, not just a
 			// word on the button.
@@ -952,7 +953,7 @@ describe("SessionInspector reviews tab", () => {
 		expect(screen.queryByText("claude-code is reviewing this change…")).not.toBeInTheDocument();
 	});
 
-	it("gives each reviewer its own tab and lands on the one just run", async () => {
+	it("shows all review history together with the harness on each pass", async () => {
 		const state = {
 			...reviewState(3, "changes_requested", "sha-1"),
 			latestRun: {
@@ -992,48 +993,12 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsTab();
 
-		// The newest run leads, so its verdict is what you see first.
 		expect(await screen.findByText("codex asked for tests.")).toBeInTheDocument();
-		expect(screen.queryByText("claude-code found nothing blocking.")).not.toBeInTheDocument();
-
-		// The other reviewer is one click away, not buried.
-		await userEvent.click(screen.getByRole("tab", { name: /claude-code/ }));
 		expect(await screen.findByText("claude-code found nothing blocking.")).toBeInTheDocument();
-	});
-
-	it("moves the picker when you pick a reviewer to read", async () => {
-		const state = {
-			...reviewState(3, "changes_requested", "sha-1"),
-			latestRun: { ...approvedReview, id: "run-codex", harness: "codex", createdAt: "2026-01-03T00:00:00Z" },
-		};
-		mockCommonGets([], "reviewer-pane", [state]);
-		const previous = getMock.getMockImplementation()!;
-		getMock.mockImplementation(async (path: string, opts?: unknown) => {
-			if (path === "/api/v1/sessions/{sessionId}/reviews") {
-				return {
-					data: {
-						reviewerHandleId: "reviewer-pane",
-						reviews: [state],
-						runs: [
-							state.latestRun,
-							{ ...approvedReview, id: "run-claude", harness: "claude-code", createdAt: "2026-01-01T00:00:00Z" },
-						],
-					},
-				};
-			}
-			return previous(path, opts);
-		});
-
-		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
-		await openReviewsTab();
-
-		// Newest run leads, so the picker starts there.
-		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("codex");
-
-		// Reading another reviewer makes it the one that runs next, so the two
-		// controls never disagree about which agent you are on.
-		await userEvent.click(screen.getByRole("tab", { name: /claude-code/ }));
-		expect(screen.getByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("claude-code");
+		expect(screen.queryByText("Reviewed by")).not.toBeInTheDocument();
+		expect(screen.queryByRole("tab", { name: /codex|claude-code/ })).not.toBeInTheDocument();
+		expect(screen.getAllByText("codex")).not.toHaveLength(0);
+		expect(screen.getAllByText("claude-code")).not.toHaveLength(0);
 	});
 
 	it("locks the reviewer choice while one is running", async () => {
@@ -1091,7 +1056,9 @@ describe("SessionInspector reviews tab", () => {
 
 		await userEvent.click(await screen.findByRole("button", { name: /re-run review/i }));
 
-		expect(await screen.findByText("No needed reviews were started.")).toBeInTheDocument();
+		expect(
+			await screen.findByText("This commit has already been reviewed. Push a new commit to run another review."),
+		).toBeInTheDocument();
 		expect(onOpenReviewerTerminal).not.toHaveBeenCalled();
 	});
 

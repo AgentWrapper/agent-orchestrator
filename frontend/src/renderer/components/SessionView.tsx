@@ -72,6 +72,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const inspectorRef = useRef<PanelImperativeHandle | null>(null);
 	const inspectorSeparatorRef = useRef<HTMLDivElement | null>(null);
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
+	const [reviewerTerminal, setReviewerTerminal] = useState<
+		Extract<TerminalTarget, { kind: "reviewer" }> | undefined
+	>();
 	const [browserPoppedOut, setBrowserPoppedOut] = useState(false);
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
 
@@ -140,6 +143,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		setActiveShellTerminal(null);
 		setTerminalTarget({ kind: "worker" });
 	}, [setActiveShellTerminal]);
+	const selectReviewerTerminal = useCallback(() => {
+		if (!reviewerTerminal) return;
+		setActiveShellTerminal(null);
+		setTerminalTarget(reviewerTerminal);
+	}, [reviewerTerminal, setActiveShellTerminal]);
 
 	// The shell layout owns opening (it is mounted on every route, so the button
 	// and Ctrl+Shift+` work everywhere); this view only follows the result. When a new
@@ -187,6 +195,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	useEffect(() => {
 		setTerminalTarget({ kind: "worker" });
+		setReviewerTerminal(undefined);
 		setBrowserPoppedOut(false);
 		setFilesPoppedOut(false);
 	}, [sessionId]);
@@ -377,8 +386,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						onNewShellTerminal={addShellTerminal}
 						onRenameShellTerminal={renameShellTerminalByHandle}
 						onSelectSessionTerminal={selectSessionTerminal}
+						onSelectReviewerTerminal={selectReviewerTerminal}
 						onSelectShellTerminal={selectShellTerminal}
-						onSelectWorkerTerminal={selectSessionTerminal}
+						reviewerTerminal={reviewerTerminal}
 						session={session}
 						shellTerminals={shellTerminals}
 						terminalTarget={terminalTarget}
@@ -420,9 +430,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									}
 									isInspectorVisible={isInspectorOpen}
 									onOpenFiles={handleOpenFiles}
-									onOpenReviewerTerminal={({ handleId, harness }) =>
-										setTerminalTarget({ kind: "reviewer", handleId, harness })
-									}
+									onOpenReviewerTerminal={({ handleId, harness }) => {
+										const reviewer = { kind: "reviewer" as const, handleId, harness };
+										setReviewerTerminal(reviewer);
+										setActiveShellTerminal(null);
+										setTerminalTarget(reviewer);
+									}}
 									onToggleBrowserPopOut={handleToggleBrowserPopOut}
 									onViewChange={(next: InspectorView) => setInspectorViewForSession(sessionId, next)}
 									view={inspectorView}

@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Shield, Terminal as TerminalIcon, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Terminal as TerminalIcon, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type WheelEvent } from "react";
 import { useOverflowScroll } from "../hooks/useOverflowScroll";
 import { useTruncatedText } from "../hooks/useTruncatedText";
@@ -16,7 +16,8 @@ type CenterPaneProps = {
 	theme: Theme;
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
-	onSelectWorkerTerminal?: () => void;
+	reviewerTerminal?: Extract<TerminalTarget, { kind: "reviewer" }>;
+	onSelectReviewerTerminal?: () => void;
 	/** Standalone shells to render as tabs beside the session's own pane. */
 	shellTerminals?: ShellTerminal[];
 	onSelectSessionTerminal?: () => void;
@@ -48,7 +49,8 @@ export function CenterPane({
 	theme,
 	daemonReady,
 	terminalTarget,
-	onSelectWorkerTerminal,
+	reviewerTerminal,
+	onSelectReviewerTerminal,
 	shellTerminals = [],
 	onSelectSessionTerminal,
 	onSelectShellTerminal,
@@ -147,13 +149,20 @@ export function CenterPane({
 					>
 						{session ? (
 							<SessionPaneTab
-								isActive={target.kind !== "shell"}
+								isActive={target.kind === "worker"}
 								label={isOrchestratorSession(session) ? "Orchestrator" : session.title}
 								onSelect={onSelectSessionTerminal}
 							/>
 						) : (
-							<SessionPaneTab isActive={target.kind !== "shell"} label="No session" />
+							<SessionPaneTab isActive={target.kind === "worker"} label="No session" />
 						)}
+						{reviewerTerminal ? (
+							<SessionPaneTab
+								isActive={target.kind === "reviewer"}
+								label={`Reviewer · ${reviewerTerminal.harness}`}
+								onSelect={onSelectReviewerTerminal}
+							/>
+						) : null}
 						{shellTerminals.map((shell) => (
 							<ShellTerminalTab
 								key={shell.handleId}
@@ -189,24 +198,6 @@ export function CenterPane({
 					</button>
 				</div>
 			</div>
-			{target.kind === "reviewer" ? (
-				<div className="flex h-toolbar shrink-0 items-center gap-3 border-b border-border px-4">
-					<button
-						aria-label="Back to agent terminal"
-						className="inline-flex h-control-board-sm items-center gap-1.5 rounded-md border border-border bg-transparent px-2.5 text-xs font-semibold leading-none text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
-						onClick={onSelectWorkerTerminal}
-						type="button"
-					>
-						<ChevronLeft aria-hidden="true" className="size-icon-lg" />
-						<span>agent</span>
-					</button>
-					<span className="inline-flex items-center gap-1.5 font-mono text-xs font-semibold text-success-bright">
-						<Shield aria-hidden="true" className="size-icon-lg" />
-						Reviewer
-					</span>
-					<span className="ml-auto truncate font-mono text-xs text-passive">{target.harness}</span>
-				</div>
-			) : null}
 			<div className="relative min-h-0 flex-1">
 				<TerminalPane
 					daemonReady={daemonReady}

@@ -766,7 +766,7 @@ function ReviewsView({
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			const started = data?.reviews?.find((review) => review.status === "running" && review.latestRun);
 			if (reused || !started?.latestRun) {
-				setReviewNotice("No needed reviews were started.");
+				setReviewNotice("This commit has already been reviewed. Push a new commit to run another review.");
 				return;
 			}
 			if (data?.reviewerHandleId) {
@@ -1110,9 +1110,6 @@ function ReviewPanel({
 	onCancel: () => void;
 	onOpenTerminal?: OpenReviewerTerminal;
 }) {
-	const [activeReviewer, setActiveReviewer] = useState("");
-	const [followedReviewer, setFollowedReviewer] = useState("");
-
 	if (sortedPRs(session).length === 0) {
 		return <p className={inspectorEmptyClass}>No pull request opened yet.</p>;
 	}
@@ -1158,29 +1155,6 @@ function ReviewPanel({
 		}
 	}
 
-	// Reviewers lead the panel now: you pick who reviewed, then read their verdict
-	// on each PR. Nesting the tabs inside a PR row meant expanding a row before
-	// you could compare agents at all.
-	const allRuns = [...runsByPR.values()].flat().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-	const reviewerTabs: string[] = [];
-	for (const run of allRuns) {
-		const name = run.harness || "reviewer";
-		if (!reviewerTabs.includes(name)) reviewerTabs.push(name);
-	}
-	const newestReviewer = reviewerTabs[0] ?? "";
-	// Running a new agent should land you on its tab, synced during render so no
-	// frame shows the tab you were reading before.
-	if (newestReviewer !== followedReviewer) {
-		setFollowedReviewer(newestReviewer);
-		setActiveReviewer(newestReviewer);
-	}
-	// The picker and the tabs name the same thing, so choosing in one moves the
-	// other. Without this you could be reading codex while the run button was
-	// about to launch claude-code.
-	const pickedReviewer = reviewerOverride && reviewerTabs.includes(reviewerOverride) ? reviewerOverride : "";
-	const selectedReviewer =
-		pickedReviewer || (reviewerTabs.includes(activeReviewer) ? activeReviewer : newestReviewer);
-
 	const runDisabled =
 		isTriggering ||
 		openReviewStates.length === 0 ||
@@ -1198,9 +1172,6 @@ function ReviewPanel({
 					{notice}
 				</p>
 			) : null}
-			{/* Named as a setting: it chooses who reviews next, which is a different
-			    question from the tabs below, which choose whose review you are
-			    reading. Unlabelled and adjacent, the two read as one control. */}
 			<div className="flex min-w-0 flex-col gap-1.5">
 				<span className="inline-flex items-center gap-1.5 text-micro font-medium uppercase tracking-wide-sm text-passive">
 					<ScanEye aria-hidden="true" className="size-icon-2xs shrink-0" />
@@ -1224,34 +1195,6 @@ function ReviewPanel({
 					</span>
 				) : null}
 			</div>
-			{reviewerTabs.length > 0 ? (
-				<div className="flex min-w-0 flex-col gap-1.5">
-					<span className="text-micro font-medium uppercase tracking-wide-sm text-passive">Reviewed by</span>
-					<div className="flex min-w-0 flex-wrap items-center gap-1" role="tablist" aria-label="Reviewers">
-					{reviewerTabs.map((name) => (
-						<button
-							aria-selected={name === selectedReviewer}
-							className={cn(
-								"inline-flex h-control-md min-w-0 items-center gap-1.5 rounded-md px-1.5 text-2xs font-medium transition-colors",
-								name === selectedReviewer
-									? "bg-accent-strong/16 text-foreground ring-1 ring-inset ring-accent-strong/45"
-									: "text-passive hover:bg-interactive-hover hover:text-foreground",
-							)}
-							key={name}
-							onClick={() => {
-								setActiveReviewer(name);
-								if (!reviewRunning) onReviewerOverrideChange(name as ReviewerHarness);
-							}}
-							role="tab"
-							type="button"
-						>
-							<AgentAvatar className="size-icon-sm" decorative provider={name} />
-							<span className="truncate">{name}</span>
-						</button>
-						))}
-					</div>
-				</div>
-			) : null}
 			<div className="flex flex-col divide-y divide-border">
 				{openReviewStates.length === 0 ? (
 					<p className={cn(inspectorEmptyClass, "py-1")}>No open pull requests to review.</p>
@@ -1266,7 +1209,6 @@ function ReviewPanel({
 						>
 							<ReviewerRuns
 								reviewState={reviewState}
-								reviewer={selectedReviewer}
 								runs={runsByPR.get(reviewState.prUrl) ?? []}
 							/>
 						</ReviewDisclosure>
@@ -1433,46 +1375,20 @@ function githubVerdict(verdict: string): { label: string; tone: "neutral" | "run
 	}
 }
 
-/**
- * One reviewer's verdict on one PR.
- *
- * The reviewer behind the PR's current verdict keeps the usual row, which is
- * what demotes a verdict left behind by an earlier commit to "Previous:". Other
- * reviewers show their own passes, newest first.
- */
-function ReviewerRuns({
-	reviewState,
-	reviewer,
-	runs,
-}: {
-	reviewState: PRReviewState;
-	reviewer: string;
-	runs: ReviewRunFacts[];
-}) {
-	const mine = runs
-		.filter((run) => (run.harness || "reviewer") === reviewer)
-		.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-	const currentHarness = (reviewState.latestRun ?? reviewState.previousRun)?.harness;
-
-	// Nothing has run anywhere yet, so there is no reviewer to be selected — the
-	// PR's own state is the only thing to show.
-	if (reviewer === "" || reviewer === currentHarness) {
-		return <AoReviewRow reviewState={reviewState} />;
-	}
-	if (mine.length === 0) {
-		// A PR nothing has run against still shows its own state — "Not run" is the
-		// answer, and hiding it behind a reviewer filter would lose it. Only when
-		// other reviewers have covered this PR is the selected one's absence the
-		// more useful thing to say.
-		if (runs.length === 0) {
-			return <AoReviewRow reviewState={reviewState} />;
-		}
-		return <p className={cn(inspectorEmptyClass, "m-0")}>{`${reviewer} has not reviewed this PR.`}</p>;
-	}
-	return <ReviewRunList reviewState={reviewState} runs={mine} />;
+/** Every recorded reviewer pass for one PR, newest first. */
+function ReviewerRuns({ reviewState, runs }: { reviewState: PRReviewState; runs: ReviewRunFacts[] }) {
+	// Preserve the current-commit state when the only available run belongs to
+	// an older SHA. History must not make stale findings look current.
+	if (!reviewState.latestRun || runs.length === 0) return <AoReviewRow reviewState={reviewState} />;
+	return (
+		<ReviewRunList
+			reviewState={reviewState}
+			runs={[...runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt))}
+		/>
+	);
 }
 
-/** One reviewer's passes for a PR, newest first. */
+/** Review history for a PR, with the harness identified on every pass. */
 function ReviewRunList({ reviewState, runs }: { reviewState: PRReviewState; runs: ReviewRunFacts[] }) {
 	return (
 		<div className={cn("flex min-w-0 flex-col gap-3", reviewState.status === "ineligible" && "opacity-70")}>
@@ -1484,6 +1400,10 @@ function ReviewRunList({ reviewState, runs }: { reviewState: PRReviewState; runs
 				return (
 					<div className="flex min-w-0 flex-col gap-1.5" key={run.id}>
 						<span className="inline-flex min-w-0 items-center gap-2">
+							<span className="inline-flex min-w-0 items-center gap-1 text-micro font-medium text-muted-foreground">
+								<AgentAvatar className="size-icon-sm shrink-0" decorative provider={run.harness || "reviewer"} />
+								<span className="truncate">{run.harness || "reviewer"}</span>
+							</span>
 							<VerdictBadge label={verdict.label} tone={verdict.tone} />
 							<span className="shrink-0 font-mono text-micro text-passive">{formatTimeCompact(run.createdAt)}</span>
 							{index > 0 ? <span className="shrink-0 text-micro text-passive">earlier pass</span> : null}
@@ -1540,7 +1460,22 @@ function AoReviewRow({ reviewState }: { reviewState: PRReviewState }) {
 	const reviewLinkLabel = reviewState.latestRun ? "View review" : "View previous review";
 	return (
 		<div className={cn("flex min-w-0 flex-col gap-1.5", reviewState.status === "ineligible" && "opacity-70")}>
-			<VerdictBadge label={isStale ? "Not run on this commit" : verdict.label} tone={isStale ? "neutral" : verdict.tone} />
+			<span className="inline-flex min-w-0 items-center gap-2">
+				{displayRun ? (
+					<span className="inline-flex min-w-0 items-center gap-1 text-micro font-medium text-muted-foreground">
+						<AgentAvatar
+							className="size-icon-sm shrink-0"
+							decorative
+							provider={displayRun.harness || "reviewer"}
+						/>
+						<span className="truncate">{displayRun.harness || "reviewer"}</span>
+					</span>
+				) : null}
+				<VerdictBadge
+					label={isStale ? "Not run on this commit" : verdict.label}
+					tone={isStale ? "neutral" : verdict.tone}
+				/>
+			</span>
 			{previousVerdict ? (
 				<p className="m-0 inline-flex min-w-0 items-center gap-1.5 text-2xs text-passive">
 					<span className="shrink-0">Previous:</span>
