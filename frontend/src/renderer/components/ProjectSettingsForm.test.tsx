@@ -412,11 +412,12 @@ describe("ProjectSettingsForm", () => {
 		expect(options.map((option) => option.textContent)).toEqual([
 			"Claude Code",
 			"Codex",
+			"Cursor",
 			"OpenCode",
 			"Goose",
 			"KiroAuth unknown",
 		]);
-		expect(options[4]).not.toHaveAttribute("aria-disabled", "true");
+		expect(options[5]).not.toHaveAttribute("aria-disabled", "true");
 	});
 
 	it("shows scratch identity and saves only scratch-supported settings", async () => {
