@@ -15,6 +15,7 @@ import { useUiStore, type Theme } from "../stores/ui-store";
 import type { TerminalTarget } from "../types/terminal";
 import { isOrchestratorSession, type WorkspaceSession } from "../types/workspace";
 import { ShellTerminalTab } from "./ShellTerminalTab";
+import { AgentAvatar } from "./AgentAvatar";
 import { TerminalPane } from "./TerminalPane";
 import { AgentAvatar } from "./AgentAvatar";
 import { SessionTopbarPortal } from "./SessionTopbarPortal";
@@ -377,6 +378,8 @@ export function CenterPane({
 
 type SessionPaneTabProps = {
 	label: string;
+	/** Agent behind this session, shown as its logo so the tab reads as the agent's. */
+	provider?: string;
 	isActive: boolean;
 	onSelect?: () => void;
 	session?: WorkspaceSession;
