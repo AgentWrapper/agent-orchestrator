@@ -2,7 +2,6 @@
 
 import {
   ArrowUp,
-  Bot,
   Check,
   ChevronRight,
   CircleAlert,
@@ -421,6 +420,50 @@ function RotatingVMStartupLabel() {
   );
 }
 
+const harnessNames: Record<string, string> = {
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  cursor: "Cursor",
+};
+
+function ChatAgentAvatar({
+  session,
+  className,
+}: {
+  session: CloudSession;
+  className: string;
+}) {
+  if (session.kind === "orchestrator") {
+    return (
+      <img
+        src="/ao-logo.svg"
+        alt="Agent Orchestrator"
+        className={`${className} rounded-[3px] object-contain`}
+        draggable={false}
+      />
+    );
+  }
+  if (harnessNames[session.harness]) {
+    return (
+      <img
+        src={`/agents/${session.harness}.svg`}
+        alt={harnessNames[session.harness]}
+        className={`${className} object-contain`}
+        draggable={false}
+      />
+    );
+  }
+  return (
+    <span
+      role="img"
+      aria-label={session.harness}
+      className={`${className} inline-flex items-center justify-center text-[10px] font-semibold uppercase text-[#9ba1aa]`}
+    >
+      {session.harness.charAt(0)}
+    </span>
+  );
+}
+
 export function CloudChat({
   api,
   session,
@@ -753,7 +796,7 @@ export function CloudChat({
             </div>
           ) : timeline.length === 0 && pending.length === 0 ? (
             <div className="my-auto py-16 text-center">
-              <Bot className="mx-auto size-5 text-[#4d8dff]" />
+              <ChatAgentAvatar session={session} className="mx-auto size-5" />
               <h2 className="mt-3 text-sm font-medium">Ready for a task</h2>
               <p className="mt-1.5 text-xs leading-5 text-[#646a73]">
                 Send a message to the orchestrator. Work continues in Fly even
@@ -776,7 +819,7 @@ export function CloudChat({
                   return (
                     <div key={entry.id} className="flex gap-3">
                       <div className="mt-1 grid size-6 shrink-0 place-items-center rounded-md bg-[#15171b]">
-                        <Bot className="size-3.5 text-[#9ba1aa]" />
+                        <ChatAgentAvatar session={session} className="size-4" />
                       </div>
                       <div className="prose prose-invert min-w-0 max-w-none flex-1 text-sm leading-6 text-[#d7d7d2] prose-headings:mb-2 prose-headings:mt-4 prose-headings:text-[#f4f5f7] prose-p:my-2 prose-p:text-[#d7d7d2] prose-pre:border prose-pre:border-white/[0.06] prose-pre:bg-[#15171b] prose-code:text-[#d7d7d2] prose-code:before:content-none prose-code:after:content-none prose-li:text-[#d7d7d2] prose-strong:text-[#f4f5f7]">
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>

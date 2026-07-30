@@ -227,6 +227,28 @@ it("shows prefetched conversation history without another replay request", async
   expect(api.chatEvents).not.toHaveBeenCalled();
 });
 
+it("uses the AO logo for orchestrators and harness logos for workers", async () => {
+  const orchestrator = render(
+    createElement(CloudChat, { api: testAPI(), session }),
+  );
+  const aoLogo = await screen.findByAltText("Agent Orchestrator");
+  expect(aoLogo).toHaveAttribute("src", "/ao-logo.svg");
+  orchestrator.unmount();
+
+  render(
+    createElement(CloudChat, {
+      api: testAPI({
+        chatEvents: vi.fn().mockResolvedValue({
+          events: [event(1, "chat.assistant_delta", { text: "Done" })],
+        }),
+      }),
+      session: { ...session, kind: "worker", harness: "claude-code" },
+    }),
+  );
+  const claudeLogo = await screen.findByAltText("Claude Code");
+  expect(claudeLogo).toHaveAttribute("src", "/agents/claude-code.svg");
+});
+
 it("retries initial history replay when focus reconnects during loading", async () => {
   const firstReplay = deferred<{ events: CloudEvent[] }>();
   const chatEvents = vi
