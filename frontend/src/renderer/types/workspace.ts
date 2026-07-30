@@ -152,6 +152,11 @@ export type WorkspaceSession = {
 	 * a repeated preview of the same target.
 	 */
 	previewRevision?: number;
+	/**
+	 * Monotonic static-content refresh signal. Unlike previewRevision, this
+	 * reloads the browser's current location without changing its target.
+	 */
+	previewRefreshRevision?: number;
 	/** The session's git diff against its base, when known. */
 	changedFiles?: ChangedFile[];
 	/** Pre-filled commit subject for the Git rail, when known. */

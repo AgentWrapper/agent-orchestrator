@@ -32,6 +32,11 @@ type UseBrowserViewOptions = {
 	 * unrelated session update, which leave it unchanged, are ignored).
 	 */
 	previewRevision?: number;
+	/**
+	 * Monotonic counter for poller-observed static content changes. Advancing it
+	 * reloads the current page without navigating back to previewUrl.
+	 */
+	previewRefreshRevision?: number;
 };
 
 export type BrowserViewModel = {
@@ -115,6 +120,7 @@ export function useBrowserView({
 	terminated,
 	previewUrl,
 	previewRevision,
+	previewRefreshRevision,
 }: UseBrowserViewOptions): BrowserViewModel {
 	const [viewId, setViewId] = useState("");
 	const [navState, setNavState] = useState<BrowserNavState>(EMPTY_NAV_STATE);
@@ -132,6 +138,7 @@ export function useBrowserView({
 	const settleTimerRef = useRef<number | null>(null);
 	const observerRef = useRef<ResizeObserver | null>(null);
 	const previewTriggerRef = useRef<{ revision: number | null; target: string } | null>(null);
+	const previewRefreshTriggerRef = useRef<number | null>(null);
 	const hasUrlRef = useRef(false);
 	const modalOpenRef = useRef(false);
 	const mirrorTokenRef = useRef(0);
@@ -253,6 +260,7 @@ export function useBrowserView({
 		// ensuring a different worker so equal revision numbers cannot suppress
 		// that worker's own target.
 		previewTriggerRef.current = null;
+		previewRefreshTriggerRef.current = null;
 		setTabsState(EMPTY_TABS_STATE);
 		setTabNotice("");
 		setAgentBrowserActive(false);
@@ -556,6 +564,11 @@ export function useBrowserView({
 		return withView((id) => window.ao!.browser.clear(id));
 	}, [hasNativeBrowser, withView]);
 
+	const reload = useCallback(
+		() => (hasNativeBrowser ? withView((id) => window.ao!.browser.reload(id)) : Promise.resolve()),
+		[hasNativeBrowser, withView],
+	);
+
 	// Drive the view from the daemon-set preview target. Current daemons key
 	// this on previewRevision (bumped on every `ao preview` call); older daemons
 	// did not send it, so fall back to URL changes for compatibility.
@@ -576,6 +589,18 @@ export function useBrowserView({
 			void clear();
 		}
 	}, [clear, navigate, previewRevision, previewUrl, terminated, viewId]);
+
+	// Static-file changes refresh whichever location the user is currently
+	// viewing. This intentionally does not re-navigate to previewUrl: the user
+	// may have followed links or navigated within the app since selecting it.
+	useEffect(() => {
+		if (!viewId || viewIdRef.current !== viewId || terminated) return;
+		const revision = typeof previewRefreshRevision === "number" ? previewRefreshRevision : 0;
+		const previous = previewRefreshTriggerRef.current;
+		previewRefreshTriggerRef.current = revision;
+		if (previous === null || revision <= previous) return;
+		void reload();
+	}, [previewRefreshRevision, reload, terminated, viewId]);
 
 	const destroy = useCallback(() => {
 		const id = viewIdRef.current;
@@ -612,7 +637,7 @@ export function useBrowserView({
 		navigate,
 		goBack: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.goBack(id)) : Promise.resolve()),
 		goForward: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.goForward(id)) : Promise.resolve()),
-		reload: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.reload(id)) : Promise.resolve()),
+		reload,
 		stop: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.stop(id)) : Promise.resolve()),
 		tabs: tabsState.tabs,
 		activeTabId: tabsState.activeTabId,

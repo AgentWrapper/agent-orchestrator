@@ -106,6 +106,7 @@ function PersistentBrowserPanelView({
 		poppedOut: false,
 		previewUrl: currentSession.previewUrl,
 		previewRevision: currentSession.previewRevision,
+		previewRefreshRevision: currentSession.previewRefreshRevision,
 	});
 	const annotationQueue = useBrowserAnnotationQueue({
 		sessionId: currentSession.id,

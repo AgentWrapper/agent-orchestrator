@@ -960,6 +960,8 @@ export interface components {
             issueId?: string;
             kind: string;
             /** Format: int64 */
+            previewRefreshRevision?: number;
+            /** Format: int64 */
             previewRevision?: number;
             previewUrl?: string;
             projectId: string;

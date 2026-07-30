@@ -159,6 +159,42 @@ func (f *fakeStore) SetSessionPreviewURL(_ context.Context, id domain.SessionID,
 	return true, nil
 }
 
+func (f *fakeStore) CompareAndSetSessionPreviewURL(
+	_ context.Context,
+	id domain.SessionID,
+	expectedURL string,
+	expectedRevision int64,
+	previewURL string,
+	updatedAt time.Time,
+) (int64, bool, error) {
+	r, ok := f.sessions[id]
+	if !ok || r.Metadata.PreviewURL != expectedURL || r.Metadata.PreviewRevision != expectedRevision {
+		return 0, false, nil
+	}
+	r.Metadata.PreviewURL = previewURL
+	r.Metadata.PreviewRevision++
+	r.UpdatedAt = updatedAt
+	f.sessions[id] = r
+	return r.Metadata.PreviewRevision, true, nil
+}
+
+func (f *fakeStore) RefreshSessionPreview(
+	_ context.Context,
+	id domain.SessionID,
+	expectedURL string,
+	expectedRevision int64,
+	updatedAt time.Time,
+) (bool, error) {
+	r, ok := f.sessions[id]
+	if !ok || r.Metadata.PreviewURL != expectedURL || r.Metadata.PreviewRevision != expectedRevision {
+		return false, nil
+	}
+	r.Metadata.PreviewRefreshRevision++
+	r.UpdatedAt = updatedAt
+	f.sessions[id] = r
+	return true, nil
+}
+
 func (f *fakeStore) SetSessionTerminateOnPRMerge(_ context.Context, id domain.SessionID, terminate bool, updatedAt time.Time) (bool, error) {
 	r, ok := f.sessions[id]
 	if !ok {

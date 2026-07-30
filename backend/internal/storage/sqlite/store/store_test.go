@@ -911,6 +911,55 @@ func TestSetSessionPreviewURLBumpsRevisionAndFiresCDCOnSameURL(t *testing.T) {
 	}
 }
 
+func TestConditionalPreviewMutationsProtectTargetAndSeparateRefresh(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	now := time.Now().UTC()
+	target := "http://localhost:5173/"
+	if ok, err := s.SetSessionPreviewURL(ctx, r.ID, target, now); err != nil || !ok {
+		t.Fatalf("set initial preview: ok=%v err=%v", ok, err)
+	}
+	base, _ := s.LatestSeq(ctx)
+
+	if ok, err := s.RefreshSessionPreview(ctx, r.ID, target, 1, now.Add(time.Second)); err != nil || !ok {
+		t.Fatalf("refresh matching preview: ok=%v err=%v", ok, err)
+	}
+	if revision, ok, err := s.CompareAndSetSessionPreviewURL(ctx, r.ID, target, 0, "", now.Add(2*time.Second)); err != nil || ok || revision != 0 {
+		t.Fatalf("stale compare-and-set: revision=%d ok=%v err=%v, want benign rejection", revision, ok, err)
+	}
+	if revision, ok, err := s.CompareAndSetSessionPreviewURL(ctx, r.ID, target, 1, "", now.Add(3*time.Second)); err != nil || !ok || revision != 2 {
+		t.Fatalf("matching compare-and-set: revision=%d ok=%v err=%v", revision, ok, err)
+	}
+
+	got, found, err := s.GetSession(ctx, r.ID)
+	if err != nil || !found {
+		t.Fatalf("get session: found=%v err=%v", found, err)
+	}
+	if got.Metadata.PreviewURL != "" || got.Metadata.PreviewRevision != 2 {
+		t.Fatalf("target state = (%q, %d), want blank at revision 2", got.Metadata.PreviewURL, got.Metadata.PreviewRevision)
+	}
+	if got.Metadata.PreviewRefreshRevision != 1 {
+		t.Fatalf("refresh revision = %d, want 1", got.Metadata.PreviewRefreshRevision)
+	}
+
+	evs, err := s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 2 {
+		t.Fatalf("events after refresh and matching CAS = %d, want 2", len(evs))
+	}
+	var refreshPayload map[string]any
+	if err := json.Unmarshal([]byte(evs[0].Payload), &refreshPayload); err != nil {
+		t.Fatalf("refresh payload JSON: %v", err)
+	}
+	if got := refreshPayload["previewRefreshRevision"]; got != float64(1) {
+		t.Fatalf("previewRefreshRevision payload = %#v, want 1", got)
+	}
+}
+
 func TestRenameSessionFiresCDCEvent(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

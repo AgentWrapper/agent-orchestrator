@@ -14,7 +14,6 @@ import (
 func staticTreeSignature(entry Entry) uint64 {
 	root := filepath.Dir(entry.AbsPath)
 	hash := fnv.New64a()
-	seen := 0
 	_ = filepath.WalkDir(root, func(filePath string, item fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			//nolint:nilerr // unreadable preview assets do not invalidate the rest of the tree
@@ -28,10 +27,6 @@ func staticTreeSignature(entry Entry) uint64 {
 		}
 		if !item.Type().IsRegular() {
 			return nil
-		}
-		seen++
-		if seen > maxPreviewWalkFiles {
-			return filepath.SkipAll
 		}
 		info, err := item.Info()
 		if err != nil {

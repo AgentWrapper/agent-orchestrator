@@ -202,6 +202,7 @@ export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: Bro
 		poppedOut,
 		previewUrl: session.previewUrl,
 		previewRevision: session.previewRevision,
+		previewRefreshRevision: session.previewRefreshRevision,
 	});
 	const annotationQueue = useBrowserAnnotationQueue({
 		sessionId: session.id,

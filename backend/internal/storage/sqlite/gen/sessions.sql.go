@@ -13,13 +13,41 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+const compareAndSetSessionPreviewURL = `-- name: CompareAndSetSessionPreviewURL :one
+UPDATE sessions
+SET preview_url = ?, preview_revision = preview_revision + 1, updated_at = ?
+WHERE id = ? AND preview_url = ? AND preview_revision = ?
+RETURNING preview_revision
+`
+
+type CompareAndSetSessionPreviewURLParams struct {
+	PreviewURL      string
+	UpdatedAt       time.Time
+	ID              domain.SessionID
+	PreviewURL_2    string
+	PreviewRevision int64
+}
+
+func (q *Queries) CompareAndSetSessionPreviewURL(ctx context.Context, arg CompareAndSetSessionPreviewURLParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, compareAndSetSessionPreviewURL,
+		arg.PreviewURL,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.PreviewURL_2,
+		arg.PreviewRevision,
+	)
+	var preview_revision int64
+	err := row.Scan(&preview_revision)
+	return preview_revision, err
+}
+
 const getSession = `-- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge
+    workspace_repo_path, terminate_on_pr_merge, preview_refresh_revision
 FROM sessions WHERE id = ?
 `
 
@@ -51,6 +79,7 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.RuntimeLaunchID,
 		&i.WorkspaceRepoPath,
 		&i.TerminateOnPRMerge,
+		&i.PreviewRefreshRevision,
 	)
 	return i, err
 }
@@ -61,36 +90,37 @@ INSERT INTO sessions (
     activity_state, activity_last_at, first_signal_at, is_terminated,
     branch, workspace_path, workspace_repo_path, runtime_handle_id,
     runtime_launch_id, agent_session_id, prompt,
-    preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation,
+    preview_url, preview_revision, preview_refresh_revision, terminate_on_pr_merge, cleanup_generation,
     created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSessionParams struct {
-	ID                 domain.SessionID
-	ProjectID          domain.ProjectID
-	Num                int64
-	IssueID            domain.IssueID
-	Kind               domain.SessionKind
-	Harness            domain.AgentHarness
-	DisplayName        string
-	ActivityState      domain.ActivityState
-	ActivityLastAt     time.Time
-	FirstSignalAt      sql.NullTime
-	IsTerminated       bool
-	Branch             string
-	WorkspacePath      string
-	WorkspaceRepoPath  string
-	RuntimeHandleID    string
-	RuntimeLaunchID    string
-	AgentSessionID     string
-	Prompt             string
-	PreviewURL         string
-	PreviewRevision    int64
-	TerminateOnPRMerge bool
-	CleanupGeneration  int64
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	ID                     domain.SessionID
+	ProjectID              domain.ProjectID
+	Num                    int64
+	IssueID                domain.IssueID
+	Kind                   domain.SessionKind
+	Harness                domain.AgentHarness
+	DisplayName            string
+	ActivityState          domain.ActivityState
+	ActivityLastAt         time.Time
+	FirstSignalAt          sql.NullTime
+	IsTerminated           bool
+	Branch                 string
+	WorkspacePath          string
+	WorkspaceRepoPath      string
+	RuntimeHandleID        string
+	RuntimeLaunchID        string
+	AgentSessionID         string
+	Prompt                 string
+	PreviewURL             string
+	PreviewRevision        int64
+	PreviewRefreshRevision int64
+	TerminateOnPRMerge     bool
+	CleanupGeneration      int64
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
 }
 
 func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) error {
@@ -115,6 +145,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.Prompt,
 		arg.PreviewURL,
 		arg.PreviewRevision,
+		arg.PreviewRefreshRevision,
 		arg.TerminateOnPRMerge,
 		arg.CleanupGeneration,
 		arg.CreatedAt,
@@ -129,7 +160,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge
+    workspace_repo_path, terminate_on_pr_merge, preview_refresh_revision
 FROM sessions ORDER BY project_id, num
 `
 
@@ -167,6 +198,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.RuntimeLaunchID,
 			&i.WorkspaceRepoPath,
 			&i.TerminateOnPRMerge,
+			&i.PreviewRefreshRevision,
 		); err != nil {
 			return nil, err
 		}
@@ -187,7 +219,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge
+    workspace_repo_path, terminate_on_pr_merge, preview_refresh_revision
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -225,6 +257,7 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.RuntimeLaunchID,
 			&i.WorkspaceRepoPath,
 			&i.TerminateOnPRMerge,
+			&i.PreviewRefreshRevision,
 		); err != nil {
 			return nil, err
 		}
@@ -248,6 +281,32 @@ func (q *Queries) NextSessionNum(ctx context.Context, projectID domain.ProjectID
 	var next int64
 	err := row.Scan(&next)
 	return next, err
+}
+
+const refreshSessionPreview = `-- name: RefreshSessionPreview :execrows
+UPDATE sessions
+SET preview_refresh_revision = preview_refresh_revision + 1, updated_at = ?
+WHERE id = ? AND preview_url = ? AND preview_revision = ?
+`
+
+type RefreshSessionPreviewParams struct {
+	UpdatedAt       time.Time
+	ID              domain.SessionID
+	PreviewURL      string
+	PreviewRevision int64
+}
+
+func (q *Queries) RefreshSessionPreview(ctx context.Context, arg RefreshSessionPreviewParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, refreshSessionPreview,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.PreviewURL,
+		arg.PreviewRevision,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const renameSession = `-- name: RenameSession :execrows
@@ -337,33 +396,34 @@ UPDATE sessions SET
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, workspace_repo_path = ?, runtime_handle_id = ?,
     runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
-    preview_url = ?, preview_revision = ?, terminate_on_pr_merge = ?,
+    preview_url = ?, preview_revision = ?, preview_refresh_revision = ?, terminate_on_pr_merge = ?,
     cleanup_generation = ?, updated_at = ?
 WHERE id = ?
 `
 
 type UpdateSessionParams struct {
-	IssueID            domain.IssueID
-	Kind               domain.SessionKind
-	Harness            domain.AgentHarness
-	DisplayName        string
-	ActivityState      domain.ActivityState
-	ActivityLastAt     time.Time
-	FirstSignalAt      sql.NullTime
-	IsTerminated       bool
-	Branch             string
-	WorkspacePath      string
-	WorkspaceRepoPath  string
-	RuntimeHandleID    string
-	RuntimeLaunchID    string
-	AgentSessionID     string
-	Prompt             string
-	PreviewURL         string
-	PreviewRevision    int64
-	TerminateOnPRMerge bool
-	CleanupGeneration  int64
-	UpdatedAt          time.Time
-	ID                 domain.SessionID
+	IssueID                domain.IssueID
+	Kind                   domain.SessionKind
+	Harness                domain.AgentHarness
+	DisplayName            string
+	ActivityState          domain.ActivityState
+	ActivityLastAt         time.Time
+	FirstSignalAt          sql.NullTime
+	IsTerminated           bool
+	Branch                 string
+	WorkspacePath          string
+	WorkspaceRepoPath      string
+	RuntimeHandleID        string
+	RuntimeLaunchID        string
+	AgentSessionID         string
+	Prompt                 string
+	PreviewURL             string
+	PreviewRevision        int64
+	PreviewRefreshRevision int64
+	TerminateOnPRMerge     bool
+	CleanupGeneration      int64
+	UpdatedAt              time.Time
+	ID                     domain.SessionID
 }
 
 func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) error {
@@ -385,6 +445,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.Prompt,
 		arg.PreviewURL,
 		arg.PreviewRevision,
+		arg.PreviewRefreshRevision,
 		arg.TerminateOnPRMerge,
 		arg.CleanupGeneration,
 		arg.UpdatedAt,

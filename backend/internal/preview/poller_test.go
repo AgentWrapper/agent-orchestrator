@@ -13,8 +13,9 @@ import (
 )
 
 type fakePreviewSessions struct {
-	sessions []domain.SessionRecord
-	sets     []previewSet
+	sessions       []domain.SessionRecord
+	sets           []previewSet
+	beforeMutation func()
 }
 
 type previewSet struct {
@@ -26,16 +27,56 @@ func (f *fakePreviewSessions) ListAllSessions(_ context.Context) ([]domain.Sessi
 	return append([]domain.SessionRecord(nil), f.sessions...), nil
 }
 
-func (f *fakePreviewSessions) SetPreview(_ context.Context, id domain.SessionID, previewURL string) (domain.Session, error) {
-	f.sets = append(f.sets, previewSet{id: id, url: previewURL})
+func (f *fakePreviewSessions) CompareAndSetPreview(
+	_ context.Context,
+	id domain.SessionID,
+	expectedURL string,
+	expectedRevision int64,
+	previewURL string,
+) (int64, bool, error) {
+	if f.beforeMutation != nil {
+		before := f.beforeMutation
+		f.beforeMutation = nil
+		before()
+	}
 	for i, sess := range f.sessions {
 		if sess.ID == id {
+			if sess.Metadata.PreviewURL != expectedURL || sess.Metadata.PreviewRevision != expectedRevision {
+				return 0, false, nil
+			}
+			f.sets = append(f.sets, previewSet{id: id, url: previewURL})
 			sess.Metadata.PreviewURL = previewURL
+			sess.Metadata.PreviewRevision++
 			f.sessions[i] = sess
-			return domain.Session{SessionRecord: sess}, nil
+			return sess.Metadata.PreviewRevision, true, nil
 		}
 	}
-	return domain.Session{}, nil
+	return 0, false, nil
+}
+
+func (f *fakePreviewSessions) RefreshPreview(
+	_ context.Context,
+	id domain.SessionID,
+	expectedURL string,
+	expectedRevision int64,
+) (bool, error) {
+	if f.beforeMutation != nil {
+		before := f.beforeMutation
+		f.beforeMutation = nil
+		before()
+	}
+	for i, sess := range f.sessions {
+		if sess.ID == id {
+			if sess.Metadata.PreviewURL != expectedURL || sess.Metadata.PreviewRevision != expectedRevision {
+				return false, nil
+			}
+			f.sets = append(f.sets, previewSet{id: id, url: expectedURL})
+			sess.Metadata.PreviewRefreshRevision++
+			f.sessions[i] = sess
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func TestPollerDoesNotOpenUntargetedWorkerEntry(t *testing.T) {
@@ -187,7 +228,10 @@ func TestPollerRefreshesWhenStaticPreviewAssetChanges(t *testing.T) {
 	writeFile(t, asset, "body { color: red; }")
 	target := mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "dist/index.html")
 	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, target)}}
-	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{
+		AssetScanInterval: time.Nanosecond,
+		Logger:            discardLogger(),
+	})
 
 	if err := poller.Poll(context.Background()); err != nil {
 		t.Fatalf("first Poll: %v", err)
@@ -370,6 +414,89 @@ func TestPollerRediscoverEntryAfterDeleteAndRecreate(t *testing.T) {
 	}
 	if svc.sets[1].url != wantURL {
 		t.Fatalf("rediscovered set.url = %q, want %q", svc.sets[1].url, wantURL)
+	}
+}
+
+func TestPollerDoesNotRestoreAfterExplicitClearAdvancesRevision(t *testing.T) {
+	workspace := t.TempDir()
+	entry := filepath.Join(workspace, "index.html")
+	writeFile(t, entry, "<main>v1</main>")
+	target := mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "index.html")
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, target)}}
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
+
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("baseline Poll: %v", err)
+	}
+	if err := os.Remove(entry); err != nil {
+		t.Fatalf("remove index.html: %v", err)
+	}
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("delete Poll: %v", err)
+	}
+
+	// `ao preview clear` leaves the URL blank but advances the explicit target
+	// revision. Recreating the file must not resurrect the poller-owned target.
+	svc.sessions[0].Metadata.PreviewRevision++
+	writeFile(t, entry, "<main>v2</main>")
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("recreate Poll: %v", err)
+	}
+	assertSets(t, svc.sets, previewSet{id: "ao-1", url: ""})
+}
+
+func TestPollerStaleSnapshotCannotReplaceNewExplicitTarget(t *testing.T) {
+	workspace := t.TempDir()
+	writeFile(t, filepath.Join(workspace, "index.html"), "<main>preview</main>")
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "index.html")}}
+	svc.beforeMutation = func() {
+		svc.sessions[0].Metadata.PreviewURL = "http://127.0.0.1:4173/app"
+		svc.sessions[0].Metadata.PreviewRevision++
+	}
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
+
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	assertSets(t, svc.sets)
+	if got := svc.sessions[0].Metadata.PreviewURL; got != "http://127.0.0.1:4173/app" {
+		t.Fatalf("preview URL = %q, want newer explicit target", got)
+	}
+}
+
+func TestPollerRateLimitsCompleteAssetFingerprints(t *testing.T) {
+	workspace := t.TempDir()
+	writeFile(t, filepath.Join(workspace, "index.html"), "<main>preview</main>")
+	target := mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "index.html")
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, target)}}
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{
+		AssetScanInterval: 5 * time.Second,
+		Logger:            discardLogger(),
+	})
+	now := time.Unix(100, 0)
+	poller.now = func() time.Time { return now }
+	scans := 0
+	poller.fingerprint = func(entry Entry) uint64 {
+		scans++
+		return staticTreeSignature(entry)
+	}
+
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("baseline Poll: %v", err)
+	}
+	now = now.Add(time.Second)
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("rate-limited Poll: %v", err)
+	}
+	if scans != 1 {
+		t.Fatalf("asset scans = %d, want one before interval elapses", scans)
+	}
+	now = now.Add(4 * time.Second)
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("due Poll: %v", err)
+	}
+	if scans != 2 {
+		t.Fatalf("asset scans = %d, want second scan at interval", scans)
 	}
 }
 

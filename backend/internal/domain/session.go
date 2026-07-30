@@ -40,6 +40,10 @@ type SessionMetadata struct {
 	// even when PreviewURL is unchanged. The desktop browser panel keys
 	// navigation on it so a repeated `ao preview <same-url>` still refreshes.
 	PreviewRevision int64 `json:"previewRevision,omitempty"`
+	// PreviewRefreshRevision is bumped by the workspace preview poller when a
+	// selected static file changes. The desktop reloads its current location
+	// instead of navigating back to PreviewURL.
+	PreviewRefreshRevision int64 `json:"previewRefreshRevision,omitempty"`
 }
 
 // SessionRecord is the persistence shape. It intentionally stores only durable
