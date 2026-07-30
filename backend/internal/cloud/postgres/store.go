@@ -525,11 +525,12 @@ func (s *Store) ListSessions(
 			return nil, err
 		}
 		sessions[index].Status = status
-		capabilities, err := s.sessionCapabilities(ctx, accountID, sessions[index].ID)
+		capabilities, connected, err := s.sessionRuntime(ctx, accountID, sessions[index].ID)
 		if err != nil {
 			return nil, err
 		}
 		sessions[index].Capabilities = capabilities
+		sessions[index].RuntimeConnected = connected
 	}
 	return sessions, nil
 }
@@ -557,36 +558,40 @@ func (s *Store) GetSession(
 		return clouddomain.Session{}, err
 	}
 	session.Status = status
-	capabilities, err := s.sessionCapabilities(ctx, accountID, session.ID)
+	capabilities, connected, err := s.sessionRuntime(ctx, accountID, session.ID)
 	if err != nil {
 		return clouddomain.Session{}, err
 	}
 	session.Capabilities = capabilities
+	session.RuntimeConnected = connected
 	return session, nil
 }
 
-func (s *Store) sessionCapabilities(
+func (s *Store) sessionRuntime(
 	ctx context.Context,
 	accountID clouddomain.AccountID,
 	sessionID clouddomain.SessionID,
-) ([]string, error) {
+) ([]string, bool, error) {
 	var raw []byte
+	var connected bool
 	err := s.pool.QueryRow(ctx, `
-		SELECT capabilities
+		SELECT capabilities,
+			disconnected_at IS NULL
+				AND last_seen_at > now() - interval '45 seconds'
 		FROM ao_worker_connections
 		WHERE account_id = $1 AND session_id = $2
-	`, accountID, sessionID).Scan(&raw)
+	`, accountID, sessionID).Scan(&raw, &connected)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return []string{}, nil
+		return []string{}, false, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("load session capabilities: %w", err)
+		return nil, false, fmt.Errorf("load session runtime: %w", err)
 	}
 	var capabilities []string
 	if err := json.Unmarshal(raw, &capabilities); err != nil {
-		return nil, fmt.Errorf("decode session capabilities: %w", err)
+		return nil, false, fmt.Errorf("decode session capabilities: %w", err)
 	}
-	return capabilities, nil
+	return capabilities, connected, nil
 }
 
 func (s *Store) sessionStatus(

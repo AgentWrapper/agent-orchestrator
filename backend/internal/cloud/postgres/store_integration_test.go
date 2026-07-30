@@ -74,6 +74,33 @@ func TestCreateSessionIsIdempotentAndEventsAreOrdered(t *testing.T) {
 	if second.Session.ID != first.Session.ID {
 		t.Fatalf("idempotent session ID = %q, want %q", second.Session.ID, first.Session.ID)
 	}
+	beforeHeartbeat, err := store.GetSession(ctx, account.ID, first.Session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if beforeHeartbeat.RuntimeConnected {
+		t.Fatal("new session reported a connected runtime")
+	}
+	if err := store.MarkWorkerSeen(
+		ctx,
+		account.ID,
+		first.Session.ID,
+		"worker-one",
+		"test",
+		1,
+		[]string{"chat.stream-json.v1"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	afterHeartbeat, err := store.GetSession(ctx, account.ID, first.Session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !afterHeartbeat.RuntimeConnected ||
+		len(afterHeartbeat.Capabilities) != 1 ||
+		afterHeartbeat.Capabilities[0] != "chat.stream-json.v1" {
+		t.Fatalf("heartbeat session = %#v", afterHeartbeat)
+	}
 
 	if _, err := store.AppendEvent(
 		ctx,

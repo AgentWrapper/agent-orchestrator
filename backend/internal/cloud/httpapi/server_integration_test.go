@@ -387,6 +387,14 @@ func TestChatMessageAuthIdempotencyAndWorkerReplay(t *testing.T) {
 		t.Fatalf("initial chat events = %#v, error = %v", initialEvents, err)
 	}
 	initialEvent := initialEvents[0]
+	if err := store.SetSandboxDesiredState(
+		ctx,
+		account.ID,
+		created.Session.ID,
+		"deleted",
+	); err != nil {
+		t.Fatal(err)
+	}
 	path := "/api/cloud/v1/sessions/" + string(created.Session.ID) + "/messages"
 	key := uuid.NewString()
 	unauthorized := requestJSON(
@@ -424,6 +432,20 @@ func TestChatMessageAuthIdempotencyAndWorkerReplay(t *testing.T) {
 	}
 	if firstBody.Event.Type != "chat.user_message" {
 		t.Fatalf("first event type = %q", firstBody.Event.Type)
+	}
+	wokenSandbox, err := store.GetSandbox(ctx, account.ID, created.Session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wokenSandbox.DesiredState != "running" {
+		t.Fatalf("message desired state = %q, want running", wokenSandbox.DesiredState)
+	}
+	wokenSession, err := store.GetSession(ctx, account.ID, created.Session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wokenSession.ActivityState != "active" || wokenSession.Status != "working" {
+		t.Fatalf("message session = %#v, want active/working", wokenSession)
 	}
 
 	retry := requestJSON(
@@ -1113,6 +1135,13 @@ func TestBrowserInterruptAndWorkerTurnActivity(t *testing.T) {
 	defer interrupt.Body.Close()
 	if interrupt.StatusCode != http.StatusAccepted {
 		t.Fatalf("interrupt status = %d", interrupt.StatusCode)
+	}
+	interruptedSession, err := store.GetSession(ctx, account.ID, session.Session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if interruptedSession.ActivityState != "idle" {
+		t.Fatalf("interrupt activity = %q, want idle", interruptedSession.ActivityState)
 	}
 	_, encodedCommand, err := socket.Read(ctx)
 	if err != nil {

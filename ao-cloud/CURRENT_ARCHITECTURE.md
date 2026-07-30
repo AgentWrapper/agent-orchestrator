@@ -57,6 +57,8 @@ LCM is a reconciliation loop, not a chain of UI-side provisioning calls:
 
 1. A browser or orchestrator records a session and desired sandbox state in
    Postgres.
+   Submitting a message marks the session active and restores desired state to
+   running, so an offline sandbox is automatically reprovisioned.
 2. The reconciler leases due `ao_sandboxes` rows.
 3. The selected provider adapter creates, starts, pauses, resumes, or deletes
    the environment.

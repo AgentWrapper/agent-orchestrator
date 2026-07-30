@@ -34,6 +34,7 @@ const session: CloudSession = {
   activityState: "idle",
   status: "idle",
   capabilities: ["chat.stream-json.v1"],
+  runtimeConnected: true,
   isTerminated: false,
   createdAt: "2026-07-30T00:00:00Z",
 };
@@ -175,6 +176,12 @@ it("derives active and awaiting states from chat events", () => {
   expect(
     deriveTurnState([
       event(1, "chat.turn_started", {}),
+      event(2, "chat.interrupt_requested", {}),
+    ]),
+  ).toEqual({ turnActive: false, awaitingInput: false });
+  expect(
+    deriveTurnState([
+      event(1, "chat.turn_started", {}),
       event(2, "chat.turn_interrupted", {}),
     ]),
   ).toEqual({ turnActive: false, awaitingInput: false });
@@ -202,6 +209,24 @@ it("loads durable replay before showing the empty state", async () => {
   );
 });
 
+it("shows worker startup instead of thinking for a disconnected runtime", async () => {
+  const api = testAPI({
+    chatEvents: vi.fn().mockResolvedValue({
+      events: [event(1, "chat.user_message", { text: "Wake up" })],
+    }),
+  });
+
+  render(
+    createElement(CloudChat, {
+      api,
+      session: { ...session, runtimeConnected: false },
+    }),
+  );
+
+  expect(await screen.findByText("Starting secure worker…")).toBeInTheDocument();
+  expect(screen.queryByText("Thinking…")).not.toBeInTheDocument();
+});
+
 it("replays messages, locks the composer, and interrupts an active turn", async () => {
   const api = testAPI({
     chatEvents: vi.fn().mockResolvedValue({
@@ -223,5 +248,8 @@ it("replays messages, locks the composer, and interrupts an active turn", async 
 
   await waitFor(() =>
     expect(api.interruptSession).toHaveBeenCalledWith("session-one"),
+  );
+  await waitFor(() =>
+    expect(screen.getByLabelText("Message the orchestrator")).toBeEnabled(),
   );
 });

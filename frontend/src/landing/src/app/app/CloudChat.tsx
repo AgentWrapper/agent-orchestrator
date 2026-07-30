@@ -323,6 +323,7 @@ export function deriveTurnState(events: CloudEvent[]) {
         break;
       case "chat.turn_completed":
       case "chat.turn_aborted":
+      case "chat.interrupt_requested":
       case "chat.turn_interrupted":
       case "chat.error":
         turnActive = false;
@@ -499,6 +500,7 @@ export function CloudChat({
     pending.length > 0 ||
     events.some((event) => event.type === "chat.user_message");
   const structuredRuntimeReady =
+    session.runtimeConnected &&
     session.capabilities?.includes("chat.stream-json.v1") === true;
   const visibleWorkInProgress = timeline.some(
     (entry) =>

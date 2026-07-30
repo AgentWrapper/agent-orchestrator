@@ -42,21 +42,22 @@ type Project struct {
 
 // Session records the durable state of a cloud agent session.
 type Session struct {
-	ID             SessionID `json:"id"`
-	AccountID      AccountID `json:"accountId"`
-	ProjectID      ProjectID `json:"projectId"`
-	Kind           string    `json:"kind"`
-	Harness        string    `json:"harness"`
-	DisplayName    string    `json:"displayName"`
-	Branch         string    `json:"branch"`
-	Prompt         string    `json:"-"`
-	ActivityState  string    `json:"activityState"`
-	IsTerminated   bool      `json:"isTerminated"`
-	AgentSessionID string    `json:"agentSessionId,omitempty"`
-	Capabilities   []string  `json:"capabilities,omitempty"`
-	Status         string    `json:"status"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+	ID               SessionID `json:"id"`
+	AccountID        AccountID `json:"accountId"`
+	ProjectID        ProjectID `json:"projectId"`
+	Kind             string    `json:"kind"`
+	Harness          string    `json:"harness"`
+	DisplayName      string    `json:"displayName"`
+	Branch           string    `json:"branch"`
+	Prompt           string    `json:"-"`
+	ActivityState    string    `json:"activityState"`
+	IsTerminated     bool      `json:"isTerminated"`
+	AgentSessionID   string    `json:"agentSessionId,omitempty"`
+	Capabilities     []string  `json:"capabilities,omitempty"`
+	RuntimeConnected bool      `json:"runtimeConnected"`
+	Status           string    `json:"status"`
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
 }
 
 // ResourceProfile specifies sandbox compute and storage capacity.

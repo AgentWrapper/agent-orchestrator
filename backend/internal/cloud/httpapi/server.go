@@ -458,6 +458,10 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "append cloud message", err)
 		return
 	}
+	if err := s.wakeSessionForMessage(r.Context(), account.ID, sessionID); err != nil {
+		s.internalError(w, r, "wake cloud session for message", err)
+		return
+	}
 	command := cloudworkerhub.Command{
 		Type:     "prompt",
 		Data:     base64.StdEncoding.EncodeToString([]byte(input.Text)),
@@ -468,6 +472,36 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"event": event})
+}
+
+func (s *Server) wakeSessionForMessage(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+) error {
+	sandbox, err := s.store.GetSandbox(ctx, accountID, sessionID)
+	if err != nil {
+		return err
+	}
+	if sandbox.DesiredState != "running" {
+		if err := s.store.SetSandboxDesiredState(ctx, accountID, sessionID, "running"); err != nil {
+			return err
+		}
+		payload, _ := json.Marshal(map[string]string{
+			"state":  "running",
+			"source": "message",
+		})
+		if _, err := s.events.Append(
+			ctx,
+			accountID,
+			sessionID,
+			"sandbox.desired_state_changed",
+			payload,
+		); err != nil {
+			return err
+		}
+	}
+	return s.store.UpdateSessionActivity(ctx, accountID, sessionID, "active")
 }
 
 func (s *Server) interruptSession(w http.ResponseWriter, r *http.Request) {
@@ -481,10 +515,6 @@ func (s *Server) interruptSession(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "authorize cloud interrupt", err)
 		return
 	}
-	if err := s.store.UpdateSessionActivity(r.Context(), account.ID, sessionID, "active"); err != nil {
-		s.internalError(w, r, "update interrupt activity", err)
-		return
-	}
 	payload, _ := json.Marshal(map[string]string{"source": "browser"})
 	event, err := s.events.Append(
 		r.Context(),
@@ -495,6 +525,10 @@ func (s *Server) interruptSession(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		s.internalError(w, r, "append interrupt request", err)
+		return
+	}
+	if err := s.store.UpdateSessionActivity(r.Context(), account.ID, sessionID, "idle"); err != nil {
+		s.internalError(w, r, "update interrupt activity", err)
 		return
 	}
 	if err := s.workerHub.Send(sessionID, cloudworkerhub.Command{
@@ -933,6 +967,10 @@ func (s *Server) workerSendMessage(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "append orchestrated message", err)
 		return
 	}
+	if err := s.wakeSessionForMessage(r.Context(), claims.AccountID, targetID); err != nil {
+		s.internalError(w, r, "wake orchestrated session for message", err)
+		return
+	}
 	if err := s.workerHub.Send(targetID, cloudworkerhub.Command{
 		Type:     "prompt",
 		Data:     base64.StdEncoding.EncodeToString([]byte(input.Text)),
@@ -1111,7 +1149,16 @@ func (s *Server) workerConnect(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	replayedAfter := max(after, accepted)
+	interrupted, err := s.store.LatestEventSequenceByType(
+		r.Context(),
+		claims.AccountID,
+		claims.SessionID,
+		"chat.interrupt_requested",
+	)
+	if err != nil {
+		return
+	}
+	replayedAfter := max(after, accepted, interrupted)
 	if err := s.writePromptReplay(r.Context(), socket, claims, &replayedAfter); err != nil {
 		return
 	}

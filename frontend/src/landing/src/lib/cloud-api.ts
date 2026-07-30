@@ -37,6 +37,7 @@ export interface CloudSession {
     | "idle"
     | "terminated";
   capabilities?: string[];
+  runtimeConnected: boolean;
   isTerminated: boolean;
   createdAt: string;
 }
