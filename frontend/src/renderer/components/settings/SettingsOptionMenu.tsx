@@ -1,4 +1,4 @@
-import { ChevronDown } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "../../lib/utils";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../ui/dropdown-menu";
@@ -59,15 +59,9 @@ export function SettingsOptionMenu<T extends string>({
 					<ChevronDown className="size-icon-sm shrink-0 opacity-70" aria-hidden="true" />
 				</button>
 			</DropdownMenuTrigger>
-			{/* bg-settings-menu / border-settings-menu / rounded-(--radius-settings-panel) must
-			    be real utilities so twMerge drops DropdownMenuContent's bg-popover, border-border,
-			    and rounded-lg. */}
 			<DropdownMenuContent
 				align="end"
-				className={cn(
-					"settings-menu-surface overflow-y-auto! overflow-x-hidden! max-h-select-menu-max! rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu",
-					menuClassName,
-				)}
+				className={cn("min-w-[10rem]", menuClassName)}
 			>
 				{options.map((option) => (
 					<DropdownMenuItem
@@ -75,10 +69,7 @@ export function SettingsOptionMenu<T extends string>({
 						disabled={option.disabled}
 						onSelect={() => onChange(option.value)}
 						className={cn(
-							"settings-menu-item min-w-0 cursor-default outline-none",
-							"focus:border-settings-menu focus:bg-settings-menu-selected focus:text-settings-label",
-							"data-highlighted:border-settings-menu data-highlighted:bg-settings-menu-selected data-highlighted:text-settings-label",
-							option.value === value && "border-settings-menu bg-settings-menu-selected",
+							"justify-between gap-3",
 							menuItemClassName,
 						)}
 					>
@@ -86,8 +77,13 @@ export function SettingsOptionMenu<T extends string>({
 							renderMenuItem(option, option.value === value)
 						) : (
 							<>
-								{option.icon}
-								{option.label}
+								<span className="flex min-w-0 items-center gap-2">
+									{option.icon}
+									{option.label}
+								</span>
+								{option.value === value && (
+									<Check className="size-icon-sm shrink-0 text-foreground" aria-hidden="true" />
+								)}
 							</>
 						)}
 					</DropdownMenuItem>
