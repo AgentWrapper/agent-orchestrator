@@ -320,7 +320,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				{projectId && health.state !== "ok" ? (
 					// A full-bleed strip, not a card: the column header rule below it runs
 					// edge to edge, so an inset rounded box floats against it.
-					<div className="flex items-center gap-3 border-b border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
+					<div className="flex items-center gap-3 border-b border-border bg-background px-3 py-2 text-xs text-muted-foreground">
 						<AlertTriangle className="size-icon-base shrink-0 text-warning" aria-hidden="true" />
 						<span className="min-w-0 flex-1">{health.message}</span>
 						{health.state === "restart_needed" || health.state === "duplicates" ? (
@@ -604,7 +604,7 @@ function SessionCard({
 			{...cardBodyProps}
 			className={cn(
 				"group relative w-full rounded-lg border text-left transition-[border-color,box-shadow]",
-				badge.cardClassName ?? "border-border bg-surface",
+				badge.cardClassName ?? "border-border bg-background",
 				interactive && "cursor-pointer hover:border-border-strong hover:shadow-sm",
 			)}
 			data-testid="board-session-card"
@@ -721,7 +721,7 @@ function ArchiveSessionItem({
 	);
 
 	return (
-		<div className="flex min-h-28 flex-col overflow-hidden rounded-md border border-border bg-surface" role="listitem">
+		<div className="flex min-h-28 flex-col overflow-hidden rounded-md border border-border bg-background" role="listitem">
 			<div className="flex min-w-0 items-center gap-2 px-3 pt-2">
 				<ArchiveStatus badge={badge} />
 				<span className="ml-auto shrink-0 text-2xs text-passive">{formatTimeCompact(session.updatedAt)}</span>
