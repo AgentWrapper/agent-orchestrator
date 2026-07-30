@@ -38,7 +38,6 @@ import { StatusPill } from "./StatusPill";
 import { SessionTerminationDialog } from "./SessionTerminationDialog";
 import { ReviewerSelect } from "./ReviewerSelect";
 import { agentsQueryOptions } from "../hooks/useAgentsQuery";
-import { SettingsRow } from "./settings/SettingsRow";
 import { Switch } from "./ui/switch";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
@@ -1173,7 +1172,12 @@ function ReviewPanel({
 		setFollowedReviewer(newestReviewer);
 		setActiveReviewer(newestReviewer);
 	}
-	const selectedReviewer = reviewerTabs.includes(activeReviewer) ? activeReviewer : newestReviewer;
+	// The picker and the tabs name the same thing, so choosing in one moves the
+	// other. Without this you could be reading codex while the run button was
+	// about to launch claude-code.
+	const pickedReviewer = reviewerOverride && reviewerTabs.includes(reviewerOverride) ? reviewerOverride : "";
+	const selectedReviewer =
+		pickedReviewer || (reviewerTabs.includes(activeReviewer) ? activeReviewer : newestReviewer);
 
 	const runDisabled =
 		isTriggering ||
@@ -1195,9 +1199,13 @@ function ReviewPanel({
 			{/* Named as a setting: it chooses who reviews next, which is a different
 			    question from the tabs below, which choose whose review you are
 			    reading. Unlabelled and adjacent, the two read as one control. */}
-			<SettingsRow className="-mx-1" icon={ScanEye} label="Reviewer">
+			<div className="flex min-w-0 flex-col gap-1.5">
+				<span className="inline-flex items-center gap-1.5 text-micro font-medium uppercase tracking-wide-sm text-passive">
+					<ScanEye aria-hidden="true" className="size-icon-2xs shrink-0" />
+					Select reviewer agent
+				</span>
 				<ReviewerSelect
-					ariaLabel="Default reviewer agent"
+					ariaLabel="Select reviewer agent"
 					authorized={agentCatalog?.authorized}
 					defaultHarness={harness}
 					disabled={reviewRunning}
@@ -1206,7 +1214,14 @@ function ReviewPanel({
 					supported={agentCatalog?.supported}
 					value={reviewerOverride}
 				/>
-			</SettingsRow>
+				{reviewRunning ? (
+					// One reviewer at a time: a second harness would need its own pane,
+					// and the handle is per worker.
+					<span className="text-micro leading-snug text-passive">
+						{`${harness} is running. cancel it to review with a different agent.`}
+					</span>
+				) : null}
+			</div>
 			{reviewerTabs.length > 0 ? (
 				<div className="flex min-w-0 flex-col gap-1.5">
 					<span className="text-micro font-medium uppercase tracking-wide-sm text-passive">Reviewed by</span>
@@ -1221,7 +1236,10 @@ function ReviewPanel({
 									: "text-passive hover:bg-interactive-hover hover:text-foreground",
 							)}
 							key={name}
-							onClick={() => setActiveReviewer(name)}
+							onClick={() => {
+								setActiveReviewer(name);
+								if (!reviewRunning) onReviewerOverrideChange(name as ReviewerHarness);
+							}}
 							role="tab"
 							type="button"
 						>

@@ -723,7 +723,7 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(<SessionInspector session={sessionWithProvider([pr(3, "open")], "codex")} />);
 		await openReviewsTab();
 
-		expect(await screen.findByRole("button", { name: /Default reviewer agent/ })).toHaveTextContent("claude-code");
+		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("claude-code");
 		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
 	});
 
@@ -748,7 +748,7 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open"), pr(4, "open"), pr(5, "draft")])} />);
 		await openReviewsTab();
 
-		expect(screen.getByRole("button", { name: /Default reviewer agent/ })).toHaveTextContent("codex");
+		expect(screen.getByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("codex");
 		expect(await screen.findByText("Reviewable change 3")).toBeInTheDocument();
 		expect(screen.getByText("#3 · Not run")).toBeInTheDocument();
 		expect(screen.getByText("Reviewable change 4")).toBeInTheDocument();
@@ -895,7 +895,7 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsTab();
 
-		await userEvent.click(await screen.findByRole("button", { name: /Default reviewer agent/ }));
+		await userEvent.click(await screen.findByRole("button", { name: /Select reviewer agent/ }));
 		await userEvent.click(await screen.findByRole("menuitem", { name: /opencode/ }));
 		await userEvent.click(screen.getByRole("button", { name: "Run review" }));
 
@@ -998,6 +998,57 @@ describe("SessionInspector reviews tab", () => {
 		expect(await screen.findByText("claude-code found nothing blocking.")).toBeInTheDocument();
 	});
 
+	it("moves the picker when you pick a reviewer to read", async () => {
+		const state = {
+			...reviewState(3, "changes_requested", "sha-1"),
+			latestRun: { ...approvedReview, id: "run-codex", harness: "codex", createdAt: "2026-01-03T00:00:00Z" },
+		};
+		mockCommonGets([], "reviewer-pane", [state]);
+		const previous = getMock.getMockImplementation()!;
+		getMock.mockImplementation(async (path: string, opts?: unknown) => {
+			if (path === "/api/v1/sessions/{sessionId}/reviews") {
+				return {
+					data: {
+						reviewerHandleId: "reviewer-pane",
+						reviews: [state],
+						runs: [
+							state.latestRun,
+							{ ...approvedReview, id: "run-claude", harness: "claude-code", createdAt: "2026-01-01T00:00:00Z" },
+						],
+					},
+				};
+			}
+			return previous(path, opts);
+		});
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+
+		// Newest run leads, so the picker starts there.
+		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("codex");
+
+		// Reading another reviewer makes it the one that runs next, so the two
+		// controls never disagree about which agent you are on.
+		await userEvent.click(screen.getByRole("tab", { name: /claude-code/ }));
+		expect(screen.getByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("claude-code");
+	});
+
+	it("locks the reviewer choice while one is running", async () => {
+		const running = {
+			...reviewState(3, "running", "sha-1"),
+			latestRun: { ...approvedReview, id: "run-live", harness: "codex", status: "running", verdict: "" },
+		};
+		mockCommonGets([], "reviewer-pane", [running]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+
+		// AO runs one reviewer per worker, so a second harness cannot start
+		// alongside it. Say so rather than silently ignoring the choice.
+		expect(await screen.findByText(/cancel it to review with a different agent/)).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /Select reviewer agent/ })).toBeDisabled();
+	});
+
 	it("hides the previous verdict after the current head review completes", async () => {
 		const current = {
 			...reviewState(3, "up_to_date", "sha-current"),
@@ -1084,7 +1135,7 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsTab();
 
-		expect(await screen.findByRole("button", { name: /Default reviewer agent/ })).toHaveTextContent("codex");
+		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("codex");
 		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
 		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
 		expect(screen.queryByText("review session")).not.toBeInTheDocument();
@@ -1097,7 +1148,7 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsTab();
 
-		expect(await screen.findByRole("button", { name: /Default reviewer agent/ })).toHaveTextContent("codex");
+		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("codex");
 		expect(screen.queryByText("Pull request reviews")).not.toBeInTheDocument();
 	});
 
