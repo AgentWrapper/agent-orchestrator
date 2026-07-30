@@ -748,6 +748,12 @@ type ShellTerminalEnvelope struct {
 	ShellTerminal ShellTerminalResponse `json:"shellTerminal"`
 }
 
+// MarkAllNotificationsReadRequest is the optional body of
+// POST /api/v1/notifications/read-all.
+type MarkAllNotificationsReadRequest struct {
+	IDs []string `json:"ids,omitempty" description:"Acknowledge exactly these notifications. Omit to acknowledge every unread notification; paginating clients should send the ids they actually rendered so later pages stay unread."`
+}
+
 // MarkAllNotificationsReadResponse is the body of POST /api/v1/notifications/read-all.
 type MarkAllNotificationsReadResponse struct {
 	Notifications []NotificationResponse `json:"notifications" description:"Deprecated compatibility field. Always empty so mark-all responses stay bounded."`

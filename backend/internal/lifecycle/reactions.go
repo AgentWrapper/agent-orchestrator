@@ -426,22 +426,20 @@ func (m *Manager) notificationIntentForSCM(rec domain.SessionRecord, o ports.SCM
 	return &base
 }
 
+// scmObservationIsReadyToMerge projects a live observation into the shared
+// readiness rule (domain.MergeReadiness). Startup reconciliation applies the
+// same rule to the stored facts, so the two paths cannot disagree about what
+// "ready to merge" means.
 func scmObservationIsReadyToMerge(o ports.SCMObservation) bool {
-	if o.PR.Merged || o.PR.Closed || o.PR.Draft {
-		return false
-	}
-	ci := domain.CIState(o.CI.Summary)
-	if ci == "" {
-		ci = domain.CIUnknown
-	}
-	switch ci {
-	case domain.CIFailing, domain.CIPending, domain.CIUnknown:
-		return false
-	}
-	if domain.ReviewDecision(o.Review.Decision) == domain.ReviewChangesRequest || hasUnresolvedSCMComments(o.Review.Threads) {
-		return false
-	}
-	return domain.Mergeability(o.Mergeability.State) == domain.MergeMergeable
+	return domain.MergeReadiness{
+		Draft:              o.PR.Draft,
+		Merged:             o.PR.Merged,
+		Closed:             o.PR.Closed,
+		CI:                 domain.CIState(o.CI.Summary),
+		Review:             domain.ReviewDecision(o.Review.Decision),
+		Mergeability:       domain.Mergeability(o.Mergeability.State),
+		UnresolvedComments: hasUnresolvedSCMComments(o.Review.Threads),
+	}.ReadyToMerge()
 }
 
 func hasUnresolvedSCMComments(threads []ports.SCMReviewThreadObservation) bool {

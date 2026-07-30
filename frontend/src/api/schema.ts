@@ -252,7 +252,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Mark all unread notifications read */
+        /** Mark notifications read */
         post: operations["markAllNotificationsRead"];
         delete?: never;
         options?: never;
@@ -1075,6 +1075,10 @@ export interface components {
             files: components["schemas"]["WorkspaceFileSummary"][];
             sessionId: string;
             truncated: boolean;
+        };
+        MarkAllNotificationsReadRequest: {
+            /** @description Acknowledge exactly these notifications. Omit to acknowledge every unread notification; paginating clients should send the ids they actually rendered so later pages stay unread. */
+            ids?: string[];
         };
         MarkAllNotificationsReadResponse: {
             /** @description Deprecated compatibility field. Always empty so mark-all responses stay bounded. */
@@ -2318,7 +2322,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MarkAllNotificationsReadRequest"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {
@@ -2327,6 +2335,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MarkAllNotificationsReadResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Internal Server Error */

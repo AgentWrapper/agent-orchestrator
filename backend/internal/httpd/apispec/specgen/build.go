@@ -208,6 +208,7 @@ var schemaNames = map[string]string{
 	"ControllersListNotificationsResponse":        "ListNotificationsResponse",
 	"ControllersMarkNotificationReadRequest":      "MarkNotificationReadRequest",
 	"ControllersNotificationEnvelope":             "NotificationEnvelope",
+	"ControllersMarkAllNotificationsReadRequest":  "MarkAllNotificationsReadRequest",
 	"ControllersMarkAllNotificationsReadResponse": "MarkAllNotificationsReadResponse",
 	// httpd/controllers — standalone shell terminal wire envelopes
 	"ControllersShellTerminalHandleIDParam": "ShellTerminalHandleIDParam",
@@ -586,9 +587,11 @@ func notificationOperations() []operation {
 		},
 		{
 			method: http.MethodPost, path: "/api/v1/notifications/read-all", id: "markAllNotificationsRead", tag: "notifications",
-			summary: "Mark all unread notifications read",
+			summary: "Mark notifications read",
+			reqBody: controllers.MarkAllNotificationsReadRequest{},
 			resps: []respUnit{
 				{http.StatusOK, controllers.MarkAllNotificationsReadResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},

@@ -134,11 +134,16 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 	// while the panel is open — acknowledging empties the unread cache, and a row
 	// must not disappear out from under the cursor.
 	//
+	// Acknowledge only what is still unread, and only by id. Scrolling loads the
+	// next page, which lands here and gets acknowledged in turn — so nothing is
+	// cleared on the server that the panel has not actually shown.
+	//
 	// Keyed on the ids rather than the array: the query hands back a fresh array
 	// on every render, which as a dependency would re-acknowledge forever.
-	const unreadRef = useRef(unread);
-	unreadRef.current = unread;
-	const unreadKey = unread.map((item) => item.id).join("|");
+	const pending = useMemo(() => unread.filter((item) => item.status === "unread"), [unread]);
+	const pendingRef = useRef(pending);
+	pendingRef.current = pending;
+	const pendingKey = pending.map((item) => item.id).join("|");
 	const acknowledgedKeyRef = useRef("");
 	useEffect(() => {
 		if (!open) {
@@ -146,22 +151,23 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 			acknowledgedKeyRef.current = "";
 			return;
 		}
-		if (unreadKey === "" || acknowledgedKeyRef.current === unreadKey) return;
-		acknowledgedKeyRef.current = unreadKey;
+		if (pendingKey === "" || acknowledgedKeyRef.current === pendingKey) return;
+		acknowledgedKeyRef.current = pendingKey;
+		const acknowledging = pendingRef.current;
 		setUnseen((current) => {
 			const known = new Set(current.map((item) => item.id));
-			const added = unreadRef.current.filter((item) => !known.has(item.id));
+			const added = acknowledging.filter((item) => !known.has(item.id));
 			return added.length === 0 ? current : [...added, ...current];
 		});
 		setActionError(null);
 		void captureRendererEvent("ao.renderer.notification_mark_read_requested", { scope: "all" });
-		void markAllMutate()
+		void markAllMutate(acknowledging.map((item) => item.id))
 			.then(() => captureRendererEvent("ao.renderer.notification_mark_read_succeeded", { scope: "all" }))
 			.catch((error: unknown) => {
 				void captureRendererEvent("ao.renderer.notification_mark_read_failed", { scope: "all" });
 				setActionError(error instanceof Error ? error.message : "Could not mark notifications read");
 			});
-	}, [markAllMutate, open, unreadKey]);
+	}, [markAllMutate, open, pendingKey]);
 
 	const setPanelOpen = (nextOpen: boolean) => {
 		setOpen(nextOpen);
@@ -187,8 +193,13 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 	const pagingQuery = unreadQuery.hasNextPage ? unreadQuery : unresolvedQuery;
 	const isLoading =
 		(unreadQuery.isLoading && unseen.length === 0) || (unresolvedQuery.isLoading && unresolved.length === 0);
-	const isError = unreadQuery.isError && unresolvedQuery.isError;
-	const isEmpty = unseen.length === 0 && unresolved.length === 0;
+	// Each section owns its own failure. Collapsing both into one verdict let a
+	// failed query hide behind the other's success and render "all caught up"
+	// for data that was never loaded.
+	const unseenFailed = unreadQuery.isError;
+	const unresolvedFailed = unresolvedQuery.isError;
+	const isError = unseenFailed && unresolvedFailed;
+	const isEmpty = unseen.length === 0 && unresolved.length === 0 && !unseenFailed && !unresolvedFailed;
 
 	const loadEarlierOnScroll = (event: React.UIEvent<HTMLDivElement>) => {
 		const list = event.currentTarget;
@@ -244,7 +255,12 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 						onScroll={loadEarlierOnScroll}
 						role="list"
 					>
-						{unseen.length > 0 ? <NotificationSectionHeading count={unseen.length} label="Unseen" /> : null}
+						{unseen.length > 0 || unseenFailed ? (
+							<NotificationSectionHeading count={unseen.length} label="Unseen" />
+						) : null}
+						{unseenFailed ? (
+							<NotificationSectionError label="unseen notifications" onRetry={() => void unreadQuery.refetch()} />
+						) : null}
 						{unseen.map((notification) => (
 							<NotificationItem
 								key={notification.id}
@@ -253,8 +269,14 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 								onOpenSession={openSessionAndDismiss}
 							/>
 						))}
-						{unresolved.length > 0 ? (
+						{unresolved.length > 0 || unresolvedFailed ? (
 							<NotificationSectionHeading count={unresolved.length} label="Unresolved" />
+						) : null}
+						{unresolvedFailed ? (
+							<NotificationSectionError
+								label="unresolved notifications"
+								onRetry={() => void unresolvedQuery.refetch()}
+							/>
 						) : null}
 						{unresolved.map((notification) => (
 							<NotificationItem
@@ -291,6 +313,27 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 				)}
 			</PopoverContent>
 		</Popover>
+	);
+}
+
+/**
+ * One section failed while the other loaded. Say so in place rather than
+ * letting the panel imply the missing data is simply absent.
+ */
+function NotificationSectionError({ label, onRetry }: { label: string; onRetry: () => void }) {
+	return (
+		<div aria-live="polite" className="flex items-center gap-2 px-4 py-2 text-caption text-error" role="alert">
+			<CircleAlert className="size-icon-md shrink-0" aria-hidden="true" />
+			Could not load {label}.
+			<button
+				aria-label={`Retry loading ${label}`}
+				className="font-medium underline underline-offset-2 hover:text-foreground"
+				onClick={onRetry}
+				type="button"
+			>
+				Retry
+			</button>
+		</div>
 	);
 }
 

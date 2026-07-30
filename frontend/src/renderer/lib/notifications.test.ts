@@ -160,8 +160,8 @@ describe("notification cache helpers", () => {
 		expect(getCachedUnreadCount(qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey))).toBe(1);
 	});
 
-	// Opening the panel acknowledges everything at once; history keeps the rows.
-	it("clears Unread on acknowledgement and keeps the rows in All", () => {
+	// Opening the panel acknowledges what it rendered; history keeps the rows.
+	it("clears the acknowledged rows and keeps them in All", () => {
 		const qc = queryClient();
 		mergeUnreadNotification(qc, notification());
 		qc.setQueryData<NotificationsCache>(recentNotificationsQueryKey, {
@@ -169,13 +169,52 @@ describe("notification cache helpers", () => {
 			pages: [{ notifications: [notification()], unreadCount: 1, unresolvedCount: 1 }],
 		});
 
-		markAllCachedNotificationsRead(qc);
+		markAllCachedNotificationsRead(qc, ["ntf_1"]);
 
-		expect(getCachedNotifications(qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey))).toEqual([]);
 		expect(getCachedUnreadCount(qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey))).toBe(0);
 		expect(getCachedNotifications(qc.getQueryData<NotificationsCache>(recentNotificationsQueryKey))).toEqual([
 			expect.objectContaining({ id: "ntf_1", status: "read" }),
 		]);
+	});
+
+	// Acknowledging must never discard the cursor to rows the panel has not
+	// loaded yet: the server only cleared the ids we sent, so anything past the
+	// loaded page has to stay reachable for the rest of the session.
+	it("keeps unacknowledged pages and their cursor after acknowledgement", () => {
+		const qc = queryClient();
+		const loaded = Array.from({ length: NOTIFICATION_PAGE_SIZE }, (_, index) =>
+			notification({ id: `ntf_${index + 1}`, type: "pr_merged" }),
+		);
+		qc.setQueryData<NotificationsCache>(unreadNotificationsQueryKey, {
+			pageParams: [""],
+			pages: [
+				{
+					notifications: loaded,
+					nextCursor: "older",
+					unreadCount: NOTIFICATION_PAGE_SIZE + 1,
+					unresolvedCount: 0,
+				},
+			],
+		});
+
+		markAllCachedNotificationsRead(
+			qc,
+			loaded.map((item) => item.id),
+		);
+
+		const cache = qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey);
+		expect(cache?.pages[0]?.nextCursor).toBe("older");
+		expect(getCachedUnreadCount(cache)).toBe(1);
+		expect(getCachedNotifications(cache).every((item) => item.status === "read")).toBe(true);
+
+		// The still-unread row past the loaded page arrives on the next page and
+		// must be visible rather than stranded.
+		mergeUnreadNotification(qc, notification({ id: "ntf_101", type: "pr_merged" }));
+		expect(
+			getCachedNotifications(qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey)).find(
+				(item) => item.id === "ntf_101",
+			)?.status,
+		).toBe("unread");
 	});
 
 	it("deduplicates and updates notifications across cached pages", () => {

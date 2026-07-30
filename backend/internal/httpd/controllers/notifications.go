@@ -3,7 +3,9 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -19,7 +21,7 @@ import (
 type NotificationService interface {
 	List(ctx context.Context, filter notificationsvc.ListFilter) (notificationsvc.ListPage, error)
 	MarkRead(ctx context.Context, id string) (notificationsvc.Notification, bool, error)
-	MarkAllRead(ctx context.Context) (int64, error)
+	MarkAllRead(ctx context.Context, ids []string) (int64, error)
 }
 
 // NotificationStream is the live notification stream used by SSE clients.
@@ -95,7 +97,15 @@ func (c *NotificationsController) markAllRead(w http.ResponseWriter, r *http.Req
 		apispec.NotImplemented(w, r, "POST", "/api/v1/notifications/read-all")
 		return
 	}
-	updatedCount, err := c.Svc.MarkAllRead(r.Context())
+	// The body is optional: older clients POST nothing and mean "everything".
+	var req MarkAllNotificationsReadRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+			return
+		}
+	}
+	updatedCount, err := c.Svc.MarkAllRead(r.Context(), req.IDs)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return

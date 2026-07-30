@@ -59,9 +59,15 @@ export async function fetchNotificationsPage(status: NotificationListStatus, cur
 	};
 }
 
-/** Fired when the panel opens — seeing the notifications is the acknowledgement. */
-export async function markAllNotificationsRead(): Promise<number> {
-	const { data, error } = await apiClient.POST("/api/v1/notifications/read-all");
+/**
+ * Fired when the panel opens — seeing the notifications is the acknowledgement.
+ *
+ * Scoped to the ids actually rendered. Acknowledging every unread row on the
+ * server would strand anything past the loaded page: the panel never held a
+ * cursor for it, and terminal types are not reachable through Unresolved.
+ */
+export async function markAllNotificationsRead(ids: string[]): Promise<number> {
+	const { data, error } = await apiClient.POST("/api/v1/notifications/read-all", { body: { ids } });
 	if (error) throw new Error(apiErrorMessage(error, "Could not mark notifications read"));
 	return data?.updatedCount ?? 0;
 }
@@ -163,25 +169,34 @@ function mergeNotificationIntoCache(
 	return inserted;
 }
 
-export function markAllCachedNotificationsRead(queryClient: QueryClient): void {
-	queryClient.setQueryData<NotificationsCache>(unreadNotificationsQueryKey, (current) => {
-		if (!current) return current;
-		return {
-			pageParams: [""],
-			pages: [{ notifications: [], unreadCount: 0, unresolvedCount: current.pages[0]?.unresolvedCount ?? 0 }],
-		};
-	});
-	queryClient.setQueryData<NotificationsCache>(recentNotificationsQueryKey, (current) => {
-		if (!current) return current;
-		return {
-			...current,
-			pages: current.pages.map((page) => ({
-				...page,
-				notifications: page.notifications.map((item) => (item.status === "read" ? item : { ...item, status: "read" })),
-				unreadCount: 0,
-			})),
-		};
-	});
+/**
+ * Marks exactly the acknowledged ids read, in place.
+ *
+ * Deliberately keeps the pages and their `nextCursor` intact. Resetting the
+ * unread cache to a single empty page would throw away the cursor to rows the
+ * panel had not loaded yet, and with the server having acknowledged only these
+ * ids, those rows would be unreachable for the rest of the session.
+ */
+export function markAllCachedNotificationsRead(queryClient: QueryClient, ids: string[]): void {
+	const acknowledged = new Set(ids);
+	if (acknowledged.size === 0) return;
+	for (const queryKey of [unreadNotificationsQueryKey, recentNotificationsQueryKey] as const) {
+		queryClient.setQueryData<NotificationsCache>(queryKey, (current) => {
+			if (!current) return current;
+			return {
+				...current,
+				pages: current.pages.map((page) => {
+					let cleared = 0;
+					const notifications = page.notifications.map((item) => {
+						if (!acknowledged.has(item.id) || item.status === "read") return item;
+						cleared++;
+						return { ...item, status: "read" as const };
+					});
+					return { ...page, notifications, unreadCount: Math.max(0, page.unreadCount - cleared) };
+				}),
+			};
+		});
+	}
 }
 
 export function getCachedNotifications(cache: NotificationsCache | undefined): NotificationDTO[] {

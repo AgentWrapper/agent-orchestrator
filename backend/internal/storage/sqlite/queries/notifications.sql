@@ -96,14 +96,6 @@ WHERE type = 'needs_input'
   )
 RETURNING *;
 
--- name: ResolveStaleReadyToMergeNotifications :many
-UPDATE notifications
-SET resolved_at = sqlc.arg(resolved_at)
-WHERE type = 'ready_to_merge'
-  AND resolved_at IS NULL
-  AND pr_url IN (SELECT url FROM pr WHERE pr_state <> 'open')
-RETURNING *;
-
 -- name: GetOpenNotificationByDedupe :one
 SELECT *
 FROM notifications
@@ -117,3 +109,13 @@ SELECT EXISTS(
     SELECT 1 FROM notifications
     WHERE session_id = ? AND status = 'unread'
 ) AS has_unread;
+
+-- Readiness is more than open/closed: draft, CI, review decision, unresolved
+-- human comments, and mergeability all block a merge. Rather than restate that
+-- rule in SQL and let it drift from the live path, this returns the open rows
+-- and lets domain.MergeReadiness judge them against the stored PR facts.
+-- name: ListOpenReadyToMergeNotifications :many
+SELECT *
+FROM notifications
+WHERE type = 'ready_to_merge'
+  AND resolved_at IS NULL;

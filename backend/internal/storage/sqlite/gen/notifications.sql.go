@@ -173,6 +173,51 @@ func (q *Queries) ListNotificationsPage(ctx context.Context, arg ListNotificatio
 	return items, nil
 }
 
+const listOpenReadyToMergeNotifications = `-- name: ListOpenReadyToMergeNotifications :many
+SELECT id, session_id, project_id, pr_url, type, title, body, status, created_at, resolved_at
+FROM notifications
+WHERE type = 'ready_to_merge'
+  AND resolved_at IS NULL
+`
+
+// Readiness is more than open/closed: draft, CI, review decision, unresolved
+// human comments, and mergeability all block a merge. Rather than restate that
+// rule in SQL and let it drift from the live path, this returns the open rows
+// and lets domain.MergeReadiness judge them against the stored PR facts.
+func (q *Queries) ListOpenReadyToMergeNotifications(ctx context.Context) ([]Notification, error) {
+	rows, err := q.db.QueryContext(ctx, listOpenReadyToMergeNotifications)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Notification{}
+	for rows.Next() {
+		var i Notification
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.ProjectID,
+			&i.PRURL,
+			&i.Type,
+			&i.Title,
+			&i.Body,
+			&i.Status,
+			&i.CreatedAt,
+			&i.ResolvedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUnreadNotificationsPage = `-- name: ListUnreadNotificationsPage :many
 SELECT id, session_id, project_id, pr_url, type, title, body, status, created_at, resolved_at
 FROM notifications
@@ -438,49 +483,6 @@ RETURNING id, session_id, project_id, pr_url, type, title, body, status, created
 // session/PR facts on startup.
 func (q *Queries) ResolveStaleNeedsInputNotifications(ctx context.Context, resolvedAt sql.NullTime) ([]Notification, error) {
 	rows, err := q.db.QueryContext(ctx, resolveStaleNeedsInputNotifications, resolvedAt)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Notification{}
-	for rows.Next() {
-		var i Notification
-		if err := rows.Scan(
-			&i.ID,
-			&i.SessionID,
-			&i.ProjectID,
-			&i.PRURL,
-			&i.Type,
-			&i.Title,
-			&i.Body,
-			&i.Status,
-			&i.CreatedAt,
-			&i.ResolvedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const resolveStaleReadyToMergeNotifications = `-- name: ResolveStaleReadyToMergeNotifications :many
-UPDATE notifications
-SET resolved_at = ?1
-WHERE type = 'ready_to_merge'
-  AND resolved_at IS NULL
-  AND pr_url IN (SELECT url FROM pr WHERE pr_state <> 'open')
-RETURNING id, session_id, project_id, pr_url, type, title, body, status, created_at, resolved_at
-`
-
-func (q *Queries) ResolveStaleReadyToMergeNotifications(ctx context.Context, resolvedAt sql.NullTime) ([]Notification, error) {
-	rows, err := q.db.QueryContext(ctx, resolveStaleReadyToMergeNotifications, resolvedAt)
 	if err != nil {
 		return nil, err
 	}

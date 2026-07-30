@@ -6,7 +6,6 @@ import {
 	notificationsQueryKey,
 	recentNotificationsQueryKey,
 	type NotificationListStatus,
-	unreadNotificationsQueryKey,
 } from "../lib/notifications";
 
 export function useNotificationsQuery(status: NotificationListStatus, enabled = true) {
@@ -28,10 +27,12 @@ export function useMarkAllNotificationsReadMutation() {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationFn: markAllNotificationsRead,
-		onSuccess: () => {
-			markAllCachedNotificationsRead(queryClient);
+		onSuccess: (_updated, ids) => {
+			markAllCachedNotificationsRead(queryClient, ids);
+			// Deliberately no invalidate here: refetching would drop the loaded
+			// pages, and with them the cursor to unseen rows the panel has not
+			// reached yet. The cache is already correct for the ids we sent.
 			void queryClient.invalidateQueries({ queryKey: recentNotificationsQueryKey });
-			void queryClient.invalidateQueries({ queryKey: unreadNotificationsQueryKey });
 		},
 	});
 }

@@ -20,12 +20,13 @@ import (
 )
 
 type fakeNotificationService struct {
-	gotFilter    notificationsvc.ListFilter
-	gotMarkID    string
-	items        []notificationsvc.Notification
-	markItem     notificationsvc.Notification
-	markAllCount int64
-	err          error
+	gotFilter     notificationsvc.ListFilter
+	gotMarkID     string
+	gotMarkAllIDs []string
+	items         []notificationsvc.Notification
+	markItem      notificationsvc.Notification
+	markAllCount  int64
+	err           error
 }
 
 type fakeNotificationStream struct {
@@ -43,7 +44,8 @@ func (f *fakeNotificationService) MarkRead(_ context.Context, id string) (notifi
 	return f.markItem, f.err == nil, f.err
 }
 
-func (f *fakeNotificationService) MarkAllRead(context.Context) (int64, error) {
+func (f *fakeNotificationService) MarkAllRead(_ context.Context, ids []string) (int64, error) {
+	f.gotMarkAllIDs = ids
 	return f.markAllCount, f.err
 }
 
@@ -211,6 +213,30 @@ func TestNotificationsAPI_MarkAllRead(t *testing.T) {
 	if len(resp.Notifications) != 0 || resp.UpdatedCount != 123 {
 		t.Fatalf("resp = %+v", resp)
 	}
+	if svc.gotMarkAllIDs != nil {
+		t.Fatalf("empty body must mean every unread row, got ids %v", svc.gotMarkAllIDs)
+	}
+}
+
+// A paginating client acknowledges exactly what it rendered, so notifications
+// past its last loaded page stay unread and remain reachable.
+func TestNotificationsAPI_MarkAllReadAcknowledgesOnlyGivenIDs(t *testing.T) {
+	svc := &fakeNotificationService{markAllCount: 2}
+	srv := newNotificationTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/notifications/read-all", `{"ids":["ntf_1","ntf_2"]}`)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", status, body)
+	}
+	if len(svc.gotMarkAllIDs) != 2 || svc.gotMarkAllIDs[0] != "ntf_1" || svc.gotMarkAllIDs[1] != "ntf_2" {
+		t.Fatalf("ids = %v", svc.gotMarkAllIDs)
+	}
+}
+
+func TestNotificationsAPI_MarkAllReadRejectsInvalidBody(t *testing.T) {
+	srv := newNotificationTestServer(t, &fakeNotificationService{})
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/notifications/read-all", "{not json")
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
 }
 
 func TestNotificationsAPI_WithoutServiceIs501(t *testing.T) {

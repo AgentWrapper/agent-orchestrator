@@ -22,6 +22,8 @@ type fakeStore struct {
 	markRow      domain.NotificationRecord
 	markOK       bool
 	markAllCount int64
+	markedAll    bool
+	markedIDs    []string
 	err          error
 }
 
@@ -56,7 +58,13 @@ func (f *fakeStore) MarkNotificationRead(_ context.Context, _ string) (domain.No
 }
 
 func (f *fakeStore) MarkAllNotificationsRead(context.Context) (int64, error) {
+	f.markedAll = true
 	return f.markAllCount, f.err
+}
+
+func (f *fakeStore) MarkNotificationsRead(_ context.Context, ids []string) (int64, error) {
+	f.markedIDs = ids
+	return int64(len(ids)), f.err
 }
 
 func TestListAddsTargetsAndReturnsNextCursor(t *testing.T) {
@@ -136,12 +144,29 @@ func TestMarkReadMissingReturnsNotFound(t *testing.T) {
 func TestMarkAllReadReturnsUpdatedCount(t *testing.T) {
 	st := &fakeStore{markAllCount: 42}
 	mgr := New(Deps{Store: st})
-	got, err := mgr.MarkAllRead(context.Background())
+	got, err := mgr.MarkAllRead(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("MarkAllRead: %v", err)
 	}
-	if got != 42 {
-		t.Fatalf("updated count = %d, want 42", got)
+	if got != 42 || !st.markedAll {
+		t.Fatalf("updated count = %d markedAll=%v, want 42 true", got, st.markedAll)
+	}
+}
+
+// Acknowledging every unread row would strand anything past the client's last
+// loaded page, so an explicit id list must scope the write to those rows.
+func TestMarkAllReadWithIDsScopesToThoseNotifications(t *testing.T) {
+	st := &fakeStore{markAllCount: 99}
+	mgr := New(Deps{Store: st})
+	got, err := mgr.MarkAllRead(context.Background(), []string{"n1", "n2"})
+	if err != nil {
+		t.Fatalf("MarkAllRead: %v", err)
+	}
+	if got != 2 || st.markedAll {
+		t.Fatalf("updated count = %d markedAll=%v, want 2 false", got, st.markedAll)
+	}
+	if len(st.markedIDs) != 2 || st.markedIDs[0] != "n1" {
+		t.Fatalf("marked ids = %v", st.markedIDs)
 	}
 }
 

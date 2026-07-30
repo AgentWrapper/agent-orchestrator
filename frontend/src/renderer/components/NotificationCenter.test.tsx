@@ -245,6 +245,45 @@ describe("NotificationCenter", () => {
 		expect(screen.getByText("Checkout flow needs input")).toBeInTheDocument();
 	});
 
+	// Acknowledging every server row would strand anything past the loaded page,
+	// so the panel names exactly the ids it rendered.
+	it("acknowledges only the ids it rendered", async () => {
+		renderNotificationCenter();
+		await clickOpen();
+
+		expect(markAllMock).toHaveBeenCalledWith(["ntf_2", "ntf_1"]);
+	});
+
+	// A failed section must not hide behind the other one's success.
+	it.each([
+		{ failing: "unread" as const, label: "Could not load unseen notifications." },
+		{ failing: "unresolved" as const, label: "Could not load unresolved notifications." },
+	])("surfaces a failed $failing section instead of claiming success", async ({ failing, label }) => {
+		notificationQueryMock.mockImplementation((status: NotificationListStatus) =>
+			status === failing
+				? { ...notificationQueryResult(status, { isError: true }), data: undefined }
+				: notificationQueryResult(status),
+		);
+		renderNotificationCenter();
+		const trigger = screen.getByRole("button", { name: /notifications/i });
+		await userEvent.click(trigger);
+
+		expect(await screen.findByText(label)).toBeInTheDocument();
+		expect(screen.queryByText("You're all caught up.")).not.toBeInTheDocument();
+	});
+
+	// Both sections empty and healthy is the only case that is genuinely clear.
+	it("claims all caught up only when both sections loaded", async () => {
+		notificationQueryMock.mockImplementation((status: NotificationListStatus) => ({
+			...notificationQueryResult(status),
+			data: { pageParams: [""], pages: [{ notifications: [], unreadCount: 0, unresolvedCount: 0 }] },
+		}));
+		renderNotificationCenter();
+		await userEvent.click(screen.getByRole("button", { name: /notifications/i }));
+
+		expect(await screen.findByText("You're all caught up.")).toBeInTheDocument();
+	});
+
 	it("navigates to the session from anywhere on the row, including the body text", async () => {
 		renderNotificationCenter();
 		await clickOpen();
