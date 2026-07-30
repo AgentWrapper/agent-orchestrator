@@ -95,6 +95,15 @@ func (c *commandContext) postLoopbackJSON(ctx context.Context, path string, body
 }
 
 func (c *commandContext) doJSONPath(ctx context.Context, method, path string, body, out any) error {
+	return c.doJSONPathWithHeaders(ctx, method, path, body, out, nil)
+}
+
+func (c *commandContext) doJSONPathWithHeaders(
+	ctx context.Context,
+	method, path string,
+	body, out any,
+	headers map[string]string,
+) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -125,6 +134,9 @@ func (c *commandContext) doJSONPath(ctx context.Context, method, path string, bo
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for name, value := range headers {
+		req.Header.Set(name, value)
 	}
 
 	// Reuse the injected client's transport (keeps it stubbable in tests) but

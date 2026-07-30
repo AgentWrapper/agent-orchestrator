@@ -6,6 +6,7 @@ import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
 const navigateMock = vi.hoisted(() => vi.fn());
+const openShellTerminalMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigateMock,
@@ -86,26 +87,21 @@ const { workspaces, workspaceQueryState, panels, shellTerminalsState } = vi.hois
 vi.mock("./ShellTopbar", () => ({ ShellTopbar: () => null }));
 vi.mock("./CenterPane", () => ({
 	CenterPane: ({
+		session,
 		shellTerminals = [],
 		onSelectShellTerminal,
 		onSelectSessionTerminal,
-		projectSessions = [],
-		availableProjectSessions = [],
-		onAddProjectSession,
-		onCloseProjectSession,
-		onSelectProjectSession,
+		onNewShellTerminal,
 	}: {
+		session?: WorkspaceSession;
 		shellTerminals?: Array<{ handleId: string; title: string }>;
 		onSelectShellTerminal?: (handleId: string) => void;
 		onSelectSessionTerminal?: () => void;
-		projectSessions?: WorkspaceSession[];
-		availableProjectSessions?: WorkspaceSession[];
-		onAddProjectSession?: (session: WorkspaceSession) => void;
-		onCloseProjectSession?: (session: WorkspaceSession) => void;
-		onSelectProjectSession?: (session: WorkspaceSession) => void;
+		onNewShellTerminal?: () => void;
 	}) => (
 		<div>
 			terminal center
+			<div data-testid="session-tab">{session?.title ?? ""}</div>
 			<div data-testid="shell-tabs">{shellTerminals.map((s) => s.title).join(",")}</div>
 			{shellTerminals.map((s) => (
 				<button key={s.handleId} type="button" onClick={() => onSelectShellTerminal?.(s.handleId)}>
@@ -115,25 +111,9 @@ vi.mock("./CenterPane", () => ({
 			<button type="button" onClick={() => onSelectSessionTerminal?.()}>
 				select agent tab
 			</button>
-			<div data-testid="project-tabs">
-				{projectSessions.map((session) => (
-					<button key={session.id} type="button" onClick={() => onSelectProjectSession?.(session)}>
-						{session.title}
-					</button>
-				))}
-			</div>
-			<div data-testid="available-project-tabs">
-				{availableProjectSessions.map((session) => (
-					<button key={session.id} type="button" onClick={() => onAddProjectSession?.(session)}>
-						Add {session.title}
-					</button>
-				))}
-			</div>
-			{projectSessions.slice(1).map((session) => (
-				<button key={session.id} type="button" onClick={() => onCloseProjectSession?.(session)}>
-					Close {session.title}
-				</button>
-			))}
+			<button type="button" onClick={() => onNewShellTerminal?.()}>
+				new terminal
+			</button>
 		</div>
 	),
 }));
@@ -196,6 +176,14 @@ vi.mock("../hooks/useBrowserView", () => ({
 			goForward: vi.fn(),
 			reload: vi.fn(),
 			stop: vi.fn(),
+			tabs: [{ id: "t1", url: "http://127.0.0.1:4173/", title: "Calculator", active: true }],
+			activeTabId: "t1",
+			tabNotice: "",
+			agentBrowserActive: false,
+			selectTab: vi.fn(),
+			closeTab: vi.fn(),
+			annotationMode: false,
+			setAnnotationMode: vi.fn(),
 			destroy: browserDestroy,
 		};
 	},
@@ -236,7 +224,7 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 // real hooks would need a QueryClientProvider this suite deliberately omits.
 vi.mock("../hooks/useShellTerminals", () => ({
 	useShellTerminals: () => ({ data: shellTerminalsState.data, isLoading: false }),
-	useOpenShellTerminal: () => ({ mutate: vi.fn() }),
+	useOpenShellTerminal: () => ({ mutate: openShellTerminalMock }),
 	useCloseShellTerminal: () => ({ mutate: vi.fn() }),
 	useRenameShellTerminal: () => ({ mutate: vi.fn() }),
 }));
@@ -342,12 +330,13 @@ describe("SessionView", () => {
 		}
 		workspaceQueryState.data = workspaces;
 		workspaceQueryState.isLoading = false;
-		useUiStore.setState({ inspectorSessions: {}, visibleTerminalKindBySession: {}, sessionTabsByOwner: {} });
+		useUiStore.setState({ inspectorSessions: {}, visibleTerminalKindBySession: {} });
 		panels.clear();
 		browserDestroy.mockReset();
 		browserViewOptions.current = undefined;
 		shellTerminalsState.data = [];
 		navigateMock.mockReset();
+		openShellTerminalMock.mockReset();
 	});
 
 	// Regression: shell terminals are an app-wide list, so without a per-session
@@ -408,64 +397,23 @@ describe("SessionView", () => {
 		expect(useUiStore.getState().visibleTerminalKindBySession["sess-1"]).toBeUndefined();
 	});
 
-	it("starts with only the owner tab and pins another worker through the add menu", () => {
+	// The strip only ever shows the session on screen — pinning another session's
+	// terminal as a tab (and the cross-project picker that did it) is gone (#3208).
+	it("shows only the session on screen in the tab strip", () => {
 		render(<SessionView sessionId="sess-1" />);
 
-		expect(screen.getByTestId("project-tabs")).toHaveTextContent("do the thing");
-		expect(screen.getByTestId("project-tabs")).not.toHaveTextContent("do the other thing");
-		expect(screen.getByTestId("available-project-tabs")).toHaveTextContent("Add do the other thing");
-
-		fireEvent.click(screen.getByRole("button", { name: "Add do the other thing" }));
-		expect(useUiStore.getState().sessionTabsByOwner["sess-1"]).toEqual(["sess-2"]);
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "sess-2" },
-			search: { tabOwner: "sess-1" },
-		});
+		expect(screen.getByTestId("session-tab")).toHaveTextContent("do the thing");
+		expect(screen.getByTestId("session-tab")).not.toHaveTextContent("do the other thing");
+		expect(screen.queryByRole("button", { name: /^Add / })).not.toBeInTheDocument();
 	});
 
-	it("offers and pins live worker sessions from other projects", () => {
-		render(<SessionView sessionId="sess-1" />);
+	// The daemon roots a shell in the session's worktree when it is given that
+	// session's id, so a new terminal must name the session actually on screen.
+	it("opens new terminals in the on-screen session's worktree", () => {
+		render(<SessionView sessionId="sess-2" />);
 
-		fireEvent.click(screen.getByRole("button", { name: "Add cross-project task" }));
-		expect(useUiStore.getState().sessionTabsByOwner["sess-1"]).toEqual(["sess-cross-project"]);
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-2", sessionId: "sess-cross-project" },
-			search: { tabOwner: "sess-1" },
-		});
-	});
-
-	it("keeps pinned worker and shell tabs private to their owner session", () => {
-		useUiStore.getState().addSessionTab("sess-1", "sess-2");
-		shellTerminalsState.data = [
-			{
-				handleId: "sh-a",
-				sessionId: "sess-1",
-				title: "owner-shell",
-				workingDir: "/p",
-				createdAt: "2026-07-24T00:00:00Z",
-			},
-			{
-				handleId: "sh-b",
-				sessionId: "sess-2",
-				title: "worker-shell",
-				workingDir: "/q",
-				createdAt: "2026-07-24T00:00:00Z",
-			},
-		];
-		const { rerender } = render(<SessionView sessionId="sess-2" tabOwnerSessionId="sess-1" />);
-
-		expect(screen.getByTestId("project-tabs")).toHaveTextContent("do the thing");
-		expect(screen.getByTestId("project-tabs")).toHaveTextContent("do the other thing");
-		expect(screen.getByTestId("shell-tabs")).toHaveTextContent("owner-shell");
-		expect(screen.getByTestId("shell-tabs")).not.toHaveTextContent("worker-shell");
-
-		rerender(<SessionView sessionId="sess-2" />);
-		expect(screen.getByTestId("project-tabs")).not.toHaveTextContent("do the thing");
-		expect(screen.getByTestId("project-tabs")).toHaveTextContent("do the other thing");
-		expect(screen.getByTestId("shell-tabs")).not.toHaveTextContent("owner-shell");
-		expect(screen.getByTestId("shell-tabs")).toHaveTextContent("worker-shell");
+		fireEvent.click(screen.getByRole("button", { name: "new terminal" }));
+		expect(openShellTerminalMock).toHaveBeenCalledWith({ projectId: "proj-1", sessionId: "sess-2" }, expect.anything());
 	});
 
 	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS

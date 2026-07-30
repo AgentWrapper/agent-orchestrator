@@ -48,6 +48,10 @@ type pendingLaunch struct {
 	ready    chan struct{}
 }
 
+type orchestratorReengagementTracker interface {
+	ObserveActivity(ctx context.Context, before, after domain.SessionRecord, event string)
+}
+
 // Option customizes a Manager.
 type Option func(*Manager)
 
@@ -70,6 +74,11 @@ func WithActiveSteering(pred func(domain.AgentHarness) bool) Option {
 			m.steerActive = pred
 		}
 	}
+}
+
+// WithOrchestratorReengagement wires durable orchestrator activity tracking.
+func WithOrchestratorReengagement(tracker orchestratorReengagementTracker) Option {
+	return func(m *Manager) { m.reengagement = tracker }
 }
 
 // Manager reduces runtime, activity, spawn, and termination observations into durable session facts.
@@ -103,7 +112,8 @@ type Manager struct {
 	// active turn (input steers the run) rather than only while idle. Supplied by
 	// the agent adapter via WithActiveSteering; the default answers false, so an
 	// unknown harness is only written to while idle.
-	steerActive func(domain.AgentHarness) bool
+	steerActive  func(domain.AgentHarness) bool
+	reengagement orchestratorReengagementTracker
 }
 
 // New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.
@@ -333,9 +343,16 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 			rec.UpdatedAt = now
 			err := m.store.UpdateSession(ctx, rec)
 			m.mu.Unlock()
+			if err == nil && m.reengagement != nil {
+				m.reengagement.ObserveActivity(ctx, rec, rec, s.Event)
+			}
 			return err
 		}
+		tracker := m.reengagement
 		m.mu.Unlock()
+		if tracker != nil {
+			tracker.ObserveActivity(ctx, rec, rec, s.Event)
+		}
 		return nil
 	}
 	next := rec
@@ -368,7 +385,11 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		}
 	}
 	waitingEvents := m.waitingInputEvents(next, prevState, prevAt, now)
+	tracker := m.reengagement
 	m.mu.Unlock()
+	if tracker != nil {
+		tracker.ObserveActivity(ctx, rec, next, s.Event)
+	}
 	for _, ev := range waitingEvents {
 		m.emitTelemetry(ctx, ev)
 	}

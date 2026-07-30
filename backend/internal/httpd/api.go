@@ -19,22 +19,25 @@ import (
 
 // APIDeps bundles every service the API layer's controllers depend on.
 type APIDeps struct {
-	Agents             controllers.AgentCatalog
-	Projects           projectsvc.Manager
-	Sessions           controllers.SessionService
-	Activity           controllers.ActivityRecorder
-	PRs                prsvc.ActionManager
-	Reviews            reviewsvc.Manager
-	Notifications      controllers.NotificationService
-	NotificationStream controllers.NotificationStream
-	Push               controllers.PushRegistry
-	Import             controllers.ImportService
-	ShellTerminals     controllers.ShellTerminalService
-	DevImport          controllers.DevImportService
-	CDC                cdc.Source
-	Events             cdcSubscriber
-	Telemetry          ports.EventSink
-	Mobile             *controllers.MobileController
+	Agents              controllers.AgentCatalog
+	Projects            projectsvc.Manager
+	Sessions            controllers.SessionService
+	Activity            controllers.ActivityRecorder
+	PRs                 prsvc.ActionManager
+	Reviews             reviewsvc.Manager
+	Notifications       controllers.NotificationService
+	NotificationStream  controllers.NotificationStream
+	Push                controllers.PushRegistry
+	Import              controllers.ImportService
+	ShellTerminals      controllers.ShellTerminalService
+	DevImport           controllers.DevImportService
+	CDC                 cdc.Source
+	Events              cdcSubscriber
+	Telemetry           ports.EventSink
+	Mobile              *controllers.MobileController
+	Browser             controllers.BrowserService
+	PreviewServer       controllers.ManagedPreviewServer
+	SessionCapabilities controllers.SessionCapabilityValidator
 }
 
 // API owns one controller per resource and is the single Register call the
@@ -51,6 +54,7 @@ type API struct {
 	imports       *controllers.ImportController
 	shellTerms    *controllers.ShellTerminalsController
 	dev           *controllers.DevController
+	browser       *controllers.BrowserController
 	events        *EventsController
 }
 
@@ -67,8 +71,10 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 			Mgr: deps.Projects,
 		},
 		sessions: &controllers.SessionsController{
-			Svc:      deps.Sessions,
-			Activity: deps.Activity,
+			Svc:           deps.Sessions,
+			Activity:      deps.Activity,
+			PreviewServer: deps.PreviewServer,
+			Capabilities:  deps.SessionCapabilities,
 		},
 		prs:           &controllers.PRsController{Svc: deps.PRs},
 		reviews:       &controllers.ReviewsController{Svc: deps.Reviews},
@@ -77,6 +83,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		imports:       &controllers.ImportController{Svc: deps.Import},
 		shellTerms:    &controllers.ShellTerminalsController{Svc: deps.ShellTerminals},
 		dev:           &controllers.DevController{Import: deps.DevImport},
+		browser:       &controllers.BrowserController{Svc: deps.Browser},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
 }
@@ -105,6 +112,7 @@ func (a *API) Register(root chi.Router) {
 			a.imports.Register(r)
 			a.shellTerms.Register(r)
 			a.dev.Register(r)
+			a.browser.Register(r)
 			// Sibling REST controllers plug in here.
 		})
 		// Long-lived streams intentionally bypass the REST timeout middleware.

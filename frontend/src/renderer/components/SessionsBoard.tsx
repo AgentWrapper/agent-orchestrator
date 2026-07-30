@@ -6,6 +6,7 @@ import {
 	Check,
 	Copy,
 	GitBranch,
+	LoaderCircle,
 	Plus,
 	RotateCcw,
 	RotateCw,
@@ -32,7 +33,11 @@ import {
 } from "../lib/session-presentation";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { useRestoreSession } from "../hooks/useRestoreSession";
-import { useTerminateSession } from "../hooks/useTerminateSession";
+import {
+	clearTerminateSessionState,
+	useTerminateSession,
+	useTerminateSessionState,
+} from "../hooks/useTerminateSession";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyStates";
@@ -51,7 +56,7 @@ import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/
 import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
-import { SessionTerminationDialog } from "./SessionTerminationDialog";
+import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { DaemonStartupLoader } from "./DaemonStartupLoader";
 import { useShellMaybe } from "../lib/shell-context";
 
@@ -148,15 +153,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const [restoringSessionId, setRestoringSessionId] = useState<string | undefined>();
 	const [restoreErrors, setRestoreErrors] = useState<Record<string, string>>({});
 	const [restoreUnavailableSession, setRestoreUnavailableSession] = useState<WorkspaceSession | undefined>();
-	const [terminationSession, setTerminationSession] = useState<WorkspaceSession | undefined>();
-	const terminateSession = useTerminateSession({ onSuccess: () => setTerminationSession(undefined) });
+	const terminateSession = useTerminateSession();
 	const activeProjectIdRef = useRef(projectId);
 	activeProjectIdRef.current = projectId;
 	useEffect(() => {
 		setRestoringSessionId(undefined);
 		setRestoreErrors({});
 		setRestoreUnavailableSession(undefined);
-		setTerminationSession(undefined);
 	}, [projectId]);
 
 	const openSession = (session: WorkspaceSession) =>
@@ -349,10 +352,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 									col={col}
 									sessions={byZone.get(col.zone) ?? []}
 									onOpen={openSession}
-									onTerminate={(session) => {
-										terminateSession.reset();
-										setTerminationSession(session);
-									}}
+									onTerminate={(session) => terminateSession.mutate(session)}
 								/>
 							))}
 						</div>
@@ -424,16 +424,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					}}
 				/>
 			)}
-			<SessionTerminationDialog
-				busy={terminateSession.isPending}
-				error={terminateSession.error instanceof Error ? terminateSession.error.message : null}
-				onConfirm={() => terminationSession && terminateSession.mutate(terminationSession)}
-				onOpenChange={(open) => {
-					if (!open && !terminateSession.isPending) setTerminationSession(undefined);
-				}}
-				open={terminationSession !== undefined}
-				session={terminationSession}
-			/>
 		</div>
 	);
 }
@@ -586,8 +576,12 @@ function MergeLaneColumn({
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
 }) {
-	const mergedSessions = sessions.filter((session) => session.status === "merged");
-	const readySessions = sessions.filter((session) => session.status !== "merged");
+	const mergedSessions = sessions
+		.filter((session) => session.status === "merged")
+		.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+	const readySessions = sessions
+		.filter((session) => session.status !== "merged")
+		.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 
 	return (
 		<SplitLaneColumn
@@ -755,11 +749,14 @@ function SessionCard({
 	onTerminate?: () => void;
 	interactive?: boolean;
 }) {
+	const queryClient = useQueryClient();
+	const [confirmOpen, setConfirmOpen] = useState(false);
 	const badge = getSessionStatusView(session.status);
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
+	const termination = useTerminateSessionState(session.id);
 	const showTerminate = interactive && session.isTerminated !== true && onTerminate;
 	const keepTerminateVisible = session.status === "merged";
 	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -789,23 +786,39 @@ function SessionCard({
 			data-session-id={session.id}
 		>
 			{showTerminate ? (
-				<button
-					aria-label={`Terminate ${session.title}`}
-					className={cn(
-						"absolute right-2 top-1.5 z-10 inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-[color,background-color,opacity] hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-						keepTerminateVisible
-							? "opacity-100"
-							: "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
-					)}
-					onClick={(event) => {
-						event.stopPropagation();
+				<SessionTerminationPopover
+					onConfirm={() => {
+						setConfirmOpen(false);
 						onTerminate();
 					}}
-					title="Terminate session"
-					type="button"
-				>
-					<Trash2 className="size-icon-sm" aria-hidden="true" />
-				</button>
+					onOpenChange={setConfirmOpen}
+					open={confirmOpen}
+					session={session}
+					trigger={
+						<button
+							aria-label={termination.isPending ? `Killing ${session.title}` : `Terminate ${session.title}`}
+							className={cn(
+								"absolute right-2 top-1.5 z-10 inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-[color,background-color,opacity] hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+								keepTerminateVisible || termination.isPending
+									? "opacity-100"
+									: "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
+							)}
+							onClick={(event) => {
+								event.stopPropagation();
+								clearTerminateSessionState(queryClient, session.id);
+							}}
+							disabled={termination.isPending}
+							title={termination.isPending ? "Killing session" : "Terminate session"}
+							type="button"
+						>
+							{termination.isPending ? (
+								<LoaderCircle className="size-icon-sm animate-spin" aria-hidden="true" />
+							) : (
+								<Trash2 className="size-icon-sm" aria-hidden="true" />
+							)}
+						</button>
+					}
+				/>
 			) : null}
 			<div className="flex items-start gap-2.5 px-3.5 pb-2.5 pt-3">
 				<AgentAvatar className="mt-0.5" provider={session.provider} />
@@ -857,6 +870,11 @@ function SessionCard({
 					</span>
 				)}
 			</div>
+			{termination.error ? (
+				<div className="border-t border-border px-3.5 py-1.5 text-2xs text-destructive" role="alert">
+					{termination.error}
+				</div>
+			) : null}
 		</div>
 	);
 }
