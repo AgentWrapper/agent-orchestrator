@@ -123,6 +123,7 @@ type PRReview struct {
 	IsBot       int64
 	SubmittedAt time.Time
 	Body        string
+	TargetSha   string
 }
 
 type PRReviewThread struct {

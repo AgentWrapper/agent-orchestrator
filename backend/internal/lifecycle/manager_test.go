@@ -17,15 +17,17 @@ type fakeStore struct {
 	sessions   map[domain.SessionID]domain.SessionRecord
 	projects   map[string]domain.ProjectRecord
 	prs        map[domain.SessionID][]domain.PullRequest
+	reviews    map[string][]domain.PullRequestReview
 	signatures map[string]string
 
 	listPRsErr        error
+	listReviewsErr    error
 	signatureWriteErr error
 	signatureWrites   int
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, projects: map[string]domain.ProjectRecord{}, prs: map[domain.SessionID][]domain.PullRequest{}, signatures: map[string]string{}}
+	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, projects: map[string]domain.ProjectRecord{}, prs: map[domain.SessionID][]domain.PullRequest{}, reviews: map[string][]domain.PullRequestReview{}, signatures: map[string]string{}}
 }
 
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
@@ -38,6 +40,13 @@ func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]
 		return nil, f.listPRsErr
 	}
 	return f.prs[id], nil
+}
+
+func (f *fakeStore) ListPRReviews(_ context.Context, prURL string) ([]domain.PullRequestReview, error) {
+	if f.listReviewsErr != nil {
+		return nil, f.listReviewsErr
+	}
+	return f.reviews[prURL], nil
 }
 
 func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
@@ -945,6 +954,37 @@ func TestSCMObservation_ReviewerAutoStartRequiresProjectOptIn(t *testing.T) {
 		PR:      ports.SCMPRObservation{URL: "pr1", Number: 1, HeadSHA: "c1"},
 	}
 	if err := m.ApplySCMObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+
+	if calls != 0 {
+		t.Fatalf("reviewer auto-start calls = %d, want 0", calls)
+	}
+}
+
+func TestSCMObservation_ReviewerAutoStartSkipsAlreadyReviewedHead(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Kind = domain.KindWorker
+	st.sessions["mer-1"] = rec
+	st.projects["mer"] = domain.ProjectRecord{
+		ID:     "mer",
+		Config: domain.ProjectConfig{AutoReviewPullRequests: true},
+	}
+	st.reviews["pr1"] = []domain.PullRequestReview{
+		{ID: "review-1", State: domain.ReviewApproved, TargetSHA: "c1"},
+	}
+	calls := 0
+	m.SetReviewerAutoStart(func(context.Context, domain.SessionID) error {
+		calls++
+		return nil
+	})
+
+	o := ports.SCMObservation{
+		Fetched: true,
+		PR:      ports.SCMPRObservation{URL: "pr1", Number: 1, HeadSHA: "c1"},
+	}
+	if err := m.ApplyReviewerAutoStart(ctx, "mer-1", o); err != nil {
 		t.Fatal(err)
 	}
 

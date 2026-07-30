@@ -761,7 +761,13 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsTab();
 
-		expect(await screen.findByText("Auto-review on")).toBeInTheDocument();
+		const autoReviewStatus = await screen.findByText("Auto-review on");
+		expect(autoReviewStatus).toBeInTheDocument();
+		expect(autoReviewStatus.closest("p")?.querySelector("svg")).toBeNull();
+		const runReview = screen.getByRole("button", { name: "Run review" });
+		expect(runReview).toBeDisabled();
+		await userEvent.click(runReview);
+		expect(postMock).not.toHaveBeenCalled();
 	});
 
 	it("places not-run status beside the PR number without an aggregate status chip", async () => {

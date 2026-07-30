@@ -29,6 +29,10 @@ type sessionStore interface {
 	// when no open PR remains and at least one merged) and to suppress
 	// merge-conflict nudges on PRs stacked behind an open parent.
 	ListPRsBySession(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error)
+	// ListPRReviews returns submitted provider review summaries for a PR. The
+	// reviewer auto-start policy reads this to avoid re-reviewing a PR head that
+	// already has review coverage.
+	ListPRReviews(ctx context.Context, prURL string) ([]domain.PullRequestReview, error)
 	// GetPRLastNudgeSignature / UpdatePRLastNudgeSignature persist the
 	// reaction-dedup map so nudges survive a daemon restart.
 	GetPRLastNudgeSignature(ctx context.Context, prURL string) (string, error)

@@ -399,7 +399,30 @@ func (m *Manager) applyReviewerAutoStartPolicy(ctx context.Context, id domain.Se
 	if err != nil || !ok || !project.Config.AutoReviewPullRequests {
 		return err
 	}
+	reviewed, err := m.prHeadAlreadyReviewed(ctx, o.PR.URL, o.PR.HeadSHA)
+	if err != nil || reviewed {
+		return err
+	}
 	return trigger(ctx, id)
+}
+
+func (m *Manager) prHeadAlreadyReviewed(ctx context.Context, prURL, headSHA string) (bool, error) {
+	if prURL == "" || headSHA == "" {
+		return false, nil
+	}
+	reviews, err := m.store.ListPRReviews(ctx, prURL)
+	if err != nil {
+		return false, err
+	}
+	for _, review := range reviews {
+		if review.TargetSHA != headSHA {
+			continue
+		}
+		if review.State == domain.ReviewApproved || review.State == domain.ReviewChangesRequest {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (m *Manager) notificationIntentForCurrentSCM(ctx context.Context, id domain.SessionID, o ports.SCMObservation) (*ports.NotificationIntent, error) {

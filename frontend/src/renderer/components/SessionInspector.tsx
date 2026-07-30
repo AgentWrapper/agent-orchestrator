@@ -951,12 +951,14 @@ function ReviewPanel({
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
 	const reviewHasRun = reviewRunning || Boolean(latest);
 	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
+	const autoReviewEnabled = config?.autoReviewPullRequests === true;
 	const openReviewerTerminal = () => {
 		if (!terminalEnabled) return;
 		onOpenTerminal?.({ handleId: reviewerHandleId, harness });
 	};
 	const runDisabled =
 		isTriggering ||
+		autoReviewEnabled ||
 		openReviewStates.length === 0 ||
 		openReviewStates.every((reviewState) => reviewState.status === "ineligible");
 
@@ -972,11 +974,8 @@ function ReviewPanel({
 					{notice}
 				</p>
 			) : null}
-			<p className={cn(inspectorEmptyClass, "inline-flex min-w-0 items-center gap-1.5")}>
-				<Shield className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
-				<span className="truncate font-medium text-foreground">
-					{config?.autoReviewPullRequests === true ? "Auto-review on" : "Auto-review off"}
-				</span>
+			<p className={inspectorEmptyClass}>
+				<span className="font-medium text-foreground">{autoReviewEnabled ? "Auto-review on" : "Auto-review off"}</span>
 			</p>
 			<p className={cn(inspectorEmptyClass, "inline-flex min-w-0 items-center gap-1.5")}>
 				<ReviewerHarnessIcon className="size-icon-sm shrink-0 text-passive" harness={harness} />

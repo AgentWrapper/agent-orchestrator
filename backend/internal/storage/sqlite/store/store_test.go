@@ -580,7 +580,7 @@ func TestWriteSCMObservationPersistsMetadataChecksReviewsAndComments(t *testing.
 		UpdatedAt: now, ObservedAt: now, CIObservedAt: now, ReviewObservedAt: now,
 	}
 	checks := []domain.PullRequestCheck{{Name: "build", CommitHash: "h1", Status: domain.PRCheckFailed, Conclusion: "failure", URL: "ci", Details: "99", LogTail: "boom", CreatedAt: now}}
-	reviews := []domain.PullRequestReview{{ID: "review-1", Author: "reviewer", State: domain.ReviewChangesRequest, URL: "https://github.com/o/r/pull/1#pullrequestreview-1", Body: "please fix the nil check", SubmittedAt: now}}
+	reviews := []domain.PullRequestReview{{ID: "review-1", Author: "reviewer", State: domain.ReviewChangesRequest, URL: "https://github.com/o/r/pull/1#pullrequestreview-1", Body: "please fix the nil check", TargetSHA: "h1", SubmittedAt: now}}
 	threads := []domain.PullRequestReviewThread{{ThreadID: "t1", Path: "main.go", Line: 7, SemanticHash: "th", UpdatedAt: now}}
 	comments := []domain.PullRequestComment{{ThreadID: "t1", ID: "c1", Author: "reviewer", File: "main.go", Line: 7, Body: "fix", URL: "comment", CreatedAt: now}}
 
@@ -603,7 +603,7 @@ func TestWriteSCMObservationPersistsMetadataChecksReviewsAndComments(t *testing.
 		t.Fatalf("threads not persisted: %+v", gotThreads)
 	}
 	gotReviews, _ := s.ListPRReviews(ctx, pr.URL)
-	if len(gotReviews) != 1 || gotReviews[0].ID != "review-1" || gotReviews[0].URL != "https://github.com/o/r/pull/1#pullrequestreview-1" || gotReviews[0].Body != "please fix the nil check" {
+	if len(gotReviews) != 1 || gotReviews[0].ID != "review-1" || gotReviews[0].URL != "https://github.com/o/r/pull/1#pullrequestreview-1" || gotReviews[0].Body != "please fix the nil check" || gotReviews[0].TargetSHA != "h1" {
 		t.Fatalf("reviews not persisted: %+v", gotReviews)
 	}
 	gotComments, _ := s.ListPRComments(ctx, pr.URL)

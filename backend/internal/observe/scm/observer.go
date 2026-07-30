@@ -1205,6 +1205,7 @@ func domainFromObservation(sessionID domain.SessionID, obs ports.SCMObservation,
 			URL:         review.URL,
 			Body:        review.Body,
 			IsBot:       review.IsBot,
+			TargetSHA:   review.TargetSHA,
 			SubmittedAt: firstTime(review.SubmittedAt, now),
 		})
 	}

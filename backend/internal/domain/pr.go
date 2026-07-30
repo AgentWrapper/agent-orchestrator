@@ -119,6 +119,7 @@ type PullRequestReview struct {
 	URL         string
 	Body        string
 	IsBot       bool
+	TargetSHA   string
 	SubmittedAt time.Time
 }
 
