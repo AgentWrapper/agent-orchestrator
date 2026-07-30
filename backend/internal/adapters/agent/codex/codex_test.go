@@ -18,8 +18,12 @@ import (
 // lives under a /var -> /private/var symlink).
 func canonicalTempDir(t *testing.T) string {
 	t.Helper()
-	dir, err := filepath.EvalSymlinks(t.TempDir())
+	raw := t.TempDir()
+	dir, err := filepath.EvalSymlinks(raw)
 	if err != nil {
+		if os.IsPermission(err) {
+			return raw
+		}
 		t.Fatal(err)
 	}
 	return dir
@@ -34,6 +38,13 @@ func sessionHookFlags() []string {
 		"-c", `hooks.UserPromptSubmit=[{hooks=[{type="command",command="ao hooks codex user-prompt-submit",timeout=5}]}]`,
 		"-c", `hooks.PermissionRequest=[{hooks=[{type="command",command="ao hooks codex permission-request",timeout=5}]}]`,
 		"-c", `hooks.Stop=[{hooks=[{type="command",command="ao hooks codex stop",timeout=5}]}]`,
+	}
+}
+
+func TestExitDetectionUsesAOProcessSupervisor(t *testing.T) {
+	plugin := &Plugin{}
+	if got := plugin.ExitDetectionMode(); got != ports.AgentExitDetectionSupervisor {
+		t.Fatalf("exit detection mode = %q, want %q", got, ports.AgentExitDetectionSupervisor)
 	}
 }
 

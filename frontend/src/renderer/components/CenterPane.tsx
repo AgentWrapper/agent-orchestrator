@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Plus, Shield, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Shield, Terminal as TerminalIcon, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type WheelEvent } from "react";
 import { useOverflowScroll } from "../hooks/useOverflowScroll";
 import { useTruncatedText } from "../hooks/useTruncatedText";
@@ -8,6 +8,7 @@ import { cn } from "../lib/utils";
 import type { Theme } from "../stores/ui-store";
 import type { TerminalTarget } from "../types/terminal";
 import { isOrchestratorSession, type WorkspaceSession } from "../types/workspace";
+import { ShellTerminalTab } from "./ShellTerminalTab";
 import { TerminalPane } from "./TerminalPane";
 
 type CenterPaneProps = {
@@ -21,7 +22,8 @@ type CenterPaneProps = {
 	onSelectSessionTerminal?: () => void;
 	onSelectShellTerminal?: (handleId: string) => void;
 	onCloseShellTerminal?: (handleId: string) => void;
-	/** Opens a new standalone shell tab (Superset-style "+" at the end of the tab bar). */
+	onRenameShellTerminal?: (handleId: string, title: string) => void;
+	/** Opens a new shell tab in this session's worktree (the button at the end of the tab bar). */
 	onNewShellTerminal?: () => void;
 };
 
@@ -51,6 +53,7 @@ export function CenterPane({
 	onSelectSessionTerminal,
 	onSelectShellTerminal,
 	onCloseShellTerminal,
+	onRenameShellTerminal,
 	onNewShellTerminal,
 }: CenterPaneProps) {
 	const paneRef = useRef<HTMLDivElement | null>(null);
@@ -58,7 +61,7 @@ export function CenterPane({
 	const lastWheelZoomAtRef = useRef(0);
 	const [fontSize, setFontSize] = useState(initialTerminalFontSize);
 	const [isFullscreen, setIsFullscreen] = useState(false);
-	const tabOverflowWatch = `session|${shellTerminals.map((t) => t.handleId).join("|")}`;
+	const tabOverflowWatch = `${session?.id ?? ""}|${shellTerminals.map((terminal) => terminal.handleId).join("|")}`;
 	const tabsOverflow = useOverflowScroll<HTMLDivElement>(tabOverflowWatch);
 	const target = terminalTarget ?? { kind: "worker" };
 
@@ -136,25 +139,27 @@ export function CenterPane({
 					>
 						<ChevronLeft aria-hidden="true" className="size-icon-md" />
 					</button>
-					{/* The session's own pane is always the first tab; standalone shells
-					    follow it in the order they were opened. With no shells open this
-					    renders as the plain session label it has always been. Tabs shrink
-					    and truncate like browser tabs down to a minimum width; beyond
-					    that the strip scrolls and edge chevrons reveal the overflow. */}
+					{/* The session's own pane plus the shells opened from this strip; the
+					    terminal button at the end adds a shell in the session's worktree. */}
 					<div
 						ref={tabsOverflow.ref}
 						className="scrollbar-none flex min-w-flex-min flex-1 items-center gap-3 overflow-x-auto"
 					>
-						<SessionPaneTab
-							isActive={target.kind !== "shell"}
-							label={!session ? "No session" : isOrchestratorSession(session) ? "Orchestrator" : session.title}
-							onSelect={onSelectSessionTerminal}
-						/>
+						{session ? (
+							<SessionPaneTab
+								isActive={target.kind !== "shell"}
+								label={isOrchestratorSession(session) ? "Orchestrator" : session.title}
+								onSelect={onSelectSessionTerminal}
+							/>
+						) : (
+							<SessionPaneTab isActive={target.kind !== "shell"} label="No session" />
+						)}
 						{shellTerminals.map((shell) => (
 							<ShellTerminalTab
 								key={shell.handleId}
 								isActive={target.kind === "shell" && target.handleId === shell.handleId}
 								onClose={() => onCloseShellTerminal?.(shell.handleId)}
+								onRename={onRenameShellTerminal ? (title) => onRenameShellTerminal(shell.handleId, title) : undefined}
 								onSelect={() => onSelectShellTerminal?.(shell.handleId)}
 								shell={shell}
 							/>
@@ -173,19 +178,15 @@ export function CenterPane({
 					>
 						<ChevronRight aria-hidden="true" className="size-icon-md" />
 					</button>
-					{/* New shell tab at the end of the strip — the same action Ctrl+Shift+`
-					    fires, routed through the store so the two cannot drift. */}
-					{onNewShellTerminal && (
-						<button
-							aria-label="New terminal"
-							className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
-							onClick={onNewShellTerminal}
-							title="New terminal (Ctrl+Shift+`)"
-							type="button"
-						>
-							<Plus aria-hidden="true" className="size-icon-md" />
-						</button>
-					)}
+					<button
+						aria-label="New terminal"
+						className="inline-flex h-control-sm shrink-0 items-center gap-px rounded-sm px-1 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+						onClick={onNewShellTerminal}
+						title="New terminal"
+						type="button"
+					>
+						<TerminalIcon aria-hidden="true" className="size-icon-md" />
+					</button>
 				</div>
 			</div>
 			{target.kind === "reviewer" ? (
@@ -264,18 +265,19 @@ type SessionPaneTabProps = {
 	label: string;
 	isActive: boolean;
 	onSelect?: () => void;
+	onClose?: () => void;
 };
 
 // Shared tab chrome: the open tab is highlighted with the same rounded
 // background as the inspector rail tabs (Summary · Reviews · Browser), and
 // the full label only becomes the hover tooltip when the tab strip is
 // crowded enough to truncate it.
-function SessionPaneTab({ label, isActive, onSelect }: SessionPaneTabProps) {
+function SessionPaneTab({ label, isActive, onSelect, onClose }: SessionPaneTabProps) {
 	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(label);
 	return (
 		<span
 			className={cn(
-				"inline-flex min-w-shell-tab-min items-center rounded-md px-2 py-1 transition-colors",
+				"group inline-flex min-w-shell-tab-min items-center gap-1 rounded-md px-2 py-1 transition-colors",
 				isActive ? "bg-interactive-active" : "hover:bg-interactive-hover/60",
 			)}
 		>
@@ -292,52 +294,19 @@ function SessionPaneTab({ label, isActive, onSelect }: SessionPaneTabProps) {
 			>
 				{label}
 			</button>
-		</span>
-	);
-}
-
-type ShellTerminalTabProps = {
-	shell: ShellTerminal;
-	isActive: boolean;
-	onSelect: () => void;
-	onClose: () => void;
-};
-
-// The close control is a sibling button, not nested inside the tab button —
-// nesting interactive elements is invalid HTML and breaks keyboard traversal.
-// It stays hidden until the tab is hovered or focused (group-focus-within
-// keeps it reachable from the keyboard).
-function ShellTerminalTab({ shell, isActive, onSelect, onClose }: ShellTerminalTabProps) {
-	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(shell.title);
-	return (
-		<span
-			className={cn(
-				"group inline-flex min-w-shell-tab-min items-center gap-1 rounded-md px-2 py-1 transition-colors",
-				isActive ? "bg-interactive-active" : "hover:bg-interactive-hover/60",
-			)}
-		>
-			<button
-				ref={ref}
-				aria-current={isActive}
-				className={cn(
-					"min-w-flex-min max-w-shell-tab-max truncate font-mono text-control font-semibold transition-colors",
-					isActive ? "text-foreground" : "text-passive hover:text-foreground",
-				)}
-				onClick={onSelect}
-				title={isTruncated ? shell.title : shell.workingDir}
-				type="button"
-			>
-				{shell.title}
-			</button>
-			<button
-				aria-label={`Close terminal ${shell.title}`}
-				className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-passive opacity-0 transition-[background,color,opacity] group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
-				onClick={onClose}
-				title="Close terminal"
-				type="button"
-			>
-				<X aria-hidden="true" className="size-icon-sm" />
-			</button>
+			{onClose ? (
+				<button
+					aria-label={`Close session tab ${label}`}
+					className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-passive opacity-0 transition-[background,color,opacity] group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+					onClick={(event) => {
+						event.stopPropagation();
+						onClose();
+					}}
+					type="button"
+				>
+					<X aria-hidden="true" className="size-icon-sm" />
+				</button>
+			) : null}
 		</span>
 	);
 }

@@ -36,6 +36,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 
 	_ "modernc.org/sqlite" // register sqlite driver for opencode session metadata probes
 )
@@ -165,8 +166,9 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	return info, ok, nil
 }
 
-// AuthStatus checks whether opencode has at least one configured provider
-// credential.
+// AuthStatus checks whether opencode has a configured provider credential.
+// Missing credentials remain unknown because opencode can still run its public
+// free models without a provider login.
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
 	binary, err := p.opencodeBinary(ctx)
 	if err != nil {
@@ -180,13 +182,13 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	out, err := exec.CommandContext(probeCtx, binary, "auth", "list").CombinedOutput()
+	out, err := aoprocess.CommandContext(probeCtx, binary, "auth", "list").CombinedOutput()
 	if probeCtx.Err() != nil {
 		return ports.AgentAuthStatusUnknown, probeCtx.Err()
 	}
 	text := strings.ToLower(string(out))
 	if strings.Contains(text, "0 credentials") {
-		return ports.AgentAuthStatusUnauthorized, nil
+		return ports.AgentAuthStatusUnknown, nil
 	}
 	if strings.Contains(text, "credential") && err == nil {
 		return ports.AgentAuthStatusAuthorized, nil
@@ -264,7 +266,7 @@ func opencodeAuthJSONStatus(path string) (ports.AgentAuthStatus, bool, error) {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
 	if strings.TrimSpace(string(data)) == "" {
-		return ports.AgentAuthStatusUnauthorized, true, nil
+		return ports.AgentAuthStatusUnknown, true, nil
 	}
 
 	var entries map[string]json.RawMessage
@@ -272,7 +274,7 @@ func opencodeAuthJSONStatus(path string) (ports.AgentAuthStatus, bool, error) {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
 	if len(entries) == 0 {
-		return ports.AgentAuthStatusUnauthorized, true, nil
+		return ports.AgentAuthStatusUnknown, true, nil
 	}
 	for key, value := range entries {
 		if strings.TrimSpace(key) == "" {
@@ -283,7 +285,7 @@ func opencodeAuthJSONStatus(path string) (ports.AgentAuthStatus, bool, error) {
 			return ports.AgentAuthStatusAuthorized, true, nil
 		}
 	}
-	return ports.AgentAuthStatusUnauthorized, true, nil
+	return ports.AgentAuthStatusUnknown, true, nil
 }
 
 func opencodeDBAuthStatus(ctx context.Context, path string) (ports.AgentAuthStatus, bool, error) {
@@ -314,7 +316,7 @@ func opencodeDBAuthStatus(ctx context.Context, path string) (ports.AgentAuthStat
 	if authorized {
 		return ports.AgentAuthStatusAuthorized, true, nil
 	}
-	return ports.AgentAuthStatusUnauthorized, true, nil
+	return ports.AgentAuthStatusUnknown, true, nil
 }
 
 func opencodeDBHasAuthorizedAccount(ctx context.Context, db *sql.DB) (authorized, known bool, err error) {

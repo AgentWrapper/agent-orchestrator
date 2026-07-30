@@ -12,6 +12,8 @@ export type ShellTerminal = {
 	/** Runtime handle the terminal mux attaches to, exactly like a session pane's. */
 	handleId: string;
 	projectId?: string;
+	/** Agent session this shell is scoped to; absent for standalone shells. */
+	sessionId?: string;
 	workingDir: string;
 	title: string;
 	createdAt: string;
@@ -24,6 +26,7 @@ function toShellTerminal(t: components["schemas"]["ShellTerminalResponse"]): She
 	return {
 		handleId: t.handleId,
 		projectId: t.projectId,
+		sessionId: t.sessionId,
 		workingDir: t.workingDir,
 		title: t.title,
 		createdAt: t.createdAt,
@@ -62,16 +65,23 @@ export function useShellTerminals() {
 	return useQuery(shellTerminalsQueryOptions);
 }
 
-/** Opens a shell in the given project's root, or the daemon data dir when omitted. */
+export type OpenShellTerminalInput = { projectId?: string; sessionId?: string };
+
+/**
+ * Opens a shell in the given project's root (or the daemon data dir when
+ * omitted). When sessionId is set the shell is scoped to that session and only
+ * appears in its tab strip; otherwise it is a standalone shell on /terminals.
+ */
 export function useOpenShellTerminal() {
 	const queryClient = useQueryClient();
 	return useMutation({
-		mutationFn: async (projectId?: string): Promise<ShellTerminal> => {
+		mutationFn: async ({ projectId, sessionId }: OpenShellTerminalInput = {}): Promise<ShellTerminal> => {
 			if (usePreviewData) {
 				previewShellSeq += 1;
 				const shell: ShellTerminal = {
 					handleId: `shellterm-preview-${previewShellSeq}`,
 					projectId,
+					sessionId,
 					workingDir: `/Users/demo/Projects/${projectId ?? "ao"}`,
 					title: projectId ?? "shell",
 					createdAt: new Date().toISOString(),
@@ -79,9 +89,10 @@ export function useOpenShellTerminal() {
 				previewShellTerminals = [...previewShellTerminals, shell];
 				return shell;
 			}
-			const { data, error } = await apiClient.POST("/api/v1/shell-terminals", {
-				body: projectId ? { projectId } : {},
-			});
+			const body: OpenShellTerminalInput = {};
+			if (projectId) body.projectId = projectId;
+			if (sessionId) body.sessionId = sessionId;
+			const { data, error } = await apiClient.POST("/api/v1/shell-terminals", { body });
 			if (error) throw error;
 			if (!data) throw new Error("Daemon returned no shell terminal");
 			return toShellTerminal(data.shellTerminal);
@@ -109,6 +120,33 @@ export function useCloseShellTerminal() {
 		// Settled, not success: a close that 404s means the daemon already lost
 		// the shell, and the stale tab still needs to disappear.
 		onSettled: () => {
+			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
+		},
+	});
+}
+
+export type RenameShellTerminalInput = { handleId: string; title: string };
+
+/** Renames a shell terminal's tab. The new title persists on the daemon. */
+export function useRenameShellTerminal() {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: async ({ handleId, title }: RenameShellTerminalInput): Promise<ShellTerminal> => {
+			if (usePreviewData) {
+				previewShellTerminals = previewShellTerminals.map((s) => (s.handleId === handleId ? { ...s, title } : s));
+				const shell = previewShellTerminals.find((s) => s.handleId === handleId);
+				if (!shell) throw new Error("No such shell terminal");
+				return shell;
+			}
+			const { data, error } = await apiClient.PATCH("/api/v1/shell-terminals/{handleId}", {
+				params: { path: { handleId } },
+				body: { title },
+			});
+			if (error) throw error;
+			if (!data) throw new Error("Daemon returned no shell terminal");
+			return toShellTerminal(data.shellTerminal);
+		},
+		onSuccess: () => {
 			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
 		},
 	});

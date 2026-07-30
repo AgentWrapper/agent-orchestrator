@@ -33,6 +33,18 @@ type Notification struct {
 	CreatedAt time.Time
 }
 
+type OrchestratorReengagement struct {
+	SessionID            string
+	AttemptCount         int64
+	NextAttemptAt        time.Time
+	LastAttemptAt        sql.NullTime
+	ProgressSinceAttempt bool
+	AttentionNotified    bool
+	State                string
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+}
+
 type PR struct {
 	URL                      string
 	SessionID                domain.SessionID
@@ -73,6 +85,7 @@ type PR struct {
 	CIObservedAt             sql.NullTime
 	ReviewObservedAt         sql.NullTime
 	LastNudgeSignature       string
+	StateChangedAt           sql.NullTime
 }
 
 type PRCheck struct {
@@ -162,27 +175,30 @@ type ReviewRun struct {
 }
 
 type Session struct {
-	ID                domain.SessionID
-	ProjectID         domain.ProjectID
-	Num               int64
-	IssueID           domain.IssueID
-	Kind              domain.SessionKind
-	Harness           domain.AgentHarness
-	ActivityState     domain.ActivityState
-	ActivityLastAt    time.Time
-	IsTerminated      bool
-	Branch            string
-	WorkspacePath     string
-	RuntimeHandleID   string
-	AgentSessionID    string
-	Prompt            string
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
-	DisplayName       string
-	FirstSignalAt     sql.NullTime
-	PreviewURL        string
-	PreviewRevision   int64
-	CleanupGeneration int64
+	ID                 domain.SessionID
+	ProjectID          domain.ProjectID
+	Num                int64
+	IssueID            domain.IssueID
+	Kind               domain.SessionKind
+	Harness            domain.AgentHarness
+	ActivityState      domain.ActivityState
+	ActivityLastAt     time.Time
+	IsTerminated       bool
+	Branch             string
+	WorkspacePath      string
+	RuntimeHandleID    string
+	AgentSessionID     string
+	Prompt             string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	DisplayName        string
+	FirstSignalAt      sql.NullTime
+	PreviewURL         string
+	PreviewRevision    int64
+	CleanupGeneration  int64
+	RuntimeLaunchID    string
+	WorkspaceRepoPath  string
+	TerminateOnPRMerge bool
 }
 
 type SessionCleanupFact struct {
@@ -213,6 +229,7 @@ type ShellTerminal struct {
 	Title      string
 	AppRunID   string
 	CreatedAt  time.Time
+	SessionID  sql.NullString
 }
 
 type TelemetryEvent struct {
@@ -225,16 +242,6 @@ type TelemetryEvent struct {
 	SessionID   sql.NullString
 	RequestID   string
 	PayloadJson string
-}
-
-type WorkerIdleEvent struct {
-	ID            string
-	ProjectID     domain.ProjectID
-	WorkerID      domain.SessionID
-	TransitionAt  time.Time
-	DeliveryState string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
 }
 
 type WorkspaceRepo struct {

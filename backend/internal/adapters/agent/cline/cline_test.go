@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -263,7 +264,7 @@ func TestGetAgentHooksInstallsClineHooks(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if info.Mode().Perm()&0o100 == 0 {
+		if runtime.GOOS != "windows" && info.Mode().Perm()&0o100 == 0 {
 			t.Fatalf("%s is not executable: %v", spec.Event, info.Mode())
 		}
 	}

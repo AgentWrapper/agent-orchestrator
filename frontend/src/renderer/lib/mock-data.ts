@@ -66,10 +66,9 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				workspaceId: "ao-demo",
 				workspaceName: "ao-demo",
 				title: "Build screenshot-ready dashboard data",
-				provider: "codex",
+				provider: "cursor",
 				branch: "demo/dashboard-screenshot",
 				status: "working",
-				displayStatus: "working",
 				createdAt: hoursAgo(3),
 				updatedAt: minutesAgo(2),
 				activity: { state: "active", lastActivityAt: minutesAgo(2) },
@@ -89,7 +88,6 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				provider: "claude-code",
 				branch: "demo/terminal-polish",
 				status: "changes_requested",
-				displayStatus: "needs_you",
 				createdAt: hoursAgo(5),
 				updatedAt: minutesAgo(18),
 				activity: { state: "waiting_input", lastActivityAt: minutesAgo(18) },
@@ -106,10 +104,9 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				workspaceId: "ao-demo",
 				workspaceName: "ao-demo",
 				title: "Review stacked browser preview flow",
-				provider: "codex",
+				provider: "copilot",
 				branch: "demo/browser-preview-stack",
 				status: "review_pending",
-				displayStatus: "needs_you",
 				createdAt: hoursAgo(7),
 				updatedAt: minutesAgo(7),
 				activity: { state: "idle", lastActivityAt: minutesAgo(7) },
@@ -136,7 +133,6 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				provider: "opencode",
 				branch: "demo/project-settings-copy",
 				status: "review_pending",
-				displayStatus: "unknown",
 				createdAt: hoursAgo(4),
 				updatedAt: minutesAgo(31),
 				activity: { state: "idle", lastActivityAt: minutesAgo(31) },
@@ -148,10 +144,9 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				workspaceId: "ao-demo",
 				workspaceName: "ao-demo",
 				title: "Merge README screenshot asset update",
-				provider: "codex",
+				provider: "aider",
 				branch: "demo/readme-assets",
 				status: "mergeable",
-				displayStatus: "mergeable",
 				createdAt: hoursAgo(9),
 				updatedAt: minutesAgo(5),
 				activity: { state: "idle", lastActivityAt: minutesAgo(5) },
@@ -167,10 +162,9 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				workspaceId: "ao-demo",
 				workspaceName: "ao-demo",
 				title: "Fix flaky NewTaskDialog smoke test",
-				provider: "codex",
+				provider: "grok",
 				branch: "demo/new-task-flake",
 				status: "ci_failed",
-				displayStatus: "needs_you",
 				createdAt: hoursAgo(8),
 				updatedAt: minutesAgo(46),
 				activity: { state: "idle", lastActivityAt: minutesAgo(46) },
@@ -266,6 +260,8 @@ const prSummary = (sessionId: string, number: number, overrides: Partial<Session
 			prUrl: url,
 			conflictFiles: [],
 		},
+		createdAt: facts?.updatedAt ?? now,
+		stateChangedAt: facts?.updatedAt ?? now,
 		updatedAt: facts?.updatedAt ?? now,
 		observedAt: facts?.updatedAt ?? now,
 		ciObservedAt: facts?.updatedAt ?? now,
@@ -275,6 +271,33 @@ const prSummary = (sessionId: string, number: number, overrides: Partial<Session
 };
 
 export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
+	"demo-review-stack": [
+		prSummary("demo-review-stack", 321, {
+			createdAt: hoursAgo(2),
+			stateChangedAt: hoursAgo(2),
+		}),
+		prSummary("demo-review-stack", 319, {
+			createdAt: hoursAgo(6),
+			stateChangedAt: hoursAgo(5),
+		}),
+		prSummary("demo-review-stack", 320, {
+			createdAt: hoursAgo(4),
+			stateChangedAt: hoursAgo(3),
+		}),
+		prSummary("demo-review-stack", 317, {
+			url: "https://github.com/acme-inc/ao-demo/pull/317",
+			htmlUrl: "https://github.com/acme-inc/ao-demo/pull/317",
+			state: "merged",
+			createdAt: hoursAgo(7),
+			stateChangedAt: hoursAgo(1),
+			mergeability: {
+				state: "mergeable",
+				reasons: [],
+				prUrl: "https://github.com/acme-inc/ao-demo/pull/317",
+				conflictFiles: [],
+			},
+		}),
+	],
 	"fix-auth-timeouts": [
 		prSummary("fix-auth-timeouts", 184, {
 			changedFiles: 5,
@@ -356,8 +379,25 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 			additions: 128,
 			deletions: 31,
 			review: {
-				decision: "review_required",
+				decision: "approved",
 				hasUnresolvedHumanComments: false,
+				reviews: [
+					{
+						reviewerId: "prateek",
+						verdict: "approved",
+						submittedAt: minutesAgo(41),
+						reviewUrl: "https://github.com/me/webgl-preview/pull/52#pullrequestreview-2001",
+						body: "Pan clamping reads cleanly now and the easing feels right. Good to go.",
+					},
+					{
+						reviewerId: "codex",
+						isBot: true,
+						verdict: "approved",
+						submittedAt: minutesAgo(38),
+						reviewUrl: "https://github.com/me/webgl-preview/pull/52#pullrequestreview-2002",
+						body: "No issues found across the changed camera math.",
+					},
+				],
 				unresolvedBy: [],
 			},
 		}),
@@ -370,6 +410,23 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 			review: {
 				decision: "changes_requested",
 				hasUnresolvedHumanComments: true,
+				reviews: [
+					{
+						reviewerId: "maya",
+						verdict: "changes_requested",
+						submittedAt: minutesAgo(24),
+						reviewUrl: "https://github.com/me/webgl-preview/pull/56#pullrequestreview-1001",
+						body: "Pointer lock leaks its pointermove listener when the canvas unmounts — tear it down in the effect cleanup.",
+					},
+					{
+						reviewerId: "copilot",
+						isBot: true,
+						verdict: "none",
+						submittedAt: minutesAgo(19),
+						reviewUrl: "https://github.com/me/webgl-preview/pull/56#pullrequestreview-1002",
+						body: "Consider guarding requestPointerLock behind a user-gesture check to avoid the console warning.",
+					},
+				],
 				unresolvedBy: [
 					{
 						reviewerId: "maya",

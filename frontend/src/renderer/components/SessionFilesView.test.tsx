@@ -273,6 +273,20 @@ describe("SessionFilesView", () => {
 		expect(row).not.toHaveClass("border");
 		expect(row).not.toHaveClass("bg-surface");
 		expect(row).not.toHaveClass("shadow-sm");
+		expect(activeRowButton.parentElement).toHaveClass("min-h-10");
+		expect(activeRowButton).toHaveClass("gap-2", "px-3", "py-1.5");
+		expect(screen.getByLabelText("Session files").querySelector("header")).toHaveClass("h-11", "px-1.5");
+	});
+
+	it("uses the full session panel width while maximized", async () => {
+		const { unmount } = renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		const railList = await screen.findByRole("list");
+		expect(railList.parentElement).toHaveClass("max-w-[1200px]");
+		unmount();
+
+		renderWithQuery(<SessionFilesView isMaximized onClose={vi.fn()} sessionId="sess-1" />);
+		const maximizedList = await screen.findByRole("list");
+		expect(maximizedList.parentElement).not.toHaveClass("max-w-[1200px]");
 	});
 
 	it("lets the caller toggle between rail and maximized layouts", async () => {

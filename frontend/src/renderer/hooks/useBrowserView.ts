@@ -1,9 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { BrowserNavState, BrowserRect } from "../../main/browser-view-host";
+import type {
+	BrowserAgentActivityState,
+	BrowserNavState,
+	BrowserRect,
+	BrowserTabState,
+	BrowserTabsState,
+} from "../../main/browser-view-host";
 import type { BrowserAnnotationCancelPayload, BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
 import { OPEN_DIALOG_OR_MENU_SELECTOR } from "../lib/dom-selectors";
 
 export type { BrowserNavState };
+
+export type BrowserVisualTransition = {
+	kind: "tab-switch" | "popout";
+	snapshotUrl: string;
+};
 
 type UseBrowserViewOptions = {
 	sessionId: string;
@@ -40,6 +51,15 @@ export type BrowserViewModel = {
 	goForward: () => Promise<void>;
 	reload: () => Promise<void>;
 	stop: () => Promise<void>;
+	tabs: BrowserTabState[];
+	activeTabId: string;
+	tabNotice: string;
+	selectTab: (tabId: string) => Promise<void>;
+	closeTab: (tabId: string) => Promise<void>;
+	prepareForOverlay: () => Promise<void>;
+	agentBrowserActive: boolean;
+	agentBrowserActivity: BrowserAgentActivityState | null;
+	visualTransition: BrowserVisualTransition | null;
 	destroy: () => void;
 	annotationMode: boolean;
 	setAnnotationMode: (enabled: boolean) => Promise<void>;
@@ -54,7 +74,15 @@ const EMPTY_NAV_STATE: BrowserNavState = {
 	isLoading: false,
 };
 
+const EMPTY_TABS_STATE: BrowserTabsState = {
+	viewId: "",
+	activeTabId: "",
+	tabs: [],
+};
+
 const HIDDEN_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 };
+const VISUAL_TRANSITION_DURATION_MS = 240;
+const VISUAL_TRANSITION_CAPTURE_TIMEOUT_MS = 120;
 
 // The native WebContentsView is a window-level overlay, so DOM `overflow:
 // hidden` never clips it — it paints wherever the slot's bounding box lands.
@@ -104,10 +132,16 @@ export function useBrowserView({
 	const [mirrorUrl, setMirrorUrl] = useState("");
 	const [mirrorStream, setMirrorStream] = useState<MediaStream | null>(null);
 	const [annotationMode, setAnnotationModeState] = useState(false);
+	const [tabsState, setTabsState] = useState<BrowserTabsState>(EMPTY_TABS_STATE);
+	const [tabNotice, setTabNotice] = useState("");
+	const [agentBrowserActive, setAgentBrowserActive] = useState(false);
+	const [agentBrowserActivity, setAgentBrowserActivity] = useState<BrowserAgentActivityState | null>(null);
+	const [visualTransition, setVisualTransition] = useState<BrowserVisualTransition | null>(null);
 	const slotNodeRef = useRef<HTMLDivElement | null>(null);
 	const viewIdRef = useRef("");
 	const annotationModeRef = useRef(false);
 	const activeRef = useRef(active);
+	const poppedOutRef = useRef(poppedOut);
 	const frameRef = useRef<number | null>(null);
 	const settleTimerRef = useRef<number | null>(null);
 	const observerRef = useRef<ResizeObserver | null>(null);
@@ -116,6 +150,8 @@ export function useBrowserView({
 	const modalOpenRef = useRef(false);
 	const mirrorTokenRef = useRef(0);
 	const mirrorTimerRef = useRef<number | null>(null);
+	const tabNoticeTimerRef = useRef<number | null>(null);
+	const visualTransitionTimerRef = useRef<number | null>(null);
 	const mirrorStreamRef = useRef<MediaStream | null>(null);
 	const hasNativeBrowser = Boolean(window.ao?.browser);
 
@@ -135,6 +171,45 @@ export function useBrowserView({
 		if (!id) return;
 		window.ao?.browser.setBounds({ viewId: id, rect: HIDDEN_RECT, visible: false });
 	}, []);
+
+	const clearVisualTransitionTimer = useCallback(() => {
+		if (visualTransitionTimerRef.current === null) return;
+		window.clearTimeout(visualTransitionTimerRef.current);
+		visualTransitionTimerRef.current = null;
+	}, []);
+
+	const clearMirrorTimer = useCallback(() => {
+		if (mirrorTimerRef.current === null) return;
+		window.clearTimeout(mirrorTimerRef.current);
+		mirrorTimerRef.current = null;
+	}, []);
+
+	const showVisualTransition = useCallback(
+		async (kind: BrowserVisualTransition["kind"], timeoutCapture = true) => {
+			const id = viewIdRef.current;
+			if (!id || !hasNativeBrowser || !hasUrlRef.current) return;
+			const capture = window.ao?.browser.capture?.(id).catch(() => "");
+			if (!capture) return;
+			let timeoutId: number | null = null;
+			const snapshotUrl = timeoutCapture
+				? await Promise.race([
+						capture,
+						new Promise<string>((resolve) => {
+							timeoutId = window.setTimeout(() => resolve(""), VISUAL_TRANSITION_CAPTURE_TIMEOUT_MS);
+						}),
+					])
+				: await capture;
+			if (timeoutId !== null) window.clearTimeout(timeoutId);
+			if (!snapshotUrl || viewIdRef.current !== id) return;
+			clearVisualTransitionTimer();
+			setVisualTransition({ kind, snapshotUrl });
+			visualTransitionTimerRef.current = window.setTimeout(() => {
+				visualTransitionTimerRef.current = null;
+				setVisualTransition(null);
+			}, VISUAL_TRANSITION_DURATION_MS);
+		},
+		[clearVisualTransitionTimer, hasNativeBrowser],
+	);
 
 	const measureAndSend = useCallback(() => {
 		// measureAndSend runs both from the scheduleMeasure() rAF callback and as a
@@ -228,6 +303,20 @@ export function useBrowserView({
 
 	useEffect(() => {
 		let disposed = false;
+		// Preview revisions are scoped to a session. Reset the trigger before
+		// ensuring a different worker so equal revision numbers cannot suppress
+		// that worker's own target.
+		previewTriggerRef.current = null;
+		setTabsState(EMPTY_TABS_STATE);
+		setTabNotice("");
+		setAgentBrowserActive(false);
+		setAgentBrowserActivity(null);
+		setVisualTransition(null);
+		clearVisualTransitionTimer();
+		if (tabNoticeTimerRef.current !== null) {
+			window.clearTimeout(tabNoticeTimerRef.current);
+			tabNoticeTimerRef.current = null;
+		}
 		if (!hasNativeBrowser) {
 			const state = {
 				...EMPTY_NAV_STATE,
@@ -248,6 +337,12 @@ export function useBrowserView({
 			viewIdRef.current = state.viewId;
 			setViewId(state.viewId);
 			setNavState(state);
+			void window.ao?.browser
+				.getTabs(state.viewId)
+				.then((tabs) => {
+					if (!disposed && viewIdRef.current === tabs.viewId) setTabsState(tabs);
+				})
+				.catch(() => undefined);
 			scheduleSettleMeasure();
 		});
 		return () => {
@@ -262,7 +357,7 @@ export function useBrowserView({
 			}
 			viewIdRef.current = "";
 		};
-	}, [hasNativeBrowser, scheduleSettleMeasure, sendHiddenBounds, sessionId]);
+	}, [clearVisualTransitionTimer, hasNativeBrowser, scheduleSettleMeasure, sendHiddenBounds, sessionId]);
 
 	useEffect(() => {
 		return window.ao?.browser.onNavState((state) => {
@@ -272,6 +367,36 @@ export function useBrowserView({
 	}, []);
 
 	useEffect(() => {
+		return window.ao?.browser.onTabsState((state) => {
+			if (state.viewId !== viewIdRef.current) return;
+			setTabsState(state);
+			if (state.change?.kind !== "popup") return;
+			setTabNotice("Opened new tab");
+			if (tabNoticeTimerRef.current !== null) window.clearTimeout(tabNoticeTimerRef.current);
+			tabNoticeTimerRef.current = window.setTimeout(() => {
+				tabNoticeTimerRef.current = null;
+				setTabNotice("");
+			}, 3_000);
+		});
+	}, []);
+
+	useEffect(() => {
+		return window.ao?.browser.onAgentActivity((state) => {
+			if (state.viewId !== viewIdRef.current) return;
+			setAgentBrowserActive(state.active);
+			setAgentBrowserActivity(state);
+		});
+	}, []);
+
+	useEffect(
+		() => () => {
+			if (tabNoticeTimerRef.current !== null) window.clearTimeout(tabNoticeTimerRef.current);
+			clearVisualTransitionTimer();
+		},
+		[clearVisualTransitionTimer],
+	);
+
+	useEffect(() => {
 		if (navState.url && active) {
 			scheduleSettleMeasure();
 		} else {
@@ -279,14 +404,36 @@ export function useBrowserView({
 		}
 	}, [active, navState.url, poppedOut, scheduleSettleMeasure, sendHiddenBounds]);
 
+	useEffect(() => {
+		if (poppedOutRef.current === poppedOut) return;
+		poppedOutRef.current = poppedOut;
+		if (!hasNativeBrowser || !activeRef.current || !hasUrlRef.current) {
+			scheduleSettleMeasure();
+			return;
+		}
+		measureAndSend();
+		window.setTimeout(() => {
+			measureAndSend();
+		}, 0);
+		scheduleSettleMeasure();
+	}, [hasNativeBrowser, measureAndSend, poppedOut, scheduleSettleMeasure]);
+
 	const stopMirrorStream = useCallback(() => {
 		mirrorStreamRef.current?.getTracks().forEach((track) => track.stop());
 		mirrorStreamRef.current = null;
 		setMirrorStream(null);
 	}, []);
 
+	const prepareForOverlay = useCallback(async () => {
+		const id = viewIdRef.current;
+		if (!id || !hasNativeBrowser || !activeRef.current || !hasUrlRef.current) return;
+		clearMirrorTimer();
+		const frame = await (window.ao?.browser.capture?.(id) ?? Promise.resolve("")).catch(() => "");
+		if (frame && viewIdRef.current === id) setMirrorUrl(frame);
+	}, [clearMirrorTimer, hasNativeBrowser]);
+
 	const runMirror = useCallback(
-		(id: string) => {
+		(id: string, liveFrames = true) => {
 			const token = ++mirrorTokenRef.current;
 			const live = () => mirrorTokenRef.current === token && modalOpenRef.current && viewIdRef.current === id;
 			const streamMirror = async (): Promise<boolean> => {
@@ -309,13 +456,14 @@ export function useBrowserView({
 					const frame = await pending.catch(() => "");
 					if (!live()) return;
 					if (frame) setMirrorUrl(frame);
+					if (!liveFrames) return;
 					await new Promise((resolve) => {
 						window.setTimeout(resolve, 66);
 					});
 				}
 			};
 			const tick = async () => {
-				const streamed = await streamMirror().catch(() => false);
+				const streamed = liveFrames ? await streamMirror().catch(() => false) : false;
 				if (streamed || !live()) return;
 				await frameMirror();
 			};
@@ -326,20 +474,16 @@ export function useBrowserView({
 
 	useEffect(() => {
 		if (!hasNativeBrowser) return;
-		const clearMirrorTimer = () => {
-			if (mirrorTimerRef.current === null) return;
-			window.clearTimeout(mirrorTimerRef.current);
-			mirrorTimerRef.current = null;
-		};
 		const update = () => {
-			const open = document.querySelector(OPEN_DIALOG_OR_MENU_SELECTOR) !== null;
+			const openOverlay = document.querySelector(OPEN_DIALOG_OR_MENU_SELECTOR);
+			const open = openOverlay !== null;
 			if (open === modalOpenRef.current) return;
 			modalOpenRef.current = open;
 			if (open) {
 				clearMirrorTimer();
 				const id = viewIdRef.current;
 				if (id && activeRef.current && hasUrlRef.current) {
-					runMirror(id);
+					runMirror(id, openOverlay?.getAttribute("role") !== "menu");
 					// Park the native view synchronously, in the same tick the overlay
 					// opened. `modalOpenRef` is already true, so measureAndSend() emits
 					// the `parked: true` bounds now instead of a frame later — deferring
@@ -383,7 +527,7 @@ export function useBrowserView({
 			mirrorTokenRef.current += 1;
 			stopMirrorStream();
 		};
-	}, [hasNativeBrowser, measureAndSend, runMirror, scheduleSettleMeasure, sendHiddenBounds, stopMirrorStream]);
+	}, [clearMirrorTimer, hasNativeBrowser, measureAndSend, runMirror, scheduleSettleMeasure, sendHiddenBounds, stopMirrorStream]);
 
 	useEffect(() => {
 		const handle = () => scheduleMeasure();
@@ -423,6 +567,27 @@ export function useBrowserView({
 			}
 			await window.ao!.browser.setAnnotationMode({ viewId: id, enabled });
 			setAnnotationModeState(enabled);
+		},
+		[hasNativeBrowser],
+	);
+
+	const selectTab = useCallback(
+		async (tabId: string) => {
+			const viewId = viewIdRef.current;
+			if (!viewId || !hasNativeBrowser) return;
+			await showVisualTransition("tab-switch");
+			const state = await window.ao!.browser.selectTab({ viewId, tabId });
+			if (viewIdRef.current === state.viewId) setTabsState(state);
+		},
+		[hasNativeBrowser, showVisualTransition],
+	);
+
+	const closeTab = useCallback(
+		async (tabId: string) => {
+			const viewId = viewIdRef.current;
+			if (!viewId || !hasNativeBrowser) return;
+			const state = await window.ao!.browser.closeTab({ viewId, tabId });
+			if (viewIdRef.current === state.viewId) setTabsState(state);
 		},
 		[hasNativeBrowser],
 	);
@@ -470,18 +635,14 @@ export function useBrowserView({
 		return withView((id) => window.ao!.browser.clear(id));
 	}, [hasNativeBrowser, withView]);
 
-	// When the session is terminated, clear the view and stop reacting to
-	// daemon-driven preview changes so stale content does not remain visible.
-	useEffect(() => {
-		if (!terminated) return;
-		void clear();
-	}, [clear, terminated]);
-
 	// Drive the view from the daemon-set preview target. Current daemons key
 	// this on previewRevision (bumped on every `ao preview` call); older daemons
 	// did not send it, so fall back to URL changes for compatibility.
 	useEffect(() => {
-		if (!viewId || terminated) return;
+		// During a session switch React still renders once with the prior
+		// viewId state, while the cleanup has already cleared viewIdRef. Do not
+		// consume the new session's preview revision against that stale view.
+		if (!viewId || viewIdRef.current !== viewId || terminated) return;
 		const target = previewUrl?.trim() ?? "";
 		const revision = typeof previewRevision === "number" ? previewRevision : null;
 		const previous = previewTriggerRef.current;
@@ -493,7 +654,7 @@ export function useBrowserView({
 		} else if ((revision !== null && revision > 0) || previous?.target) {
 			void clear();
 		}
-	}, [clear, navigate, previewRevision, previewUrl, viewId]);
+	}, [clear, navigate, previewRevision, previewUrl, terminated, viewId]);
 
 	const destroy = useCallback(() => {
 		const id = viewIdRef.current;
@@ -503,12 +664,26 @@ export function useBrowserView({
 			setAnnotationModeState(false);
 		}
 		mirrorTokenRef.current += 1;
+		clearMirrorTimer();
 		stopMirrorStream();
 		setMirrorUrl("");
+		setVisualTransition(null);
+		clearVisualTransitionTimer();
 		sendHiddenBounds(id);
 		window.ao?.browser.destroy(id);
 		viewIdRef.current = "";
-	}, [sendHiddenBounds, stopMirrorStream]);
+		setViewId("");
+		setNavState(EMPTY_NAV_STATE);
+		setTabsState(EMPTY_TABS_STATE);
+	}, [clearMirrorTimer, clearVisualTransitionTimer, sendHiddenBounds, stopMirrorStream]);
+
+	// Termination invalidates the complete session-owned browser, including all
+	// tabs, captures, profile state, and target mappings. `clear` remains the
+	// explicit preview-reset operation.
+	useEffect(() => {
+		if (!terminated || !viewId) return;
+		destroy();
+	}, [destroy, terminated, viewId]);
 
 	return {
 		viewId,
@@ -521,6 +696,15 @@ export function useBrowserView({
 		goForward: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.goForward(id)) : Promise.resolve()),
 		reload: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.reload(id)) : Promise.resolve()),
 		stop: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.stop(id)) : Promise.resolve()),
+		tabs: tabsState.tabs,
+		activeTabId: tabsState.activeTabId,
+		tabNotice,
+		selectTab,
+		closeTab,
+		prepareForOverlay,
+		agentBrowserActive,
+		agentBrowserActivity,
+		visualTransition,
 		destroy,
 		annotationMode,
 		setAnnotationMode,

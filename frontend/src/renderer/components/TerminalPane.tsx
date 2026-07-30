@@ -2,11 +2,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { TerminalTarget } from "../types/terminal";
-import type { WorkspaceSession } from "../types/workspace";
-import type { Theme } from "../stores/ui-store";
+import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
+import { useUiStore, type Theme } from "../stores/ui-store";
 import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
 import { apiClient } from "../lib/api-client";
-import { isLoopbackHostname } from "../lib/loopback";
+import { createUrlWatcher, type UrlWatcher } from "../lib/detect-urls";
 import { cn } from "../lib/utils";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { useRestoreSession } from "../hooks/useRestoreSession";
@@ -238,13 +238,42 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	// A shell pane has no session, so it hands the hook its handle directly
 	// instead of reading one off `attachSession`.
 	const shellTerminalHandleId = terminalTarget?.kind === "shell" ? terminalTarget.handleId : undefined;
-	const { attach, state, error } = useTerminalSession(attachSession, { daemonReady, shellTerminalHandleId });
+	// Glow the Browser tab when the agent prints a URL in this worker's terminal
+	// (e.g. a pushed-PR link). Detection only badges — the user still chooses to
+	// open it — and is skipped while they are already looking at the Browser tab.
+	const watchLinks = Boolean(session?.id && session.kind === "worker" && terminalTarget?.kind !== "shell");
+	const urlWatcherRef = useRef<UrlWatcher | null>(null);
+	const handleOutput = useCallback(
+		(text: string) => {
+			const sessionId = session?.id;
+			if (!sessionId) return;
+			if (!urlWatcherRef.current) {
+				urlWatcherRef.current = createUrlWatcher(() => {
+					const store = useUiStore.getState();
+					const current = store.inspectorSessions[sessionId];
+					const viewingBrowser = (current?.isOpen ?? true) && (current?.view ?? "summary") === "browser";
+					if (!viewingBrowser) store.setBrowserUnseen(sessionId, true);
+				});
+			}
+			urlWatcherRef.current.push(text);
+		},
+		[session?.id],
+	);
+	const { attach, state, error, replaySettled } = useTerminalSession(attachSession, {
+		daemonReady,
+		shellTerminalHandleId,
+		onOutput: watchLinks ? handleOutput : undefined,
+	});
 	const handleId = shellTerminalHandleId ?? attachSession?.terminalHandleId;
 	const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : session?.provider;
 	const hadAttachmentRef = useRef(false);
+	const isSessionActive = session ? sessionIsActive(session) : false;
 	// A standalone shell is never restorable: there is no session row to restore.
 	const canRestoreSession =
-		terminalTarget?.kind !== "reviewer" && terminalTarget?.kind !== "shell" && session?.status === "terminated";
+		terminalTarget?.kind !== "reviewer" &&
+		terminalTarget?.kind !== "shell" &&
+		session !== undefined &&
+		!isSessionActive;
 
 	const handleReady = useCallback((handle: AttachableTerminal) => {
 		setTerminal(handle);
@@ -253,19 +282,26 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 		console.error("xterm failed to initialize", err);
 		setInitFailed(true);
 	}, []);
+	const setInspectorViewForSession = useUiStore((state) => state.setInspectorView);
+	const setInspectorOpenForSession = useUiStore((state) => state.setInspectorOpen);
 	const handleLinkOpen = useCallback(
 		(uri: string) => {
-			if (!session?.id || session.kind !== "worker" || session.status === "terminated") return;
+			if (!session?.id || session.kind !== "worker" || !isSessionActive) return;
 			try {
 				const url = new URL(uri);
-				if ((url.protocol !== "http:" && url.protocol !== "https:") || !isLoopbackHostname(url.hostname)) return;
+				if (url.protocol !== "http:" && url.protocol !== "https:") return;
 			} catch {
 				return;
 			}
+			const linkSessionId = session.id;
+			// A left-click is an explicit request to view the link, so open the
+			// Browser tab now (unlike a passive `ao preview`, which only badges it).
+			setInspectorViewForSession(linkSessionId, "browser");
+			setInspectorOpenForSession(linkSessionId, true);
 			void (async () => {
 				try {
 					const { error: previewError } = await apiClient.POST("/api/v1/sessions/{sessionId}/preview", {
-						params: { path: { sessionId: session.id } },
+						params: { path: { sessionId: linkSessionId } },
 						body: { url: uri },
 					});
 					if (previewError) {
@@ -278,7 +314,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 				}
 			})();
 		},
-		[queryClient, session?.id, session?.kind, session?.status],
+		[isSessionActive, queryClient, session?.id, session?.kind, setInspectorOpenForSession, setInspectorViewForSession],
 	);
 	const restoreSession = useCallback(async () => {
 		if (!session?.id || !canRestoreSession || isRestoring) return;
@@ -327,6 +363,18 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 
 	const banner = bannerText(state, error);
 	const showEmptyState = !handleId;
+	// Cover xterm while the attachment buffers the initial replay, so the pane
+	// appears already drawn at the tail instead of visibly scrolling down to it.
+	// Deliberately NOT the empty state above: that renders a centered "Starting
+	// session" card, and flashing it on every session switch would be worse than
+	// the scroll it replaces.
+	// Only while a replay is actually imminent. Gating on the state as well as
+	// the gate keeps the cover from reappearing over a pane that is visibly
+	// disconnected: an open timeout lifts it, the backoff reconnect would
+	// otherwise pull it straight back down, and the "reattaching" banner already
+	// explains that window better than a blank overlay does.
+	const showReplayCover =
+		Boolean(handleId) && !replaySettled && (state === "connecting" || state === "attached");
 	const showEndedState = state === "exited" || canRestoreSession;
 	const emptyStateTitle = session ? "Starting session" : "Agent Orchestrator";
 	const emptyStateMessage = session
@@ -370,6 +418,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 						</div>
 					</div>
 				)}
+				{showReplayCover && <ReplayCover />}
 				{banner && (
 					<div className="absolute inset-x-3 top-2 rounded-md border border-border bg-surface/95 px-3 py-1.5 font-mono text-caption text-muted-foreground">
 						{banner}
@@ -386,6 +435,31 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					}}
 				/>
 			)}
+		</div>
+	);
+}
+
+// Blank terminal-coloured cover held over xterm while the initial replay is
+// buffered. A fast open (the common case) shows nothing at all — the label only
+// appears if the wait is long enough to read as a stall rather than a repaint,
+// so normal session switching never flashes a loader.
+const REPLAY_COVER_LABEL_MS = 120;
+
+function ReplayCover() {
+	const [showLabel, setShowLabel] = useState(false);
+	useEffect(() => {
+		const timer = window.setTimeout(() => setShowLabel(true), REPLAY_COVER_LABEL_MS);
+		return () => window.clearTimeout(timer);
+	}, []);
+	return (
+		// pointer-events-none: the cover is purely visual and xterm underneath is
+		// live the whole time, so clicks, selection and wheel must pass through
+		// rather than being swallowed for the length of the gate.
+		<div
+			className="pointer-events-none absolute inset-0 grid place-items-center bg-terminal"
+			data-testid="terminal-replay-cover"
+		>
+			{showLabel && <div className="font-mono text-caption text-terminal-dim">Loading latest output…</div>}
 		</div>
 	);
 }

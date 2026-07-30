@@ -7,8 +7,11 @@ import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
 import { Linking, Platform } from "react-native";
-import { registerPushDevice, unregisterPushDevice } from "./api";
+import { ApiError, registerPushDevice, unregisterPushDevice } from "./api";
 import type { ServerConfig } from "./config";
+import { classifyServerFailure, hasServer, type PushRegisterResult, type PushStatus } from "./pushStatus";
+
+export type { PushRegisterResult, PushStatus } from "./pushStatus";
 
 // The last successful registration: the Expo token AND the daemon it was
 // registered with (host/port/TLS/password). Persisting the daemon — not just the
@@ -135,12 +138,20 @@ function easProjectId(): string | undefined {
 }
 
 // Request permission (once), acquire the Expo push token, and register it with
-// the daemon. Returns the token on success or null when unavailable (simulator,
-// permission denied, or no EAS projectId). Idempotent: the daemon upserts by
-// token, so this is also the foreground-refresh path (D7).
-export async function registerForPush(cfg: ServerConfig): Promise<string | null> {
+// the daemon. Returns the token on success, or a typed reason on failure so the
+// UI can say something accurate — notably distinguishing "this build can't mint a
+// token" from "the server wasn't reachable", which are very different problems.
+// Idempotent: the daemon upserts by token, so this is also the foreground-refresh
+// path (D7).
+export async function registerForPush(cfg: ServerConfig): Promise<PushRegisterResult> {
+	// Nothing to register with until the app is paired. Checked first, and here
+	// rather than only in the UI, so no call site can spend the user's one-shot
+	// permission prompt on a request that could only fail (an unpaired app still
+	// holds a config object — it just has an empty host).
+	if (!hasServer(cfg)) return { ok: false, reason: "not-configured" };
+
 	// Remote push tokens are only issued on physical devices.
-	if (!Device.isDevice) return null;
+	if (!Device.isDevice) return { ok: false, reason: "unsupported" };
 
 	// Ensure the Android channel exists BEFORE the permission prompt and before
 	// any notification could arrive, so a notification is never mis-filed onto an
@@ -152,14 +163,14 @@ export async function registerForPush(cfg: ServerConfig): Promise<string | null>
 	if (status !== "granted" && current.canAskAgain) {
 		status = (await Notifications.requestPermissionsAsync()).status;
 	}
-	if (status !== "granted") return null;
+	if (status !== "granted") return { ok: false, reason: "denied" };
 
 	const projectId = easProjectId();
 	if (!projectId) {
 		// Without a projectId Expo can't mint a token — this is an EAS setup gap,
 		// not a runtime error. Warn and no-op so the app still works without push.
 		console.warn("[push] no EAS projectId (run `eas init`); skipping push registration");
-		return null;
+		return { ok: false, reason: "no-project-id" };
 	}
 
 	// Retry any unregisters we still owe from a previous failure.
@@ -179,38 +190,42 @@ export async function registerForPush(cfg: ServerConfig): Promise<string | null>
 		}
 	}
 
-	// Acquiring the token can throw when the build lacks push support — most
-	// commonly on iOS with no APNs `aps-environment` entitlement (a local dev
-	// build not provisioned for push), or on a simulator. Treat that as "push
-	// unavailable on this build" and no-op rather than crashing the app.
+	// Step 1 — mint the token. This throws when the build itself can't do push:
+	// most commonly an iOS build with no APNs `aps-environment` entitlement, or a
+	// simulator. Kept in its own try so it is never confused with a server error.
+	let token: string;
 	try {
-		const { data: token } = await Notifications.getExpoPushTokenAsync({ projectId });
+		token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+	} catch (e) {
+		console.warn("[push] could not obtain an Expo push token (build not provisioned for push?)", e);
+		return { ok: false, reason: "token-failed" };
+	}
+
+	// Step 2 — hand the token to the daemon. The build is fine at this point, so
+	// any failure here is about the server: either we never reached it (offline,
+	// wrong host) or it answered and rejected us (bad password, lockout, 5xx).
+	// An ApiError carries a status, which is exactly that distinction.
+	try {
 		await registerPushDevice(cfg, {
 			token,
 			platform: Platform.OS,
 			deviceName: Device.deviceName ?? undefined,
 		});
-		await saveRegistration({
-			token,
-			host: cfg.host,
-			httpPort: cfg.httpPort,
-			secure: !!cfg.secure,
-			password: cfg.password,
-		});
-		return token;
 	} catch (e) {
-		console.warn("[push] could not obtain/register an Expo push token (build not provisioned for push?)", e);
-		return null;
+		const httpStatus = e instanceof ApiError ? e.status : undefined;
+		console.warn(`[push] could not register the token with the daemon (status: ${httpStatus ?? "no response"})`, e);
+		return { ok: false, reason: classifyServerFailure(httpStatus), status: httpStatus };
 	}
-}
 
-// Current push state, for the Settings Notifications section.
-export type PushStatus = {
-	supported: boolean; // remote push only works on a physical device
-	granted: boolean; // OS notification permission granted
-	canAskAgain: boolean; // false once the user permanently denied (must use system settings)
-	registered: boolean; // we hold a token registered with a daemon
-};
+	await saveRegistration({
+		token,
+		host: cfg.host,
+		httpPort: cfg.httpPort,
+		secure: !!cfg.secure,
+		password: cfg.password,
+	});
+	return { ok: true, token };
+}
 
 // Reads the live permission + registration state without prompting.
 export async function getPushStatus(): Promise<PushStatus> {
