@@ -321,7 +321,7 @@ export function TopbarKillButton({
 					if (!kill.isPending) setConfirmOpen(open);
 				}}
 				title="Kill session?"
-				description={`Are you sure you want to kill "${session.title}"? This stops the agent and moves the session to the Archived section below the Kanban board, where it can be restored later.`}
+				description={`Are you sure you want to kill "${session.title}"? This stops the agent, discards its workspace, and moves the session to the Archived section below the Kanban board. It can be relaunched from Archived later.`}
 				confirmLabel={kill.isPending ? "Killing..." : "Kill session"}
 				destructive
 				busy={kill.isPending}

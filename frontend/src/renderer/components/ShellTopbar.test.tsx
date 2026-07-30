@@ -325,14 +325,14 @@ describe("TopbarKillButton", () => {
 		expect(icon).not.toHaveClass("transition-transform", "group-hover:-rotate-6", "group-hover:scale-110");
 	});
 
-	it("explains that killed sessions move to the archived section and can be restored", async () => {
+	it("explains that killed sessions are archived but their workspace is discarded", async () => {
 		renderKill();
 
 		await userEvent.click(screen.getByRole("button", { name: "Kill session" }));
 		const dialog = await screen.findByRole("dialog", { name: "Kill session?" });
 
 		expect(dialog).toHaveTextContent(
-			'Are you sure you want to kill "do the thing"? This stops the agent and moves the session to the Archived section below the Kanban board, where it can be restored later.',
+			'Are you sure you want to kill "do the thing"? This stops the agent, discards its workspace, and moves the session to the Archived section below the Kanban board. It can be relaunched from Archived later.',
 		);
 		expect(dialog).not.toHaveTextContent("This cannot be undone.");
 	});
