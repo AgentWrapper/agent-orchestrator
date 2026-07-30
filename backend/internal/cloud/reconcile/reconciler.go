@@ -71,7 +71,7 @@ func New(
 
 // Run reconciles sandboxes until ctx is canceled.
 func (r *Reconciler) Run(ctx context.Context) error {
-	if err := r.reconcileOnce(ctx); err != nil {
+	if err := r.reconcileOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		r.log.Error("initial cloud sandbox reconciliation failed", "err", err)
 	}
 	ticker := time.NewTicker(r.interval)
@@ -81,7 +81,7 @@ func (r *Reconciler) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if err := r.reconcileOnce(ctx); err != nil {
+			if err := r.reconcileOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				r.log.Error("cloud sandbox reconciliation failed", "err", err)
 			}
 		}
@@ -95,6 +95,9 @@ func (r *Reconciler) reconcileOnce(ctx context.Context) error {
 	}
 	for _, sandbox := range sandboxes {
 		if err := r.reconcileSandbox(ctx, sandbox); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
 			r.log.Warn("sandbox reconciliation attempt failed",
 				"session_id", sandbox.SessionID,
 				"provider_id", sandbox.ProviderEnvironmentID,
