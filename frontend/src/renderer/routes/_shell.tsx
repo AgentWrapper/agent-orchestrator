@@ -27,7 +27,7 @@ import { addRendererExceptionStep, captureRendererEvent, captureRendererExceptio
 import { ShellProvider } from "../lib/shell-context";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
-import { applyDocumentTheme } from "../lib/theme";
+import { applyDocumentTheme, applyDocumentThemeStyle } from "../lib/theme";
 import { aoBridge } from "../lib/bridge";
 import { handleModifierLinkClick } from "../lib/external-link-policy";
 import { cn } from "../lib/utils";
@@ -93,7 +93,7 @@ function ShellLayout() {
 	const [workspaceStartupState, setWorkspaceStartupState] = useState<"loading" | "ready" | "error">("loading");
 	const workspaceStartupBaselineRef = useRef(0);
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);
-	const { themePreference, resolvedTheme, isSidebarOpen, toggleSidebar, openGlobalSettings } = useUiStore();
+	const { themePreference, themeStyle, resolvedTheme, isSidebarOpen, toggleSidebar, openGlobalSettings } = useUiStore();
 	const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const requestCreateProject = useUiStore((state) => state.requestCreateProject);
@@ -364,6 +364,10 @@ function ShellLayout() {
 	useEffect(() => {
 		applyDocumentTheme(resolvedTheme);
 	}, [resolvedTheme]);
+
+	useEffect(() => {
+		applyDocumentThemeStyle(themeStyle);
+	}, [themeStyle]);
 
 	// A daemon port is not enough to render a trustworthy empty state: the
 	// route loader may have cached [] before Electron reported the port. Fetch
