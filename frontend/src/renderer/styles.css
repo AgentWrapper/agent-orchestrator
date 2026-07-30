@@ -2237,7 +2237,26 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	overflow: hidden;
 	border: 1px solid var(--border);
 	border-radius: 8px;
-	background: var(--bg);
+	background:
+		linear-gradient(180deg, color-mix(in srgb, var(--color-bg-secondary) 92%, transparent), transparent 118px),
+		linear-gradient(135deg, color-mix(in srgb, var(--color-accent) 10%, transparent), transparent 42%),
+		var(--bg);
+	box-shadow:
+		0 0 0 1px color-mix(in srgb, var(--color-border) 42%, transparent),
+		0 20px 48px color-mix(in srgb, black 18%, transparent),
+		0 8px 18px color-mix(in srgb, black 10%, transparent);
+	transition:
+		border-color var(--duration-normal) ease,
+		box-shadow var(--duration-normal) ease,
+		background var(--duration-normal) ease;
+}
+
+.browser-panel--agent-active {
+	border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border));
+	box-shadow:
+		0 0 0 1px color-mix(in srgb, var(--color-accent) 20%, transparent),
+		0 0 28px color-mix(in srgb, var(--color-accent) 10%, transparent),
+		var(--elevation-sm);
 }
 
 /* Maximized browser overlay: a fixed layer over the app workspace (portaled to
@@ -2250,12 +2269,13 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	position: fixed;
 	inset: env(titlebar-area-height, 0px) 0 0;
 	z-index: 40;
-	background: var(--bg);
+	background: color-mix(in srgb, var(--bg) 94%, black);
 }
 
 .browser-popout-overlay .browser-panel {
 	border: 0;
 	border-radius: 0;
+	box-shadow: none;
 }
 
 .browser-panel__toolbar {
@@ -2264,15 +2284,44 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	gap: 5px;
 	flex-shrink: 0;
 	min-width: 0;
-	padding: 7px;
-	border-bottom: 1px solid var(--border);
-	background: var(--surface);
+	min-height: 44px;
+	padding: 7px 8px;
+	border-bottom: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
+	background:
+		linear-gradient(180deg, color-mix(in srgb, var(--surface) 98%, white 2%), var(--surface)),
+		var(--surface);
+	box-shadow:
+		inset 0 1px 0 color-mix(in srgb, white 7%, transparent),
+		0 1px 0 color-mix(in srgb, black 22%, transparent);
+	backdrop-filter: blur(10px);
 }
 
-.browser-panel__url {
+.browser-panel__url,
+.browser-panel__url-wrap {
+	display: flex;
+	align-items: center;
 	position: relative;
 	min-width: 0;
 	flex: 1;
+}
+
+.browser-panel__toolbar button {
+	border-radius: 7px;
+	transition:
+		background var(--duration-fast) ease,
+		color var(--duration-fast) ease,
+		transform var(--duration-fast) ease,
+		box-shadow var(--duration-fast) ease;
+}
+
+.browser-panel__toolbar button:not(:disabled):hover {
+	transform: translateY(-1px);
+	box-shadow: 0 5px 12px color-mix(in srgb, black 12%, transparent);
+}
+
+.browser-panel__toolbar button:not(:disabled):active {
+	transform: translateY(0);
+	box-shadow: none;
 }
 
 .browser-panel__annotate-btn[aria-pressed="true"] {
@@ -2289,6 +2338,9 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	line-height: 1;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+	transition:
+		color var(--duration-fast) ease,
+		opacity var(--duration-fast) ease;
 }
 
 .browser-panel__annotation-status--error {
@@ -2298,10 +2350,11 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 
 .browser-panel__url-icon {
 	position: absolute;
-	left: 9px;
+	left: 10px;
 	top: 50%;
-	width: 14px;
-	height: 14px;
+	z-index: 1;
+	width: 15px;
+	height: 15px;
 	transform: translateY(-50%);
 	color: var(--fg-passive);
 	pointer-events: none;
@@ -2310,8 +2363,27 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 .browser-panel__url-input {
 	height: 29px;
 	padding-left: 29px;
+	border-color: color-mix(in srgb, var(--color-border) 72%, transparent);
+	border-radius: 7px;
+	background:
+		linear-gradient(180deg, color-mix(in srgb, var(--bg) 90%, white 2%), var(--bg));
+	box-shadow:
+		inset 0 1px 0 color-mix(in srgb, white 6%, transparent),
+		0 1px 8px color-mix(in srgb, black 9%, transparent);
 	font-family: var(--font-mono);
 	font-size: 12px;
+}
+
+.browser-panel__url-input:focus {
+	box-shadow:
+		0 0 0 3px color-mix(in srgb, var(--color-accent) 18%, transparent),
+		inset 0 1px 0 color-mix(in srgb, white 6%, transparent);
+}
+
+.browser-panel__tabs-trigger {
+	min-width: 42px;
+	border: 1px solid color-mix(in srgb, var(--color-border) 56%, transparent);
+	background: color-mix(in srgb, var(--surface) 86%, var(--bg));
 }
 
 .browser-panel__content {
@@ -2320,6 +2392,42 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	min-height: 0;
 	overflow: hidden;
 	background: var(--bg);
+}
+
+.browser-panel__viewport {
+	position: relative;
+	flex: 1;
+	min-height: 0;
+	margin: 8px;
+	overflow: hidden;
+	border: 0;
+	border-radius: 8px;
+	background:
+		radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--color-accent) 8%, transparent), transparent 34%),
+		var(--bg);
+	box-shadow:
+		inset 0 0 0 1px color-mix(in srgb, var(--color-border) 28%, transparent),
+		inset 0 1px 0 color-mix(in srgb, white 3%, transparent),
+		0 12px 26px color-mix(in srgb, black 14%, transparent);
+}
+
+.browser-popout-overlay .browser-panel__viewport {
+	margin: 0;
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
+}
+
+.browser-panel__transition-frame {
+	position: absolute;
+	inset: 0;
+	z-index: 2;
+	width: 100%;
+	height: 100%;
+	object-fit: fill;
+	background: var(--bg);
+	pointer-events: none;
+	animation: browser-transition-frame 240ms ease-out forwards;
 }
 
 .browser-panel__slot {
@@ -2354,4 +2462,42 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	background: color-mix(in srgb, var(--red) 8%, var(--bg));
 	color: var(--red);
 	font-size: 12px;
+}
+
+@keyframes browser-transition-frame {
+	0% {
+		opacity: 1;
+	}
+	100% {
+		opacity: 0;
+	}
+}
+
+@keyframes browser-popout-in {
+	from {
+		opacity: 0.94;
+		transform: scale(0.992);
+	}
+	to {
+		opacity: 1;
+		transform: scale(1);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.browser-popout-overlay,
+	.browser-panel__transition-frame {
+		animation: none;
+	}
+
+	.browser-panel,
+	.browser-panel__annotation-status,
+	.browser-panel__toolbar button {
+		transition: none;
+	}
+
+	.browser-panel__toolbar button:not(:disabled):hover,
+	.browser-panel__toolbar button:not(:disabled):active {
+		transform: none;
+	}
 }
