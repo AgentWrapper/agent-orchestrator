@@ -43,11 +43,18 @@ resizable`, react-resizable-panels v4 `collapsible` panel + imperative API,
   content keeps a stable min-width (yyork-style, no mid-animation reflow). Toggled
   by a `PanelRight` icon button in the session topbar and ⌘⇧B; open state + split
   width persist. The AO reference keeps the rail always visible.
-- **Approved divergence (2026-06-12):** on Win/Linux the shell topbar spans the
-  window and the sidebar hangs below it so the sidebar border stops at the header.
-  On macOS the shell topbar is hidden (in-panel actions) and the sidebar is
-  full-height; traffic-light clearance uses `--size-traffic-light-clearance` for
-  both the sidebar header pad and the window-drag strip.
+- **Approved divergence (2026-06-12, revised 2026-07-29):** on Windows the shell
+  topbar renders framed under the custom titlebar; on Linux it is hidden
+  (in-panel actions) with a full-height sidebar. **macOS (2026-07-29, user
+  request):** the shell topbar mounts **full-width** above the sidebar, matching
+  the agent-orchestrator reference — traffic lights (`trafficLightPosition`
+  x:20 y:29.25 — tao's y anchors the buttons ~8pt above the container bottom,
+  not at the window top, so the value was derived empirically: measured center
+  = y − 1.25pt, target = 28pt) and the TitlebarNav cluster share the 56px
+  `--size-toolbar` centerline, board/session actions live in the bar, and the whole strip is the
+  window-drag region (`data-tauri-drag-region` repeated on every inner layout
+  container, since Tauri only starts a drag when the mousedown target itself
+  carries the attribute). The old traffic-light drag strip is gone.
 
 ## Product Context
 

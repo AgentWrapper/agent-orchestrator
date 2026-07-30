@@ -447,6 +447,12 @@
 	padding-top: 0;
 }
 
+/* macOS: the full-width shell topbar supplies the top chrome (traffic lights +
+ * TitlebarNav + actions), so the framed panel sits flush beneath it. */
+.platform-macos .center-panel-shell {
+	padding-top: 0;
+}
+
 @utility settings-row-bar {
 	display: flex;
 	height: var(--size-settings-row);

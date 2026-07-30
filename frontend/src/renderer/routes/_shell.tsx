@@ -100,32 +100,8 @@ function ShellLayout() {
 	const newShellTerminalNonce = useUiStore((state) => state.newShellTerminalNonce);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
 	const openShellTerminal = useOpenShellTerminal();
-	// Single subscription for sidebar clearance + drag strip (macOS no-ops inside the hook).
+	// Single subscription for the TitlebarNav cluster (macOS no-ops inside the hook).
 	const isFullScreen = useWindowFullScreen();
-	// Drag is on immediately for a normal windowed launch. After leaving fullscreen,
-	// wait for the pad/height transition so the growing strip cannot steal clicks.
-	const [trafficLightDragActive, setTrafficLightDragActive] = useState(isMac);
-	const leftFullScreenRef = useRef(false);
-	useEffect(() => {
-		if (!isMac) return;
-		if (isFullScreen) {
-			leftFullScreenRef.current = true;
-			setTrafficLightDragActive(false);
-			return;
-		}
-		if (!leftFullScreenRef.current) {
-			setTrafficLightDragActive(true);
-			return;
-		}
-		const reducedMotion =
-			typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-		if (reducedMotion) {
-			setTrafficLightDragActive(true);
-			return;
-		}
-		const timer = window.setTimeout(() => setTrafficLightDragActive(true), 200);
-		return () => window.clearTimeout(timer);
-	}, [isFullScreen]);
 	// Seeded to the current value so a mount never opens a terminal unasked.
 	const handledShellNonceRef = useRef(newShellTerminalNonce);
 	const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
@@ -619,16 +595,26 @@ function ShellLayout() {
 				open={isKeyboardShortcutsSettingsOpen}
 				onOpenChange={setIsKeyboardShortcutsSettingsOpen}
 			/>
-			{/* Shell chrome: Win/Linux hang the sidebar under a topbar. macOS uses a
-          titlebar strip above the off-canvas sidebar. Session and board actions
-          render inside the center panel when the shell topbar is hidden. */}
-			<div className={cn("flex h-screen min-h-0 flex-col bg-sidebar text-foreground", isWindows && "platform-windows")}>
+			{/* Shell chrome: Win/Linux hang the sidebar under a topbar. macOS mounts
+          the shell topbar full-width (traffic lights + TitlebarNav centered in
+          it, whole strip draggable) with the sidebar hanging below — matching
+          the agent-orchestrator reference. Linux renders session/board actions
+          inside the center panel instead. */}
+			<div
+				className={cn(
+					"flex h-screen min-h-0 flex-col bg-sidebar text-foreground",
+					isWindows && "platform-windows",
+					isMac && "platform-macos",
+				)}
+			>
 				{/* Windows-only custom title bar (sidebar toggle + File/Edit/View/…
             menu); paints the chrome the frameless window drops. Renders null on
             macOS/Linux. */}
 				<WindowTitlebar onSidebarPreviewEnter={previewSidebar} />
-				{/* App routes render their topbar inside the framed panel, matching the board chrome across platforms while leaving OS titlebars native. */}
-				{!framedAppTopbar && !hideShellTopbar ? <ShellTopbar /> : null}
+				{/* macOS: the one full-width app topbar, on every route (it is also the
+            window-drag region, so it never unmounts). Win renders it framed
+            inside the center panel below; Linux mounts it in-panel per view. */}
+				{!framedAppTopbar ? <ShellTopbar /> : null}
 				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
             call the store directly) stay in sync. --sidebar-width chains to
             the drag-resizable --ao-sidebar-w set on :root by useResizable. */}
@@ -690,30 +676,13 @@ function ShellLayout() {
 						</div>
 					</main>
 					<DaemonFailureBanner status={daemonStatus} />
-					{/* When ShellTopbar is hidden, keep a macOS window-drag strip over
-              the traffic-light band only. The fixed TitlebarNav renders after
-              this strip so its no-drag buttons remain clickable. */}
-					{hideShellTopbar && isMac ? (
-						<div
-							aria-hidden="true"
-							className={cn(
-								"fixed top-0 left-0 z-chrome w-(--ao-sidebar-w,var(--size-sidebar-default)) transition-[height] duration-200 ease-out motion-reduce:transition-none",
-								isFullScreen ? "pointer-events-none h-0" : "h-traffic-light-clearance",
-							)}
-							data-tauri-drag-region={trafficLightDragActive ? true : undefined}
-							style={trafficLightDragActive ? ({ WebkitAppRegion: "drag" } as CSSProperties) : undefined}
-						/>
-					) : null}
-					{/* Fixed macOS titlebar cluster beside the traffic lights — rendered
-              once here so the toggle/history buttons never move when the
-              sidebar collapses or expands. History arrows stay visible but
-              locked on the empty start page. MUST come after the drag strip
-              (ShellTopbar or the welcome substitute) in the DOM: Electron
-              builds the window-drag region in document order (drag rects add,
-              no-drag rects subtract), so the cluster's no-drag holes only
-              survive if they're processed after the drag strips they overlap.
-              Rendered first, real clicks get swallowed by window-drag even
-              though DOM hit-testing looks correct. */}
+					{/* Fixed macOS titlebar cluster beside the traffic lights, overlaying
+              the full-width ShellTopbar band — rendered once here so the
+              toggle/history buttons never move when the sidebar collapses or
+              expands. History arrows stay visible but locked on the empty
+              start page. Window drag is safe underneath: Tauri only starts a
+              drag when the mousedown target itself carries
+              data-tauri-drag-region, which these buttons never do. */}
 					<TitlebarNav
 						historyLocked={isWelcomeBoard}
 						isFullScreen={isFullScreen}

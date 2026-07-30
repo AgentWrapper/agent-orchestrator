@@ -285,9 +285,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="board">
-			{/* macOS: shell topbar is hidden on board routes, so the project/"Board"
+			{/* Linux: shell topbar is hidden on board routes, so the project/"Board"
 			    crumb + New task / Orchestrator / bell live in this in-panel row.
-			    Win/Linux keep the crumb and actions in the framed ShellTopbar.
+			    macOS/Windows keep the crumb and actions in the ShellTopbar.
 			    Welcome skips the row — a dangling "Board" above the import
 			    chooser was review feedback on #2432. */}
 			{!showWelcome && !showStartup && boardActionsInPanel && (boardLabel || actions) ? (

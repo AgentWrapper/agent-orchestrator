@@ -6,7 +6,10 @@
         "label": "main",
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "trafficLightPosition": { "x": 14, "y": 12 }
+        "trafficLightPosition": {
+          "x": 20,
+          "y": 29.25
+        }
       }
     ]
   }

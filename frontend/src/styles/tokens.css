@@ -234,6 +234,11 @@
 	--size-titlebar-content-offset-linux: calc(
 		var(--size-titlebar-cluster-left-linux) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
 	);
+	/* macOS fullscreen hides the traffic lights, so the cluster (and the topbar
+	 * content after it) measures from the panel inset instead. */
+	--size-titlebar-content-offset-fullscreen: calc(
+		var(--size-center-panel-inset) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
+	);
 	/* Clears the macOS traffic-light row used by the fixed titlebar controls. */
 	--size-traffic-light-clearance: 44px;
 	--size-traffic-light-clearance-fullscreen: var(--space-2);

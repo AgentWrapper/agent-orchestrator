@@ -51,9 +51,10 @@ export function TitlebarNav({
 
 	if (!isMac && !isLinux) return null;
 
-	// macOS: pinned beside the traffic lights, nudged down so the toggle/arrows
-	// share a centerline with the native dots (y: 12). Linux: no traffic lights,
-	// so it sits at the sidebar's top-left within the reserved titlebar band.
+	// macOS: pinned beside the traffic lights inside the full-width shell topbar,
+	// sharing its 56px centerline (traffic lights are centered there too via
+	// trafficLightPosition). Linux: no traffic lights, so it sits at the
+	// sidebar's top-left within the reserved titlebar band.
 	const leftClass = !isMac
 		? "left-1.5"
 		: isFullScreen
@@ -61,11 +62,12 @@ export function TitlebarNav({
 			: "left-titlebar-cluster-left";
 	// Linux: match the framed board titlebar's y (mac inset 2px + surface border
 	// 1px) so the cluster shares its centerline with the project title.
-	const topClass = !isMac ? "top-0.75" : isFullScreen ? "top-0" : "top-0.5";
+	const topClass = !isMac ? "top-0.75" : "top-0";
+	const heightClass = isMac ? "h-toolbar" : "h-traffic-light-clearance";
 
 	return (
 		<div
-			className={`fixed ${topClass} ${leftClass} z-titlebar flex h-traffic-light-clearance items-center gap-1`}
+			className={`fixed ${topClass} ${leftClass} z-titlebar flex ${heightClass} items-center gap-1`}
 			style={noDragStyle}
 		>
 			<TitlebarButton

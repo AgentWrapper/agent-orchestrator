@@ -1,10 +1,9 @@
 import type { ReactNode } from "react";
 import { cn } from "../lib/utils";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
-import { isLinuxPlatform, isMacPlatform } from "../lib/platform";
+import { isLinuxPlatform } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
 
-const isMac = isMacPlatform();
 const isLinux = isLinuxPlatform();
 
 /**
@@ -14,7 +13,8 @@ const isLinux = isLinuxPlatform();
  * `center-panel-surface`).
  *
  * `titlebarAlign` (default true) pulls Board/Terminal titles up level with the
- * fixed TitlebarNav cluster (macOS + Linux).
+ * fixed TitlebarNav cluster (Linux only — macOS mounts the full-width shell
+ * topbar above this panel, so the panel keeps its default insets there).
  */
 export function CenterPanelShell({
 	className,
@@ -29,7 +29,7 @@ export function CenterPanelShell({
 }) {
 	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
 	const isFullScreen = useWindowFullScreen();
-	const align = titlebarAlign && (isMac || isLinux);
+	const align = titlebarAlign && isLinux;
 	const titlebarClearance = align && !isSidebarOpen;
 
 	return (

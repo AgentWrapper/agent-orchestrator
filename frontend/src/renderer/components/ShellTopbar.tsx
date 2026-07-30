@@ -20,6 +20,7 @@ import { OrchestratorIcon } from "./icons";
 import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { getAgentActivityView } from "../lib/session-presentation";
 import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
+import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { StatusPill } from "./StatusPill";
 import { TopbarButton, TopbarKillError, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
 
@@ -27,11 +28,17 @@ const isMac = isMacPlatform();
 const boardActionsInPanel = usesBoardActionsInPanel();
 const dragStyle = isMac ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined;
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
+// Tauri only starts a window drag when the mousedown target itself carries
+// data-tauri-drag-region, so every layout container inside the topbar must
+// repeat the attribute — otherwise only the header's bare edges would drag.
+const dragRegionAttr = isMac ? { "data-tauri-drag-region": true } : {};
 
-// The one app topbar (.dashboard-app-header). On Win/Linux the shell mounts it
-// inside the framed center panel; when the platform hides the shell topbar
-// (macOS), SessionView mounts the same component in-panel so Kill / Orchestrator
-// / inspector stay available. The variant is derived from the route, not props:
+// The one app topbar (.dashboard-app-header). macOS mounts it full-width above
+// the sidebar (it doubles as the window-drag region, with the traffic lights +
+// TitlebarNav centered in its 56px band); Windows mounts it inside the framed
+// center panel; Linux hides it and SessionView mounts the same component
+// in-panel so Kill / Orchestrator / inspector stay available.
+// The variant is derived from the route, not props:
 // a sessionId in the URL swaps the lead to the session identity (orchestrator
 // crumb + mode badge, or worker branch + status pill) and the actions to
 // board/orchestrator + inspector controls (orchestrators open the Kanban board;
@@ -51,6 +58,17 @@ export function ShellTopbar() {
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const [isSpawning, setIsSpawning] = useState(false);
+	// macOS mounts this bar full-width above the sidebar: pad the content past
+	// the traffic lights + TitlebarNav cluster (fullscreen hides the lights, so
+	// the cluster — and the content after it — hugs the left edge instead).
+	const isFullScreen = useWindowFullScreen();
+	const macContentOffset = isMac
+		? ({
+				paddingLeft: isFullScreen
+					? "var(--size-titlebar-content-offset-fullscreen)"
+					: "var(--size-titlebar-content-offset)",
+			} as React.CSSProperties)
+		: undefined;
 	// Board-scope spawn failures surface where the board actions render.
 	const [boardSpawnError, setBoardSpawnError] = useState<string | null>(null);
 	const all = useWorkspaceQuery().data ?? [];
@@ -133,8 +151,12 @@ export function ShellTopbar() {
 	};
 
 	return (
-		<header className={topbarHeaderClass} data-tauri-drag-region={isMac ? true : undefined} style={dragStyle}>
-			<div className="flex min-w-0 items-center gap-3">
+		<header
+			className={topbarHeaderClass}
+			data-tauri-drag-region={isMac ? true : undefined}
+			style={{ ...dragStyle, ...macContentOffset }}
+		>
+			<div className="flex min-w-0 items-center gap-3" {...dragRegionAttr}>
 				{isSessionRoute && isOrchestrator ? (
 					<div className="inline-flex min-w-0 items-center gap-2">
 						<div className="inline-flex min-w-0 items-center gap-1.5">
@@ -166,9 +188,9 @@ export function ShellTopbar() {
 				)}
 			</div>
 
-			<div className="min-w-0 flex-1" />
+			<div className="min-w-0 flex-1" {...dragRegionAttr} />
 
-			<div className="flex shrink-0 items-center gap-1.5">
+			<div className="flex shrink-0 items-center gap-1.5" {...dragRegionAttr}>
 				{!boardActionsInPanel && isProjectBoardRoute ? (
 					<>
 						{boardSpawnError ? (

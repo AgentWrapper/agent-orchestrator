@@ -48,9 +48,9 @@ type SessionViewProps = {
 	tabOwnerSessionId?: string;
 };
 
-// The session detail screen: terminal + git rail. On Win/Linux the shell owns
-// ShellTopbar above this view; when the platform hides the shell topbar
-// (macOS), the same topbar mounts here so the outer panel stays full-height.
+// The session detail screen: terminal + git rail. On macOS/Windows the shell
+// owns ShellTopbar above this view; when the platform hides the shell topbar
+// (Linux), the same topbar mounts here so the outer panel stays full-height.
 // Rendered by both the project-scoped and cross-project session routes.
 // TerminalPane owns the terminal lifetime and remounts by terminal handle so
 // each session gets a clean xterm/mux binding.

@@ -42,14 +42,14 @@ afterEach(() => {
 });
 
 describe("renderer platform behavior", () => {
-	it("hides the shell topbar on macOS and keeps board actions in the panel", () => {
+	it("mounts the full-width shell topbar on macOS with board actions in it", () => {
 		spoofPlatform("MacIntel", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
 
 		expect(isMacPlatform()).toBe(true);
 		expect(isWindowsPlatform()).toBe(false);
-		expect(usesFramedAppTopbar()).toBe(true);
-		expect(hidesShellTopbar()).toBe(true);
-		expect(usesBoardActionsInPanel()).toBe(true);
+		expect(usesFramedAppTopbar()).toBe(false);
+		expect(hidesShellTopbar()).toBe(false);
+		expect(usesBoardActionsInPanel()).toBe(false);
 	});
 
 	it("keeps Windows board controls in the inset panel topbar", () => {
