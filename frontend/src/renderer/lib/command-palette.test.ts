@@ -267,7 +267,7 @@ describe("buildCommands PR actions", () => {
 		];
 		const draft = buildCommands({
 			workspaces: draftWorkspaces,
-			reviewStatesBySessionId: { "w-draft": [reviewState(5, "ineligible")] },	
+			reviewStatesBySessionId: { "w-draft": [reviewState(5, "ineligible")] },
 		});
 		const draftItem = byId(draft).get("pr-review:w-draft:5");
 		expect(draftItem?.disabled).toBe(true);

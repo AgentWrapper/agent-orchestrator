@@ -535,28 +535,56 @@ describe("CommandPalette PR and review actions", () => {
 		await waitFor(() => expect(paletteInput()).toBeNull());
 	});
 
-	it("keeps the palette open and shows the daemon error when triggering a review fails", async () => {
-		mockReviews([reviewState("needs_review")]);
-		postMock.mockResolvedValue({ error: { message: "review unavailable" } });
+	it("shows Not eligible for review once the session review state is cached, after a reopen", async () => {
 		await openPaletteWithQuery("review");
-		fireEvent.click(await screen.findByText("Run review #7"));
-		expect(await screen.findByRole("alert")).toHaveTextContent("review unavailable");
-		expect(useUiStore.getState().isCommandPaletteOpen).toBe(true);
+		await waitFor(() => expect(getMock).toHaveBeenCalled());
+
+		act(() => useUiStore.getState().setCommandPaletteOpen(false));
+		await waitFor(() => expect(paletteInput()).toBeNull());
+
+		act(() => useUiStore.getState().setCommandPaletteOpen(true));
+		const reopenedInput = await screen.findByPlaceholderText(/search projects/i);
+		fireEvent.change(reopenedInput, { target: { value: "review" } });
+
+		expect(await screen.findByText("Not eligible for review")).toBeInTheDocument();
+		fireEvent.click(screen.getByText("Run review #7"));
+		expect(postMock).not.toHaveBeenCalled();
 	});
 
-	it("disables the review action with Review already running once the session review state loads", async () => {
+	it("disables the review action with Review already running once cached, after a reopen", async () => {
 		mockReviews([reviewState("running")]);
 		await openPaletteWithQuery("review");
+		await waitFor(() => expect(getMock).toHaveBeenCalled());
+
+		act(() => useUiStore.getState().setCommandPaletteOpen(false));
+		await waitFor(() => expect(paletteInput()).toBeNull());
+
+		act(() => useUiStore.getState().setCommandPaletteOpen(true));
+		const reopenedInput = await screen.findByPlaceholderText(/search projects/i);
+		fireEvent.change(reopenedInput, { target: { value: "review" } });
+
 		expect(await screen.findByText("Review already running")).toBeInTheDocument();
 		fireEvent.click(screen.getByText("Reviewing... #7"));
 		expect(postMock).not.toHaveBeenCalled();
 		expect(useUiStore.getState().isCommandPaletteOpen).toBe(true);
 	});
 
-	it("disables the review action with Not eligible for review when no open PR is reviewable", async () => {
+	it("does not retitle or disable the review row while the palette stays open, even after the query resolves", async () => {
+		mockReviews([reviewState("running")]);
 		await openPaletteWithQuery("review");
-		expect(await screen.findByText("Not eligible for review")).toBeInTheDocument();
-		fireEvent.click(screen.getByText("Run review #7"));
-		expect(postMock).not.toHaveBeenCalled();
+		expect(await screen.findByText("Run review #7")).toBeInTheDocument();
+
+		// Let the review query resolve in the background while this same
+		// palette session stays open.
+		await waitFor(() => expect(getMock).toHaveBeenCalled());
+		await act(async () => {
+			await Promise.resolve();
+		});
+
+		// The row must still show the pre-open label — it must not flip to
+		// "Reviewing... #7" / disabled until the palette is closed and reopened.
+		expect(screen.getByText("Run review #7")).toBeInTheDocument();
+		expect(screen.queryByText("Reviewing... #7")).toBeNull();
+		expect(screen.queryByText("Review already running")).toBeNull();
 	});
 });

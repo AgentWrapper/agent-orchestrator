@@ -53,7 +53,6 @@ export function CommandPalette() {
 	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
 	const [pendingId, setPendingId] = useState<string | null>(null);
 	const [reviewStatesSnapshot, setReviewStatesSnapshot] = useState<Readonly<Record<string, PRReviewState[]>>>();
-	const openSnapshotSettledRef = useRef(false);
 	const wasOpenRef = useRef(false);
 	const pendingRef = useRef(false);
 	const choosePathRef = useRef<(() => void) | null>(null);
@@ -72,41 +71,36 @@ export function CommandPalette() {
 	);
 	// Review states are fetched only while the palette is open; the shared query
 	// key means sessions already viewed in the inspector reuse the cached data.
-	// new
-const reviewQuerySummary = useQueries({
-    queries: sessionsWithOpenPRs.map((session) =>
-        sessionReviewsQueryOptions(session, isOpen, PALETTE_REVIEW_STALE_TIME_MS),
-    ),
-    combine: (results) => {
-        const reviewStatesBySessionId: Record<string, PRReviewState[]> = {};
-        let allSettled = true;
-        results.forEach((result, index) => {
-            const session = sessionsWithOpenPRs[index];
-            if (session && result.data) reviewStatesBySessionId[session.id] = result.data.reviews ?? [];
-            if (result.isPending) allSettled = false;
-        });
-        return { allSettled, reviewStatesBySessionId };
-    },
-});
+	const reviewQuerySummary = useQueries({
+		queries: sessionsWithOpenPRs.map((session) =>
+			sessionReviewsQueryOptions(session, isOpen, PALETTE_REVIEW_STALE_TIME_MS),
+		),
+		combine: (results) => {
+			const reviewStatesBySessionId: Record<string, PRReviewState[]> = {};
+			results.forEach((result, index) => {
+				const session = sessionsWithOpenPRs[index];
+				if (session && result.data) reviewStatesBySessionId[session.id] = result.data.reviews ?? [];
+			});
+			return { reviewStatesBySessionId };
+		},
+	});
 
-useEffect(() => {
-    if (!isOpen) {
-        wasOpenRef.current = false;
-        openSnapshotSettledRef.current = false;
-        setReviewStatesSnapshot(undefined);
-        return;
-    }
-    if (!wasOpenRef.current) {
-        wasOpenRef.current = true;
-        openSnapshotSettledRef.current = reviewQuerySummary.allSettled;
-        setReviewStatesSnapshot(reviewQuerySummary.reviewStatesBySessionId);
-        return;
-    }
-    if (!openSnapshotSettledRef.current && reviewQuerySummary.allSettled) {
-        openSnapshotSettledRef.current = true;
-        setReviewStatesSnapshot(reviewQuerySummary.reviewStatesBySessionId);
-    }
-}, [isOpen, reviewQuerySummary.allSettled, reviewQuerySummary.reviewStatesBySessionId]);
+	// Snapshot review states once when the palette opens and never again while
+	// it stays open — items must not retitle, disable, or reorder under the
+	// cursor between opening the palette and pressing Enter. Data refreshes on
+	// the next open (the 60s staleTime plus shared cache mean this is usually
+	// already fresh).
+	useEffect(() => {
+		if (!isOpen) {
+			wasOpenRef.current = false;
+			setReviewStatesSnapshot(undefined);
+			return;
+		}
+		if (!wasOpenRef.current) {
+			wasOpenRef.current = true;
+			setReviewStatesSnapshot(reviewQuerySummary.reviewStatesBySessionId);
+		}
+	}, [isOpen, reviewQuerySummary.reviewStatesBySessionId]);
 
 	const items = useMemo(
 		() =>
