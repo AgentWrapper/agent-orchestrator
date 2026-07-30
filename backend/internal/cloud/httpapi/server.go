@@ -139,6 +139,7 @@ func (s *Server) routes() http.Handler {
 	router.Use(middleware.RequestID)
 	router.Use(middleware.RealIP)
 	router.Use(middleware.Recoverer)
+	router.Use(s.requestLogger)
 	router.Use(s.cors)
 	router.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "ao-cloud"})
@@ -184,6 +185,45 @@ func (s *Server) routes() http.Handler {
 		})
 	})
 	return router
+}
+
+func (s *Server) requestLogger(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		startedAt := time.Now()
+		wrapped := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		next.ServeHTTP(wrapped, r)
+		status := wrapped.Status()
+		if status == 0 {
+			status = http.StatusOK
+		}
+		if status < http.StatusBadRequest && quietCloudRequest(r.URL.Path) {
+			return
+		}
+		route := ""
+		if routeContext := chi.RouteContext(r.Context()); routeContext != nil {
+			route = routeContext.RoutePattern()
+		}
+		s.log.Info("AO Cloud request completed",
+			"request_id", middleware.GetReqID(r.Context()),
+			"method", r.Method,
+			"path", r.URL.Path,
+			"route", route,
+			"status", status,
+			"bytes", wrapped.BytesWritten(),
+			"duration_ms", time.Since(startedAt).Milliseconds(),
+		)
+	})
+}
+
+func quietCloudRequest(path string) bool {
+	switch path {
+	case "/healthz", "/readyz",
+		"/api/cloud/v1/worker/heartbeat",
+		"/api/cloud/v1/worker/events":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
@@ -492,6 +532,11 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusServiceUnavailable, "WORKER_BACKPRESSURE", "The message was saved but worker delivery is temporarily unavailable.")
 		return
 	}
+	s.log.Info("cloud turn queued",
+		"request_id", middleware.GetReqID(r.Context()),
+		"session_id", sessionID,
+		"message_sequence", event.Sequence,
+	)
 	writeJSON(w, http.StatusAccepted, map[string]any{"event": event})
 }
 
@@ -1271,7 +1316,34 @@ func (s *Server) workerEvent(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "append worker event", err)
 		return
 	}
+	if logWorkerLifecycleEvent(input.Type) {
+		s.log.Info("cloud worker lifecycle event",
+			"session_id", claims.SessionID,
+			"worker_id", claims.WorkerID,
+			"worker_epoch", claims.Epoch,
+			"event_type", input.Type,
+			"event_sequence", event.Sequence,
+		)
+	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"event": event})
+}
+
+func logWorkerLifecycleEvent(eventType string) bool {
+	switch eventType {
+	case "worker.prompt_accepted",
+		"worker.command_stream_disconnected",
+		"repository.ready",
+		"agent.started",
+		"agent.exited",
+		"chat.session_started",
+		"chat.turn_started",
+		"chat.turn_completed",
+		"chat.turn_interrupted",
+		"chat.turn_aborted":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) workerConnect(w http.ResponseWriter, r *http.Request) {
@@ -1298,6 +1370,12 @@ func (s *Server) workerConnect(w http.ResponseWriter, r *http.Request) {
 		claims.Epoch,
 	)
 	defer unregister()
+	s.log.Info("cloud worker command stream connected",
+		"session_id", claims.SessionID,
+		"worker_id", claims.WorkerID,
+		"worker_epoch", claims.Epoch,
+		"replay_after", after,
+	)
 	accepted, err := s.store.LatestPromptAcceptedSequence(
 		r.Context(),
 		claims.AccountID,

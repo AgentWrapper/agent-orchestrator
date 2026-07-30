@@ -39,6 +39,7 @@ import {
   defaultConnectedAgent,
 } from "@/lib/cloud-agent-connections";
 import {
+  mergeChatEventCache,
   prefetchChatEvents,
   pruneChatEventCache,
 } from "@/lib/cloud-chat-cache";
@@ -133,6 +134,13 @@ function statusColor(session: CloudSession) {
   return "bg-[#9ad97a]";
 }
 
+function sessionDisplayStatus(
+  session: CloudSession,
+  activeSessionIds: Set<string>,
+) {
+  return activeSessionIds.has(session.id) ? "working" : session.status;
+}
+
 export default function CloudAppPage() {
   const { session, status, login, logout } = useAuth();
   const api = useMemo(
@@ -160,16 +168,22 @@ export default function CloudAppPage() {
   const [error, setError] = useState<string | null>(null);
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [showSessionForm, setShowSessionForm] = useState(false);
-  const [activeChatSessionId, setActiveChatSessionId] = useState<string | null>(
-    null,
+  const [activeChatSessionIds, setActiveChatSessionIds] = useState<Set<string>>(
+    () => new Set(),
   );
+  const optimisticActiveAt = useRef(new Map<string, number>());
   const refreshInFlight = useRef<Promise<void> | null>(null);
 
   const handleChatTurnActiveChange = useCallback(
     (sessionId: string, active: boolean) => {
-      setActiveChatSessionId((current) =>
-        active ? sessionId : current === sessionId ? null : current,
-      );
+      if (active) optimisticActiveAt.current.set(sessionId, Date.now());
+      else optimisticActiveAt.current.delete(sessionId);
+      setActiveChatSessionIds((current) => {
+        const next = new Set(current);
+        if (active) next.add(sessionId);
+        else next.delete(sessionId);
+        return next;
+      });
     },
     [],
   );
@@ -234,6 +248,26 @@ export default function CloudAppPage() {
         ]);
         setProjects(projectData.projects);
         setSessions(sessionData.sessions);
+        const now = Date.now();
+        const authoritativeActive = new Set(
+          sessionData.sessions
+            .filter(
+              (cloudSession) =>
+                cloudSession.status === "working" ||
+                cloudSession.activeTurn !== undefined,
+            )
+            .map(({ id }) => id),
+        );
+        setActiveChatSessionIds((current) => {
+          const next = new Set(authoritativeActive);
+          for (const sessionId of current) {
+            const optimisticAt = optimisticActiveAt.current.get(sessionId) ?? 0;
+            if (now - optimisticAt < 5_000) next.add(sessionId);
+            else if (!next.has(sessionId))
+              optimisticActiveAt.current.delete(sessionId);
+          }
+          return next;
+        });
         const sessionIDs = new Set(sessionData.sessions.map(({ id }) => id));
         pruneChatEventCache(sessionIDs);
         void Promise.allSettled(
@@ -359,6 +393,11 @@ export default function CloudAppPage() {
     setLoading(true);
     try {
       const result = await operation();
+      if (result.session.kind === "orchestrator") {
+        mergeChatEventCache(result.session.id, [], true);
+      } else if (api) {
+        await prefetchChatEvents(api, result.session.id, 0);
+      }
       await refresh();
       setSelectedProjectId(result.session.projectId);
       setSelectedSessionId(result.session.id);
@@ -417,6 +456,7 @@ export default function CloudAppPage() {
           crypto.randomUUID(),
         );
         orchestrator = result.session;
+        mergeChatEventCache(orchestrator.id, [], true);
       }
       await refresh();
       setSelectedProjectId(project.id);
@@ -596,7 +636,7 @@ export default function CloudAppPage() {
                         <span className="truncate">
                           {cloudSession.displayName}
                         </span>
-                        {activeChatSessionId === cloudSession.id ? (
+                        {activeChatSessionIds.has(cloudSession.id) ? (
                           <LoaderCircle
                             className="ml-auto size-3.5 shrink-0 animate-spin text-[#4d8dff] motion-reduce:animate-none"
                             aria-label="Working"
@@ -701,7 +741,7 @@ export default function CloudAppPage() {
                     <span className="hidden xl:inline">Kanban</span>
                   </button>
                   <span className="mr-1 inline-flex h-7 items-center gap-1.5 rounded-md border border-white/10 px-2 font-mono text-[10px] uppercase tracking-[0.05em] text-[#9ba1aa]">
-                    {activeChatSessionId === selectedSession.id ? (
+                    {activeChatSessionIds.has(selectedSession.id) ? (
                       <LoaderCircle
                         className="size-3.5 animate-spin text-[#4d8dff] motion-reduce:animate-none"
                         aria-hidden="true"
@@ -714,7 +754,7 @@ export default function CloudAppPage() {
                         aria-hidden="true"
                       />
                     )}
-                    {activeChatSessionId === selectedSession.id
+                    {activeChatSessionIds.has(selectedSession.id)
                       ? "working"
                       : selectedSession.status.replaceAll("_", " ")}
                   </span>
@@ -821,6 +861,7 @@ export default function CloudAppPage() {
             ) : view === "session" && selectedSession ? (
               structuredChatAvailable ? (
                 <CloudChat
+                  key={selectedSession.id}
                   api={api}
                   session={selectedSession}
                   onTurnActiveChange={handleChatTurnActiveChange}
@@ -834,6 +875,7 @@ export default function CloudAppPage() {
               <SessionBoard
                 sessions={visibleSessions}
                 projects={projects}
+                activeSessionIds={activeChatSessionIds}
                 onSelect={(cloudSession) => {
                   setSelectedProjectId(cloudSession.projectId);
                   setSelectedSessionId(cloudSession.id);
@@ -933,6 +975,7 @@ function CloudRuntimeConnecting({ session }: { session: CloudSession }) {
 function SessionBoard({
   sessions,
   projects,
+  activeSessionIds,
   onSelect,
   onCreateOrchestrator,
   agentAvailable,
@@ -941,6 +984,7 @@ function SessionBoard({
 }: {
   sessions: CloudSession[];
   projects: CloudProject[];
+  activeSessionIds: Set<string>;
   onSelect: (session: CloudSession) => void;
   onCreateOrchestrator?: () => void;
   agentAvailable: boolean;
@@ -952,28 +996,36 @@ function SessionBoard({
       "Working",
       "#36c2b4",
       sessions.filter((item) =>
-        ["working", "idle", "exited"].includes(item.status),
+        ["working", "idle", "exited"].includes(
+          sessionDisplayStatus(item, activeSessionIds),
+        ),
       ),
     ],
     [
       "Needs you",
       "#f2b84b",
       sessions.filter((item) =>
-        ["needs_input", "ci_failed", "changes_requested"].includes(item.status),
+        ["needs_input", "ci_failed", "changes_requested"].includes(
+          sessionDisplayStatus(item, activeSessionIds),
+        ),
       ),
     ],
     [
       "In review",
       "#5b8def",
       sessions.filter((item) =>
-        ["pr_open", "review_pending"].includes(item.status),
+        ["pr_open", "review_pending"].includes(
+          sessionDisplayStatus(item, activeSessionIds),
+        ),
       ),
     ],
     [
       "Ready to merge",
       "#9ad97a",
       sessions.filter((item) =>
-        ["approved", "mergeable", "merged"].includes(item.status),
+        ["approved", "mergeable", "merged"].includes(
+          sessionDisplayStatus(item, activeSessionIds),
+        ),
       ),
     ],
   ] as const;
@@ -1048,7 +1100,8 @@ function SessionBoard({
                   <span className="truncate text-sm font-medium">
                     {cloudSession.displayName}
                   </span>
-                  {cloudSession.status === "working" ? (
+                  {sessionDisplayStatus(cloudSession, activeSessionIds) ===
+                  "working" ? (
                     <LoaderCircle
                       className="ml-auto size-3.5 shrink-0 animate-spin text-[#4d8dff] motion-reduce:animate-none"
                       aria-label="Working"
@@ -1068,7 +1121,10 @@ function SessionBoard({
                     }
                   </span>
                   <span className="shrink-0 uppercase tracking-[0.04em]">
-                    {cloudSession.status.replaceAll("_", " ")}
+                    {sessionDisplayStatus(
+                      cloudSession,
+                      activeSessionIds,
+                    ).replaceAll("_", " ")}
                   </span>
                 </div>
               </button>

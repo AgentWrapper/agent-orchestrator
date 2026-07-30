@@ -75,9 +75,16 @@ export function prefetchChatEvents(
     }
     cached = mergeChatEventCache(sessionId, [], true);
     return cached;
-  })().finally(() => inFlight.delete(sessionId));
-  inFlight.set(sessionId, request);
-  return request;
+  })();
+  const tracked = request.finally(() => {
+    if (inFlight.get(sessionId) === tracked) inFlight.delete(sessionId);
+  });
+  inFlight.set(sessionId, tracked);
+  return tracked;
+}
+
+export function releaseChatEventPrefetch(sessionId: string) {
+  inFlight.delete(sessionId);
 }
 
 export function pruneChatEventCache(sessionIds: Set<string>) {

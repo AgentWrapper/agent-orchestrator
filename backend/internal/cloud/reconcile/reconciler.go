@@ -117,6 +117,11 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, sandbox clouddomain.S
 		return r.provision(ctx, sandbox, provider)
 	}
 	if sandbox.DesiredState == "deleted" {
+		r.log.Info("deleting cloud sandbox",
+			"session_id", sandbox.SessionID,
+			"provider", sandbox.Provider,
+			"provider_id", sandbox.ProviderEnvironmentID,
+		)
 		err := provider.Delete(ctx, cloudsandbox.ID(sandbox.ProviderEnvironmentID))
 		if err != nil && !errors.Is(err, cloudsandbox.ErrNotFound) {
 			return r.fail(ctx, sandbox, err)
@@ -149,11 +154,21 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, sandbox clouddomain.S
 		case "deleting":
 			return r.observe(ctx, sandbox, string(environment.ID), "deleting", "", 2*time.Second)
 		case "stopped", "archived":
+			r.log.Info("starting cloud sandbox",
+				"session_id", sandbox.SessionID,
+				"provider", sandbox.Provider,
+				"provider_id", environment.ID,
+			)
 			if err := provider.Start(ctx, environment.ID); err != nil {
 				return r.fail(ctx, sandbox, err)
 			}
 			return r.observe(ctx, sandbox, string(environment.ID), "bootstrapping", "", 2*time.Second)
 		case "paused":
+			r.log.Info("resuming cloud sandbox",
+				"session_id", sandbox.SessionID,
+				"provider", sandbox.Provider,
+				"provider_id", environment.ID,
+			)
 			if err := provider.Resume(ctx, environment.ID); err != nil {
 				return r.fail(ctx, sandbox, err)
 			}
@@ -231,6 +246,11 @@ func (r *Reconciler) provision(
 
 	// Cloud V1 currently caps provider resources at 4 vCPU, 8 GiB RAM, and
 	// 10 GiB persistent disk.
+	r.log.Info("provisioning cloud sandbox",
+		"session_id", sandbox.SessionID,
+		"provider", sandbox.Provider,
+	)
+	startedAt := time.Now()
 	environment, err := provider.Create(ctx, cloudsandbox.Spec{
 		Name:            "ao-" + string(sandbox.SessionID),
 		SessionID:       sandbox.SessionID,
@@ -253,6 +273,12 @@ func (r *Reconciler) provision(
 	if err != nil {
 		return r.fail(ctx, sandbox, err)
 	}
+	r.log.Info("cloud sandbox provisioned",
+		"session_id", sandbox.SessionID,
+		"provider", sandbox.Provider,
+		"provider_id", environment.ID,
+		"duration_ms", time.Since(startedAt).Milliseconds(),
+	)
 	return r.observe(ctx, sandbox, string(environment.ID), "provisioning", "", 2*time.Second)
 }
 

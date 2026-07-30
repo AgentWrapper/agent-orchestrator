@@ -224,7 +224,43 @@ it("shows prefetched conversation history without another replay request", async
   render(createElement(CloudChat, { api, session }));
 
   expect(await screen.findByText("Already loaded")).toBeInTheDocument();
+  expect(screen.queryByText("Loading conversation…")).not.toBeInTheDocument();
   expect(api.chatEvents).not.toHaveBeenCalled();
+});
+
+it("keeps an active session marked working when its chat unmounts", async () => {
+  mergeChatEventCache(
+    session.id,
+    [event(1, "chat.user_message", { text: "Keep working" })],
+    true,
+  );
+  const onTurnActiveChange = vi.fn();
+  const activeSession: CloudSession = {
+    ...session,
+    activeTurn: {
+      id: "turn-one",
+      sessionId: session.id,
+      userMessageSequence: 1,
+      state: "running",
+      attemptCount: 1,
+      createdAt: "2026-07-30T00:00:00Z",
+      updatedAt: "2026-07-30T00:00:00Z",
+    },
+  };
+  const chat = render(
+    createElement(CloudChat, {
+      api: testAPI(),
+      session: activeSession,
+      onTurnActiveChange,
+    }),
+  );
+  await waitFor(() =>
+    expect(onTurnActiveChange).toHaveBeenCalledWith(session.id, true),
+  );
+
+  chat.unmount();
+
+  expect(onTurnActiveChange).not.toHaveBeenCalledWith(session.id, false);
 });
 
 it("uses the AO logo for orchestrators and harness logos for workers", async () => {

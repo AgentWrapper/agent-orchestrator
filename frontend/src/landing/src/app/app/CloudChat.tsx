@@ -22,7 +22,9 @@ import {
 } from "@/lib/cloud-api";
 import {
   mergeChatEventCache,
+  prefetchChatEvents,
   readChatEventCache,
+  releaseChatEventPrefetch,
 } from "@/lib/cloud-chat-cache";
 
 interface CloudChatProps {
@@ -469,7 +471,8 @@ export function CloudChat({
   session,
   onTurnActiveChange,
 }: CloudChatProps) {
-  const [events, setEvents] = useState<CloudEvent[]>([]);
+  const [initialCache] = useState(() => readChatEventCache(session.id));
+  const [events, setEvents] = useState<CloudEvent[]>(initialCache.events);
   const [pending, setPending] = useState<Array<{ id: string; text: string }>>(
     [],
   );
@@ -477,14 +480,23 @@ export function CloudChat({
   const [sending, setSending] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [replaySessionId, setReplaySessionId] = useState<string | null>(null);
+  const [replaySessionId, setReplaySessionId] = useState<string | null>(
+    initialCache.hydrated ? session.id : null,
+  );
   const [activeTurn, setActiveTurn] = useState<CloudTurn | null>(
     session.activeTurn ?? null,
   );
   const [reconnectNonce, setReconnectNonce] = useState(0);
-  const latestSequence = useRef(0);
-  const loadedSessionId = useRef<string | null>(null);
-  const historyLoadedSessionId = useRef<string | null>(null);
+  const latestSequence = useRef(
+    initialCache.events.reduce(
+      (latest, event) => Math.max(latest, event.sequence),
+      0,
+    ),
+  );
+  const loadedSessionId = useRef<string | null>(session.id);
+  const historyLoadedSessionId = useRef<string | null>(
+    initialCache.hydrated ? session.id : null,
+  );
   const lastStreamActivity = useRef(Date.now());
   const turnProbeInFlight = useRef(false);
   const draftValue = useRef("");
@@ -522,27 +534,18 @@ export function CloudChat({
     const connect = async () => {
       if (needsHistoryReplay) {
         try {
-          let replayAfter = 0;
-          let replayed: CloudEvent[] = [];
-          for (;;) {
-            const replay = await api.chatEvents(session.id, replayAfter, 500);
-            replayed = mergeEvents(replayed, replay.events);
-            if (replay.events.length < 500) break;
-            replayAfter = replay.events.reduce(
-              (latest, event) => Math.max(latest, event.sequence),
-              replayAfter,
-            );
-          }
-          if (controller.signal.aborted) return;
-          const chatEvents = replayed.filter((event) =>
-            event.type.startsWith("chat."),
+          const cached = await prefetchChatEvents(
+            api,
+            session.id,
+            Number.POSITIVE_INFINITY,
           );
-          latestSequence.current = chatEvents.reduce(
+          if (controller.signal.aborted) return;
+          latestSequence.current = cached.events.reduce(
             (latest, event) => Math.max(latest, event.sequence),
             0,
           );
-          const cached = mergeChatEventCache(session.id, chatEvents, true);
           setEvents(cached.events);
+          historyLoadedSessionId.current = session.id;
         } catch (replayError) {
           if (controller.signal.aborted) return;
           setError(
@@ -552,7 +555,6 @@ export function CloudChat({
           );
         } finally {
           if (!controller.signal.aborted) {
-            historyLoadedSessionId.current = session.id;
             setReplaySessionId(session.id);
           }
         }
@@ -621,7 +623,12 @@ export function CloudChat({
       }
     };
     void connect();
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      if (historyLoadedSessionId.current !== session.id) {
+        releaseChatEventPrefetch(session.id);
+      }
+    };
   }, [api, reconnectNonce, session.id]);
 
   const probeTurnAndReconnect = useCallback(async () => {
@@ -695,9 +702,9 @@ export function CloudChat({
   );
 
   useEffect(() => {
+    if (!replayReady) return;
     onTurnActiveChange?.(session.id, responseActive);
-    return () => onTurnActiveChange?.(session.id, false);
-  }, [onTurnActiveChange, responseActive, session.id]);
+  }, [onTurnActiveChange, replayReady, responseActive, session.id]);
 
   const submit = async () => {
     const text = draft.trim();
