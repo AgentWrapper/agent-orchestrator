@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-// prettier-ignore
 import { FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL } from "./shared/shortcuts";
 import type { AoBridge } from "./preload";
 
@@ -37,6 +36,7 @@ function exposedBridge(): AoBridge {
 
 beforeEach(() => {
 	electronMocks.listeners.clear();
+	electronMocks.invoke.mockClear();
 	electronMocks.off.mockClear();
 	electronMocks.on.mockClear();
 });
@@ -90,5 +90,15 @@ describe("preload application shortcut bridges", () => {
 
 		dispose();
 		expect(electronMocks.off).toHaveBeenCalledWith(channel, wrapped);
+	});
+});
+
+describe("preload keybinding recording bridge", () => {
+	it("tells the main process when shortcut capture starts and stops", async () => {
+		await exposedBridge().keybindings.setRecording(true);
+		await exposedBridge().keybindings.setRecording(false);
+
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(1, "keybindings:setRecording", true);
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(2, "keybindings:setRecording", false);
 	});
 });

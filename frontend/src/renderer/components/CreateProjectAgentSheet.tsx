@@ -1,12 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
-import { TriangleAlert, X } from "lucide-react";
+import { TriangleAlert, X, type LucideIcon } from "lucide-react";
 import { memo, useEffect, useState } from "react";
 import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { AGENT_OPTIONS } from "../lib/agent-options";
+import { agentLabelCompare, buildRankedAgentOptions } from "../lib/agent-select-options";
 import { cn } from "../lib/utils";
+import { AgentAvatar } from "./AgentAvatar";
 import { buildIntake, type IntakeForm, IntakeFields, intakeNeedsRule } from "./IntakeFields";
+import { AgentSelectMenuItem } from "./settings/AgentSelectMenuItem";
+import { SettingsRow } from "./settings/SettingsRow";
+import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import type { ProjectKind } from "../types/workspace";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
@@ -28,10 +33,6 @@ const DEFAULT_AGENT_PRIORITY_RANK = new Map<string, number>(
 	DEFAULT_AGENT_PRIORITY.map((agent, index) => [agent, index]),
 );
 
-function agentLabelCompare(a: AgentInfo, b: AgentInfo): number {
-	return a.label.localeCompare(b.label) || a.id.localeCompare(b.id);
-}
-
 type CreateProjectAgentSheetProps = {
 	error?: string | null;
 	isCreating: boolean;
@@ -42,6 +43,7 @@ type CreateProjectAgentSheetProps = {
 	open: boolean;
 	path: string | null;
 	repositorySetupNeeded?: boolean;
+	repositorySetupWarning?: string | null;
 };
 
 type SheetError = {
@@ -94,6 +96,7 @@ export function CreateProjectAgentSheet({
 	open,
 	path,
 	repositorySetupNeeded = false,
+	repositorySetupWarning = null,
 }: CreateProjectAgentSheetProps) {
 	const queryClient = useQueryClient();
 	const agentsQuery = useQuery({
@@ -258,7 +261,12 @@ export function CreateProjectAgentSheet({
 
 						{repositorySetupNeeded && (
 							<div className="rounded-lg border border-[var(--color-border-agents-sheet)] bg-[var(--color-bg-agents-sheet-control)]/80 px-3 py-2.5 text-xs leading-body-md text-[var(--color-text-agents-sheet-description)]">
-								If this folder needs Git setup, AO will initialize it and create the first commit before starting.
+								<p>If this folder needs Git setup, AO will initialize it and create the first commit before starting.</p>
+								{repositorySetupWarning && (
+									<p className="mt-2 text-warning">
+										{repositorySetupWarning}
+									</p>
+								)}
 							</div>
 						)}
 
@@ -324,6 +332,7 @@ export function CreateProjectAgentSheet({
 export const RequiredAgentField = memo(function RequiredAgentField({
 	authorized,
 	disabled = false,
+	icon,
 	id,
 	invalid = false,
 	installed,
@@ -335,9 +344,11 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 	labelClassName,
 	contentClassName,
 	value,
+	variant = "stacked",
 }: {
 	authorized?: AgentInfo[];
 	disabled?: boolean;
+	icon?: LucideIcon;
 	id: string;
 	invalid?: boolean;
 	installed?: AgentInfo[];
@@ -349,31 +360,60 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 	labelClassName?: string;
 	contentClassName?: string;
 	value: string;
+	variant?: "stacked" | "settings-row";
 }) {
 	const fallbackAgents: AgentInfo[] = AGENT_OPTIONS.map((agent) => ({ id: agent, label: agent }));
-	const supportedAgents = supported ?? fallbackAgents;
-	const installedAgents = installed ?? supportedAgents;
-	const authorizedAgents = authorized ?? supportedAgents;
-	const authorizedIds = new Set(authorizedAgents.map((agent) => agent.id));
-	const installedById = new Map(installedAgents.map((agent) => [agent.id, agent]));
-	const options = supportedAgents
-		.map((agent) => {
-			const installedAgent = installedById.get(agent.id);
-			const authStatus = installedAgent?.authStatus;
-			const isAuthorized = authorizedIds.has(agent.id) || authStatus === "authorized";
-			const isAuthUnknown = Boolean(installedAgent) && !isAuthorized && authStatus !== "unauthorized";
-			const isSelectable = isAuthorized || isAuthUnknown;
-			const rank = isAuthorized ? 0 : isAuthUnknown ? 1 : installedAgent ? 2 : 3;
-			return {
-				...agent,
-				disabled: !isSelectable,
-				priorityRank: DEFAULT_AGENT_PRIORITY_RANK.get(agent.id) ?? Number.MAX_SAFE_INTEGER,
-				rank,
-				reason: !installedAgent ? "Needs install" : isAuthUnknown ? "Auth unknown" : !isAuthorized ? "Needs auth" : "",
-				warning: isAuthUnknown,
-			};
-		})
-		.sort((a, b) => a.rank - b.rank || a.priorityRank - b.priorityRank || agentLabelCompare(a, b));
+	const options = buildRankedAgentOptions({
+		supported,
+		installed,
+		authorized,
+		priorityRank: DEFAULT_AGENT_PRIORITY_RANK,
+		fallbackAgents,
+	});
+
+	if (variant === "settings-row") {
+		const menuOptions = options.map((agent) => ({
+			value: agent.id,
+			label: agent.label,
+			disabled: agent.disabled,
+		}));
+
+		return (
+			<SettingsRow icon={icon} label={label}>
+				<SettingsOptionMenu
+					aria-label={label}
+					value={value}
+					placeholder={placeholder}
+					options={menuOptions}
+					disabled={disabled}
+					onChange={onChange}
+					triggerClassName={invalid ? "text-error" : undefined}
+					menuClassName="settings-agent-menu-surface"
+					menuItemClassName="settings-agent-menu-item"
+					renderTrigger={(selected, triggerPlaceholder) => (
+						<>
+							{selected ? <AgentAvatar provider={selected.value} className="size-icon-lg" /> : null}
+							<span className="min-w-0 truncate">{selected?.label ?? triggerPlaceholder}</span>
+						</>
+					)}
+					renderMenuItem={(option, selected) => {
+						const agent = options.find((entry) => entry.id === option.value);
+						if (!agent) return option.label;
+						return (
+							<AgentSelectMenuItem
+								agentId={agent.id}
+								label={agent.label}
+								selected={selected}
+								status={agent.status}
+								statusTone={agent.statusTone}
+								disabled={agent.disabled}
+							/>
+						);
+					}}
+				/>
+			</SettingsRow>
+		);
+	}
 
 	return (
 		<div className="flex flex-col gap-1.5">
@@ -385,6 +425,7 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 					id={id}
 					size="sm"
 					className={cn("w-full text-control", triggerClassName)}
+					aria-label={label}
 					aria-invalid={invalid || undefined}
 				>
 					<SelectValue placeholder={placeholder} />
@@ -403,15 +444,14 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 							disabled={agent.disabled}
 							className="[&>span:last-child]:w-full"
 						>
-							<span className="flex min-w-0 w-full items-center justify-between gap-4">
-								<span className="truncate">{agent.label}</span>
-								{agent.reason && (
-									<span className="inline-flex shrink-0 items-center gap-1 text-caption text-muted-foreground">
-										{agent.warning && <TriangleAlert className="size-3 text-warning" aria-hidden="true" />}
-										{agent.reason}
-									</span>
-								)}
-							</span>
+							<AgentSelectMenuItem
+								agentId={agent.id}
+								label={agent.label}
+								selected={value === agent.id}
+								status={agent.status}
+								statusTone={agent.statusTone}
+								disabled={agent.disabled}
+							/>
 						</SelectItem>
 					))}
 				</SelectContent>

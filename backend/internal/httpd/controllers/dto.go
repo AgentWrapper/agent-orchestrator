@@ -244,11 +244,82 @@ type SetSessionPreviewRequest struct {
 	URL string `json:"url,omitempty" description:"Preview target URL. When empty, the daemon autodetects a static entry point in the session workspace."`
 }
 
+// StartPreviewServerRequest selects one named entry from .ao/launch.json. The
+// name may be omitted when the file contains exactly one configuration.
+type StartPreviewServerRequest struct {
+	Configuration string `json:"configuration,omitempty" description:"Named preview configuration. Optional when exactly one configuration exists."`
+}
+
+// PreviewServerStatusResponse reports the deterministic server AO owns for one
+// session. Logs are bounded to the latest lines and never contain global
+// process or port discovery.
+type PreviewServerStatusResponse struct {
+	SessionID     domain.SessionID `json:"sessionId"`
+	State         string           `json:"state" enum:"stopped,starting,ready,stopping,failed"`
+	Configuration string           `json:"configuration,omitempty"`
+	TargetKind    string           `json:"targetKind,omitempty" enum:"app,api"`
+	URL           string           `json:"url,omitempty"`
+	Port          int              `json:"port,omitempty"`
+	StartedAt     time.Time        `json:"startedAt,omitempty"`
+	Error         string           `json:"error,omitempty"`
+	Logs          []string         `json:"logs"`
+}
+
+// BrowserStatusQuery selects the session whose logical browser is inspected.
+type BrowserStatusQuery struct {
+	SessionID domain.SessionID `query:"sessionId" description:"AO session identifier."`
+}
+
+// BrowserCapabilityHeader proves that the caller owns the target session.
+type BrowserCapabilityHeader struct {
+	Capability string `header:"X-AO-Browser-Capability" description:"Opaque browser capability injected into the owning AO worker."`
+}
+
+// BrowserStatusResponse reports whether the desktop-owned browser transport is
+// ready. A connected runtime can create the session target while its panel is
+// hidden; panel visibility is intentionally not part of this state.
+type BrowserStatusResponse struct {
+	SessionID   domain.SessionID `json:"sessionId"`
+	Connected   bool             `json:"connected"`
+	ConnectedAt time.Time        `json:"connectedAt,omitempty"`
+	Transport   string           `json:"transport"`
+}
+
+// BrowserCommandRequest is the stable daemon-facing command envelope. Action
+// arguments remain action-specific JSON so new target-scoped operations do not
+// require a new transport or Electron IPC surface.
+type BrowserCommandRequest struct {
+	SessionID domain.SessionID       `json:"sessionId"`
+	Action    string                 `json:"action"`
+	Args      map[string]interface{} `json:"args,omitempty"`
+}
+
+// BrowserCommandResponse returns a correlated result from the browser runtime.
+type BrowserCommandResponse struct {
+	RequestID string           `json:"requestId"`
+	SessionID domain.SessionID `json:"sessionId"`
+	Action    string           `json:"action"`
+	Result    interface{}      `json:"result"`
+}
+
+// SetSessionMergePolicyRequest is the body of PATCH /api/v1/sessions/{sessionId}/merge-policy.
+type SetSessionMergePolicyRequest struct {
+	TerminateOnPRMerge bool `json:"terminateOnPrMerge"`
+}
+
 // RenameSessionResponse is the body of PATCH /api/v1/sessions/{sessionId}.
 type RenameSessionResponse struct {
 	OK          bool             `json:"ok"`
 	SessionID   domain.SessionID `json:"sessionId"`
 	DisplayName string           `json:"displayName"`
+}
+
+// SetSessionMergePolicyResponse is the body of PATCH /api/v1/sessions/{sessionId}/merge-policy.
+type SetSessionMergePolicyResponse struct {
+	OK                 bool             `json:"ok"`
+	SessionID          domain.SessionID `json:"sessionId"`
+	TerminateOnPRMerge bool             `json:"terminateOnPrMerge"`
+	Session            SessionView      `json:"session"`
 }
 
 // RestoreSessionResponse is the body of POST /api/v1/sessions/{sessionId}/restore.
@@ -257,6 +328,14 @@ type RestoreSessionResponse struct {
 	SessionID   domain.SessionID           `json:"sessionId"`
 	RestoreMode sessionsvc.RestoreModeView `json:"restoreMode" enum:"native,saved_prompt,fresh"`
 	Session     SessionView                `json:"session"`
+}
+
+// ResumeAgentResponse is the body of POST /api/v1/sessions/{sessionId}/resume-agent.
+type ResumeAgentResponse struct {
+	OK         bool                       `json:"ok"`
+	SessionID  domain.SessionID           `json:"sessionId"`
+	ResumeMode sessionsvc.RestoreModeView `json:"resumeMode" enum:"native,saved_prompt,fresh"`
+	Session    SessionView                `json:"session"`
 }
 
 // KillSessionResponse is the body of POST /api/v1/sessions/{sessionId}/kill.
@@ -336,6 +415,8 @@ type SessionPRSummary struct {
 	CI               SessionPRCISummary           `json:"ci"`
 	Review           SessionPRReviewSummary       `json:"review"`
 	Mergeability     SessionPRMergeabilitySummary `json:"mergeability"`
+	StateChangedAt   *time.Time                   `json:"stateChangedAt,omitempty"`
+	CreatedAt        *time.Time                   `json:"createdAt,omitempty"`
 	UpdatedAt        time.Time                    `json:"updatedAt"`
 	ObservedAt       time.Time                    `json:"observedAt,omitempty"`
 	CIObservedAt     time.Time                    `json:"ciObservedAt,omitempty"`
@@ -431,11 +512,20 @@ func NewSessionPRSummary(in sessionsvc.PRSummary) SessionPRSummary {
 		CI:               newSessionPRCISummary(in.CI),
 		Review:           newSessionPRReviewSummary(in.Review),
 		Mergeability:     newSessionPRMergeabilitySummary(in.Mergeability),
+		StateChangedAt:   optionalTime(in.StateChangedAt),
+		CreatedAt:        optionalTime(in.CreatedAt),
 		UpdatedAt:        in.UpdatedAt,
 		ObservedAt:       in.ObservedAt,
 		CIObservedAt:     in.CIObservedAt,
 		ReviewObservedAt: in.ReviewObservedAt,
 	}
+}
+
+func optionalTime(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	return &value
 }
 
 func newSessionPRCISummary(in sessionsvc.PRCISummary) SessionPRCISummary {
@@ -506,6 +596,7 @@ type SetActivityRequest struct {
 	ToolName       string `json:"toolName,omitempty" description:"Native tool name, for tool-use hook events."`
 	ToolUseID      string `json:"toolUseId,omitempty" description:"Native tool-use id, for tool-use hook events."`
 	AgentSessionID string `json:"agentSessionId,omitempty" description:"Native agent session identifier used to resume its transcript."`
+	LaunchID       string `json:"launchId,omitempty" description:"AO process generation that produced the signal."`
 }
 
 // SetActivityResponse is the body of POST /api/v1/sessions/{sessionId}/activity.
@@ -536,6 +627,13 @@ type OrchestratorResponse struct {
 	ID          domain.SessionID `json:"id"`
 	ProjectID   domain.ProjectID `json:"projectId"`
 	ProjectName string           `json:"projectName,omitempty"`
+}
+
+// CompleteOrchestratorResponse is returned after the orchestrator declares its
+// assigned work complete.
+type CompleteOrchestratorResponse struct {
+	OK        bool             `json:"ok"`
+	SessionID domain.SessionID `json:"sessionId"`
 }
 
 // ListAgentsResponse is the body of GET /api/v1/agents.
@@ -615,6 +713,12 @@ type ShellTerminalHandleIDParam struct {
 // OpenShellTerminalRequest is the body of POST /api/v1/shell-terminals.
 type OpenShellTerminalRequest struct {
 	ProjectID string `json:"projectId,omitempty" description:"Project whose root the shell starts in. Omitted opens the shell in the daemon data dir."`
+	SessionID string `json:"sessionId,omitempty" description:"Agent session the shell is scoped to, so it appears only in that session's tab strip. Omitted makes it a standalone shell."`
+}
+
+// UpdateShellTerminalRequest is the body of PATCH /api/v1/shell-terminals/{handleId}.
+type UpdateShellTerminalRequest struct {
+	Title string `json:"title" description:"New tab title for the shell terminal. Trimmed; must be non-empty."`
 }
 
 // ShellTerminalResponse is one standalone shell terminal. HandleID is what the
@@ -622,6 +726,7 @@ type OpenShellTerminalRequest struct {
 type ShellTerminalResponse struct {
 	HandleID   string    `json:"handleId"`
 	ProjectID  string    `json:"projectId,omitempty"`
+	SessionID  string    `json:"sessionId,omitempty"`
 	WorkingDir string    `json:"workingDir"`
 	Title      string    `json:"title"`
 	CreatedAt  time.Time `json:"createdAt"`

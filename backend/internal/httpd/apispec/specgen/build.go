@@ -77,6 +77,8 @@ func Build() ([]byte, error) {
 			"Developer-only maintenance operations"),
 		*(&openapi31.Tag{Name: "mobile"}).WithDescription(
 			"Connect Mobile LAN bridge control (loopback/desktop only)"),
+		*(&openapi31.Tag{Name: "browser"}).WithDescription(
+			"Target-isolated desktop browser runtime (loopback only)"),
 	}
 
 	for _, op := range operations() {
@@ -154,9 +156,18 @@ var schemaNames = map[string]string{
 	"ControllersSessionResponse":                  "SessionResponse",
 	"ControllersSessionPreviewResponse":           "SessionPreviewResponse",
 	"ControllersSetSessionPreviewRequest":         "SetSessionPreviewRequest",
+	"ControllersStartPreviewServerRequest":        "StartPreviewServerRequest",
+	"ControllersPreviewServerStatusResponse":      "PreviewServerStatusResponse",
+	"ControllersBrowserStatusQuery":               "BrowserStatusQuery",
+	"ControllersBrowserStatusResponse":            "BrowserStatusResponse",
+	"ControllersBrowserCommandRequest":            "BrowserCommandRequest",
+	"ControllersBrowserCommandResponse":           "BrowserCommandResponse",
+	"ControllersSetSessionMergePolicyRequest":     "SetSessionMergePolicyRequest",
+	"ControllersSetSessionMergePolicyResponse":    "SetSessionMergePolicyResponse",
 	"ControllersRenameSessionRequest":             "RenameSessionRequest",
 	"ControllersRenameSessionResponse":            "RenameSessionResponse",
 	"ControllersRestoreSessionResponse":           "RestoreSessionResponse",
+	"ControllersResumeAgentResponse":              "ResumeAgentResponse",
 	"ControllersCleanupSessionsResponse":          "CleanupSessionsResponse",
 	"ControllersCleanupSkippedSession":            "CleanupSkippedSession",
 	"ControllersWorkspaceFileQuery":               "WorkspaceFileQuery",
@@ -185,6 +196,7 @@ var schemaNames = map[string]string{
 	"ControllersSpawnOrchestratorRequest":         "SpawnOrchestratorRequest",
 	"ControllersSpawnOrchestratorResponse":        "SpawnOrchestratorResponse",
 	"ControllersOrchestratorResponse":             "OrchestratorResponse",
+	"ControllersCompleteOrchestratorResponse":     "CompleteOrchestratorResponse",
 	"AgentInventory":                              "ListAgentsResponse",
 	"AgentInfo":                                   "AgentInfo",
 	"AgentProbeResult":                            "ProbeAgentResponse",
@@ -200,6 +212,7 @@ var schemaNames = map[string]string{
 	// httpd/controllers — standalone shell terminal wire envelopes
 	"ControllersShellTerminalHandleIDParam": "ShellTerminalHandleIDParam",
 	"ControllersOpenShellTerminalRequest":   "OpenShellTerminalRequest",
+	"ControllersUpdateShellTerminalRequest": "UpdateShellTerminalRequest",
 	"ControllersShellTerminalResponse":      "ShellTerminalResponse",
 	"ControllersListShellTerminalsResponse": "ListShellTerminalsResponse",
 	"ControllersShellTerminalEnvelope":      "ShellTerminalEnvelope",
@@ -331,8 +344,43 @@ func operations() []operation {
 	ops = append(ops, importOperations()...)
 	ops = append(ops, devOperations()...)
 	ops = append(ops, mobileOperations()...)
+	ops = append(ops, browserOperations()...)
 	ops = append(ops, shellTerminalOperations()...)
 	return ops
+}
+
+func browserOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/browser/status", id: "getBrowserStatus", tag: "browser",
+			summary:    "Check whether the desktop browser runtime is connected for a session",
+			pathParams: []any{controllers.BrowserStatusQuery{}, controllers.BrowserCapabilityHeader{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.BrowserStatusResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusForbidden, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/browser/commands", id: "executeBrowserCommand", tag: "browser",
+			summary:    "Execute a target-scoped command in a session's desktop browser",
+			pathParams: []any{controllers.BrowserCapabilityHeader{}},
+			reqBody:    controllers.BrowserCommandRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.BrowserCommandResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusForbidden, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusServiceUnavailable, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
 }
 
 // shellTerminalOperations describes the standalone shell terminal surface:
@@ -354,6 +402,19 @@ func shellTerminalOperations() []operation {
 			reqBody: controllers.OpenShellTerminalRequest{},
 			resps: []respUnit{
 				{http.StatusCreated, controllers.ShellTerminalEnvelope{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPatch, path: "/api/v1/shell-terminals/{handleId}", id: "renameShellTerminal", tag: "shellTerminals",
+			summary:    "Rename a standalone shell terminal tab",
+			pathParams: []any{controllers.ShellTerminalHandleIDParam{}},
+			reqBody:    controllers.UpdateShellTerminalRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ShellTerminalEnvelope{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
@@ -800,6 +861,50 @@ func sessionOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/preview/server", id: "getSessionPreviewServer", tag: "sessions",
+			summary:    "Get the managed preview server status for a session",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.BrowserCapabilityHeader{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.PreviewServerStatusResponse{}},
+				{http.StatusForbidden, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/preview/server", id: "startSessionPreviewServer", tag: "sessions",
+			summary:    "Start a session-owned server from .ao/launch.json and open its application preview",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.BrowserCapabilityHeader{}},
+			reqBody:    controllers.StartPreviewServerRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.PreviewServerStatusResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusForbidden, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusRequestTimeout, envelope.APIError{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusGatewayTimeout, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodDelete, path: "/api/v1/sessions/{sessionId}/preview/server", id: "stopSessionPreviewServer", tag: "sessions",
+			summary:    "Stop the managed preview server for a session",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.BrowserCapabilityHeader{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.PreviewServerStatusResponse{}},
+				{http.StatusForbidden, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/preview/files/*", id: "getSessionPreviewFile", tag: "sessions",
 			summary:    "Serve a static browser preview file from a session workspace",
 			pathParams: []any{controllers.SessionIDParam{}},
@@ -874,6 +979,19 @@ func sessionOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPatch, path: "/api/v1/sessions/{sessionId}/merge-policy", id: "setSessionMergePolicy", tag: "sessions",
+			summary:    "Configure whether PR completion terminates the session",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.SetSessionMergePolicyRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SetSessionMergePolicyResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/sessions/cleanup", id: "cleanupSessions", tag: "sessions",
 			summary:    "Clean up terminated session workspaces",
 			pathParams: []any{controllers.CleanupSessionsQuery{}},
@@ -892,6 +1010,18 @@ func sessionOperations() []operation {
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/resume-agent", id: "resumeAgent", tag: "sessions",
+			summary:    "Resume an exited agent in its existing session",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ResumeAgentResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},
 		{
@@ -972,6 +1102,18 @@ func sessionOperations() []operation {
 			pathParams: []any{controllers.OrchestratorIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.SessionResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/orchestrators/{id}/done", id: "completeOrchestrator", tag: "sessions",
+			summary:    "Declare an orchestrator complete and stop automatic re-engagement",
+			pathParams: []any{controllers.OrchestratorIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.CompleteOrchestratorResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
