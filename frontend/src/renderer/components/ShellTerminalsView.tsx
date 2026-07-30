@@ -1,9 +1,14 @@
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
 import { useOverflowScroll } from "../hooks/useOverflowScroll";
-import { useCloseShellTerminal, useRenameShellTerminal, useShellTerminals } from "../hooks/useShellTerminals";
+import {
+	useCloseShellTerminal,
+	useRefreshShellTerminals,
+	useRenameShellTerminal,
+	useShellTerminals,
+} from "../hooks/useShellTerminals";
 import { useShell } from "../lib/shell-context";
 import { aoBridge } from "../lib/bridge";
 import { isMacPlatform } from "../lib/platform";
@@ -31,6 +36,18 @@ export function ShellTerminalsView() {
 	// shells belong to that session's tab strip, not this global list.
 	const shellTerminals = (useShellTerminals().data ?? []).filter((s) => !s.sessionId);
 	const closeShellTerminal = useCloseShellTerminal();
+	const refreshShellTerminals = useRefreshShellTerminals();
+	const [attachEpochs, setAttachEpochs] = useState<Record<string, number>>({});
+	// See SessionView: "exited" is a hint. If the daemon still lists the shell it
+	// is alive and the pane must re-attach rather than sit on "Terminal ended".
+	const handleShellExited = useCallback(
+		async (handleId: string) => {
+			const shells = await refreshShellTerminals();
+			if (!shells.some((shell) => shell.handleId === handleId)) return;
+			setAttachEpochs((current) => ({ ...current, [handleId]: (current[handleId] ?? 0) + 1 }));
+		},
+		[refreshShellTerminals],
+	);
 	const renameShellTerminal = useRenameShellTerminal();
 	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
 	const activeHandleId = useUiStore((state) => state.activeShellTerminalHandleId);
@@ -132,6 +149,8 @@ export function ShellTerminalsView() {
 					<TerminalPane
 						daemonReady={daemonStatus.state === "ready"}
 						fontSize={12}
+						attachEpoch={attachEpochs[active.handleId] ?? 0}
+						onShellExited={handleShellExited}
 						terminalTarget={{
 							generation: active.createdAt,
 							kind: "shell",

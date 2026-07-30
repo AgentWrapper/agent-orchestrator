@@ -37,6 +37,10 @@ type CenterPaneProps = {
 	onNewShellTerminal?: () => void;
 	/** Session actions consolidated into the terminal bar by SessionView. */
 	topbarActions?: ReactNode;
+	/** A shell pane reported its PTY ended; the owner re-checks with the daemon. */
+	onShellExited?: (handleId: string) => void;
+	/** Bumped to force a fresh attachment when a reported exit turns out false. */
+	attachEpoch?: number;
 };
 
 const terminalFontSizeStorageKey = "ao.terminal.fontSize";
@@ -71,6 +75,8 @@ export function CenterPane({
 	onRenameShellTerminal,
 	onNewShellTerminal,
 	topbarActions,
+	onShellExited,
+	attachEpoch,
 }: CenterPaneProps) {
 	const { t } = useTranslation();
 	const paneRef = useRef<HTMLDivElement | null>(null);
@@ -356,8 +362,10 @@ export function CenterPane({
 				role="tabpanel"
 			>
 				<TerminalPane
+					attachEpoch={attachEpoch}
 					daemonReady={daemonReady}
 					fontSize={fontSize}
+					onShellExited={onShellExited}
 					session={session}
 					terminalTarget={target}
 					theme={theme}
