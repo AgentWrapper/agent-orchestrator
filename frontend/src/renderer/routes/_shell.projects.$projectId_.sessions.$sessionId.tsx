@@ -1,16 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { SessionView } from "../components/SessionView";
 
-type SessionSearch = { tabOwner?: string };
-
 export const Route = createFileRoute("/_shell/projects/$projectId_/sessions/$sessionId")({
-	validateSearch: (search: Record<string, unknown>): SessionSearch =>
-		typeof search.tabOwner === "string" ? { tabOwner: search.tabOwner } : {},
 	component: ProjectSessionRoute,
 });
 
 function ProjectSessionRoute() {
 	const { sessionId } = Route.useParams();
-	const { tabOwner } = Route.useSearch();
-	return <SessionView sessionId={sessionId} tabOwnerSessionId={tabOwner} />;
+	return <SessionView sessionId={sessionId} />;
 }

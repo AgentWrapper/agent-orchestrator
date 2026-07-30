@@ -27,8 +27,10 @@ type PollerConfig struct {
 	Logger   *slog.Logger
 }
 
-// Poller watches active worker workspaces for static frontend entrypoints and
-// persists preview URL refreshes through the normal session service path.
+// Poller watches explicitly selected workspace previews and persists refreshes
+// through the normal session service path. It never chooses a preview for a
+// fresh worker: selection belongs to `ao preview`, a managed server start, or
+// deliberate user navigation.
 type Poller struct {
 	source   sessionPreviewSource
 	setter   previewSetter
@@ -113,38 +115,33 @@ func (p *Poller) Poll(ctx context.Context) error {
 			continue
 		}
 		storedEntry, workspaceOwned := StoredWorkspaceEntry(sess.Metadata.PreviewURL, sess.ID)
-		entry, ok := Entry{}, false
-		if workspaceOwned {
-			entry, ok = EntryAtPath(sess.Metadata.WorkspacePath, storedEntry)
-		}
-		if !ok {
-			// A session the user has never explicitly previewed
-			// (workspaceOwned == false) is only auto-previewed when it has a
-			// real static-frontend entrypoint (index.html variants). The
-			// mostRecentPreviewable .md/.html fallback is intentionally NOT
-			// applied here, otherwise every new session in a Markdown-rich repo
-			// auto-opens its browser to an arbitrary repo doc. Once a session
-			// has been explicitly previewed (workspaceOwned == true), full
-			// DiscoverEntry — including the document fallback — keeps the
-			// preview fresh. See issue #2859.
-			if workspaceOwned {
-				entry, ok = DiscoverEntry(sess.Metadata.WorkspacePath)
-			} else {
-				entry, ok = DiscoverWebEntrypoint(sess.Metadata.WorkspacePath)
+		previous, seenBefore := p.seen[sess.ID]
+		restoringCleared := false
+		if !workspaceOwned {
+			// Only restore an entry after the poller itself cleared it because
+			// the selected file temporarily disappeared. A blank fresh session
+			// or an explicit user clear must remain blank.
+			if !seenBefore || !previous.cleared || previous.path == "" {
+				continue
 			}
+			storedEntry = previous.path
+			workspaceOwned = true
+			restoringCleared = true
 		}
+		entry, ok := EntryAtPath(sess.Metadata.WorkspacePath, storedEntry)
 		if !ok {
 			if workspaceOwned {
-				if _, err := p.setter.SetPreview(ctx, sess.ID, ""); err != nil {
-					p.logger.Error("preview poller: failed to clear stale preview",
-						"session", sess.ID, "err", err)
+				if !restoringCleared {
+					if _, err := p.setter.SetPreview(ctx, sess.ID, ""); err != nil {
+						p.logger.Error("preview poller: failed to clear stale preview",
+							"session", sess.ID, "err", err)
+					}
 				}
-				p.seen[sess.ID] = entryState{cleared: true}
+				p.seen[sess.ID] = entryState{path: storedEntry, cleared: true}
 			}
 			continue
 		}
 		state := stateFor(entry)
-		previous, seenBefore := p.seen[sess.ID]
 		if seenBefore && previous == state {
 			continue
 		}

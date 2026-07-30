@@ -29,7 +29,7 @@ const siteDescription =
 export const metadata: Metadata = {
   metadataBase: new URL(COMPANY.MARKETING_URL),
   title: {
-    default: COMPANY.NAME,
+    default: `Run Coding Agents in Parallel | ${COMPANY.NAME}`,
     template: `%s | ${COMPANY.NAME}`,
   },
   description: siteDescription,

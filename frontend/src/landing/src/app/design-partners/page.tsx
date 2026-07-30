@@ -1,6 +1,7 @@
 import { AGENT_HARNESSES, COMPANY } from "@ao/shared/constants";
 import type { Metadata } from "next";
 import Image from "next/image";
+import { preload } from "react-dom";
 import {
   formatStatPlus,
   getGitHubRepoStats,
@@ -27,7 +28,7 @@ const FALLBACK_STATS = {
 } as const;
 
 export const metadata: Metadata = {
-  title: "Design Partner Program - Agent Orchestrator",
+  title: "Design Partner Program",
   description:
     "Mission control for your agent fleet: shared sessions, ROI observability, and an engine room your org fully owns. Your engineers get leverage; your leadership gets answers.",
   openGraph: {
@@ -139,6 +140,14 @@ const phases: RoadmapPhase[] = [
   },
 ];
 
+// The hero is excluded: its <Image priority> already preloads it, and as the LCP
+// element it should stay the only image competing for early bandwidth. These are
+// all below the fold, so they warm the cache at low priority instead.
+const BELOW_FOLD_IMAGES = [
+  "/design-partners/shared-workspace-olive.png",
+  ...phases.map((phase) => phase.image),
+];
+
 function ArrowIcon({ className = "" }: { className?: string }) {
   return (
     <svg
@@ -183,6 +192,11 @@ function TextLink({
 }
 
 export default async function DesignPartnersPage() {
+  // Emitted before the stats await so the browser can fetch artwork in parallel.
+  for (const image of BELOW_FOLD_IMAGES) {
+    preload(image, { as: "image", fetchPriority: "low" });
+  }
+
   const repo = await getGitHubRepoStats();
   const stars = repo?.stars ?? FALLBACK_STATS.stars;
   const forks = repo?.forks ?? FALLBACK_STATS.forks;

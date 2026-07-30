@@ -137,6 +137,27 @@ type fakeProvider struct {
 	fetchBatches     [][]ports.SCMPRRef
 	logCalls         int
 	reviewCalls      int
+	identity         ports.SCMIdentity
+	identityErr      error
+	identityCalls    int
+}
+
+type fakeIdentityResolver struct {
+	identity ports.SCMIdentity
+	err      error
+	calls    int
+}
+
+func (r *fakeIdentityResolver) AuthenticatedIdentity(context.Context) (ports.SCMIdentity, error) {
+	r.calls++
+	return r.identity, r.err
+}
+
+func (p *fakeProvider) AuthenticatedIdentity(context.Context) (ports.SCMIdentity, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.identityCalls++
+	return p.identity, p.identityErr
 }
 
 func (p *fakeProvider) SCMCredentialsAvailable(context.Context) (bool, error) {
@@ -226,7 +247,7 @@ func (l *fakeLifecycle) ApplySCMObservation(_ context.Context, _ domain.SessionI
 }
 
 func newTestObserver(store *fakeStore, provider *fakeProvider, lc Lifecycle, now time.Time) *Observer {
-	return New(provider, store, lc, Config{Clock: func() time.Time { return now }, Tick: time.Hour, Logger: quietSlog(), CacheMax: 128})
+	return New(provider, store, lc, Config{Clock: func() time.Time { return now }, Tick: time.Hour, Logger: quietSlog(), CacheMax: 128, IdentityResolver: provider})
 }
 
 func TestDispatchOrderIsDeterministic(t *testing.T) {
@@ -546,6 +567,70 @@ func TestPoll_RepoETag200DiscoversPRAndRefreshesSamePoll(t *testing.T) {
 	}
 }
 
+func TestPoll_DiscoversOnlyPRsFromAuthenticatedHuman(t *testing.T) {
+	store := testStoreWithSession()
+	provider := &fakeProvider{
+		repoGuards: map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "v2"}},
+		openPRs: map[string][]ports.SCMPRObservation{prKey(testRepo, 0): {
+			{URL: "https://github.com/o/r/pull/1", Number: 1, SourceBranch: "feat", HeadRepo: "o/r", TargetBranch: "main", HeadSHA: "sha1", Author: "other"},
+			{URL: "https://github.com/o/r/pull/2", Number: 2, SourceBranch: "feat", HeadRepo: "o/r", TargetBranch: "main", HeadSHA: "sha2", Author: "ALICE"},
+		}},
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 2): testObs(2)},
+	}
+	identity := &fakeIdentityResolver{identity: ports.SCMIdentity{Login: "alice", Human: true}}
+	obs := New(provider, store, &fakeLifecycle{}, Config{
+		Clock:            func() time.Time { return time.Unix(1, 0).UTC() },
+		Tick:             time.Hour,
+		Logger:           quietSlog(),
+		CacheMax:         128,
+		IdentityResolver: identity,
+	})
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if identity.calls != 1 {
+		t.Fatalf("identity resolver calls = %d, want 1", identity.calls)
+	}
+	if len(provider.fetchBatches) != 1 || len(provider.fetchBatches[0]) != 1 || provider.fetchBatches[0][0].Number != 2 {
+		t.Fatalf("fetched PRs = %#v, want only authenticated author's PR #2", provider.fetchBatches)
+	}
+	for _, write := range store.writes {
+		if write.pr.Number == 1 {
+			t.Fatal("foreign author's PR was persisted")
+		}
+	}
+}
+
+func TestPoll_PreservesBranchDiscoveryWithoutHumanIdentity(t *testing.T) {
+	tests := []struct {
+		name        string
+		identity    ports.SCMIdentity
+		identityErr error
+	}{
+		{name: "lookup error", identityErr: errors.New("identity unavailable")},
+		{name: "bot account", identity: ports.SCMIdentity{Login: "ao-bot", Human: false}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := testStoreWithSession()
+			provider := &fakeProvider{
+				repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "v2"}},
+				openPRs:      map[string][]ports.SCMPRObservation{prKey(testRepo, 0): {{URL: "https://github.com/o/r/pull/1", Number: 1, SourceBranch: "feat", HeadRepo: "o/r", TargetBranch: "main", HeadSHA: "sha1", Author: "other"}}},
+				observations: map[string]ports.SCMObservation{prKey(testRepo, 1): testObs(1)},
+				identity:     tt.identity,
+				identityErr:  tt.identityErr,
+			}
+			obs := newTestObserver(store, provider, &fakeLifecycle{}, time.Unix(1, 0).UTC())
+			if err := obs.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if len(provider.fetchBatches) != 1 || provider.fetchBatches[0][0].Number != 1 {
+				t.Fatalf("branch fallback did not discover PR: %#v", provider.fetchBatches)
+			}
+		})
+	}
+}
+
 // A session whose branch is the prefix of two open PRs (its root plus a stacked
 // child on branch "feat/child") picks up both PRs in a single poll.
 func TestPoll_DiscoversStackedChildByBranchPrefix(t *testing.T) {
@@ -606,6 +691,18 @@ func TestPoll_DiscoversSiblingUnderRootSessionNamespace(t *testing.T) {
 	}
 	if len(lc.observed) != 1 {
 		t.Fatalf("lifecycle observations = %d, want 1", len(lc.observed))
+	}
+}
+
+func TestMatchSession_PrefersExactBranchOverNamespaceMatch(t *testing.T) {
+	exact := sessionRepo{session: domain.SessionRecord{ID: "exact"}, branch: "ao/p-1"}
+	namespace := sessionRepo{session: domain.SessionRecord{ID: "namespace"}, branch: "ao/p-1/root"}
+	got, ok := matchSession([]sessionRepo{namespace, exact}, "ao/p-1")
+	if !ok {
+		t.Fatal("expected a matching session")
+	}
+	if got.session.ID != exact.session.ID {
+		t.Fatalf("matched session = %q, want exact branch owner %q", got.session.ID, exact.session.ID)
 	}
 }
 
