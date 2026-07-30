@@ -1745,6 +1745,57 @@ paths:
       summary: List a worker's code-review runs
       tags:
       - reviews
+  /api/v1/sessions/{sessionId}/reviews/addressed:
+    post:
+      operationId: addressReviewFeedback
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddressedReviewInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AddressedReviewResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Reply to and resolve explicitly addressed review threads
+      tags:
+      - reviews
   /api/v1/sessions/{sessionId}/reviews/cancel:
     post:
       operationId: cancelReview
@@ -2291,6 +2342,32 @@ components:
           - string
       required:
       - path
+      type: object
+    AddressedReviewInput:
+      properties:
+        body:
+          description: Reply AO should post before resolving the requested review
+            threads.
+          type: string
+        runId:
+          description: Review run id whose feedback was addressed.
+          type: string
+        threadIds:
+          description: Exact provider review thread ids AO should reply to and resolve.
+          items:
+            type: string
+          type: array
+      required:
+      - runId
+      - threadIds
+      - body
+      type: object
+    AddressedReviewResponse:
+      properties:
+        resolved:
+          type: integer
+      required:
+      - resolved
       type: object
     AgentConfig:
       properties:

@@ -25,11 +25,13 @@ ao review submit [worker-session-id] [flags]
 
 | Flag | Meaning | Default / Required |
 |---|---|---|
+| `--addressed` | Signal that worker/reviewer-addressed feedback should be replied to and resolved by AO | - |
 | `--body string` | Review body: a path to a Markdown file, or `-` to read from stdin | - |
 | `--review-id string` | Id of the GitHub PR review just posted (the `.id` from the `gh api` POST that created the review) | - |
 | `--reviews string` | JSON review results array or object: a path, or `-` to read from stdin | - |
 | `--run string` | Review run id | Required |
 | `--session string` | Worker session id (or pass it as the positional argument) | - |
+| `--thread-id string` | Exact provider review thread id addressed by the worker; repeat for each thread | Required with `--addressed` |
 | `--verdict string` | Review verdict: `approved` or `changes_requested` | Required |
 
 ## Examples
@@ -42,4 +44,9 @@ ao review submit mer-3 --run review-run-1 --verdict approved
 ```bash
 # Submit a changes-requested review with a body from stdin
 echo "Please fix the null check on line 42." | ao review submit --session mer-3 --run review-run-1 --verdict changes_requested --body -
+```
+
+```bash
+# After addressing specific review threads, ask AO to reply and resolve exactly those threads
+echo "Fixed in abc123." | ao review submit --session mer-3 --addressed --run review-run-1 --thread-id PRRT_kwDOExample1 --thread-id PRRT_kwDOExample2 --body -
 ```

@@ -77,13 +77,25 @@ type submitReviewRequest struct {
 	Reviews        []submitReviewItem `json:"reviews,omitempty"`
 }
 
+type addressedReviewRequest struct {
+	RunID     string   `json:"runId"`
+	ThreadIDs []string `json:"threadIds"`
+	Body      string   `json:"body"`
+}
+
+type addressedReviewResponse struct {
+	Resolved int `json:"resolved"`
+}
+
 type reviewSubmitOptions struct {
-	session  string
-	runID    string
-	verdict  string
-	body     string
-	reviewID string
-	reviews  string
+	session   string
+	runID     string
+	verdict   string
+	body      string
+	reviewID  string
+	reviews   string
+	addressed bool
+	threadIDs []string
 }
 
 type reviewSessionOptions struct {
@@ -154,6 +166,8 @@ func newReviewSubmitCommand(ctx *commandContext) *cobra.Command {
 	cmd.Flags().StringVar(&opts.body, "body", "", "Review body: a path to a Markdown file, or - to read from stdin (so nothing is written into the worktree)")
 	cmd.Flags().StringVar(&opts.reviewID, "review-id", "", "Id of the GitHub PR review just posted (the .id from the gh api POST that created the review)")
 	cmd.Flags().StringVar(&opts.reviews, "reviews", "", "JSON review results array or object: a path, or - to read from stdin")
+	cmd.Flags().BoolVar(&opts.addressed, "addressed", false, "Reply to and resolve provider review feedback addressed by this run")
+	cmd.Flags().StringArrayVar(&opts.threadIDs, "thread-id", nil, "Provider review thread id addressed by the worker; repeat for each exact thread")
 	return cmd
 }
 
@@ -162,8 +176,14 @@ func (c *commandContext) submitReview(cmd *cobra.Command, args []string, opts re
 	if len(args) == 1 {
 		session = strings.TrimSpace(args[0])
 	}
+	if session == "" && opts.addressed {
+		session = strings.TrimSpace(os.Getenv("AO_SESSION_ID"))
+	}
 	if session == "" {
 		return usageError{errors.New("usage: worker session id is required (positional or --session)")}
+	}
+	if opts.addressed {
+		return c.submitAddressedReview(cmd, session, opts)
 	}
 	if strings.TrimSpace(opts.reviews) != "" {
 		return c.submitReviewBatch(cmd, session, opts)
@@ -178,19 +198,11 @@ func (c *commandContext) submitReview(cmd *cobra.Command, args []string, opts re
 	}
 	var body string
 	if path := strings.TrimSpace(opts.body); path != "" {
-		var raw []byte
 		var err error
-		if path == "-" {
-			// Read the review from stdin so the reviewer never has to write a file
-			// into its checkout (where it could be committed onto the worker branch).
-			raw, err = io.ReadAll(cmd.InOrStdin())
-		} else {
-			raw, err = os.ReadFile(path)
-		}
+		body, err = readReviewBody(cmd, path)
 		if err != nil {
-			return usageError{fmt.Errorf("read review body: %w", err)}
+			return err
 		}
-		body = string(raw)
 	}
 	reviewID := strings.TrimSpace(opts.reviewID)
 	path := "sessions/" + url.PathEscape(session) + "/reviews/submit"
@@ -202,9 +214,41 @@ func (c *commandContext) submitReview(cmd *cobra.Command, args []string, opts re
 	return err
 }
 
+func (c *commandContext) submitAddressedReview(cmd *cobra.Command, session string, opts reviewSubmitOptions) error {
+	if strings.TrimSpace(opts.reviews) != "" || strings.TrimSpace(opts.verdict) != "" || strings.TrimSpace(opts.reviewID) != "" {
+		return usageError{errors.New("usage: --addressed cannot be combined with --reviews, --verdict, or --review-id")}
+	}
+	runID := strings.TrimSpace(opts.runID)
+	if runID == "" {
+		return usageError{errors.New("usage: --run is required with --addressed")}
+	}
+	threadIDs := normalizeCLIThreadIDs(opts.threadIDs)
+	if len(threadIDs) == 0 {
+		return usageError{errors.New("usage: at least one --thread-id is required with --addressed")}
+	}
+	bodyPath := strings.TrimSpace(opts.body)
+	if bodyPath == "" {
+		return usageError{errors.New("usage: --body is required with --addressed")}
+	}
+	body, err := readReviewBody(cmd, bodyPath)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(body) == "" {
+		return usageError{errors.New("usage: --body must not be blank with --addressed")}
+	}
+	path := "sessions/" + url.PathEscape(session) + "/reviews/addressed"
+	var res addressedReviewResponse
+	if err := c.postJSON(cmd.Context(), path, addressedReviewRequest{RunID: runID, ThreadIDs: threadIDs, Body: body}, &res); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(cmd.OutOrStdout(), "resolved %d review thread(s) for %s\n", res.Resolved, session)
+	return err
+}
+
 func (c *commandContext) submitReviewBatch(cmd *cobra.Command, session string, opts reviewSubmitOptions) error {
-	if strings.TrimSpace(opts.runID) != "" || strings.TrimSpace(opts.verdict) != "" || strings.TrimSpace(opts.body) != "" || strings.TrimSpace(opts.reviewID) != "" {
-		return usageError{errors.New("usage: --reviews cannot be combined with --run, --verdict, --body, or --review-id")}
+	if strings.TrimSpace(opts.runID) != "" || strings.TrimSpace(opts.verdict) != "" || strings.TrimSpace(opts.body) != "" || strings.TrimSpace(opts.reviewID) != "" || len(opts.threadIDs) > 0 {
+		return usageError{errors.New("usage: --reviews cannot be combined with --run, --verdict, --body, --review-id, or --thread-id")}
 	}
 	reviews, err := readReviewItems(cmd, strings.TrimSpace(opts.reviews))
 	if err != nil {
@@ -338,4 +382,37 @@ func readReviewItems(cmd *cobra.Command, path string) ([]submitReviewItem, error
 		return nil, usageError{errors.New("usage: --reviews requires at least one review result")}
 	}
 	return reviews, nil
+}
+
+func readReviewBody(cmd *cobra.Command, path string) (string, error) {
+	var raw []byte
+	var err error
+	if path == "-" {
+		// Read from stdin so agents do not need to write transient review text
+		// into their checkout.
+		raw, err = io.ReadAll(cmd.InOrStdin())
+	} else {
+		raw, err = os.ReadFile(path)
+	}
+	if err != nil {
+		return "", usageError{fmt.Errorf("read review body: %w", err)}
+	}
+	return string(raw), nil
+}
+
+func normalizeCLIThreadIDs(ids []string) []string {
+	seen := make(map[string]struct{}, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }

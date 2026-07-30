@@ -25,6 +25,8 @@ type fakeReviewService struct {
 	cancel     reviewcore.CancelResult
 	list       reviewcore.SessionReviews
 	submitted  []reviewsvc.SubmittedReview
+	addressed  reviewsvc.AddressedFeedback
+	addressErr error
 }
 
 func (f *fakeReviewService) Trigger(context.Context, domain.SessionID) (reviewcore.TriggerResult, error) {
@@ -55,6 +57,14 @@ func (f *fakeReviewService) SubmitMany(_ context.Context, _ domain.SessionID, re
 		runs = append(runs, domain.ReviewRun{ID: review.RunID, Verdict: review.Verdict, Body: review.Body, GithubReviewID: review.GithubReviewID})
 	}
 	return runs, nil
+}
+
+func (f *fakeReviewService) Addressed(_ context.Context, _ domain.SessionID, in reviewsvc.AddressedFeedback) (reviewsvc.AddressedResult, error) {
+	f.addressed = in
+	if f.addressErr != nil {
+		return reviewsvc.AddressedResult{}, f.addressErr
+	}
+	return reviewsvc.AddressedResult{Resolved: len(in.ThreadIDs)}, nil
 }
 
 func (f *fakeReviewService) List(context.Context, domain.SessionID) (reviewcore.SessionReviews, error) {
@@ -172,4 +182,29 @@ func TestReviewsSubmitAcceptsBatchedReviews(t *testing.T) {
 			t.Fatalf("body missing %s: %s", want, body)
 		}
 	}
+}
+
+func TestReviewsAddressedRequiresExplicitThreads(t *testing.T) {
+	svc := &fakeReviewService{}
+	srv := newReviewTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/sessions/mer-1/reviews/addressed", `{"runId":"run-1","threadIds":["thread-1","thread-2"],"body":"Fixed in abc123."}`)
+	assertJSON(t, headers)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d body=%s", status, body)
+	}
+	if svc.addressed.RunID != "run-1" || svc.addressed.Body != "Fixed in abc123." || len(svc.addressed.ThreadIDs) != 2 || svc.addressed.ThreadIDs[1] != "thread-2" {
+		t.Fatalf("addressed = %+v", svc.addressed)
+	}
+	if !strings.Contains(string(body), `"resolved":2`) {
+		t.Fatalf("body = %s, want resolved count", body)
+	}
+}
+
+func TestReviewsAddressedMapsNothingToResolve(t *testing.T) {
+	srv := newReviewTestServer(t, &fakeReviewService{addressErr: reviewsvc.ErrNothingToResolve})
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/sessions/mer-1/reviews/addressed", `{"runId":"run-1","body":"fixed"}`)
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusUnprocessableEntity, "NOTHING_TO_RESOLVE")
 }

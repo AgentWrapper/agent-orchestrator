@@ -15,6 +15,7 @@ type fakeStore struct {
 	ok        bool
 	batchRuns []domain.ReviewRun
 	prs       []domain.PullRequest
+	threads   []domain.PullRequestReviewThread
 
 	updateCalls int
 	markCalls   int
@@ -91,6 +92,16 @@ func (f *fakeStore) ListPRsBySession(context.Context, domain.SessionID) ([]domai
 	return out, nil
 }
 
+func (f *fakeStore) ListPRReviewThreads(_ context.Context, prURL string) ([]domain.PullRequestReviewThread, error) {
+	out := make([]domain.PullRequestReviewThread, 0, len(f.threads))
+	for _, th := range f.threads {
+		if prURL == "" || th.ThreadID != "" {
+			out = append(out, th)
+		}
+	}
+	return out, nil
+}
+
 type fakeReducer struct {
 	outcome    lifecycle.ReviewDeliveryOutcome
 	err        error
@@ -99,6 +110,23 @@ type fakeReducer struct {
 	got        lifecycle.ReviewResult
 	gotBatchID string
 	gotBatch   []lifecycle.ReviewResult
+}
+
+type fakeFeedbackActions struct {
+	replyErr   error
+	resolveErr error
+	replies    []string
+	resolves   []string
+}
+
+func (f *fakeFeedbackActions) ReplyToReviewThread(_ context.Context, threadID, body string) error {
+	f.replies = append(f.replies, threadID+":"+body)
+	return f.replyErr
+}
+
+func (f *fakeFeedbackActions) ResolveReviewThread(_ context.Context, threadID string) error {
+	f.resolves = append(f.resolves, threadID)
+	return f.resolveErr
 }
 
 func (f *fakeReducer) ApplyReviewResult(_ context.Context, _ domain.SessionID, result lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error) {
@@ -274,6 +302,104 @@ func TestSubmitCompletedRetryRejectsDifferentRecordedFields(t *testing.T) {
 			}
 			if st.updateCalls != 0 || st.markCalls != 0 || reducer.calls != 0 {
 				t.Fatalf("mismatched retry should not rewrite or deliver: update=%d mark=%d reducer=%d", st.updateCalls, st.markCalls, reducer.calls)
+			}
+		})
+	}
+}
+
+func TestAddressedRepliesThenResolvesExactThreads(t *testing.T) {
+	st := &fakeStore{
+		ok:  true,
+		run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", Status: domain.ReviewRunDelivered},
+		threads: []domain.PullRequestReviewThread{
+			{ThreadID: "thread-1"},
+			{ThreadID: "thread-2"},
+			{ThreadID: "thread-3"},
+		},
+	}
+	actions := &fakeFeedbackActions{}
+	svc := New(nil, st, WithReviewFeedbackActions(actions))
+
+	res, err := svc.Addressed(context.Background(), "mer-1", AddressedFeedback{
+		RunID:     "run-1",
+		ThreadIDs: []string{"thread-1", "thread-2", "thread-1"},
+		Body:      "Fixed in abc123.",
+	})
+	if err != nil {
+		t.Fatalf("Addressed: %v", err)
+	}
+	if res.Resolved != 2 {
+		t.Fatalf("resolved = %d, want 2", res.Resolved)
+	}
+	if got := actions.replies; len(got) != 2 || got[0] != "thread-1:Fixed in abc123." || got[1] != "thread-2:Fixed in abc123." {
+		t.Fatalf("replies = %+v", got)
+	}
+	if got := actions.resolves; len(got) != 2 || got[0] != "thread-1" || got[1] != "thread-2" {
+		t.Fatalf("resolves = %+v", got)
+	}
+}
+
+func TestAddressedRejectsMissingThreads(t *testing.T) {
+	st := &fakeStore{ok: true, run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1"}}
+	svc := New(nil, st, WithReviewFeedbackActions(&fakeFeedbackActions{}))
+
+	if _, err := svc.Addressed(context.Background(), "mer-1", AddressedFeedback{RunID: "run-1", Body: "fixed"}); !errors.Is(err, ErrNothingToResolve) {
+		t.Fatalf("err = %v, want ErrNothingToResolve", err)
+	}
+}
+
+func TestAddressedRejectsWrongSessionOrThreadWithoutProviderCalls(t *testing.T) {
+	tests := []struct {
+		name      string
+		sessionID domain.SessionID
+		threadIDs []string
+		threads   []domain.PullRequestReviewThread
+	}{
+		{name: "wrong session", sessionID: "other", threadIDs: []string{"thread-1"}, threads: []domain.PullRequestReviewThread{{ThreadID: "thread-1"}}},
+		{name: "wrong thread", sessionID: "mer-1", threadIDs: []string{"missing"}, threads: []domain.PullRequestReviewThread{{ThreadID: "thread-1"}}},
+		{name: "already resolved", sessionID: "mer-1", threadIDs: []string{"thread-1"}, threads: []domain.PullRequestReviewThread{{ThreadID: "thread-1", Resolved: true}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := &fakeStore{ok: true, run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1"}, threads: tt.threads}
+			actions := &fakeFeedbackActions{}
+			svc := New(nil, st, WithReviewFeedbackActions(actions))
+			_, err := svc.Addressed(context.Background(), tt.sessionID, AddressedFeedback{RunID: "run-1", ThreadIDs: tt.threadIDs, Body: "fixed"})
+			if !errors.Is(err, ErrInvalid) {
+				t.Fatalf("err = %v, want ErrInvalid", err)
+			}
+			if len(actions.replies) != 0 || len(actions.resolves) != 0 {
+				t.Fatalf("provider should not be called before validation succeeds: replies=%+v resolves=%+v", actions.replies, actions.resolves)
+			}
+		})
+	}
+}
+
+func TestAddressedProviderFailuresStopInOrder(t *testing.T) {
+	tests := []struct {
+		name        string
+		replyErr    error
+		resolveErr  error
+		wantReplies int
+		wantResolve int
+	}{
+		{name: "reply failure", replyErr: errors.New("reply failed"), wantReplies: 1, wantResolve: 0},
+		{name: "resolve failure", resolveErr: errors.New("resolve failed"), wantReplies: 1, wantResolve: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := &fakeStore{
+				ok:      true,
+				run:     domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1"},
+				threads: []domain.PullRequestReviewThread{{ThreadID: "thread-1"}, {ThreadID: "thread-2"}},
+			}
+			actions := &fakeFeedbackActions{replyErr: tt.replyErr, resolveErr: tt.resolveErr}
+			svc := New(nil, st, WithReviewFeedbackActions(actions))
+			if _, err := svc.Addressed(context.Background(), "mer-1", AddressedFeedback{RunID: "run-1", ThreadIDs: []string{"thread-1", "thread-2"}, Body: "fixed"}); err == nil {
+				t.Fatal("Addressed returned nil error, want provider failure")
+			}
+			if len(actions.replies) != tt.wantReplies || len(actions.resolves) != tt.wantResolve {
+				t.Fatalf("calls replies/resolves = %d/%d, want %d/%d", len(actions.replies), len(actions.resolves), tt.wantReplies, tt.wantResolve)
 			}
 		})
 	}

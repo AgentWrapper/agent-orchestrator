@@ -222,7 +222,11 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Projects: store,
 		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir),
 	})
-	reviewSvc := reviewsvc.New(reviewEngine, store, reviewsvc.WithLifecycleReducer(lcm))
+	reviewOpts := []reviewsvc.Option{reviewsvc.WithLifecycleReducer(lcm)}
+	if scmProvider != nil {
+		reviewOpts = append(reviewOpts, reviewsvc.WithReviewFeedbackActions(scmProvider))
+	}
+	reviewSvc := reviewsvc.New(reviewEngine, store, reviewOpts...)
 	return sessionSvc, reviewSvc, mgr, nil
 }
 

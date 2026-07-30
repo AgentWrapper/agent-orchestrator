@@ -698,11 +698,15 @@ func TestPRObservation_ReviewCommentsNudgeAgent(t *testing.T) {
 		"fix this",
 		"https://github.com/o/r/pull/1#discussion_r1",
 		"Thread ID: T1",
+		"ao review submit --addressed --run <review-run-id> --thread-id <thread-id> --body -",
 		"re-fetch review data unless you need additional context",
 	} {
 		if !strings.Contains(msg.msgs[0], want) {
 			t.Fatalf("review nudge missing %q:\n%s", want, msg.msgs[0])
 		}
+	}
+	if strings.Contains(msg.msgs[0], "resolve each thread directly") {
+		t.Fatalf("review nudge should not tell agents to resolve directly:\n%s", msg.msgs[0])
 	}
 	if strings.Contains(msg.msgs[0], "already handled") {
 		t.Fatalf("review nudge included resolved comment:\n%s", msg.msgs[0])
@@ -1218,10 +1222,13 @@ func TestApplyReviewResultSendsAndDedupsThroughPRSignature(t *testing.T) {
 		t.Fatalf("outcome/messages = %q/%v, want sent once", outcome, msg.msgs)
 	}
 	got := msg.msgs[0]
-	for _, want := range []string{"[AO reviewer]", "PR: " + result.PRURL, "Verdict: changes_requested", "Review body:\nfix the bug", "GitHub review: 98[2J765"} {
+	for _, want := range []string{"[AO reviewer]", "PR: " + result.PRURL, "Verdict: changes_requested", "Review run ID: run-1", "ao review submit --addressed --run run-1 --thread-id <thread-id> --body -", "Review body:\nfix the bug", "GitHub review: 98[2J765"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("AO review nudge missing %q: %q", want, got)
 		}
+	}
+	if strings.Contains(got, "resolve the review comment threads") || strings.Contains(got, "reply on GitHub review") {
+		t.Fatalf("AO review nudge should not tell agents to resolve provider threads directly: %q", got)
 	}
 	if strings.Contains(got, "\x1b") {
 		t.Fatalf("AO review nudge should sanitize control bytes: %q", got)
@@ -1302,14 +1309,21 @@ func TestApplyReviewBatchSendsCombinedAndDedups(t *testing.T) {
 		"submitted 2 review(s) requesting changes",
 		"PR: https://github.com/o/r/pull/1",
 		"GitHub review: 101",
+		"Review run ID: run-1",
+		"ao review submit --addressed --run run-1 --thread-id <thread-id> --body -",
 		"Review body:\nfix auth",
 		"PR: https://github.com/o/r/pull/2",
 		"GitHub review: 102",
+		"Review run ID: run-2",
+		"ao review submit --addressed --run run-2 --thread-id <thread-id> --body -",
 		"Review body:\nfix tests",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("batch nudge missing %q: %q", want, got)
 		}
+	}
+	if strings.Contains(got, "resolve the review comment threads") || strings.Contains(got, "reply on GitHub review") {
+		t.Fatalf("batch nudge should not tell agents to resolve provider threads directly: %q", got)
 	}
 	if st.signatures["https://github.com/o/r/pull/1"] == "" {
 		t.Fatal("batch nudge did not persist signature on anchor PR")
