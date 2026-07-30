@@ -837,6 +837,7 @@ body {
 	margin: 0;
 	overflow: hidden;
 	background: var(--color-bg-primary);
+	scrollbar-width: none;
 	color: var(--color-text-primary);
 	font-family: var(--font-sans);
 	font-size: var(--font-size-md);
@@ -902,6 +903,16 @@ select {
 }
 
 .xterm .xterm-viewport::-webkit-scrollbar {
+	width: 0;
+	height: 0;
+}
+
+/* Hide all scrollbars app-wide — scroll still works via wheel/trackpad. */
+* {
+	scrollbar-width: none;
+}
+
+*::-webkit-scrollbar {
 	width: 0;
 	height: 0;
 }
