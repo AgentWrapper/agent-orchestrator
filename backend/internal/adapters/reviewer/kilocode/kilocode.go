@@ -102,6 +102,7 @@ func withReviewerConfig(argv []string, taskPromptRoot, systemPromptFile string) 
 			"git show*":                     "allow",
 			"git status*":                   "allow",
 			"ao review submit *":            "allow",
+			"printf *":                      "allow",
 			"printf * | gh api *":           "allow",
 			"printf * | ao review submit *": "allow",
 		},

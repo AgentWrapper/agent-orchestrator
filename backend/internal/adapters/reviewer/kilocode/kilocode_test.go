@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -90,7 +91,8 @@ func TestReviewCommandPreservesAgentAndAppliesReadOnlyPolicy(t *testing.T) {
 	}
 	if config.Permission.Bash["*"] != "deny" ||
 		config.Permission.Bash["gh api *"] != "allow" ||
-		config.Permission.Bash["ao review submit *"] != "allow" {
+		config.Permission.Bash["ao review submit *"] != "allow" ||
+		config.Permission.Bash["printf *"] != "allow" {
 		t.Fatalf("bash policy = %#v", config.Permission.Bash)
 	}
 	wantPromptPattern := filepath.ToSlash(filepath.Join("ao", "prompts", "reviewer", "**"))
@@ -143,6 +145,41 @@ func TestReviewCommandBuildsKiloCodeArgvWithHiddenPrompts(t *testing.T) {
 	}
 }
 
+func TestBashPolicyAllowsEveryParsedReportingPipelineStage(t *testing.T) {
+	bash := reviewerBashPolicy(t)
+	tests := []struct {
+		name   string
+		stages []string
+	}{
+		{
+			name: "GitHub review",
+			stages: []string{
+				`printf '%s' '{ "event": "COMMENT", "body": "ready" }'`,
+				`gh api --method POST repos/o/r/pulls/1/reviews --input - --jq '.id'`,
+			},
+		},
+		{
+			name: "AO bookkeeping",
+			stages: []string{
+				`printf '%s' '{ "reviews": [] }'`,
+				`ao review submit --session sess-1 --reviews -`,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, stage := range tt.stages {
+				if !bashAllowsCommand(t, bash, stage) {
+					t.Fatalf("parsed pipeline stage is denied: %q; policy = %#v", stage, bash)
+				}
+			}
+		})
+	}
+	if bashAllowsCommand(t, bash, `rm -rf /`) {
+		t.Fatalf("arbitrary command is allowed by policy: %#v", bash)
+	}
+}
+
 func TestReviewCommandAddsConfigWhenWorkerHasNoInlineConfig(t *testing.T) {
 	agent := &captureAgent{argv: []string{"kilocode"}}
 	got, err := (&Reviewer{agent: agent}).ReviewCommand(context.Background(), ports.ReviewInvocation{})
@@ -152,6 +189,45 @@ func TestReviewCommandAddsConfigWhenWorkerHasNoInlineConfig(t *testing.T) {
 	if len(got.Argv) != 3 || got.Argv[0] != "env" || !strings.HasPrefix(got.Argv[1], configAssignmentPrefix) || got.Argv[2] != "kilocode" {
 		t.Fatalf("argv = %#v", got.Argv)
 	}
+}
+
+func reviewerBashPolicy(t *testing.T) map[string]string {
+	t.Helper()
+	argv, err := withReviewerConfig([]string{"kilocode"}, "", "")
+	if err != nil {
+		t.Fatalf("withReviewerConfig: %v", err)
+	}
+	var config struct {
+		Permission struct {
+			Bash map[string]string `json:"bash"`
+		} `json:"permission"`
+	}
+	raw := strings.TrimPrefix(argv[1], configAssignmentPrefix)
+	if err := json.Unmarshal([]byte(raw), &config); err != nil {
+		t.Fatalf("reviewer config: %v", err)
+	}
+	return config.Permission.Bash
+}
+
+func bashAllowsCommand(t *testing.T, policy map[string]string, command string) bool {
+	t.Helper()
+	for pattern, action := range policy {
+		if action == "deny" {
+			continue
+		}
+		parts := strings.Split(pattern, "*")
+		for i, part := range parts {
+			parts[i] = regexp.QuoteMeta(part)
+		}
+		matcher, err := regexp.Compile("^" + strings.Join(parts, ".*") + "$")
+		if err != nil {
+			t.Fatalf("compile pattern %q: %v", pattern, err)
+		}
+		if matcher.MatchString(command) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestReviewCommandPropagatesUnavailableCLI(t *testing.T) {
