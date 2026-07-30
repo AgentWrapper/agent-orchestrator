@@ -188,10 +188,16 @@ func New(opts Options) *Runtime {
 	if timeout == 0 {
 		timeout = defaultTimeout
 	}
+	// The pane runs `<shell> -c <launchCmd>`, and buildLaunchCommand emits POSIX
+	// shell syntax (`export KEY=value`, `unset KEY`, `cd <dir> || exit`). A
+	// user's $SHELL may be a non-POSIX shell (fish does not support `export
+	// KEY=value` or `unset`), which would make the pane fail to parse the launch
+	// command and exit immediately, killing the tmux session before the
+	// liveness probe. So the pane interpreter is always a POSIX shell; the
+	// user's interactive shell is still honoured for the keep-alive via
+	// `exec "${SHELL:-/bin/sh}" -i` inside the launch command (tmux copies
+	// $SHELL into the session env).
 	shellPath := opts.Shell
-	if shellPath == "" {
-		shellPath = getenv("SHELL")
-	}
 	if shellPath == "" {
 		shellPath = "/bin/sh"
 	}

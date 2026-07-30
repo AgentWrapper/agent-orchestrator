@@ -97,11 +97,16 @@ func TestNewDefaultsToPortableShell(t *testing.T) {
 	}
 }
 
-func TestNewPicksUpShellFromEnv(t *testing.T) {
-	t.Setenv("SHELL", "/bin/zsh")
+func TestNewIgnoresNonPosixShellEnv(t *testing.T) {
+	// The pane interpreter must be POSIX regardless of $SHELL: buildLaunchCommand
+	// emits `export KEY=value` / `unset`, which fish and other non-POSIX shells
+	// reject, killing the pane before the liveness probe. A non-POSIX $SHELL
+	// (fish) must NOT become the pane shell; the user's shell is still honoured
+	// for the keep-alive via `exec "${SHELL:-/bin/sh}" -i` in the launch command.
+	t.Setenv("SHELL", "/opt/homebrew/bin/fish")
 	r := New(Options{})
-	if got := r.shell; got != "/bin/zsh" {
-		t.Fatalf("shell = %q, want /bin/zsh", got)
+	if got := r.shell; got != "/bin/sh" {
+		t.Fatalf("shell = %q, want /bin/sh (POSIX, ignoring non-POSIX $SHELL)", got)
 	}
 }
 

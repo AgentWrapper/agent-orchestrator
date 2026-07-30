@@ -13,7 +13,7 @@ import {
 	Settings,
 	Trash2,
 } from "lucide-react";
-import { useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import type { UpdateStatus } from "../../main/update-settings";
 import {
@@ -36,7 +36,6 @@ import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
-	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import {
@@ -99,6 +98,8 @@ export const SIDEBAR_DEFAULT_WIDTH = 240;
 export const SIDEBAR_MIN_WIDTH = 200;
 export const SIDEBAR_MAX_WIDTH = 420;
 export const SIDEBAR_COLLAPSE_THRESHOLD = SIDEBAR_MIN_WIDTH;
+
+const MAX_VISIBLE_SIDEBAR_SESSIONS = 6;
 
 type SidebarProps = {
 	/** Hide the sidebar's right edge stroke on the welcome board inset chrome. */
@@ -495,6 +496,13 @@ function ProjectItem({
 	// Only termination removes a worker from the sidebar; archived sessions stay
 	// reachable through SessionsBoard.
 	const sessions = workerSessions(workspace.sessions).filter((session) => session.isTerminated !== true);
+	const [sessionsExpanded, setSessionsExpanded] = useState(false);
+	// Reset "show more" when the project collapses (revert to capped).
+	useEffect(() => {
+		if (!expanded) setSessionsExpanded(false);
+	}, [expanded]);
+	const visibleSessions = sessionsExpanded ? sessions : sessions.slice(0, MAX_VISIBLE_SIDEBAR_SESSIONS);
+	const hiddenSessionCount = sessions.length - visibleSessions.length;
 	// The project's live orchestrator (if any) backs the hover Orchestrator
 	// button: navigate to it when present, otherwise spawn one first.
 	const orchestrator = newestActiveOrchestrator(workspace.sessions);
@@ -669,12 +677,10 @@ function ProjectItem({
 							<Plus aria-hidden="true" />
 							New session
 						</DropdownMenuItem>
-						<DropdownMenuSeparator />
 						<DropdownMenuItem onSelect={() => selection.goSettings(workspace.id)}>
 							<Settings aria-hidden="true" />
 							Project settings
 						</DropdownMenuItem>
-						<DropdownMenuSeparator />
 						<DropdownMenuItem
 							className="text-destructive focus:text-destructive [&_svg]:text-destructive"
 							disabled={isRemoving}
@@ -707,7 +713,7 @@ function ProjectItem({
 					transition={{ duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
 				>
 					<SidebarMenuSub className="mx-0 ml-3.5 translate-x-0 gap-px border-l-0 px-0 py-1">
-						{sessions.map((session) => (
+						{visibleSessions.map((session) => (
 							<SessionRow
 								key={session.id}
 								session={session}
@@ -715,6 +721,17 @@ function ProjectItem({
 								onOpen={() => selection.goSession(workspace.id, session.id)}
 							/>
 						))}
+						{hiddenSessionCount > 0 && (
+							<SidebarMenuSubItem>
+								<button
+									type="button"
+									onClick={() => setSessionsExpanded(true)}
+									className="flex h-7 w-full items-center rounded-md px-2.5 text-2xs font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
+								>
+									Show more ({hiddenSessionCount})
+								</button>
+							</SidebarMenuSubItem>
+						)}
 					</SidebarMenuSub>
 				</motion.div>
 			</motion.div>
@@ -965,19 +982,30 @@ function SectionDisclosure({
 	);
 
 	if (trailing) {
+		// Render the toggle as a div[role="button"] so the trailing control (e.g.
+		// the Projects "+") can be its own <button> without nesting a <button>
+		// inside a <button>, which is invalid HTML and trips React's hydration
+		// nesting validator. Keyboard parity with a real button via Enter/Space.
 		return (
-			<button
+			<div
+				role="button"
 				aria-expanded={open}
 				aria-label={label}
+				tabIndex={0}
 				className={cn(SECTION_ROW_CLASS, "pr-1", className)}
 				onClick={onToggle}
-				type="button"
+				onKeyDown={(event) => {
+					if (event.key === "Enter" || event.key === " ") {
+						event.preventDefault();
+						onToggle();
+					}
+				}}
 			>
 				<span className="flex min-w-0 flex-1 items-center gap-2 text-left">
 					{labelRow}
 				</span>
 				{trailing}
-			</button>
+			</div>
 		);
 	}
 
@@ -1009,17 +1037,18 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 					queueMicrotask(onOpen);
 				}}
 				tooltip={isCollapsed ? "Search" : undefined}
-				className={cn(
-					"h-8 gap-2 rounded-lg bg-muted/60 px-2.5 text-sm font-normal text-muted-foreground",
-					"transition-colors duration-150 hover:bg-muted hover:text-foreground [&_svg]:size-icon-sm!",
-					"group-data-[collapsible=icon]:size-control-form! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:transition-colors group-data-[collapsible=icon]:hover:bg-interactive-hover",
-				)}
+			className={cn(
+				"h-8 gap-2 rounded-lg bg-muted/30 px-2.5 text-sm font-normal text-muted-foreground",
+				"border border-muted/40",
+				"transition-[background-color,border-color,color] duration-150 hover:bg-muted/60 hover:border-muted/70 hover:text-foreground [&_svg]:size-icon-sm!",
+				"group-data-[collapsible=icon]:size-control-form! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:border-transparent group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:hover:bg-interactive-hover",
+			)}
 			>
 				<Search strokeWidth={1.75} aria-hidden="true" />
 				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-left leading-none group-data-[collapsible=icon]:hidden">
 					Search
 				</span>
-				<kbd className="sidebar-expanded-chrome ml-auto shrink-0 rounded border border-border px-1 py-0.5 font-mono text-[10px] leading-none text-muted-foreground/70 group-data-[collapsible=icon]:hidden">
+				<kbd className="sidebar-expanded-chrome ml-auto shrink-0 rounded border border-muted/50 px-1 py-0.5 font-mono text-[10px] leading-none text-muted-foreground/60 group-data-[collapsible=icon]:hidden">
 					{isMac ? "⌘K" : "Ctrl K"}
 				</kbd>
 			</SidebarMenuButton>

@@ -169,8 +169,8 @@ export function CenterPane({
 			className="terminal-pane-frame flex h-full min-h-0 min-w-flex-min flex-col px-px"
 			onWheelCapture={handleWheelZoom}
 		>
-		<div className="flex h-inspector-tabs shrink-0 items-center gap-1.5 border-b border-border px-1.5">
-			<div className="flex min-w-flex-min flex-1 items-center gap-1.5">
+		<div className="flex h-topbar-primary shrink-0 items-center gap-1.5 border-b border-border px-2">
+			<div className="flex h-full min-w-flex-min flex-1 items-center gap-1.5">
 				<button
 					aria-label="Scroll tabs left"
 					className={cn(
@@ -188,7 +188,7 @@ export function CenterPane({
 				    shell tabs. The + menu is the only way to add to that layout. */}
 				<div
 					ref={tabsOverflow.ref}
-					className="scrollbar-none flex min-w-flex-min flex-1 items-center gap-1.5 overflow-x-auto"
+					className="scrollbar-none flex h-full min-w-flex-min flex-1 items-center gap-1.5 overflow-x-auto"
 				>
 						{sessionTabs.length > 0
 							? sessionTabs.map((projectSession) => {
@@ -393,25 +393,23 @@ type SessionPaneTabProps = {
 	onClose?: () => void;
 };
 
-// Shared tab chrome: the open tab is highlighted with the same rounded
-// background as the inspector rail tabs (Summary · Reviews · Browser), and
-// the full label only becomes the hover tooltip when the tab strip is
-// crowded enough to truncate it.
+// Session tab chrome: the active tab gets a bright accent bottom border.
+// The full label only becomes the hover tooltip when the strip truncates it.
 function SessionPaneTab({ label, isActive, onSelect, onClose }: SessionPaneTabProps) {
 	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(label);
 	return (
 		<span
 			className={cn(
-				"session-pane-tab group inline-flex min-w-shell-tab-min items-center gap-1.5 rounded-md px-2 py-1.5 transition-colors",
-				isActive ? "bg-interactive-active" : "hover:bg-interactive-hover/60",
+				"session-pane-tab group inline-flex h-full min-w-shell-tab-min items-center gap-1.5 px-2 pt-1.5 pb-[calc(var(--spacing-1)-1px)] transition-colors border-b-2 -mb-px",
+				isActive ? "border-accent text-foreground" : "border-transparent hover:bg-interactive-hover/60",
 			)}
 		>
 			<button
 				ref={ref}
 				aria-current={isActive}
 				className={cn(
-					"session-pane-tab__label min-w-flex-min max-w-shell-tab-max truncate font-semibold transition-colors",
-					isActive ? "text-foreground" : "text-passive/60 hover:text-passive",
+					"session-pane-tab__label min-w-flex-min max-w-shell-tab-max truncate font-semibold",
+					isActive ? "" : "text-passive/60 hover:text-passive",
 				)}
 				onClick={onSelect}
 				title={isTruncated ? label : "Session terminal"}

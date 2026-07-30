@@ -39,8 +39,8 @@ describe("CenterPane toolbar session label", () => {
 		const sessionTab = screen.getByRole("button", { name: "do the thing" });
 		expect(sessionTab).toHaveAttribute("aria-current", "true");
 		expect(sessionTab).toHaveClass("session-pane-tab__label");
-		expect(sessionTab.parentElement).toHaveClass("session-pane-tab", "bg-interactive-active");
-		expect(sessionTab.closest(".h-inspector-tabs")).toHaveClass("px-1.5");
+		expect(sessionTab.parentElement).toHaveClass("session-pane-tab", "border-accent");
+		expect(sessionTab.closest(".h-inspector-tabs")).toHaveClass("px-2");
 		expect(document.querySelector('button[aria-label="Scroll tabs left"]')).toHaveClass("hidden");
 		expect(sessionTab.closest(".terminal-pane-frame")).toHaveClass("px-px");
 		expect(screen.queryByRole("button", { name: "Terminal" })).not.toBeInTheDocument();
@@ -164,11 +164,11 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByRole("button", { name: "Terminal" })).not.toBeInTheDocument();
 	});
 
-	it("uses the inspector tab height for the terminal header", () => {
+	it("uses the topbar primary height for the terminal header", () => {
 		render(<CenterPane session={worker} theme="dark" daemonReady />);
 
-		const header = screen.getByRole("button", { name: "do the thing" }).closest(".h-inspector-tabs");
-		expect(header).toHaveClass("h-inspector-tabs");
+		const header = screen.getByRole("button", { name: "do the thing" }).closest(".h-topbar-primary");
+		expect(header).toHaveClass("h-topbar-primary");
 	});
 
 	it("uses the session tab to return from a selected shell", () => {

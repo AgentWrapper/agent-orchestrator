@@ -210,7 +210,7 @@
 	   ═══════════════════════════════════════════════════════════════ */
 
 	--z-chrome: 10;
-	--z-sidebar-preview: 15;
+	--z-sidebar-preview: 55;
 	--z-titlebar: 20;
 	--z-overlay: 50;
 
@@ -396,7 +396,7 @@
 	--color-bg-settings-row: transparent;
 	--color-bg-settings-menu: var(--popover);
 	--color-bg-settings-menu-selected: var(--accent);
-	--color-bg-settings-dialog: var(--popover);
+	--color-bg-settings-dialog: var(--card);
 	--color-text-settings-title: var(--foreground);
 	--color-text-settings-muted: var(--muted-foreground);
 	--color-text-settings-row: var(--foreground);
@@ -727,7 +727,7 @@
 	--color-bg-settings-row: var(--card);
 	--color-bg-settings-menu: var(--popover);
 	--color-bg-settings-menu-selected: var(--accent);
-	--color-bg-settings-dialog: var(--popover);
+	--color-bg-settings-dialog: var(--card);
 	--color-text-settings-title: var(--foreground);
 	--color-text-settings-muted: var(--muted-foreground);
 	--color-text-settings-row: var(--foreground);

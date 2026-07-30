@@ -33,6 +33,13 @@ export type SettingsModal =
 			projectId: string;
 	  };
 
+export type DevSettings = {
+	/** Number of fixture sessions to generate per attention zone (0 = off). */
+	fixtureCount: number;
+	/** Number of minutes of random activity to spread sessions across. */
+	randomSpreadMinutes: number;
+};
+
 // Selection (which project/session is open) now lives in the URL — the router
 // is the single source of truth, read via route params. This store holds only
 // ephemeral UI: theme, sidebar collapse, command palette, per-session inspector
@@ -77,6 +84,9 @@ type UiState = {
 	// session. Surfaces outside the session subtree (the notification runtime)
 	// need that distinction, and SessionView's own target is local state.
 	visibleTerminalKindBySession: Record<string, TerminalTarget["kind"]>;
+	// Dev Settings (only visible when import.meta.env.DEV is true).
+	// Toggle to control board fixture injection and board filler behaviour.
+	devSettings: DevSettings;
 	setWorkbenchTab: (tab: WorkbenchTab) => void;
 	setThemePreference: (theme: ThemePreference) => void;
 	setDeveloperMode: (enabled: boolean) => void;
@@ -103,11 +113,14 @@ type UiState = {
 	setActiveShellTerminal: (handleId: string | null) => void;
 	setVisibleTerminalKind: (sessionId: string, kind: TerminalTarget["kind"]) => void;
 	clearVisibleTerminalKind: (sessionId: string) => void;
+	setDevSettings: (devSettings: DevSettings) => void;
 };
 
 const sidebarStorageKey = "ao.sidebar.open";
 const developerModeStorageKey = "ao.developerMode";
 const sessionTabsStorageKey = "ao.sessionTabs";
+const devSettingsStorageKey = "ao.devSettings";
+const defaultDevSettings: DevSettings = { fixtureCount: 8, randomSpreadMinutes: 120 };
 
 function getLocalStorage() {
 	if (typeof window === "undefined" || !window.localStorage) return null;
@@ -120,6 +133,20 @@ function initialSidebarOpen() {
 
 function initialDeveloperMode() {
 	return getLocalStorage()?.getItem(developerModeStorageKey) === "true";
+}
+
+function initialDevSettings(): DevSettings {
+	try {
+		const raw = getLocalStorage()?.getItem(devSettingsStorageKey);
+		if (raw) {
+			const parsed = JSON.parse(raw) as Partial<DevSettings>;
+			return {
+				fixtureCount: typeof parsed.fixtureCount === "number" ? parsed.fixtureCount : defaultDevSettings.fixtureCount,
+				randomSpreadMinutes: typeof parsed.randomSpreadMinutes === "number" ? parsed.randomSpreadMinutes : defaultDevSettings.randomSpreadMinutes,
+			};
+		}
+	} catch { /* use defaults */ }
+	return defaultDevSettings;
 }
 
 function initialSessionTabs(): Record<string, string[]> {
@@ -160,6 +187,7 @@ export const useUiStore = create<UiState>((set) => ({
 	themePreference: initialThemePreference,
 	resolvedTheme: resolveTheme(initialThemePreference),
 	developerMode: initialDeveloperMode(),
+	devSettings: initialDevSettings(),
 	restartingProjectIds: new Set<string>(),
 	orchestratorReplacementErrors: {},
 	orchestratorStartupErrors: {},
@@ -176,6 +204,10 @@ export const useUiStore = create<UiState>((set) => ({
 	setDeveloperMode: (developerMode) => {
 		getLocalStorage()?.setItem(developerModeStorageKey, String(developerMode));
 		set({ developerMode });
+	},
+	setDevSettings: (devSettings) => {
+		getLocalStorage()?.setItem(devSettingsStorageKey, JSON.stringify(devSettings));
+		set({ devSettings });
 	},
 	syncSystemTheme: () =>
 		set((state) => {

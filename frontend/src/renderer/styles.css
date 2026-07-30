@@ -530,7 +530,7 @@
 	min-width: 0;
 	max-width: var(--size-topbar-context-max);
 	align-items: center;
-	gap: var(--space-topbar-group);
+	gap: 10px;
 	overflow: hidden;
 }
 
@@ -2512,4 +2512,44 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	background: color-mix(in srgb, var(--red) 8%, var(--bg));
 	color: var(--red);
 	font-size: 12px;
+}
+
+/* ── Global focus + selection policy ───────────────────────────────────────
+ * No focus rings or focus-driven borders anywhere in the app chrome. Text
+ * selection is disabled app-wide except for prose paragraphs, editable
+ * controls (input/textarea), and the terminal (xterm) where selecting
+ * output is the point. */
+*:focus,
+*:focus-visible {
+	outline: none;
+}
+
+/* Strip the shadcn focus box-shadow ring without nuking unrelated shadows. */
+:where(button, a, [role="button"], [data-slot="select-trigger"],
+	[data-slot="select-item"], [data-slot="dropdown-menu-item"],
+	[data-sidebar="menu-button"], input, textarea, select,
+	.settings-field-control, .settings-inline-input,
+	.settings-footer-button, .settings-segment-item,
+	.settings-close-button, .reverb-topbar__control):focus-visible {
+	box-shadow: none;
+}
+
+/* App-wide text selection lockout — opt in per surface below. */
+html,
+body,
+#root {
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+/* Prose paragraphs, editable controls, and the terminal remain selectable. */
+p,
+input,
+textarea,
+select,
+[contenteditable="true"],
+.xterm,
+.xterm * {
+	user-select: text;
+	-webkit-user-select: text;
 }

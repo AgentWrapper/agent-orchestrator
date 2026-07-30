@@ -1,7 +1,7 @@
 import type { InfiniteData, QueryClient } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { aoBridge } from "./bridge";
-import { apiClient, apiErrorMessage, getApiBaseUrl, subscribeApiBaseUrl } from "./api-client";
+import { apiClient, apiErrorMessage, getApiBaseUrl, hasTrustedApiBaseUrl, subscribeApiBaseUrl } from "./api-client";
 
 export type NotificationDTO = components["schemas"]["NotificationResponse"];
 export type NotificationsPage = components["schemas"]["ListNotificationsResponse"];
@@ -224,6 +224,13 @@ export function createNotificationsTransport(
 
 			const connectSource = () => {
 				if (typeof EventSource === "undefined") return;
+				// Wait for the supervisor to discover the daemon's trusted base URL
+				// before opening the SSE stream. Without it, getApiBaseUrl() returns
+				// "" and the EventSource targets the vite dev origin, whose /api proxy
+				// points at the default port (3001) and 502s when the daemon actually
+				// landed on a different port. subscribeApiBaseUrl reconnects here once
+				// the real URL is set.
+				if (!hasTrustedApiBaseUrl()) return;
 				const baseUrl = getApiBaseUrl();
 				if (source && sourceBaseUrl === baseUrl && source.readyState !== EVENTSOURCE_CLOSED) return;
 				source?.close();
