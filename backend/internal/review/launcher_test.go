@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -29,6 +30,15 @@ type fakePreLaunchReviewer struct {
 	fakeReviewer
 	prelaunched bool
 	gotPre      ports.ReviewInvocation
+}
+
+type fakeOneShotReviewer struct {
+	fakeReviewer
+	result ports.ReviewResult
+}
+
+func (f *fakeOneShotReviewer) ParseReviewResult([]byte) (ports.ReviewResult, error) {
+	return f.result, nil
 }
 
 func (f *fakePreLaunchReviewer) PreLaunch(_ context.Context, inv ports.ReviewInvocation) error {
@@ -178,6 +188,103 @@ func TestLauncherSpawnReturnsStableHandle(t *testing.T) {
 	}
 	if !strings.Contains(string(system), "Code reviewer role") || !strings.Contains(string(system), "exact file path in that request") || strings.Contains(string(system), filepath.ToSlash(taskPath)) {
 		t.Fatalf("system prompt = %q", system)
+	}
+}
+
+func TestLauncherRunsOneShotReviewerWithoutRuntimePane(t *testing.T) {
+	reviewer := &fakeOneShotReviewer{result: ports.ReviewResult{
+		Verdict: domain.VerdictChangesRequested,
+		Body:    "fix the race",
+	}}
+	rt := &fakeRuntime{}
+	completed := make(chan []ReviewCompletion, 1)
+	launcher := NewLauncher(
+		fakeReviewerResolver{reviewer: reviewer, ok: true},
+		rt,
+		t.TempDir(),
+		WithCompletionHandler(func(_ context.Context, workerID domain.SessionID, completions []ReviewCompletion) {
+			if workerID != "mer-1" {
+				t.Errorf("worker id = %q", workerID)
+			}
+			completed <- completions
+		}),
+	).(*agentLauncher)
+	launcher.execute = func(_ context.Context, workspacePath string, command ports.ReviewCommandSpec) ([]byte, []byte, error) {
+		if workspacePath != "/ws/repo" {
+			t.Errorf("workspace path = %q", workspacePath)
+		}
+		if got := strings.Join(command.Argv, " "); got != "greptile review" {
+			t.Errorf("command = %q", got)
+		}
+		return []byte(`{"comments":[]}`), nil, nil
+	}
+
+	spec := launchSpec()
+	spec.Harness = domain.ReviewerGreptile
+	spec.ReviewQueue = []ports.ReviewTask{{
+		RunID:         "run-1",
+		PRURL:         spec.PRURL,
+		TargetSHA:     spec.TargetSHA,
+		TargetBranch:  "main",
+		WorkspacePath: "/ws/repo",
+	}}
+	handle, err := launcher.Spawn(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if handle != "review-mer-1" {
+		t.Fatalf("handle = %q", handle)
+	}
+	select {
+	case completions := <-completed:
+		if len(completions) != 1 || completions[0].RunID != "run-1" ||
+			completions[0].Verdict != domain.VerdictChangesRequested || completions[0].Body != "fix the race" {
+			t.Fatalf("completions = %+v", completions)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for one-shot completion")
+	}
+	if rt.created {
+		t.Fatal("one-shot reviewer unexpectedly created a runtime pane")
+	}
+}
+
+func TestLauncherCancelsOneShotReviewer(t *testing.T) {
+	reviewer := &fakeOneShotReviewer{}
+	rt := &fakeRuntime{}
+	started := make(chan struct{})
+	completed := make(chan struct{}, 1)
+	launcher := NewLauncher(
+		fakeReviewerResolver{reviewer: reviewer, ok: true},
+		rt,
+		t.TempDir(),
+		WithCompletionHandler(func(context.Context, domain.SessionID, []ReviewCompletion) {
+			completed <- struct{}{}
+		}),
+	).(*agentLauncher)
+	launcher.execute = func(ctx context.Context, _ string, _ ports.ReviewCommandSpec) ([]byte, []byte, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, nil, ctx.Err()
+	}
+
+	spec := launchSpec()
+	spec.Harness = domain.ReviewerGreptile
+	handle, err := launcher.Spawn(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	<-started
+	if err := launcher.Cancel(context.Background(), handle, domain.ReviewerGreptile); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	select {
+	case <-completed:
+		t.Fatal("cancelled one-shot reviewer submitted a completion")
+	case <-time.After(50 * time.Millisecond):
+	}
+	if rt.interrupts != 0 {
+		t.Fatalf("runtime interrupts = %d", rt.interrupts)
 	}
 }
 

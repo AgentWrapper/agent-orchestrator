@@ -21,6 +21,21 @@ type Reviewer interface {
 	ReviewMessage(ctx context.Context, inv ReviewInvocation) (string, error)
 }
 
+// OneShotReviewer is a non-interactive reviewer that exits after emitting one
+// machine-readable result. The review launcher owns its subprocess lifecycle
+// and feeds the normalized result back through AO's existing review service.
+// Interactive reviewers deliberately do not implement this interface.
+type OneShotReviewer interface {
+	Reviewer
+	ParseReviewResult(output []byte) (ReviewResult, error)
+}
+
+// ReviewResult is the reviewer-neutral result of a one-shot review.
+type ReviewResult struct {
+	Verdict domain.ReviewVerdict
+	Body    string
+}
+
 // ReviewCancelMode names how AO should stop a running reviewer.
 type ReviewCancelMode string
 
@@ -90,9 +105,11 @@ type ReviewInvocation struct {
 
 // ReviewTask is one PR/run in a multi-PR review trigger queue.
 type ReviewTask struct {
-	RunID     string
-	PRURL     string
-	TargetSHA string
+	RunID         string
+	PRURL         string
+	TargetSHA     string
+	TargetBranch  string
+	WorkspacePath string
 }
 
 // ReviewCommandSpec is how to launch a reviewer: the argv and any extra env the

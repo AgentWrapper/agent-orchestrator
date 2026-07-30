@@ -20,8 +20,9 @@ type Review struct {
 	ProjectID ProjectID       `json:"projectId"`
 	Harness   ReviewerHarness `json:"harness"`
 	PRURL     string          `json:"prUrl"`
-	// ReviewerHandleID is the runtime handle of the live reviewer pane, reused
-	// across passes and exposed so the UI can attach its terminal.
+	// ReviewerHandleID is the stable handle of the active reviewer execution.
+	// Interactive reviewers expose it as a terminal; one-shot reviewers use it
+	// only for liveness and cancellation.
 	ReviewerHandleID string    `json:"reviewerHandleId"`
 	CreatedAt        time.Time `json:"createdAt"`
 	UpdatedAt        time.Time `json:"updatedAt"`
@@ -43,7 +44,7 @@ type ReviewRun struct {
 	Status    ReviewRunStatus `json:"status"`
 	Verdict   ReviewVerdict   `json:"verdict"`
 	// Body is the review text the reviewer submitted. It is recorded for AO's
-	// own tracking; the reviewer also posts the review to the PR itself.
+	// own tracking; interactive reviewers may also post it to the PR itself.
 	Body string `json:"body"`
 	// GithubReviewID is the id of the GitHub PR review the reviewer posted for
 	// this pass (the `gh api .../pulls/{n}/reviews` object id), recorded at

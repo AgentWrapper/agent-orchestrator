@@ -144,7 +144,7 @@ type sessionLifecycle interface {
 // LCM, the per-session agent resolver, and the agent messenger. The returned
 // service is mounted at httpd APIDeps.Sessions. It also returns the manager so
 // the caller can wire Reconcile into the boot sequence.
-func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, reengagement *orchestratorloop.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, previewLifecycle sessionmanager.PreviewLifecycle, browserLifecycle sessionmanager.BrowserLifecycle, browserCapabilities sessionmanager.BrowserCapabilityIssuer, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
+func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, reengagement *orchestratorloop.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, previewLifecycle sessionmanager.PreviewLifecycle, browserLifecycle sessionmanager.BrowserLifecycle, browserCapabilities sessionmanager.BrowserCapabilityIssuer, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
 	gitWS, err := gitworktree.New(gitworktree.Options{
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
 		// override moves all durable per-user state together.
@@ -211,21 +211,56 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		SignalCapable: activitydispatch.SupportsHarness,
 	})
 	// Triggering a review spawns a reviewer over the worker's worktree, resolved
-	// from the reviewer registry (distinct from the worker agent set). The
-	// reviewer posts its review to the PR itself, so the service needs no SCM
-	// writer.
+	// from the reviewer registry (distinct from the worker agent set).
+	// Interactive reviewers submit through `ao review submit`; one-shot
+	// reviewers return structured output to the same service through the
+	// completion handler below.
 	reviewers, err := reviewer.NewResolver()
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("reviewer resolver: %w", err)
 	}
+	var reviewSvc *reviewsvc.Service
+	completionHandler := func(resultCtx context.Context, workerID domain.SessionID, completions []reviewcore.ReviewCompletion) {
+		submitted := make([]reviewsvc.SubmittedReview, 0, len(completions))
+		for _, completion := range completions {
+			if completion.Err != nil {
+				if _, updateErr := store.UpdateReviewRunResult(resultCtx, completion.RunID, domain.ReviewRunFailed, domain.VerdictNone, completion.Err.Error(), ""); updateErr != nil {
+					log.Error("record one-shot reviewer failure", "worker", workerID, "run", completion.RunID, "error", updateErr)
+				}
+				continue
+			}
+			submitted = append(submitted, reviewsvc.SubmittedReview{
+				RunID:   completion.RunID,
+				Verdict: completion.Verdict,
+				Body:    completion.Body,
+			})
+		}
+		if len(submitted) == 0 {
+			return
+		}
+		if reviewSvc == nil {
+			log.Error("record one-shot reviewer results", "worker", workerID, "error", "review service is not initialized")
+			return
+		}
+		if _, submitErr := reviewSvc.SubmitMany(resultCtx, workerID, submitted); submitErr != nil {
+			log.Error("record one-shot reviewer results", "worker", workerID, "error", submitErr)
+		}
+	}
 	reviewEngine := reviewcore.New(reviewcore.Deps{
-		Store:    store,
-		Sessions: store,
-		PRs:      store,
-		Projects: store,
-		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir),
+		Store:      store,
+		Sessions:   store,
+		PRs:        store,
+		Projects:   store,
+		Workspaces: store,
+		Launcher: reviewcore.NewLauncher(
+			reviewers,
+			runtime,
+			cfg.DataDir,
+			reviewcore.WithLauncherContext(ctx),
+			reviewcore.WithCompletionHandler(completionHandler),
+		),
 	})
-	reviewSvc := reviewsvc.New(reviewEngine, store, reviewsvc.WithLifecycleReducer(lcm))
+	reviewSvc = reviewsvc.New(reviewEngine, store, reviewsvc.WithLifecycleReducer(lcm))
 	return sessionSvc, reviewSvc, mgr, nil
 }
 

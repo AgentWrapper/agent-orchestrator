@@ -15,15 +15,15 @@ import (
 )
 
 // ListReviewsResponse is the body of GET /api/v1/sessions/{sessionId}/reviews.
-// reviewerHandleId is the live reviewer pane's runtime handle, for the UI to
-// attach its terminal over /mux (empty when no reviewer has run).
+// reviewerHandleId is the stable reviewer execution handle. Interactive
+// reviewers expose it over /mux; one-shot reviewers use it for cancellation.
 type ListReviewsResponse struct {
 	ReviewerHandleID string                     `json:"reviewerHandleId"`
 	Reviews          []reviewcore.PRReviewState `json:"reviews"`
 }
 
 // ReviewRunResponse is the body of submit (200). It carries the run plus the
-// reviewer pane handle so the UI can attach a terminal.
+// stable reviewer execution handle.
 type ReviewRunResponse struct {
 	Review           domain.ReviewRun   `json:"review"`
 	Reviews          []domain.ReviewRun `json:"reviews"`

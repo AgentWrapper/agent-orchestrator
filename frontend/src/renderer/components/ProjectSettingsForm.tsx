@@ -49,7 +49,7 @@ const PERMISSION_MODE_OPTIONS = [
 	{ value: "bypass-permissions", label: "Bypass permissions" },
 ] as const;
 
-const KNOWN_REVIEWER_HARNESS_IDS = new Set(["claude-code", "codex", "opencode"]);
+const KNOWN_REVIEWER_HARNESS_IDS = new Set(["claude-code", "codex", "greptile", "opencode"]);
 
 const projectQueryKey = (id: string) => ["project", id] as const;
 
@@ -492,7 +492,7 @@ function PermissionModeSelect({ value, onChange }: { value: string; onChange: (v
 	);
 }
 
-const REVIEWER_AGENT_PRIORITY = ["claude-code", "codex", "cursor", "opencode", "aider"] as const;
+const REVIEWER_AGENT_PRIORITY = ["claude-code", "codex", "greptile", "cursor", "opencode", "aider"] as const;
 const REVIEWER_AGENT_PRIORITY_RANK = new Map<string, number>(
 	REVIEWER_AGENT_PRIORITY.map((agent, index) => [agent, index]),
 );
@@ -514,9 +514,12 @@ function ReviewerSelect({
 }) {
 	const fallbackAgents: components["schemas"]["AgentInfo"][] = [...KNOWN_REVIEWER_HARNESS_IDS].map((id) => ({
 		id,
-		label: id,
+		label: id === "greptile" ? "Greptile CLI" : id,
 	}));
 	const filteredSupported = (supported ?? fallbackAgents).filter((a) => KNOWN_REVIEWER_HARNESS_IDS.has(a.id));
+	if (!filteredSupported.some((agent) => agent.id === "greptile")) {
+		filteredSupported.push({ id: "greptile", label: "Greptile CLI" });
+	}
 	const supportedAgents = filteredSupported.length > 0 ? filteredSupported : fallbackAgents;
 	const options = buildRankedAgentOptions({
 		supported: supportedAgents,
@@ -524,7 +527,11 @@ function ReviewerSelect({
 		authorized,
 		priorityRank: REVIEWER_AGENT_PRIORITY_RANK,
 		fallbackAgents,
-	});
+	}).map((agent) =>
+		agent.id === "greptile"
+			? { ...agent, disabled: false, status: "CLI checked when run", statusTone: "muted" as const }
+			: agent,
+	);
 
 	const menuOptions = [
 		{ value: "__default__", label: "Project default" },

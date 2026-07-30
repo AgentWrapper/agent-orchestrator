@@ -684,6 +684,38 @@ describe("SessionInspector reviews tab", () => {
 		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-pane", harness: "codex" });
 	});
 
+	it("does not open a terminal for the one-shot Greptile reviewer", async () => {
+		mockCommonGets([], "", [reviewState(3, "needs_review")]);
+		postMock.mockResolvedValue({
+			response: { status: 201 },
+			data: {
+				reviewerHandleId: "reviewer-job",
+				reviews: [
+					{
+						...reviewState(3, "running"),
+						latestRun: {
+							...approvedReview,
+							harness: "greptile",
+							status: "running",
+							verdict: "",
+							body: "",
+						},
+					},
+				],
+			},
+		});
+		const onOpenReviewerTerminal = vi.fn();
+
+		renderWithQuery(
+			<SessionInspector onOpenReviewerTerminal={onOpenReviewerTerminal} session={session([pr(3, "open")])} />,
+		);
+		await openReviewsTab();
+		await userEvent.click(await screen.findByRole("button", { name: /run review/i }));
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+
+		expect(onOpenReviewerTerminal).not.toHaveBeenCalled();
+	});
+
 	it("shows claude-code as the default reviewer before a run exists", async () => {
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/sessions/{sessionId}/reviews") {

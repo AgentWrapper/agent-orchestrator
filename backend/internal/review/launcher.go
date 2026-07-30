@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -28,14 +29,14 @@ type Launcher interface {
 	// have been created. On failure the engine's Trigger() calls failRuns() to
 	// mark those rows as failed, matching the existing Spawn failure semantics.
 	Preflight(ctx context.Context, harness domain.ReviewerHarness, workspacePath string) error
-	// Spawn launches a fresh reviewer and returns the runtime handle id of the
-	// live pane (stable per worker, reused across passes).
+	// Spawn launches a fresh reviewer and returns its stable execution handle.
+	// For interactive reviewers this is also the runtime pane handle.
 	Spawn(ctx context.Context, spec LaunchSpec) (handleID string, err error)
-	// Notify asks an already-running reviewer pane to review a new commit.
+	// Notify asks an existing reviewer execution to review a new commit.
 	Notify(ctx context.Context, handleID string, spec LaunchSpec) error
-	// Alive reports whether a reviewer pane is still running.
+	// Alive reports whether a reviewer execution is still running.
 	Alive(ctx context.Context, handleID string) (bool, error)
-	// Cancel interrupts a running reviewer pane while keeping the terminal alive.
+	// Cancel stops a running reviewer. Interactive reviewer terminals are kept.
 	Cancel(ctx context.Context, handleID string, harness domain.ReviewerHarness) error
 }
 
@@ -52,6 +53,18 @@ type LaunchSpec struct {
 	ReviewIndex   int
 }
 
+// ReviewCompletion is one asynchronously completed one-shot review. Err is set
+// when the CLI failed before producing a usable result.
+type ReviewCompletion struct {
+	RunID   string
+	Verdict domain.ReviewVerdict
+	Body    string
+	Err     error
+}
+
+// CompletionHandler records results emitted by a one-shot reviewer.
+type CompletionHandler func(ctx context.Context, workerID domain.SessionID, completions []ReviewCompletion)
+
 // reviewerRuntime is the runtime surface the launcher needs: create a pane,
 // inject a message into a running pane, and probe liveness. The tmux runtime
 // satisfies it.
@@ -67,18 +80,53 @@ type reviewerRuntime interface {
 // runtime. The reviewer reuses the worker's worktree (a fresh session worktree
 // would branch off the default branch and so would not contain the PR changes).
 type agentLauncher struct {
-	reviewers ports.ReviewerResolver
-	runtime   reviewerRuntime
-	dataDir   string
+	reviewers  ports.ReviewerResolver
+	runtime    reviewerRuntime
+	dataDir    string
+	rootCtx    context.Context
+	onComplete CompletionHandler
+	execute    oneShotExecutor
+
+	jobsMu  sync.Mutex
+	jobs    map[string]oneShotJob
+	nextJob uint64
 }
 
 type preLaunchReviewer interface {
 	PreLaunch(ctx context.Context, inv ports.ReviewInvocation) error
 }
 
+// LauncherOption customizes one-shot reviewer execution.
+type LauncherOption func(*agentLauncher)
+
+// WithLauncherContext ties one-shot reviewer processes to the daemon lifetime.
+func WithLauncherContext(ctx context.Context) LauncherOption {
+	return func(l *agentLauncher) {
+		if ctx != nil {
+			l.rootCtx = ctx
+		}
+	}
+}
+
+// WithCompletionHandler records one-shot reviewer results.
+func WithCompletionHandler(handler CompletionHandler) LauncherOption {
+	return func(l *agentLauncher) { l.onComplete = handler }
+}
+
 // NewLauncher builds the production reviewer launcher.
-func NewLauncher(reviewers ports.ReviewerResolver, runtime reviewerRuntime, dataDir string) Launcher {
-	return &agentLauncher{reviewers: reviewers, runtime: runtime, dataDir: dataDir}
+func NewLauncher(reviewers ports.ReviewerResolver, runtime reviewerRuntime, dataDir string, opts ...LauncherOption) Launcher {
+	l := &agentLauncher{
+		reviewers: reviewers,
+		runtime:   runtime,
+		dataDir:   dataDir,
+		rootCtx:   context.Background(),
+		jobs:      make(map[string]oneShotJob),
+		execute:   executeOneShot,
+	}
+	for _, opt := range opts {
+		opt(l)
+	}
+	return l
 }
 
 // Preflight checks whether the reviewer for the given harness can be launched
@@ -116,7 +164,7 @@ func (l *agentLauncher) Preflight(ctx context.Context, harness domain.ReviewerHa
 	return nil
 }
 
-// reviewerHandleID is the stable runtime handle for a worker's reviewer pane, so
+// reviewerHandleID is the stable execution handle for a worker's reviewer, so
 // one live reviewer is reused across passes.
 func reviewerHandleID(workerID domain.SessionID) string {
 	return "review-" + string(workerID)
@@ -181,6 +229,9 @@ func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (string, err
 	if !ok {
 		return "", fmt.Errorf("no reviewer adapter for harness %q", spec.Harness)
 	}
+	if oneShot, ok := reviewer.(ports.OneShotReviewer); ok {
+		return l.startOneShot(spec, oneShot)
+	}
 	handleID := reviewerHandleID(spec.WorkerID)
 	inv, err := l.prepareInvocation(spec)
 	if err != nil {
@@ -239,6 +290,10 @@ func (l *agentLauncher) Notify(ctx context.Context, handleID string, spec Launch
 	if !ok {
 		return fmt.Errorf("no reviewer adapter for harness %q", spec.Harness)
 	}
+	if oneShot, ok := reviewer.(ports.OneShotReviewer); ok {
+		_, err := l.startOneShot(spec, oneShot)
+		return err
+	}
 	inv, err := l.prepareInvocation(spec)
 	if err != nil {
 		return err
@@ -257,11 +312,17 @@ func (l *agentLauncher) Alive(ctx context.Context, handleID string) (bool, error
 	if handleID == "" {
 		return false, nil
 	}
+	if alive, handled := l.oneShotAlive(handleID); handled {
+		return alive, nil
+	}
 	return l.runtime.IsAlive(ctx, ports.RuntimeHandle{ID: handleID})
 }
 
 func (l *agentLauncher) Cancel(ctx context.Context, handleID string, harness domain.ReviewerHarness) error {
 	if handleID == "" {
+		return nil
+	}
+	if l.cancelOneShot(handleID) {
 		return nil
 	}
 	reviewer, ok := l.reviewers.Reviewer(harness)

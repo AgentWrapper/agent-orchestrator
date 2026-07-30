@@ -141,10 +141,27 @@ func (f fakePRs) ListPRsBySession(_ context.Context, _ domain.SessionID) ([]doma
 	return f.prs, nil
 }
 
-type fakeProjects struct{ cfg domain.ProjectConfig }
+type fakeProjects struct {
+	cfg    domain.ProjectConfig
+	kind   domain.ProjectKind
+	origin string
+}
 
 func (f fakeProjects) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
-	return domain.ProjectRecord{ID: id, Config: f.cfg}, true, nil
+	return domain.ProjectRecord{ID: id, Config: f.cfg, Kind: f.kind, RepoOriginURL: f.origin}, true, nil
+}
+
+type fakeWorkspaces struct {
+	repos     []domain.WorkspaceRepoRecord
+	worktrees []domain.SessionWorktreeRecord
+}
+
+func (f fakeWorkspaces) ListWorkspaceRepos(context.Context, string) ([]domain.WorkspaceRepoRecord, error) {
+	return f.repos, nil
+}
+
+func (f fakeWorkspaces) ListSessionWorktrees(context.Context, domain.SessionID) ([]domain.SessionWorktreeRecord, error) {
+	return f.worktrees, nil
 }
 
 type fakeLauncher struct {
@@ -166,6 +183,51 @@ type fakeLauncher struct {
 	handles          []string
 	preflightErr     error
 	preflighted      bool
+}
+
+func TestReviewQueueRoutesWorkspacePRsToTheirRepoWorktrees(t *testing.T) {
+	engine := New(Deps{
+		Projects: fakeProjects{
+			kind:   domain.ProjectKindWorkspace,
+			origin: "git@github.com:acme/root.git",
+		},
+		Workspaces: fakeWorkspaces{
+			repos: []domain.WorkspaceRepoRecord{
+				{Name: "api", RepoOriginURL: "https://github.com/acme/api.git"},
+			},
+			worktrees: []domain.SessionWorktreeRecord{
+				{RepoName: domain.RootWorkspaceRepoName, WorktreePath: "/ws/root"},
+				{RepoName: "api", WorktreePath: "/ws/api"},
+			},
+		},
+	})
+	worker := domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "project-1",
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/root"},
+	}
+	prs := []domain.PullRequest{
+		{URL: "root-pr", Repo: "acme/root", TargetBranch: "main"},
+		{URL: "api-pr", Repo: "ACME/API", TargetBranch: "develop"},
+	}
+	runs := []domain.ReviewRun{
+		{ID: "run-root", PRURL: "root-pr", TargetSHA: "root-sha"},
+		{ID: "run-api", PRURL: "api-pr", TargetSHA: "api-sha"},
+	}
+
+	queue, err := engine.reviewQueue(context.Background(), worker, prs, runs)
+	if err != nil {
+		t.Fatalf("reviewQueue: %v", err)
+	}
+	if len(queue) != 2 {
+		t.Fatalf("queue = %+v", queue)
+	}
+	if queue[0].WorkspacePath != "/ws/root" || queue[0].TargetBranch != "main" {
+		t.Errorf("root task = %+v", queue[0])
+	}
+	if queue[1].WorkspacePath != "/ws/api" || queue[1].TargetBranch != "develop" {
+		t.Errorf("api task = %+v", queue[1])
+	}
 }
 
 func (f *fakeLauncher) Spawn(_ context.Context, spec LaunchSpec) (string, error) {
