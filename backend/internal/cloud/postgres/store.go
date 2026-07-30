@@ -374,6 +374,26 @@ func (s *Store) CreateSession(
 	if _, err := appendEventTx(ctx, tx, accountID, session.ID, "session.requested", eventPayload); err != nil {
 		return CreateSessionResult{}, err
 	}
+	if strings.TrimSpace(input.Prompt) != "" {
+		promptPayload, marshalErr := json.Marshal(map[string]any{
+			"id":      commandID,
+			"text":    input.Prompt,
+			"initial": true,
+		})
+		if marshalErr != nil {
+			return CreateSessionResult{}, fmt.Errorf("encode initial user message: %w", marshalErr)
+		}
+		if _, err := appendEventTx(
+			ctx,
+			tx,
+			accountID,
+			session.ID,
+			"chat.user_message",
+			promptPayload,
+		); err != nil {
+			return CreateSessionResult{}, err
+		}
+	}
 
 	resultJSON, _ := json.Marshal(map[string]any{"sessionId": session.ID})
 	var command clouddomain.CommandReceipt
@@ -505,6 +525,11 @@ func (s *Store) ListSessions(
 			return nil, err
 		}
 		sessions[index].Status = status
+		capabilities, err := s.sessionCapabilities(ctx, accountID, sessions[index].ID)
+		if err != nil {
+			return nil, err
+		}
+		sessions[index].Capabilities = capabilities
 	}
 	return sessions, nil
 }
@@ -532,7 +557,36 @@ func (s *Store) GetSession(
 		return clouddomain.Session{}, err
 	}
 	session.Status = status
+	capabilities, err := s.sessionCapabilities(ctx, accountID, session.ID)
+	if err != nil {
+		return clouddomain.Session{}, err
+	}
+	session.Capabilities = capabilities
 	return session, nil
+}
+
+func (s *Store) sessionCapabilities(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+) ([]string, error) {
+	var raw []byte
+	err := s.pool.QueryRow(ctx, `
+		SELECT capabilities
+		FROM ao_worker_connections
+		WHERE account_id = $1 AND session_id = $2
+	`, accountID, sessionID).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load session capabilities: %w", err)
+	}
+	var capabilities []string
+	if err := json.Unmarshal(raw, &capabilities); err != nil {
+		return nil, fmt.Errorf("decode session capabilities: %w", err)
+	}
+	return capabilities, nil
 }
 
 func (s *Store) sessionStatus(
@@ -663,6 +717,125 @@ func appendEventTx(
 	return event, nil
 }
 
+// AppendUserMessage idempotently records a durable browser-submitted chat prompt.
+func (s *Store) AppendUserMessage(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+	idempotencyKey, text string,
+) (clouddomain.Event, bool, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return clouddomain.Event{}, false, fmt.Errorf("begin append user message: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	commandID := uuid.NewString()
+	commandPayload, err := json.Marshal(map[string]string{"text": text})
+	if err != nil {
+		return clouddomain.Event{}, false, fmt.Errorf("encode user message command: %w", err)
+	}
+	var insertedID string
+	err = tx.QueryRow(ctx, `
+		INSERT INTO ao_commands (
+			id, account_id, session_id, idempotency_key, kind, payload
+		)
+		SELECT $1, $2, session.id, $4, 'session.message', $5
+		FROM ao_sessions session
+		WHERE session.id = $3 AND session.account_id = $2
+		ON CONFLICT (account_id, idempotency_key) DO NOTHING
+		RETURNING id
+	`, commandID, accountID, sessionID, idempotencyKey, commandPayload).Scan(&insertedID)
+	switch {
+	case err == nil:
+	case errors.Is(err, pgx.ErrNoRows):
+		event, loadErr := loadUserMessageEvent(ctx, tx, accountID, sessionID, idempotencyKey, text)
+		if loadErr != nil {
+			return clouddomain.Event{}, false, loadErr
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return clouddomain.Event{}, false, fmt.Errorf("commit existing user message: %w", err)
+		}
+		return event, false, nil
+	default:
+		return clouddomain.Event{}, false, fmt.Errorf("insert user message command: %w", err)
+	}
+
+	payload, err := json.Marshal(map[string]string{"id": commandID, "text": text})
+	if err != nil {
+		return clouddomain.Event{}, false, fmt.Errorf("encode user message event: %w", err)
+	}
+	event, err := appendEventTx(ctx, tx, accountID, sessionID, "chat.user_message", payload)
+	if err != nil {
+		return clouddomain.Event{}, false, err
+	}
+	result, err := json.Marshal(map[string]int64{"eventSequence": event.Sequence})
+	if err != nil {
+		return clouddomain.Event{}, false, fmt.Errorf("encode user message result: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE ao_commands
+		SET status = 'succeeded', result = $2, updated_at = now()
+		WHERE id = $1
+	`, commandID, result); err != nil {
+		return clouddomain.Event{}, false, fmt.Errorf("complete user message command: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return clouddomain.Event{}, false, fmt.Errorf("commit user message: %w", err)
+	}
+	return event, true, nil
+}
+
+func loadUserMessageEvent(
+	ctx context.Context,
+	tx pgx.Tx,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+	idempotencyKey, text string,
+) (clouddomain.Event, error) {
+	var existingSessionID clouddomain.SessionID
+	var kind string
+	var payloadRaw, resultRaw []byte
+	err := tx.QueryRow(ctx, `
+		SELECT COALESCE(session_id::text, ''), kind, payload, result
+		FROM ao_commands
+		WHERE account_id = $1 AND idempotency_key = $2
+	`, accountID, idempotencyKey).Scan(&existingSessionID, &kind, &payloadRaw, &resultRaw)
+	if err != nil {
+		return clouddomain.Event{}, fmt.Errorf("load user message command: %w", err)
+	}
+	var payload struct {
+		Text string `json:"text"`
+	}
+	var result struct {
+		EventSequence int64 `json:"eventSequence"`
+	}
+	if kind != "session.message" ||
+		existingSessionID != sessionID ||
+		json.Unmarshal(payloadRaw, &payload) != nil ||
+		payload.Text != text ||
+		json.Unmarshal(resultRaw, &result) != nil ||
+		result.EventSequence <= 0 {
+		return clouddomain.Event{}, ErrIdempotencyConflict
+	}
+	var event clouddomain.Event
+	err = tx.QueryRow(ctx, `
+		SELECT session_id, sequence, type, payload, created_at
+		FROM ao_events
+		WHERE account_id = $1 AND session_id = $2 AND sequence = $3
+	`, accountID, sessionID, result.EventSequence).Scan(
+		&event.SessionID,
+		&event.Sequence,
+		&event.Type,
+		&event.Payload,
+		&event.CreatedAt,
+	)
+	if err != nil {
+		return clouddomain.Event{}, fmt.Errorf("load user message event: %w", err)
+	}
+	return event, nil
+}
+
 // EventsAfter returns session events after a sequence number.
 func (s *Store) EventsAfter(
 	ctx context.Context,
@@ -685,6 +858,38 @@ func (s *Store) EventsAfter(
 		return nil, fmt.Errorf("replay events: %w", err)
 	}
 	defer rows.Close()
+	return scanEvents(rows, "event")
+}
+
+// ChatEventsAfter returns only native chat events after a sequence number.
+func (s *Store) ChatEventsAfter(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+	after int64,
+	limit int,
+) ([]clouddomain.Event, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 500
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT session_id, sequence, type, payload, created_at
+		FROM ao_events
+		WHERE account_id = $1
+			AND session_id = $2
+			AND sequence > $3
+			AND type LIKE 'chat.%'
+		ORDER BY sequence
+		LIMIT $4
+	`, accountID, sessionID, after, limit)
+	if err != nil {
+		return nil, fmt.Errorf("replay chat events: %w", err)
+	}
+	defer rows.Close()
+	return scanEvents(rows, "chat event")
+}
+
+func scanEvents(rows pgx.Rows, description string) ([]clouddomain.Event, error) {
 	events := make([]clouddomain.Event, 0)
 	for rows.Next() {
 		var event clouddomain.Event
@@ -695,7 +900,7 @@ func (s *Store) EventsAfter(
 			&event.Payload,
 			&event.CreatedAt,
 		); err != nil {
-			return nil, fmt.Errorf("scan event: %w", err)
+			return nil, fmt.Errorf("scan %s: %w", description, err)
 		}
 		events = append(events, event)
 	}
@@ -718,6 +923,52 @@ func (s *Store) LatestEventSequenceByType(
 		return 0, fmt.Errorf("load latest event sequence: %w", err)
 	}
 	return sequence, nil
+}
+
+// LatestPromptAcceptedSequence returns the newest durable worker prompt acknowledgement.
+func (s *Store) LatestPromptAcceptedSequence(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+) (int64, error) {
+	var sequence int64
+	if err := s.pool.QueryRow(ctx, `
+		SELECT COALESCE(MAX(
+			CASE
+				WHEN jsonb_typeof(payload->'sequence') = 'number'
+				THEN (payload->>'sequence')::bigint
+			END
+		), 0)
+		FROM ao_events
+		WHERE account_id = $1
+			AND session_id = $2
+			AND type = 'worker.prompt_accepted'
+			AND payload ? 'sequence'
+	`, accountID, sessionID).Scan(&sequence); err != nil {
+		return 0, fmt.Errorf("load latest accepted prompt: %w", err)
+	}
+	return sequence, nil
+}
+
+// SetAgentSessionID records the provider-native conversation identifier for resume.
+func (s *Store) SetAgentSessionID(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+	agentSessionID string,
+) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE ao_sessions
+		SET agent_session_id = $3, updated_at = now()
+		WHERE account_id = $1 AND id = $2
+	`, accountID, sessionID, agentSessionID)
+	if err != nil {
+		return fmt.Errorf("store agent session ID: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrSessionNotFound
+	}
+	return nil
 }
 
 // IssueAccessTicket creates a short-lived, single-use session ticket.
@@ -907,4 +1158,6 @@ var (
 	ErrSessionNotFound = errors.New("cloud session not found")
 	// ErrInvalidTicket indicates that an access ticket is invalid or expired.
 	ErrInvalidTicket = errors.New("cloud access ticket is invalid or expired")
+	// ErrIdempotencyConflict indicates that a key was already used for another command.
+	ErrIdempotencyConflict = errors.New("cloud idempotency key conflicts with an existing command")
 )

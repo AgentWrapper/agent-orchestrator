@@ -100,6 +100,7 @@ func (c *Client) Event(ctx context.Context, eventType string, payload any) error
 // RunCommandStream receives commands until the stream or handler fails.
 func (c *Client) RunCommandStream(
 	ctx context.Context,
+	after int64,
 	handle func(cloudworkerhub.Command) error,
 ) error {
 	endpoint, err := url.Parse(c.baseURL)
@@ -113,6 +114,11 @@ func (c *Client) RunCommandStream(
 		endpoint.Scheme = "wss"
 	}
 	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/api/cloud/v1/worker/connect"
+	if after > 0 {
+		query := endpoint.Query()
+		query.Set("after", fmt.Sprintf("%d", after))
+		endpoint.RawQuery = query.Encode()
+	}
 	headers := http.Header{}
 	headers.Set("Authorization", "Worker "+c.getToken())
 	socket, response, err := websocket.Dial(ctx, endpoint.String(), &websocket.DialOptions{

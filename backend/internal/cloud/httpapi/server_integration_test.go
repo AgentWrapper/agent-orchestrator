@@ -354,6 +354,216 @@ func TestWorkerAndBrowserTerminalReplayLiveRouting(t *testing.T) {
 	}
 }
 
+func TestChatMessageAuthIdempotencyAndWorkerReplay(t *testing.T) {
+	server, store := integrationAPI(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	account, err := store.EnsureAccount(ctx, tokenID("user-one"), "User One")
+	if err != nil {
+		t.Fatalf("EnsureAccount() error = %v", err)
+	}
+	project, err := store.CreateProject(ctx, account.ID, cloudpostgres.CreateProjectInput{
+		DisplayName:   "Chat E2E",
+		RepositoryURL: "https://github.com/example/" + uuid.NewString(),
+		DefaultBranch: "main",
+	})
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	created, err := store.CreateSession(ctx, account.ID, cloudpostgres.CreateSessionInput{
+		IdempotencyKey: uuid.NewString(),
+		ProjectID:      project.ID,
+		Kind:           "worker",
+		Harness:        "fake",
+		DisplayName:    "chat-e2e",
+		Resource:       clouddomain.DefaultResourceProfile(),
+	})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	path := "/api/cloud/v1/sessions/" + string(created.Session.ID) + "/messages"
+	key := uuid.NewString()
+	unauthorized := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		path,
+		"user-two",
+		map[string]string{"text": "hello Claude"},
+		map[string]string{"Idempotency-Key": key},
+	)
+	unauthorized.Body.Close()
+	if unauthorized.StatusCode != http.StatusNotFound {
+		t.Fatalf("cross-account message status = %d, want 404", unauthorized.StatusCode)
+	}
+
+	first := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		path,
+		"user-one",
+		map[string]string{"text": "hello Claude"},
+		map[string]string{"Idempotency-Key": key},
+	)
+	defer first.Body.Close()
+	if first.StatusCode != http.StatusAccepted {
+		t.Fatalf("first message status = %d", first.StatusCode)
+	}
+	var firstBody struct {
+		Event clouddomain.Event `json:"event"`
+	}
+	if err := json.NewDecoder(first.Body).Decode(&firstBody); err != nil {
+		t.Fatalf("decode first message: %v", err)
+	}
+	if firstBody.Event.Type != "chat.user_message" {
+		t.Fatalf("first event type = %q", firstBody.Event.Type)
+	}
+
+	retry := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		path,
+		"user-one",
+		map[string]string{"text": "hello Claude"},
+		map[string]string{"Idempotency-Key": key},
+	)
+	defer retry.Body.Close()
+	if retry.StatusCode != http.StatusAccepted {
+		t.Fatalf("retry message status = %d", retry.StatusCode)
+	}
+	var retryBody struct {
+		Event clouddomain.Event `json:"event"`
+	}
+	if err := json.NewDecoder(retry.Body).Decode(&retryBody); err != nil {
+		t.Fatalf("decode retried message: %v", err)
+	}
+	if retryBody.Event.Sequence != firstBody.Event.Sequence ||
+		string(retryBody.Event.Payload) != string(firstBody.Event.Payload) {
+		t.Fatalf("retry event = %#v, want %#v", retryBody.Event, firstBody.Event)
+	}
+	conflict := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		path,
+		"user-one",
+		map[string]string{"text": "different text"},
+		map[string]string{"Idempotency-Key": key},
+	)
+	conflict.Body.Close()
+	if conflict.StatusCode != http.StatusConflict {
+		t.Fatalf("conflicting retry status = %d, want 409", conflict.StatusCode)
+	}
+
+	if _, err := store.AppendEvent(
+		ctx,
+		account.ID,
+		created.Session.ID,
+		"terminal.output",
+		json.RawMessage(`{"data":"ignored"}`),
+	); err != nil {
+		t.Fatalf("AppendEvent(non-chat) error = %v", err)
+	}
+	eventsResponse := requestJSON(
+		t,
+		server,
+		http.MethodGet,
+		"/api/cloud/v1/sessions/"+string(created.Session.ID)+"/chat-events?after=0&limit=1",
+		"user-one",
+		nil,
+		nil,
+	)
+	defer eventsResponse.Body.Close()
+	if eventsResponse.StatusCode != http.StatusOK {
+		t.Fatalf("chat events status = %d", eventsResponse.StatusCode)
+	}
+	var eventsBody struct {
+		Events []clouddomain.Event `json:"events"`
+	}
+	if err := json.NewDecoder(eventsResponse.Body).Decode(&eventsBody); err != nil {
+		t.Fatalf("decode chat events: %v", err)
+	}
+	if len(eventsBody.Events) != 1 || eventsBody.Events[0].Sequence != firstBody.Event.Sequence {
+		t.Fatalf("chat events = %#v", eventsBody.Events)
+	}
+
+	bootstrapTicket, err := store.IssueAccessTicket(
+		ctx,
+		account.ID,
+		created.Session.ID,
+		"worker_bootstrap",
+		[]string{"worker:connect", "worker:event", "worker:terminal"},
+		time.Minute,
+	)
+	if err != nil {
+		t.Fatalf("IssueAccessTicket(worker) error = %v", err)
+	}
+	bootstrapResponse := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/worker/bootstrap",
+		"",
+		map[string]any{
+			"bootstrapToken": bootstrapTicket,
+			"version":        "test",
+			"capabilities":   []string{"chat.stream-json.v1"},
+		},
+		nil,
+	)
+	defer bootstrapResponse.Body.Close()
+	var bootstrapBody struct {
+		WorkerToken string `json:"workerToken"`
+	}
+	if err := json.NewDecoder(bootstrapResponse.Body).Decode(&bootstrapBody); err != nil {
+		t.Fatalf("decode bootstrap: %v", err)
+	}
+	workerEvent := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/worker/events",
+		"",
+		map[string]any{
+			"type":    "chat.assistant_delta",
+			"payload": map[string]string{"text": "hello"},
+		},
+		map[string]string{"Authorization": "Worker " + bootstrapBody.WorkerToken},
+	)
+	workerEvent.Body.Close()
+	if workerEvent.StatusCode != http.StatusAccepted {
+		t.Fatalf("chat worker event status = %d", workerEvent.StatusCode)
+	}
+	workerURL := "ws" + strings.TrimPrefix(server.URL, "http") +
+		"/api/cloud/v1/worker/connect?after=0"
+	headers := http.Header{}
+	headers.Set("Authorization", "Worker "+bootstrapBody.WorkerToken)
+	socket, _, err := websocket.Dial(ctx, workerURL, &websocket.DialOptions{HTTPHeader: headers})
+	if err != nil {
+		t.Fatalf("dial worker socket: %v", err)
+	}
+	defer socket.Close(websocket.StatusNormalClosure, "test complete")
+	_, encodedCommand, err := socket.Read(ctx)
+	if err != nil {
+		t.Fatalf("read replayed prompt: %v", err)
+	}
+	var command cloudworkerhub.Command
+	if err := json.Unmarshal(encodedCommand, &command); err != nil {
+		t.Fatalf("decode replayed prompt: %v", err)
+	}
+	decodedPrompt, err := base64.StdEncoding.DecodeString(command.Data)
+	if err != nil {
+		t.Fatalf("decode prompt data: %v", err)
+	}
+	if command.Type != "prompt" ||
+		command.Sequence != firstBody.Event.Sequence ||
+		string(decodedPrompt) != "hello Claude" {
+		t.Fatalf("replayed prompt command = %#v text=%q", command, decodedPrompt)
+	}
+}
+
 func TestAgentProviderConnectionValidationAndAccountIsolation(t *testing.T) {
 	server, _ := integrationAPI(t)
 	for _, token := range []string{"user-one", "user-two"} {
@@ -594,13 +804,14 @@ func TestAgentConnectionGatesSessionAndBootstrapsCredential(t *testing.T) {
 		t.Fatalf("missing connection code = %q", missingBody.Code)
 	}
 
+	oauthSecret := "sk-ant-oat01-" + strings.Repeat("a", 80)
 	put := requestJSON(
 		t,
 		server,
 		http.MethodPut,
 		"/api/cloud/v1/provider-connections/agents/claude-code",
 		"user-one",
-		map[string]any{"credentialType": "oauth_token", "secret": "claude-oauth-secret"},
+		map[string]any{"credentialType": "oauth_token", "secret": oauthSecret},
 		nil,
 	)
 	put.Body.Close()
@@ -670,7 +881,7 @@ func TestAgentConnectionGatesSessionAndBootstrapsCredential(t *testing.T) {
 	if *bootstrapBody.AgentCredential != (cloudworker.AgentCredential{
 		Provider:       "claude-code",
 		CredentialType: "oauth_token",
-		Secret:         "claude-oauth-secret",
+		Secret:         oauthSecret,
 	}) {
 		t.Fatalf("bootstrap agentCredential = %#v", bootstrapBody.AgentCredential)
 	}

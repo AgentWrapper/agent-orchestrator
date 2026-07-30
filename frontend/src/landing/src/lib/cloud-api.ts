@@ -36,7 +36,16 @@ export interface CloudSession {
     | "exited"
     | "idle"
     | "terminated";
+  capabilities?: string[];
   isTerminated: boolean;
+  createdAt: string;
+}
+
+export interface CloudEvent {
+  sessionId: string;
+  sequence: number;
+  type: string;
+  payload: Record<string, unknown>;
   createdAt: string;
 }
 
@@ -130,6 +139,81 @@ export class CloudAPI {
       `/api/cloud/v1/sessions/${encodeURIComponent(sessionId)}/desired-state`,
       { method: "POST", body: { state } },
     );
+  }
+
+  async chatEvents(sessionId: string, after = 0, limit = 500) {
+    return this.request<{ events: CloudEvent[] }>(
+      `/api/cloud/v1/sessions/${encodeURIComponent(sessionId)}/chat-events?after=${after}&limit=${limit}`,
+    );
+  }
+
+  async sendMessage(sessionId: string, text: string, idempotencyKey: string) {
+    return this.request<{ event: CloudEvent }>(
+      `/api/cloud/v1/sessions/${encodeURIComponent(sessionId)}/messages`,
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
+        body: { text },
+      },
+    );
+  }
+
+  async streamEvents(
+    sessionId: string,
+    after: number,
+    signal: AbortSignal,
+    onEvent: (event: CloudEvent) => void,
+  ) {
+    const target = new URL(
+      `/api/cloud/v1/sessions/${encodeURIComponent(sessionId)}/events`,
+      this.baseURL,
+    );
+    target.searchParams.set("after", String(after));
+    const response = await fetch(target, {
+      headers: {
+        Accept: "text/event-stream",
+        Authorization: `Bearer ${this.accessToken}`,
+      },
+      signal,
+    });
+    if (!response.ok) {
+      const failure = (await response.json().catch(() => null)) as {
+        message?: string;
+        code?: string;
+      } | null;
+      throw new Error(
+        failure?.message ??
+          `AO Cloud event stream failed (${failure?.code ?? response.status}).`,
+      );
+    }
+    if (!response.body) {
+      throw new Error("AO Cloud event stream returned no response body.");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      while (!signal.aborted) {
+        const { value, done } = await reader.read();
+        buffer += decoder.decode(value, { stream: !done }).replaceAll("\r\n", "\n");
+        let boundary = buffer.indexOf("\n\n");
+        while (boundary >= 0) {
+          const block = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          const data = block
+            .split("\n")
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.slice(5).trimStart())
+            .join("\n");
+          if (data) onEvent(JSON.parse(data) as CloudEvent);
+          boundary = buffer.indexOf("\n\n");
+        }
+        if (done) return;
+      }
+    } finally {
+      reader.releaseLock();
+    }
   }
 
   async providerConnections() {

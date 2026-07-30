@@ -28,12 +28,24 @@ func newAgentCredentialValidator(client *http.Client) *agentCredentialValidator 
 	}
 }
 
+func normalizeAgentCredentialSecret(value string) []byte {
+	return []byte(strings.Join(strings.Fields(value), ""))
+}
+
 func (v *agentCredentialValidator) Validate(
 	ctx context.Context,
 	agent, credentialType string,
 	secret []byte,
 ) error {
 	if agent != "claude-code" {
+		return nil
+	}
+	// #nosec G101 -- this compares a public credential-kind label, not a credential value.
+	if credentialType == "oauth_token" {
+		token := string(secret)
+		if !strings.HasPrefix(token, "sk-ant-oat01-") || len(token) < 80 {
+			return errInvalidAgentCredential
+		}
 		return nil
 	}
 	request, err := http.NewRequestWithContext(
@@ -49,9 +61,6 @@ func (v *agentCredentialValidator) Validate(
 	request.Header.Set("anthropic-version", "2023-06-01")
 	request.Header.Set("User-Agent", "claude-code/2.1.220")
 	switch credentialType {
-	case "oauth_token":
-		request.Header.Set("Authorization", "Bearer "+string(secret))
-		request.Header.Set("anthropic-beta", "oauth-2025-04-20")
 	case "api_key":
 		request.Header.Set("x-api-key", string(secret))
 	default:

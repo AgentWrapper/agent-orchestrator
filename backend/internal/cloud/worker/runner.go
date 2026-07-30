@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/creack/pty"
@@ -43,7 +44,7 @@ func NewRunner(client *Client, bootstrap BootstrapResponse, workspaceDir, dataDi
 	}
 }
 
-// Run prepares the repository, launches the agent, and forwards terminal traffic.
+// Run prepares the repository and launches the configured interactive or structured runtime.
 func (r *Runner) Run(ctx context.Context) error {
 	if err := os.MkdirAll(r.dataDir, 0o700); err != nil {
 		return fmt.Errorf("create worker data dir: %w", err)
@@ -111,11 +112,35 @@ func (r *Runner) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer clearEnvironmentSecret(hookEnvironment, credentialEnvironmentName)
+	runtimeEnvironment := append(os.Environ(), envList(hookEnvironment)...)
+	clearEnvironmentSecret(hookEnvironment, credentialEnvironmentName)
+	switch r.bootstrap.Launch.Session.Harness {
+	case "claude-code":
+		if structuredRuntimeEnabled("claude-code") {
+			return r.runStructuredClaude(ctx, argv, launchConfig, runtimeEnvironment)
+		}
+	case "codex":
+		if structuredRuntimeEnabled("codex") {
+			return r.runStructuredCodex(ctx, argv, launchConfig.Prompt, runtimeEnvironment)
+		}
+	case "cursor":
+		if structuredRuntimeEnabled("cursor") {
+			return r.runStructuredCursor(ctx, argv, launchConfig.Prompt, runtimeEnvironment)
+		}
+	}
+	return r.runInteractiveAgent(ctx, argv, launchConfig, strategy, runtimeEnvironment)
+}
+
+func (r *Runner) runInteractiveAgent(
+	ctx context.Context,
+	argv []string,
+	launchConfig ports.LaunchConfig,
+	strategy ports.PromptDeliveryStrategy,
+	environment []string,
+) error {
 	command := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	command.Dir = r.workspaceDir
-	command.Env = append(os.Environ(), envList(hookEnvironment)...)
-	clearEnvironmentSecret(hookEnvironment, credentialEnvironmentName)
+	command.Env = environment
 	terminal, err := pty.Start(command)
 	if err != nil {
 		return fmt.Errorf("start agent PTY: %w", err)
@@ -183,9 +208,23 @@ func (r *Runner) commandLoop(
 	writeMu *sync.Mutex,
 ) {
 	backoff := time.Second
+	var highestPrompt atomic.Int64
+	var acknowledgedPrompt int64
 	for ctx.Err() == nil {
+		if highest := highestPrompt.Load(); highest > acknowledgedPrompt {
+			if err := r.acknowledgePrompt(ctx, highest); err != nil {
+				if !waitForRetry(ctx, backoff) {
+					return
+				}
+				if backoff < 8*time.Second {
+					backoff *= 2
+				}
+				continue
+			}
+			acknowledgedPrompt = highest
+		}
 		connectionStartedAt := time.Now()
-		err := r.client.RunCommandStream(ctx, func(command cloudworkerhub.Command) error {
+		err := r.client.RunCommandStream(ctx, highestPrompt.Load(), func(command cloudworkerhub.Command) error {
 			switch command.Type {
 			case "input":
 				decoded, err := base64.StdEncoding.DecodeString(command.Data)
@@ -195,6 +234,25 @@ func (r *Runner) commandLoop(
 				writeMu.Lock()
 				_, err = terminal.Write(decoded)
 				writeMu.Unlock()
+				return err
+			case "prompt":
+				if command.Sequence > 0 && command.Sequence <= highestPrompt.Load() {
+					return nil
+				}
+				decoded, err := base64.StdEncoding.DecodeString(command.Data)
+				if err != nil {
+					return fmt.Errorf("decode prompt: %w", err)
+				}
+				writeMu.Lock()
+				_, err = terminal.Write(append(decoded, '\r'))
+				writeMu.Unlock()
+				if err == nil && command.Sequence > 0 {
+					highestPrompt.Store(command.Sequence)
+					if err := r.acknowledgePrompt(ctx, command.Sequence); err != nil {
+						return err
+					}
+					acknowledgedPrompt = command.Sequence
+				}
 				return err
 			case "resize":
 				return pty.Setsize(terminal, &pty.Winsize{Rows: command.Rows, Cols: command.Cols})
@@ -210,10 +268,8 @@ func (r *Runner) commandLoop(
 			backoff = time.Second
 		}
 		_ = r.client.Event(ctx, "worker.command_stream_disconnected", map[string]string{"error": err.Error()})
-		select {
-		case <-ctx.Done():
+		if !waitForRetry(ctx, backoff) {
 			return
-		case <-time.After(backoff):
 		}
 		if !stableConnection && backoff < 8*time.Second {
 			backoff *= 2
@@ -298,7 +354,7 @@ func (r *Runner) heartbeatLoop(ctx context.Context) {
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
 	for {
-		if err := r.client.Heartbeat(ctx, Version, DefaultCapabilities); err != nil && ctx.Err() == nil {
+		if err := r.client.Heartbeat(ctx, Version, r.runtimeCapabilities()); err != nil && ctx.Err() == nil {
 			_ = r.client.Event(ctx, "worker.heartbeat_failed", map[string]string{"error": err.Error()})
 		}
 		select {
@@ -306,6 +362,29 @@ func (r *Runner) heartbeatLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 		}
+	}
+}
+
+func (r *Runner) runtimeCapabilities() []string {
+	capabilities := append([]string(nil), DefaultCapabilities...)
+	if structuredRuntimeEnabled(r.bootstrap.Launch.Session.Harness) {
+		capabilities = append(capabilities, "chat.stream-json.v1")
+	} else {
+		capabilities = append(capabilities, "runtime.pty.v1")
+	}
+	return capabilities
+}
+
+func structuredRuntimeEnabled(harness string) bool {
+	switch harness {
+	case "claude-code":
+		return os.Getenv("AO_CLOUD_CLAUDE_PTY") != "1"
+	case "codex":
+		return os.Getenv("AO_CLOUD_CODEX_PTY") != "1"
+	case "cursor":
+		return os.Getenv("AO_CLOUD_CURSOR_PTY") != "1"
+	default:
+		return false
 	}
 }
 

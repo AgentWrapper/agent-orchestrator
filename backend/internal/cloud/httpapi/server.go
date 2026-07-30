@@ -45,6 +45,8 @@ type store interface {
 	UpdateSessionActivity(context.Context, clouddomain.AccountID, clouddomain.SessionID, string) error
 	WorkerConnectionCurrent(context.Context, clouddomain.AccountID, clouddomain.SessionID, string, int64) (bool, error)
 	LatestEventSequenceByType(context.Context, clouddomain.AccountID, clouddomain.SessionID, string) (int64, error)
+	LatestPromptAcceptedSequence(context.Context, clouddomain.AccountID, clouddomain.SessionID) (int64, error)
+	SetAgentSessionID(context.Context, clouddomain.AccountID, clouddomain.SessionID, string) error
 	UpsertProviderConnection(context.Context, clouddomain.AccountID, string, string, []byte, []byte, json.RawMessage) (cloudpostgres.ProviderConnection, error)
 	ListProviderConnections(context.Context, clouddomain.AccountID) ([]cloudpostgres.ProviderConnection, error)
 	ProviderConnectionSecretByProvider(context.Context, clouddomain.AccountID, string, string) ([]byte, []byte, json.RawMessage, error)
@@ -155,6 +157,8 @@ func (s *Server) routes() http.Handler {
 			protected.Post("/sessions", s.createSession)
 			protected.Get("/sessions/{sessionId}", s.getSession)
 			protected.Post("/sessions/{sessionId}/desired-state", s.setDesiredState)
+			protected.Get("/sessions/{sessionId}/chat-events", s.chatEvents)
+			protected.Post("/sessions/{sessionId}/messages", s.sendMessage)
 			protected.Get("/sessions/{sessionId}/events", s.streamEvents)
 			protected.Get("/sessions/{sessionId}/scm", s.sessionSCM)
 			protected.Post("/sessions/{sessionId}/terminal-ticket", s.issueTerminalTicket)
@@ -379,6 +383,88 @@ func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"session": session})
 }
 
+func (s *Server) chatEvents(w http.ResponseWriter, r *http.Request) {
+	account, _ := accountFromContext(r.Context())
+	sessionID := clouddomain.SessionID(chi.URLParam(r, "sessionId"))
+	if _, err := s.store.GetSession(r.Context(), account.ID, sessionID); err != nil {
+		if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
+			writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The cloud session does not exist.")
+			return
+		}
+		s.internalError(w, r, "authorize chat event replay", err)
+		return
+	}
+	after, err := parseAfter(r)
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, "INVALID_AFTER", "after must be a non-negative integer.")
+		return
+	}
+	limit, err := parseLimit(r, 500)
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, "INVALID_LIMIT", "limit must be a positive integer no greater than 500.")
+		return
+	}
+	events, err := s.events.ReplayChat(r.Context(), account.ID, sessionID, after, limit)
+	if err != nil {
+		s.internalError(w, r, "replay chat events", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": events})
+}
+
+func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
+	account, _ := accountFromContext(r.Context())
+	sessionID := clouddomain.SessionID(chi.URLParam(r, "sessionId"))
+	if _, err := s.store.GetSession(r.Context(), account.ID, sessionID); err != nil {
+		if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
+			writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The cloud session does not exist.")
+			return
+		}
+		s.internalError(w, r, "authorize cloud message", err)
+		return
+	}
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if idempotencyKey == "" || len(idempotencyKey) > 200 {
+		writeError(w, r, http.StatusBadRequest, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required.")
+		return
+	}
+	var input struct {
+		Text string `json:"text"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if strings.TrimSpace(input.Text) == "" || len([]byte(input.Text)) > 64<<10 {
+		writeError(w, r, http.StatusBadRequest, "INVALID_MESSAGE", "text must be non-empty and at most 64 KiB.")
+		return
+	}
+	event, err := s.events.AppendUserMessage(
+		r.Context(),
+		account.ID,
+		sessionID,
+		idempotencyKey,
+		input.Text,
+	)
+	if errors.Is(err, cloudpostgres.ErrIdempotencyConflict) {
+		writeError(w, r, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "Idempotency-Key was already used for another command.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "append cloud message", err)
+		return
+	}
+	command := cloudworkerhub.Command{
+		Type:     "prompt",
+		Data:     base64.StdEncoding.EncodeToString([]byte(input.Text)),
+		Sequence: event.Sequence,
+	}
+	if err := s.workerHub.Send(sessionID, command); err != nil {
+		writeError(w, r, http.StatusServiceUnavailable, "WORKER_BACKPRESSURE", "The message was saved but worker delivery is temporarily unavailable.")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"event": event})
+}
+
 func (s *Server) sessionSCM(w http.ResponseWriter, r *http.Request) {
 	account, _ := accountFromContext(r.Context())
 	sessionID := clouddomain.SessionID(chi.URLParam(r, "sessionId"))
@@ -468,19 +554,8 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 
 	sent := after
-	for {
-		events, err := s.events.Replay(ctx, account.ID, sessionID, sent, 500)
-		if err != nil {
-			return
-		}
-		for _, event := range events {
-			if err := writeSSE(w, flusher, event, &sent); err != nil {
-				return
-			}
-		}
-		if len(events) < 500 {
-			break
-		}
+	if err := s.writeEventReplay(ctx, w, flusher, account.ID, sessionID, &sent); err != nil {
+		return
 	}
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
@@ -488,8 +563,8 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-ctx.Done():
 			return
-		case event := <-live:
-			if err := writeSSE(w, flusher, event, &sent); err != nil {
+		case <-live:
+			if err := s.writeEventReplay(ctx, w, flusher, account.ID, sessionID, &sent); err != nil {
 				return
 			}
 		case <-heartbeat.C:
@@ -497,6 +572,30 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			flusher.Flush()
+		}
+	}
+}
+
+func (s *Server) writeEventReplay(
+	ctx context.Context,
+	w http.ResponseWriter,
+	flusher http.Flusher,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+	sent *int64,
+) error {
+	for {
+		replayed, err := s.events.Replay(ctx, accountID, sessionID, *sent, 500)
+		if err != nil {
+			return err
+		}
+		for _, event := range replayed {
+			if err := writeSSE(w, flusher, event, sent); err != nil {
+				return err
+			}
+		}
+		if len(replayed) < 500 {
+			return nil
 		}
 	}
 }
@@ -671,7 +770,8 @@ func (s *Server) workerEvent(w http.ResponseWriter, r *http.Request) {
 	input.Type = strings.TrimSpace(input.Type)
 	if input.Type == "" || len(input.Type) > 100 || !strings.HasPrefix(input.Type, "worker.") &&
 		!strings.HasPrefix(input.Type, "agent.") && !strings.HasPrefix(input.Type, "terminal.") &&
-		!strings.HasPrefix(input.Type, "repository.") && !strings.HasPrefix(input.Type, "preview.") {
+		!strings.HasPrefix(input.Type, "repository.") && !strings.HasPrefix(input.Type, "preview.") &&
+		!strings.HasPrefix(input.Type, "chat.") {
 		writeError(w, r, http.StatusBadRequest, "INVALID_EVENT_TYPE", "Worker event type is not allowed.")
 		return
 	}
@@ -702,6 +802,26 @@ func (s *Server) workerEvent(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if input.Type == "chat.session_started" {
+		var session struct {
+			SessionID string `json:"sessionId"`
+		}
+		if err := json.Unmarshal(input.Payload, &session); err != nil ||
+			strings.TrimSpace(session.SessionID) == "" ||
+			len(session.SessionID) > 200 {
+			writeError(w, r, http.StatusBadRequest, "INVALID_AGENT_SESSION", "Agent session payload is invalid.")
+			return
+		}
+		if err := s.store.SetAgentSessionID(
+			r.Context(),
+			claims.AccountID,
+			claims.SessionID,
+			session.SessionID,
+		); err != nil {
+			s.internalError(w, r, "store agent session ID", err)
+			return
+		}
+	}
 	event, err := s.events.Append(r.Context(), claims.AccountID, claims.SessionID, input.Type, input.Payload)
 	if err != nil {
 		s.internalError(w, r, "append worker event", err)
@@ -714,6 +834,11 @@ func (s *Server) workerConnect(w http.ResponseWriter, r *http.Request) {
 	claims := workerFromContext(r.Context())
 	if !cloudworker.HasScope(claims, "worker:terminal") {
 		writeError(w, r, http.StatusForbidden, "SCOPE_REQUIRED", "worker:terminal scope is required.")
+		return
+	}
+	after, err := parseAfter(r)
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, "INVALID_AFTER", "after must be a non-negative integer.")
 		return
 	}
 	socket, err := websocket.Accept(w, r, &websocket.AcceptOptions{
@@ -729,6 +854,18 @@ func (s *Server) workerConnect(w http.ResponseWriter, r *http.Request) {
 		claims.Epoch,
 	)
 	defer unregister()
+	accepted, err := s.store.LatestPromptAcceptedSequence(
+		r.Context(),
+		claims.AccountID,
+		claims.SessionID,
+	)
+	if err != nil {
+		return
+	}
+	replayedAfter := max(after, accepted)
+	if err := s.writePromptReplay(r.Context(), socket, claims, &replayedAfter); err != nil {
+		return
+	}
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -739,6 +876,12 @@ func (s *Server) workerConnect(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				_ = socket.Close(websocket.StatusPolicyViolation, "worker replaced")
 				return
+			}
+			if command.Type == "prompt" {
+				if err := s.writePromptReplay(r.Context(), socket, claims, &replayedAfter); err != nil {
+					return
+				}
+				continue
 			}
 			encoded, _ := json.Marshal(command)
 			if err := socket.Write(r.Context(), websocket.MessageText, encoded); err != nil {
@@ -751,6 +894,58 @@ func (s *Server) workerConnect(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return
 			}
+		}
+	}
+}
+
+func (s *Server) writePromptReplay(
+	ctx context.Context,
+	socket *websocket.Conn,
+	claims cloudworker.Claims,
+	replayedAfter *int64,
+) error {
+	for {
+		replayed, err := s.events.ReplayChat(
+			ctx,
+			claims.AccountID,
+			claims.SessionID,
+			*replayedAfter,
+			500,
+		)
+		if err != nil {
+			return err
+		}
+		for _, event := range replayed {
+			if event.Sequence > *replayedAfter {
+				*replayedAfter = event.Sequence
+			}
+			if event.Type != "chat.user_message" {
+				continue
+			}
+			var payload struct {
+				Text    string `json:"text"`
+				Initial bool   `json:"initial"`
+			}
+			if json.Unmarshal(event.Payload, &payload) != nil ||
+				payload.Text == "" ||
+				payload.Initial {
+				continue
+			}
+			command := cloudworkerhub.Command{
+				Type:     "prompt",
+				Data:     base64.StdEncoding.EncodeToString([]byte(payload.Text)),
+				Sequence: event.Sequence,
+			}
+			encoded, marshalErr := json.Marshal(command)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			if err := socket.Write(ctx, websocket.MessageText, encoded); err != nil {
+				return err
+			}
+		}
+		if len(replayed) < 500 {
+			return nil
 		}
 	}
 }
@@ -1025,7 +1220,7 @@ func (s *Server) putAgentConnection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input.CredentialType = strings.TrimSpace(input.CredentialType)
-	secret := []byte(strings.TrimSpace(input.Secret))
+	secret := normalizeAgentCredentialSecret(input.Secret)
 	input.Secret = ""
 	defer clearBytes(secret)
 	if !validAgentCredentialType(agent, input.CredentialType) {
@@ -1326,6 +1521,18 @@ func parseAfter(r *http.Request) (int64, error) {
 		return 0, errors.New("invalid after")
 	}
 	return after, nil
+}
+
+func parseLimit(r *http.Request, maximum int) (int, error) {
+	raw := r.URL.Query().Get("limit")
+	if raw == "" {
+		return maximum, nil
+	}
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit <= 0 || limit > maximum {
+		return 0, errors.New("invalid limit")
+	}
+	return limit, nil
 }
 
 func writeSSE(w http.ResponseWriter, flusher http.Flusher, event clouddomain.Event, sent *int64) error {

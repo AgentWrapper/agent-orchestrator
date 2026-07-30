@@ -14,6 +14,20 @@ Vercel web app
     → ao-worker + Claude Code/Codex/Cursor
 ```
 
+## Structured agent sessions
+
+Claude Code, Codex, and Cursor sessions open in AO's native conversation view.
+The worker consumes each provider's machine-readable event stream and maps it
+to provider-neutral `chat.*` events for messages, reasoning, tools, command and
+file output, usage, approvals, warnings, errors, and turn lifecycle.
+
+Browser messages are idempotently committed to PostgreSQL before worker
+delivery. Provider events are also committed before display. The web client
+uses an authenticated replay-then-live SSE stream, so refreshes and reconnects
+continue from the last durable sequence without depending on terminal scrollback.
+Closing the browser does not stop the worker. Workers that do not negotiate the
+structured-chat capability automatically use the PTY surface instead.
+
 ## Local development
 
 Prerequisites:

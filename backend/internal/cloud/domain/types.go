@@ -53,6 +53,7 @@ type Session struct {
 	ActivityState  string    `json:"activityState"`
 	IsTerminated   bool      `json:"isTerminated"`
 	AgentSessionID string    `json:"agentSessionId,omitempty"`
+	Capabilities   []string  `json:"capabilities,omitempty"`
 	Status         string    `json:"status"`
 	CreatedAt      time.Time `json:"createdAt"`
 	UpdatedAt      time.Time `json:"updatedAt"`

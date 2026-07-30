@@ -39,6 +39,7 @@ import {
   defaultConnectedAgent,
 } from "@/lib/cloud-agent-connections";
 import { useAuth } from "../auth/AuthProvider";
+import { CloudChat } from "./CloudChat";
 import { CloudTerminal } from "./CloudTerminal";
 
 type View = "board" | "session" | "settings";
@@ -48,6 +49,14 @@ const cloudSidebarWidthKey = "ao-cloud-sidebar-width";
 const defaultSidebarWidth = 240;
 const minimumSidebarWidth = 200;
 const maximumSidebarWidth = 420;
+const structuredChatHarnesses = new Set(["claude-code", "codex", "cursor"]);
+
+function supportsStructuredChat(session: CloudSession) {
+  return (
+    structuredChatHarnesses.has(session.harness) &&
+    session.capabilities?.includes("chat.stream-json.v1") === true
+  );
+}
 
 const button =
   "inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border px-2.5 text-sm text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45";
@@ -237,6 +246,16 @@ export default function CloudAppPage() {
 
   const selectedProject = projects.find(({ id }) => id === selectedProjectId);
   const selectedSession = sessions.find(({ id }) => id === selectedSessionId);
+  const structuredChatAvailable = selectedSession
+    ? supportsStructuredChat(selectedSession)
+    : false;
+  const terminalRuntimeAvailable =
+    selectedSession?.capabilities?.includes("runtime.pty.v1") === true;
+  const runtimeConnecting =
+    selectedSession !== undefined &&
+    !selectedSession.isTerminated &&
+    !structuredChatAvailable &&
+    !terminalRuntimeAvailable;
   const daytonaConnections = connections.filter(
     ({ provider }) => provider === "daytona",
   );
@@ -685,7 +704,13 @@ export default function CloudAppPage() {
                 run={run}
               />
             ) : view === "session" && selectedSession ? (
-              <CloudTerminal api={api} sessionId={selectedSession.id} />
+              structuredChatAvailable ? (
+                <CloudChat api={api} session={selectedSession} />
+              ) : runtimeConnecting ? (
+                <CloudRuntimeConnecting session={selectedSession} />
+              ) : (
+                <CloudTerminal api={api} sessionId={selectedSession.id} />
+              )
             ) : (
               <SessionBoard
                 sessions={visibleSessions}
@@ -740,6 +765,52 @@ export default function CloudAppPage() {
         />
       )}
     </main>
+  );
+}
+
+function CloudRuntimeConnecting({ session }: { session: CloudSession }) {
+  const role = session.kind === "orchestrator" ? "orchestrator" : "worker";
+  return (
+    <div
+      className="grid h-full min-h-0 place-items-center bg-[#0a0b0d] px-6"
+      role="status"
+      aria-live="polite"
+    >
+      <div className="w-full max-w-md">
+        <div className="flex items-center gap-4">
+          <div className="relative grid size-12 shrink-0 place-items-center">
+            <span className="absolute inset-0 animate-ping rounded-full border border-[#4d8dff]/25 [animation-duration:2.4s] motion-reduce:animate-none" />
+            <span className="absolute inset-1.5 rounded-full border border-white/[0.08]" />
+            <AgentAvatar agent={session.harness} className="relative size-6" />
+          </div>
+          <div className="min-w-0">
+            <h2 className="truncate text-sm font-medium text-[#f4f5f7]">
+              Connecting {role}
+            </h2>
+            <p className="mt-1 truncate text-xs text-[#646a73]">
+              {session.displayName} · {session.branch}
+            </p>
+          </div>
+          <LoaderCircle className="ml-auto size-4 shrink-0 animate-spin text-[#4d8dff] motion-reduce:animate-none" />
+        </div>
+
+        <div className="mt-7 grid grid-cols-[auto_1fr_auto_1fr_auto] items-center gap-2 text-[11px] text-[#646a73]">
+          <span className="text-[#9ba1aa]">Sandbox</span>
+          <span className="h-px overflow-hidden bg-white/[0.08]">
+            <span className="block h-full w-1/2 animate-[cloud-progress_1.5s_ease-in-out_infinite] bg-[#4d8dff]/60 motion-reduce:animate-none" />
+          </span>
+          <span className="text-[#9ba1aa]">Runtime</span>
+          <span className="h-px overflow-hidden bg-white/[0.08]">
+            <span className="block h-full w-1/2 animate-[cloud-progress_1.5s_ease-in-out_300ms_infinite] bg-[#4d8dff]/60 motion-reduce:animate-none" />
+          </span>
+          <span>Live chat</span>
+        </div>
+        <p className="mt-5 text-xs leading-5 text-[#646a73]">
+          AO will open the native chat as soon as the agent runtime is ready.
+          The task keeps starting even if you leave this view.
+        </p>
+      </div>
+    </div>
   );
 }
 
