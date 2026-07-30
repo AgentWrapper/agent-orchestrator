@@ -30,8 +30,8 @@ import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds"
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { readKeybindingOverrides, writeKeybindingOverrides } from "./main/keybinding-settings";
 import { spawn, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { closeSync, existsSync, openSync } from "node:fs";
+import { randomBytes, randomUUID } from "node:crypto";
+import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -57,6 +57,7 @@ import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/post
 import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
 import { connectSupervisor, type SupervisorLinkHandle } from "./main/supervisor-link";
+import { connectBrowserRuntime, type BrowserRuntimeLinkHandle } from "./main/browser-runtime-link";
 import { keepDaemonAlive, shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
@@ -96,16 +97,25 @@ if (process.platform === "win32") {
 // inside ~/.ao alongside the daemon's data dir and running.json. sessionData and
 // crashDumps derive from userData, so this one override reparents them all.
 // Must run before app ready.
-app.setPath("userData", path.join(os.homedir(), ".ao", "electron"));
+// Dev runs get their own profile under the same ~/.ao root: the packaged app
+// keeps this directory open, and two Chromium instances sharing one profile
+// corrupt its LevelDB stores. Mirrors how dev already isolates running.json and
+// the daemon data dir into ~/.ao/dev.
+app.setPath(
+	"userData",
+	app.isPackaged ? path.join(os.homedir(), ".ao", "electron") : path.join(os.homedir(), ".ao", "dev", "electron"),
+);
 
 let mainWindow: BrowserWindow | null = null;
 let daemonProcess: ChildProcess | null = null;
 let daemonStoppingProcess: ChildProcess | null = null;
+let daemonRestartAfterExitProcess: ChildProcess | null = null;
 let daemonStartPromise: Promise<DaemonStatus> | null = null;
 let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
 let daemonOutput = "";
 let browserViewHost: BrowserViewHost | null = null;
+let browserRuntimeLink: BrowserRuntimeLinkHandle | null = null;
 let keybindingOverrides: KeybindingOverrides = {};
 let keybindingRecordingActive = false;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
@@ -214,6 +224,9 @@ function applyRuntimeAppIcon(): void {
 function setDaemonStatus(nextStatus: DaemonStatus): void {
 	daemonStatus = nextStatus;
 	mainWindow?.webContents.send("daemon:status", daemonStatus);
+	if (nextStatus.state === "ready" && browserViewHost) {
+		establishBrowserRuntimeLink();
+	}
 }
 
 const MAX_DAEMON_OUTPUT_CHARS = 12_000;
@@ -312,11 +325,12 @@ function createWindow(): void {
 		shell,
 		WebContentsView,
 		annotatePreloadPath: annotatePreloadPath(),
-		rendererOrigin: RENDERER_ORIGIN,
+		rendererOrigin: new URL(rendererUrl()).origin,
 		isMac,
 		getKeybindingOverrides: () => keybindingOverrides,
 		isKeybindingRecording: () => keybindingRecordingActive,
 	});
+	if (daemonStatus.state === "ready") establishBrowserRuntimeLink();
 
 	void mainWindow.loadURL(rendererUrl());
 
@@ -343,6 +357,8 @@ function createWindow(): void {
 	});
 
 	mainWindow.on("closed", () => {
+		browserRuntimeLink?.dispose();
+		browserRuntimeLink = null;
 		keybindingRecordingActive = false;
 		browserViewHost?.dispose();
 		browserViewHost = null;
@@ -351,9 +367,11 @@ function createWindow(): void {
 }
 
 // How long the supervisor waits for the daemon to confirm its bound port (via
-// the listen log line or running.json) before reporting the configured port as
-// a best-effort fallback.
-const PORT_DISCOVERY_TIMEOUT_MS = 15_000;
+// the listen log line or running.json). A daemon that cannot confirm startup in
+// this window is reported with its captured output instead of being treated as
+// ready on an assumed port.
+const PORT_DISCOVERY_TIMEOUT_MS = 30_000;
+const DAEMON_RESTART_STOP_TIMEOUT_MS = 5_000;
 const RUN_FILE_POLL_MS = 300;
 // Accept run-files stamped slightly before our spawn timestamp: the daemon's
 // clock reading and ours race within normal scheduling jitter.
@@ -446,6 +464,7 @@ function ensureShellEnv(): Promise<void> {
 // (including supervisor restarts) reports the same run. An explicit
 // AO_APP_RUN_ID in the environment wins, which lets a test or a wrapper pin it.
 const appRunId = process.env.AO_APP_RUN_ID ?? `apprun-${randomUUID()}`;
+const browserRuntimeToken = randomBytes(32).toString("base64url");
 
 function daemonEnv(): NodeJS.ProcessEnv {
 	// AO_OWNER is the daemon's durable spawn-mode record: the daemon writes it
@@ -461,7 +480,11 @@ function daemonEnv(): NodeJS.ProcessEnv {
 	// is how the daemon recognises the previous run's shells as orphans and
 	// destroys them (see internal/service/shellterm).
 	const AO_OWNER = keepDaemonAlive(process.env) ? "persistent" : "app";
-	const ownerTag = { AO_OWNER, AO_APP_RUN_ID: appRunId };
+	const ownerTag = {
+		AO_OWNER,
+		AO_APP_RUN_ID: appRunId,
+		AO_BROWSER_RUNTIME_TOKEN: browserRuntimeToken,
+	};
 	// In dev mode, inject isolation defaults so the dev daemon never collides with
 	// the installed app. User-set env vars take priority (checked first).
 	const devExtras: Record<string, string> = {};
@@ -561,6 +584,41 @@ function supervisorPipeFromRunFile(rfp: string | null): string {
 	const dir = path.basename(path.dirname(rfp));
 	if (dir === ".ao" || dir === "." || dir === "") return "\\\\.\\pipe\\ao-supervise";
 	return "\\\\.\\pipe\\ao-supervise-" + dir.replace(/[^a-zA-Z0-9-]/g, "-");
+}
+
+function establishBrowserRuntimeLink(): void {
+	if (!browserViewHost || browserRuntimeLink) return;
+	const rfp = runFilePath();
+	if (!rfp) {
+		console.warn("AO: browser runtime link skipped; run-file path unavailable");
+		return;
+	}
+	let runInfo: ReturnType<typeof parseRunFile> = null;
+	try {
+		runInfo = parseRunFile(readFileSync(rfp, "utf8"));
+	} catch {
+		// Daemon readiness will retry this after running.json becomes readable.
+	}
+	const address = runInfo?.browserRuntimeAddress;
+	if (!address) {
+		console.warn("AO: browser runtime link skipped; daemon did not publish an address");
+		return;
+	}
+	let token = browserRuntimeToken;
+	token = runInfo?.browserRuntimeToken ?? token;
+	browserRuntimeLink = connectBrowserRuntime(address, {
+		token,
+		execute: (command, signal) => {
+			const host = browserViewHost;
+			if (!host) {
+				throw Object.assign(new Error("Browser target owner is unavailable"), {
+					code: "BROWSER_TARGET_UNAVAILABLE",
+				});
+			}
+			return host.execute(command.sessionId, command.action, command.args, signal);
+		},
+		log: (message) => console.log(`AO: ${message}`),
+	});
 }
 
 function establishSupervisorLink(): void {
@@ -972,16 +1030,29 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		}, RUN_FILE_POLL_MS);
 	}
 
-	// Last resort: neither source confirmed (e.g. an older daemon build). Report
-	// the configured port so the renderer is not stuck on "starting" forever.
+	// Neither source confirmed startup. Surface the captured process output so
+	// the renderer can explain why boot stalled instead of spinning forever or
+	// attempting workspace requests against an assumed port.
 	fallbackTimer = setTimeout(() => {
 		if (portConfirmed || daemonProcess !== child || daemonStoppingProcess === child) return;
-		stopDiscovery();
+		// Keep running.json polling alive after surfacing the timeout. In
+		// keep-daemon mode there are no stdout/stderr scanners, so the run file is
+		// the only way a slow-but-successful boot can still recover to ready.
+		fallbackTimer = undefined;
 		setDaemonStatus({
-			state: "ready",
-			port: resolvedDaemonPort(),
-			message: "Daemon port not confirmed from logs or running.json; assuming the configured port.",
-			code: "port_unconfirmed",
+			state: "error",
+			message: "AO daemon did not finish starting within 30 seconds.",
+			details:
+				daemonOutput.trim() ||
+				[
+					"No startup output was captured.",
+					`Executable: ${launch.command}`,
+					`Working directory: ${launch.cwd}`,
+					`Expected port confirmation from: ${handshakePath ?? "running.json"}`,
+				].join("\n"),
+			code: "not_ready",
+			executablePath: launch.command,
+			workingDirectory: launch.cwd,
 		});
 	}, PORT_DISCOVERY_TIMEOUT_MS);
 
@@ -1009,6 +1080,11 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		// failures. Preserve the clean stopped status instead.
 		if (daemonStoppingProcess === child) {
 			daemonStoppingProcess = null;
+			if (daemonRestartAfterExitProcess === child) {
+				daemonRestartAfterExitProcess = null;
+				void startDaemonForRestart();
+				return;
+			}
 			setDaemonStatus({ state: "stopped" });
 			return;
 		}
@@ -1041,6 +1117,9 @@ function killDaemon(child: ChildProcess): void {
 function stopDaemon(): DaemonStatus {
 	daemonStartEpoch += 1;
 	daemonStartPromise = null;
+	// An explicit stop (or a newer restart request) cancels any deferred restart
+	// left waiting for a previously slow child to exit.
+	daemonRestartAfterExitProcess = null;
 	if (!daemonProcess) {
 		setDaemonStatus({ state: "stopped" });
 		return daemonStatus;
@@ -1052,14 +1131,79 @@ function stopDaemon(): DaemonStatus {
 	// A later daemon:start re-establishes the link via reportBoundPort.
 	supervisorLink?.dispose();
 	supervisorLink = null;
+	browserRuntimeLink?.dispose();
+	browserRuntimeLink = null;
 	killDaemon(daemonProcess);
 	setDaemonStatus({ state: "stopped" });
 	return daemonStatus;
 }
 
+function reportDaemonRestartFailure(error: unknown): DaemonStatus {
+	setDaemonStatus({
+		state: "error",
+		message: `Could not restart the AO daemon: ${error instanceof Error ? error.message : String(error)}`,
+		details: daemonOutput.trim() || undefined,
+		code: "spawn_failed",
+	});
+	return daemonStatus;
+}
+
+async function startDaemonForRestart(): Promise<DaemonStatus> {
+	try {
+		return await startDaemon();
+	} catch (error) {
+		return reportDaemonRestartFailure(error);
+	}
+}
+
+async function restartDaemon(): Promise<DaemonStatus> {
+	const child = daemonProcess;
+	if (!child) return startDaemonForRestart();
+
+	const exited = new Promise<boolean>((resolve) => {
+		let settled = false;
+		const finish = (didExit: boolean) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			child.off("exit", onExit);
+			resolve(didExit);
+		};
+		const onExit = () => finish(true);
+		const timer = setTimeout(() => finish(false), DAEMON_RESTART_STOP_TIMEOUT_MS);
+		child.once("exit", onExit);
+	});
+
+	stopDaemon();
+	// Register the deferred intent immediately after signaling the child. The
+	// exit can race the five-second UI timeout, so waiting until after the
+	// timeout to set this would occasionally miss the only exit event.
+	daemonRestartAfterExitProcess = child;
+	if (!(await exited)) {
+		// The process may still honor SIGTERM after the UI timeout. Keep the
+		// restart intent attached to that exact child so its eventual exit starts
+		// a replacement instead of collapsing back to a code-less stopped state.
+		setDaemonStatus({
+			state: "error",
+			message: "AO daemon is still stopping. It will restart automatically when shutdown completes.",
+			details: daemonOutput.trim() || undefined,
+			code: "not_ready",
+		});
+		return daemonStatus;
+	}
+	return startDaemonForRestart();
+}
+
 ipcMain.handle("daemon:getStatus", () => refreshDaemonStatus());
 ipcMain.handle("daemon:start", () => startDaemon());
 ipcMain.handle("daemon:stop", () => stopDaemon());
+ipcMain.handle("daemon:restart", async () => {
+	try {
+		return await restartDaemon();
+	} catch (error) {
+		return reportDaemonRestartFailure(error);
+	}
+});
 ipcMain.handle("app:getVersion", () => app.getVersion());
 ipcMain.handle("app:openExternal", async (_event, url: string) => {
 	await openAllowedAppExternalURL(url, shell);
@@ -1382,6 +1526,8 @@ app.whenReady().then(async () => {
 // The supervisorLink fd is NOT explicitly closed on quit; the OS closes it when
 // the process exits for any reason (Cmd+Q, crash, SIGKILL). Sessions survive.
 app.on("before-quit", () => {
+	browserRuntimeLink?.dispose();
+	browserRuntimeLink = null;
 	browserViewHost?.dispose();
 	browserViewHost = null;
 });

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -24,6 +25,32 @@ func newOrchestratorCommand(ctx *commandContext) *cobra.Command {
 		Short: "Manage orchestrator sessions",
 	}
 	cmd.AddCommand(newOrchestratorListCommand(ctx))
+	cmd.AddCommand(newOrchestratorDoneCommand(ctx))
+	return cmd
+}
+
+func newOrchestratorDoneCommand(ctx *commandContext) *cobra.Command {
+	var sessionID string
+	cmd := &cobra.Command{
+		Use:   "done",
+		Short: "Stop automatic re-engagement for a completed orchestrator",
+		Args:  noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if strings.TrimSpace(sessionID) == "" {
+				return usageError{errors.New("--session is required")}
+			}
+			var res struct {
+				OK        bool   `json:"ok"`
+				SessionID string `json:"sessionId"`
+			}
+			if err := ctx.postJSON(cmd.Context(), "orchestrators/"+sessionID+"/done", nil, &res); err != nil {
+				return err
+			}
+			_, err := fmt.Fprintf(cmd.OutOrStdout(), "Orchestrator %s marked done.\n", res.SessionID)
+			return err
+		},
+	}
+	cmd.Flags().StringVar(&sessionID, "session", "", "Orchestrator session id")
 	return cmd
 }
 

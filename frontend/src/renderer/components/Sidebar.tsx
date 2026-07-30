@@ -463,12 +463,14 @@ function ProjectItem({
 	};
 
 	const handleConfirmRemove = async () => {
+		setConfirmOpen(false);
 		setIsRemoving(true);
+		// Teardown can take a while when a project owns several sessions. Leave
+		// the confirmation immediately and move to the route that remains valid
+		// after removal while the sidebar keeps progress/error feedback visible.
+		selection.goHome();
 		try {
 			await onRemoveProject(workspace.id);
-			setConfirmOpen(false);
-			// The route for a removed project no longer resolves; fall back home.
-			if (selection.activeProjectId === workspace.id) selection.goHome();
 		} catch (err) {
 			const message = err instanceof Error ? err.message : "Could not remove project";
 			setRemoveError(message);
@@ -583,6 +585,15 @@ function ProjectItem({
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</div>
+			{isRemoving ? (
+				<div className="sidebar-expanded-chrome px-5 py-1 text-2xs text-muted-foreground" role="status">
+					Removing {workspace.name}…
+				</div>
+			) : removeError ? (
+				<div className="sidebar-expanded-chrome px-5 py-1 text-2xs text-destructive" role="alert">
+					{removeError}
+				</div>
+			) : null}
 			{/* project-sidebar__sessions: indented under the project parent so worker
           sessions read as children without adding a persistent guide rail. */}
 			{expanded && sessions.length > 0 && (
@@ -599,9 +610,7 @@ function ProjectItem({
 			)}
 			<ConfirmDialog
 				open={confirmOpen}
-				onOpenChange={(open) => {
-					if (!isRemoving) setConfirmOpen(open);
-				}}
+				onOpenChange={setConfirmOpen}
 				title={`Remove project`}
 				description={
 					<>
@@ -614,10 +623,8 @@ function ProjectItem({
 						</p>
 					</>
 				}
-				confirmLabel={isRemoving ? "Removing…" : "Remove"}
+				confirmLabel="Remove"
 				destructive
-				busy={isRemoving}
-				error={removeError}
 				onConfirm={handleConfirmRemove}
 			/>
 		</SidebarMenuItem>

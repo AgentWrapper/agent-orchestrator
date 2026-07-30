@@ -1,6 +1,6 @@
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -306,6 +306,30 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByRole("button", { name: "Remove" }));
 		await waitFor(() => expect(onRemoveProject).toHaveBeenCalledTimes(1));
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/" });
+	});
+
+	it("dismisses project removal immediately and shows progress outside the modal", async () => {
+		let finishRemoval!: () => void;
+		const onRemoveProject = vi.fn(
+			() =>
+				new Promise<void>((resolve) => {
+					finishRemoval = resolve;
+				}),
+		) as RemoveProjectHandler;
+		const user = userEvent.setup();
+		renderSidebar({ onRemoveProject });
+
+		await user.click(screen.getByLabelText("Project actions for Project One"));
+		await user.click(await screen.findByRole("menuitem", { name: "Remove project" }));
+		await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove" }));
+
+		expect(screen.queryByRole("dialog", { name: "Remove project" })).not.toBeInTheDocument();
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/" });
+		expect(screen.getByRole("status")).toHaveTextContent("Removing Project One");
+
+		finishRemoval();
+		await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
 	});
 
 	it("does not remove the project when cancellation is clicked in the ConfirmDialog", async () => {
@@ -323,7 +347,7 @@ describe("Sidebar", () => {
 		expect(onRemoveProject).not.toHaveBeenCalled();
 	});
 
-	it("shows an error message inside the ConfirmDialog when removal fails", async () => {
+	it("keeps the removal dialog dismissed and surfaces failures in the sidebar", async () => {
 		const user = userEvent.setup();
 		const onRemoveProject = vi
 			.fn()
@@ -335,10 +359,9 @@ describe("Sidebar", () => {
 		await screen.findByRole("dialog", { name: "Remove project" });
 		await user.click(screen.getByRole("button", { name: "Remove" }));
 
-		// The error text renders inside the dialog — find it by its destructive color class
 		expect(await screen.findByText("Failed to remove project")).toBeInTheDocument();
-		// Dialog stays open on failure so the user can retry or cancel
-		expect(screen.getByRole("dialog", { name: "Remove project" })).toBeInTheDocument();
+		expect(screen.queryByRole("dialog", { name: "Remove project" })).not.toBeInTheDocument();
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/" });
 	});
 
 	it("requests a new task for the project from the kebab menu", async () => {
