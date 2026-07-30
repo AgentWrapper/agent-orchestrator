@@ -1,7 +1,10 @@
 package usage
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -245,7 +248,7 @@ func TestReadJSONLChunkRetainsPartialTailAndSkipsOversizedRecord(t *testing.T) {
 	if err := osWrite(path, `{"a":1}`+"\n"+`{"b":`); err != nil {
 		t.Fatal(err)
 	}
-	first, err := readJSONLChunk(path, 0, 1024, 32, "")
+	first, err := readJSONLChunk(context.Background(), path, 0, 1024, 32, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +260,7 @@ func TestReadJSONLChunkRetainsPartialTailAndSkipsOversizedRecord(t *testing.T) {
 	if err := osAppend(path, `2}`+"\n"); err != nil {
 		t.Fatal(err)
 	}
-	second, err := readJSONLChunk(path, first.nextOffset, 1024, 32, "")
+	second, err := readJSONLChunk(context.Background(), path, first.nextOffset, 1024, 32, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,13 +271,38 @@ func TestReadJSONLChunkRetainsPartialTailAndSkipsOversizedRecord(t *testing.T) {
 	if err := osWrite(path, strings.Repeat("x", 40)+"\n"); err != nil {
 		t.Fatal(err)
 	}
-	large, err := readJSONLChunk(path, 0, 1024, 16, "")
+	large, err := readJSONLChunk(context.Background(), path, 0, 1024, 16, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if large.anomalies != 1 || large.errorCode != domain.UsageErrorRecordTooLarge || large.nextOffset != 41 {
 		t.Fatalf("oversized chunk = %+v", large)
 	}
+}
+
+func TestContextReaderStopsBetweenTranscriptReadChunks(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	reader := &cancelAfterChunkReader{cancel: cancel}
+
+	_, err := io.ReadAll(contextReader{ctx: ctx, reader: reader})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("ReadAll() error = %v, want context canceled", err)
+	}
+}
+
+type cancelAfterChunkReader struct {
+	cancel context.CancelFunc
+	read   bool
+}
+
+func (r *cancelAfterChunkReader) Read(buffer []byte) (int, error) {
+	if r.read {
+		return 0, io.EOF
+	}
+	r.read = true
+	buffer[0] = 'x'
+	r.cancel()
+	return 1, nil
 }
 
 func usageSource(kind domain.UsageSourceKind) domain.UsageSourceContext {

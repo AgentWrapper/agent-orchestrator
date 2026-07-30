@@ -218,22 +218,6 @@ type ModelUsageEvent struct {
 	CreatedAt        time.Time
 }
 
-// UsageMetricCoverage summarizes whether a metric is available over an
-// aggregate scope.
-type UsageMetricCoverage struct {
-	Value    *int64
-	Coverage UsageCoverage
-}
-
-// UsageCostCoverage summarizes estimated or provider-reported cost over an
-// aggregate scope. Value is nano-USD.
-type UsageCostCoverage struct {
-	Value          *int64
-	Coverage       UsageCoverage
-	Confidence     CostConfidence
-	PricingVersion string
-}
-
 // UsageModelAggregate is the raw model-level aggregate read from storage before
 // the service applies user-facing coverage rules.
 type UsageModelAggregate struct {
@@ -272,48 +256,6 @@ type CompactSessionUsage struct {
 	CollectionState UsageCollectionState
 	Coverage        UsageCoverage
 	LastObservedAt  *time.Time
-}
-
-// UsageMetricTotals is the aggregate metric block used by session, harness,
-// and model summaries.
-type UsageMetricTotals struct {
-	InputTokens         UsageMetricCoverage
-	UncachedInputTokens UsageMetricCoverage
-	CacheReadTokens     UsageMetricCoverage
-	CacheWriteTokens    UsageMetricCoverage
-	OutputTokens        UsageMetricCoverage
-	ReasoningTokens     UsageMetricCoverage
-	EstimatedCostNanos  UsageCostCoverage
-}
-
-// UsageCollectionSummary is the collection-state header for session usage.
-type UsageCollectionSummary struct {
-	State          UsageCollectionState
-	LastObservedAt *time.Time
-	Warnings       []string
-}
-
-// ModelUsageSummary is a per-exact-model aggregate.
-type ModelUsageSummary struct {
-	ModelID  string
-	Provider string
-	Totals   UsageMetricTotals
-}
-
-// HarnessUsageSummary groups model summaries by harness and provider.
-type HarnessUsageSummary struct {
-	Harness  AgentHarness
-	Provider string
-	Totals   UsageMetricTotals
-	Models   []ModelUsageSummary
-}
-
-// SessionUsageSummary is the read model returned by the session usage service.
-type SessionUsageSummary struct {
-	SessionID  SessionID
-	Collection UsageCollectionSummary
-	Totals     UsageMetricTotals
-	Harnesses  []HarnessUsageSummary
 }
 
 // SourceCursorState is the durable source state to commit after parsing a

@@ -222,7 +222,7 @@ func Run() error {
 		usageCollector *usagesvc.Collector
 		usagePipeline  *usagepipeline.Pipeline
 	)
-	if roots, rootsErr := usagesvc.DefaultSourceRoots(); rootsErr != nil {
+	if roots, rootsErr := usagesvc.DefaultSourceRoots(ctx); rootsErr != nil {
 		log.Warn("usage collection disabled", "err", rootsErr)
 	} else {
 		usageCollector = usagesvc.NewCollector(store, roots, func(reconcile bool) {

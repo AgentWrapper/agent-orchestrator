@@ -347,7 +347,7 @@ func TestCollectorBackfillPreservesCompletedExitedBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, err := SourceIdentity(path)
+	identity, err := SourceIdentity(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -427,7 +427,7 @@ func TestCollectorSubagentStopReactivatesCompletedSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, err := SourceIdentity(subagentPath)
+	identity, err := SourceIdentity(context.Background(), subagentPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -495,7 +495,10 @@ func TestDiscoverClaudeSubagentPathsReturnsAllSources(t *testing.T) {
 		writeUsageFixture(t, path, "{}\n")
 	}
 
-	paths := discoverClaudeSubagentPaths(mainPath)
+	paths, err := discoverClaudeSubagentPaths(context.Background(), mainPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(paths) != 129 {
 		t.Fatalf("discovered %d subagent paths, want 129", len(paths))
 	}
@@ -613,7 +616,7 @@ func TestCollectorResumeKeepsDiscoveringAfterOnlyArchivedRolloutMatches(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, err := SourceIdentity(archivedPath)
+	identity, err := SourceIdentity(context.Background(), archivedPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -746,7 +749,7 @@ func TestSourceIdentityChangesWhenFileIsReplacedWithSameFirstRecord(t *testing.T
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	first, err := SourceIdentity(path)
+	first, err := SourceIdentity(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -756,7 +759,7 @@ func TestSourceIdentityChangesWhenFileIsReplacedWithSameFirstRecord(t *testing.T
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	second, err := SourceIdentity(path)
+	second, err := SourceIdentity(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -771,14 +774,14 @@ func TestSourceIdentityDoesNotChangeAsFirstRecordIsWritten(t *testing.T) {
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	emptyIdentity, err := SourceIdentity(path)
+	emptyIdentity, err := SourceIdentity(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte(`{"type":"session_meta"}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	writtenIdentity, err := SourceIdentity(path)
+	writtenIdentity, err := SourceIdentity(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -794,7 +797,7 @@ func TestValidateSourcePathRedactsArtifactPath(t *testing.T) {
 	writeUsageFixture(t, secretPath, `{"type":"session_meta"}`+"\n")
 	collector := NewCollector(nil, SourceRoots{CodexSessions: allowedRoot}, nil)
 
-	_, _, _, err := collector.validateSourcePath(domain.HarnessCodex, secretPath)
+	_, _, _, err := collector.validateSourcePath(context.Background(), domain.HarnessCodex, secretPath)
 	if err == nil {
 		t.Fatal("expected path outside provider root to be rejected")
 	}

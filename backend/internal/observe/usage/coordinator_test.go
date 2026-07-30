@@ -162,6 +162,39 @@ func TestCoordinatorRebuildsWatcherAndReconcilesAfterWatcherError(t *testing.T) 
 	}
 }
 
+func TestCoordinatorSafetyPollIngestsAfterMissedFilesystemEvent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	store := &coordinatorTestStore{
+		sources: []domain.UsageSourceRecord{watchableTestSource(5, path)},
+	}
+	watcher := newCoordinatorTestWatcher()
+	poll := make(chan time.Time, 1)
+	called := make(chan struct{}, 3)
+	var calls atomic.Int64
+	ingestor := coordinatorTestIngestor(func(context.Context, int64) (IngestResult, error) {
+		calls.Add(1)
+		called <- struct{}{}
+		return IngestResult{}, nil
+	})
+
+	cancel, done := startCoordinatorTest(t, store, ingestor, watcher, CoordinatorConfig{
+		Workers:    1,
+		SafetyPoll: poll,
+	})
+	waitForCoordinatorCalls(t, called, 1) // startup inventory
+
+	// Simulate an append whose fsnotify event was lost. Only the safety poll is
+	// delivered; the source must be enqueued exactly once.
+	poll <- time.Now()
+	waitForCoordinatorCalls(t, called, 1)
+	time.Sleep(100 * time.Millisecond)
+	stopCoordinatorTest(t, cancel, done)
+
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("ingestion calls = %d, want startup plus one safety-poll ingestion", got)
+	}
+}
+
 func TestCoordinatorRunsDiscoveryOnlyForDiscoveryEvents(t *testing.T) {
 	store := &coordinatorTestStore{}
 	watcher := newCoordinatorTestWatcher()
@@ -282,7 +315,7 @@ func (w *coordinatorTestWatcher) Start(ctx context.Context) <-chan struct{} {
 	return w.done
 }
 
-func (w *coordinatorTestWatcher) Rebuild() error {
+func (w *coordinatorTestWatcher) Rebuild(context.Context) error {
 	w.rebuilds.Add(1)
 	return nil
 }

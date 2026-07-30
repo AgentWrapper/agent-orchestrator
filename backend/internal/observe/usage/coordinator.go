@@ -12,10 +12,11 @@ import (
 )
 
 const (
-	defaultWorkerCount            = 2
-	defaultWorkQueueSize          = 256
-	defaultCoordinatorRetry       = 30 * time.Second
-	refreshRetryID          int64 = 0
+	defaultWorkerCount              = 2
+	defaultWorkQueueSize            = 256
+	defaultCoordinatorRetry         = 30 * time.Second
+	defaultSafetyPollInterval       = 30 * time.Second
+	refreshRetryID            int64 = 0
 )
 
 type coordinatorStore interface {
@@ -30,7 +31,7 @@ type transcriptWatcher interface {
 	Events() <-chan TranscriptEvent
 	Errors() <-chan error
 	Start(context.Context) <-chan struct{}
-	Rebuild() error
+	Rebuild(context.Context) error
 }
 
 // CoordinatorConfig configures the event-driven usage pipeline.
@@ -41,10 +42,13 @@ type CoordinatorConfig struct {
 	Logger     *slog.Logger
 	Initialize func(context.Context) error
 	Reconcile  func(context.Context) error
+	// SafetyPoll injects the periodic reconciliation signal in tests. Production
+	// leaves it nil and uses a 30-second ticker.
+	SafetyPoll <-chan time.Time
 }
 
-// Coordinator turns filesystem, hook, startup, and retry signals into bounded
-// source ingestion work. It intentionally has no polling ticker.
+// Coordinator turns filesystem, hook, startup, retry, and periodic safety
+// signals into bounded source ingestion work.
 type Coordinator struct {
 	store      coordinatorStore
 	ingestor   sourceIngestor
@@ -55,6 +59,7 @@ type Coordinator struct {
 	logger     *slog.Logger
 	initialize func(context.Context) error
 	reconcile  func(context.Context) error
+	safetyPoll <-chan time.Time
 	refresh    chan struct{}
 	inventory  chan struct{}
 }
@@ -88,6 +93,7 @@ func NewCoordinator(
 		logger:     cfg.Logger,
 		initialize: cfg.Initialize,
 		reconcile:  cfg.Reconcile,
+		safetyPoll: cfg.SafetyPoll,
 		refresh:    make(chan struct{}, 1),
 		inventory:  make(chan struct{}, 1),
 	}
@@ -167,6 +173,13 @@ func (c *Coordinator) run(ctx context.Context) {
 	var ready []int64
 	var retryTimer *time.Timer
 	initializePending := c.initialize != nil
+	safetyPoll := c.safetyPoll
+	var safetyTicker *time.Ticker
+	if safetyPoll == nil {
+		safetyTicker = time.NewTicker(defaultSafetyPollInterval)
+		safetyPoll = safetyTicker.C
+		defer safetyTicker.Stop()
+	}
 
 	enqueue := func(sourceID int64) {
 		delete(retries, sourceID)
@@ -247,7 +260,7 @@ func (c *Coordinator) run(ctx context.Context) {
 		if err != nil {
 			c.logger.Warn("usage transcript watcher failed; rebuilding", "err", err)
 		}
-		if rebuildErr := c.watcher.Rebuild(); rebuildErr != nil {
+		if rebuildErr := c.watcher.Rebuild(ctx); rebuildErr != nil {
 			c.logger.Warn("usage transcript watcher rebuild failed", "err", rebuildErr)
 			scheduleRetry(refreshRetryID, c.now().UTC().Add(defaultCoordinatorRetry))
 			return
@@ -335,6 +348,11 @@ func (c *Coordinator) run(ctx context.Context) {
 			refreshInventory(true)
 		case <-c.inventory:
 			refreshInventory(false)
+		case <-safetyPoll:
+			// Filesystem notifications are advisory. Periodically rediscover
+			// sources and enqueue the current watchable inventory so a silently
+			// missed append cannot leave persisted usage stale forever.
+			refreshInventory(true)
 		case <-retryC:
 			now := c.now().UTC()
 			for sourceID, at := range retries {

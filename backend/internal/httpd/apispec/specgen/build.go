@@ -68,7 +68,7 @@ func Build() ([]byte, error) {
 		*(&openapi31.Tag{Name: "notifications"}).WithDescription(
 			"Durable dashboard notifications"),
 		*(&openapi31.Tag{Name: "usage"}).WithDescription(
-			"Token usage and optional cost telemetry for AO sessions"),
+			"Compact token usage for AO session cards"),
 		*(&openapi31.Tag{Name: "push"}).WithDescription(
 			"Mobile push-device registration for OS push notifications"),
 		*(&openapi31.Tag{Name: "events"}).WithDescription(
@@ -214,12 +214,6 @@ var schemaNames = map[string]string{
 	"ControllersListUsageSessionsQuery":           "ListUsageSessionsQuery",
 	"ControllersCompactSessionUsageResponse":      "CompactSessionUsageResponse",
 	"ControllersListCompactSessionUsageResponse":  "ListCompactSessionUsageResponse",
-	"ControllersUsageMetricResponse":              "UsageMetricResponse",
-	"ControllersUsageCostMetricResponse":          "UsageCostMetricResponse",
-	"ControllersUsageTotalsResponse":              "UsageTotalsResponse",
-	"ControllersUsageModelResponse":               "UsageModelResponse",
-	"ControllersUsageHarnessResponse":             "UsageHarnessResponse",
-	"ControllersSessionUsageResponse":             "SessionUsageResponse",
 	// httpd/controllers — standalone shell terminal wire envelopes
 	"ControllersShellTerminalHandleIDParam": "ShellTerminalHandleIDParam",
 	"ControllersOpenShellTerminalRequest":   "OpenShellTerminalRequest",
@@ -403,17 +397,6 @@ func usageOperations() []operation {
 			pathParams: []any{controllers.ListUsageSessionsQuery{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.ListCompactSessionUsageResponse{}},
-				{http.StatusInternalServerError, envelope.APIError{}},
-				{http.StatusNotImplemented, envelope.APIError{}},
-			},
-		},
-		{
-			method: http.MethodGet, path: "/api/v1/usage/sessions/{sessionId}", id: "getSessionUsage", tag: "usage",
-			summary:    "Get detailed usage and optional cost telemetry for one session",
-			pathParams: []any{controllers.SessionIDParam{}},
-			resps: []respUnit{
-				{http.StatusOK, controllers.SessionUsageResponse{}},
-				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},

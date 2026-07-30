@@ -240,7 +240,7 @@ func TestCoordinatorCollectsCodexUsageFromFilesystemEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	watcher, err := NewTranscriptWatcher([]string{sessionsRoot, archiveRoot})
+	watcher, err := NewTranscriptWatcher(context.Background(), []string{sessionsRoot, archiveRoot})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +315,7 @@ func TestIngestorPersistsAppendOnlyUsageAcrossRestartAndFinalization(t *testing.
 	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	identity, err := usagesvc.SourceIdentity(path)
+	identity, err := usagesvc.SourceIdentity(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,7 +435,7 @@ func TestIngestorLateAppendReturnsCompletedBindingToFinalizing(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	identity, err := usagesvc.SourceIdentity(path)
+	identity, err := usagesvc.SourceIdentity(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -527,7 +527,7 @@ func TestIngestorStopsRetryingConflictingNativeEvent(t *testing.T) {
 	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	identity, err := usagesvc.SourceIdentity(path)
+	identity, err := usagesvc.SourceIdentity(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}

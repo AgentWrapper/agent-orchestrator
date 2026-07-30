@@ -129,6 +129,31 @@ func TestRuntimeObservation_ConfirmedRuntimeDeathTerminates(t *testing.T) {
 	}
 }
 
+func TestRuntimeObservation_ConfirmedRuntimeDeathFinalizesUsageBeforeTermination(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Metadata.RuntimeLaunchID = "launch-1"
+	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute)
+	st.sessions[rec.ID] = rec
+	finalizer := &fakeUsageFinalizer{store: st}
+	m.SetUsageFinalizer(finalizer)
+
+	if err := m.ApplyRuntimeObservation(ctx, rec.ID, ports.RuntimeFacts{
+		Runtime:    ports.ProbeDead,
+		Workload:   ports.ProbeFailed,
+		LaunchID:   "launch-1",
+		ObservedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if finalizer.calls != 1 || finalizer.sawTerminated {
+		t.Fatalf("finalizer calls=%d sawTerminated=%v, want 1/false", finalizer.calls, finalizer.sawTerminated)
+	}
+	if !st.sessions[rec.ID].IsTerminated {
+		t.Fatal("reaper-driven death did not terminate session")
+	}
+}
+
 func TestRuntimeObservation_FailedProbeDoesNotMutate(t *testing.T) {
 	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")

@@ -94,10 +94,86 @@ CREATE INDEX idx_model_usage_events_session_observed ON model_usage_events (sess
 CREATE INDEX idx_model_usage_events_project_observed ON model_usage_events (project_id, observed_at);
 CREATE INDEX idx_model_usage_events_session_model ON model_usage_events (session_id, harness, provider, model_id);
 
+-- Usage mutations reuse the invalidation-only session_updated CDC event so
+-- clients refetch the compact usage read model from the canonical change log.
+CREATE TRIGGER usage_bindings_cdc_insert
+AFTER INSERT ON usage_bindings
+BEGIN
+    INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
+    VALUES (
+        (SELECT project_id FROM sessions WHERE id = NEW.session_id),
+        NEW.session_id,
+        'session_updated',
+        json_object('id', NEW.session_id),
+        NEW.updated_at
+    );
+END;
+
+CREATE TRIGGER usage_bindings_cdc_update
+AFTER UPDATE ON usage_bindings
+BEGIN
+    INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
+    VALUES (
+        (SELECT project_id FROM sessions WHERE id = NEW.session_id),
+        NEW.session_id,
+        'session_updated',
+        json_object('id', NEW.session_id),
+        NEW.updated_at
+    );
+END;
+
+CREATE TRIGGER usage_sources_cdc_insert
+AFTER INSERT ON usage_sources
+BEGIN
+    INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
+    SELECT
+        sessions.project_id,
+        usage_bindings.session_id,
+        'session_updated',
+        json_object('id', usage_bindings.session_id),
+        NEW.updated_at
+    FROM usage_bindings
+    JOIN sessions ON sessions.id = usage_bindings.session_id
+    WHERE usage_bindings.id = NEW.binding_id;
+END;
+
+CREATE TRIGGER usage_sources_cdc_update
+AFTER UPDATE ON usage_sources
+BEGIN
+    INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
+    SELECT
+        sessions.project_id,
+        usage_bindings.session_id,
+        'session_updated',
+        json_object('id', usage_bindings.session_id),
+        NEW.updated_at
+    FROM usage_bindings
+    JOIN sessions ON sessions.id = usage_bindings.session_id
+    WHERE usage_bindings.id = NEW.binding_id;
+END;
+
+CREATE TRIGGER model_usage_events_cdc_insert
+AFTER INSERT ON model_usage_events
+BEGIN
+    INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
+    VALUES (
+        NEW.project_id,
+        NEW.session_id,
+        'session_updated',
+        json_object('id', NEW.session_id),
+        NEW.created_at
+    );
+END;
+
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
+DROP TRIGGER model_usage_events_cdc_insert;
+DROP TRIGGER usage_sources_cdc_update;
+DROP TRIGGER usage_sources_cdc_insert;
+DROP TRIGGER usage_bindings_cdc_update;
+DROP TRIGGER usage_bindings_cdc_insert;
 DROP TABLE model_usage_events;
 DROP TABLE usage_sources;
 DROP TABLE usage_bindings;

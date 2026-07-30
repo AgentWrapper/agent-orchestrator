@@ -230,15 +230,19 @@ func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domai
 // existing recent-activity guard; supervised workload death is independently
 // fenced by the launch generation and never terminates the runtime.
 func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.SessionID, f ports.RuntimeFacts) error {
-	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
-		if cur.IsTerminated {
-			return cur, false
-		}
-		currentLaunch := cur.Metadata.RuntimeLaunchID
-		if currentLaunch != "" && f.LaunchID != currentLaunch {
-			return cur, false
-		}
-		if currentLaunch != "" && f.Runtime == ports.ProbeAlive && f.Workload == ports.ProbeDead {
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil || !ok || rec.IsTerminated {
+		return err
+	}
+	currentLaunch := rec.Metadata.RuntimeLaunchID
+	if currentLaunch != "" && f.LaunchID != currentLaunch {
+		return nil
+	}
+	if currentLaunch != "" && f.Runtime == ports.ProbeAlive && f.Workload == ports.ProbeDead {
+		return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
+			if cur.IsTerminated || cur.Metadata.RuntimeLaunchID != currentLaunch {
+				return cur, false
+			}
 			if cur.Activity.State == domain.ActivityExited {
 				return cur, false
 			}
@@ -246,21 +250,12 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 			next.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: timeOr(f.ObservedAt, now)}
 			delete(m.flights, id)
 			return next, true
-		}
-		if !runtimeClearlyDead(f, cur.Activity, now, m.window) {
-			return cur, false
-		}
-		next := cur
-		next.IsTerminated = true
-		next.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: timeOr(f.ObservedAt, now)}
-		// Reaper-driven death (crash/SIGKILL) never fires a session-end hook,
-		// so this is the last chance to release the session's tool-flight
-		// state; a leaked entry would otherwise persist for the daemon's life
-		// (later observations return early on cur.IsTerminated). Runs under
-		// m.mu — mutate holds it across this callback.
-		delete(m.flights, id)
-		return next, true
-	})
+		})
+	}
+	if !runtimeClearlyDead(f, rec.Activity, m.clock(), m.window) {
+		return nil
+	}
+	return m.finalizeAndMarkTerminated(ctx, id, currentLaunch, f.ObservedAt)
 }
 
 // ApplyActivitySignal records an authoritative agent activity signal and any
@@ -653,7 +648,19 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 	if err != nil || !ok || rec.IsTerminated {
 		return err
 	}
-	launchID := rec.Metadata.RuntimeLaunchID
+	return m.finalizeAndMarkTerminated(ctx, id, rec.Metadata.RuntimeLaunchID, time.Time{})
+}
+
+// finalizeAndMarkTerminated gives every terminal transition the same
+// pre-termination usage flush and fences the durable write to the runtime
+// generation that requested it. A restore that completes while finalization is
+// running therefore remains live.
+func (m *Manager) finalizeAndMarkTerminated(
+	ctx context.Context,
+	id domain.SessionID,
+	launchID string,
+	observedAt time.Time,
+) error {
 	m.mu.Lock()
 	finalizer := m.usageFinalizer
 	m.mu.Unlock()
@@ -667,7 +674,7 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 			return cur, false
 		}
 		cur.IsTerminated = true
-		cur.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: now}
+		cur.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: timeOr(observedAt, now)}
 		delete(m.flights, id) // runs under m.mu (mutate holds it)
 		return cur, true
 	})

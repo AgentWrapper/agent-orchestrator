@@ -6,8 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionInspector } from "./SessionInspector";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
-import type { SessionUsage } from "../hooks/useSessionUsage";
-import { useUiStore } from "../stores/ui-store";
 import type { PRState, PullRequestFacts, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
 const { getMock, navigateMock, patchMock, postMock } = vi.hoisted(() => ({
@@ -96,68 +94,6 @@ const prSummary = (
 	};
 };
 
-const usageTelemetry = (overrides: Partial<SessionUsage> = {}): SessionUsage => ({
-	sessionId: "sess-1",
-	collectionState: "collecting",
-	lastObservedAt: "2026-06-15T12:00:00Z",
-	warnings: [],
-	totals: {
-		inputTokens: { value: 1000, coverage: "partial" },
-		uncachedInputTokens: { value: 600, coverage: "partial" },
-		cacheReadTokens: { value: 400, coverage: "partial" },
-		cacheWriteTokens: { value: 0, coverage: "partial" },
-		outputTokens: { value: 200, coverage: "partial" },
-		reasoningTokens: { value: 40, coverage: "partial" },
-		estimatedCost: {
-			valueNanos: null,
-			currency: "USD",
-			coverage: "unavailable",
-			confidence: "unavailable",
-		},
-	},
-	harnesses: [
-		{
-			harness: "codex",
-			provider: "openai",
-			totals: {
-				inputTokens: { value: 1000, coverage: "partial" },
-				uncachedInputTokens: { value: 600, coverage: "partial" },
-				cacheReadTokens: { value: 400, coverage: "partial" },
-				cacheWriteTokens: { value: 0, coverage: "partial" },
-				outputTokens: { value: 200, coverage: "partial" },
-				reasoningTokens: { value: 40, coverage: "partial" },
-				estimatedCost: {
-					valueNanos: null,
-					currency: "USD",
-					coverage: "unavailable",
-					confidence: "unavailable",
-				},
-			},
-			models: [
-				{
-					modelId: "gpt-5.6",
-					provider: "openai",
-					totals: {
-						inputTokens: { value: 1000, coverage: "partial" },
-						uncachedInputTokens: { value: 600, coverage: "partial" },
-						cacheReadTokens: { value: 400, coverage: "partial" },
-						cacheWriteTokens: { value: 0, coverage: "partial" },
-						outputTokens: { value: 200, coverage: "partial" },
-						reasoningTokens: { value: 40, coverage: "partial" },
-						estimatedCost: {
-							valueNanos: null,
-							currency: "USD",
-							coverage: "unavailable",
-							confidence: "unavailable",
-						},
-					},
-				},
-			],
-		},
-	],
-	...overrides,
-});
-
 function renderWithQuery(children: ReactNode, workspaces?: WorkspaceSummary[]) {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -168,9 +104,6 @@ function renderWithQuery(children: ReactNode, workspaces?: WorkspaceSummary[]) {
 
 function mockCommonGets(_unusedRuns: unknown[] = [], reviewerHandleId = "", reviews: unknown[] = []) {
 	getMock.mockImplementation(async (path: string) => {
-		if (path === "/api/v1/usage/sessions/{sessionId}") {
-			return { data: usageTelemetry(), error: undefined };
-		}
 		if (path === "/api/v1/sessions/{sessionId}/reviews") {
 			return { data: { reviewerHandleId, reviews } };
 		}
@@ -226,17 +159,11 @@ const reviewState = (n: number, status: string, targetSha = `sha-${n}`) => ({
 });
 
 beforeEach(() => {
-	useUiStore.getState().setDeveloperMode(false);
 	getMock.mockReset();
 	navigateMock.mockReset();
 	patchMock.mockReset();
 	postMock.mockReset();
-	getMock.mockImplementation(async (path: string) => {
-		if (path === "/api/v1/usage/sessions/{sessionId}") {
-			return { data: usageTelemetry(), error: undefined };
-		}
-		return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
-	});
+	getMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [] }, error: undefined });
 	patchMock.mockResolvedValue({ data: { ok: true }, error: undefined, response: { status: 200 } });
 	postMock.mockResolvedValue({ data: { ok: true, sessionId: "sess-1" }, error: undefined });
 });
@@ -643,9 +570,6 @@ describe("SessionInspector Activity section", () => {
 			}),
 		];
 		getMock.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/usage/sessions/{sessionId}") {
-				return { data: usageTelemetry(), error: undefined };
-			}
 			if (path === "/api/v1/sessions/{sessionId}/pr") {
 				return { data: { sessionId: "sess-1", prs: summaries }, error: undefined };
 			}
@@ -727,121 +651,6 @@ describe("SessionInspector Activity section", () => {
 	});
 });
 
-describe("SessionInspector Usage & cost section", () => {
-	beforeEach(() => {
-		useUiStore.getState().setDeveloperMode(true);
-	});
-
-	it("stays hidden and does not fetch detailed usage outside Developer Mode", async () => {
-		useUiStore.getState().setDeveloperMode(false);
-		renderWithQuery(<SessionInspector session={session([])} />);
-
-		expect(screen.queryByText("Usage & cost")).not.toBeInTheDocument();
-		await waitFor(() => expect(getMock.mock.calls.length).toBeGreaterThan(0));
-		expect(getMock.mock.calls.some(([path]) => path === "/api/v1/usage/sessions/{sessionId}")).toBe(false);
-	});
-
-	it("shows session telemetry immediately and peeks provider and model details on hover", async () => {
-		renderWithQuery(<SessionInspector session={session([])} />);
-
-		const usageSection = screen
-			.getByText("Usage & cost")
-			.closest("[data-testid='inspector-section']") as HTMLElement;
-		await waitFor(() => expect(within(usageSection).getByText("Coming soon")).toBeInTheDocument());
-
-		expect(within(usageSection).getByText("Total tokens")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Total cost")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Coming soon")).toHaveClass("text-success");
-		expect(within(usageSection).getAllByText("1.2K").length).toBeGreaterThan(0);
-		expect(within(usageSection).queryByText("1.2K tok")).not.toBeInTheDocument();
-		expect(within(usageSection).getByText("Input tokens")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Output tokens")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Cache read tokens")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Cache write tokens")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Reasoning tokens")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Uncached input tokens")).toBeInTheDocument();
-		expect(within(usageSection).getByTestId("session-usage-metrics")).toHaveClass(
-			"rounded-lg",
-			"border",
-			"bg-(--color-bg-settings-input)",
-		);
-		expect(within(usageSection).getByText("Codex")).toBeInTheDocument();
-		expect(within(usageSection).getByText("OpenAI")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Collecting", { exact: false })).toBeInTheDocument();
-		expect(within(usageSection).queryByText("gpt-5.6")).not.toBeInTheDocument();
-
-		await userEvent.hover(within(usageSection).getByLabelText("Codex usage details"));
-		const providerPeek = await screen.findByRole("region", { name: "Codex usage peek" });
-		expect(within(providerPeek).getByText("1 model")).toBeInTheDocument();
-		expect(within(providerPeek).getByText("gpt-5.6")).toBeInTheDocument();
-		expect(within(providerPeek).getByText("Input tokens")).toBeInTheDocument();
-		expect(within(providerPeek).getByText("Output tokens")).toBeInTheDocument();
-
-		await userEvent.hover(within(providerPeek).getByLabelText("gpt-5.6 usage details"));
-		const modelPeek = await screen.findByRole("region", { name: "gpt-5.6 usage peek" });
-		expect(within(modelPeek).getByText("Input tokens")).toBeInTheDocument();
-		expect(within(modelPeek).getByText("Output tokens")).toBeInTheDocument();
-		expect(within(modelPeek).getByText("Cache read tokens")).toBeInTheDocument();
-		expect(within(modelPeek).getByText("Cache write tokens")).toBeInTheDocument();
-		expect(within(modelPeek).getByText("Reasoning tokens")).toBeInTheDocument();
-		expect(within(modelPeek).getByText("Uncached input tokens")).toBeInTheDocument();
-
-		const sectionTitles = Array.from(
-			document.querySelectorAll("[data-testid='inspector-section']"),
-			(section) => section.querySelector("span")?.textContent,
-		);
-		expect(sectionTitles.indexOf("Usage & cost")).toBe(sectionTitles.indexOf("Activity") + 1);
-		expect(getMock).toHaveBeenCalledWith("/api/v1/usage/sessions/{sessionId}", {
-			params: { path: { sessionId: "sess-1" } },
-		});
-	});
-
-	it("shows multiple agents as compact rows with independent hover peeks", async () => {
-		const codex = usageTelemetry().harnesses[0];
-		if (!codex) throw new Error("missing Codex usage fixture");
-		const claude = {
-			...codex,
-			harness: "claude-code",
-			provider: "anthropic",
-			models: codex.models.map((model) => ({
-				...model,
-				modelId: "claude-opus-4.1",
-				provider: "anthropic",
-			})),
-		};
-		getMock.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/usage/sessions/{sessionId}") {
-				return { data: usageTelemetry({ harnesses: [codex, claude] }), error: undefined };
-			}
-			return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
-		});
-
-		renderWithQuery(<SessionInspector session={session([])} />);
-		const usageSection = screen
-			.getByText("Usage & cost")
-			.closest("[data-testid='inspector-section']") as HTMLElement;
-
-		await waitFor(() => expect(within(usageSection).getByLabelText("Codex usage details")).toBeInTheDocument());
-		const codexRow = within(usageSection).getByLabelText("Codex usage details");
-		const claudeRow = within(usageSection).getByLabelText("Claude usage details");
-		expect(within(usageSection).getByText("Codex")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Claude")).toBeInTheDocument();
-		expect(within(usageSection).getByText("OpenAI")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Anthropic")).toBeInTheDocument();
-		expect(within(usageSection).queryByText("gpt-5.6")).not.toBeInTheDocument();
-		expect(within(usageSection).queryByText("claude-opus-4.1")).not.toBeInTheDocument();
-
-		await userEvent.hover(codexRow);
-		const codexPeek = await screen.findByRole("region", { name: "Codex usage peek" });
-		expect(within(codexPeek).getByText("gpt-5.6")).toBeInTheDocument();
-
-		await userEvent.unhover(codexRow);
-		await userEvent.hover(claudeRow);
-		const claudePeek = await screen.findByRole("region", { name: "Claude usage peek" });
-		expect(within(claudePeek).getByText("claude-opus-4.1")).toBeInTheDocument();
-	});
-});
-
 describe("SessionInspector tabs", () => {
 	it("exposes Summary, Reviews, Browser, and Files as inspector tabs", () => {
 		renderWithQuery(<SessionInspector session={session([pr(1, "open")])} />);
@@ -896,9 +705,6 @@ describe("SessionInspector reviews tab", () => {
 
 	it("shows claude-code as the default reviewer before a run exists", async () => {
 		getMock.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/usage/sessions/{sessionId}") {
-				return { data: usageTelemetry(), error: undefined };
-			}
 			if (path === "/api/v1/sessions/{sessionId}/reviews") {
 				return { data: { reviewerHandleId: "", reviews: [] } };
 			}

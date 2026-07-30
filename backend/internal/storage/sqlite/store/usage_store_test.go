@@ -2,11 +2,13 @@ package store_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
@@ -170,6 +172,111 @@ func TestInsertUsageSourceErrorRedactsArtifactPath(t *testing.T) {
 	}
 }
 
+func TestReplaceUsageSourceRollsBackRetirementWhenInsertFails(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	sess := seedUsageSession(t, s, domain.HarnessCodex)
+	now := time.Unix(1700000000, 0).UTC()
+	source := seedUsageSource(t, s, sess, now)
+
+	_, err := s.ReplaceUsageSource(ctx, source.ID, domain.UsageErrorArtifactReplaced, domain.UsageSourceRecord{
+		BindingID:       source.BindingID,
+		Kind:            source.Kind,
+		NativeSessionID: source.NativeSessionID,
+		ArtifactPath:    "/tmp/codex/replacement.jsonl",
+		FileIdentity:    "replacement",
+		Generation:      source.Generation + 1,
+		ParserVersion:   "",
+		State:           domain.UsageSourcePending,
+		CreatedAt:       now.Add(time.Second),
+		UpdatedAt:       now.Add(time.Second),
+	}, now.Add(time.Second))
+	if err == nil {
+		t.Fatal("expected replacement insert to fail")
+	}
+
+	sources, err := s.ListUsageSourcesForBinding(ctx, source.BindingID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 1 {
+		t.Fatalf("sources = %+v, want only original source", sources)
+	}
+	if sources[0].ID != source.ID || sources[0].State != domain.UsageSourcePending || sources[0].LastErrorCode != "" {
+		t.Fatalf("original source was retired despite rollback: %+v", sources[0])
+	}
+}
+
+func TestUsageMutationsEmitSessionUpdatedCDC(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	sess := seedUsageSession(t, s, domain.HarnessCodex)
+	now := time.Unix(1700000000, 0).UTC()
+	base, err := s.LatestSeq(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	binding, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
+		SessionID:    sess.ID,
+		Harness:      sess.Harness,
+		NativeRootID: "root-thread",
+		State:        domain.UsageBindingActive,
+		FirstSeenAt:  now,
+		LastSeenAt:   now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertUsageSessionUpdatedEvents(t, s, base, sess, 1)
+
+	base, err = s.LatestSeq(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+		BindingID:       binding.ID,
+		Kind:            domain.UsageSourceCodexRollout,
+		NativeSessionID: "child-thread",
+		ArtifactPath:    "/tmp/codex/rollout.jsonl",
+		FileIdentity:    "dev:ino",
+		ParserVersion:   "codex-rollout/v1",
+		State:           domain.UsageSourcePending,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertUsageSessionUpdatedEvents(t, s, base, sess, 1)
+
+	base, err = s.LatestSeq(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.ApplyUsageChunk(ctx, source.ID, 0, domain.SourceCursorState{
+		ByteOffset:      10,
+		State:           domain.UsageSourceActive,
+		CurrentModelID:  "gpt-5.6",
+		CurrentProvider: "openai",
+		LastObservedAt:  &now,
+		UpdatedAt:       now,
+	}, []domain.ModelUsageEvent{usageEvent(
+		"event-1",
+		"hash-1",
+		now,
+		domain.UsageTokenMetrics{InputTokens: 10, UncachedInputTokens: 10, OutputTokens: 2},
+		nil,
+	)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One event comes from the append-only usage fact and one from advancing
+	// the source cursor in the same transaction.
+	assertUsageSessionUpdatedEvents(t, s, base, sess, 2)
+}
+
 func TestApplyUsageChunkAtomicReplayAndAggregates(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -258,6 +365,37 @@ func TestApplyUsageChunkAtomicReplayAndAggregates(t *testing.T) {
 		ctxRow.Source.CurrentModelID != "gpt-5.6" || ctxRow.Source.CurrentProvider != "openai" ||
 		ctxRow.InitialModelID != "gpt-5" || ctxRow.BindingState != domain.UsageBindingActive {
 		t.Fatalf("source context = %+v", ctxRow)
+	}
+}
+
+func assertUsageSessionUpdatedEvents(
+	t *testing.T,
+	s *sqlite.Store,
+	after int64,
+	session domain.SessionRecord,
+	want int,
+) {
+	t.Helper()
+	events, err := s.EventsAfter(context.Background(), after, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != want {
+		t.Fatalf("events = %+v, want %d", events, want)
+	}
+	for _, event := range events {
+		if event.Type != cdc.EventSessionUpdated ||
+			event.ProjectID != string(session.ProjectID) ||
+			event.SessionID != string(session.ID) {
+			t.Fatalf("decoded usage event = %+v", event)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload["id"] != string(session.ID) || len(payload) != 1 {
+			t.Fatalf("usage event payload = %v, want id-only payload", payload)
+		}
 	}
 }
 

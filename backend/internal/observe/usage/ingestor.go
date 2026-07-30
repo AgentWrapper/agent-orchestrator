@@ -85,6 +85,9 @@ func NewIngestor(store ingestorStore, cfg IngestorConfig) *Ingestor {
 // incomplete trailing record; a later filesystem event will enqueue the source
 // again after the provider finishes the record.
 func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, error) {
+	if err := ctx.Err(); err != nil {
+		return IngestResult{}, err
+	}
 	now := i.now().UTC()
 	source, ok, err := i.store.GetUsageSourceForIngestion(ctx, sourceID)
 	if err != nil || !ok {
@@ -95,8 +98,14 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 	if err != nil || !info.Mode().IsRegular() {
 		return i.retrySource(ctx, source.Source, domain.UsageErrorArtifactMissing, now, nil)
 	}
-	identity, err := usagesvc.SourceIdentity(source.Source.ArtifactPath)
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	identity, err := usagesvc.SourceIdentity(ctx, source.Source.ArtifactPath)
 	if err != nil {
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
 		return i.retrySource(ctx, source.Source, domain.UsageErrorSourceReadFailed, now, nil)
 	}
 	if source.Source.FileIdentity != identity || info.Size() < source.Source.ByteOffset {
@@ -122,6 +131,7 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 	}
 
 	chunk, err := readJSONLChunk(
+		ctx,
 		source.Source.ArtifactPath,
 		source.Source.ByteOffset,
 		i.chunkBytes,
@@ -129,6 +139,9 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 		source.Source.LastErrorCode,
 	)
 	if err != nil {
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
 		return i.retrySource(ctx, source.Source, domain.UsageErrorSourceReadFailed, now, nil)
 	}
 	stableFinalTail := false
@@ -288,7 +301,16 @@ type jsonlChunk struct {
 	errorCode      string
 }
 
-func readJSONLChunk(path string, offset, maxBytes int64, maxRecord int, previousError string) (jsonlChunk, error) {
+func readJSONLChunk(
+	ctx context.Context,
+	path string,
+	offset, maxBytes int64,
+	maxRecord int,
+	previousError string,
+) (jsonlChunk, error) {
+	if err := ctx.Err(); err != nil {
+		return jsonlChunk{}, err
+	}
 	file, err := os.Open(path) //nolint:gosec // path was validated at registration.
 	if err != nil {
 		return jsonlChunk{}, err
@@ -297,7 +319,7 @@ func readJSONLChunk(path string, offset, maxBytes int64, maxRecord int, previous
 	if _, err := file.Seek(offset, io.SeekStart); err != nil {
 		return jsonlChunk{}, err
 	}
-	data, err := io.ReadAll(io.LimitReader(file, maxBytes))
+	data, err := io.ReadAll(io.LimitReader(contextReader{ctx: ctx, reader: file}, maxBytes))
 	if err != nil {
 		return jsonlChunk{}, err
 	}
@@ -343,6 +365,9 @@ func readJSONLChunk(path string, offset, maxBytes int64, maxRecord int, previous
 	completeEnd := start + lastNewline + 1
 	cursor := start
 	for cursor < completeEnd {
+		if err := ctx.Err(); err != nil {
+			return jsonlChunk{}, err
+		}
 		relative := bytes.IndexByte(data[cursor:completeEnd], '\n')
 		if relative < 0 {
 			break
@@ -365,4 +390,16 @@ func readJSONLChunk(path string, offset, maxBytes int64, maxRecord int, previous
 		chunk.trailingOffset = chunk.nextOffset
 	}
 	return chunk, nil
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(buffer []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(buffer)
 }

@@ -2,6 +2,8 @@ package usage
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,12 +38,60 @@ func TestTranscriptWatcherErrorsRedactRootPath(t *testing.T) {
 	if err := os.WriteFile(root, []byte("not a directory"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := NewTranscriptWatcher([]string{root})
+	_, err := NewTranscriptWatcher(context.Background(), []string{root})
 	if err == nil {
 		t.Fatal("expected file transcript root to be rejected")
 	}
 	if strings.Contains(err.Error(), root) {
 		t.Fatalf("watcher error exposed transcript root: %v", err)
+	}
+}
+
+func TestTranscriptWatcherRebuildHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := NewTranscriptWatcher(ctx, []string{t.TempDir()})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("NewTranscriptWatcher() error = %v, want context canceled", err)
+	}
+}
+
+func TestTranscriptWatcherCancelsLargeHistoryRebuildPromptly(t *testing.T) {
+	root := t.TempDir()
+	watcher, err := NewTranscriptWatcher(context.Background(), []string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(watcher.close)
+	for index := range 2_000 {
+		if err := os.Mkdir(filepath.Join(root, fmt.Sprintf("history-%04d", index)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		close(started)
+		done <- watcher.Rebuild(ctx)
+	}()
+	<-started
+	time.Sleep(time.Millisecond)
+	cancelledAt := time.Now()
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Rebuild() error = %v, want context canceled", err)
+		}
+		if elapsed := time.Since(cancelledAt); elapsed > time.Second {
+			t.Fatalf("Rebuild() stopped after %v, want prompt cancellation", elapsed)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Rebuild() did not stop after cancellation")
 	}
 }
 
@@ -160,7 +210,7 @@ func TestTranscriptWatcherCleanShutdown(t *testing.T) {
 	waitForClosedTranscriptEvents(t, watcher.Events())
 	waitForClosedWatcherErrors(t, watcher.Errors())
 
-	if err := watcher.Rebuild(); err == nil {
+	if err := watcher.Rebuild(context.Background()); err == nil {
 		t.Fatal("Rebuild() after shutdown succeeded, want closed error")
 	}
 }
@@ -171,17 +221,17 @@ func TestTranscriptWatcherMarksOnlyCreationEventsForDiscovery(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	watcher, err := NewTranscriptWatcher([]string{root})
+	watcher, err := NewTranscriptWatcher(context.Background(), []string{root})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(watcher.close)
 
-	emit, discovery, err := watcher.handleEvent(fsnotify.Event{Name: path, Op: fsnotify.Create})
+	emit, discovery, err := watcher.handleEvent(context.Background(), fsnotify.Event{Name: path, Op: fsnotify.Create})
 	if err != nil || filepath.Clean(emit) != filepath.Clean(path) || !discovery {
 		t.Fatalf("create event = path:%q discovery:%v err:%v", emit, discovery, err)
 	}
-	emit, discovery, err = watcher.handleEvent(fsnotify.Event{Name: path, Op: fsnotify.Write})
+	emit, discovery, err = watcher.handleEvent(context.Background(), fsnotify.Event{Name: path, Op: fsnotify.Write})
 	if err != nil || filepath.Clean(emit) != filepath.Clean(path) || discovery {
 		t.Fatalf("write event = path:%q discovery:%v err:%v", emit, discovery, err)
 	}
@@ -189,7 +239,7 @@ func TestTranscriptWatcherMarksOnlyCreationEventsForDiscovery(t *testing.T) {
 
 func startTranscriptWatcher(t *testing.T, roots ...string) (*TranscriptWatcher, context.CancelFunc) {
 	t.Helper()
-	watcher, err := NewTranscriptWatcher(roots)
+	watcher, err := NewTranscriptWatcher(context.Background(), roots)
 	if err != nil {
 		t.Fatalf("NewTranscriptWatcher() error = %v", err)
 	}
