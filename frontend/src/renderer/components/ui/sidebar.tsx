@@ -142,6 +142,7 @@ function Sidebar({
 	variant = "sidebar",
 	collapsible = "offcanvas",
 	overlay = false,
+	peekReveal: peekRevealProp = 0,
 	className,
 	children,
 	...props
@@ -150,6 +151,8 @@ function Sidebar({
 	variant?: "sidebar" | "floating" | "inset";
 	collapsible?: "offcanvas" | "icon" | "none";
 	overlay?: boolean;
+	/** Pixels to reveal from the edge when collapsed — creates an edge-hover peek. */
+	peekReveal?: number;
 }) {
 	const { t } = useTranslation();
 	const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
@@ -193,9 +196,25 @@ function Sidebar({
 
 	const isOffcanvasCollapsed = state === "collapsed" && collapsible === "offcanvas";
 	const isIconCollapsed = state === "collapsed" && collapsible === "icon";
-	// translate X: -100% slides left sidebar fully off-screen, +100% for right
-	const containerX = isOffcanvasCollapsed ? (side === "left" ? "-100%" : "100%") : "0%";
-	const sidebarSpring = { type: "spring", stiffness: 280, damping: 32, mass: 0.8 } as const;
+	// translate X: -100% slides left sidebar fully off-screen; peekReveal partially
+	// reveals the sidebar without opening it (used for the edge-hover peek hint).
+	const containerX = isOffcanvasCollapsed
+		? peekRevealProp > 0
+			? `calc(${side === "left" ? "-100%" : "100%"} + ${side === "left" ? peekRevealProp : -peekRevealProp}px)`
+			: side === "left" ? "-100%" : "100%"
+		: "0%";
+	const sidebarSpring = { type: "spring", stiffness: 420, damping: 40, mass: 0.6 } as const;
+
+	// Suppress animation for the very first state change (startup snap from
+	// collapsed → expanded). After that, all user-triggered toggles animate normally.
+	const suppressNextRef = React.useRef(true);
+	const prevStateRef = React.useRef(state);
+	let activeTransition: typeof sidebarSpring | { duration: number } = sidebarSpring;
+	if (suppressNextRef.current && prevStateRef.current !== state) {
+		activeTransition = { duration: 0 };
+		suppressNextRef.current = false;
+	}
+	prevStateRef.current = state;
 
 	// Target width for the gap placeholder. Animating the actual width (not a
 	// visual-only layout override) lets the flex sibling <main> follow naturally.
@@ -227,21 +246,21 @@ function Sidebar({
 		>
 			{/* Layout gap — width is animated directly so the flex sibling <main>
 			    expands/contracts in real-time without needing its own animation. */}
-			<motion.div
-				data-slot="sidebar-gap"
-				initial={false}
-				animate={{ width: gapTargetWidth }}
-				transition={sidebarSpring}
-				className="relative shrink-0 bg-transparent"
-			/>
-			{/* Container slides in/out via Motion x-transform (GPU-accelerated,
-			    no layout reflow). CSS left/right anchor stays fixed; position
-			    offset is driven entirely by the animated x value. */}
-			<motion.div
-				data-slot="sidebar-container"
-				initial={false}
-				animate={{ x: containerX }}
-				transition={sidebarSpring}
+		<motion.div
+			data-slot="sidebar-gap"
+			initial={false}
+			animate={{ width: gapTargetWidth }}
+			transition={activeTransition}
+			className="relative shrink-0 bg-transparent"
+		/>
+		{/* Container slides in/out via Motion x-transform (GPU-accelerated,
+		    no layout reflow). CSS left/right anchor stays fixed; position
+		    offset is driven entirely by the animated x value. */}
+		<motion.div
+			data-slot="sidebar-container"
+			initial={false}
+			animate={{ x: containerX }}
+			transition={activeTransition}
 				className={cn(
 					"fixed inset-y-0 z-chrome hidden h-svh w-(--sidebar-width) md:flex",
 					side === "left" ? "left-0" : "right-0",

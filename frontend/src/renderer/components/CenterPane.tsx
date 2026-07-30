@@ -280,7 +280,7 @@ function SessionPaneTab({ label, isActive, onSelect, onClose }: SessionPaneTabPr
 	return (
 		<span
 			className={cn(
-				"group inline-flex min-w-shell-tab-min items-center gap-1 rounded-md px-2 py-1 transition-colors",
+				"session-pane-tab group inline-flex min-w-shell-tab-min items-center gap-1.5 rounded-md px-2 py-1.5 transition-colors",
 				isActive ? "bg-interactive-active" : "hover:bg-interactive-hover/60",
 			)}
 		>

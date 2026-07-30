@@ -131,6 +131,7 @@ function ShellLayout() {
 	const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
 	const [isKeyboardShortcutsSettingsOpen, setIsKeyboardShortcutsSettingsOpen] = useState(false);
 	const [isSidebarPeekOpen, setIsSidebarPeekOpen] = useState(false);
+	const [sidebarPeekReveal, setSidebarPeekReveal] = useState(0);
 	const sidebarPeekCloseTimerRef = useRef<number | undefined>(undefined);
 	const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	useEffect(() => {
@@ -186,6 +187,7 @@ function ShellLayout() {
 		cancelSidebarPeekClose();
 		sidebarPeekCloseTimerRef.current = window.setTimeout(() => {
 			setIsSidebarPeekOpen(false);
+			setSidebarPeekReveal(0);
 			sidebarPeekCloseTimerRef.current = undefined;
 		}, 140);
 	}, [cancelSidebarPeekClose, isSidebarOpen]);
@@ -641,10 +643,11 @@ function ShellLayout() {
 					{/* macOS + Linux reserve a titlebar band for the fixed TitlebarNav
               cluster above a full-height sidebar; Windows hangs the sidebar
               below its custom titlebar. */}
-					<Sidebar
-						hideEdgeBorder={isWelcomeBoard}
-						isOverlay={isSidebarPeekOpen && !isSidebarOpen}
-						onPreviewLeave={scheduleSidebarPeekClose}
+				<Sidebar
+					hideEdgeBorder={isWelcomeBoard}
+					isOverlay={isSidebarPeekOpen && !isSidebarOpen}
+					peekReveal={sidebarPeekReveal}
+					onPreviewLeave={scheduleSidebarPeekClose}
 						underTopbar={isMac || isWindows || isLinux}
 						topbarOffset={isWindows ? "titlebar" : hideShellTopbar ? "trafficLights" : "toolbar"}
 						onCreateProject={createProject}
@@ -707,18 +710,28 @@ function ShellLayout() {
 						historyLocked={isWelcomeBoard}
 						isFullScreen={isFullScreen}
 					/>
-					{/* 10px invisible edge strip — the only trigger for the sidebar
-					    hover-preview. Rendered over everything on the left; pointer
-					    events are off while the sidebar is open so it never interferes
-					    with normal sidebar interactions. */}
-					{!isSidebarOpen && !isFullScreen && (isMac || isLinux) && (
-						<div
-							aria-hidden="true"
-							className="fixed inset-y-0 left-0 z-sidebar-preview w-[10px] pointer-events-auto"
-							onPointerEnter={previewSidebar}
-							onPointerLeave={scheduleSidebarPeekClose}
-						/>
-					)}
+				{/* Edge proximity zone: 60px wide.
+				    0–25px  → full floating sidebar (isSidebarPeekOpen).
+				    25–60px → partial sidebar peek (sidebarPeekReveal pixels revealed). */}
+				{!isSidebarOpen && !isFullScreen && (isMac || isLinux) && (
+					<div
+						aria-hidden="true"
+						className="fixed inset-y-0 left-0 z-sidebar-preview w-[60px] pointer-events-auto"
+						onPointerMove={(e) => {
+							if (e.clientX < 25) {
+								setSidebarPeekReveal(0);
+								previewSidebar();
+							} else {
+								setSidebarPeekReveal(56);
+								scheduleSidebarPeekClose();
+							}
+						}}
+						onPointerLeave={() => {
+							setSidebarPeekReveal(0);
+							scheduleSidebarPeekClose();
+						}}
+					/>
+				)}
 				</SidebarProvider>
 				<OrchestratorReplacementDialog
 					error={replacementErrorProjectId ? orchestratorReplacementErrors[replacementErrorProjectId] : undefined}

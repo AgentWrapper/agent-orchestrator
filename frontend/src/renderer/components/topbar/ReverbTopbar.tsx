@@ -51,7 +51,7 @@ export function ReverbTopbar({
 			data-surface={model.surface}
 			style={dragStyle}
 		>
-			<div className="reverb-topbar__context flex min-w-0 items-center gap-2">
+			<div className="reverb-topbar__context flex min-w-0 items-center gap-3">
 				{leadingIcon ? (
 					<span aria-hidden="true" className="reverb-topbar__leading-icon inline-flex shrink-0 items-center">
 						{leadingIcon}
