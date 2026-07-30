@@ -80,6 +80,7 @@ const ctx = vi.hoisted(() => {
 	return {
 		params: {} as { projectId?: string; sessionId?: string },
 		enabled: true,
+		workspaceLive: true,
 		workspaces,
 	};
 });
@@ -100,7 +101,12 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 }));
 
 vi.mock("../lib/shell-context", () => ({
-	useShell: () => ({ createProject: vi.fn(), initializeProjectRepository: vi.fn(), daemonStatus: {} }),
+	useShell: () => ({
+		createProject: vi.fn(),
+		initializeProjectRepository: vi.fn(),
+		daemonStatus: {},
+		workspaceLive: ctx.workspaceLive,
+	}),
 }));
 
 vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnMock }));
@@ -149,6 +155,7 @@ const paletteInput = () => screen.queryByPlaceholderText(/search projects/i);
 beforeEach(() => {
 	ctx.params = {};
 	ctx.enabled = true;
+	ctx.workspaceLive = true;
 	ctx.workspaces[0].orchestratorAgent = "codex";
 	ctx.workspaces[1].orchestratorAgent = "codex";
 	navigateMock.mockReset();
@@ -323,6 +330,23 @@ describe("CommandPalette search + Enter", () => {
 });
 
 describe("CommandPalette actions", () => {
+	it("keeps navigation available but disables daemon mutations until workspace hydration succeeds", async () => {
+		ctx.params = { projectId: "proj-2" };
+		ctx.workspaceLive = false;
+		renderPalette();
+		act(() => useUiStore.getState().setCommandPaletteOpen(true));
+		await screen.findByPlaceholderText(/search projects/i);
+
+		expect(screen.getAllByText("AO is still loading").length).toBeGreaterThan(0);
+		fireEvent.click(screen.getByText("Open orchestrator"));
+		fireEvent.click(screen.getByText("New project"));
+		expect(spawnMock).not.toHaveBeenCalled();
+		expect(choosePathMock).not.toHaveBeenCalled();
+
+		fireEvent.click(document.querySelector('[cmdk-item][data-value="project:proj-1"]') as HTMLElement);
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
+	});
+
 	it("shows disabled New task reason, skips it for selection, and ignores clicks", async () => {
 		ctx.params = {};
 		renderPalette();

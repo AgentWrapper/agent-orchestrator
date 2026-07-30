@@ -27,6 +27,7 @@ import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { StatusPill } from "./StatusPill";
 import { TopbarButton, TopbarKillError, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
+import { useShellMaybe } from "../lib/shell-context";
 
 const isMac = isMacPlatform();
 const boardActionsInPanel = usesBoardActionsInPanel();
@@ -59,6 +60,8 @@ export function ShellTopbar() {
 	// Board-scope spawn failures surface where the board actions render.
 	const [boardSpawnError, setBoardSpawnError] = useState<string | null>(null);
 	const all = useWorkspaceQuery().data ?? [];
+	const shell = useShellMaybe();
+	const daemonReady = shell ? shell.workspaceLive : true;
 
 	const session = params.sessionId
 		? all.flatMap((workspace) => workspace.sessions).find((s) => s.id === params.sessionId)
@@ -83,7 +86,7 @@ export function ShellTopbar() {
 		projectId ? void navigate({ to: "/projects/$projectId", params: { projectId } }) : void navigate({ to: "/" });
 
 	const openNewTask = () => {
-		if (!projectId || isProjectRestarting) return;
+		if (!daemonReady || !projectId || isProjectRestarting) return;
 		requestNewTask(projectId);
 	};
 
@@ -93,7 +96,7 @@ export function ShellTopbar() {
 	};
 
 	const openOrchestrator = async () => {
-		if (!projectId) return;
+		if (!daemonReady || !projectId) return;
 		setBoardSpawnError(null);
 		void addRendererExceptionStep("Orchestrator open requested", {
 			source: "orchestrator-open",
@@ -183,7 +186,7 @@ export function ShellTopbar() {
 						) : null}
 						<TopbarButton
 							aria-label="New task"
-							disabled={isProjectRestarting}
+							disabled={!daemonReady || isProjectRestarting}
 							onClick={openNewTask}
 							style={noDragStyle}
 							variant="accent"
@@ -193,7 +196,7 @@ export function ShellTopbar() {
 						</TopbarButton>
 						<TopbarButton
 							aria-label={orchestratorActivityLabel ? `Orchestrator, ${orchestratorActivityLabel}` : "Spawn Orchestrator"}
-							disabled={isSpawning || isProjectRestarting}
+							disabled={!daemonReady || isSpawning || isProjectRestarting}
 							onClick={() => void openOrchestrator()}
 							style={noDragStyle}
 							variant="primary"
@@ -217,7 +220,7 @@ export function ShellTopbar() {
 								<ProjectTerminationFeedback projectId={projectId} />
 								<TopbarButton
 									aria-label="New task"
-									disabled={isProjectRestarting}
+									disabled={!daemonReady || isProjectRestarting}
 									onClick={openNewTask}
 									style={noDragStyle}
 									variant="accent"
@@ -235,6 +238,7 @@ export function ShellTopbar() {
 						    moved here from the inspector's Summary "Danger zone". */}
 						{!isOrchestrator && session && sessionIsActive(session) ? (
 							<TopbarKillButton
+								disabled={!daemonReady}
 								key={session.id}
 								session={session}
 								orchestratorId={orchestrator?.id}
@@ -253,7 +257,7 @@ export function ShellTopbar() {
 						{!isOrchestrator && (
 							<TopbarButton
 								aria-label="Open orchestrator"
-								disabled={isSpawning || isProjectRestarting}
+								disabled={!daemonReady || isSpawning || isProjectRestarting}
 								onClick={() => void openOrchestrator()}
 								style={noDragStyle}
 								variant="primary"
@@ -293,10 +297,12 @@ export function ShellTopbar() {
 // Mutation-cache state is filtered by worker ID so rapid route switches never
 // carry another worker's Killing/error state into the current topbar.
 export function TopbarKillButton({
+	disabled = false,
 	session,
 	orchestratorId,
 	onKilled,
 }: {
+	disabled?: boolean;
 	session: WorkspaceSession;
 	orchestratorId?: string;
 	onKilled: (workspaceId: string, orchestratorId?: string) => void;
@@ -322,7 +328,7 @@ export function TopbarKillButton({
 				trigger={
 					<TopbarButton
 						aria-label={isPending ? "Killing..." : "Kill session"}
-						disabled={isPending}
+						disabled={disabled || isPending}
 						onClick={() => {
 							clearTerminateSessionState(queryClient, session.id);
 						}}

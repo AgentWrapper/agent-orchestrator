@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { useShellMaybe } from "../lib/shell-context";
 import { useUiStore } from "../stores/ui-store";
 import { NewTaskDialog } from "./NewTaskDialog";
 
@@ -15,6 +16,7 @@ export function GlobalNewTaskDialog() {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const newTaskRequest = useUiStore((state) => state.newTaskRequest);
+	const workspaceLive = useShellMaybe()?.workspaceLive ?? true;
 	const [open, setOpen] = useState(false);
 	const [projectId, setProjectId] = useState<string | undefined>(undefined);
 	const lastNonce = useRef(0);
@@ -22,13 +24,14 @@ export function GlobalNewTaskDialog() {
 	useEffect(() => {
 		if (!newTaskRequest || newTaskRequest.nonce === lastNonce.current) return;
 		lastNonce.current = newTaskRequest.nonce;
+		if (!workspaceLive) return;
 		// Consume requests that arrive while this dialog is already open. In
 		// particular, do not retarget a populated form to another project, and do
 		// not replay the ignored request when the user later closes the dialog.
 		if (open) return;
 		setProjectId(newTaskRequest.projectId);
 		setOpen(true);
-	}, [newTaskRequest, open]);
+	}, [newTaskRequest, open, workspaceLive]);
 
 	const handleCreated = async (sessionId: string) => {
 		if (!projectId) return;
@@ -41,7 +44,7 @@ export function GlobalNewTaskDialog() {
 
 	return (
 		<NewTaskDialog
-			open={open}
+			open={open && workspaceLive}
 			projectId={projectId}
 			onCreated={(sessionId) => void handleCreated(sessionId)}
 			onOpenChange={setOpen}

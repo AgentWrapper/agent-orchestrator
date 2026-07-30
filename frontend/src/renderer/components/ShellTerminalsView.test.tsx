@@ -9,7 +9,7 @@ vi.mock("../hooks/useShellTerminals", () => ({
 }));
 
 vi.mock("../lib/shell-context", () => ({
-	useShell: () => ({ daemonStatus: { state: "ready" } }),
+	useShell: () => ({ daemonStatus: { state: "ready" }, workspaceLive: true }),
 }));
 
 vi.mock("./TerminalPane", () => ({ TerminalPane: () => <div>terminal body</div> }));

@@ -42,6 +42,7 @@ export type CommandPaletteContext = {
 	currentProjectId?: string;
 	currentSessionId?: string;
 	restartingProjectIds?: ReadonlySet<string>;
+	mutationsEnabled?: boolean;
 };
 
 export const commandGroupOrder: CommandGroupId[] = ["current", "attention", "projects", "sessions", "prs", "global"];
@@ -93,7 +94,7 @@ function findSession(workspaces: WorkspaceSummary[], sessionId: string): Workspa
 }
 
 export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
-	const { workspaces, currentProjectId, currentSessionId, restartingProjectIds } = ctx;
+	const { workspaces, currentProjectId, currentSessionId, restartingProjectIds, mutationsEnabled = true } = ctx;
 	const items: CommandItem[] = [];
 
 	const currentProject = currentProjectId
@@ -108,9 +109,11 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 		title: "New task",
 		subtitle: currentProject?.name,
 		keywords: ["worker", "chat", "start"],
-		disabled: !currentProject || isProjectRestarting,
+		disabled: !mutationsEnabled || !currentProject || isProjectRestarting,
 		disabledReason: !currentProject
 			? "No current project"
+			: !mutationsEnabled
+				? "AO is still loading"
 			: isProjectRestarting
 				? "Orchestrator restarting"
 				: undefined,
@@ -124,8 +127,12 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 			title: "Open orchestrator",
 			subtitle: currentProject.name,
 			keywords: ["orchestrator", "spawn", currentProject.name],
-			disabled: isProjectRestarting,
-			disabledReason: isProjectRestarting ? "Orchestrator restarting" : undefined,
+			disabled: !mutationsEnabled || isProjectRestarting,
+			disabledReason: !mutationsEnabled
+				? "AO is still loading"
+				: isProjectRestarting
+					? "Orchestrator restarting"
+					: undefined,
 			action: { kind: "open-orchestrator", projectId: currentProject.id },
 		});
 		items.push({
@@ -222,6 +229,8 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 		group: "global",
 		title: "New project",
 		keywords: ["add", "import", "repo", "workspace"],
+		disabled: !mutationsEnabled,
+		disabledReason: mutationsEnabled ? undefined : "AO is still loading",
 		action: { kind: "open-new-project" },
 	});
 	items.push({

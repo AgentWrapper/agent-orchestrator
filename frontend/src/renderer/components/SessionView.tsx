@@ -72,7 +72,7 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 	const setInspectorViewForSession = useUiStore((state) => state.setInspectorView);
 	const markInspectorPreviewSeen = useUiStore((state) => state.markInspectorPreviewSeen);
 	const setBrowserUnseen = useUiStore((state) => state.setBrowserUnseen);
-	const { daemonStatus } = useShell();
+	const { workspaceLive } = useShell();
 	const inspectorRef = useRef<PanelImperativeHandle | null>(null);
 	const inspectorSeparatorRef = useRef<HTMLDivElement | null>(null);
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
@@ -423,7 +423,7 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 				<ResizablePanel defaultSize="72%" id="terminal" minSize="45%">
 					<CenterPane
 						availableProjectSessions={availableSessions.filter((candidate) => candidate.id !== tabOwnerSession?.id)}
-						daemonReady={daemonStatus.state === "ready"}
+						daemonReady={workspaceLive}
 						onAddProjectSession={addProjectSession}
 						onCloseProjectSession={closeProjectSession}
 						onCloseShellTerminal={closeShellTerminalByHandle}

@@ -141,7 +141,9 @@ export function Sidebar({
 	const updateStatus = useUpdateStatus();
 	// Daemon status for the smoke suite's sr-only mirror in the footer. Null when
 	// rendered outside the shell (unit tests) — the mirror simply doesn't render.
-	const daemonStatus = useShellMaybe()?.daemonStatus ?? null;
+	const shell = useShellMaybe();
+	const daemonStatus = shell?.daemonStatus ?? null;
+	const daemonReady = shell ? shell.workspaceLive : true;
 	const commandPaletteEnabled = useCommandPaletteEnabled();
 	const setCommandPaletteOpen = useUiStore((s) => s.setCommandPaletteOpen);
 
@@ -284,6 +286,7 @@ export function Sidebar({
 						Projects
 					</SidebarGroupLabel>
 					<CreateProjectButton
+						daemonReady={daemonReady}
 						hideTrigger={workspaces.length === 0}
 						onCreateProject={onCreateProject}
 						onInitializeProject={onInitializeProject}
@@ -304,6 +307,7 @@ export function Sidebar({
 							<SidebarMenu className="gap-0 group-data-[collapsible=icon]:gap-1">
 								{workspaces.map((workspace) => (
 									<ProjectItem
+										daemonReady={daemonReady}
 										key={workspace.id}
 										workspace={workspace}
 										expanded={!collapsedIds.has(workspace.id)}
@@ -312,7 +316,7 @@ export function Sidebar({
 										onRemoveProject={onRemoveProject}
 									/>
 								))}
-								{isCollapsed && <CreateProjectListItem />}
+								{isCollapsed && <CreateProjectListItem daemonReady={daemonReady} />}
 							</SidebarMenu>
 						)}
 					</SidebarGroupContent>
@@ -393,12 +397,14 @@ export function Sidebar({
 type Selection = ReturnType<typeof useSelection>;
 
 function ProjectItem({
+	daemonReady,
 	workspace,
 	expanded,
 	selection,
 	onToggle,
 	onRemoveProject,
 }: {
+	daemonReady: boolean;
 	workspace: WorkspaceSummary;
 	expanded: boolean;
 	selection: Selection;
@@ -430,6 +436,7 @@ function ProjectItem({
 			selection.goSession(workspace.id, orchestrator.id);
 			return;
 		}
+		if (!daemonReady) return;
 		if (!hasConfiguredOrchestratorAgent(workspace)) {
 			selection.goSettings(workspace.id);
 			return;
@@ -458,6 +465,7 @@ function ProjectItem({
 	};
 
 	const removeProject = () => {
+		if (!daemonReady) return;
 		setRemoveError(null);
 		setConfirmOpen(true);
 	};
@@ -540,7 +548,7 @@ function ProjectItem({
 						<button
 							aria-label={orchestrator ? `Open ${workspace.name} orchestrator` : `Spawn ${workspace.name} orchestrator`}
 							className={HOVER_ACTION_CLASS}
-							disabled={isSpawning || isProjectRestarting}
+							disabled={(!daemonReady && !orchestrator) || isSpawning || isProjectRestarting}
 							onClick={() => void openOrchestrator()}
 							type="button"
 						>
@@ -564,7 +572,10 @@ function ProjectItem({
 						</button>
 					</DropdownMenuTrigger>
 					<DropdownMenuContent side="right" align="start" className="min-w-44">
-						<DropdownMenuItem disabled={isProjectRestarting} onSelect={() => requestNewTask(workspace.id)}>
+						<DropdownMenuItem
+							disabled={!daemonReady || isProjectRestarting}
+							onSelect={() => requestNewTask(workspace.id)}
+						>
 							<Plus aria-hidden="true" />
 							New session
 						</DropdownMenuItem>
@@ -576,7 +587,7 @@ function ProjectItem({
 						<DropdownMenuSeparator />
 						<DropdownMenuItem
 							className="text-destructive focus:text-destructive [&_svg]:text-destructive"
-							disabled={isRemoving}
+							disabled={!daemonReady || isRemoving}
 							onSelect={() => void removeProject()}
 						>
 							<Trash2 aria-hidden="true" />
@@ -600,6 +611,7 @@ function ProjectItem({
 				<SidebarMenuSub className="sidebar-expanded-chrome mx-0 ml-3.5 translate-x-0 gap-0 border-l-0 px-0 py-1">
 					{sessions.map((session) => (
 						<SessionRow
+							daemonReady={daemonReady}
 							key={session.id}
 							session={session}
 							active={selection.activeSessionId === session.id}
@@ -634,7 +646,17 @@ function ProjectItem({
 // One worker-session row. Reads as a link by default; a hover-revealed pencil
 // flips the label into an inline input (Enter/blur saves, Escape cancels) that
 // persists through the daemon rename endpoint, so the new name survives reload.
-function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; active: boolean; onOpen: () => void }) {
+function SessionRow({
+	daemonReady,
+	session,
+	active,
+	onOpen,
+}: {
+	daemonReady: boolean;
+	session: WorkspaceSession;
+	active: boolean;
+	onOpen: () => void;
+}) {
 	const queryClient = useQueryClient();
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState(session.title);
@@ -643,6 +665,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 	const cancelledRef = useRef(false);
 
 	const startEditing = () => {
+		if (!daemonReady) return;
 		setDraft(session.title);
 		setIsEditing(true);
 	};
@@ -724,6 +747,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 					"absolute top-1/2 right-1 -translate-y-1/2 opacity-0",
 					"group-focus-within/menu-sub-item:opacity-100 group-hover/menu-sub-item:opacity-100",
 				)}
+				disabled={!daemonReady}
 				onClick={startEditing}
 				type="button"
 			>
@@ -842,10 +866,14 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 }
 
 function CreateProjectButton({
+	daemonReady,
 	hideTrigger = false,
 	onCreateProject,
 	onInitializeProject,
-}: Pick<SidebarProps, "onCreateProject" | "onInitializeProject"> & { hideTrigger?: boolean }) {
+}: Pick<SidebarProps, "onCreateProject" | "onInitializeProject"> & {
+	daemonReady: boolean;
+	hideTrigger?: boolean;
+}) {
 	// Single CreateProjectFlow owner for the sidebar: the header "+" stays mounted
 	// (CSS-hidden when collapsed or on the empty start page) so it can own
 	// openSignal for ⌘N on every shell route. The collapsed rail button below
@@ -853,6 +881,7 @@ function CreateProjectButton({
 	const createProjectNonce = useUiStore((state) => state.createProjectNonce);
 	return (
 		<CreateProjectFlow
+			disabled={!daemonReady}
 			mode="choose"
 			onCreateProject={onCreateProject}
 			onInitializeProject={onInitializeProject}
@@ -867,7 +896,7 @@ function CreateProjectButton({
 								"grid size-icon-xl place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground",
 								hideTrigger && "hidden",
 							)}
-							disabled={disabled}
+							disabled={!daemonReady || disabled}
 							onClick={choosePath}
 							type="button"
 						>
@@ -881,7 +910,7 @@ function CreateProjectButton({
 	);
 }
 
-function CreateProjectListItem() {
+function CreateProjectListItem({ daemonReady }: { daemonReady: boolean }) {
 	const requestCreateProject = useUiStore((state) => state.requestCreateProject);
 	return (
 		<SidebarMenuItem className="mb-px group-data-[collapsible=icon]:mb-0">
@@ -890,6 +919,7 @@ function CreateProjectListItem() {
 					<button
 						aria-label="New project"
 						className="grid h-control-board w-full place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
+						disabled={!daemonReady}
 						onClick={() => requestCreateProject()}
 						type="button"
 					>

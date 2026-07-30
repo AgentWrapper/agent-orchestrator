@@ -47,6 +47,7 @@ vi.mock("../lib/platform", async (importOriginal) => {
 });
 
 import { SessionsBoard } from "./SessionsBoard";
+import { ShellProvider, type ShellContextValue } from "../lib/shell-context";
 import { TooltipProvider } from "./ui/tooltip";
 
 function renderBoard(projectId?: string) {
@@ -75,6 +76,55 @@ beforeEach(() => {
 });
 
 describe("SessionsBoard", () => {
+	it("keeps cached sessions visible when the live refresh fails", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "AO",
+					path: "/tmp/ao",
+					sessions: [
+						{
+							id: "s1",
+							workspaceId: "p1",
+							workspaceName: "AO",
+							title: "cached session",
+							provider: "codex",
+							status: "working",
+							updatedAt: "2026-07-28T08:00:00Z",
+							prs: [],
+						},
+					],
+				},
+			],
+			error: new Error("daemon unavailable"),
+			isError: true,
+		});
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const shell: ShellContextValue = {
+			daemonStatus: { state: "ready", port: 7777 } as ShellContextValue["daemonStatus"],
+			workspaceStartupState: "error",
+			workspaceLive: false,
+			createProject: vi.fn(),
+			initializeProjectRepository: vi.fn(),
+		};
+
+		render(
+			<QueryClientProvider client={queryClient}>
+				<ShellProvider value={shell}>
+					<TooltipProvider>
+						<SessionsBoard projectId="p1" />
+					</TooltipProvider>
+				</ShellProvider>
+			</QueryClientProvider>,
+		);
+
+		expect(screen.getByText("cached session")).toBeInTheDocument();
+		expect(screen.queryByText("Could not load sessions.")).not.toBeInTheDocument();
+		expect(screen.getByTestId("cached-workspace-state")).toHaveTextContent("AO could not refresh");
+		expect(screen.queryByRole("button", { name: "Terminate cached session" })).not.toBeInTheDocument();
+	});
+
 	it("does not show an agent setup warning on the board", () => {
 		renderBoard();
 

@@ -47,9 +47,19 @@ export const Route = createFileRoute("/_shell")({
 	// children); pairs with the router's defaultPreload: "intent" so a hovered
 	// nav target is warm before the click.
 	loader: async ({ context }) => {
-		await refreshDaemonStatus().catch(() => undefined);
-		if (!usesPreviewWorkspaceData && !hasTrustedApiBaseUrl()) return;
-		return context.queryClient.ensureQueryData(workspaceQueryOptions);
+		const cached = context.queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey);
+		// A restored snapshot should paint immediately. The mounted daemon-status
+		// hook owns the refresh so a second, unversioned request cannot race it.
+		if (cached !== undefined) {
+			return cached;
+		}
+		const status = await refreshDaemonStatus().catch(() => undefined);
+		if (usesPreviewWorkspaceData || (status?.state === "ready" && status.port && hasTrustedApiBaseUrl())) {
+			return context.queryClient.ensureQueryData(workspaceQueryOptions);
+		}
+		// Do not populate the query cache with a fake empty response while the
+		// daemon is starting; that would overwrite the last useful snapshot.
+		return [];
 	},
 	component: ShellLayout,
 });
@@ -92,6 +102,10 @@ function ShellLayout() {
 	const [workspaceStartupState, setWorkspaceStartupState] = useState<"loading" | "ready" | "error">("loading");
 	const workspaceStartupBaselineRef = useRef(0);
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);
+	const workspaceHydratedPortRef = useRef<number | undefined>(undefined);
+	const [workspaceLive, setWorkspaceLive] = useState(false);
+	const workspaceLiveRef = useRef(workspaceLive);
+	workspaceLiveRef.current = workspaceLive;
 	const { themePreference, resolvedTheme, isSidebarOpen, toggleSidebar } = useUiStore();
 	const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
@@ -171,6 +185,7 @@ function ShellLayout() {
 	const replacementErrorProjectId = Object.keys(orchestratorReplacementErrors)[0] ?? null;
 	const isStartupLoading =
 		!usesPreviewWorkspaceData &&
+		workspaceQuery.data === undefined &&
 		!daemonStatus.code &&
 		(daemonStatus.state !== "ready" || workspaceStartupState === "loading");
 
@@ -234,6 +249,7 @@ function ShellLayout() {
 			trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
 			asWorkspace?: boolean;
 		}) => {
+			if (!workspaceLive) throw new Error("AO is still loading the current workspace state.");
 			void addRendererExceptionStep("Project add requested", {
 				source: "project-add",
 				operation: "project_add",
@@ -319,22 +335,27 @@ function ShellLayout() {
 				setOrchestratorStartupError(workspace.id, startupMessage);
 			}
 		},
-		[navigate, queryClient, setOrchestratorStartupError, updateWorkspaces],
+		[navigate, queryClient, setOrchestratorStartupError, updateWorkspaces, workspaceLive],
 	);
 
-	const initializeProjectRepository = useCallback(async (path: string) => {
-		const { error } = await apiClient.POST("/api/v1/projects/initialize", {
-			body: { path },
-		});
-		if (error) {
-			const failure = new Error(apiErrorMessage(error)) as Error & { code?: string };
-			failure.code = apiErrorCode(error);
-			throw failure;
-		}
-	}, []);
+	const initializeProjectRepository = useCallback(
+		async (path: string) => {
+			if (!workspaceLive) throw new Error("AO is still loading the current workspace state.");
+			const { error } = await apiClient.POST("/api/v1/projects/initialize", {
+				body: { path },
+			});
+			if (error) {
+				const failure = new Error(apiErrorMessage(error)) as Error & { code?: string };
+				failure.code = apiErrorCode(error);
+				throw failure;
+			}
+		},
+		[workspaceLive],
+	);
 
 	const removeProject = useCallback(
 		async (projectId: string) => {
+			if (!workspaceLive) throw new Error("AO is still loading the current workspace state.");
 			void addRendererExceptionStep("Project removal requested", {
 				source: "project-remove",
 				operation: "project_remove",
@@ -358,11 +379,12 @@ function ShellLayout() {
 			void captureRendererEvent("ao.renderer.project_removed", { project_id: projectId });
 			updateWorkspaces((current) => current.filter((item) => item.id !== projectId));
 		},
-		[updateWorkspaces],
+		[updateWorkspaces, workspaceLive],
 	);
 
 	const restartOrchestrator = useCallback(
 		async (projectId: string) => {
+			if (!workspaceLive) return;
 			await restartProjectOrchestrator({
 				projectId,
 				queryClient,
@@ -374,7 +396,7 @@ function ShellLayout() {
 				},
 			});
 		},
-		[navigate, queryClient, setOrchestratorReplacementError, setProjectRestarting],
+		[navigate, queryClient, setOrchestratorReplacementError, setProjectRestarting, workspaceLive],
 	);
 
 	useEffect(() => {
@@ -485,12 +507,54 @@ function ShellLayout() {
 	}, [cancelSidebarPeekClose, isSidebarOpen, isSidebarPeekOpen, scheduleSidebarPeekClose]);
 
 	useEffect(() => {
-		if (daemonStatus.state !== "ready" || !daemonStatus.port) return;
-		if (agentCatalogPortRef.current === daemonStatus.port) return;
+		if (daemonStatus.state !== "ready" || !daemonStatus.port) {
+			workspaceHydratedPortRef.current = undefined;
+			setWorkspaceLive(false);
+			return;
+		}
 
-		agentCatalogPortRef.current = daemonStatus.port;
-		void queryClient.invalidateQueries({ queryKey: agentsQueryKey });
-		void queryClient.fetchQuery({ ...agentsQueryOptions, queryFn: refreshAgents });
+		const port = daemonStatus.port;
+		if (agentCatalogPortRef.current !== port) {
+			agentCatalogPortRef.current = port;
+			void queryClient.invalidateQueries({ queryKey: agentsQueryKey });
+			void queryClient.fetchQuery({ ...agentsQueryOptions, queryFn: refreshAgents });
+		}
+		if (workspaceHydratedPortRef.current === port) return;
+
+		let cancelled = false;
+		let unsubscribe = () => {};
+		const initialUpdatedAt = queryClient.getQueryState(workspaceQueryKey)?.dataUpdatedAt ?? 0;
+		const markWorkspaceLive = () => {
+			if (cancelled) return;
+			workspaceHydratedPortRef.current = port;
+			setWorkspaceLive(true);
+			unsubscribe();
+		};
+		unsubscribe = queryClient.getQueryCache().subscribe((event) => {
+			const isWorkspaceQuery =
+				event.query.queryKey.length === workspaceQueryKey.length &&
+				event.query.queryKey.every((part: unknown, index: number) => part === workspaceQueryKey[index]);
+			if (
+				isWorkspaceQuery &&
+				event.query.state.status === "success" &&
+				event.query.state.dataUpdatedAt > initialUpdatedAt
+			) {
+				markWorkspaceLive();
+			}
+		});
+		setWorkspaceLive(false);
+		void (async () => {
+			try {
+				await queryClient.fetchQuery({ ...workspaceQueryOptions, staleTime: 0 });
+				markWorkspaceLive();
+			} catch {
+				if (!cancelled) setWorkspaceLive(false);
+			}
+		})();
+		return () => {
+			cancelled = true;
+			unsubscribe();
+		};
 	}, [daemonStatus.port, daemonStatus.state, queryClient]);
 
 	// Follow OS appearance while the user keeps Theme on System — updates
@@ -530,6 +594,7 @@ function ShellLayout() {
 	useEffect(
 		() =>
 			aoBridge.app.onNewSessionShortcut(() => {
+				if (!workspaceLiveRef.current) return;
 				if (scopedProjectId) {
 					requestNewTask(scopedProjectId);
 				} else {
@@ -544,7 +609,13 @@ function ShellLayout() {
 	// New standalone terminal (Ctrl+Shift+`), also detected in the main process so it
 	// fires from inside a terminal pane. It raises the same store signal as the
 	// tab-strip + button so the two cannot drift apart.
-	useEffect(() => aoBridge.app.onNewShellTerminalShortcut(() => requestNewShellTerminal()), [requestNewShellTerminal]);
+	useEffect(
+		() =>
+			aoBridge.app.onNewShellTerminalShortcut(() => {
+				if (workspaceLiveRef.current) requestNewShellTerminal();
+			}),
+		[requestNewShellTerminal],
+	);
 
 	// The shell layout is the single consumer of that signal, because it is the
 	// only component mounted on EVERY route. Owning it here is what lets the
@@ -559,6 +630,7 @@ function ShellLayout() {
 	useEffect(() => {
 		if (handledShellNonceRef.current === newShellTerminalNonce) return;
 		handledShellNonceRef.current = newShellTerminalNonce;
+		if (!workspaceLive) return;
 		openShellTerminal.mutate(
 			{
 				projectId: tabOwnerSession?.workspaceId ?? scopedProjectId,
@@ -582,6 +654,7 @@ function ShellLayout() {
 		tabOwnerSessionId,
 		navigate,
 		setActiveShellTerminal,
+		workspaceLive,
 	]);
 
 	useEffect(() => aoBridge.app.onOpenSettingsShortcut(() => void navigate({ to: "/settings" })), [navigate]);
@@ -604,7 +677,15 @@ function ShellLayout() {
 	);
 
 	return (
-		<ShellProvider value={{ daemonStatus, workspaceStartupState, createProject, initializeProjectRepository }}>
+		<ShellProvider
+			value={{
+				daemonStatus,
+				workspaceLive,
+				workspaceStartupState,
+				createProject,
+				initializeProjectRepository,
+			}}
+		>
 			<NotificationRuntime />
 			<GlobalNewTaskDialog />
 			<KeyboardShortcutsDialog
@@ -660,7 +741,11 @@ function ShellLayout() {
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}
-						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
+						workspaceError={
+							workspaceQuery.isError && workspaceQuery.data === undefined
+								? errorMessage(workspaceQuery.error)
+								: undefined
+						}
 						workspaces={workspaces}
 					/>
 					<main className={cn("flex min-w-0 flex-1 flex-col overflow-x-hidden", !isSidebarOpen && "sidebar-hidden")}>

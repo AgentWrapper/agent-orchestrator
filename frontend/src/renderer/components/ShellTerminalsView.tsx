@@ -16,7 +16,7 @@ import { TerminalPane } from "./TerminalPane";
 // most wants a plain terminal. Inside a session, shells still appear as tabs
 // beside that session's pane; this screen is where they live otherwise.
 export function ShellTerminalsView() {
-	const { daemonStatus } = useShell();
+	const { workspaceLive } = useShell();
 	const theme = useResolvedTheme();
 	// The standalone screen shows only session-less shells; a session's own
 	// shells belong to that session's tab strip, not this global list.
@@ -95,7 +95,8 @@ export function ShellTerminalsView() {
 				<button
 					aria-label="New terminal"
 					className="ml-auto inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
-					onClick={requestNewShellTerminal}
+					disabled={!workspaceLive}
+					onClick={() => workspaceLive && requestNewShellTerminal()}
 					title="New terminal (Ctrl+Shift+`)"
 					type="button"
 				>
@@ -105,7 +106,7 @@ export function ShellTerminalsView() {
 			<div className="min-h-0 flex-1">
 				{active ? (
 					<TerminalPane
-						daemonReady={daemonStatus.state === "ready"}
+						daemonReady={workspaceLive}
 						fontSize={12}
 						terminalTarget={{ kind: "shell", handleId: active.handleId, title: active.title }}
 						theme={theme}

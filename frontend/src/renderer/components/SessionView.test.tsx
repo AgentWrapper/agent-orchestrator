@@ -232,7 +232,7 @@ vi.mock("./SessionInspector", () => ({
 	),
 }));
 vi.mock("../lib/shell-context", () => ({
-	useShell: () => ({ daemonStatus: { state: "ready" } }),
+	useShell: () => ({ daemonStatus: { state: "ready" }, workspaceLive: true }),
 }));
 vi.mock("../hooks/useWorkspaceQuery", () => ({
 	useWorkspaceQuery: () => ({
