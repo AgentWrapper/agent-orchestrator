@@ -296,7 +296,7 @@ export function KeyboardShortcutsSettingsDialog({
 				}}
 			>
 				<DialogContent
-					className={cn(settingsDialogContentClass, "relative w-[min(760px,calc(100vw-var(--space-8)))]")}
+					className={cn(settingsDialogContentClass, "w-[min(760px,calc(100vw-var(--space-8)))]")}
 					onEscapeKeyDown={(event) => {
 						if (recording) {
 							event.preventDefault();

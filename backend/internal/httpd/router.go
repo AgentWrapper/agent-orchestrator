@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -188,6 +189,10 @@ func mountTelemetry(r chi.Router, cfg config.Config, sink ports.EventSink) {
 			w.WriteHeader(http.StatusAccepted)
 			return
 		}
+		if isRoutineInternalCLICommand(body.CommandPath) {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
 
 		if now := time.Now(); cliTelemetry.reserveInvoked(now, actorType, body.CommandPath) {
 			sink.Emit(req.Context(), ports.TelemetryEvent{
@@ -260,6 +265,22 @@ func mountTelemetry(r chi.Router, cfg config.Config, sink ports.EventSink) {
 		})
 		w.WriteHeader(http.StatusAccepted)
 	})
+}
+
+func isRoutineInternalCLICommand(commandPath string) bool {
+	switch strings.TrimSpace(commandPath) {
+	case "ao status",
+		"ao session ls",
+		"ao session get",
+		"ao project ls",
+		"ao project get",
+		"ao orchestrator ls",
+		"ao hooks",
+		"ao pty-host":
+		return true
+	default:
+		return false
+	}
 }
 
 func cliActorType(actorType, commandPath string) string {

@@ -188,6 +188,7 @@ func NewRootCommand(deps Deps) *cobra.Command {
 	root.AddCommand(newSpawnCommand(ctx))
 	root.AddCommand(newSendCommand(ctx))
 	root.AddCommand(newPreviewCommand(ctx))
+	root.AddCommand(newBrowserCommand(ctx))
 	root.AddCommand(newHooksCommand(ctx))
 	root.AddCommand(newAgentProcessCommand(ctx))
 	root.AddCommand(newLaunchCommand(ctx))
@@ -210,16 +211,35 @@ type commandContext struct {
 }
 
 func shouldEmitCLIInvocation(cmd *cobra.Command) bool {
-	switch strings.TrimSpace(cmd.CommandPath()) {
+	commandPath := strings.TrimSpace(cmd.CommandPath())
+	if isRoutineInternalCLICommand(commandPath) {
+		return false
+	}
+	switch commandPath {
 	// "ao daemon"/"ao start" are supervisor-driven bootstrapping, and
 	// "ao completion"/"ao help" are shell setup and self-documentation.
 	// "ao pty-host" and "ao agent-process" are internal runtime processes.
-	// None reflect user activity. "ao hooks" is agent activity and is still
-	// reported, but the daemon keeps it out of ao.app.active/DAU.
+	// None reflect user activity.
 	case "ao daemon", "ao start", "ao completion", "ao help", "ao pty-host", "ao agent-process", "ao agent-process supervise":
 		return false
 	default:
 		return true
+	}
+}
+
+func isRoutineInternalCLICommand(commandPath string) bool {
+	switch strings.TrimSpace(commandPath) {
+	case "ao status",
+		"ao session ls",
+		"ao session get",
+		"ao project ls",
+		"ao project get",
+		"ao orchestrator ls",
+		"ao hooks",
+		"ao pty-host":
+		return true
+	default:
+		return false
 	}
 }
 
