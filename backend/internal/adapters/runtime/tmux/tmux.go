@@ -464,7 +464,13 @@ func (r *Runtime) ForegroundCommand(ctx context.Context, handle ports.RuntimeHan
 		}
 		return "", fmt.Errorf("tmux runtime: probe foreground command %s: %w", id, err)
 	}
-	return strings.TrimSpace(string(out)), nil
+	// One line per pane; the session's own process is the first.
+	for _, line := range strings.Split(string(out), "\n") {
+		if command := strings.TrimSpace(line); command != "" {
+			return command, nil
+		}
+	}
+	return "", nil
 }
 
 // IsSupervisedProcessAlive reports whether the managed workload for ref is

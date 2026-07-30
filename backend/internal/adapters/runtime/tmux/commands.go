@@ -81,11 +81,16 @@ func hasSessionArgs(id string) []string {
 	return []string{"has-session", "-t", exactSessionTarget(id)}
 }
 
-// foregroundCommandArgs asks tmux what is running in the session's active pane.
-// pane_current_command is the pane's foreground process name, which is the agent
-// binary while the agent runs and the shell once it exits.
+// foregroundCommandArgs asks tmux what is running in the session's panes.
+// pane_current_command is a pane's foreground process name: the agent binary
+// while the agent runs, the shell once it exits.
+//
+// list-panes rather than display-message: display-message resolves an exact
+// session target ("=name") to the session but then reports nothing for a
+// pane-scoped format, returning empty instead of failing. Empty reads as "cannot
+// tell", so the probe silently answered nothing every time.
 func foregroundCommandArgs(id string) []string {
-	return []string{"display-message", "-p", "-t", exactSessionTarget(id), "#{pane_current_command}"}
+	return []string{"list-panes", "-s", "-t", exactSessionTarget(id), "-F", "#{pane_current_command}"}
 }
 
 // exactSessionTarget wraps id in tmux's exact-match prefix `=` so session-
