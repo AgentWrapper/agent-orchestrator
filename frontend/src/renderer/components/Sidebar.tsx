@@ -99,7 +99,7 @@ type SidebarProps = {
 	/** Render the expanded sidebar over content without reserving layout width. */
 	isOverlay?: boolean;
 	underTopbar?: boolean;
-	/** Chrome height to clear when underTopbar is set. Defaults to the 56px shell toolbar. */
+	/** Chrome height to clear when underTopbar is set. Defaults to --size-toolbar. */
 	topbarOffset?: "toolbar" | "titlebar" | "trafficLights";
 	onPreviewLeave?: () => void;
 	workspaceError?: string;
@@ -228,26 +228,21 @@ export function Sidebar({
 		<SidebarRoot
 			collapsible="offcanvas"
 			data-expanded-chrome={expandedChromeVisible ? "visible" : "hidden"}
+			data-topbar-offset={underTopbar ? topbarOffset : undefined}
 			onPointerLeave={onPreviewLeave}
 			overlay={isOverlay}
 			className={cn(
 				hideEdgeBorder ? "border-transparent" : "border-r-0 group-data-[side=left]:border-r-0",
 				isOverlay && "z-sidebar-preview shadow-2xl",
-				isOverlay
+				isOverlay || !underTopbar
 					? "top-0 h-svh!"
-					: underTopbar
-						? topbarOffset === "titlebar"
-							? "top-9 h-[calc(100svh-2.25rem)]!"
-							: topbarOffset === "trafficLights"
-								? "top-traffic-light-clearance h-[calc(100svh-var(--size-traffic-light-clearance))]!"
-								: "top-14 h-[calc(100svh-3.5rem)]!"
-						: "top-0 h-svh!",
+					: "top-(--sidebar-chrome-offset) h-[calc(100svh-var(--sidebar-chrome-offset))]!",
 			)}
 		>
 			<SidebarHeader
 				className={cn(
 					"gap-0 p-0 px-2 pt-2 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2",
-					isOverlay && (topbarOffset === "titlebar" ? "pt-10!" : "pt-15!"),
+					isOverlay && underTopbar && "pt-(--sidebar-chrome-offset)!",
 				)}
 			>
 				{/* Brand (project-sidebar__brand); in the icon rail it becomes the old

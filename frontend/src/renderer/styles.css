@@ -163,6 +163,7 @@
 
 	/* Layout — toolbar offset for fixed sidebar below topbar */
 	--spacing-toolbar: var(--size-toolbar);
+	--spacing-window-titlebar: var(--size-window-titlebar);
 	--spacing-titlebar-content-offset: var(--size-titlebar-content-offset);
 	--spacing-titlebar-cluster-left: var(--size-titlebar-cluster-left);
 	/* Fullscreen has no traffic lights — park the cluster at the panel inset. */
@@ -420,6 +421,18 @@
 .center-panel-shell--mac .center-panel-titlebar {
 	height: var(--size-traffic-light-clearance);
 	min-height: var(--size-traffic-light-clearance);
+}
+
+/* Sidebar chrome clearance: size tokens only — set by data-topbar-offset on the
+ * fixed sidebar container so top/height/overlay pad share one offset. */
+[data-topbar-offset="toolbar"] {
+	--sidebar-chrome-offset: var(--size-toolbar);
+}
+[data-topbar-offset="titlebar"] {
+	--sidebar-chrome-offset: var(--size-window-titlebar);
+}
+[data-topbar-offset="trafficLights"] {
+	--sidebar-chrome-offset: var(--size-traffic-light-clearance);
 }
 
 /* On macOS the titlebar controls stay fixed when the sidebar is off-canvas.
@@ -1313,13 +1326,13 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 
 /* Windows custom title bar (WindowTitlebar): the app paints the sidebar toggle
  * + menu on one row while Electron overlays the native min/max/close buttons on
- * the right. Height must match TITLEBAR_HEIGHT + the Window Controls Overlay
- * height in main.ts so the native buttons line up. The whole strip is the
- * window-drag region; interactive children opt out with
+ * the right. Height uses --size-window-titlebar and must match TITLEBAR_HEIGHT
+ * + the Window Controls Overlay height in main.ts so the native buttons line up.
+ * The whole strip is the window-drag region; interactive children opt out with
  * -webkit-app-region: no-drag. */
 .window-titlebar {
 	display: flex;
-	height: 36px;
+	height: var(--size-window-titlebar);
 	flex-shrink: 0;
 	align-items: center;
 	gap: 8px;
