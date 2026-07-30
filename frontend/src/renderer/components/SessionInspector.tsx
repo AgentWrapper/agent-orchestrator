@@ -390,16 +390,10 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 			});
 			if (error) throw new Error(apiErrorMessage(error, `Failed to update merge policy (${response.status})`));
 		},
-		onMutate: async (terminateOnPrMerge) => {
-			await queryClient.cancelQueries({ queryKey: workspaceQueryKey });
-			const previous = queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey);
+		onSuccess: (_data, terminateOnPrMerge) => {
 			queryClient.setQueryData<WorkspaceSummary[]>(workspaceQueryKey, (current) =>
 				updateSessionMergePolicy(current, session.id, terminateOnPrMerge),
 			);
-			return { previous };
-		},
-		onError: (_error, _next, context) => {
-			if (context?.previous) queryClient.setQueryData(workspaceQueryKey, context.previous);
 		},
 		onSettled: () => {
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });

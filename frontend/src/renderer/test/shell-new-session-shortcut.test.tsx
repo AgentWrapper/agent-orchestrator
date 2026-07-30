@@ -322,12 +322,12 @@ beforeEach(() => {
 });
 
 describe("shell loader", () => {
-	it("returns a restored snapshot without waiting for daemon status", async () => {
+	it("returns a restored snapshot without starting a competing daemon refresh", async () => {
 		shellMocks.queryClient.getQueryData.mockReturnValue(workspaces);
 		shellMocks.refreshDaemonStatus.mockReturnValue(new Promise(() => {}));
 
 		await expect(shellLoader({ context: { queryClient: shellMocks.queryClient } })).resolves.toBe(workspaces);
-		expect(shellMocks.refreshDaemonStatus).toHaveBeenCalledOnce();
+		expect(shellMocks.refreshDaemonStatus).not.toHaveBeenCalled();
 		expect(shellMocks.queryClient.ensureQueryData).not.toHaveBeenCalled();
 	});
 });
@@ -388,6 +388,7 @@ describe("shell workspace startup", () => {
 
 		const view = await renderShell();
 		expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("loading");
+		expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "true");
 		expect(shellMocks.queryClient.fetchQuery).not.toHaveBeenCalled();
 
 		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };

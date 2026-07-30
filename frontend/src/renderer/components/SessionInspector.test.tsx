@@ -99,7 +99,7 @@ function renderWithQuery(children: ReactNode, workspaces?: WorkspaceSummary[]) {
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	});
 	if (workspaces) client.setQueryData(workspaceQueryKey, workspaces);
-	return render(<QueryClientProvider client={client}>{children}</QueryClientProvider>);
+	return { ...render(<QueryClientProvider client={client}>{children}</QueryClientProvider>), client };
 }
 
 function mockCommonGets(_unusedRuns: unknown[] = [], reviewerHandleId = "", reviews: unknown[] = []) {
@@ -240,17 +240,43 @@ describe("SessionInspector PR section", () => {
 });
 
 describe("SessionInspector completion controls", () => {
-	it("persists the terminate-on-merge preference", async () => {
-		renderWithQuery(<SessionInspector session={session([])} />);
+	it("updates the cached preference only after the daemon confirms it", async () => {
+		let resolvePatch: ((result: { data: { ok: boolean }; error: undefined; response: { status: number } }) => void) | undefined;
+		patchMock.mockReturnValueOnce(
+			new Promise((resolve) => {
+				resolvePatch = resolve;
+			}),
+		);
+		const worker = session([]);
+		const initialWorkspaces: WorkspaceSummary[] = [
+			{
+				id: "ws-1",
+				name: "my-app",
+				path: "/repo",
+				sessions: [worker],
+			},
+		];
+		const { client } = renderWithQuery(<SessionInspector session={worker} />, initialWorkspaces);
 
 		await userEvent.click(screen.getByRole("switch", { name: "Terminate session when pull requests merge" }));
 
-		await waitFor(() =>
+		await waitFor(() => {
 			expect(patchMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/merge-policy", {
 				params: { path: { sessionId: "sess-1" } },
 				body: { terminateOnPrMerge: true },
-			}),
-		);
+			});
+		});
+		expect(
+			client.getQueryData<WorkspaceSummary[]>(workspaceQueryKey)?.[0]?.sessions[0]?.terminateOnPrMerge,
+		).not.toBe(true);
+
+		resolvePatch?.({ data: { ok: true }, error: undefined, response: { status: 200 } });
+
+		await waitFor(() => {
+			expect(
+				client.getQueryData<WorkspaceSummary[]>(workspaceQueryKey)?.[0]?.sessions[0]?.terminateOnPrMerge,
+			).toBe(true);
+		});
 	});
 
 	it("terminates a live merged session and returns to its orchestrator immediately", async () => {

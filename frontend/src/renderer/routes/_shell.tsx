@@ -48,10 +48,9 @@ export const Route = createFileRoute("/_shell")({
 	// nav target is warm before the click.
 	loader: async ({ context }) => {
 		const cached = context.queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey);
-		// A restored snapshot should paint immediately. The shell invalidates it
-		// in the background as soon as the daemon reports a trusted ready port.
+		// A restored snapshot should paint immediately. The mounted daemon-status
+		// hook owns the refresh so a second, unversioned request cannot race it.
 		if (cached !== undefined) {
-			void refreshDaemonStatus().catch(() => undefined);
 			return cached;
 		}
 		const status = await refreshDaemonStatus().catch(() => undefined);
@@ -186,6 +185,7 @@ function ShellLayout() {
 	const replacementErrorProjectId = Object.keys(orchestratorReplacementErrors)[0] ?? null;
 	const isStartupLoading =
 		!usesPreviewWorkspaceData &&
+		workspaceQuery.data === undefined &&
 		!daemonStatus.code &&
 		(daemonStatus.state !== "ready" || workspaceStartupState === "loading");
 
