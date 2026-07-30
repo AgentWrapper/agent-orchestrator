@@ -175,6 +175,11 @@ WHERE timestamp >= now() - INTERVAL 30 DAY
   AND (
     event = 'ao.v2.app.active'
     OR (event = 'ao.app.active' AND properties.channel = 'renderer')
+    OR (
+      event = 'ao.app.active'
+      AND properties.channel = 'cli'
+      AND properties.actor_type = 'user'
+    )
   )
 GROUP BY day
 ORDER BY day
