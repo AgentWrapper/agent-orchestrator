@@ -74,6 +74,7 @@ export function CloudTerminal({ api, sessionId }: CloudTerminalProps) {
     let socket: WebSocket | null = null;
     let lastSequence = 0;
     let reconnectTimer: number | undefined;
+    const pendingInput: string[] = [];
 
     const sendResize = () => {
       if (socket?.readyState !== WebSocket.OPEN) return;
@@ -96,6 +97,13 @@ export function CloudTerminal({ api, sessionId }: CloudTerminalProps) {
         socket.addEventListener("open", () => {
           setConnection("connected");
           sendResize();
+          while (pendingInput.length > 0) {
+            const data = pendingInput.shift();
+            if (data)
+              socket?.send(
+                JSON.stringify({ type: "input", data: bytesToBase64(data) }),
+              );
+          }
         });
         socket.addEventListener("message", (event) => {
           const message = JSON.parse(String(event.data)) as {
@@ -128,7 +136,10 @@ export function CloudTerminal({ api, sessionId }: CloudTerminalProps) {
     };
 
     const input = terminal.onData((data) => {
-      if (socket?.readyState !== WebSocket.OPEN) return;
+      if (socket?.readyState !== WebSocket.OPEN) {
+        if (pendingInput.length < 256) pendingInput.push(data);
+        return;
+      }
       socket.send(JSON.stringify({ type: "input", data: bytesToBase64(data) }));
     });
     const resize = terminal.onResize(sendResize);

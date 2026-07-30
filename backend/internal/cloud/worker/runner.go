@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -64,7 +65,28 @@ func (r *Runner) Run(ctx context.Context) error {
 		SystemPrompt:  systemPrompt(r.bootstrap.Launch.Session.Kind),
 		WorkspacePath: r.workspaceDir,
 	}
+	if r.bootstrap.Launch.Session.Harness == "claude-code" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("resolve Claude home: %w", err)
+		}
+		if err := prepareClaudeCloudExperience(home); err != nil {
+			return err
+		}
+	}
+	if preLaunch, ok := agent.(interface {
+		PreLaunch(context.Context, ports.LaunchConfig) error
+	}); ok {
+		if err := preLaunch.PreLaunch(ctx, launchConfig); err != nil {
+			return fmt.Errorf("prepare agent launch: %w", err)
+		}
+	}
 	hookEnvironment := workerEnvironment(r.client.getToken())
+	if augmenter, ok := agent.(interface {
+		AugmentRuntimeEnv(map[string]string, string)
+	}); ok {
+		augmenter.AugmentRuntimeEnv(hookEnvironment, r.dataDir)
+	}
 	if err := agent.GetAgentHooks(ctx, ports.WorkspaceHookConfig{
 		DataDir:       r.dataDir,
 		Env:           hookEnvironment,
@@ -396,6 +418,73 @@ func clearEnvironmentSecret(environment map[string]string, name string) {
 	}
 	environment[name] = ""
 	delete(environment, name)
+}
+
+func prepareClaudeCloudExperience(home string) error {
+	if err := updateJSONFile(filepath.Join(home, ".claude.json"), func(root map[string]any) {
+		root["hasCompletedOnboarding"] = true
+		root["theme"] = "dark"
+	}); err != nil {
+		return fmt.Errorf("prepare Claude onboarding: %w", err)
+	}
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := updateJSONFile(settingsPath, func(settings map[string]any) {
+		settings["theme"] = "dark"
+		settings["skipDangerousModePermissionPrompt"] = true
+		permissions, _ := settings["permissions"].(map[string]any)
+		if permissions == nil {
+			permissions = map[string]any{}
+			settings["permissions"] = permissions
+		}
+		permissions["defaultMode"] = "bypassPermissions"
+	}); err != nil {
+		return fmt.Errorf("prepare Claude settings: %w", err)
+	}
+	return nil
+}
+
+func updateJSONFile(path string, update func(map[string]any)) error {
+	root := map[string]any{}
+	contents, err := os.ReadFile(path)
+	switch {
+	case err == nil && len(contents) > 0:
+		if err := json.Unmarshal(contents, &root); err != nil {
+			return fmt.Errorf("parse %s: %w", path, err)
+		}
+	case err == nil || errors.Is(err, os.ErrNotExist):
+	default:
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	update(root)
+	encoded, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode %s: %w", path, err)
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
+	}
+	temporary, err := os.CreateTemp(dir, ".ao-cloud-config-*")
+	if err != nil {
+		return fmt.Errorf("create temporary config: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer func() { _ = os.Remove(temporaryPath) }()
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("secure temporary config: %w", err)
+	}
+	if _, err := temporary.Write(encoded); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("write temporary config: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close temporary config: %w", err)
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("replace %s: %w", path, err)
+	}
+	return nil
 }
 
 func workerEnvironment(token string) map[string]string {

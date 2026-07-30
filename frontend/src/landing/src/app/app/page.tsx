@@ -18,7 +18,9 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
+  type PointerEvent as ReactPointerEvent,
   type SVGProps,
 } from "react";
 
@@ -40,6 +42,12 @@ import { useAuth } from "../auth/AuthProvider";
 import { CloudTerminal } from "./CloudTerminal";
 
 type View = "board" | "session" | "settings";
+
+const cloudSelectionKey = "ao-cloud-selection";
+const cloudSidebarWidthKey = "ao-cloud-sidebar-width";
+const defaultSidebarWidth = 240;
+const minimumSidebarWidth = 200;
+const maximumSidebarWidth = 420;
 
 const button =
   "inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border px-2.5 text-sm text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45";
@@ -133,45 +141,97 @@ export default function CloudAppPage() {
   );
   const [view, setView] = useState<View>("board");
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [selectionRestored, setSelectionRestored] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(defaultSidebarWidth);
   const [error, setError] = useState<string | null>(null);
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [showSessionForm, setShowSessionForm] = useState(false);
+  const refreshInFlight = useRef<Promise<void> | null>(null);
 
-  const refresh = useCallback(async () => {
-    if (!api) return;
+  useEffect(() => {
     try {
-      const [
-        projectData,
-        sessionData,
-        repositoryData,
-        connectionData,
-        runtimeData,
-      ] = await Promise.all([
-        api.projects(),
-        api.sessions(),
-        api.repositories(),
-        api.providerConnections(),
-        api.me(),
-      ]);
-      setProjects(projectData.projects);
-      setSessions(sessionData.sessions);
-      setRepositories(repositoryData.repositories);
-      setConnections(connectionData.providerConnections);
-      setSandboxProvider(runtimeData.sandboxProvider);
-      setError(null);
-    } catch (refreshError) {
-      setError(
-        refreshError instanceof Error
-          ? refreshError.message
-          : "Could not load AO Cloud.",
-      );
+      const savedSelection = JSON.parse(
+        window.localStorage.getItem(cloudSelectionKey) ?? "{}",
+      ) as { projectId?: string; sessionId?: string };
+      const savedWidthValue = window.localStorage.getItem(cloudSidebarWidthKey);
+      const savedWidth =
+        savedWidthValue === null ? Number.NaN : Number(savedWidthValue);
+      if (savedSelection.projectId)
+        setSelectedProjectId(savedSelection.projectId);
+      if (savedSelection.sessionId) {
+        setSelectedSessionId(savedSelection.sessionId);
+        setView("session");
+      }
+      if (Number.isFinite(savedWidth)) {
+        setSidebarWidth(
+          Math.min(
+            maximumSidebarWidth,
+            Math.max(minimumSidebarWidth, savedWidth),
+          ),
+        );
+      }
+    } catch {
+      window.localStorage.removeItem(cloudSelectionKey);
+    } finally {
+      setSelectionRestored(true);
     }
+  }, []);
+
+  useEffect(() => {
+    if (!selectionRestored) return;
+    window.localStorage.setItem(
+      cloudSelectionKey,
+      JSON.stringify({
+        projectId: selectedProjectId,
+        sessionId: selectedSessionId,
+      }),
+    );
+  }, [selectedProjectId, selectedSessionId, selectionRestored]);
+
+  const refresh = useCallback(() => {
+    if (!api) return Promise.resolve();
+    if (refreshInFlight.current) return refreshInFlight.current;
+    const request = (async () => {
+      try {
+        const [
+          projectData,
+          sessionData,
+          repositoryData,
+          connectionData,
+          runtimeData,
+        ] = await Promise.all([
+          api.projects(),
+          api.sessions(),
+          api.repositories(),
+          api.providerConnections(),
+          api.me(),
+        ]);
+        setProjects(projectData.projects);
+        setSessions(sessionData.sessions);
+        setRepositories(repositoryData.repositories);
+        setConnections(connectionData.providerConnections);
+        setSandboxProvider(runtimeData.sandboxProvider);
+        setError(null);
+      } catch (refreshError) {
+        setError(
+          refreshError instanceof Error
+            ? refreshError.message
+            : "Could not load AO Cloud.",
+        );
+      } finally {
+        refreshInFlight.current = null;
+        setInitialLoading(false);
+      }
+    })();
+    refreshInFlight.current = request;
+    return request;
   }, [api]);
 
   useEffect(() => {
     if (!api) return;
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 3000);
+    const timer = window.setInterval(() => void refresh(), 2000);
     return () => window.clearInterval(timer);
   }, [api, refresh]);
 
@@ -191,6 +251,19 @@ export default function CloudAppPage() {
     ? sessions.filter(({ projectId }) => projectId === selectedProjectId)
     : sessions;
 
+  useEffect(() => {
+    if (initialLoading || !selectedSessionId) return;
+    const restoredSession = sessions.find(({ id }) => id === selectedSessionId);
+    if (!restoredSession) {
+      setSelectedSessionId(null);
+      setView("board");
+      return;
+    }
+    if (selectedProjectId !== restoredSession.projectId) {
+      setSelectedProjectId(restoredSession.projectId);
+    }
+  }, [initialLoading, selectedProjectId, selectedSessionId, sessions]);
+
   const run = async (operation: () => Promise<unknown>) => {
     setLoading(true);
     try {
@@ -208,9 +281,33 @@ export default function CloudAppPage() {
     }
   };
 
+  const createSessionAndOpen = async (
+    operation: () => Promise<{ session: CloudSession }>,
+  ) => {
+    setLoading(true);
+    try {
+      const result = await operation();
+      await refresh();
+      setSelectedProjectId(result.session.projectId);
+      setSelectedSessionId(result.session.id);
+      setView("session");
+      setError(null);
+      return true;
+    } catch (operationError) {
+      setError(
+        operationError instanceof Error
+          ? operationError.message
+          : "Could not create the cloud session.",
+      );
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const startOrchestrator = () => {
     if (!api || !selectedProjectId || !defaultAgent) return;
-    void run(() =>
+    void createSessionAndOpen(() =>
       api.createSession(
         {
           projectId: selectedProjectId,
@@ -223,6 +320,36 @@ export default function CloudAppPage() {
         crypto.randomUUID(),
       ),
     );
+  };
+
+  const beginSidebarResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = sidebarWidth;
+    let nextWidth = startWidth;
+    const availableMaximum = Math.max(
+      minimumSidebarWidth,
+      Math.min(maximumSidebarWidth, window.innerWidth - 320),
+    );
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const move = (moveEvent: PointerEvent) => {
+      nextWidth = Math.min(
+        availableMaximum,
+        Math.max(minimumSidebarWidth, startWidth + moveEvent.clientX - startX),
+      );
+      setSidebarWidth(nextWidth);
+    };
+    const finish = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.localStorage.setItem(cloudSidebarWidthKey, String(nextWidth));
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish, { once: true });
   };
 
   if (status === "loading") {
@@ -255,9 +382,17 @@ export default function CloudAppPage() {
   }
 
   return (
-    <main className="ao-cloud-app fixed inset-0 z-[60] h-dvh overflow-hidden bg-[#0a0b0d] font-[-apple-system,BlinkMacSystemFont,'Segoe_UI',sans-serif] text-[#f4f5f7]">
-      <div className="grid h-full grid-cols-[240px_minmax(0,1fr)]">
-        <aside className="flex min-h-0 flex-col bg-[#17181c]">
+    <main
+      className="ao-cloud-app fixed inset-0 z-[60] h-dvh overflow-hidden bg-[#0a0b0d] font-[-apple-system,BlinkMacSystemFont,'Segoe_UI',sans-serif] text-[#f4f5f7]"
+      aria-busy={loading || initialLoading}
+    >
+      <div
+        className="grid h-full"
+        style={{
+          gridTemplateColumns: `${sidebarWidth}px minmax(0, 1fr)`,
+        }}
+      >
+        <aside className="relative flex min-h-0 flex-col bg-[#17181c]">
           <div className="flex h-11 shrink-0 items-center gap-2 px-3">
             <img
               src="/ao-logo.svg"
@@ -377,10 +512,40 @@ export default function CloudAppPage() {
               </span>
             </button>
           </div>
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize sidebar"
+            tabIndex={0}
+            className="absolute inset-y-0 right-0 z-20 w-1 cursor-col-resize bg-transparent transition-colors duration-150 hover:bg-[#4d8dff]/60 focus-visible:bg-[#4d8dff] focus-visible:outline-none motion-reduce:transition-none"
+            onPointerDown={beginSidebarResize}
+            onKeyDown={(event) => {
+              if (event.key !== "ArrowLeft" && event.key !== "ArrowRight")
+                return;
+              event.preventDefault();
+              const direction = event.key === "ArrowLeft" ? -1 : 1;
+              const nextWidth = Math.min(
+                maximumSidebarWidth,
+                Math.max(minimumSidebarWidth, sidebarWidth + direction * 16),
+              );
+              setSidebarWidth(nextWidth);
+              window.localStorage.setItem(
+                cloudSidebarWidthKey,
+                String(nextWidth),
+              );
+            }}
+            onDoubleClick={() => {
+              setSidebarWidth(defaultSidebarWidth);
+              window.localStorage.setItem(
+                cloudSidebarWidthKey,
+                String(defaultSidebarWidth),
+              );
+            }}
+          />
         </aside>
 
         <section className="flex min-h-0 min-w-0 flex-col border-l border-white/[0.06] bg-[#0a0b0d]">
-          <header className="flex h-14 shrink-0 items-center gap-3 border-b border-white/10 px-4">
+          <header className="relative flex h-14 shrink-0 items-center gap-3 border-b border-white/10 px-4">
             <div className="min-w-0">
               <h1 className="flex min-w-0 items-center gap-1.5 truncate text-sm font-medium">
                 {view === "settings"
@@ -390,9 +555,29 @@ export default function CloudAppPage() {
                     : (selectedProject?.displayName ?? "Board")}
               </h1>
             </div>
-            <div className="ml-auto flex shrink-0 items-center gap-2">
+            <div className="ml-auto flex max-w-full shrink-0 items-center gap-2 overflow-x-auto">
               {view === "session" && selectedSession ? (
                 <>
+                  <button
+                    className={button}
+                    disabled={loading}
+                    onClick={() => setShowSessionForm(true)}
+                    aria-label="New task"
+                  >
+                    <Plus className="size-3.5" />
+                    <span className="hidden xl:inline">New task</span>
+                  </button>
+                  <button
+                    className={primaryButton}
+                    onClick={() => {
+                      setSelectedSessionId(null);
+                      setView("board");
+                    }}
+                    aria-label="Open Kanban board"
+                  >
+                    <LayoutDashboard className="size-3.5" />
+                    <span className="hidden xl:inline">Kanban</span>
+                  </button>
                   <span className="mr-1 inline-flex h-7 items-center gap-1.5 rounded-md border border-white/10 px-2 font-mono text-[10px] uppercase tracking-[0.05em] text-[#9ba1aa]">
                     <span
                       className={`size-1.5 rounded-full ${statusColor(selectedSession)}`}
@@ -407,9 +592,10 @@ export default function CloudAppPage() {
                         api.setDesiredState(selectedSession.id, "running"),
                       )
                     }
+                    aria-label="Run session"
                   >
                     <Play className="size-3.5" />
-                    Run
+                    <span className="hidden 2xl:inline">Run</span>
                   </button>
                   <button
                     className={button}
@@ -419,9 +605,10 @@ export default function CloudAppPage() {
                         api.setDesiredState(selectedSession.id, "paused"),
                       )
                     }
+                    aria-label="Pause session"
                   >
                     <Pause className="size-3.5" />
-                    Pause
+                    <span className="hidden 2xl:inline">Pause</span>
                   </button>
                   <button
                     className={button}
@@ -466,6 +653,11 @@ export default function CloudAppPage() {
                 </>
               ) : null}
             </div>
+            {loading ? (
+              <div className="absolute inset-x-0 bottom-0 h-px overflow-hidden bg-[#4d8dff]/15">
+                <div className="h-full w-1/3 animate-[cloud-progress_900ms_ease-in-out_infinite] bg-[#4d8dff] motion-reduce:w-full motion-reduce:animate-none" />
+              </div>
+            ) : null}
           </header>
 
           {error && (
@@ -478,7 +670,14 @@ export default function CloudAppPage() {
           )}
 
           <div className="min-h-0 flex-1">
-            {view === "settings" ? (
+            {initialLoading ? (
+              <div className="grid h-full place-items-center">
+                <div className="flex items-center gap-2 text-sm text-[#9ba1aa]">
+                  <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" />
+                  Loading cloud workspace…
+                </div>
+              </div>
+            ) : view === "settings" ? (
               <CloudSettings
                 api={api}
                 connections={connections}
@@ -492,6 +691,7 @@ export default function CloudAppPage() {
                 sessions={visibleSessions}
                 projects={projects}
                 onSelect={(cloudSession) => {
+                  setSelectedProjectId(cloudSession.projectId);
                   setSelectedSessionId(cloudSession.id);
                   setView("session");
                 }}
@@ -501,6 +701,7 @@ export default function CloudAppPage() {
                     : undefined
                 }
                 agentAvailable={Boolean(defaultAgent)}
+                loading={loading}
                 onOpenSettings={() => setView("settings")}
               />
             )}
@@ -524,16 +725,18 @@ export default function CloudAppPage() {
           projectId={selectedProjectId}
           providerConnectionId={daytonaConnections[0]?.id}
           connections={connections}
+          loading={loading}
           onOpenSettings={() => {
             setShowSessionForm(false);
             setView("settings");
           }}
           onClose={() => setShowSessionForm(false)}
-          onSubmit={(input) =>
-            run(() => api.createSession(input, crypto.randomUUID())).then(() =>
-              setShowSessionForm(false),
-            )
-          }
+          onSubmit={async (input) => {
+            const created = await createSessionAndOpen(() =>
+              api.createSession(input, crypto.randomUUID()),
+            );
+            if (created) setShowSessionForm(false);
+          }}
         />
       )}
     </main>
@@ -546,6 +749,7 @@ function SessionBoard({
   onSelect,
   onCreateOrchestrator,
   agentAvailable,
+  loading,
   onOpenSettings,
 }: {
   sessions: CloudSession[];
@@ -553,6 +757,7 @@ function SessionBoard({
   onSelect: (session: CloudSession) => void;
   onCreateOrchestrator?: () => void;
   agentAvailable: boolean;
+  loading: boolean;
   onOpenSettings: () => void;
 }) {
   const columns = [
@@ -600,9 +805,14 @@ function SessionBoard({
             <button
               className={`${primaryButton} mt-5`}
               onClick={onCreateOrchestrator}
+              disabled={loading}
             >
-              <Play className="size-3.5" />
-              Start orchestrator
+              {loading ? (
+                <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" />
+              ) : (
+                <Play className="size-3.5" />
+              )}
+              {loading ? "Starting…" : "Start orchestrator"}
             </button>
           ) : !agentAvailable ? (
             <button className={`${button} mt-5`} onClick={onOpenSettings}>
@@ -1020,6 +1230,7 @@ function SessionForm({
   projectId,
   providerConnectionId,
   connections,
+  loading,
   onOpenSettings,
   onClose,
   onSubmit,
@@ -1027,6 +1238,7 @@ function SessionForm({
   projectId: string;
   providerConnectionId?: string;
   connections: ProviderConnection[];
+  loading: boolean;
   onOpenSettings: () => void;
   onClose: () => void;
   onSubmit: (input: {
@@ -1119,8 +1331,15 @@ function SessionForm({
           <button type="button" className={button} onClick={onClose}>
             Cancel
           </button>
-          <button type="submit" className={primaryButton} disabled={!harness}>
-            Spawn worker
+          <button
+            type="submit"
+            className={primaryButton}
+            disabled={!harness || loading}
+          >
+            {loading ? (
+              <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" />
+            ) : null}
+            {loading ? "Spawning…" : "Spawn worker"}
           </button>
         </div>
       </form>

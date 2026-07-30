@@ -2,14 +2,58 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
 	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 	cloudpostgres "github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
 )
+
+func TestPrepareClaudeCloudExperienceSkipsFirstRunPrompts(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(home, ".claude.json"),
+		[]byte(`{"custom":"preserved"}`),
+		0o600,
+	); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := prepareClaudeCloudExperience(home); err != nil {
+		t.Fatalf("prepareClaudeCloudExperience() error = %v", err)
+	}
+
+	root := readJSONObject(t, filepath.Join(home, ".claude.json"))
+	if root["hasCompletedOnboarding"] != true ||
+		root["theme"] != "dark" ||
+		root["custom"] != "preserved" {
+		t.Fatalf("Claude root config = %#v", root)
+	}
+	settings := readJSONObject(t, filepath.Join(home, ".claude", "settings.json"))
+	permissions, _ := settings["permissions"].(map[string]any)
+	if settings["theme"] != "dark" ||
+		settings["skipDangerousModePermissionPrompt"] != true ||
+		permissions["defaultMode"] != "bypassPermissions" {
+		t.Fatalf("Claude settings = %#v", settings)
+	}
+}
+
+func readJSONObject(t *testing.T, path string) map[string]any {
+	t.Helper()
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", path, err)
+	}
+	var object map[string]any
+	if err := json.Unmarshal(contents, &object); err != nil {
+		t.Fatalf("Unmarshal(%q) error = %v", path, err)
+	}
+	return object
+}
 
 func TestPrepareAgentCredentialEnvironment(t *testing.T) {
 	tests := []struct {
