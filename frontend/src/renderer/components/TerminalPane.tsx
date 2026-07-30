@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { RotateCcw } from "lucide-react";
+import { Cloud, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { TerminalTarget } from "../types/terminal";
 import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
@@ -363,6 +363,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 
 	const banner = bannerText(state, error);
 	const showEmptyState = !handleId;
+	const showCloudState = showEmptyState && session?.isCloud === true;
 	// Cover xterm while the attachment buffers the initial replay, so the pane
 	// appears already drawn at the tail instead of visibly scrolling down to it.
 	// Deliberately NOT the empty state above: that renders a centered "Starting
@@ -410,14 +411,16 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					paneScrollsByKeyboard={providerScrollsByKeyboard(provider)}
 					theme={theme}
 				/>
-				{showEmptyState && (
+				{showCloudState ? (
+					<CloudSessionState session={session} />
+				) : showEmptyState ? (
 					<div className="absolute inset-0 grid place-items-center bg-terminal font-mono text-control">
 						<div className="text-center">
 							<div className="text-terminal">{emptyStateTitle}</div>
 							<div className="mt-2 text-terminal-dim">{emptyStateMessage}</div>
 						</div>
 					</div>
-				)}
+				) : null}
 				{showReplayCover && <ReplayCover />}
 				{banner && (
 					<div className="absolute inset-x-3 top-2 rounded-md border border-border bg-surface/95 px-3 py-1.5 font-mono text-caption text-muted-foreground">
@@ -435,6 +438,35 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					}}
 				/>
 			)}
+		</div>
+	);
+}
+
+function CloudSessionState({ session }: { session: WorkspaceSession }) {
+	const activity = session.activity?.state?.replace("_", " ") ?? "unknown";
+	return (
+		<div className="absolute inset-0 grid place-items-center bg-terminal p-6 text-control">
+			<div className="max-w-[520px] rounded-md border border-border bg-surface/80 px-5 py-4 text-left shadow-sm">
+				<div className="flex items-center gap-2 font-mono text-sm font-medium text-terminal">
+					<Cloud className="size-icon-base text-accent" aria-hidden="true" />
+					<span>Daytona cloud session</span>
+				</div>
+				<div className="mt-3 grid gap-1.5 font-mono text-caption text-terminal-dim">
+					<div>
+						<span className="text-muted-foreground">Session</span> {session.id}
+					</div>
+					<div>
+						<span className="text-muted-foreground">Status</span> {session.status}
+					</div>
+					<div>
+						<span className="text-muted-foreground">Activity</span> {activity}
+					</div>
+				</div>
+				<p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+					This worker is running in Daytona. The desktop dev UI is reading cloud project and activity state, but
+					interactive terminal attach is not wired for cloud sessions yet.
+				</p>
+			</div>
 		</div>
 	);
 }

@@ -120,6 +120,7 @@ export type PullRequestFacts = {
 export type WorkspaceSession = {
 	id: string;
 	terminalHandleId?: string;
+	isCloud?: boolean;
 	workspaceId: string;
 	workspaceName: string;
 	title: string;
