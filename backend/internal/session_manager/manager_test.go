@@ -278,6 +278,20 @@ type exitObservingRuntime struct {
 	statusOK []bool
 }
 
+type exitObservingRestartRuntime struct {
+	*fakeRestartRuntime
+	statuses []ports.AgentExitStatus
+}
+
+func (r *exitObservingRestartRuntime) AgentExitStatus(_ context.Context, _ ports.RuntimeHandle) (ports.AgentExitStatus, bool, error) {
+	if len(r.statuses) == 0 {
+		return ports.AgentExitStatus{}, false, nil
+	}
+	status := r.statuses[0]
+	r.statuses = r.statuses[1:]
+	return status, true, nil
+}
+
 func (r *exitObservingRuntime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
 	if r.createErr != nil {
 		return ports.RuntimeHandle{}, r.createErr
@@ -1023,6 +1037,76 @@ func TestResumeAgent_FallsBackToRuntimeRecreateWithoutRestartCapability(t *testi
 	}
 	if got := st.sessions["mer-1"].Metadata.RuntimeHandleID; got != "h1" {
 		t.Fatalf("fallback runtime handle = %q, want h1", got)
+	}
+}
+
+func TestResumeAgent_NativeExitFallbackRestartsExistingRuntime(t *testing.T) {
+	baseRuntime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
+	restartRuntime := &fakeRestartRuntime{fakeRuntime: baseRuntime}
+	runtime := &exitObservingRestartRuntime{
+		fakeRestartRuntime: restartRuntime,
+		statuses:           []ports.AgentExitStatus{{Exited: true, ExitCode: 1}},
+	}
+	agent := &recordingAgent{}
+	m, st, _ := newExitedResumeManager(t, runtime, agent)
+
+	result, err := m.ResumeAgentWithMode(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("ResumeAgentWithMode: %v", err)
+	}
+	if restartRuntime.restarted != 2 {
+		t.Fatalf("runtime restarts = %d, want 2 (native then saved-prompt fallback)", restartRuntime.restarted)
+	}
+	if baseRuntime.created != 0 || baseRuntime.destroyed != 0 {
+		t.Fatalf("in-place fallback recreated runtime: created=%d destroyed=%d", baseRuntime.created, baseRuntime.destroyed)
+	}
+	if restartRuntime.restartHandle.ID != "tmux-mer-1" {
+		t.Fatalf("fallback restart handle = %q, want tmux-mer-1", restartRuntime.restartHandle.ID)
+	}
+	if got := baseRuntime.lastCfg.Argv; !reflect.DeepEqual(got, []string{"launch"}) {
+		t.Fatalf("fallback argv = %#v, want launch", got)
+	}
+	if result.Mode != RestoreModeSavedPrompt {
+		t.Fatalf("resume mode = %q, want %q", result.Mode, RestoreModeSavedPrompt)
+	}
+	got := st.sessions["mer-1"]
+	if got.IsTerminated || got.Activity.State != domain.ActivityIdle {
+		t.Fatalf("resumed session = %+v, want live idle", got)
+	}
+	if got.Metadata.RuntimeHandleID != "tmux-mer-1" {
+		t.Fatalf("runtime handle = %q, want preserved tmux-mer-1", got.Metadata.RuntimeHandleID)
+	}
+}
+
+func TestResumeAgent_PromptlessNativeExitPreservesExistingRuntime(t *testing.T) {
+	baseRuntime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
+	restartRuntime := &fakeRestartRuntime{fakeRuntime: baseRuntime}
+	runtime := &exitObservingRestartRuntime{
+		fakeRestartRuntime: restartRuntime,
+		statuses:           []ports.AgentExitStatus{{Exited: true, ExitCode: 1}},
+	}
+	agent := &recordingAgent{}
+	m, st, _ := newExitedResumeManager(t, runtime, agent)
+	rec := st.sessions["mer-1"]
+	rec.Metadata.Prompt = ""
+	st.sessions["mer-1"] = rec
+
+	_, err := m.ResumeAgentWithMode(ctx, "mer-1")
+	if !errors.Is(err, ErrNotResumable) {
+		t.Fatalf("ResumeAgentWithMode err = %v, want ErrNotResumable", err)
+	}
+	if restartRuntime.restarted != 1 {
+		t.Fatalf("runtime restarts = %d, want only the native attempt", restartRuntime.restarted)
+	}
+	if baseRuntime.created != 0 || baseRuntime.destroyed != 0 {
+		t.Fatalf("promptless failure recreated runtime: created=%d destroyed=%d", baseRuntime.created, baseRuntime.destroyed)
+	}
+	got := st.sessions["mer-1"]
+	if got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("promptless failure changed session lifecycle: %+v", got)
+	}
+	if got.Metadata.RuntimeHandleID != "tmux-mer-1" {
+		t.Fatalf("runtime handle = %q, want preserved tmux-mer-1", got.Metadata.RuntimeHandleID)
 	}
 }
 

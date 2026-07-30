@@ -1242,10 +1242,14 @@ func (m *Manager) relaunchSession(ctx context.Context, operation string, rec dom
 			return RestoreResult{}, fmt.Errorf("restore %s: native resume: %w", rec.ID, err)
 		}
 		if !stable {
-			_ = m.runtime.Destroy(ctx, handle)
+			if restartHandle == nil {
+				_ = m.runtime.Destroy(ctx, handle)
+			}
 			m.lcm.CancelLaunch(rec.ID, launchID)
 			if rec.Metadata.Prompt == "" && rec.Kind == domain.KindWorker {
-				_ = m.lcm.MarkTerminated(ctx, rec.ID)
+				if restartHandle == nil {
+					_ = m.lcm.MarkTerminated(ctx, rec.ID)
+				}
 				m.cleanupSystemPromptDir(rec.ID)
 				return RestoreResult{}, fmt.Errorf("restore %s: native resume exited: %w", rec.ID, ErrNotResumable)
 			}
@@ -1269,12 +1273,17 @@ func (m *Manager) relaunchSession(ctx context.Context, operation string, rec dom
 				return RestoreResult{}, fmt.Errorf("restore %s: fallback prepare launch: %w", rec.ID, err)
 			}
 			defer m.lcm.CancelLaunch(rec.ID, launchID)
-			handle, err = m.runtime.Create(ctx, ports.RuntimeConfig{
+			fallbackCfg := ports.RuntimeConfig{
 				SessionID:     rec.ID,
 				WorkspacePath: ws.Path,
 				Argv:          argv,
 				Env:           env,
-			})
+			}
+			if restartHandle == nil {
+				handle, err = m.runtime.Create(ctx, fallbackCfg)
+			} else {
+				handle, err = m.restartRuntime(ctx, handle, fallbackCfg)
+			}
 			if err != nil {
 				m.cleanupSystemPromptDir(rec.ID)
 				return RestoreResult{}, fmt.Errorf("restore %s: fallback runtime: %w", rec.ID, err)
