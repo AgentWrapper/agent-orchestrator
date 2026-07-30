@@ -771,11 +771,20 @@ function ReviewsView({
 		},
 	});
 	const reviewStates = reviewsQuery.data?.reviews ?? [];
+	const autoReviewEnabled = projectConfigQuery.data?.autoReviewPullRequests === true;
 
 	return (
 		<div role="tabpanel">
 			{/* AO code reviews lead: the flow is run AO review first, then raise the PR for others. */}
-			<Section surface title="AO code reviews">
+			<Section
+				action={
+					<span className={cn("normal-case tracking-normal", autoReviewEnabled ? "text-success" : "text-passive")}>
+						{autoReviewEnabled ? "Auto-review on" : "Auto-review off"}
+					</span>
+				}
+				surface
+				title="AO code reviews"
+			>
 				<ReviewPanel
 					config={projectConfigQuery.data}
 					error={reviewsQuery.error ?? triggerReview.error ?? cancelReview.error}
@@ -951,7 +960,6 @@ function ReviewPanel({
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
 	const reviewHasRun = reviewRunning || Boolean(latest);
 	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
-	const autoReviewEnabled = config?.autoReviewPullRequests === true;
 	const openReviewerTerminal = () => {
 		if (!terminalEnabled) return;
 		onOpenTerminal?.({ handleId: reviewerHandleId, harness });
@@ -973,9 +981,6 @@ function ReviewPanel({
 					{notice}
 				</p>
 			) : null}
-			<p className={inspectorEmptyClass}>
-				<span className="font-medium text-foreground">{autoReviewEnabled ? "Auto-review on" : "Auto-review off"}</span>
-			</p>
 			<p className={cn(inspectorEmptyClass, "inline-flex min-w-0 items-center gap-1.5")}>
 				<ReviewerHarnessIcon className="size-icon-sm shrink-0 text-passive" harness={harness} />
 				<span className="truncate font-mono font-medium text-foreground">{harness}</span>
