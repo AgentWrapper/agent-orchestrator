@@ -236,7 +236,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		return ports.RuntimeHandle{}, err
 	}
 
-	launchCmd := buildLaunchCommand(cfg)
+	launchCmd := buildLaunchCommand(cfg, id, r.binary)
 	args := newSessionArgs(id, cfg.WorkspacePath, r.shell, launchCmd)
 	if _, err := r.run(ctx, args...); err != nil {
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: create session %s: %w", id, err)
@@ -306,7 +306,7 @@ func (r *Runtime) Restart(ctx context.Context, handle ports.RuntimeHandle, cfg p
 		return ports.RuntimeHandle{}, err
 	}
 
-	launchCmd := buildLaunchCommand(cfg)
+	launchCmd := buildLaunchCommand(cfg, id, r.binary)
 	if _, err := r.run(ctx, respawnPaneArgs(id, cfg.WorkspacePath, r.shell, launchCmd)...); err != nil {
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: restart session %s: %w", id, err)
 	}
@@ -955,7 +955,7 @@ func shellQuote(s string) string {
 //
 // PATH from cfg.Env is exported last, after all other keys, so an explicit
 // override takes effect.
-func buildLaunchCommand(cfg ports.RuntimeConfig) string {
+func buildLaunchCommand(cfg ports.RuntimeConfig, runtimeID, tmuxBinary string) string {
 	path := cfg.Env["PATH"]
 	if path == "" {
 		path = getenv("PATH")
@@ -965,8 +965,9 @@ func buildLaunchCommand(cfg ports.RuntimeConfig) string {
 	b.WriteString("cd ")
 	b.WriteString(shellQuote(cfg.WorkspacePath))
 	b.WriteString(" || exit; ")
-	exitKey := agentExitEnvKey(string(cfg.SessionID))
-	b.WriteString("tmux set-environment -u ")
+	exitKey := agentExitEnvKey(runtimeID)
+	b.WriteString(shellQuote(tmuxBinary))
+	b.WriteString(" set-environment -u ")
 	b.WriteString(shellQuote(exitKey))
 	b.WriteString(" >/dev/null 2>&1 || true; ")
 	if _, configured := cfg.Env["NO_COLOR"]; !configured {
@@ -1001,7 +1002,9 @@ func buildLaunchCommand(cfg ports.RuntimeConfig) string {
 		parts[i] = shellQuote(a)
 	}
 	b.WriteString(strings.Join(parts, " "))
-	b.WriteString("; ao_agent_exit=$?; tmux set-environment ")
+	b.WriteString("; ao_agent_exit=$?; ")
+	b.WriteString(shellQuote(tmuxBinary))
+	b.WriteString(" set-environment ")
 	b.WriteString(shellQuote(exitKey))
 	b.WriteString(` "$ao_agent_exit" >/dev/null 2>&1 || true`)
 	// Keep the tmux session alive after the agent exits so the operator can

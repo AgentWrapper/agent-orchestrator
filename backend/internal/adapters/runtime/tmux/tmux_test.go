@@ -362,11 +362,48 @@ func TestCreateLaunchCommandContainsKeepAliveShell(t *testing.T) {
 	if !strings.Contains(launchCmd, "'myagent'") {
 		t.Fatalf("launch command missing quoted argv: %q", launchCmd)
 	}
-	if !strings.Contains(launchCmd, "tmux set-environment -u 'AO_AGENT_EXIT_SESS_1'") {
+	if !strings.Contains(launchCmd, "'tmux-test' set-environment -u 'AO_AGENT_EXIT_SESS_1'") {
 		t.Fatalf("launch command missing stale marker cleanup: %q", launchCmd)
 	}
-	if !strings.Contains(launchCmd, `ao_agent_exit=$?; tmux set-environment 'AO_AGENT_EXIT_SESS_1' "$ao_agent_exit"`) {
+	if !strings.Contains(launchCmd, `ao_agent_exit=$?; 'tmux-test' set-environment 'AO_AGENT_EXIT_SESS_1' "$ao_agent_exit"`) {
 		t.Fatalf("launch command missing exit marker write: %q", launchCmd)
+	}
+}
+
+func TestCreateLaunchCommandUsesNormalizedIDAndConfiguredBinaryForExitMarker(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	r.binary = "/opt/tmux tools/tmux"
+	fr.outputs = [][]byte{nil, []byte("/tmp/ws\n"), nil, nil, nil, nil}
+	rawID := domain.SessionID(strings.Repeat("project-with-a-long-name-", 3) + "1")
+	runtimeID := SessionName(string(rawID))
+
+	handle, err := r.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     rawID,
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"myagent"},
+		Env:           map[string]string{"PATH": "/agent-only/bin"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if handle.ID != runtimeID {
+		t.Fatalf("handle ID = %q, want normalized %q", handle.ID, runtimeID)
+	}
+
+	args := fr.calls[0].args
+	launchCmd := args[len(args)-1]
+	exitKey := agentExitEnvKey(runtimeID)
+	if rawKey := agentExitEnvKey(string(rawID)); rawKey == exitKey {
+		t.Fatalf("precondition: raw marker key %q must differ from normalized key", rawKey)
+	}
+	for _, want := range []string{
+		"'/opt/tmux tools/tmux' set-environment -u '" + exitKey + "'",
+		"export PATH='/agent-only/bin';",
+		"ao_agent_exit=$?; '/opt/tmux tools/tmux' set-environment '" + exitKey + "' \"$ao_agent_exit\"",
+	} {
+		if !strings.Contains(launchCmd, want) {
+			t.Fatalf("launch command missing %q in: %q", want, launchCmd)
+		}
 	}
 }
 
@@ -436,7 +473,7 @@ func TestBuildLaunchCommandPreservesExplicitNoColor(t *testing.T) {
 		WorkspacePath: "/tmp/ws",
 		Argv:          []string{"myagent"},
 		Env:           map[string]string{"NO_COLOR": "1"},
-	})
+	}, "sess-1", "tmux-test")
 
 	if !strings.Contains(launchCmd, "export NO_COLOR='1';") {
 		t.Fatalf("launch command does not preserve configured NO_COLOR: %q", launchCmd)
