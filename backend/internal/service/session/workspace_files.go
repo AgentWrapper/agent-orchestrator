@@ -613,14 +613,6 @@ func applyWorkspaceTextEditCandidate(root string, id domain.SessionID, oldText, 
 	return result, nil
 }
 
-func workspaceTextOccurrenceIndex(content, oldText string, occurrence int) (int, bool) {
-	indexes := workspaceTextOccurrenceIndexes(content, oldText)
-	if occurrence < 0 || occurrence >= len(indexes) {
-		return 0, false
-	}
-	return indexes[occurrence], true
-}
-
 func workspaceTextOccurrenceIndexes(content, oldText string) []int {
 	if oldText == "" {
 		return nil
