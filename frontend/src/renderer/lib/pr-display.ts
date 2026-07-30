@@ -60,13 +60,19 @@ export function sessionPRDisplaySummaries(
 	summaries: SessionPRSummary[] = [],
 ): SessionPRSummary[] {
 	const summariesByNumber = new Map(summaries.map((summary) => [summary.number, summary]));
-	const seen = new Set<number>();
-	const fromFacts = sortedPRs(session).map((pr) => {
-		seen.add(pr.number);
-		return summariesByNumber.get(pr.number) ?? sessionPRFactToSummary(session, pr);
-	});
-	const summaryOnly = summaries.filter((summary) => !seen.has(summary.number));
-	return [...fromFacts, ...summaryOnly].sort(comparePRDisplaySummaries);
+	const result = new Map<number, SessionPRSummary>();
+
+	for (const pr of sortedPRs(session)) {
+		result.set(pr.number, summariesByNumber.get(pr.number) ?? sessionPRFactToSummary(session, pr));
+	}
+
+	for (const summary of summaries) {
+		if (!result.has(summary.number)) {
+			result.set(summary.number, summary);
+		}
+	}
+
+	return [...result.values()].sort(comparePRDisplaySummaries);
 }
 
 function sessionPRFactToSummary(session: WorkspaceSession, pr: PullRequestFacts): SessionPRSummary {

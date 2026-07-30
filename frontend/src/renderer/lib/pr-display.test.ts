@@ -101,6 +101,156 @@ describe("sessionPRDisplaySummaries", () => {
 		expect(fallback.createdAt).toBeUndefined();
 		expect(fallback.stateChangedAt).toBeUndefined();
 	});
+
+	it("deduplicates entries when summaries contain duplicate PR numbers", () => {
+		const session: WorkspaceSession = {
+			id: "sess-dup",
+			workspaceId: "ws-1",
+			workspaceName: "repo",
+			title: "Dup test",
+			provider: "codex",
+			branch: "main",
+			status: "working",
+			updatedAt: "2026-06-15T12:00:00Z",
+			prs: [
+				{
+					url: "https://github.com/acme/repo/pull/7",
+					number: 7,
+					state: "open",
+					ci: "passing",
+					review: "none",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-15T11:00:00Z",
+				},
+			],
+		};
+
+		const result = sessionPRDisplaySummaries(session, [summary({ number: 7 }), summary({ number: 7 })]);
+		expect(result).toHaveLength(1);
+		expect(result[0].number).toBe(7);
+	});
+
+	it("never carries PRs from one session into another", () => {
+		const sessionA: WorkspaceSession = {
+			id: "sess-a",
+			workspaceId: "ws-1",
+			workspaceName: "repo",
+			title: "Session A",
+			provider: "codex",
+			branch: "feat/a",
+			status: "working",
+			updatedAt: "2026-06-15T12:00:00Z",
+			prs: [
+				{
+					url: "https://github.com/acme/repo/pull/1",
+					number: 1,
+					state: "open",
+					ci: "passing",
+					review: "none",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-15T11:00:00Z",
+				},
+			],
+		};
+		const sessionB: WorkspaceSession = {
+			id: "sess-b",
+			workspaceId: "ws-1",
+			workspaceName: "repo",
+			title: "Session B",
+			provider: "codex",
+			branch: "feat/b",
+			status: "working",
+			updatedAt: "2026-06-15T12:00:00Z",
+			prs: [
+				{
+					url: "https://github.com/acme/repo/pull/2",
+					number: 2,
+					state: "open",
+					ci: "passing",
+					review: "none",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-15T11:00:00Z",
+				},
+			],
+		};
+
+		const resultA = sessionPRDisplaySummaries(sessionA);
+		const resultB = sessionPRDisplaySummaries(sessionB);
+
+		expect(resultA).toHaveLength(1);
+		expect(resultA[0].number).toBe(1);
+		expect(resultB).toHaveLength(1);
+		expect(resultB[0].number).toBe(2);
+	});
+
+	it("merges facts and enriched summaries without duplication", () => {
+		const session: WorkspaceSession = {
+			id: "sess-merge",
+			workspaceId: "ws-1",
+			workspaceName: "repo",
+			title: "Merge test",
+			provider: "codex",
+			branch: "feat/merge",
+			status: "working",
+			updatedAt: "2026-06-15T12:00:00Z",
+			prs: [
+				{
+					url: "https://github.com/acme/repo/pull/7",
+					number: 7,
+					state: "open",
+					ci: "passing",
+					review: "none",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-15T11:00:00Z",
+				},
+			],
+		};
+
+		const enriched = summary({ number: 7, title: "Enriched title", author: "bot" });
+		const result = sessionPRDisplaySummaries(session, [enriched]);
+
+		expect(result).toHaveLength(1);
+		expect(result[0].title).toBe("Enriched title");
+		expect(result[0].author).toBe("bot");
+	});
+
+	it("includes summary-only PRs that have no corresponding fact", () => {
+		const session: WorkspaceSession = {
+			id: "sess-summary-only",
+			workspaceId: "ws-1",
+			workspaceName: "repo",
+			title: "Summary only",
+			provider: "codex",
+			branch: "main",
+			status: "working",
+			updatedAt: "2026-06-15T12:00:00Z",
+			prs: [],
+		};
+
+		const result = sessionPRDisplaySummaries(session, [summary({ number: 42 })]);
+		expect(result).toHaveLength(1);
+		expect(result[0].number).toBe(42);
+	});
+
+	it("returns empty when session has no PRs and no summaries", () => {
+		const session: WorkspaceSession = {
+			id: "sess-empty",
+			workspaceId: "ws-1",
+			workspaceName: "repo",
+			title: "Empty",
+			provider: "codex",
+			branch: "main",
+			status: "working",
+			updatedAt: "2026-06-15T12:00:00Z",
+			prs: [],
+		};
+
+		expect(sessionPRDisplaySummaries(session)).toEqual([]);
+	});
 });
 
 describe("prSummaryParts", () => {
