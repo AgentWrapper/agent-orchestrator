@@ -12,6 +12,9 @@ Allow: /
 Disallow: /api/
 Disallow: /_next/
 
+# Content Signals (https://contentsignals.org)
+Content-Signal: search=yes, ai-input=yes, ai-train=yes
+
 # AI assistants and AI search crawlers - explicitly welcome
 User-Agent: ChatGPT-User
 Allow: /
@@ -37,9 +40,6 @@ Disallow: /
 
 User-Agent: Bytespider
 Disallow: /
-
-# Content Signals (https://contentsignals.org)
-Content-Signal: search=yes, ai-input=yes, ai-train=yes
 
 Sitemap: ${baseUrl}/sitemap.xml
 `;
