@@ -253,11 +253,42 @@ func (l *agentLauncher) Notify(ctx context.Context, handleID string, spec Launch
 	return nil
 }
 
+// reviewerShells are the foreground commands that mean the reviewer agent has
+// exited and left its terminal at a prompt.
+var reviewerShells = map[string]bool{
+	"sh": true, "bash": true, "zsh": true, "fish": true, "dash": true, "ksh": true, "csh": true, "tcsh": true,
+}
+
+// Alive reports whether a reviewer is still running on this handle.
+//
+// A live terminal is not a live reviewer. When the agent exits — a bad flag, a
+// session-id collision, a crash — tmux keeps the pane at a shell prompt, and
+// asking tmux alone reports it as alive. Trigger then takes the Notify path and
+// types the review prompt into that shell, which runs it as commands in the
+// worktree and silently never produces a review. Treating a shell as dead sends
+// Trigger down the Spawn path instead, which replaces the pane outright.
 func (l *agentLauncher) Alive(ctx context.Context, handleID string) (bool, error) {
 	if handleID == "" {
 		return false, nil
 	}
-	return l.runtime.IsAlive(ctx, ports.RuntimeHandle{ID: handleID})
+	alive, err := l.runtime.IsAlive(ctx, ports.RuntimeHandle{ID: handleID})
+	if err != nil || !alive {
+		return false, err
+	}
+	inspector, ok := l.runtime.(ports.RuntimeForegroundInspector)
+	if !ok {
+		return true, nil
+	}
+	command, err := inspector.ForegroundCommand(ctx, ports.RuntimeHandle{ID: handleID})
+	if err != nil {
+		// A failed probe is not proof of death: keep the pane rather than
+		// destroying a working reviewer over a transient tmux error.
+		return true, nil
+	}
+	if command == "" {
+		return true, nil
+	}
+	return !reviewerShells[strings.TrimPrefix(command, "-")], nil
 }
 
 func (l *agentLauncher) Cancel(ctx context.Context, handleID string, harness domain.ReviewerHarness) error {

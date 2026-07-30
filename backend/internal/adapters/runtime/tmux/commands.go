@@ -81,6 +81,13 @@ func hasSessionArgs(id string) []string {
 	return []string{"has-session", "-t", exactSessionTarget(id)}
 }
 
+// foregroundCommandArgs asks tmux what is running in the session's active pane.
+// pane_current_command is the pane's foreground process name, which is the agent
+// binary while the agent runs and the shell once it exits.
+func foregroundCommandArgs(id string) []string {
+	return []string{"display-message", "-p", "-t", exactSessionTarget(id), "#{pane_current_command}"}
+}
+
 // exactSessionTarget wraps id in tmux's exact-match prefix `=` so session-
 // selection commands (-t) target only the session with that precise name.
 // Session-selection commands like kill-session, has-session, and list-panes
