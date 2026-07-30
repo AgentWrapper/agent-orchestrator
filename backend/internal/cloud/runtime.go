@@ -12,6 +12,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/daytona"
+	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/auth"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/tenancy"
@@ -20,6 +21,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
+	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
 )
 
 const sandboxAOPath = "/usr/local/bin/ao"
@@ -29,9 +31,10 @@ type cloudRuntimeStack struct {
 	activity *lifecycle.Manager
 	runtime  *daytona.Runtime
 	bridge   *daytonaActivityBridge
+	term     *terminal.Manager
 }
 
-func newCloudRuntimeStack(cfg Config, store *postgres.Store, issuer *auth.Issuer, log *slog.Logger) (*cloudRuntimeStack, error) {
+func newCloudRuntimeStack(cfg Config, store *postgres.Store, issuer *auth.Issuer, events *cdc.Broadcaster, log *slog.Logger) (*cloudRuntimeStack, error) {
 	if strings.TrimSpace(cfg.Runtime) == "" {
 		return nil, nil
 	}
@@ -124,6 +127,7 @@ func newCloudRuntimeStack(cfg Config, store *postgres.Store, issuer *auth.Issuer
 	})
 	lcm.SetCompletionTerminator(mgr)
 	commander := cloudSessionManager{base: mgr, bridge: bridge}
+	term := terminal.NewManager(cloudTerminalSource{store: store, runtime: rt}, events, log)
 	return &cloudRuntimeStack{
 		sessions: sessionsvc.NewWithDeps(sessionsvc.Deps{
 			Manager:       commander,
@@ -134,7 +138,68 @@ func newCloudRuntimeStack(cfg Config, store *postgres.Store, issuer *auth.Issuer
 		activity: lcm,
 		runtime:  rt,
 		bridge:   bridge,
+		term:     term,
 	}, nil
+}
+
+type cloudTerminalStore interface {
+	GetSession(context.Context, domain.SessionID) (domain.SessionRecord, bool, error)
+	ListAllSessions(context.Context) ([]domain.SessionRecord, error)
+}
+
+type cloudTerminalSource struct {
+	store   cloudTerminalStore
+	runtime interface {
+		ports.Attacher
+		IsAlive(context.Context, ports.RuntimeHandle) (bool, error)
+	}
+}
+
+func (s cloudTerminalSource) Attach(ctx context.Context, handle ports.RuntimeHandle, rows, cols uint16) (ports.Stream, error) {
+	if _, ok, err := s.authorizedSession(ctx, handle); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, fmt.Errorf("cloud terminal: runtime handle %s is not available in this org", handle.ID)
+	}
+	return s.runtime.Attach(ctx, handle, rows, cols)
+}
+
+func (s cloudTerminalSource) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error) {
+	rec, ok, err := s.authorizedSession(ctx, handle)
+	if err != nil {
+		return false, err
+	}
+	if !ok || rec.IsTerminated {
+		return false, nil
+	}
+	return s.runtime.IsAlive(ctx, handle)
+}
+
+func (s cloudTerminalSource) authorizedSession(ctx context.Context, handle ports.RuntimeHandle) (domain.SessionRecord, bool, error) {
+	if s.store == nil {
+		return domain.SessionRecord{}, false, errors.New("cloud terminal: session store is not configured")
+	}
+	if s.runtime == nil {
+		return domain.SessionRecord{}, false, errors.New("cloud terminal: runtime is not configured")
+	}
+	if strings.TrimSpace(handle.ID) == "" {
+		return domain.SessionRecord{}, false, errors.New("cloud terminal: runtime handle is required")
+	}
+	if rec, ok, err := s.store.GetSession(ctx, domain.SessionID(handle.ID)); err != nil {
+		return domain.SessionRecord{}, false, err
+	} else if ok && rec.Metadata.RuntimeHandleID == handle.ID {
+		return rec, true, nil
+	}
+	recs, err := s.store.ListAllSessions(ctx)
+	if err != nil {
+		return domain.SessionRecord{}, false, err
+	}
+	for _, rec := range recs {
+		if rec.Metadata.RuntimeHandleID == handle.ID {
+			return rec, true, nil
+		}
+	}
+	return domain.SessionRecord{}, false, nil
 }
 
 func daytonaBaseEnv() map[string]string {

@@ -17,11 +17,11 @@ import (
 // still bounding memory per message.
 const terminalMuxReadLimit = 1 << 20
 
-// mountTerminalMux registers the long-lived terminal-multiplexing WebSocket at /mux. It
+// MountTerminalMux registers the long-lived terminal-multiplexing WebSocket at /mux. It
 // is intentionally outside the per-request Timeout middleware (the connection is
 // long-lived). When mgr is nil the route is not mounted — the daemon simply has
 // no terminal surface yet.
-func mountTerminalMux(r chi.Router, mgr *terminal.Manager, log *slog.Logger) {
+func MountTerminalMux(r chi.Router, mgr *terminal.Manager, log *slog.Logger) {
 	if mgr == nil {
 		return
 	}

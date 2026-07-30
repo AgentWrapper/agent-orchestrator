@@ -111,7 +111,7 @@ function mapWorkspaceSummaries(
 					}
 					return {
 						id: session.id,
-						terminalHandleId: options.cloud ? undefined : session.terminalHandleId,
+						terminalHandleId: session.terminalHandleId,
 						isCloud: options.cloud,
 						workspaceId: project.id,
 						workspaceName: options.cloud ? `${project.name} (Cloud)` : project.name,

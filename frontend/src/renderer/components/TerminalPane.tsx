@@ -6,6 +6,7 @@ import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import { useUiStore, type Theme } from "../stores/ui-store";
 import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
 import { apiClient } from "../lib/api-client";
+import { cloudDevReady, createCloudDevTerminalMux } from "../lib/cloud-dev";
 import { createUrlWatcher, type UrlWatcher } from "../lib/detect-urls";
 import { cn } from "../lib/utils";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -25,7 +26,9 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 	const terminalKey =
 		terminalTarget?.kind === "reviewer" || terminalTarget?.kind === "shell"
 			? terminalTarget.handleId
-			: (session?.terminalHandleId ?? "empty");
+			: session?.isCloud
+				? `cloud:${session.terminalHandleId ?? session.id}`
+				: (session?.terminalHandleId ?? "empty");
 
 	if (!window.ao) {
 		// A standalone shell has no agent and no branch, so it previews as a plain
@@ -235,6 +238,9 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const [restoreUnavailable, setRestoreUnavailable] = useState(false);
 	const queryClient = useQueryClient();
 	const restoreSessionById = useRestoreSession();
+	const cloudDev = useUiStore((state) => state.cloudDev);
+	const attachToCloud = session?.isCloud === true;
+	const createCloudMux = useCallback(() => createCloudDevTerminalMux(cloudDev), [cloudDev]);
 	// A shell pane has no session, so it hands the hook its handle directly
 	// instead of reading one off `attachSession`.
 	const shellTerminalHandleId = terminalTarget?.kind === "shell" ? terminalTarget.handleId : undefined;
@@ -260,7 +266,8 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 		[session?.id],
 	);
 	const { attach, state, error, replaySettled } = useTerminalSession(attachSession, {
-		daemonReady,
+		daemonReady: attachToCloud ? cloudDevReady(cloudDev) : daemonReady,
+		createMux: attachToCloud ? createCloudMux : undefined,
 		shellTerminalHandleId,
 		onOutput: watchLinks ? handleOutput : undefined,
 	});
@@ -463,8 +470,7 @@ function CloudSessionState({ session }: { session: WorkspaceSession }) {
 					</div>
 				</div>
 				<p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-					This worker is running in Daytona. The desktop dev UI is reading cloud project and activity state, but
-					interactive terminal attach is not wired for cloud sessions yet.
+					This worker is running in Daytona, but AO Cloud has not returned a terminal handle for this session yet.
 				</p>
 			</div>
 		</div>

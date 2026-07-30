@@ -234,10 +234,14 @@ product UI.
 6. Use `New task`. When `AO Cloud tasks` is enabled and ready, the same dialog
    spawns the worker through `ao-cloud` and the board/sidebar polling includes
    cloud projects and sessions.
+7. Select the cloud worker. The terminal pane attaches to `ao-cloud`'s `/mux`
+   WebSocket with the dev access token and opens a Daytona tmux attach stream
+   for the session's `terminalHandleId`.
 
-Current limitation: this dev UI path shows cloud project/session status, but it
-does not attach the desktop terminal pane to Daytona yet. A cloud terminal bridge
-is still needed for interactive TTY parity.
+The terminal pane uses the same frontend mux client as local sessions, but points
+it at the configured `AO Cloud URL`. `ao-cloud` authenticates the WebSocket
+query token, scopes the request to the selected org, then authorizes the runtime
+handle before delegating to the Daytona runtime adapter.
 
 Tunnel reachability note: ngrok, Cloudflare quick tunnels, and localtunnel all
 served `/healthz` from the maintainer machine, but Daytona sandbox `curl` calls

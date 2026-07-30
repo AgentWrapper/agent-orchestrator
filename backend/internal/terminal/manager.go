@@ -258,10 +258,13 @@ func largestGrid(members map[*connState]*termMember) (cols, rows uint16) {
 func (m *Manager) Serve(ctx context.Context, conn wsConn) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	stopOnManagerClose := context.AfterFunc(m.ctx, cancel)
+	defer stopOnManagerClose()
 
 	c := &connState{
 		mgr:    m,
 		conn:   conn,
+		ctx:    ctx,
 		cancel: cancel,
 		out:    make(chan serverMsg, defaultWriteBuffer),
 		terms:  map[string]*attachment{},
@@ -287,6 +290,7 @@ func (m *Manager) Serve(ctx context.Context, conn wsConn) {
 type connState struct {
 	mgr    *Manager
 	conn   wsConn
+	ctx    context.Context
 	cancel context.CancelFunc
 	out    chan serverMsg
 
@@ -391,7 +395,7 @@ func (c *connState) openTerminal(id string, rows, cols uint16, role string) {
 	c.mgr.joinTerminal(id, c, a, cols, rows, role != roleSecondary)
 
 	go func() {
-		a.run(c.mgr.ctx)
+		a.run(c.ctx)
 		c.mgr.forget(a)
 	}()
 }

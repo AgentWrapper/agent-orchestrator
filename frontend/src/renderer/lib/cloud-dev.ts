@@ -1,5 +1,6 @@
 import type { components } from "../../api/schema";
 import type { CloudDevSettings } from "../stores/ui-store";
+import { createTerminalMux, muxUrlFromApiBase, type TerminalMux } from "./terminal-mux";
 
 type CloudRequestOptions = {
 	method?: string;
@@ -33,6 +34,17 @@ export function cloudDevReady(settings: CloudDevSettings): boolean {
 		settings.orgId.trim() !== "" &&
 		settings.projectId.trim() !== ""
 	);
+}
+
+export function cloudDevTerminalMuxURL(settings: CloudDevSettings): string {
+	const url = new URL(muxUrlFromApiBase(normalizeCloudBaseUrl(settings.apiBaseUrl)));
+	url.searchParams.set("access_token", settings.accessToken.trim());
+	if (settings.orgId.trim()) url.searchParams.set("org_id", settings.orgId.trim());
+	return url.toString();
+}
+
+export function createCloudDevTerminalMux(settings: CloudDevSettings): TerminalMux {
+	return createTerminalMux(cloudDevTerminalMuxURL(settings));
 }
 
 export async function createCloudDevToken(settings: CloudDevSettings): Promise<{ accessToken: string; orgId: string }> {

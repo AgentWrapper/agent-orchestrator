@@ -12,6 +12,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
+type managerContextKey string
+
 // fakeConn is an in-memory wsConn driven by channels.
 type fakeConn struct {
 	in     chan clientMsg
@@ -98,6 +100,38 @@ func TestServeOpenStreamsAndWritesTerminal(t *testing.T) {
 		rs := pty.resizeCalls()
 		return len(rs) == 1 && rs[0] == [2]uint16{30, 100}
 	})
+}
+
+func TestServePassesRequestContextToAttachmentSource(t *testing.T) {
+	seen := make(chan string, 1)
+	src := &fakeSource{
+		alive: true,
+		aliveFn: func(ctx context.Context) {
+			if value, _ := ctx.Value(managerContextKey("tenant")).(string); value != "" {
+				seen <- value
+			}
+		},
+		spawner: &fakeSpawner{ptys: []*fakePTY{newFakePTY()}},
+	}
+	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0))
+	defer mgr.Close()
+
+	conn := newFakeConn()
+	ctx := context.WithValue(context.Background(), managerContextKey("tenant"), "org-1")
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go mgr.Serve(ctx, conn)
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
+
+	select {
+	case got := <-seen:
+		if got != "org-1" {
+			t.Fatalf("tenant context = %q, want org-1", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("attachment source did not see request context")
+	}
 }
 
 func TestServeBuffersInputUntilAttachReady(t *testing.T) {

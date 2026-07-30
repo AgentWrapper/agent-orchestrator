@@ -71,9 +71,12 @@ func Run() error {
 	}
 	pollerDone := poller.Start(ctx)
 
-	runtimeStack, err := newCloudRuntimeStack(cfg, store, issuer, logger)
+	runtimeStack, err := newCloudRuntimeStack(cfg, store, issuer, events, logger)
 	if err != nil {
 		return err
+	}
+	if runtimeStack != nil && runtimeStack.term != nil {
+		defer runtimeStack.term.Close()
 	}
 	handler := NewHandlerWithRuntime(cfg, store, issuer, credentialSvc, events, runtimeStack)
 	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
@@ -121,6 +124,7 @@ func NewHandlerWithRuntime(cfg Config, store *postgres.Store, issuer *auth.Issue
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
+	r.Use(cloudRequestLogger(slog.Default()))
 	r.Use(middleware.Recoverer)
 	r.Use(cloudCORSMiddleware)
 
@@ -136,6 +140,13 @@ func NewHandlerWithRuntime(cfg Config, store *postgres.Store, issuer *auth.Issue
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		envelope.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "ao-cloud"})
 	})
+	if runtimeStack != nil && runtimeStack.term != nil {
+		r.Group(func(r chi.Router) {
+			r.Use(cloudMuxQueryAuthMiddleware)
+			r.Use(tenancy.Middleware(issuer, store))
+			httpd.MountTerminalMux(r, runtimeStack.term, slog.Default())
+		})
+	}
 
 	var sessionService *sessionsvc.Service
 	activity := controllers.ActivityRecorder(nil)
@@ -199,6 +210,52 @@ func cloudCORSMiddleware(next http.Handler) http.Handler {
 			}
 			w.WriteHeader(http.StatusNoContent)
 			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func cloudRequestLogger(log *slog.Logger) func(http.Handler) http.Handler {
+	if log == nil {
+		log = slog.Default()
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+			r, capturedErr := envelope.WithErrorCapture(r)
+			start := time.Now()
+			defer func() {
+				attrs := []any{
+					"id", middleware.GetReqID(r.Context()),
+					"method", r.Method,
+					"path", r.URL.Path,
+					"status", ww.Status(),
+					"bytes", ww.BytesWritten(),
+					"duration", time.Since(start),
+					"remote", r.RemoteAddr,
+				}
+				if err := capturedErr(); err != nil && ww.Status() >= http.StatusInternalServerError {
+					attrs = append(attrs, "error", err)
+				}
+				log.Info("ao-cloud http request", attrs...)
+			}()
+			next.ServeHTTP(ww, r)
+		})
+	}
+}
+
+func cloudMuxQueryAuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if r.Header.Get("Authorization") == "" {
+			if token := strings.TrimSpace(q.Get("access_token")); token != "" {
+				r.Header.Set("Authorization", "Bearer "+token)
+			}
+		}
+		if r.Header.Get("X-AO-Org-ID") == "" {
+			if orgID := strings.TrimSpace(q.Get("org_id")); orgID != "" {
+				r.Header.Set("X-AO-Org-ID", orgID)
+			}
 		}
 		next.ServeHTTP(w, r)
 	})

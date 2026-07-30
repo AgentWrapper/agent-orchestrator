@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/auth"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
@@ -72,4 +73,91 @@ func TestCloudClaudeAgentLaunchUsesPrintModeForInitialPrompt(t *testing.T) {
 			t.Fatalf("script missing %q: %s", want, cmd[2])
 		}
 	}
+}
+
+func TestCloudTerminalSourceScopesAttachToAuthenticatedOrgSession(t *testing.T) {
+	store := &fakeCloudTerminalStore{
+		sessions: []domain.SessionRecord{{
+			ID: "sess-1",
+			Metadata: domain.SessionMetadata{
+				RuntimeHandleID: "runtime-1",
+			},
+		}},
+	}
+	runtime := &fakeCloudTerminalRuntime{alive: true, stream: fakeCloudTerminalStream{}}
+	source := cloudTerminalSource{store: store, runtime: runtime}
+
+	stream, err := source.Attach(context.Background(), ports.RuntimeHandle{ID: "runtime-1"}, 24, 80)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	if stream == nil || runtime.attachedHandle != "runtime-1" {
+		t.Fatalf("Attach did not delegate to runtime, stream=%#v handle=%q", stream, runtime.attachedHandle)
+	}
+}
+
+func TestCloudTerminalSourceRejectsHandleOutsideAuthenticatedOrg(t *testing.T) {
+	source := cloudTerminalSource{
+		store: &fakeCloudTerminalStore{
+			sessions: []domain.SessionRecord{{
+				ID: "sess-1",
+				Metadata: domain.SessionMetadata{
+					RuntimeHandleID: "runtime-1",
+				},
+			}},
+		},
+		runtime: &fakeCloudTerminalRuntime{alive: true, stream: fakeCloudTerminalStream{}},
+	}
+
+	alive, err := source.IsAlive(context.Background(), ports.RuntimeHandle{ID: "other-runtime"})
+	if err != nil {
+		t.Fatalf("IsAlive: %v", err)
+	}
+	if alive {
+		t.Fatalf("IsAlive = true, want false for unknown handle")
+	}
+	if _, err := source.Attach(context.Background(), ports.RuntimeHandle{ID: "other-runtime"}, 24, 80); err == nil {
+		t.Fatalf("Attach succeeded for unknown handle")
+	}
+}
+
+type fakeCloudTerminalStore struct {
+	sessions []domain.SessionRecord
+}
+
+func (s *fakeCloudTerminalStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
+	for _, rec := range s.sessions {
+		if rec.ID == id {
+			return rec, true, nil
+		}
+	}
+	return domain.SessionRecord{}, false, nil
+}
+
+func (s *fakeCloudTerminalStore) ListAllSessions(context.Context) ([]domain.SessionRecord, error) {
+	return s.sessions, nil
+}
+
+type fakeCloudTerminalRuntime struct {
+	alive          bool
+	stream         ports.Stream
+	attachedHandle string
+}
+
+func (r *fakeCloudTerminalRuntime) Attach(_ context.Context, handle ports.RuntimeHandle, _, _ uint16) (ports.Stream, error) {
+	r.attachedHandle = handle.ID
+	return r.stream, nil
+}
+
+func (r *fakeCloudTerminalRuntime) IsAlive(context.Context, ports.RuntimeHandle) (bool, error) {
+	return r.alive, nil
+}
+
+type fakeCloudTerminalStream struct{}
+
+func (fakeCloudTerminalStream) Read([]byte) (int, error)  { return 0, nil }
+func (fakeCloudTerminalStream) Write([]byte) (int, error) { return 0, nil }
+func (fakeCloudTerminalStream) Close() error              { return nil }
+func (fakeCloudTerminalStream) Resize(uint16, uint16) error {
+	return nil
 }

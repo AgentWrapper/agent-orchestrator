@@ -16,6 +16,7 @@ import (
 type fakeSource struct {
 	spawner   *fakeSpawner
 	attachFn  func(ctx context.Context, rows, cols uint16) (ports.Stream, error)
+	aliveFn   func(ctx context.Context)
 	mu        sync.Mutex
 	alive     bool
 	aliveErr  error
@@ -35,7 +36,10 @@ func (f *fakeSource) Attach(ctx context.Context, _ ports.RuntimeHandle, rows, co
 	return f.spawner.spawn(rows, cols)
 }
 
-func (f *fakeSource) IsAlive(context.Context, ports.RuntimeHandle) (bool, error) {
+func (f *fakeSource) IsAlive(ctx context.Context, _ ports.RuntimeHandle) (bool, error) {
+	if f.aliveFn != nil {
+		f.aliveFn(ctx)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.alive, f.aliveErr
