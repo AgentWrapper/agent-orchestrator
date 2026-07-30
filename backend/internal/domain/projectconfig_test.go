@@ -30,6 +30,7 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"agent rules file bare dot", ProjectConfig{AgentRulesFile: "."}, true},
 		{"good reviewers", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerClaudeCode}}}, false},
 		{"good codex reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerCodex}}}, false},
+		{"good Kilo Code reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerKiloCode}}}, false},
 		{"good opencode reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerOpenCode}}}, false},
 		{"unknown reviewer harness", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: "nope"}}}, true},
 		{"worker-only harness is not auto a reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerHarness(HarnessAider)}}}, true},
@@ -113,6 +114,9 @@ func TestResolveReviewerHarness(t *testing.T) {
 	}
 	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessOpenCode); got != ReviewerOpenCode {
 		t.Fatalf("opencode worker = %q, want reviewer opencode", got)
+	}
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessKilocode); got != ReviewerKiloCode {
+		t.Fatalf("Kilo Code worker = %q, want reviewer kilocode", got)
 	}
 
 	// A worker harness that is not itself a reviewer (e.g. crush, aider) falls

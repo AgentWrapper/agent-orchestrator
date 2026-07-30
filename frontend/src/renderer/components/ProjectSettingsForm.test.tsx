@@ -67,6 +67,7 @@ const agentCatalogResponse = {
 			{ id: "claude-code", label: "Claude Code" },
 			{ id: "codex", label: "Codex" },
 			{ id: "goose", label: "Goose" },
+			{ id: "kilocode", label: "Kilo Code" },
 			{ id: "kiro", label: "Kiro" },
 			{ id: "opencode", label: "OpenCode" },
 		],
@@ -74,12 +75,14 @@ const agentCatalogResponse = {
 			{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
 			{ id: "codex", label: "Codex", authStatus: "authorized" },
 			{ id: "goose", label: "Goose", authStatus: "authorized" },
+			{ id: "kilocode", label: "Kilo Code", authStatus: "authorized" },
 			{ id: "kiro", label: "Kiro", authStatus: "unknown" },
 			{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
 		],
 		authorized: [
 			{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
 			{ id: "codex", label: "Codex", authStatus: "authorized" },
+			{ id: "kilocode", label: "Kilo Code", authStatus: "authorized" },
 			{ id: "goose", label: "Goose", authStatus: "authorized" },
 			{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
 		],
@@ -410,9 +413,31 @@ describe("ProjectSettingsForm", () => {
 			"Codex",
 			"OpenCode",
 			"Goose",
+			"Kilo Code",
 			"KiroAuth unknown",
 		]);
-		expect(options[4]).not.toHaveAttribute("aria-disabled", "true");
+		expect(options[5]).not.toHaveAttribute("aria-disabled", "true");
+	});
+
+	it("offers Kilo Code as a configured reviewer", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		const reviewer = await screen.findByRole("button", { name: "Default reviewer agent" });
+		await userEvent.click(reviewer);
+		expect(await screen.findByRole("menuitem", { name: "Kilo Code" })).toBeEnabled();
 	});
 
 	it("shows scratch identity and saves only scratch-supported settings", async () => {
