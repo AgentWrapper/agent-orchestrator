@@ -7,12 +7,20 @@ import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "../../shared/
 const POSTHOG_KEY = import.meta.env.VITE_AO_POSTHOG_KEY?.trim() || DEFAULT_POSTHOG_PROJECT_KEY;
 const POSTHOG_HOST = import.meta.env.VITE_AO_POSTHOG_HOST?.trim() || DEFAULT_POSTHOG_HOST;
 const RELEASE_TAG = "2026-01-30";
+const TELEMETRY_SCHEMA_VERSION = 2;
 const REDACTED_LOCAL_URL = "[redacted-local-url]";
 const REDACTED_LOCAL_PATH = "[redacted-local-path]";
 const ACTIVE_STORAGE_KEY = "ao.telemetry.activeSlotsByDate";
 const ROUTE_VIEW_STORAGE_KEY = "ao.telemetry.routeViewsByDate";
 const EMBEDDED_LOCAL_URL_PATTERN =
 	/(?:\bfile:\/\/\/\S+|\bapp:\/\/renderer\/\S+|\bhttps?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\S*)/gi;
+const POSTHOG_EVENT_NAME_ALIASES: Record<string, string> = {
+	"ao.app.active": "ao.v2.app.active",
+	"ao.renderer.route_viewed": "ao.v2.renderer.route_viewed",
+	"ao.renderer.loaded": "ao.v2.renderer.loaded",
+	"ao.renderer.api_error": "ao.v2.renderer.api_error",
+	"ao.renderer.daemon_failure": "ao.v2.renderer.daemon_failure",
+};
 
 let initPromise: Promise<boolean> | null = null;
 let errorHandlersBound = false;
@@ -79,11 +87,16 @@ export function buildTelemetryContext(appVersion: string, platform: string): Tel
 		ao_version: version,
 		platform,
 		build_mode: import.meta.env.DEV ? "dev" : "packaged",
+		telemetry_schema_version: TELEMETRY_SCHEMA_VERSION,
 	};
 }
 
 export function withTelemetryContext(properties: TelemetryProperties): TelemetryProperties {
 	return { ...telemetryContext, ...properties, $process_person_profile: false };
+}
+
+export function postHogEventName(event: string): string {
+	return POSTHOG_EVENT_NAME_ALIASES[event] ?? event;
 }
 
 export function reserveDailyActiveCapture(storage?: DailyActiveStorage, now = new Date()): boolean {
@@ -502,13 +515,16 @@ export async function initTelemetry(): Promise<boolean> {
 			capture: async () =>
 				Boolean(
 					posthog.capture(
-						"ao.app.active",
+						postHogEventName("ao.app.active"),
 						withTelemetryContext(await sanitizeRendererProperties("ao.app.active", { channel: "renderer" })),
 						{ send_instantly: true },
 					),
 				),
 		});
-		posthog.capture("ao.renderer.loaded", withTelemetryContext(await sanitizeRendererProperties("ao.renderer.loaded")));
+		posthog.capture(
+			postHogEventName("ao.renderer.loaded"),
+			withTelemetryContext(await sanitizeRendererProperties("ao.renderer.loaded")),
+		);
 		return true;
 	})().catch(() => false);
 	return initPromise;
@@ -524,7 +540,7 @@ export async function captureRendererEvent(event: string, properties?: Record<st
 	}
 	if (!(await initTelemetry())) return;
 	const safeProperties = withTelemetryContext(sanitizedProperties);
-	posthog.capture(event, safeProperties);
+	posthog.capture(postHogEventName(event), safeProperties);
 }
 
 export async function captureRendererException(error: unknown, properties?: Record<string, unknown>): Promise<void> {

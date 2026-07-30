@@ -104,7 +104,7 @@ func TestVersionEmitsCLIInvocationBestEffort(t *testing.T) {
 	}
 }
 
-func TestShouldEmitCLIInvocationSkipsOnlyNonUsageCommands(t *testing.T) {
+func TestShouldEmitCLIInvocationSkipsNonUsageAndRoutineInternalCommands(t *testing.T) {
 	byName := map[string]*cobra.Command{}
 	for _, cmd := range NewRootCommand(Deps{}).Commands() {
 		byName[cmd.Name()] = cmd
@@ -112,11 +112,12 @@ func TestShouldEmitCLIInvocationSkipsOnlyNonUsageCommands(t *testing.T) {
 	for name, want := range map[string]bool{
 		"daemon": false, // supervisor-driven bootstrapping, not human usage
 		"start":  false,
-		// hooks is agent activity; pty-host is only an internal Windows runtime
-		// process and should not count as CLI usage.
-		"hooks":    true,
+		// hooks/status are routine internal polling paths; pty-host is only an
+		// internal Windows runtime process. Successful executions should not
+		// count as CLI usage.
+		"hooks":    false,
 		"pty-host": false,
-		"status":   true,
+		"status":   false,
 		"spawn":    true,
 	} {
 		cmd, ok := byName[name]

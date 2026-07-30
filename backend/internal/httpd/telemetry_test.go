@@ -21,7 +21,7 @@ func (f telemetryRoundTripper) Do(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
-func TestCLIInvokedRouteEmitsTelemetry(t *testing.T) {
+func TestCLIInvokedRouteEmitsTelemetryForUserCommands(t *testing.T) {
 	sink := &captureSink{}
 	r := NewRouterWithControl(config.Config{DataDir: t.TempDir()}, discardLogger(), nil, APIDeps{Telemetry: sink}, ControlDeps{})
 
@@ -38,15 +38,15 @@ func TestCLIInvokedRouteEmitsTelemetry(t *testing.T) {
 		}
 	}
 
-	postInvoked("status", "ao status")
+	postInvoked("spawn", "ao spawn")
 	if len(sink.events) != 2 {
 		t.Fatalf("events = %d, want 2", len(sink.events))
 	}
 	if sink.events[0].Name != "ao.cli.invoked" {
 		t.Fatalf("event name = %q, want ao.cli.invoked", sink.events[0].Name)
 	}
-	if got := sink.events[0].Payload["command_path"]; got != "ao status" {
-		t.Fatalf("command_path = %#v, want ao status", got)
+	if got := sink.events[0].Payload["command_path"]; got != "ao spawn" {
+		t.Fatalf("command_path = %#v, want ao spawn", got)
 	}
 	if got := sink.events[0].Payload["actor_type"]; got != "user" {
 		t.Fatalf("actor_type = %#v, want user", got)
@@ -61,22 +61,51 @@ func TestCLIInvokedRouteEmitsTelemetry(t *testing.T) {
 	// Repeat invocations of the same command the same day are polling noise:
 	// both the per-command invocation event and the daily activity heartbeat
 	// stay silent.
-	postInvoked("status", "ao status")
+	postInvoked("spawn", "ao spawn")
 	if len(sink.events) != 2 {
 		t.Fatalf("events after repeat invocation = %d, want 2", len(sink.events))
 	}
 
 	// A different command the same day still reports its first invocation, but
 	// no additional heartbeat.
-	postInvoked("ls", "ao session ls")
+	postInvoked("send", "ao send")
 	if len(sink.events) != 3 {
 		t.Fatalf("events after new command = %d, want 3", len(sink.events))
 	}
 	if sink.events[2].Name != "ao.cli.invoked" {
 		t.Fatalf("third event name = %q, want ao.cli.invoked", sink.events[2].Name)
 	}
-	if got := sink.events[2].Payload["command_path"]; got != "ao session ls" {
-		t.Fatalf("command_path = %#v, want ao session ls", got)
+	if got := sink.events[2].Payload["command_path"]; got != "ao send" {
+		t.Fatalf("command_path = %#v, want ao send", got)
+	}
+}
+
+func TestCLIInvokedRouteDropsRoutineInternalSuccessTelemetry(t *testing.T) {
+	sink := &captureSink{}
+	r := NewRouterWithControl(config.Config{DataDir: t.TempDir()}, discardLogger(), nil, APIDeps{Telemetry: sink}, ControlDeps{})
+
+	for _, body := range []string{
+		`{"command":"status","commandPath":"ao status","actorType":"user"}`,
+		`{"command":"ls","commandPath":"ao session ls","actorType":"user"}`,
+		`{"command":"get","commandPath":"ao session get","actorType":"user"}`,
+		`{"command":"ls","commandPath":"ao project ls","actorType":"user"}`,
+		`{"command":"get","commandPath":"ao project get","actorType":"user"}`,
+		`{"command":"ls","commandPath":"ao orchestrator ls","actorType":"user"}`,
+		`{"command":"hooks","commandPath":"ao hooks","actorType":"agent"}`,
+		`{"command":"pty-host","commandPath":"ao pty-host","actorType":"system"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/internal/telemetry/cli-invoked", strings.NewReader(body))
+		req.Host = "127.0.0.1:3001"
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("status for %s = %d, want 202", body, rec.Code)
+		}
+	}
+
+	if len(sink.events) != 0 {
+		t.Fatalf("events = %#v, want none for routine internal successes", sink.events)
 	}
 }
 
@@ -96,31 +125,28 @@ func TestCLIInvokedRouteSeparatesAgentAndSystemInvocationsFromActiveUsers(t *tes
 		}
 	}
 
-	// Older CLIs do not send actorType, so the daemon infers ao hooks as agent
-	// activity and keeps it out of ao.app.active.
+	// Older CLIs do not send actorType, so the daemon infers ao hooks as a
+	// routine internal agent path and drops successful invocation telemetry.
 	postInvoked(`{"command":"hooks","commandPath":"ao hooks"}`)
-	if len(sink.events) != 1 {
-		t.Fatalf("events after hooks = %d, want 1", len(sink.events))
-	}
-	if sink.events[0].Name != "ao.cli.invoked" || sink.events[0].Payload["actor_type"] != "agent" {
-		t.Fatalf("hooks event = %#v, want agent ao.cli.invoked", sink.events[0])
+	if len(sink.events) != 0 {
+		t.Fatalf("events after hooks = %d, want 0", len(sink.events))
 	}
 
 	// Newer CLIs mark any command run inside an AO-managed agent session as
 	// agent-context, even if it is not the hooks subcommand.
-	postInvoked(`{"command":"ls","commandPath":"ao session ls","actorType":"agent"}`)
-	if len(sink.events) != 2 {
-		t.Fatalf("events after agent session ls = %d, want 2", len(sink.events))
+	postInvoked(`{"command":"send","commandPath":"ao send","actorType":"agent"}`)
+	if len(sink.events) != 1 {
+		t.Fatalf("events after agent send = %d, want 1", len(sink.events))
 	}
-	if sink.events[1].Payload["actor_type"] != "agent" {
-		t.Fatalf("agent session ls actor_type = %#v, want agent", sink.events[1].Payload["actor_type"])
+	if sink.events[0].Payload["actor_type"] != "agent" {
+		t.Fatalf("agent send actor_type = %#v, want agent", sink.events[0].Payload["actor_type"])
 	}
 
 	// Internal runtime hosts are system background processes and should not
 	// emit CLI usage or active-user telemetry at all.
 	postInvoked(`{"command":"pty-host","commandPath":"ao pty-host"}`)
-	if len(sink.events) != 2 {
-		t.Fatalf("events after pty-host = %d, want 2", len(sink.events))
+	if len(sink.events) != 1 {
+		t.Fatalf("events after pty-host = %d, want 1", len(sink.events))
 	}
 }
 
@@ -140,13 +166,13 @@ func TestCLIInvokedRouteDedupeIncludesActorType(t *testing.T) {
 		}
 	}
 
-	postInvoked(`{"command":"ls","commandPath":"ao session ls","actorType":"agent"}`)
-	postInvoked(`{"command":"ls","commandPath":"ao session ls","actorType":"agent"}`)
+	postInvoked(`{"command":"send","commandPath":"ao send","actorType":"agent"}`)
+	postInvoked(`{"command":"send","commandPath":"ao send","actorType":"agent"}`)
 	if len(sink.events) != 1 {
 		t.Fatalf("events after repeated agent command = %d, want 1", len(sink.events))
 	}
 
-	postInvoked(`{"command":"ls","commandPath":"ao session ls","actorType":"user"}`)
+	postInvoked(`{"command":"send","commandPath":"ao send","actorType":"user"}`)
 	if len(sink.events) != 3 {
 		t.Fatalf("events after same user command = %d, want 3", len(sink.events))
 	}
@@ -293,18 +319,18 @@ func TestCLIInvokedRoutePersistsDailyReservationsAcrossRouterRestart(t *testing.
 	}
 
 	r1 := NewRouterWithControl(cfg, discardLogger(), nil, APIDeps{Telemetry: sink}, ControlDeps{})
-	postInvoked(r1, "status", "ao status")
+	postInvoked(r1, "spawn", "ao spawn")
 	if len(sink.events) != 2 {
 		t.Fatalf("events after first invocation = %d, want 2", len(sink.events))
 	}
 
 	r2 := NewRouterWithControl(cfg, discardLogger(), nil, APIDeps{Telemetry: sink}, ControlDeps{})
-	postInvoked(r2, "status", "ao status")
+	postInvoked(r2, "spawn", "ao spawn")
 	if len(sink.events) != 2 {
 		t.Fatalf("events after router restart repeat = %d, want 2", len(sink.events))
 	}
 
-	postInvoked(r2, "ls", "ao session ls")
+	postInvoked(r2, "send", "ao send")
 	if len(sink.events) != 3 {
 		t.Fatalf("events after router restart new command = %d, want 3", len(sink.events))
 	}

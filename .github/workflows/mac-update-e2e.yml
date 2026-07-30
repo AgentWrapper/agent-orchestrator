@@ -4,33 +4,49 @@ name: macOS update e2e
 # point it at version N's REAL published feed, and prove the update downloads,
 # stages, installs, and that the relaunched app both reports N and is alive.
 #
-# This is the check that would have caught both #3034 and the 29 Jul incident
-# before any user saw them. The interesting logic lives in
-# frontend/scripts/e2e-mac-update.mjs; this job only supplies a real macOS host
-# and a real signed baseline install.
+# This is the check that would have caught both #3034 and the 29 Jul incident.
+# The interesting logic lives in frontend/scripts/e2e-mac-update.mjs; this job
+# only supplies a real macOS host and a real signed baseline install.
 #
-# Deliberately NOT wired into any release workflow yet:
+# THIS IS POST-RELEASE MONITORING, NOT A PROMOTION GATE. Read that literally
+# before wiring it anywhere.
+#
+# The app resolves the update through the REAL published GitHub feed, so this
+# job cannot start until version N's release and its latest-mac.yml are already
+# public. By then every real stable client can already see and take that update,
+# and the run takes tens of minutes. A check that finishes after the thing it
+# guards has shipped is not a gate; calling it one would be worse than not
+# having it, because it invites someone to trust it as a pre-promotion barrier.
+# So: run it right after a release lands and treat a failure as "pull or hotfix
+# the release you just published", not "block the release you are about to".
+#
+# What it would take to make it a real pre-promotion gate: an isolated candidate
+# feed that real clients never see, with the public feed promoted only after the
+# check passes. The mechanism for that already exists in principle (the
+# AO_RELEASE_REPO build-time override, #3267 decision 8 step 3, which publishes
+# to a non-production repo), but pointing this job at one requires the private
+# signing/release pipeline to build and publish a candidate there. That pipeline
+# is a separate repo and out of scope here, so the honest description today is
+# monitoring. Do not re-label this without that isolated feed existing.
+#
+# Deliberately NOT wired into any release workflow, and not to be wired in as
+# part of this file's current shape:
 #   - The release workflows are paused, and un-pausing them is a separate
 #     decision that does not belong to this change.
 #   - macOS runner minutes are materially more expensive than Linux, and this
-#     project ships nightlies frequently. #3288 recommends making this a hard
-#     required gate on promotion to the STABLE channel specifically (the exact
-#     transition that failed in production), and treating nightly-to-nightly
-#     coverage as optional pending real per-run cost data. The "cost" step below
-#     prints the wall clock so that question can be settled with numbers.
+#     project ships nightlies frequently. #3288 recommends concentrating spend on
+#     promotion to the STABLE channel specifically (the exact transition that
+#     failed in production), and treating nightly-to-nightly coverage as optional
+#     pending real per-run cost data. The "cost" step below prints the wall clock
+#     so that question can be settled with numbers.
 #
-# To wire it as a stable-promotion gate later, call it from the release
-# workflow:
-#
-#   update-e2e:
-#     uses: ./.github/workflows/mac-update-e2e.yml
-#     with:
-#       baseline_tag: v<previous stable>
-#       target_version: <new version>
-#
-# Requires: the baseline release's signed macOS zip must be published, and the
-# target version's release + latest-mac.yml feed must already be live, since the
-# app resolves the update through the real GitHub feed.
+# Requires, both hard:
+#   - The baseline release's signed macOS zip is published, AND that baseline is
+#     new enough to carry the AO_E2E_UPDATE_SENTINEL listener (added by #3288
+#     workstream 0). Older baselines ignore the env var and can only ever time
+#     out. The harness checks this explicitly and fails in seconds; see the
+#     "Check the baseline can signal staging" step below.
+#   - The target version's release and latest-mac.yml feed are already live.
 
 on:
   workflow_dispatch:
@@ -109,6 +125,27 @@ jobs:
           ditto -x -k "$RUNNER_TEMP/baseline/agent-orchestrator-darwin-arm64.zip" /Applications
           plutil -extract CFBundleShortVersionString raw -o - \
             "/Applications/Agent Orchestrator.app/Contents/Info.plist"
+
+      - name: Check the baseline can signal staging
+        # The harness waits on AO_E2E_UPDATE_SENTINEL, and that listener only
+        # exists from #3288 workstream 0 onward. A baseline published before it
+        # ignores the env var entirely, so the run could only ever burn the full
+        # 20 minute download timeout and report a "never staged" failure that
+        # looks like a broken update. Same check the harness makes, hoisted into
+        # its own step so an incapable baseline is unmistakable in the log.
+        run: |
+          set -euo pipefail
+          node --input-type=module -e '
+            import { assertSentinelCapable } from "./frontend/scripts/e2e-mac-update.mjs";
+            const app = "/Applications/Agent Orchestrator.app";
+            try {
+              assertSentinelCapable(app);
+            } catch (err) {
+              console.error(`::error::${err.message}`);
+              process.exit(1);
+            }
+            console.log("baseline supports AO_E2E_UPDATE_SENTINEL");
+          '
 
       - name: Run the update end to end
         env:
