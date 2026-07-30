@@ -36,6 +36,7 @@ interface CloudInspectorProps {
   open: boolean;
   width: number;
   onTabChange: (tab: CloudInspectorTab) => void;
+  onPreviewAddressChange: (address: string) => void;
   onWidthChange: (width: number) => void;
   onClose: () => void;
 }
@@ -60,13 +61,10 @@ export function CloudInspector({
   open,
   width,
   onTabChange,
+  onPreviewAddressChange,
   onWidthChange,
   onClose,
 }: CloudInspectorProps) {
-  const [filePreviewAddress, setFilePreviewAddress] = useState("");
-  useEffect(() => {
-    if (previewAddress) setFilePreviewAddress("");
-  }, [previewAddress]);
   const startResize = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     const originX = event.clientX;
@@ -154,7 +152,8 @@ export function CloudInspector({
                 <BrowserView
                   api={api}
                   sessionId={sessionId}
-                  requestedAddress={filePreviewAddress || previewAddress}
+                  requestedAddress={previewAddress}
+                  onAddressChange={onPreviewAddressChange}
                 />
               </div>
               <div
@@ -171,7 +170,7 @@ export function CloudInspector({
                   api={api}
                   sessionId={sessionId}
                   onPreview={(path) => {
-                    setFilePreviewAddress(
+                    onPreviewAddressChange(
                       `file:///workspace/repository/${path.replace(/^\/+/, "")}`,
                     );
                     onTabChange("browser");
@@ -668,10 +667,12 @@ function BrowserView({
   api,
   sessionId,
   requestedAddress,
+  onAddressChange,
 }: {
   api: CloudAPI;
   sessionId: string;
   requestedAddress?: string;
+  onAddressChange: (address: string) => void;
 }) {
   const [address, setAddress] = useState("http://localhost:3000");
   const [loadedAddress, setLoadedAddress] = useState("");
@@ -703,6 +704,7 @@ function BrowserView({
         }
         setLoadedAddress(parsed.href);
         setAddress(parsed.href);
+        onAddressChange(parsed.href);
       } catch (navigationError) {
         setPreviewURL("");
         setError(
@@ -714,7 +716,7 @@ function BrowserView({
         setLoading(false);
       }
     },
-    [api, sessionId],
+    [api, onAddressChange, sessionId],
   );
 
   useEffect(() => {

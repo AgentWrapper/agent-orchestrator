@@ -60,6 +60,12 @@ import { CloudTerminal } from "./CloudTerminal";
 
 type View = "board" | "session" | "settings";
 
+interface SessionInspectorState {
+  open: boolean;
+  tab: CloudInspectorTab;
+  previewAddress?: string;
+}
+
 const cloudSelectionKey = "ao-cloud-selection";
 const cloudSidebarWidthKey = "ao-cloud-sidebar-width";
 const cloudSidebarCollapsedKey = "ao-cloud-sidebar-collapsed";
@@ -180,14 +186,10 @@ export default function CloudAppPage() {
   const [selectionRestored, setSelectionRestored] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(defaultSidebarWidth);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [inspectorOpen, setInspectorOpen] = useState(false);
   const [inspectorWidth, setInspectorWidth] = useState(480);
-  const [inspectorTab, setInspectorTab] =
-    useState<CloudInspectorTab>("terminal");
-  const [inspectorPreview, setInspectorPreview] = useState<{
-    sessionId: string;
-    url: string;
-  } | null>(null);
+  const [sessionInspectors, setSessionInspectors] = useState<
+    Record<string, SessionInspectorState>
+  >({});
   const [error, setError] = useState<string | null>(null);
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [showSessionForm, setShowSessionForm] = useState(false);
@@ -196,7 +198,56 @@ export default function CloudAppPage() {
   );
   const optimisticActiveAt = useRef(new Map<string, number>());
   const refreshInFlight = useRef<Promise<void> | null>(null);
-  const inspectorContext = useRef("");
+  const selectedInspector = selectedSessionId
+    ? sessionInspectors[selectedSessionId]
+    : undefined;
+  const inspectorOpen = selectedInspector?.open ?? false;
+  const inspectorTab = selectedInspector?.tab ?? "terminal";
+  const setInspectorOpen = useCallback(
+    (next: boolean | ((current: boolean) => boolean)) => {
+      if (!selectedSessionId) return;
+      setSessionInspectors((current) => {
+        const previous = current[selectedSessionId] ?? {
+          open: false,
+          tab: "terminal",
+        };
+        return {
+          ...current,
+          [selectedSessionId]: {
+            ...previous,
+            open: typeof next === "function" ? next(previous.open) : next,
+          },
+        };
+      });
+    },
+    [selectedSessionId],
+  );
+  const setInspectorTab = useCallback(
+    (tab: CloudInspectorTab) => {
+      if (!selectedSessionId) return;
+      setSessionInspectors((current) => ({
+        ...current,
+        [selectedSessionId]: {
+          ...(current[selectedSessionId] ?? { open: false, tab: "terminal" }),
+          tab,
+        },
+      }));
+    },
+    [selectedSessionId],
+  );
+  const setInspectorPreview = useCallback(
+    (previewAddress: string) => {
+      if (!selectedSessionId) return;
+      setSessionInspectors((current) => ({
+        ...current,
+        [selectedSessionId]: {
+          ...(current[selectedSessionId] ?? { open: false, tab: "terminal" }),
+          previewAddress,
+        },
+      }));
+    },
+    [selectedSessionId],
+  );
 
   const handleChatTurnActiveChange = useCallback(
     (sessionId: string, active: boolean) => {
@@ -228,6 +279,7 @@ export default function CloudAppPage() {
         open?: boolean;
         width?: number;
         tab?: CloudInspectorTab;
+        sessions?: Record<string, Partial<SessionInspectorState>>;
       };
       if (savedSelection.projectId)
         setSelectedProjectId(savedSelection.projectId);
@@ -244,16 +296,44 @@ export default function CloudAppPage() {
         );
       }
       setSidebarCollapsed(savedCollapsed);
-      setInspectorOpen(savedInspector.open === true);
       if (typeof savedInspector.width === "number") {
         setInspectorWidth(Math.min(900, Math.max(320, savedInspector.width)));
       }
-      if (
-        savedInspector.tab &&
-        ["changes", "browser", "terminal", "files"].includes(savedInspector.tab)
-      ) {
-        setInspectorTab(savedInspector.tab);
+      const restoredInspectors: Record<string, SessionInspectorState> = {};
+      for (const [sessionId, inspector] of Object.entries(
+        savedInspector.sessions ?? {},
+      )) {
+        if (
+          inspector &&
+          inspector.tab &&
+          ["changes", "browser", "terminal", "files"].includes(inspector.tab)
+        ) {
+          restoredInspectors[sessionId] = {
+            open: inspector.open === true,
+            tab: inspector.tab,
+            previewAddress:
+              typeof inspector.previewAddress === "string"
+                ? inspector.previewAddress
+                : undefined,
+          };
+        }
       }
+      if (
+        savedSelection.sessionId &&
+        !restoredInspectors[savedSelection.sessionId]
+      ) {
+        restoredInspectors[savedSelection.sessionId] = {
+          open: savedInspector.open === true,
+          tab:
+            savedInspector.tab &&
+            ["changes", "browser", "terminal", "files"].includes(
+              savedInspector.tab,
+            )
+              ? savedInspector.tab
+              : "terminal",
+        };
+      }
+      setSessionInspectors(restoredInspectors);
     } catch {
       window.localStorage.removeItem(cloudSelectionKey);
     } finally {
@@ -277,12 +357,11 @@ export default function CloudAppPage() {
     window.localStorage.setItem(
       cloudInspectorKey,
       JSON.stringify({
-        open: inspectorOpen,
         width: inspectorWidth,
-        tab: inspectorTab,
+        sessions: sessionInspectors,
       }),
     );
-  }, [inspectorOpen, inspectorTab, inspectorWidth, selectionRestored]);
+  }, [inspectorWidth, selectionRestored, sessionInspectors]);
 
   const connectedWorkspaceSessionIDs = useMemo(
     () =>
@@ -415,14 +494,6 @@ export default function CloudAppPage() {
 
   const selectedProject = projects.find(({ id }) => id === selectedProjectId);
   const selectedSession = sessions.find(({ id }) => id === selectedSessionId);
-  useEffect(() => {
-    const nextContext = `${view}:${selectedSession?.id ?? ""}`;
-    if (inspectorContext.current === nextContext) return;
-    inspectorContext.current = nextContext;
-    if (view === "session" && selectedSession?.kind === "orchestrator") {
-      setInspectorOpen(false);
-    }
-  }, [selectedSession?.id, selectedSession?.kind, view]);
   const structuredChatAvailable = selectedSession
     ? supportsStructuredChat(selectedSession)
     : false;
@@ -853,7 +924,7 @@ export default function CloudAppPage() {
               );
             })}
           </div>
-          <div className="border-t border-white/[0.06] p-1.5">
+          <div className="min-h-[105px] shrink-0 border-t border-white/[0.06] p-1.5">
             <button
               className={`flex h-8 w-full items-center rounded-lg text-sm text-[#9ba1aa] hover:bg-white/[0.04] hover:text-white ${
                 sidebarCollapsed ? "justify-center px-0" : "gap-2 px-2"
@@ -1071,10 +1142,7 @@ export default function CloudAppPage() {
                       session={selectedSession}
                       onTurnActiveChange={handleChatTurnActiveChange}
                       onOpenPreview={(url) => {
-                        setInspectorPreview({
-                          sessionId: selectedSession.id,
-                          url,
-                        });
+                        setInspectorPreview(url);
                         setInspectorTab("browser");
                         setInspectorOpen(true);
                       }}
@@ -1085,15 +1153,12 @@ export default function CloudAppPage() {
                     api={api}
                     sessionId={selectedSession.id}
                     runtimeConnected={selectedSession.runtimeConnected}
-                    previewAddress={
-                      inspectorPreview?.sessionId === selectedSession.id
-                        ? inspectorPreview.url
-                        : undefined
-                    }
+                    previewAddress={selectedInspector?.previewAddress}
                     tab={inspectorTab}
                     open={inspectorOpen}
                     width={inspectorWidth}
                     onTabChange={setInspectorTab}
+                    onPreviewAddressChange={setInspectorPreview}
                     onWidthChange={setInspectorWidth}
                     onClose={() => setInspectorOpen(false)}
                   />

@@ -57,6 +57,7 @@ function InspectorHarness({ api }: { api: CloudAPI }) {
       open
       width={480}
       onTabChange={setTab}
+      onPreviewAddressChange={vi.fn()}
       onWidthChange={vi.fn()}
       onClose={vi.fn()}
     />
@@ -127,6 +128,7 @@ it("keeps workspace tools unavailable until the worker connects", () => {
       open
       width={480}
       onTabChange={vi.fn()}
+      onPreviewAddressChange={vi.fn()}
       onWidthChange={vi.fn()}
       onClose={vi.fn()}
     />,

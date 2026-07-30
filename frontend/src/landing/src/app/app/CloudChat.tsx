@@ -540,6 +540,78 @@ function ChatAgentAvatar({
   );
 }
 
+function AssistantMessage({
+  text,
+  streaming,
+  animateBuffered,
+  onOpenPreview,
+}: {
+  text: string;
+  streaming: boolean;
+  animateBuffered: boolean;
+  onOpenPreview?: (url: string) => void;
+}) {
+  const reduceMotion = useReducedMotion();
+  const shouldAnimate = animateBuffered && !reduceMotion;
+  const [visibleText, setVisibleText] = useState(shouldAnimate ? "" : text);
+
+  useEffect(() => {
+    if (!shouldAnimate) {
+      setVisibleText(text);
+      return;
+    }
+    const characters = Array.from(text);
+    const duration = Math.min(1_600, Math.max(350, characters.length * 8));
+    const startedAt = performance.now();
+    let frame = 0;
+    const reveal = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / duration);
+      const visibleCount = Math.max(1, Math.ceil(characters.length * progress));
+      setVisibleText(characters.slice(0, visibleCount).join(""));
+      if (progress < 1) frame = window.requestAnimationFrame(reveal);
+    };
+    frame = window.requestAnimationFrame(reveal);
+    return () => window.cancelAnimationFrame(frame);
+  }, [shouldAnimate, text]);
+
+  const revealing = visibleText.length < text.length;
+  return (
+    <>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        urlTransform={chatURLTransform}
+        components={{
+          a: ({ href, children }) => {
+            const previewLink = href && isWorkerPreviewLink(href);
+            return (
+              <a
+                href={href}
+                target={previewLink ? undefined : "_blank"}
+                rel={previewLink ? undefined : "noreferrer"}
+                onClick={
+                  previewLink && onOpenPreview
+                    ? (event) => {
+                        event.preventDefault();
+                        onOpenPreview(href);
+                      }
+                    : undefined
+                }
+              >
+                {children}
+              </a>
+            );
+          },
+        }}
+      >
+        {visibleText}
+      </ReactMarkdown>
+      {streaming || revealing ? (
+        <span className="ml-1 inline-block size-1.5 animate-pulse rounded-full bg-[#4d8dff] motion-reduce:animate-none" />
+      ) : null}
+    </>
+  );
+}
+
 export function CloudChat({
   api,
   session,
@@ -554,6 +626,9 @@ export function CloudChat({
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
+  const [bufferedAssistantIds, setBufferedAssistantIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [error, setError] = useState<string | null>(null);
   const [replaySessionId, setReplaySessionId] = useState<string | null>(
     initialCache.hydrated ? session.id : null,
@@ -604,6 +679,7 @@ export function CloudChat({
       setError(null);
       setReplaySessionId(cached.hydrated ? session.id : null);
       setInterrupting(false);
+      setBufferedAssistantIds(new Set());
     }
     const needsHistoryReplay = historyLoadedSessionId.current !== session.id;
     const connect = async () => {
@@ -649,6 +725,13 @@ export function CloudChat({
                 event.sequence,
               );
               if (event.type.startsWith("chat.")) {
+                if (event.type === "chat.assistant_message") {
+                  setBufferedAssistantIds((current) => {
+                    const next = new Set(current);
+                    next.add(`assistant-${event.sequence}`);
+                    return next;
+                  });
+                }
                 mergeChatEventCache(session.id, [event]);
                 setEvents((current) => mergeEvents(current, [event]));
                 const eventTurnID =
@@ -899,43 +982,20 @@ export function CloudChat({
                 }
                 if (entry.type === "assistant") {
                   return (
-                    <div key={entry.id} className="flex gap-3">
-                      <div className="mt-1 grid size-6 shrink-0 place-items-center rounded-md bg-[#15171b]">
+                    <div key={entry.id} className="flex items-start gap-3">
+                      <div className="grid size-6 shrink-0 place-items-center rounded-md bg-[#15171b]">
                         <ChatAgentAvatar session={session} className="size-4" />
                       </div>
-                      <div className="prose prose-invert min-w-0 max-w-none flex-1 text-sm leading-6 text-[#d7d7d2] prose-headings:mb-2 prose-headings:mt-4 prose-headings:text-[#f4f5f7] prose-p:my-2 prose-p:text-[#d7d7d2] prose-pre:border prose-pre:border-white/[0.06] prose-pre:bg-[#15171b] prose-code:text-[#d7d7d2] prose-code:before:content-none prose-code:after:content-none prose-li:text-[#d7d7d2] prose-strong:text-[#f4f5f7]">
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm]}
-                          urlTransform={chatURLTransform}
-                          components={{
-                            a: ({ href, children }) => {
-                              const previewLink =
-                                href && isWorkerPreviewLink(href);
-                              return (
-                                <a
-                                  href={href}
-                                  target={previewLink ? undefined : "_blank"}
-                                  rel={previewLink ? undefined : "noreferrer"}
-                                  onClick={
-                                    previewLink && onOpenPreview
-                                      ? (event) => {
-                                          event.preventDefault();
-                                          onOpenPreview(href);
-                                        }
-                                      : undefined
-                                  }
-                                >
-                                  {children}
-                                </a>
-                              );
-                            },
-                          }}
-                        >
-                          {entry.text}
-                        </ReactMarkdown>
-                        {entry.streaming ? (
-                          <span className="ml-1 inline-block size-1.5 animate-pulse rounded-full bg-[#4d8dff] motion-reduce:animate-none" />
-                        ) : null}
+                      <div
+                        className="prose prose-invert min-w-0 max-w-none flex-1 text-sm leading-6 text-[#d7d7d2] prose-headings:mb-2 prose-headings:mt-4 prose-headings:text-[#f4f5f7] prose-p:my-2 prose-p:text-[#d7d7d2] prose-pre:border prose-pre:border-white/[0.06] prose-pre:bg-[#15171b] prose-code:text-[#d7d7d2] prose-code:before:content-none prose-code:after:content-none prose-li:text-[#d7d7d2] prose-strong:text-[#f4f5f7] [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+                        aria-live={entry.streaming ? "polite" : undefined}
+                      >
+                        <AssistantMessage
+                          text={entry.text}
+                          streaming={entry.streaming}
+                          animateBuffered={bufferedAssistantIds.has(entry.id)}
+                          onOpenPreview={onOpenPreview}
+                        />
                       </div>
                     </div>
                   );
@@ -1112,7 +1172,7 @@ export function CloudChat({
         </div>
       </div>
 
-      <div className="border-t border-white/[0.06] bg-[#0a0b0d] px-3 py-3 sm:px-4">
+      <div className="min-h-[105px] border-t border-white/[0.06] bg-[#0a0b0d] px-3 py-3 sm:px-4">
         <div className="mx-auto max-w-3xl">
           {error ? (
             <p role="alert" className="mb-2 text-xs text-[#ef6b6b]">
