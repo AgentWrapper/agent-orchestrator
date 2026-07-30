@@ -70,6 +70,15 @@ type AgentAvatarProps = {
  * hover title, so surfaces that show the logo in place of visible agent text —
  * e.g. the archive cards — still name the agent for screen readers.
  */
+/**
+ * Whether this agent has a real brand mark. Surfaces that only want a logo —
+ * not the initial-letter fallback — can skip rendering entirely; a bare letter
+ * tile is noise in a dense row like the terminal tab strip.
+ */
+export function hasAgentLogo(provider: string): boolean {
+	return Boolean(LOGOS[provider]);
+}
+
 export function AgentAvatar({ provider, className, decorative = false }: AgentAvatarProps) {
 	const logo = LOGOS[provider];
 	if (logo) {

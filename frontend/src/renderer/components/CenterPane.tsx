@@ -15,9 +15,8 @@ import { useUiStore, type Theme } from "../stores/ui-store";
 import type { TerminalTarget } from "../types/terminal";
 import { isOrchestratorSession, type WorkspaceSession } from "../types/workspace";
 import { ShellTerminalTab } from "./ShellTerminalTab";
-import { AgentAvatar } from "./AgentAvatar";
+import { AgentAvatar, hasAgentLogo } from "./AgentAvatar";
 import { TerminalPane } from "./TerminalPane";
-import { AgentAvatar } from "./AgentAvatar";
 import { SessionTopbarPortal } from "./SessionTopbarPortal";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
@@ -401,7 +400,11 @@ function SessionPaneTab({ label, isActive, onSelect, session }: SessionPaneTabPr
 					: "text-muted-foreground hover:bg-raised hover:text-foreground",
 			)}
 		>
-			{session ? <AgentAvatar className="size-icon-base" decorative provider={session.provider} /> : null}
+			{/* Logo only, never the initial-letter fallback: an agent without a mark
+			    (e.g. the fake harness) would put a bare letter tile in the strip. */}
+			{session?.provider && hasAgentLogo(session.provider) ? (
+				<AgentAvatar className="size-icon-base" decorative provider={session.provider} />
+			) : null}
 			<button
 				ref={ref}
 				aria-current={isActive}
