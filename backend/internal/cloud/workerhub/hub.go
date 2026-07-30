@@ -9,6 +9,8 @@ import (
 	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 )
 
+const commandBufferSize = 256
+
 // Command is a live instruction sent to a connected cloud worker.
 type Command struct {
 	Type string `json:"type"`
@@ -27,11 +29,15 @@ type connection struct {
 type Hub struct {
 	mu          sync.RWMutex
 	connections map[clouddomain.SessionID]connection
+	pending     map[clouddomain.SessionID][]Command
 }
 
 // New creates an empty worker connection hub.
 func New() *Hub {
-	return &Hub{connections: make(map[clouddomain.SessionID]connection)}
+	return &Hub{
+		connections: make(map[clouddomain.SessionID]connection),
+		pending:     make(map[clouddomain.SessionID][]Command),
+	}
 }
 
 // Register installs a worker connection and returns its command stream and cleanup function.
@@ -41,13 +47,17 @@ func (h *Hub) Register(
 	epoch int64,
 ) (<-chan Command, func()) {
 	h.mu.Lock()
-	commands := make(chan Command, 256)
+	commands := make(chan Command, commandBufferSize)
 	previous, exists := h.connections[sessionID]
 	if !exists || previous.epoch <= epoch {
 		if exists {
 			close(previous.commands)
 		}
 		h.connections[sessionID] = connection{workerID: workerID, epoch: epoch, commands: commands}
+		for _, command := range h.pending[sessionID] {
+			commands <- command
+		}
+		delete(h.pending, sessionID)
 	} else {
 		close(commands)
 	}
@@ -65,18 +75,24 @@ func (h *Hub) Register(
 
 // Send queues a command for the session's current worker.
 func (h *Hub) Send(sessionID clouddomain.SessionID, command Command) error {
-	h.mu.RLock()
+	h.mu.Lock()
 	connection, ok := h.connections[sessionID]
 	if !ok {
-		h.mu.RUnlock()
-		return ErrWorkerDisconnected
+		pending := h.pending[sessionID]
+		if len(pending) >= commandBufferSize {
+			h.mu.Unlock()
+			return ErrWorkerBackpressure
+		}
+		h.pending[sessionID] = append(pending, command)
+		h.mu.Unlock()
+		return nil
 	}
 	select {
 	case connection.commands <- command:
-		h.mu.RUnlock()
+		h.mu.Unlock()
 		return nil
 	default:
-		h.mu.RUnlock()
+		h.mu.Unlock()
 		return ErrWorkerBackpressure
 	}
 }

@@ -162,6 +162,7 @@ func (r *Runner) commandLoop(
 ) {
 	backoff := time.Second
 	for ctx.Err() == nil {
+		connectionStartedAt := time.Now()
 		err := r.client.RunCommandStream(ctx, func(command cloudworkerhub.Command) error {
 			switch command.Type {
 			case "input":
@@ -182,13 +183,17 @@ func (r *Runner) commandLoop(
 		if ctx.Err() != nil {
 			return
 		}
+		stableConnection := time.Since(connectionStartedAt) >= 10*time.Second
+		if stableConnection {
+			backoff = time.Second
+		}
 		_ = r.client.Event(ctx, "worker.command_stream_disconnected", map[string]string{"error": err.Error()})
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(backoff):
 		}
-		if backoff < 8*time.Second {
+		if !stableConnection && backoff < 8*time.Second {
 			backoff *= 2
 		}
 	}

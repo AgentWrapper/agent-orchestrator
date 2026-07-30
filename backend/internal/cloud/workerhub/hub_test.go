@@ -1,7 +1,6 @@
 package workerhub
 
 import (
-	"errors"
 	"testing"
 
 	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
@@ -25,9 +24,15 @@ func TestNewerWorkerEpochReplacesOlderConnection(t *testing.T) {
 	}
 }
 
-func TestSendFailsWhenWorkerIsDisconnected(t *testing.T) {
-	err := New().Send("missing", Command{Type: "input"})
-	if !errors.Is(err, ErrWorkerDisconnected) {
+func TestSendQueuesWhileWorkerIsDisconnected(t *testing.T) {
+	hub := New()
+	want := Command{Type: "input", Data: "aGVsbG8="}
+	if err := hub.Send("session-one", want); err != nil {
 		t.Fatalf("Send() error = %v", err)
+	}
+	commands, unregister := hub.Register("session-one", "worker-one", 1)
+	defer unregister()
+	if got := <-commands; got != want {
+		t.Fatalf("command = %#v, want %#v", got, want)
 	}
 }
