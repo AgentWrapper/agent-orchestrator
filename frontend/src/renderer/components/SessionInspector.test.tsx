@@ -5,7 +5,8 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionInspector } from "./SessionInspector";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
-import type { PRState, PullRequestFacts, WorkspaceSession } from "../types/workspace";
+import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import type { PRState, PullRequestFacts, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
 const { getMock, navigateMock, patchMock, postMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
@@ -93,10 +94,11 @@ const prSummary = (
 	};
 };
 
-function renderWithQuery(children: ReactNode) {
+function renderWithQuery(children: ReactNode, workspaces?: WorkspaceSummary[]) {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	});
+	if (workspaces) client.setQueryData(workspaceQueryKey, workspaces);
 	return render(<QueryClientProvider client={client}>{children}</QueryClientProvider>);
 }
 
@@ -251,36 +253,53 @@ describe("SessionInspector completion controls", () => {
 		);
 	});
 
-	it("terminates a live merged session and returns to its project after success", async () => {
-		renderWithQuery(<SessionInspector session={session([pr(7, "merged")], { status: "merged" })} />);
+	it("terminates a live merged session and returns to its orchestrator immediately", async () => {
+		postMock.mockReturnValue(new Promise(() => {}));
+		const worker = session([pr(7, "merged")], { status: "merged" });
+		const orchestrator = session([], { id: "orch-1", kind: "orchestrator", title: "orchestrator" });
+		renderWithQuery(<SessionInspector session={worker} />, [
+			{
+				id: "ws-1",
+				name: "my-app",
+				path: "/repo",
+				sessions: [worker, orchestrator],
+			},
+		]);
 
 		expect(
 			screen.queryByRole("switch", { name: "Terminate session when pull requests merge" }),
 		).not.toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: "Terminate session" }));
 		expect(screen.getByRole("dialog", { name: "Terminate do the thing?" })).toBeInTheDocument();
-		await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Terminate session" }));
+		await userEvent.click(
+			within(screen.getByRole("dialog")).getByRole("button", { name: "Yes, terminate session" }),
+		);
 
-		await waitFor(() =>
-			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/kill", {
-				params: { path: { sessionId: "sess-1" } },
-			}),
-		);
-		await waitFor(() =>
-			expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "ws-1" } }),
-		);
+		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/kill", {
+			params: { path: { sessionId: "sess-1" } },
+		});
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "ws-1", sessionId: "orch-1" },
+		});
 	});
 
-	it("keeps the confirmation open and does not navigate when termination fails", async () => {
+	it("keeps the confirmation dismissed after a termination failure", async () => {
 		postMock.mockResolvedValueOnce({ error: new Error("runtime teardown failed"), response: { status: 500 } });
 		renderWithQuery(<SessionInspector session={session([pr(7, "merged")], { status: "merged" })} />);
 
 		await userEvent.click(screen.getByRole("button", { name: "Terminate session" }));
-		await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Terminate session" }));
+		await userEvent.click(
+			within(screen.getByRole("dialog")).getByRole("button", { name: "Yes, terminate session" }),
+		);
 
-		expect(await screen.findByText("runtime teardown failed")).toBeInTheDocument();
-		expect(screen.getByRole("dialog")).toBeInTheDocument();
-		expect(navigateMock).not.toHaveBeenCalled();
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId",
+			params: { projectId: "ws-1" },
+		});
 	});
 
 	it("hides completion controls after the session is terminated", () => {
