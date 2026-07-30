@@ -800,8 +800,8 @@ function SessionCard({
 			{...cardBodyProps}
 			className={cn(
 		"group relative w-full rounded-lg border text-left transition-[border-color,box-shadow,background-color,transform] duration-[100ms] ease-out",
-		badge.cardClassName ?? "border-border bg-background",
-		interactive && "cursor-pointer hover:border-border-strong hover:shadow-sm hover:bg-[color-mix(in_oklch,var(--foreground)_7%,var(--background))] active:scale-[0.98]",
+		badge.cardClassName ?? "border-border bg-card",
+		interactive && "cursor-pointer hover:border-border-strong hover:shadow-sm hover:bg-[color-mix(in_oklch,var(--foreground)_7%,var(--card))] active:scale-[0.98]",
 			)}
 			data-testid="board-session-card"
 			data-session-id={session.id}
