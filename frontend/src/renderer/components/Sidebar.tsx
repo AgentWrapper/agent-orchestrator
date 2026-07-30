@@ -43,7 +43,6 @@ import {
 	ContextMenu,
 	ContextMenuContent,
 	ContextMenuItem,
-	ContextMenuSeparator,
 	ContextMenuTrigger,
 } from "./ui/context-menu";
 import {
@@ -751,12 +750,10 @@ function ProjectItem({
 				<Plus aria-hidden="true" />
 				New session
 			</ContextMenuItem>
-			<ContextMenuSeparator />
 			<ContextMenuItem onSelect={() => selection.goSettings(workspace.id)}>
 				<Settings aria-hidden="true" />
 				Project settings
 			</ContextMenuItem>
-			<ContextMenuSeparator />
 			<ContextMenuItem
 				className="text-destructive focus:text-destructive [&_svg]:text-destructive"
 				disabled={isRemoving}
