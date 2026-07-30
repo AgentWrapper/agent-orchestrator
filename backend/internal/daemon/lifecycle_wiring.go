@@ -226,6 +226,14 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir),
 	})
 	reviewSvc := reviewsvc.New(reviewEngine, store, reviewsvc.WithLifecycleReducer(lcm))
+	lcm.SetActivityObserver(func(ctx context.Context, id domain.SessionID, state domain.ActivityState) {
+		if state.NeedsInput() || state == domain.ActivityExited {
+			return
+		}
+		if err := reviewSvc.RetryPendingDelivery(ctx, id); err != nil {
+			log.Warn("retry pending review delivery failed", "session", id, "err", err)
+		}
+	})
 	return sessionSvc, reviewSvc, mgr, nil
 }
 

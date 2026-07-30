@@ -47,9 +47,43 @@ type Store interface {
 	GetReviewRun(ctx context.Context, id string) (domain.ReviewRun, bool, error)
 	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
 	MarkReviewRunDelivered(ctx context.Context, id string, deliveredAt time.Time) (bool, error)
+	ListReviewRunsBySession(ctx context.Context, id domain.SessionID) ([]domain.ReviewRun, error)
 	ListPRsBySession(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error)
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
+}
+
+// RetryPendingDelivery retries completed change-request reviews that could not
+// be delivered while the worker was blocked or otherwise unsafe to nudge.
+func (s *Service) RetryPendingDelivery(ctx context.Context, workerID domain.SessionID) error {
+	if workerID == "" || s.store == nil || s.lifecycle == nil {
+		return nil
+	}
+	runs, err := s.store.ListReviewRunsBySession(ctx, workerID)
+	if err != nil {
+		return err
+	}
+	batches := make(map[string][]domain.ReviewRun)
+	batchOrder := make([]string, 0)
+	for _, run := range runs {
+		if run.Status != domain.ReviewRunComplete || run.Verdict != domain.VerdictChangesRequested || run.DeliveredAt != nil {
+			continue
+		}
+		key := "batch:" + run.BatchID
+		if run.BatchID == "" {
+			key = "single:" + run.ID
+		}
+		if _, ok := batches[key]; !ok {
+			batchOrder = append(batchOrder, key)
+		}
+		batches[key] = append(batches[key], run)
+	}
+	for _, key := range batchOrder {
+		if _, err := s.deliverSubmitted(ctx, workerID, batches[key]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Reducer is the lifecycle reaction boundary used after a review result has
