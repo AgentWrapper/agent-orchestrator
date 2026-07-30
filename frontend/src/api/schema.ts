@@ -948,6 +948,9 @@ export interface components {
             ok: boolean;
             sessionId: string;
         };
+        ContainerReapConfig: {
+            disabled?: boolean;
+        };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
             branch?: string;
@@ -1012,9 +1015,6 @@ export interface components {
             /** Format: date-time */
             lastActivityAt: string;
             state: string;
-        };
-        DomainContainerReapConfig: {
-            disabled?: boolean;
         };
         DomainReviewerConfig: {
             harness: string;
@@ -1186,7 +1186,7 @@ export interface components {
             agentConfig?: components["schemas"]["AgentConfig"];
             agentRules?: string;
             agentRulesFile?: string;
-            containerReap?: components["schemas"]["DomainContainerReapConfig"];
+            containerReap?: components["schemas"]["ContainerReapConfig"];
             defaultBranch?: string;
             env?: {
                 [key: string]: string;

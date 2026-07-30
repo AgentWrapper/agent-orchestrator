@@ -183,3 +183,22 @@ func TestReapSessionContainers_MiddleFailureDoesNotAbortRemaining(t *testing.T) 
 		t.Fatalf("expected the 4th call to still target ccc, got %v", lastCall)
 	}
 }
+
+// TestReapSessionContainers_ContextDeadlineExceededSparesEverything is the
+// non-blocking review item: a wedged docker daemon (a docker call blocking
+// past reapTimeout) must resolve to "reap nothing," not a kill-blocking
+// error — same bias as every other ambiguous failure mode.
+func TestReapSessionContainers_ContextDeadlineExceededSparesEverything(t *testing.T) {
+	fr := &fakeRunner{t: t, script: []fakeCall{
+		{err: context.DeadlineExceeded},
+	}}
+	r := newWithRunner(fr)
+
+	removed, err := r.ReapSessionContainers(context.Background(), domain.SessionID("sess-1"))
+	if err != nil {
+		t.Fatalf("a deadline-exceeded docker call must not be an error, got: %v", err)
+	}
+	if removed != 0 {
+		t.Fatalf("removed = %d, want 0", removed)
+	}
+}

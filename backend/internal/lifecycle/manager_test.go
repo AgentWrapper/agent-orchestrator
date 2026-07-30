@@ -2041,7 +2041,7 @@ func TestActivity_WorkerIdleOrchestratorActiveDefersNoNudge(t *testing.T) {
 	}
 }
 
-// fakeLifecycleContainerReaper is a minimal containerReaper test double.
+// fakeLifecycleContainerReaper is a minimal ports.ContainerReaper test double.
 type fakeLifecycleContainerReaper struct {
 	sessions []domain.SessionID
 	removed  int
@@ -2067,7 +2067,7 @@ func (f *fakeProjectConfigLoader) GetProject(_ context.Context, id string) (doma
 	return rec, ok, nil
 }
 
-func newManagerWithContainerReaper(cr containerReaper, pl projectConfigLoader) (*Manager, *fakeStore, *fakeMessenger) {
+func newManagerWithContainerReaper(cr ports.ContainerReaper, pl projectConfigLoader) (*Manager, *fakeStore, *fakeMessenger) {
 	st := newFakeStore()
 	msg := &fakeMessenger{}
 	m := New(st, msg, WithContainerReaper(cr, pl))
@@ -2173,5 +2173,27 @@ func TestMarkTerminated_NilReaperSkipsWithoutProjectLookup(t *testing.T) {
 	}
 	if !st.sessions["mer-1"].IsTerminated {
 		t.Fatal("session must still be marked terminated with no reaper wired")
+	}
+}
+
+// TestMarkTerminated_MissingProjectSkipsRatherThanReaps is the regression for
+// failing open on a missing project record: GetProject returning ok=false,
+// err=nil is ambiguity (AO cannot know whether ContainerReap.Disabled would
+// have applied), not a green light to reap. Must be treated the same as the
+// error path.
+func TestMarkTerminated_MissingProjectSkipsRatherThanReaps(t *testing.T) {
+	cr := &fakeLifecycleContainerReaper{}
+	pl := &fakeProjectConfigLoader{projects: map[string]domain.ProjectRecord{}} // no "mer" entry: ok=false, err=nil
+	m, st, _ := newManagerWithContainerReaper(cr, pl)
+	st.sessions["mer-1"] = working("mer-1")
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(cr.sessions) != 0 {
+		t.Fatalf("a missing project record must skip reaping (spare on ambiguity), got calls: %v", cr.sessions)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must still be marked terminated when the project record is missing")
 	}
 }

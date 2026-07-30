@@ -2769,6 +2769,11 @@ components:
       - ok
       - sessionId
       type: object
+    ContainerReapConfig:
+      properties:
+        disabled:
+          type: boolean
+      type: object
     ControllersSessionView:
       properties:
         activity:
@@ -2951,11 +2956,6 @@ components:
       required:
       - state
       - lastActivityAt
-      type: object
-    DomainContainerReapConfig:
-      properties:
-        disabled:
-          type: boolean
       type: object
     DomainReviewerConfig:
       properties:
@@ -3397,7 +3397,7 @@ components:
         agentRulesFile:
           type: string
         containerReap:
-          $ref: '#/components/schemas/DomainContainerReapConfig'
+          $ref: '#/components/schemas/ContainerReapConfig'
         defaultBranch:
           type: string
         env:

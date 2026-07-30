@@ -41,16 +41,9 @@ type notificationSink interface {
 
 // projectConfigLoader resolves a project's config so MarkTerminated can check
 // the ContainerReap opt-out before reaping. A load failure must not fall
-// through to reaping - see containerReaper below.
+// through to reaping - see ports.ContainerReaper below.
 type projectConfigLoader interface {
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
-}
-
-// containerReaper removes a terminated session's Docker containers (the
-// container leg of #2652). Optional: nil wiring means container reaping is
-// skipped entirely at the lifecycle layer.
-type containerReaper interface {
-	ReapSessionContainers(ctx context.Context, id domain.SessionID) (int, error)
 }
 
 type sessionTerminator interface {
@@ -82,7 +75,7 @@ func WithTelemetry(sink ports.EventSink) Option {
 // WithContainerReaper wires the container leg of #2652: MarkTerminated will
 // force-remove the terminated session's ao.session-labeled Docker containers,
 // unless the project opts out via ProjectConfig.ContainerReap.Disabled.
-func WithContainerReaper(reaper containerReaper, projects projectConfigLoader) Option {
+func WithContainerReaper(reaper ports.ContainerReaper, projects projectConfigLoader) Option {
 	return func(m *Manager) {
 		m.containers = reaper
 		m.projects = projects
@@ -117,7 +110,7 @@ type Manager struct {
 	// completionTerminator is late-bound because Session Manager itself depends
 	// on this lifecycle reducer. It is required before the SCM observer starts.
 	completionTerminator sessionTerminator
-	containers           containerReaper
+	containers           ports.ContainerReaper
 	projects             projectConfigLoader
 
 	mu        sync.Mutex
@@ -657,7 +650,10 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 	return m.store.UpdateSession(ctx, rec)
 }
 
-// MarkTerminated marks a session terminated without tearing down external resources.
+// MarkTerminated marks a session terminated. Runtime/workspace teardown is the
+// caller's responsibility (see session_manager.Manager.Kill); this also reaps the
+// session's Docker containers via the optional ContainerReaper (#2652) as its one
+// built-in external side effect.
 func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error {
 	err := m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
 		if cur.IsTerminated {
@@ -695,11 +691,11 @@ func (m *Manager) reapSessionContainers(ctx context.Context, id domain.SessionID
 			return
 		}
 		project, ok, err := m.projects.GetProject(ctx, string(rec.ProjectID))
-		if err != nil {
-			slog.Default().Warn("lifecycle: container reap: project lookup failed, skipping rather than guessing", "session", id, "project", rec.ProjectID, "err", err)
+		if err != nil || !ok {
+			slog.Default().Warn("lifecycle: container reap: project lookup failed or missing, skipping rather than guessing", "session", id, "project", rec.ProjectID, "err", err)
 			return
 		}
-		if ok && project.Config.ContainerReap.Disabled {
+		if project.Config.ContainerReap.Disabled {
 			return
 		}
 	}

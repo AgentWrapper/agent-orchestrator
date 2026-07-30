@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -33,6 +34,14 @@ const SessionLabel = "ao.session"
 // container (a shared postgres, a registry) that must survive the session
 // that happened to start it.
 const SpareLabel = "ao.spare"
+
+// reapTimeout bounds every docker CLI call this adapter makes. Kill is
+// user-facing and synchronous, and the reap runs between runtime destroy and
+// workspace teardown -- an unbounded call against a wedged daemon would block
+// the whole teardown on nothing else being able to make progress. A timeout
+// is treated the same as isDockerUnavailable: reap nothing, per this
+// package's spare-on-ambiguity bias.
+const reapTimeout = 10 * time.Second
 
 // commandRunner abstracts exec.Command for tests.
 type commandRunner interface {
@@ -82,6 +91,9 @@ func (r *Reaper) ReapSessionContainers(ctx context.Context, id domain.SessionID)
 		return 0, nil
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, reapTimeout)
+	defer cancel()
+
 	out, err := r.run.Output(ctx, "docker", "ps", "-a",
 		"--filter", fmt.Sprintf("label=%s=%s", SessionLabel, sessionID),
 		"--format", "{{.ID}}\t{{.Label \""+SpareLabel+"\"}}")
@@ -127,6 +139,12 @@ func (r *Reaper) ReapSessionContainers(ctx context.Context, id domain.SessionID)
 // present daemon. Most AO installs run without Docker at all; that must
 // resolve to "nothing to reap," not a kill-blocking error.
 func isDockerUnavailable(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		// A wedged docker daemon must resolve to "reap nothing," not a
+		// kill-blocking error -- same bias as every other ambiguous failure
+		// mode this package handles.
+		return true
+	}
 	var execErr *exec.Error
 	if errors.As(err, &execErr) {
 		return true
