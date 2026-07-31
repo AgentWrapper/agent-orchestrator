@@ -26,7 +26,11 @@ func (a *captureAgent) GetLaunchCommand(_ context.Context, cfg ports.LaunchConfi
 	if a.err != nil {
 		return nil, a.err
 	}
-	return []string{"cursor-agent", "--force", "--", cfg.Prompt}, nil
+	argv := []string{"cursor-agent"}
+	if cfg.Permissions == ports.PermissionModeAuto {
+		argv = append(argv, "--force")
+	}
+	return append(argv, "--", cfg.Prompt), nil
 }
 func (a *captureAgent) GetPromptDeliveryStrategy(context.Context, ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
 	return ports.PromptDeliveryInCommand, nil
@@ -39,7 +43,7 @@ func (a *captureAgent) SessionInfo(context.Context, ports.SessionRef) (ports.Ses
 	return ports.SessionInfo{}, false, nil
 }
 
-func TestReviewCommandBuildsPersistentInteractiveAskInvocation(t *testing.T) {
+func TestReviewCommandBuildsPersistentInteractiveInvocation(t *testing.T) {
 	agent := &captureAgent{}
 	r := &Reviewer{agent: agent}
 	dataDir := t.TempDir()
@@ -48,7 +52,7 @@ func TestReviewCommandBuildsPersistentInteractiveAskInvocation(t *testing.T) {
 		ReviewerID:       "review-w1",
 		WorkspacePath:    "/ws/w1",
 		DataDir:          dataDir,
-		Prompt:           "Read the AO review task.",
+		Prompt:           "complete the AO review task in `/ao/prompts/reviewer/requests/batch-1/run-1/task.md`.",
 		SystemPrompt:     "secret system content must not enter argv",
 		SystemPromptFile: "/ao/prompts/reviewer/system.md",
 		TaskPromptFile:   "/ao/prompts/reviewer/requests/batch-1/run-1/task.md",
@@ -60,21 +64,25 @@ func TestReviewCommandBuildsPersistentInteractiveAskInvocation(t *testing.T) {
 
 	wantPrompt := "Read and follow the AO reviewer role in `/ao/prompts/reviewer/system.md`, then complete the AO review task in `/ao/prompts/reviewer/requests/batch-1/run-1/task.md`."
 	want := []string{
-		"cursor-agent", "--force",
-		"--mode", "ask", "--sandbox", "enabled", "--trust",
+		"cursor-agent", "--trust",
 		"--add-dir", "/ao/prompts/reviewer",
 		"--", wantPrompt,
 	}
 	if !reflect.DeepEqual(got.Argv, want) {
 		t.Fatalf("argv = %#v, want %#v", got.Argv, want)
 	}
-	if agent.got.Permissions != ports.PermissionModeAuto {
-		t.Fatalf("permissions = %q, want auto", agent.got.Permissions)
+	if agent.got.Permissions != ports.PermissionModeDefault {
+		t.Fatalf("permissions = %q, want default", agent.got.Permissions)
 	}
 	if agent.got.WorkspacePath != "/ws/w1" || agent.got.SessionID != "review-w1" {
 		t.Fatalf("launch config = %+v", agent.got)
 	}
-	for _, forbidden := range []string{"--print", "-p", "--output-format", "--plan", "--mode=plan"} {
+	for _, forbidden := range []string{
+		"--print", "-p", "--output-format",
+		"--force", "--yolo",
+		"--mode", "--mode=ask", "--mode=plan", "--plan",
+		"--sandbox",
+	} {
 		if slicesContain(got.Argv, forbidden) {
 			t.Fatalf("argv contains non-interactive/plan flag %q: %#v", forbidden, got.Argv)
 		}
@@ -82,9 +90,25 @@ func TestReviewCommandBuildsPersistentInteractiveAskInvocation(t *testing.T) {
 	if strings.Contains(strings.Join(got.Argv, " "), "secret system content") {
 		t.Fatalf("argv exposes system prompt content: %#v", got.Argv)
 	}
-	profileDir := filepath.Join(dataDir, "cursor", "reviewers", "review-w1")
-	if got.Env[cursorDataDirEnv] != profileDir || got.Env[cursorConfigDirEnv] != profileDir {
+	profileDir := filepath.Join(dataDir, "cursor-reviewers", "c442045692db6092")
+	if !reflect.DeepEqual(got.Env, map[string]string{cursorDataDirEnv: profileDir}) {
 		t.Fatalf("env = %#v, want AO-owned profile %q", got.Env, profileDir)
+	}
+}
+
+func TestReviewCommandOmitsAddDirWhenPromptRootIsEmpty(t *testing.T) {
+	agent := &captureAgent{}
+	got, err := (&Reviewer{agent: agent}).ReviewCommand(context.Background(), ports.ReviewInvocation{
+		ReviewerID:       "review-w1",
+		DataDir:          t.TempDir(),
+		Prompt:           "complete the task in `/ao/task.md`.",
+		SystemPromptFile: filepath.Join("ao", "system.md"),
+	})
+	if err != nil {
+		t.Fatalf("ReviewCommand: %v", err)
+	}
+	if slicesContain(got.Argv, "--add-dir") {
+		t.Fatalf("argv contains conditional --add-dir without a root: %#v", got.Argv)
 	}
 }
 
@@ -132,11 +156,9 @@ func TestReviewCancelUsesTwoInterrupts(t *testing.T) {
 	}
 }
 
-func TestPreLaunchInstallsAOManagedReviewerPolicyAndPreservesUserConfig(t *testing.T) {
+func TestPreLaunchWritesIsolatedReviewerConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv(cursorConfigDirEnv, "")
-	t.Setenv("XDG_CONFIG_HOME", "")
 	userConfigPath := filepath.Join(home, ".cursor", cursorConfigFileName)
 	if err := os.MkdirAll(filepath.Dir(userConfigPath), 0o700); err != nil {
 		t.Fatal(err)
@@ -147,9 +169,11 @@ func TestPreLaunchInstallsAOManagedReviewerPolicyAndPreservesUserConfig(t *testi
 	}
 
 	dataDir := t.TempDir()
+	workspace := t.TempDir()
 	inv := ports.ReviewInvocation{
-		ReviewerID:     "review/w1",
+		ReviewerID:     "review-w1",
 		DataDir:        dataDir,
+		WorkspacePath:  workspace,
 		TaskPromptRoot: filepath.Join(dataDir, "prompts", "w1", "reviewer"),
 	}
 	if err := (&Reviewer{}).PreLaunch(context.Background(), inv); err != nil {
@@ -159,106 +183,85 @@ func TestPreLaunchInstallsAOManagedReviewerPolicyAndPreservesUserConfig(t *testi
 	if got, err := os.ReadFile(userConfigPath); err != nil || !reflect.DeepEqual(got, userConfig) {
 		t.Fatalf("user config changed: got %q err=%v", got, err)
 	}
-	profileDir := filepath.Join(dataDir, "cursor", "reviewers", "review-w1")
-	if marker, err := os.ReadFile(filepath.Join(profileDir, cursorConfigMarkerName)); err != nil || string(marker) != cursorConfigMarkerContent {
-		t.Fatalf("ownership marker = %q, err=%v", marker, err)
+	if _, err := os.Stat(filepath.Join(workspace, ".cursor", "cli.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("checkout config exists or stat failed: %v", err)
 	}
-	config := readReviewerConfig(t, filepath.Join(profileDir, cursorConfigFileName))
-	if model := config["model"].(map[string]any)["modelId"]; model != "kept" {
-		t.Fatalf("seeded model = %v, want kept", model)
+	profileDir := filepath.Join(dataDir, "cursor-reviewers", "c442045692db6092")
+	if got := reviewerProfileDir(inv); got != profileDir {
+		t.Fatalf("profile dir = %q, want %q", got, profileDir)
 	}
-	permissions := config["permissions"].(map[string]any)
-	assertJSONStrings(t, permissions["allow"], append(reviewerAllowedPermissions,
-		"Read("+filepath.ToSlash(filepath.Join(inv.TaskPromptRoot, "**"))+")"))
-	assertJSONStrings(t, permissions["deny"], reviewerDeniedPermissions)
-	sandbox := config["sandbox"].(map[string]any)
-	if sandbox["mode"] != "enabled" {
-		t.Fatalf("sandbox = %#v, want enabled", sandbox)
-	}
-}
-
-func TestPreLaunchPreservesAOProfileFieldsOnPolicyRefresh(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv(cursorConfigDirEnv, "")
-	t.Setenv("XDG_CONFIG_HOME", "")
-	inv := ports.ReviewInvocation{ReviewerID: "review-w1", DataDir: t.TempDir(), TaskPromptRoot: "/first/root"}
-	r := &Reviewer{}
-	if err := r.PreLaunch(context.Background(), inv); err != nil {
-		t.Fatalf("first PreLaunch: %v", err)
-	}
-	configPath := filepath.Join(reviewerProfileDir(inv), cursorConfigFileName)
-	config := readReviewerConfig(t, configPath)
-	config["userPreference"] = "preserve"
-	data, err := json.Marshal(config)
+	profileInfo, err := os.Stat(profileDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+	if profileInfo.Mode().Perm() != 0o700 {
+		t.Fatalf("profile mode = %o, want 700", profileInfo.Mode().Perm())
+	}
+	configPath := filepath.Join(profileDir, cursorConfigFileName)
+	configInfo, err := os.Stat(configPath)
+	if err != nil {
 		t.Fatal(err)
 	}
-
-	inv.TaskPromptRoot = "/second/root"
-	if err := r.PreLaunch(context.Background(), inv); err != nil {
-		t.Fatalf("second PreLaunch: %v", err)
+	if configInfo.Mode().Perm() != 0o600 {
+		t.Fatalf("config mode = %o, want 600", configInfo.Mode().Perm())
 	}
-	refreshed := readReviewerConfig(t, configPath)
-	if refreshed["userPreference"] != "preserve" {
-		t.Fatalf("profile field was dropped: %#v", refreshed)
+	config := readReviewerConfig(t, configPath)
+	if config.Version != 1 {
+		t.Fatalf("version = %d, want 1", config.Version)
 	}
-	allow := refreshed["permissions"].(map[string]any)["allow"]
-	assertJSONStrings(t, allow, append(reviewerAllowedPermissions, "Read(/second/root/**)"))
+	wantAllow := append(append([]string(nil), reviewerAllowedPermissions...),
+		"Read("+filepath.ToSlash(filepath.Join(inv.TaskPromptRoot, "**"))+")")
+	if !reflect.DeepEqual(config.Permissions.Allow, wantAllow) {
+		t.Fatalf("allow = %#v, want %#v", config.Permissions.Allow, wantAllow)
+	}
+	if !reflect.DeepEqual(config.Permissions.Deny, reviewerDeniedPermissions) {
+		t.Fatalf("deny = %#v, want %#v", config.Permissions.Deny, reviewerDeniedPermissions)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"sandbox", "approvalMode", "user-owned", "model"} {
+		if strings.Contains(string(data), forbidden) {
+			t.Fatalf("config contains forbidden seeded/extra field %q: %s", forbidden, data)
+		}
+	}
 }
 
-func TestPreLaunchRefusesNonAOReviewerConfig(t *testing.T) {
-	inv := ports.ReviewInvocation{ReviewerID: "review-w1", DataDir: t.TempDir(), TaskPromptRoot: "/prompts"}
-	configPath := filepath.Join(reviewerProfileDir(inv), cursorConfigFileName)
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
-		t.Fatal(err)
+func TestPreLaunchWithoutPromptRootOmitsExternalRead(t *testing.T) {
+	inv := ports.ReviewInvocation{ReviewerID: "review-w1", DataDir: t.TempDir()}
+	if err := (&Reviewer{}).PreLaunch(context.Background(), inv); err != nil {
+		t.Fatalf("PreLaunch: %v", err)
 	}
-	foreign := []byte(`{"permissions":{"allow":["Shell(user-owned)"]}}`)
-	if err := os.WriteFile(configPath, foreign, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	err := (&Reviewer{}).PreLaunch(context.Background(), inv)
-	if err == nil || !strings.Contains(err.Error(), "refusing to overwrite non-AO") {
-		t.Fatalf("PreLaunch err = %v, want ownership refusal", err)
-	}
-	if got, readErr := os.ReadFile(configPath); readErr != nil || !reflect.DeepEqual(got, foreign) {
-		t.Fatalf("foreign config changed: got %q err=%v", got, readErr)
+	config := readReviewerConfig(t, filepath.Join(reviewerProfileDir(inv), cursorConfigFileName))
+	if !reflect.DeepEqual(config.Permissions.Allow, reviewerAllowedPermissions) {
+		t.Fatalf("allow = %#v, want %#v", config.Permissions.Allow, reviewerAllowedPermissions)
 	}
 }
 
-func readReviewerConfig(t *testing.T, path string) map[string]any {
+func TestPreLaunchHonorsContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	inv := ports.ReviewInvocation{ReviewerID: "review-w1", DataDir: t.TempDir()}
+	if err := (&Reviewer{}).PreLaunch(ctx, inv); !errors.Is(err, context.Canceled) {
+		t.Fatalf("PreLaunch err = %v, want context cancellation", err)
+	}
+	if _, err := os.Stat(reviewerProfileDir(inv)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("profile created after cancellation: %v", err)
+	}
+}
+
+func readReviewerConfig(t *testing.T, path string) reviewerConfig {
 	t.Helper()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var config map[string]any
+	var config reviewerConfig
 	if err := json.Unmarshal(data, &config); err != nil {
 		t.Fatal(err)
 	}
 	return config
-}
-
-func assertJSONStrings(t *testing.T, got any, want []string) {
-	t.Helper()
-	values, ok := got.([]any)
-	if !ok {
-		t.Fatalf("value = %#v, want JSON string array", got)
-	}
-	actual := make([]string, len(values))
-	for i, value := range values {
-		actual[i], ok = value.(string)
-		if !ok {
-			t.Fatalf("value[%d] = %#v, want string", i, value)
-		}
-	}
-	if !reflect.DeepEqual(actual, want) {
-		t.Fatalf("strings = %#v, want %#v", actual, want)
-	}
 }
 
 func slicesContain(values []string, want string) bool {
