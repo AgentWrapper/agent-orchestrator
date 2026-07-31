@@ -16,6 +16,7 @@ const (
 	ReviewerCursor     ReviewerHarness = "cursor"
 	ReviewerKiloCode   ReviewerHarness = "kilocode"
 	ReviewerOpenCode   ReviewerHarness = "opencode"
+	ReviewerKiro       ReviewerHarness = "kiro"
 	ReviewerPi         ReviewerHarness = "pi"
 )
 
@@ -28,6 +29,7 @@ var AllReviewerHarnesses = []ReviewerHarness{
 	ReviewerCursor,
 	ReviewerKiloCode,
 	ReviewerOpenCode,
+	ReviewerKiro,
 	ReviewerPi,
 }
 

@@ -200,11 +200,16 @@ func (r *Runtime) Interrupt(ctx context.Context, handle ports.RuntimeHandle) err
 
 // Escape sends the TUI Escape key without changing Interrupt's Ctrl-C contract.
 func (r *Runtime) Escape(ctx context.Context, handle ports.RuntimeHandle) error {
+	return r.SendInput(ctx, handle, "\x1b")
+}
+
+// SendInput writes raw control bytes without appending Enter.
+func (r *Runtime) SendInput(ctx context.Context, handle ports.RuntimeHandle, input string) error {
 	sess := r.resolve(handle.ID)
 	if sess == nil {
 		return fmt.Errorf("conpty: session %q not found", handle.ID)
 	}
-	return clientSendInput(sess.addr, "\x1b")
+	return clientSendInput(sess.addr, input)
 }
 
 // GetOutput returns the last lines lines from the pty-host ring buffer.

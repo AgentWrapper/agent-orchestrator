@@ -398,6 +398,28 @@ describe("ProjectSettingsForm", () => {
 		expect(screen.getByRole("button", { name: "Default reviewer agent" })).toBeDisabled();
 	});
 
+	it("offers both interactive Kiro and Pi reviewers", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+		const reviewer = await screen.findByRole("combobox", { name: "Default reviewer agent" });
+		await userEvent.click(reviewer);
+		const labels = (await screen.findAllByRole("option")).map((option) => option.textContent);
+		expect(labels).toContain("KiroAuth unknown");
+		expect(labels).toContain("Pi");
+	});
+
 	it("shows unknown-auth agents as selectable with a warning in project settings", async () => {
 		mockProject({
 			id: "proj-1",

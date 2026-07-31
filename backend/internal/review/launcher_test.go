@@ -63,6 +63,17 @@ type fakeReviewerForPreflight struct {
 	Preflight  func(context.Context, string) error
 }
 
+type fakeReviewerWithLaunchSpec struct {
+	spec ports.ReviewCommandSpec
+}
+
+func (f *fakeReviewerWithLaunchSpec) ReviewCommand(context.Context, ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
+	return f.spec, nil
+}
+func (f *fakeReviewerWithLaunchSpec) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
+	return inv.Prompt, nil
+}
+
 func (f *fakeReviewerForPreflight) ReviewCommand(_ context.Context, _ ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
 	if f.CommandErr != nil {
 		return ports.ReviewCommandSpec{}, f.CommandErr
@@ -100,6 +111,7 @@ type fakeRuntime struct {
 	interrupts    int
 	escaped       string
 	escapes       int
+	input         string
 	destroyed     string
 	destroyBefore bool
 	created       bool
@@ -128,6 +140,11 @@ func (f *fakeRuntime) Interrupt(_ context.Context, handle ports.RuntimeHandle) e
 func (f *fakeRuntime) Escape(_ context.Context, handle ports.RuntimeHandle) error {
 	f.escaped = handle.ID
 	f.escapes++
+	return nil
+}
+func (f *fakeRuntime) SendInput(_ context.Context, handle ports.RuntimeHandle, input string) error {
+	f.sentTo = handle.ID
+	f.input = input
 	return nil
 }
 func (f *fakeRuntime) SendMessage(_ context.Context, handle ports.RuntimeHandle, msg string) error {
@@ -329,11 +346,37 @@ func TestLauncherCancelSendsEscapeForPi(t *testing.T) {
 	if err := l.Cancel(context.Background(), "review-mer-1", domain.ReviewerPi); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
-	if rt.escaped != "review-mer-1" || rt.escapes != 1 {
-		t.Fatalf("escape handle/count = %q/%d, want review-mer-1/1", rt.escaped, rt.escapes)
+	if rt.sentTo != "review-mer-1" || rt.input != "\x1b" {
+		t.Fatalf("native input = %q to %q, want Escape to review-mer-1", rt.input, rt.sentTo)
 	}
 	if rt.interrupts != 0 {
 		t.Fatalf("Pi cancel sent %d Ctrl-C interrupts", rt.interrupts)
+	}
+}
+
+func TestLauncherCancelSendsEscapeForKiro(t *testing.T) {
+	reviewer := &fakeCancellableReviewer{mode: ports.ReviewCancelEscape}
+	rt := &fakeRuntime{}
+	l := newTestLauncher(t, reviewer, rt)
+	if err := l.Cancel(context.Background(), "review-mer-1", domain.ReviewerKiro); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if rt.sentTo != "review-mer-1" || rt.input != "\x1b" || rt.interrupts != 0 {
+		t.Fatalf("native input = %q to %q, interrupts=%d", rt.input, rt.sentTo, rt.interrupts)
+	}
+}
+
+func TestLauncherSpawnUsesReviewerWorkingDirectoryAndInitialMessage(t *testing.T) {
+	reviewer := &fakeReviewerWithLaunchSpec{spec: ports.ReviewCommandSpec{
+		Argv: []string{"kiro-cli", "chat"}, WorkingDirectory: "/ao/reviewer", InitialMessage: "task ref",
+	}}
+	rt := &fakeRuntime{}
+	l := newTestLauncher(t, reviewer, rt)
+	if _, err := l.Spawn(context.Background(), launchSpec()); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if rt.createCfg.WorkspacePath != "/ao/reviewer" || rt.sentMsg != "task ref" {
+		t.Fatalf("create = %+v, sent = %q", rt.createCfg, rt.sentMsg)
 	}
 }
 

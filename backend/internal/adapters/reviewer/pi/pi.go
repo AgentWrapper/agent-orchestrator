@@ -142,7 +142,7 @@ func (*Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (s
 
 // ReviewCancel selects Pi's official interactive Escape cancellation key.
 func (*Reviewer) ReviewCancel(context.Context) (ports.ReviewCancelSpec, error) {
-	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelEscape, Interrupts: 1}, nil
+	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelEscape, Interrupts: 1, Input: "\x1b"}, nil
 }
 
 const piPolicy = `Pi reviewer security policy

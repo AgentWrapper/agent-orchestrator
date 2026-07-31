@@ -28,8 +28,8 @@ const (
 	// ReviewCancelInterrupt sends the terminal interrupt key sequence to the
 	// reviewer process while preserving the terminal pane.
 	ReviewCancelInterrupt ReviewCancelMode = "interrupt"
-	// ReviewCancelEscape sends the Escape key used by interactive TUIs such as
-	// Pi to cancel the active turn while preserving the pane.
+	// ReviewCancelEscape sends Escape, the native cancel-stream key used by
+	// interactive TUIs such as Kiro and Pi, while preserving the reviewer pane.
 	ReviewCancelEscape ReviewCancelMode = "escape"
 )
 
@@ -38,6 +38,9 @@ const (
 type ReviewCancelSpec struct {
 	Mode       ReviewCancelMode
 	Interrupts int
+	// Input is the raw terminal control sequence for a native TUI cancellation.
+	// ReviewCancelEscape defaults it to Escape when adapters leave it empty.
+	Input string
 }
 
 // ReviewerCanceller is implemented by reviewer adapters that explicitly define
@@ -106,6 +109,12 @@ type ReviewTask struct {
 type ReviewCommandSpec struct {
 	Argv []string
 	Env  map[string]string
+	// InitialMessage is injected after the process starts. Interactive-only
+	// reviewers use this instead of placing a task on the command line.
+	InitialMessage string
+	// WorkingDirectory overrides the worker checkout as the reviewer process's
+	// cwd. The checkout remains available through ReviewInvocation.WorkspacePath.
+	WorkingDirectory string
 }
 
 // ReviewerResolver maps a reviewer harness onto its adapter. ok=false means no

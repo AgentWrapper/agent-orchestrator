@@ -55,6 +55,7 @@ const KNOWN_REVIEWER_HARNESS_IDS = new Set([
 	"copilot",
 	"cursor",
 	"kilocode",
+	"kiro",
 	"opencode",
 	"pi",
 ]);
@@ -507,6 +508,7 @@ const REVIEWER_AGENT_PRIORITY = [
 	"cursor",
 	"opencode",
 	"kilocode",
+	"kiro",
 	"pi",
 	"aider",
 ] as const;

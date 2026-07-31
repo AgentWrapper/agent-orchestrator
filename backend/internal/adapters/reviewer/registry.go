@@ -11,6 +11,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/copilot"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/cursor"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/kilocode"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/kiro"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/opencode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/pi"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -32,6 +33,7 @@ func Constructors() []Adapter {
 		copilot.New(),
 		cursor.New(),
 		kilocode.New(),
+		kiro.New(),
 		opencode.New(),
 		pi.New(),
 	}

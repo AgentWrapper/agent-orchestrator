@@ -59,7 +59,7 @@ type reviewerRuntime interface {
 	Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error)
 	Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	Interrupt(ctx context.Context, handle ports.RuntimeHandle) error
-	Escape(ctx context.Context, handle ports.RuntimeHandle) error
+	SendInput(ctx context.Context, handle ports.RuntimeHandle, input string) error
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
 	SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error
 }
@@ -215,14 +215,23 @@ func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (string, err
 	if err := l.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID}); err != nil {
 		return "", fmt.Errorf("reviewer replace stale pane: %w", err)
 	}
+	workspacePath := spec.WorkspacePath
+	if cmd.WorkingDirectory != "" {
+		workspacePath = cmd.WorkingDirectory
+	}
 	handle, err := l.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     domain.SessionID(handleID),
-		WorkspacePath: spec.WorkspacePath,
+		WorkspacePath: workspacePath,
 		Argv:          cmd.Argv,
 		Env:           pinnedEnv(cmd.Env),
 	})
 	if err != nil {
 		return "", fmt.Errorf("reviewer runtime: %w", err)
+	}
+	if cmd.InitialMessage != "" {
+		if err := l.runtime.SendMessage(ctx, handle, cmd.InitialMessage); err != nil {
+			return "", fmt.Errorf("reviewer initial message: %w", err)
+		}
 	}
 	return handle.ID, nil
 }
@@ -309,12 +318,16 @@ func (l *agentLauncher) Cancel(ctx context.Context, handleID string, harness dom
 		}
 		return nil
 	case ports.ReviewCancelEscape:
-		interrupts := spec.Interrupts
-		if interrupts <= 0 {
-			interrupts = 1
+		input := spec.Input
+		if input == "" {
+			input = "\x1b"
 		}
-		for i := 0; i < interrupts; i++ {
-			if err := l.runtime.Escape(ctx, ports.RuntimeHandle{ID: handleID}); err != nil {
+		count := spec.Interrupts
+		if count <= 0 {
+			count = 1
+		}
+		for i := 0; i < count; i++ {
+			if err := l.runtime.SendInput(ctx, ports.RuntimeHandle{ID: handleID}, input); err != nil {
 				return err
 			}
 		}

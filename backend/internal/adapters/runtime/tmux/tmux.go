@@ -629,6 +629,18 @@ func (r *Runtime) Escape(ctx context.Context, handle ports.RuntimeHandle) error 
 	return nil
 }
 
+// SendInput writes raw literal control bytes without appending Enter.
+func (r *Runtime) SendInput(ctx context.Context, handle ports.RuntimeHandle, input string) error {
+	id, err := handleID(handle)
+	if err != nil {
+		return err
+	}
+	if _, err := r.run(ctx, sendKeysLiteralArgs(id, input)...); err != nil {
+		return fmt.Errorf("tmux runtime: send input %s: %w", id, err)
+	}
+	return nil
+}
+
 // GetOutput returns the last `lines` lines of the session pane's captured
 // output.
 func (r *Runtime) GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error) {

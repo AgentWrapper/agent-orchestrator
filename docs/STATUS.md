@@ -40,10 +40,11 @@ surface (`npm run sqlc`, `npm run api`).
   `/prs/{id}/resolve-comments`.
 - Review routes registered: `GET /reviews`, `POST /reviews/execute`,
   `POST /reviews/{id}/send`.
-- Interactive, long-lived reviewer panes for Claude Code, Codex, OpenCode, and
-  Pi. Pi uses an AO-data-owned extension with built-in/project resources
-  disabled, structured read-only inspection/reporting tools, and Escape-based
-  turn cancellation; the other reviewers retain their Ctrl-C contract.
+- Interactive, long-lived reviewer panes for Claude Code, Codex, Kiro,
+  OpenCode, and Pi. Pi uses an AO-data-owned extension with built-in/project
+  resources disabled, structured read-only inspection/reporting tools, and
+  Escape-based turn cancellation. Kiro also uses its native Escape
+  cancellation; the other reviewers retain their Ctrl-C contract.
 - Durable dashboard notifications for `needs_input`, `ready_to_merge`,
   `pr_merged`, and `pr_closed_unmerged`: backend enrichment/persistence,
   cursor-paginated read/unread history, live notification stream, and read

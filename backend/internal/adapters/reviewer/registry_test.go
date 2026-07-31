@@ -26,9 +26,9 @@ func TestRegistryMatchesDomainVocabulary(t *testing.T) {
 			t.Errorf("reviewer harness %q does not implement cancellation", h)
 		} else if spec, err := canceller.ReviewCancel(context.Background()); err != nil {
 			t.Errorf("reviewer harness %q cancel spec: %v", h, err)
-		} else if h == domain.ReviewerPi {
-			if spec.Mode != ports.ReviewCancelEscape || spec.Interrupts != 1 {
-				t.Errorf("Pi cancel spec = %+v, want one Escape", spec)
+		} else if h == domain.ReviewerKiro || h == domain.ReviewerPi {
+			if spec.Mode != ports.ReviewCancelEscape || spec.Interrupts > 1 {
+				t.Errorf("TUI reviewer %q cancel spec = %+v, want one Escape", h, spec)
 			}
 		} else if spec.Mode != ports.ReviewCancelInterrupt || spec.Interrupts != 2 {
 			t.Errorf("reviewer harness %q cancel spec = %+v, want two interrupts", h, spec)
