@@ -1,4 +1,4 @@
-import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { isCancelledError, useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { CommandPalette } from "../components/CommandPalette";
@@ -134,11 +134,6 @@ function ShellLayout() {
 	const [isSidebarPeekOpen, setIsSidebarPeekOpen] = useState(false);
 	const [sidebarPeekReveal, setSidebarPeekReveal] = useState(0);
 	const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
-	const routeSearch = useSearch({ strict: false }) as { tabOwner?: string };
-	const tabOwnerSession = routeSearch.tabOwner
-		? workspaces.flatMap((workspace) => workspace.sessions).find((session) => session.id === routeSearch.tabOwner)
-		: undefined;
-	const tabOwnerSessionId = tabOwnerSession?.id;
 	useEffect(() => {
 		document.addEventListener("click", handleModifierLinkClick);
 		return () => document.removeEventListener("click", handleModifierLinkClick);
@@ -519,10 +514,7 @@ function ShellLayout() {
 		if (handledShellNonceRef.current === newShellTerminalNonce) return;
 		handledShellNonceRef.current = newShellTerminalNonce;
 		openShellTerminal.mutate(
-			{
-				projectId: tabOwnerSession?.workspaceId ?? scopedProjectId,
-				sessionId: tabOwnerSessionId ?? routeParams.sessionId,
-			},
+			{ projectId: scopedProjectId, sessionId: routeParams.sessionId },
 			{
 				onSuccess: (shell) => {
 					setActiveShellTerminal(shell.handleId);
@@ -537,8 +529,6 @@ function ShellLayout() {
 		openShellTerminal,
 		scopedProjectId,
 		routeParams.sessionId,
-		tabOwnerSession?.workspaceId,
-		tabOwnerSessionId,
 		navigate,
 		setActiveShellTerminal,
 	]);
@@ -618,7 +608,7 @@ function ShellLayout() {
 					peekReveal={sidebarPeekReveal}
 					onPreviewLeave={closeSidebarPeek}
 						underTopbar={isMac || isWindows || isLinux}
-						topbarOffset={isWindows ? "titlebar" : "toolbar"}
+						topbarOffset={isWindows ? "titlebar" : hideShellTopbar ? "trafficLights" : "toolbar"}
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}

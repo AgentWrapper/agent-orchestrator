@@ -108,7 +108,7 @@ type SidebarProps = {
 	isOverlay?: boolean;
 	underTopbar?: boolean;
 	/** Chrome height to clear when underTopbar is set. Defaults to the 40px Reverb workspace bar. */
-	topbarOffset?: "toolbar" | "titlebar";
+	topbarOffset?: "toolbar" | "titlebar" | "trafficLights";
 	onPreviewLeave?: () => void;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
@@ -560,12 +560,14 @@ function ProjectItem({
 	};
 
 	const handleConfirmRemove = async () => {
+		setConfirmOpen(false);
 		setIsRemoving(true);
+		// Teardown can take a while when a project owns several sessions. Leave
+		// the confirmation immediately and move to the route that remains valid
+		// after removal while the sidebar keeps progress/error feedback visible.
+		selection.goHome();
 		try {
 			await onRemoveProject(workspace.id);
-			setConfirmOpen(false);
-			// The route for a removed project no longer resolves; fall back home.
-			if (selection.activeProjectId === workspace.id) selection.goHome();
 		} catch (err) {
 			const message = err instanceof Error ? err.message : "Could not remove project";
 			setRemoveError(message);
@@ -593,8 +595,8 @@ function ProjectItem({
 				tooltip={workspace.name}
 				className={cn(
 					NAV_ROW_CLASS,
-				// Always reserve room for the action cluster (orchestrator, kebab)
-				// — icons are always visible, not hover-gated.
+					// Always reserve room for the action cluster (dashboard,
+					// orchestrator, kebab) — icons are always visible, not hover-gated.
 					"pr-sidebar-project-actions [&_svg]:size-icon-md",
 					// Icon rail: the old 36px letter tile.
 					"group-data-[collapsible=icon]:size-control-board! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:font-semibold",
@@ -697,6 +699,15 @@ function ProjectItem({
 		</div>{/* end hover zone */}
 	{/* project-sidebar__sessions: clip shrinks in height; inner content
 	    slides up on exit so it looks like rows move out the top. */}
+			{isRemoving ? (
+				<div className="sidebar-expanded-chrome px-5 py-1 text-2xs text-muted-foreground" role="status">
+					Removing {workspace.name}…
+				</div>
+			) : removeError ? (
+				<div className="sidebar-expanded-chrome px-5 py-1 text-2xs text-destructive" role="alert">
+					{removeError}
+				</div>
+			) : null}
 	<AnimatePresence initial={false}>
 		{expanded && sessions.length > 0 && (
 			<motion.div
@@ -741,9 +752,7 @@ function ProjectItem({
 	</AnimatePresence>
 			<ConfirmDialog
 				open={confirmOpen}
-				onOpenChange={(open) => {
-					if (!isRemoving) setConfirmOpen(open);
-				}}
+				onOpenChange={setConfirmOpen}
 				title={`Remove project`}
 				description={
 					<>
@@ -756,10 +765,8 @@ function ProjectItem({
 						</p>
 					</>
 				}
-				confirmLabel={isRemoving ? "Removing…" : "Remove"}
+				confirmLabel="Remove"
 				destructive
-				busy={isRemoving}
-				error={removeError}
 				onConfirm={handleConfirmRemove}
 			/>
 		</SidebarMenuItem>
@@ -821,13 +828,13 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 
 	if (isEditing) {
 		return (
-			<SidebarMenuSubItem>
-				<div className="relative flex h-auto w-full items-center gap-2.25 rounded-sm py-1.25 pl-1.5 pr-1.5">
+			<SidebarMenuSubItem className="pl-7">
+				<div className="relative flex h-8 w-full items-center gap-2 rounded-lg px-2.5 py-0">
 					<SessionDot session={session} />
 					<input
 						aria-label={`Rename ${session.title}`}
 						autoFocus
-						className="min-w-0 flex-1 rounded-xs border border-accent bg-transparent px-1 py-px text-xs text-foreground outline-none focus-visible:ring-1 focus-visible:ring-accent"
+						className="min-w-0 flex-1 rounded-xs border border-accent bg-transparent px-1 py-px text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-accent"
 						maxLength={MAX_DISPLAY_NAME_LEN}
 						onBlur={() => void commit()}
 						onChange={(e) => setDraft(e.target.value)}
@@ -850,7 +857,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 	}
 
 	return (
-		<SidebarMenuSubItem>
+		<SidebarMenuSubItem className="pl-7">
 			<button
 				aria-current={active ? "page" : undefined}
 				aria-label={`Open ${session.title}`}

@@ -62,7 +62,7 @@ import { keepDaemonAlive, shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
 import { buildWindowsAppMenuTemplate } from "./main/menu";
-import { scanImportFolder } from "./main/import-folder-scan";
+import { ancestorRepositorySetupWarning, scanImportFolder } from "./main/import-folder-scan";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -97,7 +97,14 @@ if (process.platform === "win32") {
 // inside ~/.ao alongside the daemon's data dir and running.json. sessionData and
 // crashDumps derive from userData, so this one override reparents them all.
 // Must run before app ready.
-app.setPath("userData", path.join(os.homedir(), ".ao", "electron"));
+// Dev runs get their own profile under the same ~/.ao root: the packaged app
+// keeps this directory open, and two Chromium instances sharing one profile
+// corrupt its LevelDB stores. Mirrors how dev already isolates running.json and
+// the daemon data dir into ~/.ao/dev.
+app.setPath(
+	"userData",
+	app.isPackaged ? path.join(os.homedir(), ".ao", "electron") : path.join(os.homedir(), ".ao", "dev", "electron"),
+);
 
 let mainWindow: BrowserWindow | null = null;
 let daemonProcess: ChildProcess | null = null;
@@ -123,9 +130,10 @@ const isDev = !app.isPackaged;
 const DEV_DAEMON_PORT = 3002;
 const DEV_STATE_SUBDIR = "dev"; // ~/.ao/dev/
 
-// Height (px) of the custom Windows title bar. Must stay in sync with the Window
-// Controls Overlay height passed to BrowserWindow and the .window-titlebar height
-// in styles.css, so the native min/max/close buttons line up with the app's bar.
+// Height (px) of the custom Windows title bar. Must stay in sync with
+// --size-window-titlebar (tokens.css) and .window-titlebar, plus the Window
+// Controls Overlay height passed to BrowserWindow, so the native min/max/close
+// buttons line up with the app's bar.
 const TITLEBAR_HEIGHT = 36;
 // Traffic lights stay fixed across sidebar expand/collapse. Y matches the
 // natural macOS titlebar band (TitlebarNav is h-traffic-light-clearance).
@@ -1310,6 +1318,10 @@ ipcMain.handle("app:chooseDirectory", async (_event, title?: string) => {
 ipcMain.handle("app:scanImportFolder", async (_event, input: { path: string; mode: "project" | "workspace" }) => {
 	await ensureShellEnv();
 	return scanImportFolder(input.path, input.mode, { env: daemonEnv(), homeDir: os.homedir() });
+});
+ipcMain.handle("app:checkAncestorRepo", async (_event, path: string) => {
+	await ensureShellEnv();
+	return ancestorRepositorySetupWarning(path, { env: daemonEnv(), homeDir: os.homedir() });
 });
 ipcMain.handle("clipboard:writeText", (_event, text: string) => {
 	clipboard.writeText(text, "clipboard");

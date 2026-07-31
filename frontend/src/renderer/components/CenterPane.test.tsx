@@ -18,11 +18,18 @@ const worker = {
 	updatedAt: "2026-06-10T00:00:00Z",
 	prs: [],
 } satisfies WorkspaceSession;
+
 const secondWorker = {
-	...worker,
 	id: "sess-2",
+	workspaceId: "proj-1",
+	workspaceName: "my-app",
 	title: "review the change",
+	provider: "claude-code",
+	kind: "worker",
 	branch: "ao/sess-2",
+	status: "working",
+	updatedAt: "2026-06-10T00:00:00Z",
+	prs: [],
 } satisfies WorkspaceSession;
 
 describe("CenterPane toolbar session label", () => {
@@ -46,7 +53,14 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
 	});
 
-	it("renders project sessions as tabs and opens a sibling session", () => {
+	it("renders only this session's own tab, never a sibling session", () => {
+		render(<CenterPane session={worker} theme="dark" daemonReady />);
+
+		expect(screen.getByRole("button", { name: "do the thing" })).toHaveAttribute("aria-current", "true");
+		expect(screen.queryByRole("button", { name: "review the change" })).not.toBeInTheDocument();
+	});
+
+	it("selects a project session when clicking its tab", () => {
 		const onSelectProjectSession = vi.fn();
 		render(
 			<CenterPane
@@ -58,7 +72,6 @@ describe("CenterPane toolbar session label", () => {
 			/>,
 		);
 
-		expect(screen.getByRole("button", { name: "do the thing" })).toHaveAttribute("aria-current", "true");
 		fireEvent.click(screen.getByRole("button", { name: "review the change" }));
 		expect(onSelectProjectSession).toHaveBeenCalledWith(secondWorker);
 	});
@@ -104,49 +117,21 @@ describe("CenterPane toolbar session label", () => {
 			/>,
 		);
 
-		expect(screen.queryByRole("button", { name: "review the change" })).not.toBeInTheDocument();
-		fireEvent.pointerDown(screen.getByRole("button", { name: "Add tab" }), { button: 0, ctrlKey: false });
-		fireEvent.click(screen.getByRole("menuitem", { name: /review the change/ }));
-		expect(onAddProjectSession).toHaveBeenCalledWith(secondWorker);
-
-		fireEvent.pointerDown(screen.getByRole("button", { name: "Add tab" }), { button: 0, ctrlKey: false });
-		fireEvent.click(screen.getByRole("menuitem", { name: "Terminal" }));
-		expect(onNewShellTerminal).toHaveBeenCalledOnce();
+		// The tab launcher dropdown is not expanded by default.
+		expect(onAddProjectSession).not.toHaveBeenCalled();
+		expect(onNewShellTerminal).not.toHaveBeenCalled();
 	});
 
-	it("limits a large session list, then expands it into a searchable scroll area", () => {
-		const sessions = Array.from({ length: 7 }, (_, index) => ({
-			...secondWorker,
-			id: `sess-${index + 2}`,
-			title: `Worker ${index + 1}`,
-		}));
-		render(
-			<CenterPane
-				session={worker}
-				projectSessions={[worker]}
-				availableProjectSessions={sessions}
-				theme="dark"
-				daemonReady
-			/>,
-		);
+	// The tab-strip + button opens a dropdown; the Terminal option (#3208 fix)
+	// no longer leaks every session across every project.
+	it("shows the tab launcher dropdown with a terminal option", () => {
+		const onNewShellTerminal = vi.fn();
+		render(<CenterPane session={worker} onNewShellTerminal={onNewShellTerminal} theme="dark" daemonReady />);
 
-		fireEvent.pointerDown(screen.getByRole("button", { name: "Add tab" }), { button: 0, ctrlKey: false });
-		const search = screen.getByRole("textbox", { name: "Search sessions" });
-		const terminal = screen.getByRole("menuitem", { name: "Terminal" });
-		expect(terminal.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-		expect(screen.getByRole("menuitem", { name: /Worker 5/ })).toBeInTheDocument();
-		expect(screen.queryByRole("menuitem", { name: /Worker 6/ })).not.toBeInTheDocument();
-
-		fireEvent.click(screen.getByRole("menuitem", { name: "Show all sessions" }));
-		const lastSession = screen.getByRole("menuitem", { name: /Worker 7/ });
-		expect(lastSession).toBeInTheDocument();
-		expect(lastSession.parentElement).toHaveClass("h-52", "overflow-y-auto");
-
-		fireEvent.change(screen.getByRole("textbox", { name: "Search sessions" }), {
-			target: { value: "Worker 7" },
-		});
-		expect(screen.getByRole("menuitem", { name: /Worker 7/ })).toBeInTheDocument();
-		expect(screen.queryByRole("menuitem", { name: /Worker 1/ })).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Add tab" }));
+		expect(screen.getByRole("menu")).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("menuitem", { name: "Terminal" }));
+		expect(onNewShellTerminal).toHaveBeenCalledOnce();
 	});
 
 	it("uses an Orchestrator tab for an orchestrator session", () => {

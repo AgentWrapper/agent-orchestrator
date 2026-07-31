@@ -254,7 +254,7 @@ export function SessionFilesView({
 			</header>
 
 			<div className="min-h-0 flex-1 overflow-auto bg-background">
-				<div className="mx-auto flex w-full max-w-[1200px] flex-col px-0 py-1">
+				<div className={cn("flex w-full flex-col px-0 py-1", !isMaximized && "mx-auto max-w-[1200px]")}>
 					<ReviewFileList
 						error={filesQuery.error}
 						expandedPaths={expandedPaths}

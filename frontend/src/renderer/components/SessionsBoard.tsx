@@ -8,6 +8,7 @@ import {
 	Copy,
 	GitBranch,
 	LayoutDashboard,
+	LoaderCircle,
 	Plus,
 	RotateCcw,
 	RotateCw,

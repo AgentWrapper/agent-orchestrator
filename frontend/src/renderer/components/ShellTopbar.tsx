@@ -1,30 +1,31 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import {
-	GitBranch,
-	LayoutDashboard,
-	PanelRightOpen,
-	Plus,
-	Settings2,
-	SquareTerminal,
-	Trash2,
-	X,
-} from "lucide-react";
-import { useEffect, useState } from "react";
-import { ConfirmDialog } from "./ConfirmDialog";
+import { GitBranch, LayoutDashboard, PanelRightOpen, Plus, Settings2, SquareTerminal, Trash2, X } from "lucide-react";
+
 import { NotificationCenter } from "./NotificationCenter";
-import { hasConfiguredOrchestratorAgent, sessionIsActive, type WorkspaceSession } from "../types/workspace";
+import {
+	hasConfiguredOrchestratorAgent,
+	sessionIsActive,
+	type WorkspaceSession,
+} from "../types/workspace";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { useReverbTopbarModel, type ReverbTopbarSurfaceOverride } from "../hooks/useReverbTopbarModel";
-import { useTerminateSession } from "../hooks/useTerminateSession";
+import {
+	clearTerminateSessionState,
+	useProjectTerminateSessionStates,
+	useTerminateSession,
+	useTerminateSessionState,
+} from "../hooks/useTerminateSession";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
 import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { TopbarButton, TopbarKillError } from "./TopbarButton";
+import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { ReverbTopbar } from "./topbar/ReverbTopbar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+
 
 const isMac = isMacPlatform();
 const boardActionsInPanel = usesBoardActionsInPanel();
@@ -145,6 +146,7 @@ export function ShellTopbar({
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<span className="inline-flex" style={noDragStyle}>
+
 							<TopbarButton
 								aria-label={orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
 								disabled={isSpawning || isProjectRestarting}
@@ -309,11 +311,10 @@ export function ShellTopbar({
 	);
 }
 
-// Compact kill control for the topbar actions row. Stop a running worker and
-// tear down its runtime/workspace. Kill is irreversible from the UI, so the
-// button arms a one-step confirmation before firing POST /sessions/{id}/kill,
-// then invalidates the workspace query so the session drops into the board's
-// terminated group.
+// Confirmation is modal, but teardown progress is not: confirming closes the
+// dialog and returns to the project's orchestrator while the daemon finishes.
+// Mutation-cache state is filtered by worker ID so rapid route switches never
+// carry another worker's Killing/error state into the current topbar.
 export function TopbarKillButton({
 	session,
 	orchestratorId,
@@ -324,48 +325,66 @@ export function TopbarKillButton({
 	onKilled: (workspaceId: string, orchestratorId?: string) => void;
 }) {
 	const [confirmOpen, setConfirmOpen] = useState(false);
+	const queryClient = useQueryClient();
 	const kill = useTerminateSession();
-	const error = kill.error instanceof Error ? kill.error.message : null;
+	const { error, isPending } = useTerminateSessionState(session.id);
+
+	const confirmKill = () => {
+		setConfirmOpen(false);
+		kill.mutate(session);
+		onKilled(session.workspaceId, orchestratorId);
+	};
 
 	return (
-		<>
-			<Tooltip>
-				<TooltipTrigger asChild>
+		<div className="inline-flex items-center gap-1.5" style={noDragStyle}>
+			<SessionTerminationPopover
+				onConfirm={confirmKill}
+				onOpenChange={setConfirmOpen}
+				open={confirmOpen}
+				session={session}
+				trigger={
 					<TopbarButton
-						aria-label="Kill session"
+						aria-label={isPending ? "Killing..." : "Kill session"}
+						disabled={isPending}
 						onClick={() => {
-							kill.reset();
-							setConfirmOpen(true);
+							clearTerminateSessionState(queryClient, session.id);
 						}}
-						style={noDragStyle}
-						variant="killIcon"
+						title="Kill session"
+						variant="kill"
 					>
 						<Trash2 className="size-icon-lg" aria-hidden="true" />
+						{isPending ? "Killing..." : "Kill"}
 					</TopbarButton>
-				</TooltipTrigger>
-				<TooltipContent side="bottom">Kill session</TooltipContent>
-			</Tooltip>
-			<ConfirmDialog
-				open={confirmOpen}
-				onOpenChange={(open) => {
-					if (!kill.isPending) setConfirmOpen(open);
-				}}
-				title="Kill session?"
-				description={`Are you sure you want to kill "${session.title}"? This stops the agent and tears down its workspace. This cannot be undone.`}
-				confirmLabel={kill.isPending ? "Killing..." : "Kill session"}
-				destructive
-				busy={kill.isPending}
-				error={error}
-				onConfirm={() => {
-					kill.reset();
-					kill.mutate(session, {
-						onSuccess: (_data, terminatedSession) => {
-							setConfirmOpen(false);
-							onKilled(terminatedSession.workspaceId, orchestratorId);
-						},
-					});
-				}}
+				}
 			/>
-		</>
+			{error ? <TopbarKillError>{error}</TopbarKillError> : null}
+		</div>
+	);
+}
+
+// exported for access from session route orchestrator header
+export function ProjectTerminationFeedback({ projectId }: { projectId: string | undefined }) {
+	const states = useProjectTerminateSessionStates(projectId);
+	if (states.length === 0) return null;
+
+	return (
+		<div aria-label="Session termination status" className="flex max-w-content-max items-center gap-2">
+			{states.map((state) =>
+				state.error ? (
+					<TopbarKillError className="max-w-48 truncate" key={state.session.id} title={state.error}>
+						{state.session.title}: {state.error}
+					</TopbarKillError>
+				) : (
+					<span
+						className="max-w-40 truncate text-caption text-muted-foreground"
+						key={state.session.id}
+						role="status"
+						title={`Killing ${state.session.title}…`}
+					>
+						Killing {state.session.title}…
+					</span>
+				),
+			)}
+		</div>
 	);
 }
