@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 type fixedBrowserCapability string
@@ -22,7 +23,7 @@ func TestSpawnEnvProjectVarsCannotOverrideInternal(t *testing.T) {
 		"FOO":        "bar",
 		EnvSessionID: "hacked", // a project must not override AO-internal vars
 		EnvProjectID: "hacked",
-	})
+	}, nil)
 	if env["FOO"] != "bar" {
 		t.Fatalf("FOO = %q, want bar", env["FOO"])
 	}
@@ -34,6 +35,75 @@ func TestSpawnEnvProjectVarsCannotOverrideInternal(t *testing.T) {
 	}
 }
 
+func TestSpawnEnvSpawnConfigWinsOverProject(t *testing.T) {
+	env := spawnEnv("mer-1", "mer", "issue-9", "/data", map[string]string{
+		"FOO":        "project",
+		"BAR":        "project-only",
+		"AO_RUN_ID":  "project-hijack",
+		EnvSessionID: "hacked",
+	}, map[string]string{
+		"FOO":        "spawn",
+		"AO_RUN_ID":  "r1",
+		EnvSessionID: "hacked-by-spawn", // AO-internal vars still win over everything
+	})
+	if env["FOO"] != "spawn" {
+		t.Fatalf("FOO = %q, want spawn (spawn config wins over project env)", env["FOO"])
+	}
+	if env["AO_RUN_ID"] != "r1" {
+		t.Fatalf("AO_RUN_ID = %q, want r1", env["AO_RUN_ID"])
+	}
+	if env["BAR"] != "project-only" {
+		t.Fatalf("BAR = %q, want project-only", env["BAR"])
+	}
+	if env[EnvSessionID] != "mer-1" {
+		t.Fatalf("AO_SESSION_ID = %q, want mer-1 (internal wins)", env[EnvSessionID])
+	}
+}
+
+func TestSpawnEnvNilExtraChangesNothing(t *testing.T) {
+	projectEnv := map[string]string{"FOO": "bar"}
+	base := spawnEnv("mer-1", "mer", "issue-9", "/data", projectEnv, nil)
+	empty := spawnEnv("mer-1", "mer", "issue-9", "/data", projectEnv, map[string]string{})
+	if len(base) != len(empty) {
+		t.Fatalf("nil vs empty extra env differ: %v vs %v", base, empty)
+	}
+	for k, v := range base {
+		if empty[k] != v {
+			t.Fatalf("env[%q] = %q, want %q", k, empty[k], v)
+		}
+	}
+	if base["FOO"] != "bar" || base[EnvSessionID] != "mer-1" || base[EnvProjectID] != "mer" || base[EnvDataDir] != "/data" {
+		t.Fatalf("nil extra env changed the base env: %v", base)
+	}
+}
+
+func TestSpawn_ConfigEnvReachesRuntime(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		Env: map[string]string{"FOO": "project", "BAR": "project-only"},
+	}}
+	rt := &fakeRuntime{}
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: func(string) (string, error) { return "/bin/true", nil }})
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode,
+		Env: map[string]string{"AO_RUN_ID": "r1", "FOO": "spawn"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := rt.lastCfg.Env["AO_RUN_ID"]; got != "r1" {
+		t.Fatalf("runtime env AO_RUN_ID = %q, want r1", got)
+	}
+	if got := rt.lastCfg.Env["FOO"]; got != "spawn" {
+		t.Fatalf("runtime env FOO = %q, want spawn (spawn config wins over project env)", got)
+	}
+	if got := rt.lastCfg.Env["BAR"]; got != "project-only" {
+		t.Fatalf("runtime env BAR = %q, want project-only", got)
+	}
+	if rt.lastCfg.Env[EnvSessionID] == "" {
+		t.Fatal("runtime env missing AO_SESSION_ID")
+	}
+}
+
 func TestRuntimeEnvInjectsBrowserCapability(t *testing.T) {
 	manager := &Manager{
 		dataDir:             "/data",
@@ -41,7 +111,7 @@ func TestRuntimeEnvInjectsBrowserCapability(t *testing.T) {
 		executable:          func() (string, error) { return filepath.Join("/opt", "aod", "ao"), nil },
 		logger:              slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	env := manager.runtimeEnv("mer-1", "mer", "", nil)
+	env := manager.runtimeEnv("mer-1", "mer", "", nil, nil)
 	if env[EnvBrowserCapability] != "capability-1" {
 		t.Fatalf("%s = %q", EnvBrowserCapability, env[EnvBrowserCapability])
 	}
