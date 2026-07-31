@@ -80,11 +80,14 @@ Reviewer targets carry a run-batch generation. A newly spawned reviewer that
 reuses the same opaque handle cannot inherit an exited renderer from an older
 run. The daemon persists that generation beside the handle only after Spawn or
 Notify succeeds; a preflight, spawn, or notify failure cannot assign an
-unlaunched batch to the previous live handle. While a reviewer renderer is
-retained, the provider polls the authoritative session reviews endpoint every
-2.5 seconds, including while the window is in the background. A superseded
-parked renderer is disposed immediately. A superseded active renderer stays
-inspectable until the user leaves it, then is disposed, so an asynchronous
+unlaunched batch to the previous live handle. Existing databases cannot prove
+which historical run owned their stored handle, so migration uses that handle
+as an opaque legacy generation rather than inferring from run history. The next
+successful launch replaces it with its batch generation. While a reviewer
+renderer is retained, the provider polls the authoritative session reviews
+endpoint every 2.5 seconds, including while the window is in the background. A
+superseded parked renderer is disposed immediately. A superseded active renderer
+stays inspectable until the user leaves it, then is disposed, so an asynchronous
 ownership update cannot blank the selected terminal. Sessions whose reviewer
 terminal has never been visited add no review polling.
 

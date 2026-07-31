@@ -2,17 +2,11 @@
 -- +goose StatementBegin
 ALTER TABLE review ADD COLUMN reviewer_generation TEXT NOT NULL DEFAULT '';
 
--- Existing databases did not record handle ownership separately. Preserve the
--- best available generation so an upgrade does not invalidate every retained
--- reviewer; all launches after this migration update it atomically.
-UPDATE review
-SET reviewer_generation = COALESCE((
-    SELECT CASE WHEN review_run.batch_id != '' THEN review_run.batch_id ELSE review_run.id END
-    FROM review_run
-    WHERE review_run.session_id = review.session_id
-    ORDER BY review_run.created_at DESC, review_run.id DESC
-    LIMIT 1
-), '');
+-- Existing databases did not record which batch successfully owned the live
+-- handle, and newer failed runs may never have launched. Use the handle itself
+-- as a stable opaque legacy generation; the next successful Spawn or Notify
+-- replaces it with the launched batch id.
+UPDATE review SET reviewer_generation = reviewer_handle_id;
 -- +goose StatementEnd
 
 -- +goose Down
