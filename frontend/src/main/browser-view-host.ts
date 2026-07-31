@@ -669,7 +669,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const session = entries.get(viewId);
 		if (!session) return emptyNavState(viewId);
 		const entry = activeEntry(session);
-		if (cancelForNavigation) cancelAnnotation(options, entry, "navigation");
+		if (cancelForNavigation) {
+			cancelAnnotation(options, entry, "navigation");
+			applySessionBounds(session, entry);
+		}
 		action(entry.view.webContents);
 		return pushNavState(options, entry);
 	};

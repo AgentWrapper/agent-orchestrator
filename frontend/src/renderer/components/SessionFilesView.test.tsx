@@ -41,10 +41,13 @@ describe("SessionFilesView", () => {
 		getMock.mockImplementation(async (path: string, options?: unknown) => {
 			if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
 				return {
-					data: {
-						sessionId: "sess-1",
-						truncated: false,
-						files: [
+						data: {
+							sessionId: "sess-1",
+							truncated: false,
+							compareBaseSha: "base-sha",
+							compareBaseRef: "main",
+							compareMode: "base",
+							files: [
 							{
 								path: "src/App.tsx",
 								status: "modified",
@@ -86,11 +89,14 @@ describe("SessionFilesView", () => {
 						binary: false,
 						deleted: false,
 						content: "const value = 1;\n",
-						contentTruncated: false,
-						diff: "@@\n-const value = 0;\n+const value = 1;\n",
-						diffTruncated: false,
-					},
-				};
+							contentTruncated: false,
+							diff: "@@\n-const value = 0;\n+const value = 1;\n",
+							diffTruncated: false,
+							compareBaseSha: "base-sha",
+							compareBaseRef: "main",
+							compareMode: "base",
+						},
+					};
 			}
 			return { data: undefined };
 		});
@@ -129,6 +135,74 @@ describe("SessionFilesView", () => {
 				params: { path: { sessionId: "sess-1" }, query: { path: "docs/guide.md" } },
 			}),
 		);
+	});
+
+	it("renders previous and current paths for renamed files", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
+				return {
+					data: {
+						sessionId: "sess-1",
+						truncated: false,
+						compareMode: "base",
+						files: [
+							{
+								path: "src/NewName.tsx",
+								previousPath: "src/OldName.tsx",
+								status: "renamed",
+								additions: 0,
+								deletions: 0,
+								size: 120,
+								binary: false,
+							},
+						],
+					},
+				};
+			}
+			return {
+				data: {
+					sessionId: "sess-1",
+					path: "src/NewName.tsx",
+					previousPath: "src/OldName.tsx",
+					status: "renamed",
+					additions: 0,
+					deletions: 0,
+					size: 120,
+					binary: false,
+					deleted: false,
+					content: "",
+					contentTruncated: false,
+					diff: "",
+					diffTruncated: false,
+					compareMode: "base",
+				},
+			};
+		});
+
+		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+
+		expect(await screen.findByText("src/OldName.tsx")).toBeInTheDocument();
+		expect(screen.getByText("src/NewName.tsx")).toBeInTheDocument();
+	});
+
+	it("reports HEAD fallback when no base comparison is available", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
+				return {
+					data: {
+						sessionId: "sess-1",
+						truncated: false,
+						compareMode: "head_fallback",
+						files: [],
+					},
+				};
+			}
+			return { data: undefined };
+		});
+
+		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+
+		expect(await screen.findByText("No changes against HEAD.")).toBeInTheDocument();
 	});
 
 	it("uses the terminal foreground color for diff content", async () => {

@@ -1163,21 +1163,30 @@ func workspaceFilesResponse(files sessionsvc.WorkspaceFiles) ListWorkspaceFilesR
 	out := make([]WorkspaceFileSummary, 0, len(files.Files))
 	for _, file := range files.Files {
 		out = append(out, WorkspaceFileSummary{
-			Path:      file.Path,
-			Status:    file.Status,
-			Additions: file.Additions,
-			Deletions: file.Deletions,
-			Size:      file.Size,
-			Binary:    file.Binary,
+			Path:         file.Path,
+			PreviousPath: file.PreviousPath,
+			Status:       file.Status,
+			Additions:    file.Additions,
+			Deletions:    file.Deletions,
+			Size:         file.Size,
+			Binary:       file.Binary,
 		})
 	}
-	return ListWorkspaceFilesResponse{SessionID: files.SessionID, Files: out, Truncated: files.Truncated}
+	return ListWorkspaceFilesResponse{
+		SessionID:      files.SessionID,
+		CompareBaseSHA: files.CompareBaseSHA,
+		CompareBaseRef: files.CompareBaseRef,
+		CompareMode:    files.CompareMode,
+		Files:          out,
+		Truncated:      files.Truncated,
+	}
 }
 
 func workspaceFileResponse(file sessionsvc.WorkspaceFileDetail) WorkspaceFileResponse {
 	return WorkspaceFileResponse{
 		SessionID:        file.SessionID,
 		Path:             file.Path,
+		PreviousPath:     file.PreviousPath,
 		Status:           file.Status,
 		Additions:        file.Additions,
 		Deletions:        file.Deletions,
@@ -1188,6 +1197,9 @@ func workspaceFileResponse(file sessionsvc.WorkspaceFileDetail) WorkspaceFileRes
 		ContentTruncated: file.ContentTruncated,
 		Diff:             file.Diff,
 		DiffTruncated:    file.DiffTruncated,
+		CompareBaseSHA:   file.CompareBaseSHA,
+		CompareBaseRef:   file.CompareBaseRef,
+		CompareMode:      file.CompareMode,
 	}
 }
 
