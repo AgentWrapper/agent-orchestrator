@@ -19,25 +19,23 @@ import (
 const commandTimeout = 8 * time.Second
 
 type commandSpec struct {
-	args []string
-	json bool
+	args   []string
+	parser func([]byte) ([]ports.AgentModelInfo, error)
 }
 
 var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*[[:alpha:]]`)
 
 var commandSpecs = map[string]commandSpec{
-	"opencode": {args: []string{"models"}},
-	"grok":     {args: []string{"models"}},
-	"cursor":   {args: []string{"models"}},
-	"agy":      {args: []string{"models"}},
-	"aider":    {args: []string{"--list-models", ""}},
-	"kilocode": {args: []string{"models"}},
-	"pi":       {args: []string{"--list-models"}},
-	"autohand": {args: []string{"models", "list"}},
-	"kimi":     {args: []string{"provider", "list", "--json"}, json: true},
-	"auggie":   {args: []string{"models", "list", "--json"}, json: true},
-	"devin":    {args: []string{"models", "list", "--format", "json"}, json: true},
-	"kiro":     {args: []string{"chat", "--list-models", "--format", "json"}, json: true},
+	"opencode": {args: []string{"models"}, parser: parseIDLines},
+	"grok":     {args: []string{"models"}, parser: parseGrokModels},
+	"cursor":   {args: []string{"models"}, parser: parseCursorModels},
+	"agy":      {args: []string{"models"}, parser: parseIDLines},
+	"kilocode": {args: []string{"models"}, parser: parseIDLines},
+	"pi":       {args: []string{"--list-models"}, parser: parsePiModels},
+	"kimi":     {args: []string{"provider", "list", "--json"}, parser: parseJSONModels},
+	"auggie":   {args: []string{"models", "list", "--json"}, parser: parseJSONModels},
+	"devin":    {args: []string{"models", "list", "--format", "json"}, parser: parseJSONModels},
+	"kiro":     {args: []string{"chat", "--list-models", "--format", "json"}, parser: parseJSONModels},
 }
 
 // Base returns the picker behavior AO can provide without executing a CLI.
@@ -93,7 +91,7 @@ func Base(agentID string) ports.AgentModelCatalog {
 
 // Discover executes a documented non-interactive model-list command when the
 // agent exposes one. Static catalogs are returned without executing the binary.
-func Discover(ctx context.Context, agentID, binary string) (ports.AgentModelCatalog, error) {
+func Discover(ctx context.Context, agentID, binary, workingDir string) (ports.AgentModelCatalog, error) {
 	base := Base(agentID)
 	spec, ok := commandSpecs[agentID]
 	if !ok {
@@ -104,16 +102,12 @@ func Discover(ctx context.Context, agentID, binary string) (ports.AgentModelCata
 	}
 	runCtx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
-	output, err := exec.CommandContext(runCtx, binary, spec.args...).CombinedOutput() //nolint:gosec // binary is adapter-resolved, args are static
+	cmd := modelCommand(runCtx, binary, spec.args, workingDir)
+	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return base, fmt.Errorf("%s model discovery: %w", agentID, err)
 	}
-	var models []ports.AgentModelInfo
-	if spec.json {
-		models, err = parseJSONModels(output)
-	} else {
-		models = parseTextModels(string(output))
-	}
+	models, err := spec.parser(output)
 	if err != nil {
 		return base, fmt.Errorf("%s model discovery: %w", agentID, err)
 	}
@@ -124,6 +118,14 @@ func Discover(ctx context.Context, agentID, binary string) (ports.AgentModelCata
 	base.Source = "cli"
 	base.FetchedAt = time.Now().UTC()
 	return base, nil
+}
+
+func modelCommand(ctx context.Context, binary string, args []string, workingDir string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, binary, args...) //nolint:gosec // binary is adapter-resolved, args are static
+	if strings.TrimSpace(workingDir) != "" {
+		cmd.Dir = workingDir
+	}
+	return cmd
 }
 
 // BinaryVersion returns a short best-effort version string for cache
@@ -163,26 +165,109 @@ func model(id, label string, isDefault bool) ports.AgentModelInfo {
 	return ports.AgentModelInfo{ID: id, Label: label, IsDefault: isDefault}
 }
 
-func parseTextModels(output string) []ports.AgentModelInfo {
-	output = ansiPattern.ReplaceAllString(output, "")
+func parseIDLines(output []byte) ([]ports.AgentModelInfo, error) {
+	text := ansiPattern.ReplaceAllString(string(output), "")
 	var models []ports.AgentModelInfo
-	for _, line := range strings.Split(output, "\n") {
+	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(strings.TrimLeft(line, "•*-✓>│├└ "))
 		if line == "" {
 			continue
 		}
 		fields := strings.Fields(line)
-		if len(fields) == 0 {
+		if len(fields) != 1 || !looksLikeModelID(fields[0]) {
 			continue
 		}
 		id := strings.Trim(fields[0], "`\"'[](),:")
-		lower := strings.ToLower(id)
-		if id == "" || lower == "model" || lower == "models" || lower == "provider" || strings.HasPrefix(lower, "available") {
-			continue
-		}
 		models = append(models, ports.AgentModelInfo{ID: id, Label: id})
 	}
-	return normalize(models)
+	return normalize(models), nil
+}
+
+func parseGrokModels(output []byte) ([]ports.AgentModelInfo, error) {
+	return parseSectionModels(string(output), "Available models:", "")
+}
+
+func parseCursorModels(output []byte) ([]ports.AgentModelInfo, error) {
+	return parseSectionModels(string(output), "Available models", "Tip:")
+}
+
+func parseSectionModels(output, startMarker, stopMarker string) ([]ports.AgentModelInfo, error) {
+	output = ansiPattern.ReplaceAllString(output, "")
+	inModels := false
+	var models []ports.AgentModelInfo
+	for _, rawLine := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if !inModels {
+			if line == startMarker {
+				inModels = true
+			}
+			continue
+		}
+		if stopMarker != "" && strings.HasPrefix(line, stopMarker) {
+			break
+		}
+		line = strings.TrimSpace(strings.TrimLeft(line, "•*-✓>│├└ "))
+		fields := strings.Fields(line)
+		if len(fields) == 0 || !looksLikeModelID(fields[0]) {
+			continue
+		}
+		id := strings.Trim(fields[0], "`\"'[](),:")
+		label := id
+		if before, after, ok := strings.Cut(line, " - "); ok && strings.TrimSpace(before) == id {
+			label = strings.TrimSpace(after)
+			if suffix, _, found := strings.Cut(label, " ("); found {
+				label = strings.TrimSpace(suffix)
+			}
+		}
+		models = append(models, ports.AgentModelInfo{
+			ID:        id,
+			Label:     label,
+			IsDefault: strings.Contains(strings.ToLower(line), "(default)"),
+		})
+	}
+	return normalize(models), nil
+}
+
+func parsePiModels(output []byte) ([]ports.AgentModelInfo, error) {
+	output = []byte(ansiPattern.ReplaceAllString(string(output), ""))
+	var models []ports.AgentModelInfo
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || strings.EqualFold(fields[0], "provider") {
+			continue
+		}
+		provider := strings.TrimSpace(fields[0])
+		modelID := strings.TrimSpace(fields[1])
+		if !looksLikeModelID(provider) || !looksLikeModelID(modelID) {
+			continue
+		}
+		id := provider + "/" + modelID
+		models = append(models, ports.AgentModelInfo{ID: id, Label: modelID, Provider: provider})
+	}
+	return normalize(models), nil
+}
+
+func looksLikeModelID(value string) bool {
+	value = strings.Trim(value, "`\"'[](),:")
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case strings.ContainsRune("./:_-@+", r):
+		default:
+			return false
+		}
+	}
+	switch strings.ToLower(value) {
+	case "model", "models", "provider":
+		return false
+	default:
+		return true
+	}
 }
 
 func parseJSONModels(output []byte) ([]ports.AgentModelInfo, error) {
@@ -199,14 +284,14 @@ func parseJSONModels(output []byte) ([]ports.AgentModelInfo, error) {
 				walk(item)
 			}
 		case map[string]any:
-			id := firstString(node, "modelId", "model_id", "slug", "model")
+			id := firstString(node, "modelId", "model_id", "model_uid", "slug", "model")
 			if id == "" {
 				if _, isProviderContainer := node["models"]; !isProviderContainer {
 					id = firstString(node, "id")
 				}
 			}
 			if id != "" {
-				label := firstString(node, "displayName", "display_name", "label", "name")
+				label := firstString(node, "displayName", "display_name", "model_name", "label", "name")
 				if label == "" {
 					label = id
 				}
