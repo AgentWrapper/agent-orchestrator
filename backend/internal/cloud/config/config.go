@@ -28,6 +28,7 @@ type Config struct {
 	DaytonaAPIKey         string
 	DaytonaTarget         string
 	DaytonaWorkerSnapshot string
+	DockerWorkerImage     string
 	FlyAPIURL             string
 	FlyAPIToken           string
 	FlyApp                string
@@ -61,11 +62,12 @@ func Load() (Config, error) {
 		DatabaseDirectURL:     strings.TrimSpace(os.Getenv("AO_DATABASE_DIRECT_URL")),
 		SupabaseURL:           strings.TrimRight(os.Getenv("AO_SUPABASE_URL"), "/"),
 		SupabaseAnonKey:       os.Getenv("AO_SUPABASE_ANON_KEY"),
-		SandboxProvider:       envOr("AO_SANDBOX_PROVIDER", "daytona"),
+		SandboxProvider:       envOr("AO_SANDBOX_PROVIDER", "docker"),
 		DaytonaAPIURL:         strings.TrimRight(envOr("AO_DAYTONA_API_URL", "https://app.daytona.io/api"), "/"),
 		DaytonaAPIKey:         os.Getenv("AO_DAYTONA_API_KEY"),
 		DaytonaTarget:         envOr("AO_DAYTONA_TARGET", "us"),
 		DaytonaWorkerSnapshot: envOr("AO_DAYTONA_WORKER_SNAPSHOT", "daytona-large"),
+		DockerWorkerImage:     envOr("AO_DOCKER_WORKER_IMAGE", "ao-cloud-worker:local"),
 		FlyAPIURL:             strings.TrimRight(envOr("AO_FLY_API_URL", "https://api.machines.dev/v1"), "/"),
 		FlyAPIToken:           strings.TrimSpace(os.Getenv("AO_FLY_API_TOKEN")),
 		FlyApp:                strings.TrimSpace(os.Getenv("AO_FLY_APP")),
@@ -110,6 +112,10 @@ func (c Config) Validate() error {
 		return errors.New("AO_WORKER_SIGNING_KEY must decode to at least 32 bytes")
 	}
 	switch c.SandboxProvider {
+	case "docker":
+		if strings.TrimSpace(c.DockerWorkerImage) == "" {
+			return errors.New("AO_DOCKER_WORKER_IMAGE is required when AO_SANDBOX_PROVIDER=docker")
+		}
 	case "daytona":
 		if strings.TrimSpace(c.DaytonaAPIKey) == "" {
 			return errors.New("AO_DAYTONA_API_KEY is required when AO_SANDBOX_PROVIDER=daytona")
@@ -133,7 +139,7 @@ func (c Config) Validate() error {
 			return fmt.Errorf("missing required Fly configuration: %s", strings.Join(missingFly, ", "))
 		}
 	default:
-		return fmt.Errorf("AO_SANDBOX_PROVIDER must be daytona or fly, got %q", c.SandboxProvider)
+		return fmt.Errorf("AO_SANDBOX_PROVIDER must be docker, daytona, or fly, got %q", c.SandboxProvider)
 	}
 	return nil
 }

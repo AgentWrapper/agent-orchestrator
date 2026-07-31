@@ -31,8 +31,6 @@ type Runner struct {
 	workspaceDir      string
 	dataDir           string
 	credentialCommand func(context.Context, string, []string, io.Reader) error
-	shellTerminal     *os.File
-	shellWriteMu      sync.Mutex
 }
 
 // NewRunner creates a worker runner from bootstrap launch data.
@@ -46,7 +44,9 @@ func NewRunner(client *Client, bootstrap BootstrapResponse, workspaceDir, dataDi
 	}
 }
 
-// Run prepares the repository and launches the configured interactive or structured runtime.
+// Run prepares the repository and launches the configured agent in the session
+// terminal. The browser attaches to this exact PTY; it is not a reconstructed
+// chat transcript or a separate workspace shell.
 func (r *Runner) Run(ctx context.Context) error {
 	if err := os.MkdirAll(r.dataDir, 0o700); err != nil {
 		return fmt.Errorf("create worker data dir: %w", err)
@@ -121,27 +121,6 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 	runtimeEnvironment := append(os.Environ(), envList(hookEnvironment)...)
 	clearEnvironmentSecret(hookEnvironment, credentialEnvironmentName)
-	if structuredRuntimeEnabled(r.bootstrap.Launch.Session.Harness) {
-		stopShell, err := r.startWorkspaceShell(ctx, runtimeEnvironment)
-		if err != nil {
-			return err
-		}
-		defer stopShell()
-	}
-	switch r.bootstrap.Launch.Session.Harness {
-	case "claude-code":
-		if structuredRuntimeEnabled("claude-code") {
-			return r.runStructuredClaude(ctx, argv, runtimeEnvironment)
-		}
-	case "codex":
-		if structuredRuntimeEnabled("codex") {
-			return r.runStructuredCodex(ctx, argv, runtimeEnvironment)
-		}
-	case "cursor":
-		if structuredRuntimeEnabled("cursor") {
-			return r.runStructuredCursor(ctx, argv, runtimeEnvironment)
-		}
-	}
 	return r.runInteractiveAgent(ctx, argv, launchConfig, strategy, runtimeEnvironment)
 }
 
@@ -377,6 +356,27 @@ func (r *Runner) streamOutput(ctx context.Context, terminal io.Reader) error {
 	}
 }
 
+func (r *Runner) acknowledgePrompt(ctx context.Context, sequence int64) error {
+	return r.client.Event(ctx, "worker.prompt_accepted", map[string]int64{"sequence": sequence})
+}
+
+func (r *Runner) reportTurnInterrupted(ctx context.Context, sequence int64) error {
+	return r.client.Event(ctx, "chat.turn_interrupted", map[string]int64{
+		"requestSequence": sequence,
+	})
+}
+
+func waitForRetry(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
 func (r *Runner) heartbeatLoop(ctx context.Context) {
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
@@ -395,23 +395,7 @@ func (r *Runner) heartbeatLoop(ctx context.Context) {
 func (r *Runner) runtimeCapabilities() []string {
 	capabilities := append([]string(nil), DefaultCapabilities...)
 	capabilities = append(capabilities, "runtime.pty.v1", "workspace.inspect.v1", "preview.http.v1")
-	if structuredRuntimeEnabled(r.bootstrap.Launch.Session.Harness) {
-		capabilities = append(capabilities, "chat.stream-json.v1")
-	}
 	return capabilities
-}
-
-func structuredRuntimeEnabled(harness string) bool {
-	switch harness {
-	case "claude-code":
-		return os.Getenv("AO_CLOUD_CLAUDE_PTY") != "1"
-	case "codex":
-		return os.Getenv("AO_CLOUD_CODEX_PTY") != "1"
-	case "cursor":
-		return os.Getenv("AO_CLOUD_CURSOR_PTY") != "1"
-	default:
-		return false
-	}
 }
 
 func resolveAgent(harness string) (ports.Agent, error) {

@@ -18,6 +18,7 @@ import (
 	cloudreconcile "github.com/aoagents/agent-orchestrator/backend/internal/cloud/reconcile"
 	cloudsandbox "github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandbox"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandbox/daytona"
+	clouddocker "github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandbox/docker"
 	cloudfly "github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandbox/fly"
 	cloudsandboxresolve "github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandboxresolve"
 	cloudscm "github.com/aoagents/agent-orchestrator/backend/internal/cloud/scm"
@@ -82,6 +83,10 @@ func run(log *slog.Logger) error {
 	if cfg.DaytonaAPIKey != "" {
 		daytonaProvider = daytona.New(cfg.DaytonaAPIURL, cfg.DaytonaAPIKey, cfg.DaytonaTarget, nil)
 	}
+	var dockerProvider cloudsandbox.Provider
+	if cfg.SandboxProvider == "docker" {
+		dockerProvider = clouddocker.New(cfg.DockerWorkerImage)
+	}
 	var flyProvider cloudsandbox.Provider
 	if cfg.SandboxProvider == "fly" {
 		flyClient := cloudfly.New(cloudfly.Config{
@@ -105,6 +110,7 @@ func run(log *slog.Logger) error {
 		cfg.DaytonaAPIURL,
 		cfg.DaytonaTarget,
 		daytonaProvider,
+		dockerProvider,
 		flyProvider,
 	)
 	var workerBinary []byte
@@ -119,6 +125,7 @@ func run(log *slog.Logger) error {
 		providerResolver,
 		cfg.PublicURL,
 		cfg.DaytonaWorkerSnapshot,
+		cfg.DockerWorkerImage,
 		cfg.ReconcileInterval,
 		workerBinary,
 		log,

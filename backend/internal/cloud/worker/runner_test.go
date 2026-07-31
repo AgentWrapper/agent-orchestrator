@@ -43,29 +43,6 @@ func TestPrepareClaudeCloudExperienceSkipsFirstRunPrompts(t *testing.T) {
 	}
 }
 
-func TestStructuredRuntimeEnabled(t *testing.T) {
-	for _, harness := range []string{"claude-code", "codex", "cursor"} {
-		t.Run(harness, func(t *testing.T) {
-			environmentName := map[string]string{
-				"claude-code": "AO_CLOUD_CLAUDE_PTY",
-				"codex":       "AO_CLOUD_CODEX_PTY",
-				"cursor":      "AO_CLOUD_CURSOR_PTY",
-			}[harness]
-			t.Setenv(environmentName, "")
-			if !structuredRuntimeEnabled(harness) {
-				t.Fatalf("structuredRuntimeEnabled(%q) = false", harness)
-			}
-			t.Setenv(environmentName, "1")
-			if structuredRuntimeEnabled(harness) {
-				t.Fatalf("structuredRuntimeEnabled(%q) = true with PTY override", harness)
-			}
-		})
-	}
-	if structuredRuntimeEnabled("unsupported") {
-		t.Fatal("structuredRuntimeEnabled(unsupported) = true")
-	}
-}
-
 func TestOrchestratorSystemPromptRequiresDurableAOWorkers(t *testing.T) {
 	prompt := systemPrompt("orchestrator")
 	for _, required := range []string{

@@ -14,59 +14,64 @@ Cloud web app
     → ao-worker + Claude Code/Codex/Cursor
 ```
 
-## Structured agent sessions
+## Terminal-first sessions
 
-Claude Code, Codex, and Cursor sessions open in AO's native conversation view.
-The worker consumes each provider's machine-readable event stream and maps it
-to provider-neutral `chat.*` events for messages, reasoning, tools, command and
-file output, usage, approvals, warnings, errors, and turn lifecycle.
+Each cloud session exposes the actual PTY that runs its selected harness. The
+browser sends input, resize, and reconnect commands to that terminal through the
+control plane; it does not reconstruct a custom chat transcript from provider
+output. An orchestrator terminal starts Claude Code with AO's bypass-permission
+policy and includes the cloud `ao` CLI for `spawn`, `send`, `status`, `inspect`,
+`wait`, and `result`.
 
-Browser messages are idempotently committed to PostgreSQL before worker
-delivery. Provider events are also committed before display. The web client
-uses an authenticated replay-then-live SSE stream, so refreshes and reconnects
-continue from the last durable sequence without depending on terminal scrollback.
-Closing the browser does not stop the worker. Workers that do not negotiate the
-structured-chat capability automatically use the PTY surface instead.
+Workers keep their own harness PTY. PostgreSQL still records lifecycle,
+provisioning, and terminal output needed for reconnect, while the sandbox volume
+keeps the repository and harness state. Files and diffs remain available through
+the inspector.
 
 ## Local development
 
 Prerequisites:
 
-- Go, Node.js, npm, PostgreSQL 17, Docker
+- Go, Node.js, npm, Docker
 - authenticated `gh` CLI for the development Git credential broker
 - Supabase project with Email Auth enabled
 - Fly organization/app token or Daytona API key
 
-Create local databases once:
+Start local PostgreSQL once:
 
 ```bash
-brew services start postgresql@17
-createdb ao_cloud_dev
-createdb ao_cloud_test
+npm run cloud:postgres
+```
+
+Run the cloud package suite against that disposable database with:
+
+```bash
+npm run cloud:test
 ```
 
 Copy `ao-cloud/.env.example` to the gitignored `.env.cloud.local`, then add
-credentials. Generate local encryption/signing keys with:
+your Supabase development auth values and Git credential mode. Generate local
+encryption/signing keys with:
 
 ```bash
 openssl rand -hex 32
 openssl rand -hex 32
 ```
 
-Build the Linux worker used for local-to-Daytona validation (Fly runs the
-published worker image directly):
+Build the same worker image used by local Docker sandboxes:
 
 ```bash
-npm run cloud:build-worker
+npm run cloud:build-image
 ```
 
-Start the control plane:
+Set `AO_SANDBOX_PROVIDER=docker` (the default) and keep
+`AO_DOCKER_WORKER_IMAGE=ao-cloud-worker:local`. Start the control plane:
 
 ```bash
 npm run cloud:server
 ```
 
-Start the website in a second terminal:
+Start the web app in a second terminal:
 
 ```bash
 npm run cloud:web
@@ -80,7 +85,10 @@ http://127.0.0.1:5174/app
 
 The Go service applies the embedded `ao_*` PostgreSQL migrations at startup.
 The website uses the Supabase public/anon key only. Service-role, database,
-Daytona, encryption, worker-signing, and Git credentials remain server-side.
+Docker, Daytona, encryption, worker-signing, and Git credentials remain
+server-side. For the Docker provider, the worker is given
+`host.docker.internal` automatically so it can call the CP that is running on
+your host.
 
 ## Supabase configuration
 
@@ -231,5 +239,4 @@ to the Supabase Auth redirect allowlist.
 - Daytona remains available behind the provider contract, but its earlier
   restricted-tier account blocked worker egress and is not the active provider.
 
-See [`CURRENT_ARCHITECTURE.md`](CURRENT_ARCHITECTURE.md) for the exact runtime
-and [`../docs/TODO-CLOUD.md`](../docs/TODO-CLOUD.md) for production gaps.
+The product-level cloud design is in [`../CLOUD_DESIGN.md`](../CLOUD_DESIGN.md).

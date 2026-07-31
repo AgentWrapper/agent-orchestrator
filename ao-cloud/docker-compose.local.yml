@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ao
+      POSTGRES_PASSWORD: ao
+      POSTGRES_DB: ao_cloud_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - ao-cloud-postgres:/var/lib/postgresql/data
+      - ./postgres-init.sql:/docker-entrypoint-initdb.d/10-create-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ao -d ao_cloud_dev"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  ao-cloud-postgres:

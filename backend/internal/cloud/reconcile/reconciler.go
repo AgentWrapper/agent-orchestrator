@@ -31,6 +31,7 @@ type Reconciler struct {
 	providers      providerResolver
 	publicURL      string
 	workerSnapshot string
+	workerImage    string
 	owner          string
 	interval       time.Duration
 	log            *slog.Logger
@@ -47,6 +48,7 @@ func New(
 	providers providerResolver,
 	publicURL string,
 	workerSnapshot string,
+	workerImage string,
 	interval time.Duration,
 	workerBinary []byte,
 	log *slog.Logger,
@@ -62,6 +64,7 @@ func New(
 		providers:      providers,
 		publicURL:      strings.TrimRight(publicURL, "/"),
 		workerSnapshot: workerSnapshot,
+		workerImage:    workerImage,
 		owner:          uuid.NewString(),
 		interval:       interval,
 		workerBinary:   append([]byte(nil), workerBinary...),
@@ -255,6 +258,7 @@ func (r *Reconciler) provision(
 		Name:            "ao-" + string(sandbox.SessionID),
 		SessionID:       sandbox.SessionID,
 		Snapshot:        r.workerSnapshot,
+		Image:           r.workerImage,
 		ResourceProfile: clouddomain.ResourceProfile{CPU: 4, Memory: 8, Disk: 10},
 		Environment: map[string]string{
 			"AO_CLOUD_PUBLIC_URL":       r.publicURL,

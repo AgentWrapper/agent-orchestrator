@@ -19,9 +19,6 @@ Start with [architecture.md](architecture.md) for the current backend model and
 | [STATUS.md](STATUS.md)                                       | What is shipped on `main` today and what is still in flight.                                                          |
 | [stack.md](stack.md)                                         | Accepted library/runtime choices, pending stack decisions, and dependencies explicitly avoided for V1.                |
 | [telemetry.md](telemetry.md)                                 | Telemetry collection, privacy safeguards, configuration, and PostHog dashboard guidance.                              |
-| [Cloud Agent Plan Nihal.md](Cloud%20Agent%20Plan%20Nihal.md) | Cloud-agent decisions, self-hosted AWS topology, competitive research, and unresolved design questions.               |
-| [Cloud Agent V1 Plan.md](Cloud%20Agent%20V1%20Plan.md)       | Implementation scope, shared contracts, local regression baseline, cloud acceptance gates, and required credentials.  |
-| [TODO-CLOUD.md](TODO-CLOUD.md)                               | Deferred organization, provider, synchronization, enterprise, automation, and billing work for AO Cloud.              |
 
 ## Mental model
 

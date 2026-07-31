@@ -9,9 +9,11 @@
     "api:ts": "openapi-typescript backend/internal/httpd/apispec/openapi.yaml -o frontend/src/api/schema.ts",
     "api": "npm run api:spec && npm run api:ts",
     "cloud:build-worker": "cd backend && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /tmp/ao-worker-linux-amd64 ./cmd/ao-worker",
+    "cloud:build-image": "docker build -f ao-cloud/docker/worker.Dockerfile -t ao-cloud-worker:local .",
+    "cloud:postgres": "docker compose -f ao-cloud/docker-compose.local.yml up -d postgres",
+    "cloud:test": "AO_CLOUD_TEST_DATABASE_URL='postgresql://ao:ao@127.0.0.1:5432/ao_cloud_test?sslmode=disable' sh -c 'cd backend && go test ./internal/cloud/...'",
     "cloud:server": "set -a; . ./.env.cloud.local; set +a; cd backend && go run ./cmd/ao-cloud",
-    "cloud:web": "npm --prefix frontend/src/landing run dev -- --hostname 127.0.0.1 --port 5174",
-    "cloud:test": "set -a; . ./.env.cloud.local; set +a; cd backend && go test ./cmd/ao-cloud ./cmd/ao-worker ./cmd/ao-cloud-agent ./internal/cloud/..."
+    "cloud:web": "npm --prefix frontend/src/landing run dev -- --hostname 127.0.0.1 --port 5174"
   },
   "devDependencies": {
     "openapi-typescript": "7.4.4"

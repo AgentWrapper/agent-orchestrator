@@ -42,11 +42,6 @@ import {
   defaultConnectedAgent,
 } from "@/lib/cloud-agent-connections";
 import {
-  mergeChatEventCache,
-  prefetchChatEvents,
-  pruneChatEventCache,
-} from "@/lib/cloud-chat-cache";
-import {
   removeWorkspaceSnapshots,
   warmWorkspaceSession,
 } from "@/lib/cloud-workspace-cache";
@@ -56,7 +51,6 @@ import {
 } from "@/lib/cloud-terminal-pool";
 import { useAuth } from "../auth/AuthProvider";
 import { PrismLogoGrid } from "../auth/PrismLogoGrid";
-import { CloudChat } from "./CloudChat";
 import { CloudInspector, type CloudInspectorTab } from "./CloudInspector";
 import { CloudTerminal } from "./CloudTerminal";
 
@@ -77,15 +71,6 @@ const defaultSidebarWidth = 240;
 const collapsedSidebarWidth = 52;
 const minimumSidebarWidth = 200;
 const maximumSidebarWidth = 420;
-const structuredChatHarnesses = new Set(["claude-code", "codex", "cursor"]);
-
-function supportsStructuredChat(session: CloudSession) {
-  return (
-    structuredChatHarnesses.has(session.harness) ||
-    session.capabilities?.includes("chat.stream-json.v1") === true
-  );
-}
-
 const button =
   "inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border px-2.5 text-sm text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45";
 const primaryButton =
@@ -203,7 +188,6 @@ export default function CloudAppPage() {
   const [activeChatSessionIds, setActiveChatSessionIds] = useState<Set<string>>(
     () => new Set(),
   );
-  const optimisticActiveAt = useRef(new Map<string, number>());
   const refreshInFlight = useRef<Promise<void> | null>(null);
   const selectedInspector = selectedSessionId
     ? sessionInspectors[selectedSessionId]
@@ -254,20 +238,6 @@ export default function CloudAppPage() {
       }));
     },
     [selectedSessionId],
-  );
-
-  const handleChatTurnActiveChange = useCallback(
-    (sessionId: string, active: boolean) => {
-      if (active) optimisticActiveAt.current.set(sessionId, Date.now());
-      else optimisticActiveAt.current.delete(sessionId);
-      setActiveChatSessionIds((current) => {
-        const next = new Set(current);
-        if (active) next.add(sessionId);
-        else next.delete(sessionId);
-        return next;
-      });
-    },
-    [],
   );
 
   useEffect(() => {
@@ -452,7 +422,6 @@ export default function CloudAppPage() {
         ]);
         setProjects(projectData.projects);
         setSessions(sessionData.sessions);
-        const now = Date.now();
         const authoritativeActive = new Set(
           sessionData.sessions
             .filter(
@@ -462,32 +431,7 @@ export default function CloudAppPage() {
             )
             .map(({ id }) => id),
         );
-        setActiveChatSessionIds((current) => {
-          const next = new Set(authoritativeActive);
-          for (const sessionId of current) {
-            const optimisticAt = optimisticActiveAt.current.get(sessionId) ?? 0;
-            if (now - optimisticAt < 5_000) next.add(sessionId);
-            else if (!next.has(sessionId))
-              optimisticActiveAt.current.delete(sessionId);
-          }
-          return next;
-        });
-        const sessionIDs = new Set(sessionData.sessions.map(({ id }) => id));
-        pruneChatEventCache(sessionIDs);
-        await Promise.allSettled(
-          sessionData.sessions
-            .filter(({ harness }) => structuredChatHarnesses.has(harness))
-            .map((cloudSession) =>
-              prefetchChatEvents(
-                api,
-                cloudSession.id,
-                cloudSession.status === "working" ||
-                  cloudSession.activeTurn !== undefined
-                  ? 1_000
-                  : 5_000,
-              ),
-            ),
-        );
+        setActiveChatSessionIds(authoritativeActive);
         setRepositories(repositoryData.repositories);
         setConnections(connectionData.providerConnections);
         setSandboxProvider(runtimeData.sandboxProvider);
@@ -528,9 +472,6 @@ export default function CloudAppPage() {
 
   const selectedProject = projects.find(({ id }) => id === selectedProjectId);
   const selectedSession = sessions.find(({ id }) => id === selectedSessionId);
-  const structuredChatAvailable = selectedSession
-    ? supportsStructuredChat(selectedSession)
-    : false;
   const terminalRuntimeAvailable =
     selectedSession?.capabilities?.includes("runtime.pty.v1") === true;
   const daytonaConnections = connections.filter(
@@ -599,11 +540,6 @@ export default function CloudAppPage() {
     setLoading(true);
     try {
       const result = await operation();
-      if (result.session.kind === "orchestrator") {
-        mergeChatEventCache(result.session.id, [], true);
-      } else if (api) {
-        await prefetchChatEvents(api, result.session.id, 0);
-      }
       await refresh();
       setSelectedProjectId(result.session.projectId);
       setSelectedSessionId(result.session.id);
@@ -662,7 +598,6 @@ export default function CloudAppPage() {
           crypto.randomUUID(),
         );
         orchestrator = result.session;
-        mergeChatEventCache(orchestrator.id, [], true);
       }
       await refresh();
       setSelectedProjectId(project.id);
@@ -691,7 +626,6 @@ export default function CloudAppPage() {
       api.setDesiredState(selectedSession.id, "deleted"),
     );
     if (!deleted) return;
-    optimisticActiveAt.current.delete(selectedSession.id);
     setActiveChatSessionIds((current) => {
       const next = new Set(current);
       next.delete(selectedSession.id);
@@ -1207,20 +1141,10 @@ export default function CloudAppPage() {
                 run={run}
               />
             ) : view === "session" && selectedSession ? (
-              structuredChatAvailable ? (
+              terminalRuntimeAvailable ? (
                 <div className="flex h-full min-h-0 min-w-0">
                   <div className="min-h-0 min-w-0 flex-1">
-                    <CloudChat
-                      key={selectedSession.id}
-                      api={api}
-                      session={selectedSession}
-                      onTurnActiveChange={handleChatTurnActiveChange}
-                      onOpenPreview={(url) => {
-                        setInspectorPreview(url);
-                        setInspectorTab("browser");
-                        setInspectorOpen(true);
-                      }}
-                    />
+                    <CloudTerminal api={api} sessionId={selectedSession.id} />
                   </div>
                   <CloudInspector
                     key={selectedSession.id}
@@ -1237,8 +1161,6 @@ export default function CloudAppPage() {
                     onClose={() => setInspectorOpen(false)}
                   />
                 </div>
-              ) : terminalRuntimeAvailable ? (
-                <CloudTerminal api={api} sessionId={selectedSession.id} />
               ) : (
                 <CloudRuntimeConnecting session={selectedSession} />
               )

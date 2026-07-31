@@ -56,6 +56,7 @@ func TestResolveUsesEncryptedUserConnection(t *testing.T) {
 		"us",
 		nil,
 		nil,
+		nil,
 	)
 	provider, err := resolver.Resolve(context.Background(), clouddomain.Sandbox{
 		AccountID:            "account-one",
@@ -76,7 +77,7 @@ func TestResolveUsesEncryptedUserConnection(t *testing.T) {
 
 func TestResolveUsesConfiguredFlyProvider(t *testing.T) {
 	flyProvider := daytona.New("https://unused.invalid", "key", "us", nil)
-	resolver := New(fakeSecretStore{}, nil, "", "", nil, flyProvider)
+	resolver := New(fakeSecretStore{}, nil, "", "", nil, nil, flyProvider)
 
 	provider, err := resolver.Resolve(context.Background(), clouddomain.Sandbox{
 		Provider: "fly",

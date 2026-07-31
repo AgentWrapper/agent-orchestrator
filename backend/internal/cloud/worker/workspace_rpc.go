@@ -19,8 +19,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/creack/pty"
-
 	cloudworkerhub "github.com/aoagents/agent-orchestrator/backend/internal/cloud/workerhub"
 )
 
@@ -44,67 +42,11 @@ type workspaceEntry struct {
 	ModTime string `json:"modTime"`
 }
 
-func (r *Runner) startWorkspaceShell(ctx context.Context, environment []string) (func(), error) {
-	command := exec.CommandContext(ctx, "/bin/bash", "--noprofile", "--norc")
-	command.Dir = r.workspaceDir
-	command.Env = append([]string(nil), environment...)
-	command.Env = append(command.Env, "TERM=xterm-256color", `PS1=\[\e[38;5;75m\]\w\[\e[0m\] \$ `)
-	terminal, err := pty.Start(command)
-	if err != nil {
-		return nil, fmt.Errorf("start workspace shell: %w", err)
-	}
-	r.shellWriteMu.Lock()
-	r.shellTerminal = terminal
-	r.shellWriteMu.Unlock()
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		if err := r.streamOutput(ctx, terminal); err != nil &&
-			!errors.Is(err, io.EOF) &&
-			ctx.Err() == nil {
-			_ = r.client.Event(ctx, "terminal.shell_failed", map[string]string{"error": err.Error()})
-		}
-		_ = command.Wait()
-	}()
-
-	return func() {
-		r.shellWriteMu.Lock()
-		if r.shellTerminal == terminal {
-			r.shellTerminal = nil
-		}
-		_ = terminal.Close()
-		r.shellWriteMu.Unlock()
-		if command.Process != nil {
-			_ = command.Process.Kill()
-		}
-		<-done
-	}, nil
-}
-
 func (r *Runner) dispatchWorkspaceCommand(
 	ctx context.Context,
 	command cloudworkerhub.Command,
 ) bool {
 	switch command.Type {
-	case "input":
-		decoded, err := base64.StdEncoding.DecodeString(command.Data)
-		if err != nil {
-			return true
-		}
-		r.shellWriteMu.Lock()
-		if r.shellTerminal != nil {
-			_, _ = r.shellTerminal.Write(decoded)
-		}
-		r.shellWriteMu.Unlock()
-		return true
-	case "resize":
-		r.shellWriteMu.Lock()
-		if r.shellTerminal != nil {
-			_ = pty.Setsize(r.shellTerminal, &pty.Winsize{Rows: command.Rows, Cols: command.Cols})
-		}
-		r.shellWriteMu.Unlock()
-		return true
 	case "workspace_request":
 		go r.respondToWorkspaceRequest(ctx, command)
 		return true

@@ -3,8 +3,8 @@
 import { useEffect, useRef } from "react";
 
 const logoSource = "/ao-logo.svg";
-const minimumCellSize = 34;
-const maximumCellSize = 44;
+const minimumCellSize = 24;
+const maximumCellSize = 32;
 const revealDuration = 1_000;
 
 interface GlyphCell {
@@ -55,7 +55,7 @@ function createScene(
     ? Math.max(6, Math.min(9, Math.round(width / 22)))
     : Math.max(
         minimumCellSize,
-        Math.min(maximumCellSize, Math.round(width / 18)),
+        Math.min(maximumCellSize, Math.round(width / 25)),
       );
   const offsetX = (width % cellSize) / 2;
   const offsetY = (height % cellSize) / 2;
