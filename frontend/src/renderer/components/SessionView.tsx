@@ -425,8 +425,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									browserAnnotationQueue={browserAnnotationQueue}
 									browserPanelRef={browserMaximize.setNodeRef}
 									browserPoppedOut={browserPoppedOut}
+									filesPoppedOut={filesPoppedOut}
 									filesView={
-										session ? (
+										session && !filesPoppedOut ? (
 											<SessionFilesView
 												containerRef={filesMaximize.setNodeRef}
 												onClose={() => setInspectorViewForSession(sessionId, "summary")}
@@ -441,6 +442,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 										setTerminalTarget({ kind: "reviewer", handleId, harness })
 									}
 									onToggleBrowserPopOut={handleToggleBrowserPopOut}
+									onToggleFilesPopOut={handleToggleFilesPopOut}
 									onViewChange={(next: InspectorView) => setInspectorViewForSession(sessionId, next)}
 									view={inspectorView}
 									browserView={browserView}

@@ -123,6 +123,47 @@ describe("useFlipTransition", () => {
 		expect(onSettle).toHaveBeenCalledTimes(1);
 	});
 
+	// DESIGN.md's documented timing lives in tokens.css as --duration-emphasized;
+	// the hook must actually read it rather than keep a second copy that can
+	// drift from the design system.
+	describe("duration", () => {
+		afterEach(() => {
+			document.documentElement.style.removeProperty("--duration-emphasized");
+		});
+
+		function playAndReadDuration(): number {
+			flipGetStateMock.mockReturnValue({ id: "captured-state" });
+			const { result } = renderHook(() => useFlipTransition());
+			act(() => result.current.captureRect(node));
+			act(() => result.current.playFlip(node));
+			return flipFromMock.mock.calls[0][1].duration;
+		}
+
+		it("reads --duration-emphasized from the document root", () => {
+			document.documentElement.style.setProperty("--duration-emphasized", "500ms");
+			expect(playAndReadDuration()).toBeCloseTo(0.5);
+		});
+
+		it("accepts a seconds-based token value", () => {
+			document.documentElement.style.setProperty("--duration-emphasized", "0.4s");
+			expect(playAndReadDuration()).toBeCloseTo(0.4);
+		});
+
+		it("falls back to the documented default when the token is unreadable", () => {
+			document.documentElement.style.setProperty("--duration-emphasized", "not-a-duration");
+			expect(playAndReadDuration()).toBeCloseTo(0.32);
+		});
+
+		it("lets an explicit option override the token", () => {
+			document.documentElement.style.setProperty("--duration-emphasized", "500ms");
+			flipGetStateMock.mockReturnValue({ id: "captured-state" });
+			const { result } = renderHook(() => useFlipTransition());
+			act(() => result.current.captureRect(node));
+			act(() => result.current.playFlip(node, { duration: 200 }));
+			expect(flipFromMock.mock.calls[0][1].duration).toBeCloseTo(0.2);
+		});
+	});
+
 	// The marker is the contract the Browser panel's CSS hangs off: while it is
 	// present the toolbar is hidden and the viewport fills the panel, so the
 	// real-layout tween only reveals/clips a static snapshot instead of

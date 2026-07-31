@@ -4,8 +4,25 @@ import { Flip } from "gsap/Flip";
 
 gsap.registerPlugin(Flip);
 
-const DEFAULT_DURATION_MS = 320;
+// Used only if the token cannot be read (no document, or a stylesheet that has
+// not applied yet); tokens.css is the source of truth.
+const FALLBACK_DURATION_MS = 320;
+// GSAP's own ease, not a CSS one. `--ease-emphasized` in tokens.css is its
+// cubic-bezier equivalent, for CSS-driven parts of the same transition.
 const DEFAULT_EASE = "expo.out";
+
+// DESIGN.md documents this transition's timing, so the number belongs in the
+// motion scale in tokens.css rather than duplicated here. Read per play (not
+// memoised at module load) so a theme or stylesheet swap is picked up and so
+// the value is never captured before first paint.
+function emphasizedDurationMs(): number {
+	if (typeof window === "undefined" || typeof document === "undefined") return FALLBACK_DURATION_MS;
+	const raw = getComputedStyle(document.documentElement).getPropertyValue("--duration-emphasized").trim();
+	if (!raw) return FALLBACK_DURATION_MS;
+	const value = Number.parseFloat(raw);
+	if (!Number.isFinite(value) || value <= 0) return FALLBACK_DURATION_MS;
+	return raw.endsWith("ms") ? value : value * 1000;
+}
 
 export type FlipOptions = {
 	duration?: number;
@@ -28,8 +45,13 @@ function prefersReducedMotion(): boolean {
 // transform — a transform-based scale distorts non-uniformly whenever the
 // origin and destination aspect ratios differ (e.g. a docked panel vs. a
 // fullscreen one), visibly warping real UI controls like toolbar buttons.
-// Real layout tweening reflows children exactly like any responsive resize,
-// so nothing but the intended box ever changes shape.
+//
+// The trade is that real layout tweening relayouts the subtree every frame, so
+// contents that reshape under a width sweep (a dense toolbar row, a bitmap
+// whose box changes aspect) visibly squeeze and rescale their way through the
+// transition. Targets are marked `data-flipping` for exactly the tween's
+// duration so those surfaces can sit it out in CSS rather than animate through
+// it — see the Browser panel's rules in styles.css.
 export function useFlipTransition(): FlipController {
 	const pendingStateRef = useRef<Flip.FlipState | null>(null);
 	const activeTimelineRef = useRef<{ kill: () => void } | null>(null);
@@ -74,7 +96,7 @@ export function useFlipTransition(): FlipController {
 				targets: node,
 				scale: false,
 				absolute: true,
-				duration: (options?.duration ?? DEFAULT_DURATION_MS) / 1000,
+				duration: (options?.duration ?? emphasizedDurationMs()) / 1000,
 				ease: options?.ease ?? DEFAULT_EASE,
 				onComplete: () => {
 					activeTimelineRef.current = null;

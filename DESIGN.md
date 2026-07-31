@@ -50,7 +50,8 @@ resizable`, react-resizable-panels v4 `collapsible` panel + imperative API,
   both the sidebar header pad and the window-drag strip.
 - **Approved divergence (2026-07-31):** the Browser panel and File diff viewer's
   maximize/restore transitions use GSAP Flip (grow/shrink from the panel's actual
-  on-screen rect to fullscreen and back, ~320ms `expo.out`) instead of the "never
+  on-screen rect to fullscreen and back, `--duration-emphasized` `expo.out`)
+  instead of the "never
   animate layout" default — a macOS-window-zoom feel, user-requested. Flip's
   `scale: false` mode tweens real width/height/top/left rather than a CSS
   `transform: scale` — a transform-based scale distorts non-uniformly whenever the
@@ -264,11 +265,20 @@ mirrors the reference exactly. Launching from a project row pre-fills the Projec
 - **Approved divergence (2026-07-31):** Browser panel and File diff viewer
   maximize/restore are a second expressive exception — a GSAP Flip animation
   (`scale: false`, real width/height/top/left, not a CSS transform) grows/shrinks
-  the panel from its real rect to fullscreen (~320ms `expo.out`), not the
-  fade+zoom-95 modal recipe. Per-file diff expand/collapse uses a grid-row
-  auto-height animation on the existing `--duration-normal ease-out` (plain CSS,
-  no GSAP). Both respect `prefers-reduced-motion`. Scoped to these two surfaces
-  only — do not extend to other panels without new approval.
+  the panel from its real rect to fullscreen, not the fade+zoom-95 modal recipe.
+  Timing is `--duration-emphasized` with GSAP's `expo.out`; `--ease-emphasized`
+  is that curve's CSS equivalent, for parts of the same transition animated in
+  CSS. Per-file diff expand/collapse uses a grid-row auto-height animation on the
+  existing `--duration-normal ease-out` (plain CSS, no GSAP). Both respect
+  `prefers-reduced-motion`. Scoped to these two surfaces only — do not extend to
+  other panels without new approval.
+
+  Because the tween moves real layout, every frame relayouts the target's
+  contents. Surfaces whose contents visibly reshape under that (the Browser
+  panel's toolbar and its frozen snapshot) sit the tween out instead: the hook
+  marks the target `data-flipping` for the tween's exact duration, and the
+  surface's CSS uses that to hide what would otherwise squeeze, so the animation
+  only reveals or clips a static image.
 
 ## Implementation notes
 
