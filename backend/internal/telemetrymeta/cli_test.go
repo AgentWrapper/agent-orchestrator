@@ -23,3 +23,39 @@ func TestIsRoutineInternalCLICommandNormalizesLegacyShapes(t *testing.T) {
 		}
 	}
 }
+
+func TestCLIActorTypeKeepsKnownLegacyUserCommands(t *testing.T) {
+	for _, commandPath := range []string{
+		"ao agent ls",
+		"ao session claim-pr",
+		"ao dev import-projects",
+		"ao project orchestration get",
+		"ao project orchestration set",
+		"ao handoff",
+		"ao smoke list",
+		"ao smoke set",
+	} {
+		if got := CLIActorType("", commandPath); got != "user" {
+			t.Errorf("CLIActorType(%q) = %q, want user", commandPath, got)
+		}
+	}
+}
+
+func TestCLIActorTypeKeepsConservativeFallback(t *testing.T) {
+	for _, tc := range []struct {
+		actorType   string
+		commandPath string
+		want        string
+	}{
+		{actorType: "agent", commandPath: "ao surprise", want: "agent"},
+		{actorType: "user", commandPath: "ao surprise", want: "user"},
+		{actorType: "system", commandPath: "ao spawn", want: "system"},
+		{commandPath: "ao daemon", want: "system"},
+		{commandPath: "ao spawn", want: "user"},
+		{commandPath: "ao surprise", want: "system"},
+	} {
+		if got := CLIActorType(tc.actorType, tc.commandPath); got != tc.want {
+			t.Errorf("CLIActorType(%q, %q) = %q, want %q", tc.actorType, tc.commandPath, got, tc.want)
+		}
+	}
+}

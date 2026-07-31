@@ -184,7 +184,7 @@ func mountTelemetry(r chi.Router, cfg config.Config, sink ports.EventSink) {
 			return
 		}
 		commandPath := telemetrymeta.NormalizeCommandPath(body.CommandPath)
-		actorType := cliActorType(body.ActorType, commandPath)
+		actorType := telemetrymeta.CLIActorType(body.ActorType, commandPath)
 		if actorType == "system" {
 			w.WriteHeader(http.StatusAccepted)
 			return
@@ -265,32 +265,6 @@ func mountTelemetry(r chi.Router, cfg config.Config, sink ports.EventSink) {
 		})
 		w.WriteHeader(http.StatusAccepted)
 	})
-}
-
-func cliActorType(actorType, commandPath string) string {
-	switch actorType {
-	case "agent", "user":
-		return actorType
-	case "system":
-		return "system"
-	}
-	commandPath = telemetrymeta.NormalizeCommandPath(commandPath)
-	switch commandPath {
-	case "ao hooks":
-		return "agent"
-	case "ao daemon", "ao start", "ao completion", "ao help", "ao pty-host":
-		return "system"
-	case "ao add", "ao agent", "ao cancel", "ao claim-pr", "ao cleanup", "ao clear", "ao delete",
-		"ao doctor", "ao import", "ao import-projects", "ao kill", "ao launch", "ao merge",
-		"ao preview", "ao project add", "ao project rm", "ao project set-config", "ao remove",
-		"ao rename", "ao resolve-comments", "ao restart", "ao restore", "ao review",
-		"ao review submit", "ao send", "ao session cleanup", "ao session kill",
-		"ao session rename", "ao session restore", "ao spawn", "ao stop", "ao submit",
-		"ao trigger", "ao version":
-		return "user"
-	default:
-		return "system"
-	}
 }
 
 // localControlRequest reports whether a control request is a trusted local

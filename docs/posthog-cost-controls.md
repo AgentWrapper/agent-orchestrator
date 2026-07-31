@@ -224,36 +224,42 @@ For historical DAU before v2 rollout, keep existing `ao.app.active` charts but
 filter out legacy CLI automation:
 
 ```sql
-WITH lower(replaceRegexpAll(trim(BOTH ' ' FROM toString(properties.command_path)), '\\s+', ' ')) AS normalized_command_path
 SELECT
-    toDate(timestamp) AS day,
+    day,
     uniqExact(distinct_id) AS active_installs
-FROM events
-WHERE timestamp >= now() - INTERVAL 90 DAY
-  AND event = 'ao.app.active'
-  AND NOT (
-    properties.channel = 'cli'
+FROM (
+    SELECT
+        distinct_id,
+        toDate(timestamp) AS day,
+        lower(trim(replaceRegexpAll(toString(properties.command_path), '[[:space:]]+', ' '))) AS normalized_command_path,
+        properties.channel AS channel
+    FROM events
+    WHERE timestamp >= now() - INTERVAL 90 DAY
+      AND event = 'ao.app.active'
+)
+WHERE NOT (
+    channel = 'cli'
     AND (
-      normalized_command_path IN (
-        'ao hooks',
-        'ao session ls',
-        'ao session get',
-        'ao orchestrator ls',
-        'ao status',
-        'ao project ls',
-        'ao project get',
-        'ao pty-host'
-      )
-      OR startsWith(normalized_command_path, 'ao hooks ')
-      OR startsWith(normalized_command_path, 'ao session ls ')
-      OR startsWith(normalized_command_path, 'ao session get ')
-      OR startsWith(normalized_command_path, 'ao orchestrator ls ')
-      OR startsWith(normalized_command_path, 'ao status ')
-      OR startsWith(normalized_command_path, 'ao project ls ')
-      OR startsWith(normalized_command_path, 'ao project get ')
-      OR startsWith(normalized_command_path, 'ao pty-host ')
+        normalized_command_path IN (
+            'ao hooks',
+            'ao session ls',
+            'ao session get',
+            'ao orchestrator ls',
+            'ao status',
+            'ao project ls',
+            'ao project get',
+            'ao pty-host'
+        )
+        OR startsWith(normalized_command_path, 'ao hooks ')
+        OR startsWith(normalized_command_path, 'ao session ls ')
+        OR startsWith(normalized_command_path, 'ao session get ')
+        OR startsWith(normalized_command_path, 'ao orchestrator ls ')
+        OR startsWith(normalized_command_path, 'ao status ')
+        OR startsWith(normalized_command_path, 'ao project ls ')
+        OR startsWith(normalized_command_path, 'ao project get ')
+        OR startsWith(normalized_command_path, 'ao pty-host ')
     )
-  )
+)
 GROUP BY day
 ORDER BY day
 ```
