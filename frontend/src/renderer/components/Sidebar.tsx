@@ -335,14 +335,16 @@ export function Sidebar({
 			</div>
 		</div>
 
-	<SidebarContent className="scrollbar-none gap-0 px-2 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
+	<SidebarContent className="gap-0 overflow-y-auto px-2 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
 		{/* Collapsed rail always shows project icons; expanded sidebar animates
-		    the project tree in/out when the Projects section is toggled. */}
+		    the project tree in/out when the Projects section is toggled.
+		    overflow: clip clips without creating a scroll container, so the
+		    parent SidebarContent's overflow-y-auto scrolls unimpeded. */}
 		<motion.div
 			animate={{ height: isCollapsed || projectsOpen ? "auto" : 0 }}
 			initial={false}
 			transition={{ duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
-			style={{ overflow: "hidden" }}
+			style={{ overflow: "clip" }}
 			className="w-full"
 		>
 			{/* Inner animator: slides up + fades out on collapse. */}
