@@ -190,6 +190,7 @@ func (r *Runner) commandLoop(
 	backoff := time.Second
 	var highestPrompt atomic.Int64
 	var acknowledgedPrompt int64
+	firstPrompt := true
 	for ctx.Err() == nil {
 		if highest := highestPrompt.Load(); highest > acknowledgedPrompt {
 			if err := r.acknowledgePrompt(ctx, highest); err != nil {
@@ -221,6 +222,12 @@ func (r *Runner) commandLoop(
 			case "prompt":
 				if command.Sequence > 0 && command.Sequence <= highestPrompt.Load() {
 					return nil
+				}
+				if firstPrompt {
+					firstPrompt = false
+					if !waitForRetry(ctx, 1500*time.Millisecond) {
+						return ctx.Err()
+					}
 				}
 				decoded, err := base64.StdEncoding.DecodeString(command.Data)
 				if err != nil {
