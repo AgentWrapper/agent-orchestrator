@@ -55,8 +55,14 @@
 				"expo-camera",
 				{
 					"cameraPermission": "Allow AO to scan the pairing QR code.",
-					"microphonePermission": false,
 					"recordAudioAndroid": false
+				}
+			],
+			[
+				"expo-speech-recognition",
+				{
+					"microphonePermission": "Allow AO to use the microphone so you can dictate prompts to an agent.",
+					"speechRecognitionPermission": "Allow AO to transcribe your speech into prompts for an agent."
 				}
 			],
 			[
