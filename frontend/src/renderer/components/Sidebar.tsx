@@ -723,7 +723,7 @@ function ProjectItem({
 					exit={{ y: -12, opacity: 0 }}
 					transition={{ duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
 				>
-					<SidebarMenuSub className="mx-0 ml-3.5 translate-x-0 gap-px border-l-0 px-0 py-1">
+					<SidebarMenuSub className="mx-0 ml-1.5 translate-x-0 gap-px border-l-0 px-0 py-1">
 						{visibleSessions.map((session) => (
 							<SessionRow
 								key={session.id}
@@ -826,7 +826,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 
 	if (isEditing) {
 		return (
-			<SidebarMenuSubItem className="pl-7">
+			<SidebarMenuSubItem className="pl-3">
 				<div className="relative flex h-8 w-full items-center gap-2 rounded-lg px-2.5 py-0">
 					<SessionDot session={session} />
 					<input
@@ -855,7 +855,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 	}
 
 	return (
-		<SidebarMenuSubItem className="pl-7">
+		<SidebarMenuSubItem className="pl-3">
 			<button
 				aria-current={active ? "page" : undefined}
 				aria-label={`Open ${session.title}`}
