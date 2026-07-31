@@ -29,6 +29,7 @@ func (r *Reviewer) Harness() domain.ReviewerHarness {
 
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
+var _ ports.ReviewerPaneReusePolicy = (*Reviewer)(nil)
 
 // ReviewCommand launches Cursor in headless Ask mode. Ask mode prevents code
 // changes, while --force (selected by PermissionModeAuto) lets the reviewer run
@@ -46,8 +47,12 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	if err != nil {
 		return ports.ReviewCommandSpec{}, err
 	}
+	flags := []string{"--print", "--output-format", "text", "--mode=ask"}
+	if strings.TrimSpace(inv.TaskPromptRoot) != "" {
+		flags = append(flags, "--add-dir", inv.TaskPromptRoot)
+	}
 	return ports.ReviewCommandSpec{
-		Argv: insertBeforePrompt(argv, "--print", "--output-format", "text", "--mode=ask"),
+		Argv: insertBeforePrompt(argv, flags...),
 	}, nil
 }
 
@@ -62,8 +67,15 @@ func cursorPrompt(inv ports.ReviewInvocation) string {
 	return strings.TrimSpace(inv.SystemPrompt + "\n\n" + inv.Prompt)
 }
 
-// ReviewMessage returns the centrally-authored task. Headless Cursor processes
-// normally exit after one pass, so subsequent tasks spawn a fresh process.
+// ReuseReviewerPane reports that headless Cursor exits after one pass. The
+// launcher replaces its stable pane instead of sending a later task to the
+// interactive shell that the runtime leaves behind.
+func (r *Reviewer) ReuseReviewerPane() bool {
+	return false
+}
+
+// ReviewMessage satisfies the reviewer contract. The launcher does not call it
+// because ReuseReviewerPane returns false.
 func (r *Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
 	return inv.Prompt, nil
 }

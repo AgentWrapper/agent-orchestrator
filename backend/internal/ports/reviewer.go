@@ -21,6 +21,14 @@ type Reviewer interface {
 	ReviewMessage(ctx context.Context, inv ReviewInvocation) (string, error)
 }
 
+// ReviewerPaneReusePolicy is implemented by reviewers that cannot accept a
+// later task in their existing runtime pane. Returning false makes Notify
+// replace the stable pane with a fresh reviewer process instead of injecting a
+// message. Reviewers are reusable by default.
+type ReviewerPaneReusePolicy interface {
+	ReuseReviewerPane() bool
+}
+
 // ReviewCancelMode names how AO should stop a running reviewer.
 type ReviewCancelMode string
 

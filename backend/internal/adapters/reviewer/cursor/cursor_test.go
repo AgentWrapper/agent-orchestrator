@@ -45,6 +45,7 @@ func TestReviewCommandBuildsHeadlessAskInvocation(t *testing.T) {
 		Prompt:           "Read the AO review task.",
 		SystemPromptFile: "/ao/prompts/reviewer/system.md",
 		TaskPromptFile:   "/ao/prompts/reviewer/requests/batch-1/run-1/task.md",
+		TaskPromptRoot:   "/ao/prompts/reviewer",
 	})
 	if err != nil {
 		t.Fatalf("ReviewCommand: %v", err)
@@ -54,6 +55,7 @@ func TestReviewCommandBuildsHeadlessAskInvocation(t *testing.T) {
 	want := []string{
 		"cursor-agent", "--force",
 		"--print", "--output-format", "text", "--mode=ask",
+		"--add-dir", "/ao/prompts/reviewer",
 		"--", wantPrompt,
 	}
 	if !reflect.DeepEqual(got.Argv, want) {
@@ -64,6 +66,12 @@ func TestReviewCommandBuildsHeadlessAskInvocation(t *testing.T) {
 	}
 	if agent.got.WorkspacePath != "/ws/w1" || agent.got.SessionID != "review-w1" {
 		t.Fatalf("launch config = %+v", agent.got)
+	}
+}
+
+func TestReviewerPaneIsOneShot(t *testing.T) {
+	if (&Reviewer{}).ReuseReviewerPane() {
+		t.Fatal("headless Cursor reviewer pane must not be reused")
 	}
 }
 

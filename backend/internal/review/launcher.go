@@ -31,7 +31,8 @@ type Launcher interface {
 	// Spawn launches a fresh reviewer and returns the runtime handle id of the
 	// live pane (stable per worker, reused across passes).
 	Spawn(ctx context.Context, spec LaunchSpec) (handleID string, err error)
-	// Notify asks an already-running reviewer pane to review a new commit.
+	// Notify asks an already-running reviewer pane to review a new commit, or
+	// replaces the pane when the adapter declares it cannot be reused.
 	Notify(ctx context.Context, handleID string, spec LaunchSpec) error
 	// Alive reports whether a reviewer pane is still running.
 	Alive(ctx context.Context, handleID string) (bool, error)
@@ -239,6 +240,16 @@ func (l *agentLauncher) Notify(ctx context.Context, handleID string, spec Launch
 	reviewer, ok := l.reviewers.Reviewer(spec.Harness)
 	if !ok {
 		return fmt.Errorf("no reviewer adapter for harness %q", spec.Harness)
+	}
+	if policy, ok := reviewer.(ports.ReviewerPaneReusePolicy); ok && !policy.ReuseReviewerPane() {
+		freshHandleID, err := l.Spawn(ctx, spec)
+		if err != nil {
+			return fmt.Errorf("respawn one-shot reviewer: %w", err)
+		}
+		if freshHandleID != handleID {
+			return fmt.Errorf("respawn one-shot reviewer returned handle %q, want %q", freshHandleID, handleID)
+		}
+		return nil
 	}
 	inv, err := l.prepareInvocation(spec)
 	if err != nil {
