@@ -194,7 +194,7 @@ func mountTelemetry(r chi.Router, cfg config.Config, sink ports.EventSink) {
 			return
 		}
 
-		if now := time.Now(); cliTelemetry.reserveInvoked(now, actorType, body.CommandPath) {
+		if now := time.Now(); cliTelemetry.reserveInvoked(now, actorType, commandPath) {
 			sink.Emit(req.Context(), ports.TelemetryEvent{
 				Name:       "ao.cli.invoked",
 				Source:     "cli",

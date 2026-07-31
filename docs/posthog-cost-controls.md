@@ -44,7 +44,9 @@ Configure PostHog ingestion controls for project `475752` in this order.
 2. Drop legacy CLI firehose events where `event = 'ao.cli.invoked'` and
    `actor_type` is missing or null.
 3. Drop legacy active-user firehose events where `event = 'ao.app.active'`,
-   `channel = 'cli'`, `actor_type` is missing or null, and `command_path` is in:
+   `channel = 'cli'`, `actor_type` is missing or null, and normalized
+   `command_path` (lowercase with whitespace collapsed) equals one of these
+   routine paths, or starts with one of them followed by a space:
    - `ao hooks`
    - `ao session ls`
    - `ao session get`
@@ -191,6 +193,7 @@ For historical DAU before v2 rollout, keep existing `ao.app.active` charts but
 filter out legacy CLI automation:
 
 ```sql
+WITH lower(replaceRegexpAll(trim(BOTH ' ' FROM toString(properties.command_path)), '\\s+', ' ')) AS normalized_command_path
 SELECT
     toDate(timestamp) AS day,
     uniqExact(distinct_id) AS active_installs
@@ -200,15 +203,25 @@ WHERE timestamp >= now() - INTERVAL 90 DAY
   AND NOT (
     properties.channel = 'cli'
     AND (properties.actor_type IS NULL OR properties.actor_type = '')
-    AND properties.command_path IN (
-      'ao hooks',
-      'ao session ls',
-      'ao session get',
-      'ao orchestrator ls',
-      'ao status',
-      'ao project ls',
-      'ao project get',
-      'ao pty-host'
+    AND (
+      normalized_command_path IN (
+        'ao hooks',
+        'ao session ls',
+        'ao session get',
+        'ao orchestrator ls',
+        'ao status',
+        'ao project ls',
+        'ao project get',
+        'ao pty-host'
+      )
+      OR startsWith(normalized_command_path, 'ao hooks ')
+      OR startsWith(normalized_command_path, 'ao session ls ')
+      OR startsWith(normalized_command_path, 'ao session get ')
+      OR startsWith(normalized_command_path, 'ao orchestrator ls ')
+      OR startsWith(normalized_command_path, 'ao status ')
+      OR startsWith(normalized_command_path, 'ao project ls ')
+      OR startsWith(normalized_command_path, 'ao project get ')
+      OR startsWith(normalized_command_path, 'ao pty-host ')
     )
   )
 GROUP BY day
