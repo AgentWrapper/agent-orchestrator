@@ -13,7 +13,6 @@ import { OrchestratorReplacementDialog } from "../components/OrchestratorReplace
 import { Sidebar } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
 import { TitlebarNav } from "../components/TitlebarNav";
-import { WindowTitlebar } from "../components/WindowTitlebar";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useOpenShellTerminal } from "../hooks/useShellTerminals";
@@ -174,12 +173,6 @@ function ShellLayout() {
 		window.clearTimeout(sidebarPeekCloseTimerRef.current);
 		sidebarPeekCloseTimerRef.current = undefined;
 	}, []);
-
-	const previewSidebar = useCallback(() => {
-		if (isSidebarOpen) return;
-		cancelSidebarPeekClose();
-		setIsSidebarPeekOpen(true);
-	}, [cancelSidebarPeekClose, isSidebarOpen]);
 
 	const scheduleSidebarPeekClose = useCallback(() => {
 		if (isSidebarOpen) return;
@@ -616,7 +609,6 @@ function ShellLayout() {
 				{/* Windows-only custom title bar (sidebar toggle + File/Edit/View/…
             menu); paints the chrome the frameless window drops. Renders null on
             macOS/Linux. */}
-				<WindowTitlebar onSidebarPreviewEnter={previewSidebar} />
 				{/* App routes render their topbar inside the framed panel, matching the board chrome across platforms while leaving OS titlebars native. */}
 				{!framedAppTopbar && !hideShellTopbar ? <ShellTopbar /> : null}
 				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
@@ -706,7 +698,6 @@ function ShellLayout() {
 					<TitlebarNav
 						historyLocked={isWelcomeBoard}
 						isFullScreen={isFullScreen}
-						onSidebarPreviewEnter={previewSidebar}
 					/>
 				</SidebarProvider>
 				<OrchestratorReplacementDialog
