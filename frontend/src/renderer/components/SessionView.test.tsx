@@ -800,6 +800,23 @@ describe("SessionView", () => {
 		expect(browserUnseen("sess-1")).toBe(true);
 	});
 
+	it("does not glow for preview or agent activity while Browser is visible as a popout", () => {
+		const worker = workerSession("sess-1");
+		worker.previewUrl = "http://localhost:4173/";
+		worker.previewRevision = 1;
+		const { rerender } = render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "pop browser" }));
+		expect(screen.getByRole("button", { name: "browser center" })).toBeInTheDocument();
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
+
+		worker.previewRevision = 2;
+		browserViewState.agentBrowserActive = true;
+		rerender(<SessionView sessionId="sess-1" />);
+
+		expect(browserUnseen("sess-1")).toBe(false);
+	});
+
 	it("does not open Browser when `ao preview clear` removes the target", () => {
 		const worker = workerSession("sess-1");
 		const { rerender } = render(<SessionView sessionId="sess-1" />);
@@ -854,5 +871,12 @@ describe("SessionView", () => {
 		rerender(<SessionView sessionId="sess-1" />);
 
 		expect(browserUnseen("sess-1")).toBe(true);
+
+		// An explicit clear still resets unseen activity when the target was
+		// already empty, so only previewRevision changes.
+		browserViewState.agentBrowserActive = false;
+		workerSession("sess-1").previewRevision = 1;
+		rerender(<SessionView sessionId="sess-1" />);
+		expect(browserUnseen("sess-1")).toBe(false);
 	});
 });

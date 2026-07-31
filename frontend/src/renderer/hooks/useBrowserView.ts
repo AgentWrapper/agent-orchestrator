@@ -137,6 +137,7 @@ export function useBrowserView({
 	const [agentBrowserActive, setAgentBrowserActive] = useState(false);
 	const [agentBrowserActivity, setAgentBrowserActivity] = useState<BrowserAgentActivityState | null>(null);
 	const [visualTransition, setVisualTransition] = useState<BrowserVisualTransition | null>(null);
+	const [stateSessionId, setStateSessionId] = useState(sessionId);
 	const slotNodeRef = useRef<HTMLDivElement | null>(null);
 	const viewIdRef = useRef("");
 	const annotationModeRef = useRef(false);
@@ -154,24 +155,6 @@ export function useBrowserView({
 	const visualTransitionTimerRef = useRef<number | null>(null);
 	const mirrorStreamRef = useRef<MediaStream | null>(null);
 	const hasNativeBrowser = Boolean(window.ao?.browser);
-
-	// `navState`/`viewId`/etc. are state, not derived from `sessionId`, so on the
-	// very first render after `sessionId` changes they would otherwise still
-	// hold the PREVIOUS session's values — the reset effect below only lands a
-	// render later. A consumer that reads `navState.url` during that one stale
-	// render (e.g. to decide whether to auto-reveal a browser tab) would treat
-	// a departed session's leftover URL as this session's own content. Adjust
-	// state during render (React's documented pattern for this exact case) so
-	// no consumer ever observes a mismatched session's data.
-	const [renderedSessionId, setRenderedSessionId] = useState(sessionId);
-	if (sessionId !== renderedSessionId) {
-		setRenderedSessionId(sessionId);
-		setViewId("");
-		setNavState(EMPTY_NAV_STATE);
-		setTabsState(EMPTY_TABS_STATE);
-		setTabNotice("");
-		setAgentBrowserActive(false);
-	}
 
 	useEffect(() => {
 		activeRef.current = active;
@@ -327,6 +310,7 @@ export function useBrowserView({
 		// ensuring a different worker so equal revision numbers cannot suppress
 		// that worker's own target.
 		previewTriggerRef.current = null;
+		setStateSessionId(sessionId);
 		setViewId("");
 		setNavState(EMPTY_NAV_STATE);
 		setTabsState(EMPTY_TABS_STATE);
@@ -707,9 +691,15 @@ export function useBrowserView({
 		destroy();
 	}, [destroy, terminated, viewId]);
 
+	// Hook state survives a `sessionId` prop change until the reset effect above
+	// commits. Keep navigation, tab, and activity state hidden during that
+	// intervening render so consumers can never interpret the departed session's
+	// state as belonging to the destination session.
+	const stateBelongsToSession = stateSessionId === sessionId;
+
 	return {
-		viewId,
-		navState,
+		viewId: stateBelongsToSession ? viewId : "",
+		navState: stateBelongsToSession ? navState : EMPTY_NAV_STATE,
 		mirrorUrl,
 		mirrorStream,
 		slotRef,
@@ -718,15 +708,15 @@ export function useBrowserView({
 		goForward: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.goForward(id)) : Promise.resolve()),
 		reload: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.reload(id)) : Promise.resolve()),
 		stop: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.stop(id)) : Promise.resolve()),
-		tabs: tabsState.tabs,
-		activeTabId: tabsState.activeTabId,
-		tabNotice,
+		tabs: stateBelongsToSession ? tabsState.tabs : [],
+		activeTabId: stateBelongsToSession ? tabsState.activeTabId : "",
+		tabNotice: stateBelongsToSession ? tabNotice : "",
 		selectTab,
 		closeTab,
 		prepareForOverlay,
-		agentBrowserActive,
-		agentBrowserActivity,
-		visualTransition,
+		agentBrowserActive: stateBelongsToSession && agentBrowserActive,
+		agentBrowserActivity: stateBelongsToSession ? agentBrowserActivity : null,
+		visualTransition: stateBelongsToSession ? visualTransition : null,
 		destroy,
 		annotationMode,
 		setAnnotationMode,

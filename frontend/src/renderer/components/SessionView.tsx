@@ -41,6 +41,12 @@ function previewRevealKey(previewUrl?: string, previewRevision?: number): string
 	return `url:${target}`;
 }
 
+function browserIsVisible(sessionId: string, browserPoppedOut: boolean): boolean {
+	if (browserPoppedOut) return true;
+	const current = useUiStore.getState().inspectorSessions[sessionId];
+	return (current?.isOpen ?? true) && (current?.view ?? "summary") === "browser";
+}
+
 type SessionViewProps = {
 	sessionId: string;
 };
@@ -236,6 +242,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// Reveal the first real content in each non-empty browser lifecycle. Once the
 	// user leaves Browser, subsequent work respects that choice and uses the
 	// unseen indicator instead of repeatedly stealing the active inspector tab.
+	// previewRevision intentionally retriggers the empty branch so an explicit
+	// clear consumes unseen activity even when the browser was already empty.
 	useEffect(() => {
 		if (!hasInspector) return;
 		const current = useUiStore.getState().inspectorSessions[sessionId];
@@ -251,11 +259,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	}, [
 		hasBrowserContent,
 		hasInspector,
+		previewRevision,
 		sessionId,
 		setBrowserContentRevealed,
 		setBrowserUnseen,
 		setInspectorOpenForSession,
 		setInspectorViewForSession,
+		terminated,
 	]);
 
 	// `ao preview` is authoritative browser work, including a same-URL rerun
@@ -273,9 +283,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		markInspectorPreviewSeen(sessionId, previewKey);
 		if (!previewKey) return;
 		const current = useUiStore.getState().inspectorSessions[sessionId];
-		const viewingBrowser = (current?.isOpen ?? true) && (current?.view ?? "summary") === "browser";
+		const viewingBrowser = browserIsVisible(sessionId, browserPoppedOut);
 		if (current?.browserContentRevealed && !viewingBrowser) setBrowserUnseen(sessionId, true);
 	}, [
+		browserPoppedOut,
 		hasInspector,
 		markInspectorPreviewSeen,
 		previewRevision,
@@ -290,19 +301,26 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// surface that activity as unseen rather than reopening the tab; gating this
 	// on hasBrowserContent/browserContentRevealed missed exactly that case.
 	useEffect(() => {
-		if (!hasInspector || !browserView.agentBrowserActive) return;
-		const current = useUiStore.getState().inspectorSessions[sessionId];
-		const viewingBrowser = (current?.isOpen ?? true) && (current?.view ?? "summary") === "browser";
-		if (!viewingBrowser) setBrowserUnseen(sessionId, true);
-	}, [browserView.agentBrowserActive, hasInspector, inspectorView, isInspectorOpen, sessionId, setBrowserUnseen]);
+		if (!hasInspector || terminated || !browserView.agentBrowserActive) return;
+		if (!browserIsVisible(sessionId, browserPoppedOut)) setBrowserUnseen(sessionId, true);
+	}, [
+		browserPoppedOut,
+		browserView.agentBrowserActive,
+		hasInspector,
+		inspectorView,
+		isInspectorOpen,
+		sessionId,
+		setBrowserUnseen,
+		terminated,
+	]);
 
 	// Opening Browser consumes the pending activity indicator, including the
 	// case where the inspector was collapsed while already parked on Browser.
 	useEffect(() => {
-		if (hasInspector && isInspectorOpen && inspectorView === "browser") {
+		if (hasInspector && browserIsVisible(sessionId, browserPoppedOut)) {
 			setBrowserUnseen(sessionId, false);
 		}
-	}, [hasInspector, inspectorView, isInspectorOpen, sessionId, setBrowserUnseen]);
+	}, [browserPoppedOut, hasInspector, inspectorView, isInspectorOpen, sessionId, setBrowserUnseen]);
 
 	// Computed when the inspector panel mounts and frozen while it stays
 	// mounted: rrp re-registers the panel (a layout effect keyed on defaultSize,

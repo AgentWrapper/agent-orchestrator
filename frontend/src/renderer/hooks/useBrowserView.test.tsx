@@ -755,8 +755,8 @@ describe("useBrowserView", () => {
 
 	it("never exposes a departed session's leftover navState, even transiently, once sessionId changes", async () => {
 		// `navState` is component state, not derived from `sessionId` — without a
-		// render-time reset, the hook returns the PREVIOUS session's stale url for
-		// one render before its own reset effect lands one render later. A
+		// synchronous ownership guard, the hook returns the PREVIOUS session's
+		// stale url for one render before its own reset effect lands. A
 		// consumer that decides whether to auto-open a browser tab from
 		// `navState.url` (e.g. SessionView) could read that stale render and
 		// wrongly treat a departed session's leftover URL as this session's own
