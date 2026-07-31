@@ -87,6 +87,22 @@ type fakeBakedWorkerProvider struct {
 	fakeProvider
 }
 
+type fakeRecreatingProvider struct {
+	fakeProvider
+	recreatedID   cloudsandbox.ID
+	recreatedSpec cloudsandbox.Spec
+}
+
+func (f *fakeRecreatingProvider) Recreate(
+	_ context.Context,
+	id cloudsandbox.ID,
+	spec cloudsandbox.Spec,
+) (cloudsandbox.Environment, error) {
+	f.recreatedID = id
+	f.recreatedSpec = spec
+	return cloudsandbox.Environment{ID: "provider-two", State: "running"}, nil
+}
+
 func (*fakeBakedWorkerProvider) Get(
 	context.Context,
 	cloudsandbox.ID,
@@ -149,6 +165,12 @@ func TestProvisionIssuesScopedBootstrapAndLabelsSandbox(t *testing.T) {
 	}
 	if provider.created.Environment["AO_WORKSPACE_DIR"] != "/workspace/repository" {
 		t.Fatalf("workspace environment = %#v", provider.created.Environment)
+	}
+	if provider.created.Environment["HOME"] != "/workspace/.ao/home" ||
+		provider.created.Environment["AO_DATA_DIR"] != "/workspace/.ao/worker" ||
+		provider.created.Environment["CLAUDE_CONFIG_DIR"] != "/workspace/.ao/home/.claude" ||
+		provider.created.Environment["CODEX_HOME"] != "/workspace/.ao/home/.codex" {
+		t.Fatalf("persistent agent environment = %#v", provider.created.Environment)
 	}
 	if provider.created.Labels["ao.session_id"] != "session-one" {
 		t.Fatalf("labels = %#v", provider.created.Labels)
@@ -253,5 +275,42 @@ func TestDestroyedProviderEnvironmentIsClearedForReprovisioning(t *testing.T) {
 	}
 	if store.state != "requested" || store.id != "" {
 		t.Fatalf("observation = %q %q, want requested with cleared provider ID", store.state, store.id)
+	}
+}
+
+func TestRegressionStoppedWorkerVMIsRecreatedWithFreshBootstrapCredentials(t *testing.T) {
+	store := &fakeStore{claimed: []clouddomain.Sandbox{{
+		SessionID:             "session-one",
+		AccountID:             "account-one",
+		Provider:              "docker",
+		ProviderEnvironmentID: "provider-one",
+		DesiredState:          "running",
+		ObservedState:         "paused",
+	}}}
+	provider := &fakeRecreatingProvider{fakeProvider: fakeProvider{
+		current: cloudsandbox.Environment{ID: "provider-one", State: "stopped"},
+	}}
+	reconciler := New(
+		store,
+		fakeResolver{provider: provider},
+		"https://cloud.example",
+		"",
+		"ao-cloud-worker:local",
+		time.Second,
+		nil,
+		nil,
+	)
+
+	if err := reconciler.reconcileOnce(context.Background()); err != nil {
+		t.Fatalf("reconcileOnce() error = %v", err)
+	}
+	if provider.recreatedID != "provider-one" {
+		t.Fatalf("recreated ID = %q, want provider-one", provider.recreatedID)
+	}
+	if provider.recreatedSpec.Environment["AO_WORKER_BOOTSTRAP_TOKEN"] != "one-use-ticket" {
+		t.Fatalf("worker environment = %#v", provider.recreatedSpec.Environment)
+	}
+	if store.state != "bootstrapping" || store.id != "provider-two" {
+		t.Fatalf("observation = %q %q, want bootstrapping provider-two", store.state, store.id)
 	}
 }

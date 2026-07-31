@@ -68,7 +68,7 @@ func (s *Server) replayTurnEvents(
 	after := turn.UserMessageSequence - 1
 	events := make([]clouddomain.Event, 0, workerInspectionPageSize)
 	for {
-		page, err := s.events.ReplayChat(
+		page, err := s.events.ReplayResults(
 			r.Context(),
 			accountID,
 			sessionID,
@@ -119,6 +119,11 @@ func assistantResult(events []clouddomain.Event, turnID string) string {
 				current.WriteString(text)
 			}
 			streaming = false
+		case "agent.activity":
+			if strings.TrimSpace(current.String()) == "" && len(segments) == 0 {
+				current.WriteString(activityFinalAnswer(payload))
+			}
+			flush()
 		case "chat.tool_started",
 			"chat.approval_requested",
 			"chat.user_input_requested",
@@ -132,4 +137,18 @@ func assistantResult(events []clouddomain.Event, turnID string) string {
 	}
 	flush()
 	return strings.Join(segments, "\n\n")
+}
+
+func activityFinalAnswer(payload map[string]any) string {
+	event, _ := payload["event"].(string)
+	if event != "stop" && event != "after-agent" {
+		return ""
+	}
+	native, _ := payload["native"].(map[string]any)
+	for _, key := range []string{"last_assistant_message", "lastAssistantMessage"} {
+		if answer, _ := native[key].(string); strings.TrimSpace(answer) != "" {
+			return answer
+		}
+	}
+	return ""
 }

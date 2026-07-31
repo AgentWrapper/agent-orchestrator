@@ -23,6 +23,7 @@ type Client struct {
 }
 
 var _ cloudsandbox.Provider = (*Client)(nil)
+var _ cloudsandbox.Recreator = (*Client)(nil)
 
 // New creates a local Docker sandbox provider using image.
 func New(image string) *Client {
@@ -68,7 +69,6 @@ func (c *Client) Create(ctx context.Context, spec cloudsandbox.Spec) (cloudsandb
 	args = append(args, image)
 	id, err := c.run(ctx, args...)
 	if err != nil {
-		_, _ = c.run(ctx, "volume", "rm", volume)
 		return cloudsandbox.Environment{}, fmt.Errorf("run Docker sandbox: %w", err)
 	}
 	return c.Get(ctx, cloudsandbox.ID(strings.TrimSpace(id)))
@@ -100,6 +100,19 @@ func (c *Client) FindBySession(ctx context.Context, sessionID clouddomain.Sessio
 func (c *Client) Start(ctx context.Context, id cloudsandbox.ID) error {
 	_, err := c.run(ctx, "start", string(id))
 	return providerError("start Docker sandbox", err)
+}
+
+// Recreate replaces a stopped worker container with fresh bootstrap
+// credentials while retaining its named workspace volume.
+func (c *Client) Recreate(
+	ctx context.Context,
+	id cloudsandbox.ID,
+	spec cloudsandbox.Spec,
+) (cloudsandbox.Environment, error) {
+	if _, err := c.run(ctx, "rm", "--force", string(id)); err != nil {
+		return cloudsandbox.Environment{}, providerError("remove stopped Docker sandbox", err)
+	}
+	return c.Create(ctx, spec)
 }
 
 func (c *Client) Stop(ctx context.Context, id cloudsandbox.ID) error {

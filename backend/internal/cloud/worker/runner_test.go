@@ -9,10 +9,13 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 	cloudpostgres "github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
+	shareddomain "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 func TestPrepareClaudeCloudExperienceSkipsFirstRunPrompts(t *testing.T) {
@@ -40,6 +43,90 @@ func TestPrepareClaudeCloudExperienceSkipsFirstRunPrompts(t *testing.T) {
 		settings["skipDangerousModePermissionPrompt"] != true ||
 		permissions["defaultMode"] != "bypassPermissions" {
 		t.Fatalf("Claude settings = %#v", settings)
+	}
+}
+
+func TestPrepareClaudeCloudExperienceUsesConfiguredDirectory(t *testing.T) {
+	home := t.TempDir()
+	configDir := filepath.Join(home, "persistent-claude")
+	t.Setenv("CLAUDE_CONFIG_DIR", configDir)
+
+	if err := prepareClaudeCloudExperience(home); err != nil {
+		t.Fatalf("prepareClaudeCloudExperience() error = %v", err)
+	}
+	root := readJSONObject(t, filepath.Join(configDir, ".claude.json"))
+	settings := readJSONObject(t, filepath.Join(configDir, "settings.json"))
+	if root["hasCompletedOnboarding"] != true || root["theme"] != "dark" {
+		t.Fatalf("configured Claude root = %#v", root)
+	}
+	if settings["skipDangerousModePermissionPrompt"] != true {
+		t.Fatalf("configured Claude settings = %#v", settings)
+	}
+}
+
+func TestClaudeTranscriptExistsUsesPersistentConfigDirectory(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", configDir)
+	transcriptDir := filepath.Join(configDir, "projects", "-workspace-repository")
+	if err := os.MkdirAll(transcriptDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(transcriptDir, "native-session.jsonl"),
+		[]byte("{}\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !claudeTranscriptExists("native-session") {
+		t.Fatal("claudeTranscriptExists() = false, want true")
+	}
+	if claudeTranscriptExists("missing-session") {
+		t.Fatal("claudeTranscriptExists(missing) = true")
+	}
+}
+
+func TestRegressionRestartedClaudeSessionRequiresPersistedTranscript(t *testing.T) {
+	configDir := t.TempDir()
+	dataDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", configDir)
+	if err := os.WriteFile(
+		filepath.Join(dataDir, "agent-session-initialized"),
+		[]byte("initialized\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	session := clouddomain.Session{
+		ID:             "session-one",
+		Harness:        "claude-code",
+		AgentSessionID: "native-session",
+	}
+	restore, err := shouldRestoreAgentSession(session, dataDir)
+	if err != nil {
+		t.Fatalf("shouldRestoreAgentSession() error = %v", err)
+	}
+	if restore {
+		t.Fatal("shouldRestoreAgentSession() = true without transcript")
+	}
+
+	transcriptDir := filepath.Join(configDir, "projects", "-workspace-repository")
+	if err := os.MkdirAll(transcriptDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(transcriptDir, "native-session.jsonl"),
+		[]byte("{}\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	restore, err = shouldRestoreAgentSession(session, dataDir)
+	if err != nil {
+		t.Fatalf("shouldRestoreAgentSession() error = %v", err)
+	}
+	if !restore {
+		t.Fatal("shouldRestoreAgentSession() = false with durable marker and transcript")
 	}
 }
 
@@ -84,6 +171,95 @@ func TestRestrictOrchestratorToolsRemovesClaudeAgentTool(t *testing.T) {
 	if got := restrictOrchestratorTools(worker, "worker", "claude-code"); !reflect.DeepEqual(got, worker) {
 		t.Fatalf("worker argv = %#v, want %#v", got, worker)
 	}
+}
+
+func TestRegressionSpawnedClaudePromptIsSubmittedAfterComposerUpdate(t *testing.T) {
+	terminal := &recordingWriter{}
+	var writeMu sync.Mutex
+	if err := submitInteractivePrompt(
+		context.Background(),
+		terminal,
+		&writeMu,
+		[]byte("Read the README"),
+		0,
+	); err != nil {
+		t.Fatalf("submitInteractivePrompt() error = %v", err)
+	}
+	want := [][]byte{[]byte("Read the README"), {'\r'}}
+	if !reflect.DeepEqual(terminal.writes, want) {
+		t.Fatalf("terminal writes = %#v, want %#v", terminal.writes, want)
+	}
+}
+
+func TestRegressionRestartedClaudeSessionUsesRestoreCommand(t *testing.T) {
+	agent := &recordingCloudAgentLauncher{
+		launch:    []string{"agent", "new"},
+		restore:   []string{"agent", "resume", "native-session"},
+		restoreOK: true,
+	}
+	got, err := cloudAgentCommand(
+		context.Background(),
+		agent,
+		ports.LaunchConfig{
+			DataDir:       "/workspace/.ao/worker",
+			Kind:          shareddomain.KindWorker,
+			Permissions:   ports.PermissionModeBypassPermissions,
+			SystemPrompt:  "standing instructions",
+			WorkspacePath: "/workspace/repository",
+		},
+		clouddomain.Session{
+			ID:             "session-one",
+			AgentSessionID: "native-session",
+		},
+		true,
+	)
+	if err != nil {
+		t.Fatalf("cloudAgentCommand() error = %v", err)
+	}
+	if !reflect.DeepEqual(got, agent.restore) {
+		t.Fatalf("cloudAgentCommand() = %#v, want %#v", got, agent.restore)
+	}
+	if agent.restoreConfig.Session.Metadata[ports.MetadataKeyAgentSessionID] != "native-session" ||
+		agent.restoreConfig.Session.WorkspacePath != "/workspace/repository" ||
+		agent.restoreConfig.SystemPrompt != "standing instructions" {
+		t.Fatalf("restore config = %#v", agent.restoreConfig)
+	}
+	if agent.launchCalls != 0 {
+		t.Fatalf("GetLaunchCommand() calls = %d, want 0", agent.launchCalls)
+	}
+}
+
+type recordingCloudAgentLauncher struct {
+	launch        []string
+	restore       []string
+	restoreOK     bool
+	launchCalls   int
+	restoreConfig ports.RestoreConfig
+}
+
+func (a *recordingCloudAgentLauncher) GetLaunchCommand(
+	context.Context,
+	ports.LaunchConfig,
+) ([]string, error) {
+	a.launchCalls++
+	return a.launch, nil
+}
+
+func (a *recordingCloudAgentLauncher) GetRestoreCommand(
+	_ context.Context,
+	config ports.RestoreConfig,
+) ([]string, bool, error) {
+	a.restoreConfig = config
+	return a.restore, a.restoreOK, nil
+}
+
+type recordingWriter struct {
+	writes [][]byte
+}
+
+func (w *recordingWriter) Write(data []byte) (int, error) {
+	w.writes = append(w.writes, append([]byte(nil), data...))
+	return len(data), nil
 }
 
 func readJSONObject(t *testing.T, path string) map[string]any {

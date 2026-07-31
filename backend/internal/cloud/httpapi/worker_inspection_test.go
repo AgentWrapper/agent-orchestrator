@@ -24,6 +24,27 @@ func TestAssistantResultPreservesNarrationAcrossTools(t *testing.T) {
 	}
 }
 
+func TestAssistantResultUsesTerminalFirstCompletionHook(t *testing.T) {
+	events := []clouddomain.Event{
+		inspectionEvent("chat.user_message", map[string]any{
+			"turnId": "turn-one",
+			"text":   "Read the README",
+		}),
+		inspectionEvent("agent.activity", map[string]any{
+			"event": "stop",
+			"state": "idle",
+			"native": map[string]any{
+				"last_assistant_message": "The repository contains a local-first agent arena.",
+			},
+		}),
+	}
+
+	result := assistantResult(events, "turn-one")
+	if result != "The repository contains a local-first agent arena." {
+		t.Fatalf("assistantResult() = %q", result)
+	}
+}
+
 func inspectionEvent(eventType string, payload map[string]any) clouddomain.Event {
 	encoded, _ := json.Marshal(payload)
 	return clouddomain.Event{Type: eventType, Payload: encoded}

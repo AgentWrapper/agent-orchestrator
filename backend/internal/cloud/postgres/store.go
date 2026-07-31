@@ -964,6 +964,41 @@ func (s *Store) ChatEventsAfter(
 	return scanEvents(rows, "chat event")
 }
 
+// ResultEventsAfter returns result-bearing events for both structured and
+// terminal-first workers.
+func (s *Store) ResultEventsAfter(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+	after int64,
+	limit int,
+) ([]clouddomain.Event, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 500
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT session_id, sequence, type, payload, created_at
+		FROM ao_events
+		WHERE account_id = $1
+			AND session_id = $2
+			AND sequence > $3
+			AND (
+				type LIKE 'chat.%'
+				OR (
+					type = 'agent.activity'
+					AND payload->>'event' IN ('stop', 'after-agent')
+				)
+			)
+		ORDER BY sequence
+		LIMIT $4
+	`, accountID, sessionID, after, limit)
+	if err != nil {
+		return nil, fmt.Errorf("replay result events: %w", err)
+	}
+	defer rows.Close()
+	return scanEvents(rows, "result event")
+}
+
 // ActivePromptEventsAfter returns legacy prompts and prompts whose durable
 // turn is still unfinished. Terminal turns must never replay to a new worker.
 func (s *Store) ActivePromptEventsAfter(

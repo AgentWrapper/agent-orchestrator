@@ -1338,12 +1338,28 @@ func (s *Server) workerEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	if input.Type == "agent.activity" {
 		var activity struct {
-			State       string `json:"state"`
-			HasActivity bool   `json:"hasActivity"`
+			Event       string          `json:"event"`
+			State       string          `json:"state"`
+			HasActivity bool            `json:"hasActivity"`
+			Native      json.RawMessage `json:"native"`
 		}
 		if err := json.Unmarshal(input.Payload, &activity); err != nil {
 			writeError(w, r, http.StatusBadRequest, "INVALID_ACTIVITY_EVENT", "Agent activity payload is invalid.")
 			return
+		}
+		if activity.Event == "session-start" {
+			nativeSessionID := activityNativeSessionID(activity.Native)
+			if nativeSessionID != "" {
+				if err := s.store.SetAgentSessionID(
+					r.Context(),
+					claims.AccountID,
+					claims.SessionID,
+					nativeSessionID,
+				); err != nil {
+					s.internalError(w, r, "store agent session ID from activity", err)
+					return
+				}
+			}
 		}
 		if activity.HasActivity {
 			switch activity.State {
@@ -1361,6 +1377,52 @@ func (s *Server) workerEvent(w http.ResponseWriter, r *http.Request) {
 				s.internalError(w, r, "update worker activity", err)
 				return
 			}
+			if activityStartsTurn(activity.Event, activity.State) {
+				if _, err := s.store.TransitionActiveTurn(
+					r.Context(),
+					claims.AccountID,
+					claims.SessionID,
+					"running",
+					"",
+				); err != nil {
+					s.internalError(w, r, "start turn from worker activity", err)
+					return
+				}
+			}
+			if activityCompletesTurn(activity.Event, activity.State) {
+				activeTurn, err := s.store.GetActiveTurn(
+					r.Context(),
+					claims.AccountID,
+					claims.SessionID,
+				)
+				if err != nil {
+					s.internalError(w, r, "load turn for worker activity", err)
+					return
+				}
+				if activeTurn != nil && activeTurn.State == "running" {
+					if _, err := s.store.TransitionActiveTurn(
+						r.Context(),
+						claims.AccountID,
+						claims.SessionID,
+						"completed",
+						"",
+					); err != nil {
+						s.internalError(w, r, "complete turn from worker activity", err)
+						return
+					}
+				}
+			}
+		}
+	}
+	if input.Type == "agent.started" {
+		if err := s.store.UpdateSessionActivity(
+			r.Context(),
+			claims.AccountID,
+			claims.SessionID,
+			"idle",
+		); err != nil {
+			s.internalError(w, r, "reset started agent activity", err)
+			return
 		}
 	}
 	switch input.Type {
@@ -1468,6 +1530,28 @@ func (s *Server) workerEvent(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"event": event})
+}
+
+func activityStartsTurn(event, state string) bool {
+	return event == "user-prompt-submit" && state == "active"
+}
+
+func activityNativeSessionID(native json.RawMessage) string {
+	var payload struct {
+		SessionID string `json:"session_id"`
+	}
+	if json.Unmarshal(native, &payload) != nil {
+		return ""
+	}
+	sessionID := strings.TrimSpace(payload.SessionID)
+	if len(sessionID) > 200 {
+		return ""
+	}
+	return sessionID
+}
+
+func activityCompletesTurn(event, state string) bool {
+	return state == "idle" && (event == "stop" || event == "after-agent")
 }
 
 func logWorkerLifecycleEvent(eventType string) bool {

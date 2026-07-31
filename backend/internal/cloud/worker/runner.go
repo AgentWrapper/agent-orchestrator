@@ -18,6 +18,7 @@ import (
 	"github.com/creack/pty"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
+	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 	cloudlocalgh "github.com/aoagents/agent-orchestrator/backend/internal/cloud/scm/localgh"
 	cloudworkerhub "github.com/aoagents/agent-orchestrator/backend/internal/cloud/workerhub"
 	shareddomain "github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -51,6 +52,14 @@ func (r *Runner) Run(ctx context.Context) error {
 	if err := os.MkdirAll(r.dataDir, 0o700); err != nil {
 		return fmt.Errorf("create worker data dir: %w", err)
 	}
+	restoreAgent, err := shouldRestoreAgentSession(
+		r.bootstrap.Launch.Session,
+		r.dataDir,
+	)
+	if err != nil {
+		return err
+	}
+	agentSessionMarker := filepath.Join(r.dataDir, "agent-session-initialized")
 	if err := r.prepareRepository(ctx); err != nil {
 		_ = r.client.Event(ctx, "repository.failed", map[string]string{"error": err.Error()})
 		return err
@@ -102,9 +111,20 @@ func (r *Runner) Run(ctx context.Context) error {
 	}); err != nil {
 		return fmt.Errorf("install agent hooks: %w", err)
 	}
-	argv, err := agent.GetLaunchCommand(ctx, launchConfig)
+	argv, err := cloudAgentCommand(
+		ctx,
+		agent,
+		launchConfig,
+		r.bootstrap.Launch.Session,
+		restoreAgent,
+	)
 	if err != nil {
-		return fmt.Errorf("build agent launch command: %w", err)
+		return err
+	}
+	if !restoreAgent {
+		if err := os.WriteFile(agentSessionMarker, []byte("initialized\n"), 0o600); err != nil {
+			return fmt.Errorf("persist agent session marker: %w", err)
+		}
 	}
 	argv = restrictOrchestratorTools(
 		argv,
@@ -121,6 +141,68 @@ func (r *Runner) Run(ctx context.Context) error {
 	runtimeEnvironment := append(os.Environ(), envList(hookEnvironment)...)
 	clearEnvironmentSecret(hookEnvironment, credentialEnvironmentName)
 	return r.runInteractiveAgent(ctx, argv, launchConfig, runtimeEnvironment)
+}
+
+func shouldRestoreAgentSession(
+	session clouddomain.Session,
+	dataDir string,
+) (bool, error) {
+	restore := session.AgentSessionID != ""
+	marker := filepath.Join(dataDir, "agent-session-initialized")
+	if _, err := os.Stat(marker); err == nil {
+		restore = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, fmt.Errorf("inspect agent session marker: %w", err)
+	}
+	if restore &&
+		session.Harness == "claude-code" &&
+		!claudeTranscriptExists(session.AgentSessionID) {
+		return false, nil
+	}
+	return restore, nil
+}
+
+type cloudAgentLauncher interface {
+	GetLaunchCommand(context.Context, ports.LaunchConfig) ([]string, error)
+	GetRestoreCommand(context.Context, ports.RestoreConfig) ([]string, bool, error)
+}
+
+func cloudAgentCommand(
+	ctx context.Context,
+	agent cloudAgentLauncher,
+	launchConfig ports.LaunchConfig,
+	session clouddomain.Session,
+	restore bool,
+) ([]string, error) {
+	if restore {
+		metadata := map[string]string{}
+		if session.AgentSessionID != "" {
+			metadata[ports.MetadataKeyAgentSessionID] = session.AgentSessionID
+		}
+		restored, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{
+			DataDir:     launchConfig.DataDir,
+			Kind:        launchConfig.Kind,
+			Permissions: launchConfig.Permissions,
+			Session: ports.SessionRef{
+				ID:            string(session.ID),
+				Metadata:      metadata,
+				WorkspacePath: launchConfig.WorkspacePath,
+			},
+			SystemPrompt:     launchConfig.SystemPrompt,
+			SystemPromptFile: launchConfig.SystemPromptFile,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("build agent restore command: %w", err)
+		}
+		if ok {
+			return restored, nil
+		}
+	}
+	argv, err := agent.GetLaunchCommand(ctx, launchConfig)
+	if err != nil {
+		return nil, fmt.Errorf("build agent launch command: %w", err)
+	}
+	return argv, nil
 }
 
 func (r *Runner) runInteractiveAgent(
@@ -268,9 +350,7 @@ func (r *Runner) commandLoop(
 				if err != nil {
 					return fmt.Errorf("decode prompt: %w", err)
 				}
-				writeMu.Lock()
-				_, err = terminal.Write(append(decoded, '\r'))
-				writeMu.Unlock()
+				err = submitInteractivePrompt(ctx, terminal, writeMu, decoded, 100*time.Millisecond)
 				if err == nil && command.Sequence > 0 {
 					highestPrompt.Store(command.Sequence)
 					if err := r.acknowledgePrompt(ctx, command.Sequence); err != nil {
@@ -312,6 +392,28 @@ func (r *Runner) commandLoop(
 			backoff *= 2
 		}
 	}
+}
+
+func submitInteractivePrompt(
+	ctx context.Context,
+	terminal io.Writer,
+	writeMu *sync.Mutex,
+	prompt []byte,
+	enterDelay time.Duration,
+) error {
+	writeMu.Lock()
+	defer writeMu.Unlock()
+	if _, err := terminal.Write(prompt); err != nil {
+		return err
+	}
+	// Ink-based harnesses can render text and process Enter against the same
+	// stale input state when both arrive in one PTY write. Keep Enter in a
+	// distinct read cycle so the visible prompt is actually submitted.
+	if !waitForRetry(ctx, enterDelay) {
+		return ctx.Err()
+	}
+	_, err := terminal.Write([]byte{'\r'})
+	return err
 }
 
 func (r *Runner) prepareRepository(ctx context.Context) error {
@@ -541,13 +643,24 @@ func clearEnvironmentSecret(environment map[string]string, name string) {
 }
 
 func prepareClaudeCloudExperience(home string) error {
-	if err := updateJSONFile(filepath.Join(home, ".claude.json"), func(root map[string]any) {
-		root["hasCompletedOnboarding"] = true
-		root["theme"] = "dark"
-	}); err != nil {
-		return fmt.Errorf("prepare Claude onboarding: %w", err)
+	configDir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR"))
+	rootPaths := []string{filepath.Join(home, ".claude.json")}
+	if configDir != "" {
+		rootPaths = append(rootPaths, filepath.Join(configDir, ".claude.json"))
 	}
-	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	for _, rootPath := range rootPaths {
+		if err := updateJSONFile(rootPath, func(root map[string]any) {
+			root["hasCompletedOnboarding"] = true
+			root["theme"] = "dark"
+		}); err != nil {
+			return fmt.Errorf("prepare Claude onboarding: %w", err)
+		}
+	}
+	settingsDir := filepath.Join(home, ".claude")
+	if configDir != "" {
+		settingsDir = configDir
+	}
+	settingsPath := filepath.Join(settingsDir, "settings.json")
 	if err := updateJSONFile(settingsPath, func(settings map[string]any) {
 		settings["theme"] = "dark"
 		settings["skipDangerousModePermissionPrompt"] = true
@@ -561,6 +674,25 @@ func prepareClaudeCloudExperience(home string) error {
 		return fmt.Errorf("prepare Claude settings: %w", err)
 	}
 	return nil
+}
+
+func claudeTranscriptExists(agentSessionID string) bool {
+	agentSessionID = strings.TrimSpace(agentSessionID)
+	if agentSessionID == "" {
+		return false
+	}
+	configDir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR"))
+	if configDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return false
+		}
+		configDir = filepath.Join(home, ".claude")
+	}
+	matches, err := filepath.Glob(
+		filepath.Join(configDir, "projects", "*", agentSessionID+".jsonl"),
+	)
+	return err == nil && len(matches) > 0
 }
 
 func updateJSONFile(path string, update func(map[string]any)) error {

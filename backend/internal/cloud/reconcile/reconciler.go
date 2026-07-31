@@ -157,6 +157,22 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, sandbox clouddomain.S
 		case "deleting":
 			return r.observe(ctx, sandbox, string(environment.ID), "deleting", "", 2*time.Second)
 		case "stopped", "archived":
+			if recreator, ok := provider.(cloudsandbox.Recreator); ok {
+				spec, err := r.workerSpec(ctx, sandbox)
+				if err != nil {
+					return r.fail(ctx, sandbox, err)
+				}
+				r.log.Info("recreating stopped cloud sandbox",
+					"session_id", sandbox.SessionID,
+					"provider", sandbox.Provider,
+					"provider_id", environment.ID,
+				)
+				recreated, err := recreator.Recreate(ctx, environment.ID, spec)
+				if err != nil {
+					return r.fail(ctx, sandbox, err)
+				}
+				return r.observe(ctx, sandbox, string(recreated.ID), "bootstrapping", "", 2*time.Second)
+			}
 			r.log.Info("starting cloud sandbox",
 				"session_id", sandbox.SessionID,
 				"provider", sandbox.Provider,
@@ -227,14 +243,7 @@ func (r *Reconciler) provision(
 	if found {
 		return r.observe(ctx, sandbox, string(existing.ID), "provisioning", "", time.Second)
 	}
-	ticket, err := r.store.IssueAccessTicket(
-		ctx,
-		sandbox.AccountID,
-		sandbox.SessionID,
-		"worker_bootstrap",
-		[]string{"worker:connect", "worker:event", "worker:terminal", "worker:git", "worker:orchestrate"},
-		10*time.Minute,
-	)
+	spec, err := r.workerSpec(ctx, sandbox)
 	if err != nil {
 		return r.fail(ctx, sandbox, err)
 	}
@@ -254,26 +263,7 @@ func (r *Reconciler) provision(
 		"provider", sandbox.Provider,
 	)
 	startedAt := time.Now()
-	environment, err := provider.Create(ctx, cloudsandbox.Spec{
-		Name:            "ao-" + string(sandbox.SessionID),
-		SessionID:       sandbox.SessionID,
-		Snapshot:        r.workerSnapshot,
-		Image:           r.workerImage,
-		ResourceProfile: clouddomain.ResourceProfile{CPU: 4, Memory: 8, Disk: 10},
-		Environment: map[string]string{
-			"AO_CLOUD_PUBLIC_URL":       r.publicURL,
-			"AO_CLOUD_SESSION_ID":       string(sandbox.SessionID),
-			"AO_WORKER_BOOTSTRAP_TOKEN": ticket,
-			"AO_WORKSPACE_DIR":          "/workspace/repository",
-		},
-		Labels: map[string]string{
-			"ao.session_id": string(sandbox.SessionID),
-			"ao.account_id": string(sandbox.AccountID),
-			"ao.managed":    "true",
-		},
-		AutoStopMinutes:   30,
-		AutoDeleteMinutes: 7 * 24 * 60,
-	})
+	environment, err := provider.Create(ctx, spec)
 	if err != nil {
 		return r.fail(ctx, sandbox, err)
 	}
@@ -284,6 +274,47 @@ func (r *Reconciler) provision(
 		"duration_ms", time.Since(startedAt).Milliseconds(),
 	)
 	return r.observe(ctx, sandbox, string(environment.ID), "provisioning", "", 2*time.Second)
+}
+
+func (r *Reconciler) workerSpec(
+	ctx context.Context,
+	sandbox clouddomain.Sandbox,
+) (cloudsandbox.Spec, error) {
+	ticket, err := r.store.IssueAccessTicket(
+		ctx,
+		sandbox.AccountID,
+		sandbox.SessionID,
+		"worker_bootstrap",
+		[]string{"worker:connect", "worker:event", "worker:terminal", "worker:git", "worker:orchestrate"},
+		10*time.Minute,
+	)
+	if err != nil {
+		return cloudsandbox.Spec{}, err
+	}
+	return cloudsandbox.Spec{
+		Name:            "ao-" + string(sandbox.SessionID),
+		SessionID:       sandbox.SessionID,
+		Snapshot:        r.workerSnapshot,
+		Image:           r.workerImage,
+		ResourceProfile: clouddomain.ResourceProfile{CPU: 4, Memory: 8, Disk: 10},
+		Environment: map[string]string{
+			"AO_CLOUD_PUBLIC_URL":       r.publicURL,
+			"AO_CLOUD_SESSION_ID":       string(sandbox.SessionID),
+			"AO_WORKER_BOOTSTRAP_TOKEN": ticket,
+			"AO_WORKSPACE_DIR":          "/workspace/repository",
+			"AO_DATA_DIR":               "/workspace/.ao/worker",
+			"HOME":                      "/workspace/.ao/home",
+			"CLAUDE_CONFIG_DIR":         "/workspace/.ao/home/.claude",
+			"CODEX_HOME":                "/workspace/.ao/home/.codex",
+		},
+		Labels: map[string]string{
+			"ao.session_id": string(sandbox.SessionID),
+			"ao.account_id": string(sandbox.AccountID),
+			"ao.managed":    "true",
+		},
+		AutoStopMinutes:   30,
+		AutoDeleteMinutes: 7 * 24 * 60,
+	}, nil
 }
 
 func (r *Reconciler) fail(ctx context.Context, sandbox clouddomain.Sandbox, cause error) error {

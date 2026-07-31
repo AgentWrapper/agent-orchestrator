@@ -15,6 +15,7 @@ type store interface {
 	AppendUserMessage(context.Context, clouddomain.AccountID, clouddomain.SessionID, string, string) (clouddomain.Event, bool, error)
 	EventsAfter(context.Context, clouddomain.AccountID, clouddomain.SessionID, int64, int) ([]clouddomain.Event, error)
 	ChatEventsAfter(context.Context, clouddomain.AccountID, clouddomain.SessionID, int64, int) ([]clouddomain.Event, error)
+	ResultEventsAfter(context.Context, clouddomain.AccountID, clouddomain.SessionID, int64, int) ([]clouddomain.Event, error)
 	ActivePromptEventsAfter(context.Context, clouddomain.AccountID, clouddomain.SessionID, int64, int) ([]clouddomain.Event, error)
 }
 
@@ -90,6 +91,18 @@ func (s *Service) ReplayChat(
 	limit int,
 ) ([]clouddomain.Event, error) {
 	return s.store.ChatEventsAfter(ctx, accountID, sessionID, after, limit)
+}
+
+// ReplayResults returns structured chat output plus terminal-first completion
+// hooks that carry a harness's final answer.
+func (s *Service) ReplayResults(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+	after int64,
+	limit int,
+) ([]clouddomain.Event, error) {
+	return s.store.ResultEventsAfter(ctx, accountID, sessionID, after, limit)
 }
 
 // ReplayActivePrompts returns only prompts still owned by an unfinished turn.

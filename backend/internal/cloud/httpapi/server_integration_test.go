@@ -1499,6 +1499,60 @@ func TestBrowserInterruptAndWorkerTurnActivity(t *testing.T) {
 			t.Fatalf("%s activity = %q, want %q", event.eventType, got.ActivityState, event.wantState)
 		}
 	}
+
+	if _, _, err := store.AppendUserMessage(
+		ctx,
+		account.ID,
+		session.Session.ID,
+		uuid.NewString(),
+		"hook-driven turn",
+	); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []struct {
+		name       string
+		state      string
+		wantActive bool
+		wantTurn   string
+	}{
+		{name: "user-prompt-submit", state: "active", wantActive: true, wantTurn: "running"},
+		{name: "stop", state: "idle", wantActive: false},
+	} {
+		response := requestJSON(
+			t,
+			server,
+			http.MethodPost,
+			"/api/cloud/v1/worker/events",
+			"",
+			map[string]any{
+				"type": "agent.activity",
+				"payload": map[string]any{
+					"event":       event.name,
+					"state":       event.state,
+					"hasActivity": true,
+				},
+			},
+			map[string]string{"Authorization": "Worker " + token},
+		)
+		response.Body.Close()
+		if response.StatusCode != http.StatusAccepted {
+			t.Fatalf("agent.activity %s status = %d", event.name, response.StatusCode)
+		}
+		got, err := store.GetSession(ctx, account.ID, session.Session.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.ActivityState != event.state {
+			t.Fatalf("agent.activity %s state = %q, want %q", event.name, got.ActivityState, event.state)
+		}
+		if event.wantActive {
+			if got.ActiveTurn == nil || got.ActiveTurn.State != event.wantTurn {
+				t.Fatalf("agent.activity %s turn = %#v, want %q", event.name, got.ActiveTurn, event.wantTurn)
+			}
+		} else if got.ActiveTurn != nil {
+			t.Fatalf("agent.activity %s left active turn %#v", event.name, got.ActiveTurn)
+		}
+	}
 }
 
 func bootstrapWorker(
