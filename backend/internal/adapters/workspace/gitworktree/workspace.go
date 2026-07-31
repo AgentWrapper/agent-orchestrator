@@ -1044,9 +1044,46 @@ func (w *Workspace) createWorkspaceProjectRepo(ctx context.Context, repo workspa
 	if err != nil {
 		return "", err
 	}
+	if rec, ok := findWorktree(records, repo.outputPath); ok {
+		missing, err := registeredWorktreeDirMissing(rec)
+		if err != nil {
+			return "", err
+		}
+		if !missing {
+			if _, err := w.run(ctx, w.binary, revParseHeadArgs(repo.outputPath)...); err != nil {
+				if !rec.Locked || rec.LockReason != "initializing" {
+					return "", fmt.Errorf(
+						"gitworktree: refusing to replace registered workspace repo %q because HEAD is not ready: %w",
+						repo.outputPath, err,
+					)
+				}
+				if cleanupErr := w.removeIncompleteInitialization(ctx, repo.repoPath, rec); cleanupErr != nil {
+					return "", errors.Join(
+						fmt.Errorf("gitworktree: registered workspace repo %q is not ready: %w", repo.outputPath, err),
+						cleanupErr,
+					)
+				}
+				records, err = w.listRecords(ctx, repo.repoPath)
+				if err != nil {
+					return "", err
+				}
+			}
+		}
+	}
 	force, err := staleRegistrationForPath(records, repo.outputPath)
 	if err != nil {
 		return "", err
+	}
+	localBranch, err := w.refExists(ctx, repo.repoPath, "refs/heads/"+branch)
+	if err != nil {
+		return "", err
+	}
+	if localBranch {
+		if _, err := w.run(ctx, w.binary, worktreeAddBranchArgs(repo.repoPath, repo.outputPath, branch, force)...); err != nil {
+			addErr := fmt.Errorf("gitworktree: workspace repo %q worktree add existing branch %q: %w", repo.name, branch, err)
+			return "", errors.Join(addErr, w.cleanupFailedInitialization(ctx, repo.repoPath, repo.outputPath, false))
+		}
+		return baseSHA, nil
 	}
 	// Recovery from a registration that only goes stale after that check is
 	// addNewBranchWorktree's job: git's own --force override, not the repo-wide

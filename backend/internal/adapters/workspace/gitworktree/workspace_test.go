@@ -763,6 +763,8 @@ func workspaceProjectRepoFake(t *testing.T, ws *Workspace, output, worktreeList 
 			return nil, nil
 		case strings.Contains(joined, "rev-parse --verify origin/main"):
 			return []byte("abc123\n"), nil
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/feature/test"):
+			return nil, commandError{args: append([]string{binary}, args...), err: exitErr}
 		default:
 			t.Fatalf("unexpected git invocation: %v", args)
 			return nil, nil
