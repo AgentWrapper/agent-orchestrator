@@ -1,6 +1,6 @@
 import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { isCancelledError, useQueryClient } from "@tanstack/react-query";
-import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CommandPalette } from "../components/CommandPalette";
 import { CenterPanelShell } from "../components/CenterPanelShell";
 import { DaemonFailureBanner } from "../components/DaemonFailureBanner";
@@ -372,7 +372,7 @@ function ShellLayout() {
 		[navigate, queryClient, setOrchestratorReplacementError, setProjectRestarting],
 	);
 
-	useEffect(() => {
+	useLayoutEffect(() => {
 		applyDocumentTheme(resolvedTheme);
 	}, [resolvedTheme]);
 
