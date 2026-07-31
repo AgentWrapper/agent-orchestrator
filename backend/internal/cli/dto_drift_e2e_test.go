@@ -104,10 +104,6 @@ func (f *fakeSessionService) SetTerminateOnPRMerge(context.Context, domain.Sessi
 	return domain.Session{}, nil
 }
 
-func (f *fakeSessionService) CompleteOrchestrator(context.Context, domain.SessionID) error {
-	return nil
-}
-
 func (f *fakeSessionService) Send(context.Context, domain.SessionID, string) error {
 	return nil
 }
