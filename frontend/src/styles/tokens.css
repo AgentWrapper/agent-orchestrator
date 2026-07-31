@@ -212,6 +212,8 @@
 	--size-control-board: 36px;
 	--size-table-head: var(--space-10);
 	--size-toolbar: 56px;
+	/* Windows custom title bar (.window-titlebar) — keep in sync with TITLEBAR_HEIGHT in main.ts. */
+	--size-window-titlebar: 36px;
 	--size-inspector-tabs: 48px;
 	--size-row-md: 52px;
 	--size-browser-url: 29px;

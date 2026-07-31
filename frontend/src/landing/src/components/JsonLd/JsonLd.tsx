@@ -53,10 +53,9 @@ export function OrganizationJsonLd() {
 		},
 		sameAs: [
 			COMPANY.GITHUB_URL,
-			"https://github.com/AgentWrapper",
+			"https://github.com/Untrivial-ai",
 			COMPANY.X_URL,
 			COMPANY.LINKEDIN_URL,
-			COMPANY.YOUTUBE_URL,
 		],
 	};
 

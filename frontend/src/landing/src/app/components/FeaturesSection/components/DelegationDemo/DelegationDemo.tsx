@@ -46,7 +46,7 @@ export function DelegationDemo() {
 
 	return (
 		<FeaturePreviewShell
-			title="AgentWrapper / agent-orchestrator"
+			title="Untrivial-ai / agent-orchestrator"
 			trailing={
 				<span className="rounded border border-[var(--preview-border)] px-1.5 py-0.5 font-mono text-[9px] text-[var(--preview-muted-foreground)]">
 					Orchestrator

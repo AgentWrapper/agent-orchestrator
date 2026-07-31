@@ -1,9 +1,21 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
-import { ChevronRight, LayoutDashboard, MoreVertical, Pencil, Plus, RefreshCw, Search, Settings, Trash2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import {
+	ChevronRight,
+	Folder,
+	FolderOpen,
+	LayoutDashboard,
+	MoreVertical,
+	Pencil,
+	Pin,
+	Plus,
+	RefreshCw,
+	Search,
+	Settings,
+	Trash2,
+} from "lucide-react";
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import type { UpdateStatus } from "../../main/update-settings";
-import { effectiveShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
 import {
 	hasConfiguredOrchestratorAgent,
 	newestActiveOrchestrator,
@@ -33,7 +45,6 @@ import {
 	SidebarFooter,
 	SidebarGroup,
 	SidebarGroupContent,
-	SidebarGroupLabel,
 	SidebarHeader,
 	SidebarMenu,
 	SidebarMenuButton,
@@ -48,7 +59,6 @@ import { OrchestratorIcon } from "./icons";
 import aoLogo from "../../../assets/ao-logo.svg";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
-import { useKeybindingsStore } from "../stores/keybindings-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
@@ -67,6 +77,14 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 const HOVER_ACTION_CLASS =
 	"grid size-5 shrink-0 place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-50 data-[state=open]:bg-interactive-hover data-[state=open]:text-foreground [&_svg]:size-icon-lg";
 
+// Shared nav-row chrome (Codex-style): inset pill hover/selected, 14px type, no accent bar.
+const NAV_ROW_CLASS =
+	"h-9 gap-2.5 rounded-lg px-2.5 text-sm font-medium text-muted-foreground transition-[background-color,color] hover:bg-interactive-hover hover:text-foreground active:bg-interactive-hover active:text-foreground data-[active=true]:bg-interactive-active data-[active=true]:font-medium data-[active=true]:text-foreground";
+
+// Search + Pinned/Projects section chrome: same type, icon, and row size.
+const SECTION_ROW_CLASS =
+	"flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2.5 text-sm font-medium text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-md [&_svg]:shrink-0";
+
 // Mirrors the daemon's display-name cap (maxDisplayNameLen) and the spawn
 // `--name` flag, so inline edits never round-trip a value the API would reject.
 const MAX_DISPLAY_NAME_LEN = 20;
@@ -81,8 +99,8 @@ type SidebarProps = {
 	/** Render the expanded sidebar over content without reserving layout width. */
 	isOverlay?: boolean;
 	underTopbar?: boolean;
-	/** Chrome height to clear when underTopbar is set. Defaults to the 56px shell toolbar. */
-	topbarOffset?: "toolbar" | "titlebar";
+	/** Chrome height to clear when underTopbar is set. Defaults to --size-toolbar. */
+	topbarOffset?: "toolbar" | "titlebar" | "trafficLights";
 	onPreviewLeave?: () => void;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
@@ -171,6 +189,9 @@ export function Sidebar({
 			next.has(id) ? next.delete(id) : next.add(id);
 			return next;
 		});
+	// Section disclosure: Pinned / Projects headers collapse their bodies.
+	const [pinnedOpen, setPinnedOpen] = useState(true);
+	const [projectsOpen, setProjectsOpen] = useState(true);
 	// Fetch the running app version to derive the build channel. Channel is
 	// identity: derived from the version string, not the update-channel setting
 	// (the setting can be changed mid-session; the binary cannot).
@@ -207,24 +228,21 @@ export function Sidebar({
 		<SidebarRoot
 			collapsible="offcanvas"
 			data-expanded-chrome={expandedChromeVisible ? "visible" : "hidden"}
+			data-topbar-offset={underTopbar ? topbarOffset : undefined}
 			onPointerLeave={onPreviewLeave}
 			overlay={isOverlay}
 			className={cn(
 				hideEdgeBorder ? "border-transparent" : "border-r-0 group-data-[side=left]:border-r-0",
 				isOverlay && "z-sidebar-preview shadow-2xl",
-				isOverlay
+				isOverlay || !underTopbar
 					? "top-0 h-svh!"
-					: underTopbar
-						? topbarOffset === "titlebar"
-							? "top-9 h-[calc(100svh-2.25rem)]!"
-							: "top-14 h-[calc(100svh-3.5rem)]!"
-						: "top-0 h-svh!",
+					: "top-(--sidebar-chrome-offset) h-[calc(100svh-var(--sidebar-chrome-offset))]!",
 			)}
 		>
 			<SidebarHeader
 				className={cn(
-					"gap-0 p-0 pl-1.5 pr-1.75 pt-1 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-1",
-					isOverlay && (topbarOffset === "titlebar" ? "pt-10!" : "pt-15!"),
+					"gap-0 p-0 px-2 pt-2 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2",
+					isOverlay && underTopbar && "pt-(--sidebar-chrome-offset)!",
 				)}
 			>
 				{/* Brand (project-sidebar__brand); in the icon rail it becomes the old
@@ -267,65 +285,97 @@ export function Sidebar({
 				</div>
 			</SidebarHeader>
 
-			{/* Keep Search + Projects chrome fixed; only the project tree scrolls. */}
-			<div className="flex shrink-0 flex-col gap-0 pl-1.5 pr-1.75 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
+			{/* Keep Search + section chrome fixed; only the project tree scrolls. */}
+			<div className="flex shrink-0 flex-col gap-0 px-2 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
 				{commandPaletteEnabled ? (
-					<SidebarGroup className="p-0 pb-3">
+					<SidebarGroup className="p-0 pb-4">
 						<SidebarGroupContent>
-							<SidebarMenu className="gap-0 group-data-[collapsible=icon]:gap-1">
+							<SidebarMenu className="gap-0.5 group-data-[collapsible=icon]:gap-1">
 								<SidebarSearchButton onOpen={() => setCommandPaletteOpen(true)} />
 							</SidebarMenu>
 						</SidebarGroupContent>
 					</SidebarGroup>
 				) : null}
-				{/* Section label (project-sidebar__nav-label) */}
-				<div className="sidebar-expanded-chrome flex shrink-0 items-center justify-between px-1.5 pb-2 group-data-[collapsible=icon]:hidden">
-					<SidebarGroupLabel className="h-auto rounded-none p-0 text-2xs font-semibold uppercase tracking-wide-lg text-passive">
-						Projects
-					</SidebarGroupLabel>
-					<CreateProjectButton
-						hideTrigger={workspaces.length === 0}
-						onCreateProject={onCreateProject}
-						onInitializeProject={onInitializeProject}
+
+				{/* Pinned — collapsible; body empty until pin functionality lands. */}
+				<div className="sidebar-expanded-chrome flex shrink-0 flex-col group-data-[collapsible=icon]:hidden">
+					<SectionDisclosure
+						icon={<Pin strokeWidth={1.75} aria-hidden="true" />}
+						label="Pinned"
+						open={pinnedOpen}
+						onToggle={() => setPinnedOpen((v) => !v)}
+						className="mb-1"
+					/>
+					{pinnedOpen ? <div className="pb-2" /> : null}
+				</div>
+
+				{/* Projects — collapsible section; + sits inside the same hover pill. */}
+				<div className="sidebar-expanded-chrome flex shrink-0 pb-1.5 group-data-[collapsible=icon]:hidden">
+					<SectionDisclosure
+						icon={
+							projectsOpen ? (
+								<FolderOpen strokeWidth={1.75} aria-hidden="true" />
+							) : (
+								<Folder strokeWidth={1.75} aria-hidden="true" />
+							)
+						}
+						label="Projects"
+						open={projectsOpen}
+						onToggle={() => setProjectsOpen((v) => !v)}
+						trailing={
+							<CreateProjectButton
+								hideTrigger={workspaces.length === 0}
+								onCreateProject={onCreateProject}
+								onInitializeProject={onInitializeProject}
+							/>
+						}
 					/>
 				</div>
 			</div>
 
-			<SidebarContent className="scrollbar-none gap-0 pl-1.5 pr-1.75 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
-				<SidebarGroup className="p-0">
-					{/* Tree (project-sidebar__tree) */}
-					<SidebarGroupContent>
-						{workspaceError ? (
-							<div className="sidebar-expanded-chrome px-1.5 py-3 group-data-[collapsible=icon]:hidden">
-								<p className="text-xs text-foreground">Could not load projects.</p>
-								<p className="mt-1 text-caption text-passive">{workspaceError}</p>
-							</div>
-						) : workspaces.length === 0 ? null : (
-							<SidebarMenu className="gap-0 group-data-[collapsible=icon]:gap-1">
-								{workspaces.map((workspace) => (
-									<ProjectItem
-										key={workspace.id}
-										workspace={workspace}
-										expanded={!collapsedIds.has(workspace.id)}
-										selection={selection}
-										onToggle={() => toggleCollapsed(workspace.id)}
-										onRemoveProject={onRemoveProject}
-									/>
-								))}
-								{isCollapsed && <CreateProjectListItem />}
-							</SidebarMenu>
-						)}
-					</SidebarGroupContent>
-				</SidebarGroup>
+			<SidebarContent className="scrollbar-none gap-0 px-2 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
+				{/* Collapsed-rail still lists projects even when the expanded
+				    Projects section is closed — the rail has no section chrome. */}
+				{(projectsOpen || isCollapsed) && (
+					<SidebarGroup className="p-0">
+						{/* Tree (project-sidebar__tree) */}
+						<SidebarGroupContent>
+							{workspaceError ? (
+								<div className="sidebar-expanded-chrome px-2.5 py-3 group-data-[collapsible=icon]:hidden">
+									<p className="text-sm text-foreground">Could not load projects.</p>
+									<p className="mt-1 text-caption text-passive">{workspaceError}</p>
+								</div>
+							) : workspaces.length === 0 ? null : (
+								<SidebarMenu className="gap-0.5 group-data-[collapsible=icon]:gap-1">
+									{workspaces.map((workspace) => (
+										<ProjectItem
+											key={workspace.id}
+											workspace={workspace}
+											expanded={!collapsedIds.has(workspace.id)}
+											selection={selection}
+											onToggle={() => toggleCollapsed(workspace.id)}
+											onRemoveProject={onRemoveProject}
+										/>
+									))}
+									{isCollapsed && <CreateProjectListItem />}
+								</SidebarMenu>
+							)}
+						</SidebarGroupContent>
+					</SidebarGroup>
+				)}
 			</SidebarContent>
 
 			{/* Footer — Settings opens the global settings page directly.
-			    Bottom margin clears the framed center-panel inset and sits the
-			    button on the same band as the board Archive row. */}
+			    Top hairline matches the board Archive `border-t border-border-strong`.
+			    Row height matches Archive (`h-row-md`). Bottom margin is the shell
+			    inset minus 1px so the hairline meets Archive (the +1 surface-border
+			    compensation overshoots on mac/linux). */}
 			<SidebarFooter
 				className={cn(
-					"relative mt-auto gap-0 overflow-hidden px-2.5 pb-0 pt-1.5 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pb-0 group-data-[collapsible=icon]:pt-1.5",
-					isMac || isLinux ? "mb-3" : "mb-5",
+					"relative mt-auto gap-0 overflow-hidden border-t border-border-strong px-2 pb-0 pt-0 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:border-t-0 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pb-0 group-data-[collapsible=icon]:pt-1.5",
+					isMac || isLinux
+						? "mb-[calc(var(--size-center-panel-inset-mac)-1px)]"
+						: "mb-[calc(var(--size-center-panel-bottom-inset)-1px)]",
 				)}
 			>
 				{/* Always-present daemon status mirror for the smoke suite: no visible
@@ -337,12 +387,15 @@ export function Sidebar({
 				)}
 				<div
 					aria-hidden={isCollapsed || undefined}
-					className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-1 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0"
+					className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-0.5 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0"
 				>
 					<RestartToUpdateRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
 					<button
 						aria-label="Settings"
-						className="flex w-full items-center justify-center gap-2.5 rounded-settings-row bg-interactive-hover px-2.5 py-2.5 text-control font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-lg [&_svg]:shrink-0"
+						className={cn(
+							NAV_ROW_CLASS,
+							"flex h-row-md w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
+						)}
 						onClick={() => selection.goGlobalSettings()}
 						tabIndex={isCollapsed ? -1 : 0}
 						type="button"
@@ -360,7 +413,7 @@ export function Sidebar({
 						<TooltipTrigger asChild>
 							<button
 								aria-label="Settings"
-								className="grid size-control-board place-items-center rounded-settings-row bg-interactive-hover text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
+								className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
 								onClick={() => selection.goGlobalSettings()}
 								tabIndex={isCollapsed ? 0 : -1}
 								type="button"
@@ -457,6 +510,14 @@ function ProjectItem({
 		}
 	};
 
+	// Folder icon always toggles disclosure, even when another project is
+	// selected — without this, collapsing a non-active project required a
+	// select click then a second click (felt like a double-click).
+	const onFolderClick = (event: MouseEvent) => {
+		event.stopPropagation();
+		onToggle();
+	};
+
 	const removeProject = () => {
 		setRemoveError(null);
 		setConfirmOpen(true);
@@ -480,7 +541,7 @@ function ProjectItem({
 	};
 
 	return (
-		<SidebarMenuItem className="mb-px group-data-[collapsible=icon]:mb-0">
+		<SidebarMenuItem className="group-data-[collapsible=icon]:mb-0">
 			{/* project-sidebar__proj-row */}
 			<SidebarMenuButton
 				aria-current={projectActive ? "page" : undefined}
@@ -489,25 +550,26 @@ function ProjectItem({
 				onClick={onProjectClick}
 				tooltip={workspace.name}
 				className={cn(
-					"relative h-control-board gap-2.25 rounded-sm px-1.5 py-0 text-control font-medium text-muted-foreground transition-[background-color,padding,color]",
-					"before:absolute before:top-2 before:bottom-2 before:left-0 before:w-px before:rounded-full before:bg-transparent",
-					"hover:bg-interactive-hover hover:text-foreground active:bg-interactive-hover active:text-foreground",
-					"data-[active=true]:bg-interactive-active data-[active=true]:font-semibold data-[active=true]:text-foreground data-[active=true]:before:bg-accent",
+					NAV_ROW_CLASS,
 					// Always reserve room for the action cluster (dashboard,
 					// orchestrator, kebab) — icons are always visible, not hover-gated.
-					"pr-sidebar-project-actions",
+					"pr-sidebar-project-actions [&_svg]:size-icon-md",
 					// Icon rail: the old 36px letter tile.
 					"group-data-[collapsible=icon]:size-control-board! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:font-semibold",
 				)}
 			>
-				<ChevronRight
-					className={cn(
-						"size-icon-xs! shrink-0 text-passive transition-transform group-data-[collapsible=icon]:hidden",
-						expanded && "rotate-90",
-					)}
-					strokeWidth={2.5}
+				<span
 					aria-hidden="true"
-				/>
+					className="shrink-0 group-data-[collapsible=icon]:hidden"
+					data-project-folder=""
+					onClick={onFolderClick}
+				>
+					{expanded ? (
+						<FolderOpen strokeWidth={1.75} aria-hidden="true" />
+					) : (
+						<Folder strokeWidth={1.75} aria-hidden="true" />
+					)}
+				</span>
 				<span className="hidden group-data-[collapsible=icon]:block">{workspace.name.charAt(0).toUpperCase()}</span>
 				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">
 					{workspace.name}
@@ -518,7 +580,7 @@ function ProjectItem({
 			propagation issues in Electron's Chromium. Hidden in the icon rail. */}
 			<div
 				className={cn(
-					"sidebar-expanded-chrome absolute top-0 right-1 z-chrome flex h-control-board items-center gap-px",
+					"sidebar-expanded-chrome absolute top-0 right-1.5 z-chrome flex h-9 items-center gap-px",
 					"group-data-[collapsible=icon]:hidden",
 				)}
 			>
@@ -597,7 +659,7 @@ function ProjectItem({
 			{/* project-sidebar__sessions: indented under the project parent so worker
           sessions read as children without adding a persistent guide rail. */}
 			{expanded && sessions.length > 0 && (
-				<SidebarMenuSub className="sidebar-expanded-chrome mx-0 ml-3.5 translate-x-0 gap-0 border-l-0 px-0 py-1">
+				<SidebarMenuSub className="sidebar-expanded-chrome mx-0 ml-2 translate-x-0 gap-0.5 border-l-0 px-0 py-0.5">
 					{sessions.map((session) => (
 						<SessionRow
 							key={session.id}
@@ -666,13 +728,13 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 
 	if (isEditing) {
 		return (
-			<SidebarMenuSubItem>
-				<div className="relative flex h-auto w-full items-center gap-2.25 rounded-sm py-1.25 pl-1.5 pr-1.5">
+			<SidebarMenuSubItem className="pl-7">
+				<div className="relative flex h-8 w-full items-center gap-2 rounded-lg px-2.5 py-0">
 					<SessionDot session={session} />
 					<input
 						aria-label={`Rename ${session.title}`}
 						autoFocus
-						className="min-w-0 flex-1 rounded-xs border border-accent bg-transparent px-1 py-px text-xs text-foreground outline-none focus-visible:ring-1 focus-visible:ring-accent"
+						className="min-w-0 flex-1 rounded-xs border border-accent bg-transparent px-1 py-px text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-accent"
 						maxLength={MAX_DISPLAY_NAME_LEN}
 						onBlur={() => void commit()}
 						onChange={(e) => setDraft(e.target.value)}
@@ -695,22 +757,21 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 	}
 
 	return (
-		<SidebarMenuSubItem>
+		<SidebarMenuSubItem className="pl-7">
 			<button
 				aria-current={active ? "page" : undefined}
 				aria-label={`Open ${session.title}`}
 				className={cn(
-					"relative flex h-auto w-full items-center gap-2.25 rounded-sm py-1.25 pl-1.5 pr-7 text-left outline-hidden transition-[color]",
-					"before:absolute before:top-1.5 before:bottom-1.5 before:left-0 before:w-px before:rounded-full before:bg-transparent",
-					"hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
-					active && "text-foreground before:bg-accent",
+					"relative flex h-8 w-full items-center gap-2 rounded-lg px-2.5 py-0 pr-7 text-left text-sm outline-hidden transition-[background-color,color]",
+					"hover:bg-interactive-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+					active && "bg-interactive-active text-foreground",
 				)}
 				onClick={onOpen}
 				type="button"
 			>
 				<SessionDot session={session} />
 				<span className="min-w-0 flex-1">
-					<span className={cn("block truncate text-xs", active ? "text-foreground" : "text-muted-foreground")}>
+					<span className={cn("block truncate", active ? "text-foreground" : "text-muted-foreground")}>
 						{session.title}
 					</span>
 				</span>
@@ -745,7 +806,7 @@ function RestartToUpdateRow({ status, tabIndex }: { status: UpdateStatus; tabInd
 		<button
 			aria-label={`Restart to install update${status.version ? ` v${status.version}` : ""}`}
 			className={cn(
-				"flex w-full items-center gap-2.5 rounded-settings-row p-2.5 text-left text-control font-medium transition-colors",
+				"flex w-full items-center gap-2.5 rounded-lg p-2.5 text-left text-control font-medium transition-colors",
 				escalated
 					? "border border-working/35 bg-working/12 text-working hover:bg-working/18 [&_svg]:text-working"
 					: "text-passive hover:bg-interactive-hover hover:text-foreground [&_svg]:text-passive",
@@ -801,16 +862,71 @@ function RestartToUpdateRailButton({ status, tabIndex }: { status: UpdateStatus;
 	);
 }
 
+function SectionDisclosure({
+	icon,
+	label,
+	open,
+	onToggle,
+	className,
+	trailing,
+}: {
+	icon: ReactNode;
+	label: string;
+	open: boolean;
+	onToggle: () => void;
+	className?: string;
+	/** Optional trailing control (e.g. Projects "+") — stays inside the hover pill. */
+	trailing?: ReactNode;
+}) {
+	const labelRow = (
+		<>
+			{icon}
+			<span className="truncate">{label}</span>
+			<ChevronRight
+				aria-hidden="true"
+				className={cn("size-3.5! shrink-0 transition-transform duration-150", open && "rotate-90")}
+				strokeWidth={2}
+			/>
+		</>
+	);
+
+	if (trailing) {
+		return (
+			<div className={cn(SECTION_ROW_CLASS, "pr-1", className)}>
+				<button
+					aria-expanded={open}
+					aria-label={label}
+					className="flex min-w-0 flex-1 items-center gap-2 text-left"
+					onClick={onToggle}
+					type="button"
+				>
+					{labelRow}
+				</button>
+				{trailing}
+			</div>
+		);
+	}
+
+	return (
+		<button
+			aria-expanded={open}
+			aria-label={label}
+			className={cn(SECTION_ROW_CLASS, "text-left", className)}
+			onClick={onToggle}
+			type="button"
+		>
+			{labelRow}
+		</button>
+	);
+}
+
 function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
-	const overrides = useKeybindingsStore((state) => state.overrides);
-	const paletteBinding = effectiveShortcutBindings("command-palette", isMac, overrides)[0];
-	const shortcutLabel = paletteBinding ? shortcutBindingLabel(paletteBinding, isMac) : "Unassigned";
 	const { state } = useSidebar();
 	const isCollapsed = state === "collapsed";
 	return (
 		<SidebarMenuItem className="group-data-[collapsible=icon]:mb-0">
 			<SidebarMenuButton
-				aria-label={`Search · ${shortcutLabel}`}
+				aria-label="Search"
 				onClick={() => {
 					// Open on the microtask after this click rather than inside it: mounting
 					// the palette dialog while this button's tooltip layer is still tearing
@@ -818,23 +934,17 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 					// "defers opening" test pins the deferral so it is not dropped as noise.
 					queueMicrotask(onOpen);
 				}}
-				tooltip={isCollapsed ? `Search · ${shortcutLabel}` : undefined}
+				tooltip={isCollapsed ? "Search" : undefined}
 				className={cn(
-					"h-control-form gap-2 rounded-settings-row bg-interactive-hover px-3 py-0 text-control font-medium text-muted-foreground",
-					"hover:bg-interactive-hover hover:text-foreground active:bg-interactive-hover active:text-foreground",
-					"[&>svg]:size-icon-md!",
-					"group-data-[collapsible=icon]:size-control-form! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0!",
+					// Filled search trigger (Cursor-style): icon + label.
+					"h-8 gap-2 rounded-lg bg-muted px-2.5 text-sm font-normal text-muted-foreground",
+					"hover:bg-interactive-hover! hover:text-foreground active:bg-interactive-hover! [&_svg]:size-icon-sm!",
+					"group-data-[collapsible=icon]:size-control-form! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:hover:bg-interactive-hover!",
 				)}
 			>
 				<Search strokeWidth={1.75} aria-hidden="true" />
-				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate leading-none group-data-[collapsible=icon]:hidden">
+				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-left leading-none group-data-[collapsible=icon]:hidden">
 					Search
-				</span>
-				<span
-					aria-hidden="true"
-					className="sidebar-expanded-chrome shrink-0 text-caption leading-none text-passive group-data-[collapsible=icon]:hidden"
-				>
-					{shortcutLabel}
 				</span>
 			</SidebarMenuButton>
 		</SidebarMenuItem>
@@ -864,7 +974,8 @@ function CreateProjectButton({
 						<button
 							aria-label="New project"
 							className={cn(
-								"grid size-icon-xl place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground",
+								// No own hover fill — lives inside the Projects section hover pill.
+								"grid size-icon-xl shrink-0 place-items-center rounded-sm text-passive transition-colors hover:text-foreground",
 								hideTrigger && "hidden",
 							)}
 							disabled={disabled}
@@ -889,7 +1000,7 @@ function CreateProjectListItem() {
 				<TooltipTrigger asChild>
 					<button
 						aria-label="New project"
-						className="grid h-control-board w-full place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
+						className="grid h-control-board w-full place-items-center rounded-lg text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
 						onClick={() => requestCreateProject()}
 						type="button"
 					>

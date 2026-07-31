@@ -5,11 +5,14 @@ Electron renderer sends sanitized PostHog events directly, and the Go daemon can
 persist allowlisted events locally and fan them out to PostHog when remote
 telemetry is enabled.
 
+For cost-control runbooks, including the v2 PostHog event namespace and legacy
+ingestion drop rules, see [posthog-cost-controls.md](posthog-cost-controls.md).
+
 ## What is collected
 
-- App activation events: `ao.app.active` from the renderer and user-context
-  CLI, each capped to one event per six-hour UTC slot, or four per day per
-  install/channel
+- App activation events: `ao.app.active` / `ao.v2.app.active` from the
+  renderer and meaningful user-context CLI commands, each capped to one event
+  per six-hour UTC slot, or four per day per install/channel
 - Renderer load and daily route-surface usage, grouped by coarse surface names
 - Project/task/session UI actions, with project identifiers SHA-256 hashed
 - Renderer exceptions, reduced to error name and coarse context
@@ -17,8 +20,8 @@ telemetry is enabled.
   transitions, HTTP 5xx, and daemon panics
 - AO version context (`app_version` / `ao_version`), platform, and build mode
 
-PostHog session recording is enabled for the renderer. Network request names are
-masked before recording.
+PostHog session recording is disabled by default. If a time-boxed investigation
+enables it, network request names are masked before recording.
 
 ## Privacy
 
@@ -66,27 +69,38 @@ unavailable. AO's heartbeat and route reservations continue to use their own
 sanitized `localStorage` keys independently of PostHog SDK persistence.
 
 `ao.cli.invoked` is capped at once per actor type and command path per UTC day
-per install, so script- or agent-driven polling (`ao status`, `ao session ls`,
-`ao hooks` firing on every agent hook event, ...) reports as "this install used
-this command today" rather than one event per call. Commands that never reflect
-product activity — the supervisor-driven `ao daemon`/`ao start`, the
-self-documenting `ao completion`/`ao help`, and the internal Windows
-`ao pty-host` runtime host — are excluded outright.
+per install. Routine successful internal/read-only commands (`ao status`,
+`ao session ls`, `ao session get`, `ao project ls`, `ao project get`,
+`ao orchestrator ls`, `ao hooks`, and `ao pty-host`) are excluded outright.
+Commands that never reflect product activity — the supervisor-driven
+`ao daemon`/`ao start`, the self-documenting `ao completion`/`ao help`, and
+the internal `ao agent-process` runtime process — are also excluded outright.
 
 CLI invocations are classified by actor:
 
 - `actor_type=user`: a user-context CLI command. These can refresh CLI-channel
   `ao.app.active`.
-- `actor_type=agent`: `ao hooks` and commands run inside an AO-managed agent
-  session (`AO_SESSION_ID` is set). These are useful agent-activity signal but
-  do not refresh `ao.app.active`, because agents can keep running after the
-  human has stopped actively using AO.
+- `actor_type=agent`: commands run inside an AO-managed agent session
+  (`AO_SESSION_ID` is set). These are useful command-adoption signal but do not
+  refresh `ao.app.active`, because agents can keep running after the human has
+  stopped actively using AO. Routine internal paths such as `ao hooks` are
+  dropped on success.
 - `actor_type=system`: supervisor/runtime background processes. These are not
   sent as CLI usage.
 
 The per-command daily cap keeps invocation frequency off PostHog, and the CLI
 reservation state is persisted under the AO data dir so a daemon restart does
 not re-emit every polling command for the same day.
+
+Routine successful internal/read-only commands are not reliability signal by
+themselves and should not be reintroduced as success telemetry. For commands
+such as `ao status`, `ao session ls`, `ao session get`, `ao project ls`,
+`ao project get`, `ao orchestrator ls`, `ao hooks`, and `ao pty-host`, track
+only meaningful user-impacting failures through a separate, rate-limited event
+such as `ao.v2.cli.failed`. That event should carry safe enum-like fields such
+as `command_path`, `actor_type`, `error_category`, and stable `error_code`; it
+must not include raw error messages, stack traces, local paths, project names,
+repository URLs, prompts, terminal output, tokens, or request payloads.
 
 `ao.renderer.route_viewed` is capped at once per coarse surface per UTC day per
 renderer install. This preserves surface adoption and retention signal while
@@ -105,20 +119,21 @@ paths, git remotes, emails in repo config, or other local data.
 
 The minimum signals for accurate usage analytics are:
 
-- `ao.app.active`: up to one event per six-hour UTC slot per install/account
-  when a human uses the desktop app or runs a user-context CLI command. This
-  powers DAU, WAU, MAU, retention, and churn while keeping arbitrary rolling
-  windows from undercounting long-running usage. Renderer active events are
-  sent immediately; a slot is released for retry when the SDK rejects or
-  throws while capturing the event.
+- `ao.app.active` / `ao.v2.app.active`: up to one event per six-hour UTC slot
+  per install/account when a human uses the desktop app or runs a meaningful
+  user-context CLI command. This powers DAU, WAU, MAU, retention, and churn
+  while keeping arbitrary rolling windows from undercounting long-running
+  usage. Renderer active events are sent immediately; a slot is released for
+  retry when the SDK rejects or throws while capturing the event.
 - `ao.projects.created` and `ao.onboarding.first_project_added`: activation
   funnel from install to first project.
 - `ao.session.spawned`, `ao.session.spawn_failed`, and
   `ao.onboarding.first_session_spawned`: activation funnel from project to
   first running agent, plus spawn reliability.
-- `ao.cli.invoked` with `actor_type=user|agent`: command adoption by actor,
-  capped by command/install/day. Agent-context command usage is product signal,
-  but should be analyzed separately from active-user counts.
+- `ao.cli.invoked` / `ao.v2.cli.invoked` with `actor_type=user|agent`:
+  command adoption by actor for meaningful non-internal commands, capped by
+  command/install/day. Agent-context command usage is product signal, but
+  should be analyzed separately from active-user counts.
 - `ao.session.waiting_input_entered/exited`: whether agents are making progress
   or waiting on the human, with dwell time.
 - Renderer and daemon error/crash events: reliability and support signal.
@@ -229,26 +244,28 @@ Local daemon telemetry is retained in SQLite for 30 days.
 
 ## PostHog Retention And Geography Dashboard
 
-Use `ao.app.active` as the active-user event for DAU, weekly retention, and
-country-level active-user maps. AO emits it from:
+Use `ao.v2.app.active` as the current active-user event for DAU, weekly
+retention, and country-level active-user maps. During migration, union it with
+legacy `ao.app.active` where `channel=renderer` or where `channel=cli` and
+`actor_type=user`. AO emits active-user telemetry from:
 
 - `channel=renderer` when the desktop app initializes and at most once per UTC
   six-hour slot while the app stays open
-- `channel=cli` when the CLI reports a user-typed command invocation to the
-  local daemon, at most once per UTC six-hour slot per install
+- `channel=cli` when the CLI reports a meaningful user-typed command
+  invocation to the local daemon, at most once per UTC six-hour slot per install
 
 Recommended PostHog setup:
 
 1. Enable PostHog GeoIP enrichment for the project.
 2. Create an "AO Active Users" dashboard.
 3. Add a Trends insight:
-   - Event: `ao.app.active`
+   - Event: `ao.v2.app.active`
    - Aggregation: unique users
    - Chart type: world map
    - Breakdown: GeoIP country code, for example `$geoip_country_code`
 4. Add a Retention insight:
-   - Start event: `ao.app.active`
-   - Return event: `ao.app.active`
+   - Start event: `ao.v2.app.active`
+   - Return event: `ao.v2.app.active`
    - Interval: weekly
    - Range: last 12 weeks
 5. Add optional filters or breakdowns for `channel=renderer` and `channel=cli`

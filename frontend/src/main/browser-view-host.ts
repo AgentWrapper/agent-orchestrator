@@ -52,6 +52,8 @@ export type BrowserAgentActivityState = {
 	viewId: string;
 	active: boolean;
 	action: string;
+	phase?: "started" | "finished";
+	commandId?: string;
 };
 
 type BrowserBoundsInput = {
@@ -99,6 +101,7 @@ type BrowserWebContents = Pick<
 type BrowserViewLike = View & {
 	webContents: BrowserWebContents;
 	setBounds: (bounds: BrowserRect) => void;
+	setBorderRadius?: (radius: number) => void;
 	setVisible?: (visible: boolean) => void;
 };
 
@@ -222,6 +225,7 @@ type BrowserNetworkCapture = {
 // Hidden targets still need a real viewport for screenshots, responsive
 // layout, scrolling, and pointer automation before the panel is first shown.
 const OFFSCREEN_BOUNDS: BrowserRect = { x: -10_000, y: -10_000, width: 1280, height: 720 };
+const BROWSER_VIEW_BORDER_RADIUS = 8;
 const DEFAULT_NETWORK_CAPTURE_SECONDS = 60;
 const MAX_NETWORK_CAPTURE_SECONDS = 300;
 const MAX_NETWORK_REQUESTS = 200;
@@ -301,13 +305,26 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const forgetIfFocused = (viewId: string): void => {
 		if (lastFocusedViewId === viewId) lastFocusedViewId = null;
 	};
-	const setAgentBrowserActivity = (session: BrowserSessionEntry, action: string, active: boolean): void => {
+	const setAgentBrowserActivity = (
+		session: BrowserSessionEntry,
+		action: string,
+		active: boolean,
+		commandId?: string,
+		phase?: BrowserAgentActivityState["phase"],
+	): void => {
 		session.agentBrowserCommands = Math.max(0, session.agentBrowserCommands + (active ? 1 : -1));
 		options.mainWindow.webContents.send("browser:agentActivity", {
 			viewId: session.viewId,
 			active: session.agentBrowserCommands > 0,
 			action,
+			...(phase ? { phase } : {}),
+			...(commandId ? { commandId } : {}),
 		} satisfies BrowserAgentActivityState);
+	};
+	const applyBrowserViewBounds = (view: BrowserViewLike, bounds: BrowserRect, visible?: boolean): void => {
+		view.setBounds(bounds);
+		if (visible !== undefined) view.setVisible?.(visible);
+		view.setBorderRadius?.(BROWSER_VIEW_BORDER_RADIUS);
 	};
 	let pendingMirror: { viewId: string; expires: number; frame: WebFrameMain } | null = null;
 
@@ -356,9 +373,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				sandbox: true,
 			},
 		});
-		view.setBounds(OFFSCREEN_BOUNDS);
-		view.setVisible?.(false);
+		applyBrowserViewBounds(view, OFFSCREEN_BOUNDS, false);
 		options.mainWindow.contentView.addChildView(view);
+		view.setBorderRadius?.(BROWSER_VIEW_BORDER_RADIUS);
 		view.webContents.session?.setPermissionCheckHandler?.(() => false);
 		view.webContents.session?.setPermissionRequestHandler?.((_contents, _permission, callback) => callback(false));
 
@@ -473,8 +490,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const previous = session.tabs.get(session.activeTabId);
 		if (previous && previous !== next) {
 			invalidateRefs(previous);
-			previous.view.setVisible?.(false);
-			previous.view.setBounds(OFFSCREEN_BOUNDS);
+			applyBrowserViewBounds(previous.view, OFFSCREEN_BOUNDS, false);
 		}
 		session.activeTabId = tabId;
 		invalidateRefs(next);
@@ -507,12 +523,14 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 
 	function applySessionBounds(session: BrowserSessionEntry, entry: BrowserEntry): void {
 		if (!session.visible) {
-			entry.view.setVisible?.(false);
-			entry.view.setBounds(OFFSCREEN_BOUNDS);
+			applyBrowserViewBounds(entry.view, OFFSCREEN_BOUNDS, false);
 			return;
 		}
-		entry.view.setBounds(session.bounds);
-		entry.view.setVisible?.(session.parked || (session.bounds.width > 0 && session.bounds.height > 0));
+		applyBrowserViewBounds(
+			entry.view,
+			session.bounds,
+			session.parked || (session.bounds.width > 0 && session.bounds.height > 0),
+		);
 	}
 
 	const isRendererOwned = (event: IpcMainInvokeEvent | IpcMainEvent, viewId: string): boolean =>
@@ -635,8 +653,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	};
 
 	const destroyTabView = (entry: BrowserEntry): void => {
-		entry.view.setVisible?.(false);
-		entry.view.setBounds(OFFSCREEN_BOUNDS);
+		applyBrowserViewBounds(entry.view, OFFSCREEN_BOUNDS, false);
 		options.mainWindow.contentView.removeChildView?.(entry.view);
 		if (entry.view.webContents.debugger?.isAttached()) {
 			entry.view.webContents.debugger.detach();
@@ -790,7 +807,8 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			}
 			const session = ensureSession(sessionId);
 			const entry = activeEntry(session);
-			setAgentBrowserActivity(session, action, true);
+			const commandId = randomUUID();
+			setAgentBrowserActivity(session, action, true, commandId, "started");
 			try {
 				switch (action) {
 				case "open": {
@@ -899,7 +917,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 					throw browserError("INVALID_ARGUMENT", `Unsupported browser action: ${action}`);
 				}
 			} finally {
-				setAgentBrowserActivity(session, action, false);
+				setAgentBrowserActivity(session, action, false, commandId, "finished");
 			}
 		},
 		dispose: () => {
