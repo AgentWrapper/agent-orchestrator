@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	scmgithub "github.com/aoagents/agent-orchestrator/backend/internal/adapters/scm/github"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 type fakePRStore struct {
@@ -15,6 +15,9 @@ type fakePRStore struct {
 	err        error
 	unresolved bool
 	unresErr   error
+	checks     []domain.PullRequestCheck
+	written    *domain.PullRequest
+	writeErr   error
 }
 
 func (f *fakePRStore) GetPRByNumber(_ context.Context, _ int) (domain.PullRequest, bool, error) {
@@ -29,10 +32,19 @@ func (f *fakePRStore) GetPRReviewCommentsUnresolved(_ context.Context, _ string)
 	return f.unresolved, f.unresErr
 }
 
+func (f *fakePRStore) ListChecks(_ context.Context, _ string) ([]domain.PullRequestCheck, error) {
+	return append([]domain.PullRequestCheck(nil), f.checks...), nil
+}
+
+func (f *fakePRStore) WriteSCMObservation(_ context.Context, pr domain.PullRequest, _ []domain.PullRequestCheck, _ []domain.PullRequestReview, _ []domain.PullRequestReviewThread, _ []domain.PullRequestComment, _ ports.ReviewWriteMode) error {
+	f.written = &pr
+	return f.writeErr
+}
+
 type fakeSCMMerger struct {
 	sha      string
 	err      error
-	settings scmgithub.RepoMergeSettings
+	settings ports.SCMRepoMergeSettings
 	settErr  error
 }
 
@@ -40,13 +52,15 @@ func (f *fakeSCMMerger) MergePR(_ context.Context, _, _ string, _ int, _, _ stri
 	return f.sha, f.err
 }
 
-func (f *fakeSCMMerger) RepoMergeSettings(_ context.Context, _, _ string) (scmgithub.RepoMergeSettings, error) {
+func (f *fakeSCMMerger) RepoMergeSettings(_ context.Context, _, _ string) (ports.SCMRepoMergeSettings, error) {
 	return f.settings, f.settErr
 }
 
 func mergeablePR(number int, repo string) domain.PullRequest {
 	return domain.PullRequest{
+		URL:          "https://github.com/" + repo + "/pull/42",
 		Number:       number,
+		SessionID:    "sess-1",
 		Repo:         repo,
 		CI:           domain.CIPassing,
 		Review:       domain.ReviewApproved,
@@ -55,8 +69,8 @@ func mergeablePR(number int, repo string) domain.PullRequest {
 	}
 }
 
-func allowSquash() scmgithub.RepoMergeSettings {
-	return scmgithub.RepoMergeSettings{AllowSquash: true}
+func allowSquash() ports.SCMRepoMergeSettings {
+	return ports.SCMRepoMergeSettings{AllowSquash: true}
 }
 
 func TestMerge_Success(t *testing.T) {
@@ -70,6 +84,12 @@ func TestMerge_Success(t *testing.T) {
 	}
 	if res.PRNumber != 42 || res.Method != "squash" {
 		t.Fatalf("res = %#v", res)
+	}
+	if store.written == nil {
+		t.Fatal("expected merged PR snapshot to be persisted")
+	}
+	if !store.written.Merged || store.written.MergeCommitSHA != "abc123" {
+		t.Fatalf("persisted PR = %#v, want merged with merge SHA", *store.written)
 	}
 }
 
@@ -104,6 +124,38 @@ func TestMerge_NotMergeable(t *testing.T) {
 	_, err := svc.Merge(context.Background(), "1", "")
 	if !errors.Is(err, ErrPRNotMergeable) {
 		t.Fatalf("err = %v, want ErrPRNotMergeable", err)
+	}
+}
+
+func TestMerge_UnknownCIWithObservedChecksIsNotMergeable(t *testing.T) {
+	pr := mergeablePR(2, "acme/widgets")
+	pr.CI = domain.CIUnknown
+	store := &fakePRStore{
+		ok:     true,
+		pr:     pr,
+		checks: []domain.PullRequestCheck{{Name: "unit", Status: domain.PRCheckPassed}},
+	}
+	svc := NewActionService(store, &fakeSCMMerger{settings: allowSquash()})
+	_, err := svc.Merge(context.Background(), "2", "")
+	if !errors.Is(err, ErrPRNotMergeable) {
+		t.Fatalf("err = %v, want ErrPRNotMergeable", err)
+	}
+	if store.written != nil {
+		t.Fatalf("unexpected merged snapshot persisted: %#v", *store.written)
+	}
+}
+
+func TestMerge_UnknownCIWithNoChecksIsMergeable(t *testing.T) {
+	pr := mergeablePR(3, "acme/widgets")
+	pr.CI = domain.CIUnknown
+	store := &fakePRStore{ok: true, pr: pr}
+	svc := NewActionService(store, &fakeSCMMerger{sha: "merge-sha", settings: allowSquash()})
+	res, err := svc.Merge(context.Background(), "3", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.PRNumber != 3 || store.written == nil || !store.written.Merged {
+		t.Fatalf("res = %#v written = %#v", res, store.written)
 	}
 }
 
@@ -144,7 +196,7 @@ func TestMerge_UnresolvedReviewCommentsBlocksMerge(t *testing.T) {
 
 func TestMerge_NoAllowedMergeMethodReturnsPreconditions(t *testing.T) {
 	store := &fakePRStore{ok: true, pr: mergeablePR(9, "acme/widgets")}
-	svc := NewActionService(store, &fakeSCMMerger{settings: scmgithub.RepoMergeSettings{}})
+	svc := NewActionService(store, &fakeSCMMerger{settings: ports.SCMRepoMergeSettings{}})
 	_, err := svc.Merge(context.Background(), "9", "")
 	if !errors.Is(err, ErrPRPreconditions) {
 		t.Fatalf("err = %v, want ErrPRPreconditions (no merge method enabled)", err)
@@ -153,7 +205,7 @@ func TestMerge_NoAllowedMergeMethodReturnsPreconditions(t *testing.T) {
 
 func TestMerge_PrefersSquashThenMergeThenRebase(t *testing.T) {
 	store := &fakePRStore{ok: true, pr: mergeablePR(10, "acme/widgets")}
-	scm := &fakeSCMMerger{sha: "abc", settings: scmgithub.RepoMergeSettings{AllowMergeCommit: true, AllowRebase: true}}
+	scm := &fakeSCMMerger{sha: "abc", settings: ports.SCMRepoMergeSettings{AllowMergeCommit: true, AllowRebase: true}}
 	svc := NewActionService(store, scm)
 	res, err := svc.Merge(context.Background(), "10", "")
 	if err != nil {

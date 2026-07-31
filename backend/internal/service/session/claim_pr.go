@@ -278,13 +278,17 @@ func (s *Service) listPRFacts(ctx context.Context, id domain.SessionID) ([]domai
 		if err != nil {
 			return nil, err
 		}
-		facts = append(facts, pullRequestFacts(pr, comments))
+		checks, err := s.store.ListChecks(ctx, pr.URL)
+		if err != nil {
+			return nil, err
+		}
+		facts = append(facts, pullRequestFacts(pr, comments, len(checks)))
 	}
 	sortPRFacts(facts)
 	return facts, nil
 }
 
-func pullRequestFacts(pr domain.PullRequest, comments []domain.PullRequestComment) domain.PRFacts {
+func pullRequestFacts(pr domain.PullRequest, comments []domain.PullRequestComment, checkCount int) domain.PRFacts {
 	unresolved := false
 	for _, c := range comments {
 		if !c.Resolved {
@@ -292,7 +296,7 @@ func pullRequestFacts(pr domain.PullRequest, comments []domain.PullRequestCommen
 			break
 		}
 	}
-	return domain.PRFacts{URL: pr.URL, Number: pr.Number, Draft: pr.Draft, Merged: pr.Merged, Closed: pr.Closed, CI: pr.CI, Review: pr.Review, Mergeability: pr.Mergeability, ReviewComments: unresolved, UpdatedAt: pr.UpdatedAt}
+	return domain.PRFacts{URL: pr.URL, Number: pr.Number, Draft: pr.Draft, Merged: pr.Merged, Closed: pr.Closed, CI: pr.CI, Review: pr.Review, Mergeability: pr.Mergeability, ReviewComments: unresolved, CheckCount: checkCount, UpdatedAt: pr.UpdatedAt}
 }
 
 func sortPRFacts(prs []domain.PRFacts) {

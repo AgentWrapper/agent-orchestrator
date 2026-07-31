@@ -26,15 +26,18 @@ func TestListPRFactsForSessionProjectsAllPRsNewestFirst(t *testing.T) {
 
 	// A stack: root (open) -> child targets the root branch (open) -> a merged
 	// historical PR. Distinct updated_at so newest-first ordering is observable.
-	write := func(pr domain.PullRequest) {
+	write := func(pr domain.PullRequest, checks []domain.PullRequestCheck) {
 		t.Helper()
-		if err := s.WriteSCMObservation(ctx, pr, nil, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
+		if err := s.WriteSCMObservation(ctx, pr, checks, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
 			t.Fatalf("write %s: %v", pr.URL, err)
 		}
 	}
-	write(domain.PullRequest{URL: "root", SessionID: r.ID, Number: 1, CI: domain.CIPassing, SourceBranch: "feat/x", TargetBranch: "main", UpdatedAt: now, ObservedAt: now})
-	write(domain.PullRequest{URL: "child", SessionID: r.ID, Number: 2, Draft: true, SourceBranch: "feat/x/child", TargetBranch: "feat/x", UpdatedAt: now.Add(time.Second), ObservedAt: now})
-	write(domain.PullRequest{URL: "old", SessionID: r.ID, Number: 3, Merged: true, SourceBranch: "feat/old", TargetBranch: "main", UpdatedAt: now.Add(2 * time.Second), ObservedAt: now})
+	write(
+		domain.PullRequest{URL: "root", SessionID: r.ID, Number: 1, CI: domain.CIPassing, SourceBranch: "feat/x", TargetBranch: "main", UpdatedAt: now, ObservedAt: now},
+		[]domain.PullRequestCheck{{Name: "unit", Status: domain.PRCheckPassed, CreatedAt: now}, {Name: "lint", Status: domain.PRCheckPassed, CreatedAt: now}},
+	)
+	write(domain.PullRequest{URL: "child", SessionID: r.ID, Number: 2, Draft: true, SourceBranch: "feat/x/child", TargetBranch: "feat/x", UpdatedAt: now.Add(time.Second), ObservedAt: now}, nil)
+	write(domain.PullRequest{URL: "old", SessionID: r.ID, Number: 3, Merged: true, SourceBranch: "feat/old", TargetBranch: "main", UpdatedAt: now.Add(2 * time.Second), ObservedAt: now}, nil)
 
 	facts, err := s.ListPRFactsForSession(ctx, r.ID)
 	if err != nil {
@@ -67,6 +70,9 @@ func TestListPRFactsForSessionProjectsAllPRsNewestFirst(t *testing.T) {
 	}
 	if byURL["root"].CI != domain.CIPassing {
 		t.Fatalf("root CI = %q, want passing", byURL["root"].CI)
+	}
+	if byURL["root"].CheckCount != 2 {
+		t.Fatalf("root CheckCount = %d, want 2", byURL["root"].CheckCount)
 	}
 
 	// A session with no PRs returns an empty (non-nil) slice, never an error.

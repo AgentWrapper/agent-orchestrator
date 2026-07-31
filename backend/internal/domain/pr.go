@@ -16,39 +16,30 @@ type PRFacts struct {
 	Review         ReviewDecision
 	Mergeability   Mergeability
 	ReviewComments bool // has unresolved review comments (any author) to address
+	CheckCount     int  // number of persisted CI checks observed for this PR
 	SourceBranch   string
 	TargetBranch   string
 	UpdatedAt      time.Time
 }
 
-// PRPipelineStatus computes the single-PR pipeline status used both for
-// session status aggregation (service/session) and to gate merge eligibility
-// server-side (service/pr) — a single source of truth so "ready to merge"
-// means the same thing everywhere, per #3064 review.
-//
-// CI == CIUnknown is accepted here (not just CIPassing): a repo with no
-// checks configured reports an absent status rollup as CIUnknown, and
-// rejecting that would permanently disable merge on every such repo. GitHub's
-// own merge endpoint is the real backstop — it already returns 405 for a PR
-// whose required checks haven't passed, mapped to ErrProviderPRNotMergeable —
-// so this local check exists to avoid a pointless round-trip, not to be
-// stricter than GitHub itself.
-func PRPipelineStatus(pr PRFacts) SessionStatus {
-	switch {
-	case pr.CI == CIFailing:
-		return StatusCIFailed
-	case pr.Draft:
-		return StatusDraft
-	case pr.Review == ReviewChangesRequest || pr.ReviewComments:
-		return StatusChangesRequested
-	case pr.Mergeability == MergeMergeable && pr.CI != CIPending:
-		return StatusMergeable
-	case pr.Review == ReviewApproved:
-		return StatusApproved
-	case pr.Review == ReviewRequired:
-		return StatusReviewPending
+// PRMergeReady reports the provider-neutral merge readiness rule shared by
+// service layers. Unknown CI is accepted only when AO has observed no check
+// rows at all; unknown with checks present can mean an incomplete/paginated
+// provider rollup and must fail closed.
+func PRMergeReady(pr PRFacts) bool {
+	if pr.Draft || pr.Review == ReviewChangesRequest || pr.ReviewComments {
+		return false
+	}
+	if pr.Mergeability != MergeMergeable {
+		return false
+	}
+	switch pr.CI {
+	case CIPassing:
+		return true
+	case CIUnknown, "":
+		return pr.CheckCount == 0
 	default:
-		return StatusPROpen
+		return false
 	}
 }
 

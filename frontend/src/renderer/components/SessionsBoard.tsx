@@ -5,6 +5,7 @@ import {
 	AlertTriangle,
 	Check,
 	Copy,
+	GitMerge,
 	GitBranch,
 	LoaderCircle,
 	Plus,
@@ -56,7 +57,7 @@ import { cn } from "../lib/utils";
 import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { DaemonStartupLoader } from "./DaemonStartupLoader";
 import { useShellMaybe } from "../lib/shell-context";
@@ -1052,26 +1053,32 @@ function MergePRButton({ pr, sessionId }: { pr: SessionPRSummary; sessionId: str
 			: mergeDisabledReason(pr);
 
 	return (
-		<Tooltip>
-			<TooltipTrigger asChild>
-				<button
-					aria-label={`Merge PR #${pr.number}`}
-					className={cn(
-						"inline-flex items-center rounded-sm px-1 py-0.5 text-2xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent",
-						mutation.isError ? "text-destructive hover:bg-destructive/10" : "text-accent hover:bg-accent/10",
-					)}
-					disabled={!eligible || mutation.isPending}
-					onClick={(event) => {
-						event.stopPropagation();
-						mutation.mutate({ pr, sessionId });
-					}}
-					type="button"
-				>
-					{mutation.isPending ? "Merging…" : mutation.isError ? "Retry merge" : "Merge"}
-				</button>
-			</TooltipTrigger>
-			<TooltipContent side="top">{tooltipText}</TooltipContent>
-		</Tooltip>
+		<TooltipProvider>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<span
+						className="inline-flex"
+						onClick={(event) => event.stopPropagation()}
+						tabIndex={!eligible ? 0 : -1}
+					>
+						<button
+							aria-label={`Merge PR #${pr.number}`}
+							className={cn(
+								"inline-flex items-center gap-0.5 rounded-sm px-1 py-0.5 text-2xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent",
+								mutation.isError ? "text-destructive hover:bg-destructive/10" : "text-accent hover:bg-accent/10",
+							)}
+							disabled={!eligible || mutation.isPending}
+							onClick={() => mutation.mutate({ pr, sessionId })}
+							type="button"
+						>
+							<GitMerge className="size-icon-2xs" aria-hidden="true" />
+							{mutation.isPending ? "Merging…" : mutation.isError ? "Retry merge" : "Merge"}
+						</button>
+					</span>
+				</TooltipTrigger>
+				<TooltipContent side="top">{tooltipText}</TooltipContent>
+			</Tooltip>
+		</TooltipProvider>
 	);
 }
 

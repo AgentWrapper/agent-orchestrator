@@ -102,6 +102,11 @@ SELECT
     pr.ci_state,
     pr.mergeability,
     pr.updated_at,
+    (
+        SELECT COUNT(*)
+        FROM pr_checks
+        WHERE pr_checks.pr_url = pr.url
+    ) AS check_count,
     EXISTS (
         SELECT 1
         FROM pr_comment
@@ -130,6 +135,11 @@ SELECT
     pr.source_branch,
     pr.target_branch,
     pr.updated_at,
+    (
+        SELECT COUNT(*)
+        FROM pr_checks
+        WHERE pr_checks.pr_url = pr.url
+    ) AS check_count,
     EXISTS (
         SELECT 1
         FROM pr_comment

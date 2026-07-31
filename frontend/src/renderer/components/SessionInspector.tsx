@@ -6,6 +6,7 @@ import {
 	ChevronDown,
 	ChevronRight,
 	Files as FilesIcon,
+	GitMerge,
 	GitPullRequest,
 	Play,
 	Shield,
@@ -23,6 +24,7 @@ import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { canonicalTrackerIssueId, findProjectOrchestrator, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
+import { isPRMergeable, mergeDisabledReason, useMergePR } from "../lib/pr-actions";
 import { aoBridge } from "../lib/bridge";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
 import type { BrowserViewModel } from "../hooks/useBrowserView";
@@ -35,6 +37,7 @@ import { StatusPill } from "./StatusPill";
 import { CodexIcon } from "./icons";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { Switch } from "./ui/switch";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -297,7 +300,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				<Section title={prSectionTitle}>
 					<div className="flex flex-col gap-1.5">
 						{prSummaries.map((pr) => (
-							<PRSummaryCard key={pr.number} pr={pr} />
+							<PRSummaryCard key={pr.number} pr={pr} sessionId={session.id} />
 						))}
 					</div>
 				</Section>
@@ -484,7 +487,7 @@ function updateSessionMergePolicy(
 	}));
 }
 
-function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
+function PRSummaryCard({ pr, sessionId }: { pr: SessionPRSummary; sessionId: string }) {
 	return (
 		<div className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2.5 py-1.5">
 			<div className="flex items-center gap-2">
@@ -505,11 +508,51 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 					<span>Open</span>
 					<ArrowUpRight aria-hidden="true" className="size-icon-2xs" strokeWidth={2} />
 				</a>
+				<InspectorMergePRButton pr={pr} sessionId={sessionId} />
 			</div>
 			{pr.title ? <div className="mt-1.5 text-xs font-medium leading-snug text-settings-label">{pr.title}</div> : null}
 			<PRSummaryMeta className="mt-1" pr={pr} />
 			<PRSummaryParts className="mt-1.5" pr={pr} variant="stacked" />
 		</div>
+	);
+}
+
+function InspectorMergePRButton({ pr, sessionId }: { pr: SessionPRSummary; sessionId: string }) {
+	const mutation = useMergePR();
+	const eligible = isPRMergeable(pr);
+	const tooltipText = mutation.isError
+		? mutation.error instanceof Error
+			? mutation.error.message
+			: "Merge failed"
+		: eligible
+			? "Merge this pull request"
+			: mergeDisabledReason(pr);
+
+	return (
+		<TooltipProvider>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<span className="inline-flex" tabIndex={!eligible ? 0 : -1}>
+						<Button
+							aria-label={`Merge PR #${pr.number}`}
+							className={cn(
+								"h-6 gap-1 px-1.5 text-caption",
+								mutation.isError ? "text-error hover:bg-error/10" : "text-accent hover:bg-accent/10",
+							)}
+							disabled={!eligible || mutation.isPending}
+							onClick={() => mutation.mutate({ pr, sessionId })}
+							size="sm"
+							type="button"
+							variant="ghost"
+						>
+							<GitMerge className="size-icon-2xs" aria-hidden="true" />
+							{mutation.isPending ? "Merging..." : mutation.isError ? "Retry" : "Merge"}
+						</Button>
+					</span>
+				</TooltipTrigger>
+				<TooltipContent side="top">{tooltipText}</TooltipContent>
+			</Tooltip>
+		</TooltipProvider>
 	);
 }
 

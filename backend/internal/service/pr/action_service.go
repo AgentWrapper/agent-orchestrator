@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
-	scmgithub "github.com/aoagents/agent-orchestrator/backend/internal/adapters/scm/github"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // Store is the storage dependency ActionService needs to resolve a PR and
@@ -17,12 +18,14 @@ type Store interface {
 	GetPRByNumber(ctx context.Context, number int) (domain.PullRequest, bool, error)
 	GetPRByRepoAndNumber(ctx context.Context, repo string, number int) (domain.PullRequest, bool, error)
 	GetPRReviewCommentsUnresolved(ctx context.Context, url string) (bool, error)
+	ListChecks(ctx context.Context, prURL string) ([]domain.PullRequestCheck, error)
+	WriteSCMObservation(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode) error
 }
 
 // SCMMerger is the SCM-provider dependency that performs the real merge.
 type SCMMerger interface {
 	MergePR(ctx context.Context, owner, repo string, number int, headSHA, method string) (string, error)
-	RepoMergeSettings(ctx context.Context, owner, repo string) (scmgithub.RepoMergeSettings, error)
+	RepoMergeSettings(ctx context.Context, owner, repo string) (ports.SCMRepoMergeSettings, error)
 }
 
 // ActionService implements ActionManager (declared in actions.go).
@@ -85,7 +88,12 @@ func (s *ActionService) Merge(ctx context.Context, id, repo string) (MergeResult
 		ReviewComments: unresolved,
 		Mergeability:   pr.Mergeability,
 	}
-	if domain.PRPipelineStatus(facts) != domain.StatusMergeable {
+	checks, err := s.store.ListChecks(ctx, pr.URL)
+	if err != nil {
+		return MergeResult{}, err
+	}
+	facts.CheckCount = len(checks)
+	if !domain.PRMergeReady(facts) {
 		return MergeResult{}, ErrPRNotMergeable
 	}
 
@@ -103,15 +111,32 @@ func (s *ActionService) Merge(ctx context.Context, id, repo string) (MergeResult
 		return MergeResult{}, err
 	}
 
-	if _, err := s.scm.MergePR(ctx, owner, repoName, pr.Number, pr.HeadSHA, method); err != nil {
+	mergeSHA, err := s.scm.MergePR(ctx, owner, repoName, pr.Number, pr.HeadSHA, method)
+	if err != nil {
 		switch {
-		case errors.Is(err, scmgithub.ErrProviderPRNotMergeable):
+		case errors.Is(err, ports.ErrSCMPRNotMergeable):
 			return MergeResult{}, ErrPRNotMergeable
-		case errors.Is(err, scmgithub.ErrProviderPRPreconditions):
+		case errors.Is(err, ports.ErrSCMPRPreconditions):
 			return MergeResult{}, ErrPRPreconditions
 		default:
 			return MergeResult{}, err
 		}
+	}
+	now := time.Now().UTC()
+	pr.Merged = true
+	pr.Closed = false
+	pr.Draft = false
+	pr.MergeCommitSHA = mergeSHA
+	pr.Mergeability = domain.MergeUnknown
+	pr.ProviderState = "closed"
+	pr.ProviderMergeable = "MERGED"
+	pr.ProviderMergeStateStatus = "MERGED"
+	pr.UpdatedAt = now
+	pr.UpdatedAtProvider = now
+	pr.MergedAtProvider = now
+	pr.ObservedAt = now
+	if err := s.store.WriteSCMObservation(ctx, pr, checks, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
+		return MergeResult{}, err
 	}
 	return MergeResult{PRNumber: pr.Number, Method: method}, nil
 }
@@ -119,7 +144,7 @@ func (s *ActionService) Merge(ctx context.Context, id, repo string) (MergeResult
 // pickMergeMethod prefers squash, then merge commit, then rebase — the first
 // one the repo actually allows. Returns ErrPRPreconditions if none are
 // enabled (all three can be disabled in branch/repo settings).
-func pickMergeMethod(s scmgithub.RepoMergeSettings) (string, error) {
+func pickMergeMethod(s ports.SCMRepoMergeSettings) (string, error) {
 	switch {
 	case s.AllowSquash:
 		return "squash", nil

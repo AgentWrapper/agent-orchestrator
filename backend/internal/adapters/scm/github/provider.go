@@ -241,10 +241,10 @@ type RepoMergeSettings struct {
 }
 
 // RepoMergeSettings fetches the repo's allowed merge strategies.
-func (p *Provider) RepoMergeSettings(ctx context.Context, owner, repo string) (RepoMergeSettings, error) {
+func (p *Provider) RepoMergeSettings(ctx context.Context, owner, repo string) (ports.SCMRepoMergeSettings, error) {
 	resp, err := p.client.doREST(ctx, http.MethodGet, repoPath(owner, repo), nil, nil)
 	if err != nil {
-		return RepoMergeSettings{}, err
+		return ports.SCMRepoMergeSettings{}, err
 	}
 	var out struct {
 		AllowMergeCommit *bool `json:"allow_merge_commit"`
@@ -252,10 +252,10 @@ func (p *Provider) RepoMergeSettings(ctx context.Context, owner, repo string) (R
 		AllowRebaseMerge *bool `json:"allow_rebase_merge"`
 	}
 	if err := json.Unmarshal(resp.Body, &out); err != nil {
-		return RepoMergeSettings{}, fmt.Errorf("github scm: decode repo settings: %w", err)
+		return ports.SCMRepoMergeSettings{}, fmt.Errorf("github scm: decode repo settings: %w", err)
 	}
 	// Absent fields (older API shapes) mean "not restricted", i.e. allowed.
-	return RepoMergeSettings{
+	return ports.SCMRepoMergeSettings{
 		AllowMergeCommit: out.AllowMergeCommit == nil || *out.AllowMergeCommit,
 		AllowSquash:      out.AllowSquashMerge == nil || *out.AllowSquashMerge,
 		AllowRebase:      out.AllowRebaseMerge == nil || *out.AllowRebaseMerge,

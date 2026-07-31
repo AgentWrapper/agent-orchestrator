@@ -63,6 +63,11 @@ SELECT
     pr.ci_state,
     pr.mergeability,
     pr.updated_at,
+    (
+        SELECT COUNT(*)
+        FROM pr_checks
+        WHERE pr_checks.pr_url = pr.url
+    ) AS check_count,
     EXISTS (
         SELECT 1
         FROM pr_comment
@@ -86,6 +91,7 @@ type GetDisplayPRFactsBySessionRow struct {
 	CIState        domain.CIState
 	Mergeability   domain.Mergeability
 	UpdatedAt      time.Time
+	CheckCount     int64
 	ReviewComments bool
 }
 
@@ -100,6 +106,7 @@ func (q *Queries) GetDisplayPRFactsBySession(ctx context.Context, sessionID doma
 		&i.CIState,
 		&i.Mergeability,
 		&i.UpdatedAt,
+		&i.CheckCount,
 		&i.ReviewComments,
 	)
 	return i, err
@@ -346,6 +353,11 @@ SELECT
     pr.source_branch,
     pr.target_branch,
     pr.updated_at,
+    (
+        SELECT COUNT(*)
+        FROM pr_checks
+        WHERE pr_checks.pr_url = pr.url
+    ) AS check_count,
     EXISTS (
         SELECT 1
         FROM pr_comment
@@ -368,6 +380,7 @@ type ListPRFactsBySessionRow struct {
 	SourceBranch   string
 	TargetBranch   string
 	UpdatedAt      time.Time
+	CheckCount     int64
 	ReviewComments bool
 }
 
@@ -393,6 +406,7 @@ func (q *Queries) ListPRFactsBySession(ctx context.Context, sessionID domain.Ses
 			&i.SourceBranch,
 			&i.TargetBranch,
 			&i.UpdatedAt,
+			&i.CheckCount,
 			&i.ReviewComments,
 		); err != nil {
 			return nil, err

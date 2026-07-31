@@ -29,8 +29,8 @@ const (
 var (
 	ErrNotFound                = ports.ErrSCMNotFound
 	ErrAuthFailed              = errors.New("github scm: authentication failed")
-	ErrProviderPRNotMergeable  = errors.New("github scm: pr not mergeable")
-	ErrProviderPRPreconditions = errors.New("github scm: merge preconditions unmet")
+	ErrProviderPRNotMergeable  = ports.ErrSCMPRNotMergeable
+	ErrProviderPRPreconditions = ports.ErrSCMPRPreconditions
 	ErrRateLimited             = errors.New("github scm: rate limited")
 )
 
