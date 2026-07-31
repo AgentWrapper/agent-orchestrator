@@ -36,7 +36,7 @@ export function TopbarKillError({ className, ...props }: React.HTMLAttributes<HT
 }
 
 export const topbarHeaderClass =
-	"center-panel-titlebar flex h-toolbar shrink-0 items-center gap-3 border-b border-border pr-4 z-chrome";
+	"center-panel-titlebar flex h-toolbar shrink-0 items-center gap-3 border-b border-border z-chrome";
 
 export const topbarProjectLabelClass =
 	"text-brand font-semibold tracking-tight leading-none text-foreground whitespace-nowrap";
