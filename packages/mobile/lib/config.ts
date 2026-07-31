@@ -81,6 +81,17 @@ export async function saveConfig(cfg: ServerConfig): Promise<void> {
 	}
 }
 
+/**
+ * Forget the paired server entirely. Both storage tiers must be cleared: wiping
+ * only the AsyncStorage blob would leave the connection password behind in the
+ * device keystore, so a later re-pair to the same host would silently
+ * resurrect it.
+ */
+export async function clearConfig(): Promise<void> {
+	await AsyncStorage.removeItem(KEY);
+	await SecureStore.deleteItemAsync(PW_KEY);
+}
+
 export function httpBase(cfg: ServerConfig): string {
 	return `${cfg.secure ? "https" : "http"}://${cleanHost(cfg.host)}:${cfg.httpPort}`;
 }
