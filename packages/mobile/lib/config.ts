@@ -8,7 +8,10 @@ import { useCallback, useEffect, useState } from "react";
 // kept only for back-compat and no longer used to build the mux URL.
 export type ServerConfig = {
 	host: string; // e.g. "100.101.102.103" or "my-pc.tail1234.ts.net"
-	httpPort: string; // AO daemon HTTP port (REST API + /mux), default 3001
+	// Port of the daemon's LAN mobile bridge (REST API + /mux), default 3011.
+	// NOT 3001 — that is the desktop/CLI daemon, which binds loopback only and
+	// can never be reached from a phone.
+	httpPort: string;
 	muxPort: string; // legacy separate mux port - unused against the Go daemon
 	secure?: boolean; // use https/wss instead of http/ws (TLS / Tailscale funnel)
 	password: string; // daemon connection password for Authorization header
@@ -16,7 +19,7 @@ export type ServerConfig = {
 
 export const DEFAULT_CONFIG: ServerConfig = {
 	host: "",
-	httpPort: "3001",
+	httpPort: "3011",
 	muxPort: "14801",
 	secure: false,
 	password: "",
