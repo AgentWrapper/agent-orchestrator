@@ -144,6 +144,9 @@ func TestSessionList_ProjectFilterAndDefaultFiltering(t *testing.T) {
 	if !strings.Contains(out, "1 terminated session hidden") {
 		t.Fatalf("hidden terminated hint missing:\n%s", out)
 	}
+	if !strings.Contains(out, "1 orchestrator session hidden. Use --all or `ao orchestrator ls` to show.") {
+		t.Fatalf("hidden orchestrator hint missing:\n%s", out)
+	}
 	want := []string{
 		"GET /api/v1/sessions?active=true&project=demo",
 		"GET /api/v1/sessions?active=false&project=demo",
@@ -171,11 +174,33 @@ func TestSessionList_JSONOutputDecodes(t *testing.T) {
 	if got.Meta.HiddenTerminatedCount != 1 {
 		t.Fatalf("hiddenTerminatedCount = %d, want 1", got.Meta.HiddenTerminatedCount)
 	}
+	if got.Meta.HiddenOrchestratorCount != 1 {
+		t.Fatalf("hiddenOrchestratorCount = %d, want 1", got.Meta.HiddenOrchestratorCount)
+	}
 	if len(got.Data) != 1 {
 		t.Fatalf("len(data) = %d, want 1; data=%#v", len(got.Data), got.Data)
 	}
 	if got.Data[0].ID != "demo-1" || got.Data[0].ProjectID != "demo" || got.Data[0].Role != "worker" {
 		t.Fatalf("unexpected JSON entry: %#v", got.Data[0])
+	}
+}
+
+func TestSessionList_AllIncludesOrchestratorsWithoutHiddenHint(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, _ := sessionCommandServer(t)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "session", "ls", "--project", "demo", "--all")
+	if err != nil {
+		t.Fatalf("session ls --all failed: %v\nstderr=%s", err, errOut)
+	}
+	if !strings.Contains(out, "demo-1") || !strings.Contains(out, "demo-2") {
+		t.Fatalf("output missing worker or orchestrator session:\n%s", out)
+	}
+	if strings.Contains(out, "orchestrator session hidden") {
+		t.Fatalf("output reports hidden orchestrators with --all:\n%s", out)
 	}
 }
 
