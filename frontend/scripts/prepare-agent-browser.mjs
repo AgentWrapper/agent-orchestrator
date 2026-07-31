@@ -5,6 +5,7 @@ import path from "node:path";
 const VERSION = "0.33.1";
 const RELEASE_BASE = `https://github.com/vercel-labs/agent-browser/releases/download/v${VERSION}`;
 const OUTPUT_DIR = path.resolve("agent-browser");
+const quiet = process.argv.includes("--quiet");
 
 const TARGETS = {
 	"darwin-arm64": {
@@ -36,6 +37,7 @@ if (!target) {
 
 const binaryName = process.platform === "win32" ? "agent-browser.exe" : "agent-browser";
 const binaryPath = path.join(OUTPUT_DIR, binaryName);
+const licenseVersionPath = path.join(OUTPUT_DIR, ".license-version");
 
 await mkdir(OUTPUT_DIR, { recursive: true });
 if ((await fileSHA256(binaryPath)) !== target.sha256) {
@@ -55,27 +57,39 @@ if ((await fileSHA256(binaryPath)) !== target.sha256) {
 	if (process.platform !== "win32") await chmod(binaryPath, 0o755);
 }
 
-await Promise.all([
-	downloadText(
-		`https://unpkg.com/agent-browser@${VERSION}/LICENSE`,
-		path.join(OUTPUT_DIR, "LICENSE-agent-browser"),
-	),
-	downloadText(
-		`https://unpkg.com/agent-browser@${VERSION}/cli/src/native/a11y/LICENSE-axe-core.txt`,
-		path.join(OUTPUT_DIR, "LICENSE-axe-core"),
-	),
-	downloadText(
-		`https://unpkg.com/agent-browser@${VERSION}/cli/src/native/a11y/LICENSE-axe-core-THIRD-PARTY.txt`,
-		path.join(OUTPUT_DIR, "LICENSE-axe-core-THIRD-PARTY"),
-	),
-]);
+if ((await readText(licenseVersionPath)).trim() !== VERSION) {
+	await Promise.all([
+		downloadText(
+			`https://unpkg.com/agent-browser@${VERSION}/LICENSE`,
+			path.join(OUTPUT_DIR, "LICENSE-agent-browser"),
+		),
+		downloadText(
+			`https://unpkg.com/agent-browser@${VERSION}/cli/src/native/a11y/LICENSE-axe-core.txt`,
+			path.join(OUTPUT_DIR, "LICENSE-axe-core"),
+		),
+		downloadText(
+			`https://unpkg.com/agent-browser@${VERSION}/cli/src/native/a11y/LICENSE-axe-core-THIRD-PARTY.txt`,
+			path.join(OUTPUT_DIR, "LICENSE-axe-core-THIRD-PARTY"),
+		),
+	]);
+	await writeFile(licenseVersionPath, `${VERSION}\n`, "utf8");
+}
 
-console.log(`Prepared agent-browser ${VERSION} for ${process.platform}-${process.arch}`);
+if (!quiet) console.log(`Prepared browser automation runtime for ${process.platform}-${process.arch}`);
 
 async function fileSHA256(file) {
 	try {
 		const contents = await readFile(file);
 		return createHash("sha256").update(contents).digest("hex");
+	} catch (error) {
+		if (error?.code === "ENOENT") return "";
+		throw error;
+	}
+}
+
+async function readText(file) {
+	try {
+		return await readFile(file, "utf8");
 	} catch (error) {
 		if (error?.code === "ENOENT") return "";
 		throw error;

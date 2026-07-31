@@ -1,6 +1,6 @@
 # Native agent-browser integration
 
-Status: experimental Stage 0, disabled by default
+Status: implementation complete, enabled by default; cross-platform acceptance pending
 
 AO can run the pinned native Vercel `agent-browser` against the same Electron
 `WebContentsView` shown in AO Preview.
@@ -15,30 +15,28 @@ worker's existing browser capability before forwarding a request.
 From `frontend/`:
 
 ```powershell
-npm run agent-browser:prepare
-$env:AO_AGENT_BROWSER_ENABLED = "1"
 npm run dev
 ```
 
-`agent-browser:prepare` downloads only the current platform's binary for the
-pinned release and verifies its SHA-256 checksum. It does not install Chrome.
-The generated `frontend/agent-browser/` directory is gitignored.
+The normal development command prepares the current platform's pinned binary
+when needed and verifies its SHA-256 checksum. Packaging does the same before
+copying the component into the desktop app. It does not install Chrome. The
+generated `frontend/agent-browser/` directory is gitignored.
 
 Inside an AO worker:
 
 ```text
-ao browser agent-browser open http://localhost:5173
-ao browser agent-browser snapshot -i
-ao browser agent-browser fill @e1 "hello"
-ao browser agent-browser click @e2
-ao browser agent-browser wait --text "Saved"
-ao browser agent-browser errors
+ao browser open http://localhost:5173
+ao browser snapshot --interactive
+ao browser fill e1 "hello"
+ao browser click e2
+ao browser wait --text "Saved"
+ao browser errors
 ```
 
-The command is hidden from normal CLI help while the adapter is experimental.
-Supported commands are intentionally limited to semantic inspection,
-interaction, waits, tabs, frames, dialogs, console/errors, highlighting, and
-snapshot diffs.
+The native engine is internal. Ordinary `ao browser` commands translate to its
+semantic inspection, interaction, wait, tab, frame, dialog, screenshot, and
+console/error operations while preserving AO's stable output contract.
 
 AO blocks commands and flags that could launch or attach to another browser,
 display the private CDP endpoint, reuse a personal profile, persist browser
@@ -59,5 +57,15 @@ routes, or close AO Preview.
 8. Wait five minutes after the last command and confirm the sidecar exits while
    AO Preview stays open.
 
-The existing `ao browser` commands remain the fallback if the feature flag is
-off, the binary is missing, or the Stage 0 adapter fails.
+AO retains its own bounded, metadata-only network capture so credentials,
+request bodies, and query values never enter browser command output.
+
+## Validation status
+
+- Focused native-runtime, CDP-bridge, Browser host, CLI, controller, and service
+  checks pass on Windows.
+- A fresh Windows x64 desktop package contains the checksum-matching
+  `agent-browser 0.33.1` executable and required license files.
+- macOS (arm64/x64), Linux x64 packaging, and the manual lifecycle checks above
+  remain release acceptance work on their respective hosts; no implementation
+  fallback or feature flag remains.

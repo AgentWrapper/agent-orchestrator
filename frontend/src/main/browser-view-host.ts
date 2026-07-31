@@ -138,7 +138,7 @@ export type BrowserViewHostOptions = {
 };
 
 export type BrowserViewHost = {
-	dispose: () => void;
+	dispose: () => Promise<void>;
 	destroy: (viewId: string) => void;
 	destroyAll: () => void;
 	execute: (sessionId: string, action: string, args?: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>;
@@ -154,10 +154,6 @@ type BrowserEntry = {
 	view: BrowserViewLike;
 	state: BrowserNavState;
 	annotationEnabled: boolean;
-	refGeneration: number;
-	refs: Map<string, { backendNodeId: number; generation: number }>;
-	consoleMessages: BrowserLogEntry[];
-	errors: BrowserLogEntry[];
 	networkCapture?: BrowserNetworkCapture;
 };
 
@@ -230,8 +226,6 @@ const MAX_NETWORK_CAPTURE_SECONDS = 300;
 const MAX_NETWORK_REQUESTS = 200;
 const MAX_BROWSER_TABS = 16;
 const MAX_EXTERNAL_TEXT_BYTES = 1 << 20;
-const MAX_SNAPSHOT_LINES = 1_000;
-const MAX_LOG_MESSAGE_CHARS = 16_384;
 const UNTRUSTED_BEGIN = "<<<BEGIN UNTRUSTED EXTERNAL CONTENT>>>";
 const UNTRUSTED_END = "<<<END UNTRUSTED EXTERNAL CONTENT>>>";
 // The human-facing address bar may open local preview files. Agent commands use
@@ -373,10 +367,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			view,
 			state,
 			annotationEnabled: false,
-			refGeneration: 0,
-			refs: new Map(),
-			consoleMessages: [],
-			errors: [],
 		};
 		session.tabs.set(tabId, entry);
 		tabsByWebContentsId.set(view.webContents.id, entry);
@@ -475,12 +465,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (!next) throw browserError("TAB_NOT_FOUND", `Browser tab ${tabId} does not exist`);
 		const previous = session.tabs.get(session.activeTabId);
 		if (previous && previous !== next) {
-			invalidateRefs(previous);
 			previous.view.setVisible?.(false);
 			previous.view.setBounds(OFFSCREEN_BOUNDS);
 		}
 		session.activeTabId = tabId;
-		invalidateRefs(next);
 		applySessionBounds(session, next);
 		pushNavState(options, next);
 		if (notify) pushTabsState(options, session, { kind: "selected", tabId });
@@ -814,37 +802,55 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			}
 			const session = ensureSession(sessionId);
 			const entry = activeEntry(session);
+			const runNative = async (nativeAction: string, nativeArgs: Record<string, unknown> = {}) => {
+				if (!options.agentBrowserRuntime) {
+					throw browserError("BROWSER_AUTOMATION_UNAVAILABLE", "Browser automation runtime is unavailable");
+				}
+				return options.agentBrowserRuntime.runAction(
+					sessionId,
+					nativeAction,
+					nativeArgs,
+					agentBrowserTargets(session),
+					signal,
+				);
+			};
 			setAgentBrowserActivity(session, action, true);
 			try {
 				switch (action) {
 				case "open": {
 					const url = stringArg(args, "url", "URL_REQUIRED", "url is required");
-					const state = await navigate({ viewId: entry.state.viewId, url: normalizeAgentBrowserURL(url) });
-					if (state.error) throw browserError("NAVIGATION_FAILED", state.error);
-					return state;
+					await runNative(action, { url: normalizeAgentBrowserURL(url) });
+					return pushNavState(options, activeEntry(session));
 				}
-				case "snapshot":
-					return snapshotEntry(entry, Boolean(args.interactive));
+				case "snapshot": {
+					const result = await runNative(action, { interactive: Boolean(args.interactive) });
+					if (typeof result.snapshot !== "string") {
+						throw browserError("BROWSER_AUTOMATION_INVALID_OUTPUT", "Browser snapshot output was invalid");
+					}
+					return { text: result.snapshot, refs: result.refs, untrustedExternalContent: true };
+				}
 				case "click":
-					return clickEntry(entry, stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"));
-				case "fill":
-					return fillEntry(
-						entry,
-						stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
-						stringArg(args, "text", "INVALID_ARGUMENT", "text is required", true),
-					);
-				case "type":
-					return typeEntry(
-						entry,
-						stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
-						stringArg(args, "text", "INVALID_ARGUMENT", "text is required", true),
-					);
-				case "press":
-					return pressEntry(entry, stringArg(args, "key", "INVALID_ARGUMENT", "key is required"));
+				case "dblclick":
+				case "focus":
 				case "hover":
-					return hoverEntry(entry, stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"));
 				case "highlight":
-					return highlightEntry(entry, stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"));
+				case "scrollintoview":
+				case "check":
+				case "uncheck":
+					return runNative(action, { ref: stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required") });
+				case "fill":
+				case "type":
+					return runNative(action, {
+						ref: stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
+						text: stringArg(args, "text", "INVALID_ARGUMENT", "text is required", true),
+					});
+				case "press":
+					return runNative(action, { key: stringArg(args, "key", "INVALID_ARGUMENT", "key is required") });
+				case "drag":
+					return runNative(action, {
+						ref: stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
+						targetRef: stringArg(args, "targetRef", "REFERENCE_REQUIRED", "target ref is required"),
+					});
 				case "unhighlight":
 					return unhighlightEntry(entry);
 				case "tabs":
@@ -852,55 +858,47 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				case "tab-new": {
 					const url =
 						typeof args.url === "string" && args.url.trim() ? normalizeAgentBrowserURL(args.url) : undefined;
-					const tab = await openTab(session, url, true);
-					return tabResult(tab, true);
+					await runNative(action, { url });
+					return tabResult(activeEntry(session), true);
 				}
 				case "tab-select": {
-					const tab = activateTab(
-						session,
-						stringArg(args, "tabId", "TAB_ID_REQUIRED", "tabId is required"),
-					);
-					return tabResult(tab, true);
+					await runNative(action, { tabId: stringArg(args, "tabId", "TAB_ID_REQUIRED", "tabId is required") });
+					return tabResult(activeEntry(session), true);
 				}
 				case "tab-close": {
 					const tabId =
 						typeof args.tabId === "string" && args.tabId.trim() ? args.tabId.trim() : session.activeTabId;
-					return { closedTabId: tabId, ...closeTab(session, tabId) };
+					await runNative(action, { tabId });
+					return { closedTabId: tabId, ...listTabs(session) };
 				}
 				case "scroll":
-					return scrollEntry(
-						entry,
-						stringArg(args, "direction", "INVALID_ARGUMENT", "direction is required"),
-						numberArg(args.amount, 1, 5_000) || 600,
-					);
+					return runNative(action, {
+						direction: stringArg(args, "direction", "INVALID_ARGUMENT", "direction is required"),
+						amount: numberArg(args.amount, 1, 5_000) || 600,
+					});
 				case "select":
-					return selectEntry(
-						entry,
-						stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
-						stringArg(args, "value", "INVALID_ARGUMENT", "value is required", true),
-					);
-				case "check":
-					return checkEntry(
-						entry,
-						stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
-						true,
-					);
-				case "uncheck":
-					return checkEntry(
-						entry,
-						stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
-						false,
-					);
-				case "get":
-					return getEntry(
-						entry,
-						stringArg(args, "property", "INVALID_ARGUMENT", "property is required"),
-						typeof args.ref === "string" && args.ref.trim() ? args.ref : undefined,
-					);
+					return runNative(action, {
+						ref: stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
+						value: stringArg(args, "value", "INVALID_ARGUMENT", "value is required", true),
+					});
+				case "get": {
+					const property = stringArg(args, "property", "INVALID_ARGUMENT", "property is required");
+					const result = await runNative(action, {
+						property,
+						ref: typeof args.ref === "string" && args.ref.trim() ? args.ref : undefined,
+					});
+					return { ...result, value: result.value ?? result[property] };
+				}
 				case "wait":
-					return waitForEntry(entry, args, signal);
+					return runNative(action, args);
+				case "frame":
+				case "dialog":
+					return runNative(action, args);
 				case "screenshot":
-					return screenshotEntry(entry);
+					if (!options.agentBrowserRuntime) {
+						throw browserError("BROWSER_AUTOMATION_UNAVAILABLE", "Browser automation runtime is unavailable");
+					}
+					return options.agentBrowserRuntime.screenshot(sessionId, agentBrowserTargets(session), signal);
 				case "network-start":
 					return startNetworkCapture(
 						session,
@@ -916,21 +914,8 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				case "network-clear":
 					return clearNetworkCapture(networkEntryFor(session));
 				case "console":
-					return { messages: markLogMessages(entry.consoleMessages), untrustedExternalContent: true };
 				case "errors":
-					return { messages: markLogMessages(entry.errors), untrustedExternalContent: true };
-				case "agent-browser-run": {
-					if (!options.agentBrowserRuntime) {
-						throw browserError("AGENT_BROWSER_DISABLED", "Native agent-browser runtime is unavailable");
-					}
-					const commandArgs = stringArrayArg(args, "arguments");
-					return options.agentBrowserRuntime.run(
-						sessionId,
-						commandArgs,
-						agentBrowserTargets(session),
-						signal,
-					);
-				}
+					return normalizeNativeMessages(await runNative(action), action);
 				default:
 					throw browserError("INVALID_ARGUMENT", `Unsupported browser action: ${action}`);
 				}
@@ -938,12 +923,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				setAgentBrowserActivity(session, action, false);
 			}
 		},
-		dispose: () => {
+		dispose: async () => {
 			ipcDisposers.splice(0).forEach((dispose) => dispose());
+			await options.agentBrowserRuntime?.dispose();
 			for (const viewId of [...entries.keys()]) {
 				destroy(viewId);
 			}
-			void options.agentBrowserRuntime?.dispose();
 		},
 		destroy,
 		destroyAll: () => {
@@ -1120,18 +1105,12 @@ function wireNavEvents(
 	contents.on("did-navigate-in-page", update);
 	contents.on("page-title-updated", update);
 	contents.on("did-start-loading", () => {
-		invalidateRefs(entry);
 		cancelAnnotation(options, entry, "navigation");
 		update();
 	});
 	contents.on("did-stop-loading", update);
 	contents.on("did-fail-load", (_event, errorCode, errorDescription) => {
 		if (errorCode === -3) return;
-		pushBrowserLog(entry.errors, {
-			level: "error",
-			message: String(errorDescription || `Navigation failed (${errorCode})`),
-			timestamp: new Date().toISOString(),
-		});
 		if (isActive()) entry.view.setVisible?.(false);
 		entry.state = { ...readNavState(entry), error: String(errorDescription || "Unable to load page") };
 		if (isActive()) options.mainWindow.webContents.send("browser:navState", entry.state);
@@ -1171,99 +1150,12 @@ function readNavState(entry: BrowserEntry): BrowserNavState {
 	};
 }
 
-type AXValue = { value?: unknown };
-type AXNode = {
-	nodeId: string;
-	parentId?: string;
-	ignored?: boolean;
-	backendDOMNodeId?: number;
-	role?: AXValue;
-	name?: AXValue;
-	value?: AXValue;
-	properties?: Array<{ name: string; value?: AXValue }>;
-};
-
-const INTERACTIVE_ROLES = new Set([
-	"button",
-	"checkbox",
-	"combobox",
-	"link",
-	"listbox",
-	"menuitem",
-	"menuitemcheckbox",
-	"menuitemradio",
-	"option",
-	"radio",
-	"scrollbar",
-	"searchbox",
-	"slider",
-	"spinbutton",
-	"switch",
-	"tab",
-	"textbox",
-	"treeitem",
-]);
-
 function wireAutomationEvents(contents: BrowserWebContents, entry: BrowserEntry): void {
-	contents.on("console-message", (...eventArgs: unknown[]) => {
-		const details = eventArgs.find(
-			(value) => value && typeof value === "object" && typeof (value as { message?: unknown }).message === "string",
-		) as { level?: string; message: string; lineNumber?: number; sourceId?: string } | undefined;
-		const legacyLevel = typeof eventArgs[1] === "number" ? eventArgs[1] : 1;
-		const legacyMessage = typeof eventArgs[2] === "string" ? eventArgs[2] : "";
-		const level = details?.level ?? ["debug", "info", "warning", "error"][legacyLevel] ?? "info";
-		const log: BrowserLogEntry = {
-			level,
-			message: details?.message ?? legacyMessage,
-			source: details?.sourceId ?? (typeof eventArgs[4] === "string" ? eventArgs[4] : undefined),
-			line: details?.lineNumber ?? (typeof eventArgs[3] === "number" ? eventArgs[3] : undefined),
-			timestamp: new Date().toISOString(),
-		};
-		pushBrowserLog(entry.consoleMessages, log);
-		if (level === "error") pushBrowserLog(entry.errors, log);
-	});
-	contents.on("render-process-gone", (_event, details) => {
-		pushBrowserLog(entry.errors, {
-			level: "error",
-			message: `Browser renderer exited: ${details.reason}`,
-			timestamp: new Date().toISOString(),
-		});
-	});
-	const targetDebugger = contents.debugger;
-	if (!targetDebugger) return;
-	targetDebugger.on("message", (_event, method, params) => {
+	contents.debugger?.on("message", (_event, method, params) => {
 		handleNetworkDebuggerEvent(entry, method, params as Record<string, unknown>);
-		if (method === "DOM.documentUpdated") {
-			invalidateRefs(entry);
-			return;
-		}
-		if (method === "Runtime.exceptionThrown") {
-			const detail = params as { exceptionDetails?: { text?: string; url?: string; lineNumber?: number } };
-			const exception = detail.exceptionDetails;
-			pushBrowserLog(entry.errors, {
-				level: "error",
-				message: exception?.text ?? "Uncaught browser exception",
-				source: exception?.url,
-				line: exception?.lineNumber,
-				timestamp: new Date().toISOString(),
-			});
-		}
 	});
 }
 
-function pushBrowserLog(target: BrowserLogEntry[], entry: BrowserLogEntry): void {
-	target.push({
-		...entry,
-		message: entry.message.slice(0, MAX_LOG_MESSAGE_CHARS),
-		source: entry.source?.slice(0, 2_048),
-	});
-	if (target.length > 200) target.splice(0, target.length - 200);
-}
-
-function invalidateRefs(entry: BrowserEntry): void {
-	entry.refGeneration += 1;
-	entry.refs.clear();
-}
 
 async function ensureDebugger(entry: BrowserEntry): Promise<void> {
 	const debug = entry.view.webContents.debugger;
@@ -1551,246 +1443,6 @@ function finiteNumber(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-async function snapshotEntry(entry: BrowserEntry, interactiveOnly: boolean): Promise<unknown> {
-	await ensureDebugger(entry);
-	await entry.view.webContents.debugger.sendCommand("Accessibility.enable");
-	const response = (await entry.view.webContents.debugger.sendCommand("Accessibility.getFullAXTree")) as {
-		nodes?: AXNode[];
-	};
-	const nodes = response.nodes ?? [];
-	entry.refGeneration += 1;
-	entry.refs.clear();
-	const generation = entry.refGeneration;
-	const depths = new Map<string, number>();
-	const lines: string[] = [];
-	const elements: Array<{ ref: string; role: string; name: string }> = [];
-	let refIndex = 0;
-	let truncated = false;
-	for (const node of nodes) {
-		if (node.ignored) continue;
-		const role = stringValue(node.role) || "generic";
-		const name = stringValue(node.name);
-		const value = stringValue(node.value);
-		const interactive =
-			INTERACTIVE_ROLES.has(role) || node.properties?.some((property) => property.name === "focusable");
-		if (interactiveOnly && !interactive) continue;
-		if (!interactive && !name && !value) continue;
-		if (lines.length >= MAX_SNAPSHOT_LINES) {
-			truncated = true;
-			continue;
-		}
-		let ref = "";
-		if (interactive && node.backendDOMNodeId) {
-			ref = `e${++refIndex}`;
-			entry.refs.set(ref, { backendNodeId: node.backendDOMNodeId, generation });
-			elements.push({ ref, role, name });
-		}
-		const parentDepth = node.parentId ? (depths.get(node.parentId) ?? -1) : -1;
-		const depth = Math.max(0, parentDepth + 1);
-		depths.set(node.nodeId, depth);
-		const label = name ? ` \"${compactText(name)}\"` : "";
-		const currentValue = value && value !== name ? ` value=\"${compactText(value)}\"` : "";
-		const reference = ref ? ` [ref=${ref}]` : "";
-		lines.push(`${"  ".repeat(Math.min(depth, 8))}${role}${label}${currentValue}${reference}`);
-	}
-	const snapshotText = lines.join("\n") || "(empty accessibility snapshot)";
-	const truncationNotice = truncated
-		? `\n[Snapshot truncated: showing ${lines.length} lines from ${nodes.length} accessibility nodes]`
-		: "";
-	return {
-		url: entry.view.webContents.getURL(),
-		title: entry.view.webContents.getTitle(),
-		generation,
-		text: markUntrusted(snapshotText + truncationNotice),
-		elements,
-		totalNodes: nodes.length,
-		truncated,
-		untrustedExternalContent: true,
-	};
-}
-
-async function clickEntry(entry: BrowserEntry, refName: string): Promise<unknown> {
-	const objectId = await resolveRef(entry, refName);
-	const point = await pointerPoint(entry, objectId, refName);
-	await entry.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
-		type: "mousePressed",
-		x: point.x,
-		y: point.y,
-		button: "left",
-		clickCount: 1,
-	});
-	await entry.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
-		type: "mouseReleased",
-		x: point.x,
-		y: point.y,
-		button: "left",
-		clickCount: 1,
-	});
-	return { ref: refName, x: point.x, y: point.y, url: entry.view.webContents.getURL() };
-}
-
-async function fillEntry(entry: BrowserEntry, refName: string, text: string): Promise<unknown> {
-	const objectId = await resolveRef(entry, refName);
-	await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
-		objectId,
-		functionDeclaration: `function(next){
-			this.scrollIntoView({block:'center',inline:'center'});
-			this.focus();
-			const proto = Object.getPrototypeOf(this);
-			const descriptor = proto && Object.getOwnPropertyDescriptor(proto, 'value');
-			if (descriptor && descriptor.set) descriptor.set.call(this, next); else this.value = next;
-			this.dispatchEvent(new Event('input', {bubbles:true, composed:true}));
-			this.dispatchEvent(new Event('change', {bubbles:true, composed:true}));
-		}`,
-		arguments: [{ value: text }],
-		awaitPromise: true,
-	});
-	return { ref: refName, value: text, url: entry.view.webContents.getURL() };
-}
-
-async function typeEntry(entry: BrowserEntry, refName: string, text: string): Promise<unknown> {
-	const objectId = await resolveRef(entry, refName);
-	await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
-		objectId,
-		functionDeclaration:
-			"function(){ this.scrollIntoView({block:'center',inline:'center'}); this.focus(); }",
-	});
-	await entry.view.webContents.debugger.sendCommand("Input.insertText", { text });
-	return { ref: refName, text, url: entry.view.webContents.getURL() };
-}
-
-type BrowserKey = {
-	key: string;
-	code: string;
-	keyCode: number;
-	text?: string;
-	modifiers: number;
-};
-
-const NAMED_KEYS: Record<string, Omit<BrowserKey, "modifiers">> = {
-	enter: { key: "Enter", code: "Enter", keyCode: 13, text: "\r" },
-	tab: { key: "Tab", code: "Tab", keyCode: 9, text: "\t" },
-	escape: { key: "Escape", code: "Escape", keyCode: 27 },
-	esc: { key: "Escape", code: "Escape", keyCode: 27 },
-	backspace: { key: "Backspace", code: "Backspace", keyCode: 8 },
-	delete: { key: "Delete", code: "Delete", keyCode: 46 },
-	home: { key: "Home", code: "Home", keyCode: 36 },
-	end: { key: "End", code: "End", keyCode: 35 },
-	pageup: { key: "PageUp", code: "PageUp", keyCode: 33 },
-	pagedown: { key: "PageDown", code: "PageDown", keyCode: 34 },
-	arrowup: { key: "ArrowUp", code: "ArrowUp", keyCode: 38 },
-	arrowdown: { key: "ArrowDown", code: "ArrowDown", keyCode: 40 },
-	arrowleft: { key: "ArrowLeft", code: "ArrowLeft", keyCode: 37 },
-	arrowright: { key: "ArrowRight", code: "ArrowRight", keyCode: 39 },
-	space: { key: " ", code: "Space", keyCode: 32, text: " " },
-};
-
-function parseBrowserKey(input: string): BrowserKey {
-	const parts = input
-		.split("+")
-		.map((part) => part.trim())
-		.filter(Boolean);
-	if (parts.length === 0) throw browserError("INVALID_ARGUMENT", "key is required");
-	let modifiers = 0;
-	for (const modifier of parts.slice(0, -1)) {
-		switch (modifier.toLowerCase()) {
-			case "alt":
-				modifiers |= 1;
-				break;
-			case "control":
-			case "ctrl":
-				modifiers |= 2;
-				break;
-			case "meta":
-			case "command":
-			case "cmd":
-				modifiers |= 4;
-				break;
-			case "shift":
-				modifiers |= 8;
-				break;
-			default:
-				throw browserError("INVALID_ARGUMENT", `Unsupported key modifier: ${modifier}`);
-		}
-	}
-	const rawKey = parts.at(-1)!;
-	const named = NAMED_KEYS[rawKey.toLowerCase()];
-	if (named) {
-		return {
-			...named,
-			text: modifiers & (1 | 2 | 4) ? undefined : named.text,
-			modifiers,
-		};
-	}
-	if ([...rawKey].length !== 1) {
-		throw browserError("INVALID_ARGUMENT", `Unsupported key: ${rawKey}`);
-	}
-	const rawIsLetter = /^[a-zA-Z]$/.test(rawKey);
-	const key = rawIsLetter ? (modifiers & 8 ? rawKey.toUpperCase() : rawKey.toLowerCase()) : rawKey;
-	const upper = key.toUpperCase();
-	const isLetter = /^[A-Z]$/.test(upper);
-	const isDigit = /^\d$/.test(key);
-	return {
-		key,
-		code: isLetter ? `Key${upper}` : isDigit ? `Digit${key}` : "",
-		keyCode: upper.charCodeAt(0),
-		text: modifiers & (1 | 2 | 4) ? undefined : key,
-		modifiers,
-	};
-}
-
-async function pressEntry(entry: BrowserEntry, input: string): Promise<unknown> {
-	await ensureDebugger(entry);
-	const key = parseBrowserKey(input);
-	const params = {
-		key: key.key,
-		code: key.code,
-		windowsVirtualKeyCode: key.keyCode,
-		nativeVirtualKeyCode: key.keyCode,
-		modifiers: key.modifiers,
-		...(key.text === undefined ? {} : { text: key.text, unmodifiedText: key.text }),
-	};
-	await entry.view.webContents.debugger.sendCommand("Input.dispatchKeyEvent", {
-		type: key.text === undefined ? "rawKeyDown" : "keyDown",
-		...params,
-	});
-	await entry.view.webContents.debugger.sendCommand("Input.dispatchKeyEvent", {
-		type: "keyUp",
-		...params,
-		text: undefined,
-		unmodifiedText: undefined,
-	});
-	return { key: input, url: entry.view.webContents.getURL() };
-}
-
-async function hoverEntry(entry: BrowserEntry, refName: string): Promise<unknown> {
-	const objectId = await resolveRef(entry, refName);
-	const point = await pointerPoint(entry, objectId, refName);
-	await entry.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
-		type: "mouseMoved",
-		x: point.x,
-		y: point.y,
-	});
-	return { ref: refName, x: point.x, y: point.y, url: entry.view.webContents.getURL() };
-}
-
-async function highlightEntry(entry: BrowserEntry, refName: string): Promise<unknown> {
-	const objectId = await resolveRef(entry, refName);
-	await entry.view.webContents.debugger.sendCommand("Overlay.enable");
-	await entry.view.webContents.debugger.sendCommand("Overlay.highlightNode", {
-		objectId,
-		highlightConfig: {
-			showInfo: false,
-			showStyles: false,
-			showRulers: false,
-			contentColor: { r: 59, g: 130, b: 246, a: 0.18 },
-			borderColor: { r: 37, g: 99, b: 235, a: 1 },
-			paddingColor: { r: 96, g: 165, b: 250, a: 0.12 },
-			marginColor: { r: 147, g: 197, b: 253, a: 0.08 },
-		},
-	});
-	return { ref: refName, url: entry.view.webContents.getURL() };
-}
 
 async function unhighlightEntry(entry: BrowserEntry): Promise<unknown> {
 	await ensureDebugger(entry);
@@ -1799,272 +1451,6 @@ async function unhighlightEntry(entry: BrowserEntry): Promise<unknown> {
 	return { url: entry.view.webContents.getURL() };
 }
 
-function quadCenter(quad: number[] | undefined): { x: number; y: number } | undefined {
-	if (!quad || quad.length < 8) return undefined;
-	const xs = [quad[0], quad[2], quad[4], quad[6]];
-	const ys = [quad[1], quad[3], quad[5], quad[7]];
-	return {
-		x: xs.reduce((sum, value) => sum + value, 0) / xs.length,
-		y: ys.reduce((sum, value) => sum + value, 0) / ys.length,
-	};
-}
-
-async function scrollEntry(entry: BrowserEntry, rawDirection: string, amount: number): Promise<unknown> {
-	await ensureDebugger(entry);
-	const direction = rawDirection.toLowerCase();
-	const deltas: Record<string, { deltaX: number; deltaY: number }> = {
-		up: { deltaX: 0, deltaY: -amount },
-		down: { deltaX: 0, deltaY: amount },
-		left: { deltaX: -amount, deltaY: 0 },
-		right: { deltaX: amount, deltaY: 0 },
-	};
-	const delta = deltas[direction];
-	if (!delta) {
-		throw browserError("INVALID_ARGUMENT", "direction must be up, down, left, or right");
-	}
-	const viewport = (await entry.view.webContents.debugger.sendCommand("Runtime.evaluate", {
-		expression: "({x: Math.max(0, innerWidth / 2), y: Math.max(0, innerHeight / 2)})",
-		returnByValue: true,
-	})) as { result?: { value?: { x?: number; y?: number } } };
-	await entry.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
-		type: "mouseWheel",
-		x: viewport.result?.value?.x ?? 0,
-		y: viewport.result?.value?.y ?? 0,
-		...delta,
-	});
-	return { direction, amount, url: entry.view.webContents.getURL() };
-}
-
-async function selectEntry(entry: BrowserEntry, refName: string, value: string): Promise<unknown> {
-	const objectId = await resolveRef(entry, refName);
-	const response = (await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
-		objectId,
-		functionDeclaration: `function(next){
-			if (!(this instanceof HTMLSelectElement)) return {supported:false};
-			const values = Array.isArray(next) ? next : [next];
-			const matched = Array.from(this.options).some((option) => values.includes(option.value));
-			if (!matched) return {supported:true, matched:false, value:this.value};
-			for (const option of this.options) option.selected = values.includes(option.value);
-			this.dispatchEvent(new Event('input', {bubbles:true, composed:true}));
-			this.dispatchEvent(new Event('change', {bubbles:true, composed:true}));
-			return {supported:true, matched:true, value:this.value};
-		}`,
-		arguments: [{ value }],
-		returnByValue: true,
-	})) as { result?: { value?: { supported?: boolean; matched?: boolean; value?: string } } };
-	if (!response.result?.value?.supported) {
-		throw browserError("INVALID_ELEMENT_STATE", `Element ${refName} is not a select control`);
-	}
-	if (!response.result.value.matched) {
-		throw browserError("INVALID_ARGUMENT", `Select option ${JSON.stringify(value)} does not exist`);
-	}
-	return { ref: refName, value: response.result.value.value, url: entry.view.webContents.getURL() };
-}
-
-async function checkEntry(entry: BrowserEntry, refName: string, checked: boolean): Promise<unknown> {
-	const objectId = await resolveRef(entry, refName);
-	const response = (await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
-		objectId,
-		functionDeclaration: `function(next){
-			if (!('checked' in this)) return {supported:false};
-			if (Boolean(this.checked) !== Boolean(next)) this.click();
-			return {supported:true, checked:Boolean(this.checked)};
-		}`,
-		arguments: [{ value: checked }],
-		returnByValue: true,
-	})) as { result?: { value?: { supported?: boolean; checked?: boolean } } };
-	if (!response.result?.value?.supported) {
-		throw browserError("INVALID_ELEMENT_STATE", `Element ${refName} is not checkable`);
-	}
-	if (response.result.value.checked !== checked) {
-		throw browserError("ELEMENT_NOT_INTERACTABLE", `Element ${refName} did not change checked state`);
-	}
-	return { ref: refName, checked: response.result.value.checked, url: entry.view.webContents.getURL() };
-}
-
-async function getEntry(entry: BrowserEntry, property: string, refName?: string): Promise<unknown> {
-	const normalized = property.toLowerCase();
-	if (!refName) {
-		if (normalized === "url") return { property: normalized, value: entry.view.webContents.getURL() };
-		if (normalized === "title") return { property: normalized, value: entry.view.webContents.getTitle() };
-		if (normalized !== "text") {
-			throw browserError("INVALID_ARGUMENT", "page property must be url, title, or text");
-		}
-		await ensureDebugger(entry);
-		const response = (await entry.view.webContents.debugger.sendCommand("Runtime.evaluate", {
-			expression: "document.body ? document.body.innerText : ''",
-			returnByValue: true,
-		})) as { result?: { value?: unknown } };
-		return {
-			property: normalized,
-			value: markUntrusted(externalText(response.result?.value)),
-			untrustedExternalContent: true,
-		};
-	}
-	if (!["text", "value", "checked"].includes(normalized)) {
-		throw browserError("INVALID_ARGUMENT", "element property must be text, value, or checked");
-	}
-	const objectId = await resolveRef(entry, refName);
-	const response = (await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
-		objectId,
-		functionDeclaration: `function(property){
-			if (property === 'text') return this.innerText ?? this.textContent ?? '';
-			if (property === 'value') return this.value ?? '';
-			if (property === 'checked') return Boolean(this.checked);
-		}`,
-		arguments: [{ value: normalized }],
-		returnByValue: true,
-	})) as { result?: { value?: unknown } };
-	const value =
-		normalized === "text" ? markUntrusted(externalText(response.result?.value)) : response.result?.value;
-	return {
-		ref: refName,
-		property: normalized,
-		value,
-		url: entry.view.webContents.getURL(),
-		...(normalized === "text" ? { untrustedExternalContent: true } : {}),
-	};
-}
-
-async function resolveRef(entry: BrowserEntry, refName: string): Promise<string> {
-	await ensureDebugger(entry);
-	const ref = entry.refs.get(refName);
-	if (!ref || ref.generation !== entry.refGeneration) {
-		throw browserError("STALE_REFERENCE", `Element reference ${refName} is stale; run ao browser snapshot again`);
-	}
-	try {
-		const resolved = (await entry.view.webContents.debugger.sendCommand("DOM.resolveNode", {
-			backendNodeId: ref.backendNodeId,
-		})) as { object?: { objectId?: string } };
-		if (!resolved.object?.objectId) throw new Error("node has no runtime object");
-		return resolved.object.objectId;
-	} catch {
-		entry.refs.delete(refName);
-		throw browserError("STALE_REFERENCE", `Element reference ${refName} is stale; run ao browser snapshot again`);
-	}
-}
-
-async function waitForEntry(entry: BrowserEntry, args: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
-	const fixedMS = numberArg(args.ms, 0, 60_000);
-	if (fixedMS > 0) {
-		await delay(fixedMS, signal);
-		return { waitedMs: fixedMS, url: entry.view.webContents.getURL() };
-	}
-	const timeoutMS = numberArg(args.timeoutMs, 1, 55_000) || 10_000;
-	const stableMS = numberArg(args.stableMs, 1, 10_000);
-	let expression = "";
-	let condition = "";
-	let valueSatisfies = (value: unknown): boolean => value === true;
-	if (typeof args.text === "string" && args.text) {
-		expression = `Boolean(document.body && document.body.innerText.includes(${JSON.stringify(args.text)}))`;
-		condition = `text ${JSON.stringify(args.text)}`;
-	} else if (typeof args.textGone === "string" && args.textGone) {
-		expression = `Boolean(!document.body || !document.body.innerText.includes(${JSON.stringify(args.textGone)}))`;
-		condition = `text ${JSON.stringify(args.textGone)} to disappear`;
-	} else if (typeof args.selector === "string" && args.selector) {
-		expression = `Boolean(document.querySelector(${JSON.stringify(args.selector)}))`;
-		condition = `selector ${JSON.stringify(args.selector)}`;
-	} else if (typeof args.selectorGone === "string" && args.selectorGone) {
-		expression = `Boolean(!document.querySelector(${JSON.stringify(args.selectorGone)}))`;
-		condition = `selector ${JSON.stringify(args.selectorGone)} to disappear`;
-	} else if (typeof args.url === "string" && args.url) {
-		expression = `location.href.includes(${JSON.stringify(args.url)})`;
-		condition = `URL ${JSON.stringify(args.url)}`;
-	} else if (args.load === true) {
-		expression = "document.readyState === 'complete'";
-		condition = "page load completion";
-	} else if (stableMS > 0) {
-		expression = `(() => {
-			const key = "__ao_browser_dom_stability__";
-			let state = globalThis[key];
-			if (!state || state.document !== document) {
-				state = {document, lastMutation: performance.now()};
-				state.observer = new MutationObserver(() => { state.lastMutation = performance.now(); });
-				state.observer.observe(document, {
-					subtree: true,
-					childList: true,
-					attributes: true,
-					characterData: true,
-				});
-				globalThis[key] = state;
-			}
-			return performance.now() - state.lastMutation;
-		})()`;
-		condition = `DOM stability for ${stableMS}ms`;
-		valueSatisfies = (value) => typeof value === "number" && value >= stableMS;
-	} else {
-		throw browserError(
-			"INVALID_ARGUMENT",
-			"wait requires text, textGone, selector, selectorGone, url, load, stableMs, or ms",
-		);
-	}
-	await ensureDebugger(entry);
-	const deadline = Date.now() + timeoutMS;
-	try {
-		while (Date.now() <= deadline) {
-			throwIfAborted(signal);
-			if (args.load === true && entry.view.webContents.isLoading()) {
-				await delay(100, signal);
-				continue;
-			}
-			let evaluated: {
-				result?: { value?: unknown };
-				exceptionDetails?: { text?: string };
-			};
-			try {
-				evaluated = (await entry.view.webContents.debugger.sendCommand("Runtime.evaluate", {
-					expression,
-					returnByValue: true,
-				})) as typeof evaluated;
-			} catch {
-				// Navigations and HMR can briefly replace the execution context. Retry
-				// until the requested condition or timeout rather than failing early.
-				await delay(100, signal);
-				continue;
-			}
-			if (evaluated.exceptionDetails) {
-				throw browserError(
-					"INVALID_ARGUMENT",
-					evaluated.exceptionDetails.text ?? `Unable to evaluate wait condition ${condition}`,
-				);
-			}
-			if (valueSatisfies(evaluated.result?.value)) {
-				return { condition, url: entry.view.webContents.getURL() };
-			}
-			await delay(100, signal);
-		}
-		throw browserError("WAIT_TIMEOUT", `Timed out after ${timeoutMS}ms waiting for ${condition}`);
-	} finally {
-		if (stableMS > 0) {
-			try {
-				await entry.view.webContents.debugger.sendCommand("Runtime.evaluate", {
-					expression: `(() => {
-						const key = "__ao_browser_dom_stability__";
-						const state = globalThis[key];
-						state?.observer?.disconnect();
-						delete globalThis[key];
-					})()`,
-				});
-			} catch {
-				// Navigation may have already destroyed the observed document.
-			}
-		}
-	}
-}
-
-async function screenshotEntry(entry: BrowserEntry): Promise<unknown> {
-	const image = await entry.view.webContents.capturePage();
-	if (image.isEmpty()) throw browserError("BROWSER_COMMAND_FAILED", "Browser screenshot is empty");
-	const size = image.getSize();
-	return {
-		mimeType: "image/png",
-		data: image.toPNG().toString("base64"),
-		width: size.width,
-		height: size.height,
-		url: entry.view.webContents.getURL(),
-		untrustedExternalContent: true,
-	};
-}
 
 function stringArg(
 	args: Record<string, unknown>,
@@ -2078,13 +1464,6 @@ function stringArg(
 	return value;
 }
 
-function stringArrayArg(args: Record<string, unknown>, name: string): string[] {
-	const value = args[name];
-	if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
-		throw browserError("INVALID_ARGUMENT", `${name} must be an array of strings`);
-	}
-	return value;
-}
 
 function numberArg(value: unknown, min: number, max: number): number {
 	if (typeof value !== "number" || !Number.isFinite(value)) return 0;
@@ -2108,14 +1487,6 @@ function networkDurationArg(value: unknown): number {
 	return value;
 }
 
-function stringValue(value: AXValue | undefined): string {
-	return typeof value?.value === "string" ? value.value : value?.value == null ? "" : String(value.value);
-}
-
-function compactText(value: string): string {
-	return value.replace(/\s+/g, " ").replace(/\"/g, '\\"').trim().slice(0, 240);
-}
-
 function normalizeAgentBrowserURL(input: string): string {
 	const raw = input.trim();
 	if (!raw) throw browserError("URL_REQUIRED", "url is required");
@@ -2132,42 +1503,6 @@ function normalizeAgentBrowserURL(input: string): string {
 	return normalized.href;
 }
 
-async function pointerPoint(
-	entry: BrowserEntry,
-	objectId: string,
-	refName: string,
-): Promise<{ x: number; y: number }> {
-	await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
-		objectId,
-		functionDeclaration: "function(){ this.scrollIntoView({block:'center',inline:'center'}); this.focus(); }",
-	});
-	const response = (await entry.view.webContents.debugger.sendCommand("DOM.getBoxModel", { objectId })) as {
-		model?: { border?: number[]; content?: number[] };
-	};
-	const pagePoint = quadCenter(response.model?.border ?? response.model?.content);
-	if (!pagePoint) throw browserError("ELEMENT_NOT_VISIBLE", `Element ${refName} has no visible box`);
-	const metrics = (await entry.view.webContents.debugger.sendCommand("Page.getLayoutMetrics")) as {
-		cssVisualViewport?: { pageX?: number; pageY?: number };
-		visualViewport?: { pageX?: number; pageY?: number };
-	};
-	const viewport = metrics.cssVisualViewport ?? metrics.visualViewport ?? {};
-	const point = {
-		x: pagePoint.x - (viewport.pageX ?? 0),
-		y: pagePoint.y - (viewport.pageY ?? 0),
-	};
-	const hit = (await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
-		objectId,
-		functionDeclaration:
-			"function(x,y){ const hit=document.elementFromPoint(x,y); return Boolean(hit && (hit===this || this.contains(hit))); }",
-		arguments: [{ value: point.x }, { value: point.y }],
-		returnByValue: true,
-	})) as { result?: { value?: boolean } };
-	if (!hit.result?.value) {
-		throw browserError("ELEMENT_NOT_INTERACTABLE", `Element ${refName} is covered or not pointer-interactable`);
-	}
-	return point;
-}
-
 function externalText(value: unknown): string {
 	const raw = value == null ? "" : String(value);
 	const bytes = Buffer.from(raw, "utf8");
@@ -2179,24 +1514,38 @@ function markUntrusted(value: string): string {
 	return `${UNTRUSTED_BEGIN}\n${value}\n${UNTRUSTED_END}`;
 }
 
-function markLogMessages(messages: BrowserLogEntry[]): BrowserLogEntry[] {
-	return messages.map((message) => ({ ...message, message: markUntrusted(externalText(message.message)) }));
-}
-
-function delay(ms: number, signal?: AbortSignal): Promise<void> {
-	if (!signal) return new Promise((resolve) => setTimeout(resolve, ms));
-	throwIfAborted(signal);
-	return new Promise((resolve, reject) => {
-		const timer = setTimeout(() => {
-			signal.removeEventListener("abort", onAbort);
-			resolve();
-		}, ms);
-		const onAbort = () => {
-			clearTimeout(timer);
-			reject(browserError("BROWSER_COMMAND_CANCELED", "Browser command was canceled"));
+function normalizeNativeMessages(result: Record<string, unknown>, action: string): Record<string, unknown> {
+	const raw = Array.isArray(result.messages) ? result.messages : Array.isArray(result.value) ? result.value : [];
+	const messages = raw.map((item): BrowserLogEntry => {
+		if (typeof item === "string") {
+			return {
+				level: action === "errors" ? "error" : "log",
+				message: markUntrusted(externalText(item)),
+				timestamp: new Date().toISOString(),
+			};
+		}
+		const record = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+		const level =
+			typeof record.level === "string"
+				? record.level
+				: typeof record.type === "string"
+					? record.type
+					: action === "errors"
+						? "error"
+						: "log";
+		const message =
+			typeof record.message === "string"
+				? record.message
+				: typeof record.text === "string"
+					? record.text
+					: JSON.stringify(record);
+		return {
+			level,
+			message: markUntrusted(externalText(message)),
+			timestamp: typeof record.timestamp === "string" ? record.timestamp : new Date().toISOString(),
 		};
-		signal.addEventListener("abort", onAbort, { once: true });
 	});
+	return { messages, untrustedExternalContent: true };
 }
 
 function throwIfAborted(signal?: AbortSignal): void {

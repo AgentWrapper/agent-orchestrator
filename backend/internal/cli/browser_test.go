@@ -48,8 +48,6 @@ func browserCLIServer(t *testing.T, capture *browserRequestCapture) *httptest.Se
 			result = `{"active":false,"metadataOnly":true,"tabId":"t1","requestCount":1,"maxEntries":200,"requests":[{"method":"GET","url":"https://api.example.test/items?token=%5Bredacted%5D","resourceType":"xhr","status":200,"durationMs":42}]}`
 		case "network-clear":
 			result = `{"active":true,"metadataOnly":true,"tabId":"t1","requestCount":0,"maxEntries":200}`
-		case "agent-browser-run":
-			result = `{"command":"snapshot","stdout":"- button \"Save\" [ref=e1]\n","stderr":"","exitCode":0}`
 		}
 		_, _ = io.WriteString(w, `{"requestId":"r1","sessionId":"ao-1","action":"`+capture.body.Action+`","result":`+result+`}`)
 	}))
@@ -112,38 +110,6 @@ func TestBrowserClickAndWaitArguments(t *testing.T) {
 	}
 }
 
-func TestBrowserNativeAdapterForwardsArgumentsWithoutParsingThem(t *testing.T) {
-	setBrowserIdentity(t)
-	cfg := setConfigEnv(t)
-	capture := &browserRequestCapture{}
-	srv := browserCLIServer(t, capture)
-	writeRunFileFor(t, cfg, srv)
-
-	out, errOut, err := executeCLI(
-		t,
-		Deps{ProcessAlive: func(int) bool { return true }},
-		"browser",
-		"agent-browser",
-		"snapshot",
-		"-i",
-		"--json",
-	)
-	if err != nil {
-		t.Fatalf("native adapter err=%v stderr=%s", err, errOut)
-	}
-	arguments, _ := capture.body.Args["arguments"].([]any)
-	if capture.body.Action != "agent-browser-run" ||
-		len(arguments) != 3 ||
-		arguments[0] != "snapshot" ||
-		arguments[1] != "-i" ||
-		arguments[2] != "--json" {
-		t.Fatalf("native command = %#v", capture.body)
-	}
-	if !strings.Contains(out, `button "Save" [ref=e1]`) {
-		t.Fatalf("native output = %q", out)
-	}
-}
-
 func TestBrowserExpandedWaitArguments(t *testing.T) {
 	setBrowserIdentity(t)
 	cfg := setConfigEnv(t)
@@ -190,6 +156,10 @@ func TestBrowserCoreInteractionArguments(t *testing.T) {
 		want   map[string]any
 	}{
 		{name: "type", args: []string{"type", "e1", "hello"}, action: "type", want: map[string]any{"ref": "e1", "text": "hello"}},
+		{name: "double click", args: []string{"dblclick", "e1"}, action: "dblclick", want: map[string]any{"ref": "e1"}},
+		{name: "focus", args: []string{"focus", "e1"}, action: "focus", want: map[string]any{"ref": "e1"}},
+		{name: "scroll into view", args: []string{"scrollintoview", "e1"}, action: "scrollintoview", want: map[string]any{"ref": "e1"}},
+		{name: "drag", args: []string{"drag", "e1", "e2"}, action: "drag", want: map[string]any{"ref": "e1", "targetRef": "e2"}},
 		{name: "press", args: []string{"press", "Control+A"}, action: "press", want: map[string]any{"key": "Control+A"}},
 		{name: "hover", args: []string{"hover", "e2"}, action: "hover", want: map[string]any{"ref": "e2"}},
 		{name: "highlight", args: []string{"highlight", "e2"}, action: "highlight", want: map[string]any{"ref": "e2"}},
@@ -203,6 +173,8 @@ func TestBrowserCoreInteractionArguments(t *testing.T) {
 		{name: "check", args: []string{"check", "e4"}, action: "check", want: map[string]any{"ref": "e4"}},
 		{name: "uncheck", args: []string{"uncheck", "e4"}, action: "uncheck", want: map[string]any{"ref": "e4"}},
 		{name: "get", args: []string{"get", "value", "e5"}, action: "get", want: map[string]any{"property": "value", "ref": "e5"}},
+		{name: "frame", args: []string{"frame", "e6"}, action: "frame", want: map[string]any{"target": "e6"}},
+		{name: "dialog", args: []string{"dialog", "accept", "yes"}, action: "dialog", want: map[string]any{"operation": "accept", "text": "yes"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

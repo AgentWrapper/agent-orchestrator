@@ -1,11 +1,13 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { access } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { AgentBrowserCDPBridge, type AgentBrowserTargetProvider } from "./agent-browser-cdp-bridge";
 
 const MAX_ARGUMENTS = 100;
 const MAX_ARGUMENT_CHARS = 16_384;
 const MAX_OUTPUT_BYTES = 1 << 20;
+const MAX_SCREENSHOT_BYTES = 5 << 20;
 const COMMAND_TIMEOUT_MS = 60_000;
 
 const ALLOWED_COMMANDS = new Set([
@@ -27,6 +29,7 @@ const ALLOWED_COMMANDS = new Set([
 	"scroll",
 	"scrollintoview",
 	"drag",
+	"screenshot",
 	"wait",
 	"get",
 	"is",
@@ -69,16 +72,20 @@ export type AgentBrowserRunResult = {
 type NativeProcessResult = Pick<AgentBrowserRunResult, "stdout" | "stderr" | "exitCode">;
 
 export type AgentBrowserRuntimeOptions = {
-	enabled: boolean;
 	binaryPath: string;
+	dataDir: string;
 	log?: (message: string) => void;
 };
+
+export type AgentBrowserJSONResult = Record<string, unknown>;
 
 type SessionRuntime = {
 	bridge: AgentBrowserCDPBridge;
 	endpoint: string;
 	streamDisabled: boolean;
 	namespace: string;
+	runtimeDir: string;
+	configPath: string;
 };
 
 export class AgentBrowserRuntime {
@@ -95,16 +102,10 @@ export class AgentBrowserRuntime {
 		provider: AgentBrowserTargetProvider,
 		signal?: AbortSignal,
 	): Promise<AgentBrowserRunResult> {
-		if (!this.options.enabled) {
-			throw runtimeError(
-				"AGENT_BROWSER_DISABLED",
-				"Native agent-browser is disabled. Set AO_AGENT_BROWSER_ENABLED=1 to enable the integration proof.",
-			);
-		}
 		await this.assertBinary();
 		validateAgentBrowserArguments(args);
 		const runtime = await this.ensureSession(sessionId, provider);
-		const environment = this.environment(runtime.endpoint, runtime.namespace);
+		const environment = this.environment(runtime);
 		if (!runtime.streamDisabled) {
 			const disabled = await runNativeProcess(
 				this.options.binaryPath,
@@ -130,24 +131,56 @@ export class AgentBrowserRuntime {
 		return { ...result, command: args[0], untrustedExternalContent: true };
 	}
 
+	async runAction(
+		sessionId: string,
+		action: string,
+		args: Record<string, unknown>,
+		provider: AgentBrowserTargetProvider,
+		signal?: AbortSignal,
+	): Promise<AgentBrowserJSONResult> {
+		const nativeArgs = nativeArgumentsForAction(action, args);
+		const result = await this.run(sessionId, [...nativeArgs, "--json"], provider, signal);
+		return parseAgentBrowserJSON(result.stdout);
+	}
+
+	async screenshot(
+		sessionId: string,
+		provider: AgentBrowserTargetProvider,
+		signal?: AbortSignal,
+	): Promise<{ data: string; width: number; height: number; untrustedExternalContent: true }> {
+		const runtime = await this.ensureSession(sessionId, provider);
+		const directory = await mkdtemp(path.join(runtime.runtimeDir, "screenshot-"));
+		const target = path.join(directory, "screenshot.png");
+		try {
+			await this.run(sessionId, ["screenshot", target, "--json"], provider, signal);
+			const image = await readFile(target);
+			if (image.length > MAX_SCREENSHOT_BYTES) {
+				throw runtimeError("AGENT_BROWSER_OUTPUT_TOO_LARGE", "Browser screenshot exceeded AO's size limit");
+			}
+			const { width, height } = pngDimensions(image);
+			return { data: image.toString("base64"), width, height, untrustedExternalContent: true };
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	}
+
 	async closeSession(sessionId: string): Promise<void> {
 		const runtime = this.sessions.get(sessionId);
 		if (!runtime) return;
 		this.sessions.delete(sessionId);
 		try {
-			if (this.options.enabled) {
-				await runNativeProcess(
-					this.options.binaryPath,
-					["close"],
-					this.environment(runtime.endpoint, runtime.namespace),
-					undefined,
-					10_000,
-				);
-			}
+			await runNativeProcess(
+				this.options.binaryPath,
+				["close"],
+				this.environment(runtime),
+				undefined,
+				10_000,
+			);
 		} catch (error) {
 			this.log(`agent-browser close failed for ${sessionId}: ${String(error)}`);
 		} finally {
 			await runtime.bridge.close();
+			await rm(runtime.runtimeDir, { recursive: true, force: true });
 		}
 	}
 
@@ -163,36 +196,41 @@ export class AgentBrowserRuntime {
 		if (existing) return existing;
 		const bridge = new AgentBrowserCDPBridge(provider);
 		const endpoint = await bridge.start();
+		const namespace = `${sessionNamespace(sessionId)}-${randomBytes(6).toString("hex")}`;
+		const runtimeDir = path.join(this.options.dataDir, namespace);
+		const configPath = path.join(runtimeDir, "config.json");
+		await mkdir(runtimeDir, { recursive: true });
+		await writeFile(configPath, "{}\n", "utf8");
 		const runtime = {
 			bridge,
 			endpoint,
 			streamDisabled: false,
-			namespace: `${sessionNamespace(sessionId)}-${randomBytes(6).toString("hex")}`,
+			namespace,
+			runtimeDir,
+			configPath,
 		};
 		this.sessions.set(sessionId, runtime);
 		return runtime;
 	}
 
-	private environment(endpoint: string, namespace: string): NodeJS.ProcessEnv {
-		const environment: NodeJS.ProcessEnv = {
-			...process.env,
-			AGENT_BROWSER_CDP: endpoint,
-			AGENT_BROWSER_SESSION: namespace,
-			AGENT_BROWSER_NAMESPACE: namespace,
+	private environment(runtime: SessionRuntime): NodeJS.ProcessEnv {
+		const environment: NodeJS.ProcessEnv = { ...process.env };
+		for (const name of Object.keys(environment)) {
+			if (name.startsWith("AGENT_BROWSER_")) delete environment[name];
+		}
+		for (const name of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"]) delete environment[name];
+		Object.assign(environment, {
+			HOME: runtime.runtimeDir,
+			USERPROFILE: runtime.runtimeDir,
+			AGENT_BROWSER_CONFIG: runtime.configPath,
+			AGENT_BROWSER_CDP: runtime.endpoint,
+			AGENT_BROWSER_SESSION: runtime.namespace,
+			AGENT_BROWSER_NAMESPACE: runtime.namespace,
 			AGENT_BROWSER_CONTENT_BOUNDARIES: "1",
 			AGENT_BROWSER_MAX_OUTPUT: "50000",
 			AGENT_BROWSER_IDLE_TIMEOUT_MS: "300000",
 			AGENT_BROWSER_AUTO_CONNECT: "0",
-		};
-		for (const name of [
-			"AGENT_BROWSER_RESTORE",
-			"AGENT_BROWSER_PROFILE",
-			"AGENT_BROWSER_STATE",
-			"AGENT_BROWSER_EXECUTABLE_PATH",
-			"AGENT_BROWSER_ALLOWED_DOMAINS",
-		]) {
-			delete environment[name];
-		}
+		});
 		return environment;
 	}
 
@@ -202,10 +240,173 @@ export class AgentBrowserRuntime {
 		} catch {
 			throw runtimeError(
 				"AGENT_BROWSER_NOT_INSTALLED",
-				`Native agent-browser binary was not found at ${this.options.binaryPath}. Run npm run agent-browser:prepare.`,
+				`AO's browser automation component was not found at ${this.options.binaryPath}. Reinstall or rebuild the desktop app.`,
 			);
 		}
 	}
+}
+
+export function nativeArgumentsForAction(action: string, args: Record<string, unknown>): string[] {
+	const ref = () => nativeRef(stringValue(args.ref, "ref is required"));
+	switch (action) {
+		case "open":
+			return ["open", httpURL(stringValue(args.url, "url is required"))];
+		case "snapshot":
+			return ["snapshot", ...(args.interactive === true ? ["--interactive"] : []), "--compact"];
+		case "click":
+		case "dblclick":
+		case "focus":
+		case "hover":
+		case "highlight":
+		case "scrollintoview":
+		case "check":
+		case "uncheck":
+			return [action, ref()];
+		case "fill":
+		case "type":
+			return [action, ref(), stringValue(args.text, "text is required", true)];
+		case "press":
+			return ["press", stringValue(args.key, "key is required")];
+		case "drag":
+			return ["drag", ref(), nativeRef(stringValue(args.targetRef, "target ref is required"))];
+		case "select":
+			return ["select", ref(), stringValue(args.value, "value is required", true)];
+		case "tabs":
+			return ["tab", "list"];
+		case "tab-new": {
+			const url = optionalStringValue(args.url);
+			return ["tab", "new", ...(url ? [httpURL(url)] : [])];
+		}
+		case "tab-select":
+			return ["tab", stringValue(args.tabId, "tabId is required")];
+		case "tab-close": {
+			const tabId = optionalStringValue(args.tabId);
+			return ["tab", "close", ...(tabId ? [tabId] : [])];
+		}
+		case "scroll": {
+			const direction = stringValue(args.direction, "direction is required").toLowerCase();
+			if (!["up", "down", "left", "right"].includes(direction)) {
+				throw runtimeError("INVALID_ARGUMENT", "direction must be up, down, left, or right");
+			}
+			const amount = numberValue(args.amount, 600, 1, 5_000);
+			return ["scroll", direction, String(amount)];
+		}
+		case "get": {
+			const property = stringValue(args.property, "property is required").toLowerCase();
+			if (!["url", "title", "text", "value", "checked"].includes(property)) {
+				throw runtimeError("INVALID_ARGUMENT", `Unsupported browser property: ${property}`);
+			}
+			const target = optionalStringValue(args.ref);
+			if (["url", "title"].includes(property) && target) {
+				throw runtimeError("INVALID_ARGUMENT", `${property} does not accept an element ref`);
+			}
+			if (["value", "checked"].includes(property) && !target) {
+				throw runtimeError("REFERENCE_REQUIRED", `${property} requires an element ref`);
+			}
+			return ["get", property, ...(target ? [nativeRef(target)] : [])];
+		}
+		case "wait":
+			return nativeWaitArguments(args);
+		case "frame": {
+			const target = stringValue(args.target, "frame target is required");
+			return ["frame", target === "main" ? target : nativeRef(target)];
+		}
+		case "dialog": {
+			const operation = stringValue(args.operation, "dialog operation is required").toLowerCase();
+			if (!["accept", "dismiss", "status"].includes(operation)) {
+				throw runtimeError("INVALID_ARGUMENT", "dialog operation must be accept, dismiss, or status");
+			}
+			const text = optionalStringValue(args.text);
+			return ["dialog", operation, ...(text ? [text] : [])];
+		}
+		case "console":
+		case "errors":
+			return [action];
+		default:
+			throw runtimeError("INVALID_ARGUMENT", `Unsupported native browser action: ${action}`);
+	}
+}
+
+function nativeWaitArguments(args: Record<string, unknown>): string[] {
+	const timeout = String(numberValue(args.timeoutMs, 10_000, 1, 55_000));
+	if (typeof args.text === "string" && args.text) return ["wait", "--text", args.text, "--timeout", timeout];
+	if (typeof args.textGone === "string" && args.textGone) {
+		return ["wait", `text=${args.textGone}`, "--state", "hidden", "--timeout", timeout];
+	}
+	if (typeof args.selector === "string" && args.selector) {
+		return ["wait", args.selector, "--timeout", timeout];
+	}
+	if (typeof args.selectorGone === "string" && args.selectorGone) {
+		return ["wait", args.selectorGone, "--state", "detached", "--timeout", timeout];
+	}
+	if (typeof args.url === "string" && args.url) return ["wait", "--url", `**${args.url}**`, "--timeout", timeout];
+	if (args.load === true) return ["wait", "--load", "load", "--timeout", timeout];
+	if (typeof args.stableMs === "number" && args.stableMs > 0) {
+		const stableMs = numberValue(args.stableMs, 500, 1, 60_000);
+		const expression = `(() => { const key = "__aoDomStability"; const now = performance.now(); let state = globalThis[key]; if (!state) { state = { lastMutation: now }; state.observer = new MutationObserver(() => { state.lastMutation = performance.now(); }); state.observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true }); globalThis[key] = state; } if (performance.now() - state.lastMutation < ${stableMs}) return false; state.observer.disconnect(); delete globalThis[key]; return true; })()`;
+		return ["wait", "--fn", expression, "--timeout", timeout];
+	}
+	if (typeof args.ms === "number" && args.ms > 0) return ["wait", String(args.ms)];
+	throw runtimeError("INVALID_ARGUMENT", "A wait condition is required");
+}
+
+function parseAgentBrowserJSON(stdout: string): AgentBrowserJSONResult {
+	let envelope: unknown;
+	try {
+		envelope = JSON.parse(stdout);
+	} catch {
+		throw runtimeError("AGENT_BROWSER_INVALID_OUTPUT", "Browser automation returned invalid structured output");
+	}
+	if (!isRecord(envelope)) throw runtimeError("AGENT_BROWSER_INVALID_OUTPUT", "Browser automation returned invalid output");
+	if (envelope.success === false) {
+		throw runtimeError("AGENT_BROWSER_COMMAND_FAILED", stringError(envelope.error) || "Browser automation failed");
+	}
+	const data = envelope.data;
+	if (isRecord(data)) return { ...data, untrustedExternalContent: true };
+	return { value: data, untrustedExternalContent: true };
+}
+
+function nativeRef(value: string): string {
+	return /^@?e\d+$/i.test(value) ? `@${value.replace(/^@/, "")}` : value;
+}
+
+function stringValue(value: unknown, message: string, allowEmpty = false): string {
+	if (typeof value !== "string" || (!allowEmpty && !value.trim())) throw runtimeError("INVALID_ARGUMENT", message);
+	return allowEmpty ? value : value.trim();
+}
+
+function optionalStringValue(value: unknown): string | undefined {
+	return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function numberValue(value: unknown, fallback: number, minimum: number, maximum: number): number {
+	if (value === undefined) return fallback;
+	if (typeof value !== "number" || !Number.isFinite(value) || value < minimum || value > maximum) {
+		throw runtimeError("INVALID_ARGUMENT", `Numeric argument must be between ${minimum} and ${maximum}`);
+	}
+	return Math.round(value);
+}
+
+function httpURL(value: string): string {
+	assertHTTPURL(value);
+	return value;
+}
+
+function pngDimensions(image: Buffer): { width: number; height: number } {
+	if (image.length < 24 || image.toString("ascii", 1, 4) !== "PNG") {
+		throw runtimeError("AGENT_BROWSER_INVALID_OUTPUT", "Browser automation returned an invalid PNG screenshot");
+	}
+	return { width: image.readUInt32BE(16), height: image.readUInt32BE(20) };
+}
+
+function stringError(value: unknown): string {
+	if (typeof value === "string") return value;
+	if (isRecord(value) && typeof value.message === "string") return value.message;
+	return "";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 export function validateAgentBrowserArguments(args: string[]): void {

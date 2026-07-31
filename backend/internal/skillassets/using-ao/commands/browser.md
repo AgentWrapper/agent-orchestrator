@@ -19,35 +19,16 @@ If the task first requires choosing, starting, or opening a preview target,
 read [preview.md](preview.md) and follow its static-file/project-runtime
 decision.
 
-When AO's native adapter is enabled, prefer its semantic workflow. It is
-feature-gated during rollout and controls the same worker-owned AO Preview:
+Use the ordinary AO commands below. AO binds its browser engine to the current
+worker's visible Browser panel automatically; there is no separate native
+command, connection flag, profile, or setup step:
 
 ```bash
-ao browser agent-browser open http://localhost:5173
-ao browser agent-browser snapshot -i
-ao browser agent-browser fill @e2 "hello"
-ao browser agent-browser click @e3
-ao browser agent-browser wait --text "Saved"
-ao browser agent-browser errors
-```
-
-AO supplies the session and CDP connection internally. Never add `--cdp`,
-`--auto-connect`, `--session`, `--profile`, or browser launch flags. If the
-native adapter reports `AGENT_BROWSER_DISABLED` or
-`AGENT_BROWSER_NOT_INSTALLED`, use the compatible AO commands below.
-
-Fallback workflow:
-
-```bash
-ao browser status
 ao browser open http://localhost:5173
-ao browser snapshot
-ao browser click e1
+ao browser snapshot --interactive
 ao browser fill e2 "hello"
-ao browser press Enter
-ao browser hover e3
+ao browser click e3
 ao browser wait --text "Saved"
-ao browser snapshot
 ao browser errors
 ```
 
@@ -60,10 +41,14 @@ ao browser status [--json]
 ao browser open <url> [--json]
 ao browser snapshot [--interactive] [--json]
 ao browser click <ref> [--json]
+ao browser dblclick <ref> [--json]
+ao browser focus <ref> [--json]
 ao browser fill <ref> <text> [--json]
 ao browser type <ref> <text> [--json]
 ao browser press <key> [--json]
 ao browser hover <ref> [--json]
+ao browser scrollintoview <ref> [--json]
+ao browser drag <source-ref> <target-ref> [--json]
 ao browser highlight <ref> [--json]
 ao browser unhighlight [--json]
 ao browser tabs [--json]
@@ -84,6 +69,10 @@ ao browser network stop [--json]
 ao browser network clear [--json]
 ao browser console [--json]
 ao browser errors [--json]
+ao browser frame <ref|main> [--json]
+ao browser dialog accept [text] [--json]
+ao browser dialog dismiss [--json]
+ao browser dialog status [--json]
 ```
 
 `fill` replaces the current value, while `type` inserts text at the current

@@ -245,7 +245,7 @@ function buildWindowsAppMenu(): Menu {
 }
 
 function createWindow(): void {
-	browserViewHost?.dispose();
+	void browserViewHost?.dispose();
 	browserViewHost = null;
 	mainWindow = new BrowserWindow({
 		width: 1320,
@@ -331,8 +331,8 @@ function createWindow(): void {
 		getKeybindingOverrides: () => keybindingOverrides,
 		isKeybindingRecording: () => keybindingRecordingActive,
 		agentBrowserRuntime: new AgentBrowserRuntime({
-			enabled: process.env.AO_AGENT_BROWSER_ENABLED === "1",
 			binaryPath: resolveAgentBrowserBinaryPath(),
+			dataDir: path.join(app.getPath("userData"), "browser-runtime"),
 			log: (message) => console.log(`AO: ${message}`),
 		}),
 	});
@@ -366,7 +366,7 @@ function createWindow(): void {
 		browserRuntimeLink?.dispose();
 		browserRuntimeLink = null;
 		keybindingRecordingActive = false;
-		browserViewHost?.dispose();
+		void browserViewHost?.dispose();
 		browserViewHost = null;
 		mainWindow = null;
 	});
@@ -1540,10 +1540,20 @@ app.whenReady().then(async () => {
 // self-stops ~5s after the last client (this process) drops its connection.
 // The supervisorLink fd is NOT explicitly closed on quit; the OS closes it when
 // the process exits for any reason (Cmd+Q, crash, SIGKILL). Sessions survive.
-app.on("before-quit", () => {
+let browserCleanupComplete = false;
+app.on("before-quit", (event) => {
 	browserRuntimeLink?.dispose();
 	browserRuntimeLink = null;
-	browserViewHost?.dispose();
+	if (!browserCleanupComplete && browserViewHost) {
+		event.preventDefault();
+		const host = browserViewHost;
+		browserViewHost = null;
+		void host.dispose().finally(() => {
+			browserCleanupComplete = true;
+			app.quit();
+		});
+		return;
+	}
 	browserViewHost = null;
 });
 

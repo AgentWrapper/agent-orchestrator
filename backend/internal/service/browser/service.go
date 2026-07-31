@@ -12,15 +12,13 @@ import (
 )
 
 var actions = map[string]struct{}{
-	"open": {}, "snapshot": {}, "click": {}, "fill": {}, "type": {}, "press": {},
-	"hover": {}, "highlight": {}, "unhighlight": {}, "tabs": {}, "tab-new": {},
+	"open": {}, "snapshot": {}, "click": {}, "dblclick": {}, "focus": {}, "fill": {}, "type": {}, "press": {},
+	"hover": {}, "highlight": {}, "unhighlight": {}, "scrollintoview": {}, "drag": {}, "tabs": {}, "tab-new": {},
 	"tab-select": {}, "tab-close": {}, "scroll": {}, "select": {}, "check": {},
 	"uncheck": {}, "get": {}, "wait": {}, "screenshot": {}, "network-start": {},
 	"network-status": {}, "network-list": {}, "network-stop": {}, "network-clear": {},
-	"console": {}, "errors": {}, "agent-browser-run": {},
+	"console": {}, "errors": {}, "frame": {}, "dialog": {},
 }
-
-const maxAgentBrowserArgumentsBytes = 64 << 10
 
 type sessionReader interface {
 	Get(ctx context.Context, id domain.SessionID) (domain.Session, error)
@@ -71,34 +69,8 @@ func (s *Service) Execute(
 			nil,
 		)
 	}
-	if action == "agent-browser-run" && !validAgentBrowserArguments(args) {
-		return browserruntime.Result{}, action, apierr.Invalid(
-			"INVALID_ARGUMENT",
-			"agent-browser arguments must be a bounded string array",
-			nil,
-		)
-	}
 	result, err := s.runtime.Execute(ctx, sessionID, action, args)
 	return result, action, err
-}
-
-func validAgentBrowserArguments(args map[string]interface{}) bool {
-	raw, ok := args["arguments"].([]interface{})
-	if !ok || len(raw) == 0 || len(raw) > 100 {
-		return false
-	}
-	total := 0
-	for _, value := range raw {
-		arg, ok := value.(string)
-		if !ok {
-			return false
-		}
-		total += len(arg)
-		if len(arg) > 16<<10 || total > maxAgentBrowserArgumentsBytes {
-			return false
-		}
-	}
-	return true
 }
 
 func (s *Service) authorize(ctx context.Context, sessionID domain.SessionID, capability string) error {

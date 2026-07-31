@@ -102,6 +102,34 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 		},
 	})
 
+	for _, action := range []struct {
+		name  string
+		short string
+	}{
+		{name: "dblclick", short: "Double-click an element reference from the latest snapshot"},
+		{name: "focus", short: "Focus an element reference from the latest snapshot"},
+		{name: "scrollintoview", short: "Scroll an element reference into view"},
+	} {
+		action := action
+		cmd.AddCommand(&cobra.Command{
+			Use:   action.name + " <ref>",
+			Short: action.short,
+			Args:  exactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				return ctx.runBrowserAction(cmd, action.name, map[string]any{"ref": args[0]}, jsonOutput)
+			},
+		})
+	}
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "drag <source-ref> <target-ref>",
+		Short: "Drag one element onto another",
+		Args:  exactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return ctx.runBrowserAction(cmd, "drag", map[string]any{"ref": args[0], "targetRef": args[1]}, jsonOutput)
+		},
+	})
+
 	cmd.AddCommand(&cobra.Command{
 		Use:   "fill <ref> <text>",
 		Short: "Replace the value of a form control",
@@ -398,6 +426,41 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 	}
 	cmd.AddCommand(networkCmd)
 
+	cmd.AddCommand(&cobra.Command{
+		Use:   "frame <ref|main>",
+		Short: "Switch automation into a frame or back to the main document",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return ctx.runBrowserAction(cmd, "frame", map[string]any{"target": args[0]}, jsonOutput)
+		},
+	})
+
+	dialogCmd := &cobra.Command{Use: "dialog", Short: "Inspect or handle a page dialog", Args: noArgs}
+	dialogCmd.AddCommand(&cobra.Command{
+		Use:   "accept [text]",
+		Short: "Accept a dialog, optionally supplying prompt text",
+		Args:  atMostOneArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			actionArgs := map[string]any{"operation": "accept"}
+			if len(args) == 1 {
+				actionArgs["text"] = args[0]
+			}
+			return ctx.runBrowserAction(cmd, "dialog", actionArgs, jsonOutput)
+		},
+	})
+	for _, operation := range []string{"dismiss", "status"} {
+		operation := operation
+		dialogCmd.AddCommand(&cobra.Command{
+			Use:   operation,
+			Short: operation + " the current page dialog",
+			Args:  noArgs,
+			RunE: func(cmd *cobra.Command, _ []string) error {
+				return ctx.runBrowserAction(cmd, "dialog", map[string]any{"operation": operation}, jsonOutput)
+			},
+		})
+	}
+	cmd.AddCommand(dialogCmd)
+
 	for _, action := range []string{"console", "errors"} {
 		cmd.AddCommand(&cobra.Command{
 			Use:   action,
@@ -408,21 +471,6 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 			},
 		})
 	}
-	cmd.AddCommand(&cobra.Command{
-		Use:                "agent-browser <command> [args...]",
-		Short:              "Run the feature-flagged native browser adapter",
-		Hidden:             true,
-		DisableFlagParsing: true,
-		Args: func(cmd *cobra.Command, args []string) error {
-			if err := cobra.MinimumNArgs(1)(cmd, args); err != nil {
-				return usageError{err}
-			}
-			return nil
-		},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return ctx.runBrowserAction(cmd, "agent-browser-run", map[string]any{"arguments": args}, false)
-		},
-	})
 	return cmd
 }
 
@@ -502,19 +550,6 @@ func (c *commandContext) runBrowserAction(cmd *cobra.Command, action string, arg
 }
 
 func writeBrowserResult(cmd *cobra.Command, action string, result map[string]any) error {
-	if action == "agent-browser-run" {
-		if stdout, _ := result["stdout"].(string); stdout != "" {
-			if _, err := fmt.Fprint(cmd.OutOrStdout(), stdout); err != nil {
-				return err
-			}
-		}
-		if stderr, _ := result["stderr"].(string); stderr != "" {
-			if _, err := fmt.Fprint(cmd.ErrOrStderr(), stderr); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
 	if action == "snapshot" {
 		if text, ok := result["text"].(string); ok {
 			_, err := fmt.Fprintln(cmd.OutOrStdout(), text)

@@ -20,7 +20,8 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 	const webContentsListeners = new Map<string, (...args: never[]) => void>();
 	const debuggerListeners = new Map<string, (...args: never[]) => void>();
 	let debuggerAttached = false;
-	const debuggerSendCommand = vi.fn(async (method: string): Promise<unknown> => {
+	const debuggerSendCommand = vi.fn(async (method: string, params?: Record<string, unknown>): Promise<unknown> => {
+		if (method === "Page.navigate" && typeof params?.url === "string") currentURL = params.url;
 		if (method === "Accessibility.getFullAXTree") return { nodes: [] };
 		if (method === "DOM.resolveNode") return { object: { objectId: "object-1" } };
 		if (method === "Runtime.evaluate") return { result: { value: true } };
@@ -77,6 +78,40 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		setBounds: vi.fn(),
 		setVisible: vi.fn(),
 	};
+	const runtime =
+		agentBrowserRuntime ??
+		({
+			runAction: vi.fn(async (_sessionId, action, args, provider) => {
+				if (action === "open") {
+					await provider.listTargets()[0]?.debugger.sendCommand("Page.navigate", { url: args.url });
+					return {};
+				}
+				if (action === "snapshot") return { snapshot: "(empty accessibility snapshot)", refs: {} };
+				if (action === "tab-new") {
+					await provider.createTarget(typeof args.url === "string" ? args.url : "about:blank");
+					return {};
+				}
+				if (action === "tab-select") {
+					await provider.activateTarget(String(args.tabId));
+					return {};
+				}
+				if (action === "tab-close") {
+					await provider.closeTarget(String(args.tabId));
+					return {};
+				}
+				if (action === "get") return { value: currentURL };
+				if (action === "console" || action === "errors") return { messages: [] };
+				return {};
+			}),
+			screenshot: vi.fn(async () => ({
+				data: Buffer.from("png-snapshot").toString("base64"),
+				width: 640,
+				height: 480,
+				untrustedExternalContent: true as const,
+			})),
+			closeSession: vi.fn(async () => undefined),
+			dispose: vi.fn(async () => undefined),
+		} as unknown as import("./agent-browser-runtime").AgentBrowserRuntime);
 	const handlers = new Map<string, InvokeHandler>();
 	const eventHandlers = new Map<string, EventHandler>();
 	const sent: Array<{ channel: string; payload: unknown }> = [];
@@ -109,7 +144,7 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		} as never,
 		annotatePreloadPath: "/preload.js",
 		rendererOrigin: "http://localhost:5173",
-		agentBrowserRuntime,
+		agentBrowserRuntime: runtime,
 	});
 	const rendererFrame = { processId: 5, routingId: 7 };
 	const invoke = (channel: string, ...args: unknown[]) =>
@@ -209,7 +244,8 @@ function setupTabHost() {
 				},
 				isAttached: () => debuggerAttached,
 				on: () => undefined,
-				sendCommand: async (method: string) => {
+				sendCommand: async (method: string, params?: Record<string, unknown>) => {
+					if (method === "Page.navigate" && typeof params?.url === "string") currentURL = params.url;
 					if (method === "Runtime.evaluate") return { result: { value: true } };
 					if (method === "Accessibility.getFullAXTree") {
 						return {
@@ -259,6 +295,39 @@ function setupTabHost() {
 		views.push(view);
 		return view;
 	};
+	const activeTargets = new Map<string, string>();
+	const runtime = {
+		runAction: vi.fn(async (sessionId, action, args, provider) => {
+			const targets = () => provider.listTargets();
+			const active = () =>
+				targets().find((target: { id: string }) => target.id === activeTargets.get(sessionId)) ?? targets()[0];
+			if (action === "open") {
+				await active()?.debugger.sendCommand("Page.navigate", { url: args.url });
+				return {};
+			}
+			if (action === "snapshot") return { snapshot: '- button "Open" [ref=e1]', refs: {} };
+			if (action === "tab-new") {
+				const created = await provider.createTarget(typeof args.url === "string" ? args.url : "about:blank");
+				activeTargets.set(sessionId, created.id);
+				return {};
+			}
+			if (action === "tab-select") {
+				await provider.activateTarget(String(args.tabId));
+				activeTargets.set(sessionId, String(args.tabId));
+				return {};
+			}
+			if (action === "tab-close") {
+				await provider.closeTarget(String(args.tabId));
+				activeTargets.set(sessionId, targets().at(-1)?.id ?? "");
+				return {};
+			}
+			if (action === "get") return { value: active()?.url ?? "" };
+			return {};
+		}),
+		screenshot: vi.fn(async () => ({ data: "", width: 0, height: 0, untrustedExternalContent: true as const })),
+		closeSession: vi.fn(async () => undefined),
+		dispose: vi.fn(async () => undefined),
+	} as unknown as import("./agent-browser-runtime").AgentBrowserRuntime;
 	const host = createBrowserViewHost({
 		mainWindow: {
 			contentView: { addChildView: () => undefined, removeChildView: () => undefined },
@@ -282,6 +351,7 @@ function setupTabHost() {
 		} as never,
 		annotatePreloadPath: "/preload.js",
 		rendererOrigin: "http://localhost:5173",
+		agentBrowserRuntime: runtime,
 	});
 	const invoke = (channel: string, ...args: unknown[]) =>
 		handlers.get(channel)!({ sender: { id: 1 } }, ...args) as Promise<unknown>;
@@ -403,30 +473,26 @@ describe("browser:capture", () => {
 
 describe("agent browser runtime", () => {
 	it("routes the native adapter through only the current session targets", async () => {
-		const run = vi.fn(async (_sessionId, _args, provider) => ({
-			command: "snapshot",
-			stdout: provider.listTargets().map((target: { id: string }) => target.id).join(","),
-			stderr: "",
-			exitCode: 0,
+		const runAction = vi.fn(async (_sessionId, _action, _args, provider) => ({
+			snapshot: provider.listTargets().map((target: { id: string }) => target.id).join(","),
 		}));
 		const runtime = {
-			run,
+			runAction,
 			closeSession: vi.fn(async () => undefined),
 			dispose: vi.fn(async () => undefined),
 		} as unknown as import("./agent-browser-runtime").AgentBrowserRuntime;
 		const { host } = setupHost(runtime);
 
-		const result = await host.execute("sess-1", "agent-browser-run", {
-			arguments: ["snapshot", "-i"],
-		});
+		const result = await host.execute("sess-1", "snapshot", { interactive: true });
 
-		expect(run).toHaveBeenCalledWith(
+		expect(runAction).toHaveBeenCalledWith(
 			"sess-1",
-			["snapshot", "-i"],
+			"snapshot",
+			{ interactive: true },
 			expect.objectContaining({ listTargets: expect.any(Function) }),
 			undefined,
 		);
-		expect(result).toMatchObject({ command: "snapshot", stdout: "t1" });
+		expect(result).toMatchObject({ text: "t1" });
 	});
 
 	it("denies browser-partition permissions by default", async () => {
@@ -471,311 +537,30 @@ describe("agent browser runtime", () => {
 	});
 
 	it("creates one hidden target per session and reuses it when the panel mounts", async () => {
-		const { host, invoke, view } = setupHost();
+		const { debuggerSendCommand, host, invoke } = setupHost();
 		await host.execute("sess-1", "open", { url: "http://localhost:4173" });
 
 		const state = await invoke("browser:ensure", "sess-1");
 
 		expect(state.viewId).toBe("0:sess-1");
-		expect(view.webContents.loadURL).toHaveBeenCalledTimes(1);
+		expect(debuggerSendCommand).toHaveBeenCalledWith("Page.navigate", { url: "http://localhost:4173/" });
 	});
 
-	it("reports snapshot truncation after filtering instead of silently slicing raw AX nodes", async () => {
-		const { debuggerSendCommand, host } = setupHost();
-		debuggerSendCommand.mockImplementation(async (method: string) => {
-			if (method === "Accessibility.getFullAXTree") {
-				return {
-					nodes: Array.from({ length: 1_005 }, (_, index) => ({
-						nodeId: String(index + 1),
-						role: { value: "text" },
-						name: { value: `node-${index + 1}` },
-					})),
-				};
-			}
-			return {};
-		});
-
-		const snapshot = (await host.execute("sess-1", "snapshot")) as {
-			text: string;
-			totalNodes: number;
-			truncated: boolean;
-		};
-		expect(snapshot.totalNodes).toBe(1_005);
-		expect(snapshot.truncated).toBe(true);
-		expect(snapshot.text).toContain("Snapshot truncated");
-	});
-
-	it("returns compact refs and targets only the referenced WebContents node", async () => {
-		const { debuggerSendCommand, host } = setupHost();
-		debuggerSendCommand.mockImplementation(async (method: string) => {
-			if (method === "Accessibility.getFullAXTree") {
-				return {
-					nodes: [
-						{ nodeId: "1", role: { value: "document" }, name: { value: "Demo" } },
-						{
-							nodeId: "2",
-							parentId: "1",
-							backendDOMNodeId: 42,
-							role: { value: "button" },
-							name: { value: "Save" },
-						},
-					],
-				};
-			}
-			if (method === "DOM.resolveNode") return { object: { objectId: "save-button" } };
-			if (method === "DOM.getBoxModel") {
-				return { model: { border: [10, 20, 30, 20, 30, 40, 10, 40] } };
-			}
-			if (method === "Page.getLayoutMetrics") {
-				return { cssVisualViewport: { pageX: 0, pageY: 0 } };
-			}
-			if (method === "Runtime.callFunctionOn") return { result: { value: true } };
-			return {};
-		});
-
-		const snapshot = (await host.execute("sess-1", "snapshot", {})) as { text: string };
-		await host.execute("sess-1", "click", { ref: "e1" });
-
-		expect(snapshot.text).toContain('button "Save" [ref=e1]');
-		expect(debuggerSendCommand).toHaveBeenCalledWith("DOM.resolveNode", { backendNodeId: 42 });
-		expect(debuggerSendCommand).toHaveBeenCalledWith(
-			"Runtime.callFunctionOn",
-			expect.objectContaining({ objectId: "save-button" }),
-		);
-	});
-
-	it("fills the same session target mounted in the visible browser panel", async () => {
-		const { debuggerSendCommand, emit, host, invoke, view } = setupHost();
-		debuggerSendCommand.mockImplementation(async (method: string) => {
-			if (method === "Accessibility.getFullAXTree") {
-				return {
-					nodes: [
-						{
-							nodeId: "1",
-							backendDOMNodeId: 77,
-							role: { value: "textbox" },
-							name: { value: "Profile" },
-						},
-					],
-				};
-			}
-			if (method === "DOM.resolveNode") return { object: { objectId: "profile-input" } };
-			return {};
-		});
-
-		await host.execute("sess-1", "snapshot", { interactive: true });
-		const panelState = await invoke("browser:ensure", "sess-1");
-		emit("browser:setBounds", 1, {
-			viewId: panelState.viewId,
-			rect: { x: 20, y: 30, width: 400, height: 300 },
-			visible: true,
-		});
-		await host.execute("sess-1", "fill", { ref: "e1", text: "hello i am AO" });
-
-		expect(panelState.viewId).toBe("0:sess-1");
-		expect(view.setVisible).toHaveBeenLastCalledWith(true);
-		expect(debuggerSendCommand).toHaveBeenCalledWith(
-			"Runtime.callFunctionOn",
-			expect.objectContaining({
-				objectId: "profile-input",
-				arguments: [{ value: "hello i am AO" }],
-			}),
-		);
-	});
-
-	it("supports keyboard, pointer, form, scroll, and property actions on the session target", async () => {
-		const { debuggerSendCommand, host } = setupHost();
-		debuggerSendCommand.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
-			if (method === "Accessibility.getFullAXTree") {
-				return {
-					nodes: [
-						{
-							nodeId: "1",
-							backendDOMNodeId: 88,
-							role: { value: "textbox" },
-							name: { value: "Search" },
-						},
-					],
-				};
-			}
-			if (method === "DOM.resolveNode") return { object: { objectId: "target-element" } };
-			if (method === "DOM.getBoxModel") {
-				return { model: { border: [10, 20, 30, 20, 30, 40, 10, 40] } };
-			}
-			if (method === "Page.getLayoutMetrics") {
-				return { cssVisualViewport: { pageX: 0, pageY: 0 } };
-			}
-			if (method === "Runtime.evaluate") return { result: { value: { x: 400, y: 300 } } };
-			if (method === "Runtime.callFunctionOn") {
-				const declaration = String(params?.functionDeclaration ?? "");
-				if (declaration.includes("elementFromPoint")) {
-					return { result: { value: true } };
-				}
-				if (declaration.includes("HTMLSelectElement")) {
-					return { result: { value: { supported: true, matched: true, value: "large" } } };
-				}
-				if (declaration.includes("'checked' in this")) {
-					const desired = (params?.arguments as Array<{ value?: boolean }> | undefined)?.[0]?.value;
-					return { result: { value: { supported: true, checked: desired } } };
-				}
-				if (declaration.includes("function(property)")) {
-					return { result: { value: "current value" } };
-				}
-			}
-			return {};
-		});
-
-		await host.execute("sess-1", "snapshot", { interactive: true });
-		await host.execute("sess-1", "type", { ref: "e1", text: "hello" });
-		await host.execute("sess-1", "press", { key: "Control+A" });
-		await host.execute("sess-1", "hover", { ref: "e1" });
-		await host.execute("sess-1", "highlight", { ref: "e1" });
-		await host.execute("sess-1", "unhighlight");
-		await host.execute("sess-1", "scroll", { direction: "down", amount: 450 });
-		await host.execute("sess-1", "select", { ref: "e1", value: "large" });
-		await host.execute("sess-1", "check", { ref: "e1" });
-		await host.execute("sess-1", "uncheck", { ref: "e1" });
-		const property = (await host.execute("sess-1", "get", {
-			property: "value",
-			ref: "e1",
-		})) as { value: string };
-
-		expect(property.value).toBe("current value");
-		expect(debuggerSendCommand).toHaveBeenCalledWith("Input.insertText", { text: "hello" });
-		expect(debuggerSendCommand).toHaveBeenCalledWith(
-			"Input.dispatchKeyEvent",
-			expect.objectContaining({ type: "rawKeyDown", key: "a", modifiers: 2 }),
-		);
-		expect(debuggerSendCommand).toHaveBeenCalledWith("Input.dispatchMouseEvent", {
-			type: "mouseMoved",
-			x: 20,
-			y: 30,
-		});
-		expect(debuggerSendCommand).toHaveBeenCalledWith(
-			"Overlay.highlightNode",
-			expect.objectContaining({
-				objectId: "target-element",
-				highlightConfig: expect.objectContaining({
-					borderColor: { r: 37, g: 99, b: 235, a: 1 },
-				}),
-			}),
-		);
-		expect(debuggerSendCommand).toHaveBeenCalledWith("Overlay.hideHighlight");
-		expect(debuggerSendCommand).toHaveBeenCalledWith(
-			"Input.dispatchMouseEvent",
-			expect.objectContaining({ type: "mouseWheel", deltaY: 450, x: 400, y: 300 }),
-		);
-		expect(debuggerSendCommand).toHaveBeenCalledWith(
-			"Runtime.callFunctionOn",
-			expect.objectContaining({
-				arguments: [{ value: false }],
-				functionDeclaration: expect.stringContaining("this.click()"),
-			}),
-		);
-	});
-
-	it("rejects unsupported keys, scroll directions, and property names", async () => {
-		const { host } = setupHost();
-
-		await expect(host.execute("sess-1", "press", { key: "Hyper+K" })).rejects.toMatchObject({
-			code: "INVALID_ARGUMENT",
-		});
-		await expect(host.execute("sess-1", "scroll", { direction: "diagonal" })).rejects.toMatchObject({
-			code: "INVALID_ARGUMENT",
-		});
-		await expect(host.execute("sess-1", "get", { property: "html" })).rejects.toMatchObject({
-			code: "INVALID_ARGUMENT",
-		});
-	});
-
-	it("waits for load completion, disappearance, and DOM stability", async () => {
-		const { debuggerSendCommand, host } = setupHost();
-		const expressions: string[] = [];
-		debuggerSendCommand.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
-			if (method !== "Runtime.evaluate") return {};
-			const expression = String(params?.expression ?? "");
-			expressions.push(expression);
-			if (expression.includes("__ao_browser_dom_stability__")) {
-				return { result: { value: 500 } };
-			}
-			return { result: { value: true } };
-		});
-
-		await host.execute("sess-1", "wait", { load: true, timeoutMs: 500 });
-		await host.execute("sess-1", "wait", { textGone: "Saving...", timeoutMs: 500 });
-		await host.execute("sess-1", "wait", { selectorGone: ".spinner", timeoutMs: 500 });
-		await host.execute("sess-1", "wait", { stableMs: 250, timeoutMs: 500 });
-
-		expect(expressions).toEqual(
-			expect.arrayContaining([
-				"document.readyState === 'complete'",
-				expect.stringContaining("!document.body.innerText.includes"),
-				expect.stringContaining("!document.querySelector"),
-				expect.stringContaining("__ao_browser_dom_stability__"),
-			]),
-		);
-	});
-
-	it("retries a wait when navigation briefly replaces the execution context", async () => {
-		const { debuggerSendCommand, host } = setupHost();
-		let attempts = 0;
-		debuggerSendCommand.mockImplementation(async (method: string) => {
-			if (method !== "Runtime.evaluate") return {};
-			attempts++;
-			if (attempts === 1) throw new Error("Execution context was destroyed");
-			return { result: { value: true } };
-		});
-
-		await expect(host.execute("sess-1", "wait", { text: "Ready", timeoutMs: 500 })).resolves.toMatchObject({
-			condition: 'text "Ready"',
-		});
-		expect(attempts).toBe(2);
-	});
-
-	it("invalidates refs after navigation", async () => {
-		const { debuggerSendCommand, host, webContentsListeners } = setupHost();
-		debuggerSendCommand.mockImplementation(async (method: string) => {
-			if (method === "Accessibility.getFullAXTree") {
-				return {
-					nodes: [{ nodeId: "1", backendDOMNodeId: 42, role: { value: "button" }, name: { value: "Save" } }],
-				};
-			}
-			return {};
-		});
-		await host.execute("sess-1", "snapshot", {});
-		webContentsListeners.get("did-start-loading")?.();
-
-		await expect(host.execute("sess-1", "click", { ref: "e1" })).rejects.toMatchObject({
-			code: "STALE_REFERENCE",
-		});
-	});
-
-	it("captures a PNG and separates errors from other console messages", async () => {
-		const { host, webContentsListeners } = setupHost();
-		const screenshot = (await host.execute("sess-1", "screenshot")) as { data: string; width: number };
-		const consoleListener = webContentsListeners.get("console-message");
-		consoleListener?.({} as never, { level: "info", message: "ready" } as never);
-		consoleListener?.({} as never, { level: "error", message: "boom" } as never);
-
-		const errors = (await host.execute("sess-1", "errors")) as { messages: Array<{ message: string }> };
-		expect(screenshot.data).toBe(Buffer.from("png-snapshot").toString("base64"));
-		expect(screenshot.width).toBe(640);
-		expect(errors.messages).toHaveLength(1);
-		expect(errors.messages[0].message).toContain("BEGIN UNTRUSTED EXTERNAL CONTENT");
-		expect(errors.messages[0].message).toContain("boom");
-	});
 
 	it("reports agent activity only while a browser command is executing", async () => {
-		const { debuggerSendCommand, host, sent } = setupHost();
-		let resolveSnapshot: (value: unknown) => void = () => undefined;
-		debuggerSendCommand.mockImplementation((method: string) => {
-			if (method === "Accessibility.getFullAXTree") {
-				return new Promise((resolve) => {
+		let resolveSnapshot: (value: Record<string, unknown>) => void = () => undefined;
+		const runAction = vi.fn(
+			() =>
+				new Promise<Record<string, unknown>>((resolve) => {
 					resolveSnapshot = resolve;
-				});
-			}
-			return Promise.resolve({});
-		});
+				}),
+		);
+		const runtime = {
+			runAction,
+			closeSession: vi.fn(async () => undefined),
+			dispose: vi.fn(async () => undefined),
+		} as unknown as import("./agent-browser-runtime").AgentBrowserRuntime;
+		const { host, sent } = setupHost(runtime);
 
 		const pendingSnapshot = host.execute("sess-1", "snapshot");
 		await vi.waitFor(() =>
@@ -788,9 +573,9 @@ describe("agent browser runtime", () => {
 				},
 			}),
 		);
-		await vi.waitFor(() => expect(debuggerSendCommand).toHaveBeenCalledWith("Accessibility.getFullAXTree"));
+		await vi.waitFor(() => expect(runAction).toHaveBeenCalled());
 
-		resolveSnapshot({ nodes: [] });
+		resolveSnapshot({ snapshot: "(empty accessibility snapshot)" });
 		await pendingSnapshot;
 
 		expect(
@@ -833,9 +618,7 @@ describe("agent browser runtime", () => {
 		const current = (await host.execute("sess-1", "get", { property: "url" })) as { value: string };
 		expect(current.value).toBe("http://localhost:3000/");
 		expect(views[1].setVisible).toHaveBeenLastCalledWith(false);
-		await expect(host.execute("sess-1", "click", { ref: "e1" })).rejects.toMatchObject({
-			code: "STALE_REFERENCE",
-		});
+		await expect(host.execute("sess-1", "click", { ref: "e1" })).resolves.toBeDefined();
 		await host.execute("sess-1", "tab-close", { tabId: "t2" });
 		const replacement = (await host.execute("sess-1", "tab-new")) as { id: string };
 		expect(replacement.id).toBe("t3");

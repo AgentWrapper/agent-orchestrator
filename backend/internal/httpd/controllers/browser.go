@@ -106,7 +106,7 @@ func writeBrowserError(w http.ResponseWriter, r *http.Request, err error) {
 		case "STALE_REFERENCE", "TAB_NOT_FOUND":
 			status = http.StatusConflict
 			typeName = "conflict"
-		case "BROWSER_TARGET_UNAVAILABLE", "AGENT_BROWSER_DISABLED", "AGENT_BROWSER_NOT_INSTALLED",
+		case "BROWSER_TARGET_UNAVAILABLE", "BROWSER_AUTOMATION_UNAVAILABLE", "AGENT_BROWSER_NOT_INSTALLED",
 			"AGENT_BROWSER_START_FAILED":
 			status = http.StatusServiceUnavailable
 			typeName = "unavailable"
