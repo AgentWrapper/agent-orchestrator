@@ -47,7 +47,7 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	if err != nil {
 		return ports.ReviewCommandSpec{}, err
 	}
-	flags := []string{"--print", "--output-format", "text", "--mode=ask"}
+	flags := []string{"--trust", "--print", "--output-format", "text", "--mode=ask"}
 	if strings.TrimSpace(inv.TaskPromptRoot) != "" {
 		flags = append(flags, "--add-dir", inv.TaskPromptRoot)
 	}

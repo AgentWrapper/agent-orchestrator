@@ -54,7 +54,7 @@ func TestReviewCommandBuildsHeadlessAskInvocation(t *testing.T) {
 	wantPrompt := "Read and follow the AO reviewer role in `/ao/prompts/reviewer/system.md`, then complete the AO review task in `/ao/prompts/reviewer/requests/batch-1/run-1/task.md`."
 	want := []string{
 		"cursor-agent", "--force",
-		"--print", "--output-format", "text", "--mode=ask",
+		"--trust", "--print", "--output-format", "text", "--mode=ask",
 		"--add-dir", "/ao/prompts/reviewer",
 		"--", wantPrompt,
 	}
