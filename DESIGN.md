@@ -49,12 +49,18 @@ resizable`, react-resizable-panels v4 `collapsible` panel + imperative API,
   full-height; traffic-light clearance uses `--size-traffic-light-clearance` for
   both the sidebar header pad and the window-drag strip.
 - **Approved divergence (2026-07-31):** the Browser panel and File diff viewer's
-  maximize/restore transitions use a FLIP transform (grow/shrink from the panel's
-  actual on-screen rect to fullscreen and back, ~320ms `--ease-emphasized`) instead
-  of the "never animate layout" default — a macOS-window-zoom feel, user-requested.
-  Scoped to just these two surfaces' maximize/restore plus per-file diff
-  expand/collapse (shorter, `--duration-normal ease-out`); everything else in the
-  app keeps the existing minimal-functional motion rules. See _Motion_ below.
+  maximize/restore transitions use GSAP Flip (grow/shrink from the panel's actual
+  on-screen rect to fullscreen and back, ~320ms `expo.out`) instead of the "never
+  animate layout" default — a macOS-window-zoom feel, user-requested. Flip's
+  `scale: false` mode tweens real width/height/top/left rather than a CSS
+  `transform: scale` — a transform-based scale distorts non-uniformly whenever the
+  docked and fullscreen aspect ratios differ, visibly warping real UI controls
+  like the toolbar's buttons (an earlier attempt hit exactly this). Real layout
+  tweening reflows children like any responsive resize, so nothing but the
+  intended box changes shape. Scoped to just these two surfaces' maximize/restore
+  plus per-file diff expand/collapse (shorter, `--duration-normal ease-out`,
+  plain CSS grid-row animation, no GSAP); everything else in the app keeps the
+  existing minimal-functional motion rules. See _Motion_ below.
 
 ## Product Context
 
@@ -256,12 +262,13 @@ mirrors the reference exactly. Launching from a project row pre-fills the Projec
 - **Duration:** micro 80ms · short 160ms · medium 240ms · status pulse 1.8s loop ·
   modal enter ~150ms fade+zoom-95.
 - **Approved divergence (2026-07-31):** Browser panel and File diff viewer
-  maximize/restore are a second expressive exception — a FLIP-driven transform
-  grows/shrinks the panel from its real rect to fullscreen (`--duration-emphasized`
-  320ms, `--ease-emphasized` expo-out), not the fade+zoom-95 modal recipe. Per-file
-  diff expand/collapse uses a grid-row auto-height animation on the existing
-  `--duration-normal ease-out`. Both respect `prefers-reduced-motion`. Scoped to
-  these two surfaces only — do not extend to other panels without new approval.
+  maximize/restore are a second expressive exception — a GSAP Flip animation
+  (`scale: false`, real width/height/top/left, not a CSS transform) grows/shrinks
+  the panel from its real rect to fullscreen (~320ms `expo.out`), not the
+  fade+zoom-95 modal recipe. Per-file diff expand/collapse uses a grid-row
+  auto-height animation on the existing `--duration-normal ease-out` (plain CSS,
+  no GSAP). Both respect `prefers-reduced-motion`. Scoped to these two surfaces
+  only — do not extend to other panels without new approval.
 
 ## Implementation notes
 

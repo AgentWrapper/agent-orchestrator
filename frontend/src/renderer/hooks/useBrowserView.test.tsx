@@ -271,44 +271,6 @@ describe("useBrowserView", () => {
 		}
 	});
 
-	it("captures the panel's current pixel size into the held snapshot, so it can be displayed at native size instead of stretched to fill the destination box", async () => {
-		// Regression: the transition frame previously used width/height:100% and
-		// got stretched to fill whatever box the panel remounted into (e.g. the
-		// fullscreen overlay), compounding with the FLIP transform's own scaling
-		// into a visibly distorted image mid-animation. Sizing it explicitly to
-		// the rect it was captured from lets the FLIP transform be the only thing
-		// that scales it.
-		const bridge = setupBridge();
-		const slot = createSlot({ width: 320, height: 240 });
-		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
-		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
-		act(() =>
-			bridge.emit({
-				viewId: "42:sess-1",
-				url: "http://localhost:3000/",
-				title: "",
-				canGoBack: false,
-				canGoForward: false,
-				isLoading: false,
-			}),
-		);
-		act(() => result.current.slotRef(slot));
-
-		vi.useFakeTimers();
-		try {
-			await act(async () => {
-				await result.current.beginPopoutTransition();
-			});
-
-			expect(result.current.visualTransition).toMatchObject({
-				kind: "popout",
-				sourceSize: { width: 320, height: 240 },
-			});
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
 	it("keeps the native view hidden across a poppedOut change while a popout transition is held, and reveals it on end", async () => {
 		const bridge = setupBridge();
 		const slot = createSlot();

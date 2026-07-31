@@ -15,14 +15,6 @@ export type BrowserVisualTransition = {
 	kind: "tab-switch" | "popout";
 	snapshotUrl: string;
 	/**
-	 * The panel's on-screen pixel size at the moment the snapshot was captured
-	 * (popout only). Rendering the frame at this fixed size — rather than
-	 * stretching to fill whatever box the panel currently occupies — keeps the
-	 * FLIP transform as the only thing scaling it, avoiding a compounded
-	 * double-stretch while the panel grows/shrinks.
-	 */
-	sourceSize?: { width: number; height: number };
-	/**
 	 * True once endPopoutTransition() has revealed the native view and the
 	 * snapshot is crossfading out, rather than being removed outright. An
 	 * instant removal would race the native view's reveal (an async IPC round
@@ -212,11 +204,7 @@ export function useBrowserView({
 	}, []);
 
 	const showVisualTransition = useCallback(
-		async (
-			kind: BrowserVisualTransition["kind"],
-			timeoutCapture = true,
-			sourceSize?: { width: number; height: number },
-		) => {
+		async (kind: BrowserVisualTransition["kind"], timeoutCapture = true) => {
 			const id = viewIdRef.current;
 			if (!id || !hasNativeBrowser || !hasUrlRef.current) return;
 			const capture = window.ao?.browser.capture?.(id).catch(() => "");
@@ -233,7 +221,7 @@ export function useBrowserView({
 			if (timeoutId !== null) window.clearTimeout(timeoutId);
 			if (!snapshotUrl || viewIdRef.current !== id) return;
 			clearVisualTransitionTimer();
-			setVisualTransition({ kind, snapshotUrl, ...(sourceSize ? { sourceSize } : {}) });
+			setVisualTransition({ kind, snapshotUrl });
 			// A "popout" transition's lifetime is driven by the caller's FLIP
 			// animation (variable duration), not a fixed timer like tab-switch —
 			// the caller clears it explicitly via endPopoutTransition().
@@ -291,10 +279,7 @@ export function useBrowserView({
 
 	const beginPopoutTransition = useCallback(async () => {
 		popoutTransitionRef.current = true;
-		const node = slotNodeRef.current;
-		const rect = node ? visibleSlotRect(node) : null;
-		const sourceSize = rect && rect.width > 0 && rect.height > 0 ? { width: rect.width, height: rect.height } : undefined;
-		await showVisualTransition("popout", true, sourceSize);
+		await showVisualTransition("popout");
 	}, [showVisualTransition]);
 
 	const endPopoutTransition = useCallback(() => {

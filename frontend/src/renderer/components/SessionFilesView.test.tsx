@@ -110,6 +110,13 @@ describe("SessionFilesView", () => {
 		expect(containerRef).toHaveBeenCalledWith(screen.getByLabelText("Session files"));
 	});
 
+	it("marks the root section with a stable data-flip-id so GSAP Flip can correlate it across the inline/maximized remount", async () => {
+		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+
+		await screen.findByRole("button", { name: "Collapse src/App.tsx" });
+		expect(screen.getByLabelText("Session files")).toHaveAttribute("data-flip-id", "session-files-panel");
+	});
+
 	it("keeps a collapsed file's diff container mounted (inert) instead of removing it, so it can animate closed", async () => {
 		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
 

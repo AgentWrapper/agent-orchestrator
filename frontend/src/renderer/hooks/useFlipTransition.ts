@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef } from "react";
+import { gsap } from "gsap";
+import { Flip } from "gsap/Flip";
+
+gsap.registerPlugin(Flip);
 
 const DEFAULT_DURATION_MS = 320;
-const DEFAULT_EASING = "cubic-bezier(0.16, 1, 0.3, 1)";
-const FALLBACK_BUFFER_MS = 100;
-
-export type FlipRect = Pick<DOMRect, "left" | "top" | "width" | "height">;
+const DEFAULT_EASE = "expo.out";
 
 export type FlipOptions = {
 	duration?: number;
-	easing?: string;
+	ease?: string;
 	onSettle?: () => void;
 };
 
@@ -17,94 +18,57 @@ export type FlipController = {
 	playFlip: (node: HTMLElement | null, options?: FlipOptions) => void;
 };
 
-// FLIP (First-Last-Invert-Play): computes the transform that makes an element
-// laid out at `last` render as though it were still at `first`'s position/size,
-// so the caller can clear it and let a CSS transition play the real motion —
-// GPU-only (transform), so it stays smooth regardless of the content underneath.
-export function computeInvertTransform(first: FlipRect, last: FlipRect): { transform: string; transformOrigin: string } {
-	const dx = first.left - last.left;
-	const dy = first.top - last.top;
-	const sx = last.width === 0 ? 1 : first.width / last.width;
-	const sy = last.height === 0 ? 1 : first.height / last.height;
-	return {
-		transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`,
-		transformOrigin: "0 0",
-	};
-}
-
 function prefersReducedMotion(): boolean {
 	return typeof window !== "undefined" && Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
 }
 
+// Drives a GSAP Flip transition between the origin node captured by
+// captureRect() and a (possibly different, e.g. remounted-elsewhere) target
+// node. `scale: false` tweens real width/height/top/left rather than a CSS
+// transform — a transform-based scale distorts non-uniformly whenever the
+// origin and destination aspect ratios differ (e.g. a docked panel vs. a
+// fullscreen one), visibly warping real UI controls like toolbar buttons.
+// Real layout tweening reflows children exactly like any responsive resize,
+// so nothing but the intended box ever changes shape.
 export function useFlipTransition(): FlipController {
-	const pendingFirstRectRef = useRef<FlipRect | null>(null);
-	const cancelActiveRef = useRef<(() => void) | null>(null);
+	const pendingStateRef = useRef<Flip.FlipState | null>(null);
+	const activeTimelineRef = useRef<{ kill: () => void } | null>(null);
 
 	const captureRect = useCallback((node: HTMLElement | null) => {
-		pendingFirstRectRef.current = node ? node.getBoundingClientRect() : null;
+		pendingStateRef.current = node ? Flip.getState(node) : null;
 	}, []);
 
 	const playFlip = useCallback((node: HTMLElement | null, options?: FlipOptions) => {
-		cancelActiveRef.current?.();
-		cancelActiveRef.current = null;
+		activeTimelineRef.current?.kill();
+		activeTimelineRef.current = null;
 
-		const first = pendingFirstRectRef.current;
-		pendingFirstRectRef.current = null;
+		const state = pendingStateRef.current;
+		pendingStateRef.current = null;
 		const onSettle = options?.onSettle;
 
-		if (!node || !first || prefersReducedMotion()) {
-			node?.style.removeProperty("transform");
-			node?.style.removeProperty("transition");
+		if (!node || !state || prefersReducedMotion()) {
 			onSettle?.();
 			return;
 		}
 
-		const last = node.getBoundingClientRect();
-		const { transform, transformOrigin } = computeInvertTransform(first, last);
-		node.style.transformOrigin = transformOrigin;
-		node.style.transition = "none";
-		node.style.transform = transform;
-		// Force a reflow so the browser commits the inverted transform before the
-		// next frame clears it — otherwise the two style writes coalesce and the
-		// element never visually starts at `first`.
-		void node.getBoundingClientRect();
-
-		const duration = options?.duration ?? DEFAULT_DURATION_MS;
-		const easing = options?.easing ?? DEFAULT_EASING;
-
-		let settled = false;
-		const finish = () => {
-			if (settled) return;
-			settled = true;
-			node.removeEventListener("transitionend", handleTransitionEnd);
-			window.clearTimeout(fallbackId);
-			cancelActiveRef.current = null;
-			onSettle?.();
-		};
-		const handleTransitionEnd = (event: TransitionEvent) => {
-			if (event.target !== node || event.propertyName !== "transform") return;
-			finish();
-		};
-		node.addEventListener("transitionend", handleTransitionEnd);
-		const fallbackId = window.setTimeout(finish, duration + FALLBACK_BUFFER_MS);
-
-		const rafId = window.requestAnimationFrame(() => {
-			node.style.transition = `transform ${duration}ms ${easing}`;
-			node.style.transform = "";
+		activeTimelineRef.current = Flip.from(state, {
+			targets: node,
+			scale: false,
+			absolute: true,
+			duration: (options?.duration ?? DEFAULT_DURATION_MS) / 1000,
+			ease: options?.ease ?? DEFAULT_EASE,
+			onComplete: () => {
+				activeTimelineRef.current = null;
+				// Drop the inline width/height/position GSAP applied during the
+				// tween, so the node goes back to being governed purely by its own
+				// CSS (a later window resize would otherwise fight stale values).
+				gsap.set(node, { clearProps: "all" });
+				onSettle?.();
+			},
 		});
-
-		cancelActiveRef.current = () => {
-			if (settled) return;
-			settled = true;
-			window.cancelAnimationFrame(rafId);
-			node.removeEventListener("transitionend", handleTransitionEnd);
-			window.clearTimeout(fallbackId);
-			node.style.transition = "";
-			node.style.transform = "";
-		};
 	}, []);
 
-	useEffect(() => () => cancelActiveRef.current?.(), []);
+	useEffect(() => () => activeTimelineRef.current?.kill(), []);
 
 	return { captureRect, playFlip };
 }

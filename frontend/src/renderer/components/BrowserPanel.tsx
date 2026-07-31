@@ -370,6 +370,7 @@ export function BrowserPanelView({
 				poppedOut && "browser-panel--popped-out",
 				agentStatusLabel && "browser-panel--agent-active",
 			)}
+			data-flip-id="browser-panel"
 			data-testid="browser-panel"
 			data-transition={visualTransition?.kind}
 			ref={panelRef}
@@ -556,18 +557,6 @@ export function BrowserPanelView({
 						)}
 						data-testid="browser-transition-frame"
 						src={visualTransition.snapshotUrl}
-						style={
-							visualTransition.kind === "popout" && visualTransition.sourceSize
-								? {
-										top: 0,
-										left: 0,
-										right: "auto",
-										bottom: "auto",
-										width: visualTransition.sourceSize.width,
-										height: visualTransition.sourceSize.height,
-									}
-								: undefined
-						}
 					/>
 				) : null}
 				{showStaticPreview ? <StaticPreview url={navState.url} /> : null}

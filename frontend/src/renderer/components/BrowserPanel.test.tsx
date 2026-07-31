@@ -32,12 +32,7 @@ const hookState = vi.hoisted(() => ({
 	agentBrowserActive: false,
 	agentBrowserActivity: null as { active: boolean; action?: string; phase?: "started" | "finished" } | null,
 	visualTransition: null as
-		| {
-				kind: "tab-switch" | "popout";
-				snapshotUrl: string;
-				sourceSize?: { width: number; height: number };
-				releasing?: boolean;
-		  }
+		| { kind: "tab-switch" | "popout"; snapshotUrl: string; releasing?: boolean }
 		| null,
 	previewUrl: undefined as string | undefined,
 	navState: {
@@ -357,23 +352,10 @@ describe("BrowserPanel", () => {
 		expect(frame).toHaveAttribute("src", "data:image/jpeg;base64,snapshot");
 	});
 
-	it("sizes a held popout transition frame to its captured pixel size instead of stretching to fill the panel", () => {
-		// Regression: the frame previously always stretched to 100%/100% of its
-		// (possibly just-resized) container, compounding with the FLIP transform's
-		// own scaling into a visibly distorted image. Popout frames must render at
-		// their native captured size and let the FLIP transform do all the scaling.
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		hookState.visualTransition = {
-			kind: "popout",
-			snapshotUrl: "data:image/jpeg;base64,snapshot",
-			sourceSize: { width: 320, height: 240 },
-		};
-
+	it("marks the panel root with a stable data-flip-id so GSAP Flip can correlate it across the inline/popped-out remount", () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
-		const frame = screen.getByTestId("browser-transition-frame");
-		expect(frame.style.width).toBe("320px");
-		expect(frame.style.height).toBe("240px");
+		expect(screen.getByTestId("browser-panel")).toHaveAttribute("data-flip-id", "browser-panel");
 	});
 
 	it("crossfades a releasing popout transition frame out instead of removing it instantly", () => {
@@ -381,24 +363,12 @@ describe("BrowserPanel", () => {
 		hookState.visualTransition = {
 			kind: "popout",
 			snapshotUrl: "data:image/jpeg;base64,snapshot",
-			sourceSize: { width: 320, height: 240 },
 			releasing: true,
 		};
 
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
 		expect(screen.getByTestId("browser-transition-frame")).toHaveClass("browser-panel__transition-frame--releasing");
-	});
-
-	it("leaves a tab-switch transition frame filling the panel (no fixed size)", () => {
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		hookState.visualTransition = { kind: "tab-switch", snapshotUrl: "data:image/jpeg;base64,snapshot" };
-
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-
-		const frame = screen.getByTestId("browser-transition-frame");
-		expect(frame.style.width).toBe("");
-		expect(frame.style.height).toBe("");
 	});
 
 	it("renders the premium browser shell hooks in the default view", () => {
