@@ -233,7 +233,8 @@ func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domai
 // existing recent-activity guard; supervised workload death is independently
 // fenced by the launch generation and never terminates the runtime.
 func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.SessionID, f ports.RuntimeFacts) error {
-	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
+	terminated := false
+	err := m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
 		if cur.IsTerminated {
 			return cur, false
 		}
@@ -262,8 +263,20 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 		// (later observations return early on cur.IsTerminated). Runs under
 		// m.mu — mutate holds it across this callback.
 		delete(m.flights, id)
+		terminated = true
 		return next, true
 	})
+	if err != nil {
+		return err
+	}
+	if terminated {
+		// Route reaper-observed death through the same container-reap hook as
+		// every other terminal path (#2652): a crash/SIGKILL detected by the
+		// runtime reaper must not leave the session's Docker containers behind
+		// just because it never called MarkTerminated directly.
+		m.reapSessionContainers(ctx, id)
+	}
+	return nil
 }
 
 // ApplyActivitySignal records an authoritative agent activity signal and any

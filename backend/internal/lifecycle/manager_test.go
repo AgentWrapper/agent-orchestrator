@@ -2197,3 +2197,55 @@ func TestMarkTerminated_MissingProjectSkipsRatherThanReaps(t *testing.T) {
 		t.Fatal("session must still be marked terminated when the project record is missing")
 	}
 }
+
+// TestRuntimeObservation_ConfirmedDeathReapsContainers is the regression for
+// the review finding that ApplyRuntimeObservation's reaper-driven terminal
+// transition (crash/SIGKILL detected by the runtime reaper) bypassed
+// MarkTerminated entirely and left containers unreaped. This confirms the
+// container leg of #2652 now fires on this path too, not just explicit kill.
+func TestRuntimeObservation_ConfirmedDeathReapsContainers(t *testing.T) {
+	cr := &fakeLifecycleContainerReaper{removed: 1}
+	pl := &fakeProjectConfigLoader{projects: map[string]domain.ProjectRecord{
+		"mer": {ID: "mer", Config: domain.ProjectConfig{}},
+	}}
+	m, st, _ := newManagerWithContainerReaper(cr, pl)
+	rec := working("mer-1")
+	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute)
+	st.sessions["mer-1"] = rec
+
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Runtime: ports.ProbeDead, Workload: ports.ProbeFailed}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if !got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("want terminated/exited, got %+v", got)
+	}
+	if len(cr.sessions) != 1 || cr.sessions[0] != "mer-1" {
+		t.Fatalf("expected container reap for mer-1 on reaper-observed death, got %v", cr.sessions)
+	}
+}
+
+// TestRuntimeObservation_WorkloadDeathAloneDoesNotReap confirms the
+// non-terminal workload-dead branch (runtime alive, workload dead) does NOT
+// trigger a container reap — only a confirmed session termination should.
+func TestRuntimeObservation_WorkloadDeathAloneDoesNotReap(t *testing.T) {
+	cr := &fakeLifecycleContainerReaper{}
+	pl := &fakeProjectConfigLoader{projects: map[string]domain.ProjectRecord{
+		"mer": {ID: "mer", Config: domain.ProjectConfig{}},
+	}}
+	m, st, _ := newManagerWithContainerReaper(cr, pl)
+	rec := working("mer-1")
+	rec.Metadata.RuntimeLaunchID = "launch-1"
+	st.sessions["mer-1"] = rec
+
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{LaunchID: "launch-1", Runtime: ports.ProbeAlive, Workload: ports.ProbeDead}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if got.IsTerminated {
+		t.Fatal("workload death alone must not terminate the session")
+	}
+	if len(cr.sessions) != 0 {
+		t.Fatalf("expected no reap call for a non-terminal transition, got %v", cr.sessions)
+	}
+}
