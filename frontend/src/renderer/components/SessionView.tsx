@@ -230,9 +230,20 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const handleToggleBrowserPopOut = useCallback(
 		(next: boolean) => {
 			if (next) setFilesPoppedOut(false);
-			browserMaximize.captureOrigin();
-			void browserView.beginPopoutTransition();
-			setBrowserPoppedOut(next);
+			// The frozen frame has to be on screen *before* the layout flips. The
+			// native view is held hidden for the whole transition, but the capture
+			// behind it is an IPC round trip, so starting the grow first leaves the
+			// panel painting nothing until that resolves and the snapshot then pops
+			// in partway through the animation. Await it, then flip: the capture is
+			// normally a few ms and is bounded by the capture timeout either way.
+			// Origin is measured last, immediately before the change it describes.
+			void browserView.beginPopoutTransition().then((captured) => {
+				// No frozen frame means nothing covers the native view through the
+				// move, so switch outright rather than animate an empty panel.
+				// Skipping the origin capture is what makes the FLIP a no-op.
+				if (captured) browserMaximize.captureOrigin();
+				setBrowserPoppedOut(next);
+			});
 		},
 		[browserMaximize, browserView],
 	);

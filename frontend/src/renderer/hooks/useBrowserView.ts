@@ -76,8 +76,12 @@ export type BrowserViewModel = {
 	 * `endPopoutTransition` is called — unlike a tab-switch transition, this
 	 * does not auto-clear, since the caller drives its lifetime from a FLIP
 	 * animation of unknown/variable duration.
+	 *
+	 * Resolves once the frame is on screen, so callers can await it before
+	 * changing layout; resolves false if no frame could be captured, meaning
+	 * nothing covers the handoff and the move should not be animated.
 	 */
-	beginPopoutTransition: () => Promise<void>;
+	beginPopoutTransition: () => Promise<boolean>;
 	/** Releases a held popout transition and reveals the native view at its current bounds. */
 	endPopoutTransition: () => void;
 };
@@ -203,12 +207,15 @@ export function useBrowserView({
 		mirrorTimerRef.current = null;
 	}, []);
 
+	// Resolves true only if a frozen frame actually made it on screen, so a
+	// caller that relies on one to cover a native-view handoff can tell whether
+	// it got that cover or has to proceed uncovered.
 	const showVisualTransition = useCallback(
-		async (kind: BrowserVisualTransition["kind"], timeoutCapture = true) => {
+		async (kind: BrowserVisualTransition["kind"], timeoutCapture = true): Promise<boolean> => {
 			const id = viewIdRef.current;
-			if (!id || !hasNativeBrowser || !hasUrlRef.current) return;
+			if (!id || !hasNativeBrowser || !hasUrlRef.current) return false;
 			const capture = window.ao?.browser.capture?.(id).catch(() => "");
-			if (!capture) return;
+			if (!capture) return false;
 			let timeoutId: number | null = null;
 			const snapshotUrl = timeoutCapture
 				? await Promise.race([
@@ -219,17 +226,18 @@ export function useBrowserView({
 					])
 				: await capture;
 			if (timeoutId !== null) window.clearTimeout(timeoutId);
-			if (!snapshotUrl || viewIdRef.current !== id) return;
+			if (!snapshotUrl || viewIdRef.current !== id) return false;
 			clearVisualTransitionTimer();
 			setVisualTransition({ kind, snapshotUrl });
 			// A "popout" transition's lifetime is driven by the caller's FLIP
 			// animation (variable duration), not a fixed timer like tab-switch —
 			// the caller clears it explicitly via endPopoutTransition().
-			if (kind === "popout") return;
+			if (kind === "popout") return true;
 			visualTransitionTimerRef.current = window.setTimeout(() => {
 				visualTransitionTimerRef.current = null;
 				setVisualTransition(null);
 			}, VISUAL_TRANSITION_DURATION_MS);
+			return true;
 		},
 		[clearVisualTransitionTimer, hasNativeBrowser],
 	);
@@ -278,8 +286,15 @@ export function useBrowserView({
 	}, [sendHiddenBounds]);
 
 	const beginPopoutTransition = useCallback(async () => {
-		popoutTransitionRef.current = true;
-		await showVisualTransition("popout");
+		const captured = await showVisualTransition("popout");
+		// Engage the hold only once the frozen frame is on screen to cover it.
+		// Held from the first line instead, the native view would be blanked for
+		// the whole capture round trip while the panel is still in place, and if
+		// the capture came back empty it would stay blank for the entire
+		// transition with nothing covering it — so report that back and let the
+		// caller move without an animation instead.
+		popoutTransitionRef.current = captured;
+		return captured;
 	}, [showVisualTransition]);
 
 	const endPopoutTransition = useCallback(() => {

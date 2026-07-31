@@ -329,6 +329,58 @@ describe("useBrowserView", () => {
 		}
 	});
 
+	// The hold blanks the native view, so it is only safe once a frozen frame is
+	// actually covering it. If the capture comes back empty there is nothing to
+	// cover it, and holding anyway would blank the panel for the whole
+	// transition — report the miss so the caller can move without animating.
+	it("does not hold the native view hidden when no frame could be captured", async () => {
+		const bridge = setupBridge();
+		const slot = createSlot();
+		bridge.capture.mockResolvedValue("");
+		const { result, rerender } = renderHook(
+			({ poppedOut }) => useBrowserView({ sessionId: "sess-1", active: true, poppedOut }),
+			{ initialProps: { poppedOut: false } },
+		);
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
+		act(() => result.current.slotRef(slot));
+
+		vi.useFakeTimers();
+		try {
+			await act(async () => {
+				vi.advanceTimersByTime(300);
+			});
+
+			let captured: boolean | undefined;
+			await act(async () => {
+				captured = await result.current.beginPopoutTransition();
+			});
+
+			expect(captured).toBe(false);
+			expect(result.current.visualTransition).toBeNull();
+
+			bridge.setBounds.mockClear();
+			act(() => rerender({ poppedOut: true }));
+			await act(async () => {
+				vi.advanceTimersByTime(300);
+			});
+			// No hold: the live view keeps painting at the new slot rather than
+			// going blank behind an animation with nothing in front of it.
+			expect(bridge.setBounds).toHaveBeenCalledWith(expect.objectContaining({ visible: true }));
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("does not leave the new session's view stuck hidden after a session switch mid popout transition", async () => {
 		const bridge = setupBridge();
 		const slot = createSlot();
