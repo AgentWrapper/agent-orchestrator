@@ -117,6 +117,23 @@ export type PullRequestFacts = {
 	updatedAt: string;
 };
 
+/**
+ * Why a pipeline stage's session is still alive. The engine's kill-on policy
+ * spares a stage session whose outcome is worth a human look (`no_output`,
+ * `no_signal`, `timed_out`), capped at 3 per pipeline with a 24h TTL, and the
+ * daemon stamps this on the session DTO. Absent for every ordinary session.
+ */
+export type PipelineOrphanInfo = {
+	runId: string;
+	stage: string;
+	/** The settled stage outcome that spared the session. */
+	outcome: string;
+	/** ISO timestamp of when the engine decided to keep it. */
+	keptAt: string;
+	/** Pipeline definition name. */
+	pipeline: string;
+};
+
 export type WorkspaceSession = {
 	id: string;
 	terminalHandleId?: string;
@@ -162,6 +179,11 @@ export type WorkspaceSession = {
 	 * done server-side, so {@link status} already reflects all of these.
 	 */
 	prs: PullRequestFacts[];
+	/**
+	 * Set when a pipeline stage session was deliberately kept alive rather than
+	 * cleaned up. See {@link PipelineOrphanInfo}.
+	 */
+	pipelineOrphan?: PipelineOrphanInfo;
 };
 
 // Tracker providers whose ids the intake daemon stamps sessions with, in

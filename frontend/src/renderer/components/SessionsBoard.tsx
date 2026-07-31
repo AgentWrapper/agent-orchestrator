@@ -13,6 +13,7 @@ import {
 	Trash2,
 } from "lucide-react";
 import {
+	type PipelineOrphanInfo,
 	type WorkspaceSession,
 	canonicalTrackerIssueId,
 	hasConfiguredOrchestratorAgent,
@@ -32,6 +33,7 @@ import {
 	type SessionStatusView,
 } from "../lib/session-presentation";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { useKillSession } from "../hooks/useKillSession";
 import { useRestoreSession } from "../hooks/useRestoreSession";
 import {
 	clearTerminateSessionState,
@@ -41,10 +43,14 @@ import {
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyStates";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { OrchestratorIcon } from "./icons";
 import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { AgentAvatar } from "./AgentAvatar";
+import { Badge } from "./ui/badge";
 import { TopbarButton, TopbarKillError, topbarProjectLabelClass } from "./TopbarButton";
+import { stageOutcomeLabel } from "../lib/pipeline-display";
+import type { StageOutcome } from "../lib/pipeline-draft";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
@@ -55,7 +61,7 @@ import { cn } from "../lib/utils";
 import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { DaemonStartupLoader } from "./DaemonStartupLoader";
 import { useShellMaybe } from "../lib/shell-context";
@@ -753,6 +759,10 @@ function SessionCard({
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const badge = getSessionStatusView(session.status);
 	const issueId = canonicalTrackerIssueId(session.issueId);
+	const orphan = session.pipelineOrphan;
+	// A killed orphan keeps the badge (it still explains where the session came
+	// from) but loses the kill action: there is nothing left to stop.
+	const showOrphanKill = orphan !== undefined && session.status !== "terminated";
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
@@ -832,10 +842,18 @@ function SessionCard({
 					>
 						{session.title}
 					</div>
-					{showBranch && (
+					{/* The pipeline badge shares the branch line rather than the header
+					    row: the header already carries the title and the agent avatar,
+					    and a third chip up there wraps on a column-width card. */}
+					{(showBranch || orphan) && (
 						<div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-passive">
-							<GitBranch aria-hidden="true" className="size-icon-2xs shrink-0" />
-							<span className="truncate">{branch}</span>
+							{orphan && <PipelineOrphanBadge orphan={orphan} />}
+							{showBranch && (
+								<>
+									<GitBranch aria-hidden="true" className="size-icon-2xs shrink-0" />
+									<span className="truncate">{branch}</span>
+								</>
+							)}
 						</div>
 					)}
 				</div>
@@ -870,6 +888,7 @@ function SessionCard({
 					</span>
 				)}
 			</div>
+			{orphan && showOrphanKill && <PipelineOrphanKillButton orphan={orphan} session={session} />}
 			{termination.error ? (
 				<div className="border-t border-border px-3.5 py-1.5 text-2xs text-destructive" role="alert">
 					{termination.error}
@@ -994,7 +1013,94 @@ function ArchiveRestoreError({ message }: { message?: string }) {
 	) : null;
 }
 
-type BoardPRLifecycleStatus = { label: "closed" | "open" | "draft" | "merged"; className: string };
+// The "pipeline" badge on a session the pipeline engine deliberately spared.
+// Deliberately neutral: this is not an error state. The tooltip leads with the
+// outcome, because the outcome is the reason the session is still here at all
+// (a stage that ended no_output / no_signal / timed_out is worth a human look
+// before its workspace goes away), and the reaper will not keep it forever.
+function PipelineOrphanBadge({ orphan }: { orphan: PipelineOrphanInfo }) {
+	return (
+		<TooltipProvider delayDuration={0}>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<Badge className="cursor-help" data-testid="pipeline-orphan-badge" tabIndex={0}>
+						pipeline
+					</Badge>
+				</TooltipTrigger>
+				<TooltipContent className="max-w-72 space-y-1 px-2.5 py-2 text-left" side="bottom">
+					<p className="text-2xs leading-relaxed text-popover-foreground">
+						Stage <span className="font-mono">{orphan.stage}</span> ended{" "}
+						<span className="font-medium text-warning">{stageOutcomeLabel(orphan.outcome as StageOutcome)}</span>, so
+						this session was kept for you to inspect instead of being cleaned up.
+					</p>
+					{/* Run ids are `run-<uuid>`, so they self-label and need to wrap. */}
+					<p className="break-all font-mono text-micro text-muted-foreground">
+						{orphan.pipeline} · {orphan.runId}
+					</p>
+					<p className="text-micro text-muted-foreground">kept {formatTimeCompact(orphan.keptAt)}</p>
+				</TooltipContent>
+			</Tooltip>
+		</TooltipProvider>
+	);
+}
+
+// Hover-revealed kill for a spared stage session, mirroring the Done column's
+// restore affordance so the card gains no permanent clutter. Kill tears down the
+// runtime and the kept workspace, so it goes through the shared confirm dialog.
+function PipelineOrphanKillButton({ orphan, session }: { orphan: PipelineOrphanInfo; session: WorkspaceSession }) {
+	const [confirming, setConfirming] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const kill = useKillSession(session, {
+		onKilled: () => setConfirming(false),
+		onError: setError,
+	});
+	const label = `Kill orphaned ${orphan.stage} stage`;
+	return (
+		<>
+			<button
+				aria-label={label}
+				className="absolute bottom-1.5 right-2 z-10 inline-flex h-control-xs items-center justify-center rounded-sm border border-error/40 bg-surface px-2.5 text-2xs font-semibold text-error opacity-0 shadow-sm transition-opacity duration-normal ease-out hover:opacity-90 focus:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100"
+				onClick={(event) => {
+					event.stopPropagation();
+					setError(null);
+					setConfirming(true);
+				}}
+				title={label}
+				type="button"
+			>
+				Kill
+			</button>
+			{/* The card root is itself clickable (it opens the session). React
+			    replays synthetic events through a portal's React tree, not the
+			    DOM tree, so without this a click inside the dialog would open
+			    the session sitting behind it. */}
+			<div onClick={(event) => event.stopPropagation()}>
+				<ConfirmDialog
+					busy={kill.isPending}
+					confirmLabel="Kill session"
+					description={
+						<p className="text-xs leading-5 text-muted-foreground">
+							Stage <span className="font-mono text-foreground">{orphan.stage}</span> of{" "}
+							<span className="font-mono text-foreground">{orphan.runId}</span> ({orphan.pipeline}) ended{" "}
+							{stageOutcomeLabel(orphan.outcome as StageOutcome)}, which is why this session is still here. Killing
+							it tears down the agent and its kept workspace. This cannot be undone.
+						</p>
+					}
+					destructive
+					error={error}
+					onConfirm={() => kill.mutate()}
+					onOpenChange={(open) => {
+						if (!open) setConfirming(false);
+					}}
+					open={confirming}
+					title="Kill this pipeline stage session?"
+				/>
+			</div>
+		</>
+	);
+}
+
+type BoardPRLifecycleStatus = { label:"closed" | "open" | "draft" | "merged"; className: string };
 type BoardPRGroup = { status: BoardPRLifecycleStatus; prs: SessionPRSummary[] };
 
 function BoardPRGroup({ group, linksInteractive = true }: { group: BoardPRGroup; linksInteractive?: boolean }) {
