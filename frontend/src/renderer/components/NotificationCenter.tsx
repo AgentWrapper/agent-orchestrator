@@ -242,7 +242,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 	const trigger = (
 		<TopbarButton
 			aria-label={unreadCount > 0 ? `${unreadCount} unread notifications` : "Notifications"}
-			className="relative"
+			className="relative mr-[2px]"
 			style={style}
 			variant="icon"
 		>
