@@ -12,19 +12,21 @@ import (
 )
 
 // UpsertReview inserts the per-worker review row, or reuses the existing one
-// (session_id is unique) by refreshing its harness/pr_url/updated_at.
+// (session_id is unique) by refreshing its harness, live handle ownership, and
+// updated_at.
 func (s *Store) UpsertReview(ctx context.Context, r domain.Review) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return s.qw.UpsertReview(ctx, gen.UpsertReviewParams{
-		ID:               r.ID,
-		SessionID:        r.SessionID,
-		ProjectID:        r.ProjectID,
-		Harness:          r.Harness,
-		PRURL:            r.PRURL,
-		ReviewerHandleID: r.ReviewerHandleID,
-		CreatedAt:        r.CreatedAt,
-		UpdatedAt:        r.UpdatedAt,
+		ID:                 r.ID,
+		SessionID:          r.SessionID,
+		ProjectID:          r.ProjectID,
+		Harness:            r.Harness,
+		PRURL:              r.PRURL,
+		ReviewerHandleID:   r.ReviewerHandleID,
+		ReviewerGeneration: r.ReviewerGeneration,
+		CreatedAt:          r.CreatedAt,
+		UpdatedAt:          r.UpdatedAt,
 	})
 }
 
@@ -192,14 +194,15 @@ func (s *Store) ListReviewRunsByBatch(ctx context.Context, id domain.SessionID, 
 
 func reviewFromRow(r gen.Review) domain.Review {
 	return domain.Review{
-		ID:               r.ID,
-		SessionID:        r.SessionID,
-		ProjectID:        r.ProjectID,
-		Harness:          r.Harness,
-		PRURL:            r.PRURL,
-		ReviewerHandleID: r.ReviewerHandleID,
-		CreatedAt:        r.CreatedAt,
-		UpdatedAt:        r.UpdatedAt,
+		ID:                 r.ID,
+		SessionID:          r.SessionID,
+		ProjectID:          r.ProjectID,
+		Harness:            r.Harness,
+		PRURL:              r.PRURL,
+		ReviewerHandleID:   r.ReviewerHandleID,
+		ReviewerGeneration: r.ReviewerGeneration,
+		CreatedAt:          r.CreatedAt,
+		UpdatedAt:          r.UpdatedAt,
 	}
 }
 

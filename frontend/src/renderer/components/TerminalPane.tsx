@@ -1,4 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { RotateCcw } from "lucide-react";
 import {
 	createContext,
@@ -33,6 +33,11 @@ import {
 	type TerminalMuxPool,
 } from "../lib/terminal-mux";
 import { cn } from "../lib/utils";
+import {
+	currentReviewerTerminal,
+	fetchSessionReviews,
+	sessionReviewsQueryKey,
+} from "../lib/reviewer-terminal";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useShellTerminals } from "../hooks/useShellTerminals";
@@ -60,7 +65,7 @@ type TerminalCacheDescriptor = {
 
 type CachedTerminalEntry = TerminalCacheDescriptor & {
 	activationId: number;
-	activationPhase: "parked" | "preparing" | "ready" | "visible";
+	activationPhase: "parked" | "preparing" | "ready" | "revealed" | "visible";
 	container: HTMLDivElement;
 	discardOnDeactivate?: boolean;
 	props: TerminalPaneProps;
@@ -80,6 +85,7 @@ type TerminalCacheController = {
 };
 
 const TerminalCacheContext = createContext<TerminalCacheController | null>(null);
+const RETAINED_REVIEWER_POLL_MS = 2_500;
 
 function terminalTargetMatches(left?: TerminalTarget, right?: TerminalTarget): boolean {
 	if (left === right) return true;
@@ -158,14 +164,19 @@ function setTerminalPhase(
 ): void {
 	entry.activationPhase = phase;
 	entry.container.dataset.terminalActivationPhase = phase;
-	const visible = phase === "visible";
-	entry.container.inert = !visible;
-	if (visible) {
+	const interactive = phase === "visible";
+	const rendered = phase === "revealed" || interactive;
+	entry.container.inert = !interactive;
+	if (interactive) {
 		entry.container.removeAttribute("aria-hidden");
 		entry.container.style.pointerEvents = "";
 	} else {
 		entry.container.setAttribute("aria-hidden", "true");
 		entry.container.style.pointerEvents = "none";
+	}
+	if (rendered) {
+		entry.container.style.visibility = "";
+	} else {
 		entry.container.style.visibility = "hidden";
 	}
 }
@@ -192,10 +203,11 @@ function showTerminal(entry: CachedTerminalEntry, slot: HTMLDivElement): void {
 
 function revealTerminal(entry: CachedTerminalEntry): void {
 	entry.viewportAnchor = undefined;
+	setTerminalPhase(entry, "revealed");
+}
+
+function activateTerminal(entry: CachedTerminalEntry): void {
 	setTerminalPhase(entry, "visible");
-	// Visibility is the final mutation: logical xterm state, DOM scrollTop,
-	// accessibility, and pointer state are all settled before a pixel can paint.
-	entry.container.style.visibility = "";
 }
 
 function CachedTerminalPortal({
@@ -204,6 +216,7 @@ function CachedTerminalPortal({
 	onFatal,
 	onPrepared,
 	onReveal,
+	onActivated,
 	onTerminalReady,
 }: {
 	active: boolean;
@@ -211,6 +224,7 @@ function CachedTerminalPortal({
 	onFatal: (cacheKey: string, message: string) => void;
 	onPrepared: (cacheKey: string, activationId: number) => void;
 	onReveal: (cacheKey: string, activationId: number) => void;
+	onActivated: (cacheKey: string, activationId: number) => void;
 	onTerminalReady: (cacheKey: string, terminal: AttachableTerminal) => void;
 }) {
 	const handleFatal = useCallback(
@@ -248,14 +262,24 @@ function CachedTerminalPortal({
 		if (!active || entry.activationPhase !== "ready") return;
 		onReveal(entry.cacheKey, entry.activationId);
 	}, [active, entry, entry.activationId, entry.activationPhase, onReveal]);
+	useLayoutEffect(() => {
+		if (!active || entry.activationPhase !== "revealed") return;
+		const activationId = entry.activationId;
+		let paintFrame: number | null = null;
+		const revealFrame = requestAnimationFrame(() => {
+			paintFrame = requestAnimationFrame(() => {
+				onActivated(entry.cacheKey, activationId);
+			});
+		});
+		return () => {
+			cancelAnimationFrame(revealFrame);
+			if (paintFrame !== null) cancelAnimationFrame(paintFrame);
+		};
+	}, [active, entry, entry.activationId, entry.activationPhase, onActivated]);
 	return createPortal(
 		<AttachedTerminal
 			{...entry.props}
-			isVisible={
-				active &&
-				(entry.activationPhase === "ready" ||
-					entry.activationPhase === "visible")
-			}
+			isVisible={active && entry.activationPhase === "visible"}
 			onFatal={handleFatal}
 			onTerminalReady={handleTerminalReady}
 		/>,
@@ -292,6 +316,21 @@ export function TerminalCacheProvider({
 	}
 	const muxPool = muxPoolRef.current;
 	const [, setRevision] = useState(0);
+	const reviewerSessionIds = [
+		...new Set(
+			[...entriesRef.current.values()]
+				.filter((entry) => entry.kind === "reviewer" && entry.sessionId)
+				.map((entry) => entry.sessionId as string),
+		),
+	];
+	const reviewerStateQueries = useQueries({
+		queries: reviewerSessionIds.map((sessionId) => ({
+			queryKey: sessionReviewsQueryKey(sessionId),
+			queryFn: () => fetchSessionReviews(sessionId),
+			refetchInterval: RETAINED_REVIEWER_POLL_MS,
+			refetchIntervalInBackground: true,
+		})),
+	});
 
 	const rerender = useCallback(() => setRevision((current) => current + 1), []);
 
@@ -439,18 +478,39 @@ export function TerminalCacheProvider({
 		[rerender],
 	);
 
-	const markReveal = useCallback((cacheKey: string, activationId: number) => {
-		const entry = entriesRef.current.get(cacheKey);
-		if (
-			!entry ||
-			entry.activationId !== activationId ||
-			entry.activationPhase !== "ready" ||
-			activeRef.current?.key !== cacheKey
-		) {
-			return;
-		}
-		revealTerminal(entry);
-	}, []);
+	const markReveal = useCallback(
+		(cacheKey: string, activationId: number) => {
+			const entry = entriesRef.current.get(cacheKey);
+			if (
+				!entry ||
+				entry.activationId !== activationId ||
+				entry.activationPhase !== "ready" ||
+				activeRef.current?.key !== cacheKey
+			) {
+				return;
+			}
+			revealTerminal(entry);
+			rerender();
+		},
+		[rerender],
+	);
+
+	const markActivated = useCallback(
+		(cacheKey: string, activationId: number) => {
+			const entry = entriesRef.current.get(cacheKey);
+			if (
+				!entry ||
+				entry.activationId !== activationId ||
+				entry.activationPhase !== "revealed" ||
+				activeRef.current?.key !== cacheKey
+			) {
+				return;
+			}
+			activateTerminal(entry);
+			rerender();
+		},
+		[rerender],
+	);
 
 	// Daemon readiness and theme are shell-wide. Parked entries must observe
 	// them too so reconnect and rendering behavior never depends on the route
@@ -499,6 +559,37 @@ export function TerminalCacheProvider({
 			}
 		}
 	}, [removeEntry, workspaceQuery.data, workspaceQuery.isSuccess]);
+
+	// Reviewer panes use a stable session-wide handle that is replaced logically
+	// by each review batch. Workspace snapshots do not carry that generation, so
+	// retained reviewer owners observe the authoritative reviews endpoint and
+	// dispose a parked writer as soon as its handle or batch is superseded.
+	useEffect(() => {
+		for (let index = 0; index < reviewerSessionIds.length; index += 1) {
+			const query = reviewerStateQueries[index];
+			if (!query?.isSuccess) continue;
+			const sessionId = reviewerSessionIds[index];
+			const current = currentReviewerTerminal(query.data);
+			for (const entry of [...entriesRef.current.values()]) {
+				if (entry.kind !== "reviewer" || entry.sessionId !== sessionId) continue;
+				if (
+					!current ||
+					entry.handleId !== current.handleId ||
+					entry.generation !== current.generation
+				) {
+					if (activeRef.current?.key === entry.cacheKey) {
+						// Removing the active portal would leave SessionView's
+						// still-selected target pointing at a blank slot. Keep its
+						// inspectable terminal until the user leaves; activation of
+						// the new generation or ordinary deactivation disposes it.
+						entry.discardOnDeactivate = true;
+					} else {
+						removeEntry(entry.cacheKey);
+					}
+				}
+			}
+		}
+	}, [removeEntry, reviewerSessionIds, reviewerStateQueries]);
 
 	// Shell handles have their own lifecycle outside WorkspaceSession. Closing a
 	// shell must close its retained mux writer even if it was parked.
@@ -563,6 +654,7 @@ export function TerminalCacheProvider({
 					active={activeRef.current?.key === entry.cacheKey}
 					entry={entry}
 					key={entry.cacheKey}
+					onActivated={markActivated}
 					onFatal={markFatal}
 					onPrepared={markPrepared}
 					onReveal={markReveal}
@@ -873,7 +965,7 @@ function AttachedTerminal({
 		},
 		[session?.id],
 	);
-	const { attach, state, error, replaySettled, syncSize } = useTerminalSession(attachSession, {
+	const { attach, state, error, replaySettled, syncVisibleSize } = useTerminalSession(attachSession, {
 		createMux,
 		daemonReady,
 		isVisible,
@@ -890,27 +982,9 @@ function AttachedTerminal({
 		session !== undefined &&
 		!isSessionActive;
 
-	const handleReady = useCallback(
-		(handle: AttachableTerminal) => {
-			const activationAwareHandle: AttachableTerminal = {
-				get cols() {
-					return handle.cols;
-				},
-				get rows() {
-					return handle.rows;
-				},
-				write: handle.write,
-				writeln: handle.writeln,
-				captureViewportAnchor: handle.captureViewportAnchor,
-				prepareForActivation: (anchor) => handle.prepareForActivation(anchor, syncSize),
-				clear: handle.clear,
-				onUserInput: handle.onUserInput,
-				onResize: handle.onResize,
-			};
-			setTerminal(activationAwareHandle);
-		},
-		[syncSize],
-	);
+	const handleReady = useCallback((handle: AttachableTerminal) => {
+		setTerminal(handle);
+	}, []);
 	useLayoutEffect(() => {
 		if (terminal) onTerminalReady?.(terminal);
 	}, [onTerminalReady, terminal]);
@@ -1038,6 +1112,7 @@ function AttachedTerminal({
 					onError={handleInitError}
 					onLinkOpen={handleLinkOpen}
 					onReady={handleReady}
+					onVisibleSize={syncVisibleSize}
 					paneScrollsByKeyboard={providerScrollsByKeyboard(provider)}
 					theme={theme}
 				/>

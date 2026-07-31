@@ -62,6 +62,8 @@ export type XtermTerminalProps = {
 	onError?: (error: unknown) => void;
 	/** Called after a terminal hyperlink is opened in the OS browser. */
 	onLinkOpen?: (uri: string) => void;
+	/** Publish the positive grid after a retained terminal becomes visible. */
+	onVisibleSize?: (cols: number, rows: number) => void;
 	/** Hidden retained terminals keep parsing output but expose no UI overlays. */
 	isVisible?: boolean;
 	/**
@@ -752,10 +754,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			marker.onDispose(() => viewportMarkers.delete(markerId));
 			return { atBottom, markerId, viewportY: buffer.viewportY };
 		};
-		const prepareForActivation = (
-			anchor: TerminalViewportAnchor,
-			onGridChanged?: (cols: number, rows: number) => void,
-		): Promise<void> => {
+		const prepareForActivation = (anchor: TerminalViewportAnchor): Promise<void> => {
 			cancelActivationPreparation?.();
 			return new Promise((resolve) => {
 				const marker = anchor.markerId ? viewportMarkers.get(anchor.markerId) : undefined;
@@ -796,22 +795,6 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					viewport.scrollTop = buffer.baseY > 0 ? maxScrollTop * (buffer.viewportY / buffer.baseY) : 0;
 				};
 
-				// Only fit when reparenting actually changes the terminal grid.
-				// This runs while the retained container is visibility:hidden, so
-				// any xterm reflow and PTY resize repaint remain non-visible.
-				const proposed = fit.proposeDimensions();
-				if (
-					proposed?.cols &&
-					proposed.rows &&
-					(proposed.cols !== term.cols || proposed.rows !== term.rows)
-				) {
-					// Preparing is intentionally non-interactive, so the regular
-					// fit guard rejects hidden work. This one controlled fit is the
-					// activation transaction; report its new grid immediately so
-					// the PTY can repaint before reveal.
-					fit.fit();
-					onGridChanged?.(term.cols, term.rows);
-				}
 				restoreAnchor();
 
 				renderListener = term.onRender(() => {
@@ -894,6 +877,20 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	useLayoutEffect(() => {
 		if (props.isVisible === false) setContextMenuOpen(false);
 	}, [props.isVisible, setContextMenuOpen]);
+
+	const wasVisibleRef = useRef(props.isVisible !== false);
+	useEffect(() => {
+		const visible = props.isVisible !== false;
+		const becameVisible = visible && !wasVisibleRef.current;
+		wasVisibleRef.current = visible;
+		if (!becameVisible) return;
+		// Run after the retained frame has been revealed. A fit can emit a PTY
+		// resize/SIGWINCH, and preparation has no authoritative remote repaint
+		// acknowledgement, so hidden/preparing phases stay transport-inert.
+		fitRef.current?.();
+		const term = termRef.current;
+		if (term) callbacksRef.current.onVisibleSize?.(term.cols, term.rows);
+	}, [props.isVisible]);
 
 	return (
 		<>

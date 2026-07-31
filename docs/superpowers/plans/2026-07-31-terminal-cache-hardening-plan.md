@@ -16,7 +16,11 @@
 7. Add a lease-based shared terminal mux pool at the cache-provider boundary.
 8. Synchronize retained viewport state through public xterm and DOM APIs,
    clamping an evicted historical marker to the oldest retained line.
-9. Keep preparing terminals transport-inert and reveal only after activation
-   synchronization completes.
-10. Run focused tests, Chromium, the relevant frontend suite, typecheck, build,
+9. Keep preparing terminals transport-inert, paint the synchronized retained
+   frame while the entry is still inert, and defer any grid fit or PTY resize
+   until the following interactive phase.
+10. Poll authoritative review ownership only while a reviewer renderer is
+    retained, with handle and generation persisted together after a successful
+    launch, and dispose it when a newer batch or handle supersedes it.
+11. Run focused tests, Chromium, the relevant frontend suite, typecheck, build,
     diff review, and leak/focus/input self-review.

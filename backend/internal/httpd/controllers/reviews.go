@@ -18,8 +18,9 @@ import (
 // reviewerHandleId is the live reviewer pane's runtime handle, for the UI to
 // attach its terminal over /mux (empty when no reviewer has run).
 type ListReviewsResponse struct {
-	ReviewerHandleID string                     `json:"reviewerHandleId"`
-	Reviews          []reviewcore.PRReviewState `json:"reviews"`
+	ReviewerHandleID   string                     `json:"reviewerHandleId"`
+	ReviewerGeneration string                     `json:"reviewerGeneration"`
+	Reviews            []reviewcore.PRReviewState `json:"reviews"`
 }
 
 // ReviewRunResponse is the body of submit (200). It carries the run plus the
@@ -33,8 +34,9 @@ type ReviewRunResponse struct {
 // TriggerReviewResponse is the body of trigger (200/201). reviews carries the
 // PR-scoped review state after the trigger.
 type TriggerReviewResponse struct {
-	ReviewerHandleID string                     `json:"reviewerHandleId"`
-	Reviews          []reviewcore.PRReviewState `json:"reviews"`
+	ReviewerHandleID   string                     `json:"reviewerHandleId"`
+	ReviewerGeneration string                     `json:"reviewerGeneration"`
+	Reviews            []reviewcore.PRReviewState `json:"reviews"`
 	// Created is true when a new review pass was started (HTTP 201) and false
 	// when an existing run for the same commit was reused (HTTP 200).
 	Created bool `json:"created" description:"True when a new review pass was started; false when an existing run for the same commit was reused."`
@@ -43,8 +45,9 @@ type TriggerReviewResponse struct {
 // CancelReviewResponse is the body of cancel (200). reviews carries the
 // PR-scoped review state after running passes have been stopped.
 type CancelReviewResponse struct {
-	ReviewerHandleID string                     `json:"reviewerHandleId"`
-	Reviews          []reviewcore.PRReviewState `json:"reviews"`
+	ReviewerHandleID   string                     `json:"reviewerHandleId"`
+	ReviewerGeneration string                     `json:"reviewerGeneration"`
+	Reviews            []reviewcore.PRReviewState `json:"reviews"`
 }
 
 // SubmitReviewItem is one review result in a batched submit request.
@@ -91,7 +94,11 @@ func (c *ReviewsController) list(w http.ResponseWriter, r *http.Request) {
 	if reviews == nil {
 		reviews = []reviewcore.PRReviewState{}
 	}
-	envelope.WriteJSON(w, http.StatusOK, ListReviewsResponse{ReviewerHandleID: res.ReviewerHandleID, Reviews: reviews})
+	envelope.WriteJSON(w, http.StatusOK, ListReviewsResponse{
+		ReviewerHandleID:   res.ReviewerHandleID,
+		ReviewerGeneration: res.ReviewerGeneration,
+		Reviews:            reviews,
+	})
 }
 
 func (c *ReviewsController) trigger(w http.ResponseWriter, r *http.Request) {
@@ -115,9 +122,10 @@ func (c *ReviewsController) trigger(w http.ResponseWriter, r *http.Request) {
 		reviews = []reviewcore.PRReviewState{}
 	}
 	envelope.WriteJSON(w, status, TriggerReviewResponse{
-		ReviewerHandleID: res.ReviewerHandleID,
-		Reviews:          reviews,
-		Created:          res.Created,
+		ReviewerHandleID:   res.ReviewerHandleID,
+		ReviewerGeneration: res.ReviewerGeneration,
+		Reviews:            reviews,
+		Created:            res.Created,
 	})
 }
 
@@ -136,8 +144,9 @@ func (c *ReviewsController) cancel(w http.ResponseWriter, r *http.Request) {
 		reviews = []reviewcore.PRReviewState{}
 	}
 	envelope.WriteJSON(w, http.StatusOK, CancelReviewResponse{
-		ReviewerHandleID: res.ReviewerHandleID,
-		Reviews:          reviews,
+		ReviewerHandleID:   res.ReviewerHandleID,
+		ReviewerGeneration: res.ReviewerGeneration,
+		Reviews:            reviews,
 	})
 }
 

@@ -904,6 +904,7 @@ export interface components {
             transport: string;
         };
         CancelReviewResponse: {
+            reviewerGeneration: string;
             reviewerHandleId: string;
             reviews: components["schemas"]["PRReviewState"][];
         };
@@ -1039,6 +1040,7 @@ export interface components {
             projects: components["schemas"]["ProjectSummary"][];
         };
         ListReviewsResponse: {
+            reviewerGeneration: string;
             reviewerHandleId: string;
             reviews: components["schemas"]["PRReviewState"][];
         };
@@ -1513,6 +1515,7 @@ export interface components {
         TriggerReviewResponse: {
             /** @description True when a new review pass was started; false when an existing run for the same commit was reused. */
             created: boolean;
+            reviewerGeneration: string;
             reviewerHandleId: string;
             reviews: components["schemas"]["PRReviewState"][];
         };

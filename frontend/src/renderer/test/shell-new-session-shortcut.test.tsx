@@ -79,6 +79,9 @@ const shellMocks = vi.hoisted(() => {
 vi.mock("@tanstack/react-query", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@tanstack/react-query")>()),
 	useQueryClient: () => shellMocks.queryClient,
+	// TerminalCacheProvider owns reviewer queries in production. This shell-only
+	// harness has no routed terminal children and intentionally omits a provider.
+	useQueries: () => [],
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({

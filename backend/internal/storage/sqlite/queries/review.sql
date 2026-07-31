@@ -1,14 +1,15 @@
 -- name: UpsertReview :exec
-INSERT INTO review (id, session_id, project_id, harness, pr_url, reviewer_handle_id, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO review (id, session_id, project_id, harness, pr_url, reviewer_handle_id, reviewer_generation, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (session_id) DO UPDATE SET
     harness = excluded.harness,
     pr_url = excluded.pr_url,
     reviewer_handle_id = excluded.reviewer_handle_id,
+    reviewer_generation = excluded.reviewer_generation,
     updated_at = excluded.updated_at;
 
 -- name: GetReviewBySession :one
-SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, created_at, updated_at
+SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, created_at, updated_at, reviewer_generation
 FROM review WHERE session_id = ?;
 
 -- name: InsertReviewRun :exec

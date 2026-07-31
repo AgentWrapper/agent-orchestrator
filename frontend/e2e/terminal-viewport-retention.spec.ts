@@ -58,17 +58,21 @@ type TestXterm = {
 		};
 	};
 	getSelection: () => string;
+	options: { fontSize: number };
 	selectLines: (start: number, end: number) => void;
 };
 
 type RevealSample = {
 	atBottom: boolean;
 	domBottomDelta: number;
+	fontSize: number;
 	scrollTop: number;
 	viewportY: number;
 };
 
 type RevealObserverWindow = Window & {
+	__aoRevealFrame?: number;
+	__aoRevealFrames?: string[];
 	__aoRevealObserver?: MutationObserver;
 	__aoRevealSamples?: RevealSample[];
 };
@@ -98,9 +102,14 @@ async function observeNextReveal(container: Locator): Promise<void> {
 	await container.evaluate((element) => {
 		const state = window as RevealObserverWindow;
 		state.__aoRevealObserver?.disconnect();
+		if (state.__aoRevealFrame !== undefined) {
+			cancelAnimationFrame(state.__aoRevealFrame);
+		}
 		const samples: RevealSample[] = [];
+		const framePhases: string[] = [];
 		state.__aoRevealSamples = samples;
-		const observer = new MutationObserver(() => {
+		state.__aoRevealFrames = framePhases;
+		const captureVisibleSample = () => {
 			const host = element.querySelector<HTMLElement>("[aria-label='Session terminal']");
 			const viewport = host?.querySelector<HTMLElement>(".xterm-viewport");
 			const terminal = (host as (HTMLElement & { __aoXtermForTest?: TestXterm }) | null)
@@ -116,9 +125,25 @@ async function observeNextReveal(container: Locator): Promise<void> {
 			samples.push({
 				atBottom: terminal.buffer.active.viewportY === terminal.buffer.active.baseY,
 				domBottomDelta: viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop,
+				fontSize: terminal.options.fontSize,
 				scrollTop: viewport.scrollTop,
 				viewportY: terminal.buffer.active.viewportY,
 			});
+		};
+		const sampleFrame = () => {
+			const phase =
+				(element as HTMLElement).dataset.terminalActivationPhase ?? "missing";
+			framePhases.push(phase);
+			if (phase === "visible") {
+				captureVisibleSample();
+				state.__aoRevealFrame = undefined;
+				return;
+			}
+			state.__aoRevealFrame = requestAnimationFrame(sampleFrame);
+		};
+		state.__aoRevealFrame = requestAnimationFrame(sampleFrame);
+		const observer = new MutationObserver(() => {
+			captureVisibleSample();
 		});
 		observer.observe(element, {
 			attributes: true,
@@ -132,9 +157,23 @@ async function revealSamples(page: Page): Promise<RevealSample[]> {
 	return page.evaluate(() => (window as RevealObserverWindow).__aoRevealSamples ?? []);
 }
 
+async function revealFramePhases(page: Page): Promise<string[]> {
+	return page.evaluate(() => (window as RevealObserverWindow).__aoRevealFrames ?? []);
+}
+
+async function settledRevealSamples(page: Page): Promise<RevealSample[]> {
+	await expect.poll(async () => (await revealSamples(page)).length).toBeGreaterThan(0);
+	return revealSamples(page);
+}
+
 async function openSession(page: Page, title: string): Promise<void> {
 	await page.getByRole("button", { name: `Open ${title}`, exact: true }).click();
 	await expect(activeTerminal(page)).toBeVisible();
+	await expect(
+		page
+			.getByTestId("session-terminal-slot")
+			.locator("[data-terminal-activation-phase='visible']"),
+	).toHaveCount(1);
 }
 
 async function installHarness(page: Page): Promise<void> {
@@ -226,13 +265,20 @@ test.describe("retained terminal viewport", () => {
 						(element as HTMLElement & { __aoXtermForTest?: TestXterm }).__aoXtermForTest!.getSelection(),
 				),
 		).toBe(historicalState.selection);
-		const firstRevealSamples = await revealSamples(page);
-		expect(firstRevealSamples.length).toBeGreaterThan(0);
+		const firstRevealSamples = await settledRevealSamples(page);
 		for (const sample of firstRevealSamples) {
 			expect(sample.viewportY).toBe(historicalState.viewportY);
 			expect(Math.round(sample.scrollTop)).toBe(Math.round(historicalState.scrollTop));
 			expect(sample.atBottom).toBe(false);
 		}
+		const firstRevealFrames = await revealFramePhases(page);
+		expect(firstRevealFrames).toContain("revealed");
+		expect(
+			firstRevealFrames.filter((phase) => phase === "revealed").length,
+		).toBeGreaterThanOrEqual(2);
+		expect(firstRevealFrames.indexOf("revealed")).toBeLessThan(
+			firstRevealFrames.indexOf("visible"),
+		);
 		const sixStats = await muxStats(page);
 		for (const handle of [handleA, handleB, handleC, handleD, handleE, handleF]) {
 			expect(sixStats.opens[handle]).toBe(1);
@@ -253,8 +299,35 @@ test.describe("retained terminal viewport", () => {
 			});
 		expect(topLineBeforeResize).toBeTruthy();
 		await openSession(page, sessionB.title);
+		const beforeParkedGridChange = await muxStats(page);
+		const aResizesBeforeReturn = beforeParkedGridChange.resizes[handleA]?.length ?? 0;
+		const bResizesBeforeGridChange = beforeParkedGridChange.resizes[handleB]?.length ?? 0;
 		await page.setViewportSize({ width: 1040, height: 680 });
+		await expect
+			.poll(async () => (await muxStats(page)).resizes[handleB]?.length ?? 0)
+			.toBeGreaterThan(bResizesBeforeGridChange);
+		const fontSizeBefore = Number(
+			(await page.getByText(/^\d+px$/).textContent())?.replace("px", ""),
+		);
+		await page.getByRole("button", { name: "Increase terminal font size" }).click();
+		const fontSizeAfter = fontSizeBefore + 1;
+		expect((await muxStats(page)).resizes[handleA]?.length ?? 0).toBe(aResizesBeforeReturn);
+		await observeNextReveal(parkedA);
 		await openSession(page, sessionA.title);
+		await expect
+			.poll(async () => (await muxStats(page)).resizes[handleA]?.length ?? 0)
+			.toBeGreaterThan(aResizesBeforeReturn);
+		const activationResizePhases = (await muxStats(page)).resizePhases[handleA]?.slice(
+			aResizesBeforeReturn,
+		);
+		expect(activationResizePhases).not.toContain("parked");
+		expect(activationResizePhases).not.toContain("preparing");
+		expect(activationResizePhases).not.toContain("ready");
+		expect(activationResizePhases).toContain("visible");
+		const resizedRevealSamples = await settledRevealSamples(page);
+		for (const sample of resizedRevealSamples) {
+			expect(sample.fontSize).toBe(fontSizeAfter);
+		}
 		const topLineAfterResize = await activeTerminal(page)
 			.locator("[aria-label='Session terminal']")
 			.evaluate((element) => {
@@ -280,8 +353,7 @@ test.describe("retained terminal viewport", () => {
 		);
 		await observeNextReveal(parkedA);
 		await openSession(page, sessionA.title);
-		const bottomRevealSamples = await revealSamples(page);
-		expect(bottomRevealSamples.length).toBeGreaterThan(0);
+		const bottomRevealSamples = await settledRevealSamples(page);
 		for (const sample of bottomRevealSamples) {
 			expect(sample.atBottom).toBe(true);
 			expect(Math.round(sample.domBottomDelta)).toBeLessThanOrEqual(1);
@@ -347,10 +419,14 @@ test.describe("retained terminal viewport", () => {
 				"\r\n" + Array.from({ length: 30 }, (_, index) => `A hidden output ${index}`).join("\r\n"),
 			);
 		}, handleA);
+		const aResizesBeforeReturn = (await muxStats(page)).resizes[handleA]?.length ?? 0;
 
 		// Exercise the same rapid return seen in 04.30.04, including output in
 		// the return commit. There must still be one retained renderer/writer.
 		await openSession(page, sessionA.title);
+		expect((await muxStats(page)).resizes[handleA]?.length ?? 0).toBe(
+			aResizesBeforeReturn,
+		);
 		await page.evaluate((handleId) => {
 			window.__aoFakeTerminalMux!.emit(handleId, "\r\nA output during return");
 		}, handleA);
@@ -404,13 +480,42 @@ test.describe("retained terminal viewport", () => {
 		await expect(page.getByTestId("terminal-replay-cover")).toHaveCount(0);
 		expect((await muxStats(page)).opens[handleC]).toBe(1);
 
-		await openSession(page, sessionA.title);
-		await expect(activeViewport(page)).toHaveAttribute("data-reconnect-instance", "a");
+		const beforeReconnect = await muxStats(page);
 		await page.evaluate((handleId) => window.__aoFakeTerminalMux!.disconnect(handleId), handleA);
 		await expect(activeTerminal(page).getByText("Terminal disconnected — reattaching…")).toBeVisible();
 		await expect.poll(async () => (await muxStats(page)).opens[handleA] ?? 0).toBe(2);
 		await expect.poll(async () => (await muxStats(page)).opens[handleB] ?? 0).toBe(2);
 		await expect.poll(async () => (await muxStats(page)).opens[handleC] ?? 0).toBe(2);
+		const hiddenReconnect = await muxStats(page);
+		for (const parkedHandle of [handleA, handleB]) {
+			expect(hiddenReconnect.openFrames[parkedHandle]?.[1]).toMatchObject({
+				cols: 0,
+				phase: "parked",
+				rows: 0,
+			});
+			expect(hiddenReconnect.resizes[parkedHandle]?.length ?? 0).toBe(
+				beforeReconnect.resizes[parkedHandle]?.length ?? 0,
+			);
+		}
+		expect(hiddenReconnect.openFrames[handleC]?.[1]?.phase).toBe("visible");
+		expect(hiddenReconnect.openFrames[handleC]?.[1]?.cols).toBeGreaterThan(0);
+		expect(hiddenReconnect.openFrames[handleC]?.[1]?.rows).toBeGreaterThan(0);
+
+		const aResizesBeforeReturn = hiddenReconnect.resizes[handleA]?.length ?? 0;
+		await openSession(page, sessionA.title);
+		await expect
+			.poll(async () => (await muxStats(page)).resizes[handleA]?.length ?? 0)
+			.toBeGreaterThan(aResizesBeforeReturn);
+		const returnStats = await muxStats(page);
+		const returnResizeIndex = returnStats.resizes[handleA].length - 1;
+		expect(returnStats.resizes[handleA][returnResizeIndex]).toMatchObject({
+			cols: expect.any(Number),
+			rows: expect.any(Number),
+		});
+		expect(returnStats.resizes[handleA][returnResizeIndex].cols).toBeGreaterThan(0);
+		expect(returnStats.resizes[handleA][returnResizeIndex].rows).toBeGreaterThan(0);
+		expect(returnStats.resizePhases[handleA][returnResizeIndex]).toBe("visible");
+		await expect(activeViewport(page)).toHaveAttribute("data-reconnect-instance", "a");
 		await expect(page.getByTestId("terminal-replay-cover")).toHaveCount(0);
 		await expect(activeViewport(page)).toHaveAttribute("data-reconnect-instance", "a");
 		const afterReconnect = await activeTerminal(page)

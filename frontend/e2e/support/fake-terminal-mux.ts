@@ -3,7 +3,12 @@ import type { Page } from "@playwright/test";
 export type FakeTerminalMuxStats = {
 	closes: Record<string, number>;
 	inputs: Record<string, string[]>;
+	openFrames: Record<
+		string,
+		{ cols?: number; phase: string | null; rows?: number }[]
+	>;
 	opens: Record<string, number>;
+	resizePhases: Record<string, (string | null)[]>;
 	resizes: Record<string, { cols: number; rows: number }[]>;
 	sockets: number;
 	writers: number;
@@ -45,7 +50,19 @@ export async function installFakeTerminalMux(
 		const opens: Record<string, number> = {};
 		const closes: Record<string, number> = {};
 		const inputs: Record<string, string[]> = {};
+		const openFrames: Record<
+			string,
+			{ cols?: number; phase: string | null; rows?: number }[]
+		> = {};
 		const resizes: Record<string, { cols: number; rows: number }[]> = {};
+		const resizePhases: Record<string, (string | null)[]> = {};
+
+		const terminalPhase = (handleId: string): string | null =>
+			Array.from(
+				document.querySelectorAll<HTMLElement>("[data-terminal-cache-key]"),
+			).find((element) =>
+				element.dataset.terminalCacheKey?.includes(`handle:${handleId}`),
+			)?.dataset.terminalActivationPhase ?? null;
 
 		const encode = (text: string): string => {
 			const bytes = new TextEncoder().encode(text);
@@ -109,6 +126,11 @@ export async function installFakeTerminalMux(
 				if (frame.type === "open") {
 					this.handles.add(handleId);
 					opens[handleId] = (opens[handleId] ?? 0) + 1;
+					(openFrames[handleId] ??= []).push({
+						cols: frame.cols,
+						phase: terminalPhase(handleId),
+						rows: frame.rows,
+					});
 					queueMicrotask(() => {
 						if (this.readyState !== FakeWebSocket.OPEN) return;
 						this.message({ ch: "terminal", id: handleId, type: "opened" });
@@ -128,6 +150,7 @@ export async function installFakeTerminalMux(
 				}
 				if (frame.type === "resize" && frame.cols && frame.rows) {
 					(resizes[handleId] ??= []).push({ cols: frame.cols, rows: frame.rows });
+					(resizePhases[handleId] ??= []).push(terminalPhase(handleId));
 				}
 			}
 
@@ -172,7 +195,9 @@ export async function installFakeTerminalMux(
 			stats: () => ({
 				closes: structuredClone(closes),
 				inputs: structuredClone(inputs),
+				openFrames: structuredClone(openFrames),
 				opens: structuredClone(opens),
+				resizePhases: structuredClone(resizePhases),
 				resizes: structuredClone(resizes),
 				sockets: sockets.filter(
 					(socket) => socket.isTerminalMux && socket.readyState < FakeWebSocket.CLOSED,

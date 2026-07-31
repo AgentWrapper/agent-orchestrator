@@ -25,6 +25,13 @@ import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { canonicalTrackerIssueId, findProjectOrchestrator, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
+import {
+	fetchSessionReviews,
+	newestReviewRun,
+	sessionReviewsQueryKey,
+	type PRReviewState,
+	type ReviewsResponse,
+} from "../lib/reviewer-terminal";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
 import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { useUiStore } from "../stores/ui-store";
@@ -40,8 +47,6 @@ import { appI18n } from "../i18n";
 import type { MessageKey } from "../i18n";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
-type PRReviewState = components["schemas"]["PRReviewState"];
-type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type OpenReviewerTerminal = (target: { generation: string; handleId: string; harness: string }) => void;
 
 export type InspectorView = "summary" | "reviews" | "browser" | "files";
@@ -725,7 +730,7 @@ function ReviewsView({
 	const queryClient = useQueryClient();
 	const [reviewNotice, setReviewNotice] = useState<string | null>(null);
 	const reviewsQuery = useQuery({
-		queryKey: ["session-reviews", session.id],
+		queryKey: sessionReviewsQueryKey(session.id),
 		enabled: hasPr,
 		refetchInterval: (query) => {
 			const data = query.state.data as ReviewsResponse | undefined;
@@ -734,11 +739,7 @@ function ReviewsView({
 		},
 		queryFn: async () => {
 			if (usePreviewData) return mockReviewsResponse(session);
-			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/reviews", {
-				params: { path: { sessionId: session.id } },
-			});
-			if (error) throw new Error(apiErrorMessage(error, "Unable to load reviews"));
-			return data ?? ({ reviewerHandleId: "", reviews: [] } satisfies ReviewsResponse);
+			return fetchSessionReviews(session.id);
 		},
 	});
 	const projectConfigQuery = useQuery({
@@ -765,17 +766,24 @@ function ReviewsView({
 			setReviewNotice(null);
 		},
 		onSuccess: ({ data, reused }) => {
-			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });
+			if (data) {
+				queryClient.setQueryData(sessionReviewsQueryKey(session.id), data);
+			} else {
+				void queryClient.invalidateQueries({ queryKey: sessionReviewsQueryKey(session.id) });
+			}
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			const started = data?.reviews?.find((review) => review.status === "running" && review.latestRun);
-			if (reused || !started?.latestRun) {
+			const started = newestReviewRun(
+				data?.reviews ?? [],
+				(review) => review.status === "running",
+			);
+			if (reused || !started) {
 				setReviewNotice(t("inspector.noReviewsStarted"));
 				return;
 			}
 			if (data?.reviewerHandleId) {
-				const harness = started.latestRun.harness || "reviewer";
+				const harness = started.harness || "reviewer";
 				onOpenReviewerTerminal?.({
-					generation: started.latestRun.batchId || started.latestRun.id,
+					generation: data.reviewerGeneration || started.batchId || started.id,
 					handleId: data.reviewerHandleId,
 					harness,
 				});
@@ -791,7 +799,7 @@ function ReviewsView({
 		},
 		onSuccess: () => {
 			setReviewNotice(null);
-			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });
+			void queryClient.invalidateQueries({ queryKey: sessionReviewsQueryKey(session.id) });
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		},
 	});
@@ -810,6 +818,7 @@ function ReviewsView({
 					onOpenTerminal={onOpenReviewerTerminal}
 					onCancel={() => cancelReview.mutate()}
 					onTrigger={() => triggerReview.mutate()}
+					reviewerGeneration={reviewsQuery.data?.reviewerGeneration ?? ""}
 					reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
 					reviewStates={reviewStates}
 					notice={reviewNotice}
@@ -870,6 +879,7 @@ function mockProjectConfig(): ProjectConfig {
 
 function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 	return {
+		reviewerGeneration: `demo-batch-${session.id}`,
 		reviewerHandleId: `${session.id}-reviewer`,
 		reviews: sortedPRs(session).map((pr, index) => {
 			const targetSha = `demo${pr.number}${index}`;
@@ -934,6 +944,7 @@ function ReviewPanel({
 	session,
 	config,
 	reviewStates,
+	reviewerGeneration,
 	reviewerHandleId,
 	isLoading,
 	isTriggering,
@@ -947,6 +958,7 @@ function ReviewPanel({
 	session: WorkspaceSession;
 	config?: ProjectConfig;
 	reviewStates: PRReviewState[];
+	reviewerGeneration: string;
 	reviewerHandleId: string;
 	isLoading: boolean;
 	isTriggering: boolean;
@@ -971,16 +983,23 @@ function ReviewPanel({
 			.map((pr) => pr.url),
 	);
 	const openReviewStates = reviewStates.filter((reviewState) => openPRURLs.has(reviewState.prUrl));
-	const latest = openReviewStates.find((review) => review.latestRun)?.latestRun;
+	// The reviewer handle is session-wide and is replaced for each review batch.
+	// Closed/merged PRs remain authoritative for that generation even though
+	// their rows are omitted from the actionable open-PR list below.
+	const latest = newestReviewRun(reviewStates);
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
 	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
-	const reviewHasRun = reviewRunning || Boolean(latest);
+	const reviewHasRun = reviewRunning || Boolean(latest) || Boolean(reviewerGeneration);
 	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
 	const openReviewerTerminal = () => {
 		if (!terminalEnabled) return;
 		onOpenTerminal?.({
-			generation: latest?.batchId || latest?.id || reviewerHandleId,
+			generation:
+				reviewerGeneration ||
+				latest?.batchId ||
+				latest?.id ||
+				reviewerHandleId,
 			handleId: reviewerHandleId,
 			harness,
 		});

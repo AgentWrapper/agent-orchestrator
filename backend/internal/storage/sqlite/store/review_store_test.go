@@ -149,18 +149,20 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	if err := s.UpsertReview(ctx, domain.Review{
 		ID: "rev-1", SessionID: rec.ID, ProjectID: rec.ProjectID,
 		Harness: domain.ReviewerClaudeCode, PRURL: "https://example/pr/1",
-		ReviewerHandleID: "review-mer-1",
-		CreatedAt:        now, UpdatedAt: now,
+		ReviewerHandleID:   "review-mer-1",
+		ReviewerGeneration: "batch-1",
+		CreatedAt:          now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("upsert review: %v", err)
 	}
 	// Second upsert with the same session reuses the row (session_id UNIQUE),
-	// refreshing harness/pr_url/reviewer_handle_id but keeping the original id.
+	// refreshing harness and handle ownership but keeping the original id.
 	if err := s.UpsertReview(ctx, domain.Review{
 		ID: "rev-2", SessionID: rec.ID, ProjectID: rec.ProjectID,
 		Harness: domain.ReviewerHarness("greptile"), PRURL: "https://example/pr/2",
-		ReviewerHandleID: "review-mer-1b",
-		CreatedAt:        now, UpdatedAt: now.Add(time.Second),
+		ReviewerHandleID:   "review-mer-1b",
+		ReviewerGeneration: "batch-2",
+		CreatedAt:          now, UpdatedAt: now.Add(time.Second),
 	}); err != nil {
 		t.Fatalf("upsert review (reuse): %v", err)
 	}
@@ -171,7 +173,10 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	if got.ID != "rev-1" {
 		t.Fatalf("upsert created a new row, want reuse: id=%q", got.ID)
 	}
-	if got.Harness != domain.ReviewerHarness("greptile") || got.PRURL != "https://example/pr/2" || got.ReviewerHandleID != "review-mer-1b" {
+	if got.Harness != domain.ReviewerHarness("greptile") ||
+		got.PRURL != "https://example/pr/2" ||
+		got.ReviewerHandleID != "review-mer-1b" ||
+		got.ReviewerGeneration != "batch-2" {
 		t.Fatalf("upsert did not refresh fields: %+v", got)
 	}
 

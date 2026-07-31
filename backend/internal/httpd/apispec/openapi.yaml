@@ -2642,6 +2642,8 @@ components:
       type: object
     CancelReviewResponse:
       properties:
+        reviewerGeneration:
+          type: string
         reviewerHandleId:
           type: string
         reviews:
@@ -2650,6 +2652,7 @@ components:
           type: array
       required:
       - reviewerHandleId
+      - reviewerGeneration
       - reviews
       type: object
     ClaimPRRequest:
@@ -3019,6 +3022,8 @@ components:
       type: object
     ListReviewsResponse:
       properties:
+        reviewerGeneration:
+          type: string
         reviewerHandleId:
           type: string
         reviews:
@@ -3027,6 +3032,7 @@ components:
           type: array
       required:
       - reviewerHandleId
+      - reviewerGeneration
       - reviews
       type: object
     ListSessionPRsResponse:
@@ -4211,6 +4217,8 @@ components:
           description: True when a new review pass was started; false when an existing
             run for the same commit was reused.
           type: boolean
+        reviewerGeneration:
+          type: string
         reviewerHandleId:
           type: string
         reviews:
@@ -4219,6 +4227,7 @@ components:
           type: array
       required:
       - reviewerHandleId
+      - reviewerGeneration
       - reviews
       - created
       type: object

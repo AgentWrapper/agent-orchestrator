@@ -50,10 +50,7 @@ export type AttachableTerminal = {
 	 * Resolves only after xterm has rendered the anchor and crossed a paint
 	 * boundary, so the owner can reveal without exposing an intermediate row.
 	 */
-	prepareForActivation: (
-		anchor: TerminalViewportAnchor,
-		onGridChanged?: (cols: number, rows: number) => void,
-	) => Promise<void>;
+	prepareForActivation: (anchor: TerminalViewportAnchor) => Promise<void>;
 	/**
 	 * Erase screen + scrollback and home the cursor, preserving terminal modes.
 	 * Never a full reset (RIS): that would drop zellij's mouse-tracking mode
@@ -194,6 +191,9 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		generation: 0,
 		inputReady: false,
 		detached: true,
+		// True only after this attachment opens parked at 0×0. The next visible
+		// activation must promote it back to a positive primary grid.
+		needsVisibleSizeSync: false,
 		// Initial-replay gate, reset per connect (see REPLAY_QUIET_MS).
 		replayBuffering: false,
 		replayChunks: [] as Uint8Array[],
@@ -591,8 +591,14 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		// If `opened` never arrives, openTimer tears down and teardownMux lifts
 		// the cover.
 
-		mux.open(handle, terminal.cols, terminal.rows);
-		mux.resize(handle, terminal.cols, terminal.rows);
+		// A retained pane may reconnect while parked. It still needs the output
+		// stream, but its stale off-screen grid must not resize the shared PTY.
+		// Zero dimensions mean "attach without claiming a size"; the first
+		// visible fit emits the authoritative grid after activation.
+		const visible = optionsRef.current.isVisible !== false;
+		r.needsVisibleSizeSync = !visible;
+		mux.open(handle, visible ? terminal.cols : 0, visible ? terminal.rows : 0);
+		if (visible) mux.resize(handle, terminal.cols, terminal.rows);
 		r.openTimer = setTimeout(() => {
 			if (!isCurrentAttachment(generation, handle, mux)) return;
 			r.openTimer = null;
@@ -650,6 +656,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				r.terminal = null;
 				r.handle = null;
 				r.inputReady = false;
+				r.needsVisibleSizeSync = false;
 				setError(undefined);
 				// Detaching ends any pending replay: never leave the next mount of
 				// this hook believing a burst is still in flight.
@@ -660,13 +667,24 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		[connect, teardownMux, transition],
 	);
 
-	// Activation-only grid synchronization. A parked terminal suppresses normal
-	// ResizeObserver traffic, but a deliberate hidden fit during reparenting must
-	// update the PTY before the correct frame is revealed. Send exactly once and
-	// cancel delayed work for the superseded grid.
-	const syncSize = useCallback((cols: number, rows: number) => {
+	// Reassert the retained terminal's positive grid only after activation has
+	// painted it and made it visible. A parked reconnect opens at 0×0 so it
+	// cannot claim a stale off-screen size; FitAddon emits no onResize when the
+	// local grid is unchanged, so activation must explicitly promote that
+	// retained primary back to an authoritative size.
+	const syncVisibleSize = useCallback((cols: number, rows: number) => {
 		const r = runtime.current;
-		if (r.detached || !r.mux || !r.handle) return;
+		if (
+			optionsRef.current.isVisible === false ||
+			r.detached ||
+			!r.mux ||
+			!r.handle ||
+			!r.needsVisibleSizeSync ||
+			cols <= 0 ||
+			rows <= 0
+		) {
+			return;
+		}
 		if (r.resizeTimer) {
 			clearTimeout(r.resizeTimer);
 			r.resizeTimer = null;
@@ -676,6 +694,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			r.reassertTimer = null;
 		}
 		r.replayPendingReassert = null;
+		r.needsVisibleSizeSync = false;
 		r.mux.resize(r.handle, cols, rows);
 	}, []);
 
@@ -753,5 +772,5 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		[teardownMux],
 	);
 
-	return { attach, state, error, replaySettled, syncSize };
+	return { attach, state, error, replaySettled, syncVisibleSize };
 }
