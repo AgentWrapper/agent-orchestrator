@@ -27,6 +27,7 @@ func New() *Reviewer {
 	return &Reviewer{resolveBinary: workeragent.ResolveKiroBinary}
 }
 
+// Harness identifies Kiro in the reviewer registry.
 func (r *Reviewer) Harness() domain.ReviewerHarness { return domain.ReviewerKiro }
 
 var _ ports.Reviewer = (*Reviewer)(nil)

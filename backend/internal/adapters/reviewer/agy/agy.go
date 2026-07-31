@@ -25,7 +25,7 @@ const (
 	// reviewer constant: Agy must remain invalid in project configuration until
 	// the isolation prerequisite is implemented.
 	HarnessID      domain.ReviewerHarness = "agy"
-	minimumVersion                        = "1.1.6"
+	minimumVersion string                 = "1.1.6"
 )
 
 var requiredFlags = []string{"--agent", "--conversation", "--prompt-interactive", "--sandbox"}

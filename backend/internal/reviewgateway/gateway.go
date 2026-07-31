@@ -171,6 +171,7 @@ type Executor interface {
 // ExecExecutor invokes an executable directly, never through a shell.
 type ExecExecutor struct{}
 
+// Execute runs one gateway-constructed command without invoking a shell.
 func (ExecExecutor) Execute(ctx context.Context, command Command) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, command.Path, command.Args...)
 	cmd.Dir = command.Dir
@@ -428,7 +429,8 @@ func (g *Gateway) task(runID string) (Task, error) {
 }
 
 func (g *Gateway) git(ctx context.Context, args ...string) ([]byte, error) {
-	fixed := []string{"-c", "core.hooksPath=" + filepath.Join(g.env.Root, "disabled-git-hooks"), "-c", "core.fsmonitor=false", "-c", "diff.external=", "--no-pager"}
+	fixed := make([]string, 0, 7+len(args))
+	fixed = append(fixed, "-c", "core.hooksPath="+filepath.Join(g.env.Root, "disabled-git-hooks"), "-c", "core.fsmonitor=false", "-c", "diff.external=", "--no-pager")
 	fixed = append(fixed, args...)
 	return g.exec.Execute(ctx, Command{Path: g.gitPath, Args: fixed, Dir: g.manifest.WorkspacePath, Env: g.baseEnv()})
 }
@@ -524,7 +526,7 @@ func ensurePrivateDir(path string) error {
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("review gateway: private path is not a real directory")
 	}
-	if err := os.Chmod(path, 0o700); err != nil {
+	if err := os.Chmod(path, 0o700); err != nil { //nolint:gosec // directories require execute permission and remain owner-only
 		return fmt.Errorf("review gateway: secure private directory: %w", err)
 	}
 	return nil

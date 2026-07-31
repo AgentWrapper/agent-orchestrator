@@ -34,6 +34,7 @@ func New(dataDir string) *Reviewer {
 	return &Reviewer{dataDir: dataDir, resolveBinary: workerqwen.ResolveQwenBinary}
 }
 
+// Harness returns Qwen's reserved reviewer identity.
 func (r *Reviewer) Harness() domain.ReviewerHarness { return domain.ReviewerQwen }
 
 var _ ports.Reviewer = (*Reviewer)(nil)
