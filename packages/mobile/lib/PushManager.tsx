@@ -44,15 +44,19 @@ export function PushManager(): null {
 		wasConfigured.current = configured;
 	}, [configured]);
 
-	// Register after a successful pairing/connection (D7: only prompt once the
-	// feature is meaningful) and refresh on every foreground while connected.
-	// registerForPush persists the daemon it registered with and, when the config
-	// points at a different daemon, unregisters the old one first — so switching
-	// daemons (even across app restarts) is handled inside push.ts, not here.
+	// Register after a successful pairing/connection, and refresh on every
+	// foreground while connected. registerForPush persists the daemon it
+	// registered with and, when the config points at a different daemon,
+	// unregisters the old one first — so switching daemons (even across app
+	// restarts) is handled inside push.ts, not here.
+	//
+	// `ask: false`: this fires automatically, milliseconds after connect, so it
+	// must never spend the one-shot OS prompt. It re-registers users who already
+	// granted permission; asking is left to a call the user initiated.
 	useEffect(() => {
 		if (!config || connection !== "open") return;
 		const safeRegister = () => {
-			registerForPush(config).catch((e) => console.warn("[push] registration failed", e));
+			registerForPush(config, { ask: false }).catch((e) => console.warn("[push] registration failed", e));
 		};
 		safeRegister();
 		const sub = AppState.addEventListener("change", (s) => {

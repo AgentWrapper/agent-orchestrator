@@ -60,7 +60,7 @@
 			[
 				"expo-notifications",
 				{
-					"color": "#0a0b0d"
+					"color": "#4d8dff"
 				}
 			],
 			"expo-secure-store"
