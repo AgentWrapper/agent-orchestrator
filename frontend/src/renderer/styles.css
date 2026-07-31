@@ -2299,6 +2299,10 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	min-width: 0;
 	min-height: 44px;
 	padding: 7px 8px;
+	/* Fades the chrome back in as a maximize/restore lands (it sits the tween
+	   out — see .browser-panel[data-flipping] below), so it arrives rather
+	   than pops. */
+	transition: opacity var(--duration-fast) ease-out;
 	border-bottom: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
 	background:
 		linear-gradient(180deg, color-mix(in srgb, var(--surface) 98%, white 2%), var(--surface)),
@@ -2469,6 +2473,36 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	opacity: 0;
 }
 
+/* Maximize/restore tweens the panel's real width/height, so every frame is a
+   genuine relayout of its contents. The toolbar is a dense single row (icon
+   buttons plus a flex-1 URL field): at docked width its controls are already
+   near their floor, so tweening through that range visibly squeezes and
+   re-spaces them, and the snapshot's own box changes aspect under it. Rather
+   than animate that, the panel shows only the frozen page for the tween —
+   the toolbar drops out and the viewport fills the whole box, so the growing
+   or shrinking window reveals/clips one static image and nothing reshapes. */
+.browser-panel[data-flipping] {
+	position: relative;
+}
+
+.browser-panel[data-flipping] .browser-panel__toolbar {
+	opacity: 0;
+}
+
+.browser-panel[data-flipping] .browser-panel__viewport {
+	position: absolute;
+	inset: 0;
+}
+
+/* cover, not contain: the snapshot is captured at the origin aspect and the
+   box ends at a different one, so contain letterboxes it against --bg with
+   bands that grow as the tween runs, and rescales the content every frame.
+   cover keeps it uniformly scaled and full-bleed, cropping instead — a zoom,
+   not a stretch. */
+[data-transition="popout"] .browser-panel__transition-frame {
+	object-fit: cover;
+}
+
 .browser-panel__slot {
 	position: absolute;
 	inset: 0;
@@ -2531,6 +2565,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 
 	.browser-panel,
 	.browser-panel__annotation-status,
+	.browser-panel__toolbar,
 	.browser-panel__toolbar button,
 	.session-files-diff-collapse {
 		transition: none;
