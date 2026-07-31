@@ -24,7 +24,7 @@ export function buildLlmsHeader(): string[] {
 		"",
 		"> Run 10+ parallel coding agents on your machine",
 		"",
-		`${COMPANY.NAME} is an open-source desktop application that lets developers run multiple AI coding agents in parallel, each in its own isolated Git worktree. It works with any CLI-based agent including Claude Code, OpenCode, and OpenAI Codex. Agents can work on different branches or features simultaneously without conflicts. ${COMPANY.NAME} is free, does not proxy API calls, and supports macOS, Windows, and Linux.`,
+		`${COMPANY.NAME} is an open-source desktop application that lets developers run multiple AI coding agents in parallel, each in its own isolated Git worktree. It works with any CLI-based agent including Claude Code, OpenCode, and OpenAI Codex. Agents can work on different branches or features simultaneously without conflicts. ${COMPANY.NAME} is free, does not proxy API calls, and supports macOS with Windows and Linux coming soon.`,
 	];
 }
 
@@ -45,7 +45,6 @@ export function buildWhenToUseSection(
 		"- Run several coding agents (Claude Code, Codex, OpenCode, or any CLI agent) at the same time on one repository without them stepping on each other, each agent gets an isolated Git worktree and its own branch.",
 		"- Orchestrate agent work through the desktop app and local `ao` CLI: create workspaces, launch agents with a prompt, open terminals, and track tasks.",
 		"- Schedule recurring agent runs (automations) that execute a prompt on a cron-like schedule in a fresh or existing workspace.",
-		"- Automatically route CI failures and review feedback to the agent session that owns the branch, so the right agent can handle failures without manual babysitting.",
 		"- Review diffs, manage ports, and monitor many concurrent agent sessions from one dashboard.",
 		"",
 		`Agent Orchestrator is not a coding agent itself; it is the local workspace and orchestration layer the agents run in. If you are an AI agent inside an AO-managed session, use the installed \`ao\` CLI. ${documentationDirection}`,
@@ -86,7 +85,7 @@ function renderDocumentationItem(item: DocsNavItem, depth: number): string[] {
 
 	const page = item.url ? getDocPage(docSlugFromUrl(item.url)) : undefined;
 	const href = item.url
-		? `${COMPANY.MARKETING_URL}${item.url.replace(/\/+$/, "")}/index.html.md`
+		? `${COMPANY.MARKETING_URL}${item.url.endsWith("/") ? item.url : `${item.url}/`}`
 		: undefined;
 	const link = href ? `[${item.title}](${href})` : item.title;
 	const label = item.items && item.items.length > 0 ? `**${link}**` : link;
@@ -108,7 +107,7 @@ export function buildDocumentationSection(): string[] {
 	const lines = [
 		"## Documentation",
 		"",
-		`- **[Documentation overview](${COMPANY.DOCS_URL}/index.html.md)**${overviewDescription}`,
+		`- **[Documentation overview](${COMPANY.DOCS_URL}/)**${overviewDescription}`,
 	];
 
 	for (const item of getDocsNav()) {
