@@ -2719,6 +2719,11 @@ components:
         disabled:
           type: boolean
       type: object
+    ContainerReapConfig:
+      properties:
+        disabled:
+          type: boolean
+      type: object
     ControllersSessionView:
       properties:
         activity:

@@ -930,6 +930,9 @@ export interface components {
         ContainerReapConfig: {
             disabled?: boolean;
         };
+        ContainerReapConfig: {
+            disabled?: boolean;
+        };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
             branch?: string;
