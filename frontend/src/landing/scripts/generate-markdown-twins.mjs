@@ -21,7 +21,16 @@ for (const htmlFile of htmlFiles) {
   const $ = load(await readFile(htmlFile, "utf8"));
   const title = $("[data-doc-title]").first().text().trim();
   const description = $("[data-doc-description]").first().text().trim();
-  const article = $("[data-doc-content]").first().html();
+  const content = $("[data-doc-content]").first();
+
+  content.find("[data-doc-tab-list]").remove();
+  content.find("[data-doc-tab-panel]").each((_, panel) => {
+    const label = $(panel).attr("data-doc-tab-label");
+    if (label) $(panel).prepend($("<p>").append($("<strong>").text(label)));
+    $(panel).removeAttr("hidden");
+  });
+
+  const article = content.html();
 
   if (!title || !description || !article) throw new Error(`Missing documentation content in ${htmlFile}`);
 
