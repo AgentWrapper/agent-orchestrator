@@ -2719,11 +2719,6 @@ components:
         disabled:
           type: boolean
       type: object
-    ContainerReapConfig:
-      properties:
-        disabled:
-          type: boolean
-      type: object
     ControllersSessionView:
       properties:
         activity:
@@ -3066,15 +3061,6 @@ components:
       type: object
     ListWorkspaceFilesResponse:
       properties:
-        compareBaseRef:
-          type: string
-        compareBaseSha:
-          type: string
-        compareMode:
-          enum:
-          - base
-          - head_fallback
-          type: string
         files:
           items:
             $ref: '#/components/schemas/WorkspaceFileSummary'
@@ -4263,15 +4249,6 @@ components:
           type: integer
         binary:
           type: boolean
-        compareBaseRef:
-          type: string
-        compareBaseSha:
-          type: string
-        compareMode:
-          enum:
-          - base
-          - head_fallback
-          type: string
         content:
           type: string
         contentTruncated:
@@ -4285,8 +4262,6 @@ components:
         diffTruncated:
           type: boolean
         path:
-          type: string
-        previousPath:
           type: string
         sessionId:
           type: string
@@ -4324,8 +4299,6 @@ components:
         deletions:
           type: integer
         path:
-          type: string
-        previousPath:
           type: string
         size:
           format: int64

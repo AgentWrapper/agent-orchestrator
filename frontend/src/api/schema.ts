@@ -930,9 +930,6 @@ export interface components {
         ContainerReapConfig: {
             disabled?: boolean;
         };
-        ContainerReapConfig: {
-            disabled?: boolean;
-        };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
             branch?: string;
@@ -1056,10 +1053,6 @@ export interface components {
             shellTerminals: components["schemas"]["ShellTerminalResponse"][];
         };
         ListWorkspaceFilesResponse: {
-            compareBaseRef?: string;
-            compareBaseSha?: string;
-            /** @enum {string} */
-            compareMode?: "base" | "head_fallback";
             files: components["schemas"]["WorkspaceFileSummary"][];
             sessionId: string;
             truncated: boolean;
@@ -1534,10 +1527,6 @@ export interface components {
         WorkspaceFileResponse: {
             additions: number;
             binary: boolean;
-            compareBaseRef?: string;
-            compareBaseSha?: string;
-            /** @enum {string} */
-            compareMode?: "base" | "head_fallback";
             content: string;
             contentTruncated: boolean;
             deleted: boolean;
@@ -1545,7 +1534,6 @@ export interface components {
             diff: string;
             diffTruncated: boolean;
             path: string;
-            previousPath?: string;
             sessionId: string;
             /** Format: int64 */
             size: number;
@@ -1557,7 +1545,6 @@ export interface components {
             binary: boolean;
             deletions: number;
             path: string;
-            previousPath?: string;
             /** Format: int64 */
             size: number;
             /** @enum {string} */
