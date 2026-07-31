@@ -359,7 +359,6 @@ export function BrowserPanelView({
 							: "";
 	const agentStatusLabel = agentActivityLabel(agentBrowserActivity, agentBrowserActive);
 
-
 	return (
 		<div
 			className={cn(

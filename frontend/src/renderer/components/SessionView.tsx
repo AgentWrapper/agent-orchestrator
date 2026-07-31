@@ -198,8 +198,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// is still used, but only to cover the native view's handoff, which is an
 	// IPC round trip and would otherwise flash. See DESIGN.md's Motion section.
 	const browserPopoutSettleRef = useRef(false);
+	const browserPopoutRequestRef = useRef(0);
+	const currentSessionIdRef = useRef(sessionId);
+	currentSessionIdRef.current = sessionId;
 
 	useLayoutEffect(() => {
+		browserPopoutRequestRef.current += 1;
+		browserPopoutSettleRef.current = false;
 		setTerminalTarget({ kind: "worker" });
 		setBrowserPoppedOut(false);
 		setFilesPoppedOut(false);
@@ -235,17 +240,28 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const handleToggleBrowserPopOut = useCallback(
 		(next: boolean) => {
 			if (next) setFilesPoppedOut(false);
+			const requestId = ++browserPopoutRequestRef.current;
+			const requestSessionId = sessionId;
 			// The frozen frame has to be on screen *before* the layout moves: the
 			// native view is hidden across the move, so flipping first would leave
 			// the panel painting nothing until the capture round trip resolves.
 			// Once the new layout is committed the effect below reveals the live
 			// view and crossfades the frame out.
 			void browserView.beginPopoutTransition().then((captured) => {
+				// Capturing crosses an IPC boundary. If the route changed while it
+				// was pending, this completion belongs to the outgoing session and
+				// must not pop out the incoming session's browser.
+				if (
+					browserPopoutRequestRef.current !== requestId ||
+					currentSessionIdRef.current !== requestSessionId
+				) {
+					return;
+				}
 				browserPopoutSettleRef.current = captured;
 				setBrowserPoppedOut(next);
 			});
 		},
-		[browserView],
+		[browserView, sessionId],
 	);
 
 	// Reveals the native view at the slot's new bounds once React has committed

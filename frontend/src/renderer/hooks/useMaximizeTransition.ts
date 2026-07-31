@@ -10,9 +10,9 @@ export type MaximizeTransitionController = {
 
 // Drives a FLIP grow/shrink transition whenever `maximized` changes, using the
 // rect captured by the last captureOrigin() call as the animation's start
-// point. Shared by the Browser panel (paired with begin/end native-view-hide
-// hooks via onSettle) and the File diff viewer (pure DOM, no native view to
-// coordinate) — see DESIGN.md's Motion section for the approved scope.
+// point. Used by the File diff viewer; the Browser panel deliberately switches
+// layouts immediately because its native WebContentsView cannot participate in
+// a DOM FLIP transition. See DESIGN.md's Motion section for the approved scope.
 export function useMaximizeTransition(maximized: boolean, onSettle?: () => void): MaximizeTransitionController {
 	const flip = useFlipTransition();
 	const nodeRef = useRef<HTMLElement | null>(null);

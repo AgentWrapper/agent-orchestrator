@@ -2437,25 +2437,18 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	z-index: 2;
 	width: 100%;
 	height: 100%;
-	/* contain, not fill: during a popout transition the panel is a GSAP Flip
-	   target resizing via real width/height (not a CSS transform), so this
-	   frame's own 100%/100% box genuinely changes shape every frame as the
-	   rail and fullscreen aspect ratios differ. object-fit: contain keeps the
-	   captured content itself undistorted throughout — fill would stretch it
-	   to match whatever shape that box is in at each instant. */
+	/* Tab-switch captures keep the same geometry, so contain preserves the
+	   captured page's aspect ratio without distortion. Popout handoffs override
+	   this below because their source and destination geometries differ. */
 	object-fit: contain;
 	background: var(--bg);
 	pointer-events: none;
 	animation: browser-transition-frame 240ms ease-out forwards;
 }
 
-/* A held popout transition's frame must stay fully opaque for its whole
-   (variable, FLIP-driven) hold duration — the 240ms fade above is sized for
-   the fixed tab-switch case and would otherwise fade the frame transparent
-   partway through a longer maximize/restore transform, exposing the hidden
-   native view's blank background underneath. endPopoutTransition() removes
-   the frame outright once the transform settles; no fade-out needed since
-   the live view is pixel-aligned with it at that exact instant. */
+/* A popout frame is held while the native view moves to its new bounds. The
+   240ms animation above is sized for tab switches, so the handoff drives its
+   release explicitly after the destination layout commits. */
 [data-transition="popout"] .browser-panel__transition-frame {
 	animation: none;
 	opacity: 1;

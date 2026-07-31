@@ -655,7 +655,7 @@ describe("SessionView", () => {
 		// The maximized overlay appears; the terminal stays mounted behind it.
 		expect(await screen.findByRole("button", { name: "browser center" })).toBeInTheDocument();
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
-		// A snapshot is held (native view frozen/hidden) for the FLIP grow transition.
+		// A snapshot is held while the native view moves to its new bounds.
 		expect(beginPopoutTransitionMock).toHaveBeenCalledTimes(1);
 
 		fireEvent.click(screen.getByRole("button", { name: "browser center" }));
@@ -664,7 +664,7 @@ describe("SessionView", () => {
 		);
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
 		expect(browserDestroy).not.toHaveBeenCalled();
-		// The restore direction also freezes a snapshot for its own FLIP shrink transition.
+		// Restore also freezes a snapshot for the native-view handoff.
 		expect(beginPopoutTransitionMock).toHaveBeenCalledTimes(2);
 	});
 
@@ -718,6 +718,27 @@ describe("SessionView", () => {
 
 		expect(await screen.findByRole("button", { name: "browser center" })).toBeInTheDocument();
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
+	});
+
+	it("ignores a pending browser popout capture after switching sessions", async () => {
+		let releaseCapture: (captured: boolean) => void = () => undefined;
+		beginPopoutTransitionMock.mockReturnValue(
+			new Promise<boolean>((resolve) => {
+				releaseCapture = resolve;
+			}),
+		);
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
+		const { rerender } = render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "pop browser" }));
+		rerender(<SessionView sessionId="sess-2" />);
+
+		await act(async () => {
+			releaseCapture(true);
+		});
+
+		expect(screen.queryByRole("button", { name: "browser center" })).not.toBeInTheDocument();
+		expect(screen.getByTestId("session-tab")).toHaveTextContent("do the other thing");
 	});
 
 	it("opens the files view in the inspector rail first", () => {
