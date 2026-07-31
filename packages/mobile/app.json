@@ -19,6 +19,9 @@
 			"bundleIdentifier": "aoagents.ao",
 			"config": {
 				"usesNonExemptEncryption": false
+			},
+			"infoPlist": {
+				"LSApplicationQueriesSchemes": ["github"]
 			}
 		},
 		"android": {
