@@ -69,7 +69,12 @@ var (
 	ErrAwaitingDecision = errors.New("session: awaiting a user decision")
 )
 
-// Env vars a spawned process reads to learn who it is.
+// Env vars a spawned process reads to learn who it is. A worker that starts
+// its own Docker containers (a database, a queue, any ad-hoc service) should
+// label them `--label ao.session=$AO_SESSION_ID` so AO's container reaper
+// (dockerreap) removes them on session kill/terminal state — see #2652. Add
+// `--label ao.spare=true` to a deliberately shared container that must
+// survive past this session.
 const (
 	EnvSessionID = "AO_SESSION_ID"
 	EnvProjectID = "AO_PROJECT_ID"

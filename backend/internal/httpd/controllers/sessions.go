@@ -75,7 +75,6 @@ type SessionService interface {
 	Rename(ctx context.Context, id domain.SessionID, displayName string) error
 	SetPreview(ctx context.Context, id domain.SessionID, previewURL string) (domain.Session, error)
 	SetTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool) (domain.Session, error)
-	CompleteOrchestrator(ctx context.Context, id domain.SessionID) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
 	ListPRSummaries(ctx context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error)
 	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
@@ -143,7 +142,6 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Get("/orchestrators", c.listOrchestrators)
 	r.Post("/orchestrators", c.spawnOrchestrator)
 	r.Get("/orchestrators/{id}", c.getOrchestrator)
-	r.Post("/orchestrators/{id}/done", c.completeOrchestrator)
 }
 
 func (c *SessionsController) list(w http.ResponseWriter, r *http.Request) {
@@ -980,19 +978,6 @@ func (c *SessionsController) getOrchestrator(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sessionView(sess)})
-}
-
-func (c *SessionsController) completeOrchestrator(w http.ResponseWriter, r *http.Request) {
-	if c.Svc == nil {
-		apispec.NotImplemented(w, r, "POST", "/api/v1/orchestrators/{id}/done")
-		return
-	}
-	id := orchestratorID(r)
-	if err := c.Svc.CompleteOrchestrator(r.Context(), id); err != nil {
-		envelope.WriteError(w, r, err)
-		return
-	}
-	envelope.WriteJSON(w, http.StatusOK, CompleteOrchestratorResponse{OK: true, SessionID: id})
 }
 
 func sessionID(r *http.Request) domain.SessionID {

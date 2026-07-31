@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# verify-mac-artifact.sh <path-to-.zip-or-.app>
+# verify-mac-artifact.sh <path-to-.zip-or-.app-or-.dmg>
 #
 # The one canonical way to check that a shipped macOS artifact is sealed,
 # notarized and stapled. CI gates and humans debugging by hand must both use
@@ -31,21 +31,30 @@
 #      `xcrun stapler validate` is the check that proves the ticket is attached
 #      to the bytes we ship, and it gates cleanly on exit code.
 #
+#   4. The spctl ASSESSMENT TYPE differs by artifact. An .app (however it was
+#      delivered) is assessed as executable code, `-t exec`. A .dmg is not
+#      executable code; it is a container Gatekeeper assesses on open, so it
+#      needs `-t open --context context:primary-signature`, which is what #3267
+#      decision 3 step 4 specifies. Using `-t exec` on a dmg assesses the wrong
+#      thing. `-vv` stays mandatory for both (rule 2).
+#
 # Exit codes: 0 all checks passed, 1 a check failed, 2 usage error.
 
 set -euo pipefail
 
 usage() {
 	cat >&2 <<'EOF'
-usage: verify-mac-artifact.sh <path-to-.zip-or-.app>
+usage: verify-mac-artifact.sh <path-to-.zip-or-.app-or-.dmg>
 
 Verifies a macOS release artifact is signed, notarized and stapled:
   codesign --verify --deep --strict
-  spctl -a -vv -t exec
+  spctl -a -vv -t exec                                  (.zip / .app)
+  spctl -a -vv -t open --context context:primary-signature   (.dmg)
   xcrun stapler validate
 
 A .zip is extracted with `ditto -x -k` first (never `unzip`), and the single
-.app bundle inside it is checked.
+.app bundle inside it is checked. A .dmg is checked as the container it is,
+without mounting it.
 EOF
 }
 
@@ -78,6 +87,12 @@ case "$ARTIFACT" in
 		exit 2
 	fi
 	;;
+*.dmg)
+	if [[ ! -f "$ARTIFACT" ]]; then
+		echo "verify-mac-artifact: expected a .dmg file, got a directory: $ARTIFACT" >&2
+		exit 2
+	fi
+	;;
 *.app)
 	if [[ ! -d "$ARTIFACT" ]]; then
 		echo "verify-mac-artifact: expected an .app bundle directory: $ARTIFACT" >&2
@@ -85,7 +100,7 @@ case "$ARTIFACT" in
 	fi
 	;;
 *)
-	echo "verify-mac-artifact: unsupported artifact type: $ARTIFACT (expected .zip or .app)" >&2
+	echo "verify-mac-artifact: unsupported artifact type: $ARTIFACT (expected .zip, .app or .dmg)" >&2
 	usage
 	exit 2
 	;;
@@ -149,12 +164,19 @@ run_check() {
 }
 
 # Seal intact. --deep walks nested code (helpers, frameworks, the bundled
-# daemon); --strict rejects the loosened defaults.
+# daemon); --strict rejects the loosened defaults. A .dmg has no nested code for
+# --deep to walk, so the same invocation is correct for both.
 run_check "codesign" codesign --verify --deep --strict --verbose=2 "$APP"
 
 # Gatekeeper would accept it. -vv is mandatory (rule 2); expect
-# "accepted" plus "source=Notarized Developer ID".
-run_check "spctl" spctl -a -vv -t exec "$APP"
+# "accepted" plus "source=Notarized Developer ID". The assessment type depends
+# on the artifact (rule 4): executable code for an .app, "open" against the
+# primary signature for a .dmg container.
+if [[ "$ARTIFACT" == *.dmg ]]; then
+	run_check "spctl" spctl -a -vv -t open --context context:primary-signature "$APP"
+else
+	run_check "spctl" spctl -a -vv -t exec "$APP"
+fi
 
 # The notarization ticket is actually attached to these bytes (rule 3).
 run_check "stapler" xcrun stapler validate "$APP"

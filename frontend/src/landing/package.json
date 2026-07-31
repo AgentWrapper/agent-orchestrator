@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "postbuild": "node scripts/generate-markdown-twins.mjs",
     "start": "next start"
   },
   "workspaces": [
@@ -52,6 +53,8 @@
     "@types/three": "^0.181.0",
     "tailwindcss": "4.2.2",
     "three": "^0.181.2",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "cheerio": "1.2.0",
+    "node-html-markdown": "2.0.0"
   }
 }

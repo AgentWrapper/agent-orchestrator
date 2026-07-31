@@ -5,7 +5,7 @@
 #   curl -fsSL https://aoagents.dev/cli/install.sh | sh
 #
 # Installs the `ao` CLI via the Homebrew tap. For the desktop app, download it
-# from https://github.com/AgentWrapper/agent-orchestrator/releases/latest.
+# from https://github.com/Untrivial-ai/agent-orchestrator/releases/latest.
 
 set -eu
 
@@ -17,7 +17,7 @@ RESET='\033[0m'
 info() { printf "${GREEN}==>${RESET} %s\n" "$1" >&2; }
 error() { printf "${RED}error:${RESET} %s\n" "$1" >&2; exit 1; }
 
-RELEASES_URL="https://github.com/AgentWrapper/agent-orchestrator/releases/latest"
+RELEASES_URL="https://github.com/Untrivial-ai/agent-orchestrator/releases/latest"
 
 main() {
     printf "${BOLD}Installing Agent Orchestrator${RESET}\n\n"

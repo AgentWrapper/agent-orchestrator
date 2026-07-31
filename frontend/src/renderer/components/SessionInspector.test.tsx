@@ -224,9 +224,10 @@ describe("SessionInspector PR section", () => {
 		expect(prSection("Pull request").getByText("open")).toHaveClass("text-[9px]", "leading-none");
 	});
 
-	it("shows the empty state when there are no PRs", () => {
+	it("hides the pull request section when there are no PRs", () => {
 		renderWithQuery(<SessionInspector session={session([])} />);
-		expect(screen.getByText("No pull request opened yet.")).toBeInTheDocument();
+		expect(screen.queryByText("Pull request")).not.toBeInTheDocument();
+		expect(screen.queryByText("No pull request opened yet.")).not.toBeInTheDocument();
 	});
 
 	it("links each PR to its url", () => {
@@ -241,7 +242,7 @@ describe("SessionInspector PR section", () => {
 
 describe("SessionInspector completion controls", () => {
 	it("persists the terminate-on-merge preference", async () => {
-		renderWithQuery(<SessionInspector session={session([])} />);
+		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
 
 		await userEvent.click(screen.getByRole("switch", { name: "Terminate session when pull requests merge" }));
 
@@ -316,6 +317,15 @@ describe("SessionInspector completion controls", () => {
 
 		expect(screen.queryByText("Completion")).not.toBeInTheDocument();
 		expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+	});
+
+	it("hides completion controls when there are no PRs and the session is not merged", () => {
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		expect(screen.queryByText("Completion")).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("switch", { name: "Terminate session when pull requests merge" }),
+		).not.toBeInTheDocument();
 	});
 });
 
