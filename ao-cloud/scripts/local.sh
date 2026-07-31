@@ -18,7 +18,8 @@ worker and control-plane images, starts the Compose stack, then starts the web
 app.
 It remains attached and streams logs until Ctrl-C, which stops the stack while
 preserving PostgreSQL data.
-stop stops the control plane, web app, and local PostgreSQL container.
+stop gracefully stops local worker sandboxes, the control plane, web app, and
+local PostgreSQL container while preserving volumes.
 clear-db stops the stack and permanently deletes local PostgreSQL data without
 starting anything afterward. reset-db is a backwards-compatible alias.
 EOF
@@ -116,7 +117,20 @@ stop_process() {
   fi
 }
 
+stop_local_sandboxes() {
+  local ids
+  ids="$(docker ps --quiet --filter label=ao.managed=true)"
+  if [[ -z "$ids" ]]; then
+    return
+  fi
+  docker stop --time 15 $ids || true
+  echo "Stopped local AO worker sandboxes."
+}
+
 stop_stack() {
+  # Stop sandboxes first so their worker processes can handle SIGTERM while the
+  # control plane is still available for their final lifecycle events.
+  stop_local_sandboxes
   stop_process sandbox-events
   stop_process web
   stop_process control-plane

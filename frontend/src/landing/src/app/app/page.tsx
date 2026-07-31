@@ -1159,7 +1159,11 @@ export default function CloudAppPage() {
               terminalRuntimeAvailable ? (
                 <div className="flex h-full min-h-0 min-w-0">
                   <div className="min-h-0 min-w-0 flex-1">
-                    <CloudTerminal api={api} sessionId={selectedSession.id} />
+                    <CloudTerminal
+                      api={api}
+                      sessionId={selectedSession.id}
+                      layoutKey={inspectorOpen ? "inspector-open" : "inspector-closed"}
+                    />
                   </div>
                   <CloudInspector
                     key={selectedSession.id}

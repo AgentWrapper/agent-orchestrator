@@ -5,6 +5,7 @@ export type CloudTerminalConnectionState =
   | "connected"
   | "disconnected"
   | "error";
+export type CloudTerminalKind = "agent" | "workspace";
 
 export type CloudTerminalEvent =
   | { type: "state"; state: CloudTerminalConnectionState }
@@ -39,6 +40,7 @@ class CloudTerminalConnection {
   constructor(
     private readonly api: CloudAPI,
     private readonly sessionId: string,
+    private readonly kind: CloudTerminalKind,
   ) {
     window.addEventListener("online", this.reconnectNow);
     window.addEventListener("focus", this.reconnectNow);
@@ -101,10 +103,10 @@ class CloudTerminalConnection {
     this.connectInFlight = true;
     this.setState("connecting");
     try {
-      const { ticket } = await this.api.terminalTicket(this.sessionId);
+      const { ticket } = await this.api.terminalTicket(this.sessionId, this.kind);
       if (this.closed) return;
       const socket = new WebSocket(
-        this.api.terminalURL(ticket, this.lastSequence),
+        this.api.terminalURL(ticket, this.lastSequence, this.kind),
       );
       this.socket = socket;
       socket.addEventListener("open", () => {
@@ -196,13 +198,15 @@ const connections = new Map<string, CloudTerminalConnection>();
 export function ensureCloudTerminalConnection(
   api: CloudAPI,
   sessionId: string,
+  kind: CloudTerminalKind = "agent",
 ) {
   if (poolAPI && poolAPI !== api) clearCloudTerminalConnections();
   poolAPI = api;
-  const existing = connections.get(sessionId);
+  const key = `${sessionId}:${kind}`;
+  const existing = connections.get(key);
   if (existing) return existing;
-  const connection = new CloudTerminalConnection(api, sessionId);
-  connections.set(sessionId, connection);
+  const connection = new CloudTerminalConnection(api, sessionId, kind);
+  connections.set(key, connection);
   return connection;
 }
 
@@ -216,10 +220,11 @@ export function syncCloudTerminalConnections(
   for (const sessionId of sessionIds) {
     ensureCloudTerminalConnection(api, sessionId);
   }
-  for (const [sessionId, connection] of connections) {
+  for (const [key, connection] of connections) {
+    const sessionId = key.split(":", 1)[0];
     if (active.has(sessionId)) continue;
     connection.close();
-    connections.delete(sessionId);
+    connections.delete(key);
   }
 }
 

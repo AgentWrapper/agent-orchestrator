@@ -62,14 +62,28 @@ talking to a database, sandbox, or local daemon directly.
 - Harden reconciliation: create, boot, pause/resume, replacement, deletion,
   retries, orphan cleanup, egress policy, resource limits, and retention.
 - Build/publish an immutable worker image with no baked credentials.
+- Keep the shared interactive terminal path harness-neutral: Claude Code, Codex,
+  and Cursor workers must all render and resize through the same full-pane PTY
+  viewport rather than a harness-specific transcript UI.
+- Add new harnesses by baking their CLI and verified runtime prerequisites into
+  the worker image, then implementing the matching AO adapter, credential
+  delivery, prompt strategy, hooks/activity mapping, and lifecycle tests before
+  exposing the harness in Cloud settings.
 
 **Outcome:** every orchestrator or worker gets one isolated Daytona sandbox
 that recovers safely from worker, provider, or control-plane failure.
 
 ## Phase 4 — Git and agent security boundaries
 
-- Replace temporary `local-gh` and deployment tokens with GitHub App
-  installations, repository grants, short-lived tokens, and verified webhooks.
+- Add a GitHub App connection flow so each user or organization can install AO
+  on selected repositories from the Cloud settings UI.
+- Replace temporary local `gh auth token` forwarding and deployment tokens with
+  GitHub App installation tokens. The control plane obtains and refreshes those
+  short-lived tokens server-side; sandboxes receive only AO-scoped, short-lived
+  Git credentials for their registered repository.
+- Add repository grants, installation selection, disconnect/revocation,
+  verified webhooks, and clear UI status for the connected GitHub account or
+  organization.
 - Scope Git operations by organization, project, session, repository, branch,
   and operation.
 - Support an agent only when its cloud credential, launch, stream, interrupt,

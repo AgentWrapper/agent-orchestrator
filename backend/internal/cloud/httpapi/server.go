@@ -1292,6 +1292,7 @@ func (s *Server) workerEvent(w http.ResponseWriter, r *http.Request) {
 	input.Type = strings.TrimSpace(input.Type)
 	if input.Type == "" || len(input.Type) > 100 || !strings.HasPrefix(input.Type, "worker.") &&
 		!strings.HasPrefix(input.Type, "agent.") && !strings.HasPrefix(input.Type, "terminal.") &&
+		!strings.HasPrefix(input.Type, "workspace_terminal.") &&
 		!strings.HasPrefix(input.Type, "repository.") && !strings.HasPrefix(input.Type, "preview.") &&
 		!strings.HasPrefix(input.Type, "chat.") {
 		writeError(w, r, http.StatusBadRequest, "INVALID_EVENT_TYPE", "Worker event type is not allowed.")
@@ -1673,11 +1674,22 @@ func (s *Server) issueTerminalTicket(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "authorize terminal ticket", err)
 		return
 	}
+	var input struct {
+		Kind string `json:"kind"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	kind := terminalKind(input.Kind)
+	if kind == "" {
+		writeError(w, r, http.StatusBadRequest, "INVALID_TERMINAL_KIND", "terminal kind must be agent or workspace.")
+		return
+	}
 	ticket, err := s.store.IssueAccessTicket(
 		r.Context(),
 		account.ID,
 		sessionID,
-		"terminal",
+		terminalTicketPurpose(kind),
 		[]string{"terminal:read", "terminal:operate"},
 		60*time.Second,
 	)
@@ -1705,8 +1717,42 @@ type terminalServerMessage struct {
 	Message  string `json:"message,omitempty"`
 }
 
+func terminalKind(value string) string {
+	switch value {
+	case "", "agent":
+		return "agent"
+	case "workspace":
+		return "workspace"
+	default:
+		return ""
+	}
+}
+
+func terminalTicketPurpose(kind string) string {
+	if kind == "workspace" {
+		return "workspace_terminal"
+	}
+	return "terminal"
+}
+
+func terminalOutputEvent(kind string) string {
+	if kind == "workspace" {
+		return "workspace_terminal.output"
+	}
+	return "terminal.output"
+}
+
 func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
-	ticket, err := s.store.ConsumeAccessTicket(r.Context(), r.URL.Query().Get("ticket"), "terminal")
+	kind := terminalKind(r.URL.Query().Get("kind"))
+	if kind == "" {
+		writeError(w, r, http.StatusBadRequest, "INVALID_TERMINAL_KIND", "terminal kind must be agent or workspace.")
+		return
+	}
+	ticket, err := s.store.ConsumeAccessTicket(
+		r.Context(),
+		r.URL.Query().Get("ticket"),
+		terminalTicketPurpose(kind),
+	)
 	if errors.Is(err, cloudpostgres.ErrInvalidTicket) {
 		writeError(w, r, http.StatusUnauthorized, "INVALID_TERMINAL_TICKET", "Terminal ticket is invalid or expired.")
 		return
@@ -1732,7 +1778,7 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	live := make(chan clouddomain.Event, 1024)
 	unsubscribe := s.events.Subscribe(ticket.AccountID, ticket.SessionID, func(event clouddomain.Event) {
-		if event.Type != "terminal.output" && event.Type != "worker.connected" {
+		if event.Type != terminalOutputEvent(kind) && event.Type != "worker.connected" {
 			return
 		}
 		select {
@@ -1768,7 +1814,7 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, event := range replayed {
-			if event.Type == "terminal.output" {
+			if event.Type == terminalOutputEvent(kind) {
 				if err := writeTerminalEvent(ctx, socket, event, &sent); err != nil {
 					return
 				}
@@ -1834,6 +1880,9 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 					Message: err.Error(),
 				})
 				continue
+			}
+			if kind == "workspace" {
+				workerCommand.Type = "workspace_terminal_" + workerCommand.Type
 			}
 			if err := s.workerHub.Send(ticket.SessionID, workerCommand); err != nil {
 				message := "Terminal command could not be queued."

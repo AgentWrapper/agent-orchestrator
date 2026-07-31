@@ -2,26 +2,34 @@
 
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 import { CloudAPI } from "@/lib/cloud-api";
 import {
   CloudTerminalConnectionState,
+  CloudTerminalKind,
   ensureCloudTerminalConnection,
 } from "@/lib/cloud-terminal-pool";
 
 interface CloudTerminalProps {
   api: CloudAPI;
   sessionId: string;
+  layoutKey?: string;
+  kind?: CloudTerminalKind;
 }
 
-export function CloudTerminal({ api, sessionId }: CloudTerminalProps) {
+export function CloudTerminal({
+  api,
+  sessionId,
+  layoutKey = "",
+  kind = "agent",
+}: CloudTerminalProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [connection, setConnection] =
     useState<CloudTerminalConnectionState>("connecting");
   const [notice, setNotice] = useState<string | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
 
@@ -60,9 +68,14 @@ export function CloudTerminal({ api, sessionId }: CloudTerminalProps) {
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.open(host);
-    fit.fit();
+    const fitTerminal = () => fit.fit();
+    fitTerminal();
+    const firstFrame = window.requestAnimationFrame(fitTerminal);
+    const secondFrame = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(fitTerminal);
+    });
 
-    const persistentConnection = ensureCloudTerminalConnection(api, sessionId);
+    const persistentConnection = ensureCloudTerminalConnection(api, sessionId, kind);
     const unsubscribe = persistentConnection.subscribe((event) => {
       if (event.type === "state") {
         setConnection(event.state);
@@ -83,22 +96,25 @@ export function CloudTerminal({ api, sessionId }: CloudTerminalProps) {
       persistentConnection.resize(rows, cols),
     );
     const observer = new ResizeObserver(() => {
-      fit.fit();
+      fitTerminal();
       persistentConnection.resize(terminal.rows, terminal.cols);
     });
     observer.observe(host);
+    if (host.parentElement) observer.observe(host.parentElement);
 
     return () => {
       observer.disconnect();
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
       unsubscribe();
       input.dispose();
       resize.dispose();
       terminal.dispose();
     };
-  }, [api, sessionId]);
+  }, [api, kind, layoutKey, sessionId]);
 
   return (
-    <div className="relative h-full min-h-0 bg-[#101317]">
+    <div className="relative h-full min-h-0 w-full bg-[#101317]">
       {connection !== "connected" ? (
         <div
           className="pointer-events-none absolute inset-0 z-10 grid place-items-center bg-[#101317]/92"
@@ -131,7 +147,7 @@ export function CloudTerminal({ api, sessionId }: CloudTerminalProps) {
           {notice}
         </div>
       ) : null}
-      <div ref={hostRef} className="h-full min-h-0 p-2" />
+      <div ref={hostRef} className="h-full min-h-0 w-full p-2" />
     </div>
   );
 }

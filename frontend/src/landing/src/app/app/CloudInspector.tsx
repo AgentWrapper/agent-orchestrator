@@ -163,7 +163,7 @@ export function CloudInspector({
                     : "pointer-events-none invisible absolute inset-0"
                 }
               >
-                <CloudTerminal api={api} sessionId={sessionId} />
+                <CloudTerminal api={api} sessionId={sessionId} kind="workspace" />
               </div>
               <div className={tab === "files" ? "h-full" : "hidden"}>
                 <FilesView

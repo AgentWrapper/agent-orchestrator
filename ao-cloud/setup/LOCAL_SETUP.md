@@ -69,9 +69,10 @@ The control-plane and web-app logs are written to:
 ~/.ao/cloud-local/logs/web.log
 ```
 
-`npm run cloud:local` stays attached to the log stream. Press Ctrl-C to stop
-the control-plane and PostgreSQL Compose services plus the web app, while
-preserving the database volume.
+`npm run cloud:local` stays attached to the log stream. Press Ctrl-C to
+gracefully stop each local AO worker sandbox (with a 15-second grace period),
+then stop the control-plane and PostgreSQL Compose services plus the web app.
+It preserves worker workspace volumes and the database volume.
 
 The runner reads the host `gh auth token` at startup. It injects that token into
 the control plane only; worker containers receive scoped, short-lived Git
@@ -113,7 +114,8 @@ docker compose -f ao-cloud/docker-compose.local.yml ps
 
 ## Stop or clear the database
 
-Stop the control plane, web app, and local database while keeping its data:
+Stop local worker sandboxes, the control plane, web app, and database while
+keeping their workspace/database volumes:
 
 ```bash
 npm run cloud:local:stop

@@ -60,9 +60,9 @@ func (r *Runner) Run(ctx context.Context) error {
 		return err
 	}
 	launchConfig := ports.LaunchConfig{
-		DataDir:       r.dataDir,
-		Kind:          shareddomain.SessionKind(r.bootstrap.Launch.Session.Kind),
-		Permissions:   ports.PermissionModeBypassPermissions,
+		DataDir:     r.dataDir,
+		Kind:        shareddomain.SessionKind(r.bootstrap.Launch.Session.Kind),
+		Permissions: ports.PermissionModeBypassPermissions,
 		// Cloud prompts are delivered through the durable worker command stream
 		// after the interactive agent PTY has started. Passing one in argv makes
 		// some harnesses prefill their composer without submitting the task.
@@ -137,7 +137,25 @@ func (r *Runner) runInteractiveAgent(
 		return fmt.Errorf("start agent PTY: %w", err)
 	}
 	defer func() { _ = terminal.Close() }()
+	workspaceCommand := exec.CommandContext(ctx, "/bin/bash", "-i")
+	workspaceCommand.Dir = r.workspaceDir
+	workspaceCommand.Env = environment
+	workspaceTerminal, err := pty.Start(workspaceCommand)
+	if err != nil {
+		return fmt.Errorf("start workspace shell PTY: %w", err)
+	}
+	defer func() {
+		_ = workspaceTerminal.Close()
+		if workspaceCommand.Process != nil {
+			_ = workspaceCommand.Process.Kill()
+			_, _ = workspaceCommand.Process.Wait()
+		}
+	}()
 	var terminalWriteMu sync.Mutex
+	var workspaceWriteMu sync.Mutex
+	go func() {
+		_ = r.streamOutput(ctx, workspaceTerminal, "workspace_terminal.output")
+	}()
 	_ = r.client.Event(ctx, "agent.started", map[string]any{
 		"harness": r.bootstrap.Launch.Session.Harness,
 		"argv0":   filepath.Base(argv[0]),
@@ -157,10 +175,16 @@ func (r *Runner) runInteractiveAgent(
 	commandWG.Add(1)
 	go func() {
 		defer commandWG.Done()
-		r.commandLoop(commandCtx, terminal, &terminalWriteMu)
+		r.commandLoop(
+			commandCtx,
+			terminal,
+			workspaceTerminal,
+			&terminalWriteMu,
+			&workspaceWriteMu,
+		)
 	}()
 
-	readErr := r.streamOutput(ctx, terminal)
+	readErr := r.streamOutput(ctx, terminal, "terminal.output")
 	waitErr := command.Wait()
 	cancelHeartbeat()
 	cancelCommands()
@@ -185,7 +209,9 @@ func (r *Runner) runInteractiveAgent(
 func (r *Runner) commandLoop(
 	ctx context.Context,
 	terminal *os.File,
+	workspaceTerminal *os.File,
 	writeMu *sync.Mutex,
+	workspaceWriteMu *sync.Mutex,
 ) {
 	backoff := time.Second
 	var highestPrompt atomic.Int64
@@ -219,6 +245,15 @@ func (r *Runner) commandLoop(
 				_, err = terminal.Write(decoded)
 				writeMu.Unlock()
 				return err
+			case "workspace_terminal_input":
+				decoded, err := base64.StdEncoding.DecodeString(command.Data)
+				if err != nil {
+					return fmt.Errorf("decode workspace terminal input: %w", err)
+				}
+				workspaceWriteMu.Lock()
+				_, err = workspaceTerminal.Write(decoded)
+				workspaceWriteMu.Unlock()
+				return err
 			case "prompt":
 				if command.Sequence > 0 && command.Sequence <= highestPrompt.Load() {
 					return nil
@@ -246,6 +281,8 @@ func (r *Runner) commandLoop(
 				return err
 			case "resize":
 				return pty.Setsize(terminal, &pty.Winsize{Rows: command.Rows, Cols: command.Cols})
+			case "workspace_terminal_resize":
+				return pty.Setsize(workspaceTerminal, &pty.Winsize{Rows: command.Rows, Cols: command.Cols})
 			case "keepalive":
 				return nil
 			case "interrupt":
@@ -331,7 +368,7 @@ func (r *Runner) checkoutBranch(ctx context.Context) error {
 	return nil
 }
 
-func (r *Runner) streamOutput(ctx context.Context, terminal io.Reader) error {
+func (r *Runner) streamOutput(ctx context.Context, terminal io.Reader, eventType string) error {
 	buffer := make([]byte, 32<<10)
 	for {
 		count, err := terminal.Read(buffer)
@@ -340,7 +377,7 @@ func (r *Runner) streamOutput(ctx context.Context, terminal io.Reader) error {
 				"encoding": "base64",
 				"data":     base64.StdEncoding.EncodeToString(buffer[:count]),
 			}
-			if eventErr := r.client.Event(ctx, "terminal.output", payload); eventErr != nil {
+			if eventErr := r.client.Event(ctx, eventType, payload); eventErr != nil {
 				return eventErr
 			}
 		}

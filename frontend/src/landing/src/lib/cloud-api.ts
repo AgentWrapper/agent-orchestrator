@@ -361,18 +361,26 @@ export class CloudAPI {
     );
   }
 
-  async terminalTicket(sessionId: string) {
+  async terminalTicket(
+    sessionId: string,
+    kind: "agent" | "workspace" = "agent",
+  ) {
     return this.request<{ ticket: string; expiresIn: number }>(
       `/api/cloud/v1/sessions/${encodeURIComponent(sessionId)}/terminal-ticket`,
-      { method: "POST", body: {} },
+      { method: "POST", body: { kind } },
     );
   }
 
-  terminalURL(ticket: string, after = 0) {
+  terminalURL(
+    ticket: string,
+    after = 0,
+    kind: "agent" | "workspace" = "agent",
+  ) {
     const target = new URL("/api/cloud/v1/terminal", this.baseURL);
     target.protocol = target.protocol === "https:" ? "wss:" : "ws:";
     target.searchParams.set("ticket", ticket);
     target.searchParams.set("after", String(after));
+    target.searchParams.set("kind", kind);
     return target.toString();
   }
 
