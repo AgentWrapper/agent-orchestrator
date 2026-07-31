@@ -85,7 +85,7 @@ function renderDocumentationItem(item: DocsNavItem, depth: number): string[] {
 
 	const page = item.url ? getDocPage(docSlugFromUrl(item.url)) : undefined;
 	const href = item.url
-		? `${COMPANY.MARKETING_URL}${item.url.endsWith("/") ? item.url : `${item.url}/`}`
+		? `${COMPANY.MARKETING_URL}${item.url.replace(/\/+$/, "")}/index.html.md`
 		: undefined;
 	const link = href ? `[${item.title}](${href})` : item.title;
 	const label = item.items && item.items.length > 0 ? `**${link}**` : link;
@@ -107,7 +107,7 @@ export function buildDocumentationSection(): string[] {
 	const lines = [
 		"## Documentation",
 		"",
-		`- **[Documentation overview](${COMPANY.DOCS_URL}/)**${overviewDescription}`,
+		`- **[Documentation overview](${COMPANY.DOCS_URL}/index.html.md)**${overviewDescription}`,
 	];
 
 	for (const item of getDocsNav()) {
