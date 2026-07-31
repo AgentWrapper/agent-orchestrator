@@ -801,7 +801,11 @@ function SplitLaneColumn({
 					onClick={() => setPrimaryCollapsed((v) => !v)}
 					type="button"
 				>
-					<div className="flex min-w-0 items-center gap-2.5">
+					<div
+						aria-label={`${primaryTone.label} / ${secondaryTone.label} lane summary`}
+						className="flex min-w-0 items-center gap-2.5"
+						role="group"
+					>
 						<LaneStatusLabel tone={headerTone} />
 					</div>
 					<LaneHeadingCount count={headerCount} label={headerTone.countLabel} />

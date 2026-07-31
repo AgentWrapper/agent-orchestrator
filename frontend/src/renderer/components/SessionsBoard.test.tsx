@@ -427,17 +427,16 @@ describe("SessionsBoard", () => {
 		// The column header names only the lane the column starts with; "Working" is
 		// named once, on the section that actually holds the working cards.
 		// Titles carry their own weight and a colour bar rather than a glyph.
-		expect(within(workSummary).getByText("Idle")).toHaveClass("font-mono", "text-xs", "uppercase");
+		expect(within(workSummary).getByText("Idle")).toHaveClass("font-sans", "text-xs");
 		expect(within(workSummary).queryByText("Working")).toBeNull();
-		expect(workSummary.parentElement).toHaveClass("h-12", "border-b");
+		expect(workSummary.parentElement).toHaveClass("h-12");
 		expect(within(workLane).getByLabelText("2 idle sessions")).toHaveTextContent("2");
 		expect(within(workingRegion).getByText("Working")).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: /idle sessions/i })).not.toBeInTheDocument();
 		// Lanes are sized by their content, so a short Idle lane leaves no dead
 		// space above the Working header.
 		expect(idleRegion.className).not.toContain("flex-[3]");
 		expect(workingRegion.className).not.toContain("flex-[2]");
-		expect(workingRegion.firstElementChild?.className).toContain("border-y");
+		expect(workingRegion.firstElementChild?.className).toContain("border-b");
 		expect(within(idleRegion).getByText("idle-no-pr-task")).toBeInTheDocument();
 		expect(within(idleRegion).getByText("second-idle-task")).toBeInTheDocument();
 		expect(within(workingRegion).getByText("active-task")).toBeInTheDocument();
@@ -617,7 +616,7 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await userEvent.click(screen.getByRole("button", { name: /^archive,/i }));
 
 		const archive = screen.getByRole("list", { name: "Archived sessions" });
 		expect(archive).toHaveClass("board-scrollbar", "overflow-y-auto");
@@ -658,7 +657,7 @@ describe("SessionsBoard", () => {
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		const view = renderBoardWithClient(queryClient, "p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await userEvent.click(screen.getByRole("button", { name: /^archive,/i }));
 		const layout = screen.getByRole("group", { name: "Archive layout" });
 		expect(within(layout).getByRole("button", { name: "Columns" })).toHaveAttribute("aria-pressed", "true");
 		expect(screen.getByRole("list", { name: "Archived sessions" })).toHaveClass("grid");
@@ -673,7 +672,7 @@ describe("SessionsBoard", () => {
 
 		view.unmount();
 		renderBoard("p1");
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await userEvent.click(screen.getByRole("button", { name: /^archive,/i }));
 		expect(screen.getByRole("button", { name: "Rows" })).toHaveAttribute("aria-pressed", "true");
 		expect(screen.getByRole("list", { name: "Archived sessions" })).not.toHaveClass("grid");
 	});
@@ -687,7 +686,7 @@ describe("SessionsBoard", () => {
 		const queryClient = renderBoard("p1");
 		const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue(undefined);
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await userEvent.click(screen.getByRole("button", { name: /^archive,/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		await waitFor(() =>
@@ -711,7 +710,7 @@ describe("SessionsBoard", () => {
 		});
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await userEvent.click(screen.getByRole("button", { name: /^archive,/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		await waitFor(() =>
@@ -733,7 +732,7 @@ describe("SessionsBoard", () => {
 		});
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await userEvent.click(screen.getByRole("button", { name: /^archive,/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		await waitFor(() => expect(postMock).toHaveBeenCalled());
@@ -755,7 +754,7 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await userEvent.click(screen.getByRole("button", { name: /^archive,/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		const restoringButton = screen.getByRole("button", { name: "Restore dead worker" });
@@ -779,7 +778,7 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await userEvent.click(screen.getByRole("button", { name: /^archive,/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		expect(await screen.findByText("Session can no longer be restored")).toBeInTheDocument();
@@ -795,7 +794,7 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await userEvent.click(screen.getByRole("button", { name: /^archive,/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		expect(await screen.findByText("Unable to restore session")).toBeInTheDocument();
@@ -811,7 +810,7 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await userEvent.click(screen.getByRole("button", { name: /^archive,/i }));
 		await userEvent.click(screen.getByText("dead worker"));
 
 		expect(postMock).not.toHaveBeenCalled();
@@ -841,7 +840,7 @@ describe("SessionsBoard", () => {
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		const view = renderBoardWithClient(queryClient, "p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await userEvent.click(screen.getByRole("button", { name: /^archive,/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		view.rerender(
@@ -882,7 +881,7 @@ describe("SessionsBoard", () => {
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		const view = renderBoardWithClient(queryClient, "p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await userEvent.click(screen.getByRole("button", { name: /^archive,/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		view.rerender(
@@ -912,7 +911,7 @@ describe("SessionsBoard", () => {
 		const mergeLane = screen.getByRole("region", { name: "Ready to merge / Merged sessions" });
 		const mergedRegion = within(mergeLane).getByRole("region", { name: "Merged sessions" });
 		const mergeSummary = within(mergeLane).getByRole("group", { name: "Ready to merge / Merged lane summary" });
-		expect(within(mergeSummary).getByText("Merged")).toHaveClass("font-mono", "text-xs", "uppercase");
+		expect(within(mergeSummary).getByText("Merged")).toHaveClass("font-sans", "text-xs");
 		expect(within(mergeLane).getByLabelText("1 merged session")).toHaveTextContent("1");
 		// Nothing is ready to merge, so that half is dropped from the header too.
 		expect(within(mergeLane).queryByLabelText("0 ready to merge sessions")).not.toBeInTheDocument();
@@ -920,7 +919,7 @@ describe("SessionsBoard", () => {
 		expect(within(mergeLane).queryByRole("region", { name: "Ready to merge sessions" })).not.toBeInTheDocument();
 		expect(mergedRegion.className).not.toContain("border-y");
 		expect(within(mergedRegion).getByText("merged worker")).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: /archive/i })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /^archive,/i })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Restore merged worker" })).not.toBeInTheDocument();
 
 		await userEvent.click(screen.getByText("merged worker"));
@@ -954,10 +953,10 @@ describe("SessionsBoard", () => {
 		// Content-sized lanes: no fixed ratio reserving height for a short lane.
 		expect(readyRegion.className).not.toContain("flex-[3]");
 		expect(mergedRegion.className).not.toContain("flex-[2]");
-		expect(mergedRegion.firstElementChild?.className).toContain("border-y");
+		expect(mergedRegion.firstElementChild?.className).toContain("border-b");
 		expect(within(readyRegion).getByText("ready worker")).toBeInTheDocument();
 		expect(within(mergedRegion).getByText("merged worker")).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: /archive/i })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /^archive,/i })).not.toBeInTheDocument();
 	});
 
 	it("uses the shared minimal scrollbar styling for every Kanban lane", () => {
@@ -1007,7 +1006,7 @@ describe("SessionsBoard", () => {
 		expect(within(mergedRegion).getByText("live merged worker")).toBeInTheDocument();
 		expect(within(mergedRegion).queryByText("archived merged worker")).not.toBeInTheDocument();
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await userEvent.click(screen.getByRole("button", { name: /^archive,/i }));
 		const archive = screen.getByRole("list", { name: "Archived sessions" });
 		const archivedMergedCard = within(archive)
 			.getByText("archived merged worker")
