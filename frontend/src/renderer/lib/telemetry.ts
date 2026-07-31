@@ -426,6 +426,16 @@ export async function sanitizeRendererProperties(
 			if (properties?.field === "status" || properties?.field === "activity") safe.field = properties.field;
 			if (properties?.reason === "missing" || properties?.reason === "unrecognized") safe.reason = properties.reason;
 			break;
+		case "ao.renderer.update_failed":
+		case "ao.renderer.update_downloaded":
+		case "ao.renderer.update_unsupported":
+			// Version strings are release identifiers, not user data. The updater's
+			// raw error message is deliberately absent: it can carry feed URLs and
+			// local paths, so update-telemetry.ts maps it to error_category first.
+			if (typeof properties?.to_version === "string") safe.to_version = properties.to_version;
+			if (typeof properties?.error_category === "string") safe.error_category = properties.error_category;
+			if (properties?.phase === "check" || properties?.phase === "download") safe.phase = properties.phase;
+			break;
 	}
 	return safe;
 }
@@ -473,6 +483,16 @@ export function buildPostHogConfig(distinctId: string): PostHogInitOptions {
 		capture_pageview: false,
 		capture_exceptions: false,
 		capture_performance: false,
+		// Session replay is billed per recording, not per event, so it bypasses
+		// every limiter in this file. AO never watches replays, so keep the
+		// recorder off in the client instead of relying on the project-side
+		// toggle staying off.
+		disable_session_recording: true,
+		// AO reads no feature flags and ships no surveys. Both of these poll
+		// PostHog on init, and /flags requests are billed, so every one of these
+		// requests is pure cost for data nothing consumes.
+		advanced_disable_flags: true,
+		disable_surveys: true,
 		// AO owns the stable random installation ID. Memory-only SDK
 		// persistence prevents legacy identified state from replacing it after
 		// an upgrade; the AO-owned heartbeat and route reservations continue to

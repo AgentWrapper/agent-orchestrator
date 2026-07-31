@@ -188,6 +188,7 @@ type PostHogSink struct {
 	apiKey     string
 	host       string
 	distinctID string
+	appVersion string
 	client     postHogClient
 	log        *slog.Logger
 	ch         chan ports.TelemetryEvent
@@ -195,8 +196,22 @@ type PostHogSink struct {
 	closeOnce  sync.Once
 }
 
+// PostHogOption configures a sink at construction. Options are applied before
+// the export goroutine starts, so the fields they set are only ever written on
+// the constructing goroutine and read on the export one.
+type PostHogOption func(*PostHogSink)
+
+// WithAppVersion stamps app_version/ao_version on every exported event. Empty
+// values are ignored so an unset supervisor env var leaves the properties off
+// entirely rather than reporting a misleading "unknown".
+func WithAppVersion(version string) PostHogOption {
+	return func(s *PostHogSink) {
+		s.appVersion = strings.TrimSpace(version)
+	}
+}
+
 // NewPostHogSink starts a buffered PostHog exporter with a stable install ID.
-func NewPostHogSink(dataDir, apiKey, host string, client postHogClient, log *slog.Logger) (*PostHogSink, error) {
+func NewPostHogSink(dataDir, apiKey, host string, client postHogClient, log *slog.Logger, opts ...PostHogOption) (*PostHogSink, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, fmt.Errorf("posthog api key is required")
 	}
@@ -217,6 +232,11 @@ func NewPostHogSink(dataDir, apiKey, host string, client postHogClient, log *slo
 		client:     client,
 		log:        telemetryLogger(log),
 		ch:         make(chan ports.TelemetryEvent, postHogBufferSize),
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(s)
+		}
 	}
 	s.wg.Add(1)
 	go s.loop()
@@ -300,6 +320,13 @@ func (s *PostHogSink) properties(ev ports.TelemetryEvent) map[string]any {
 	}
 	if remoteEventName(ev.Name) != ev.Name {
 		props["legacy_event_name"] = ev.Name
+	}
+	// Without this, every daemon event lands with no version at all, so a
+	// failure rate cannot be attributed to a release. Renderer events already
+	// carry app_version; these are the matching daemon-side values.
+	if s.appVersion != "" {
+		props["app_version"] = s.appVersion
+		props["ao_version"] = s.appVersion
 	}
 	if ev.RequestID != "" {
 		props["request_id"] = ev.RequestID
