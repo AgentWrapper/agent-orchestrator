@@ -516,6 +516,7 @@ function AgentModelField({
 	onModeChange: (value: string) => void;
 }) {
 	const queryClient = useQueryClient();
+	const [customAgentId, setCustomAgentId] = useState<string | null>(null);
 	const query = useQuery(agentModelsQueryOptions(agentId, projectId));
 	const refreshMutation = useMutation({
 		mutationFn: () => refreshAgentModels(agentId, projectId),
@@ -561,31 +562,88 @@ function AgentModelField({
 	}
 
 	const hasCatalog = catalog?.selectionMode === "catalog" && (catalog.models?.length ?? 0) > 0;
+	const modelIsInCatalog = catalog?.models?.some((item) => item.id === model) ?? false;
+	const showCustomInput = hasCatalog && (customAgentId === agentId || (model !== "" && !modelIsInCatalog));
+	const catalogOptions = hasCatalog
+		? [
+				{ value: "__default__", label: "Agent default" },
+				...catalog.models.map((item) => ({ value: item.id, label: item.label })),
+				...(catalog.allowCustom ? [{ value: "__custom__", label: "Custom model…" }] : []),
+			]
+		: [];
+	const catalogValue = model === "" ? "__default__" : modelIsInCatalog ? model : "__custom__";
+	const selectCatalogModel = (value: string) => {
+		if (value === "__custom__") {
+			setCustomAgentId(agentId);
+			onModelChange("");
+		} else {
+			setCustomAgentId(null);
+			onModelChange(value === "__default__" ? "" : value);
+		}
+		onModeChange("");
+	};
 	return (
 		<>
 			<SettingsRow icon={Sparkles} label={label}>
 				<div className="flex min-w-0 items-center gap-2">
-					<input
-						id={datalistID}
-						aria-label={label}
-						className="settings-inline-input"
-						value={model}
-						list={hasCatalog ? `${datalistID}-list` : undefined}
-						disabled={agentId === ""}
-						onChange={(event) => {
-							onModelChange(event.target.value);
-							onModeChange("");
-						}}
-						placeholder={query.isFetching ? "Loading models…" : "(agent default)"}
-					/>
-					{hasCatalog && (
-						<datalist id={`${datalistID}-list`}>
-							{catalog.models.map((item) => (
-								<option key={item.id} value={item.id}>
-									{item.provider ? `${item.label} · ${item.provider}` : item.label}
-								</option>
-							))}
-						</datalist>
+					{hasCatalog && !showCustomInput ? (
+						<SettingsOptionMenu
+							aria-label={label}
+							value={catalogValue}
+							options={catalogOptions}
+							onChange={selectCatalogModel}
+							triggerClassName="settings-inline-input justify-end"
+							menuClassName="w-[min(24rem,calc(100vw-2rem))]"
+							renderTrigger={(selected) => (
+								<span className="min-w-0 truncate">{selected?.label ?? "Agent default"}</span>
+							)}
+							renderMenuItem={(option) => {
+								const item = catalog.models.find((candidate) => candidate.id === option.value);
+								return (
+									<div className="flex min-w-0 flex-1 items-center gap-3">
+										<div className="min-w-0 flex-1">
+											<div className="flex items-center gap-2">
+												<span className="truncate text-settings-label">{option.label}</span>
+												{item?.isDefault && (
+													<span className="rounded-full bg-settings-menu-selected px-1.5 py-0.5 text-micro text-settings-muted">
+														Default
+													</span>
+												)}
+											</div>
+											{item && item.id !== item.label && (
+												<p className="truncate text-xs text-settings-muted">{item.id}</p>
+											)}
+										</div>
+										{item?.provider && <span className="shrink-0 text-xs text-settings-muted">{item.provider}</span>}
+									</div>
+								);
+							}}
+						/>
+					) : (
+						<>
+							<input
+								id={datalistID}
+								aria-label={label}
+								className="settings-inline-input"
+								value={model}
+								disabled={agentId === ""}
+								onChange={(event) => {
+									onModelChange(event.target.value);
+									onModeChange("");
+								}}
+								placeholder={query.isFetching ? "Loading models…" : "(agent default)"}
+							/>
+							{hasCatalog && (
+								<SettingsOptionMenu
+									aria-label={`${label} options`}
+									value="__custom__"
+									options={catalogOptions}
+									onChange={selectCatalogModel}
+									triggerClassName="shrink-0"
+									renderTrigger={() => <span>Browse</span>}
+								/>
+							)}
+						</>
 					)}
 					<ModelRefreshButton
 						label={label}

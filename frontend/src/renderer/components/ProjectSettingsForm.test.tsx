@@ -306,6 +306,68 @@ describe("ProjectSettingsForm", () => {
 		expect(reviewerAgent).toHaveTextContent("claude-code");
 	});
 
+	it("shows the full model catalog again after selecting a model", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") return agentCatalogResponse;
+			if (path === "/api/v1/agents/{agent}/models") {
+				return {
+					data: {
+						agentId: "codex",
+						selectionMode: "catalog",
+						models: [
+							{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol", isDefault: true },
+							{ id: "gpt-5.5", label: "GPT-5.5" },
+							{ id: "gpt-5.4", label: "GPT-5.4" },
+						],
+						allowCustom: true,
+						source: "official-catalog",
+						fetchedAt: "2026-07-31T00:00:00Z",
+						stale: false,
+					},
+					error: undefined,
+				};
+			}
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "proj-1",
+						name: "Project One",
+						kind: "single_repo",
+						path: "/repo/project-one",
+						repo: "",
+						defaultBranch: "main",
+						config: {
+							worker: { agent: "codex" },
+							orchestrator: { agent: "codex" },
+						},
+					},
+				},
+				error: undefined,
+			};
+		});
+
+		renderSettings();
+
+		const workerModel = await screen.findByRole("button", { name: "Worker model" });
+		await userEvent.click(workerModel);
+		expect((await screen.findAllByRole("menuitem")).map((item) => item.textContent)).toEqual([
+			"Agent default",
+			"GPT-5.6 SolDefaultgpt-5.6-sol",
+			"GPT-5.5gpt-5.5",
+			"GPT-5.4gpt-5.4",
+			"Custom model…",
+		]);
+		await userEvent.click(screen.getByRole("menuitem", { name: /GPT-5\.4/ }));
+		expect(workerModel).toHaveTextContent("GPT-5.4");
+
+		await userEvent.click(workerModel);
+		expect(await screen.findByRole("menuitem", { name: /GPT-5\.6 Sol/ })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: /GPT-5\.5/ })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: /GPT-5\.4/ })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Custom model…" })).toBeInTheDocument();
+	});
+
 	it("shows the daemon validation message when the atomic settings save fails", async () => {
 		mockProject({
 			id: "proj-1",
