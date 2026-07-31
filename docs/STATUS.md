@@ -103,6 +103,13 @@ surface (`npm run sqlc`, `npm run api`).
 
 ## In flight / not yet a runtime feature
 
+- **Native agent-browser adapter**: an opt-in Stage 0 integration packages one
+  checksum-pinned Vercel `agent-browser` Rust binary and routes a deliberately
+  limited semantic command set through an authenticated, worker-scoped CDP
+  bridge to the existing AO Preview. It is disabled unless
+  `AO_AGENT_BROWSER_ENABLED=1`; the current `ao browser` adapter remains the
+  default and fallback until manual cross-platform reliability, isolation,
+  DevTools handoff, lifecycle, and resource checks pass.
 - **Tracker lane**: GitHub tracker adapter exists, but there is no daemon
   observer loop or agent-lifecycle→issue mirroring yet, so the tracker does
   nothing at runtime ([#112](https://github.com/aoagents/agent-orchestrator/issues/112)).

@@ -56,6 +56,7 @@ import { buildDaemonEnv, resolveShellEnv, type ShellRunner } from "./shared/shel
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
 import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
+import { AgentBrowserRuntime } from "./main/agent-browser-runtime";
 import { connectSupervisor, type SupervisorLinkHandle } from "./main/supervisor-link";
 import { connectBrowserRuntime, type BrowserRuntimeLinkHandle } from "./main/browser-runtime-link";
 import { keepDaemonAlive, shouldLinkOnAttach } from "./main/daemon-owner";
@@ -329,6 +330,11 @@ function createWindow(): void {
 		isMac,
 		getKeybindingOverrides: () => keybindingOverrides,
 		isKeybindingRecording: () => keybindingRecordingActive,
+		agentBrowserRuntime: new AgentBrowserRuntime({
+			enabled: process.env.AO_AGENT_BROWSER_ENABLED === "1",
+			binaryPath: resolveAgentBrowserBinaryPath(),
+			log: (message) => console.log(`AO: ${message}`),
+		}),
 	});
 	if (daemonStatus.state === "ready") establishBrowserRuntimeLink();
 
@@ -364,6 +370,15 @@ function createWindow(): void {
 		browserViewHost = null;
 		mainWindow = null;
 	});
+}
+
+function resolveAgentBrowserBinaryPath(): string {
+	const override = process.env.AO_AGENT_BROWSER_PATH?.trim();
+	if (override) return path.resolve(override);
+	const binary = process.platform === "win32" ? "agent-browser.exe" : "agent-browser";
+	return app.isPackaged
+		? path.join(process.resourcesPath, "agent-browser", binary)
+		: path.join(app.getAppPath(), "agent-browser", binary);
 }
 
 // How long the supervisor waits for the daemon to confirm its bound port (via

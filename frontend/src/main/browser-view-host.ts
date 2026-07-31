@@ -18,6 +18,8 @@ import type {
 } from "../shared/browser-annotations";
 import { attachAppShortcuts } from "./app-shortcuts";
 import type { KeybindingOverrides } from "../shared/shortcuts";
+import type { AgentBrowserRuntime } from "./agent-browser-runtime";
+import type { AgentBrowserTarget, AgentBrowserTargetProvider } from "./agent-browser-cdp-bridge";
 
 export type BrowserRect = Pick<Rectangle, "x" | "y" | "width" | "height">;
 
@@ -132,6 +134,7 @@ export type BrowserViewHostOptions = {
 	isMac?: boolean;
 	getKeybindingOverrides?: () => KeybindingOverrides;
 	isKeybindingRecording?: () => boolean;
+	agentBrowserRuntime?: AgentBrowserRuntime;
 };
 
 export type BrowserViewHost = {
@@ -505,6 +508,25 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		return state;
 	}
 
+	function agentBrowserTargets(session: BrowserSessionEntry): AgentBrowserTargetProvider {
+		const target = (entry: BrowserEntry): AgentBrowserTarget => ({
+			id: entry.tabId,
+			url: entry.view.webContents.getURL() || "about:blank",
+			title: entry.view.webContents.getTitle(),
+			debugger: entry.view.webContents.debugger,
+		});
+		return {
+			listTargets: () => [...session.tabs.values()].map(target),
+			createTarget: async (url) => target(await openTab(session, url === "about:blank" ? undefined : url, true)),
+			activateTarget: (targetId) => {
+				activateTab(session, targetId);
+			},
+			closeTarget: (targetId) => {
+				closeTab(session, targetId);
+			},
+		};
+	}
+
 	function applySessionBounds(session: BrowserSessionEntry, entry: BrowserEntry): void {
 		if (!session.visible) {
 			entry.view.setVisible?.(false);
@@ -613,6 +635,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const destroy = (viewId: string): void => {
 		const session = entries.get(viewId);
 		if (!session) return;
+		void options.agentBrowserRuntime?.closeSession(session.sessionId);
 		entries.delete(viewId);
 		viewIdsBySessionId.delete(session.sessionId);
 		rendererOwnersByViewId.delete(viewId);
@@ -785,6 +808,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			if (!sessionId.trim()) throw browserError("INVALID_ARGUMENT", "sessionId is required");
 			if (action === "__destroy-session") {
 				const viewId = viewIdsBySessionId.get(sessionId);
+				await options.agentBrowserRuntime?.closeSession(sessionId);
 				if (viewId) destroy(viewId);
 				return { destroyed: Boolean(viewId) };
 			}
@@ -895,6 +919,18 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 					return { messages: markLogMessages(entry.consoleMessages), untrustedExternalContent: true };
 				case "errors":
 					return { messages: markLogMessages(entry.errors), untrustedExternalContent: true };
+				case "agent-browser-run": {
+					if (!options.agentBrowserRuntime) {
+						throw browserError("AGENT_BROWSER_DISABLED", "Native agent-browser runtime is unavailable");
+					}
+					const commandArgs = stringArrayArg(args, "arguments");
+					return options.agentBrowserRuntime.run(
+						sessionId,
+						commandArgs,
+						agentBrowserTargets(session),
+						signal,
+					);
+				}
 				default:
 					throw browserError("INVALID_ARGUMENT", `Unsupported browser action: ${action}`);
 				}
@@ -907,6 +943,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			for (const viewId of [...entries.keys()]) {
 				destroy(viewId);
 			}
+			void options.agentBrowserRuntime?.dispose();
 		},
 		destroy,
 		destroyAll: () => {
@@ -2038,6 +2075,14 @@ function stringArg(
 ): string {
 	const value = args[name];
 	if (typeof value !== "string" || (!allowEmpty && !value.trim())) throw browserError(code, message);
+	return value;
+}
+
+function stringArrayArg(args: Record<string, unknown>, name: string): string[] {
+	const value = args[name];
+	if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+		throw browserError("INVALID_ARGUMENT", `${name} must be an array of strings`);
+	}
 	return value;
 }
 

@@ -17,7 +17,26 @@ This is the automation interface for AO's visible desktop Browser panel. Do not 
 
 If the task first requires choosing, starting, or opening a preview target,
 read [preview.md](preview.md) and follow its static-file/project-runtime
-decision. Once the relevant page is known:
+decision.
+
+When AO's native adapter is enabled, prefer its semantic workflow. It is
+feature-gated during rollout and controls the same worker-owned AO Preview:
+
+```bash
+ao browser agent-browser open http://localhost:5173
+ao browser agent-browser snapshot -i
+ao browser agent-browser fill @e2 "hello"
+ao browser agent-browser click @e3
+ao browser agent-browser wait --text "Saved"
+ao browser agent-browser errors
+```
+
+AO supplies the session and CDP connection internally. Never add `--cdp`,
+`--auto-connect`, `--session`, `--profile`, or browser launch flags. If the
+native adapter reports `AGENT_BROWSER_DISABLED` or
+`AGENT_BROWSER_NOT_INSTALLED`, use the compatible AO commands below.
+
+Fallback workflow:
 
 ```bash
 ao browser status

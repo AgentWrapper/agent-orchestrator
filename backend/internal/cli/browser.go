@@ -408,6 +408,21 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 			},
 		})
 	}
+	cmd.AddCommand(&cobra.Command{
+		Use:                "agent-browser <command> [args...]",
+		Short:              "Run the feature-flagged native browser adapter",
+		Hidden:             true,
+		DisableFlagParsing: true,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.MinimumNArgs(1)(cmd, args); err != nil {
+				return usageError{err}
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return ctx.runBrowserAction(cmd, "agent-browser-run", map[string]any{"arguments": args}, false)
+		},
+	})
 	return cmd
 }
 
@@ -487,6 +502,19 @@ func (c *commandContext) runBrowserAction(cmd *cobra.Command, action string, arg
 }
 
 func writeBrowserResult(cmd *cobra.Command, action string, result map[string]any) error {
+	if action == "agent-browser-run" {
+		if stdout, _ := result["stdout"].(string); stdout != "" {
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), stdout); err != nil {
+				return err
+			}
+		}
+		if stderr, _ := result["stderr"].(string); stderr != "" {
+			if _, err := fmt.Fprint(cmd.ErrOrStderr(), stderr); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	if action == "snapshot" {
 		if text, ok := result["text"].(string); ok {
 			_, err := fmt.Fprintln(cmd.OutOrStdout(), text)

@@ -13,15 +13,16 @@
 		"url": "https://github.com/aoagents/agent-orchestrator"
 	},
 	"scripts": {
+		"agent-browser:prepare": "node ./scripts/prepare-agent-browser.mjs",
 		"build:daemon": "node ./scripts/build-daemon.mjs",
 		"predev": "npm run build:daemon",
 		"dev": "electron-forge start",
 		"dev:web": "VITE_NO_ELECTRON=1 vite --config vite.renderer.config.ts",
-		"prepackage": "npm run build:daemon",
+		"prepackage": "npm run build:daemon && npm run agent-browser:prepare",
 		"package": "electron-forge package",
-		"premake": "npm run build:daemon",
+		"premake": "npm run build:daemon && npm run agent-browser:prepare",
 		"make": "electron-forge make",
-		"publish": "npm run build:daemon && electron-forge publish",
+		"publish": "npm run build:daemon && npm run agent-browser:prepare && electron-forge publish",
 		"typecheck": "tsc --noEmit",
 		"typecheck:e2e": "tsc --noEmit -p tsconfig.e2e.json",
 		"test": "vitest run --config vite.renderer.config.ts",
@@ -46,6 +47,7 @@
 		"@types/react": "^19.2.17",
 		"@types/react-dom": "^19.2.3",
 		"@types/semver": "^7.7.1",
+		"@types/ws": "^8.18.1",
 		"@vitejs/plugin-react": "^6.0.2",
 		"app-builder-lib": "^26.15.3",
 		"electron": "^33.0.0",
@@ -86,6 +88,7 @@
 		"react-resizable-panels": "^4.11.2",
 		"semver": "^7.8.5",
 		"tailwind-merge": "^3.6.0",
+		"ws": "^8.21.1",
 		"zustand": "^5.0.14"
 	},
 	"optionalDependencies": {

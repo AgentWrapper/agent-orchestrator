@@ -52,6 +52,24 @@ func TestServiceRequiresOwningCapabilityAndLiveSession(t *testing.T) {
 	if _, action, err := service.Execute(context.Background(), "s1", token, " SNAPSHOT ", nil); err != nil || action != "snapshot" || runtime.action != "snapshot" {
 		t.Fatalf("execute action=%q runtime=%q err=%v", action, runtime.action, err)
 	}
+	if _, action, err := service.Execute(
+		context.Background(),
+		"s1",
+		token,
+		"agent-browser-run",
+		map[string]interface{}{"arguments": []interface{}{"snapshot", "-i"}},
+	); err != nil || action != "agent-browser-run" || runtime.action != "agent-browser-run" {
+		t.Fatalf("native execute action=%q runtime=%q err=%v", action, runtime.action, err)
+	}
+	if _, _, err := service.Execute(
+		context.Background(),
+		"s1",
+		token,
+		"agent-browser-run",
+		map[string]interface{}{"arguments": []interface{}{}},
+	); apiErrorCode(err) != "INVALID_ARGUMENT" {
+		t.Fatalf("invalid native arguments error = %v", err)
+	}
 	if _, _, err := service.Execute(context.Background(), "s1", token, "eval", nil); apiErrorCode(err) != "BROWSER_ACTION_UNSUPPORTED" {
 		t.Fatalf("unsupported action error = %v", err)
 	}

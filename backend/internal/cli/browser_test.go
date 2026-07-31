@@ -48,6 +48,8 @@ func browserCLIServer(t *testing.T, capture *browserRequestCapture) *httptest.Se
 			result = `{"active":false,"metadataOnly":true,"tabId":"t1","requestCount":1,"maxEntries":200,"requests":[{"method":"GET","url":"https://api.example.test/items?token=%5Bredacted%5D","resourceType":"xhr","status":200,"durationMs":42}]}`
 		case "network-clear":
 			result = `{"active":true,"metadataOnly":true,"tabId":"t1","requestCount":0,"maxEntries":200}`
+		case "agent-browser-run":
+			result = `{"command":"snapshot","stdout":"- button \"Save\" [ref=e1]\n","stderr":"","exitCode":0}`
 		}
 		_, _ = io.WriteString(w, `{"requestId":"r1","sessionId":"ao-1","action":"`+capture.body.Action+`","result":`+result+`}`)
 	}))
@@ -107,6 +109,38 @@ func TestBrowserClickAndWaitArguments(t *testing.T) {
 	}
 	if capture.body.Action != "wait" || capture.body.Args["text"] != "Ready" || capture.body.Args["timeoutMs"] != float64(2500) {
 		t.Fatalf("wait = %#v", capture.body)
+	}
+}
+
+func TestBrowserNativeAdapterForwardsArgumentsWithoutParsingThem(t *testing.T) {
+	setBrowserIdentity(t)
+	cfg := setConfigEnv(t)
+	capture := &browserRequestCapture{}
+	srv := browserCLIServer(t, capture)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(
+		t,
+		Deps{ProcessAlive: func(int) bool { return true }},
+		"browser",
+		"agent-browser",
+		"snapshot",
+		"-i",
+		"--json",
+	)
+	if err != nil {
+		t.Fatalf("native adapter err=%v stderr=%s", err, errOut)
+	}
+	arguments, _ := capture.body.Args["arguments"].([]any)
+	if capture.body.Action != "agent-browser-run" ||
+		len(arguments) != 3 ||
+		arguments[0] != "snapshot" ||
+		arguments[1] != "-i" ||
+		arguments[2] != "--json" {
+		t.Fatalf("native command = %#v", capture.body)
+	}
+	if !strings.Contains(out, `button "Save" [ref=e1]`) {
+		t.Fatalf("native output = %q", out)
 	}
 }
 

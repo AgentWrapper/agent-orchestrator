@@ -14,7 +14,7 @@ type EventHandler = (event: { sender: { id: number; getZoomFactor?: () => number
 
 type DisplayHandler = (request: unknown, callback: (streams: { video?: unknown }) => void) => void;
 
-function setupHost() {
+function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").AgentBrowserRuntime) {
 	let currentURL = "";
 	let displayHandler: DisplayHandler | null = null;
 	const webContentsListeners = new Map<string, (...args: never[]) => void>();
@@ -109,6 +109,7 @@ function setupHost() {
 		} as never,
 		annotatePreloadPath: "/preload.js",
 		rendererOrigin: "http://localhost:5173",
+		agentBrowserRuntime,
 	});
 	const rendererFrame = { processId: 5, routingId: 7 };
 	const invoke = (channel: string, ...args: unknown[]) =>
@@ -401,6 +402,33 @@ describe("browser:capture", () => {
 });
 
 describe("agent browser runtime", () => {
+	it("routes the native adapter through only the current session targets", async () => {
+		const run = vi.fn(async (_sessionId, _args, provider) => ({
+			command: "snapshot",
+			stdout: provider.listTargets().map((target: { id: string }) => target.id).join(","),
+			stderr: "",
+			exitCode: 0,
+		}));
+		const runtime = {
+			run,
+			closeSession: vi.fn(async () => undefined),
+			dispose: vi.fn(async () => undefined),
+		} as unknown as import("./agent-browser-runtime").AgentBrowserRuntime;
+		const { host } = setupHost(runtime);
+
+		const result = await host.execute("sess-1", "agent-browser-run", {
+			arguments: ["snapshot", "-i"],
+		});
+
+		expect(run).toHaveBeenCalledWith(
+			"sess-1",
+			["snapshot", "-i"],
+			expect.objectContaining({ listTargets: expect.any(Function) }),
+			undefined,
+		);
+		expect(result).toMatchObject({ command: "snapshot", stdout: "t1" });
+	});
+
 	it("denies browser-partition permissions by default", async () => {
 		const { host, setPermissionCheckHandler, setPermissionRequestHandler } = setupHost();
 		await host.execute("sess-1", "tabs");
