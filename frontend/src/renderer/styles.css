@@ -533,7 +533,7 @@
 	background: var(--color-bg-topbar);
 	padding-inline-start: var(--space-topbar-x);
 	/* Right inset matches vertical breathing room: (titlebar - control) / 2 = (36 - 28) / 2 = 4px */
-	padding-inline-end: 0px;
+	padding-inline-end: 2px;
 	color: var(--color-text-topbar);
 	font-size: var(--font-size-base);
 	line-height: 1;
