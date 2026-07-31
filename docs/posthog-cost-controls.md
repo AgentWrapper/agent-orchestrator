@@ -60,10 +60,12 @@ Configure PostHog ingestion controls for project `475752` in this order.
    `ao.session.waiting_input_exited`, `ao.http.5xx`, and `ao.daemon.panic`.
 6. Drop `$web_vitals` unless a time-boxed performance investigation needs it.
 
-The 7-day estimate from these rules is a reduction from roughly 2.4M total
-events to well under 250k, before organic adoption of current builds. That is a
-10x+ reduction while keeping renderer DAU, current v2 CLI DAU, current v2
-command adoption, and reliability events.
+When these project-side ingestion controls are enabled, the 7-day estimate is a
+reduction from roughly 2.4M total events to well under 250k, before organic
+adoption of current builds. That is a 10x+ reduction while keeping renderer
+DAU, current v2 CLI DAU, current v2 command adoption, and reliability events.
+The app code alone does not enforce these PostHog UI rules for already-deployed
+legacy clients.
 
 ## Follow-up: Failure-only Internal CLI Telemetry
 

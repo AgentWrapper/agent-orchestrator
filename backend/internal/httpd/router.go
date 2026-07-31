@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -184,12 +183,13 @@ func mountTelemetry(r chi.Router, cfg config.Config, sink ports.EventSink) {
 			envelope.WriteAPIError(w, req, http.StatusBadRequest, "bad_request", "COMMAND_PATH_REQUIRED", "commandPath is required", nil)
 			return
 		}
-		actorType := cliActorType(body.ActorType, body.CommandPath)
+		commandPath := telemetrymeta.NormalizeCommandPath(body.CommandPath)
+		actorType := cliActorType(body.ActorType, commandPath)
 		if actorType == "system" {
 			w.WriteHeader(http.StatusAccepted)
 			return
 		}
-		if isRoutineInternalCLICommand(body.CommandPath) {
+		if telemetrymeta.IsRoutineInternalCLICommand(commandPath) {
 			w.WriteHeader(http.StatusAccepted)
 			return
 		}
@@ -203,7 +203,7 @@ func mountTelemetry(r chi.Router, cfg config.Config, sink ports.EventSink) {
 				RequestID:  middleware.GetReqID(req.Context()),
 				Payload: map[string]any{
 					"command":      body.Command,
-					"command_path": body.CommandPath,
+					"command_path": commandPath,
 					"actor_type":   actorType,
 				},
 			})
@@ -219,7 +219,7 @@ func mountTelemetry(r chi.Router, cfg config.Config, sink ports.EventSink) {
 					Payload: map[string]any{
 						"channel":      "cli",
 						"command":      body.Command,
-						"command_path": body.CommandPath,
+						"command_path": commandPath,
 						"actor_type":   actorType,
 					},
 				})
@@ -267,22 +267,6 @@ func mountTelemetry(r chi.Router, cfg config.Config, sink ports.EventSink) {
 	})
 }
 
-func isRoutineInternalCLICommand(commandPath string) bool {
-	switch strings.TrimSpace(commandPath) {
-	case "ao status",
-		"ao session ls",
-		"ao session get",
-		"ao project ls",
-		"ao project get",
-		"ao orchestrator ls",
-		"ao hooks",
-		"ao pty-host":
-		return true
-	default:
-		return false
-	}
-}
-
 func cliActorType(actorType, commandPath string) string {
 	switch actorType {
 	case "agent", "user":
@@ -290,13 +274,22 @@ func cliActorType(actorType, commandPath string) string {
 	case "system":
 		return "system"
 	}
+	commandPath = telemetrymeta.NormalizeCommandPath(commandPath)
 	switch commandPath {
 	case "ao hooks":
 		return "agent"
 	case "ao daemon", "ao start", "ao completion", "ao help", "ao pty-host":
 		return "system"
-	default:
+	case "ao add", "ao agent", "ao cancel", "ao claim-pr", "ao cleanup", "ao clear", "ao delete",
+		"ao doctor", "ao import", "ao import-projects", "ao kill", "ao launch", "ao merge",
+		"ao preview", "ao project add", "ao project rm", "ao project set-config", "ao remove",
+		"ao rename", "ao resolve-comments", "ao restart", "ao restore", "ao review",
+		"ao review submit", "ao send", "ao session cleanup", "ao session kill",
+		"ao session rename", "ao session restore", "ao spawn", "ao stop", "ao submit",
+		"ao trigger", "ao version":
 		return "user"
+	default:
+		return "system"
 	}
 }
 
