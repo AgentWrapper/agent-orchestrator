@@ -71,6 +71,57 @@ type AgentBinaryResolver interface {
 	ResolveBinary(ctx context.Context) (path string, err error)
 }
 
+// ModelSelectionMode tells clients how to render an agent's model control.
+type ModelSelectionMode string
+
+const (
+	// ModelSelectionCatalog renders a searchable list with a custom-id escape hatch.
+	ModelSelectionCatalog ModelSelectionMode = "catalog"
+	// ModelSelectionText renders a free-form model id input.
+	ModelSelectionText ModelSelectionMode = "text"
+	// ModelSelectionModeList renders an agent-owned mode list rather than model ids.
+	ModelSelectionModeList ModelSelectionMode = "mode"
+)
+
+// AgentModelInfo is one model or mode that an adapter reports as selectable.
+type AgentModelInfo struct {
+	ID        string `json:"id"`
+	Label     string `json:"label"`
+	Provider  string `json:"provider,omitempty"`
+	IsDefault bool   `json:"isDefault,omitempty"`
+}
+
+// AgentModelCatalog is AO's normalized model-picker response.
+type AgentModelCatalog struct {
+	AgentID       string             `json:"agentId"`
+	SelectionMode ModelSelectionMode `json:"selectionMode" enum:"catalog,text,mode"`
+	Models        []AgentModelInfo   `json:"models"`
+	AllowCustom   bool               `json:"allowCustom"`
+	Source        string             `json:"source"`
+	BinaryVersion string             `json:"binaryVersion,omitempty"`
+	FetchedAt     time.Time          `json:"fetchedAt"`
+	Stale         bool               `json:"stale"`
+	Warning       string             `json:"warning,omitempty"`
+}
+
+// CachedAgentModelCatalog is the persistence record used by the model-catalog
+// service. CatalogJSON contains a serialized AgentModelCatalog.
+type CachedAgentModelCatalog struct {
+	AgentID       string
+	ProjectID     string
+	BinaryVersion string
+	CatalogJSON   string
+	Source        string
+	FetchedAt     time.Time
+}
+
+// AgentModelCatalogCache persists normalized model catalogs across daemon
+// restarts. Implementations must treat agent+project as the logical key.
+type AgentModelCatalogCache interface {
+	GetAgentModelCatalog(ctx context.Context, agentID, projectID string) (CachedAgentModelCatalog, bool, error)
+	UpsertAgentModelCatalog(ctx context.Context, record CachedAgentModelCatalog) error
+}
+
 // AgentExitDetectionMode describes how AO learns that an agent CLI process
 // ended while its terminal runtime remains alive.
 type AgentExitDetectionMode string

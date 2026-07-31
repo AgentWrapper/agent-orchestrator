@@ -9,6 +9,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 )
 
@@ -17,6 +18,7 @@ type AgentCatalog interface {
 	List(ctx context.Context) (agentsvc.Inventory, error)
 	Refresh(ctx context.Context) (agentsvc.Inventory, error)
 	Probe(ctx context.Context, agentID string) (agentsvc.ProbeResult, error)
+	Models(ctx context.Context, agentID, projectID string, refresh bool) (ports.AgentModelCatalog, error)
 }
 
 // AgentsController owns the /agents routes.
@@ -29,6 +31,34 @@ func (c *AgentsController) Register(r chi.Router) {
 	r.Get("/agents", c.list)
 	r.Post("/agents/refresh", c.refresh)
 	r.Post("/agents/{agent}/probe", c.probe)
+	r.Get("/agents/{agent}/models", c.models)
+	r.Post("/agents/{agent}/models/refresh", c.refreshModels)
+}
+
+func (c *AgentsController) models(w http.ResponseWriter, r *http.Request) {
+	c.writeModels(w, r, false)
+}
+
+func (c *AgentsController) refreshModels(w http.ResponseWriter, r *http.Request) {
+	c.writeModels(w, r, true)
+}
+
+func (c *AgentsController) writeModels(w http.ResponseWriter, r *http.Request, refresh bool) {
+	if c.Catalog == nil {
+		apispec.NotImplemented(w, r, r.Method, "/api/v1/agents/{agent}/models")
+		return
+	}
+	agentID := strings.TrimSpace(chi.URLParam(r, "agent"))
+	if agentID == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "AGENT_REQUIRED", "agent is required", nil)
+		return
+	}
+	catalog, err := c.Catalog.Models(r.Context(), agentID, strings.TrimSpace(r.URL.Query().Get("projectId")), refresh)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, catalog)
 }
 
 func (c *AgentsController) list(w http.ResponseWriter, r *http.Request) {

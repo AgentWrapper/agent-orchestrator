@@ -81,6 +81,23 @@ func TestHarnessedExcludesFakeHarness(t *testing.T) {
 		if ha.Harness == domain.HarnessFake {
 			t.Fatal("fake harness must not be returned as a shipped selectable agent")
 		}
+ 	}
+}
+
+func TestEveryProductionHarnessReportsModelOrModeConfig(t *testing.T) {
+	for _, ha := range Harnessed() {
+		t.Run(string(ha.Harness), func(t *testing.T) {
+			spec, err := ha.Agent.GetConfigSpec(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, field := range spec.Fields {
+				if field.Key == "model" || field.Key == "mode" {
+					return
+				}
+			}
+			t.Fatalf("%s exposes neither model nor mode configuration: %#v", ha.Harness, spec.Fields)
+		})
 	}
 }
 

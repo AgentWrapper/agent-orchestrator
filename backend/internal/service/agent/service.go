@@ -2,12 +2,16 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -51,6 +55,7 @@ type Inventory struct {
 // probes. Catalog readiness is advisory UI metadata, not a spawn precheck.
 type Service struct {
 	agents []agentregistry.HarnessAgent
+	cache  ports.AgentModelCatalogCache
 
 	mu          sync.RWMutex
 	inventory   Inventory
@@ -58,16 +63,30 @@ type Service struct {
 	refreshMu   sync.Mutex
 }
 
+// Deps contains optional durable dependencies for the agent catalog service.
+type Deps struct {
+	Cache ports.AgentModelCatalogCache
+}
+
 // New returns an agent inventory service backed by the daemon's shipped
 // adapter registry.
 func New() *Service {
-	return NewWithAgents(agentregistry.Harnessed())
+	return NewWithDeps(Deps{})
+}
+
+// NewWithDeps returns the production service with durable model-catalog cache.
+func NewWithDeps(deps Deps) *Service {
+	return newService(agentregistry.Harnessed(), deps.Cache)
 }
 
 // NewWithAgents returns an inventory service over a caller-provided adapter
 // slice. It is used by focused tests.
 func NewWithAgents(agents []agentregistry.HarnessAgent) *Service {
-	return &Service{agents: agents, inventory: Inventory{
+	return newService(agents, nil)
+}
+
+func newService(agents []agentregistry.HarnessAgent, cache ports.AgentModelCatalogCache) *Service {
+	return &Service{agents: agents, cache: cache, inventory: Inventory{
 		Supported:  supportedInfos(agents),
 		Installed:  []Info{},
 		Authorized: []Info{},
@@ -170,6 +189,103 @@ func (s *Service) Probe(ctx context.Context, agentID string) (ProbeResult, error
 		}, nil
 	}
 	return ProbeResult{Agent: Info{ID: agentID}, Supported: false, Installed: false}, nil
+}
+
+// Models returns one normalized model catalog. Cached values survive daemon
+// restarts; refresh forces a new documented CLI discovery attempt. Discovery
+// failures degrade to the last cached catalog or a custom model input.
+func (s *Service) Models(ctx context.Context, agentID, projectID string, refresh bool) (ports.AgentModelCatalog, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.AgentModelCatalog{}, err
+	}
+	item, ok := s.agent(agentID)
+	if !ok {
+		return ports.AgentModelCatalog{}, apierr.NotFound("AGENT_NOT_FOUND", "Unknown agent adapter")
+	}
+
+	var binary string
+	if resolver, ok := item.Agent.(ports.AgentBinaryResolver); ok {
+		resolved, err := resolver.ResolveBinary(ctx)
+		if err == nil {
+			binary = resolved
+		}
+	}
+	version := modelcatalog.BinaryVersion(ctx, binary)
+
+	cached, hasCached, err := s.cachedCatalog(ctx, agentID, projectID)
+	if err != nil {
+		return ports.AgentModelCatalog{}, err
+	}
+	if hasCached && !refresh && cached.BinaryVersion == version {
+		return cached.Catalog, nil
+	}
+
+	discovered, discoverErr := modelcatalog.Discover(ctx, agentID, binary)
+	discovered.BinaryVersion = version
+	if discoverErr != nil {
+		if hasCached {
+			cached.Catalog.Stale = true
+			cached.Catalog.Warning = discoverErr.Error()
+			return cached.Catalog, nil
+		}
+		discovered.Stale = true
+		discovered.Warning = discoverErr.Error()
+		return discovered, nil
+	}
+	if err := s.saveCatalog(ctx, projectID, discovered); err != nil {
+		return ports.AgentModelCatalog{}, err
+	}
+	return discovered, nil
+}
+
+type decodedCatalog struct {
+	Catalog       ports.AgentModelCatalog
+	BinaryVersion string
+}
+
+func (s *Service) cachedCatalog(ctx context.Context, agentID, projectID string) (decodedCatalog, bool, error) {
+	if s.cache == nil {
+		return decodedCatalog{}, false, nil
+	}
+	record, ok, err := s.cache.GetAgentModelCatalog(ctx, agentID, projectID)
+	if err != nil || !ok {
+		return decodedCatalog{}, ok, err
+	}
+	var catalog ports.AgentModelCatalog
+	if err := json.Unmarshal([]byte(record.CatalogJSON), &catalog); err != nil {
+		return decodedCatalog{}, false, fmt.Errorf("decode cached model catalog for %s: %w", agentID, err)
+	}
+	if catalog.Models == nil {
+		catalog.Models = []ports.AgentModelInfo{}
+	}
+	return decodedCatalog{Catalog: catalog, BinaryVersion: record.BinaryVersion}, true, nil
+}
+
+func (s *Service) saveCatalog(ctx context.Context, projectID string, catalog ports.AgentModelCatalog) error {
+	if s.cache == nil {
+		return nil
+	}
+	data, err := json.Marshal(catalog)
+	if err != nil {
+		return fmt.Errorf("encode model catalog for %s: %w", catalog.AgentID, err)
+	}
+	return s.cache.UpsertAgentModelCatalog(ctx, ports.CachedAgentModelCatalog{
+		AgentID:       catalog.AgentID,
+		ProjectID:     projectID,
+		BinaryVersion: catalog.BinaryVersion,
+		CatalogJSON:   string(data),
+		Source:        catalog.Source,
+		FetchedAt:     catalog.FetchedAt,
+	})
+}
+
+func (s *Service) agent(agentID string) (agentregistry.HarnessAgent, bool) {
+	for _, item := range s.agents {
+		if string(item.Harness) == agentID {
+			return item, true
+		}
+	}
+	return agentregistry.HarnessAgent{}, false
 }
 
 func supportedInfos(agents []agentregistry.HarnessAgent) []Info {

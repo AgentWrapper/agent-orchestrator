@@ -11,6 +11,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 )
 
@@ -23,6 +24,11 @@ type fakeAgentCatalog struct {
 	refreshCalls int
 	probeCalls   int
 	probeAgent   string
+	models       ports.AgentModelCatalog
+	modelCalls   int
+	modelAgent   string
+	modelProject string
+	modelRefresh bool
 }
 
 func (f *fakeAgentCatalog) List(context.Context) (agentsvc.Inventory, error) {
@@ -42,6 +48,14 @@ func (f *fakeAgentCatalog) Probe(_ context.Context, agentID string) (agentsvc.Pr
 	f.probeCalls++
 	f.probeAgent = agentID
 	return f.probed, f.err
+}
+
+func (f *fakeAgentCatalog) Models(_ context.Context, agentID, projectID string, refresh bool) (ports.AgentModelCatalog, error) {
+	f.modelCalls++
+	f.modelAgent = agentID
+	f.modelProject = projectID
+	f.modelRefresh = refresh
+	return f.models, f.err
 }
 
 func TestListAgents(t *testing.T) {
@@ -127,5 +141,43 @@ func TestProbeAgent(t *testing.T) {
 	}
 	if catalog.probeCalls != 1 || catalog.probeAgent != "codex" {
 		t.Fatalf("probe calls=%d agent=%q, want one codex probe", catalog.probeCalls, catalog.probeAgent)
+	}
+}
+
+func TestGetAndRefreshAgentModels(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for _, tc := range []struct {
+		name        string
+		method      string
+		path        string
+		wantRefresh bool
+	}{
+		{name: "cached", method: http.MethodGet, path: "/api/v1/agents/codex/models?projectId=proj-1"},
+		{name: "refresh", method: http.MethodPost, path: "/api/v1/agents/codex/models/refresh?projectId=proj-1", wantRefresh: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			catalog := &fakeAgentCatalog{models: ports.AgentModelCatalog{
+				AgentID:       "codex",
+				SelectionMode: ports.ModelSelectionCatalog,
+				Models:        []ports.AgentModelInfo{{ID: "gpt-5.6-sol", Label: "GPT-5.6 Sol"}},
+				AllowCustom:   true,
+				Source:        "official-catalog",
+			}}
+			srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{Agents: catalog}, httpd.ControlDeps{}))
+			defer srv.Close()
+
+			body, status, _ := doRequest(t, srv, tc.method, tc.path, "")
+			if status != http.StatusOK {
+				t.Fatalf("%s %s = %d, body=%s", tc.method, tc.path, status, body)
+			}
+			for _, want := range []string{`"agentId":"codex"`, `"selectionMode":"catalog"`, `"id":"gpt-5.6-sol"`} {
+				if !strings.Contains(string(body), want) {
+					t.Fatalf("body missing %s: %s", want, body)
+				}
+			}
+			if catalog.modelCalls != 1 || catalog.modelAgent != "codex" || catalog.modelProject != "proj-1" || catalog.modelRefresh != tc.wantRefresh {
+				t.Fatalf("model call = count:%d agent:%q project:%q refresh:%v", catalog.modelCalls, catalog.modelAgent, catalog.modelProject, catalog.modelRefresh)
+			}
+		})
 	}
 }

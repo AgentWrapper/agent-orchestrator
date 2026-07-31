@@ -109,6 +109,18 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports Grok Build's optional model override.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{Fields: []ports.ConfigField{{
+		Key:         "model",
+		Type:        ports.ConfigFieldString,
+		Description: "Model override passed to `grok --model`.",
+	}}}, nil
+}
+
 // GetLaunchCommand builds `grok --no-auto-update [--permission-mode <mode>]`
 // and leaves the prompt for AO's after-start terminal delivery. Grok's
 // `-p`/`--single` flag runs one headless turn and exits, while a bare prompt is
@@ -124,6 +136,8 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = []string{binary, "--no-auto-update"}
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	appendModelFlag(&cmd, cfg.Config)
+	appendModelFlag(&cmd, cfg.Config)
 
 	systemPrompt, err := launchSystemPromptText(cfg)
 	if err != nil {
@@ -209,6 +223,8 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = make([]string, 0, 4)
 	cmd = append(cmd, binary, "--no-auto-update")
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	appendModelFlag(&cmd, cfg.Config)
+	appendModelFlag(&cmd, cfg.Config)
 	systemPrompt, err := restoreSystemPromptText(cfg)
 	if err != nil {
 		return nil, false, err
@@ -218,6 +234,12 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	}
 	cmd = append(cmd, "-r", agentSessionID)
 	return cmd, true, nil
+}
+
+func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
+	if model := strings.TrimSpace(cfg.Model); model != "" {
+		*cmd = append(*cmd, "--model", model)
+	}
 }
 
 // SessionInfo reads hook-derived metadata under AO's normalized keys ("title",

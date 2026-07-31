@@ -78,6 +78,18 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports Continue's optional model slug override.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{Fields: []ports.ConfigField{{
+		Key:         "model",
+		Type:        ports.ConfigFieldString,
+		Description: "Model slug passed to `cn --model`.",
+	}}}, nil
+}
+
 // GetLaunchCommand builds the Continue CLI argv for a fresh launch.
 //
 // AO sessions are long-lived terminal sessions, so prompted and promptless
@@ -92,6 +104,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = []string{binary}
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	appendModelFlag(&cmd, cfg.Config)
 	appendSystemPromptRule(&cmd, cfg.SystemPrompt, cfg.SystemPromptFile)
 
 	if cfg.Prompt != "" {
@@ -152,9 +165,16 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = make([]string, 0, 5)
 	cmd = append(cmd, binary)
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	appendModelFlag(&cmd, cfg.Config)
 	appendSystemPromptRule(&cmd, cfg.SystemPrompt, cfg.SystemPromptFile)
 	cmd = append(cmd, "--fork", agentSessionID)
 	return cmd, true, nil
+}
+
+func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
+	if model := strings.TrimSpace(cfg.Model); model != "" {
+		*cmd = append(*cmd, "--model", model)
+	}
 }
 
 // SessionInfo reads hook-derived metadata. Since hook install is delegated to

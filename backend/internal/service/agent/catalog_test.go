@@ -29,6 +29,25 @@ type probeTrackingAgent struct {
 	onProbe func()
 }
 
+type fakeModelCache struct {
+	records map[string]ports.CachedAgentModelCatalog
+	puts    int
+}
+
+func (f *fakeModelCache) GetAgentModelCatalog(_ context.Context, agentID, projectID string) (ports.CachedAgentModelCatalog, bool, error) {
+	record, ok := f.records[agentID+"\x00"+projectID]
+	return record, ok, nil
+}
+
+func (f *fakeModelCache) UpsertAgentModelCatalog(_ context.Context, record ports.CachedAgentModelCatalog) error {
+	if f.records == nil {
+		f.records = map[string]ports.CachedAgentModelCatalog{}
+	}
+	f.records[record.AgentID+"\x00"+record.ProjectID] = record
+	f.puts++
+	return nil
+}
+
 func (f fakeAgent) GetConfigSpec(context.Context) (ports.ConfigSpec, error) {
 	return ports.ConfigSpec{}, nil
 }
@@ -332,6 +351,48 @@ func TestProbeReportsUnsupportedAndMissingAgent(t *testing.T) {
 	}
 	if unsupported.Supported || unsupported.Installed || unsupported.Agent.ID != "unknown" {
 		t.Fatalf("Probe unknown = %#v, want unsupported unknown", unsupported)
+	}
+}
+
+func TestModelsCachesStaticCatalogByProject(t *testing.T) {
+	cache := &fakeModelCache{}
+	svc := newService([]agentregistry.HarnessAgent{
+		harnessAgent("codex", "Codex", nil),
+	}, cache)
+
+	first, err := svc.Models(context.Background(), "codex", "proj-1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.SelectionMode != ports.ModelSelectionCatalog || len(first.Models) == 0 || !first.AllowCustom {
+		t.Fatalf("first catalog = %#v", first)
+	}
+	if cache.puts != 1 {
+		t.Fatalf("cache puts = %d, want 1", cache.puts)
+	}
+
+	second, err := svc.Models(context.Background(), "codex", "proj-1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cache.puts != 1 {
+		t.Fatalf("cache puts after hit = %d, want 1", cache.puts)
+	}
+	if second.Source != first.Source || len(second.Models) != len(first.Models) {
+		t.Fatalf("cached catalog = %#v, want %#v", second, first)
+	}
+}
+
+func TestModelsUsesTextFallbackWhenDiscoveryCannotRun(t *testing.T) {
+	svc := NewWithAgents([]agentregistry.HarnessAgent{
+		harnessAgent("qwen", "Qwen", ports.ErrAgentBinaryNotFound),
+	})
+	got, err := svc.Models(context.Background(), "qwen", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SelectionMode != ports.ModelSelectionText || !got.AllowCustom {
+		t.Fatalf("catalog = %#v, want custom text input", got)
 	}
 }
 

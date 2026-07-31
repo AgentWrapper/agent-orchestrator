@@ -149,6 +149,16 @@ func (f *fakeAgentCatalog) Probe(_ context.Context, agentID string) (agentsvc.Pr
 	return agentsvc.ProbeResult{Agent: info, Supported: true, Installed: true}, nil
 }
 
+func (f *fakeAgentCatalog) Models(_ context.Context, agentID, _ string, _ bool) (ports.AgentModelCatalog, error) {
+	return ports.AgentModelCatalog{
+		AgentID:       agentID,
+		SelectionMode: ports.ModelSelectionText,
+		Models:        []ports.AgentModelInfo{},
+		AllowCustom:   true,
+		Source:        "test",
+	}, nil
+}
+
 func authorizedCodexInventory() agentsvc.Inventory {
 	info := agentsvc.Info{ID: "codex", Label: "Codex", AuthStatus: "authorized"}
 	return agentsvc.Inventory{
