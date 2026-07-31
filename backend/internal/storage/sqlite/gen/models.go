@@ -12,6 +12,11 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+type AppSetting struct {
+	Key   string
+	Value string
+}
+
 type ChangeLog struct {
 	Seq       int64
 	ProjectID domain.ProjectID
@@ -74,6 +79,7 @@ type PR struct {
 	ReviewObservedAt         sql.NullTime
 	LastNudgeSignature       string
 	StateChangedAt           sql.NullTime
+	IsFromFork               sql.NullInt64
 }
 
 type PRCheck struct {
@@ -122,6 +128,79 @@ type PRReviewThread struct {
 	IsBot        int64
 	SemanticHash string
 	UpdatedAt    time.Time
+}
+
+type PipelineCredential struct {
+	ProjectID domain.ProjectID
+	Name      string
+	EnvJson   string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type PipelineDefinition struct {
+	ID         string
+	ProjectID  domain.ProjectID
+	Name       string
+	YamlSource string
+	ConfigJson string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+type PipelineRun struct {
+	ID             string
+	ProjectID      domain.ProjectID
+	PipelineID     string
+	PipelineName   string
+	SubjectKind    string
+	SessionID      string
+	PRNumber       int64
+	PRRepo         string
+	PRURL          string
+	HeadSha        string
+	PRHeadBranch   string
+	PRBaseBranch   string
+	FromFork       int64
+	Status         string
+	RunDir         string
+	DefinitionJson string
+	CancelReason   string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	SettledAt      sql.NullTime
+	RunNumber      int64
+}
+
+type PipelineStageRun struct {
+	RunID         string
+	ProjectID     domain.ProjectID
+	StageID       string
+	Outcome       string
+	Attempt       int64
+	EnteredVia    string
+	PrevStage     string
+	FailedStage   string
+	FailedOutcome string
+	SessionID     string
+	WorkspaceKind string
+	WorkspacePath string
+	DeadlineAt    sql.NullTime
+	StartedAt     sql.NullTime
+	SettledAt     sql.NullTime
+	Reason        string
+	OutputTail    string
+	Nudged        int64
+	Pgid          int64
+}
+
+type PipelineStageSignal struct {
+	ID        int64
+	RunID     string
+	StageID   string
+	Kind      string
+	Reason    string
+	CreatedAt time.Time
 }
 
 type Project struct {
@@ -187,6 +266,9 @@ type Session struct {
 	RuntimeLaunchID    string
 	WorkspaceRepoPath  string
 	TerminateOnPRMerge bool
+	PipelineRunID      string
+	PipelineOrphan     string
+	WorkspaceAdopted   bool
 }
 
 type SessionCleanupFact struct {

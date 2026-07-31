@@ -75,6 +75,8 @@ func Build() ([]byte, error) {
 			"Legacy AO project import (availability probe and run)"),
 		*(&openapi31.Tag{Name: "dev"}).WithDescription(
 			"Developer-only maintenance operations"),
+		*(&openapi31.Tag{Name: "pipelines"}).WithDescription(
+			"Pipeline definitions, runs, manual triggers, stage signals, logs and outputs"),
 		*(&openapi31.Tag{Name: "mobile"}).WithDescription(
 			"Connect Mobile LAN bridge control (loopback/desktop only)"),
 		*(&openapi31.Tag{Name: "browser"}).WithDescription(
@@ -233,6 +235,36 @@ var schemaNames = map[string]string{
 	// httpd/controllers: import wire envelopes
 	"ControllersImportStatusResponse": "ImportStatusResponse",
 	"ControllersImportRunResponse":    "ImportRunResponse",
+	// httpd/controllers: pipelines wire envelopes + params
+	"ControllersPipelineProjectQuery":               "PipelineProjectQuery",
+	"ControllersPipelineRunsQuery":                  "PipelineRunsQuery",
+	"ControllersPipelineIDParam":                    "PipelineIDParam",
+	"ControllersPipelineRunIDParam":                 "PipelineRunIDParam",
+	"ControllersPipelineStageIDParam":               "PipelineStageIDParam",
+	"ControllersPipelineOutputParam":                "PipelineOutputParam",
+	"ControllersPipelineStageLogQuery":              "PipelineStageLogQuery",
+	"ControllersPipelineStageLogResponse":           "PipelineStageLogResponse",
+	"ControllersPipelineProducedArtifact":           "PipelineProducedArtifact",
+	"ControllersPipelineDefinitionSummary":          "PipelineDefinitionSummary",
+	"ControllersListPipelineDefinitionsResponse":    "ListPipelineDefinitionsResponse",
+	"ControllersPipelineDefinitionResponse":         "PipelineDefinitionResponse",
+	"ControllersSavePipelineDefinitionRequest":      "SavePipelineDefinitionRequest",
+	"ControllersDeletePipelineDefinitionResponse":   "DeletePipelineDefinitionResponse",
+	"ControllersValidatePipelineDefinitionRequest":  "ValidatePipelineDefinitionRequest",
+	"ControllersValidatePipelineDefinitionResponse": "ValidatePipelineDefinitionResponse",
+	"ControllersPipelineValidationIssue":            "PipelineValidationIssue",
+	"ControllersPipelineRunSummary":                 "PipelineRunSummary",
+	"ControllersListPipelineRunsResponse":           "ListPipelineRunsResponse",
+	"ControllersPipelineStageView":                  "PipelineStageView",
+	"ControllersPipelineRunDetail":                  "PipelineRunDetail",
+	"ControllersPipelineRunDetailResponse":          "PipelineRunDetailResponse",
+	"ControllersTriggerPipelineRunRequest":          "TriggerPipelineRunRequest",
+	"ControllersTriggerPipelineRunResponse":         "TriggerPipelineRunResponse",
+	"ControllersSignalPipelineStageRequest":         "SignalPipelineStageRequest",
+	"ControllersSignalPipelineStageResponse":        "SignalPipelineStageResponse",
+	// httpd/controllers: settings wire envelopes
+	"ControllersPipelinesSettingResponse":   "PipelinesSettingResponse",
+	"ControllersSetPipelinesSettingRequest": "SetPipelinesSettingRequest",
 	// httpd/controllers: dev wire envelopes
 	"ControllersDevImportProjectsRequest":  "DevImportProjectsRequest",
 	"ControllersDevImportProjectsResponse": "DevImportProjectsResponse",
@@ -344,6 +376,8 @@ func operations() []operation {
 	ops = append(ops, importOperations()...)
 	ops = append(ops, devOperations()...)
 	ops = append(ops, mobileOperations()...)
+	ops = append(ops, pipelineOperations()...)
+	ops = append(ops, settingsOperations()...)
 	ops = append(ops, browserOperations()...)
 	ops = append(ops, shellTerminalOperations()...)
 	return ops
@@ -428,6 +462,235 @@ func shellTerminalOperations() []operation {
 			resps: []respUnit{
 				{http.StatusNoContent, nil},
 				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
+}
+
+// settingsOperations declares the 2 ungated /settings/pipelines operations
+// (read + persist the pipelines feature flag). Deliberately NOT behind the
+// pipelines flag: the toggle must be reachable to turn the flag on. Must stay
+// 1:1 with the routes SettingsController.Register mounts (enforced by the parity
+// test).
+func settingsOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/settings/pipelines", id: "getPipelinesSetting", tag: "settings",
+			summary: "Read the persisted pipelines feature flag",
+			resps: []respUnit{
+				{http.StatusOK, controllers.PipelinesSettingResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPut, path: "/api/v1/settings/pipelines", id: "setPipelinesSetting", tag: "settings",
+			summary: "Persist the pipelines feature flag (takes effect on daemon restart)",
+			reqBody: controllers.SetPipelinesSettingRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.PipelinesSettingResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+	}
+}
+
+// pipelineOperations declares the /pipelines operations: definitions CRUD, the
+// JSON schema, runs list/detail, manual trigger, cancel, the stage signal, and
+// the run folder reads (stage log, declared output). There is no resume and no
+// artifact route: v2 has neither (spec sections 14.1 and 6.2).
+//
+// Must stay 1:1 with the routes PipelinesController.Register mounts (enforced by
+// the parity test). A nil PipelinesController.Svc returns 501 on every route.
+func pipelineOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/pipelines", id: "listPipelineDefinitions", tag: "pipelines",
+			summary:    "List a project's pipeline definitions",
+			pathParams: []any{controllers.PipelineProjectQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListPipelineDefinitionsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/pipelines", id: "createPipelineDefinition", tag: "pipelines",
+			summary:    "Create a pipeline definition from raw YAML",
+			pathParams: []any{controllers.PipelineProjectQuery{}},
+			reqBody:    controllers.SavePipelineDefinitionRequest{},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.PipelineDefinitionResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/pipelines/validate", id: "validatePipelineDefinition", tag: "pipelines",
+			summary: "Validate a pipeline definition without persisting it",
+			reqBody: controllers.ValidatePipelineDefinitionRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ValidatePipelineDefinitionResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/pipelines/schema", id: "getPipelineConfigSchema", tag: "pipelines",
+			summary: "Fetch the JSON schema for the pipeline YAML definition format",
+			resps: []respUnit{
+				{http.StatusOK, map[string]any{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/pipelines/credentials", id: "listPipelineCredentials", tag: "pipelines",
+			summary:    "List a project's pipeline credential names (never their values)",
+			pathParams: []any{controllers.PipelineProjectQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListPipelineCredentialsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPut, path: "/api/v1/pipelines/credentials/{name}", id: "setPipelineCredential", tag: "pipelines",
+			summary:    "Create or replace a pipeline credential",
+			pathParams: []any{controllers.PipelineCredentialNameParam{}, controllers.PipelineProjectQuery{}},
+			reqBody:    controllers.SetPipelineCredentialRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.PipelineCredentialResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodDelete, path: "/api/v1/pipelines/credentials/{name}", id: "deletePipelineCredential", tag: "pipelines",
+			summary:    "Delete a pipeline credential",
+			pathParams: []any{controllers.PipelineCredentialNameParam{}, controllers.PipelineProjectQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.DeletePipelineCredentialResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/pipelines/runs", id: "listPipelineRuns", tag: "pipelines",
+			summary:    "List a project's pipeline runs, newest first",
+			pathParams: []any{controllers.PipelineRunsQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListPipelineRunsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/pipelines/runs", id: "triggerPipelineRun", tag: "pipelines",
+			summary:    "Trigger a manual pipeline run",
+			pathParams: []any{controllers.PipelineProjectQuery{}},
+			reqBody:    controllers.TriggerPipelineRunRequest{},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.TriggerPipelineRunResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/pipelines/runs/{runId}", id: "getPipelineRun", tag: "pipelines",
+			summary:    "Fetch one pipeline run with its stages and findings",
+			pathParams: []any{controllers.PipelineRunIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.PipelineRunDetailResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/pipelines/runs/{runId}/cancel", id: "cancelPipelineRun", tag: "pipelines",
+			summary:    "Cancel an in-flight pipeline run",
+			pathParams: []any{controllers.PipelineRunIDParam{}, controllers.PipelineProjectQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.PipelineRunDetailResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/pipelines/runs/{runId}/stages/{stageId}/log", id: "getPipelineStageLog", tag: "pipelines",
+			summary:    "Fetch a stage's captured stdout and stderr, optionally tailed",
+			pathParams: []any{controllers.PipelineStageIDParam{}, controllers.PipelineStageLogQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.PipelineStageLogResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/pipelines/runs/{runId}/outputs/{filename}", id: "getPipelineRunOutput", tag: "pipelines",
+			summary:    "Download one artifact a stage declared with produces",
+			pathParams: []any{controllers.PipelineOutputParam{}},
+			resps: []respUnit{
+				{http.StatusOK, ""},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+			contentTypes: map[int]string{http.StatusOK: "text/plain"},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/pipelines/runs/{runId}/stages/{stageId}/signal", id: "signalPipelineStage", tag: "pipelines",
+			summary:    "Settle a running agent stage: `ao pipeline done` or `ao pipeline fail --reason`",
+			pathParams: []any{controllers.PipelineStageIDParam{}},
+			reqBody:    controllers.SignalPipelineStageRequest{},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.SignalPipelineStageResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPut, path: "/api/v1/pipelines/{id}", id: "updatePipelineDefinition", tag: "pipelines",
+			summary:    "Update a pipeline definition's YAML",
+			pathParams: []any{controllers.PipelineIDParam{}},
+			reqBody:    controllers.SavePipelineDefinitionRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.PipelineDefinitionResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodDelete, path: "/api/v1/pipelines/{id}", id: "deletePipelineDefinition", tag: "pipelines",
+			summary:    "Delete a pipeline definition",
+			pathParams: []any{controllers.PipelineIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.DeletePipelineDefinitionResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
