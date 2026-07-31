@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 
 	cloudagentcli "github.com/aoagents/agent-orchestrator/backend/internal/cloud/agentcli"
@@ -25,7 +27,7 @@ func run() int {
 			return 1
 		}
 		baseURL := os.Getenv("AO_CLOUD_PUBLIC_URL")
-		token := os.Getenv("AO_WORKER_TOKEN")
+		token := currentWorkerToken()
 		if baseURL == "" || token == "" {
 			_, _ = fmt.Fprintln(os.Stderr, "AO_CLOUD_PUBLIC_URL and AO_WORKER_TOKEN are required for hooks")
 			return 1
@@ -38,7 +40,7 @@ func run() int {
 		}
 		return 0
 	}
-	command := cloudagentcli.NewCommand(os.Stdout, os.Stderr, os.Getenv, nil)
+	command := cloudagentcli.NewCommand(os.Stdout, os.Stderr, workerEnvironment, nil)
 	if err := command.ExecuteContext(ctx); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return 0
@@ -47,4 +49,23 @@ func run() int {
 		return 1
 	}
 	return 0
+}
+
+func workerEnvironment(name string) string {
+	if name == "AO_WORKER_TOKEN" {
+		return currentWorkerToken()
+	}
+	return os.Getenv(name)
+}
+
+func currentWorkerToken() string {
+	dataDir := strings.TrimSpace(os.Getenv("AO_DATA_DIR"))
+	if dataDir != "" {
+		if raw, err := os.ReadFile(filepath.Join(dataDir, "worker-token")); err == nil {
+			if token := strings.TrimSpace(string(raw)); token != "" {
+				return token
+			}
+		}
+	}
+	return strings.TrimSpace(os.Getenv("AO_WORKER_TOKEN"))
 }
