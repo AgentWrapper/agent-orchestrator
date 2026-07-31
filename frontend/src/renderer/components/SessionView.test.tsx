@@ -817,6 +817,32 @@ describe("SessionView", () => {
 		expect(browserUnseen("sess-1")).toBe(false);
 	});
 
+	it("does not let a previous session's popout consume the destination session's preview glow", () => {
+		const secondWorker = workerSession("sess-2");
+		secondWorker.previewUrl = "http://localhost:4173/";
+		secondWorker.previewRevision = 2;
+		act(() => {
+			useUiStore.setState({
+				inspectorSessions: {
+					"sess-2": {
+						isOpen: true,
+						view: "summary",
+						previewKey: "revision:1",
+						browserContentRevealed: true,
+					},
+				},
+			});
+		});
+		const { rerender } = render(<SessionView sessionId="sess-1" />);
+		fireEvent.click(screen.getByRole("button", { name: "pop browser" }));
+		expect(screen.getByRole("button", { name: "browser center" })).toBeInTheDocument();
+
+		rerender(<SessionView sessionId="sess-2" />);
+
+		expect(browserUnseen("sess-2")).toBe(true);
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+	});
+
 	it("does not open Browser when `ao preview clear` removes the target", () => {
 		const worker = workerSession("sess-1");
 		const { rerender } = render(<SessionView sessionId="sess-1" />);

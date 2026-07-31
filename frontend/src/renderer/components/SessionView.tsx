@@ -79,8 +79,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const inspectorRef = useRef<PanelImperativeHandle | null>(null);
 	const inspectorSeparatorRef = useRef<HTMLDivElement | null>(null);
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
-	const [browserPoppedOut, setBrowserPoppedOut] = useState(false);
+	const [browserPopOutState, setBrowserPopOutState] = useState({ sessionId, poppedOut: false });
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
+	const browserPoppedOut = browserPopOutState.sessionId === sessionId && browserPopOutState.poppedOut;
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
 
@@ -204,7 +205,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	useLayoutEffect(() => {
 		setTerminalTarget({ kind: "worker" });
-		setBrowserPoppedOut(false);
+		setBrowserPopOutState({ sessionId, poppedOut: false });
 		setFilesPoppedOut(false);
 	}, [sessionId]);
 
@@ -218,7 +219,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	}, [clearVisibleTerminalKind, sessionId, setVisibleTerminalKind, terminalTarget.kind]);
 
 	const handleOpenFiles = useCallback(() => {
-		setBrowserPoppedOut(false);
+		setBrowserPopOutState({ sessionId, poppedOut: false });
 		setFilesPoppedOut(false);
 		setInspectorViewForSession(sessionId, "files");
 		setInspectorOpenForSession(sessionId, true);
@@ -226,7 +227,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	const handleToggleFilesPopOut = useCallback(
 		(next: boolean) => {
-			if (next) setBrowserPoppedOut(false);
+			if (next) setBrowserPopOutState({ sessionId, poppedOut: false });
 			setFilesPoppedOut(next);
 			setInspectorViewForSession(sessionId, "files");
 			setInspectorOpenForSession(sessionId, true);
@@ -234,10 +235,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		[sessionId, setInspectorOpenForSession, setInspectorViewForSession],
 	);
 
-	const handleToggleBrowserPopOut = useCallback((next: boolean) => {
-		if (next) setFilesPoppedOut(false);
-		setBrowserPoppedOut(next);
-	}, []);
+	const handleToggleBrowserPopOut = useCallback(
+		(next: boolean) => {
+			if (next) setFilesPoppedOut(false);
+			setBrowserPopOutState({ sessionId, poppedOut: next });
+		},
+		[sessionId],
+	);
 
 	// Reveal the first real content in each non-empty browser lifecycle. Once the
 	// user leaves Browser, subsequent work respects that choice and uses the
