@@ -39,6 +39,13 @@ type notificationSink interface {
 	Notify(ctx context.Context, intent ports.NotificationIntent) error
 }
 
+// projectConfigLoader resolves a project's config so MarkTerminated can check
+// the ContainerReap opt-out before reaping. A load failure must not fall
+// through to reaping - see ports.ContainerReaper below.
+type projectConfigLoader interface {
+	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
+}
+
 type sessionTerminator interface {
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 }
@@ -46,10 +53,6 @@ type sessionTerminator interface {
 type pendingLaunch struct {
 	launchID string
 	ready    chan struct{}
-}
-
-type orchestratorReengagementTracker interface {
-	ObserveActivity(ctx context.Context, before, after domain.SessionRecord, event string)
 }
 
 // Option customizes a Manager.
@@ -65,6 +68,16 @@ func WithTelemetry(sink ports.EventSink) Option {
 	return func(m *Manager) { m.telemetry = sink }
 }
 
+// WithContainerReaper wires the container leg of #2652: MarkTerminated will
+// force-remove the terminated session's ao.session-labeled Docker containers,
+// unless the project opts out via ProjectConfig.ContainerReap.Disabled.
+func WithContainerReaper(reaper ports.ContainerReaper, projects projectConfigLoader) Option {
+	return func(m *Manager) {
+		m.containers = reaper
+		m.projects = projects
+	}
+}
+
 // WithActiveSteering supplies the adapter-provided active-turn steering
 // capability (see ports.ActiveTurnSteerer). Without it the reducer assumes no
 // harness can be steered mid-turn.
@@ -74,11 +87,6 @@ func WithActiveSteering(pred func(domain.AgentHarness) bool) Option {
 			m.steerActive = pred
 		}
 	}
-}
-
-// WithOrchestratorReengagement wires durable orchestrator activity tracking.
-func WithOrchestratorReengagement(tracker orchestratorReengagementTracker) Option {
-	return func(m *Manager) { m.reengagement = tracker }
 }
 
 // Manager reduces runtime, activity, spawn, and termination observations into durable session facts.
@@ -93,6 +101,8 @@ type Manager struct {
 	// completionTerminator is late-bound because Session Manager itself depends
 	// on this lifecycle reducer. It is required before the SCM observer starts.
 	completionTerminator sessionTerminator
+	containers           ports.ContainerReaper
+	projects             projectConfigLoader
 
 	mu        sync.Mutex
 	window    time.Duration
@@ -112,8 +122,7 @@ type Manager struct {
 	// active turn (input steers the run) rather than only while idle. Supplied by
 	// the agent adapter via WithActiveSteering; the default answers false, so an
 	// unknown harness is only written to while idle.
-	steerActive  func(domain.AgentHarness) bool
-	reengagement orchestratorReengagementTracker
+	steerActive func(domain.AgentHarness) bool
 }
 
 // New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.
@@ -214,7 +223,8 @@ func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domai
 // existing recent-activity guard; supervised workload death is independently
 // fenced by the launch generation and never terminates the runtime.
 func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.SessionID, f ports.RuntimeFacts) error {
-	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
+	terminated := false
+	err := m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
 		if cur.IsTerminated {
 			return cur, false
 		}
@@ -243,8 +253,20 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 		// (later observations return early on cur.IsTerminated). Runs under
 		// m.mu — mutate holds it across this callback.
 		delete(m.flights, id)
+		terminated = true
 		return next, true
 	})
+	if err != nil {
+		return err
+	}
+	if terminated {
+		// Route reaper-observed death through the same container-reap hook as
+		// every other terminal path (#2652): a crash/SIGKILL detected by the
+		// runtime reaper must not leave the session's Docker containers behind
+		// just because it never called MarkTerminated directly.
+		m.reapSessionContainers(ctx, id)
+	}
+	return nil
 }
 
 // ApplyActivitySignal records an authoritative agent activity signal and any
@@ -343,16 +365,9 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 			rec.UpdatedAt = now
 			err := m.store.UpdateSession(ctx, rec)
 			m.mu.Unlock()
-			if err == nil && m.reengagement != nil {
-				m.reengagement.ObserveActivity(ctx, rec, rec, s.Event)
-			}
 			return err
 		}
-		tracker := m.reengagement
 		m.mu.Unlock()
-		if tracker != nil {
-			tracker.ObserveActivity(ctx, rec, rec, s.Event)
-		}
 		return nil
 	}
 	next := rec
@@ -385,11 +400,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		}
 	}
 	waitingEvents := m.waitingInputEvents(next, prevState, prevAt, now)
-	tracker := m.reengagement
 	m.mu.Unlock()
-	if tracker != nil {
-		tracker.ObserveActivity(ctx, rec, next, s.Event)
-	}
 	for _, ev := range waitingEvents {
 		m.emitTelemetry(ctx, ev)
 	}
@@ -631,9 +642,12 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 	return m.store.UpdateSession(ctx, rec)
 }
 
-// MarkTerminated marks a session terminated without tearing down external resources.
+// MarkTerminated marks a session terminated. Runtime/workspace teardown is the
+// caller's responsibility (see session_manager.Manager.Kill); this also reaps the
+// session's Docker containers via the optional ContainerReaper (#2652) as its one
+// built-in external side effect.
 func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error {
-	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
+	err := m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
 		if cur.IsTerminated {
 			return cur, false
 		}
@@ -642,6 +656,49 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 		delete(m.flights, id) // runs under m.mu (mutate holds it)
 		return cur, true
 	})
+	if err != nil {
+		return err
+	}
+	m.reapSessionContainers(ctx, id)
+	return nil
+}
+
+// reapSessionContainers is the container leg of #2652 (the container-owning
+// counterpart to session_manager.Manager's cleanupAgentWorkspace): every
+// MarkTerminated call - Kill, daemon-shutdown teardown, Cleanup,
+// RetireForReplacement, and tracker-driven termination - funnels through
+// here, so this single hook covers every terminal-state path rather than
+// only explicit ao session kill. Best-effort: logged on failure, never
+// returned, matching the rest of AO's terminal-state teardown. A project-load
+// error skips reaping rather than guessing - the package's stated bias is to
+// spare on ambiguity, not to reap on it.
+func (m *Manager) reapSessionContainers(ctx context.Context, id domain.SessionID) {
+	if m.containers == nil {
+		return
+	}
+	if m.projects != nil {
+		rec, ok, err := m.store.GetSession(ctx, id)
+		if err != nil || !ok {
+			slog.Default().Warn("lifecycle: container reap: session lookup failed, skipping", "session", id, "err", err)
+			return
+		}
+		project, ok, err := m.projects.GetProject(ctx, string(rec.ProjectID))
+		if err != nil || !ok {
+			slog.Default().Warn("lifecycle: container reap: project lookup failed or missing, skipping rather than guessing", "session", id, "project", rec.ProjectID, "err", err)
+			return
+		}
+		if project.Config.ContainerReap.Disabled {
+			return
+		}
+	}
+	removed, err := m.containers.ReapSessionContainers(ctx, id)
+	if err != nil {
+		slog.Default().Warn("lifecycle: container reap failed", "session", id, "err", err)
+		return
+	}
+	if removed > 0 {
+		slog.Default().Info("lifecycle: reaped session containers", "session", id, "removed", removed)
+	}
 }
 
 // sameActivity reports whether two activity signals describe the same state.
