@@ -293,8 +293,10 @@ describe("useTerminalSession", () => {
 			act(() => void vi.advanceTimersByTime(60));
 
 			act(() => muxes[0].emitData("handle-1", "live-1"));
+			act(() => void vi.advanceTimersByTime(16));
 			expect(terminal.lines).toEqual(["replay", "live-1"]);
 			act(() => muxes[0].emitData("handle-1", "live-2"));
+			act(() => void vi.advanceTimersByTime(16));
 			expect(terminal.lines).toEqual(["replay", "live-1", "live-2"]);
 		});
 
@@ -454,6 +456,7 @@ describe("useTerminalSession", () => {
 			expect(muxes[0].inputs).toEqual([["handle-1", "l"]]);
 			// Subsequent output is live, so the echo shows up immediately.
 			act(() => muxes[0].emitData("handle-1", "l"));
+			act(() => void vi.advanceTimersByTime(16));
 			expect(terminal.lines).toEqual(["prompt$ ", "l"]);
 		});
 
