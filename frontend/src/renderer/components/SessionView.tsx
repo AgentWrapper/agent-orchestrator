@@ -176,11 +176,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const browserSlotVisible = Boolean(
 		session && hasInspector && (browserPoppedOut || (isInspectorOpen && inspectorView === "browser")),
 	);
+	const terminated = session ? !sessionIsActive(session) : false;
 	const browserView = useBrowserView({
 		sessionId,
 		active: browserSlotVisible,
 		poppedOut: browserPoppedOut,
-		terminated: session ? !sessionIsActive(session) : false,
+		terminated,
 		previewUrl,
 		previewRevision,
 	});
@@ -189,7 +190,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		navUrl: browserView.navState.url,
 	});
 	const browserUrl = browserView.navState.url.trim();
-	const hasBrowserContent = Boolean(previewUrl || browserUrl);
+	// A terminated session's `previewUrl` is a stale DB fact; useBrowserView
+	// suppresses and destroys the live preview for it, so it must not count as
+	// content here either — otherwise a merged/terminated session with an old
+	// preview auto-opens Browser onto a view the hook has already torn down.
+	const hasBrowserContent = !terminated && Boolean(previewUrl || browserUrl);
 
 	useLayoutEffect(() => {
 		setTerminalTarget({ kind: "worker" });
@@ -280,22 +285,16 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	]);
 
 	// Agent browser commands are genuine browser activity even when they do not
-	// navigate (fill, click, snapshot, etc.). When Browser is hidden, surface
-	// that activity as unseen rather than reopening the tab.
+	// navigate (fill, click, snapshot, etc.) or land on an empty target — e.g. a
+	// command that runs before any page has loaded. When Browser is hidden,
+	// surface that activity as unseen rather than reopening the tab; gating this
+	// on hasBrowserContent/browserContentRevealed missed exactly that case.
 	useEffect(() => {
-		if (!hasInspector || !browserView.agentBrowserActive || !hasBrowserContent) return;
+		if (!hasInspector || !browserView.agentBrowserActive) return;
 		const current = useUiStore.getState().inspectorSessions[sessionId];
 		const viewingBrowser = (current?.isOpen ?? true) && (current?.view ?? "summary") === "browser";
-		if (current?.browserContentRevealed && !viewingBrowser) setBrowserUnseen(sessionId, true);
-	}, [
-		browserView.agentBrowserActive,
-		hasBrowserContent,
-		hasInspector,
-		inspectorView,
-		isInspectorOpen,
-		sessionId,
-		setBrowserUnseen,
-	]);
+		if (!viewingBrowser) setBrowserUnseen(sessionId, true);
+	}, [browserView.agentBrowserActive, hasInspector, inspectorView, isInspectorOpen, sessionId, setBrowserUnseen]);
 
 	// Opening Browser consumes the pending activity indicator, including the
 	// case where the inspector was collapsed while already parked on Browser.

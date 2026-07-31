@@ -155,6 +155,24 @@ export function useBrowserView({
 	const mirrorStreamRef = useRef<MediaStream | null>(null);
 	const hasNativeBrowser = Boolean(window.ao?.browser);
 
+	// `navState`/`viewId`/etc. are state, not derived from `sessionId`, so on the
+	// very first render after `sessionId` changes they would otherwise still
+	// hold the PREVIOUS session's values — the reset effect below only lands a
+	// render later. A consumer that reads `navState.url` during that one stale
+	// render (e.g. to decide whether to auto-reveal a browser tab) would treat
+	// a departed session's leftover URL as this session's own content. Adjust
+	// state during render (React's documented pattern for this exact case) so
+	// no consumer ever observes a mismatched session's data.
+	const [renderedSessionId, setRenderedSessionId] = useState(sessionId);
+	if (sessionId !== renderedSessionId) {
+		setRenderedSessionId(sessionId);
+		setViewId("");
+		setNavState(EMPTY_NAV_STATE);
+		setTabsState(EMPTY_TABS_STATE);
+		setTabNotice("");
+		setAgentBrowserActive(false);
+	}
+
 	useEffect(() => {
 		activeRef.current = active;
 	}, [active]);

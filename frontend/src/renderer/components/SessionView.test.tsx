@@ -825,4 +825,34 @@ describe("SessionView", () => {
 		// automatically opens again.
 		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
 	});
+
+	// Regression: a terminated session's `previewUrl` is a stale DB fact —
+	// useBrowserView suppresses and destroys the live preview for terminated
+	// sessions, so it must not count as content that auto-opens Browser either.
+	it("does not auto-open Browser for a terminated session with a stale previewUrl", () => {
+		const worker = workerSession("sess-1");
+		worker.status = "merged";
+		worker.isTerminated = true;
+		worker.previewUrl = "http://localhost:5173/";
+		worker.previewRevision = 1;
+
+		render(<SessionView sessionId="sess-1" />);
+
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+		expect(useUiStore.getState().inspectorSessions["sess-1"]?.browserContentRevealed).toBeFalsy();
+	});
+
+	// Regression: agent-browser commands (fill, click, snapshot, …) are real
+	// activity even on an empty target that has not navigated anywhere yet.
+	// Gating the glow on hasBrowserContent/browserContentRevealed meant a
+	// command run before any page loaded never surfaced as unseen.
+	it("glows for agent browser activity even before any browser content has loaded", () => {
+		const { rerender } = render(<SessionView sessionId="sess-1" />);
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+
+		browserViewState.agentBrowserActive = true;
+		rerender(<SessionView sessionId="sess-1" />);
+
+		expect(browserUnseen("sess-1")).toBe(true);
+	});
 });
