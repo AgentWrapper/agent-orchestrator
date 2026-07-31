@@ -15,13 +15,11 @@ services:
         sync: false
       - key: AO_SANDBOX_PROVIDER
         value: daytona
+      - key: AO_CLOUD_AUTH_MODE
+        value: local
       - key: AO_DATABASE_URL
         sync: false
       - key: AO_DATABASE_DIRECT_URL
-        sync: false
-      - key: AO_SUPABASE_URL
-        sync: false
-      - key: AO_SUPABASE_ANON_KEY
         sync: false
       - key: AO_DAYTONA_API_URL
         value: https://app.daytona.io/api

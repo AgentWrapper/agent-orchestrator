@@ -109,6 +109,15 @@ export interface ProviderConnection {
 export type CloudAgent = "claude-code" | "codex" | "cursor";
 export type AgentCredentialType = "oauth_token" | "api_key" | "access_token";
 
+export interface CloudAuthSession {
+  accessToken: string;
+  user: {
+    id: string;
+    email: string;
+    displayName: string;
+  };
+}
+
 type FetchOptions = Omit<RequestInit, "body"> & {
   body?: unknown;
 };
@@ -123,6 +132,46 @@ export class CloudAPI {
     }
     this.baseURL = env.NEXT_PUBLIC_API_URL.replace(/\/+$/, "");
     this.accessToken = accessToken;
+  }
+
+  static async signUp(input: {
+    email: string;
+    password: string;
+  }): Promise<CloudAuthSession> {
+    return CloudAPI.authRequest("/api/cloud/v1/auth/signup", input);
+  }
+
+  static async login(input: {
+    email: string;
+    password: string;
+  }): Promise<CloudAuthSession> {
+    return CloudAPI.authRequest("/api/cloud/v1/auth/login", input);
+  }
+
+  static async logout(accessToken: string): Promise<void> {
+    await CloudAPI.authRequest("/api/cloud/v1/auth/logout", undefined, accessToken);
+  }
+
+  private static async authRequest<T = CloudAuthSession>(
+    path: string,
+    body?: unknown,
+    accessToken?: string,
+  ): Promise<T> {
+    if (!env.NEXT_PUBLIC_API_URL) throw new Error("NEXT_PUBLIC_API_URL is not configured.");
+    const headers = new Headers();
+    if (body !== undefined) headers.set("Content-Type", "application/json");
+    if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
+    const response = await fetch(env.NEXT_PUBLIC_API_URL.replace(/\/+$/, "") + path, {
+      method: "POST",
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const failure = (await response.json().catch(() => null)) as { message?: string } | null;
+      throw new Error(failure?.message ?? "Authentication failed.");
+    }
+    if (response.status === 204) return undefined as T;
+    return (await response.json()) as T;
   }
 
   async me() {

@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:17-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ao
       POSTGRES_PASSWORD: ao
@@ -15,6 +16,34 @@ services:
       interval: 2s
       timeout: 3s
       retries: 20
+
+  control-plane:
+    build:
+      context: ..
+      dockerfile: ao-cloud/docker/control-plane.Dockerfile
+      target: local
+    image: ao-cloud-control-plane:local
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3010:3010"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      AO_CLOUD_LISTEN_ADDR: 0.0.0.0:3010
+      AO_CLOUD_PUBLIC_URL: http://127.0.0.1:3010
+      AO_WEB_PUBLIC_URL: http://127.0.0.1:5174
+      AO_DATABASE_URL: postgresql://ao:ao@postgres:5432/ao_cloud_dev?sslmode=disable
+      AO_DATABASE_DIRECT_URL: postgresql://ao:ao@postgres:5432/ao_cloud_dev?sslmode=disable
+      AO_CLOUD_AUTH_MODE: local
+      AO_SANDBOX_PROVIDER: docker
+      AO_DOCKER_WORKER_IMAGE: ao-cloud-worker:local
+      AO_ENCRYPTION_KEY: ${AO_ENCRYPTION_KEY:-}
+      AO_WORKER_SIGNING_KEY: ${AO_WORKER_SIGNING_KEY:-}
+      AO_GITHUB_AUTH_MODE: ${AO_GITHUB_AUTH_MODE:-}
+      AO_GITHUB_TOKEN: ${AO_GITHUB_TOKEN:-}
 
 volumes:
   ao-cloud-postgres:

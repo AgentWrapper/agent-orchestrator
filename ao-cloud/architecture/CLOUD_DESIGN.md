@@ -21,10 +21,10 @@ Cloud web app → authenticated AO Cloud control plane → cloud sandboxes
 
 ## Design references
 
-- Product/UI direction: [`DESIGN.md`](DESIGN.md). Cloud retains AO's dense,
+- Product/UI direction: [`../../DESIGN.md`](../../DESIGN.md). Cloud retains AO's dense,
   dark, refined-blue control-surface language while using browser-appropriate
   interaction rather than Electron APIs.
-- Local cloud setup and runtime commands: [`ao-cloud/README.md`](ao-cloud/README.md).
+- Local cloud setup and runtime commands: [`../README.md`](../README.md).
 - Hosted-sessions research reference:
   <https://gist.github.com/Pritom14/7e4c4075938d89de16f740b61b18916e>.
 
@@ -32,6 +32,42 @@ The hosted-sessions reference is useful for provider abstraction, trusted
 control-plane versus untrusted-sandbox separation, and tenant boundaries. Its
 desktop-to-cloud/federated-local model is explicitly **not** part of this
 design.
+
+## Current cloud schema
+
+The existing PostgreSQL schema is a useful starting point. These are separate
+tables, linked with foreign keys:
+
+| Table | Current responsibility |
+| --- | --- |
+| `ao_accounts` | One external authenticated user maps to one cloud account. |
+| `ao_projects` | Registered repository projects, owned by `account_id`. |
+| `ao_sessions` | Orchestrator and worker sessions: kind, harness, branch, activity, termination, and native agent session ID. |
+| `ao_commands` | Idempotent command receipts, results, and failures. |
+| `ao_session_sequences` | Allocates the next ordered event sequence for each session. |
+| `ao_events` | Append-only, replayable lifecycle, chat, terminal, and worker events. |
+| `ao_turns` | One durable user-message-to-agent-response run, including its state, worker epoch, attempts, and completion/failure. |
+| `ao_sandboxes` | The session-to-provider-environment mapping, desired/observed lifecycle state, retry lease, resource profile, and last error. |
+| `ao_worker_connections` | The current worker identity, epoch, capabilities, and heartbeat timestamps for a sandbox. |
+| `ao_provider_connections` | Encrypted Daytona and coding-agent provider connection metadata. |
+| `ao_access_tickets` | One-time, short-lived worker bootstrap, terminal, and preview access grants. |
+| `ao_audit_events` | Audit-log foundation: actor, action, resource, metadata, and time. |
+| `ao_pull_requests` | Normalized pull-request facts observed for a session. |
+| `ao_pr_checks` | CI/check facts belonging to a normalized pull request. |
+
+The main relationships are:
+
+```text
+account → projects → sessions
+session → commands, events, turns, sandbox, worker connection, access tickets
+sandbox → provider connection
+session → pull requests → PR checks
+```
+
+The rebuild must replace the single-user `account_id` ownership model with
+organization, membership, role, repository-grant, quota, and tenant-scoped
+audit ownership. Existing event, turn, command, sandbox, and worker-fencing
+semantics should be retained where they remain valid.
 
 ## Components
 

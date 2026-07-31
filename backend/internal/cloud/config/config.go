@@ -21,6 +21,7 @@ type Config struct {
 	WebPublicURL          string
 	DatabaseURL           string
 	DatabaseDirectURL     string
+	AuthMode              string
 	SupabaseURL           string
 	SupabaseAnonKey       string
 	SandboxProvider       string
@@ -60,13 +61,14 @@ func Load() (Config, error) {
 		WebPublicURL:          strings.TrimRight(envOr("AO_WEB_PUBLIC_URL", "http://127.0.0.1:5174"), "/"),
 		DatabaseURL:           os.Getenv("AO_DATABASE_URL"),
 		DatabaseDirectURL:     strings.TrimSpace(os.Getenv("AO_DATABASE_DIRECT_URL")),
+		AuthMode:              strings.ToLower(envOr("AO_CLOUD_AUTH_MODE", "local")),
 		SupabaseURL:           strings.TrimRight(os.Getenv("AO_SUPABASE_URL"), "/"),
 		SupabaseAnonKey:       os.Getenv("AO_SUPABASE_ANON_KEY"),
 		SandboxProvider:       envOr("AO_SANDBOX_PROVIDER", "docker"),
 		DaytonaAPIURL:         strings.TrimRight(envOr("AO_DAYTONA_API_URL", "https://app.daytona.io/api"), "/"),
 		DaytonaAPIKey:         os.Getenv("AO_DAYTONA_API_KEY"),
 		DaytonaTarget:         envOr("AO_DAYTONA_TARGET", "us"),
-		DaytonaWorkerSnapshot: envOr("AO_DAYTONA_WORKER_SNAPSHOT", "daytona-large"),
+		DaytonaWorkerSnapshot: strings.TrimSpace(os.Getenv("AO_DAYTONA_WORKER_SNAPSHOT")),
 		DockerWorkerImage:     envOr("AO_DOCKER_WORKER_IMAGE", "ao-cloud-worker:local"),
 		FlyAPIURL:             strings.TrimRight(envOr("AO_FLY_API_URL", "https://api.machines.dev/v1"), "/"),
 		FlyAPIToken:           strings.TrimSpace(os.Getenv("AO_FLY_API_TOKEN")),
@@ -92,15 +94,21 @@ func Load() (Config, error) {
 
 // Validate checks that Config can safely start the cloud service.
 func (c Config) Validate() error {
-	missing := make([]string, 0, 5)
-	for name, value := range map[string]string{
-		"AO_DATABASE_URL":      c.DatabaseURL,
-		"AO_SUPABASE_URL":      c.SupabaseURL,
-		"AO_SUPABASE_ANON_KEY": c.SupabaseAnonKey,
-	} {
-		if strings.TrimSpace(value) == "" {
-			missing = append(missing, name)
+	missing := make([]string, 0, 3)
+	if strings.TrimSpace(c.DatabaseURL) == "" {
+		missing = append(missing, "AO_DATABASE_URL")
+	}
+	switch c.AuthMode {
+	case "local":
+	case "supabase", "hosted":
+		if strings.TrimSpace(c.SupabaseURL) == "" {
+			missing = append(missing, "AO_SUPABASE_URL")
 		}
+		if strings.TrimSpace(c.SupabaseAnonKey) == "" {
+			missing = append(missing, "AO_SUPABASE_ANON_KEY")
+		}
+	default:
+		return fmt.Errorf("AO_CLOUD_AUTH_MODE must be local, supabase, or hosted, got %q", c.AuthMode)
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required cloud configuration: %s", strings.Join(missing, ", "))
@@ -119,6 +127,9 @@ func (c Config) Validate() error {
 	case "daytona":
 		if strings.TrimSpace(c.DaytonaAPIKey) == "" {
 			return errors.New("AO_DAYTONA_API_KEY is required when AO_SANDBOX_PROVIDER=daytona")
+		}
+		if strings.TrimSpace(c.DaytonaWorkerSnapshot) == "" {
+			return errors.New("AO_DAYTONA_WORKER_SNAPSHOT is required when AO_SANDBOX_PROVIDER=daytona")
 		}
 		switch c.DaytonaTarget {
 		case "us", "eu":

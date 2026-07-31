@@ -19,6 +19,7 @@ export function CloudTerminal({ api, sessionId }: CloudTerminalProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [connection, setConnection] =
     useState<CloudTerminalConnectionState>("connecting");
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -68,7 +69,10 @@ export function CloudTerminal({ api, sessionId }: CloudTerminalProps) {
       } else if (event.type === "reset") {
         terminal.reset();
         terminal.clear();
+      } else if (event.type === "notice") {
+        setNotice(event.message);
       } else {
+        setNotice(null);
         terminal.write(event.data);
       }
     });
@@ -117,6 +121,14 @@ export function CloudTerminal({ api, sessionId }: CloudTerminalProps) {
               /workspace/repository
             </p>
           </div>
+        </div>
+      ) : null}
+      {notice ? (
+        <div
+          className="absolute inset-x-3 bottom-3 z-20 rounded border border-amber-400/30 bg-[#1a1710]/95 px-3 py-2 text-xs text-amber-100 shadow-lg"
+          role="status"
+        >
+          {notice}
         </div>
       ) : null}
       <div ref={hostRef} className="h-full min-h-0 p-2" />

@@ -72,11 +72,28 @@ func (h *Hub) Register(
 			current.workerID == workerID &&
 			current.epoch == epoch &&
 			current.commands == commands {
-			delete(h.connections, sessionID)
-			close(current.commands)
+			h.disconnectLocked(sessionID, current, nil)
 		}
 		h.mu.Unlock()
 	}
+}
+
+// DisconnectAndRequeue removes the current worker connection after a failed
+// socket write and preserves the in-flight command plus buffered commands for
+// the replacement worker.
+func (h *Hub) DisconnectAndRequeue(
+	sessionID clouddomain.SessionID,
+	workerID string,
+	epoch int64,
+	failed Command,
+) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	current, ok := h.connections[sessionID]
+	if !ok || current.workerID != workerID || current.epoch != epoch {
+		return
+	}
+	h.disconnectLocked(sessionID, current, &failed)
 }
 
 // Send queues a command for the session's current worker.
@@ -101,6 +118,23 @@ func (h *Hub) Send(sessionID clouddomain.SessionID, command Command) error {
 		h.mu.Unlock()
 		return ErrWorkerBackpressure
 	}
+}
+
+func (h *Hub) disconnectLocked(
+	sessionID clouddomain.SessionID,
+	current connection,
+	failed *Command,
+) {
+	delete(h.connections, sessionID)
+	pending := h.pending[sessionID]
+	if failed != nil {
+		pending = append(pending, *failed)
+	}
+	close(current.commands)
+	for command := range current.commands {
+		pending = append(pending, command)
+	}
+	h.pending[sessionID] = pending
 }
 
 var (

@@ -53,7 +53,15 @@ func run(log *slog.Logger) error {
 	defer store.Close()
 
 	eventService := cloudevents.New(store)
-	authVerifier := cloudauth.NewVerifier(cfg.SupabaseURL, cfg.SupabaseAnonKey, nil)
+	var authenticator cloudauth.Authenticator
+	switch cfg.AuthMode {
+	case "local":
+		authenticator = cloudauth.NewLocalAuthenticator(store)
+	case "supabase", "hosted":
+		authenticator = cloudauth.NewVerifier(cfg.SupabaseURL, cfg.SupabaseAnonKey, nil)
+	default:
+		return errors.New("unsupported AO Cloud authentication mode")
+	}
 	workerTokens := cloudworker.NewTokenManager(cfg.WorkerSigningKey)
 	workerHub := cloudworkerhub.New()
 	var localGitHub *cloudlocalgh.Client
@@ -140,7 +148,7 @@ func run(log *slog.Logger) error {
 	api := cloudhttp.New(
 		store,
 		eventService,
-		authVerifier,
+		authenticator,
 		workerTokens,
 		secretCipher,
 		cfg.SandboxProvider,

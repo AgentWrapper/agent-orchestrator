@@ -1,6 +1,5 @@
 "use client";
 
-import { signOut, type Session } from "@ao/auth/client";
 import {
   createContext,
   useCallback,
@@ -10,12 +9,12 @@ import {
   useState,
 } from "react";
 
-import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { CloudAPI, type CloudAuthSession } from "@/lib/cloud-api";
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated";
 
 interface AuthContextValue {
-  session: Session | null;
+  session: CloudAuthSession | null;
   status: AuthStatus;
   error: string | null;
   login: () => Promise<void>;
@@ -23,61 +22,45 @@ interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+const cloudSessionKey = "ao-cloud-session";
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Authentication failed.";
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
+  const [session, setSession] = useState<CloudAuthSession | null>(null);
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const client = getSupabaseBrowserClient();
-    if (!client) {
-      setStatus("unauthenticated");
-      return;
-    }
-
     let active = true;
-
-    void client.auth
-      .getSession()
-      .then(async ({ data, error: sessionError }) => {
-        if (sessionError) throw sessionError;
-
-        if (!data.session) return null;
-
-        const { error: userError } = await client.auth.getUser();
-        if (userError) throw userError;
-
-        return data.session;
-      })
-      .then((initialSession) => {
-        if (!active) return;
-        setSession(initialSession);
-        setStatus(initialSession ? "authenticated" : "unauthenticated");
-      })
-      .catch((initializationError: unknown) => {
-        if (!active) return;
-        setSession(null);
-        setError(errorMessage(initializationError));
+    try {
+      const stored = window.localStorage.getItem(cloudSessionKey);
+      const restored = stored ? (JSON.parse(stored) as CloudAuthSession) : null;
+      if (!restored) {
         setStatus("unauthenticated");
-      });
-
-    const {
-      data: { subscription },
-    } = client.auth.onAuthStateChange((_event, nextSession) => {
-      if (!active) return;
-      setSession(nextSession);
-      setStatus(nextSession ? "authenticated" : "unauthenticated");
-      setError(null);
-    });
-
+        return;
+      }
+      void new CloudAPI(restored.accessToken)
+        .me()
+        .then(() => {
+          if (!active) return;
+          setSession(restored);
+          setStatus("authenticated");
+        })
+        .catch(() => {
+          if (!active) return;
+          window.localStorage.removeItem(cloudSessionKey);
+          setSession(null);
+          setStatus("unauthenticated");
+        });
+    } catch (initializationError) {
+      setError(errorMessage(initializationError));
+      setStatus("unauthenticated");
+    }
     return () => {
       active = false;
-      subscription.unsubscribe();
     };
   }, []);
 
@@ -88,27 +71,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     setError(null);
-    const client = getSupabaseBrowserClient();
-    if (!client) {
-      setSession(null);
-      setStatus("unauthenticated");
-      return;
-    }
-
     try {
-      const { error: logoutError } = await signOut(client);
-      if (logoutError) {
-        setError(logoutError.message);
-        return;
-      }
+      if (session) await CloudAPI.logout(session.accessToken);
     } catch (logoutError) {
-      setError(errorMessage(logoutError));
-      return;
+      console.warn("AO Cloud logout failed", logoutError);
     }
-
+    window.localStorage.removeItem(cloudSessionKey);
     setSession(null);
     setStatus("unauthenticated");
-  }, []);
+  }, [session]);
 
   const value = useMemo(
     () => ({ session, status, error, login, logout }),

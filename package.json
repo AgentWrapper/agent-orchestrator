@@ -10,8 +10,13 @@
     "api": "npm run api:spec && npm run api:ts",
     "cloud:build-worker": "cd backend && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /tmp/ao-worker-linux-amd64 ./cmd/ao-worker",
     "cloud:build-image": "docker build -f ao-cloud/docker/worker.Dockerfile -t ao-cloud-worker:local .",
+    "cloud:publish-worker": "bash ao-cloud/scripts/publish-daytona-snapshot.sh",
     "cloud:postgres": "docker compose -f ao-cloud/docker-compose.local.yml up -d postgres",
     "cloud:test": "AO_CLOUD_TEST_DATABASE_URL='postgresql://ao:ao@127.0.0.1:5432/ao_cloud_test?sslmode=disable' sh -c 'cd backend && go test ./internal/cloud/...'",
+    "cloud:local": "bash ao-cloud/scripts/local.sh",
+    "cloud:local:stop": "bash ao-cloud/scripts/local.sh stop",
+    "cloud:local:clear-db": "bash ao-cloud/scripts/local.sh clear-db",
+    "cloud:local:reset-db": "bash ao-cloud/scripts/local.sh reset-db",
     "cloud:server": "set -a; . ./.env.cloud.local; set +a; cd backend && go run ./cmd/ao-cloud",
     "cloud:web": "npm --prefix frontend/src/landing run dev -- --hostname 127.0.0.1 --port 5174"
   },

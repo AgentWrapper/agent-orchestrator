@@ -65,7 +65,8 @@ type store interface {
 type Server struct {
 	store            store
 	events           *cloudevents.Service
-	auth             *cloudauth.Verifier
+	auth             cloudauth.Authenticator
+	localAuth        *cloudauth.LocalAuthenticator
 	workerTokens     *cloudworker.TokenManager
 	secretCipher     *cloudsecrets.Cipher
 	agentCredentials *agentCredentialValidator
@@ -88,7 +89,7 @@ type Server struct {
 func New(
 	store store,
 	events *cloudevents.Service,
-	auth *cloudauth.Verifier,
+	auth cloudauth.Authenticator,
 	workerTokens *cloudworker.TokenManager,
 	secretCipher *cloudsecrets.Cipher,
 	sandboxProvider string,
@@ -101,10 +102,12 @@ func New(
 	if log == nil {
 		log = slog.Default()
 	}
+	localAuth, _ := auth.(*cloudauth.LocalAuthenticator)
 	server := &Server{
 		store:            store,
 		events:           events,
 		auth:             auth,
+		localAuth:        localAuth,
 		workerTokens:     workerTokens,
 		secretCipher:     secretCipher,
 		agentCredentials: newAgentCredentialValidator(nil),
@@ -152,6 +155,11 @@ func (s *Server) routes() http.Handler {
 	router.Get("/readyz", s.ready)
 
 	router.Route("/api/cloud/v1", func(api chi.Router) {
+		if s.localAuth != nil {
+			api.Post("/auth/signup", s.localSignUp)
+			api.Post("/auth/login", s.localLogin)
+			api.With(s.localAuth.Middleware).Post("/auth/logout", s.localLogout)
+		}
 		api.Post("/worker/bootstrap", s.workerBootstrap)
 		api.Get("/terminal", s.terminalSocket)
 		api.HandleFunc("/preview/{token}/*", s.workspacePreviewProxy)
@@ -285,6 +293,72 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) localSignUp(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Email       string `json:"email"`
+		Password    string `json:"password"`
+		DisplayName string `json:"displayName"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	principal, err := s.localAuth.SignUp(r.Context(), input.Email, input.Password, input.DisplayName)
+	if errors.Is(err, cloudpostgres.ErrLocalUserExists) {
+		writeError(w, r, http.StatusConflict, "EMAIL_EXISTS", "An account with this email already exists.")
+		return
+	}
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, "INVALID_CREDENTIALS", err.Error())
+		return
+	}
+	writeLocalAuthResponse(w, http.StatusCreated, principal)
+}
+
+func (s *Server) localLogin(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	principal, err := s.localAuth.Login(r.Context(), input.Email, input.Password)
+	if errors.Is(err, cloudauth.ErrUnauthenticated) {
+		writeError(w, r, http.StatusUnauthorized, "INVALID_CREDENTIALS", "Email or password is incorrect.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "local login", err)
+		return
+	}
+	writeLocalAuthResponse(w, http.StatusOK, principal)
+}
+
+func (s *Server) localLogout(w http.ResponseWriter, r *http.Request) {
+	principal, ok := cloudauth.PrincipalFromContext(r.Context())
+	if !ok {
+		writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "A valid AO Cloud login is required.")
+		return
+	}
+	if err := s.localAuth.Logout(r.Context(), principal.AccessToken); err != nil {
+		s.internalError(w, r, "local logout", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func writeLocalAuthResponse(w http.ResponseWriter, status int, principal cloudauth.Principal) {
+	writeJSON(w, status, map[string]any{
+		"accessToken": principal.AccessToken,
+		"tokenType":   "Bearer",
+		"user": map[string]string{
+			"id":          principal.UserID,
+			"email":       principal.Email,
+			"displayName": principal.DisplayName,
+		},
+	})
+}
+
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	account, _ := accountFromContext(r.Context())
 	var input struct {
@@ -305,6 +379,21 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	}
 	if input.DefaultBranch == "" {
 		input.DefaultBranch = "main"
+	}
+	agentConnected, err := s.hasAgentConnection(r.Context(), account.ID)
+	if err != nil {
+		s.internalError(w, r, "check agent connection", err)
+		return
+	}
+	if !agentConnected {
+		writeError(
+			w,
+			r,
+			http.StatusBadRequest,
+			"AGENT_CONNECTION_REQUIRED",
+			"Connect a coding agent before creating a cloud project.",
+		)
+		return
 	}
 	project, err := s.store.CreateProject(r.Context(), account.ID, cloudpostgres.CreateProjectInput{
 		DisplayName:   input.DisplayName,
@@ -1493,6 +1582,12 @@ func (s *Server) workerConnect(w http.ResponseWriter, r *http.Request) {
 			}
 			encoded, _ := json.Marshal(command)
 			if err := s.writeWorkerSocket(r.Context(), socket, encoded); err != nil {
+				s.workerHub.DisconnectAndRequeue(
+					claims.SessionID,
+					claims.WorkerID,
+					claims.Epoch,
+					command,
+				)
 				return
 			}
 		case <-ticker.C:
@@ -1741,9 +1836,13 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if err := s.workerHub.Send(ticket.SessionID, workerCommand); err != nil {
+				message := "Terminal command could not be queued."
+				if errors.Is(err, cloudworkerhub.ErrWorkerBackpressure) {
+					message = "Terminal input queue is full. Wait for the worker to catch up."
+				}
 				_ = writeTerminalMessage(ctx, socket, terminalServerMessage{
 					Type:    "error",
-					Message: "Cloud worker is not connected.",
+					Message: message,
 				})
 			}
 		}
@@ -1929,6 +2028,25 @@ func validAgentCredentialType(agent, credentialType string) bool {
 	}
 	_, ok = credentialTypes[credentialType]
 	return ok
+}
+
+func (s *Server) hasAgentConnection(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+) (bool, error) {
+	connections, err := s.store.ListProviderConnections(ctx, accountID)
+	if err != nil {
+		return false, err
+	}
+	for _, connection := range connections {
+		if connection.Label != "default" {
+			continue
+		}
+		if _, ok := agentCredentialTypes[connection.Provider]; ok {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (s *Server) loadAgentCredential(

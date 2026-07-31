@@ -1,0 +1,76 @@
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on:
+      - control-plane
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      AO_CLOUD_DOMAIN: ${AO_CLOUD_DOMAIN:?set AO_CLOUD_DOMAIN in .env.hosted}
+      AO_CADDY_EMAIL: ${AO_CADDY_EMAIL:?set AO_CADDY_EMAIL in .env.hosted}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ao-cloud-caddy-data:/data
+      - ao-cloud-caddy-config:/config
+    networks:
+      - internal
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${AO_POSTGRES_USER:-ao}
+      POSTGRES_PASSWORD: ${AO_POSTGRES_PASSWORD:?set AO_POSTGRES_PASSWORD in .env.hosted}
+      POSTGRES_DB: ${AO_POSTGRES_DATABASE:-ao_cloud}
+    volumes:
+      - ao-cloud-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${AO_POSTGRES_USER:-ao} -d ${AO_POSTGRES_DATABASE:-ao_cloud}",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    networks:
+      - internal
+
+  control-plane:
+    build:
+      context: ..
+      dockerfile: ao-cloud/docker/control-plane.Dockerfile
+    image: ${AO_CONTROL_PLANE_IMAGE:-ao-cloud-control-plane:local}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AO_CLOUD_LISTEN_ADDR: 0.0.0.0:3010
+      AO_DATABASE_URL: postgresql://${AO_POSTGRES_USER:-ao}:${AO_POSTGRES_PASSWORD}@postgres:5432/${AO_POSTGRES_DATABASE:-ao_cloud}?sslmode=disable
+      AO_DATABASE_DIRECT_URL: postgresql://${AO_POSTGRES_USER:-ao}:${AO_POSTGRES_PASSWORD}@postgres:5432/${AO_POSTGRES_DATABASE:-ao_cloud}?sslmode=disable
+      AO_CLOUD_PUBLIC_URL: ${AO_CLOUD_PUBLIC_URL:?set AO_CLOUD_PUBLIC_URL in .env.hosted}
+      AO_WEB_PUBLIC_URL: ${AO_WEB_PUBLIC_URL:?set AO_WEB_PUBLIC_URL in .env.hosted}
+      AO_CLOUD_AUTH_MODE: ${AO_CLOUD_AUTH_MODE:-local}
+      AO_SANDBOX_PROVIDER: ${AO_SANDBOX_PROVIDER:-daytona}
+      AO_DAYTONA_API_URL: ${AO_DAYTONA_API_URL:-https://app.daytona.io/api}
+      AO_DAYTONA_API_KEY: ${AO_DAYTONA_API_KEY:-}
+      AO_DAYTONA_TARGET: ${AO_DAYTONA_TARGET:-us}
+      AO_DAYTONA_WORKER_SNAPSHOT: ${AO_DAYTONA_WORKER_SNAPSHOT:-}
+      AO_GITHUB_AUTH_MODE: ${AO_GITHUB_AUTH_MODE:-}
+      AO_GITHUB_TOKEN: ${AO_GITHUB_TOKEN:-}
+      AO_ENCRYPTION_KEY: ${AO_ENCRYPTION_KEY:?set AO_ENCRYPTION_KEY in .env.hosted}
+      AO_WORKER_SIGNING_KEY: ${AO_WORKER_SIGNING_KEY:?set AO_WORKER_SIGNING_KEY in .env.hosted}
+    networks:
+      - internal
+
+networks:
+  internal:
+
+volumes:
+  ao-cloud-caddy-data:
+  ao-cloud-caddy-config:
+  ao-cloud-postgres:

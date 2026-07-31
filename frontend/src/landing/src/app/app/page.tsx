@@ -152,8 +152,8 @@ function sessionDisplayStatus(
 export default function CloudAppPage() {
   const { session, status, login, logout } = useAuth();
   const api = useMemo(
-    () => (session?.access_token ? new CloudAPI(session.access_token) : null),
-    [session?.access_token],
+    () => (session?.accessToken ? new CloudAPI(session.accessToken) : null),
+    [session?.accessToken],
   );
   const [projects, setProjects] = useState<CloudProject[]>([]);
   const [sessions, setSessions] = useState<CloudSession[]>([]);
@@ -580,7 +580,11 @@ export default function CloudAppPage() {
     repositoryUrl: string;
     defaultBranch: string;
   }) => {
-    if (!api) return;
+    if (!api || !defaultAgent) {
+      setError("Connect a coding agent before creating a cloud project.");
+      setView("settings");
+      return;
+    }
     setLoading(true);
     try {
       const { project } = await api.createProject(input);
@@ -799,9 +803,20 @@ export default function CloudAppPage() {
             ) : null}
             <button
               className="grid size-5 place-items-center rounded-md text-[#646a73] transition-colors hover:bg-white/[0.04] hover:text-white"
-              onClick={() => setShowProjectForm(true)}
+              onClick={() => {
+                if (defaultAgent) setShowProjectForm(true);
+                else setView("settings");
+              }}
               aria-label="Add cloud project"
-              title={sidebarCollapsed ? "Add project" : undefined}
+              title={
+                sidebarCollapsed
+                  ? defaultAgent
+                    ? "Add project"
+                    : "Connect an agent first"
+                  : defaultAgent
+                    ? "Add project"
+                    : "Connect an agent first"
+              }
             >
               <Plus className="size-[15px]" />
             </button>
@@ -1386,9 +1401,8 @@ export function SessionBoard({
           <OrchestratorIcon className="mx-auto size-5 text-[#4d8dff]" />
           <h2 className="mt-4 text-base">No cloud sessions</h2>
           <p className="mt-2 text-sm leading-6 text-white/45">
-            Start the project orchestrator. AO will provision its Daytona
-            environment and it can create isolated workers with normal AO
-            commands.
+            Start the project orchestrator. AO will provision its sandbox and
+            it can create isolated workers with normal AO commands.
           </p>
           {onCreateOrchestrator ? (
             <button

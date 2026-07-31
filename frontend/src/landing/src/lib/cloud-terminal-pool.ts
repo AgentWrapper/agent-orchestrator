@@ -9,13 +9,15 @@ export type CloudTerminalConnectionState =
 export type CloudTerminalEvent =
   | { type: "state"; state: CloudTerminalConnectionState }
   | { type: "output"; data: Uint8Array }
-  | { type: "reset" };
+  | { type: "reset" }
+  | { type: "notice"; message: string };
 
 type Listener = (event: CloudTerminalEvent) => void;
 
 interface TerminalServerMessage {
   type: "output" | "error" | "reset";
   data?: string;
+  message?: string;
   sequence?: number;
 }
 
@@ -122,6 +124,13 @@ class CloudTerminalConnection {
           this.history = [];
           this.historyBytes = 0;
           this.emit({ type: "reset" });
+          return;
+        }
+        if (message.type === "error") {
+          this.emit({
+            type: "notice",
+            message: message.message ?? "Terminal command could not be queued.",
+          });
           return;
         }
         if (message.type !== "output" || !message.data) return;

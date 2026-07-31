@@ -1,0 +1,111 @@
+# AO Cloud Roadmap
+
+This roadmap rebuilds AO Cloud as a browser-only product:
+
+```text
+Cloud web app → Clerk-authenticated control plane → Daytona sandbox worker
+```
+
+Electron, the local daemon, local SQLite, and local worktrees never call AO
+Cloud.
+
+## Current baseline
+
+Reusable foundations already exist under `backend/internal/cloud/`: PostgreSQL
+state, durable turns/events, idempotent commands, worker bootstrap and fencing,
+sandbox-provider abstraction, reconciliation, terminal/workspace/preview
+brokering, and existing agent adapters.
+
+The current `ao_*` schema includes accounts, projects, sessions, commands,
+events, turns, sandboxes, worker connections, provider connections, tickets,
+and audit events. It needs to be properly reworked from a single-user
+`account_id` model into Clerk organization, membership, role, repository-grant,
+quota, and tenant-audit ownership. See [`CLOUD_DESIGN.md`](CLOUD_DESIGN.md).
+
+## Phase 0 — Hosted-shaped developer baseline
+
+- Define the production contract: Cloud web app, Clerk, hosted PostgreSQL,
+  Azure Container Apps control plane, Daytona, and one worker image.
+- Provide Docker tooling for contributors and integration tests only.
+- Remove or quarantine Supabase, Render, and Fly production assumptions.
+
+**Outcome:** developers can validate the complete hosted-shaped stack locally,
+but users never run Cloud work through their laptop or local AO installation.
+
+## Phase 1 — Clerk and organization authorization
+
+- Replace Supabase browser auth and control-plane token verification with Clerk.
+- Add organizations, memberships, roles, personal-tenant bootstrap, and
+  tenant-scoped authorization.
+- Test every project, session, event, terminal, workspace, preview, and
+  provider operation against cross-tenant access.
+
+**Outcome:** an authenticated user can select an organization, and no resource
+can be accessed outside its tenant.
+
+## Phase 2 — Control-plane API and schema migration
+
+- Make the Go control plane the complete Cloud authority for projects,
+  repositories, sessions, messages, interrupts, orchestration, terminals,
+  workspace, previews, and PR/review data.
+- Properly migrate the existing schema to organization ownership, repository
+  grants, quotas, audit records, and retention policy.
+- Publish a versioned Cloud API schema and generate the browser client.
+
+**Outcome:** the web app uses a typed, durable, organization-aware API without
+talking to a database, sandbox, or local daemon directly.
+
+## Phase 3 — Daytona lifecycle and worker runtime
+
+- Make Daytona the production sandbox provider while retaining the provider
+  interface.
+- Harden reconciliation: create, boot, pause/resume, replacement, deletion,
+  retries, orphan cleanup, egress policy, resource limits, and retention.
+- Build/publish an immutable worker image with no baked credentials.
+
+**Outcome:** every orchestrator or worker gets one isolated Daytona sandbox
+that recovers safely from worker, provider, or control-plane failure.
+
+## Phase 4 — Git and agent security boundaries
+
+- Replace temporary `local-gh` and deployment tokens with GitHub App
+  installations, repository grants, short-lived tokens, and verified webhooks.
+- Scope Git operations by organization, project, session, repository, branch,
+  and operation.
+- Support an agent only when its cloud credential, launch, stream, interrupt,
+  reconnect, and resume flow is complete.
+
+**Outcome:** sandboxes can access only authorized code and receive no broad Git
+or permanent provider credential.
+
+## Phase 5 — Browser-only product completion
+
+- Complete Clerk organization UX, cloud project/session controls, Kanban,
+  orchestrator/worker chat, terminal, files/diffs, private previews,
+  notifications, and PR/review surfaces.
+- Keep local-only controls absent rather than mocked.
+- Add end-to-end coverage from sign-in through worker delegation, reconnect,
+  interrupt, preview, and deletion.
+
+**Outcome:** users can operate a cloud project entirely in a browser and safely
+close/reopen it while work continues.
+
+## Phase 6 — Azure deployment and production hardening
+
+- Deploy to Azure Container Apps with TLS ingress, managed identity, Key Vault,
+  managed PostgreSQL, registry, observability, and worker-image rollout.
+- Make worker command delivery safe across multiple control-plane replicas.
+- Add quotas, cost and abuse controls, egress enforcement, alerts, backups,
+  restore drills, runbooks, security review, and load/failure testing.
+
+**Outcome:** AO Cloud is a secure, observable, multi-tenant product with no
+dependency on a user's local AO installation.
+
+## Sequencing rules
+
+- Do not expose a Cloud UI action before its authorization, persistence, error
+  handling, and end-to-end test exist.
+- Docker is contributor/CI infrastructure only; Cloud users always use the
+  hosted control plane and Daytona.
+- Preserve shared semantic contracts, but do not add Cloud identity, networking,
+  or sandbox details to local wire contracts.

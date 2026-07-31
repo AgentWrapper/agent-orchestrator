@@ -3,12 +3,11 @@ import { expect, it, vi } from "vitest";
 
 import EmailAuthPage from "./page";
 
-vi.mock("@ao/auth/client", () => ({
-  signInWithEmail: vi.fn(),
-  signUpWithEmail: vi.fn(),
-}));
-vi.mock("@/lib/supabase/client", () => ({
-  getSupabaseBrowserClient: vi.fn(),
+vi.mock("@/lib/cloud-api", () => ({
+  CloudAPI: {
+    login: vi.fn(),
+    signUp: vi.fn(),
+  },
 }));
 vi.mock("./PrismLogoGrid", () => ({
   PrismLogoGrid: () => (

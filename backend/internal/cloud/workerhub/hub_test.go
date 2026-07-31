@@ -56,3 +56,49 @@ func TestOldCleanupDoesNotCloseSameEpochReplacement(t *testing.T) {
 		t.Fatalf("replacement command = %#v, open=%t, want %#v", got, ok, want)
 	}
 }
+
+func TestDisconnectAndRequeuePreservesFailedAndBufferedCommands(t *testing.T) {
+	hub := New()
+	commands, unregister := hub.Register("session-one", "worker-one", 1)
+	defer unregister()
+	failed := Command{Type: "input", Data: "ZmFpbGVk"}
+	buffered := Command{Type: "resize", Rows: 40, Cols: 120}
+	if err := hub.Send("session-one", failed); err != nil {
+		t.Fatalf("Send(failed) error = %v", err)
+	}
+	if err := hub.Send("session-one", buffered); err != nil {
+		t.Fatalf("Send(buffered) error = %v", err)
+	}
+	if got := <-commands; got != failed {
+		t.Fatalf("in-flight command = %#v, want %#v", got, failed)
+	}
+
+	hub.DisconnectAndRequeue("session-one", "worker-one", 1, failed)
+	replacement, unregisterReplacement := hub.Register("session-one", "worker-two", 2)
+	defer unregisterReplacement()
+
+	for index, want := range []Command{failed, buffered} {
+		if got := <-replacement; got != want {
+			t.Fatalf("replacement command %d = %#v, want %#v", index, got, want)
+		}
+	}
+}
+
+func TestCleanupRequeuesBufferedCommands(t *testing.T) {
+	hub := New()
+	commands, unregister := hub.Register("session-one", "worker-one", 1)
+	want := Command{Type: "input", Data: "cGVyc2lzdA=="}
+	if err := hub.Send("session-one", want); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	unregister()
+	if _, ok := <-commands; ok {
+		t.Fatal("original command channel remained open")
+	}
+
+	replacement, unregisterReplacement := hub.Register("session-one", "worker-two", 2)
+	defer unregisterReplacement()
+	if got := <-replacement; got != want {
+		t.Fatalf("replacement command = %#v, want %#v", got, want)
+	}
+}

@@ -1,11 +1,10 @@
 "use client";
 
-import { signInWithEmail, signUpWithEmail } from "@ao/auth/client";
 import { ArrowLeft, LoaderCircle } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
-import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { CloudAPI } from "@/lib/cloud-api";
 
 import { AOLogo } from "../components/Header/components/AOLogo";
 import { PrismLogoGrid } from "./PrismLogoGrid";
@@ -25,46 +24,13 @@ export default function EmailAuthPage() {
     setBusy(true);
     setError(null);
     setNotice(null);
-    const client = getSupabaseBrowserClient();
-    if (!client) {
-      setError("AO Cloud authentication is not configured.");
-      setBusy(false);
-      return;
-    }
-
     try {
-      if (mode === "login") {
-        const { data, error: loginError } = await signInWithEmail(
-          client,
-          email.trim(),
-          password,
-        );
-        if (loginError) throw loginError;
-        if (!data.session) {
-          throw new Error("Supabase did not create a login session.");
-        }
-        window.location.replace("/app");
-        return;
-      }
-
-      const callback = new URL("/auth/callback", window.location.origin);
-      callback.searchParams.set("next", "/app");
-      const { data, error: signupError } = await signUpWithEmail(
-        client,
-        email.trim(),
-        password,
-        callback.toString(),
-      );
-      if (signupError) throw signupError;
-      if (data.session) {
-        window.location.replace("/app");
-        return;
-      }
-      setNotice(
-        "Check your inbox to confirm the account, then return here to sign in.",
-      );
-      setMode("login");
-      setPassword("");
+      const session =
+        mode === "login"
+          ? await CloudAPI.login({ email: email.trim(), password })
+          : await CloudAPI.signUp({ email: email.trim(), password });
+      window.localStorage.setItem("ao-cloud-session", JSON.stringify(session));
+      window.location.replace("/app");
     } catch (authError) {
       setError(
         authError instanceof Error

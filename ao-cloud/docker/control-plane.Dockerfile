@@ -13,3 +13,11 @@ COPY --from=build /out/ao-worker /usr/local/bin/ao-worker
 ENV AO_WORKER_BINARY_PATH=/usr/local/bin/ao-worker
 USER nonroot:nonroot
 ENTRYPOINT ["/usr/local/bin/ao-cloud"]
+
+# Local Docker sandboxes are managed through the Docker CLI. This target is
+# used only by docker-compose.local.yml with the host Docker socket mounted.
+FROM docker:27-cli AS local
+COPY --from=build /out/ao-cloud /usr/local/bin/ao-cloud
+COPY --from=build /out/ao-worker /usr/local/bin/ao-worker
+ENV AO_WORKER_BINARY_PATH=/usr/local/bin/ao-worker
+ENTRYPOINT ["/usr/local/bin/ao-cloud"]

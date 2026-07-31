@@ -63,7 +63,10 @@ func (r *Runner) Run(ctx context.Context) error {
 		DataDir:       r.dataDir,
 		Kind:          shareddomain.SessionKind(r.bootstrap.Launch.Session.Kind),
 		Permissions:   ports.PermissionModeBypassPermissions,
-		Prompt:        r.bootstrap.Launch.Session.Prompt,
+		// Cloud prompts are delivered through the durable worker command stream
+		// after the interactive agent PTY has started. Passing one in argv makes
+		// some harnesses prefill their composer without submitting the task.
+		Prompt:        "",
 		SessionID:     string(r.bootstrap.Launch.Session.ID),
 		SystemPrompt:  systemPrompt(r.bootstrap.Launch.Session.Kind),
 		WorkspacePath: r.workspaceDir,
@@ -111,24 +114,19 @@ func (r *Runner) Run(ctx context.Context) error {
 	if len(argv) == 0 {
 		return errors.New("agent launch command is empty")
 	}
-	strategy, err := agent.GetPromptDeliveryStrategy(ctx, launchConfig)
-	if err != nil {
-		return fmt.Errorf("resolve prompt delivery: %w", err)
-	}
 	credentialEnvironmentName, err := r.prepareAgentCredential(ctx, hookEnvironment)
 	if err != nil {
 		return err
 	}
 	runtimeEnvironment := append(os.Environ(), envList(hookEnvironment)...)
 	clearEnvironmentSecret(hookEnvironment, credentialEnvironmentName)
-	return r.runInteractiveAgent(ctx, argv, launchConfig, strategy, runtimeEnvironment)
+	return r.runInteractiveAgent(ctx, argv, launchConfig, runtimeEnvironment)
 }
 
 func (r *Runner) runInteractiveAgent(
 	ctx context.Context,
 	argv []string,
 	launchConfig ports.LaunchConfig,
-	strategy ports.PromptDeliveryStrategy,
 	environment []string,
 ) error {
 	command := exec.CommandContext(ctx, argv[0], argv[1:]...)
@@ -145,17 +143,6 @@ func (r *Runner) runInteractiveAgent(
 		"argv0":   filepath.Base(argv[0]),
 	})
 
-	if strategy == ports.PromptDeliveryAfterStart && strings.TrimSpace(launchConfig.Prompt) != "" {
-		go func() {
-			select {
-			case <-ctx.Done():
-			case <-time.After(1500 * time.Millisecond):
-				terminalWriteMu.Lock()
-				_, _ = terminal.WriteString(launchConfig.Prompt + "\r")
-				terminalWriteMu.Unlock()
-			}
-		}()
-	}
 	heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
 	defer cancelHeartbeat()
 	var heartbeatWG sync.WaitGroup

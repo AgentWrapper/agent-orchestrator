@@ -28,6 +28,14 @@ type Account struct {
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
+// LocalUser is an email/password identity used when AO Cloud runs locally.
+type LocalUser struct {
+	ID           string
+	Email        string
+	DisplayName  string
+	PasswordHash string
+}
+
 // Project describes a repository-backed cloud project.
 type Project struct {
 	ID            ProjectID       `json:"id"`

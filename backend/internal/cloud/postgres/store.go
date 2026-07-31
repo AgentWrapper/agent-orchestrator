@@ -1277,4 +1277,10 @@ var (
 	ErrIdempotencyConflict = errors.New("cloud idempotency key conflicts with an existing command")
 	// ErrActiveTurn indicates that a session already has unfinished work.
 	ErrActiveTurn = errors.New("cloud session already has an active turn")
+	// ErrLocalUserExists indicates the email is already registered for local authentication.
+	ErrLocalUserExists = errors.New("cloud local user already exists")
+	// ErrLocalUserNotFound indicates the email is not registered for local authentication.
+	ErrLocalUserNotFound = errors.New("cloud local user not found")
+	// ErrLocalSessionNotFound indicates the local login token is invalid or expired.
+	ErrLocalSessionNotFound = errors.New("cloud local session not found")
 )

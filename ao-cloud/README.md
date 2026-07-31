@@ -4,15 +4,31 @@ AO Cloud is a separately deployable Go control plane plus a headless worker
 image. It shares AO's domain and agent adapters while keeping the local
 loopback daemon, SQLite, worktrees, and Electron lifecycle unchanged.
 
-## Components
+## Images and runtime topology
 
 ```text
 Cloud web app
-    → Render ao-cloud
-    → Supabase Auth + PostgreSQL
-    → Fly Machine or Daytona sandbox per session
-    → ao-worker + Claude Code/Codex/Cursor
+    → control-plane image (ao-cloud/docker/control-plane.Dockerfile)
+    → PostgreSQL 17 service
+    → provider-created sandbox from worker image
+        → ao-worker + ao CLI + Claude Code/Codex/Cursor
 ```
+
+There are two AO images:
+
+- `ao-cloud/docker/control-plane.Dockerfile` builds the long-lived control
+  plane. It owns the browser API, authentication verification, lifecycle
+  reconciliation, and the PostgreSQL connection.
+- `ao-cloud/docker/worker.Dockerfile` builds the per-session sandbox image.
+  It contains `ao-worker`, the cloud `ao` CLI, and coding-agent CLIs. An
+  orchestrator and a worker use this same image; their session role determines
+  whether the agent works directly or uses the `ao` CLI to coordinate workers.
+
+Workers and orchestrators are not fixed Compose services because the control
+plane creates, reconnects, suspends, and deletes them per session. Locally it
+creates Docker containers from `ao-cloud-worker:local`. In hosted deployments,
+Daytona creates sandboxes from the published worker snapshot (or Fly creates
+Machines from the worker image).
 
 ## Terminal-first sessions
 
@@ -30,12 +46,16 @@ the inspector.
 
 ## Local development
 
+`npm run cloud:local` uses Compose for the control plane and PostgreSQL, builds
+the worker image, and starts the web app on the host. The local control-plane
+image includes the Docker CLI and is given the Docker socket solely so it can
+create per-session worker containers. Worker containers reach the published
+loopback CP port through `host.docker.internal`.
+
 Prerequisites:
 
 - Go, Node.js, npm, Docker
 - authenticated `gh` CLI for the development Git credential broker
-- Supabase project with Email Auth enabled
-- Fly organization/app token or Daytona API key
 
 Start local PostgreSQL once:
 
@@ -49,9 +69,8 @@ Run the cloud package suite against that disposable database with:
 npm run cloud:test
 ```
 
-Copy `ao-cloud/.env.example` to the gitignored `.env.cloud.local`, then add
-your Supabase development auth values and Git credential mode. Generate local
-encryption/signing keys with:
+Copy `ao-cloud/.env.example` to the gitignored `.env.cloud.local`, add a Git
+credential mode, and generate local encryption/signing keys with:
 
 ```bash
 openssl rand -hex 32
@@ -84,44 +103,25 @@ http://127.0.0.1:5174/app
 ```
 
 The Go service applies the embedded `ao_*` PostgreSQL migrations at startup.
-The website uses the Supabase public/anon key only. Service-role, database,
-Docker, Daytona, encryption, worker-signing, and Git credentials remain
-server-side. For the Docker provider, the worker is given
+Local accounts and opaque bearer sessions are stored in that PostgreSQL
+database; only bcrypt password hashes are persisted. Docker, Daytona,
+encryption, worker-signing, and Git credentials remain server-side. For the
+Docker provider, the worker is given
 `host.docker.internal` automatically so it can call the CP that is running on
 your host.
 
-## Supabase configuration
-
-1. Keep Email enabled under Authentication → Providers.
-2. Add local redirect:
-
-   ```text
-   http://127.0.0.1:5174/auth/callback
-   ```
-
-3. Add the Vercel callback after deployment.
-4. Obtain the pooled runtime and direct migration PostgreSQL URLs from the
-   Supabase Connect panel.
-5. Set `AO_DATABASE_URL` to the runtime connection and apply/verify migrations
-   with the direct connection before production rollout.
-
-Google OAuth can be enabled later without changing AO's account model.
-
-The control plane validates HS256 Supabase access tokens through
-`/auth/v1/user`. It does not locally trust or expose the legacy JWT signing
-secret.
-
 ## Development GitHub mode
 
-`AO_GITHUB_AUTH_MODE=local-gh` uses the host's current `gh auth token`.
-Sandboxes never receive that long-lived token. Git operations use an
+`npm run cloud:local` reads the host's current `gh auth token` before Compose
+starts and injects it into the local control plane. If `gh` is unavailable, set
+`AO_GITHUB_TOKEN` in the gitignored `.env.cloud.local` instead. Sandboxes never
+receive that long-lived token. Git operations use an
 AO-authenticated repository proxy scoped to the session's registered
 repository.
 
-This mode works only while the control plane runs on the developer machine.
-For a temporary Render deployment, set `AO_GITHUB_TOKEN` to a fine-grained
-token limited to the repositories AO may use. The token remains in Render and
-the control plane's Git proxy; sandboxes receive only scoped worker
+For hosted deployment, set `AO_GITHUB_TOKEN` to a fine-grained token limited
+to the repositories AO may use. The token remains in the control plane and its
+Git proxy; sandboxes receive only scoped worker
 credentials. Replace this fallback with the planned GitHub App before a
 multi-user production launch.
 
@@ -138,12 +138,17 @@ The current account exposes `daytona-large` at 4 vCPU, 8 GiB memory, and 10 GiB
 disk. AO uses that as the initial default and enforces the same 10-GiB ceiling
 until the Daytona tier changes.
 
-Production should build and publish
-`ao-cloud/docker/worker.Dockerfile`, create a Daytona snapshot from it, and
-set `AO_DAYTONA_WORKER_SNAPSHOT` to that snapshot. Both local development and
-the Render control-plane image set `AO_WORKER_BINARY_PATH`; the reconciler
-uploads that versioned binary into the sandbox so worker and control-plane
-protocol changes deploy together.
+Publish an immutable worker snapshot from the release commit:
+
+```bash
+AO_WORKER_VERSION="$(git rev-parse HEAD)" \
+AO_DAYTONA_WORKER_SNAPSHOT="ao-worker-$(git rev-parse --short HEAD)" \
+npm run cloud:publish-worker
+```
+
+Set that snapshot name in `AO_DAYTONA_WORKER_SNAPSHOT` before deploying the
+control plane. See [`HOSTED_SETUP.md`](setup/HOSTED_SETUP.md) for the complete
+release sequence.
 
 ## Fly Machines
 
@@ -186,22 +191,18 @@ AO_DAYTONA_LIVE_TEST=1 go test ./backend/internal/cloud/sandbox/daytona \
 The live test creates and deletes one sandbox. Ordinary test runs never create
 provider resources.
 
-## Render deployment
+## Hosted deployment on Azure VM
 
-`render.yaml` defines the always-on Go service. In Render:
+The supported self-hosted topology runs Caddy, the AO control plane, and
+PostgreSQL as separate containers on one persistent Azure VM. Caddy is the
+only public service; PostgreSQL and the control plane stay private to Compose.
 
-1. Create a Blueprint from this repository.
-2. Supply every `sync: false` variable.
-3. Set `AO_CLOUD_PUBLIC_URL` to the Render HTTPS service URL.
-4. Set `AO_WEB_PUBLIC_URL` to the final Vercel origin.
-5. Set `AO_DATABASE_URL` to Supabase's pooled PostgreSQL URL.
-6. Generate 64-character hexadecimal encryption and worker-signing keys.
-7. Set `AO_GITHUB_TOKEN` to a fine-grained token for temporary testing, or use
-   GitHub App mode when available.
-8. Verify `/readyz` before allowing web traffic.
+Follow [`HOSTED_SETUP.md`](setup/HOSTED_SETUP.md) to provision the VM, configure
+secrets, launch the stack, route HTTPS traffic, and operate backups. The
+compose definition is [`docker-compose.hosted.yml`](docker-compose.hosted.yml).
 
-Render builds `ao-cloud/docker/control-plane.Dockerfile`. The service keeps
-worker WebSockets and lifecycle reconciliation alive independently of Vercel.
+`render.yaml` is a legacy deployment manifest and is not part of the supported
+single-VM hosted topology.
 
 ## Vercel deployment
 
@@ -215,28 +216,13 @@ Framework: Next.js
 Set:
 
 ```text
-NEXT_PUBLIC_SUPABASE_URL
-NEXT_PUBLIC_SUPABASE_ANON_KEY
-NEXT_PUBLIC_API_URL=https://YOUR-RENDER-SERVICE
+NEXT_PUBLIC_API_URL=https://YOUR-CLOUD-DOMAIN
 ```
 
-Then add:
+The browser uses PostgreSQL-backed control-plane email/password sessions; it
+does not require Supabase browser credentials.
 
-```text
-https://YOUR-VERCEL-DOMAIN/auth/callback
-```
-
-to the Supabase Auth redirect allowlist.
-
-## Current deployed test profile
-
-- Render hosts the live control plane.
-- Supabase hosts authentication and the migrated PostgreSQL `ao_*` schema.
-- Fly Machines is the active sandbox provider.
-- The worker image is published to the Fly private registry.
-- The cloud web app is verified locally against the hosted control plane;
-  production web hosting remains a release decision.
-- Daytona remains available behind the provider contract, but its earlier
-  restricted-tier account blocked worker egress and is not the active provider.
-
-The product-level cloud design is in [`../CLOUD_DESIGN.md`](../CLOUD_DESIGN.md).
+The product-level cloud design is in
+[`architecture/CLOUD_DESIGN.md`](architecture/CLOUD_DESIGN.md).
+For a complete local control-plane, database, sandbox, and web-app walkthrough,
+see [`LOCAL_SETUP.md`](setup/LOCAL_SETUP.md).

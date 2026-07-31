@@ -23,6 +23,11 @@ type Principal struct {
 	AccessToken string
 }
 
+// Authenticator authenticates API requests and stores their principal in context.
+type Authenticator interface {
+	Middleware(http.Handler) http.Handler
+}
+
 type contextKey struct{}
 
 // PrincipalFromContext returns the authenticated principal stored in ctx.
