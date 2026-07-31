@@ -1,6 +1,6 @@
 // Ranking and availability rules for the agent catalog. Pure — no React Native
 // or Expo imports — so the states and ordering are unit-testable, the same split
-// as prView.ts / kanbanView.ts.
+// as prView.ts / agentsView.ts.
 //
 // Mirrors the desktop's frontend/src/renderer/lib/agent-select-options.ts, which
 // is the only place either app decides what "available" means.

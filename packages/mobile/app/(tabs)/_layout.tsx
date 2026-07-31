@@ -35,8 +35,8 @@ export default function TabsLayout() {
 			<Tabs.Screen
 				name="index"
 				options={{
-					title: "Kanban",
-					tabBarIcon: ({ color, size }) => <Feather name="grid" size={size - 2} color={color} />,
+					title: "Agents",
+					tabBarIcon: ({ color, size }) => <Feather name="activity" size={size - 2} color={color} />,
 				}}
 			/>
 			<Tabs.Screen

@@ -16,6 +16,6 @@ export async function forgetServer(): Promise<void> {
 	await unregisterFromPush();
 	await clearConfig();
 	// Re-arm onboarding: a user with no server should be offered the pairing flow
-	// again, not dropped on a bare Kanban empty state.
+	// again, not dropped on a bare Agents empty state.
 	await clearOnboardingSkipped();
 }

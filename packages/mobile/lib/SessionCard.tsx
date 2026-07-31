@@ -4,7 +4,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { AgentLogo } from "./AgentLogo";
 import { sessionTitle, shortLabel, type DashboardSession } from "./api";
 import { haptics } from "./haptics";
-import { prLine, showBranch, trackerIssueId } from "./kanbanView";
+import { prLine, showBranch, trackerIssueId } from "./agentsView";
 import { relativeTime } from "./notificationView";
 import { toneColor } from "./prView";
 import { statusVisual, type Theme } from "./theme";

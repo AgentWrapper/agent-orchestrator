@@ -28,7 +28,7 @@ export async function setOnboardingSkipped(): Promise<void> {
 /**
  * Cleared on a successful pair. Without this, a user who skipped, then paired,
  * then later cleared their server config would never be offered onboarding
- * again — they'd land on the bare Kanban empty state, which is the exact
+ * again — they'd land on the bare Agents empty state, which is the exact
  * dead end onboarding exists to remove.
  */
 export async function clearOnboardingSkipped(): Promise<void> {

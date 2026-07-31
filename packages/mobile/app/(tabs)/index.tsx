@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { attentionOf, type DashboardSession } from "../../lib/api";
 import { classifyConnectionFailure, describeConnectionFailure } from "../../lib/connectionError";
 import { haptics } from "../../lib/haptics";
-import { groupSessions, type BoardSection, type BoardZone } from "../../lib/kanbanView";
+import { groupSessions, type BoardSection, type BoardZone } from "../../lib/agentsView";
 import { ProjectSwitcher } from "../../lib/ProjectSwitcher";
 import { SessionCard } from "../../lib/SessionCard";
 import { useApp, useVisibleSessions } from "../../lib/store";
@@ -115,7 +115,7 @@ export default function FleetScreen() {
 		<View style={styles.screen}>
 			<View style={{ height: insets.top }} />
 			<ScreenHeader
-				title="Kanban"
+				title="Agents"
 				subtitle={config?.host}
 				status={connection}
 				right={

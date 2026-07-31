@@ -68,7 +68,7 @@ export default function SettingsScreen() {
 			>
 				<ConnectionSection cfg={cfg} paired={paired} connection={connection} />
 
-				<SettingsGroup title="Projects" footer="Scopes the Kanban board and the PRs tab.">
+				<SettingsGroup title="Projects" footer="Scopes the Agents and PRs tabs.">
 					<SettingsRow
 						icon="folder"
 						label="Active project"

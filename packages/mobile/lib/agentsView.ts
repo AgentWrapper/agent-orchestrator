@@ -1,4 +1,4 @@
-// Board vocabulary for the Kanban tab. Pure — no React Native or Expo imports —
+// Board vocabulary for the Agents tab. Pure — no React Native or Expo imports —
 // so the zoning, archive rule and copy are unit-testable, the same split as
 // prView.ts / orchestratorView.ts.
 //

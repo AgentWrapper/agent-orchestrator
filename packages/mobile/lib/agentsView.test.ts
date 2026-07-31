@@ -9,7 +9,7 @@ import {
 	showBranch,
 	trackerIssueId,
 	zoneMeta,
-} from "./kanbanView";
+} from "./agentsView";
 import { darkTheme, lightTheme } from "./theme";
 
 const session = (over: Partial<DashboardSession> = {}): DashboardSession =>
