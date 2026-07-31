@@ -579,4 +579,49 @@ describe("CommandPalette PR and review actions", () => {
 		expect(screen.getByText("Reviewing... #7")).toBeInTheDocument();
 		expect(screen.queryByText("Re-run review #7")).toBeNull();
 	});
+
+	it("does not expose Run review from stale cached data while a background refetch is settling", async () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		queryClient.setQueryData(
+			["session-reviews", "w-merge"],
+			{ reviewerHandleId: "", reviews: [reviewState("needs_review")] },
+			// Force this cached value to look well past the palette's 60s
+			// staleTime so opening the palette triggers a background refetch
+			// while still returning this (now-outdated) data synchronously.
+			{ updatedAt: Date.now() - 120_000 },
+		);
+
+		let resolveReviews: (value: { data: { reviewerHandleId: string; reviews: unknown[] } }) => void = () => {};
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/sessions/{sessionId}/reviews") {
+				return new Promise((resolve) => {
+					resolveReviews = resolve;
+				});
+			}
+			return { data: undefined };
+		});
+
+		render(
+			<QueryClientProvider client={queryClient}>
+				<CommandPalette />
+			</QueryClientProvider>,
+		);
+		act(() => useUiStore.getState().setCommandPaletteOpen(true));
+		const input = await screen.findByPlaceholderText(/search projects/i);
+		fireEvent.change(input, { target: { value: "#7" } });
+
+		// The stale cached "needs_review" data must not surface as an enabled
+		// Run review action while the background refetch is still settling.
+		expect(await screen.findByText("Open PR #7")).toBeInTheDocument();
+		expect(screen.queryByText(/run review|re-run review/i)).toBeNull();
+
+		await act(async () => {
+			resolveReviews({ data: { reviewerHandleId: "", reviews: [reviewState("running")] } });
+		});
+
+		// Once the refetch settles with the true state, the row must reflect it.
+		expect(await screen.findByText("Review already running")).toBeInTheDocument();
+		fireEvent.click(screen.getByText("Reviewing... #7"));
+		expect(postMock).not.toHaveBeenCalled();
+	});
 });

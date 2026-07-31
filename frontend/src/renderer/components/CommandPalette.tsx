@@ -78,7 +78,9 @@ export function CommandPalette() {
 			const reviewStatesBySessionId: Record<string, PRReviewState[]> = {};
 			results.forEach((result, index) => {
 				const session = sessionsWithOpenPRs[index];
-				if (session && result.data) reviewStatesBySessionId[session.id] = result.data.reviews ?? [];
+				if (session && result.data && !result.isFetching) {
+					reviewStatesBySessionId[session.id] = result.data.reviews ?? [];
+				}
 			});
 			return { reviewStatesBySessionId };
 		},
