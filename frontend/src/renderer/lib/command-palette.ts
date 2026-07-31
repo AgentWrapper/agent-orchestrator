@@ -203,6 +203,11 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 	for (const workspace of workspaces) {
 		for (const session of workerSessions(workspace.sessions)) {
 			const sessionReviewStates = reviewStatesBySessionId?.[session.id];
+			// Whole prop omitted (e.g. a test that doesn't care about review state) means
+			// "assume eligible"; a defined map with this session's key absent means the
+			// live app hasn't loaded this session's review state yet — don't expose a
+			// mutating action until we know it's safe to trigger.
+			const dataLoadedForSession = reviewStatesBySessionId === undefined || sessionReviewStates !== undefined;
 			const openReviewStates = sessionReviewStates ? openReviewStatesFor(session, sessionReviewStates) : undefined;
 			const sessionReviewRunning = openReviewStates ? reviewIsRunning(openReviewStates) : false;
 			for (const pr of openPRs(session)) {
@@ -248,7 +253,7 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 					searchOnly: true,
 					action: { kind: "copy-pr-url", url: pr.url },
 				});
-				if (sessionIsActive(session)) {
+				if (sessionIsActive(session) && dataLoadedForSession) {
 					items.push(prReviewCommand(session, pr, openReviewStates, sessionReviewRunning, subtitle, prKeywords));
 				}
 			}

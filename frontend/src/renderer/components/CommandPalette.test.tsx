@@ -535,56 +535,48 @@ describe("CommandPalette PR and review actions", () => {
 		await waitFor(() => expect(paletteInput()).toBeNull());
 	});
 
-	it("shows Not eligible for review once the session review state is cached, after a reopen", async () => {
+	it("shows Not eligible for review once the session review state loads", async () => {
 		await openPaletteWithQuery("review");
-		await waitFor(() => expect(getMock).toHaveBeenCalled());
-
-		act(() => useUiStore.getState().setCommandPaletteOpen(false));
-		await waitFor(() => expect(paletteInput()).toBeNull());
-
-		act(() => useUiStore.getState().setCommandPaletteOpen(true));
-		const reopenedInput = await screen.findByPlaceholderText(/search projects/i);
-		fireEvent.change(reopenedInput, { target: { value: "review" } });
-
 		expect(await screen.findByText("Not eligible for review")).toBeInTheDocument();
 		fireEvent.click(screen.getByText("Run review #7"));
 		expect(postMock).not.toHaveBeenCalled();
 	});
 
-	it("disables the review action with Review already running once cached, after a reopen", async () => {
+	it("disables the review action with Review already running once the session review state loads", async () => {
 		mockReviews([reviewState("running")]);
 		await openPaletteWithQuery("review");
-		await waitFor(() => expect(getMock).toHaveBeenCalled());
-
-		act(() => useUiStore.getState().setCommandPaletteOpen(false));
-		await waitFor(() => expect(paletteInput()).toBeNull());
-
-		act(() => useUiStore.getState().setCommandPaletteOpen(true));
-		const reopenedInput = await screen.findByPlaceholderText(/search projects/i);
-		fireEvent.change(reopenedInput, { target: { value: "review" } });
-
 		expect(await screen.findByText("Review already running")).toBeInTheDocument();
 		fireEvent.click(screen.getByText("Reviewing... #7"));
 		expect(postMock).not.toHaveBeenCalled();
 		expect(useUiStore.getState().isCommandPaletteOpen).toBe(true);
 	});
-
-	it("does not retitle or disable the review row while the palette stays open, even after the query resolves", async () => {
-		mockReviews([reviewState("running")]);
-		await openPaletteWithQuery("review");
-		expect(await screen.findByText("Run review #7")).toBeInTheDocument();
-
-		// Let the review query resolve in the background while this same
-		// palette session stays open.
-		await waitFor(() => expect(getMock).toHaveBeenCalled());
+	
+	it("hides the review action until the session's review state loads, then keeps it stable for the rest of the open", async () => {
+		let resolveReviews: (value: { data: { reviewerHandleId: string; reviews: unknown[] } }) => void = () => {};
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/sessions/{sessionId}/reviews") {
+				return new Promise((resolve) => {
+					resolveReviews = resolve;
+				});
+			}
+			return { data: undefined };
+		});
+		await openPaletteWithQuery("#7");
+		// Open PR / Copy PR URL don't depend on review state; the mutating
+		// review action must not render until we actually know it's safe.
+		expect(await screen.findByText("Open PR #7")).toBeInTheDocument();
+		expect(screen.queryByText(/run review|re-run review|reviewing/i)).toBeNull();
+		await act(async () => {
+			resolveReviews({ data: { reviewerHandleId: "", reviews: [reviewState("running")] } });
+		});
+		expect(await screen.findByText("Review already running")).toBeInTheDocument();
+		// A later poll reflecting a finished review must not retitle the row —
+		// this session is frozen for the remainder of this open.
+		mockReviews([reviewState("up_to_date")]);
 		await act(async () => {
 			await Promise.resolve();
 		});
-
-		// The row must still show the pre-open label — it must not flip to
-		// "Reviewing... #7" / disabled until the palette is closed and reopened.
-		expect(screen.getByText("Run review #7")).toBeInTheDocument();
-		expect(screen.queryByText("Reviewing... #7")).toBeNull();
-		expect(screen.queryByText("Review already running")).toBeNull();
+		expect(screen.getByText("Reviewing... #7")).toBeInTheDocument();
+		expect(screen.queryByText("Re-run review #7")).toBeNull();
 	});
 });

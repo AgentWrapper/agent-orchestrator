@@ -53,7 +53,6 @@ export function CommandPalette() {
 	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
 	const [pendingId, setPendingId] = useState<string | null>(null);
 	const [reviewStatesSnapshot, setReviewStatesSnapshot] = useState<Readonly<Record<string, PRReviewState[]>>>();
-	const wasOpenRef = useRef(false);
 	const pendingRef = useRef(false);
 	const choosePathRef = useRef<(() => void) | null>(null);
 
@@ -85,21 +84,27 @@ export function CommandPalette() {
 		},
 	});
 
-	// Snapshot review states once when the palette opens and never again while
-	// it stays open — items must not retitle, disable, or reorder under the
-	// cursor between opening the palette and pressing Enter. Data refreshes on
-	// the next open (the 60s staleTime plus shared cache mean this is usually
-	// already fresh).
+	// Each session's review action stays hidden until we know whether it's
+	// safe to trigger, then is frozen for the rest of this open — merging in
+	// newly-resolved sessions but never overwriting one already captured, so
+	// a later poll (e.g. a running review completing) can't retitle or
+	// re-sort a row the user may already have selected.
 	useEffect(() => {
 		if (!isOpen) {
-			wasOpenRef.current = false;
-			setReviewStatesSnapshot(undefined);
+			setReviewStatesSnapshot({});
 			return;
 		}
-		if (!wasOpenRef.current) {
-			wasOpenRef.current = true;
-			setReviewStatesSnapshot(reviewQuerySummary.reviewStatesBySessionId);
-		}
+		setReviewStatesSnapshot((previous) => {
+			let changed = false;
+			const next = { ...previous };
+			for (const [sessionId, reviews] of Object.entries(reviewQuerySummary.reviewStatesBySessionId)) {
+				if (!(sessionId in next)) {
+					next[sessionId] = reviews;
+					changed = true;
+				}
+			}
+			return changed ? next : previous;
+		});
 	}, [isOpen, reviewQuerySummary.reviewStatesBySessionId]);
 
 	const items = useMemo(

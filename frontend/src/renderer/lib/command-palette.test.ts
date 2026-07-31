@@ -221,6 +221,18 @@ describe("buildCommands PR actions", () => {
 		expect(review?.searchOnly).toBe(true);
 	});
 
+	it("omits the review item while a session's review data has not yet loaded, but keeps Open PR / Copy PR URL", () => {
+		const map = byId(
+			buildCommands({
+				workspaces: workspaces(),
+				reviewStatesBySessionId: {},
+			}),
+		);
+		expect(map.has("pr-review:w-pr:42")).toBe(false);
+		expect(map.get("pr-open:w-pr:42")).toBeTruthy();
+		expect(map.get("pr-copy:w-pr:42")).toBeTruthy();
+	});
+
 	it("labels the review item Re-run review for changes requested or a completed run", () => {
 		const changesRequested = buildCommands({
 			workspaces: workspaces(),
@@ -444,3 +456,4 @@ describe("groupCommands", () => {
 		expect(grouped.every((g) => g.items.length > 0)).toBe(true);
 	});
 });
+
