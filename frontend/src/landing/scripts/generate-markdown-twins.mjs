@@ -1,9 +1,19 @@
-import { glob, readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { load } from "cheerio";
 import { NodeHtmlMarkdown } from "node-html-markdown";
 
-const htmlFiles = [];
-for await (const file of glob("out/docs/**/index.html")) htmlFiles.push(file);
+async function findIndexHtmlFiles(directory) {
+  const files = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...(await findIndexHtmlFiles(entryPath)));
+    else if (entry.name === "index.html") files.push(entryPath);
+  }
+  return files;
+}
+
+const htmlFiles = await findIndexHtmlFiles("out/docs");
 
 if (htmlFiles.length === 0) throw new Error("No documentation HTML files found");
 
