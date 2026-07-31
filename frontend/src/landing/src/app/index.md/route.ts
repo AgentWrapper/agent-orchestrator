@@ -48,7 +48,7 @@ export function GET() {
     ]),
     "## Contact",
     "",
-    `- Support: hello${COMPANY.EMAIL_DOMAIN}`,
+    `- Support: ${COMPANY.MAIL_TO.replace("mailto:", "")}`,
     `- Founders: ${COMPANY.FOUNDERS_EMAIL}`,
     `- [Discord](${COMPANY.DISCORD_URL})`,
     `- [X](${COMPANY.X_URL})`,
