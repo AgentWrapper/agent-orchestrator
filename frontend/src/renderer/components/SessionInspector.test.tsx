@@ -203,7 +203,7 @@ describe("SessionInspector tabs", () => {
 			expect(within(tab).getByText(label)).toHaveClass("text-caption", "@max-[315px]/inspector:hidden");
 		}
 		expect(summaryTab).not.toHaveClass("flex-1");
-		expect(summaryTab).toHaveClass("h-control-md", "px-1.5");
+		expect(summaryTab).toHaveClass("h-control-md", "px-2");
 		expect(summaryTab).toHaveAttribute("title", "Summary");
 		expect(within(summaryTab).getByText("Summary").previousElementSibling).toHaveClass(
 			"@min-[316px]/inspector:hidden",
@@ -233,8 +233,7 @@ describe("SessionInspector tabs", () => {
 		});
 		expect(tabs.parentElement?.lastElementChild).toBe(toggle);
 		expect(toggle.querySelector("svg")).toHaveClass("size-icon-lg");
-		expect(toggle).toHaveClass("ml-1.5");
-		expect(toggle).not.toHaveClass("mx-1.5");
+		expect(toggle).toHaveClass("ml-auto");
 
 		await userEvent.click(toggle);
 		expect(onToggleVisibility).toHaveBeenCalledTimes(1);

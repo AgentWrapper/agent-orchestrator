@@ -5,6 +5,7 @@ import type { NotificationDTO, NotificationsCache } from "./notifications";
 const {
 	apiGetMock,
 	getApiBaseUrlMock,
+	hasTrustedApiBaseUrlMock,
 	onStatusMock,
 	removeStatusMock,
 	showNotificationMock,
@@ -12,6 +13,7 @@ const {
 	unsubscribeBaseUrlMock,
 } = vi.hoisted(() => ({
 	apiGetMock: vi.fn(),
+	hasTrustedApiBaseUrlMock: vi.fn(() => true),
 	getApiBaseUrlMock: vi.fn(() => "http://127.0.0.1:3001"),
 	onStatusMock: vi.fn(),
 	removeStatusMock: vi.fn(),
@@ -23,6 +25,7 @@ const {
 vi.mock("./api-client", () => ({
 	apiClient: { GET: apiGetMock },
 	apiErrorMessage: () => "Request failed",
+	hasTrustedApiBaseUrl: hasTrustedApiBaseUrlMock,
 	getApiBaseUrl: getApiBaseUrlMock,
 	subscribeApiBaseUrl: subscribeApiBaseUrlMock,
 }));

@@ -28,6 +28,14 @@ vi.mock("../../lib/bridge", () => ({
 	aoBridge: { app: { chooseDirectory: chooseDirectoryMock } },
 }));
 
+// Disable dev-board fixtures so mock API responses are the sole source of
+// workspace data — fixtures inject extra sessions that break assertions.
+vi.mock("../../lib/dev-board-fixtures", () => ({
+	usesDevBoardFixtures: false,
+	isDevBoardFixtureSession: () => false,
+	withDevBoardFixtures: (w: any[]) => w,
+}));
+
 vi.mock("@tanstack/react-router", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@tanstack/react-router")>();
 	return { ...actual, useNavigate: () => navigateMock };
@@ -132,12 +140,16 @@ describe("global board first launch", () => {
 			</QueryClientProvider>,
 		);
 
-		expect(await screen.findByTestId("daemon-startup-loader")).toHaveClass("ao-startup-screen");
-		expect(screen.getByRole("status", { name: "Agent Orchestrator is starting" })).toBeInTheDocument();
-		expect(screen.getByText("Agent Orchestrator")).toBeInTheDocument();
-		expect(screen.getByText("Starting local services")).toHaveAttribute("aria-hidden", "true");
-		expect(screen.queryByText("Import to Agent Orchestrator")).not.toBeInTheDocument();
+		// The startup loader was removed; when the daemon is booting and the
+		// workspace query succeeds with no projects, the board shows the import
+		// chooser (BoardWelcome) instead of a startup screen or column shells.
+		expect(await screen.findByText("Import to Agent Orchestrator")).toBeInTheDocument();
+		expect(screen.getByText("What are you importing?")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Workspace" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Project" })).toBeInTheDocument();
+		expect(screen.queryByTestId("daemon-startup-loader")).not.toBeInTheDocument();
 		expect(columnCount()).toBe(0);
+		expect(screen.queryByText("Board")).not.toBeInTheDocument();
 	});
 
 	it("shows the import chooser instead of empty columns when no projects exist", async () => {
@@ -249,7 +261,11 @@ describe("project board with no sessions", () => {
 		const [spawnButton] = screen.getAllByRole("button", { name: "Spawn Orchestrator" });
 		await userEvent.click(spawnButton);
 
-		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
+		// When no orchestrator agent is configured, the board navigates to
+		// project settings instead of spawning (no longer sets settingsModal).
+		expect(navigateMock).toHaveBeenCalledWith(
+			expect.objectContaining({ to: "/projects/$projectId/settings" }),
+		);
 		expect(spawnOrchestratorMock).not.toHaveBeenCalled();
 	});
 

@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession } from "../types/workspace";
 import { CenterPane } from "./CenterPane";
@@ -124,13 +125,14 @@ describe("CenterPane toolbar session label", () => {
 
 	// The tab-strip + button opens a dropdown; the Terminal option (#3208 fix)
 	// no longer leaks every session across every project.
-	it("shows the tab launcher dropdown with a terminal option", () => {
+	it("shows the tab launcher dropdown with a terminal option", async () => {
 		const onNewShellTerminal = vi.fn();
+		const user = userEvent.setup();
 		render(<CenterPane session={worker} onNewShellTerminal={onNewShellTerminal} theme="dark" daemonReady />);
 
-		fireEvent.click(screen.getByRole("button", { name: "Add tab" }));
-		expect(screen.getByRole("menu")).toBeInTheDocument();
-		fireEvent.click(screen.getByRole("menuitem", { name: "Terminal" }));
+		await user.click(screen.getByRole("button", { name: "Add tab" }));
+		expect(await screen.findByRole("menu")).toBeInTheDocument();
+		await user.click(screen.getByRole("menuitem", { name: "Terminal" }));
 		expect(onNewShellTerminal).toHaveBeenCalledOnce();
 	});
 

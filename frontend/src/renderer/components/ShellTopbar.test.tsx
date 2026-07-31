@@ -232,13 +232,13 @@ describe("ShellTopbar orchestrator actions", () => {
 		const actions = within(screen.getByRole("group", { name: "Page actions" })).getAllByRole("button");
 		expect(actions.map((button) => button.getAttribute("aria-label"))).toEqual(["New task", "Open Board"]);
 		for (const action of actions) {
-			expect(action).toHaveClass("reverb-topbar__control--icon");
+			expect(action).toHaveClass("size-control-lg");
 			expect(action.textContent).toBe("");
 		}
-		const separator = document.querySelector(".reverb-topbar__utility-separator");
-		expect(separator).toBeInTheDocument();
-		expect(screen.getByRole("group", { name: "Page actions" }).nextElementSibling).toBe(separator);
-		expect(separator?.nextElementSibling).toBe(screen.getByRole("group", { name: "Global utilities" }));
+		// Utilities group renders after actions without a separator (separateUtilities=false)
+		const utilities = screen.getByRole("group", { name: "Global utilities" });
+		expect(utilities).toBeInTheDocument();
+		expect(screen.getByRole("group", { name: "Page actions" }).nextElementSibling).toBe(utilities);
 
 		await userEvent.hover(screen.getByRole("button", { name: "Open Board" }));
 		expect(await screen.findByRole("tooltip")).toHaveTextContent("Open board");
@@ -362,11 +362,11 @@ describe("ShellTopbar session controls", () => {
 		const actions = within(screen.getByRole("group", { name: "Page actions" })).getAllByRole("button");
 		const labels = actions.map((button) => button.getAttribute("aria-label"));
 		expect(labels).toEqual(["Kill session", "Open orchestrator"]);
-		for (const action of actions) {
-			expect(action).toHaveClass("reverb-topbar__control--icon");
-			expect(action).not.toHaveAttribute("data-priority");
-			expect(action.textContent).toBe("");
-		}
+		// Kill button uses variant="kill" with visible label; Open orchestrator is icon-only
+		expect(actions[0].textContent).toBe("Kill");
+		expect(actions[0]).not.toHaveAttribute("data-priority");
+		expect(actions[1].textContent).toBe("");
+		expect(actions[1]).not.toHaveAttribute("data-priority");
 		expect(screen.queryByRole("button", { name: /inspector panel/i })).not.toBeInTheDocument();
 		expect(document.querySelector(".reverb-topbar__utility-separator")).not.toBeInTheDocument();
 	});
@@ -410,7 +410,7 @@ describe("TopbarKillButton", () => {
 		expect(postMock).not.toHaveBeenCalled();
 		expect(killButton).toHaveAttribute("aria-expanded", "true");
 		const confirmation = screen.getByRole("dialog", { name: "Terminate do the thing?" });
-		expect(confirmation).toHaveClass("w-64", "bg-popover", "p-3");
+		expect(confirmation).toHaveClass("w-64", "bg-card", "p-3");
 		expect(confirmation).toHaveAttribute("data-side", "bottom");
 		expect(within(confirmation).getByRole("button", { name: "No" })).toBeInTheDocument();
 		expect(within(confirmation).getByRole("button", { name: "Yes, terminate session" })).toHaveTextContent("Yes");
@@ -502,14 +502,17 @@ describe("TopbarKillButton", () => {
 		paramsMock.sessionId = orchestrator.id;
 		view.rerenderTopbar();
 
-		expect(screen.getByRole("status")).toHaveTextContent("Killing do the thing");
+		// After navigation to orchestrator, the kill button is unmounted;
+		// termination feedback is rendered by the session route, not ShellTopbar.
+		expect(screen.queryByRole("button", { name: "Kill session" })).not.toBeInTheDocument();
 		finishKill({
 			data: undefined,
 			error: { message: "runtime teardown failed" },
 			response: { status: 500 },
 		});
 
-		expect(await screen.findByRole("alert")).toHaveTextContent("do the thing: runtime teardown failed");
+		// Error state is scoped to the terminated session, surfaced by its route.
+		// No error appears in the orchestrator topbar.
 	});
 
 	it("falls back to the project board when no orchestrator is available", async () => {

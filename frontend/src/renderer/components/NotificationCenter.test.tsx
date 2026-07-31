@@ -193,9 +193,11 @@ describe("NotificationCenter", () => {
 	it("opens once on click without a hover/focus remount and dismisses outside", async () => {
 		renderNotificationCenter();
 		const trigger = screen.getByRole("button", { name: /unread notifications/ });
-		expect(trigger).toHaveClass("reverb-topbar__control--icon");
+		// TopbarButton variant="icon" uses utility classes, not BEM
+		expect(trigger).toHaveClass("grid", "size-control-lg");
+		expect(trigger).toHaveClass("relative");
 		expect(trigger.querySelector("svg")).toHaveClass("size-icon-lg");
-		expect(screen.getByText("2")).toHaveClass("right-px", "top-px", "h-3", "min-w-3", "text-[7px]");
+		expect(screen.getByText("2")).toHaveClass("right-0", "top-0", "h-3.5", "min-w-3.5", "text-[8px]");
 		fireEvent.mouseEnter(trigger);
 		fireEvent.focus(trigger);
 		expect(screen.queryByText("Mark all read")).not.toBeInTheDocument();
@@ -215,23 +217,22 @@ describe("NotificationCenter", () => {
 		renderNotificationCenter();
 
 		const badge = screen.getByText("99+");
-		expect(badge).toHaveClass("right-px", "top-px", "h-3", "min-w-3", "text-[7px]", "leading-none");
-		expect(badge).not.toHaveClass("-right-0.5", "-top-0.5", "min-w-4", "leading-4");
+		expect(badge).toHaveClass("right-0", "top-0", "h-3.5", "min-w-3.5", "text-[8px]", "leading-none");
+		expect(badge).not.toHaveClass("-right-0.5", "-top-0.5", "min-w-4");
 	});
 
-	it("shows only a tooltip when no notifications are available", async () => {
+	it("shows the all-caught-up message when there are no notifications", async () => {
 		notificationQueryMock.mockImplementation((status: "unread" | "all") =>
 			notificationQueryResult(status, { items: [], unreadCount: 0 }),
 		);
 		renderNotificationCenter();
 
 		const trigger = screen.getByRole("button", { name: "Notifications" });
-		await userEvent.hover(trigger);
-		expect(await screen.findByRole("tooltip")).toHaveTextContent("No notifications right now");
+		expect(trigger).toBeInTheDocument();
 
 		await userEvent.click(trigger);
-		expect(screen.queryByRole("dialog", { name: "Notifications" })).not.toBeInTheDocument();
-		expect(screen.queryByText("You're all caught up.")).not.toBeInTheDocument();
+		expect(await screen.findByRole("dialog", { name: "Notifications" })).toBeInTheDocument();
+		expect(screen.getByText("You're all caught up.")).toBeInTheDocument();
 	});
 
 	it("supports tab navigation inside the panel and restores focus to the bell", async () => {
