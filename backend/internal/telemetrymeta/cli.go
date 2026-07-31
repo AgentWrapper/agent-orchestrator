@@ -35,6 +35,11 @@ var routineInternalCLICommands = []string{
 // predate the explicit actor_type field. Unknown actor-less commands are treated
 // as system activity so foreign/local automation cannot inflate DAU by default.
 func CLIActorType(actorType, commandPath string) string {
+	normalized := NormalizeCommandPath(commandPath)
+	if _, ok := legacyActorlessSystemCLICommands[normalized]; ok {
+		return "system"
+	}
+
 	switch actorType {
 	case "agent", "user":
 		return actorType
@@ -42,10 +47,6 @@ func CLIActorType(actorType, commandPath string) string {
 		return "system"
 	}
 
-	normalized := NormalizeCommandPath(commandPath)
-	if _, ok := legacyActorlessSystemCLICommands[normalized]; ok {
-		return "system"
-	}
 	if _, ok := legacyActorlessUserCLICommands[normalized]; ok {
 		return "user"
 	}

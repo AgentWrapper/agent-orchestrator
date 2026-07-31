@@ -41,6 +41,21 @@ func TestCLIActorTypeKeepsKnownLegacyUserCommands(t *testing.T) {
 	}
 }
 
+func TestCLIActorTypeSystemCommandsOverrideExplicitActor(t *testing.T) {
+	for _, tc := range []struct {
+		actorType   string
+		commandPath string
+	}{
+		{actorType: "user", commandPath: "ao daemon"},
+		{actorType: "agent", commandPath: "ao start"},
+		{actorType: "user", commandPath: "AO  AGENT-PROCESS  SUPERVISE"},
+	} {
+		if got := CLIActorType(tc.actorType, tc.commandPath); got != "system" {
+			t.Errorf("CLIActorType(%q, %q) = %q, want system", tc.actorType, tc.commandPath, got)
+		}
+	}
+}
+
 func TestCLIActorTypeKeepsConservativeFallback(t *testing.T) {
 	for _, tc := range []struct {
 		actorType   string
