@@ -352,6 +352,15 @@ describe("useBrowserView", () => {
 			expect(bridge.setBounds).toHaveBeenCalledWith(
 				expect.objectContaining({ visible: true, rect: expect.objectContaining({ width: 320 }) }),
 			);
+			// The snapshot crossfades out rather than vanishing the instant the
+			// native view is revealed — removing it immediately raced against the
+			// native view's own reveal (an async IPC round trip vs. a React state
+			// update landing on different ticks), so both were briefly visible at
+			// once, looking like doubled/overlapping content.
+			expect(result.current.visualTransition).toMatchObject({ kind: "popout", releasing: true });
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
 			expect(result.current.visualTransition).toBeNull();
 		} finally {
 			vi.useRealTimers();

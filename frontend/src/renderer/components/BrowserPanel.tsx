@@ -550,7 +550,10 @@ export function BrowserPanelView({
 				{visualTransition ? (
 					<img
 						alt=""
-						className="browser-panel__transition-frame"
+						className={cn(
+							"browser-panel__transition-frame",
+							visualTransition.releasing && "browser-panel__transition-frame--releasing",
+						)}
 						data-testid="browser-transition-frame"
 						src={visualTransition.snapshotUrl}
 						style={

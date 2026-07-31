@@ -22,6 +22,14 @@ export type BrowserVisualTransition = {
 	 * double-stretch while the panel grows/shrinks.
 	 */
 	sourceSize?: { width: number; height: number };
+	/**
+	 * True once endPopoutTransition() has revealed the native view and the
+	 * snapshot is crossfading out, rather than being removed outright. An
+	 * instant removal would race the native view's reveal (an async IPC round
+	 * trip vs. a React state update landing on a different tick), briefly
+	 * showing both the frozen snapshot and the live view at once.
+	 */
+	releasing?: boolean;
 };
 
 type UseBrowserViewOptions = {
@@ -100,6 +108,7 @@ const EMPTY_TABS_STATE: BrowserTabsState = {
 const HIDDEN_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 };
 const VISUAL_TRANSITION_DURATION_MS = 240;
 const VISUAL_TRANSITION_CAPTURE_TIMEOUT_MS = 120;
+const POPOUT_RELEASE_FADE_MS = 160;
 
 // The native WebContentsView is a window-level overlay, so DOM `overflow:
 // hidden` never clips it — it paints wherever the slot's bounding box lands.
@@ -290,9 +299,17 @@ export function useBrowserView({
 
 	const endPopoutTransition = useCallback(() => {
 		popoutTransitionRef.current = false;
-		clearVisualTransitionTimer();
-		setVisualTransition(null);
 		measureAndSend();
+		// Crossfade the snapshot out instead of removing it the instant the
+		// native view is revealed above — measureAndSend()'s IPC round trip and
+		// this state update settle on different ticks, so an instant removal
+		// briefly showed both the frozen snapshot and the live view at once.
+		clearVisualTransitionTimer();
+		setVisualTransition((current) => (current ? { ...current, releasing: true } : current));
+		visualTransitionTimerRef.current = window.setTimeout(() => {
+			visualTransitionTimerRef.current = null;
+			setVisualTransition(null);
+		}, POPOUT_RELEASE_FADE_MS);
 	}, [clearVisualTransitionTimer, measureAndSend]);
 
 	const cancelScheduledMeasure = useCallback(() => {

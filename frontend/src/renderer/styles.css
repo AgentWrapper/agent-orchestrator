@@ -2461,6 +2461,14 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 [data-transition="popout"] .browser-panel__transition-frame {
 	animation: none;
 	opacity: 1;
+	transition: opacity var(--duration-normal) ease-out;
+}
+
+/* Crossfades the held snapshot out once endPopoutTransition() reveals the
+   native view underneath — not an instant removal, which raced the native
+   view's own reveal and briefly showed both at once. */
+[data-transition="popout"] .browser-panel__transition-frame--releasing {
+	opacity: 0;
 }
 
 .browser-panel__slot {

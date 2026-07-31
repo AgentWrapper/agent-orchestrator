@@ -32,7 +32,12 @@ const hookState = vi.hoisted(() => ({
 	agentBrowserActive: false,
 	agentBrowserActivity: null as { active: boolean; action?: string; phase?: "started" | "finished" } | null,
 	visualTransition: null as
-		| { kind: "tab-switch" | "popout"; snapshotUrl: string; sourceSize?: { width: number; height: number } }
+		| {
+				kind: "tab-switch" | "popout";
+				snapshotUrl: string;
+				sourceSize?: { width: number; height: number };
+				releasing?: boolean;
+		  }
 		| null,
 	previewUrl: undefined as string | undefined,
 	navState: {
@@ -369,6 +374,20 @@ describe("BrowserPanel", () => {
 		const frame = screen.getByTestId("browser-transition-frame");
 		expect(frame.style.width).toBe("320px");
 		expect(frame.style.height).toBe("240px");
+	});
+
+	it("crossfades a releasing popout transition frame out instead of removing it instantly", () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		hookState.visualTransition = {
+			kind: "popout",
+			snapshotUrl: "data:image/jpeg;base64,snapshot",
+			sourceSize: { width: 320, height: 240 },
+			releasing: true,
+		};
+
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		expect(screen.getByTestId("browser-transition-frame")).toHaveClass("browser-panel__transition-frame--releasing");
 	});
 
 	it("leaves a tab-switch transition frame filling the panel (no fixed size)", () => {
