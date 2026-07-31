@@ -34,7 +34,8 @@
 				"monochromeImage": "./assets/android-icon-monochrome.png"
 			},
 			"predictiveBackGestureEnabled": false,
-			"permissions": ["android.permission.CAMERA"]
+			"permissions": ["android.permission.CAMERA"],
+			"softwareKeyboardLayoutMode": "resize"
 		},
 		"web": {
 			"favicon": "./assets/favicon.png",
