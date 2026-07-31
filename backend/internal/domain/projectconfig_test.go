@@ -36,6 +36,7 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"good opencode reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerOpenCode}}}, false},
 		{"good kiro reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerKiro}}}, false},
 		{"good pi reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerPi}}}, false},
+		{"qwen reviewer disabled pending isolation", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerQwen}}}, true},
 		{"unknown reviewer harness", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: "nope"}}}, true},
 		{"agy reviewer remains disabled", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: "agy"}}}, true},
 		{"worker-only harness is not auto a reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerHarness(HarnessAider)}}}, true},
@@ -143,6 +144,9 @@ func TestResolveReviewerHarness(t *testing.T) {
 	}
 	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessAider); got != FallbackReviewerHarness {
 		t.Fatalf("fallback = %q, want %q", got, FallbackReviewerHarness)
+	}
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessQwen); got != FallbackReviewerHarness {
+		t.Fatalf("qwen worker must not auto-enable pending reviewer: %q", got)
 	}
 }
 

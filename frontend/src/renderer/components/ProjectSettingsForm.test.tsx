@@ -420,6 +420,40 @@ describe("ProjectSettingsForm", () => {
 		expect(labels).toContain("Pi");
 	});
 
+	it("keeps the staged Qwen adapter out of reviewer choices", async () => {
+		const project = {
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: { worker: { agent: "qwen" }, orchestrator: { agent: "claude-code" } },
+		};
+		const qwen = { id: "qwen", label: "Qwen Code", authStatus: "authorized" };
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				return {
+					data: {
+						supported: [...agentCatalogResponse.data.supported, qwen],
+						installed: [...agentCatalogResponse.data.installed, qwen],
+						authorized: [...agentCatalogResponse.data.authorized, qwen],
+					},
+					error: undefined,
+				};
+			}
+			return { data: { status: "ok", project }, error: undefined };
+		});
+
+		renderSettings();
+
+		await waitFor(() => expect(screen.getAllByText("/repo/project-one").length).toBeGreaterThan(0));
+		const reviewer = screen.getByRole("button", { name: "Default reviewer agent" });
+		await userEvent.click(reviewer);
+		const options = await screen.findAllByRole("menuitem");
+		expect(options.map((option) => option.textContent)).not.toContain("Qwen Code");
+	});
+
 	it("shows unknown-auth agents as selectable with a warning in project settings", async () => {
 		mockProject({
 			id: "proj-1",

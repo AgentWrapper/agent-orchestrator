@@ -58,4 +58,13 @@ func TestNewResolverResolvesShippedReviewers(t *testing.T) {
 	if _, ok := resolver.Reviewer("agy"); ok {
 		t.Error("resolver exposed Agy before its process isolation prerequisite exists")
 	}
+	if _, ok := resolver.Reviewer(domain.ReviewerQwen); ok {
+		t.Error("resolver enabled Qwen without a platform isolation provider")
+	}
+	if reason, ok := DisabledReason(domain.ReviewerQwen); !ok || reason == "" {
+		t.Fatalf("Qwen disabled reason = %q, %v", reason, ok)
+	}
+	if reason, ok := DisabledReason("agy"); !ok || reason == "" {
+		t.Fatalf("Agy disabled reason = %q, %v", reason, ok)
+	}
 }

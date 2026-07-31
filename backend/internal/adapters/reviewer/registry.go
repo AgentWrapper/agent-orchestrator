@@ -69,3 +69,15 @@ func (r *Resolver) Reviewer(harness domain.ReviewerHarness) (ports.Reviewer, boo
 	rv, ok := r.reviewers[harness]
 	return rv, ok
 }
+
+// DisabledReason reports reviewer implementations that are present for
+// integration work but deliberately unavailable to configuration/resolution.
+func DisabledReason(harness domain.ReviewerHarness) (string, bool) {
+	switch harness {
+	case domain.ReviewerQwen:
+		return "secure interactive-TUI isolation is unavailable for Qwen shell escapes", true
+	case "agy":
+		return "secure interactive-TUI isolation and review-gateway transport are unavailable for Agy", true
+	}
+	return "", false
+}
