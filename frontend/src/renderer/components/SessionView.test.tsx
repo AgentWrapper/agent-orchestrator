@@ -1,6 +1,6 @@
-import { StrictMode, type ReactNode, type Ref } from "react";
+import { type ReactNode } from "react";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionView } from "./SessionView";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
@@ -11,20 +11,7 @@ vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigateMock,
 }));
 
-type FakePanelHandle = {
-	collapse: Mock;
-	expand: Mock;
-	getSize: Mock;
-	isCollapsed: Mock;
-	resize: Mock;
-};
-
-type PanelEntry = {
-	handle: FakePanelHandle;
-	onResize?: (size: { asPercentage: number; inPixels: number }) => void;
-};
-
-const { workspaces, workspaceQueryState, panels, shellTerminalsState } = vi.hoisted(() => {
+const { workspaces, workspaceQueryState, shellTerminalsState } = vi.hoisted(() => {
 	const worker = {
 		id: "sess-1",
 		workspaceId: "proj-1",
@@ -95,7 +82,6 @@ const { workspaces, workspaceQueryState, panels, shellTerminalsState } = vi.hois
 	return {
 		workspaces,
 		workspaceQueryState,
-		panels: new Map<string, PanelEntry>(),
 		shellTerminalsState,
 	};
 });
@@ -284,96 +270,6 @@ vi.mock("../hooks/useShellTerminals", () => ({
 	useRenameShellTerminal: () => ({ mutate: vi.fn() }),
 }));
 
-// jsdom has no layout engine, so the real react-resizable-panels would never
-// produce meaningful sizes — record the props SessionView passes and expose a
-// fake imperative handle per panel instead.
-vi.mock("./ui/resizable", () => ({
-	ResizablePanelGroup: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
-	ResizableHandle: ({
-		"aria-hidden": ariaHidden,
-		className,
-		disabled,
-		elementRef,
-	}: {
-		"aria-hidden"?: boolean;
-		className?: string;
-		disabled?: boolean;
-		elementRef?: Ref<HTMLDivElement | null>;
-	}) => (
-		<div
-			aria-hidden={ariaHidden}
-			className={className}
-			data-disabled={disabled ? "true" : undefined}
-			data-separator="inactive"
-			data-testid="resize-handle"
-			ref={(el) => {
-				if (elementRef && typeof elementRef === "object") {
-					(elementRef as { current: HTMLDivElement | null }).current = el;
-				}
-			}}
-		/>
-	),
-	ResizablePanel: ({
-		children,
-		id,
-		defaultSize,
-		collapsedSize,
-		minSize,
-		maxSize,
-		collapsible,
-		panelRef,
-		onResize,
-		style: _style,
-		...rest
-	}: {
-		children?: ReactNode;
-		id: string;
-		defaultSize?: number | string;
-		collapsedSize?: number | string;
-		minSize?: number | string;
-		maxSize?: number | string;
-		collapsible?: boolean;
-		panelRef?: Ref<FakePanelHandle | null>;
-		onResize?: (size: { asPercentage: number; inPixels: number }) => void;
-		style?: React.CSSProperties;
-	}) => {
-		let entry = panels.get(id);
-		if (!entry) {
-			entry = {
-				handle: {
-					collapse: vi.fn(),
-					expand: vi.fn(),
-					getSize: vi.fn(() => ({ asPercentage: 28, inPixels: 280 })),
-					isCollapsed: vi.fn(() => false),
-					resize: vi.fn(),
-				},
-			};
-			panels.set(id, entry);
-		}
-		entry.onResize = onResize;
-		if (panelRef && typeof panelRef === "object") {
-			(panelRef as { current: FakePanelHandle | null }).current = entry.handle;
-		}
-		return (
-			<div
-				data-testid={`panel-${id}`}
-				data-collapsed-size={collapsedSize}
-				data-collapsible={collapsible ? "true" : undefined}
-				{...rest}
-			>
-				<span data-testid={`panel-${id}-sizes`}>
-					{JSON.stringify([defaultSize, minSize, maxSize].filter((s) => s !== undefined))}
-				</span>
-				{children}
-			</div>
-		);
-	},
-}));
-
-function panelSizes(id: string): unknown[] {
-	return JSON.parse(screen.getByTestId(`panel-${id}-sizes`).textContent ?? "[]") as unknown[];
-}
-
 function workerSession(sessionId: string): WorkspaceSession {
 	const session = workspaces[0].sessions.find((item) => item.id === sessionId);
 	if (!session) throw new Error(`missing test session ${sessionId}`);
@@ -410,7 +306,6 @@ describe("SessionView", () => {
 			visibleTerminalKindBySession: {},
 			sessionTabsByOwner: {},
 		});
-		panels.clear();
 		browserDestroy.mockReset();
 		browserViewOptions.current = undefined;
 		shellTerminalsState.data = [];
@@ -540,39 +435,11 @@ describe("SessionView", () => {
 		expect(screen.getByTestId("shell-tabs")).toHaveTextContent("worker-shell");
 	});
 
-	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS
-	// (numbers were percentages in the older API the shadcn examples use).
-	// defaultSize={28}/maxSize={45} clamped the inspector rail to a 45px sliver.
-	// Every size must be an explicit percentage string.
-	it("sizes the terminal/inspector split in percentages, not pixels", () => {
-		render(<SessionView sessionId="sess-1" />);
-
-		for (const panelId of ["terminal", "inspector"]) {
-			const sizes = panelSizes(panelId);
-			expect(sizes.length).toBeGreaterThan(0);
-			for (const size of sizes) {
-				expect(size, `${panelId} size ${String(size)} must be a percentage string`).toMatch(/^\d+(\.\d+)?%$/);
-			}
-		}
-	});
-
 	it("opens the Summary inspector alongside the terminal by default", () => {
 		render(<SessionView sessionId="sess-1" />);
 
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
-		// The shell owns the topbar here; on platforms that hide it (macOS/Linux)
-		// SessionView mounts it above the split. Either way it spans the framed
-		// panel and never lives inside the terminal column.
-		expect(within(screen.getByTestId("panel-terminal")).queryByTestId("session-topbar")).toBeNull();
-		expect(panelSizes("inspector")[0]).toBe("28%");
-		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("data-collapsible", "true");
-		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("data-collapsed-size", "0%");
-		expect(screen.getByTestId("resize-handle")).toHaveClass(
-			"w-px",
-			"bg-sidebar-border",
-		);
-		expect(screen.getByTestId("resize-handle").className).not.toContain("after:");
-		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("inert");
+		expect(screen.getByTestId("inspector-container")).not.toHaveAttribute("inert");
 		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
 		expect(screen.getByRole("button", { name: "Close inspector panel" })).toBeInTheDocument();
 	});
@@ -593,202 +460,46 @@ describe("SessionView", () => {
 	it("mounts the inspector open by default", () => {
 		render(<SessionView sessionId="sess-1" />);
 
-		expect(panelSizes("inspector")[0]).toMatch(/^[1-9]\d*(\.\d+)?%$/);
-		const pane = screen.getByTestId("panel-inspector");
-		expect(pane).not.toHaveAttribute("inert");
-		expect(pane).not.toHaveAttribute("aria-hidden");
-		expect(panels.get("inspector")!.handle.expand).not.toHaveBeenCalled();
+		const container = screen.getByTestId("inspector-container");
+		expect(container).not.toHaveAttribute("inert");
 	});
 
-	it("mounts fully collapsed when the store says closed", () => {
+	it("mounts with inspector hidden when the store says closed", () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
 		render(<SessionView sessionId="sess-1" />);
 
-		expect(panelSizes("inspector")[0]).toBe("0%");
-		const pane = screen.getByTestId("panel-inspector");
-		expect(pane).toHaveAttribute("inert");
-		expect(pane).toHaveAttribute("aria-hidden", "true");
-		expect(screen.queryByRole("button", { name: "Open inspector panel" })).not.toBeInTheDocument();
-		expect(screen.getByTestId("resize-handle")).toHaveAttribute("data-disabled", "true");
-		expect(screen.getByTestId("resize-handle")).toHaveAttribute("aria-hidden", "true");
-		expect(screen.getByTestId("resize-handle")).toHaveClass("w-0", "pointer-events-none");
-		expect(panels.get("inspector")!.handle.collapse).not.toHaveBeenCalled();
+		const container = screen.getByTestId("inspector-container");
+		expect(container).toHaveAttribute("inert");
 	});
 
-	it("keeps StrictMode mount imperative-free and collapses on the first user toggle", () => {
-		render(
-			<StrictMode>
-				<SessionView sessionId="sess-1" />
-			</StrictMode>,
-		);
-		const handle = panels.get("inspector")!.handle;
-
-		expect(handle.expand).not.toHaveBeenCalled();
-		expect(handle.collapse).not.toHaveBeenCalled();
-
-		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
-
-		expect(inspectorOpen("sess-1")).toBe(false);
-		expect(handle.collapse).toHaveBeenCalledTimes(1);
-		expect(handle.expand).not.toHaveBeenCalled();
-	});
-
-	it("keeps StrictMode mount imperative-free and expands on the first user toggle", () => {
-		act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
-		render(
-			<StrictMode>
-				<SessionView sessionId="sess-1" />
-			</StrictMode>,
-		);
-		const handle = panels.get("inspector")!.handle;
-
-		expect(handle.expand).not.toHaveBeenCalled();
-		expect(handle.collapse).not.toHaveBeenCalled();
-
-		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
-
-		expect(inspectorOpen("sess-1")).toBe(true);
-		expect(handle.expand).toHaveBeenCalledTimes(1);
-		expect(handle.collapse).not.toHaveBeenCalled();
-	});
-
-	it("restores the persisted split when reopening a panel that mounted at zero", () => {
-		window.localStorage.setItem("ao.inspector.split", "36");
-		act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
-		render(<SessionView sessionId="sess-1" />);
-		const handle = panels.get("inspector")!.handle;
-		handle.getSize.mockReturnValue({ asPercentage: 0, inPixels: 0 });
-
-		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
-
-		expect(handle.expand).toHaveBeenCalledTimes(1);
-		expect(handle.resize).toHaveBeenCalledWith("36%");
-	});
-
-	it("toggles the inspector with mod+shift+B through the imperative panel API", () => {
+	it("toggles the inspector with mod+shift+B", () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
-		const handle = panels.get("inspector")!.handle;
 
 		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
 		expect(inspectorOpen("sess-1")).toBe(false);
-		expect(handle.collapse).toHaveBeenCalledTimes(1);
 
 		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
 		expect(inspectorOpen("sess-1")).toBe(true);
-		expect(handle.expand).toHaveBeenCalled();
 
 		// Plain ⌘B belongs to the sidebar — the inspector must not react.
 		fireEvent.keyDown(window, { key: "b", metaKey: true });
 		expect(inspectorOpen("sess-1")).toBe(true);
 	});
 
-	it("syncs drag resizes back into the store and persists the split", () => {
-		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
-		render(<SessionView sessionId="sess-1" />);
-		const entry = panels.get("inspector")!;
-		// rrp marks the separator active for the duration of a pointer drag.
-		screen.getByTestId("resize-handle").setAttribute("data-separator", "active");
-
-		// Dragging past minSize collapses the panel → store follows.
-		act(() => entry.onResize?.({ asPercentage: 0, inPixels: 0 }));
-		expect(inspectorOpen("sess-1")).toBe(false);
-
-		// Dragging it back open reopens + persists the width.
-		act(() => entry.onResize?.({ asPercentage: 31.5, inPixels: 400 }));
-		expect(inspectorOpen("sess-1")).toBe(true);
-		expect(window.localStorage.getItem("ao.inspector.split")).toBe("31.5");
-	});
-
-	it("persists a drag collapse from the default-open inspector state", () => {
-		render(<SessionView sessionId="sess-1" />);
-		const entry = panels.get("inspector")!;
-		screen.getByTestId("resize-handle").setAttribute("data-separator", "active");
-
-		act(() => entry.onResize?.({ asPercentage: 0, inPixels: 0 }));
-
-		expect(useUiStore.getState().inspectorSessions["sess-1"]).toMatchObject({
-			isOpen: false,
-			view: "summary",
-		});
-	});
-
-	// Regression: rrp v4 reports observed DOM sizes, so the flex-grow
-	// transition animating an imperative collapse fires onResize with transient
-	// non-zero sizes. Mirroring those into the store re-opened the panel
-	// mid-animation — the topbar toggle looked dead and a mount-time 0-size
-	// event flipped a fresh profile to collapsed. Only drag events (separator
-	// active) may write back.
-	it("ignores onResize churn while the separator is not being dragged", () => {
-		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
-		render(<SessionView sessionId="sess-1" />);
-		const entry = panels.get("inspector")!;
-
-		// Mount-time/layout event at 0% must not collapse the store…
-		act(() => entry.onResize?.({ asPercentage: 0, inPixels: 0 }));
-		expect(inspectorOpen("sess-1")).toBe(true);
-
-		// …and a mid-collapse transition frame must not re-open or persist.
-		act(() => useUiStore.getState().toggleInspector("sess-1"));
-		act(() => entry.onResize?.({ asPercentage: 12.4, inPixels: 160 }));
-		expect(inspectorOpen("sess-1")).toBe(false);
-		expect(window.localStorage.getItem("ao.inspector.split")).toBeNull();
-	});
-
-	it("restores the persisted split width", () => {
-		window.localStorage.setItem("ao.inspector.split", "40");
-		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
-		render(<SessionView sessionId="sess-1" />);
-		expect(panelSizes("inspector")[0]).toBe("40%");
-	});
-
-	// Regression: rrp only derives a panel's constraints one commit after it
-	// registers into a live group. Driving the imperative API in the commit
-	// where the inspector mounts (orchestrator → worker navigation; SessionView
-	// itself stays mounted) threw "Panel constraints not found for Panel
-	// inspector" and unwound the route to the error boundary. The panel must
-	// mount already in sync via defaultSize instead.
-	it("mounts the inspector in sync when navigating from an orchestrator session, without the imperative API", () => {
+	it("shows no inspector container for orchestrator sessions, then shows one after navigating to a worker", () => {
 		const { rerender } = render(<SessionView sessionId="sess-orch" />);
-		expect(screen.queryByTestId("panel-inspector")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("inspector-container")).not.toBeInTheDocument();
 
-		// Already-open worker state — the panel that mounts later must pick this
-		// up from defaultSize alone.
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		rerender(<SessionView sessionId="sess-1" />);
-
-		expect(panelSizes("inspector")[0]).toMatch(/^[1-9]\d*(\.\d+)?%$/);
-		const handle = panels.get("inspector")!.handle;
-		expect(handle.expand).not.toHaveBeenCalled();
-		expect(handle.collapse).not.toHaveBeenCalled();
-		expect(handle.resize).not.toHaveBeenCalled();
+		expect(screen.getByTestId("inspector-container")).not.toHaveAttribute("inert");
 	});
 
-	it("expands on the first toggle after a closed worker inspector remounts", () => {
-		act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
-		const { rerender } = render(<SessionView sessionId="sess-1" />);
-		const handle = panels.get("inspector")!.handle;
-
-		act(() => useUiStore.getState().setInspectorOpen("sess-2", false));
-		rerender(<SessionView sessionId="sess-orch" />);
-		expect(screen.queryByTestId("panel-inspector")).not.toBeInTheDocument();
-
-		act(() => useUiStore.getState().setInspectorOpen("sess-2", false));
-		rerender(<SessionView sessionId="sess-2" />);
-		expect(panelSizes("inspector")[0]).toBe("0%");
-		expect(handle.collapse).not.toHaveBeenCalled();
-
-		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
-
-		expect(inspectorOpen("sess-2")).toBe(true);
-		expect(handle.expand).toHaveBeenCalledTimes(1);
-	});
-
-	it("renders no inspector panel or handle for orchestrator sessions", () => {
+	it("renders no inspector for orchestrator sessions", () => {
 		render(<SessionView sessionId="sess-orch" />);
 
-		expect(screen.queryByTestId("panel-inspector")).not.toBeInTheDocument();
-		expect(screen.queryByTestId("resize-handle")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("inspector-container")).not.toBeInTheDocument();
 
 		// The shortcut is inactive without an inspector.
 		fireEvent.keyDown(window, { key: "B", metaKey: true, shiftKey: true });
@@ -819,7 +530,7 @@ describe("SessionView", () => {
 		fireEvent.click(screen.getByRole("button", { name: "open files" }));
 
 		expect(
-			within(screen.getByTestId("panel-inspector")).getByRole("button", {
+			within(screen.getByTestId("inspector-container")).getByRole("button", {
 				name: "files rail",
 			}),
 		).toBeInTheDocument();
@@ -833,7 +544,7 @@ describe("SessionView", () => {
 
 		fireEvent.click(screen.getByRole("button", { name: "open files" }));
 		fireEvent.click(
-			within(screen.getByTestId("panel-inspector")).getByRole("button", {
+			within(screen.getByTestId("inspector-container")).getByRole("button", {
 				name: "files rail",
 			}),
 		);
@@ -844,7 +555,7 @@ describe("SessionView", () => {
 		fireEvent.click(screen.getByRole("button", { name: "files center" }));
 		expect(screen.queryByRole("button", { name: "files center" })).not.toBeInTheDocument();
 		expect(
-			within(screen.getByTestId("panel-inspector")).getByRole("button", {
+			within(screen.getByTestId("inspector-container")).getByRole("button", {
 				name: "files rail",
 			}),
 		).toBeInTheDocument();
@@ -889,8 +600,7 @@ describe("SessionView", () => {
 
 		const { rerender } = render(<SessionView sessionId="sess-1" />);
 
-		expect(panelSizes("inspector")[0]).toBe("28%");
-		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("inert");
+		expect(screen.getByTestId("inspector-container")).not.toHaveAttribute("inert");
 		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
 
 		act(() => useUiStore.getState().setInspectorView("sess-1", "browser"));
@@ -929,17 +639,14 @@ describe("SessionView", () => {
 		rerender(<SessionView sessionId="sess-2" />);
 
 		expect(inspectorOpen("sess-2")).toBe(true);
-		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("inert");
+		expect(screen.getByTestId("inspector-container")).not.toHaveAttribute("inert");
 		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
 		expect(browserUnseen("sess-2")).toBe(false);
-		const handle = panels.get("inspector")!.handle;
-		expect(handle.expand).not.toHaveBeenCalled();
 
 		secondWorker.previewRevision = 2;
 		rerender(<SessionView sessionId="sess-2" />);
 
 		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
 		expect(browserUnseen("sess-2")).toBe(true);
-		expect(handle.expand).not.toHaveBeenCalled();
 	});
 });

@@ -88,8 +88,8 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 	return (
 		<span
 			className={cn(
-				"group inline-flex h-full min-w-shell-tab-min items-center gap-1.5 px-2 pt-1.5 pb-[calc(var(--spacing-1)-1px)] transition-colors border-b-2 -mb-px",
-				isActive ? "border-accent text-foreground" : "border-transparent hover:bg-interactive-hover/60",
+				"group inline-flex h-full min-w-shell-tab-min items-center gap-1.5 px-2 pt-1.5 pb-[calc(var(--spacing-1)-1px)] transition-colors border-b-2",
+				isActive ? "border-foreground text-foreground" : "border-transparent hover:bg-interactive-hover/60",
 			)}
 			{...containerRenameHandlers}
 		>
@@ -132,7 +132,7 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 			)}
 			<button
 				aria-label={`Close terminal ${shell.title}`}
-				className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-passive opacity-0 transition-[background,color,opacity] group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+				className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-passive opacity-0 transition-[background,color,opacity] group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
 				onClick={(event) => {
 					event.stopPropagation();
 					onClose();

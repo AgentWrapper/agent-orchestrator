@@ -1324,18 +1324,6 @@ select {
 	background: var(--color-bg-primary);
 }
 
-.session-pane-tab {
-	box-sizing: border-box;
-	height: var(--size-control-md);
-	min-width: var(--size-shell-tab-min);
-	max-width: var(--size-session-pane-tab-max);
-	gap: var(--space-0_5);
-	padding-inline: var(--space-2);
-}
-
-.session-pane-tab__label {
-	font-size: var(--font-size-sm-md);
-}
 
 @keyframes status-pulse {
 	0%,

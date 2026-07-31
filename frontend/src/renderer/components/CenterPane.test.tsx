@@ -34,13 +34,12 @@ describe("CenterPane toolbar session label", () => {
 			createdAt: "2026-07-22T00:00:00Z",
 		}));
 
-	it("shows the active session as a compact padded tab without a generic Terminal label", () => {
+	it("shows the active session as a tab without a generic Terminal label", () => {
 		render(<CenterPane session={worker} theme="dark" daemonReady />);
 		const sessionTab = screen.getByRole("button", { name: "do the thing" });
 		expect(sessionTab).toHaveAttribute("aria-current", "true");
-		expect(sessionTab).toHaveClass("session-pane-tab__label");
-		expect(sessionTab.parentElement).toHaveClass("session-pane-tab", "border-accent");
-		expect(sessionTab.closest(".h-inspector-tabs")).toHaveClass("px-2");
+		expect(sessionTab).toHaveClass("font-semibold");
+		expect(sessionTab.closest(".h-topbar-primary")).toHaveClass("px-2");
 		expect(document.querySelector('button[aria-label="Scroll tabs left"]')).toHaveClass("hidden");
 		expect(sessionTab.closest(".terminal-pane-frame")).toHaveClass("px-px");
 		expect(screen.queryByRole("button", { name: "Terminal" })).not.toBeInTheDocument();
@@ -84,10 +83,10 @@ describe("CenterPane toolbar session label", () => {
 		);
 
 		for (const label of ["Orchestrator", "dummy-session", "dummy-2"]) {
-			expect(screen.getByRole("button", { name: label }).parentElement).toHaveClass("session-pane-tab");
+			expect(screen.getByRole("button", { name: label })).toHaveClass("font-semibold");
 		}
-		expect(screen.getByRole("button", { name: "Close session tab dummy-session" })).toHaveClass("size-control-xs");
-		expect(screen.getByRole("button", { name: "Close session tab dummy-2" })).toHaveClass("size-control-xs");
+		expect(screen.getByRole("button", { name: "Close session tab dummy-session" })).toHaveClass("size-control-sm");
+		expect(screen.getByRole("button", { name: "Close session tab dummy-2" })).toHaveClass("size-control-sm");
 	});
 
 	it("adds workers and terminals only through the tab launcher", () => {
@@ -150,11 +149,11 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByRole("menuitem", { name: /Worker 1/ })).not.toBeInTheDocument();
 	});
 
-	it("uses a compact Orchestrator tab for an orchestrator session", () => {
+	it("uses an Orchestrator tab for an orchestrator session", () => {
 		render(<CenterPane session={{ ...worker, id: "sess-orch", kind: "orchestrator" }} theme="dark" daemonReady />);
 		const orchestratorTab = screen.getByRole("button", { name: "Orchestrator" });
 		expect(orchestratorTab).toHaveAttribute("aria-current", "true");
-		expect(orchestratorTab).toHaveClass("session-pane-tab__label");
+		expect(orchestratorTab).toHaveClass("font-semibold");
 		expect(screen.queryByRole("button", { name: "Terminal" })).not.toBeInTheDocument();
 	});
 
