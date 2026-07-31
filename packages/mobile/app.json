@@ -5,7 +5,7 @@
 		"version": "1.0.0",
 		"orientation": "portrait",
 		"icon": "./assets/icon.png",
-		"userInterfaceStyle": "dark",
+		"userInterfaceStyle": "automatic",
 		"backgroundColor": "#0a0b0d",
 		"scheme": "aomobile",
 		"splash": {
