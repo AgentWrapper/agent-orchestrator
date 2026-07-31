@@ -26,6 +26,12 @@ vi.mock("../lib/api-client", () => ({
 	apiErrorMessage: (_error: unknown, fallback: string) => fallback,
 }));
 
+vi.mock("../lib/telemetry", () => ({
+	captureRendererEvent: vi.fn(),
+	captureRendererException: vi.fn(),
+	addRendererExceptionStep: vi.fn(),
+}));
+
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
 		clipboard: {
@@ -851,6 +857,85 @@ describe("SessionsBoard", () => {
 		expect(screen.queryByText("Session can no longer be restored")).not.toBeInTheDocument();
 	});
 
+	it("badges a pipeline-orphaned session and explains the outcome that spared it", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([orphanedSession()])],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		const badge = screen.getByTestId("pipeline-orphan-badge");
+		expect(badge).toHaveTextContent("pipeline");
+
+		await userEvent.hover(badge);
+
+		const tooltip = await screen.findByRole("tooltip");
+		expect(tooltip).toHaveTextContent("pr-review");
+		expect(tooltip).toHaveTextContent("review");
+		expect(tooltip).toHaveTextContent("no output");
+		expect(tooltip).toHaveTextContent("kept for you to inspect");
+		expect(tooltip).toHaveTextContent("run-7");
+		expect(tooltip).toHaveTextContent(/kept .*ago|kept just now/);
+	});
+
+	it("does not badge ordinary sessions as pipeline-orphaned", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([orphanedSession({ id: "s-plain", title: "plain worker", pipelineOrphan: undefined })]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		expect(screen.getByText("plain worker")).toBeInTheDocument();
+		expect(screen.queryByTestId("pipeline-orphan-badge")).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /^Kill / })).not.toBeInTheDocument();
+	});
+
+	it("kills a pipeline-orphaned session through the existing kill endpoint after confirmation", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([orphanedSession()])],
+			isError: false,
+			isSuccess: true,
+		});
+		const queryClient = renderBoard("p1");
+		const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue(undefined);
+
+		await userEvent.click(screen.getByRole("button", { name: "Kill orphaned review stage" }));
+		expect(postMock).not.toHaveBeenCalled();
+
+		await userEvent.click(screen.getByRole("button", { name: "Kill session" }));
+
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/kill", {
+				params: { path: { sessionId: "s-orphan" } },
+			}),
+		);
+		expect(invalidate).toHaveBeenCalledWith({ queryKey: ["workspaces"] });
+		expect(navigateMock).not.toHaveBeenCalled();
+	});
+
+	it("keeps the kill dialog open and shows the daemon error when the kill fails", async () => {
+		postMock.mockResolvedValueOnce({ error: { code: "KILL_FAILED", message: "worktree busy" } });
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([orphanedSession()])],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: "Kill orphaned review stage" }));
+		await userEvent.click(screen.getByRole("button", { name: "Kill session" }));
+
+		expect(await screen.findByText("Could not kill session")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Kill session" })).toBeInTheDocument();
+	});
+
 	it("shows a merged-only lane and opens its card without showing restore", async () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [workspaceWithSessions([boardSession({ id: "s-merged", title: "merged worker", status: "merged" })])],
@@ -1072,6 +1157,32 @@ function workspaceWithSessions(sessions: WorkspaceSession[]): WorkspaceSummary {
 		name: "radic",
 		path: "/tmp/radic",
 		sessions,
+	};
+}
+
+// A stage session the engine's kill-on policy spared: `no_signal` status keeps
+// it in the "Needs you" column, so the card renders without expanding a stack.
+function orphanedSession(overrides: Partial<WorkspaceSession> = {}): WorkspaceSession {
+	return {
+		id: "s-orphan",
+		workspaceId: "p1",
+		workspaceName: "radic",
+		title: "pr-review review stage",
+		provider: "claude-code",
+		kind: "worker",
+		branch: "ao/pipelines/run-7/review",
+		status: "no_signal",
+		activity: { state: "exited", lastActivityAt: "2026-01-01T00:00:00Z" },
+		updatedAt: "2026-01-01T00:00:00Z",
+		prs: [],
+		pipelineOrphan: {
+			runId: "run-7",
+			stage: "review",
+			outcome: "no_output",
+			keptAt: "2026-01-01T00:00:00Z",
+			pipeline: "pr-review",
+		},
+		...overrides,
 	};
 }
 

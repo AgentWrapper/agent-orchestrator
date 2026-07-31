@@ -1099,6 +1099,60 @@ func TestSessionsAPI_SetPreviewMissingAbsoluteFilePathFailsWithoutOverwriting(t 
 	}
 }
 
+// A session a pipeline kept alive carries its badge on the session list: the run
+// and stage that owned it and the outcome that spared it. Without this the
+// reaper's bound is invisible, which is how fifty stale sessions happened.
+func TestSessionsAPI_ListSurfacesPipelineOrphan(t *testing.T) {
+	svc := newFakeSessionService()
+	keptAt := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+	s := svc.sessions["ao-1"]
+	s.Metadata = domain.SessionMetadata{
+		PipelineRunID: "run-a",
+		PipelineOrphan: &domain.PipelineOrphanInfo{
+			RunID:    "run-a",
+			Stage:    "review",
+			Outcome:  "no_output",
+			KeptAt:   keptAt,
+			Pipeline: "pr-review",
+		},
+	}
+	svc.sessions["ao-1"] = s
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "GET", "/api/v1/sessions?project=ao", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET sessions = %d, want 200; body=%s", status, body)
+	}
+	var list struct {
+		Sessions []struct {
+			PipelineOrphan *domain.PipelineOrphanInfo `json:"pipelineOrphan"`
+		} `json:"sessions"`
+	}
+	mustJSON(t, body, &list)
+	if len(list.Sessions) != 1 || list.Sessions[0].PipelineOrphan == nil {
+		t.Fatalf("session list does not carry the pipeline orphan marker: %s", body)
+	}
+	got := *list.Sessions[0].PipelineOrphan
+	if got != *s.Metadata.PipelineOrphan {
+		t.Fatalf("pipelineOrphan = %+v, want %+v", got, *s.Metadata.PipelineOrphan)
+	}
+
+	// The field is omitted for every session no pipeline kept alive, so the badge
+	// never renders on a human's session.
+	plain := newFakeSessionService()
+	body, status, _ = doRequest(t, newSessionTestServer(t, plain), "GET", "/api/v1/sessions?project=ao", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET sessions = %d, want 200; body=%s", status, body)
+	}
+	var raw struct {
+		Sessions []map[string]any `json:"sessions"`
+	}
+	mustJSON(t, body, &raw)
+	if _, present := raw.Sessions[0]["pipelineOrphan"]; present {
+		t.Fatalf("pipelineOrphan present on a session no pipeline kept: %s", body)
+	}
+}
+
 func TestSessionsAPI_SetPreviewBumpsRevisionOnSameURL(t *testing.T) {
 	svc := newFakeSessionService()
 	srv := newSessionTestServer(t, svc)

@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-orchestrator.dev/schema/pipeline-definition.json",
+  "title": "Pipeline definition",
+  "description": "A single pipeline definition document (one pipeline per YAML document, authored in the definitions editor and stored in SQLite). Mirrors backend/internal/pipeline/definition.go and the rules in validate.go; kept in sync by hand. This schema covers shape only. The graph rules (unknown stage ids, cycles, needs matching the inbound success edge set, credentials on agent stages) are cross-field and live in validate.go.",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable pipeline name."
+    },
+    "on": { "$ref": "#/$defs/triggerSpec" },
+    "concurrency": { "$ref": "#/$defs/concurrencySpec" },
+    "defaults": { "$ref": "#/$defs/defaultsSpec" },
+    "stages": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The stages, in document order. The first is the entry stage.",
+      "items": { "$ref": "#/$defs/stage" }
+    }
+  },
+  "required": ["name", "stages"],
+  "additionalProperties": false,
+
+  "$defs": {
+    "triggerSpec": {
+      "type": "object",
+      "description": "Events that start a run. Declaring neither family is legal and means a manual-only pipeline.",
+      "properties": {
+        "pr": {
+          "type": "array",
+          "description": "Pull-request events. The subject is the PR, which may or may not have a local session tracking it.",
+          "items": {
+            "type": "string",
+            "enum": ["created", "updated", "merge-ready", "merged"]
+          }
+        },
+        "session": {
+          "type": "array",
+          "description": "Session lifecycle events. The subject is that session, which always exists.",
+          "items": {
+            "type": "string",
+            "enum": ["idle", "exited", "blocked"]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "concurrencySpec": {
+      "type": "object",
+      "description": "Runs sharing an effective key (resolved scope identity, group) serialize. Queue depth is 1: a third arrival evicts the queued run rather than stacking.",
+      "properties": {
+        "scope": {
+          "type": "string",
+          "enum": ["pr", "session", "project"],
+          "description": "Which runs collide. Defaults to the subject's natural scope: pr triggers default to pr, session triggers to session."
+        },
+        "group": {
+          "type": "string",
+          "description": "Which pipelines share a bucket. A literal, never interpolated. Defaults to the pipeline name."
+        },
+        "cancel-in-progress": {
+          "type": "boolean",
+          "description": "A new run cancels the in-flight one. Recommended for pr.updated, wrong for release-shaped pipelines."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "defaultsSpec": {
+      "type": "object",
+      "properties": {
+        "deadline": {
+          "$ref": "#/$defs/duration",
+          "description": "Fallback stage deadline. Defaults to 30m when unset."
+        },
+        "on_failure": {
+          "type": "string",
+          "description": "Stage every unrouted failure routes to. The named stage does not inherit the default: its own failure ends the branch."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "stage": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unique within the pipeline."
+        },
+        "executor": {
+          "type": "string",
+          "enum": ["agent", "command"],
+          "description": "There is no agent taxonomy. What a stage is contracted to do is expressed by produces, not by an executor variant."
+        },
+        "agent": {
+          "type": "string",
+          "description": "Agent stages only: the agent plugin to spawn (e.g. claude-code)."
+        },
+        "prompt": {
+          "type": "string",
+          "description": "Agent stages only. Shell-interpolated environment variables; there is no expression language."
+        },
+        "produces": {
+          "type": "string",
+          "pattern": "^[^/\\\\]+$",
+          "description": "Agent stages only: a bare filename resolving to <run>/agent-outputs/<filename>, carried in $AO_OUTPUT. Present means the engine verifies it exists non-empty; absent means the signal is the whole contract and the stage settles succeeded_unverified."
+        },
+        "session": { "$ref": "#/$defs/sessionSpec" },
+        "run": {
+          "type": "string",
+          "description": "Command stages only: the script. Its exit status is the outcome."
+        },
+        "credentials": {
+          "type": "array",
+          "description": "Command stages only. Engine-held secrets injected at exec time; rejected on agent stages, because a credential must never enter an agent's environment.",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "workspace": {
+          "type": "string",
+          "enum": ["auto", "inherit", "session", "run", "stage", "checkout"],
+          "description": "The tree the stage runs in. Unset defaults to auto on a success entry and inherit on a failure entry. auto resolves to session when the subject has one, otherwise run."
+        },
+        "deadline": {
+          "$ref": "#/$defs/duration",
+          "description": "Overrides defaults.deadline for this stage."
+        },
+        "on_success": {
+          "oneOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ],
+          "description": "A stage id, or a list of stage ids. A list fans out; the targets start concurrently. This is the only fan-out mechanism."
+        },
+        "on_failure": {
+          "type": "string",
+          "description": "A single stage id. Entered on first arrival; later arrivals are dropped. Absent, the stage inherits defaults.on_failure."
+        },
+        "needs": {
+          "type": "array",
+          "description": "Required on any stage with more than one inbound success edge, and must match that set exactly. Failure edges are never counted and never require it.",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["id", "executor"],
+      "additionalProperties": false
+    },
+
+    "sessionSpec": {
+      "type": "object",
+      "description": "Agent stages only: what happens to the session once the stage settles.",
+      "properties": {
+        "kill-on": {
+          "type": "array",
+          "description": "Outcomes that kill the session. Omit the key for the default [succeeded, failed], which keeps the session alive on no_output, no_signal and timed_out. An explicit empty list never kills.",
+          "items": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "succeeded",
+              "succeeded_unverified",
+              "failed",
+              "no_output",
+              "no_signal",
+              "timed_out",
+              "cancelled",
+              "skipped"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "duration": {
+      "type": "string",
+      "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h)([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))*$",
+      "description": "A Go duration string, e.g. \"45m\", \"90s\", \"1h30m\"."
+    }
+  }
+}

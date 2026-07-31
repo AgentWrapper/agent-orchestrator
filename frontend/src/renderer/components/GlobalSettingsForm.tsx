@@ -2,6 +2,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { Keyboard, Mail } from "lucide-react";
 import { ConnectMobileModal } from "./ConnectMobileModal";
+import { PipelinesSection } from "./PipelinesSection";
 import { DeveloperModeSection } from "./settings/DeveloperModeSection";
 import { GeneralSettingsSection } from "./settings/GeneralSettingsSection";
 import { ReportProblemDialog } from "./settings/ReportProblemDialog";
@@ -31,6 +32,7 @@ export function GlobalSettingsForm() {
 						/>
 					</SettingsSection>
 					<UpdatesSection />
+					<PipelinesSection />
 					<DeveloperModeSection />
 					<SettingsSection title="Get help">
 						<SettingsLinkRow icon={Mail} label="Report a problem" onClick={() => setReportProblemOpen(true)} />

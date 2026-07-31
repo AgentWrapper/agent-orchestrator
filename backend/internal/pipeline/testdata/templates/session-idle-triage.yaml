@@ -1,0 +1,19 @@
+name: session-idle-triage
+'on':
+  session:
+    - idle
+concurrency:
+  cancel-in-progress: true
+stages:
+  - id: triage
+    executor: agent
+    agent: claude-code
+    workspace: session
+    produces: triage.md
+    deadline: 10m
+    session:
+      kill-on: []
+    prompt: |-
+      The session has gone idle. Summarize where the work stands,
+      what is blocked, and the single next action.
+      Write it to $AO_OUTPUT, then `ao pipeline done`.

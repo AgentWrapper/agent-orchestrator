@@ -430,10 +430,13 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 
 	branch := cfg.Branch
-	if branch == "" {
+	// An adopted tree already sits on a branch somebody else created; generating
+	// one here would name a branch this spawn never checks out.
+	if branch == "" && cfg.WorkspacePath == "" {
 		branch = DefaultSpawnBranch(id, cfg.Kind, sessionPrefix(project), projectKind, m.dataDir)
 	}
-	ws, workspaceProject, err := m.createSessionWorkspace(ctx, project, cfg, id, branch)
+	tree, err := m.createSessionWorkspace(ctx, project, cfg, id, branch)
+	ws := tree.info
 	if err != nil {
 		// Nothing observable exists yet — no worktree, no runtime — so the seed
 		// row is deleted outright instead of accumulating as a terminated orphan
@@ -445,7 +448,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// Per-project workspace provisioning: symlink shared files, then run any
 	// post-create commands (e.g. `pnpm install`) before the agent launches.
 	if err := m.provisionWorkspace(ctx, project, ws.Path); err != nil {
-		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
+		m.rollbackSeedSpawnWorkspace(ctx, rec, tree, false)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: provision: %w", id, err)
 	}
 
@@ -457,7 +460,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if len(cfg.Attachments) > 0 {
 		refs, err := writeSpawnAttachments(ws.Path, cfg.Attachments)
 		if err != nil {
-			m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
+			m.rollbackSeedSpawnWorkspace(ctx, rec, tree, false)
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: attachments: %w", id, err)
 		}
 		// Keep the attachments dir out of git status. Best-effort: the images are
@@ -470,14 +473,14 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 
 	agent, ok := m.agents.Agent(cfg.Harness)
 	if !ok {
-		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
+		m.rollbackSeedSpawnWorkspace(ctx, rec, tree, false)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
 	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
-	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
+	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env, cfg.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
-		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
+		m.rollbackSeedSpawnWorkspace(ctx, rec, tree, false)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	launchCfg := ports.LaunchConfig{
@@ -494,7 +497,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 	delivery, err := agent.GetPromptDeliveryStrategy(ctx, launchCfg)
 	if err != nil {
-		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
+		m.rollbackSeedSpawnWorkspace(ctx, rec, tree, true)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: prompt delivery: %w", id, err)
 	}
 	if delivery == ports.PromptDeliveryAfterStart {
@@ -502,7 +505,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 	argv, err := agent.GetLaunchCommand(ctx, launchCfg)
 	if err != nil {
-		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
+		m.rollbackSeedSpawnWorkspace(ctx, rec, tree, true)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: launch command: %w", id, err)
 	}
 	// Pre-flight: confirm argv[0] actually exists on PATH (or as an absolute
@@ -510,17 +513,17 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// tmux happily creates a session+pane around a missing command, so an
 	// unresolved binary would leak through as a "live" session that never ran.
 	if err := m.validateAgentBinary(argv); err != nil {
-		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
+		m.rollbackSeedSpawnWorkspace(ctx, rec, tree, true)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
 	argv, launchID, err := m.superviseAgentProcess(agent, id, env, argv)
 	if err != nil {
-		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
+		m.rollbackSeedSpawnWorkspace(ctx, rec, tree, true)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: supervisor: %w", id, err)
 	}
 	if err := m.lcm.PrepareLaunch(id, launchID); err != nil {
-		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
+		m.rollbackSeedSpawnWorkspace(ctx, rec, tree, true)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: prepare launch: %w", id, err)
 	}
 	defer m.lcm.CancelLaunch(id, launchID)
@@ -531,7 +534,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		Env:           env,
 	})
 	if err != nil {
-		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
+		m.rollbackSeedSpawnWorkspace(ctx, rec, tree, true)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
@@ -542,17 +545,19 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		RuntimeHandleID:   handle.ID,
 		RuntimeLaunchID:   launchID,
 		Prompt:            prompt,
+		PipelineRunID:     cfg.PipelineRunID,
+		WorkspaceAdopted:  tree.adopted,
 	}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		runtimeDestroyed := m.runtime.Destroy(ctx, handle) == nil
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject, runtimeDestroyed)
+		m.rollbackPreparedSpawnWorkspace(ctx, rec, tree, runtimeDestroyed)
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: completed: %w", id, err)
 	}
 	if delivery == ports.PromptDeliveryAfterStart && prompt != "" {
 		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, id, prompt); err != nil {
 			runtimeDestroyed := m.runtime.Destroy(ctx, handle) == nil
-			workspaceDestroyed := m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject, runtimeDestroyed)
+			workspaceDestroyed := m.rollbackPreparedSpawnWorkspace(ctx, rec, tree, runtimeDestroyed)
 			if runtimeDestroyed && workspaceDestroyed {
 				m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
 			} else {
@@ -584,7 +589,31 @@ func (m *Manager) loadProject(ctx context.Context, projectID domain.ProjectID) (
 	return row, nil
 }
 
-func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.ProjectRecord, cfg ports.SpawnConfig, id domain.SessionID, branch string) (ports.WorkspaceInfo, *ports.WorkspaceProjectInfo, error) {
+// sessionWorkspace is the tree a spawn runs in, plus who owns it. adopted means
+// the spawn config named an existing tree: the session runs there and must never
+// create, restore or destroy it, because its lifecycle belongs to whoever
+// provisioned it (a pipeline run, spec section 5.5).
+type sessionWorkspace struct {
+	info    ports.WorkspaceInfo
+	project *ports.WorkspaceProjectInfo
+	adopted bool
+}
+
+func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.ProjectRecord, cfg ports.SpawnConfig, id domain.SessionID, branch string) (sessionWorkspace, error) {
+	if cfg.WorkspacePath != "" {
+		// Adopt the tree as it is. Nothing is created here, so nothing is torn
+		// down later either; the branch is whatever the caller stated, because
+		// the tree is already checked out on one of its own.
+		return sessionWorkspace{
+			info: ports.WorkspaceInfo{
+				Path:      cfg.WorkspacePath,
+				Branch:    branch,
+				SessionID: id,
+				ProjectID: cfg.ProjectID,
+			},
+			adopted: true,
+		}, nil
+	}
 	projectKind := project.Kind.WithDefault()
 	if projectKind != domain.ProjectKindWorkspace {
 		baseBranch := project.Config.WithDefaults().DefaultBranch
@@ -597,17 +626,17 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 			Kind:          cfg.Kind,
 			SessionPrefix: sessionPrefix(project),
 			Branch:        branch,
-			BaseBranch:    baseBranch,
+			BaseBranch:    firstNonEmptyString(cfg.BaseBranch, baseBranch),
 		})
-		return ws, nil, err
+		return sessionWorkspace{info: ws}, err
 	}
 	workspaceProject, ok := m.workspace.(ports.WorkspaceProject)
 	if !ok {
-		return ports.WorkspaceInfo{}, nil, errors.New("workspace project materialization is not supported by workspace adapter")
+		return sessionWorkspace{}, errors.New("workspace project materialization is not supported by workspace adapter")
 	}
 	repos, err := m.store.ListWorkspaceRepos(ctx, project.ID)
 	if err != nil {
-		return ports.WorkspaceInfo{}, nil, err
+		return sessionWorkspace{}, err
 	}
 	childRepos := make([]ports.WorkspaceProjectRepoConfig, 0, len(repos))
 	for _, repo := range repos {
@@ -624,11 +653,11 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 		SessionPrefix: sessionPrefix(project),
 		Branch:        branch,
 		RootRepoPath:  project.Path,
-		BaseBranch:    project.Config.WithDefaults().DefaultBranch,
+		BaseBranch:    firstNonEmptyString(cfg.BaseBranch, project.Config.WithDefaults().DefaultBranch),
 		Repos:         childRepos,
 	})
 	if err != nil {
-		return ports.WorkspaceInfo{}, nil, err
+		return sessionWorkspace{}, err
 	}
 	for _, wt := range info.Worktrees {
 		if err := m.store.UpsertSessionWorktree(ctx, domain.SessionWorktreeRecord{
@@ -640,43 +669,71 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 			State:        "active",
 		}); err != nil {
 			_ = workspaceProject.DestroyWorkspaceProject(ctx, info)
-			return ports.WorkspaceInfo{}, nil, fmt.Errorf("record workspace worktree %q: %w", wt.RepoName, err)
+			return sessionWorkspace{}, fmt.Errorf("record workspace worktree %q: %w", wt.RepoName, err)
 		}
 	}
-	return info.Root, &info, nil
+	return sessionWorkspace{info: info.Root, project: &info}, nil
 }
 
-func (m *Manager) destroySpawnWorkspace(ctx context.Context, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo) bool {
-	if workspaceProject != nil {
+// destroySpawnWorkspace removes the tree this spawn created and reports whether
+// it is gone. A false means the tree is still on disk, so callers preserve it on
+// the session record instead of losing track of it. Both callers short-circuit
+// on an adopted tree; the guard below is the last line of defence for a
+// destructive call, not the place adoption is handled.
+func (m *Manager) destroySpawnWorkspace(ctx context.Context, tree sessionWorkspace) bool {
+	if tree.adopted {
+		// Not this spawn's to remove: it did not create the tree, and the run
+		// that did decides when it goes.
+		return false
+	}
+	if tree.project != nil {
 		if adapter, ok := m.workspace.(ports.WorkspaceProject); ok {
-			err := adapter.DestroyWorkspaceProject(ctx, *workspaceProject)
-			_ = m.store.DeleteSessionWorktrees(ctx, ws.SessionID)
+			err := adapter.DestroyWorkspaceProject(ctx, *tree.project)
+			_ = m.store.DeleteSessionWorktrees(ctx, tree.info.SessionID)
 			return err == nil
 		}
 	}
-	err := m.workspace.Destroy(ctx, ws)
-	_ = m.store.DeleteSessionWorktrees(ctx, ws.SessionID)
+	err := m.workspace.Destroy(ctx, tree.info)
+	_ = m.store.DeleteSessionWorktrees(ctx, tree.info.SessionID)
 	return err == nil
 }
 
-func (m *Manager) rollbackPreparedSpawnWorkspace(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo, runtimeDestroyed bool) bool {
-	if m.destroySpawnWorkspace(ctx, ws, workspaceProject) {
-		m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+// rollbackPreparedSpawnWorkspace undoes the workspace side of a spawn that
+// already reached the prepared stage, and reports whether the tree is gone.
+func (m *Manager) rollbackPreparedSpawnWorkspace(ctx context.Context, rec domain.SessionRecord, tree sessionWorkspace, runtimeDestroyed bool) bool {
+	if tree.adopted {
+		// Nothing was created here, so nothing leaked: the run that provisioned
+		// the tree keeps it, and this spawn leaves no workspace to preserve.
 		return true
 	}
-	m.preserveFailedSpawnWorkspace(ctx, rec.ID, ws, runtimeDestroyed)
+	if m.destroySpawnWorkspace(ctx, tree) {
+		m.cleanupAgentWorkspace(ctx, rec, tree.info.Path)
+		return true
+	}
+	m.preserveFailedSpawnWorkspace(ctx, rec.ID, tree.info, runtimeDestroyed)
 	return false
 }
 
-func (m *Manager) rollbackSeedSpawnWorkspace(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo, prepared bool) {
-	if m.destroySpawnWorkspace(ctx, ws, workspaceProject) {
+// rollbackSeedSpawnWorkspace undoes a spawn that never got a live runtime: the
+// tree goes and the seed row with it. A tree that refuses to be destroyed (a
+// dirty scratch workspace, say) is kept and recorded on a terminated row so the
+// retry can find it instead of orphaning it.
+func (m *Manager) rollbackSeedSpawnWorkspace(ctx context.Context, rec domain.SessionRecord, tree sessionWorkspace, prepared bool) {
+	if tree.adopted {
+		// An adopted tree is neither destroyed nor cleaned up nor preserved: it
+		// belongs to the run that provisioned it, so the seed row is the only
+		// thing this spawn has to roll back.
+		m.rollbackSpawnSeedRow(ctx, rec.ID)
+		return
+	}
+	if m.destroySpawnWorkspace(ctx, tree) {
 		if prepared {
-			m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+			m.cleanupAgentWorkspace(ctx, rec, tree.info.Path)
 		}
 		m.rollbackSpawnSeedRow(ctx, rec.ID)
 		return
 	}
-	m.preserveFailedSpawnWorkspace(ctx, rec.ID, ws, true)
+	m.preserveFailedSpawnWorkspace(ctx, rec.ID, tree.info, true)
 	m.markSpawnFailedTerminated(ctx, rec.ID)
 }
 
@@ -891,7 +948,14 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		}
 	}
 	freed := false
-	if workspaceProject {
+	switch {
+	case rec.Metadata.WorkspaceAdopted:
+		// The tree came from somewhere else (a pipeline run's workspace, or for
+		// `workspace: session` another session's own worktree). Kill the pane and
+		// terminate the row, but leave the tree and its agent state alone: the
+		// owner destroys it on its own terms, and running the agent's workspace
+		// cleanup here would strip hooks a live session still needs.
+	case workspaceProject:
 		cleaned, err := m.destroyWorkspaceProjectRows(ctx, workspaceProjectRows)
 		if err != nil {
 			if errors.Is(err, ports.ErrWorkspaceDirty) {
@@ -907,7 +971,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		if cleaned {
 			m.cleanupAgentWorkspace(ctx, rec, ws.Path)
 		}
-	} else if ws.Path != "" {
+	case ws.Path != "":
 		if err := m.workspace.Destroy(ctx, ws); err != nil {
 			if errors.Is(err, ports.ErrWorkspaceDirty) {
 				if err := m.store.DeleteSessionWorktrees(ctx, id); err != nil {
@@ -1198,7 +1262,7 @@ func (m *Manager) relaunchSession(ctx context.Context, operation string, rec dom
 	// Restore re-applies the project's resolved agent config so a configured
 	// model/permissions carry across a restore, matching fresh spawn.
 	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
-	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
+	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env, nil)
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, rec.ID, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
@@ -1247,6 +1311,7 @@ func (m *Manager) relaunchSession(ctx context.Context, operation string, rec dom
 		RuntimeLaunchID:   launchID,
 		AgentSessionID:    rec.Metadata.AgentSessionID,
 		Prompt:            rec.Metadata.Prompt,
+		WorkspaceAdopted:  rec.Metadata.WorkspaceAdopted,
 	}
 	if err := m.lcm.MarkSpawned(ctx, rec.ID, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
@@ -1340,6 +1405,14 @@ func (m *Manager) SaveAndTeardownAll(ctx context.Context) error {
 // ForceDestroy; if either capture or the DB write fails, ForceDestroy is
 // not called.
 func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionRecord, destroyRuntime bool) error {
+	// The adopted path returns before the shell-terminal gate on purpose: it
+	// touches the tree in no way at all, so there is no worktree removal to
+	// protect against, and failing the gate here would abort a teardown that
+	// only needs to mark the row terminated and drop the pane.
+	if rec.Metadata.WorkspaceAdopted {
+		return m.teardownAdoptedWorkspaceSession(ctx, rec, destroyRuntime)
+	}
+
 	// Gate shut this session's scoped shell terminals before either branch
 	// below force-removes its worktree. Both SaveAndTeardownAll and
 	// reconcileLive only reach here for a session with a real workspace, so
@@ -1399,6 +1472,25 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 		m.logger.Warn("save-teardown-all: force destroy failed", "sessionID", rec.ID, "error", err)
 	} else {
 		m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+	}
+	return nil
+}
+
+// teardownAdoptedWorkspaceSession is the shutdown path for a session running in
+// a tree it does not own: terminate the row and drop the pane, and touch the
+// tree in no way at all. Stashing into someone else's worktree and then
+// force-removing it is the exact race the adopted marker exists to prevent, and
+// no restore marker is written because there is nothing for the next boot to
+// re-create: the run that owned the tree is gone with the daemon.
+func (m *Manager) teardownAdoptedWorkspaceSession(ctx context.Context, rec domain.SessionRecord, destroyRuntime bool) error {
+	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
+		return fmt.Errorf("save %s: mark terminated: %w", rec.ID, err)
+	}
+	handle := runtimeHandle(rec.Metadata)
+	if destroyRuntime && handle.ID != "" {
+		if err := m.runtime.Destroy(ctx, handle); err != nil {
+			m.logger.Warn("save-teardown-all: runtime destroy failed", "sessionID", rec.ID, "error", err)
+		}
 	}
 	return nil
 }
@@ -1673,6 +1765,12 @@ func (m *Manager) markSessionWorktreesActive(ctx context.Context, rows []domain.
 }
 
 func (m *Manager) restoreSessionWorkspace(ctx context.Context, project domain.ProjectRecord, rec domain.SessionRecord) (ports.WorkspaceInfo, error) {
+	if rec.Metadata.WorkspaceAdopted {
+		// Relaunch where the session already is. workspace.Restore would create a
+		// session worktree of its own, leaving the agent in a different tree from
+		// the one the record (and $AO_WORKSPACE) names.
+		return workspaceInfo(rec), nil
+	}
 	if project.Kind.WithDefault() != domain.ProjectKindWorkspace {
 		return m.workspace.Restore(ctx, ports.WorkspaceConfig{
 			ProjectID:     rec.ProjectID,
@@ -2166,7 +2264,10 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 			continue
 		}
 		ws := workspaceInfo(rec)
-		if ws.Path == "" {
+		// An adopted tree is not this session's to reclaim, and reclaiming it
+		// would delete a pipeline run's workspace (or, for `workspace: session`,
+		// a tree another session is still working in).
+		if ws.Path == "" || rec.Metadata.WorkspaceAdopted {
 			m.cleanupSystemPromptDir(rec.ID)
 			continue
 		}
@@ -2625,11 +2726,16 @@ func workspaceRepoList(repos []domain.WorkspaceRepoRecord) string {
 }
 
 // spawnEnv builds the runtime environment: the per-project env vars first, then
-// the AO-internal vars last so they always win (a project cannot override
-// AO_SESSION_ID and friends).
-func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, dataDir string, projectEnv map[string]string) map[string]string {
-	env := make(map[string]string, len(projectEnv)+4)
+// the spawn config's extra env (a spawn-config entry wins on collision, so a
+// caller's ambient identity cannot be masked by project config), then the
+// AO-internal vars last so they always win (neither a project nor a spawn
+// config can override AO_SESSION_ID and friends).
+func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, dataDir string, projectEnv, extraEnv map[string]string) map[string]string {
+	env := make(map[string]string, len(projectEnv)+len(extraEnv)+4)
 	for k, v := range projectEnv {
+		env[k] = v
+	}
+	for k, v := range extraEnv {
 		env[k] = v
 	}
 	env[EnvSessionID] = string(id)
@@ -2646,13 +2752,15 @@ func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueI
 // command, which fails every callback and silently kills activity tracking).
 // When the pin cannot be applied the inherited PATH is kept and a warning is
 // logged so the degradation isn't silent.
-func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, projectEnv map[string]string) map[string]string {
-	env := spawnEnv(id, project, issue, m.dataDir, projectEnv)
+func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, projectEnv, extraEnv map[string]string) map[string]string {
+	env := spawnEnv(id, project, issue, m.dataDir, projectEnv, extraEnv)
 	if m.browserCapabilities != nil {
 		env[EnvBrowserCapability] = m.browserCapabilities.Token(id)
 	}
 	env[EnvBrowserRuntimeToken] = ""
-	path, err := HookPATH(m.executable, os.Getenv, projectEnv)
+	// The PATH pin is applied over the merged env, so a PATH set by the spawn
+	// config is the base the daemon dir is prepended to, same as a project PATH.
+	path, err := HookPATH(m.executable, os.Getenv, env)
 	if err != nil {
 		m.logger.Warn("session PATH not pinned to the daemon binary; `ao hooks` callbacks may resolve to a different ao and activity tracking will stall",
 			"session", id, "error", err)
@@ -2663,13 +2771,13 @@ func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issu
 }
 
 // HookPATH builds the PATH value pinned into a spawned session: the daemon
-// executable's directory prepended to the base PATH (the project's PATH
-// override when set, else the daemon's inherited PATH — matching what the
+// executable's directory prepended to the base PATH (the PATH override from
+// baseEnv when set, else the daemon's inherited PATH, matching what the
 // runtime would have exported anyway). An error means the pin cannot be
 // applied: the executable is unresolvable, or is not named "ao", in which case
 // prepending its directory would not change what `ao` resolves to. Exported so
 // the reviewer launcher can pin its pane's PATH the same way.
-func HookPATH(executable func() (string, error), getenv func(string) string, projectEnv map[string]string) (string, error) {
+func HookPATH(executable func() (string, error), getenv func(string) string, baseEnv map[string]string) (string, error) {
 	exe, err := executable()
 	if err != nil {
 		return "", fmt.Errorf("resolve daemon executable: %w", err)
@@ -2681,7 +2789,7 @@ func HookPATH(executable func() (string, error), getenv func(string) string, pro
 	if name != hookBinaryName {
 		return "", fmt.Errorf("daemon executable %s is not named %q", exe, hookBinaryName)
 	}
-	base := projectEnv["PATH"]
+	base := baseEnv["PATH"]
 	if base == "" {
 		base = getenv("PATH")
 	}
@@ -2856,9 +2964,9 @@ func (m *Manager) cleanupAgentWorkspace(ctx context.Context, rec domain.SessionR
 	if !ok {
 		return
 	}
-	env := spawnEnv(rec.ID, rec.ProjectID, rec.IssueID, m.dataDir, nil)
+	env := spawnEnv(rec.ID, rec.ProjectID, rec.IssueID, m.dataDir, nil, nil)
 	if project, err := m.loadProject(ctx, rec.ProjectID); err == nil {
-		env = m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
+		env = m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env, nil)
 	} else {
 		m.logger.Warn("workspace cleanup: project env unavailable; agent cleanup using AO env only",
 			"sessionID", rec.ID, "projectID", rec.ProjectID, "error", err)

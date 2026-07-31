@@ -514,6 +514,7 @@ func (missingAgents) Agent(domain.AgentHarness) (ports.Agent, bool) { return nil
 type fakeWorkspace struct {
 	createErr  error
 	destroyErr error
+	created    int
 	destroyed  int
 	// createRepoPath, when set, is returned as the RepoPath of a single-repo
 	// Create so tests can assert it survives the spawn->teardown metadata round
@@ -553,6 +554,7 @@ func (w *fakeWorkspace) Create(_ context.Context, cfg ports.WorkspaceConfig) (po
 	if w.createErr != nil {
 		return ports.WorkspaceInfo{}, w.createErr
 	}
+	w.created++
 	w.lastCfg = cfg
 	path := w.path
 	if path == "" {
@@ -1111,6 +1113,37 @@ func TestSpawn_AssignsIDAndGoesIdle(t *testing.T) {
 	}
 	if st.sessions["mer-1"].Metadata.RuntimeHandleID != "h1" {
 		t.Fatal("handle not folded")
+	}
+}
+
+// A pipeline-spawned session is marked at spawn: the pipeline session trigger
+// bridge reads that marker as its loop guard, so without it a pipeline agent
+// going idle would fire the session pipelines, whose agents go idle, forever.
+func TestSpawn_MarksPipelineSpawnedSessions(t *testing.T) {
+	m, st, _, _ := newManager()
+	s, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID:     "mer",
+		Kind:          domain.KindWorker,
+		Harness:       domain.HarnessClaudeCode,
+		Prompt:        "review the diff",
+		PipelineRunID: "run-a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Metadata.PipelineRunID != "run-a" {
+		t.Fatalf("spawned metadata pipeline run id = %q, want run-a", s.Metadata.PipelineRunID)
+	}
+	if got := st.sessions["mer-1"].Metadata.PipelineRunID; got != "run-a" {
+		t.Fatalf("persisted pipeline run id = %q, want run-a", got)
+	}
+
+	plain, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode, Prompt: "do it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.Metadata.PipelineRunID != "" {
+		t.Fatalf("a human spawn carries a pipeline run id: %q", plain.Metadata.PipelineRunID)
 	}
 }
 

@@ -1,0 +1,158 @@
+name: release
+on:
+  pr: [merged]
+
+concurrency:
+  scope: project
+  group: release
+  cancel-in-progress: false
+
+defaults:
+  on_failure: notify-failure
+
+stages:
+  - id: prepare
+    executor: command
+    workspace: run
+    run: |
+      test "$(git rev-parse --abbrev-ref HEAD)" = "main"
+      mkdir -p "$AO_RUN_DIR"/{artifacts,digests}
+      ao release resolve-version > "$AO_RUN_DIR/version"
+    on_success: [build-macos, build-windows, build-linux, release-notes]
+
+  - id: build-macos
+    executor: command
+    workspace: stage
+    deadline: 40m
+    run: |
+      npm ci
+      npm run build:mac -- --version "$(cat "$AO_RUN_DIR/version")"
+      sha256sum dist/*.dmg > "$AO_RUN_DIR/digests/macos.txt"
+      cp dist/*.dmg "$AO_RUN_DIR/artifacts/"
+    on_success: verify-digests
+    on_failure: diagnose-build
+
+  - id: build-windows
+    executor: command
+    workspace: stage
+    deadline: 40m
+    run: |
+      npm ci
+      npm run build:win -- --version "$(cat "$AO_RUN_DIR/version")"
+      sha256sum dist/*.exe > "$AO_RUN_DIR/digests/windows.txt"
+      cp dist/*.exe "$AO_RUN_DIR/artifacts/"
+    on_success: verify-digests
+    on_failure: diagnose-build
+
+  - id: build-linux
+    executor: command
+    workspace: stage
+    deadline: 40m
+    run: |
+      npm ci
+      npm run build:linux -- --version "$(cat "$AO_RUN_DIR/version")"
+      sha256sum dist/*.AppImage > "$AO_RUN_DIR/digests/linux.txt"
+      cp dist/*.AppImage "$AO_RUN_DIR/artifacts/"
+    on_success: verify-digests
+    on_failure: diagnose-build
+
+  - id: release-notes
+    executor: agent
+    agent: claude-code
+    workspace: stage
+    produces: release-notes.md
+    deadline: 15m
+    session:
+      kill-on: [succeeded, failed]
+    prompt: |
+      Write release notes for version $(cat "$AO_RUN_DIR/version").
+      Use `git log` since the previous tag. Group by user-visible change,
+      not by commit. Omit internal refactors.
+      Write to $AO_OUTPUT, then `ao pipeline done`.
+      If there are no user-visible changes, `ao pipeline fail --reason "..."`.
+    on_success: publish-github
+
+  - id: verify-digests
+    executor: command
+    needs: [build-macos, build-windows, build-linux]
+    workspace: run
+    run: ao release verify-digests "$AO_RUN_DIR/digests" "$AO_RUN_DIR/artifacts"
+    on_success: sign-macos
+
+  - id: sign-macos
+    executor: command
+    workspace: run
+    credentials: [apple-signing]
+    deadline: 45m
+    run: |
+      ao release sign-dmg   "$AO_RUN_DIR/artifacts/"*.dmg
+      ao release notarize --wait --timeout 40m "$AO_RUN_DIR/artifacts/"*.dmg
+      ao release verify-notarization "$AO_RUN_DIR/artifacts/"*.dmg
+    on_success: publish-github
+
+  - id: publish-github
+    executor: command
+    needs: [sign-macos, release-notes]
+    workspace: run
+    credentials: [github-release]
+    run: |
+      gh release create "v$(cat "$AO_RUN_DIR/version")" \
+        "$AO_RUN_DIR/artifacts/"* \
+        --notes-file "$AO_RUN_DIR/agent-outputs/release-notes.md"
+    on_success: [update-tap, update-feed]
+
+  - id: update-tap
+    executor: command
+    workspace: run
+    credentials: [homebrew-tap]
+    run: ao release bump-cask --version "$(cat "$AO_RUN_DIR/version")"
+    on_success: announce
+    on_failure: notify-partial
+
+  - id: update-feed
+    executor: command
+    workspace: run
+    credentials: [github-release]
+    run: ao release publish-feed --version "$(cat "$AO_RUN_DIR/version")"
+    on_success: announce
+    on_failure: notify-partial
+
+  - id: announce
+    executor: command
+    needs: [update-tap, update-feed]
+    workspace: run
+    credentials: [discord]
+    run: |
+      ao discord post --file "$AO_RUN_DIR/agent-outputs/release-notes.md" \
+        --title "v$(cat "$AO_RUN_DIR/version")"
+
+  - id: diagnose-build
+    executor: agent
+    agent: claude-code
+    produces: diagnosis.md
+    deadline: 15m
+    session:
+      kill-on: []
+    prompt: |
+      Build stage `$AO_FAILED_STAGE` failed. Its log is at
+      $AO_RUN_DIR/stage-logs/$AO_FAILED_STAGE.log and you are in its
+      working tree with the failure state intact.
+      Diagnose the root cause, write to $AO_OUTPUT, then `ao pipeline done`.
+    on_success: notify-failure
+
+  - id: notify-failure
+    executor: command
+    workspace: run
+    credentials: [discord]
+    run: |
+      ao discord post --title "release failed at $AO_FAILED_STAGE" \
+        --body "outcome: $AO_FAILED_OUTCOME"
+
+  - id: notify-partial
+    executor: command
+    workspace: run
+    credentials: [discord]
+    run: |
+      ao discord post --urgent --title "PARTIAL RELEASE" \
+        --body "GitHub release for v$(cat "$AO_RUN_DIR/version") is live but \
+      $AO_FAILED_STAGE failed. Manual reconciliation required."

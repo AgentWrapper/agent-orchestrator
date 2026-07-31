@@ -911,6 +911,137 @@ func TestSetSessionPreviewURLBumpsRevisionAndFiresCDCOnSameURL(t *testing.T) {
 	}
 }
 
+// A session that runs in a tree it does not own keeps that fact on the row.
+// Every teardown path reads it before removing a worktree, so losing it across
+// a daemon restart would hand a live pipeline run's workspace to session
+// cleanup.
+func TestSessionWorkspaceAdoptedRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+
+	rec := sampleRecord("mer")
+	rec.Metadata.WorkspaceAdopted = true
+	rec.Metadata.WorkspacePath = "/runs/run-a/workspace"
+	r, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	got, _, _ := s.GetSession(ctx, r.ID)
+	if !got.Metadata.WorkspaceAdopted {
+		t.Fatal("adopted marker did not survive the insert")
+	}
+
+	got.Metadata.RuntimeHandleID = "pane-2"
+	if err := s.UpdateSession(ctx, got); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	again, _, _ := s.GetSession(ctx, r.ID)
+	if !again.Metadata.WorkspaceAdopted {
+		t.Fatal("adopted marker did not survive an update")
+	}
+
+	plain, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatalf("create plain: %v", err)
+	}
+	if back, _, _ := s.GetSession(ctx, plain.ID); back.Metadata.WorkspaceAdopted {
+		t.Fatal("an ordinary session is marked as running in an adopted tree")
+	}
+}
+
+// A pipeline-spawned session carries its run id on the row so the session
+// trigger bridge's loop guard survives a daemon restart, and the orphan marker
+// round-trips whole through the JSON column.
+func TestSessionPipelineMetadataRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+
+	rec := sampleRecord("mer")
+	rec.Metadata.PipelineRunID = "run-a"
+	r, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	got, _, _ := s.GetSession(ctx, r.ID)
+	if got.Metadata.PipelineRunID != "run-a" {
+		t.Fatalf("pipeline run id = %q, want the spawn marker persisted", got.Metadata.PipelineRunID)
+	}
+	if got.Metadata.PipelineOrphan != nil {
+		t.Fatalf("fresh session is orphaned: %+v", got.Metadata.PipelineOrphan)
+	}
+
+	keptAt := time.Now().UTC().Truncate(time.Second)
+	info := &domain.PipelineOrphanInfo{
+		RunID:    "run-a",
+		Stage:    "review",
+		Outcome:  "no_output",
+		KeptAt:   keptAt,
+		Pipeline: "pr-review",
+	}
+	ok, err := s.SetSessionPipelineOrphan(ctx, r.ID, info, keptAt)
+	if err != nil || !ok {
+		t.Fatalf("mark orphan: ok=%v err=%v", ok, err)
+	}
+	got, _, _ = s.GetSession(ctx, r.ID)
+	if got.Metadata.PipelineOrphan == nil {
+		t.Fatal("orphan marker not persisted")
+	}
+	if *got.Metadata.PipelineOrphan != *info {
+		t.Fatalf("orphan marker = %+v, want %+v", *got.Metadata.PipelineOrphan, *info)
+	}
+
+	// A full row update must not drop the marker, and clearing it round-trips.
+	if err := s.UpdateSession(ctx, got); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if again, _, _ := s.GetSession(ctx, r.ID); again.Metadata.PipelineOrphan == nil {
+		t.Fatal("orphan marker lost on a full row update")
+	}
+	if ok, err := s.SetSessionPipelineOrphan(ctx, r.ID, nil, keptAt); err != nil || !ok {
+		t.Fatalf("clear orphan: ok=%v err=%v", ok, err)
+	}
+	if cleared, _, _ := s.GetSession(ctx, r.ID); cleared.Metadata.PipelineOrphan != nil {
+		t.Fatalf("orphan marker not cleared: %+v", cleared.Metadata.PipelineOrphan)
+	}
+
+	if ok, err := s.SetSessionPipelineOrphan(ctx, "mer-missing", info, keptAt); err != nil || ok {
+		t.Fatalf("mark unknown session: ok=%v err=%v, want ok=false", ok, err)
+	}
+}
+
+// Marking a session pipeline-orphaned must reach the live session list: the
+// badge is the whole visibility half of the reaper (spec section 7.3), and a
+// badge that only appears on the next unrelated update is not visibility.
+func TestSetSessionPipelineOrphanFiresCDCEvent(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+
+	base, _ := s.LatestSeq(ctx)
+	keptAt := time.Now().UTC()
+	info := &domain.PipelineOrphanInfo{RunID: "run-a", Stage: "review", Outcome: "no_signal", KeptAt: keptAt, Pipeline: "pr-review"}
+	if ok, err := s.SetSessionPipelineOrphan(ctx, r.ID, info, keptAt); err != nil || !ok {
+		t.Fatalf("mark orphan: ok=%v err=%v", ok, err)
+	}
+
+	evs, err := s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updates := 0
+	for _, e := range evs {
+		if string(e.Type) == "session_updated" {
+			updates++
+		}
+	}
+	if updates != 1 {
+		t.Fatalf("session_updated events = %d, want 1 after marking the session orphaned", updates)
+	}
+}
+
 func TestRenameSessionFiresCDCEvent(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

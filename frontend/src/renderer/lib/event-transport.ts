@@ -4,6 +4,7 @@ import { getApiBaseUrl, hasTrustedApiBaseUrl, subscribeApiBaseUrl } from "./api-
 import { setEventsConnectionState } from "./events-connection";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { sessionScmSummaryQueryKey } from "../hooks/useSessionScmSummary";
+import { pipelinesEnabledQueryKey } from "../hooks/usePipelinesEnabled";
 
 export type EventTransport = {
 	connect: () => () => void;
@@ -33,6 +34,22 @@ const CDC_EVENT_TYPES = [
 	"pr_review_thread_resolved",
 ] as const;
 
+// Pipeline CDC events (backend/internal/cdc/event.go) ride the same SSE stream
+// but change only pipeline state, so they invalidate the pipeline query family
+// rather than the workspace/session lists. Every pipeline query key is prefixed
+// "pipeline-" (see hooks/usePipelineRuns, T9 definitions), so one predicate
+// covers runs, run detail, and definitions.
+const PIPELINE_EVENT_TYPES = [
+	"pipeline_definition_changed",
+	"pipeline_run_updated",
+	"pipeline_stage_run_updated",
+	"pipeline_artifact_updated",
+] as const;
+
+function isPipelineQueryKey(queryKey: readonly unknown[]): boolean {
+	return typeof queryKey[0] === "string" && queryKey[0].startsWith("pipeline");
+}
+
 /**
  * Wires live server state into the TanStack Query cache. Two sources feed it:
  *   - daemon lifecycle over Electron IPC (coming up/down changes session availability)
@@ -44,6 +61,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 	return {
 		connect() {
 			let debounce: ReturnType<typeof setTimeout> | undefined;
+			let pipelineDebounce: ReturnType<typeof setTimeout> | undefined;
 			let retryTimer: ReturnType<typeof setTimeout> | undefined;
 			let source: EventSource | undefined;
 			let sourceBaseUrl: string | undefined;
@@ -52,6 +70,12 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 				debounce = setTimeout(() => {
 					void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 					void queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey() });
+				}, INVALIDATE_DEBOUNCE_MS);
+			};
+			const refreshPipelines = () => {
+				if (pipelineDebounce) clearTimeout(pipelineDebounce);
+				pipelineDebounce = setTimeout(() => {
+					void queryClient.invalidateQueries({ predicate: (query) => isPipelineQueryKey(query.queryKey) });
 				}, INVALIDATE_DEBOUNCE_MS);
 			};
 
@@ -98,6 +122,9 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 					for (const type of CDC_EVENT_TYPES) {
 						source.addEventListener(type, refreshWorkspaces);
 					}
+					for (const type of PIPELINE_EVENT_TYPES) {
+						source.addEventListener(type, refreshPipelines);
+					}
 					// EventSource auto-reconnects and resumes via Last-Event-ID while
 					// CONNECTING; scheduleRetry only covers the terminal CLOSED state.
 				} catch {
@@ -108,6 +135,11 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 			const removeDaemonListener = aoBridge.daemon.onStatus(() => {
 				connectSource();
 				refreshWorkspaces();
+				// A daemon (re)start can flip the AO_PIPELINES flag (T12's
+				// settings/pipelines toggle restarts the daemon to apply it), so
+				// re-probe capability every time instead of trusting the cached
+				// value for the app's whole lifetime.
+				void queryClient.invalidateQueries({ queryKey: pipelinesEnabledQueryKey });
 			});
 			// Rebind when the daemon comes back on a different port, independent of
 			// status-event ordering.
@@ -116,6 +148,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 
 			return () => {
 				if (debounce) clearTimeout(debounce);
+				if (pipelineDebounce) clearTimeout(pipelineDebounce);
 				if (retryTimer) clearTimeout(retryTimer);
 				removeDaemonListener();
 				removeBaseUrlListener();

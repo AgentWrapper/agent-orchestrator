@@ -39,6 +39,14 @@ type notificationSink interface {
 	Notify(ctx context.Context, intent ports.NotificationIntent) error
 }
 
+// pipelineMergeGate is the optional one-directional coupling to the pipelines
+// service: lifecycle asks the pipeline package whether a settled run blocks a
+// PR's merge; the pipeline package never imports lifecycle. Nil (pipelines off
+// or no manager) makes the merge-readiness gate a no-op.
+type pipelineMergeGate interface {
+	PRBlocksMerge(ctx context.Context, projectID domain.ProjectID, prURL, headSHA string) (bool, error)
+}
+
 // projectConfigLoader resolves a project's config so MarkTerminated can check
 // the ContainerReap opt-out before reaping. A load failure must not fall
 // through to reaping - see ports.ContainerReaper below.
@@ -98,6 +106,9 @@ type Manager struct {
 	// nudges become no-ops but the reducer still runs.
 	guard         *sessionguard.Guard
 	notifications notificationSink
+	// pipelineGate is set post-construction (SetPipelineMergeGate) only when the
+	// pipelines subsystem is enabled; nil otherwise. Guarded by mu.
+	pipelineGate pipelineMergeGate
 	// completionTerminator is late-bound because Session Manager itself depends
 	// on this lifecycle reducer. It is required before the SCM observer starts.
 	completionTerminator sessionTerminator
@@ -148,6 +159,16 @@ func New(store sessionStore, messenger ports.AgentMessenger, opts ...Option) *Ma
 		opt(m)
 	}
 	return m
+}
+
+// SetPipelineMergeGate wires the pipelines merge-readiness gate after
+// construction. The daemon calls it only when the pipelines subsystem is enabled
+// (the gate is the pipeline service); left unset, the readiness path never
+// consults pipelines. A nil gate resets to the no-op behavior.
+func (m *Manager) SetPipelineMergeGate(gate pipelineMergeGate) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pipelineGate = gate
 }
 
 // SetCompletionTerminator wires merge completion to the same teardown path as
@@ -723,5 +744,12 @@ func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
 	base.RuntimeLaunchID = in.RuntimeLaunchID
 	set(&base.AgentSessionID, in.AgentSessionID)
 	set(&base.Prompt, in.Prompt)
+	set(&base.PipelineRunID, in.PipelineRunID)
+	// Sticky, like every other field here: a relaunch restates the handles, not
+	// the provenance, and losing this marker would hand a tree the session never
+	// owned to session teardown.
+	if in.WorkspaceAdopted {
+		base.WorkspaceAdopted = true
+	}
 	return base
 }

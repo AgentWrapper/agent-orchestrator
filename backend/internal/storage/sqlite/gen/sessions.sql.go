@@ -19,7 +19,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge
+    workspace_repo_path, terminate_on_pr_merge,
+    pipeline_run_id, pipeline_orphan, workspace_adopted
 FROM sessions WHERE id = ?
 `
 
@@ -51,6 +52,9 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.RuntimeLaunchID,
 		&i.WorkspaceRepoPath,
 		&i.TerminateOnPRMerge,
+		&i.PipelineRunID,
+		&i.PipelineOrphan,
+		&i.WorkspaceAdopted,
 	)
 	return i, err
 }
@@ -62,8 +66,9 @@ INSERT INTO sessions (
     branch, workspace_path, workspace_repo_path, runtime_handle_id,
     runtime_launch_id, agent_session_id, prompt,
     preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation,
+    pipeline_run_id, pipeline_orphan, workspace_adopted,
     created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSessionParams struct {
@@ -89,6 +94,9 @@ type InsertSessionParams struct {
 	PreviewRevision    int64
 	TerminateOnPRMerge bool
 	CleanupGeneration  int64
+	PipelineRunID      string
+	PipelineOrphan     string
+	WorkspaceAdopted   bool
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }
@@ -117,6 +125,9 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.PreviewRevision,
 		arg.TerminateOnPRMerge,
 		arg.CleanupGeneration,
+		arg.PipelineRunID,
+		arg.PipelineOrphan,
+		arg.WorkspaceAdopted,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
@@ -129,7 +140,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge
+    workspace_repo_path, terminate_on_pr_merge,
+    pipeline_run_id, pipeline_orphan, workspace_adopted
 FROM sessions ORDER BY project_id, num
 `
 
@@ -167,6 +179,9 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.RuntimeLaunchID,
 			&i.WorkspaceRepoPath,
 			&i.TerminateOnPRMerge,
+			&i.PipelineRunID,
+			&i.PipelineOrphan,
+			&i.WorkspaceAdopted,
 		); err != nil {
 			return nil, err
 		}
@@ -187,7 +202,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge
+    workspace_repo_path, terminate_on_pr_merge,
+    pipeline_run_id, pipeline_orphan, workspace_adopted
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -225,6 +241,9 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.RuntimeLaunchID,
 			&i.WorkspaceRepoPath,
 			&i.TerminateOnPRMerge,
+			&i.PipelineRunID,
+			&i.PipelineOrphan,
+			&i.WorkspaceAdopted,
 		); err != nil {
 			return nil, err
 		}
@@ -292,6 +311,29 @@ func (q *Queries) SessionIsSeed(ctx context.Context, id domain.SessionID) (bool,
 	return is_seed, err
 }
 
+const setSessionPipelineOrphan = `-- name: SetSessionPipelineOrphan :execrows
+UPDATE sessions SET pipeline_orphan = ?, updated_at = ? WHERE id = ?
+`
+
+type SetSessionPipelineOrphanParams struct {
+	PipelineOrphan string
+	UpdatedAt      time.Time
+	ID             domain.SessionID
+}
+
+// Writes the pipeline-orphan marker only, or clears it when handed an empty
+// string. A targeted
+// UPDATE rather than a read-modify-write of the whole row: the pipeline engine
+// marks a session the session manager may be updating at the same moment, and
+// the marker must not carry a stale copy of the rest of the row back with it.
+func (q *Queries) SetSessionPipelineOrphan(ctx context.Context, arg SetSessionPipelineOrphanParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setSessionPipelineOrphan, arg.PipelineOrphan, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const setSessionPreviewURL = `-- name: SetSessionPreviewURL :execrows
 UPDATE sessions SET preview_url = ?, preview_revision = preview_revision + 1, updated_at = ? WHERE id = ?
 `
@@ -338,7 +380,8 @@ UPDATE sessions SET
     branch = ?, workspace_path = ?, workspace_repo_path = ?, runtime_handle_id = ?,
     runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
     preview_url = ?, preview_revision = ?, terminate_on_pr_merge = ?,
-    cleanup_generation = ?, updated_at = ?
+    cleanup_generation = ?, pipeline_run_id = ?, pipeline_orphan = ?,
+    workspace_adopted = ?, updated_at = ?
 WHERE id = ?
 `
 
@@ -362,6 +405,9 @@ type UpdateSessionParams struct {
 	PreviewRevision    int64
 	TerminateOnPRMerge bool
 	CleanupGeneration  int64
+	PipelineRunID      string
+	PipelineOrphan     string
+	WorkspaceAdopted   bool
 	UpdatedAt          time.Time
 	ID                 domain.SessionID
 }
@@ -387,6 +433,9 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.PreviewRevision,
 		arg.TerminateOnPRMerge,
 		arg.CleanupGeneration,
+		arg.PipelineRunID,
+		arg.PipelineOrphan,
+		arg.WorkspaceAdopted,
 		arg.UpdatedAt,
 		arg.ID,
 	)

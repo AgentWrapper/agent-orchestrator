@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -72,6 +73,29 @@ func (s *Store) SetSessionPreviewURL(ctx context.Context, id domain.SessionID, p
 	})
 	if err != nil {
 		return false, fmt.Errorf("set preview url for session %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
+// SetSessionPipelineOrphan writes (info non-nil) or clears (info nil) the
+// pipeline-orphan marker for an existing session, and nothing else. It returns
+// ok=false when the session id does not exist. The sessions_cdc_update trigger
+// fans out a session_updated event when the marker changes, which is what makes
+// the badge appear in the live session list.
+func (s *Store) SetSessionPipelineOrphan(ctx context.Context, id domain.SessionID, info *domain.PipelineOrphanInfo, updatedAt time.Time) (bool, error) {
+	encoded, err := encodePipelineOrphan(info)
+	if err != nil {
+		return false, fmt.Errorf("encode pipeline orphan for session %s: %w", id, err)
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.SetSessionPipelineOrphan(ctx, gen.SetSessionPipelineOrphanParams{
+		ID:             id,
+		PipelineOrphan: encoded,
+		UpdatedAt:      updatedAt,
+	})
+	if err != nil {
+		return false, fmt.Errorf("set pipeline orphan for session %s: %w", id, err)
 	}
 	return rows > 0, nil
 }
@@ -229,6 +253,9 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 			Prompt:            row.Prompt,
 			PreviewURL:        row.PreviewURL,
 			PreviewRevision:   row.PreviewRevision,
+			PipelineRunID:     row.PipelineRunID,
+			PipelineOrphan:    decodePipelineOrphan(row.PipelineOrphan),
+			WorkspaceAdopted:  row.WorkspaceAdopted,
 		},
 		CleanupGeneration: row.CleanupGeneration,
 		CreatedAt:         row.CreatedAt,
@@ -261,6 +288,9 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		PreviewRevision:    rec.Metadata.PreviewRevision,
 		TerminateOnPRMerge: rec.TerminateOnPRMerge,
 		CleanupGeneration:  rec.CleanupGeneration,
+		PipelineRunID:      rec.Metadata.PipelineRunID,
+		PipelineOrphan:     mustEncodePipelineOrphan(rec.Metadata.PipelineOrphan),
+		WorkspaceAdopted:   rec.Metadata.WorkspaceAdopted,
 		CreatedAt:          rec.CreatedAt,
 		UpdatedAt:          rec.UpdatedAt,
 	}
@@ -289,8 +319,51 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		PreviewRevision:    rec.Metadata.PreviewRevision,
 		TerminateOnPRMerge: rec.TerminateOnPRMerge,
 		CleanupGeneration:  rec.CleanupGeneration,
+		PipelineRunID:      rec.Metadata.PipelineRunID,
+		PipelineOrphan:     mustEncodePipelineOrphan(rec.Metadata.PipelineOrphan),
+		WorkspaceAdopted:   rec.Metadata.WorkspaceAdopted,
 		UpdatedAt:          rec.UpdatedAt,
 	}
+}
+
+// encodePipelineOrphan marshals the orphan marker for the pipeline_orphan
+// column. A nil marker is the empty string, which is what "not pipeline
+// orphaned" looks like on the row.
+func encodePipelineOrphan(info *domain.PipelineOrphanInfo) (string, error) {
+	if info == nil {
+		return "", nil
+	}
+	raw, err := json.Marshal(info)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+// mustEncodePipelineOrphan is the full-row (insert/update) path, which has no
+// error channel. PipelineOrphanInfo is four strings and a timestamp, so
+// marshalling cannot fail; an impossible failure drops the marker rather than
+// the whole write, because losing a badge beats losing the session row.
+func mustEncodePipelineOrphan(info *domain.PipelineOrphanInfo) string {
+	encoded, err := encodePipelineOrphan(info)
+	if err != nil {
+		return ""
+	}
+	return encoded
+}
+
+// decodePipelineOrphan reads the column back. Empty means not orphaned, and so
+// does unparseable: a corrupt marker must not fail the session read, because the
+// session itself is still real and still needs to be listable and killable.
+func decodePipelineOrphan(raw string) *domain.PipelineOrphanInfo {
+	if raw == "" {
+		return nil
+	}
+	var info domain.PipelineOrphanInfo
+	if err := json.Unmarshal([]byte(raw), &info); err != nil {
+		return nil
+	}
+	return &info
 }
 
 // nullTimeToTime / timeToNullTime bridge the nullable first_signal_at column
