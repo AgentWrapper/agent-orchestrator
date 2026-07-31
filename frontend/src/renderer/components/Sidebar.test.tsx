@@ -405,6 +405,31 @@ describe("Sidebar", () => {
 		expect(screen.getByLabelText("Project actions for Project One")).toBeInTheDocument();
 	});
 
+	it("toggles project sessions from the folder icon without selecting the project first", async () => {
+		const user = userEvent.setup();
+		const other: WorkspaceSummary = {
+			id: "proj-2",
+			name: "Project Two",
+			path: "/repo/project-two",
+			orchestratorAgent: "claude-code",
+			sessions: [{ ...session, id: "proj-2-1", workspaceId: "proj-2", workspaceName: "Project Two", title: "other task" }],
+		};
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [session] }, other],
+		});
+
+		expect(screen.getByText("fix login")).toBeInTheDocument();
+		expect(screen.getByText("other task")).toBeInTheDocument();
+
+		const folder = screen.getByText("Project Two").closest("button")?.querySelector("[data-project-folder]");
+		expect(folder).toBeTruthy();
+		await user.click(folder!);
+
+		expect(screen.queryByText("other task")).not.toBeInTheDocument();
+		expect(screen.getByText("fix login")).toBeInTheDocument();
+		expect(navigateMock).not.toHaveBeenCalled();
+	});
+
 	it("navigates to the project board when the dashboard button is clicked", async () => {
 		const user = userEvent.setup();
 		renderSidebar();
