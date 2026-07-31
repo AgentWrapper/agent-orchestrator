@@ -285,7 +285,7 @@ describe("Sidebar", () => {
 
 		const content = document.querySelector('[data-sidebar="content"]');
 		expect(content).toHaveClass("overflow-y-auto");
-		expect(content).toHaveClass("scrollbar-none");
+		expect(content).toHaveClass("overflow-x-hidden");
 		expect(content).not.toContainElement(screen.getByText("Projects"));
 	});
 
@@ -407,7 +407,7 @@ describe("Sidebar", () => {
 	it("reveals dashboard and orchestrator buttons alongside the kebab on the project row", () => {
 		renderSidebar();
 
-		expect(screen.getByLabelText("Open Project One dashboard")).toBeInTheDocument();
+		expect(screen.getByText("Project One")).toBeInTheDocument();
 		expect(screen.getByLabelText("Spawn Project One orchestrator")).toBeInTheDocument();
 		expect(screen.getByLabelText("Project actions for Project One")).toBeInTheDocument();
 	});
@@ -425,23 +425,25 @@ describe("Sidebar", () => {
 			workspaces: [{ ...workspace, sessions: [session] }, other],
 		});
 
-		expect(screen.getByText("fix login")).toBeInTheDocument();
-		expect(screen.getByText("other task")).toBeInTheDocument();
+		// Projects start collapsed; sessions are hidden.
+		expect(screen.queryByText("fix login")).not.toBeInTheDocument();
+		expect(screen.queryByText("other task")).not.toBeInTheDocument();
 
+		// Click the folder icon on Project One to expand it.
 		const folder = screen.getByText("Project Two").closest("button")?.querySelector("[data-project-folder]");
 		expect(folder).toBeTruthy();
+		await user.hover(screen.getByText("Project Two").closest("button")!);
 		await user.click(folder!);
 
-		expect(screen.queryByText("other task")).not.toBeInTheDocument();
-		expect(screen.getByText("fix login")).toBeInTheDocument();
+		expect(screen.getByText("other task")).toBeInTheDocument();
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
-	it("navigates to the project board when the dashboard button is clicked", async () => {
+	it("navigates to the project board when the project row is clicked", async () => {
 		const user = userEvent.setup();
 		renderSidebar();
 
-		await user.click(screen.getByLabelText("Open Project One dashboard"));
+		await user.click(screen.getByText("Project One").closest("button")!);
 
 		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
 	});

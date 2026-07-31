@@ -448,10 +448,8 @@ export function Sidebar({
 		<ResizeHandle
 			className={cn(
 				"group-data-[state=collapsed]:hidden",
-				// Keep 40px breathing room at top and bottom. The sidebar-container
-				// already starts 40px from the viewport top (titlebar clearance), so
-				// top-0 is correct; bottom-10 adds the matching 40px gap at the foot.
-				"bottom-10",
+				// Equal 40px breathing room at both top and bottom.
+				"top-10 bottom-10",
 			)}
 			onDoubleClick={onResizeDoubleClick}
 			onPointerDown={onResizePointerDown}

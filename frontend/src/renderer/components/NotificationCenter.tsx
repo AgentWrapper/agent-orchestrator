@@ -34,7 +34,7 @@ import { captureRendererEvent } from "../lib/telemetry";
 import { cn } from "../lib/utils";
 import { TopbarButton } from "./TopbarButton";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+
 
 type NotificationCenterProps = {
 	style?: React.CSSProperties;
@@ -76,6 +76,59 @@ function useNotificationTargetNavigation() {
 	return { openPrimary };
 }
 
+const DEV_NOTIFICATIONS: NotificationDTO[] = import.meta.env.DEV
+	? [
+			{
+				id: "dev-1",
+				type: "needs_input",
+				status: "unread",
+				title: "Agent needs your input",
+				body: "Claude is blocked on a decision in the auth refactor task.",
+				createdAt: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+				projectId: "example/project-1",
+				sessionId: "dev-session-1",
+				prUrl: "",
+				target: { kind: "session", sessionId: "dev-session-1" },
+			},
+			{
+				id: "dev-2",
+				type: "ready_to_merge",
+				status: "unread",
+				title: "PR ready to merge",
+				body: "feat: add dark mode support — all checks passed.",
+				createdAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+				projectId: "example/project-2",
+				sessionId: "dev-session-2",
+				prUrl: "https://github.com/example/project-2/pull/42",
+				target: { kind: "pr", prUrl: "https://github.com/example/project-2/pull/42", sessionId: "dev-session-2" },
+			},
+			{
+				id: "dev-3",
+				type: "pr_merged",
+				status: "read",
+				title: "PR merged",
+				body: "fix: resolve race condition in session cleanup.",
+				createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+				projectId: "example/project-1",
+				sessionId: "dev-session-3",
+				prUrl: "https://github.com/example/project-1/pull/37",
+				target: { kind: "pr", prUrl: "https://github.com/example/project-1/pull/37", sessionId: "dev-session-3" },
+			},
+			{
+				id: "dev-4",
+				type: "pr_closed_unmerged",
+				status: "read",
+				title: "PR closed without merging",
+				body: "chore: bump deps — superseded by a newer automated PR.",
+				createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(),
+				projectId: "example/project-3",
+				sessionId: "dev-session-4",
+				prUrl: "https://github.com/example/project-3/pull/11",
+				target: { kind: "pr", prUrl: "https://github.com/example/project-3/pull/11", sessionId: "dev-session-4" },
+			},
+	  ]
+	: [];
+
 export function NotificationRuntime() {
 	const queryClient = useQueryClient();
 	const { openPrimary } = useNotificationTargetNavigation();
@@ -98,6 +151,17 @@ export function NotificationRuntime() {
 		() => createNotificationsTransport(queryClient, getVisibleAgentSessionId).connect(),
 		[getVisibleAgentSessionId, queryClient],
 	);
+
+	// Seed dummy notifications for local dev so the panel is always testable.
+	useEffect(() => {
+		if (!DEV_NOTIFICATIONS.length) return;
+		const makePage = (items: NotificationDTO[]) => ({
+			pages: [{ notifications: items, nextCursor: null }],
+			pageParams: [undefined],
+		});
+		queryClient.setQueryData(unreadNotificationsQueryKey, makePage(DEV_NOTIFICATIONS.filter((n) => n.status === "unread")));
+		queryClient.setQueryData(recentNotificationsQueryKey, makePage(DEV_NOTIFICATIONS));
+	}, [queryClient]);
 
 	useEffect(() => {
 		return aoBridge.notifications.onClick((id) => {
@@ -128,8 +192,6 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 	const unreadCount = getCachedUnreadCount(unreadQuery.data);
 	const visibleNotifications = view === "unread" ? unread : all;
 	const { openPrimary } = useNotificationTargetNavigation();
-	const hasNoNotifications = !unreadQuery.isLoading && !unreadQuery.isError && unreadCount === 0;
-
 	const markOneRead = async (id: string) => {
 		setActionError(null);
 		void captureRendererEvent("ao.renderer.notification_mark_read_requested", { scope: "single" });
@@ -177,10 +239,6 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 		void notificationsQuery.fetchNextPage();
 	};
 
-	useEffect(() => {
-		if (hasNoNotifications) setOpen(false);
-	}, [hasNoNotifications]);
-
 	const trigger = (
 		<TopbarButton
 			aria-label={unreadCount > 0 ? `${unreadCount} unread notifications` : "Notifications"}
@@ -196,15 +254,6 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 			) : null}
 		</TopbarButton>
 	);
-
-	if (hasNoNotifications) {
-		return (
-			<Tooltip>
-				<TooltipTrigger asChild>{trigger}</TooltipTrigger>
-				<TooltipContent side="bottom">No notifications right now</TooltipContent>
-			</Tooltip>
-		);
-	}
 
 	return (
 		<Popover onOpenChange={setPanelOpen} open={open}>

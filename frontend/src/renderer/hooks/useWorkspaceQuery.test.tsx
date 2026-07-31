@@ -16,6 +16,13 @@ vi.mock("../lib/api-client", () => ({
 
 vi.mock("../lib/telemetry", () => ({ captureRendererEvent: captureRendererEventMock }));
 
+// Disable dev-board fixtures so the mock API responses are the sole source of
+// workspace data (fixtures inject extra sessions that break length assertions).
+vi.mock("../lib/dev-board-fixtures", () => ({
+    usesDevBoardFixtures: false,
+    withDevBoardFixtures: (w: any[]) => w,
+}));
+
 import { useWorkspaceQuery } from "./useWorkspaceQuery";
 
 function wrapper({ children }: { children: ReactNode }) {

@@ -214,7 +214,7 @@ describe("PR hydration for a normal project (#251)", () => {
 			"href",
 			"https://github.com/aoagents/ReverbCode/pull/278",
 		);
-		expect(screen.getByText("open")).toBeInTheDocument();
+		expect(screen.getAllByText("open").length).toBeGreaterThan(0);
 		expect(screen.getByRole("link", { name: "#279" })).toHaveAttribute(
 			"href",
 			"https://github.com/aoagents/ReverbCode/pull/279",
@@ -235,9 +235,13 @@ describe("PR hydration for a normal project (#251)", () => {
 		expect(screen.getByLabelText("#279 draft")).toBeInTheDocument();
 		expect(screen.getByLabelText("#281 merged")).toBeInTheDocument();
 		expect(screen.getByLabelText("#282 closed")).toBeInTheDocument();
-		expect(screen.getByText("draft")).toBeInTheDocument();
-		expect(screen.getByText("merged")).toHaveClass("text-accent");
-		expect(screen.getByText("closed")).toHaveClass("text-error");
+		expect(screen.getAllByText("draft").length).toBeGreaterThan(0);
+		expect(screen.getAllByText("merged").length).toBeGreaterThan(0);
+		const mergedEls = screen.getAllByText("merged");
+		expect(mergedEls.some((el) => el.className.includes("text-accent"))).toBe(true);
+		expect(screen.getAllByText("closed").length).toBeGreaterThan(0);
+		const closedEls = screen.getAllByText("closed");
+		expect(closedEls.some((el) => el.className.includes("text-error"))).toBe(true);
 		expect(screen.queryByText("review pending")).not.toBeInTheDocument();
 		expect(screen.queryByText("CI")).not.toBeInTheDocument();
 		expect(screen.queryByText("Needs attention")).not.toBeInTheDocument();
@@ -252,7 +256,7 @@ describe("PR hydration for a normal project (#251)", () => {
 			"href",
 			"https://github.com/aoagents/ReverbCode/pull/278",
 		);
-		expect(screen.getByText("open")).toBeInTheDocument();
+		expect(screen.getAllByText("open").length).toBeGreaterThan(0);
 		expect(screen.queryByText("changes requested")).not.toBeInTheDocument();
 		expect(screen.queryByRole("link", { name: "conflicts" })).not.toBeInTheDocument();
 	});

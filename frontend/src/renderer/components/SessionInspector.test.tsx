@@ -87,8 +87,17 @@ const prSummary = (
 		deletions: 1,
 		changedFiles: 2,
 		ci: { state: "passing", failingChecks: [] },
-		review: { decision: "none", hasUnresolvedHumanComments: false, unresolvedBy: [] },
-		mergeability: { state: "mergeable", reasons: [], prUrl: url, conflictFiles: [] },
+		review: {
+			decision: "none",
+			hasUnresolvedHumanComments: false,
+			unresolvedBy: [],
+		},
+		mergeability: {
+			state: "mergeable",
+			reasons: [],
+			prUrl: url,
+			conflictFiles: [],
+		},
 		updatedAt: "2026-06-15T12:00:00Z",
 		...overrides,
 	};
@@ -163,9 +172,19 @@ beforeEach(() => {
 	navigateMock.mockReset();
 	patchMock.mockReset();
 	postMock.mockReset();
-	getMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [] }, error: undefined });
-	patchMock.mockResolvedValue({ data: { ok: true }, error: undefined, response: { status: 200 } });
-	postMock.mockResolvedValue({ data: { ok: true, sessionId: "sess-1" }, error: undefined });
+	getMock.mockResolvedValue({
+		data: { reviewerHandleId: "", reviews: [] },
+		error: undefined,
+	});
+	patchMock.mockResolvedValue({
+		data: { ok: true },
+		error: undefined,
+		response: { status: 200 },
+	});
+	postMock.mockResolvedValue({
+		data: { ok: true, sessionId: "sess-1" },
+		error: undefined,
+	});
 });
 
 afterEach(() => {
@@ -178,10 +197,18 @@ describe("SessionInspector tabs", () => {
 
 		const summaryTab = screen.getByRole("tab", { name: "Summary" });
 
+		for (const label of ["Summary", "Reviews", "Browser", "Files"]) {
+			const tab = screen.getByRole("tab", { name: label });
+			expect(tab).not.toHaveClass("text-sm-md");
+			expect(within(tab).getByText(label)).toHaveClass("text-caption", "@max-[315px]/inspector:hidden");
+		}
 		expect(summaryTab).not.toHaveClass("flex-1");
-		expect(summaryTab).toHaveClass("h-control-md", "px-1.5");
+		expect(summaryTab).toHaveClass("h-control-md", "px-2");
 		expect(summaryTab).toHaveAttribute("title", "Summary");
-		expect(within(summaryTab).getByText("Summary")).toHaveClass("@max-[350px]/inspector:hidden");
+		expect(within(summaryTab).getByText("Summary").previousElementSibling).toHaveClass(
+			"@min-[316px]/inspector:hidden",
+			"[&_svg]:size-icon-md",
+		);
 	});
 
 	it("renders the supplied files view when the Files tab opens", async () => {
@@ -194,6 +221,35 @@ describe("SessionInspector tabs", () => {
 
 		expect(onOpenFiles).toHaveBeenCalledTimes(1);
 		expect(screen.getByText("workspace file review")).toBeInTheDocument();
+	});
+
+	it("keeps the inspector toggle at the end of the open tab header", async () => {
+		const onToggleVisibility = vi.fn();
+		renderWithQuery(<SessionInspector onToggleVisibility={onToggleVisibility} session={session([])} />);
+
+		const tabs = screen.getByRole("tablist");
+		const toggle = screen.getByRole("button", {
+			name: "Close inspector panel",
+		});
+		expect(tabs.parentElement?.lastElementChild).toBe(toggle);
+		expect(toggle.querySelector("svg")).toHaveClass("size-icon-lg");
+		expect(toggle).toHaveClass("ml-auto");
+
+		await userEvent.click(toggle);
+		expect(onToggleVisibility).toHaveBeenCalledTimes(1);
+	});
+
+	it("leaves the closed inspector inert for the topbar-owned reopen control", () => {
+		const onToggleVisibility = vi.fn();
+		renderWithQuery(
+			<SessionInspector isInspectorVisible={false} onToggleVisibility={onToggleVisibility} session={session([])} />,
+		);
+
+		expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /inspector panel/i })).not.toBeInTheDocument();
+		const hiddenBody = document.querySelector("[aria-hidden='true'][inert]");
+		expect(hiddenBody).toBeInTheDocument();
+		expect(onToggleVisibility).not.toHaveBeenCalled();
 	});
 });
 
@@ -232,7 +288,9 @@ describe("SessionInspector PR section", () => {
 
 	it("links each PR to its url", () => {
 		renderWithQuery(<SessionInspector session={session([pr(41, "open"), pr(42, "draft")])} />);
-		const links = prSection("Pull requests (2)").getAllByRole("link", { name: "Open" });
+		const links = prSection("Pull requests (2)").getAllByRole("link", {
+			name: "Open",
+		});
 		expect(links.map((a) => a.getAttribute("href"))).toEqual([
 			"https://example.com/pr/41",
 			"https://example.com/pr/42",
@@ -244,7 +302,11 @@ describe("SessionInspector completion controls", () => {
 	it("persists the terminate-on-merge preference", async () => {
 		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
 
-		await userEvent.click(screen.getByRole("switch", { name: "Terminate session when pull requests merge" }));
+		await userEvent.click(
+			screen.getByRole("switch", {
+				name: "Terminate session when pull requests merge",
+			}),
+		);
 
 		await waitFor(() =>
 			expect(patchMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/merge-policy", {
@@ -268,7 +330,9 @@ describe("SessionInspector completion controls", () => {
 		]);
 
 		expect(
-			screen.queryByRole("switch", { name: "Terminate session when pull requests merge" }),
+			screen.queryByRole("switch", {
+				name: "Terminate session when pull requests merge",
+			}),
 		).not.toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: "Terminate session" }));
 		expect(screen.getByRole("dialog", { name: "Terminate do the thing?" })).toBeInTheDocument();
@@ -305,7 +369,12 @@ describe("SessionInspector completion controls", () => {
 
 	it("hides completion controls after the session is terminated", () => {
 		renderWithQuery(
-			<SessionInspector session={session([pr(7, "merged")], { status: "merged", isTerminated: true })} />,
+			<SessionInspector
+				session={session([pr(7, "merged")], {
+					status: "merged",
+					isTerminated: true,
+				})}
+			/>,
 		);
 
 		expect(screen.queryByText("Completion")).not.toBeInTheDocument();
@@ -378,7 +447,10 @@ describe("SessionInspector Activity section", () => {
 	});
 
 	it("keeps resume failures visible beside the action", async () => {
-		postMock.mockResolvedValueOnce({ error: new Error("agent restart failed"), response: { status: 500 } });
+		postMock.mockResolvedValueOnce({
+			error: new Error("agent restart failed"),
+			response: { status: 500 },
+		});
 		renderWithQuery(
 			<SessionInspector
 				session={session([], {
@@ -416,7 +488,10 @@ describe("SessionInspector Activity section", () => {
 			<SessionInspector
 				session={session([], {
 					status: "working",
-					activity: { state: "unknown", lastActivityAt: "2026-06-15T10:00:00Z" },
+					activity: {
+						state: "unknown",
+						lastActivityAt: "2026-06-15T10:00:00Z",
+					},
 				})}
 			/>,
 		);
@@ -581,7 +656,10 @@ describe("SessionInspector Activity section", () => {
 		];
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/sessions/{sessionId}/pr") {
-				return { data: { sessionId: "sess-1", prs: summaries }, error: undefined };
+				return {
+					data: { sessionId: "sess-1", prs: summaries },
+					error: undefined,
+				};
 			}
 			return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
 		});
@@ -688,7 +766,12 @@ describe("SessionInspector reviews tab", () => {
 
 	it("triggers a review and opens the returned reviewer terminal", async () => {
 		mockCommonGets([], "", [reviewState(3, "needs_review")]);
-		const runningReview = { ...approvedReview, status: "running", verdict: "", body: "" };
+		const runningReview = {
+			...approvedReview,
+			status: "running",
+			verdict: "",
+			body: "",
+		};
 		postMock.mockResolvedValue({
 			response: { status: 201 },
 			data: {
@@ -710,7 +793,10 @@ describe("SessionInspector reviews tab", () => {
 				params: { path: { sessionId: "sess-1" } },
 			}),
 		);
-		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-pane", harness: "codex" });
+		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({
+			handleId: "reviewer-pane",
+			harness: "codex",
+		});
 	});
 
 	it("shows claude-code as the default reviewer before a run exists", async () => {
@@ -899,7 +985,10 @@ describe("SessionInspector reviews tab", () => {
 
 	it("shows cancelled review runs without marking them failed", async () => {
 		mockCommonGets([], "reviewer-pane", [
-			{ ...reviewState(3, "needs_review", "abc123"), latestRun: { ...failedReview, status: "cancelled" } },
+			{
+				...reviewState(3, "needs_review", "abc123"),
+				latestRun: { ...failedReview, status: "cancelled" },
+			},
 		]);
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);

@@ -354,7 +354,7 @@ describe("BrowserPanel", () => {
 	it("renders the premium browser shell hooks in the default view", () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
-		expect(screen.getByTestId("browser-toolbar")).toHaveClass("browser-panel__toolbar");
+		expect(screen.getByTestId("browser-toolbar")).toHaveClass("h-topbar-secondary");
 		expect(screen.getByTestId("browser-viewport")).toHaveClass("browser-panel__viewport");
 	});
 
@@ -362,9 +362,10 @@ describe("BrowserPanel", () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
 		const icon = screen.getByTestId("browser-url-icon");
-		expect(icon).toHaveClass("browser-panel__url-icon");
-		expect(icon).not.toHaveClass("top-1/2");
-		expect(icon).not.toHaveClass("-translate-y-1/2");
+		// The icon is now positioned via Tailwind classes on the SVG element itself,
+		// rather than through a parent CSS hook.
+		expect(icon).toHaveClass("top-1/2");
+		expect(icon).toHaveClass("-translate-y-1/2");
 	});
 
 	it("warms the browser tabs menu before opening it above the native browser", async () => {

@@ -140,14 +140,13 @@ vi.mock("../components/ShellTopbar", () => ({ ShellTopbar: () => null }));
 vi.mock("../components/TitlebarNav", async () => {
 	const { useUiStore: useStore } = await vi.importActual<typeof import("../stores/ui-store")>("../stores/ui-store");
 	return {
-		TitlebarNav: ({ onSidebarPreviewEnter }: { onSidebarPreviewEnter?: () => void }) => {
+		TitlebarNav: () => {
 			const isSidebarOpen = useStore((state) => state.isSidebarOpen);
 			const toggleSidebar = useStore((state) => state.toggleSidebar);
 			return (
 				<button
 					aria-label={isSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
 					onClick={toggleSidebar}
-					onPointerEnter={onSidebarPreviewEnter}
 					type="button"
 				/>
 			);
@@ -384,24 +383,23 @@ describe("shell workspace startup", () => {
 });
 
 describe("shell sidebar hover preview", () => {
-	it("temporarily overlays a collapsed sidebar from the titlebar toggle and closes after pointer leave", async () => {
+	it("toggles the sidebar open and closed via the titlebar button click", async () => {
 		useUiStore.setState({ isSidebarOpen: false });
 		await renderShell();
 
 		const provider = screen.getByTestId("sidebar-provider");
-		const sidebar = screen.getByTestId("sidebar");
 		const previewTrigger = screen.getByRole("button", { name: "Expand sidebar" });
-		expect(screen.queryByRole("button", { name: "Preview sidebar" })).not.toBeInTheDocument();
 
 		expect(provider).toHaveAttribute("data-open", "false");
-		fireEvent.pointerEnter(previewTrigger);
+		fireEvent.click(previewTrigger);
 
 		expect(provider).toHaveAttribute("data-open", "true");
-		expect(sidebar).toHaveAttribute("data-overlay", "true");
-		expect(useUiStore.getState().isSidebarOpen).toBe(false);
+		expect(useUiStore.getState().isSidebarOpen).toBe(true);
+		expect(screen.getByRole("button", { name: "Collapse sidebar" })).toBeInTheDocument();
 
-		fireEvent.pointerMove(window, { clientX: 500, clientY: 300 });
-		await waitFor(() => expect(provider).toHaveAttribute("data-open", "false"));
+		// Click the collapse button
+		fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+		expect(provider).toHaveAttribute("data-open", "false");
 		expect(useUiStore.getState().isSidebarOpen).toBe(false);
 	});
 
@@ -410,7 +408,6 @@ describe("shell sidebar hover preview", () => {
 		await renderShell();
 
 		const previewTrigger = screen.getByRole("button", { name: "Expand sidebar" });
-		fireEvent.pointerEnter(previewTrigger);
 		fireEvent.click(previewTrigger);
 
 		expect(useUiStore.getState().isSidebarOpen).toBe(true);
