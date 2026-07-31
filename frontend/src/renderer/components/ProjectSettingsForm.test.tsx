@@ -90,6 +90,20 @@ const agentCatalogResponse = {
 function mockProject(project: Record<string, unknown>) {
 	getMock.mockImplementation(async (path: string) => {
 		if (path === "/api/v1/agents") return agentCatalogResponse;
+		if (path === "/api/v1/agents/{agent}/models") {
+			return {
+				data: {
+					agentId: "test-agent",
+					selectionMode: "text",
+					models: [],
+					allowCustom: true,
+					source: "manual",
+					fetchedAt: "2026-07-31T00:00:00Z",
+					stale: false,
+				},
+				error: undefined,
+			};
+		}
 		return {
 			data: {
 				status: "ok",
@@ -218,7 +232,8 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByText("git@github.com:acme/project-one.git")).toBeInTheDocument();
 		expect(screen.getByLabelText("Default branch")).toHaveValue("develop");
 		expect(screen.getByLabelText("Session prefix")).toHaveValue("po");
-		expect(screen.getByLabelText("Model override")).toHaveValue("claude-opus-4-5");
+		expect(screen.getByLabelText("Worker model")).toHaveValue("worker-model");
+		expect(screen.getByLabelText("Orchestrator model")).toHaveValue("claude-opus-4-5");
 
 		const workerAgent = screen.getByRole("button", { name: "Default worker agent" });
 		const orchestratorAgent = screen.getByRole("button", { name: "Default orchestrator agent" });
@@ -233,10 +248,10 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.type(screen.getByLabelText("Default branch"), "release");
 		await userEvent.clear(screen.getByLabelText("Session prefix"));
 		await userEvent.type(screen.getByLabelText("Session prefix"), "rel");
-		await userEvent.clear(screen.getByLabelText("Model override"));
-		await userEvent.type(screen.getByLabelText("Model override"), "gpt-5-codex");
 		await chooseOption(workerAgent, "OpenCode");
 		await chooseOption(orchestratorAgent, "Goose");
+		await userEvent.type(screen.getByLabelText("Worker model"), "openai/gpt-5.4");
+		await userEvent.type(screen.getByLabelText("Orchestrator model"), "anthropic/claude-sonnet");
 		await userEvent.click(permissionMode);
 		await userEvent.click(await screen.findByRole("menuitem", { name: "Bypass permissions" }));
 
@@ -255,11 +270,13 @@ describe("ProjectSettingsForm", () => {
 					postCreate: ["npm install"],
 					worker: {
 						agent: "opencode",
-						agentConfig: { model: "worker-model" },
+						agentConfig: { model: "openai/gpt-5.4" },
 					},
-					orchestrator: { agent: "goose" },
+					orchestrator: {
+						agent: "goose",
+						agentConfig: { model: "anthropic/claude-sonnet" },
+					},
 					agentConfig: {
-						model: "gpt-5-codex",
 						permissions: "bypass-permissions",
 					},
 					reviewers: [{ harness: "claude-code" }],
@@ -463,10 +480,9 @@ describe("ProjectSettingsForm", () => {
 					symlinks: [".env"],
 					postCreate: ["npm install"],
 					agentRules: "keep work small",
-					worker: { agent: "codex" },
-					orchestrator: { agent: "claude-code" },
+					worker: { agent: "codex", agentConfig: { model: "gpt-5-codex" } },
+					orchestrator: { agent: "claude-code", agentConfig: { model: "gpt-5-codex" } },
 					agentConfig: {
-						model: "gpt-5-codex",
 						permissions: "auto",
 					},
 				},

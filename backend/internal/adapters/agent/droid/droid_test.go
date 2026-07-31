@@ -31,13 +31,13 @@ func TestManifest(t *testing.T) {
 	}
 }
 
-func TestGetConfigSpecEmpty(t *testing.T) {
+func TestGetConfigSpecReportsModel(t *testing.T) {
 	spec, err := (&Plugin{}).GetConfigSpec(context.Background())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if len(spec.Fields) != 0 {
-		t.Fatalf("expected no fields, got %d", len(spec.Fields))
+	if len(spec.Fields) != 1 || spec.Fields[0].Key != "model" {
+		t.Fatalf("unexpected fields: %#v", spec.Fields)
 	}
 }
 
@@ -66,6 +66,20 @@ func TestGetLaunchCommandDefaultPerms(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(cmd, " "), "--settings") {
 		t.Fatal("default perms should not emit --settings")
+	}
+}
+
+func TestGetLaunchCommandForwardsModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "droid"}
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "  custom:sonnet  "},
+		Prompt: "fix it",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"droid", "--model", "custom:sonnet", "fix it"}; !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
 }
 

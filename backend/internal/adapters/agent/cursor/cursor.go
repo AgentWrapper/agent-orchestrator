@@ -69,6 +69,18 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports Cursor CLI's optional model override.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{Fields: []ports.ConfigField{{
+		Key:         "model",
+		Type:        ports.ConfigFieldString,
+		Description: "Model override passed to `cursor-agent --model`.",
+	}}}, nil
+}
+
 // GetLaunchCommand builds the argv to start a new interactive Cursor CLI
 // session:
 //
@@ -88,6 +100,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = []string{binary}
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	appendModelFlag(&cmd, cfg.Config)
 
 	// Prompt is positional and must be last. The `--` sentinel ends option
 	// parsing so a leading "-" in the prompt is not read as a flag.
@@ -123,8 +136,15 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = make([]string, 0, 6)
 	cmd = append(cmd, binary)
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	appendModelFlag(&cmd, cfg.Config)
 	cmd = append(cmd, "--resume", agentSessionID)
 	return cmd, true, nil
+}
+
+func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
+	if model := strings.TrimSpace(cfg.Model); model != "" {
+		*cmd = append(*cmd, "--model", model)
+	}
 }
 
 // SessionInfo surfaces Cursor hook-derived metadata. Metadata is intentionally

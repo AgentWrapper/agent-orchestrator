@@ -63,6 +63,18 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports Droid's optional model override.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{Fields: []ports.ConfigField{{
+		Key:         "model",
+		Type:        ports.ConfigFieldString,
+		Description: "Model override passed to `droid --model`.",
+	}}}, nil
+}
+
 // GetLaunchCommand builds the argv to start a new interactive Droid session:
 //
 //	droid [--settings <path>] [--append-system-prompt[-file] <x>] [prompt]
@@ -80,6 +92,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = make([]string, 0, 6)
 	cmd = append(cmd, binary)
+	appendModelFlag(&cmd, cfg.Config)
 
 	settingsArgs, err := permissionSettingsArgs(cfg.SessionID, cfg.Permissions)
 	if err != nil {
@@ -122,6 +135,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 
 	cmd = make([]string, 0, 5)
 	cmd = append(cmd, binary)
+	appendModelFlag(&cmd, cfg.Config)
 	settingsArgs, err := permissionSettingsArgs(cfg.Session.ID, cfg.Permissions)
 	if err != nil {
 		return nil, false, err
@@ -134,6 +148,12 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	}
 	cmd = append(cmd, "-r", agentSessionID)
 	return cmd, true, nil
+}
+
+func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
+	if model := strings.TrimSpace(cfg.Model); model != "" {
+		*cmd = append(*cmd, "--model", model)
+	}
 }
 
 // SessionInfo surfaces Droid hook-derived metadata. Metadata is intentionally

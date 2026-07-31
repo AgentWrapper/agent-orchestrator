@@ -20,6 +20,12 @@ import {
 	type LucideIcon,
 } from "lucide-react";
 import type { components } from "../../api/schema";
+import {
+	agentModelsQueryKey,
+	agentModelsQueryOptions,
+	refreshAgentModels,
+	type AgentModelCatalog,
+} from "../hooks/useAgentModelsQuery";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
@@ -106,7 +112,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		sessionPrefix: config.sessionPrefix ?? "",
 		workerAgent: config.worker?.agent ?? "",
 		orchestratorAgent: config.orchestrator?.agent ?? "",
-		model: config.agentConfig?.model ?? "",
+		workerModel: config.worker?.agentConfig?.model ?? config.agentConfig?.model ?? "",
+		orchestratorModel: config.orchestrator?.agentConfig?.model ?? config.agentConfig?.model ?? "",
+		workerMode: config.worker?.agentConfig?.mode ?? config.agentConfig?.mode ?? "",
+		orchestratorMode: config.orchestrator?.agentConfig?.mode ?? config.agentConfig?.mode ?? "",
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
 		intakeEnabled: intake.enabled ?? false,
@@ -144,14 +153,30 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		mutationFn: async () => {
 			void captureRendererEvent("ao.renderer.settings_save_requested", { project_id: projectId });
 			const displayName = form.displayName.trim();
+			const {
+				model: _legacyModel,
+				mode: _legacyMode,
+				...sharedAgentConfig
+			} = config.agentConfig ?? {};
 			const next: ProjectConfig = isScratchProject
 				? {
 						...scratchSupportedConfig(config),
-						worker: { ...config.worker, agent: form.workerAgent },
-						orchestrator: { ...config.orchestrator, agent: form.orchestratorAgent },
+						worker: {
+							...config.worker,
+							agent: form.workerAgent,
+							agentConfig: buildRoleAgentConfig(config.worker?.agentConfig, form.workerModel, form.workerMode),
+						},
+						orchestrator: {
+							...config.orchestrator,
+							agent: form.orchestratorAgent,
+							agentConfig: buildRoleAgentConfig(
+								config.orchestrator?.agentConfig,
+								form.orchestratorModel,
+								form.orchestratorMode,
+							),
+						},
 						agentConfig: blankToUndefined({
-							...config.agentConfig,
-							model: form.model || undefined,
+							...sharedAgentConfig,
 							permissions: form.permissions || undefined,
 						}),
 					}
@@ -159,11 +184,22 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						...config,
 						defaultBranch: form.defaultBranch || undefined,
 						sessionPrefix: form.sessionPrefix || undefined,
-						worker: { ...config.worker, agent: form.workerAgent },
-						orchestrator: { ...config.orchestrator, agent: form.orchestratorAgent },
+						worker: {
+							...config.worker,
+							agent: form.workerAgent,
+							agentConfig: buildRoleAgentConfig(config.worker?.agentConfig, form.workerModel, form.workerMode),
+						},
+						orchestrator: {
+							...config.orchestrator,
+							agent: form.orchestratorAgent,
+							agentConfig: buildRoleAgentConfig(
+								config.orchestrator?.agentConfig,
+								form.orchestratorModel,
+								form.orchestratorMode,
+							),
+						},
 						agentConfig: blankToUndefined({
-							...config.agentConfig,
-							model: form.model || undefined,
+							...sharedAgentConfig,
 							permissions: form.permissions || undefined,
 						}),
 						reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
@@ -289,7 +325,18 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					supported={agentCatalog?.supported}
 					disabled={agentsQuery.isFetching && agentCatalog === undefined}
 					invalid={validationError !== null && form.workerAgent === ""}
-					onChange={(v) => setForm((f) => ({ ...f, workerAgent: v }))}
+					onChange={(v) =>
+						setForm((f) => ({ ...f, workerAgent: v, workerModel: "", workerMode: "" }))
+					}
+				/>
+				<AgentModelField
+					role="Worker"
+					agentId={form.workerAgent}
+					projectId={projectId}
+					model={form.workerModel}
+					mode={form.workerMode}
+					onModelChange={(workerModel) => setForm((f) => ({ ...f, workerModel }))}
+					onModeChange={(workerMode) => setForm((f) => ({ ...f, workerMode }))}
 				/>
 				<RequiredAgentField
 					id="orchestratorAgent"
@@ -303,7 +350,18 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					supported={agentCatalog?.supported}
 					disabled={agentsQuery.isFetching && agentCatalog === undefined}
 					invalid={validationError !== null && form.orchestratorAgent === ""}
-					onChange={(v) => setForm((f) => ({ ...f, orchestratorAgent: v }))}
+					onChange={(v) =>
+						setForm((f) => ({ ...f, orchestratorAgent: v, orchestratorModel: "", orchestratorMode: "" }))
+					}
+				/>
+				<AgentModelField
+					role="Orchestrator"
+					agentId={form.orchestratorAgent}
+					projectId={projectId}
+					model={form.orchestratorModel}
+					mode={form.orchestratorMode}
+					onModelChange={(orchestratorModel) => setForm((f) => ({ ...f, orchestratorModel }))}
+					onModeChange={(orchestratorMode) => setForm((f) => ({ ...f, orchestratorMode }))}
 				/>
 				<SettingsRow icon={RefreshCw} label="Refresh agents">
 					<button
@@ -327,14 +385,6 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				{missingRequiredAgent && (
 					<p className="px-1 text-xs leading-row text-error">Worker and orchestrator agents are required.</p>
 				)}
-				<SettingsInputRow
-					icon={Sparkles}
-					label="Model override"
-					id="model"
-					value={form.model}
-					placeholder="(agent default)"
-					onChange={(value) => setForm((f) => ({ ...f, model: value }))}
-				/>
 				<SettingsRow icon={Shield} label="Permission mode">
 					<PermissionModeSelect
 						value={form.permissions}
@@ -426,6 +476,133 @@ function SaveChangesFooter({
 				<span className="text-xs text-warning">Orchestrator restart failed: {replacementError}</span>
 			)}
 		</div>
+	);
+}
+
+function AgentModelField({
+	role,
+	agentId,
+	projectId,
+	model,
+	mode,
+	onModelChange,
+	onModeChange,
+}: {
+	role: "Worker" | "Orchestrator";
+	agentId: string;
+	projectId: string;
+	model: string;
+	mode: string;
+	onModelChange: (value: string) => void;
+	onModeChange: (value: string) => void;
+}) {
+	const queryClient = useQueryClient();
+	const query = useQuery(agentModelsQueryOptions(agentId, projectId));
+	const refreshMutation = useMutation({
+		mutationFn: () => refreshAgentModels(agentId, projectId),
+		onSuccess: (catalog) => queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), catalog),
+	});
+	const catalog: AgentModelCatalog | undefined = query.data;
+	const isMode = catalog?.selectionMode === "mode";
+	const label = `${role} ${isMode ? "mode" : "model"}`;
+	const datalistID = `${role.toLowerCase()}-model-options`;
+	const warning =
+		catalog?.warning ??
+		(query.isError ? (query.error instanceof Error ? query.error.message : "Could not load models.") : undefined);
+
+	if (isMode) {
+		const options = [
+			{ value: "__default__", label: "Agent default" },
+			...(catalog.models ?? []).map((item) => ({ value: item.id, label: item.label })),
+		];
+		return (
+			<>
+				<SettingsRow icon={Sparkles} label={label}>
+					<div className="flex min-w-0 items-center gap-2">
+						<SettingsOptionMenu
+							aria-label={label}
+							value={mode || "__default__"}
+							options={options}
+							onChange={(value) => {
+								onModeChange(value === "__default__" ? "" : value);
+								onModelChange("");
+							}}
+						/>
+						<ModelRefreshButton
+							label={label}
+							pending={refreshMutation.isPending}
+							disabled={agentId === ""}
+							onClick={() => refreshMutation.mutate()}
+						/>
+					</div>
+				</SettingsRow>
+				{warning && <p className="px-1 text-xs leading-row text-warning">{warning}</p>}
+			</>
+		);
+	}
+
+	const hasCatalog = catalog?.selectionMode === "catalog" && (catalog.models?.length ?? 0) > 0;
+	return (
+		<>
+			<SettingsRow icon={Sparkles} label={label}>
+				<div className="flex min-w-0 items-center gap-2">
+					<input
+						id={datalistID}
+						aria-label={label}
+						className="settings-inline-input"
+						value={model}
+						list={hasCatalog ? `${datalistID}-list` : undefined}
+						disabled={agentId === ""}
+						onChange={(event) => {
+							onModelChange(event.target.value);
+							onModeChange("");
+						}}
+						placeholder={query.isFetching ? "Loading models…" : "(agent default)"}
+					/>
+					{hasCatalog && (
+						<datalist id={`${datalistID}-list`}>
+							{catalog.models.map((item) => (
+								<option key={item.id} value={item.id}>
+									{item.provider ? `${item.label} · ${item.provider}` : item.label}
+								</option>
+							))}
+						</datalist>
+					)}
+					<ModelRefreshButton
+						label={label}
+						pending={refreshMutation.isPending}
+						disabled={agentId === ""}
+						onClick={() => refreshMutation.mutate()}
+					/>
+				</div>
+			</SettingsRow>
+			{warning && <p className="px-1 text-xs leading-row text-warning">{warning}</p>}
+		</>
+	);
+}
+
+function ModelRefreshButton({
+	label,
+	pending,
+	disabled,
+	onClick,
+}: {
+	label: string;
+	pending: boolean;
+	disabled: boolean;
+	onClick: () => void;
+}) {
+	return (
+		<button
+			type="button"
+			aria-label={`Refresh ${label.toLowerCase()} list`}
+			title={`Refresh ${label.toLowerCase()} list`}
+			className="settings-option-trigger shrink-0 disabled:pointer-events-none disabled:opacity-50"
+			disabled={disabled || pending}
+			onClick={onClick}
+		>
+			<RefreshCw className={cn("size-icon-sm", pending && "animate-spin")} aria-hidden="true" />
+		</button>
 	);
 }
 
@@ -590,4 +767,17 @@ function scratchSupportedConfig(config: ProjectConfig): ProjectConfig {
 
 function blankToUndefined<T extends object>(obj: T): T | undefined {
 	return Object.values(obj).some((v) => v !== undefined) ? obj : undefined;
+}
+
+function buildRoleAgentConfig(
+	existing: components["schemas"]["AgentConfig"] | undefined,
+	model: string,
+	mode: string,
+): components["schemas"]["AgentConfig"] | undefined {
+	const next = { ...existing };
+	if (model) next.model = model;
+	else delete next.model;
+	if (mode) next.mode = mode;
+	else delete next.mode;
+	return Object.keys(next).length > 0 ? next : undefined;
 }
