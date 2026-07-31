@@ -169,7 +169,8 @@ export function CenterPane({
 			className="terminal-pane-frame flex h-full min-h-0 min-w-flex-min flex-col px-px"
 			onWheelCapture={handleWheelZoom}
 		>
-		<div className="flex h-topbar-primary shrink-0 items-center gap-1.5 border-b border-border px-2">
+		<div className="relative flex h-topbar-primary shrink-0 items-center gap-1.5 px-2">
+		<div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-border" />
 			<div className="flex h-full min-w-flex-min flex-1 items-center gap-1.5">
 				<button
 					aria-label="Scroll tabs left"
@@ -400,16 +401,16 @@ function SessionPaneTab({ label, isActive, onSelect, onClose }: SessionPaneTabPr
 	return (
 		<span
 			className={cn(
-				"session-pane-tab group inline-flex h-full min-w-shell-tab-min items-center gap-1.5 px-2 pt-1.5 pb-[calc(var(--spacing-1)-1px)] transition-colors border-b-2 -mb-px",
-				isActive ? "border-accent text-foreground" : "border-transparent hover:bg-interactive-hover/60",
+				"group inline-flex h-full min-w-shell-tab-min items-center gap-1.5 px-2 pt-1.5 pb-[calc(var(--spacing-1)-1px)] transition-colors border-b-2",
+				isActive ? "border-foreground text-foreground" : "border-transparent hover:bg-interactive-hover/60",
 			)}
 		>
 			<button
 				ref={ref}
 				aria-current={isActive}
 				className={cn(
-					"session-pane-tab__label min-w-flex-min max-w-shell-tab-max truncate font-semibold",
-					isActive ? "" : "text-passive/60 hover:text-passive",
+					"min-w-flex-min max-w-shell-tab-max select-none truncate text-control font-semibold transition-colors",
+					isActive ? "text-foreground" : "text-passive hover:text-foreground",
 				)}
 				onClick={onSelect}
 				title={isTruncated ? label : "Session terminal"}
@@ -417,19 +418,22 @@ function SessionPaneTab({ label, isActive, onSelect, onClose }: SessionPaneTabPr
 			>
 				{label}
 			</button>
-			{onClose ? (
-				<button
-					aria-label={`Close session tab ${label}`}
-					className="inline-flex size-control-xs shrink-0 items-center justify-center rounded-sm text-passive opacity-0 transition-[background,color,opacity] group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
-					onClick={(event) => {
-						event.stopPropagation();
-						onClose();
-					}}
-					type="button"
-				>
-					<X aria-hidden="true" className="size-icon-sm" />
-				</button>
-			) : null}
+		{onClose ? (
+			<button
+				aria-label={`Close session tab ${label}`}
+				className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-passive opacity-0 transition-[background,color,opacity] group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+				onClick={(event) => {
+					event.stopPropagation();
+					onClose();
+				}}
+				onDoubleClick={(event) => event.stopPropagation()}
+				onContextMenu={(event) => event.stopPropagation()}
+				title="Close tab"
+				type="button"
+			>
+				<X aria-hidden="true" className="size-icon-sm" />
+			</button>
+		) : null}
 		</span>
 	);
 }

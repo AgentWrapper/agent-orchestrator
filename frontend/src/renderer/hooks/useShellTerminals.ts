@@ -103,7 +103,7 @@ export function useOpenShellTerminal() {
 	});
 }
 
-/** Closes a shell and destroys its PTY. */
+/** Closes a shell and destroys its PTY. Optimistically removes the tab immediately. */
 export function useCloseShellTerminal() {
 	const queryClient = useQueryClient();
 	return useMutation({
@@ -116,6 +116,19 @@ export function useCloseShellTerminal() {
 				params: { path: { handleId } },
 			});
 			if (error) throw error;
+		},
+		onMutate: async (handleId: string) => {
+			await queryClient.cancelQueries({ queryKey: shellTerminalsQueryKey });
+			const previous = queryClient.getQueryData<ShellTerminal[]>(shellTerminalsQueryKey);
+			queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (old) =>
+				old ? old.filter((s) => s.handleId !== handleId) : old,
+			);
+			return { previous };
+		},
+		onError: (_err, _handleId, context) => {
+			if (context?.previous !== undefined) {
+				queryClient.setQueryData(shellTerminalsQueryKey, context.previous);
+			}
 		},
 		// Settled, not success: a close that 404s means the daemon already lost
 		// the shell, and the stale tab still needs to disappear.

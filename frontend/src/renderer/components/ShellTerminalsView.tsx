@@ -47,7 +47,8 @@ export function ShellTerminalsView() {
 	return (
 		<div className="flex h-full min-h-0 flex-col text-foreground">
 			{shellTopbarHiddenByPlatform ? <ShellTopbar surfaceOverride="standalone-terminals" /> : null}
-		<div className="flex h-topbar-primary shrink-0 items-center gap-1.5 border-b border-border px-2">
+		<div className="relative flex h-topbar-primary shrink-0 items-center gap-1.5 px-2">
+		<div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-border" />
 			<span className="shrink-0 text-caption font-semibold tracking-wide text-muted-foreground">
 				Terminals
 			</span>
