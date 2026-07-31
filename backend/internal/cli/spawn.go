@@ -31,6 +31,7 @@ type spawnOptions struct {
 	claimPR        string
 	noTakeover     bool
 	skipAgentCheck bool
+	model          string
 }
 
 // spawnRequest mirrors the daemon's SpawnSessionRequest body for
@@ -43,6 +44,7 @@ type spawnRequest struct {
 	Branch      string `json:"branch,omitempty"`
 	Prompt      string `json:"prompt,omitempty"`
 	DisplayName string `json:"displayName"`
+	Model       string `json:"model,omitempty"`
 }
 
 type spawnResult struct {
@@ -126,6 +128,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				Branch:      opts.branch,
 				Prompt:      opts.prompt,
 				DisplayName: name,
+				Model:       opts.model,
 			}
 			var res spawnResult
 			if err := ctx.postJSON(cmd.Context(), "sessions", req, &res); err != nil {
@@ -176,6 +179,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.claimPR, "claim-pr", "", "Immediately claim an existing PR for the spawned session")
 	f.BoolVar(&opts.noTakeover, "no-takeover", false, "Refuse if another active session owns the claimed PR (requires --claim-pr)")
 	f.BoolVar(&opts.skipAgentCheck, "skip-agent-check", false, "Skip advisory agent catalog install/auth preflight before spawning")
+	f.StringVar(&opts.model, "model", "", `Agent model override for this session (e.g. "claude-sonnet-4-20250514"). Takes precedence over project and role agentConfig. Unsupported by some harnesses.`)
 	return cmd
 }
 

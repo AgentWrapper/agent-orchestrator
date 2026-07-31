@@ -212,6 +212,7 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 		Kind:        row.Kind,
 		Harness:     row.Harness,
 		DisplayName: row.DisplayName,
+		Model:       row.Model,
 		Activity: domain.Activity{
 			State:          row.ActivityState,
 			LastActivityAt: row.ActivityLastAt,
@@ -259,6 +260,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		Prompt:             rec.Metadata.Prompt,
 		PreviewURL:         rec.Metadata.PreviewURL,
 		PreviewRevision:    rec.Metadata.PreviewRevision,
+		Model:              rec.Model,
 		TerminateOnPRMerge: rec.TerminateOnPRMerge,
 		CleanupGeneration:  rec.CleanupGeneration,
 		CreatedAt:          rec.CreatedAt,
@@ -287,6 +289,7 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		Prompt:             rec.Metadata.Prompt,
 		PreviewURL:         rec.Metadata.PreviewURL,
 		PreviewRevision:    rec.Metadata.PreviewRevision,
+		Model:              rec.Model,
 		TerminateOnPRMerge: rec.TerminateOnPRMerge,
 		CleanupGeneration:  rec.CleanupGeneration,
 		UpdatedAt:          rec.UpdatedAt,

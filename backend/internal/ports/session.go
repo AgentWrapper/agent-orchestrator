@@ -25,6 +25,10 @@ type SpawnConfig struct {
 	// DisplayName is the user-facing sidebar label. Empty falls back to the
 	// session id in the read model (e.g. orchestrator sessions).
 	DisplayName string
+	// Model overrides the agent model for this specific session. Empty means
+	// the project/role config or agent default applies. Takes precedence over
+	// project-level and role-level agentConfig.model.
+	Model string
 	// Attachments are images pasted or dropped into the task brief. They are
 	// written into the session worktree and referenced by path in the prompt so
 	// the agent can read them (CLI agents receive the prompt as text and cannot

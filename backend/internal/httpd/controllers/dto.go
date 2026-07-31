@@ -141,8 +141,11 @@ type SessionView struct {
 	// unchanged) so the desktop browser panel can re-navigate / refresh on a
 	// repeated preview of the same target. Pulled from the json:"-" domain
 	// Metadata.
-	PreviewRevision int64            `json:"previewRevision,omitempty"`
-	PRs             []SessionPRFacts `json:"prs"`
+	PreviewRevision int64 `json:"previewRevision,omitempty"`
+	// Model is the agent model this session resolved to (from spawn --model,
+	// role agentConfig, or project agentConfig). Empty means the agent default.
+	Model            string           `json:"model,omitempty"`
+	PRs              []SessionPRFacts `json:"prs"`
 }
 
 // ListSessionsResponse is the body of GET /api/v1/sessions.
@@ -162,6 +165,10 @@ type SpawnSessionRequest struct {
 	// `ao spawn --name` always sets it; other clients (e.g. the desktop new-task
 	// dialog) may omit it and fall back to the session id in the read model.
 	DisplayName string `json:"displayName,omitempty" maxLength:"20"`
+	// Model overrides the agent model for this specific session (e.g.
+	// "claude-sonnet-4-20250514"). Empty uses the project/role config or
+	// agent default. Rejected when the selected harness cannot honor it.
+	Model string `json:"model,omitempty"`
 	// Attachments are images pasted or dropped into the task brief. Each carries
 	// its bytes as standard base64 (no data: URL prefix). The daemon writes them
 	// into the session worktree and appends path references to the prompt.
