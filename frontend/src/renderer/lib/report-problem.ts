@@ -22,8 +22,8 @@ const REDACTED_LOCAL_PATH = "[redacted-local-path]";
 const REDACTED_LOCAL_URL = "[redacted-local-url]";
 const REDACTED_SECRET = "[redacted-secret]";
 const DISCORD_INVITE_URL = "https://discord.com/invite/UZv7JjxbwG";
-const GITHUB_NEW_ISSUE_URL = "https://github.com/AgentWrapper/agent-orchestrator/issues/new";
-const SUPPORT_EMAIL = "support@aoagents.dev";
+const GITHUB_NEW_ISSUE_URL = "https://github.com/Untrivial-ai/agent-orchestrator/issues/new";
+const SUPPORT_EMAIL = "prateek@untrivial.ai";
 
 const LOCAL_URL_PATTERN =
 	/(?:\bfile:\/\/\/\S+|\bapp:\/\/renderer\/\S+|\bhttps?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\S*)/gi;

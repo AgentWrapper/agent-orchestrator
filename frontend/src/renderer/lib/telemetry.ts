@@ -473,6 +473,7 @@ export function buildPostHogConfig(distinctId: string): PostHogInitOptions {
 		capture_pageview: false,
 		capture_exceptions: false,
 		capture_performance: false,
+		disable_session_recording: true,
 		// AO owns the stable random installation ID. Memory-only SDK
 		// persistence prevents legacy identified state from replacing it after
 		// an upgrade; the AO-owned heartbeat and route reservations continue to
