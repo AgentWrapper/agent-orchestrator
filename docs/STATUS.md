@@ -48,7 +48,10 @@ surface (`npm run sqlc`, `npm run api`).
 - The provider-neutral interactive-reviewer capability gateway and neutral
   AO-owned working-directory contract are available. Agy and Qwen reviewers
   remain disabled until tmux and ConPTY isolation providers pass the escape and
-  network acceptance tests in ADR 0002.
+  network acceptance tests in ADR 0002. Agy's adapter now pins its future launch
+  to the interactive `--prompt-interactive` TUI, validates custom-agent support,
+  and records its single-Ctrl-C cancellation contract, but fails closed before
+  runtime creation and remains absent from domain, registry, and desktop choices.
 - Durable dashboard notifications for `needs_input`, `ready_to_merge`,
   `pr_merged`, and `pr_closed_unmerged`: backend enrichment/persistence,
   cursor-paginated read/unread history, live notification stream, and read

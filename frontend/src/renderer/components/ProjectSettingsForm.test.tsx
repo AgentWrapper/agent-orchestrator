@@ -593,6 +593,40 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByRole("menuitem", { name: "Kilo Code" })).toBeEnabled();
 	});
 
+	it("keeps the staged Agy adapter out of reviewer choices", async () => {
+		const project = {
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: { worker: { agent: "agy" }, orchestrator: { agent: "claude-code" } },
+		};
+		const agy = { id: "agy", label: "Agy", authStatus: "authorized" };
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				return {
+					data: {
+						supported: [...agentCatalogResponse.data.supported, agy],
+						installed: [...agentCatalogResponse.data.installed, agy],
+						authorized: [...agentCatalogResponse.data.authorized, agy],
+					},
+					error: undefined,
+				};
+			}
+			return { data: { status: "ok", project }, error: undefined };
+		});
+
+		renderSettings();
+
+		await waitFor(() => expect(screen.getAllByText("/repo/project-one").length).toBeGreaterThan(0));
+		const reviewerAgent = screen.getByRole("button", { name: "Default reviewer agent" });
+		await userEvent.click(reviewerAgent);
+		const options = await screen.findAllByRole("menuitem");
+		expect(options.map((option) => option.textContent)).not.toContain("Agy");
+	});
+
 	it("shows scratch identity and saves only scratch-supported settings", async () => {
 		mockProject({
 			id: "scratch",

@@ -55,4 +55,7 @@ func TestNewResolverResolvesShippedReviewers(t *testing.T) {
 	if _, ok := resolver.Reviewer("nope"); ok {
 		t.Error("resolver returned an adapter for an unknown harness")
 	}
+	if _, ok := resolver.Reviewer("agy"); ok {
+		t.Error("resolver exposed Agy before its process isolation prerequisite exists")
+	}
 }
