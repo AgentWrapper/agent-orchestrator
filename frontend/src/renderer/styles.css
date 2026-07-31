@@ -2477,30 +2477,23 @@ body.is-resizing-x [data-slot="sidebar-container"] {
    genuine relayout of its contents. The toolbar is a dense single row (icon
    buttons plus a flex-1 URL field): at docked width its controls are already
    near their floor, so tweening through that range visibly squeezes and
-   re-spaces them, and the snapshot's own box changes aspect under it. Rather
-   than animate that, the panel shows only the frozen page for the tween —
-   the toolbar drops out and the viewport fills the whole box, so the growing
-   or shrinking window reveals/clips one static image and nothing reshapes. */
-.browser-panel[data-flipping] {
-	position: relative;
-}
-
+   re-spaces them. Fade it out for the tween instead and fade it back as the
+   panel lands. Opacity keeps its box, so the viewport below does not shift. */
 .browser-panel[data-flipping] .browser-panel__toolbar {
 	opacity: 0;
 }
 
-.browser-panel[data-flipping] .browser-panel__viewport {
-	position: absolute;
-	inset: 0;
-}
-
-/* cover, not contain: the snapshot is captured at the origin aspect and the
-   box ends at a different one, so contain letterboxes it against --bg with
-   bands that grow as the tween runs, and rescales the content every frame.
-   cover keeps it uniformly scaled and full-bleed, cropping instead — a zoom,
-   not a stretch. */
+/* The frozen frame is pinned to the pixel size the viewport had when it was
+   captured (set inline; see BrowserPanel), so `fill` is exact here — the box
+   already matches the capture and there is nothing to fit. Anchoring it top
+   left means the tween reveals or clips around a page that never changes
+   scale, which is what lets the live view take over without a jump. Fitting it
+   to the tweening box instead would scale the page up as the window grows and
+   then snap it back to 1x the moment the real view appeared. */
 [data-transition="popout"] .browser-panel__transition-frame {
-	object-fit: cover;
+	right: auto;
+	bottom: auto;
+	object-fit: fill;
 }
 
 .browser-panel__slot {
