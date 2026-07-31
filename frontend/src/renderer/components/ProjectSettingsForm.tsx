@@ -508,6 +508,11 @@ function AgentModelField({
 	const label = `${role} ${isMode ? "mode" : "model"}`;
 	const datalistID = `${role.toLowerCase()}-model-options`;
 	const warning =
+		(refreshMutation.isError
+			? refreshMutation.error instanceof Error
+				? refreshMutation.error.message
+				: "Could not refresh models."
+			: undefined) ??
 		catalog?.warning ??
 		(query.isError ? (query.error instanceof Error ? query.error.message : "Could not load models.") : undefined);
 
@@ -573,6 +578,8 @@ function AgentModelField({
 							value={catalogValue}
 							options={catalogOptions}
 							onChange={selectCatalogModel}
+							searchable
+							searchPlaceholder="Search models…"
 							triggerClassName="settings-inline-input justify-end"
 							menuClassName="w-[min(24rem,calc(100vw-2rem))]"
 							renderTrigger={(selected) => (
@@ -620,6 +627,8 @@ function AgentModelField({
 									value="__custom__"
 									options={catalogOptions}
 									onChange={selectCatalogModel}
+									searchable
+									searchPlaceholder="Search models…"
 									triggerClassName="shrink-0"
 									renderTrigger={() => <span>Browse</span>}
 								/>

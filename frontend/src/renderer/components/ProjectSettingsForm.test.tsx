@@ -342,6 +342,12 @@ describe("ProjectSettingsForm", () => {
 			"GPT-5.4gpt-5.4",
 			"Custom model…",
 		]);
+		const search = screen.getByRole("searchbox", { name: "Search worker model" });
+		await userEvent.type(search, "5.5");
+		expect(screen.getAllByRole("menuitem")).toHaveLength(1);
+		expect(screen.getByRole("menuitem", { name: /GPT-5\.5/ })).toBeInTheDocument();
+		expect(screen.queryByRole("menuitem", { name: /GPT-5\.4/ })).not.toBeInTheDocument();
+		await userEvent.clear(search);
 		await userEvent.click(screen.getByRole("menuitem", { name: /GPT-5\.4/ }));
 		expect(workerModel).toHaveTextContent("GPT-5.4");
 
@@ -350,6 +356,51 @@ describe("ProjectSettingsForm", () => {
 		expect(screen.getByRole("menuitem", { name: /GPT-5\.5/ })).toBeInTheDocument();
 		expect(screen.getByRole("menuitem", { name: /GPT-5\.4/ })).toBeInTheDocument();
 		expect(screen.getByRole("menuitem", { name: "Custom model…" })).toBeInTheDocument();
+	});
+
+	it("shows a warning when refreshing a cached model catalog fails", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") return agentCatalogResponse;
+			if (path === "/api/v1/agents/{agent}/models") {
+				return {
+					data: {
+						agentId: "codex",
+						selectionMode: "catalog",
+						models: [{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol" }],
+						allowCustom: true,
+						source: "official-catalog",
+						fetchedAt: "2026-07-31T00:00:00Z",
+						stale: false,
+					},
+					error: undefined,
+				};
+			}
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "proj-1",
+						name: "Project One",
+						kind: "single_repo",
+						path: "/repo/project-one",
+						repo: "",
+						defaultBranch: "main",
+						config: {
+							worker: { agent: "codex" },
+							orchestrator: { agent: "codex" },
+						},
+					},
+				},
+				error: undefined,
+			};
+		});
+		postMock.mockResolvedValue({ data: undefined, error: { message: "model refresh unavailable" } });
+
+		renderSettings();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Refresh worker model list" }));
+		expect(await screen.findByText("model refresh unavailable")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Worker model" })).toHaveTextContent("Agent default");
 	});
 
 	it("shows the daemon validation message when the atomic settings save fails", async () => {

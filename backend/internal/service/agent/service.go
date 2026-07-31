@@ -241,9 +241,11 @@ func (s *Service) Models(ctx context.Context, agentID, projectID string, refresh
 			cached.Catalog.Warning = discoverErr.Error()
 			return cached.Catalog, nil
 		}
-		discovered.Stale = true
-		discovered.Warning = discoverErr.Error()
-		return discovered, nil
+		fallback := modelcatalog.Manual(agentID)
+		fallback.BinaryVersion = version
+		fallback.Stale = true
+		fallback.Warning = discoverErr.Error()
+		return fallback, nil
 	}
 	if err := s.saveCatalog(ctx, projectID, discovered); err != nil {
 		return ports.AgentModelCatalog{}, err

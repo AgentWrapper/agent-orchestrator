@@ -26,7 +26,7 @@ type commandSpec struct {
 var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*[[:alpha:]]`)
 
 var commandSpecs = map[string]commandSpec{
-	"opencode": {args: []string{"models"}, parser: parseIDLines},
+	"opencode": {args: []string{"--pure", "models"}, parser: parseIDLines},
 	"grok":     {args: []string{"models"}, parser: parseGrokModels},
 	"cursor":   {args: []string{"models"}, parser: parseCursorModels},
 	"agy":      {args: []string{"models"}, parser: parseIDLines},
@@ -78,14 +78,20 @@ func Base(agentID string) ports.AgentModelCatalog {
 				FetchedAt:     now,
 			}
 		}
-		return ports.AgentModelCatalog{
-			AgentID:       agentID,
-			SelectionMode: ports.ModelSelectionText,
-			Models:        []ports.AgentModelInfo{},
-			AllowCustom:   true,
-			Source:        "manual",
-			FetchedAt:     now,
-		}
+		return Manual(agentID)
+	}
+}
+
+// Manual returns the free-text fallback used when an adapter has no reliable
+// catalog or when discovery fails before AO has a successful cached catalog.
+func Manual(agentID string) ports.AgentModelCatalog {
+	return ports.AgentModelCatalog{
+		AgentID:       agentID,
+		SelectionMode: ports.ModelSelectionText,
+		Models:        []ports.AgentModelInfo{},
+		AllowCustom:   true,
+		Source:        "manual",
+		FetchedAt:     time.Now().UTC(),
 	}
 }
 
