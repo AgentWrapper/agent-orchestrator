@@ -1,11 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
 import { motion } from "motion/react";
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
-import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
 import { CenterPane } from "./CenterPane";
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
 import { SessionFilesView } from "./SessionFilesView";
 import { SessionInspector } from "./SessionInspector";
 import { ShellTopbar } from "./ShellTopbar";
@@ -29,16 +27,6 @@ const inspectorSpring = { type: "spring", stiffness: 420, damping: 40, mass: 0.6
 const shellTopbarHiddenByPlatform = hidesShellTopbar();
 const emptySessionTabIds: string[] = [];
 
-const INSPECTOR_MIN_PERCENT = 22;
-const INSPECTOR_MAX_PERCENT = 45;
-const inspectorSplitStorageKey = "ao.inspector.split";
-
-function initialSplitPercent(): number {
-	const raw = typeof window === "undefined" ? null : window.localStorage?.getItem(inspectorSplitStorageKey);
-	const parsed = raw === null ? Number.NaN : Number(raw);
-	if (!Number.isFinite(parsed)) return 28;
-	return Math.min(INSPECTOR_MAX_PERCENT, Math.max(INSPECTOR_MIN_PERCENT, parsed));
-}
 
 function previewRevealKey(previewUrl?: string, previewRevision?: number): string {
 	const target = previewUrl?.trim();
@@ -80,8 +68,6 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 	const markInspectorPreviewSeen = useUiStore((state) => state.markInspectorPreviewSeen);
 	const setBrowserUnseen = useUiStore((state) => state.setBrowserUnseen);
 	const { daemonStatus } = useShell();
-	const inspectorRef = useRef<PanelImperativeHandle | null>(null);
-	const inspectorSeparatorRef = useRef<HTMLDivElement | null>(null);
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({
 		kind: "worker",
 	});

@@ -90,6 +90,7 @@ type UiState = {
 	// Dev Settings (only visible when import.meta.env.DEV is true).
 	// Toggle to control board fixture injection and board filler behaviour.
 	devSettings: DevSettings;
+	sessionTabsByOwner: Record<string, string[]>;
 	setWorkbenchTab: (tab: WorkbenchTab) => void;
 	setThemePreference: (theme: ThemePreference) => void;
 	setThemeStyle: (style: ThemeStyle) => void;
@@ -116,6 +117,8 @@ type UiState = {
 	setVisibleTerminalKind: (sessionId: string, kind: TerminalTarget["kind"]) => void;
 	clearVisibleTerminalKind: (sessionId: string) => void;
 	setDevSettings: (devSettings: DevSettings) => void;
+	addSessionTab: (ownerSessionId: string, sessionId: string) => void;
+	removeSessionTab: (ownerSessionId: string, sessionId: string) => void;
 };
 
 const sidebarStorageKey = "ao.sidebar.open";
@@ -151,28 +154,6 @@ function initialDevSettings(): DevSettings {
 	return defaultDevSettings;
 }
 
-function initialSessionTabs(): Record<string, string[]> {
-	const raw = getLocalStorage()?.getItem(sessionTabsStorageKey);
-	if (!raw) return {};
-	try {
-		const parsed = JSON.parse(raw) as unknown;
-		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-		return Object.fromEntries(
-			Object.entries(parsed).flatMap(([ownerSessionId, sessionIds]) =>
-				Array.isArray(sessionIds) && sessionIds.every((sessionId) => typeof sessionId === "string")
-					? [[ownerSessionId, sessionIds]]
-					: [],
-			),
-		);
-	} catch {
-		return {};
-	}
-}
-
-function storeSessionTabs(sessionTabsByOwner: Record<string, string[]>) {
-	getLocalStorage()?.setItem(sessionTabsStorageKey, JSON.stringify(sessionTabsByOwner));
-}
-
 function inspectorState(sessions: Record<string, InspectorSessionState>, sessionId: string): InspectorSessionState {
 	return sessions[sessionId] ?? { isOpen: true, view: "summary" };
 }
@@ -191,6 +172,7 @@ export const useUiStore = create<UiState>((set) => ({
 	resolvedTheme: resolveTheme(initialThemePreference),
 	developerMode: initialDeveloperMode(),
 	devSettings: initialDevSettings(),
+	sessionTabsByOwner: {},
 	restartingProjectIds: new Set<string>(),
 	orchestratorReplacementErrors: {},
 	orchestratorStartupErrors: {},
@@ -216,6 +198,22 @@ export const useUiStore = create<UiState>((set) => ({
 		getLocalStorage()?.setItem(devSettingsStorageKey, JSON.stringify(devSettings));
 		set({ devSettings });
 	},
+	addSessionTab: (ownerSessionId, sessionId) =>
+		set((state) => {
+			const tabs = state.sessionTabsByOwner[ownerSessionId] ?? [];
+			if (tabs.includes(sessionId)) return state;
+			const next = { ...state.sessionTabsByOwner, [ownerSessionId]: [...tabs, sessionId] };
+			getLocalStorage()?.setItem(sessionTabsStorageKey, JSON.stringify(next));
+			return { sessionTabsByOwner: next };
+		}),
+	removeSessionTab: (ownerSessionId, sessionId) =>
+		set((state) => {
+			const tabs = state.sessionTabsByOwner[ownerSessionId] ?? [];
+			const filtered = tabs.filter((id) => id !== sessionId);
+			const next = { ...state.sessionTabsByOwner, [ownerSessionId]: filtered };
+			getLocalStorage()?.setItem(sessionTabsStorageKey, JSON.stringify(next));
+			return { sessionTabsByOwner: next };
+		}),
 	syncSystemTheme: () =>
 		set((state) => {
 			if (state.themePreference !== "system") return state;
