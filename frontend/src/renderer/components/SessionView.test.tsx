@@ -155,10 +155,10 @@ vi.mock("./SessionFilesView", () => ({
 }));
 const { browserDestroy, browserViewOptions } = vi.hoisted(() => ({
 	browserDestroy: vi.fn(),
-	browserViewOptions: { current: undefined as { sessionId: string; terminated: boolean } | undefined },
+	browserViewOptions: { current: undefined as { active: boolean; sessionId: string; terminated: boolean } | undefined },
 }));
 vi.mock("../hooks/useBrowserView", () => ({
-	useBrowserView: (options: { sessionId: string; terminated: boolean }) => {
+	useBrowserView: (options: { active: boolean; sessionId: string; terminated: boolean }) => {
 		browserViewOptions.current = options;
 		return {
 			viewId: "browser:sess-1",
@@ -655,6 +655,18 @@ describe("SessionView", () => {
 		expect(browserDestroy).not.toHaveBeenCalled();
 	});
 
+	it("does not carry popped-out browser visibility into the next session", () => {
+		act(() => useUiStore.getState().setInspectorView("sess-1", "browser"));
+		const { rerender } = render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "pop browser" }));
+		expect(browserViewOptions.current).toMatchObject({ sessionId: "sess-1", active: true });
+
+		rerender(<SessionView sessionId="sess-2" />);
+
+		expect(browserViewOptions.current).toMatchObject({ sessionId: "sess-2", active: false });
+	});
+
 	it("opens the files view in the inspector rail first", () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
@@ -701,6 +713,7 @@ describe("SessionView", () => {
 		// on the default Summary tab and the unseen flag is set.
 		expect(screen.getByRole("button", { name: "pop browser" })).toHaveAttribute("data-view", "summary");
 		expect(browserUnseen("sess-1")).toBe(true);
+		expect(browserViewOptions.current).toMatchObject({ active: false });
 	});
 
 	it("clears the badge once the user opens the Browser tab", () => {
@@ -715,6 +728,7 @@ describe("SessionView", () => {
 		act(() => useUiStore.getState().setInspectorView("sess-1", "browser"));
 		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
 		expect(browserUnseen("sess-1")).toBe(false);
+		expect(browserViewOptions.current).toMatchObject({ active: true });
 	});
 
 	it("badges the Browser tab per worker session on a new preview, without switching tabs", () => {
