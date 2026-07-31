@@ -58,7 +58,7 @@ function renderSettings(projectId = "proj-1", workspaces?: WorkspaceSummary[]) {
 async function chooseOption(trigger: HTMLElement, optionName: string) {
 	await userEvent.click(trigger);
 	const escaped = optionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-	await userEvent.click(await screen.findByRole("menuitem", { name: new RegExp(escaped, "i") }));
+	await userEvent.click(await screen.findByRole("menuitem", { name: new RegExp(`^${escaped}$`, "i") }));
 }
 
 const agentCatalogResponse = {
@@ -413,9 +413,9 @@ describe("ProjectSettingsForm", () => {
 		});
 
 		renderSettings();
-		const reviewer = await screen.findByRole("combobox", { name: "Default reviewer agent" });
+		const reviewer = await screen.findByRole("button", { name: "Default reviewer agent" });
 		await userEvent.click(reviewer);
-		const labels = (await screen.findAllByRole("option")).map((option) => option.textContent);
+		const labels = (await screen.findAllByRole("menuitem")).map((option) => option.textContent);
 		expect(labels).toContain("KiroAuth unknown");
 		expect(labels).toContain("Pi");
 	});
