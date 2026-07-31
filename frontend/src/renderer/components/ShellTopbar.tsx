@@ -343,18 +343,22 @@ export function TopbarKillButton({
 				open={confirmOpen}
 				session={session}
 				trigger={
-					<TopbarButton
-						aria-label={isPending ? "Killing..." : "Kill session"}
-						disabled={isPending}
-						onClick={() => {
-							clearTerminateSessionState(queryClient, session.id);
-						}}
-						title="Kill session"
-						variant="kill"
-					>
-						<Trash2 className="size-icon-lg" aria-hidden="true" />
-						{isPending ? "Killing..." : "Kill"}
-					</TopbarButton>
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<TopbarButton
+								aria-label={isPending ? "Killing..." : "Kill session"}
+								disabled={isPending}
+								onClick={() => {
+									clearTerminateSessionState(queryClient, session.id);
+								}}
+								variant="icon"
+								className="text-error/70 hover:text-error hover:bg-error/10"
+							>
+								<Trash2 className="size-icon-lg" aria-hidden="true" />
+							</TopbarButton>
+						</TooltipTrigger>
+						<TooltipContent side="bottom">{isPending ? "Killing…" : "Kill session"}</TooltipContent>
+					</Tooltip>
 				}
 			/>
 			{error ? <TopbarKillError>{error}</TopbarKillError> : null}
