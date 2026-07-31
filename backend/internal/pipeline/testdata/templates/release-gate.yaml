@@ -1,0 +1,64 @@
+name: release-gate
+'on':
+  pr:
+    - merged
+concurrency:
+  scope: project
+  group: release
+  cancel-in-progress: false
+defaults:
+  deadline: 45m
+  on_failure: notify-failure
+stages:
+  - id: prepare
+    executor: command
+    workspace: run
+    run: |-
+      mkdir -p "$AO_RUN_DIR/artifacts"
+      ao release resolve-version > "$AO_RUN_DIR/version"
+    on_success:
+      - build
+      - release-notes
+  - id: build
+    executor: command
+    workspace: stage
+    deadline: 60m
+    run: |-
+      npm ci
+      npm run build -- --version "$(cat "$AO_RUN_DIR/version")"
+      cp -R dist/. "$AO_RUN_DIR/artifacts/"
+    on_success: verify
+  - id: release-notes
+    executor: agent
+    agent: claude-code
+    workspace: stage
+    produces: release-notes.md
+    deadline: 15m
+    session:
+      kill-on:
+        - succeeded
+        - failed
+    prompt: |-
+      Write release notes for version $(cat "$AO_RUN_DIR/version").
+      Group by user-visible change, not by commit.
+      Write them to $AO_OUTPUT, then `ao pipeline done`.
+      If there are no user-visible changes, `ao pipeline fail --reason "..."`.
+    on_success: publish
+  - id: verify
+    executor: command
+    workspace: run
+    run: ao release verify-artifacts "$AO_RUN_DIR/artifacts"
+    on_success: publish
+  - id: publish
+    executor: command
+    needs:
+      - release-notes
+      - verify
+    workspace: run
+    credentials:
+      - github-release
+    run: gh release create "v$(cat "$AO_RUN_DIR/version")" "$AO_RUN_DIR/artifacts/"* --notes-file "$AO_RUN_DIR/agent-outputs/release-notes.md"
+  - id: notify-failure
+    executor: command
+    workspace: run
+    run: echo "release failed at $AO_FAILED_STAGE ($AO_FAILED_OUTCOME)"

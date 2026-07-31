@@ -1,0 +1,35 @@
+name: pr-review
+'on':
+  pr:
+    - created
+    - updated
+concurrency:
+  scope: pr
+  cancel-in-progress: true
+defaults:
+  on_failure: notify-failure
+stages:
+  - id: review
+    executor: agent
+    agent: claude-code
+    produces: review.md
+    deadline: 20m
+    session:
+      kill-on:
+        - succeeded
+        - failed
+    prompt: |-
+      Review the diff for correctness, security, and convention drift.
+      Write the review to $AO_OUTPUT, then `ao pipeline done`.
+      If the change cannot be reviewed, `ao pipeline fail --reason "..."`.
+    on_success: post-review
+  - id: post-review
+    executor: command
+    workspace: run
+    credentials:
+      - github-review
+    run: gh pr comment "$AO_PR_NUMBER" --body-file "$AO_RUN_DIR/agent-outputs/review.md"
+  - id: notify-failure
+    executor: command
+    workspace: run
+    run: echo "pr-review failed at $AO_FAILED_STAGE ($AO_FAILED_OUTCOME)"
