@@ -21,6 +21,7 @@
 				"usesNonExemptEncryption": false
 			},
 			"infoPlist": {
+				"NSLocalNetworkUsageDescription": "AO connects to Agent Orchestrator running on your computer over your local network.",
 				"LSApplicationQueriesSchemes": ["github"]
 			}
 		},
