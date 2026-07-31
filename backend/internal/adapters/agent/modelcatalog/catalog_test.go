@@ -14,6 +14,13 @@ func TestModelCommandUsesProjectWorkingDirectory(t *testing.T) {
 	}
 }
 
+func TestOpenCodeDiscoveryUsesPureMode(t *testing.T) {
+	spec := commandSpecs["opencode"]
+	if len(spec.args) != 2 || spec.args[0] != "--pure" || spec.args[1] != "models" {
+		t.Fatalf("opencode discovery args = %q, want [--pure models]", spec.args)
+	}
+}
+
 func TestBaseClassifiesStaticTextAndModeAgents(t *testing.T) {
 	tests := []struct {
 		agent string

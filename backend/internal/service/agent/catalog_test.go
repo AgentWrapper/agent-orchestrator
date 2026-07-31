@@ -426,14 +426,17 @@ func TestModelsRejectsUnknownProjectScope(t *testing.T) {
 
 func TestModelsUsesTextFallbackWhenDiscoveryCannotRun(t *testing.T) {
 	svc := NewWithAgents([]agentregistry.HarnessAgent{
-		harnessAgent("qwen", "Qwen", ports.ErrAgentBinaryNotFound),
+		harnessAgent("opencode", "OpenCode", ports.ErrAgentBinaryNotFound),
 	})
-	got, err := svc.Models(context.Background(), "qwen", "", false)
+	got, err := svc.Models(context.Background(), "opencode", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.SelectionMode != ports.ModelSelectionText || !got.AllowCustom {
+	if got.SelectionMode != ports.ModelSelectionText || !got.AllowCustom || got.Source != "manual" || len(got.Models) != 0 {
 		t.Fatalf("catalog = %#v, want custom text input", got)
+	}
+	if !got.Stale || got.Warning == "" {
+		t.Fatalf("catalog = %#v, want discovery warning on manual fallback", got)
 	}
 }
 
