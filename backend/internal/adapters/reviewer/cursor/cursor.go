@@ -30,32 +30,27 @@ func (r *Reviewer) Harness() domain.ReviewerHarness {
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
 
-// PreLaunch installs the reviewer-only Cursor permissions into an AO-owned
-// profile. The user's Cursor configuration is used only as a seed and is never
-// modified.
+// PreLaunch installs the reviewer-only Cursor permissions into its isolated
+// AO-owned data directory without touching the checkout or user configuration.
 func (r *Reviewer) PreLaunch(ctx context.Context, inv ports.ReviewInvocation) error {
 	return installReviewerConfig(ctx, inv)
 }
 
-// ReviewCommand launches Cursor's persistent interactive TUI in Ask mode.
-// PermissionModeAuto retains --force so explicitly allowed inspection and
-// reporting commands do not wait for approval. Ask mode plus the enabled
-// sandbox is the write boundary: Cursor permissions match only the first shell
-// token, so Shell(git) cannot safely express a read-only subcommand policy.
-// Cursor has no system-prompt flag, so the short initial prompt points it at
-// both AO-owned prompt files without exposing their contents in argv.
+// ReviewCommand launches Cursor's normal persistent interactive TUI. Cursor
+// has no system-prompt flag, so the short initial prompt points it at the
+// AO-owned system file and then carries the already-short task-file reference.
 func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
 	prompt := cursorPrompt(inv)
 	argv, err := r.agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     inv.ReviewerID,
 		WorkspacePath: inv.WorkspacePath,
 		Prompt:        prompt,
-		Permissions:   ports.PermissionModeAuto,
+		Permissions:   ports.PermissionModeDefault,
 	})
 	if err != nil {
 		return ports.ReviewCommandSpec{}, err
 	}
-	flags := []string{"--mode", "ask", "--sandbox", "enabled", "--trust"}
+	flags := []string{"--trust"}
 	if strings.TrimSpace(inv.TaskPromptRoot) != "" {
 		flags = append(flags, "--add-dir", inv.TaskPromptRoot)
 	}
@@ -66,11 +61,11 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 }
 
 func cursorPrompt(inv ports.ReviewInvocation) string {
-	if inv.SystemPromptFile != "" && inv.TaskPromptFile != "" {
+	if inv.SystemPromptFile != "" {
 		return fmt.Sprintf(
-			"Read and follow the AO reviewer role in `%s`, then complete the AO review task in `%s`.",
+			"Read and follow the AO reviewer role in `%s`, then %s",
 			filepath.ToSlash(inv.SystemPromptFile),
-			filepath.ToSlash(inv.TaskPromptFile),
+			strings.TrimSpace(inv.Prompt),
 		)
 	}
 	return strings.TrimSpace(inv.Prompt)
