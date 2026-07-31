@@ -37,14 +37,6 @@ func (f *fakePreLaunchReviewer) PreLaunch(_ context.Context, inv ports.ReviewInv
 	return nil
 }
 
-type fakeOneShotReviewer struct {
-	fakeReviewer
-}
-
-func (*fakeOneShotReviewer) ReuseReviewerPane() bool {
-	return false
-}
-
 type fakeCancellableReviewer struct {
 	fakeReviewer
 	cancelled  bool
@@ -241,25 +233,6 @@ func TestLauncherNotifySendsMessageToHandle(t *testing.T) {
 	}
 	if strings.Contains(reviewer.gotInv.Prompt, reviewer.gotInv.PRURL) || reviewer.gotInv.SystemPromptFile == "" || reviewer.gotInv.TaskPromptFile == "" {
 		t.Fatalf("visible invocation = %+v", reviewer.gotInv)
-	}
-}
-
-func TestLauncherNotifyRespawnsOneShotReviewer(t *testing.T) {
-	reviewer := &fakeOneShotReviewer{}
-	rt := &fakeRuntime{}
-	l := newTestLauncher(t, reviewer, rt)
-
-	if err := l.Notify(context.Background(), "review-mer-1", launchSpec()); err != nil {
-		t.Fatalf("Notify: %v", err)
-	}
-	if rt.sentTo != "" {
-		t.Fatalf("one-shot reviewer message sent to stale pane %q", rt.sentTo)
-	}
-	if !rt.destroyBefore || !rt.created || rt.destroyed != "review-mer-1" {
-		t.Fatalf("one-shot reviewer was not replaced: %+v", rt)
-	}
-	if reviewer.gotInv.TaskPromptRoot == "" || reviewer.gotInv.TaskPromptFile == "" {
-		t.Fatalf("fresh reviewer invocation = %+v", reviewer.gotInv)
 	}
 }
 

@@ -29,13 +29,21 @@ func (r *Reviewer) Harness() domain.ReviewerHarness {
 
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
-var _ ports.ReviewerPaneReusePolicy = (*Reviewer)(nil)
 
-// ReviewCommand launches Cursor in headless Ask mode. Ask mode prevents code
-// changes, while --force (selected by PermissionModeAuto) lets the reviewer run
-// the git inspection and gh/ao reporting commands without waiting for a human
-// approval prompt. Cursor has no system-prompt flag, so production invocations
-// point it at both AO-owned prompt files.
+// PreLaunch installs the reviewer-only Cursor permissions into an AO-owned
+// profile. The user's Cursor configuration is used only as a seed and is never
+// modified.
+func (r *Reviewer) PreLaunch(ctx context.Context, inv ports.ReviewInvocation) error {
+	return installReviewerConfig(ctx, inv)
+}
+
+// ReviewCommand launches Cursor's persistent interactive TUI in Ask mode.
+// PermissionModeAuto retains --force so explicitly allowed inspection and
+// reporting commands do not wait for approval. Ask mode plus the enabled
+// sandbox is the write boundary: Cursor permissions match only the first shell
+// token, so Shell(git) cannot safely express a read-only subcommand policy.
+// Cursor has no system-prompt flag, so the short initial prompt points it at
+// both AO-owned prompt files without exposing their contents in argv.
 func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
 	prompt := cursorPrompt(inv)
 	argv, err := r.agent.GetLaunchCommand(ctx, ports.LaunchConfig{
@@ -47,12 +55,13 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	if err != nil {
 		return ports.ReviewCommandSpec{}, err
 	}
-	flags := []string{"--trust", "--print", "--output-format", "text", "--mode=ask"}
+	flags := []string{"--mode", "ask", "--sandbox", "enabled", "--trust"}
 	if strings.TrimSpace(inv.TaskPromptRoot) != "" {
 		flags = append(flags, "--add-dir", inv.TaskPromptRoot)
 	}
 	return ports.ReviewCommandSpec{
 		Argv: insertBeforePrompt(argv, flags...),
+		Env:  reviewerEnv(inv),
 	}, nil
 }
 
@@ -64,18 +73,10 @@ func cursorPrompt(inv ports.ReviewInvocation) string {
 			filepath.ToSlash(inv.TaskPromptFile),
 		)
 	}
-	return strings.TrimSpace(inv.SystemPrompt + "\n\n" + inv.Prompt)
+	return strings.TrimSpace(inv.Prompt)
 }
 
-// ReuseReviewerPane reports that headless Cursor exits after one pass. The
-// launcher replaces its stable pane instead of sending a later task to the
-// interactive shell that the runtime leaves behind.
-func (r *Reviewer) ReuseReviewerPane() bool {
-	return false
-}
-
-// ReviewMessage satisfies the reviewer contract. The launcher does not call it
-// because ReuseReviewerPane returns false.
+// ReviewMessage returns the centrally-authored task for the persistent pane.
 func (r *Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
 	return inv.Prompt, nil
 }
