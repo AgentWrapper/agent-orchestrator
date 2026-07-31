@@ -34,6 +34,21 @@ type fakeModelCache struct {
 	puts    int
 }
 
+type fakeProjectLookup struct {
+	records map[string]domain.ProjectRecord
+	gotID   string
+	err     error
+}
+
+func (f *fakeProjectLookup) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
+	f.gotID = id
+	if f.err != nil {
+		return domain.ProjectRecord{}, false, f.err
+	}
+	record, ok := f.records[id]
+	return record, ok, nil
+}
+
 func (f *fakeModelCache) GetAgentModelCatalog(_ context.Context, agentID, projectID string) (ports.CachedAgentModelCatalog, bool, error) {
 	record, ok := f.records[agentID+"\x00"+projectID]
 	return record, ok, nil
@@ -358,7 +373,7 @@ func TestModelsCachesStaticCatalogByProject(t *testing.T) {
 	cache := &fakeModelCache{}
 	svc := newService([]agentregistry.HarnessAgent{
 		harnessAgent("codex", "Codex", nil),
-	}, cache)
+	}, cache, nil)
 
 	first, err := svc.Models(context.Background(), "codex", "proj-1", false)
 	if err != nil {
@@ -380,6 +395,32 @@ func TestModelsCachesStaticCatalogByProject(t *testing.T) {
 	}
 	if second.Source != first.Source || len(second.Models) != len(first.Models) {
 		t.Fatalf("cached catalog = %#v, want %#v", second, first)
+	}
+}
+
+func TestModelsResolvesProjectWorkingDirectory(t *testing.T) {
+	projects := &fakeProjectLookup{records: map[string]domain.ProjectRecord{
+		"proj-1": {ID: "proj-1", Path: "/work/project"},
+	}}
+	svc := newService([]agentregistry.HarnessAgent{
+		harnessAgent("codex", "Codex", nil),
+	}, nil, projects)
+
+	if _, err := svc.Models(context.Background(), "codex", "proj-1", false); err != nil {
+		t.Fatal(err)
+	}
+	if projects.gotID != "proj-1" {
+		t.Fatalf("project lookup id = %q, want proj-1", projects.gotID)
+	}
+}
+
+func TestModelsRejectsUnknownProjectScope(t *testing.T) {
+	svc := newService([]agentregistry.HarnessAgent{
+		harnessAgent("codex", "Codex", nil),
+	}, nil, &fakeProjectLookup{records: map[string]domain.ProjectRecord{}})
+
+	if _, err := svc.Models(context.Background(), "codex", "missing", false); err == nil {
+		t.Fatal("Models: want unknown-project error")
 	}
 }
 

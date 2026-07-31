@@ -11,6 +11,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -54,8 +55,9 @@ type Inventory struct {
 // Service reports supported agent adapters and best-effort local readiness
 // probes. Catalog readiness is advisory UI metadata, not a spawn precheck.
 type Service struct {
-	agents []agentregistry.HarnessAgent
-	cache  ports.AgentModelCatalogCache
+	agents   []agentregistry.HarnessAgent
+	cache    ports.AgentModelCatalogCache
+	projects ProjectLookup
 
 	mu          sync.RWMutex
 	inventory   Inventory
@@ -65,7 +67,14 @@ type Service struct {
 
 // Deps contains optional durable dependencies for the agent catalog service.
 type Deps struct {
-	Cache ports.AgentModelCatalogCache
+	Cache    ports.AgentModelCatalogCache
+	Projects ProjectLookup
+}
+
+// ProjectLookup resolves the registered working directory used for model
+// discovery. The SQLite store satisfies this narrow read boundary.
+type ProjectLookup interface {
+	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 }
 
 // New returns an agent inventory service backed by the daemon's shipped
@@ -76,17 +85,17 @@ func New() *Service {
 
 // NewWithDeps returns the production service with durable model-catalog cache.
 func NewWithDeps(deps Deps) *Service {
-	return newService(agentregistry.Harnessed(), deps.Cache)
+	return newService(agentregistry.Harnessed(), deps.Cache, deps.Projects)
 }
 
 // NewWithAgents returns an inventory service over a caller-provided adapter
 // slice. It is used by focused tests.
 func NewWithAgents(agents []agentregistry.HarnessAgent) *Service {
-	return newService(agents, nil)
+	return newService(agents, nil, nil)
 }
 
-func newService(agents []agentregistry.HarnessAgent, cache ports.AgentModelCatalogCache) *Service {
-	return &Service{agents: agents, cache: cache, inventory: Inventory{
+func newService(agents []agentregistry.HarnessAgent, cache ports.AgentModelCatalogCache, projects ProjectLookup) *Service {
+	return &Service{agents: agents, cache: cache, projects: projects, inventory: Inventory{
 		Supported:  supportedInfos(agents),
 		Installed:  []Info{},
 		Authorized: []Info{},
@@ -202,6 +211,10 @@ func (s *Service) Models(ctx context.Context, agentID, projectID string, refresh
 	if !ok {
 		return ports.AgentModelCatalog{}, apierr.NotFound("AGENT_NOT_FOUND", "Unknown agent adapter")
 	}
+	workingDir, err := s.projectWorkingDir(ctx, projectID)
+	if err != nil {
+		return ports.AgentModelCatalog{}, err
+	}
 
 	var binary string
 	if resolver, ok := item.Agent.(ports.AgentBinaryResolver); ok {
@@ -220,7 +233,7 @@ func (s *Service) Models(ctx context.Context, agentID, projectID string, refresh
 		return cached.Catalog, nil
 	}
 
-	discovered, discoverErr := modelcatalog.Discover(ctx, agentID, binary)
+	discovered, discoverErr := modelcatalog.Discover(ctx, agentID, binary, workingDir)
 	discovered.BinaryVersion = version
 	if discoverErr != nil {
 		if hasCached {
@@ -236,6 +249,20 @@ func (s *Service) Models(ctx context.Context, agentID, projectID string, refresh
 		return ports.AgentModelCatalog{}, err
 	}
 	return discovered, nil
+}
+
+func (s *Service) projectWorkingDir(ctx context.Context, projectID string) (string, error) {
+	if projectID == "" || s.projects == nil {
+		return "", nil
+	}
+	project, ok, err := s.projects.GetProject(ctx, projectID)
+	if err != nil {
+		return "", apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
+	}
+	if !ok || !project.ArchivedAt.IsZero() {
+		return "", apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
+	}
+	return project.Path, nil
 }
 
 type decodedCatalog struct {
