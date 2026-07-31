@@ -140,6 +140,7 @@ var schemaNames = map[string]string{
 	"DomainSession":             "Session",
 	"DomainProjectConfig":       "ProjectConfig",
 	"DomainTrackerIntakeConfig": "TrackerIntakeConfig",
+	"DomainContainerReapConfig": "ContainerReapConfig",
 	"DomainAgentConfig":         "AgentConfig",
 	"DomainRoleOverride":        "RoleOverride",
 	// httpd/controllers (wire envelopes)
@@ -196,7 +197,6 @@ var schemaNames = map[string]string{
 	"ControllersSpawnOrchestratorRequest":         "SpawnOrchestratorRequest",
 	"ControllersSpawnOrchestratorResponse":        "SpawnOrchestratorResponse",
 	"ControllersOrchestratorResponse":             "OrchestratorResponse",
-	"ControllersCompleteOrchestratorResponse":     "CompleteOrchestratorResponse",
 	"AgentInventory":                              "ListAgentsResponse",
 	"AgentInfo":                                   "AgentInfo",
 	"AgentProbeResult":                            "ProbeAgentResponse",
@@ -1102,18 +1102,6 @@ func sessionOperations() []operation {
 			pathParams: []any{controllers.OrchestratorIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.SessionResponse{}},
-				{http.StatusNotFound, envelope.APIError{}},
-				{http.StatusInternalServerError, envelope.APIError{}},
-				{http.StatusNotImplemented, envelope.APIError{}},
-			},
-		},
-		{
-			method: http.MethodPost, path: "/api/v1/orchestrators/{id}/done", id: "completeOrchestrator", tag: "sessions",
-			summary:    "Declare an orchestrator complete and stop automatic re-engagement",
-			pathParams: []any{controllers.OrchestratorIDParam{}},
-			resps: []respUnit{
-				{http.StatusOK, controllers.CompleteOrchestratorResponse{}},
-				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
