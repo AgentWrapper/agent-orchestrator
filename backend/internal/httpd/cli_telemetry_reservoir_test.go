@@ -49,6 +49,22 @@ func TestCLITelemetryReservoirResetsOnNewUTCDay(t *testing.T) {
 	}
 }
 
+func TestCLITelemetryReservoirNormalizesCommandPathReservations(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)
+
+	r := newCLITelemetryReservoir(dir)
+	if !r.reserveInvoked(now, "user", "AO   SEND") {
+		t.Fatal("first normalized command reservation = false, want true")
+	}
+	if r.reserveInvoked(now, "user", "ao send") {
+		t.Fatal("same normalized command reservation = true, want false")
+	}
+	if !r.reserveInvoked(now, "agent", "ao send") {
+		t.Fatal("same normalized command with different actor = false, want true")
+	}
+}
+
 func TestCLITelemetryReservoirActiveReservationsUseSixHourSlots(t *testing.T) {
 	dir := t.TempDir()
 	r := newCLITelemetryReservoir(dir)
