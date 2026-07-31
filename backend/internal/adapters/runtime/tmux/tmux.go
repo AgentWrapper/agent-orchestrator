@@ -252,10 +252,16 @@ func New(opts Options) *Runtime {
 	if timeout == 0 {
 		timeout = defaultTimeout
 	}
+	// The pane runs `<shell> -c <launchCmd>`, and buildLaunchCommand emits POSIX
+	// shell syntax (`export KEY=value`, `unset KEY`, `cd <dir> || exit`). A
+	// user's $SHELL may be a non-POSIX shell (fish does not support `export
+	// KEY=value` or `unset`), which would make the pane fail to parse the launch
+	// command and exit immediately, killing the tmux session before the
+	// liveness probe. So the pane interpreter is always a POSIX shell; the
+	// user's interactive shell is still honoured for the keep-alive via
+	// `exec "${SHELL:-/bin/sh}" -i` inside the launch command (tmux copies
+	// $SHELL into the session env).
 	shellPath := opts.Shell
-	if shellPath == "" {
-		shellPath = getenv("SHELL")
-	}
 	if shellPath == "" {
 		shellPath = "/bin/sh"
 	}
@@ -986,6 +992,15 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
+// ambientColorSuppressors are variables that make agent TUIs drop color. A
+// daemon started from a coding agent or CI terminal inherits them for that
+// context's captured output, and they must not follow into an interactive
+// session. tmux widens the blast radius: a pane inherits the tmux SERVER's
+// environment, frozen from whatever first started the server, so scrubbing the
+// daemon's own environment is not enough. A project can still opt out of color
+// by setting any of these explicitly in its configured environment.
+var ambientColorSuppressors = []string{"CI", "COLOR", "FORCE_COLOR", "NO_COLOR"}
+
 // buildLaunchCommand builds the shell command string passed to `sh -c`. It
 // exports env vars, then runs argv, then execs a keep-alive interactive shell
 // so the tmux session survives the agent exiting.
@@ -1002,12 +1017,13 @@ func buildLaunchCommand(cfg ports.RuntimeConfig) string {
 	b.WriteString("cd ")
 	b.WriteString(shellQuote(cfg.WorkspacePath))
 	b.WriteString(" || exit; ")
-	if _, configured := cfg.Env["NO_COLOR"]; !configured {
-		// The daemon may be launched from another agent or CI environment that
-		// sets NO_COLOR for its own captured output. Do not leak that ambient
-		// preference into an interactive terminal session. A project can still
-		// opt out of color explicitly through its configured environment.
-		b.WriteString("unset NO_COLOR; ")
+	for _, key := range ambientColorSuppressors {
+		if _, configured := cfg.Env[key]; configured {
+			continue
+		}
+		b.WriteString("unset ")
+		b.WriteString(key)
+		b.WriteString("; ")
 	}
 	for _, key := range sortedKeys(cfg.Env) {
 		if key == "PATH" || key == "COLORTERM" {
