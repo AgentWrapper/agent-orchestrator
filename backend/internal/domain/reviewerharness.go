@@ -12,6 +12,9 @@ type ReviewerHarness string
 const (
 	ReviewerClaudeCode ReviewerHarness = "claude-code"
 	ReviewerCodex      ReviewerHarness = "codex"
+	ReviewerCopilot    ReviewerHarness = "copilot"
+	ReviewerCursor     ReviewerHarness = "cursor"
+	ReviewerKiloCode   ReviewerHarness = "kilocode"
 	ReviewerOpenCode   ReviewerHarness = "opencode"
 )
 
@@ -20,6 +23,9 @@ const (
 var AllReviewerHarnesses = []ReviewerHarness{
 	ReviewerClaudeCode,
 	ReviewerCodex,
+	ReviewerCopilot,
+	ReviewerCursor,
+	ReviewerKiloCode,
 	ReviewerOpenCode,
 }
 

@@ -66,21 +66,30 @@ const agentCatalogResponse = {
 		supported: [
 			{ id: "claude-code", label: "Claude Code" },
 			{ id: "codex", label: "Codex" },
+			{ id: "copilot", label: "GitHub Copilot" },
+			{ id: "cursor", label: "Cursor" },
 			{ id: "goose", label: "Goose" },
+			{ id: "kilocode", label: "Kilo Code" },
 			{ id: "kiro", label: "Kiro" },
 			{ id: "opencode", label: "OpenCode" },
 		],
 		installed: [
 			{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
 			{ id: "codex", label: "Codex", authStatus: "authorized" },
+			{ id: "copilot", label: "GitHub Copilot", authStatus: "authorized" },
+			{ id: "cursor", label: "Cursor", authStatus: "authorized" },
 			{ id: "goose", label: "Goose", authStatus: "authorized" },
+			{ id: "kilocode", label: "Kilo Code", authStatus: "authorized" },
 			{ id: "kiro", label: "Kiro", authStatus: "unknown" },
 			{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
 		],
 		authorized: [
 			{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
 			{ id: "codex", label: "Codex", authStatus: "authorized" },
+			{ id: "copilot", label: "GitHub Copilot", authStatus: "authorized" },
+			{ id: "cursor", label: "Cursor", authStatus: "authorized" },
 			{ id: "goose", label: "Goose", authStatus: "authorized" },
+			{ id: "kilocode", label: "Kilo Code", authStatus: "authorized" },
 			{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
 		],
 	},
@@ -239,6 +248,7 @@ describe("ProjectSettingsForm", () => {
 		await chooseOption(orchestratorAgent, "Goose");
 		await userEvent.click(permissionMode);
 		await userEvent.click(await screen.findByRole("menuitem", { name: "Bypass permissions" }));
+		await chooseOption(reviewerAgent, "Cursor");
 
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
@@ -262,7 +272,7 @@ describe("ProjectSettingsForm", () => {
 						model: "gpt-5-codex",
 						permissions: "bypass-permissions",
 					},
-					reviewers: [{ harness: "claude-code" }],
+					reviewers: [{ harness: "cursor" }],
 				},
 			},
 		});
@@ -408,11 +418,153 @@ describe("ProjectSettingsForm", () => {
 		expect(options.map((option) => option.textContent)).toEqual([
 			"Claude Code",
 			"Codex",
+			"Cursor",
 			"OpenCode",
+			"GitHub Copilot",
 			"Goose",
+			"Kilo Code",
 			"KiroAuth unknown",
 		]);
-		expect(options[4]).not.toHaveAttribute("aria-disabled", "true");
+		expect(options[7]).not.toHaveAttribute("aria-disabled", "true");
+	});
+
+	it("shows Copilot as a reviewer option and saves it in the reviewers payload", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		const reviewer = await screen.findByRole("button", { name: "Default reviewer agent" });
+		await userEvent.click(reviewer);
+		const copilot = await screen.findByRole("menuitem", { name: "GitHub Copilot" });
+		expect(copilot).not.toHaveAttribute("aria-disabled", "true");
+		await userEvent.click(copilot);
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith(
+			"/api/v1/projects/{id}",
+			expect.objectContaining({
+				body: expect.objectContaining({
+					config: expect.objectContaining({ reviewers: [{ harness: "copilot" }] }),
+				}),
+			}),
+		);
+	});
+
+	it("disables the Copilot reviewer when its binary is missing", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				return {
+					data: {
+						supported: [{ id: "copilot", label: "GitHub Copilot" }],
+						installed: [],
+						authorized: [],
+					},
+					error: undefined,
+				};
+			}
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "proj-1",
+						name: "Project One",
+						kind: "single_repo",
+						path: "/repo/project-one",
+						repo: "",
+						defaultBranch: "main",
+						config: {
+							worker: { agent: "codex" },
+							orchestrator: { agent: "claude-code" },
+						},
+					},
+				},
+				error: undefined,
+			};
+		});
+
+		renderSettings();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Default reviewer agent" }));
+		const copilot = (await screen.findAllByRole("menuitem")).find((option) =>
+			option.textContent?.includes("GitHub Copilot"),
+		);
+		expect(copilot).toHaveTextContent("Needs install");
+		expect(copilot).toHaveAttribute("aria-disabled", "true");
+	});
+
+	it("shows the standard unknown-auth warning for an installed Copilot reviewer", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				return {
+					data: {
+						supported: [{ id: "copilot", label: "GitHub Copilot" }],
+						installed: [{ id: "copilot", label: "GitHub Copilot", authStatus: "unknown" }],
+						authorized: [],
+					},
+					error: undefined,
+				};
+			}
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "proj-1",
+						name: "Project One",
+						kind: "single_repo",
+						path: "/repo/project-one",
+						repo: "",
+						defaultBranch: "main",
+						config: {
+							worker: { agent: "codex" },
+							orchestrator: { agent: "claude-code" },
+						},
+					},
+				},
+				error: undefined,
+			};
+		});
+
+		renderSettings();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Default reviewer agent" }));
+		const copilot = (await screen.findAllByRole("menuitem")).find((option) =>
+			option.textContent?.includes("GitHub Copilot"),
+		);
+		expect(copilot).toHaveTextContent("Auth unknown");
+		expect(copilot).not.toHaveAttribute("aria-disabled", "true");
+	});
+
+	it("offers Kilo Code as a configured reviewer", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		const reviewer = await screen.findByRole("button", { name: "Default reviewer agent" });
+		await userEvent.click(reviewer);
+		expect(await screen.findByRole("menuitem", { name: "Kilo Code" })).toBeEnabled();
 	});
 
 	it("shows scratch identity and saves only scratch-supported settings", async () => {

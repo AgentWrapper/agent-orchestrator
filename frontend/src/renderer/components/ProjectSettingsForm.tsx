@@ -49,7 +49,7 @@ const PERMISSION_MODE_OPTIONS = [
 	{ value: "bypass-permissions", label: "Bypass permissions" },
 ] as const;
 
-const KNOWN_REVIEWER_HARNESS_IDS = new Set(["claude-code", "codex", "opencode"]);
+const KNOWN_REVIEWER_HARNESS_IDS = new Set(["claude-code", "codex", "copilot", "cursor", "kilocode", "opencode"]);
 
 const projectQueryKey = (id: string) => ["project", id] as const;
 
@@ -492,7 +492,7 @@ function PermissionModeSelect({ value, onChange }: { value: string; onChange: (v
 	);
 }
 
-const REVIEWER_AGENT_PRIORITY = ["claude-code", "codex", "cursor", "opencode", "aider"] as const;
+const REVIEWER_AGENT_PRIORITY = ["claude-code", "codex", "copilot", "cursor", "opencode", "kilocode", "aider"] as const;
 const REVIEWER_AGENT_PRIORITY_RANK = new Map<string, number>(
 	REVIEWER_AGENT_PRIORITY.map((agent, index) => [agent, index]),
 );

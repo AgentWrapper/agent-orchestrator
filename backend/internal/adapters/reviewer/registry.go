@@ -8,6 +8,9 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/codex"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/copilot"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/cursor"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/kilocode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/opencode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -25,6 +28,9 @@ func Constructors() []Adapter {
 	return []Adapter{
 		claudecode.New(),
 		codex.New(),
+		copilot.New(),
+		cursor.New(),
+		kilocode.New(),
 		opencode.New(),
 	}
 }
