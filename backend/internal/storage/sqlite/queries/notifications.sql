@@ -81,6 +81,16 @@ WHERE pr_url = sqlc.arg(pr_url)
   AND resolved_at IS NULL
 RETURNING *;
 
+-- Readiness is more than open/closed: draft, CI, review decision, unresolved
+-- human comments, and mergeability all block a merge. Rather than restate that
+-- rule in SQL and let it drift from the live path, this returns the open rows
+-- and lets domain.MergeReadiness judge them against the stored PR facts.
+-- name: ListOpenReadyToMergeNotifications :many
+SELECT *
+FROM notifications
+WHERE type = 'ready_to_merge'
+  AND resolved_at IS NULL;
+
 -- Restart reconciliation: a resolution transition observed while the daemon was
 -- down never reaches lifecycle, so open rows are re-checked against the durable
 -- session/PR facts on startup.
@@ -109,13 +119,3 @@ SELECT EXISTS(
     SELECT 1 FROM notifications
     WHERE session_id = ? AND status = 'unread'
 ) AS has_unread;
-
--- Readiness is more than open/closed: draft, CI, review decision, unresolved
--- human comments, and mergeability all block a merge. Rather than restate that
--- rule in SQL and let it drift from the live path, this returns the open rows
--- and lets domain.MergeReadiness judge them against the stored PR facts.
--- name: ListOpenReadyToMergeNotifications :many
-SELECT *
-FROM notifications
-WHERE type = 'ready_to_merge'
-  AND resolved_at IS NULL;
