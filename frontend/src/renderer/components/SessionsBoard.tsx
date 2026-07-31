@@ -373,7 +373,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			    chooser was review feedback on #2432. */}
 			{!showWelcome && boardActionsInPanel && (boardLabel || actions) ? (
 				<div
-					className="center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 border-b border-border-strong pr-4.5"
+					className="center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 border-b border-border-strong"
 					style={dragStyle}
 				>
 					{boardLabel ? <span className={topbarProjectLabelClass}>{boardLabel}</span> : null}
