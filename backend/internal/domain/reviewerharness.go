@@ -16,6 +16,7 @@ const (
 	ReviewerCursor     ReviewerHarness = "cursor"
 	ReviewerKiloCode   ReviewerHarness = "kilocode"
 	ReviewerOpenCode   ReviewerHarness = "opencode"
+	ReviewerPi         ReviewerHarness = "pi"
 )
 
 // AllReviewerHarnesses is the canonical set used to validate a configured
@@ -27,6 +28,7 @@ var AllReviewerHarnesses = []ReviewerHarness{
 	ReviewerCursor,
 	ReviewerKiloCode,
 	ReviewerOpenCode,
+	ReviewerPi,
 }
 
 // IsKnown reports whether h is one of the supported reviewer harnesses.

@@ -1074,6 +1074,16 @@ func TestInterruptSendsCtrlC(t *testing.T) {
 	}
 }
 
+func TestEscapeSendsEscapeWithoutChangingInterrupt(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	if err := r.Escape(context.Background(), ports.RuntimeHandle{ID: "sess-1"}); err != nil {
+		t.Fatalf("Escape: %v", err)
+	}
+	if got, want := fr.calls[0].args, sendEscapeArgs("sess-1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("escape args = %#v, want %#v", got, want)
+	}
+}
+
 // -- GetOutput tests --
 
 func TestGetOutputValidatesLines(t *testing.T) {

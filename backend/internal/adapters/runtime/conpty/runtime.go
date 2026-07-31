@@ -198,6 +198,15 @@ func (r *Runtime) Interrupt(ctx context.Context, handle ports.RuntimeHandle) err
 	return clientSendInput(sess.addr, "\x03")
 }
 
+// Escape sends the TUI Escape key without changing Interrupt's Ctrl-C contract.
+func (r *Runtime) Escape(ctx context.Context, handle ports.RuntimeHandle) error {
+	sess := r.resolve(handle.ID)
+	if sess == nil {
+		return fmt.Errorf("conpty: session %q not found", handle.ID)
+	}
+	return clientSendInput(sess.addr, "\x1b")
+}
+
 // GetOutput returns the last lines lines from the pty-host ring buffer.
 func (r *Runtime) GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error) {
 	if lines <= 0 {

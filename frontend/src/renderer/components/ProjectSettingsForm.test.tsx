@@ -72,6 +72,7 @@ const agentCatalogResponse = {
 			{ id: "kilocode", label: "Kilo Code" },
 			{ id: "kiro", label: "Kiro" },
 			{ id: "opencode", label: "OpenCode" },
+			{ id: "pi", label: "Pi" },
 		],
 		installed: [
 			{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
@@ -82,6 +83,7 @@ const agentCatalogResponse = {
 			{ id: "kilocode", label: "Kilo Code", authStatus: "authorized" },
 			{ id: "kiro", label: "Kiro", authStatus: "unknown" },
 			{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
+			{ id: "pi", label: "Pi", authStatus: "authorized" },
 		],
 		authorized: [
 			{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
@@ -91,6 +93,7 @@ const agentCatalogResponse = {
 			{ id: "goose", label: "Goose", authStatus: "authorized" },
 			{ id: "kilocode", label: "Kilo Code", authStatus: "authorized" },
 			{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
+			{ id: "pi", label: "Pi", authStatus: "authorized" },
 		],
 	},
 	error: undefined,
@@ -248,7 +251,7 @@ describe("ProjectSettingsForm", () => {
 		await chooseOption(orchestratorAgent, "Goose");
 		await userEvent.click(permissionMode);
 		await userEvent.click(await screen.findByRole("menuitem", { name: "Bypass permissions" }));
-		await chooseOption(reviewerAgent, "Cursor");
+		await chooseOption(reviewerAgent, "Pi");
 
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
@@ -272,7 +275,7 @@ describe("ProjectSettingsForm", () => {
 						model: "gpt-5-codex",
 						permissions: "bypass-permissions",
 					},
-					reviewers: [{ harness: "cursor" }],
+					reviewers: [{ harness: "pi" }],
 				},
 			},
 		});
@@ -423,9 +426,10 @@ describe("ProjectSettingsForm", () => {
 			"GitHub Copilot",
 			"Goose",
 			"Kilo Code",
+			"Pi",
 			"KiroAuth unknown",
 		]);
-		expect(options[7]).not.toHaveAttribute("aria-disabled", "true");
+		expect(options[8]).not.toHaveAttribute("aria-disabled", "true");
 	});
 
 	it("shows Copilot as a reviewer option and saves it in the reviewers payload", async () => {

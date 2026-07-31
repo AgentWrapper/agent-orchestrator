@@ -689,6 +689,7 @@ func (r *selectableRuntime) Attach(context.Context, ports.RuntimeHandle, uint16,
 }
 
 func (r *selectableRuntime) Interrupt(context.Context, ports.RuntimeHandle) error { return nil }
+func (r *selectableRuntime) Escape(context.Context, ports.RuntimeHandle) error    { return nil }
 
 func (r *selectableRuntime) SendMessage(context.Context, ports.RuntimeHandle, string) error {
 	return nil

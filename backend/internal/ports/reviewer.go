@@ -28,6 +28,9 @@ const (
 	// ReviewCancelInterrupt sends the terminal interrupt key sequence to the
 	// reviewer process while preserving the terminal pane.
 	ReviewCancelInterrupt ReviewCancelMode = "interrupt"
+	// ReviewCancelEscape sends the Escape key used by interactive TUIs such as
+	// Pi to cancel the active turn while preserving the pane.
+	ReviewCancelEscape ReviewCancelMode = "escape"
 )
 
 // ReviewCancelSpec is the adapter-selected cancellation behavior for a running

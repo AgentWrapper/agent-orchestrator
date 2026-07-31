@@ -60,6 +60,7 @@ func (f *fakeCancellableReviewer) ReviewCancel(context.Context) (ports.ReviewCan
 type fakeReviewerForPreflight struct {
 	CommandErr error
 	Argv       []string
+	Preflight  func(context.Context, string) error
 }
 
 func (f *fakeReviewerForPreflight) ReviewCommand(_ context.Context, _ ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
@@ -71,6 +72,13 @@ func (f *fakeReviewerForPreflight) ReviewCommand(_ context.Context, _ ports.Revi
 
 func (f *fakeReviewerForPreflight) ReviewMessage(_ context.Context, _ ports.ReviewInvocation) (string, error) {
 	return "", nil
+}
+
+func (f *fakeReviewerForPreflight) ReviewPreflight(ctx context.Context, workspacePath string) error {
+	if f.Preflight == nil {
+		return nil
+	}
+	return f.Preflight(ctx, workspacePath)
 }
 
 type fakeReviewerResolver struct {
@@ -90,6 +98,8 @@ type fakeRuntime struct {
 	alive         bool
 	interrupt     string
 	interrupts    int
+	escaped       string
+	escapes       int
 	destroyed     string
 	destroyBefore bool
 	created       bool
@@ -113,6 +123,11 @@ func (f *fakeRuntime) IsAlive(_ context.Context, _ ports.RuntimeHandle) (bool, e
 func (f *fakeRuntime) Interrupt(_ context.Context, handle ports.RuntimeHandle) error {
 	f.interrupt = handle.ID
 	f.interrupts++
+	return nil
+}
+func (f *fakeRuntime) Escape(_ context.Context, handle ports.RuntimeHandle) error {
+	f.escaped = handle.ID
+	f.escapes++
 	return nil
 }
 func (f *fakeRuntime) SendMessage(_ context.Context, handle ports.RuntimeHandle, msg string) error {
@@ -306,6 +321,22 @@ func TestLauncherCancelUsesReviewerCancelMode(t *testing.T) {
 	}
 }
 
+func TestLauncherCancelSendsEscapeForPi(t *testing.T) {
+	reviewer := &fakeCancellableReviewer{mode: ports.ReviewCancelEscape, interrupts: 1}
+	rt := &fakeRuntime{}
+	l := newTestLauncher(t, reviewer, rt)
+
+	if err := l.Cancel(context.Background(), "review-mer-1", domain.ReviewerPi); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if rt.escaped != "review-mer-1" || rt.escapes != 1 {
+		t.Fatalf("escape handle/count = %q/%d, want review-mer-1/1", rt.escaped, rt.escapes)
+	}
+	if rt.interrupts != 0 {
+		t.Fatalf("Pi cancel sent %d Ctrl-C interrupts", rt.interrupts)
+	}
+}
+
 func TestLauncherCancelRequiresReviewerSupport(t *testing.T) {
 	l := newTestLauncher(t, &fakeReviewer{}, &fakeRuntime{})
 
@@ -322,10 +353,23 @@ func TestLauncherSpawnNoAdapter(t *testing.T) {
 }
 
 func TestLauncherPreflightResolvesAdapter(t *testing.T) {
-	reviewer := &fakeReviewerForPreflight{Argv: []string{"go"}}
+	called := false
+	reviewer := &fakeReviewerForPreflight{
+		Argv: []string{"go"},
+		Preflight: func(_ context.Context, workspacePath string) error {
+			called = true
+			if workspacePath != "/ws/mer-1" {
+				t.Fatalf("workspace = %q", workspacePath)
+			}
+			return nil
+		},
+	}
 	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, &fakeRuntime{}, "")
 	if err := l.Preflight(context.Background(), domain.ReviewerClaudeCode, "/ws/mer-1"); err != nil {
 		t.Fatalf("Preflight: %v", err)
+	}
+	if !called {
+		t.Fatal("adapter compatibility preflight was not called")
 	}
 }
 

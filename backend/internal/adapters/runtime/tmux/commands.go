@@ -118,6 +118,12 @@ func sendInterruptArgs(id string) []string {
 	return []string{"send-keys", "-t", id, "C-c"}
 }
 
+// sendEscapeArgs builds args for the literal Escape key understood by TUIs
+// whose cancellation contract differs from the terminal interrupt signal.
+func sendEscapeArgs(id string) []string {
+	return []string{"send-keys", "-t", id, "Escape"}
+}
+
 // capturePaneArgs builds args for `tmux capture-pane -t <id> -p -S -<lines>`.
 // -p prints to stdout; -S -<n> starts n lines back in history.
 func capturePaneArgs(id string, lines int) []string {

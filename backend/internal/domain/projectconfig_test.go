@@ -34,6 +34,7 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"good cursor reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerCursor}}}, false},
 		{"good Kilo Code reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerKiloCode}}}, false},
 		{"good opencode reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerOpenCode}}}, false},
+		{"good pi reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerPi}}}, false},
 		{"unknown reviewer harness", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: "nope"}}}, true},
 		{"worker-only harness is not auto a reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerHarness(HarnessAider)}}}, true},
 		{"empty reviewer harness", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ""}}}, true},
@@ -125,6 +126,9 @@ func TestResolveReviewerHarness(t *testing.T) {
 	}
 	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessKilocode); got != ReviewerKiloCode {
 		t.Fatalf("Kilo Code worker = %q, want reviewer kilocode", got)
+	}
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessPi); got != ReviewerPi {
+		t.Fatalf("pi worker = %q, want reviewer pi", got)
 	}
 
 	// A worker harness that is not itself a reviewer (e.g. crush, aider) falls

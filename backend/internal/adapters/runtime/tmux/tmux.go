@@ -617,6 +617,18 @@ func (r *Runtime) Interrupt(ctx context.Context, handle ports.RuntimeHandle) err
 	return nil
 }
 
+// Escape sends the Escape key without changing Interrupt's Ctrl-C contract.
+func (r *Runtime) Escape(ctx context.Context, handle ports.RuntimeHandle) error {
+	id, err := handleID(handle)
+	if err != nil {
+		return err
+	}
+	if _, err := r.run(ctx, sendEscapeArgs(id)...); err != nil {
+		return fmt.Errorf("tmux runtime: escape session %s: %w", id, err)
+	}
+	return nil
+}
+
 // GetOutput returns the last `lines` lines of the session pane's captured
 // output.
 func (r *Runtime) GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error) {

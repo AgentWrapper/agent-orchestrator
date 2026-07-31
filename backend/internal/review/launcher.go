@@ -59,6 +59,7 @@ type reviewerRuntime interface {
 	Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error)
 	Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	Interrupt(ctx context.Context, handle ports.RuntimeHandle) error
+	Escape(ctx context.Context, handle ports.RuntimeHandle) error
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
 	SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error
 }
@@ -74,6 +75,10 @@ type agentLauncher struct {
 
 type preLaunchReviewer interface {
 	PreLaunch(ctx context.Context, inv ports.ReviewInvocation) error
+}
+
+type preflightReviewer interface {
+	ReviewPreflight(ctx context.Context, workspacePath string) error
 }
 
 // NewLauncher builds the production reviewer launcher.
@@ -112,6 +117,11 @@ func (l *agentLauncher) Preflight(ctx context.Context, harness domain.ReviewerHa
 	}
 	if _, err := exec.LookPath(bin); err != nil {
 		return fmt.Errorf("reviewer binary %q not found: %w", bin, err)
+	}
+	if pf, ok := reviewer.(preflightReviewer); ok {
+		if err := pf.ReviewPreflight(ctx, workspacePath); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -295,6 +305,17 @@ func (l *agentLauncher) Cancel(ctx context.Context, handleID string, harness dom
 					return ctx.Err()
 				case <-timer.C:
 				}
+			}
+		}
+		return nil
+	case ports.ReviewCancelEscape:
+		interrupts := spec.Interrupts
+		if interrupts <= 0 {
+			interrupts = 1
+		}
+		for i := 0; i < interrupts; i++ {
+			if err := l.runtime.Escape(ctx, ports.RuntimeHandle{ID: handleID}); err != nil {
+				return err
 			}
 		}
 		return nil
