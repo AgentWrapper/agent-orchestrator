@@ -531,7 +531,9 @@
 	overflow: hidden;
 	border-bottom: 1px solid var(--color-border-topbar);
 	background: var(--color-bg-topbar);
-	padding-inline: var(--space-topbar-x);
+	padding-inline-start: var(--space-topbar-x);
+	/* Right inset matches vertical breathing room: (titlebar - control) / 2 = (36 - 28) / 2 = 4px */
+	padding-inline-end: 4px;
 	color: var(--color-text-topbar);
 	font-size: var(--font-size-base);
 	line-height: 1;
