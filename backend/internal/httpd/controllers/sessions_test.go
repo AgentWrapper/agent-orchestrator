@@ -179,6 +179,16 @@ func (f *fakeSessionService) SetTerminateOnPRMerge(_ context.Context, id domain.
 	return s, nil
 }
 
+func (f *fakeSessionService) SetReviewAutoInject(_ context.Context, id domain.SessionID, enabled bool) (domain.Session, error) {
+	s, ok := f.sessions[id]
+	if !ok {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	s.ReviewAutoInjectOff = !enabled
+	f.sessions[id] = s
+	return s, nil
+}
+
 func (f *fakeSessionService) CompleteOrchestrator(_ context.Context, id domain.SessionID) error {
 	f.completedID = id
 	return nil
@@ -532,6 +542,23 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	}
 	if !svc.sessions["ao-2"].TerminateOnPRMerge {
 		t.Fatalf("session merge policy not updated: %+v", svc.sessions["ao-2"])
+	}
+
+	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-2/review-policy", `{"autoInject":false}`)
+	if status != http.StatusOK {
+		t.Fatalf("review policy = %d, want 200; body=%s", status, body)
+	}
+	var reviewPolicy struct {
+		OK         bool   `json:"ok"`
+		SessionID  string `json:"sessionId"`
+		AutoInject bool   `json:"autoInject"`
+	}
+	mustJSON(t, body, &reviewPolicy)
+	if !reviewPolicy.OK || reviewPolicy.SessionID != "ao-2" || reviewPolicy.AutoInject {
+		t.Fatalf("review policy response = %#v", reviewPolicy)
+	}
+	if !svc.sessions["ao-2"].ReviewAutoInjectOff {
+		t.Fatalf("session review policy not updated: %+v", svc.sessions["ao-2"])
 	}
 
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators", `{"projectId":"ao"}`)

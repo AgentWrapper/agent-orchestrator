@@ -93,6 +93,16 @@ type RuntimeRestarter interface {
 	Restart(ctx context.Context, handle RuntimeHandle, cfg RuntimeConfig) (RuntimeHandle, error)
 }
 
+// RuntimeForegroundInspector is an optional runtime capability reporting what is
+// currently running inside a session's terminal. A live terminal is not the same
+// as a live agent: when an agent exits, its terminal usually survives at a shell
+// prompt, and callers that treat the terminal as the agent will talk to that
+// shell instead. An empty command with a nil error means the runtime could not
+// tell, which callers must not read as "no agent".
+type RuntimeForegroundInspector interface {
+	ForegroundCommand(ctx context.Context, handle RuntimeHandle) (string, error)
+}
+
 // RuntimeConfig is the spec for launching a session's process in a Runtime.
 // Argv is the agent's launch command as discrete arguments; each Runtime
 // shell-quotes it for its own shell, so the command survives args with spaces

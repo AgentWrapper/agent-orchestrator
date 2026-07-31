@@ -307,6 +307,11 @@ type SetSessionMergePolicyRequest struct {
 	TerminateOnPRMerge bool `json:"terminateOnPrMerge"`
 }
 
+// SetSessionReviewPolicyRequest is the body of PATCH /api/v1/sessions/{sessionId}/review-policy.
+type SetSessionReviewPolicyRequest struct {
+	AutoInject bool `json:"autoInject"`
+}
+
 // RenameSessionResponse is the body of PATCH /api/v1/sessions/{sessionId}.
 type RenameSessionResponse struct {
 	OK          bool             `json:"ok"`
@@ -320,6 +325,14 @@ type SetSessionMergePolicyResponse struct {
 	SessionID          domain.SessionID `json:"sessionId"`
 	TerminateOnPRMerge bool             `json:"terminateOnPrMerge"`
 	Session            SessionView      `json:"session"`
+}
+
+// SetSessionReviewPolicyResponse is the body of PATCH /api/v1/sessions/{sessionId}/review-policy.
+type SetSessionReviewPolicyResponse struct {
+	OK         bool             `json:"ok"`
+	SessionID  domain.SessionID `json:"sessionId"`
+	AutoInject bool             `json:"autoInject"`
+	Session    SessionView      `json:"session"`
 }
 
 // RestoreSessionResponse is the body of POST /api/v1/sessions/{sessionId}/restore.
@@ -783,6 +796,13 @@ type MergePRResponse struct {
 	OK       bool   `json:"ok"`
 	PRNumber int    `json:"prNumber"`
 	Method   string `json:"method"`
+}
+
+// TriggerReviewRequest is the optional body of the review trigger routes. An
+// empty harness keeps the project's configured reviewer; setting one overrides
+// it for this pass only, without editing project config.
+type TriggerReviewRequest struct {
+	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,opencode"`
 }
 
 // ResolveCommentsRequest is the optional body of POST /api/v1/prs/{id}/resolve-comments.

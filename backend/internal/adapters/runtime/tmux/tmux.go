@@ -510,6 +510,33 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 	return true, nil
 }
 
+// ForegroundCommand reports the foreground process in the session's active
+// pane. Callers use it to tell a live agent from a terminal the agent has
+// already exited from, which tmux itself keeps alive at a shell prompt. A
+// missing session returns "" with a nil error; a failed probe returns the error,
+// since "cannot tell" must not be read as "no agent".
+func (r *Runtime) ForegroundCommand(ctx context.Context, handle ports.RuntimeHandle) (string, error) {
+	id, err := handleID(handle)
+	if err != nil {
+		return "", err
+	}
+	out, err := r.run(ctx, foregroundCommandArgs(id)...)
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && sessionMissingOutput(string(out)) {
+			return "", nil
+		}
+		return "", fmt.Errorf("tmux runtime: probe foreground command %s: %w", id, err)
+	}
+	// One line per pane; the session's own process is the first.
+	for _, line := range strings.Split(string(out), "\n") {
+		if command := strings.TrimSpace(line); command != "" {
+			return command, nil
+		}
+	}
+	return "", nil
+}
+
 // IsSupervisedProcessAlive reports whether the managed workload for ref is
 // still a descendant of this tmux pane. The initial launch is identified by
 // its exact AO supervisor. After that supervisor exits and leaves the

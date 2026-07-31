@@ -112,8 +112,18 @@ type Manager struct {
 	// active turn (input steers the run) rather than only while idle. Supplied by
 	// the agent adapter via WithActiveSteering; the default answers false, so an
 	// unknown harness is only written to while idle.
-	steerActive  func(domain.AgentHarness) bool
-	reengagement orchestratorReengagementTracker
+	steerActive      func(domain.AgentHarness) bool
+	reengagement     orchestratorReengagementTracker
+	activityObserver func(context.Context, domain.SessionID, domain.ActivityState)
+}
+
+// SetActivityObserver installs a best-effort callback for valid activity
+// signals. It is used to retry work that was deliberately suppressed while a
+// session was blocked.
+func (m *Manager) SetActivityObserver(observer func(context.Context, domain.SessionID, domain.ActivityState)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.activityObserver = observer
 }
 
 // New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.
@@ -342,16 +352,25 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		if metadataChanged || s.Event == "user-prompt-submit" {
 			rec.UpdatedAt = now
 			err := m.store.UpdateSession(ctx, rec)
+			tracker := m.reengagement
+			observer := m.activityObserver
 			m.mu.Unlock()
-			if err == nil && m.reengagement != nil {
-				m.reengagement.ObserveActivity(ctx, rec, rec, s.Event)
+			if err == nil && tracker != nil {
+				tracker.ObserveActivity(ctx, rec, rec, s.Event)
+			}
+			if err == nil && observer != nil {
+				observer(ctx, id, s.State)
 			}
 			return err
 		}
 		tracker := m.reengagement
+		observer := m.activityObserver
 		m.mu.Unlock()
 		if tracker != nil {
 			tracker.ObserveActivity(ctx, rec, rec, s.Event)
+		}
+		if observer != nil {
+			observer(ctx, id, s.State)
 		}
 		return nil
 	}
@@ -386,6 +405,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	}
 	waitingEvents := m.waitingInputEvents(next, prevState, prevAt, now)
 	tracker := m.reengagement
+	observer := m.activityObserver
 	m.mu.Unlock()
 	if tracker != nil {
 		tracker.ObserveActivity(ctx, rec, next, s.Event)
@@ -394,6 +414,9 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		m.emitTelemetry(ctx, ev)
 	}
 	m.emitNotification(ctx, intent)
+	if observer != nil {
+		observer(ctx, id, s.State)
+	}
 	return nil
 }
 
@@ -436,7 +459,8 @@ func isToolUseEvent(event string) bool {
 // dialog is gone: a prompt cannot be submitted while a dialog holds the
 // composer, and a turn cannot end (or the session exit) with one on screen.
 func isTurnBoundaryEvent(event string) bool {
-	return event == "user-prompt-submit" || event == "stop" || event == "session-end" || event == "process-exited"
+	return event == "user-prompt-submit" || event == "stop" || event == "session-end" ||
+		event == "process-exited" || event == "terminal-idle"
 }
 
 // applyToolPrecedenceLocked folds an event-tagged activity signal through the
@@ -515,7 +539,9 @@ func (m *Manager) applyToolPrecedenceLocked(id domain.SessionID, cur domain.Acti
 
 	case cur == domain.ActivityBlocked:
 		// Paused on a decision: only a turn boundary or the correlated post
-		// may change the state.
+		// may change the state. terminal-idle is emitted only after an adapter
+		// positively identifies its normal composer, so it also proves that a
+		// permission dialog is no longer on screen.
 		switch {
 		case isTurnBoundaryEvent(s.Event):
 			delete(m.flights, id)

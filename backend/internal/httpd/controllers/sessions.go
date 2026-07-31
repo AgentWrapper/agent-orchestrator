@@ -75,6 +75,7 @@ type SessionService interface {
 	Rename(ctx context.Context, id domain.SessionID, displayName string) error
 	SetPreview(ctx context.Context, id domain.SessionID, previewURL string) (domain.Session, error)
 	SetTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool) (domain.Session, error)
+	SetReviewAutoInject(ctx context.Context, id domain.SessionID, enabled bool) (domain.Session, error)
 	CompleteOrchestrator(ctx context.Context, id domain.SessionID) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
 	ListPRSummaries(ctx context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error)
@@ -134,6 +135,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/pr/claim", c.claimPR)
 	r.Patch("/sessions/{sessionId}", c.rename)
 	r.Patch("/sessions/{sessionId}/merge-policy", c.setMergePolicy)
+	r.Patch("/sessions/{sessionId}/review-policy", c.setReviewPolicy)
 	r.Post("/sessions/{sessionId}/restore", c.restore)
 	r.Post("/sessions/{sessionId}/resume-agent", c.resumeAgent)
 	r.Post("/sessions/{sessionId}/kill", c.kill)
@@ -756,6 +758,29 @@ func (c *SessionsController) setMergePolicy(w http.ResponseWriter, r *http.Reque
 		SessionID:          sessionID(r),
 		TerminateOnPRMerge: in.TerminateOnPRMerge,
 		Session:            sessionView(sess),
+	})
+}
+
+func (c *SessionsController) setReviewPolicy(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "PATCH", "/api/v1/sessions/{sessionId}/review-policy")
+		return
+	}
+	var in SetSessionReviewPolicyRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	sess, err := c.Svc.SetReviewAutoInject(r.Context(), sessionID(r), in.AutoInject)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SetSessionReviewPolicyResponse{
+		OK:         true,
+		SessionID:  sessionID(r),
+		AutoInject: in.AutoInject,
+		Session:    sessionView(sess),
 	})
 }
 

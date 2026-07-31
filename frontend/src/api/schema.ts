@@ -678,6 +678,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/review-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Configure whether completed review findings are sent to the session */
+        patch: operations["setSessionReviewPolicy"];
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/reviews": {
         parameters: {
             query?: never;
@@ -964,6 +981,7 @@ export interface components {
             previewUrl?: string;
             projectId: string;
             prs: components["schemas"]["SessionPRFacts"][];
+            reviewAutoInjectOff: boolean;
             /** @enum {string} */
             scmStatus?: "pr_open" | "draft" | "ci_failed" | "review_pending" | "changes_requested" | "approved" | "mergeable" | "merged";
             /** @enum {string} */
@@ -976,6 +994,10 @@ export interface components {
         ControllersSpawnAttachmentInput: {
             data: string;
             mimeType?: string;
+        };
+        ControllersTriggerReviewRequest: {
+            /** @enum {string} */
+            harness?: "claude-code" | "codex" | "opencode";
         };
         DegradedProject: {
             id: string;
@@ -1059,6 +1081,7 @@ export interface components {
         ListReviewsResponse: {
             reviewerHandleId: string;
             reviews: components["schemas"]["PRReviewState"][];
+            runs: components["schemas"]["ReviewRun"][];
         };
         ListSessionPRsResponse: {
             prs: components["schemas"]["SessionPRSummary"][];
@@ -1249,6 +1272,9 @@ export interface components {
             displayName: string;
             ok: boolean;
             sessionId: string;
+        };
+        ResolveCommentsRequest: {
+            commentIds?: string[];
         };
         ResolveCommentsResponse: {
             ok: boolean;
@@ -1453,6 +1479,15 @@ export interface components {
         SetSessionPreviewRequest: {
             /** @description Preview target URL. When empty, the daemon autodetects a static entry point in the session workspace. */
             url?: string;
+        };
+        SetSessionReviewPolicyRequest: {
+            autoInject: boolean;
+        };
+        SetSessionReviewPolicyResponse: {
+            autoInject: boolean;
+            ok: boolean;
+            session: components["schemas"]["ControllersSessionView"];
+            sessionId: string;
         };
         ShellTerminalEnvelope: {
             shellTerminal: components["schemas"]["ShellTerminalResponse"];
@@ -2990,7 +3025,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ResolveCommentsRequest"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {
@@ -4206,6 +4245,69 @@ export interface operations {
             };
         };
     };
+    setSessionReviewPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetSessionReviewPolicyRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetSessionReviewPolicyResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     listReviews: {
         parameters: {
             query?: never;
@@ -4370,7 +4472,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ControllersTriggerReviewRequest"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {

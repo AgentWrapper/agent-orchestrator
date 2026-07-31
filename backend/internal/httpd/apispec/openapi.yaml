@@ -1068,6 +1068,11 @@ paths:
         schema:
           description: PR number.
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveCommentsRequest'
       responses:
         "200":
           content:
@@ -2036,6 +2041,57 @@ paths:
       summary: Resume an exited agent in its existing session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/review-policy:
+    patch:
+      operationId: setSessionReviewPolicy
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetSessionReviewPolicyRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetSessionReviewPolicyResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Configure whether completed review findings are sent to the session
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/reviews:
     get:
       operationId: listReviews
@@ -2170,6 +2226,11 @@ paths:
         schema:
           description: Session identifier, e.g. project-1.
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersTriggerReviewRequest'
       responses:
         "200":
           content:
@@ -2801,6 +2862,8 @@ components:
           items:
             $ref: '#/components/schemas/SessionPRFacts'
           type: array
+        reviewAutoInjectOff:
+          type: boolean
         scmStatus:
           enum:
           - pr_open
@@ -2843,6 +2906,7 @@ components:
       - activity
       - isTerminated
       - terminateOnPrMerge
+      - reviewAutoInjectOff
       - createdAt
       - updatedAt
       - status
@@ -2856,6 +2920,15 @@ components:
           type: string
       required:
       - data
+      type: object
+    ControllersTriggerReviewRequest:
+      properties:
+        harness:
+          enum:
+          - claude-code
+          - codex
+          - opencode
+          type: string
       type: object
     DegradedProject:
       properties:
@@ -3075,9 +3148,14 @@ components:
           items:
             $ref: '#/components/schemas/PRReviewState'
           type: array
+        runs:
+          items:
+            $ref: '#/components/schemas/ReviewRun'
+          type: array
       required:
       - reviewerHandleId
       - reviews
+      - runs
       type: object
     ListSessionPRsResponse:
       properties:
@@ -3545,6 +3623,13 @@ components:
       - ok
       - sessionId
       - displayName
+      type: object
+    ResolveCommentsRequest:
+      properties:
+        commentIds:
+          items:
+            type: string
+          type: array
       type: object
     ResolveCommentsResponse:
       properties:
@@ -4075,6 +4160,29 @@ components:
           description: Preview target URL. When empty, the daemon autodetects a static
             entry point in the session workspace.
           type: string
+      type: object
+    SetSessionReviewPolicyRequest:
+      properties:
+        autoInject:
+          type: boolean
+      required:
+      - autoInject
+      type: object
+    SetSessionReviewPolicyResponse:
+      properties:
+        autoInject:
+          type: boolean
+        ok:
+          type: boolean
+        session:
+          $ref: '#/components/schemas/ControllersSessionView'
+        sessionId:
+          type: string
+      required:
+      - ok
+      - sessionId
+      - autoInject
+      - session
       type: object
     ShellTerminalEnvelope:
       properties:

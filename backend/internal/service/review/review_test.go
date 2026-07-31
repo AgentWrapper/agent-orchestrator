@@ -19,6 +19,19 @@ type fakeStore struct {
 	updateCalls int
 	markCalls   int
 	markedIDs   []string
+
+	// session/project back the auto-inject lookup; the zero values keep delivery
+	// on, matching the behaviour before the opt-out existed.
+	session domain.SessionRecord
+	project domain.ProjectRecord
+}
+
+func (f *fakeStore) GetSession(context.Context, domain.SessionID) (domain.SessionRecord, bool, error) {
+	return f.session, true, nil
+}
+
+func (f *fakeStore) GetProject(context.Context, string) (domain.ProjectRecord, bool, error) {
+	return f.project, true, nil
 }
 
 func (f *fakeStore) GetReviewRun(_ context.Context, id string) (domain.ReviewRun, bool, error) {
@@ -84,6 +97,16 @@ func (f *fakeStore) MarkReviewRunDelivered(_ context.Context, id string, deliver
 func (f *fakeStore) ListReviewRunsByBatch(context.Context, domain.SessionID, string) ([]domain.ReviewRun, error) {
 	out := append([]domain.ReviewRun(nil), f.batchRuns...)
 	return out, nil
+}
+
+func (f *fakeStore) ListReviewRunsBySession(context.Context, domain.SessionID) ([]domain.ReviewRun, error) {
+	if len(f.batchRuns) > 0 {
+		return append([]domain.ReviewRun(nil), f.batchRuns...), nil
+	}
+	if f.run.ID == "" {
+		return nil, nil
+	}
+	return []domain.ReviewRun{f.run}, nil
 }
 
 func (f *fakeStore) ListPRsBySession(context.Context, domain.SessionID) ([]domain.PullRequest, error) {
@@ -247,6 +270,31 @@ func TestSubmitDeliveryFailureLeavesCompletedUndeliveredForRetry(t *testing.T) {
 	}
 	if st.updateCalls != 1 || reducer.calls != 2 || st.run.Status != domain.ReviewRunDelivered || st.run.DeliveredAt == nil {
 		t.Fatalf("retry should not rewrite result and should stamp delivery: update=%d reducer=%d run=%+v", st.updateCalls, reducer.calls, st.run)
+	}
+}
+
+func TestRetryPendingDeliverySendsAfterSuppressedSubmit(t *testing.T) {
+	st := &fakeStore{
+		ok:  true,
+		run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning},
+		prs: []domain.PullRequest{{URL: "pr1", HeadSHA: "sha1"}},
+	}
+	reducer := &fakeReducer{outcome: lifecycle.ReviewDeliveryNoop}
+	svc := New(nil, st, WithLifecycleReducer(reducer))
+
+	if _, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "fix it", "987"); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if st.run.Status != domain.ReviewRunComplete || st.run.DeliveredAt != nil {
+		t.Fatalf("suppressed delivery should remain pending: %+v", st.run)
+	}
+
+	reducer.outcome = lifecycle.ReviewDeliverySent
+	if err := svc.RetryPendingDelivery(context.Background(), "mer-1"); err != nil {
+		t.Fatalf("RetryPendingDelivery: %v", err)
+	}
+	if reducer.calls != 2 || st.run.Status != domain.ReviewRunDelivered || st.run.DeliveredAt == nil {
+		t.Fatalf("retry should deliver pending review: reducer=%d run=%+v", reducer.calls, st.run)
 	}
 }
 

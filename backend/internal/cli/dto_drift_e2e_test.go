@@ -104,6 +104,10 @@ func (f *fakeSessionService) SetTerminateOnPRMerge(context.Context, domain.Sessi
 	return domain.Session{}, nil
 }
 
+func (f *fakeSessionService) SetReviewAutoInject(context.Context, domain.SessionID, bool) (domain.Session, error) {
+	return domain.Session{}, nil
+}
+
 func (f *fakeSessionService) CompleteOrchestrator(context.Context, domain.SessionID) error {
 	return nil
 }

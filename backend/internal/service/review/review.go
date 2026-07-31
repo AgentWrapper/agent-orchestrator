@@ -25,7 +25,7 @@ var (
 
 // Manager is the reviews surface the HTTP controller depends on.
 type Manager interface {
-	Trigger(ctx context.Context, workerID domain.SessionID) (reviewcore.TriggerResult, error)
+	Trigger(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (reviewcore.TriggerResult, error)
 	Cancel(ctx context.Context, workerID domain.SessionID) (reviewcore.CancelResult, error)
 	Submit(ctx context.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body, githubReviewID string) (domain.ReviewRun, error)
 	SubmitMany(ctx context.Context, workerID domain.SessionID, reviews []SubmittedReview) ([]domain.ReviewRun, error)
@@ -47,7 +47,43 @@ type Store interface {
 	GetReviewRun(ctx context.Context, id string) (domain.ReviewRun, bool, error)
 	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
 	MarkReviewRunDelivered(ctx context.Context, id string, deliveredAt time.Time) (bool, error)
+	ListReviewRunsBySession(ctx context.Context, id domain.SessionID) ([]domain.ReviewRun, error)
 	ListPRsBySession(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error)
+	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
+	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
+}
+
+// RetryPendingDelivery retries completed change-request reviews that could not
+// be delivered while the worker was blocked or otherwise unsafe to nudge.
+func (s *Service) RetryPendingDelivery(ctx context.Context, workerID domain.SessionID) error {
+	if workerID == "" || s.store == nil || s.lifecycle == nil {
+		return nil
+	}
+	runs, err := s.store.ListReviewRunsBySession(ctx, workerID)
+	if err != nil {
+		return err
+	}
+	batches := make(map[string][]domain.ReviewRun)
+	batchOrder := make([]string, 0)
+	for _, run := range runs {
+		if run.Status != domain.ReviewRunComplete || run.Verdict != domain.VerdictChangesRequested || run.DeliveredAt != nil {
+			continue
+		}
+		key := "batch:" + run.BatchID
+		if run.BatchID == "" {
+			key = "single:" + run.ID
+		}
+		if _, ok := batches[key]; !ok {
+			batchOrder = append(batchOrder, key)
+		}
+		batches[key] = append(batches[key], run)
+	}
+	for _, key := range batchOrder {
+		if _, err := s.deliverSubmitted(ctx, workerID, batches[key]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Reducer is the lifecycle reaction boundary used after a review result has
@@ -84,8 +120,10 @@ func New(engine *reviewcore.Engine, store Store, opts ...Option) *Service {
 }
 
 // Trigger starts (or reuses) a review pass for a worker's PR.
-func (s *Service) Trigger(ctx context.Context, workerID domain.SessionID) (reviewcore.TriggerResult, error) {
-	return s.engine.Trigger(ctx, workerID)
+// Trigger starts a review pass. An empty harness keeps the project's configured
+// reviewer; a known one overrides it for this pass only.
+func (s *Service) Trigger(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (reviewcore.TriggerResult, error) {
+	return s.engine.Trigger(ctx, workerID, harness)
 }
 
 // Cancel stops the live reviewer pane and marks running review passes as failed.
@@ -222,6 +260,14 @@ func (s *Service) deliverSubmitted(ctx context.Context, workerID domain.SessionI
 	if len(deliverable) == 0 {
 		return nil, nil
 	}
+	// Handing findings to the worker is the project's call. Runs stay recorded
+	// and visible when it is off — only the nudge is withheld, and they are left
+	// undelivered so turning it back on still hands them over.
+	if off, err := s.autoInjectDisabled(ctx, workerID); err != nil {
+		return nil, err
+	} else if off {
+		return nil, nil
+	}
 	results := reviewResults(workerID, deliverable)
 	var outcome lifecycle.ReviewDeliveryOutcome
 	if len(results) == 1 && results[0].BatchID == "" {
@@ -249,6 +295,16 @@ func (s *Service) deliverSubmitted(ctx context.Context, workerID domain.SessionI
 		}
 	}
 	return delivered, nil
+}
+
+// autoInjectDisabled reports whether this worker opted out of receiving review
+// findings.
+func (s *Service) autoInjectDisabled(ctx context.Context, workerID domain.SessionID) (bool, error) {
+	worker, ok, err := s.store.GetSession(ctx, workerID)
+	if err != nil || !ok {
+		return false, err
+	}
+	return worker.ReviewAutoInjectOff, nil
 }
 
 func (s *Service) deliverableRuns(ctx context.Context, workerID domain.SessionID, runs []domain.ReviewRun) ([]domain.ReviewRun, error) {

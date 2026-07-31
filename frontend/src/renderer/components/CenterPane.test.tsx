@@ -41,6 +41,27 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByRole("button", { name: "review the change" })).not.toBeInTheDocument();
 	});
 
+	it("keeps the reviewer as a permanent tab beside the worker", () => {
+		const onSelectReviewerTerminal = vi.fn();
+		render(
+			<CenterPane
+				session={worker}
+				reviewerTerminal={{ kind: "reviewer", handleId: "reviewer-1", harness: "codex" }}
+				onSelectReviewerTerminal={onSelectReviewerTerminal}
+				terminalTarget={{ kind: "worker" }}
+				theme="dark"
+				daemonReady
+			/>,
+		);
+
+		expect(screen.getByRole("button", { name: "do the thing" })).toHaveAttribute("aria-current", "true");
+		const reviewerTab = screen.getByRole("button", { name: "Reviewer · codex" });
+		expect(reviewerTab).toHaveAttribute("aria-current", "false");
+		fireEvent.click(reviewerTab);
+		expect(onSelectReviewerTerminal).toHaveBeenCalledOnce();
+		expect(screen.queryByRole("button", { name: "Back to agent terminal" })).not.toBeInTheDocument();
+	});
+
 	// The button used to open a dropdown that also listed every session across
 	// every project (#3208); it now only ever creates a terminal.
 	it("opens a new terminal straight from the tab-strip button", () => {

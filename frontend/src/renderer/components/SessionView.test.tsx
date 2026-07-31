@@ -91,18 +91,23 @@ vi.mock("./CenterPane", () => ({
 		shellTerminals = [],
 		onSelectShellTerminal,
 		onSelectSessionTerminal,
+		onSelectReviewerTerminal,
 		onNewShellTerminal,
+		reviewerTerminal,
 	}: {
 		session?: WorkspaceSession;
 		shellTerminals?: Array<{ handleId: string; title: string }>;
 		onSelectShellTerminal?: (handleId: string) => void;
 		onSelectSessionTerminal?: () => void;
+		onSelectReviewerTerminal?: () => void;
 		onNewShellTerminal?: () => void;
+		reviewerTerminal?: { handleId: string; harness: string };
 	}) => (
 		<div>
 			terminal center
 			<div data-testid="session-tab">{session?.title ?? ""}</div>
 			<div data-testid="shell-tabs">{shellTerminals.map((s) => s.title).join(",")}</div>
+			<div data-testid="reviewer-tab">{reviewerTerminal?.harness ?? ""}</div>
 			{shellTerminals.map((s) => (
 				<button key={s.handleId} type="button" onClick={() => onSelectShellTerminal?.(s.handleId)}>
 					select {s.title}
@@ -110,6 +115,9 @@ vi.mock("./CenterPane", () => ({
 			))}
 			<button type="button" onClick={() => onSelectSessionTerminal?.()}>
 				select agent tab
+			</button>
+			<button type="button" onClick={() => onSelectReviewerTerminal?.()}>
+				select reviewer tab
 			</button>
 			<button type="button" onClick={() => onNewShellTerminal?.()}>
 				new terminal
@@ -193,11 +201,13 @@ vi.mock("./SessionInspector", () => ({
 		filesView,
 		onOpenFiles,
 		onToggleBrowserPopOut,
+		onOpenReviewerTerminal,
 		view,
 	}: {
 		filesView?: ReactNode;
 		onOpenFiles?: () => void;
 		onToggleBrowserPopOut?: () => void;
+		onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 		view?: string;
 	}) => (
 		<div>
@@ -206,6 +216,12 @@ vi.mock("./SessionInspector", () => ({
 			</button>
 			<button type="button" onClick={onOpenFiles}>
 				open files
+			</button>
+			<button
+				type="button"
+				onClick={() => onOpenReviewerTerminal?.({ handleId: "reviewer-handle", harness: "codex" })}
+			>
+				open reviewer terminal
 			</button>
 			{view === "files" ? filesView : null}
 		</div>
@@ -366,6 +382,20 @@ describe("SessionView", () => {
 		expect(tabs).toHaveTextContent("sess-1-shell");
 		expect(tabs).not.toHaveTextContent("sess-2-shell");
 		expect(tabs).not.toHaveTextContent("loose-shell");
+	});
+
+	it("keeps the reviewer terminal tab after switching back to the worker", () => {
+		render(<SessionView sessionId="sess-1" />);
+
+		expect(screen.getByTestId("reviewer-tab")).toBeEmptyDOMElement();
+		fireEvent.click(screen.getByRole("button", { name: "open reviewer terminal" }));
+		expect(screen.getByTestId("reviewer-tab")).toHaveTextContent("codex");
+
+		fireEvent.click(screen.getByRole("button", { name: "select agent tab" }));
+		expect(screen.getByTestId("reviewer-tab")).toHaveTextContent("codex");
+
+		fireEvent.click(screen.getByRole("button", { name: "select reviewer tab" }));
+		expect(useUiStore.getState().visibleTerminalKindBySession["sess-1"]).toBe("reviewer");
 	});
 
 	// The pane shows one terminal at a time, so selecting a shell takes the
