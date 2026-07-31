@@ -1,13 +1,4 @@
-import {
-	useCallback,
-	useEffect,
-	useLayoutEffect,
-	useRef,
-	useState,
-	type FormEvent,
-	type KeyboardEvent,
-	type PointerEvent,
-} from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent } from "react";
 import {
 	ArrowLeft,
 	ArrowRight,
@@ -40,8 +31,6 @@ type BrowserPanelProps = {
 	active: boolean;
 	poppedOut: boolean;
 	onTogglePopOut: (next: boolean) => void;
-	/** Root panel element, for measuring/animating maximize-restore FLIP transitions. */
-	panelRef?: (node: HTMLDivElement | null) => void;
 };
 
 type AnnotationStatus = "idle" | "picking" | "queued" | "sending" | "sent" | "error";
@@ -204,7 +193,7 @@ export function useBrowserAnnotationQueue({
 	};
 }
 
-export function BrowserPanel({ session, active, poppedOut, onTogglePopOut, panelRef }: BrowserPanelProps) {
+export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: BrowserPanelProps) {
 	const browserView = useBrowserView({
 		sessionId: session.id,
 		active,
@@ -222,7 +211,6 @@ export function BrowserPanel({ session, active, poppedOut, onTogglePopOut, panel
 			annotationQueue={annotationQueue}
 			browserView={browserView}
 			onTogglePopOut={onTogglePopOut}
-			panelRef={panelRef}
 			poppedOut={poppedOut}
 			session={session}
 		/>
@@ -234,7 +222,6 @@ export function BrowserPanelView({
 	onTogglePopOut,
 	browserView,
 	annotationQueue,
-	panelRef,
 }: BrowserPanelProps & { annotationQueue: BrowserAnnotationQueueModel; browserView: BrowserViewModel }) {
 	const {
 		viewId,
@@ -372,32 +359,6 @@ export function BrowserPanelView({
 							: "";
 	const agentStatusLabel = agentActivityLabel(agentBrowserActivity, agentBrowserActive);
 
-	// A popout frame is a bitmap of the page at the size it had when the capture
-	// was taken, and the live view it hands back to always renders at 1x. Letting
-	// it fit a box that resizes for the whole transition therefore ends on a scale
-	// jump: the page grows with the window and then snaps back the instant the
-	// real view appears. Freezing it at the size the viewport had when the frame
-	// arrived keeps the content at 1x throughout, so the handoff is a straight
-	// swap and only the area around it fills in.
-	//
-	// The measurement is sound because the frame is put on screen before the
-	// layout change (see beginPopoutTransition): the viewport is still at the
-	// transition's origin geometry at this point, in both directions.
-	const viewportRef = useRef<HTMLDivElement | null>(null);
-	const [frozenFrameSize, setFrozenFrameSize] = useState<{ width: number; height: number } | null>(null);
-	const isPopoutTransition = visualTransition?.kind === "popout";
-
-	useLayoutEffect(() => {
-		if (!isPopoutTransition) {
-			setFrozenFrameSize(null);
-			return;
-		}
-		const node = viewportRef.current;
-		if (!node) return;
-		const rect = node.getBoundingClientRect();
-		if (rect.width === 0 || rect.height === 0) return;
-		setFrozenFrameSize({ width: rect.width, height: rect.height });
-	}, [isPopoutTransition]);
 
 	return (
 		<div
@@ -406,10 +367,8 @@ export function BrowserPanelView({
 				poppedOut && "browser-panel--popped-out",
 				agentStatusLabel && "browser-panel--agent-active",
 			)}
-			data-flip-id="browser-panel"
 			data-testid="browser-panel"
 			data-transition={visualTransition?.kind}
-			ref={panelRef}
 			role="tabpanel"
 		>
 			<form
@@ -577,7 +536,6 @@ export function BrowserPanelView({
 			<div
 				className="browser-panel__viewport relative min-h-0 flex-1 overflow-hidden bg-background"
 				data-testid="browser-viewport"
-				ref={viewportRef}
 			>
 				<div className="absolute inset-0 min-h-px min-w-px" ref={slotRef} />
 				{mirrorStream ? (
@@ -594,7 +552,6 @@ export function BrowserPanelView({
 						)}
 						data-testid="browser-transition-frame"
 						src={visualTransition.snapshotUrl}
-						style={frozenFrameSize ?? undefined}
 					/>
 				) : null}
 				{showStaticPreview ? <StaticPreview url={navState.url} /> : null}

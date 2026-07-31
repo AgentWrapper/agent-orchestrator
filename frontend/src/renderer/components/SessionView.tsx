@@ -188,11 +188,16 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		sessionId: session?.id,
 		navUrl: browserView.navState.url,
 	});
-	const endBrowserPopoutTransition = useCallback(() => {
-		browserView.endPopoutTransition();
-	}, [browserView]);
-	const browserMaximize = useMaximizeTransition(browserPoppedOut, endBrowserPopoutTransition);
 	const filesMaximize = useMaximizeTransition(filesPoppedOut);
+	// The browser deliberately does not animate its maximize. Its content is a
+	// native WebContentsView that cannot be transformed, clipped or tweened, so
+	// any grow/shrink is really a captured bitmap standing in for the page, and
+	// a bitmap cannot match a live view that relayouts at the new size — it
+	// either scales (the page appears to zoom, then snaps back on handoff) or
+	// stays put (the panel grows around it into empty space). The frozen frame
+	// is still used, but only to cover the native view's handoff, which is an
+	// IPC round trip and would otherwise flash. See DESIGN.md's Motion section.
+	const browserPopoutSettleRef = useRef(false);
 
 	useLayoutEffect(() => {
 		setTerminalTarget({ kind: "worker" });
@@ -230,23 +235,31 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const handleToggleBrowserPopOut = useCallback(
 		(next: boolean) => {
 			if (next) setFilesPoppedOut(false);
-			// The frozen frame has to be on screen *before* the layout flips. The
-			// native view is held hidden for the whole transition, but the capture
-			// behind it is an IPC round trip, so starting the grow first leaves the
-			// panel painting nothing until that resolves and the snapshot then pops
-			// in partway through the animation. Await it, then flip: the capture is
-			// normally a few ms and is bounded by the capture timeout either way.
-			// Origin is measured last, immediately before the change it describes.
+			// The frozen frame has to be on screen *before* the layout moves: the
+			// native view is hidden across the move, so flipping first would leave
+			// the panel painting nothing until the capture round trip resolves.
+			// Once the new layout is committed the effect below reveals the live
+			// view and crossfades the frame out.
 			void browserView.beginPopoutTransition().then((captured) => {
-				// No frozen frame means nothing covers the native view through the
-				// move, so switch outright rather than animate an empty panel.
-				// Skipping the origin capture is what makes the FLIP a no-op.
-				if (captured) browserMaximize.captureOrigin();
+				browserPopoutSettleRef.current = captured;
 				setBrowserPoppedOut(next);
 			});
 		},
-		[browserMaximize, browserView],
+		[browserView],
 	);
+
+	// Reveals the native view at the slot's new bounds once React has committed
+	// the maximized/restored layout, and crossfades the frozen frame out over it.
+	// Deliberately not a layout effect: the panel's own slot ref has to be
+	// registered first, and child effects run before this one.
+	useEffect(() => {
+		if (!browserPopoutSettleRef.current) return;
+		browserPopoutSettleRef.current = false;
+		browserView.endPopoutTransition();
+		// Keyed on the layout change alone; browserView is a fresh object each
+		// render and would otherwise re-run this on every unrelated update.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [browserPoppedOut]);
 
 	// `ao preview` sets session.previewUrl (streamed over CDC); badge the inspector
 	// rail's Browser tab so the user can open it when they choose — we never steal
@@ -434,7 +447,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							<div className="h-full min-w-inspector-min">
 								<SessionInspector
 									browserAnnotationQueue={browserAnnotationQueue}
-									browserPanelRef={browserMaximize.setNodeRef}
 									browserPoppedOut={browserPoppedOut}
 									filesPoppedOut={filesPoppedOut}
 									filesView={
@@ -491,7 +503,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 								annotationQueue={browserAnnotationQueue}
 								browserView={browserView}
 								onTogglePopOut={handleToggleBrowserPopOut}
-								panelRef={browserMaximize.setNodeRef}
 								poppedOut
 								session={session}
 							/>

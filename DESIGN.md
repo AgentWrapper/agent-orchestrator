@@ -48,17 +48,30 @@ resizable`, react-resizable-panels v4 `collapsible` panel + imperative API,
   On macOS the shell topbar is hidden (in-panel actions) and the sidebar is
   full-height; traffic-light clearance uses `--size-traffic-light-clearance` for
   both the sidebar header pad and the window-drag strip.
-- **Approved divergence (2026-07-31):** the Browser panel and File diff viewer's
-  maximize/restore transitions use GSAP Flip (grow/shrink from the panel's actual
-  on-screen rect to fullscreen and back, `--duration-emphasized` `expo.out`)
-  instead of the "never
+- **Approved divergence (2026-07-31):** the File diff viewer's maximize/restore
+  uses GSAP Flip (grow/shrink from the panel's actual on-screen rect to
+  fullscreen and back, `--duration-emphasized` `expo.out`) instead of the "never
   animate layout" default — a macOS-window-zoom feel, user-requested. Flip's
   `scale: false` mode tweens real width/height/top/left rather than a CSS
   `transform: scale` — a transform-based scale distorts non-uniformly whenever the
   docked and fullscreen aspect ratios differ, visibly warping real UI controls
   like the toolbar's buttons (an earlier attempt hit exactly this). Real layout
-  tweening reflows children like any responsive resize, so nothing but the
-  intended box changes shape. Scoped to just these two surfaces' maximize/restore
+  tweening reflows children like any responsive resize, which suits a vertical
+  list of file cards.
+
+  **The Browser panel deliberately does not animate its maximize (2026-07-31).**
+  It was tried and reverted. Its content is a native `WebContentsView`, which
+  Chromium composites above the page and which cannot be transformed, clipped or
+  tweened, so any grow/shrink is really a captured bitmap standing in for the
+  page — and a bitmap cannot agree with a live view that relayouts at the new
+  size. Scaling it to the animating box makes the page appear to zoom and then
+  snap back at the handoff; pinning it at 1x leaves the panel growing into empty
+  space; and because the tween moves real layout, the dense toolbar row relayouts
+  every frame on top of that, which reads as lag. Maximize is now an immediate
+  swap, with the frozen frame kept only to cover the native view's handoff (an
+  IPC round trip that would otherwise flash) and crossfaded out. Do not
+  reintroduce a transition here without solving the native-view problem first.
+  Scoped to the File diff viewer's maximize/restore
   plus per-file diff expand/collapse (shorter, `--duration-normal ease-out`,
   plain CSS grid-row animation, no GSAP); everything else in the app keeps the
   existing minimal-functional motion rules. See _Motion_ below.
@@ -262,23 +275,21 @@ mirrors the reference exactly. Launching from a project row pre-fills the Projec
 - **Easing:** enter `ease-out`, exit `ease-in`, move `ease-in-out`.
 - **Duration:** micro 80ms · short 160ms · medium 240ms · status pulse 1.8s loop ·
   modal enter ~150ms fade+zoom-95.
-- **Approved divergence (2026-07-31):** Browser panel and File diff viewer
-  maximize/restore are a second expressive exception — a GSAP Flip animation
-  (`scale: false`, real width/height/top/left, not a CSS transform) grows/shrinks
-  the panel from its real rect to fullscreen, not the fade+zoom-95 modal recipe.
-  Timing is `--duration-emphasized` with GSAP's `expo.out`; `--ease-emphasized`
-  is that curve's CSS equivalent, for parts of the same transition animated in
-  CSS. Per-file diff expand/collapse uses a grid-row auto-height animation on the
+- **Approved divergence (2026-07-31):** File diff viewer maximize/restore is a
+  second expressive exception — a GSAP Flip animation (`scale: false`, real
+  width/height/top/left, not a CSS transform) grows/shrinks the panel from its
+  real rect to fullscreen, not the fade+zoom-95 modal recipe. Timing is
+  `--duration-emphasized` with GSAP's `expo.out`; `--ease-emphasized` is that
+  curve's CSS equivalent, for parts of the same transition animated in CSS.
+  Per-file diff expand/collapse uses a grid-row auto-height animation on the
   existing `--duration-normal ease-out` (plain CSS, no GSAP). Both respect
-  `prefers-reduced-motion`. Scoped to these two surfaces only — do not extend to
-  other panels without new approval.
+  `prefers-reduced-motion`. Scoped to this surface only — do not extend to other
+  panels without new approval.
 
-  Because the tween moves real layout, every frame relayouts the target's
-  contents. Surfaces whose contents visibly reshape under that (the Browser
-  panel's toolbar and its frozen snapshot) sit the tween out instead: the hook
-  marks the target `data-flipping` for the tween's exact duration, and the
-  surface's CSS uses that to hide what would otherwise squeeze, so the animation
-  only reveals or clips a static image.
+  The Browser panel is explicitly **not** part of this: its maximize is an
+  immediate swap, because a native `WebContentsView` cannot be animated and every
+  bitmap stand-in for it trades one artifact for another. See the hard rule under
+  _Layout & Chrome_ above before adding a transition there.
 
 ## Implementation notes
 
@@ -302,4 +313,5 @@ mirrors the reference exactly. Launching from a project row pre-fills the Projec
 | 2026-06-09 | Removed **Library** from the rail footer                               | User direction; footer is Search + Settings only.                                                  |
 | 2026-06-09 | Topbar right = PR/CI pill + view toggles + ⋯ menu (worker)             | Surfaces the actionable PR/CI state from the daemon; desktop-tool precedent.                       |
 | 2026-06-09 | Spawn modal mirrors the reference's Create Task                        | Consistency with the reference; mapped to `ao spawn` params.                                       |
-| 2026-07-31 | Browser panel + File diff viewer get FLIP-transform maximize/restore   | User-requested macOS-window-zoom feel; scoped to these two surfaces, not an app-wide motion pass.  |
+| 2026-07-31 | File diff viewer gets a FLIP maximize/restore                          | User-requested macOS-window-zoom feel; scoped to that surface, not an app-wide motion pass.        |
+| 2026-07-31 | Browser panel maximize stays instant                                  | Tried and reverted: a native WebContentsView cannot be animated, and every bitmap stand-in for it either zooms the page or grows into empty space, over a tween that relayouts each frame. |

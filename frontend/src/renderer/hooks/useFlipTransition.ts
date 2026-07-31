@@ -47,26 +47,12 @@ function prefersReducedMotion(): boolean {
 // fullscreen one), visibly warping real UI controls like toolbar buttons.
 //
 // The trade is that real layout tweening relayouts the subtree every frame, so
-// contents that reshape under a width sweep (a dense toolbar row, a bitmap
-// whose box changes aspect) visibly squeeze and rescale their way through the
-// transition. Targets are marked `data-flipping` for exactly the tween's
-// duration so those surfaces can sit it out in CSS rather than animate through
-// it — see the Browser panel's rules in styles.css.
+// this only suits contents that reflow cleanly under a width sweep, like the
+// file diff viewer's vertical list. The Browser panel deliberately does not use
+// it — see DESIGN.md's Motion section for why.
 export function useFlipTransition(): FlipController {
 	const pendingStateRef = useRef<Flip.FlipState | null>(null);
 	const activeTimelineRef = useRef<{ kill: () => void } | null>(null);
-	const flippingNodeRef = useRef<HTMLElement | null>(null);
-
-	// Marks the target for the tween's exact duration, so a surface can opt into
-	// CSS that only makes sense while its box is mid-resize. Because `scale:
-	// false` tweens real layout, every frame re-lays-out the subtree; a surface
-	// whose contents visibly reshape under that (the Browser panel's toolbar and
-	// its frozen snapshot) uses the marker to sit out the tween instead.
-	const clearFlippingMark = useCallback(() => {
-		const node = flippingNodeRef.current;
-		flippingNodeRef.current = null;
-		if (node) delete node.dataset.flipping;
-	}, []);
 
 	const captureRect = useCallback((node: HTMLElement | null) => {
 		pendingStateRef.current = node ? Flip.getState(node) : null;
@@ -76,9 +62,6 @@ export function useFlipTransition(): FlipController {
 		(node: HTMLElement | null, options?: FlipOptions) => {
 			activeTimelineRef.current?.kill();
 			activeTimelineRef.current = null;
-			// kill() does not fire onComplete, so an interrupted tween would leave
-			// the previous target marked forever.
-			clearFlippingMark();
 
 			const state = pendingStateRef.current;
 			pendingStateRef.current = null;
@@ -89,9 +72,6 @@ export function useFlipTransition(): FlipController {
 				return;
 			}
 
-			node.dataset.flipping = "";
-			flippingNodeRef.current = node;
-
 			activeTimelineRef.current = Flip.from(state, {
 				targets: node,
 				scale: false,
@@ -100,7 +80,6 @@ export function useFlipTransition(): FlipController {
 				ease: options?.ease ?? DEFAULT_EASE,
 				onComplete: () => {
 					activeTimelineRef.current = null;
-					clearFlippingMark();
 					// Drop the inline width/height/position GSAP applied during the
 					// tween, so the node goes back to being governed purely by its own
 					// CSS (a later window resize would otherwise fight stale values).
@@ -109,16 +88,10 @@ export function useFlipTransition(): FlipController {
 				},
 			});
 		},
-		[clearFlippingMark],
+		[],
 	);
 
-	useEffect(
-		() => () => {
-			activeTimelineRef.current?.kill();
-			clearFlippingMark();
-		},
-		[clearFlippingMark],
-	);
+	useEffect(() => () => activeTimelineRef.current?.kill(), []);
 
 	return { captureRect, playFlip };
 }

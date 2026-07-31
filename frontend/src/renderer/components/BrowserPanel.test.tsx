@@ -190,13 +190,6 @@ describe("BrowserPanel", () => {
 		expect(hookState.navigate).toHaveBeenCalledWith("localhost:5173");
 	});
 
-	it("forwards panelRef to the root panel element for FLIP-transition measurement", () => {
-		const panelRef = vi.fn();
-		render(<BrowserPanel active onTogglePopOut={() => undefined} panelRef={panelRef} poppedOut={false} session={session} />);
-
-		expect(panelRef).toHaveBeenCalledWith(screen.getByTestId("browser-panel"));
-	});
-
 	it("threads the session preview URL into the browser view (which drives navigation)", () => {
 		render(
 			<BrowserPanel
@@ -352,12 +345,6 @@ describe("BrowserPanel", () => {
 		expect(frame).toHaveAttribute("src", "data:image/jpeg;base64,snapshot");
 	});
 
-	it("marks the panel root with a stable data-flip-id so GSAP Flip can correlate it across the inline/popped-out remount", () => {
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-
-		expect(screen.getByTestId("browser-panel")).toHaveAttribute("data-flip-id", "browser-panel");
-	});
-
 	it("crossfades a releasing popout transition frame out instead of removing it instantly", () => {
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
 		hookState.visualTransition = {
@@ -369,48 +356,6 @@ describe("BrowserPanel", () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
 		expect(screen.getByTestId("browser-transition-frame")).toHaveClass("browser-panel__transition-frame--releasing");
-	});
-
-	// A popout frame is a bitmap of the page at capture size, and the live view
-	// it hands back to always renders at 1x. Fitting it to a box that resizes
-	// for the whole transition ends on a scale jump — the page grows with the
-	// window, then snaps back the instant the real view appears. Pinning it to
-	// the viewport's size at capture time keeps the content at 1x throughout.
-	it("freezes a popout transition frame at the viewport size it was captured at", () => {
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		hookState.visualTransition = { kind: "popout", snapshotUrl: "data:image/jpeg;base64,snapshot" };
-		const rect = vi
-			.spyOn(HTMLElement.prototype, "getBoundingClientRect")
-			.mockReturnValue({ width: 360, height: 480 } as DOMRect);
-
-		try {
-			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-		} finally {
-			rect.mockRestore();
-		}
-
-		const frame = screen.getByTestId("browser-transition-frame");
-		expect(frame).toHaveStyle({ width: "360px", height: "480px" });
-	});
-
-	// A tab switch keeps the same box the whole time, so there is nothing to
-	// freeze and the frame should stay governed by its own CSS.
-	it("does not freeze a tab-switch transition frame", () => {
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		hookState.visualTransition = { kind: "tab-switch", snapshotUrl: "data:image/jpeg;base64,snapshot" };
-		const rect = vi
-			.spyOn(HTMLElement.prototype, "getBoundingClientRect")
-			.mockReturnValue({ width: 360, height: 480 } as DOMRect);
-
-		try {
-			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-		} finally {
-			rect.mockRestore();
-		}
-
-		const frame = screen.getByTestId("browser-transition-frame");
-		expect(frame.style.width).toBe("");
-		expect(frame.style.height).toBe("");
 	});
 
 	it("renders the premium browser shell hooks in the default view", () => {

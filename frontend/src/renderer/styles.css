@@ -2299,10 +2299,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	min-width: 0;
 	min-height: 44px;
 	padding: 7px 8px;
-	/* Fades the chrome back in as a maximize/restore lands (it sits the tween
-	   out — see .browser-panel[data-flipping] below), so it arrives rather
-	   than pops. */
-	transition: opacity var(--duration-fast) ease-out;
 	border-bottom: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
 	background:
 		linear-gradient(180deg, color-mix(in srgb, var(--surface) 98%, white 2%), var(--surface)),
@@ -2473,27 +2469,13 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	opacity: 0;
 }
 
-/* Maximize/restore tweens the panel's real width/height, so every frame is a
-   genuine relayout of its contents. The toolbar is a dense single row (icon
-   buttons plus a flex-1 URL field): at docked width its controls are already
-   near their floor, so tweening through that range visibly squeezes and
-   re-spaces them. Fade it out for the tween instead and fade it back as the
-   panel lands. Opacity keeps its box, so the viewport below does not shift. */
-.browser-panel[data-flipping] .browser-panel__toolbar {
-	opacity: 0;
-}
-
-/* The frozen frame is pinned to the pixel size the viewport had when it was
-   captured (set inline; see BrowserPanel), so `fill` is exact here — the box
-   already matches the capture and there is nothing to fit. Anchoring it top
-   left means the tween reveals or clips around a page that never changes
-   scale, which is what lets the live view take over without a jump. Fitting it
-   to the tweening box instead would scale the page up as the window grows and
-   then snap it back to 1x the moment the real view appeared. */
+/* cover, not contain: maximize/restore does not animate, so this box is fixed
+   for the frame's whole life and is only ever fitted once. The capture comes
+   from the other geometry though, so its aspect differs — cover fills the box
+   with the page uniformly scaled and cropped, where contain would letterbox it
+   against --bg. */
 [data-transition="popout"] .browser-panel__transition-frame {
-	right: auto;
-	bottom: auto;
-	object-fit: fill;
+	object-fit: cover;
 }
 
 .browser-panel__slot {
@@ -2558,7 +2540,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 
 	.browser-panel,
 	.browser-panel__annotation-status,
-	.browser-panel__toolbar,
 	.browser-panel__toolbar button,
 	.session-files-diff-collapse {
 		transition: none;
