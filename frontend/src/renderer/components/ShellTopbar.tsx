@@ -373,8 +373,9 @@ function ProjectTerminationFeedback({ projectId }: { projectId: string | undefin
 // window runs out of space); while it is actually cropped, the full branch is
 // recoverable from a tooltip. The Tooltip root stays mounted and only the
 // content is gated on the cropped state, so the measured span never remounts
-// out from under its ResizeObserver.
-export function SessionBranchLabel({ branch }: { branch: string }) {
+// out from under its ResizeObserver. The trigger opts out of the macOS drag
+// region (noDragStyle) — inside it, Electron would swallow the hover.
+function SessionBranchLabel({ branch }: { branch: string }) {
 	const textRef = useRef<HTMLSpanElement | null>(null);
 	const [isCropped, setIsCropped] = useState(false);
 
@@ -391,7 +392,10 @@ export function SessionBranchLabel({ branch }: { branch: string }) {
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
-				<div className="inline-flex min-w-0 cursor-default items-center gap-1 font-mono text-2xs leading-none text-passive">
+				<div
+					className="inline-flex min-w-0 cursor-default items-center gap-1 font-mono text-2xs leading-none text-passive"
+					style={noDragStyle}
+				>
 					<GitBranch className="size-icon-2xs shrink-0" aria-hidden="true" />
 					<span ref={textRef} className="truncate">
 						{branch}
