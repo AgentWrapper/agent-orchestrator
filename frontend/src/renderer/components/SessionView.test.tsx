@@ -153,9 +153,11 @@ vi.mock("./SessionFilesView", () => ({
 		</button>
 	),
 }));
-const { browserDestroy, browserViewOptions } = vi.hoisted(() => ({
+const { browserDestroy, browserViewOptions, beginPopoutTransitionMock, endPopoutTransitionMock } = vi.hoisted(() => ({
 	browserDestroy: vi.fn(),
 	browserViewOptions: { current: undefined as { active: boolean; sessionId: string; terminated: boolean } | undefined },
+	beginPopoutTransitionMock: vi.fn(async () => undefined),
+	endPopoutTransitionMock: vi.fn(),
 }));
 vi.mock("../hooks/useBrowserView", () => ({
 	useBrowserView: (options: { active: boolean; sessionId: string; terminated: boolean }) => {
@@ -185,6 +187,8 @@ vi.mock("../hooks/useBrowserView", () => ({
 			annotationMode: false,
 			setAnnotationMode: vi.fn(),
 			destroy: browserDestroy,
+			beginPopoutTransition: beginPopoutTransitionMock,
+			endPopoutTransition: endPopoutTransitionMock,
 		};
 	},
 }));
@@ -333,6 +337,8 @@ describe("SessionView", () => {
 		useUiStore.setState({ inspectorSessions: {}, visibleTerminalKindBySession: {} });
 		panels.clear();
 		browserDestroy.mockReset();
+		beginPopoutTransitionMock.mockReset().mockResolvedValue(undefined);
+		endPopoutTransitionMock.mockReset();
 		browserViewOptions.current = undefined;
 		shellTerminalsState.data = [];
 		navigateMock.mockReset();
@@ -648,11 +654,15 @@ describe("SessionView", () => {
 		// The maximized overlay appears; the terminal stays mounted behind it.
 		expect(screen.getByRole("button", { name: "browser center" })).toBeInTheDocument();
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
+		// A snapshot is held (native view frozen/hidden) for the FLIP grow transition.
+		expect(beginPopoutTransitionMock).toHaveBeenCalledTimes(1);
 
 		fireEvent.click(screen.getByRole("button", { name: "browser center" }));
 		expect(screen.queryByRole("button", { name: "browser center" })).not.toBeInTheDocument();
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
 		expect(browserDestroy).not.toHaveBeenCalled();
+		// The restore direction also freezes a snapshot for its own FLIP shrink transition.
+		expect(beginPopoutTransitionMock).toHaveBeenCalledTimes(2);
 	});
 
 	it("does not carry popped-out browser visibility into the next session", () => {

@@ -31,6 +31,8 @@ type BrowserPanelProps = {
 	active: boolean;
 	poppedOut: boolean;
 	onTogglePopOut: (next: boolean) => void;
+	/** Root panel element, for measuring/animating maximize-restore FLIP transitions. */
+	panelRef?: (node: HTMLDivElement | null) => void;
 };
 
 type AnnotationStatus = "idle" | "picking" | "queued" | "sending" | "sent" | "error";
@@ -193,7 +195,7 @@ export function useBrowserAnnotationQueue({
 	};
 }
 
-export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: BrowserPanelProps) {
+export function BrowserPanel({ session, active, poppedOut, onTogglePopOut, panelRef }: BrowserPanelProps) {
 	const browserView = useBrowserView({
 		sessionId: session.id,
 		active,
@@ -211,6 +213,7 @@ export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: Bro
 			annotationQueue={annotationQueue}
 			browserView={browserView}
 			onTogglePopOut={onTogglePopOut}
+			panelRef={panelRef}
 			poppedOut={poppedOut}
 			session={session}
 		/>
@@ -222,6 +225,7 @@ export function BrowserPanelView({
 	onTogglePopOut,
 	browserView,
 	annotationQueue,
+	panelRef,
 }: BrowserPanelProps & { annotationQueue: BrowserAnnotationQueueModel; browserView: BrowserViewModel }) {
 	const {
 		viewId,
@@ -368,6 +372,7 @@ export function BrowserPanelView({
 			)}
 			data-testid="browser-panel"
 			data-transition={visualTransition?.kind}
+			ref={panelRef}
 			role="tabpanel"
 		>
 			<form

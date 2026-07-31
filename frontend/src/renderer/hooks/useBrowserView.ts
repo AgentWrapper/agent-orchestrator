@@ -63,6 +63,15 @@ export type BrowserViewModel = {
 	destroy: () => void;
 	annotationMode: boolean;
 	setAnnotationMode: (enabled: boolean) => Promise<void>;
+	/**
+	 * Captures a frozen snapshot and holds the native view hidden until
+	 * `endPopoutTransition` is called — unlike a tab-switch transition, this
+	 * does not auto-clear, since the caller drives its lifetime from a FLIP
+	 * animation of unknown/variable duration.
+	 */
+	beginPopoutTransition: () => Promise<void>;
+	/** Releases a held popout transition and reveals the native view at its current bounds. */
+	endPopoutTransition: () => void;
 };
 
 const EMPTY_NAV_STATE: BrowserNavState = {
@@ -150,6 +159,7 @@ export function useBrowserView({
 	const modalOpenRef = useRef(false);
 	const mirrorTokenRef = useRef(0);
 	const mirrorTimerRef = useRef<number | null>(null);
+	const popoutTransitionRef = useRef(false);
 	const tabNoticeTimerRef = useRef<number | null>(null);
 	const visualTransitionTimerRef = useRef<number | null>(null);
 	const mirrorStreamRef = useRef<MediaStream | null>(null);
@@ -203,6 +213,10 @@ export function useBrowserView({
 			if (!snapshotUrl || viewIdRef.current !== id) return;
 			clearVisualTransitionTimer();
 			setVisualTransition({ kind, snapshotUrl });
+			// A "popout" transition's lifetime is driven by the caller's FLIP
+			// animation (variable duration), not a fixed timer like tab-switch —
+			// the caller clears it explicitly via endPopoutTransition().
+			if (kind === "popout") return;
 			visualTransitionTimerRef.current = window.setTimeout(() => {
 				visualTransitionTimerRef.current = null;
 				setVisualTransition(null);
@@ -226,6 +240,13 @@ export function useBrowserView({
 		const id = viewIdRef.current;
 		const node = slotNodeRef.current;
 		if (!id) return;
+		// A held popout transition (FLIP-driven, variable duration) keeps the
+		// native view hidden regardless of intervening layout/measure triggers —
+		// the frozen snapshot covers it until endPopoutTransition() reveals it.
+		if (popoutTransitionRef.current) {
+			sendHiddenBounds(id);
+			return;
+		}
 		if (!activeRef.current || !node || !node.isConnected || !hasUrlRef.current || hiddenByFullscreen(node)) {
 			sendHiddenBounds(id);
 			return;
@@ -246,6 +267,18 @@ export function useBrowserView({
 		};
 		window.ao?.browser.setBounds(payload);
 	}, [sendHiddenBounds]);
+
+	const beginPopoutTransition = useCallback(async () => {
+		popoutTransitionRef.current = true;
+		await showVisualTransition("popout");
+	}, [showVisualTransition]);
+
+	const endPopoutTransition = useCallback(() => {
+		popoutTransitionRef.current = false;
+		clearVisualTransitionTimer();
+		setVisualTransition(null);
+		measureAndSend();
+	}, [clearVisualTransitionTimer, measureAndSend]);
 
 	const cancelScheduledMeasure = useCallback(() => {
 		if (frameRef.current === null) return;
@@ -315,6 +348,10 @@ export function useBrowserView({
 		setAgentBrowserActivity(null);
 		setVisualTransition(null);
 		clearVisualTransitionTimer();
+		// A held popout transition is scoped to the outgoing session's view — a
+		// session switch mid-transition must not leave the new session's view
+		// stuck hidden waiting for an endPopoutTransition() that may never come.
+		popoutTransitionRef.current = false;
 		if (tabNoticeTimerRef.current !== null) {
 			window.clearTimeout(tabNoticeTimerRef.current);
 			tabNoticeTimerRef.current = null;
@@ -710,5 +747,7 @@ export function useBrowserView({
 		destroy,
 		annotationMode,
 		setAnnotationMode,
+		beginPopoutTransition,
+		endPopoutTransition,
 	};
 }

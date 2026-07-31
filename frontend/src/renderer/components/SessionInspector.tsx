@@ -147,6 +147,7 @@ export function SessionInspector({
 	onOpenReviewerTerminal,
 	browserPoppedOut = false,
 	browserAnnotationQueue,
+	browserPanelRef,
 	isInspectorVisible = true,
 	onToggleBrowserPopOut,
 	onOpenFiles,
@@ -159,6 +160,8 @@ export function SessionInspector({
 	onOpenReviewerTerminal?: OpenReviewerTerminal;
 	browserPoppedOut?: boolean;
 	browserAnnotationQueue?: BrowserAnnotationQueueModel;
+	/** Root panel element, for measuring/animating maximize-restore FLIP transitions. */
+	browserPanelRef?: (node: HTMLDivElement | null) => void;
 	isInspectorVisible?: boolean;
 	onToggleBrowserPopOut?: (next: boolean) => void;
 	onOpenFiles?: () => void;
@@ -244,6 +247,7 @@ export function SessionInspector({
 						browserView={browserView}
 						isActive={isInspectorVisible && !browserPoppedOut}
 						onTogglePopOut={onToggleBrowserPopOut}
+						panelRef={browserPanelRef}
 						session={session}
 					/>
 				) : null}
@@ -1130,6 +1134,7 @@ function BrowserView({
 	browserPoppedOut,
 	browserAnnotationQueue,
 	onTogglePopOut,
+	panelRef,
 	browserView,
 }: {
 	session: WorkspaceSession;
@@ -1137,6 +1142,7 @@ function BrowserView({
 	browserPoppedOut: boolean;
 	browserAnnotationQueue?: BrowserAnnotationQueueModel;
 	onTogglePopOut?: (next: boolean) => void;
+	panelRef?: (node: HTMLDivElement | null) => void;
 	browserView?: BrowserViewModel;
 }) {
 	// While maximized, the browser is a full-window overlay that covers the rail,
@@ -1166,6 +1172,7 @@ function BrowserView({
 			annotationQueue={browserAnnotationQueue}
 			browserView={browserView}
 			onTogglePopOut={(next) => onTogglePopOut?.(next)}
+			panelRef={panelRef}
 			poppedOut={false}
 			session={session}
 		/>

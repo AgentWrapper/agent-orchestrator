@@ -233,6 +233,154 @@ describe("useBrowserView", () => {
 		}
 	});
 
+	it("holds a captured frame indefinitely during a popout transition, unlike tab-switch", async () => {
+		const bridge = setupBridge();
+		const slot = createSlot();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
+		act(() => result.current.slotRef(slot));
+
+		vi.useFakeTimers();
+		try {
+			await act(async () => {
+				await result.current.beginPopoutTransition();
+			});
+
+			expect(bridge.capture).toHaveBeenCalledWith("42:sess-1");
+			expect(result.current.visualTransition).toMatchObject({
+				kind: "popout",
+				snapshotUrl: "data:image/jpeg;base64,snapshot",
+			});
+
+			act(() => {
+				vi.advanceTimersByTime(1_000);
+			});
+			expect(result.current.visualTransition).toMatchObject({ kind: "popout" });
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("keeps the native view hidden across a poppedOut change while a popout transition is held, and reveals it on end", async () => {
+		const bridge = setupBridge();
+		const slot = createSlot();
+		const { result, rerender } = renderHook(
+			({ poppedOut }) => useBrowserView({ sessionId: "sess-1", active: true, poppedOut }),
+			{ initialProps: { poppedOut: false } },
+		);
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
+		act(() => result.current.slotRef(slot));
+
+		vi.useFakeTimers();
+		try {
+			await act(async () => {
+				vi.advanceTimersByTime(300);
+			});
+
+			await act(async () => {
+				await result.current.beginPopoutTransition();
+			});
+			bridge.setBounds.mockClear();
+
+			act(() => rerender({ poppedOut: true }));
+			await act(async () => {
+				vi.advanceTimersByTime(300);
+			});
+			expect(bridge.setBounds).toHaveBeenCalledWith(expect.objectContaining({ visible: false }));
+			expect(bridge.setBounds).not.toHaveBeenCalledWith(expect.objectContaining({ visible: true }));
+
+			bridge.setBounds.mockClear();
+			act(() => result.current.endPopoutTransition());
+			expect(bridge.setBounds).toHaveBeenCalledWith(
+				expect.objectContaining({ visible: true, rect: expect.objectContaining({ width: 320 }) }),
+			);
+			expect(result.current.visualTransition).toBeNull();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("does not leave the new session's view stuck hidden after a session switch mid popout transition", async () => {
+		const bridge = setupBridge();
+		const slot = createSlot();
+		const { result, rerender } = renderHook(
+			({ sessionId }) => useBrowserView({ sessionId, active: true, poppedOut: false }),
+			{ initialProps: { sessionId: "sess-1" } },
+		);
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
+		act(() => result.current.slotRef(slot));
+
+		vi.useFakeTimers();
+		try {
+			await act(async () => {
+				vi.advanceTimersByTime(300);
+			});
+
+			await act(async () => {
+				await result.current.beginPopoutTransition();
+			});
+			// Never call endPopoutTransition — the session switch below must not
+			// leave the incoming session's view stuck hidden waiting for it.
+
+			act(() => rerender({ sessionId: "sess-2" }));
+			// ensure() resolves on a microtask; flush it without advancing timers
+			// (waitFor's own polling would otherwise stall under fake timers).
+			await act(async () => {
+				await Promise.resolve();
+			});
+			expect(result.current.viewId).toBe("42:sess-2");
+			act(() =>
+				bridge.emit({
+					viewId: "42:sess-2",
+					url: "http://localhost:4000/",
+					title: "",
+					canGoBack: false,
+					canGoForward: false,
+					isLoading: false,
+				}),
+			);
+			act(() => result.current.slotRef(slot));
+			bridge.setBounds.mockClear();
+			await act(async () => {
+				vi.advanceTimersByTime(300);
+			});
+
+			expect(bridge.setBounds).toHaveBeenCalledWith(expect.objectContaining({ visible: true }));
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("does not block tab switching on a slow transition capture", async () => {
 		const bridge = setupBridge();
 		const slot = createSlot();

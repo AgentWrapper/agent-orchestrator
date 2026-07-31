@@ -188,6 +188,13 @@ describe("BrowserPanel", () => {
 		expect(hookState.navigate).toHaveBeenCalledWith("localhost:5173");
 	});
 
+	it("forwards panelRef to the root panel element for FLIP-transition measurement", () => {
+		const panelRef = vi.fn();
+		render(<BrowserPanel active onTogglePopOut={() => undefined} panelRef={panelRef} poppedOut={false} session={session} />);
+
+		expect(panelRef).toHaveBeenCalledWith(screen.getByTestId("browser-panel"));
+	});
+
 	it("threads the session preview URL into the browser view (which drives navigation)", () => {
 		render(
 			<BrowserPanel

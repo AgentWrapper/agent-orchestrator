@@ -10,6 +10,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resiz
 import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-store";
 import { useShell } from "../lib/shell-context";
 import { useBrowserView } from "../hooks/useBrowserView";
+import { useMaximizeTransition } from "../hooks/useMaximizeTransition";
 import {
 	useCloseShellTerminal,
 	useOpenShellTerminal,
@@ -187,6 +188,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		sessionId: session?.id,
 		navUrl: browserView.navState.url,
 	});
+	const endBrowserPopoutTransition = useCallback(() => {
+		browserView.endPopoutTransition();
+	}, [browserView]);
+	const browserMaximize = useMaximizeTransition(browserPoppedOut, endBrowserPopoutTransition);
+	const filesMaximize = useMaximizeTransition(filesPoppedOut);
 
 	useLayoutEffect(() => {
 		setTerminalTarget({ kind: "worker" });
@@ -213,17 +219,23 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const handleToggleFilesPopOut = useCallback(
 		(next: boolean) => {
 			if (next) setBrowserPoppedOut(false);
+			filesMaximize.captureOrigin();
 			setFilesPoppedOut(next);
 			setInspectorViewForSession(sessionId, "files");
 			setInspectorOpenForSession(sessionId, true);
 		},
-		[sessionId, setInspectorOpenForSession, setInspectorViewForSession],
+		[filesMaximize, sessionId, setInspectorOpenForSession, setInspectorViewForSession],
 	);
 
-	const handleToggleBrowserPopOut = useCallback((next: boolean) => {
-		if (next) setFilesPoppedOut(false);
-		setBrowserPoppedOut(next);
-	}, []);
+	const handleToggleBrowserPopOut = useCallback(
+		(next: boolean) => {
+			if (next) setFilesPoppedOut(false);
+			browserMaximize.captureOrigin();
+			void browserView.beginPopoutTransition();
+			setBrowserPoppedOut(next);
+		},
+		[browserMaximize, browserView],
+	);
 
 	// `ao preview` sets session.previewUrl (streamed over CDC); badge the inspector
 	// rail's Browser tab so the user can open it when they choose — we never steal
@@ -411,10 +423,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							<div className="h-full min-w-inspector-min">
 								<SessionInspector
 									browserAnnotationQueue={browserAnnotationQueue}
+									browserPanelRef={browserMaximize.setNodeRef}
 									browserPoppedOut={browserPoppedOut}
 									filesView={
 										session ? (
 											<SessionFilesView
+												containerRef={filesMaximize.setNodeRef}
 												onClose={() => setInspectorViewForSession(sessionId, "summary")}
 												onToggleMaximized={handleToggleFilesPopOut}
 												sessionId={session.id}
@@ -440,6 +454,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			{filesPoppedOut && session ? (
 				<div className="absolute inset-0 z-30 bg-background">
 					<SessionFilesView
+						containerRef={filesMaximize.setNodeRef}
 						isMaximized
 						onClose={() => {
 							setFilesPoppedOut(false);
@@ -463,6 +478,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 								annotationQueue={browserAnnotationQueue}
 								browserView={browserView}
 								onTogglePopOut={handleToggleBrowserPopOut}
+								panelRef={browserMaximize.setNodeRef}
 								poppedOut
 								session={session}
 							/>

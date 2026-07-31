@@ -160,6 +160,8 @@
 
 	--duration-fast: var(--duration-fast);
 	--duration-normal: var(--duration-normal);
+	--duration-emphasized: var(--duration-emphasized);
+	--ease-emphasized: var(--ease-emphasized);
 
 	/* Layout — toolbar offset for fixed sidebar below topbar */
 	--spacing-toolbar: var(--size-toolbar);
@@ -2505,7 +2507,8 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 
 	.browser-panel,
 	.browser-panel__annotation-status,
-	.browser-panel__toolbar button {
+	.browser-panel__toolbar button,
+	.session-files-diff-collapse {
 		transition: none;
 	}
 

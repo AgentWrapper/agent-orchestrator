@@ -102,6 +102,31 @@ describe("SessionFilesView", () => {
 		});
 	});
 
+	it("forwards containerRef to the root section for FLIP-transition measurement", async () => {
+		const containerRef = vi.fn();
+		renderWithQuery(<SessionFilesView containerRef={containerRef} onClose={vi.fn()} sessionId="sess-1" />);
+
+		await screen.findByRole("button", { name: "Collapse src/App.tsx" });
+		expect(containerRef).toHaveBeenCalledWith(screen.getByLabelText("Session files"));
+	});
+
+	it("keeps a collapsed file's diff container mounted (inert) instead of removing it, so it can animate closed", async () => {
+		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+
+		const toggle = await screen.findByRole("button", { name: "Collapse src/App.tsx" });
+		expect(await screen.findByText(diffLine("const value = 1;"))).toBeInTheDocument();
+
+		await userEvent.click(toggle);
+
+		expect(await screen.findByRole("button", { name: "Expand src/App.tsx" })).toBeInTheDocument();
+		const container = document.getElementById("workspace-diff-src/App.tsx");
+		expect(container).not.toBeNull();
+		expect(container).toHaveAttribute("inert");
+		// The cached diff content stays put underneath the collapse animation
+		// rather than vanishing the instant the toggle is clicked.
+		expect(screen.getByText(diffLine("const value = 1;"))).toBeInTheDocument();
+	});
+
 	it("loads the workspace files and requests detail for the selected file", async () => {
 		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
 

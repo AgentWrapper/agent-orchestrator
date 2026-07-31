@@ -38,6 +38,8 @@ type SessionFilesViewProps = {
 	onClose: () => void;
 	isMaximized?: boolean;
 	onToggleMaximized?: (next: boolean) => void;
+	/** Root element, for measuring/animating maximize-restore FLIP transitions. */
+	containerRef?: (node: HTMLElement | null) => void;
 };
 
 const emptyFiles: WorkspaceFileSummary[] = [];
@@ -63,6 +65,7 @@ export function SessionFilesView({
 	onClose,
 	isMaximized = false,
 	onToggleMaximized,
+	containerRef,
 }: SessionFilesViewProps) {
 	const queryClient = useQueryClient();
 	const [filter, setFilter] = useState("");
@@ -159,7 +162,10 @@ export function SessionFilesView({
 
 	return (
 		<section
-			ref={rootRef}
+			ref={(node) => {
+				rootRef.current = node;
+				containerRef?.(node);
+			}}
 			onKeyDown={onFilesKeyDown}
 			className="flex h-full min-h-0 flex-col bg-background text-foreground"
 			aria-label="Session files"
@@ -384,8 +390,15 @@ function ReviewFileCard({
 				</button>
 				<CopyPathButton path={file.path} />
 			</div>
-			{expanded ? (
-				<div id={`workspace-diff-${file.path}`} className="border-t border-border/60 bg-background/40">
+			<div
+				className="session-files-diff-collapse grid overflow-hidden transition-[grid-template-rows] duration-normal ease-out"
+				style={{ gridTemplateRows: expanded ? "1fr" : "0fr" }}
+			>
+				<div
+					id={`workspace-diff-${file.path}`}
+					className="min-h-0 overflow-hidden border-t border-border/60 bg-background/40"
+					inert={!expanded}
+				>
 					{detailQuery.isPending ? <PanelMessage>Loading diff...</PanelMessage> : null}
 					{!detailQuery.isPending && detailQuery.error ? (
 						<PanelMessage action={<RetryButton onClick={() => void detailQuery.refetch()} />}>
@@ -396,7 +409,7 @@ function ReviewFileCard({
 						<ReviewDiffBody detail={detailQuery.data} split={split} wrap={wrap} />
 					) : null}
 				</div>
-			) : null}
+			</div>
 		</article>
 	);
 }

@@ -132,6 +132,10 @@
 	/* Motion */
 	--duration-fast: 120ms;
 	--duration-normal: 150ms;
+	/* Emphasized: maximize/restore window-zoom transitions only (FLIP-driven
+	   panel transforms) — everything else stays on fast/normal. */
+	--duration-emphasized: 320ms;
+	--ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
 
 	/* ═══════════════════════════════════════════════════════════════
 	   SPACING — 4px base (audit: 4/6/8/10/12/14/16/18 most common)

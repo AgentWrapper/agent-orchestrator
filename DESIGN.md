@@ -48,6 +48,13 @@ resizable`, react-resizable-panels v4 `collapsible` panel + imperative API,
   On macOS the shell topbar is hidden (in-panel actions) and the sidebar is
   full-height; traffic-light clearance uses `--size-traffic-light-clearance` for
   both the sidebar header pad and the window-drag strip.
+- **Approved divergence (2026-07-31):** the Browser panel and File diff viewer's
+  maximize/restore transitions use a FLIP transform (grow/shrink from the panel's
+  actual on-screen rect to fullscreen and back, ~320ms `--ease-emphasized`) instead
+  of the "never animate layout" default — a macOS-window-zoom feel, user-requested.
+  Scoped to just these two surfaces' maximize/restore plus per-file diff
+  expand/collapse (shorter, `--duration-normal ease-out`); everything else in the
+  app keeps the existing minimal-functional motion rules. See _Motion_ below.
 
 ## Product Context
 
@@ -248,6 +255,13 @@ mirrors the reference exactly. Launching from a project row pre-fills the Projec
 - **Easing:** enter `ease-out`, exit `ease-in`, move `ease-in-out`.
 - **Duration:** micro 80ms · short 160ms · medium 240ms · status pulse 1.8s loop ·
   modal enter ~150ms fade+zoom-95.
+- **Approved divergence (2026-07-31):** Browser panel and File diff viewer
+  maximize/restore are a second expressive exception — a FLIP-driven transform
+  grows/shrinks the panel from its real rect to fullscreen (`--duration-emphasized`
+  320ms, `--ease-emphasized` expo-out), not the fade+zoom-95 modal recipe. Per-file
+  diff expand/collapse uses a grid-row auto-height animation on the existing
+  `--duration-normal ease-out`. Both respect `prefers-reduced-motion`. Scoped to
+  these two surfaces only — do not extend to other panels without new approval.
 
 ## Implementation notes
 
@@ -271,3 +285,4 @@ mirrors the reference exactly. Launching from a project row pre-fills the Projec
 | 2026-06-09 | Removed **Library** from the rail footer                               | User direction; footer is Search + Settings only.                                                  |
 | 2026-06-09 | Topbar right = PR/CI pill + view toggles + ⋯ menu (worker)             | Surfaces the actionable PR/CI state from the daemon; desktop-tool precedent.                       |
 | 2026-06-09 | Spawn modal mirrors the reference's Create Task                        | Consistency with the reference; mapped to `ao spawn` params.                                       |
+| 2026-07-31 | Browser panel + File diff viewer get FLIP-transform maximize/restore   | User-requested macOS-window-zoom feel; scoped to these two surfaces, not an app-wide motion pass.  |
