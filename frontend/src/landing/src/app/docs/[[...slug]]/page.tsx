@@ -46,13 +46,18 @@ export default async function DocsPage({ params }: { params: Promise<{ slug?: st
         <div className="mx-auto max-w-7xl px-6 xl:pl-[18rem] 2xl:pl-[19rem]">
           <div className="max-w-3xl pt-16 pb-10 md:pt-20 md:pb-12">
             <p className="text-sm text-muted-foreground">Documentation</p>
-            <h1 className="mt-4 text-balance text-3xl font-medium tracking-[-0.5px] text-foreground md:text-4xl">
+            <h1
+              data-doc-title
+              className="mt-4 text-balance text-3xl font-medium tracking-[-0.5px] text-foreground md:text-4xl"
+            >
               {doc.title}
             </h1>
             {doc.description ? (
-              <p className="mt-3 max-w-2xl text-pretty text-muted-foreground">{doc.description}</p>
+              <p data-doc-description className="mt-3 max-w-2xl text-pretty text-muted-foreground">
+                {doc.description}
+              </p>
             ) : (
-              <p className="mt-3 max-w-2xl text-pretty text-muted-foreground">
+              <p data-doc-description className="mt-3 max-w-2xl text-pretty text-muted-foreground">
                 Product docs for running, extending, and operating Agent Orchestrator.
               </p>
             )}
@@ -68,7 +73,10 @@ export default async function DocsPage({ params }: { params: Promise<{ slug?: st
         </aside>
 
         <div className="flex gap-10">
-          <article className="prose prose-invert min-w-0 max-w-3xl flex-1 pt-10 pb-4 text-foreground prose-headings:text-balance prose-headings:font-medium prose-headings:tracking-[-0.5px] prose-headings:text-foreground prose-h1:mt-0 prose-h1:text-3xl prose-h1:mb-2 prose-h2:mt-10 prose-h2:text-2xl prose-h2:pb-0 prose-h3:mt-7 prose-h3:text-xl prose-p:text-pretty prose-p:text-muted-foreground prose-p:leading-relaxed prose-li:text-muted-foreground prose-ul:text-muted-foreground prose-ol:text-muted-foreground prose-blockquote:text-muted-foreground prose-strong:text-foreground prose-a:text-foreground prose-a:decoration-border prose-a:underline prose-a:underline-offset-4 hover:prose-a:text-foreground prose-code:text-foreground prose-code:before:content-none prose-code:after:content-none prose-pre:border prose-pre:border-border prose-pre:bg-muted/35 prose-hr:my-8 prose-hr:border-border prose-th:text-foreground prose-td:text-muted-foreground">
+          <article
+            data-doc-content
+            className="prose prose-invert min-w-0 max-w-3xl flex-1 pt-10 pb-4 text-foreground prose-headings:text-balance prose-headings:font-medium prose-headings:tracking-[-0.5px] prose-headings:text-foreground prose-h1:mt-0 prose-h1:text-3xl prose-h1:mb-2 prose-h2:mt-10 prose-h2:text-2xl prose-h2:pb-0 prose-h3:mt-7 prose-h3:text-xl prose-p:text-pretty prose-p:text-muted-foreground prose-p:leading-relaxed prose-li:text-muted-foreground prose-ul:text-muted-foreground prose-ol:text-muted-foreground prose-blockquote:text-muted-foreground prose-strong:text-foreground prose-a:text-foreground prose-a:decoration-border prose-a:underline prose-a:underline-offset-4 hover:prose-a:text-foreground prose-code:text-foreground prose-code:before:content-none prose-code:after:content-none prose-pre:border prose-pre:border-border prose-pre:bg-muted/35 prose-hr:my-8 prose-hr:border-border prose-th:text-foreground prose-td:text-muted-foreground"
+          >
             <MDXRemote
               source={doc.content}
               components={docsMdxComponents}
