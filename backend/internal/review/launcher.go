@@ -215,13 +215,13 @@ func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (string, err
 	if err := l.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID}); err != nil {
 		return "", fmt.Errorf("reviewer replace stale pane: %w", err)
 	}
-	workspacePath := spec.WorkspacePath
-	if cmd.WorkingDirectory != "" {
-		workspacePath = cmd.WorkingDirectory
+	workingDirectory := cmd.WorkingDirectory
+	if workingDirectory == "" {
+		workingDirectory = spec.WorkspacePath
 	}
 	handle, err := l.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     domain.SessionID(handleID),
-		WorkspacePath: workspacePath,
+		WorkspacePath: workingDirectory,
 		Argv:          cmd.Argv,
 		Env:           pinnedEnv(cmd.Env),
 	})

@@ -112,8 +112,9 @@ type ReviewCommandSpec struct {
 	// InitialMessage is injected after the process starts. Interactive-only
 	// reviewers use this instead of placing a task on the command line.
 	InitialMessage string
-	// WorkingDirectory overrides the worker checkout as the reviewer process's
-	// cwd. The checkout remains available through ReviewInvocation.WorkspacePath.
+	// WorkingDirectory overrides the worker checkout as the process working
+	// directory. Secure interactive reviewers use an AO-owned neutral directory;
+	// this routing field is not itself a process sandbox.
 	WorkingDirectory string
 }
 

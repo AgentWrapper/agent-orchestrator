@@ -13,12 +13,13 @@ import (
 )
 
 type fakeReviewer struct {
-	gotInv ports.ReviewInvocation
+	gotInv           ports.ReviewInvocation
+	workingDirectory string
 }
 
 func (f *fakeReviewer) ReviewCommand(_ context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
 	f.gotInv = inv
-	return ports.ReviewCommandSpec{Argv: []string{"greptile", "review"}}, nil
+	return ports.ReviewCommandSpec{Argv: []string{"greptile", "review"}, WorkingDirectory: f.workingDirectory}, nil
 }
 func (f *fakeReviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
 	f.gotInv = inv
@@ -210,6 +211,19 @@ func TestLauncherSpawnReturnsStableHandle(t *testing.T) {
 	}
 	if !strings.Contains(string(system), "Code reviewer role") || !strings.Contains(string(system), "exact file path in that request") || strings.Contains(string(system), filepath.ToSlash(taskPath)) {
 		t.Fatalf("system prompt = %q", system)
+	}
+}
+
+func TestLauncherUsesReviewerNeutralWorkingDirectory(t *testing.T) {
+	reviewer := &fakeReviewer{workingDirectory: "/ao/reviewer-runtime/review-mer-1/workspace"}
+	rt := &fakeRuntime{}
+	l := newTestLauncher(t, reviewer, rt)
+
+	if _, err := l.Spawn(context.Background(), launchSpec()); err != nil {
+		t.Fatal(err)
+	}
+	if rt.createCfg.WorkspacePath != reviewer.workingDirectory {
+		t.Fatalf("runtime working directory = %q, want %q", rt.createCfg.WorkspacePath, reviewer.workingDirectory)
 	}
 }
 

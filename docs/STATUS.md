@@ -45,6 +45,10 @@ surface (`npm run sqlc`, `npm run api`).
   resources disabled, structured read-only inspection/reporting tools, and
   Escape-based turn cancellation. Kiro also uses its native Escape
   cancellation; the other reviewers retain their Ctrl-C contract.
+- The provider-neutral interactive-reviewer capability gateway and neutral
+  AO-owned working-directory contract are available. Agy and Qwen reviewers
+  remain disabled until tmux and ConPTY isolation providers pass the escape and
+  network acceptance tests in ADR 0002.
 - Durable dashboard notifications for `needs_input`, `ready_to_merge`,
   `pr_merged`, and `pr_closed_unmerged`: backend enrichment/persistence,
   cursor-paginated read/unread history, live notification stream, and read
