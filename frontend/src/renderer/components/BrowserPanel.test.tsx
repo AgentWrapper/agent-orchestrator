@@ -31,7 +31,9 @@ const hookState = vi.hoisted(() => ({
 	tabNotice: "",
 	agentBrowserActive: false,
 	agentBrowserActivity: null as { active: boolean; action?: string; phase?: "started" | "finished" } | null,
-	visualTransition: null as { kind: "tab-switch" | "popout"; snapshotUrl: string } | null,
+	visualTransition: null as
+		| { kind: "tab-switch" | "popout"; snapshotUrl: string; sourceSize?: { width: number; height: number } }
+		| null,
 	previewUrl: undefined as string | undefined,
 	navState: {
 		viewId: "42:sess-1",
@@ -348,6 +350,36 @@ describe("BrowserPanel", () => {
 
 		const frame = screen.getByTestId("browser-transition-frame");
 		expect(frame).toHaveAttribute("src", "data:image/jpeg;base64,snapshot");
+	});
+
+	it("sizes a held popout transition frame to its captured pixel size instead of stretching to fill the panel", () => {
+		// Regression: the frame previously always stretched to 100%/100% of its
+		// (possibly just-resized) container, compounding with the FLIP transform's
+		// own scaling into a visibly distorted image. Popout frames must render at
+		// their native captured size and let the FLIP transform do all the scaling.
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		hookState.visualTransition = {
+			kind: "popout",
+			snapshotUrl: "data:image/jpeg;base64,snapshot",
+			sourceSize: { width: 320, height: 240 },
+		};
+
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		const frame = screen.getByTestId("browser-transition-frame");
+		expect(frame.style.width).toBe("320px");
+		expect(frame.style.height).toBe("240px");
+	});
+
+	it("leaves a tab-switch transition frame filling the panel (no fixed size)", () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		hookState.visualTransition = { kind: "tab-switch", snapshotUrl: "data:image/jpeg;base64,snapshot" };
+
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		const frame = screen.getByTestId("browser-transition-frame");
+		expect(frame.style.width).toBe("");
+		expect(frame.style.height).toBe("");
 	});
 
 	it("renders the premium browser shell hooks in the default view", () => {

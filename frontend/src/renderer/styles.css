@@ -2439,10 +2439,28 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	z-index: 2;
 	width: 100%;
 	height: 100%;
-	object-fit: fill;
+	/* contain, not fill: a popout transition's frame keeps a fixed intrinsic
+	   size (see BrowserPanel.tsx) but still inherits the panel's own FLIP
+	   transform as a descendant, which non-uniformly scales its box while the
+	   panel's aspect ratio changes (rail vs. fullscreen). object-fit: contain
+	   keeps the captured content itself undistorted regardless — fill would
+	   stretch it to match whatever shape that box ends up. */
+	object-fit: contain;
 	background: var(--bg);
 	pointer-events: none;
 	animation: browser-transition-frame 240ms ease-out forwards;
+}
+
+/* A held popout transition's frame must stay fully opaque for its whole
+   (variable, FLIP-driven) hold duration — the 240ms fade above is sized for
+   the fixed tab-switch case and would otherwise fade the frame transparent
+   partway through a longer maximize/restore transform, exposing the hidden
+   native view's blank background underneath. endPopoutTransition() removes
+   the frame outright once the transform settles; no fade-out needed since
+   the live view is pixel-aligned with it at that exact instant. */
+[data-transition="popout"] .browser-panel__transition-frame {
+	animation: none;
+	opacity: 1;
 }
 
 .browser-panel__slot {

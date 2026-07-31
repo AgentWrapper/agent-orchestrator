@@ -553,6 +553,18 @@ export function BrowserPanelView({
 						className="browser-panel__transition-frame"
 						data-testid="browser-transition-frame"
 						src={visualTransition.snapshotUrl}
+						style={
+							visualTransition.kind === "popout" && visualTransition.sourceSize
+								? {
+										top: 0,
+										left: 0,
+										right: "auto",
+										bottom: "auto",
+										width: visualTransition.sourceSize.width,
+										height: visualTransition.sourceSize.height,
+									}
+								: undefined
+						}
 					/>
 				) : null}
 				{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
