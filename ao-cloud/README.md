@@ -36,12 +36,52 @@ browser sends input, resize, and reconnect commands to that terminal through the
 control plane; it does not reconstruct a custom chat transcript from provider
 output. An orchestrator terminal starts Claude Code with AO's bypass-permission
 policy and includes the cloud `ao` CLI for `spawn`, `send`, `status`, `inspect`,
-`wait`, and `result`.
+`wait`, `result`, and `session` subcommands.
 
 Workers keep their own harness PTY. PostgreSQL still records lifecycle,
 provisioning, and terminal output needed for reconnect, while the sandbox volume
 keeps the repository and harness state. Files and diffs remain available through
 the inspector.
+
+## Cloud `ao` parity surface
+
+The cloud worker image exposes a CP-authenticated `ao` CLI. The CLI never reads
+daemon state, local SQLite, Docker internals, or raw worker databases; every
+command goes through scoped worker tokens and CP routes.
+
+Orchestrators can:
+
+- `ao spawn --name "<label>" --prompt "<task>"` or `ao spawn --issue <number>`
+  to create durable worker sessions in the same project.
+- `ao status`, `ao session ls`, and `ao session get <worker>` to inspect
+  lifecycle, activity, turn attempts, branch, runtime, PR, CI, and review state.
+- `ao send --session <id> --message "<text>"`, `ao wait <worker>`, and
+  `ao result <worker>` to coordinate turns and read completed answers.
+- `ao session claim-pr <worker> <number-or-url>` to attach existing GitHub PRs.
+- `ao session merge-pr <worker>` and
+  `ao session resolve-review-thread <worker> <thread-id>` for explicit
+  GitHub write actions after review/CI policy allows it.
+- `ao session kill <worker>` to request worker deletion.
+
+Workers can use `ao blocker --message "<details>"` when they need an
+orchestrator decision or cross-session coordination. The CP records an
+idempotent message to the project orchestrator and wakes it through the worker
+command stream.
+
+The Cloud SCM observer persists pull requests, check runs, review state, merge
+state, and GitHub review threads. Actionable CI failures, requested changes,
+merge conflicts, and unresolved review threads are turned into idempotent worker
+messages so the responsible worker sees the same feedback loop the local daemon
+provides. In local development these GitHub operations use the host `gh` token
+or `AO_GITHUB_TOKEN`; hosted production should replace that deployment-wide
+token with the planned GitHub App.
+
+Workspace inspection is repository-scoped. Cloud projects always have one Git
+repository, so scratch and multi-repository local workspace behavior is not
+carried over. The inspector returns directory listings, text file reads,
+localhost/file previews, and structured diff metadata: durable compare base
+ref/SHA, added/modified/deleted/renamed status, untracked non-ignored files,
+per-file additions/deletions, binary flags, and truncation markers.
 
 ## Local development
 

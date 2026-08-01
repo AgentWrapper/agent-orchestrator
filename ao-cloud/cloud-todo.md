@@ -53,3 +53,20 @@ multi-tenant hosted service.
 - Prevent project or sandbox provisioning with unverified credentials.
 - Distinguish invalid credentials from transient provider failures and test
   both paths.
+
+## Local and Cloud semantic parity
+
+- Define a small storage-free shared contract for behavior that must match:
+  session kind, harness capability, activity state, lifecycle commands,
+  derived-status inputs, workspace-file/diff results, and normalized SCM facts.
+- Keep SQLite and PostgreSQL schemas, runtime adapters, and local/cloud-only
+  APIs separate. Do not put accounts, sandboxes, worker tickets, or persistence
+  records in the shared contract.
+- Generate the cloud browser client from a versioned cloud API schema; remove
+  the manually maintained request/response types in `cloud-api.ts`.
+- Add shared fixture-based conformance tests for portable behavior: lifecycle
+  mutations, blocked/interrupt behavior, status derivation, agent events, SCM
+  facts, and workspace diffs.
+- Maintain a capability matrix documenting operations that intentionally differ,
+  such as local worktrees/tmux/filesystem access and cloud organizations,
+  sandboxes, tickets, and quotas.

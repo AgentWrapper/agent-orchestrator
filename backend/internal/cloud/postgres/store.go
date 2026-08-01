@@ -216,6 +216,37 @@ func (s *Store) ListProjects(
 	return projects, rows.Err()
 }
 
+// GetProject returns one account-owned cloud project.
+func (s *Store) GetProject(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	projectID clouddomain.ProjectID,
+) (clouddomain.Project, error) {
+	var project clouddomain.Project
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, account_id, display_name, repository_url, default_branch,
+			config, created_at, updated_at
+		FROM ao_projects
+		WHERE account_id = $1 AND id = $2
+	`, accountID, projectID).Scan(
+		&project.ID,
+		&project.AccountID,
+		&project.DisplayName,
+		&project.RepositoryURL,
+		&project.DefaultBranch,
+		&project.Config,
+		&project.CreatedAt,
+		&project.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return clouddomain.Project{}, ErrProjectNotFound
+	}
+	if err != nil {
+		return clouddomain.Project{}, fmt.Errorf("get project: %w", err)
+	}
+	return project, nil
+}
+
 // CreateSessionInput contains the durable settings for a new session.
 type CreateSessionInput struct {
 	IdempotencyKey       string
@@ -628,6 +659,25 @@ func (s *Store) GetSession(
 	return session, nil
 }
 
+// DeleteSession removes one account-owned worker session and all dependent cloud rows.
+func (s *Store) DeleteSession(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+) error {
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM ao_sessions
+		WHERE account_id = $1 AND id = $2 AND kind = 'worker'
+	`, accountID, sessionID)
+	if err != nil {
+		return fmt.Errorf("delete cloud session: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrSessionNotFound
+	}
+	return nil
+}
+
 func (s *Store) sessionRuntime(
 	ctx context.Context,
 	accountID clouddomain.AccountID,
@@ -661,19 +711,44 @@ func (s *Store) sessionStatus(
 	accountID clouddomain.AccountID,
 	session clouddomain.Session,
 ) (string, error) {
-	var state, ci, review, mergeability string
+	var pullRequestID, state, ci, review, mergeability string
 	err := s.pool.QueryRow(ctx, `
-		SELECT state, ci_state, review_state, mergeability
+		SELECT id, state, ci_state, review_state, mergeability
 		FROM ao_pull_requests
 		WHERE account_id = $1 AND session_id = $2
 		ORDER BY updated_at DESC
 		LIMIT 1
-	`, accountID, session.ID).Scan(&state, &ci, &review, &mergeability)
+	`, accountID, session.ID).Scan(&pullRequestID, &state, &ci, &review, &mergeability)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return deriveCloudStatus(session, "", "", "", ""), nil
+		var claimedState string
+		claimErr := s.pool.QueryRow(ctx, `
+			SELECT 'open'
+			FROM ao_pr_claims
+			WHERE account_id = $1 AND session_id = $2 AND released_at IS NULL
+			ORDER BY claimed_at DESC
+			LIMIT 1
+		`, accountID, session.ID).Scan(&claimedState)
+		if errors.Is(claimErr, pgx.ErrNoRows) {
+			return deriveCloudStatus(session, "", "", "", ""), nil
+		}
+		if claimErr != nil {
+			return "", fmt.Errorf("derive cloud session claim status: %w", claimErr)
+		}
+		return deriveCloudStatus(session, claimedState, "", "", ""), nil
 	}
 	if err != nil {
 		return "", fmt.Errorf("derive cloud session status: %w", err)
+	}
+	var unresolvedThreads int
+	if countErr := s.pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM ao_pr_review_threads
+		WHERE pull_request_id = $1 AND is_resolved = false AND is_outdated = false
+	`, pullRequestID).Scan(&unresolvedThreads); countErr != nil {
+		return "", fmt.Errorf("derive cloud session review thread status: %w", countErr)
+	}
+	if unresolvedThreads > 0 {
+		review = "changes_requested"
 	}
 	return deriveCloudStatus(session, state, ci, review, mergeability), nil
 }

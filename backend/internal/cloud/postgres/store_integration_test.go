@@ -529,3 +529,76 @@ func TestDeletedSandboxCanBeRequestedAgain(t *testing.T) {
 		t.Fatalf("AgentSessionID = %q after sandbox loss", session.AgentSessionID)
 	}
 }
+
+func TestIssueLinkAndPullRequestClaimAreDurableAndExclusive(t *testing.T) {
+	store := integrationStore(t)
+	ctx := context.Background()
+	account, err := store.EnsureAccount(ctx, uuid.NewString(), "Orchestration Tester")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, account.ID, CreateProjectInput{
+		DisplayName:   "Orchestration",
+		RepositoryURL: "https://github.com/example/" + uuid.NewString(),
+		DefaultBranch: "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createWorker := func(name string) clouddomain.Session {
+		t.Helper()
+		result, createErr := store.CreateSession(ctx, account.ID, CreateSessionInput{
+			IdempotencyKey: uuid.NewString(),
+			ProjectID:      project.ID,
+			Kind:           "worker",
+			Harness:        "fake",
+			DisplayName:    name,
+			Resource:       clouddomain.DefaultResourceProfile(),
+		})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		return result.Session
+	}
+	first := createWorker("first")
+	issue, err := store.UpsertIssueSnapshot(ctx, account.ID, clouddomain.Issue{
+		ProjectID:  project.ID,
+		Provider:   "github",
+		Repository: "example/repository",
+		Number:     7,
+		URL:        "https://github.com/example/repository/issues/7",
+		Title:      "Cloud parity",
+		State:      "open",
+		ObservedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.LinkSessionIssue(ctx, account.ID, first.ID, issue.ID); err != nil {
+		t.Fatal(err)
+	}
+	var linkedIssueID string
+	if err := store.pool.QueryRow(ctx, `SELECT issue_id FROM ao_session_issue_links WHERE session_id = $1`, first.ID).Scan(&linkedIssueID); err != nil || linkedIssueID != issue.ID {
+		t.Fatalf("linked issue ID = %q, error = %v", linkedIssueID, err)
+	}
+	claim := clouddomain.PRClaim{
+		SessionID:  first.ID,
+		Provider:   "github",
+		Repository: "example/repository",
+		Number:     8,
+		URL:        "https://github.com/example/repository/pull/8",
+	}
+	firstClaim, err := store.ClaimPullRequest(ctx, account.ID, claim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retriedClaim, err := store.ClaimPullRequest(ctx, account.ID, claim)
+	if err != nil || retriedClaim.ID != firstClaim.ID {
+		t.Fatalf("idempotent claim = %#v, error = %v", retriedClaim, err)
+	}
+	second := createWorker("second")
+	claim.SessionID = second.ID
+	if _, err := store.ClaimPullRequest(ctx, account.ID, claim); !errors.Is(err, ErrPRClaimed) {
+		t.Fatalf("duplicate active claim error = %v, want ErrPRClaimed", err)
+	}
+}

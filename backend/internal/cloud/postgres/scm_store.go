@@ -106,6 +106,21 @@ func (s *Store) WriteSCMObservation(
 			return fmt.Errorf("insert cloud PR check: %w", err)
 		}
 	}
+	if _, err := tx.Exec(ctx, `DELETE FROM ao_pr_review_threads WHERE pull_request_id = $1`, pullRequestID); err != nil {
+		return fmt.Errorf("replace cloud PR review threads: %w", err)
+	}
+	for _, thread := range observation.ReviewThreads {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO ao_pr_review_threads (
+				account_id, pull_request_id, provider_thread_id, is_resolved,
+				is_outdated, path, line, body, author_login, observed_at
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, 0), $8, $9, $10)
+		`, accountID, pullRequestID, thread.ID, thread.IsResolved, thread.IsOutdated,
+			thread.Path, thread.Line, thread.Body, thread.AuthorLogin, thread.ObservedAt); err != nil {
+			return fmt.Errorf("insert cloud PR review thread: %w", err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit cloud SCM observation: %w", err)
 	}
@@ -114,7 +129,8 @@ func (s *Store) WriteSCMObservation(
 
 // SessionSCM contains the latest normalized SCM state for a session.
 type SessionSCM struct {
-	PullRequest cloudlocalgh.PullRequestObservation `json:"pullRequest"`
+	PullRequest   cloudlocalgh.PullRequestObservation    `json:"pullRequest"`
+	ReviewThreads []cloudlocalgh.ReviewThreadObservation `json:"reviewThreads,omitempty"`
 }
 
 // SessionSCM returns the latest SCM state for an account-owned session.
@@ -178,5 +194,66 @@ func (s *Store) SessionSCM(
 		}
 		observation.Checks = append(observation.Checks, check)
 	}
-	return &SessionSCM{PullRequest: observation}, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	threadRows, err := s.pool.Query(ctx, `
+		SELECT provider_thread_id, is_resolved, is_outdated, path,
+			COALESCE(line, 0), body, author_login, observed_at
+		FROM ao_pr_review_threads
+		WHERE pull_request_id = $1
+		ORDER BY observed_at DESC, provider_thread_id
+	`, pullRequestID)
+	if err != nil {
+		return nil, fmt.Errorf("list cloud PR review threads: %w", err)
+	}
+	defer threadRows.Close()
+	threads := make([]cloudlocalgh.ReviewThreadObservation, 0)
+	for threadRows.Next() {
+		var thread cloudlocalgh.ReviewThreadObservation
+		if err := threadRows.Scan(
+			&thread.ID,
+			&thread.IsResolved,
+			&thread.IsOutdated,
+			&thread.Path,
+			&thread.Line,
+			&thread.Body,
+			&thread.AuthorLogin,
+			&thread.ObservedAt,
+		); err != nil {
+			return nil, err
+		}
+		threads = append(threads, thread)
+	}
+	if err := threadRows.Err(); err != nil {
+		return nil, err
+	}
+	observation.ReviewThreads = threads
+	return &SessionSCM{PullRequest: observation, ReviewThreads: threads}, nil
+}
+
+// MarkReviewThreadResolved records a successful provider-side resolution.
+func (s *Store) MarkReviewThreadResolved(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+	providerThreadID string,
+) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE ao_pr_review_threads thread
+		SET is_resolved = true, updated_at = now()
+		FROM ao_pull_requests pr
+		WHERE thread.pull_request_id = pr.id
+			AND thread.account_id = $1
+			AND pr.account_id = $1
+			AND pr.session_id = $2
+			AND thread.provider_thread_id = $3
+	`, accountID, sessionID, providerThreadID)
+	if err != nil {
+		return fmt.Errorf("mark cloud PR review thread resolved: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrReviewThreadNotFound
+	}
+	return nil
 }

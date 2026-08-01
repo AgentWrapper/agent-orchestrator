@@ -17,6 +17,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 
 	cloudauth "github.com/aoagents/agent-orchestrator/backend/internal/cloud/auth"
 	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
@@ -35,6 +36,7 @@ type store interface {
 	EnsureAccount(context.Context, string, string) (clouddomain.Account, error)
 	CreateProject(context.Context, clouddomain.AccountID, cloudpostgres.CreateProjectInput) (clouddomain.Project, error)
 	ListProjects(context.Context, clouddomain.AccountID) ([]clouddomain.Project, error)
+	GetProject(context.Context, clouddomain.AccountID, clouddomain.ProjectID) (clouddomain.Project, error)
 	CreateSession(context.Context, clouddomain.AccountID, cloudpostgres.CreateSessionInput) (cloudpostgres.CreateSessionResult, error)
 	ListSessions(context.Context, clouddomain.AccountID) ([]clouddomain.Session, error)
 	GetSession(context.Context, clouddomain.AccountID, clouddomain.SessionID) (clouddomain.Session, error)
@@ -61,6 +63,10 @@ type store interface {
 	DeleteProviderConnection(context.Context, clouddomain.AccountID, string, string) error
 	IssueAccessTicket(context.Context, clouddomain.AccountID, clouddomain.SessionID, string, []string, time.Duration) (string, error)
 	SessionSCM(context.Context, clouddomain.AccountID, clouddomain.SessionID) (*cloudpostgres.SessionSCM, error)
+	UpsertIssueSnapshot(context.Context, clouddomain.AccountID, clouddomain.Issue) (clouddomain.Issue, error)
+	LinkSessionIssue(context.Context, clouddomain.AccountID, clouddomain.SessionID, string) error
+	ClaimPullRequest(context.Context, clouddomain.AccountID, clouddomain.PRClaim) (clouddomain.PRClaim, error)
+	MarkReviewThreadResolved(context.Context, clouddomain.AccountID, clouddomain.SessionID, string) error
 }
 
 // Server serves the authenticated AO Cloud HTTP and WebSocket APIs.
@@ -173,8 +179,14 @@ func (s *Server) routes() http.Handler {
 			worker.Get("/worker/connect", s.workerConnect)
 			worker.Get("/worker/orchestrate/sessions", s.workerListSessions)
 			worker.Post("/worker/orchestrate/sessions", s.workerCreateSession)
+			worker.Delete("/worker/orchestrate/sessions/{sessionId}", s.workerKillSession)
 			worker.Post("/worker/orchestrate/sessions/{sessionId}/messages", s.workerSendMessage)
+			worker.Post("/worker/orchestrate/sessions/{sessionId}/claim-pr", s.workerClaimPullRequest)
+			worker.Post("/worker/orchestrate/sessions/{sessionId}/merge-pr", s.workerMergePullRequest)
+			worker.Post("/worker/orchestrate/sessions/{sessionId}/review-threads/{threadId}/resolve", s.workerResolveReviewThread)
 			worker.Get("/worker/orchestrate/sessions/{sessionId}/inspection", s.workerInspectSession)
+			worker.Post("/worker/blocker", s.workerReportBlocker)
+			worker.Post("/worker/scm/claim-pr", s.workerClaimOwnPullRequest)
 			worker.Handle("/git/{owner}/{repository}.git/*", http.HandlerFunc(s.gitProxy))
 		})
 
@@ -1126,13 +1138,46 @@ func (s *Server) workerCreateSession(w http.ResponseWriter, r *http.Request) {
 		DisplayName string `json:"displayName"`
 		Prompt      string `json:"prompt"`
 		Harness     string `json:"harness"`
+		IssueNumber int    `json:"issueNumber"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
 	}
 	input.DisplayName = strings.TrimSpace(input.DisplayName)
-	if input.DisplayName == "" || len(input.DisplayName) > 200 {
-		writeError(w, r, http.StatusBadRequest, "INVALID_SESSION", "displayName is required and must be at most 200 characters.")
+	if input.DisplayName != "" && len(input.DisplayName) > 200 {
+		writeError(w, r, http.StatusBadRequest, "INVALID_SESSION", "displayName must be at most 200 characters.")
+		return
+	}
+	if input.IssueNumber < 0 {
+		writeError(w, r, http.StatusBadRequest, "INVALID_ISSUE", "issueNumber must be a positive integer.")
+		return
+	}
+	var issue *cloudlocalgh.Issue
+	if input.IssueNumber > 0 {
+		if s.localGitHub == nil {
+			writeError(w, r, http.StatusNotImplemented, "GITHUB_CONNECTION_REQUIRED", "GitHub is not configured for this deployment.")
+			return
+		}
+		project, err := s.store.GetProject(r.Context(), claims.AccountID, parent.ProjectID)
+		if err != nil {
+			s.internalError(w, r, "load orchestrator project for issue", err)
+			return
+		}
+		resolved, err := s.localGitHub.GetIssue(r.Context(), project.RepositoryURL, input.IssueNumber)
+		if err != nil {
+			writeError(w, r, http.StatusBadRequest, "INVALID_ISSUE", "The GitHub issue could not be found in this project.")
+			return
+		}
+		issue = &resolved
+		if input.DisplayName == "" {
+			input.DisplayName = fmt.Sprintf("issue-%d", resolved.Number)
+		}
+		if strings.TrimSpace(input.Prompt) == "" {
+			input.Prompt = issuePrompt(resolved)
+		}
+	}
+	if input.DisplayName == "" {
+		writeError(w, r, http.StatusBadRequest, "INVALID_SESSION", "displayName is required unless issueNumber is provided.")
 		return
 	}
 	if strings.TrimSpace(input.Prompt) == "" || len([]byte(input.Prompt)) > 64<<10 {
@@ -1187,11 +1232,40 @@ func (s *Server) workerCreateSession(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "spawn orchestrated worker", err)
 		return
 	}
+	if issue != nil {
+		snapshot, err := s.store.UpsertIssueSnapshot(r.Context(), claims.AccountID, clouddomain.Issue{
+			ProjectID:  parent.ProjectID,
+			Provider:   "github",
+			Repository: issue.Repository,
+			Number:     issue.Number,
+			URL:        issue.URL,
+			Title:      issue.Title,
+			Body:       issue.Body,
+			State:      issue.State,
+			ObservedAt: time.Now().UTC(),
+		})
+		if err != nil {
+			s.internalError(w, r, "store GitHub issue snapshot", err)
+			return
+		}
+		if err := s.store.LinkSessionIssue(r.Context(), claims.AccountID, result.Session.ID, snapshot.ID); err != nil {
+			s.internalError(w, r, "link worker to GitHub issue", err)
+			return
+		}
+	}
 	status := http.StatusCreated
 	if !result.Created {
 		status = http.StatusOK
 	}
 	writeJSON(w, status, result)
+}
+
+func issuePrompt(issue cloudlocalgh.Issue) string {
+	prompt := fmt.Sprintf("Implement GitHub issue #%d: %s", issue.Number, issue.Title)
+	if body := strings.TrimSpace(issue.Body); body != "" {
+		prompt += "\n\n" + body
+	}
+	return prompt
 }
 
 func (s *Server) workerListSessions(w http.ResponseWriter, r *http.Request) {
@@ -1213,12 +1287,243 @@ func (s *Server) workerListSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": projectSessions})
 }
 
+func (s *Server) workerClaimPullRequest(w http.ResponseWriter, r *http.Request) {
+	claims, parent, ok := s.workerOrchestrator(w, r)
+	if !ok {
+		return
+	}
+	targetID, validTarget := sessionIDParam(w, r)
+	if !validTarget {
+		return
+	}
+	target, err := s.store.GetSession(r.Context(), claims.AccountID, targetID)
+	if errors.Is(err, cloudpostgres.ErrSessionNotFound) ||
+		err == nil && (target.ProjectID != parent.ProjectID || target.Kind != "worker") {
+		writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The project worker does not exist.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "authorize pull request claim", err)
+		return
+	}
+	if s.localGitHub == nil {
+		writeError(w, r, http.StatusNotImplemented, "GITHUB_CONNECTION_REQUIRED", "GitHub is not configured for this deployment.")
+		return
+	}
+	var input struct {
+		Reference string `json:"reference"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	project, err := s.store.GetProject(r.Context(), claims.AccountID, parent.ProjectID)
+	if err != nil {
+		s.internalError(w, r, "load project for pull request claim", err)
+		return
+	}
+	pull, err := s.localGitHub.GetPullRequest(r.Context(), project.RepositoryURL, input.Reference)
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, "INVALID_PULL_REQUEST", "The pull request must belong to this project.")
+		return
+	}
+	claim, err := s.store.ClaimPullRequest(r.Context(), claims.AccountID, clouddomain.PRClaim{
+		SessionID:  target.ID,
+		Provider:   "github",
+		Repository: pull.Repository,
+		Number:     pull.Number,
+		URL:        pull.URL,
+	})
+	if errors.Is(err, cloudpostgres.ErrPRClaimed) {
+		writeError(w, r, http.StatusConflict, "PR_ALREADY_CLAIMED", "Another active worker already owns this pull request.")
+		return
+	}
+	if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
+		writeError(w, r, http.StatusConflict, "WORKER_INACTIVE", "Only an active worker can claim a pull request.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "claim pull request", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"claim": claim})
+}
+
+func (s *Server) workerMergePullRequest(w http.ResponseWriter, r *http.Request) {
+	claims, parent, target, ok := s.authorizedProjectWorker(w, r, "authorize pull request merge")
+	if !ok {
+		return
+	}
+	if s.localGitHub == nil {
+		writeError(w, r, http.StatusNotImplemented, "GITHUB_CONNECTION_REQUIRED", "GitHub is not configured for this deployment.")
+		return
+	}
+	scm, err := s.store.SessionSCM(r.Context(), claims.AccountID, target.ID)
+	if err != nil {
+		s.internalError(w, r, "load pull request for merge", err)
+		return
+	}
+	if scm == nil || scm.PullRequest.Number <= 0 {
+		writeError(w, r, http.StatusConflict, "PULL_REQUEST_REQUIRED", "The worker does not have an observed pull request.")
+		return
+	}
+	project, err := s.store.GetProject(r.Context(), claims.AccountID, parent.ProjectID)
+	if err != nil {
+		s.internalError(w, r, "load project for pull request merge", err)
+		return
+	}
+	pull, err := s.localGitHub.MergePullRequest(r.Context(), project.RepositoryURL, scm.PullRequest.Number)
+	if err != nil {
+		writeError(w, r, http.StatusBadGateway, "PULL_REQUEST_MERGE_FAILED", err.Error())
+		return
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"repository": pull.Repository,
+		"number":     pull.Number,
+		"url":        pull.URL,
+		"source":     "orchestrator",
+	})
+	if _, err := s.events.Append(r.Context(), claims.AccountID, target.ID, "repository.pull_request_merged", payload); err != nil {
+		s.internalError(w, r, "append pull request merge event", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"pullRequest": pull})
+}
+
+func (s *Server) workerResolveReviewThread(w http.ResponseWriter, r *http.Request) {
+	claims, _, target, ok := s.authorizedProjectWorker(w, r, "authorize review thread resolution")
+	if !ok {
+		return
+	}
+	if s.localGitHub == nil {
+		writeError(w, r, http.StatusNotImplemented, "GITHUB_CONNECTION_REQUIRED", "GitHub is not configured for this deployment.")
+		return
+	}
+	threadID := strings.TrimSpace(chi.URLParam(r, "threadId"))
+	if threadID == "" || len(threadID) > 300 {
+		writeError(w, r, http.StatusBadRequest, "INVALID_REVIEW_THREAD", "review thread id is invalid.")
+		return
+	}
+	scm, err := s.store.SessionSCM(r.Context(), claims.AccountID, target.ID)
+	if err != nil {
+		s.internalError(w, r, "load review threads", err)
+		return
+	}
+	if scm == nil || !sessionHasReviewThread(scm.ReviewThreads, threadID) {
+		writeError(w, r, http.StatusNotFound, "REVIEW_THREAD_NOT_FOUND", "The review thread does not belong to this worker.")
+		return
+	}
+	if err := s.localGitHub.ResolveReviewThread(r.Context(), threadID); err != nil {
+		writeError(w, r, http.StatusBadGateway, "REVIEW_THREAD_RESOLVE_FAILED", err.Error())
+		return
+	}
+	if err := s.store.MarkReviewThreadResolved(r.Context(), claims.AccountID, target.ID, threadID); err != nil {
+		if errors.Is(err, cloudpostgres.ErrReviewThreadNotFound) {
+			writeError(w, r, http.StatusNotFound, "REVIEW_THREAD_NOT_FOUND", "The review thread does not belong to this worker.")
+			return
+		}
+		s.internalError(w, r, "mark review thread resolved", err)
+		return
+	}
+	payload, _ := json.Marshal(map[string]string{"threadId": threadID, "source": "orchestrator"})
+	if _, err := s.events.Append(r.Context(), claims.AccountID, target.ID, "repository.review_thread_resolved", payload); err != nil {
+		s.internalError(w, r, "append review thread resolved event", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "threadId": threadID})
+}
+
+func sessionHasReviewThread(threads []cloudlocalgh.ReviewThreadObservation, threadID string) bool {
+	for _, thread := range threads {
+		if thread.ID == threadID {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) authorizedProjectWorker(
+	w http.ResponseWriter,
+	r *http.Request,
+	action string,
+) (cloudworker.Claims, clouddomain.Session, clouddomain.Session, bool) {
+	claims, parent, ok := s.workerOrchestrator(w, r)
+	if !ok {
+		return cloudworker.Claims{}, clouddomain.Session{}, clouddomain.Session{}, false
+	}
+	targetID, validTarget := sessionIDParam(w, r)
+	if !validTarget {
+		return cloudworker.Claims{}, clouddomain.Session{}, clouddomain.Session{}, false
+	}
+	target, err := s.store.GetSession(r.Context(), claims.AccountID, targetID)
+	if errors.Is(err, cloudpostgres.ErrSessionNotFound) ||
+		err == nil && (target.ProjectID != parent.ProjectID || target.Kind != "worker") {
+		writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The project worker does not exist.")
+		return cloudworker.Claims{}, clouddomain.Session{}, clouddomain.Session{}, false
+	}
+	if err != nil {
+		s.internalError(w, r, action, err)
+		return cloudworker.Claims{}, clouddomain.Session{}, clouddomain.Session{}, false
+	}
+	return claims, parent, target, true
+}
+
+func (s *Server) workerKillSession(w http.ResponseWriter, r *http.Request) {
+	claims, parent, ok := s.workerOrchestrator(w, r)
+	if !ok {
+		return
+	}
+	targetID, validTarget := sessionIDParam(w, r)
+	if !validTarget {
+		return
+	}
+	target, err := s.store.GetSession(r.Context(), claims.AccountID, targetID)
+	if errors.Is(err, cloudpostgres.ErrSessionNotFound) ||
+		err == nil && (target.ProjectID != parent.ProjectID || target.Kind != "worker") {
+		writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The project worker does not exist.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "authorize worker deletion", err)
+		return
+	}
+	sandbox, err := s.store.GetSandbox(r.Context(), claims.AccountID, target.ID)
+	if err != nil {
+		s.internalError(w, r, "load worker sandbox for deletion", err)
+		return
+	}
+	if sandbox.DesiredState == "deleted" {
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "state": "deleted"})
+		return
+	}
+	if err := s.store.SetSandboxDesiredState(r.Context(), claims.AccountID, target.ID, "deleted"); err != nil {
+		s.internalError(w, r, "delete worker sandbox", err)
+		return
+	}
+	if _, err := s.store.TransitionActiveTurn(r.Context(), claims.AccountID, target.ID, "failed", "Worker machine deleted."); err != nil {
+		s.internalError(w, r, "finish deleted worker turn", err)
+		return
+	}
+	if err := s.store.UpdateSessionActivity(r.Context(), claims.AccountID, target.ID, "idle"); err != nil {
+		s.internalError(w, r, "reset deleted worker activity", err)
+		return
+	}
+	payload, _ := json.Marshal(map[string]string{"state": "deleted", "source": "orchestrator"})
+	if _, err := s.events.Append(r.Context(), claims.AccountID, target.ID, "sandbox.desired_state_changed", payload); err != nil {
+		s.internalError(w, r, "append deleted worker event", err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "state": "deleted"})
+}
+
 func (s *Server) workerSendMessage(w http.ResponseWriter, r *http.Request) {
 	claims, parent, ok := s.workerOrchestrator(w, r)
 	if !ok {
 		return
 	}
-	targetID := clouddomain.SessionID(chi.URLParam(r, "sessionId"))
+	targetID, ok := sessionIDParam(w, r)
+	if !ok {
+		return
+	}
 	target, err := s.store.GetSession(r.Context(), claims.AccountID, targetID)
 	if errors.Is(err, cloudpostgres.ErrSessionNotFound) ||
 		err == nil && target.ProjectID != parent.ProjectID {
@@ -1272,8 +1577,196 @@ func (s *Server) workerSendMessage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{"event": event})
 }
 
+func sessionIDParam(w http.ResponseWriter, r *http.Request) (clouddomain.SessionID, bool) {
+	value := strings.TrimSpace(chi.URLParam(r, "sessionId"))
+	if _, err := uuid.Parse(value); err != nil {
+		writeError(w, r, http.StatusBadRequest, "INVALID_SESSION_ID", "sessionId must be a UUID.")
+		return "", false
+	}
+	return clouddomain.SessionID(value), true
+}
+
 func cloudWorkerHarness(harness string) bool {
 	return harness == "claude-code" || harness == "codex" || harness == "cursor"
+}
+
+func (s *Server) workerReportBlocker(w http.ResponseWriter, r *http.Request) {
+	claims := workerFromContext(r.Context())
+	if !cloudworker.HasScope(claims, "worker:event") {
+		writeError(w, r, http.StatusForbidden, "SCOPE_REQUIRED", "worker:event scope is required.")
+		return
+	}
+	if strings.TrimSpace(r.Header.Get("X-AO-Session-ID")) != string(claims.SessionID) {
+		writeError(w, r, http.StatusForbidden, "SESSION_ID_MISMATCH", "Worker session identity does not match its credential.")
+		return
+	}
+	session, err := s.store.GetSession(r.Context(), claims.AccountID, claims.SessionID)
+	if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
+		writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The cloud session does not exist.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "authorize worker blocker", err)
+		return
+	}
+	if session.Kind != "worker" || session.IsTerminated {
+		writeError(w, r, http.StatusForbidden, "WORKER_REQUIRED", "Only an active worker can report a blocker.")
+		return
+	}
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if idempotencyKey == "" || len(idempotencyKey) > 200 {
+		writeError(w, r, http.StatusBadRequest, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required.")
+		return
+	}
+	var input struct {
+		Message string `json:"message"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	input.Message = strings.TrimSpace(input.Message)
+	if input.Message == "" || len([]byte(input.Message)) > 64<<10 {
+		writeError(w, r, http.StatusBadRequest, "INVALID_BLOCKER", "message must be non-empty and at most 64 KiB.")
+		return
+	}
+	orchestrator, ok, err := s.projectOrchestrator(r.Context(), claims.AccountID, session.ProjectID)
+	if err != nil {
+		s.internalError(w, r, "find project orchestrator", err)
+		return
+	}
+	if !ok {
+		writeError(w, r, http.StatusConflict, "ORCHESTRATOR_UNAVAILABLE", "No active orchestrator is available for this project.")
+		return
+	}
+	text := fmt.Sprintf("Worker %s (%s) is blocked:\n\n%s", session.DisplayName, session.ID, input.Message)
+	event, err := s.events.AppendUserMessage(
+		r.Context(),
+		claims.AccountID,
+		orchestrator.ID,
+		"worker-blocker:"+string(session.ID)+":"+idempotencyKey,
+		text,
+	)
+	if errors.Is(err, cloudpostgres.ErrIdempotencyConflict) {
+		writeError(w, r, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "Idempotency-Key was already used for another command.")
+		return
+	}
+	if errors.Is(err, cloudpostgres.ErrActiveTurn) {
+		writeError(w, r, http.StatusConflict, "ORCHESTRATOR_BUSY", "The project orchestrator already has a response in progress.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "append worker blocker message", err)
+		return
+	}
+	if err := s.wakeSessionForMessage(r.Context(), claims.AccountID, orchestrator.ID); err != nil {
+		s.internalError(w, r, "wake orchestrator for blocker", err)
+		return
+	}
+	if err := s.workerHub.Send(orchestrator.ID, cloudworkerhub.Command{
+		Type:     "prompt",
+		Data:     base64.StdEncoding.EncodeToString([]byte(text)),
+		Sequence: event.Sequence,
+	}); err != nil {
+		writeError(w, r, http.StatusServiceUnavailable, "WORKER_BACKPRESSURE", "The blocker was saved but orchestrator delivery is temporarily unavailable.")
+		return
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"orchestratorSessionId": orchestrator.ID,
+		"messageSequence":       event.Sequence,
+	})
+	if _, err := s.events.Append(r.Context(), claims.AccountID, session.ID, "worker.blocker_reported", payload); err != nil {
+		s.internalError(w, r, "append worker blocker event", err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"event": event})
+}
+
+func (s *Server) workerClaimOwnPullRequest(w http.ResponseWriter, r *http.Request) {
+	claims := workerFromContext(r.Context())
+	if !cloudworker.HasScope(claims, "worker:git") {
+		writeError(w, r, http.StatusForbidden, "SCOPE_REQUIRED", "worker:git scope is required.")
+		return
+	}
+	if strings.TrimSpace(r.Header.Get("X-AO-Session-ID")) != string(claims.SessionID) {
+		writeError(w, r, http.StatusForbidden, "SESSION_ID_MISMATCH", "Worker session identity does not match its credential.")
+		return
+	}
+	session, err := s.store.GetSession(r.Context(), claims.AccountID, claims.SessionID)
+	if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
+		writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The cloud session does not exist.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "authorize worker pull request claim", err)
+		return
+	}
+	if session.Kind != "worker" || session.IsTerminated {
+		writeError(w, r, http.StatusForbidden, "WORKER_REQUIRED", "Only an active worker can claim its pull request.")
+		return
+	}
+	if s.localGitHub == nil {
+		writeError(w, r, http.StatusNotImplemented, "GITHUB_CONNECTION_REQUIRED", "GitHub is not configured for this deployment.")
+		return
+	}
+	var input struct {
+		Reference string `json:"reference"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	project, err := s.store.GetProject(r.Context(), claims.AccountID, session.ProjectID)
+	if err != nil {
+		s.internalError(w, r, "load project for worker pull request claim", err)
+		return
+	}
+	pull, err := s.localGitHub.GetPullRequest(r.Context(), project.RepositoryURL, input.Reference)
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, "INVALID_PULL_REQUEST", "The pull request must belong to this project.")
+		return
+	}
+	claim, err := s.store.ClaimPullRequest(r.Context(), claims.AccountID, clouddomain.PRClaim{
+		SessionID:  session.ID,
+		Provider:   "github",
+		Repository: pull.Repository,
+		Number:     pull.Number,
+		URL:        pull.URL,
+	})
+	if errors.Is(err, cloudpostgres.ErrPRClaimed) {
+		writeError(w, r, http.StatusConflict, "PR_ALREADY_CLAIMED", "Another active worker already owns this pull request.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "claim worker pull request", err)
+		return
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"repository": pull.Repository,
+		"number":     pull.Number,
+		"url":        pull.URL,
+		"source":     "worker",
+	})
+	if _, err := s.events.Append(r.Context(), claims.AccountID, session.ID, "repository.pull_request_claimed", payload); err != nil {
+		s.internalError(w, r, "append worker pull request claim event", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"claim": claim})
+}
+
+func (s *Server) projectOrchestrator(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	projectID clouddomain.ProjectID,
+) (clouddomain.Session, bool, error) {
+	sessions, err := s.store.ListSessions(ctx, accountID)
+	if err != nil {
+		return clouddomain.Session{}, false, err
+	}
+	for _, session := range sessions {
+		if session.ProjectID == projectID && session.Kind == "orchestrator" && !session.IsTerminated {
+			return session, true, nil
+		}
+	}
+	return clouddomain.Session{}, false, nil
 }
 
 func (s *Server) workerHeartbeat(w http.ResponseWriter, r *http.Request) {

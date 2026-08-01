@@ -53,17 +53,30 @@ func NewCommand(stdout, stderr io.Writer, getenv environment, httpClient *http.C
 		newInspectCommand(getenv, httpClient),
 		newWaitCommand(getenv, httpClient),
 		newResultCommand(getenv, httpClient),
+		newBlockerCommand(getenv, httpClient),
+		newClaimOwnPRCommand(getenv, httpClient),
+		newSessionCommand(getenv, httpClient),
 	)
 	return root
 }
 
 func newSpawnCommand(getenv environment, httpClient *http.Client) *cobra.Command {
 	var name, prompt, harness string
+	var issueNumber int
 	command := &cobra.Command{
 		Use:   "spawn",
 		Short: "Spawn a worker in this project",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
+			if issueNumber < 0 {
+				return errors.New("--issue must be a positive integer")
+			}
+			if issueNumber <= 0 && strings.TrimSpace(name) == "" {
+				return errors.New("--name is required unless --issue is provided")
+			}
+			if issueNumber <= 0 && strings.TrimSpace(prompt) == "" {
+				return errors.New("--prompt is required unless --issue is provided")
+			}
 			client, err := newClient(getenv, httpClient)
 			if err != nil {
 				return err
@@ -72,11 +85,13 @@ func newSpawnCommand(getenv environment, httpClient *http.Client) *cobra.Command
 				Session clouddomain.Session `json:"session"`
 				Created bool                `json:"created"`
 			}
-			if err := client.do(command.Context(), http.MethodPost, "/api/cloud/v1/worker/orchestrate/sessions", map[string]string{
-				"displayName": name,
-				"prompt":      prompt,
-				"harness":     harness,
-			}, &result, uuid.NewString()); err != nil {
+			input := struct {
+				DisplayName string `json:"displayName"`
+				Prompt      string `json:"prompt"`
+				Harness     string `json:"harness"`
+				IssueNumber int    `json:"issueNumber,omitempty"`
+			}{DisplayName: name, Prompt: prompt, Harness: harness, IssueNumber: issueNumber}
+			if err := client.do(command.Context(), http.MethodPost, "/api/cloud/v1/worker/orchestrate/sessions", input, &result, uuid.NewString()); err != nil {
 				return err
 			}
 			_, err = fmt.Fprintf(command.OutOrStdout(), "%s\n", result.Session.ID)
@@ -87,9 +102,153 @@ func newSpawnCommand(getenv environment, httpClient *http.Client) *cobra.Command
 	command.Flags().StringVar(&prompt, "prompt", "", "worker task")
 	command.Flags().StringVar(&harness, "agent", "", "coding harness (claude-code, codex, cursor)")
 	command.Flags().StringVar(&harness, "harness", "", "alias for --agent")
-	_ = command.MarkFlagRequired("name")
-	_ = command.MarkFlagRequired("prompt")
+	command.Flags().IntVar(&issueNumber, "issue", 0, "GitHub issue number in this project")
 	return command
+}
+
+func newSessionCommand(getenv environment, httpClient *http.Client) *cobra.Command {
+	command := &cobra.Command{
+		Use:   "session",
+		Short: "Inspect and coordinate project workers",
+	}
+	command.AddCommand(
+		newSessionListCommand(getenv, httpClient),
+		newSessionGetCommand(getenv, httpClient),
+		newClaimPRCommand(getenv, httpClient),
+		newMergePRCommand(getenv, httpClient),
+		newResolveReviewThreadCommand(getenv, httpClient),
+		newKillCommand(getenv, httpClient),
+	)
+	return command
+}
+
+func newSessionListCommand(getenv environment, httpClient *http.Client) *cobra.Command {
+	command := newStatusCommand(getenv, httpClient)
+	command.Use = "ls"
+	command.Short = "List sessions in this project"
+	return command
+}
+
+func newSessionGetCommand(getenv environment, httpClient *http.Client) *cobra.Command {
+	command := newInspectCommand(getenv, httpClient)
+	command.Use = "get <worker>"
+	command.Short = "Inspect a project worker and its latest turn"
+	return command
+}
+
+func newClaimPRCommand(getenv environment, httpClient *http.Client) *cobra.Command {
+	return &cobra.Command{
+		Use:   "claim-pr <worker> <number-or-url>",
+		Short: "Claim a project pull request for a worker",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(command *cobra.Command, args []string) error {
+			client, err := newClient(getenv, httpClient)
+			if err != nil {
+				return err
+			}
+			worker, err := client.resolveWorker(command.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			return client.do(
+				command.Context(),
+				http.MethodPost,
+				"/api/cloud/v1/worker/orchestrate/sessions/"+url.PathEscape(string(worker.ID))+"/claim-pr",
+				map[string]string{"reference": args[1]},
+				nil,
+				uuid.NewString(),
+			)
+		},
+	}
+}
+
+func newMergePRCommand(getenv environment, httpClient *http.Client) *cobra.Command {
+	return &cobra.Command{
+		Use:   "merge-pr <worker>",
+		Short: "Merge the pull request observed for a worker",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			client, err := newClient(getenv, httpClient)
+			if err != nil {
+				return err
+			}
+			worker, err := client.resolveWorker(command.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			var result struct {
+				PullRequest struct {
+					URL string `json:"url"`
+				} `json:"pullRequest"`
+			}
+			if err := client.do(
+				command.Context(),
+				http.MethodPost,
+				"/api/cloud/v1/worker/orchestrate/sessions/"+url.PathEscape(string(worker.ID))+"/merge-pr",
+				nil,
+				&result,
+				uuid.NewString(),
+			); err != nil {
+				return err
+			}
+			if result.PullRequest.URL != "" {
+				_, err = fmt.Fprintf(command.OutOrStdout(), "%s\n", result.PullRequest.URL)
+			}
+			return err
+		},
+	}
+}
+
+func newResolveReviewThreadCommand(getenv environment, httpClient *http.Client) *cobra.Command {
+	return &cobra.Command{
+		Use:   "resolve-review-thread <worker> <thread-id>",
+		Short: "Resolve a GitHub review thread observed for a worker",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(command *cobra.Command, args []string) error {
+			client, err := newClient(getenv, httpClient)
+			if err != nil {
+				return err
+			}
+			worker, err := client.resolveWorker(command.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			return client.do(
+				command.Context(),
+				http.MethodPost,
+				"/api/cloud/v1/worker/orchestrate/sessions/"+url.PathEscape(string(worker.ID))+"/review-threads/"+url.PathEscape(args[1])+"/resolve",
+				nil,
+				nil,
+				uuid.NewString(),
+			)
+		},
+	}
+}
+
+func newKillCommand(getenv environment, httpClient *http.Client) *cobra.Command {
+	return &cobra.Command{
+		Use:   "kill <worker>",
+		Short: "Request deletion of a project worker",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			client, err := newClient(getenv, httpClient)
+			if err != nil {
+				return err
+			}
+			worker, err := client.resolveWorker(command.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			return client.do(
+				command.Context(),
+				http.MethodDelete,
+				"/api/cloud/v1/worker/orchestrate/sessions/"+url.PathEscape(string(worker.ID)),
+				nil,
+				nil,
+				"",
+			)
+		},
+	}
 }
 
 func newSendCommand(getenv environment, httpClient *http.Client) *cobra.Command {
@@ -103,10 +262,14 @@ func newSendCommand(getenv environment, httpClient *http.Client) *cobra.Command 
 			if err != nil {
 				return err
 			}
+			worker, err := client.resolveWorker(command.Context(), sessionID)
+			if err != nil {
+				return err
+			}
 			return client.do(
 				command.Context(),
 				http.MethodPost,
-				"/api/cloud/v1/worker/orchestrate/sessions/"+sessionID+"/messages",
+				"/api/cloud/v1/worker/orchestrate/sessions/"+url.PathEscape(string(worker.ID))+"/messages",
 				map[string]string{"text": message},
 				nil,
 				uuid.NewString(),
@@ -118,6 +281,68 @@ func newSendCommand(getenv environment, httpClient *http.Client) *cobra.Command 
 	_ = command.MarkFlagRequired("session")
 	_ = command.MarkFlagRequired("message")
 	return command
+}
+
+func newBlockerCommand(getenv environment, httpClient *http.Client) *cobra.Command {
+	var message string
+	command := &cobra.Command{
+		Use:   "blocker",
+		Short: "Report a blocker to the project orchestrator",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			if strings.TrimSpace(message) == "" {
+				return errors.New("--message is required")
+			}
+			client, err := newClient(getenv, httpClient)
+			if err != nil {
+				return err
+			}
+			return client.do(
+				command.Context(),
+				http.MethodPost,
+				"/api/cloud/v1/worker/blocker",
+				map[string]string{"message": message},
+				nil,
+				uuid.NewString(),
+			)
+		},
+	}
+	command.Flags().StringVar(&message, "message", "", "blocker details")
+	_ = command.MarkFlagRequired("message")
+	return command
+}
+
+func newClaimOwnPRCommand(getenv environment, httpClient *http.Client) *cobra.Command {
+	return &cobra.Command{
+		Use:   "claim-pr <number-or-url>",
+		Short: "Attach this worker's pull request to its AO session",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			client, err := newClient(getenv, httpClient)
+			if err != nil {
+				return err
+			}
+			var result struct {
+				Claim struct {
+					URL string `json:"url"`
+				} `json:"claim"`
+			}
+			if err := client.do(
+				command.Context(),
+				http.MethodPost,
+				"/api/cloud/v1/worker/scm/claim-pr",
+				map[string]string{"reference": args[0]},
+				&result,
+				uuid.NewString(),
+			); err != nil {
+				return err
+			}
+			if result.Claim.URL != "" {
+				_, err = fmt.Fprintf(command.OutOrStdout(), "%s\n", result.Claim.URL)
+			}
+			return err
+		},
+	}
 }
 
 func newStatusCommand(getenv environment, httpClient *http.Client) *cobra.Command {
@@ -137,14 +362,24 @@ func newStatusCommand(getenv environment, httpClient *http.Client) *cobra.Comman
 				return err
 			}
 			for _, session := range result.Sessions {
+				turnState := "none"
+				attempts := 0
+				if session.ActiveTurn != nil {
+					turnState = session.ActiveTurn.State
+					attempts = session.ActiveTurn.AttemptCount
+				}
 				if _, err := fmt.Fprintf(
 					command.OutOrStdout(),
-					"%s\t%s\t%s\t%s\t%s\tbranch=%s\n",
+					"%s\t%s\t%s\t%s\t%s\tactivity=%s\truntime=%s\tturn=%s\tattempts=%d\tbranch=%s\n",
 					session.ID,
 					session.Status,
 					session.Kind,
 					session.Harness,
 					session.DisplayName,
+					session.ActivityState,
+					connectedLabel(session.RuntimeConnected),
+					turnState,
+					attempts,
 					session.Branch,
 				); err != nil {
 					return err
@@ -158,8 +393,31 @@ func newStatusCommand(getenv environment, httpClient *http.Client) *cobra.Comman
 type inspection struct {
 	Session         clouddomain.Session `json:"session"`
 	Turn            *clouddomain.Turn   `json:"turn"`
+	SCM             *sessionSCM         `json:"scm"`
 	Result          string              `json:"result"`
 	ResultAvailable bool                `json:"resultAvailable"`
+}
+
+type sessionSCM struct {
+	PullRequest struct {
+		Repository    string `json:"repository"`
+		Number        int    `json:"number"`
+		URL           string `json:"url"`
+		State         string `json:"state"`
+		CIState       string `json:"ciState"`
+		ReviewState   string `json:"reviewState"`
+		Mergeability  string `json:"mergeability"`
+		SourceBranch  string `json:"sourceBranch"`
+		TargetBranch  string `json:"targetBranch"`
+		ReviewThreads []struct {
+			ID         string `json:"id"`
+			IsResolved bool   `json:"isResolved"`
+			IsOutdated bool   `json:"isOutdated"`
+			Path       string `json:"path"`
+			Line       int    `json:"line"`
+			Body       string `json:"body"`
+		} `json:"reviewThreads"`
+	} `json:"pullRequest"`
 }
 
 func newInspectCommand(getenv environment, httpClient *http.Client) *cobra.Command {
@@ -196,19 +454,70 @@ func newInspectCommand(getenv environment, httpClient *http.Client) *cobra.Comma
 			}
 			_, err = fmt.Fprintf(
 				command.OutOrStdout(),
-				"id: %s\nname: %s\nbranch: %s\nstatus: %s\nruntime: %s\nturn: %s\nattempts: %d\nresult: %s\n",
+				"id: %s\nname: %s\nbranch: %s\nstatus: %s\nactivity: %s\nruntime: %s\nturn: %s\nattempts: %d\nresult: %s\n",
 				inspection.Session.ID,
 				inspection.Session.DisplayName,
 				inspection.Session.Branch,
 				inspection.Session.Status,
+				inspection.Session.ActivityState,
 				connectedLabel(inspection.Session.RuntimeConnected),
 				turnState,
 				attempts,
 				resultState,
 			)
-			return err
+			if err != nil {
+				return err
+			}
+			return printInspectionSCM(command.OutOrStdout(), inspection.SCM)
 		},
 	}
+}
+
+func printInspectionSCM(output io.Writer, scm *sessionSCM) error {
+	if scm == nil || scm.PullRequest.Number == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintf(
+		output,
+		"pull_request: #%d %s\npr_state: %s\nci: %s\nreview: %s\nmergeability: %s\nbranches: %s -> %s\n",
+		scm.PullRequest.Number,
+		scm.PullRequest.URL,
+		scm.PullRequest.State,
+		scm.PullRequest.CIState,
+		scm.PullRequest.ReviewState,
+		scm.PullRequest.Mergeability,
+		scm.PullRequest.SourceBranch,
+		scm.PullRequest.TargetBranch,
+	); err != nil {
+		return err
+	}
+	openThreads := 0
+	for _, thread := range scm.PullRequest.ReviewThreads {
+		if !thread.IsResolved && !thread.IsOutdated {
+			openThreads++
+		}
+	}
+	if _, err := fmt.Fprintf(output, "review_threads_open: %d\n", openThreads); err != nil {
+		return err
+	}
+	for _, thread := range scm.PullRequest.ReviewThreads {
+		if thread.IsResolved || thread.IsOutdated {
+			continue
+		}
+		if _, err := fmt.Fprintf(output, "- %s %s:%d %s\n", thread.ID, thread.Path, thread.Line, firstLine(thread.Body)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func firstLine(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	line, _, _ := strings.Cut(value, "\n")
+	return strings.TrimSpace(line)
 }
 
 func newResultCommand(getenv environment, httpClient *http.Client) *cobra.Command {

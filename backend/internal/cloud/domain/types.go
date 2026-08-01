@@ -48,6 +48,33 @@ type Project struct {
 	UpdatedAt     time.Time       `json:"updatedAt"`
 }
 
+// Issue is the repository-scoped task snapshot attached to a Cloud session.
+type Issue struct {
+	ID         string    `json:"id"`
+	AccountID  AccountID `json:"accountId"`
+	ProjectID  ProjectID `json:"projectId"`
+	Provider   string    `json:"provider"`
+	Repository string    `json:"repository"`
+	Number     int       `json:"number"`
+	URL        string    `json:"url"`
+	Title      string    `json:"title"`
+	Body       string    `json:"body"`
+	State      string    `json:"state"`
+	ObservedAt time.Time `json:"observedAt"`
+}
+
+// PRClaim records AO's durable ownership of a repository pull request.
+type PRClaim struct {
+	ID         string    `json:"id"`
+	AccountID  AccountID `json:"accountId"`
+	SessionID  SessionID `json:"sessionId"`
+	Provider   string    `json:"provider"`
+	Repository string    `json:"repository"`
+	Number     int       `json:"number"`
+	URL        string    `json:"url"`
+	ClaimedAt  time.Time `json:"claimedAt"`
+}
+
 // Session records the durable state of a cloud agent session.
 type Session struct {
 	ID               SessionID `json:"id"`

@@ -187,6 +187,77 @@ Browser
 No arrow in this flow passes through the local AO desktop application or local
 daemon.
 
+## Live worker, terminal, and browser transport
+
+Every cloud sandbox, including an orchestrator sandbox, runs one `ao-worker`
+next to its selected coding-agent harness. The worker owns the actual agent PTY
+and reports outward to the control plane; browsers never connect directly to a
+sandbox.
+
+```text
+Worker → control plane
+  - HTTPS heartbeats renew the worker lease and report capabilities.
+  - HTTPS events report agent activity, chat turns, terminal output, blockers,
+    workspace responses, and agent exit.
+
+Control plane → worker
+  - A persistent, authenticated worker WebSocket carries prompts, interrupts,
+    terminal input and resize commands, and workspace RPC requests.
+
+Control plane → browser
+  - SSE replays durable session and board events, then delivers live updates.
+  - A terminal WebSocket carries the live interactive terminal view.
+
+Browser → control plane
+  - HTTPS performs normal product actions.
+  - The terminal WebSocket carries keystrokes and terminal resize messages.
+```
+
+### Terminal relay
+
+A browser requests a short-lived, single-use terminal ticket from the control
+plane. The ticket authorizes a **bidirectional browser-to-control-plane**
+terminal WebSocket; it does not authorize pod or sandbox access.
+
+```text
+Agent harness in sandbox PTY
+  → ao-worker publishes terminal-output event
+  → control plane relays it on the browser terminal WebSocket
+  → xterm.js renders the real terminal output
+
+Browser keystroke or resize
+  → browser terminal WebSocket to control plane
+  → control plane authorizes and queues a worker command
+  → worker WebSocket receives it
+  → ao-worker writes it into the actual agent PTY
+```
+
+The browser terminal is therefore a live view of the real PTY, not a simulated
+or reconstructed terminal. Durable event and turn records remain necessary for
+recovery, replay, multi-client consistency, authorization, and audit after a
+browser disconnect, worker replacement, or control-plane restart.
+
+### Why the control plane relays this traffic
+
+This is the required model for AO Cloud rather than a browser or orchestrator
+connecting directly to a worker:
+
+- **Security:** sandboxes execute repository and agent-controlled code. The
+  control plane verifies user, organization, resource grant, worker epoch, and
+  short-lived ticket before any terminal or RPC action reaches a sandbox.
+- **Recovery:** a sandbox can be recreated, moved, or disconnected without
+  changing the browser-facing authority. Durable events and turns explain what
+  happened before a reconnect; a raw terminal stream cannot.
+- **Correctness:** prompts and interrupts are persisted and idempotent before
+  delivery. This prevents browser retries, reconnects, and multiple clients
+  from silently duplicating work.
+- **Scale:** workers make outbound connections, so sandboxes need no public
+  inbound control endpoint or sticky browser-to-pod routing. Control-plane
+  instances can route commands using the current worker identity and epoch.
+- **Product control:** the orchestrator receives narrow, audited AO
+  capabilities—such as send prompt, inspect workspace, interrupt, and open a
+  preview—not unrestricted shell or pod administration over other workers.
+
 ## Design decisions to preserve
 
 - One isolated sandbox per cloud orchestrator or worker session by default.

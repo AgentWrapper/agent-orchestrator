@@ -134,23 +134,33 @@ func TestRegressionRestartedClaudeSessionRequiresPersistedTranscript(t *testing.
 }
 
 func TestOrchestratorSystemPromptRequiresDurableAOWorkers(t *testing.T) {
-	prompt := systemPrompt("orchestrator")
+	prompt := systemPrompt("orchestrator", "project-one", "https://github.com/acme/repo", "main", "ao/orchestrator", "delegate carefully")
 	for _, required := range []string{
 		`ao spawn --name`,
 		`Never use Claude's Agent tool`,
 		`ao status`,
-		`Git branches`,
-		`ao inspect <worker>`,
+		`ao session get <worker>`,
 		`ao wait <worker>`,
 		`ao result <worker>`,
 		`ao send --session`,
+		`ao session merge-pr <worker>`,
+		`Project-Specific Orchestrator Rules`,
 	} {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("orchestrator prompt does not contain %q", required)
 		}
 	}
-	if prompt := systemPrompt("worker"); prompt != "" {
-		t.Fatalf("worker system prompt = %q, want empty", prompt)
+	workerPrompt := systemPrompt("worker", "project-one", "https://github.com/acme/repo", "main", "ao/worker", "run focused tests")
+	for _, required := range []string{
+		`AO Worker Role`,
+		`ao blocker --message`,
+		`Work on this session branch: ao/worker`,
+		`Pull Requests for This Session`,
+		`Project Rules`,
+	} {
+		if !strings.Contains(workerPrompt, required) {
+			t.Fatalf("worker prompt does not contain %q", required)
+		}
 	}
 }
 

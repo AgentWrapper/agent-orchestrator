@@ -81,6 +81,17 @@ type workspaceEntry struct {
 	ModTime string `json:"modTime"`
 }
 
+type workspaceDiffFile struct {
+	Path      string `json:"path"`
+	OldPath   string `json:"oldPath,omitempty"`
+	Status    string `json:"status"`
+	Staged    string `json:"staged,omitempty"`
+	Unstaged  string `json:"unstaged,omitempty"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	Binary    bool   `json:"binary"`
+}
+
 func (r *Runner) dispatchWorkspaceCommand(
 	ctx context.Context,
 	command cloudworkerhub.Command,
@@ -244,6 +255,7 @@ func (r *Runner) readWorkspaceFile(path string) (map[string]any, error) {
 }
 
 func (r *Runner) workspaceDiff(ctx context.Context) (map[string]any, error) {
+	baseRef, baseSHA := r.workspaceDiffBase(ctx)
 	status, err := limitedCommandOutput(
 		ctx,
 		r.workspaceDir,
@@ -253,6 +265,11 @@ func (r *Runner) workspaceDiff(ctx context.Context) (map[string]any, error) {
 		"--short",
 		"--untracked-files=all",
 	)
+	if err != nil {
+		return nil, err
+	}
+	statusFiles, untracked := parseWorkspaceStatus(string(status))
+	stats, statsTruncated, err := r.workspaceDiffStats(ctx, baseRef)
 	if err != nil {
 		return nil, err
 	}
@@ -281,11 +298,220 @@ func (r *Runner) workspaceDiff(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	combined, combinedTruncated, err := r.workspaceCombinedDiff(ctx, baseRef)
+	if err != nil {
+		return nil, err
+	}
 	return map[string]any{
-		"status":   string(status),
-		"unstaged": string(unstaged),
-		"staged":   string(staged),
+		"status":         string(status),
+		"unstaged":       string(unstaged),
+		"staged":         string(staged),
+		"combined":       string(combined),
+		"diffBaseRef":    baseRef,
+		"diffBaseSha":    baseSHA,
+		"files":          mergeWorkspaceDiffFiles(statusFiles, stats),
+		"untrackedFiles": untracked,
+		"truncated": map[string]bool{
+			"combined": combinedTruncated,
+			"stats":    statsTruncated,
+		},
 	}, nil
+}
+
+func (r *Runner) workspaceDiffBase(ctx context.Context) (string, string) {
+	defaultBranch := strings.TrimSpace(r.bootstrap.Launch.DefaultBranch)
+	if defaultBranch == "" {
+		defaultBranch = "main"
+	}
+	candidates := []string{"origin/" + defaultBranch, defaultBranch, "HEAD~1"}
+	for _, candidate := range candidates {
+		sha, err := commandOutput(ctx, r.workspaceDir, "git", "merge-base", "HEAD", candidate)
+		if err == nil && strings.TrimSpace(string(sha)) != "" {
+			return candidate, strings.TrimSpace(string(sha))
+		}
+	}
+	sha, err := commandOutput(ctx, r.workspaceDir, "git", "rev-parse", "HEAD")
+	if err != nil {
+		return "HEAD", ""
+	}
+	return "HEAD", strings.TrimSpace(string(sha))
+}
+
+func (r *Runner) workspaceDiffStats(ctx context.Context, baseRef string) (map[string]workspaceDiffFile, bool, error) {
+	output, err := limitedCommandOutput(
+		ctx,
+		r.workspaceDir,
+		maxInspectorFileBytes,
+		"git",
+		"diff",
+		"--numstat",
+		"--find-renames",
+		baseRef+"...HEAD",
+	)
+	if errors.Is(err, errWorkspaceOutputLimit) {
+		return nil, true, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return parseWorkspaceNumstat(string(output)), false, nil
+}
+
+func (r *Runner) workspaceCombinedDiff(ctx context.Context, baseRef string) ([]byte, bool, error) {
+	output, err := limitedCommandOutput(
+		ctx,
+		r.workspaceDir,
+		maxInspectorFileBytes,
+		"git",
+		"diff",
+		"--no-ext-diff",
+		"--no-color",
+		"--find-renames",
+		baseRef+"...HEAD",
+	)
+	if errors.Is(err, errWorkspaceOutputLimit) {
+		return nil, true, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return output, false, nil
+}
+
+func parseWorkspaceStatus(status string) (map[string]workspaceDiffFile, []string) {
+	files := make(map[string]workspaceDiffFile)
+	untracked := make([]string, 0)
+	for _, line := range strings.Split(status, "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		staged := line[:1]
+		unstaged := line[1:2]
+		pathText := strings.TrimSpace(line[3:])
+		if pathText == "" {
+			continue
+		}
+		oldPath := ""
+		pathValue := pathText
+		if before, after, ok := strings.Cut(pathText, " -> "); ok {
+			oldPath = before
+			pathValue = after
+		}
+		if staged == "?" && unstaged == "?" {
+			untracked = append(untracked, pathValue)
+		}
+		file := files[pathValue]
+		file.Path = pathValue
+		file.OldPath = oldPath
+		file.Status = workspaceStatusLabel(staged, unstaged)
+		file.Staged = strings.TrimSpace(staged)
+		file.Unstaged = strings.TrimSpace(unstaged)
+		files[pathValue] = file
+	}
+	return files, untracked
+}
+
+func workspaceStatusLabel(staged, unstaged string) string {
+	if staged == "?" && unstaged == "?" {
+		return "untracked"
+	}
+	code := staged
+	if code == " " {
+		code = unstaged
+	}
+	switch code {
+	case "A":
+		return "added"
+	case "D":
+		return "deleted"
+	case "R":
+		return "renamed"
+	case "C":
+		return "copied"
+	case "M":
+		return "modified"
+	default:
+		return "changed"
+	}
+}
+
+func parseWorkspaceNumstat(output string) map[string]workspaceDiffFile {
+	result := make(map[string]workspaceDiffFile)
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) < 3 {
+			continue
+		}
+		additions, binary := parseNumstatCount(fields[0])
+		deletions, binaryDeletes := parseNumstatCount(fields[1])
+		pathValue := fields[2]
+		oldPath := ""
+		if strings.Contains(pathValue, " => ") {
+			oldPath, pathValue = parseRenamePath(pathValue)
+		}
+		file := result[pathValue]
+		file.Path = pathValue
+		file.OldPath = oldPath
+		file.Additions = additions
+		file.Deletions = deletions
+		file.Binary = binary || binaryDeletes
+		result[pathValue] = file
+	}
+	return result
+}
+
+func parseNumstatCount(value string) (int, bool) {
+	if value == "-" {
+		return 0, true
+	}
+	count, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, false
+	}
+	return count, false
+}
+
+func parseRenamePath(value string) (string, string) {
+	open := strings.Index(value, "{")
+	close := strings.Index(value, "}")
+	if open < 0 || close < open {
+		parts := strings.Split(value, " => ")
+		return parts[0], parts[len(parts)-1]
+	}
+	prefix := value[:open]
+	suffix := value[close+1:]
+	middle := value[open+1 : close]
+	before, after, ok := strings.Cut(middle, " => ")
+	if !ok {
+		parts := strings.Split(value, " => ")
+		return parts[0], parts[len(parts)-1]
+	}
+	return prefix + before + suffix, prefix + after + suffix
+}
+
+func mergeWorkspaceDiffFiles(
+	statusFiles map[string]workspaceDiffFile,
+	stats map[string]workspaceDiffFile,
+) []workspaceDiffFile {
+	for pathValue, stat := range stats {
+		file := statusFiles[pathValue]
+		file.Path = pathValue
+		if file.Status == "" {
+			file.Status = "modified"
+		}
+		if file.OldPath == "" {
+			file.OldPath = stat.OldPath
+		}
+		file.Additions = stat.Additions
+		file.Deletions = stat.Deletions
+		file.Binary = stat.Binary
+		statusFiles[pathValue] = file
+	}
+	files := make([]workspaceDiffFile, 0, len(statusFiles))
+	for _, file := range statusFiles {
+		files = append(files, file)
+	}
+	return files
 }
 
 func (r *Runner) previewLocalhost(
@@ -397,4 +623,19 @@ func limitedCommandOutput(
 		return nil, fmt.Errorf("%s: %w: %s", name, runErr, strings.TrimSpace(string(value)))
 	}
 	return value, nil
+}
+
+func commandOutput(
+	ctx context.Context,
+	dir string,
+	name string,
+	args ...string,
+) ([]byte, error) {
+	command := exec.CommandContext(ctx, name, args...)
+	command.Dir = dir
+	output, err := command.Output()
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	return output, nil
 }

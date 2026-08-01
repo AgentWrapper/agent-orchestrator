@@ -23,6 +23,7 @@ type store interface {
 	UpdateSandboxObservation(context.Context, string, clouddomain.SessionID, string, string, string, time.Time) error
 	ReleaseSandboxClaim(context.Context, string, clouddomain.SessionID, time.Time) error
 	AppendEvent(context.Context, clouddomain.AccountID, clouddomain.SessionID, string, json.RawMessage) (clouddomain.Event, error)
+	DeleteSession(context.Context, clouddomain.AccountID, clouddomain.SessionID) error
 }
 
 // Reconciler converges durable sandbox intent with provider state.
@@ -116,10 +117,14 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, sandbox clouddomain.S
 	if err != nil {
 		return r.fail(ctx, sandbox, err)
 	}
-	if sandbox.ProviderEnvironmentID == "" {
-		return r.provision(ctx, sandbox, provider)
-	}
 	if sandbox.DesiredState == "deleted" {
+		if sandbox.ProviderEnvironmentID == "" {
+			r.log.Info("removing deleted cloud session without provider environment",
+				"session_id", sandbox.SessionID,
+				"provider", sandbox.Provider,
+			)
+			return r.deleteSession(ctx, sandbox)
+		}
 		r.log.Info("deleting cloud sandbox",
 			"session_id", sandbox.SessionID,
 			"provider", sandbox.Provider,
@@ -129,7 +134,10 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, sandbox clouddomain.S
 		if err != nil && !errors.Is(err, cloudsandbox.ErrNotFound) {
 			return r.fail(ctx, sandbox, err)
 		}
-		return r.observe(ctx, sandbox, sandbox.ProviderEnvironmentID, "deleted", "", 24*time.Hour)
+		return r.deleteSession(ctx, sandbox)
+	}
+	if sandbox.ProviderEnvironmentID == "" {
+		return r.provision(ctx, sandbox, provider)
 	}
 
 	environment, err := provider.Get(ctx, cloudsandbox.ID(sandbox.ProviderEnvironmentID))
@@ -227,6 +235,14 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, sandbox clouddomain.S
 		}
 	}
 	return r.store.ReleaseSandboxClaim(ctx, r.owner, sandbox.SessionID, time.Now().Add(30*time.Second))
+}
+
+func (r *Reconciler) deleteSession(ctx context.Context, sandbox clouddomain.Sandbox) error {
+	if err := r.store.DeleteSession(ctx, sandbox.AccountID, sandbox.SessionID); err != nil &&
+		!errors.Is(err, cloudpostgres.ErrSessionNotFound) {
+		return err
+	}
+	return nil
 }
 
 func (r *Reconciler) recreate(

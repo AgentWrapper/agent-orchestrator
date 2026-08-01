@@ -15,10 +15,11 @@ import (
 const workerInspectionPageSize = 500
 
 type workerInspectionResponse struct {
-	Session         clouddomain.Session `json:"session"`
-	Turn            *clouddomain.Turn   `json:"turn,omitempty"`
-	Result          string              `json:"result"`
-	ResultAvailable bool                `json:"resultAvailable"`
+	Session         clouddomain.Session       `json:"session"`
+	Turn            *clouddomain.Turn         `json:"turn,omitempty"`
+	SCM             *cloudpostgres.SessionSCM `json:"scm,omitempty"`
+	Result          string                    `json:"result"`
+	ResultAvailable bool                      `json:"resultAvailable"`
 }
 
 func (s *Server) workerInspectSession(w http.ResponseWriter, r *http.Request) {
@@ -51,9 +52,15 @@ func (s *Server) workerInspectSession(w http.ResponseWriter, r *http.Request) {
 		}
 		result = assistantResult(events, turn.ID)
 	}
+	scm, err := s.store.SessionSCM(r.Context(), claims.AccountID, targetID)
+	if err != nil {
+		s.internalError(w, r, "load worker SCM inspection", err)
+		return
+	}
 	writeJSON(w, http.StatusOK, workerInspectionResponse{
 		Session:         target,
 		Turn:            turn,
+		SCM:             scm,
 		Result:          result,
 		ResultAvailable: turn != nil && (turn.State == "completed" || turn.State == "failed"),
 	})

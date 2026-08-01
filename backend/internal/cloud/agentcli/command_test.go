@@ -66,6 +66,65 @@ func TestSpawnUsesWorkerAuthenticatedOrchestrationEndpoint(t *testing.T) {
 	}
 }
 
+func TestIssueSpawnAndSessionCoordinationCommands(t *testing.T) {
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		switch r.URL.Path {
+		case "/api/cloud/v1/worker/orchestrate/sessions":
+			if r.Method == http.MethodPost {
+				var input struct {
+					IssueNumber int `json:"issueNumber"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+					t.Fatal(err)
+				}
+				if input.IssueNumber != 42 {
+					t.Fatalf("issue number = %d", input.IssueNumber)
+				}
+				_, _ = w.Write([]byte(`{"session":{"id":"worker-one"},"created":true}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"sessions":[{"id":"worker-one","kind":"worker","displayName":"fixer"}]}`))
+		case "/api/cloud/v1/worker/orchestrate/sessions/worker-one/claim-pr":
+			var input map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatal(err)
+			}
+			if input["reference"] != "https://github.com/example/repo/pull/8" {
+				t.Fatalf("claim input = %#v", input)
+			}
+		case "/api/cloud/v1/worker/orchestrate/sessions/worker-one":
+			if r.Method != http.MethodDelete {
+				t.Fatalf("kill method = %s", r.Method)
+			}
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var output bytes.Buffer
+	for _, args := range [][]string{
+		{"spawn", "--issue", "42"},
+		{"session", "claim-pr", "fixer", "https://github.com/example/repo/pull/8"},
+		{"session", "kill", "fixer"},
+	} {
+		command := NewCommand(&output, &output, testEnvironment(server.URL), server.Client())
+		command.SetArgs(args)
+		if err := command.Execute(); err != nil {
+			t.Fatalf("Execute(%v) error = %v", args, err)
+		}
+	}
+	if !strings.Contains(output.String(), "worker-one\n") {
+		t.Fatalf("output = %q", output.String())
+	}
+	if len(requests) != 5 {
+		t.Fatalf("requests = %#v", requests)
+	}
+}
+
 func TestSendAndStatusProtocols(t *testing.T) {
 	var sent bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -103,7 +162,7 @@ func TestSendAndStatusProtocols(t *testing.T) {
 	}
 	if !strings.Contains(
 		output.String(),
-		"worker-one\tworking\tworker\tcursor\tWorker\tbranch=ao/worker-one",
+		"worker-one\tworking\tworker\tcursor\tWorker\tactivity=\truntime=offline\tturn=none\tattempts=0\tbranch=ao/worker-one",
 	) {
 		t.Fatalf("status output = %q", output.String())
 	}

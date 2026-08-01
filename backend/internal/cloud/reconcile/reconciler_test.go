@@ -11,10 +11,11 @@ import (
 )
 
 type fakeStore struct {
-	claimed []clouddomain.Sandbox
-	state   string
-	id      string
-	events  []string
+	claimed        []clouddomain.Sandbox
+	state          string
+	id             string
+	events         []string
+	deletedSession clouddomain.SessionID
 }
 
 func (f *fakeStore) ClaimSandboxes(context.Context, string, int, time.Duration) ([]clouddomain.Sandbox, error) {
@@ -56,10 +57,15 @@ func (f *fakeStore) AppendEvent(
 	f.events = append(f.events, eventType)
 	return clouddomain.Event{SessionID: sessionID, Type: eventType, Payload: payload}, nil
 }
+func (f *fakeStore) DeleteSession(_ context.Context, _ clouddomain.AccountID, sessionID clouddomain.SessionID) error {
+	f.deletedSession = sessionID
+	return nil
+}
 
 type fakeProvider struct {
 	created cloudsandbox.Spec
 	current cloudsandbox.Environment
+	deleted cloudsandbox.ID
 }
 
 func (f *fakeProvider) Create(_ context.Context, spec cloudsandbox.Spec) (cloudsandbox.Environment, error) {
@@ -76,7 +82,10 @@ func (*fakeProvider) Start(context.Context, cloudsandbox.ID) error  { return nil
 func (*fakeProvider) Stop(context.Context, cloudsandbox.ID) error   { return nil }
 func (*fakeProvider) Pause(context.Context, cloudsandbox.ID) error  { return nil }
 func (*fakeProvider) Resume(context.Context, cloudsandbox.ID) error { return nil }
-func (*fakeProvider) Delete(context.Context, cloudsandbox.ID) error { return nil }
+func (f *fakeProvider) Delete(_ context.Context, id cloudsandbox.ID) error {
+	f.deleted = id
+	return nil
+}
 
 type fakeBootstrapProvider struct {
 	fakeProvider
@@ -308,6 +317,41 @@ func TestDestroyedProviderEnvironmentIsClearedForReprovisioning(t *testing.T) {
 	}
 	if store.state != "requested" || store.id != "" {
 		t.Fatalf("observation = %q %q, want requested with cleared provider ID", store.state, store.id)
+	}
+}
+
+func TestDeletedSandboxRemovesProviderEnvironmentAndSession(t *testing.T) {
+	store := &fakeStore{claimed: []clouddomain.Sandbox{{
+		SessionID:             "session-one",
+		AccountID:             "account-one",
+		Provider:              "docker",
+		ProviderEnvironmentID: "provider-one",
+		DesiredState:          "deleted",
+		ObservedState:         "running",
+	}}}
+	provider := &fakeProvider{}
+	reconciler := New(
+		store,
+		fakeResolver{provider: provider},
+		"https://cloud.example",
+		"stable",
+		"",
+		time.Second,
+		nil,
+		nil,
+	)
+
+	if err := reconciler.reconcileOnce(context.Background()); err != nil {
+		t.Fatalf("reconcileOnce() error = %v", err)
+	}
+	if store.deletedSession != "session-one" {
+		t.Fatalf("deleted session = %q, want session-one", store.deletedSession)
+	}
+	if provider.deleted != "provider-one" {
+		t.Fatalf("deleted provider ID = %q, want provider-one", provider.deleted)
+	}
+	if store.state != "" {
+		t.Fatalf("deleted session should not leave sandbox observation state %q", store.state)
 	}
 }
 

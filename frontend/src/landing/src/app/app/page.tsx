@@ -666,7 +666,7 @@ export default function CloudAppPage() {
   const deleteSelectedWorkerMachine = async () => {
     if (!api || !selectedSession || selectedSession.kind !== "worker") return;
     const confirmed = window.confirm(
-      `Delete ${selectedSession.displayName}'s cloud machine and workspace volume?\n\nThe conversation remains available. Sending another message will provision a fresh machine.`,
+		`Delete ${selectedSession.displayName}'s cloud session, machine, and workspace volume?\n\nThis removes the worker from the board after the control plane tears down its sandbox.`,
     );
     if (!confirmed) return;
     const deleted = await run(() =>
