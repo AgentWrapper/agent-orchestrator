@@ -41,6 +41,8 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"good experimental continue reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerContinue}}}, false},
 		{"good experimental goose reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerGoose}}}, false},
 		{"good experimental vibe reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerVibe}}}, false},
+		{"good experimental Devin reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerDevin}}}, false},
+		{"good experimental Droid reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerDroid}}}, false},
 		{"unknown reviewer harness", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: "nope"}}}, true},
 		{"worker-only harness is not auto a reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerHarness(HarnessAider)}}}, true},
 		{"empty reviewer harness", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ""}}}, true},
@@ -154,7 +156,7 @@ func TestResolveReviewerHarness(t *testing.T) {
 	for _, tc := range []struct {
 		worker AgentHarness
 		want   ReviewerHarness
-	}{{HarnessAgy, ReviewerAgy}, {HarnessContinue, ReviewerContinue}, {HarnessGoose, ReviewerGoose}, {HarnessVibe, ReviewerVibe}} {
+	}{{HarnessAgy, ReviewerAgy}, {HarnessContinue, ReviewerContinue}, {HarnessGoose, ReviewerGoose}, {HarnessVibe, ReviewerVibe}, {HarnessDevin, ReviewerDevin}, {HarnessDroid, ReviewerDroid}} {
 		if got := (ProjectConfig{}).ResolveReviewerHarness(tc.worker); got != tc.want {
 			t.Errorf("%s worker = %q, want reviewer %q", tc.worker, got, tc.want)
 		}

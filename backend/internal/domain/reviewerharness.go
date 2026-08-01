@@ -23,6 +23,8 @@ const (
 	ReviewerContinue   ReviewerHarness = "continue"
 	ReviewerGoose      ReviewerHarness = "goose"
 	ReviewerVibe       ReviewerHarness = "vibe"
+	ReviewerDevin      ReviewerHarness = "devin"
+	ReviewerDroid      ReviewerHarness = "droid"
 )
 
 // AllReviewerHarnesses is the canonical set used to validate a configured
@@ -41,6 +43,8 @@ var AllReviewerHarnesses = []ReviewerHarness{
 	ReviewerContinue,
 	ReviewerGoose,
 	ReviewerVibe,
+	ReviewerDevin,
+	ReviewerDroid,
 }
 
 // IsKnown reports whether h is one of the supported reviewer harnesses.
