@@ -22,9 +22,6 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 	let debuggerAttached = false;
 	const debuggerSendCommand = vi.fn(async (method: string, params?: Record<string, unknown>): Promise<unknown> => {
 		if (method === "Page.navigate" && typeof params?.url === "string") currentURL = params.url;
-		if (method === "Accessibility.getFullAXTree") return { nodes: [] };
-		if (method === "DOM.resolveNode") return { object: { objectId: "object-1" } };
-		if (method === "Runtime.evaluate") return { result: { value: true } };
 		return {};
 	});
 	const setPermissionCheckHandler = vi.fn();
@@ -246,20 +243,6 @@ function setupTabHost() {
 				on: () => undefined,
 				sendCommand: async (method: string, params?: Record<string, unknown>) => {
 					if (method === "Page.navigate" && typeof params?.url === "string") currentURL = params.url;
-					if (method === "Runtime.evaluate") return { result: { value: true } };
-					if (method === "Accessibility.getFullAXTree") {
-						return {
-							nodes: [
-								{
-									nodeId: "1",
-									backendDOMNodeId: 42,
-									role: { value: "button" },
-									name: { value: "Open" },
-								},
-							],
-						};
-					}
-					if (method === "DOM.resolveNode") return { object: { objectId: "button" } };
 					return {};
 				},
 			},
