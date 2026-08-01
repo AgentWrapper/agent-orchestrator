@@ -1,5 +1,4 @@
 import { COMPANY } from "@ao/shared/constants";
-import { getBlogPosts } from "@/lib/blog";
 import { getComparisonPages } from "@/lib/compare";
 import {
 	buildDeveloperResourcesSection,
@@ -13,7 +12,6 @@ import { FAQ_ITEMS } from "../components/FAQSection/constants";
 export const dynamic = "force-static";
 
 export async function GET() {
-	const posts = getBlogPosts();
 	const comparisons = getComparisonPages();
 	const baseUrl = COMPANY.MARKETING_URL;
 
@@ -44,28 +42,6 @@ export async function GET() {
 					`URL: ${baseUrl}/compare/${page.slug}/`,
 					"",
 					stripMdxSyntax(page.content),
-					"",
-				]),
-			].join("\n"),
-		);
-	}
-
-	// Blog posts - full content
-	if (posts.length > 0) {
-		sections.push(
-			[
-				"---",
-				"",
-				"# Blog Posts",
-				"",
-				...posts.flatMap((post) => [
-					`## ${post.title}`,
-					"",
-					`URL: ${baseUrl}/blog/${post.slug}/`,
-					`Date: ${post.date}`,
-					`Author: ${post.author.name}`,
-					"",
-					stripMdxSyntax(post.content),
 					"",
 				]),
 			].join("\n"),
