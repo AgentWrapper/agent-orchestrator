@@ -244,7 +244,15 @@ func (r *Runner) readWorkspaceFile(path string) (map[string]any, error) {
 }
 
 func (r *Runner) workspaceDiff(ctx context.Context) (map[string]any, error) {
-	status, err := limitedCommandOutput(ctx, r.workspaceDir, maxInspectorFileBytes, "git", "status", "--short")
+	status, err := limitedCommandOutput(
+		ctx,
+		r.workspaceDir,
+		maxInspectorFileBytes,
+		"git",
+		"status",
+		"--short",
+		"--untracked-files=all",
+	)
 	if err != nil {
 		return nil, err
 	}

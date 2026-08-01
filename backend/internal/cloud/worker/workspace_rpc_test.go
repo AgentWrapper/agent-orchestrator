@@ -28,6 +28,16 @@ func TestWorkspaceInspectorListsReadsAndDiffsRepository(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("# AO Cloud\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(workspace, "examples", "dummy"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(workspace, "examples", "dummy", "index.html"),
+		[]byte("<h1>Dummy</h1>\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
 
 	runner := &Runner{workspaceDir: workspace}
 	listed, err := runner.listWorkspace("")
@@ -51,6 +61,15 @@ func TestWorkspaceInspectorListsReadsAndDiffsRepository(t *testing.T) {
 	}
 	if !strings.Contains(diff["unstaged"].(string), "+# AO Cloud") {
 		t.Fatalf("workspace diff = %#v", diff)
+	}
+	status := diff["status"].(string)
+	if !strings.Contains(status, "?? examples/dummy/index.html\n") {
+		t.Fatalf("workspace status did not expand untracked directory: %q", status)
+	}
+	for _, line := range strings.Split(status, "\n") {
+		if line == "?? examples/dummy/" {
+			t.Fatalf("workspace status collapsed untracked directory: %q", status)
+		}
 	}
 }
 

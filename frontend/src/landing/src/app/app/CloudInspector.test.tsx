@@ -166,16 +166,16 @@ it("does not mount or fetch inspector panes while closed", () => {
   expect(screen.queryByText("Working tree is clean")).not.toBeInTheDocument();
 });
 
-it("loads untracked file contents only when the file is selected", async () => {
+it("loads a nested untracked file diff only when the file is selected", async () => {
   const user = userEvent.setup();
   const api = inspectorAPI();
   vi.mocked(api.workspaceDiff).mockResolvedValue({
-    status: "?? index.html\n",
+    status: "?? examples/dummy/index.html\n",
     staged: "",
     unstaged: "",
   });
   vi.mocked(api.workspaceFile).mockResolvedValue({
-    path: "index.html",
+    path: "examples/dummy/index.html",
     content: "<main>\n  AO Cloud\n</main>\n",
     size: 27,
   });
@@ -194,7 +194,10 @@ it("loads untracked file contents only when the file is selected", async () => {
       name: /index\.html, 3 additions, 0 deletions/,
     }),
   ).toBeVisible();
-  expect(api.workspaceFile).toHaveBeenCalledTimes(1);
+  expect(api.workspaceFile).toHaveBeenCalledWith(
+    "session-one",
+    "examples/dummy/index.html",
+  );
   expect(screen.getAllByText("+3").length).toBeGreaterThan(0);
   expect(screen.getByText("AO Cloud")).toBeVisible();
   expect(screen.getByText("Untracked")).toBeVisible();
