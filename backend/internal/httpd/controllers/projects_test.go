@@ -76,6 +76,7 @@ func TestProjectsAPI_GetEmptyResultIs500(t *testing.T) {
 func newTestServer(t *testing.T) *httptest.Server {
 
 	t.Helper()
+	t.Setenv("GIT_CEILING_DIRECTORIES", os.TempDir())
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 

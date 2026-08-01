@@ -20,8 +20,17 @@ import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 
-type WorkspaceFileSummary = components["schemas"]["WorkspaceFileSummary"];
-type WorkspaceFileDetail = components["schemas"]["WorkspaceFileResponse"];
+type WorkspaceCompareMode = "base" | "head_fallback";
+type WorkspaceFileSummary = components["schemas"]["WorkspaceFileSummary"] & {
+	previousPath?: string;
+};
+type WorkspaceFileDetail = components["schemas"]["WorkspaceFileResponse"] & {
+	previousPath?: string;
+	compareMode?: WorkspaceCompareMode;
+};
+type WorkspaceFilesResponse = components["schemas"]["ListWorkspaceFilesResponse"] & {
+	compareMode?: WorkspaceCompareMode;
+};
 type WorkspaceFileStatus = WorkspaceFileSummary["status"];
 
 type SessionFilesViewProps = {
@@ -71,7 +80,7 @@ export function SessionFilesView({
 				params: { path: { sessionId } },
 			});
 			if (error) throw new Error(apiErrorMessage(error, "Unable to load workspace files"));
-			return data ?? { sessionId, files: [], truncated: false };
+			return (data ?? { sessionId, files: [], truncated: false }) as WorkspaceFilesResponse;
 		},
 	});
 	const files = filesQuery.data?.files ?? emptyFiles;
@@ -94,7 +103,7 @@ export function SessionFilesView({
 	const visibleFiles = useMemo(
 		() =>
 			normalizedFilter
-				? changedFiles.filter((file) => file.path.toLowerCase().includes(normalizedFilter))
+				? changedFiles.filter((file) => fileSearchText(file).includes(normalizedFilter))
 				: changedFiles,
 		[changedFiles, normalizedFilter],
 	);
@@ -155,7 +164,7 @@ export function SessionFilesView({
 			className="flex h-full min-h-0 flex-col bg-background text-foreground"
 			aria-label="Session files"
 		>
-			<header className="flex h-13 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-2">
+			<header className="flex h-11 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-1.5">
 				{searchOpen ? (
 					<label className="relative mr-auto min-w-0 flex-1 max-w-[280px]">
 						<Search className="pointer-events-none absolute left-2.5 top-1/2 size-icon-sm -translate-y-1/2 text-passive" />
@@ -254,8 +263,9 @@ export function SessionFilesView({
 			</header>
 
 			<div className="min-h-0 flex-1 overflow-auto bg-background">
-				<div className="mx-auto flex w-full max-w-[1200px] flex-col px-0 py-2">
+				<div className={cn("flex w-full flex-col px-0 py-1", !isMaximized && "mx-auto max-w-[1200px]")}>
 					<ReviewFileList
+						compareMode={filesQuery.data?.compareMode}
 						error={filesQuery.error}
 						expandedPaths={expandedPaths}
 						files={visibleFiles}
@@ -273,6 +283,7 @@ export function SessionFilesView({
 }
 
 function ReviewFileList({
+	compareMode,
 	error,
 	expandedPaths,
 	files,
@@ -283,6 +294,7 @@ function ReviewFileList({
 	split,
 	wrap,
 }: {
+	compareMode?: WorkspaceCompareMode;
 	error: Error | null;
 	expandedPaths: Set<string>;
 	files: WorkspaceFileSummary[];
@@ -302,7 +314,7 @@ function ReviewFileList({
 		);
 	}
 	if (files.length === 0) {
-		return <PanelMessage>No changed files found.</PanelMessage>;
+		return <PanelMessage>{emptyFilesMessage(compareMode)}</PanelMessage>;
 	}
 	return (
 		<ul className="session-files-review-list overflow-hidden border-y border-border/70">
@@ -348,15 +360,15 @@ function ReviewFileCard({
 		<article className="session-files-review-row overflow-hidden bg-transparent">
 			<div
 				className={cn(
-					"group/row flex min-h-11 items-center transition-colors",
+					"group/row flex min-h-10 items-center transition-colors",
 					expanded ? "bg-interactive-active/45" : "hover:bg-interactive-hover/50",
 				)}
 			>
 				<button
 					aria-controls={`workspace-diff-${file.path}`}
 					aria-expanded={expanded}
-					aria-label={`${expanded ? "Collapse" : "Expand"} ${file.path}`}
-					className="flex min-w-0 flex-1 items-center gap-3 px-4 py-2 text-left"
+					aria-label={`${expanded ? "Collapse" : "Expand"} ${fileLabel(file)}`}
+					className="flex min-w-0 flex-1 items-center gap-2 px-3 py-1.5 text-left"
 					data-file-toggle=""
 					onClick={onToggle}
 					type="button"
@@ -367,7 +379,7 @@ function ReviewFileCard({
 						<ChevronRight className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
 					)}
 					<StatusMark status={file.status} />
-					<span className="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-foreground">{file.path}</span>
+					<FilePathLabel file={file} />
 					<ChangeBadges additions={file.additions} deletions={file.deletions} />
 				</button>
 				<CopyPathButton path={file.path} />
@@ -394,7 +406,7 @@ function CopyPathButton({ path }: { path: string }) {
 	return (
 		<Button
 			aria-label={copied ? "Path copied" : `Copy path for ${path}`}
-			className="mr-2 shrink-0 opacity-0 transition-opacity focus-visible:opacity-100 group-hover/row:opacity-100"
+			className="mr-1.5 shrink-0 opacity-0 transition-opacity focus-visible:opacity-100 group-hover/row:opacity-100"
 			onClick={() => {
 				void navigator.clipboard?.writeText(path);
 				setCopied(true);
@@ -413,6 +425,37 @@ function CopyPathButton({ path }: { path: string }) {
 	);
 }
 
+function FilePathLabel({ file }: { file: WorkspaceFileSummary }) {
+	if (!file.previousPath) {
+		return <span className="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-foreground">{file.path}</span>;
+	}
+	return (
+		<span className="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-foreground">
+			<span className="text-passive line-through decoration-border">{file.previousPath}</span>
+			<span className="px-1 text-passive">-&gt;</span>
+			<span>{file.path}</span>
+		</span>
+	);
+}
+
+function fileLabel(file: WorkspaceFileSummary): string {
+	return file.previousPath ? `${file.previousPath} -> ${file.path}` : file.path;
+}
+
+function fileSearchText(file: WorkspaceFileSummary): string {
+	return fileLabel(file).toLowerCase();
+}
+
+function emptyFilesMessage(compareMode?: WorkspaceCompareMode): string {
+	if (compareMode === "head_fallback") return "No changes against HEAD.";
+	if (compareMode === "base") return "No changes against base.";
+	return "No changed files found.";
+}
+
+function emptyDiffMessage(compareMode?: WorkspaceCompareMode): string {
+	return compareMode === "base" ? "No changes against base." : "No changes against HEAD.";
+}
+
 async function loadWorkspaceFile(sessionId: string, path: string) {
 	const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/workspace/file", {
 		params: { path: { sessionId }, query: { path } },
@@ -428,7 +471,7 @@ function ReviewDiffBody({ detail, split, wrap }: { detail: WorkspaceFileDetail; 
 	}
 	const rows = parseUnifiedDiff(detail.diff);
 	if (rows.length === 0) {
-		return <PanelMessage>No changes against HEAD.</PanelMessage>;
+		return <PanelMessage>{emptyDiffMessage(detail.compareMode)}</PanelMessage>;
 	}
 	return <DiffView rows={rows} split={split} truncated={detail.diffTruncated} wrap={wrap} />;
 }
@@ -621,9 +664,9 @@ function DiffView({
 	wrap: boolean;
 }) {
 	return (
-		<div className="flex min-h-[220px] max-h-[min(620px,calc(100vh-18rem))] flex-col">
+		<div className="flex min-h-[180px] max-h-[min(620px,calc(100vh-18rem))] flex-col">
 			{truncated ? (
-				<div className="shrink-0 border-b border-border bg-warning/10 px-4 py-2 text-xs text-warning">
+				<div className="shrink-0 border-b border-border bg-warning/10 px-3 py-1.5 text-xs text-warning">
 					Diff preview truncated.
 				</div>
 			) : null}
@@ -649,7 +692,7 @@ function DiffView({
 									>
 										{diffMarkerGlyph[row.kind]}
 									</span>
-									<span className={cn("pr-4", wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre")}>
+									<span className={cn("pr-3", wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre")}>
 										{row.segments ? (
 											<DiffLineSegments add={row.kind === "add"} segments={row.segments} />
 										) : (
@@ -668,7 +711,7 @@ function DiffView({
 
 function HunkBand({ row }: { row: DiffRow }) {
 	return (
-		<div className="flex select-none items-baseline gap-3 bg-surface-faint px-3 py-1 text-passive">
+		<div className="flex select-none items-baseline gap-2 bg-surface-faint px-2.5 py-0.75 text-passive">
 			<span className="shrink-0 text-passive/70">{row.text}</span>
 			{row.section ? <span className="min-w-0 truncate text-passive/90">{row.section}</span> : null}
 		</div>
@@ -733,7 +776,7 @@ function SplitSide({ row, side }: { row: DiffRow | null; side: "old" | "new" }) 
 			<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
 				{lineNo ?? ""}
 			</span>
-			<span className="min-w-0 whitespace-pre-wrap break-all px-2">
+			<span className="min-w-0 whitespace-pre-wrap break-all px-1.5">
 				{row.segments ? <DiffLineSegments add={row.kind === "add"} segments={row.segments} /> : row.text || " "}
 			</span>
 		</div>

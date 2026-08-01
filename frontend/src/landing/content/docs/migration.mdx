@@ -3,7 +3,6 @@ title: Migration
 description: Breaking changes between AO versions and how to upgrade cleanly.
 ---
 
-import { Callout } from "fumadocs-ui/components/callout";
 
 <Callout type="info">
 	AO is in active development and follows semver pre-1.0. Breaking changes are called out here with migration steps.
@@ -11,7 +10,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 
 ## npm is frozen and no longer recommended
 
-npm still works, but it is no longer the recommended way to install AO. `0.10.0` is the final version published to npm, and the `@aoagents/ao` package is frozen and will not receive further updates. Move to the [desktop app](https://ao-agents.com/docs/installation), which auto-updates and owns the daemon. Existing CLI users can run `ao start` to fetch and open the desktop build; the npm `ao` command stays available as that one-time bridge.
+npm still works, but it is no longer the recommended way to install AO. `0.10.0` is the final version published to npm, and the `@aoagents/ao` package is frozen and will not receive further updates. Move to the [desktop app](https://aoagents.dev/docs/installation), which auto-updates and owns the daemon. Existing CLI users can run `ao start` to fetch and open the desktop build; the npm `ao` command stays available as that one-time bridge.
 
 ## From `@composio/agent-orchestrator` to `@aoagents/ao`
 
@@ -22,7 +21,7 @@ npm uninstall -g @composio/agent-orchestrator
 npm install -g @aoagents/ao
 ```
 
-Your config and data directory (`~/.agent-orchestrator`) don't change — no data migration needed. Use the current GitHub repo URL (`AgentWrapper/agent-orchestrator`) for docs, releases, and issue links.
+Your config and data directory (`~/.agent-orchestrator`) don't change — no data migration needed. Use the current GitHub repo URL (`Untrivial-ai/agent-orchestrator`) for docs, releases, and issue links.
 
 ## `ao spawn <project> <issue>` → `ao spawn <issue>`
 

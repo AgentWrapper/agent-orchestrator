@@ -5,10 +5,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession } from "../types/workspace";
 import { TerminalPane, providerScrollsByKeyboard } from "./TerminalPane";
 
-const { postMock, terminalError, terminalState } = vi.hoisted(() => ({
+const { postMock, terminalError, terminalState, replaySettled } = vi.hoisted(() => ({
 	postMock: vi.fn(),
 	terminalError: { value: undefined as string | undefined },
 	terminalState: { value: "idle" },
+	replaySettled: { value: true },
 }));
 let terminalLinkHandler: ((uri: string) => void) | undefined;
 
@@ -29,6 +30,7 @@ vi.mock("../hooks/useTerminalSession", () => ({
 		attach: vi.fn(),
 		state: terminalState.value,
 		error: terminalError.value,
+		replaySettled: replaySettled.value,
 	}),
 }));
 
@@ -57,6 +59,7 @@ beforeEach(() => {
 	postMock.mockResolvedValue({ data: {} });
 	terminalError.value = undefined;
 	terminalState.value = "idle";
+	replaySettled.value = true;
 	terminalLinkHandler = undefined;
 });
 
@@ -120,6 +123,76 @@ describe("TerminalPane empty states", () => {
 	});
 });
 
+// Initial-replay cover (issue #3160): xterm stays mounted and ingesting behind
+// a blank cover so the pane is revealed already drawn at the tail.
+describe("TerminalPane replay cover", () => {
+	beforeEach(() => {
+		// The cover is scoped to an attachment that is actually expecting a
+		// replay, so these cases have to be in a connecting/attached state.
+		terminalState.value = "connecting";
+	});
+
+	it("covers the terminal while the attachment is still buffering the replay", () => {
+		replaySettled.value = false;
+		const view = renderPane({ ...worker, terminalHandleId: "term-1" });
+		try {
+			expect(screen.getByTestId("terminal-replay-cover")).toBeInTheDocument();
+			// xterm keeps rendering underneath — covered, never unmounted, so the
+			// grid it measures stays correct.
+			expect(screen.getByTestId("xterm")).toBeInTheDocument();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("uncovers once the replay has settled", () => {
+		replaySettled.value = true;
+		const view = renderPane({ ...worker, terminalHandleId: "term-1" });
+		try {
+			expect(screen.queryByTestId("terminal-replay-cover")).not.toBeInTheDocument();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("shows no loader text on a fast open", () => {
+		replaySettled.value = false;
+		const view = renderPane({ ...worker, terminalHandleId: "term-1" });
+		try {
+			// The label is delayed, so a session switch that resolves quickly never
+			// flashes a spinner — the whole point of a blank cover.
+			expect(screen.queryByText("Loading latest output…")).not.toBeInTheDocument();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("stays out of the way while the pane is visibly reattaching", () => {
+		replaySettled.value = false;
+		terminalState.value = "reattaching";
+		const view = renderPane({ ...worker, terminalHandleId: "term-1" });
+		try {
+			// An open timeout lifts the cover and the backoff reconnect would pull
+			// it straight back down; the banner explains this window better.
+			expect(screen.queryByTestId("terminal-replay-cover")).not.toBeInTheDocument();
+			expect(screen.getByText("Terminal disconnected — reattaching…")).toBeInTheDocument();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("keeps the startup card, not the blank cover, when there is no terminal handle yet", () => {
+		replaySettled.value = false;
+		const view = renderPane(worker);
+		try {
+			expect(screen.getByText("Starting session")).toBeInTheDocument();
+			expect(screen.queryByTestId("terminal-replay-cover")).not.toBeInTheDocument();
+		} finally {
+			view.restore();
+		}
+	});
+});
+
 describe("terminal restore", () => {
 	it.each([
 		["exited", undefined],
@@ -139,6 +212,20 @@ describe("terminal restore", () => {
 				}),
 			);
 			expect(invalidate).toHaveBeenCalledWith({ queryKey: ["workspaces"] });
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("offers restore when a merged session is terminated", () => {
+		const view = renderPane({
+			...worker,
+			status: "merged",
+			isTerminated: true,
+			terminalHandleId: "term-1",
+		});
+		try {
+			expect(screen.getByRole("button", { name: "Restore session" })).toBeInTheDocument();
 		} finally {
 			view.restore();
 		}
@@ -185,10 +272,25 @@ describe("terminal link preview", () => {
 		},
 	);
 
-	it("does not mirror an external terminal link into the Browser preview", () => {
+	it("mirrors an external (non-loopback) terminal link into the Browser preview", async () => {
 		const view = renderPane(worker);
 		try {
-			act(() => terminalLinkHandler?.("https://example.com"));
+			act(() => terminalLinkHandler?.("https://example.com/pull/42"));
+			await waitFor(() =>
+				expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/preview", {
+					params: { path: { sessionId: "sess-1" } },
+					body: { url: "https://example.com/pull/42" },
+				}),
+			);
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("does not mirror a non-web (mailto:) link", () => {
+		const view = renderPane(worker);
+		try {
+			act(() => terminalLinkHandler?.("mailto:dev@example.com"));
 			expect(postMock).not.toHaveBeenCalled();
 		} finally {
 			view.restore();
@@ -217,6 +319,16 @@ describe("terminal link preview", () => {
 
 	it("does not mirror links for terminated workers because their Browser inspector is cleared", () => {
 		const view = renderPane({ ...worker, status: "terminated" });
+		try {
+			act(() => terminalLinkHandler?.("http://localhost:3000"));
+			expect(postMock).not.toHaveBeenCalled();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("does not mirror links for merged workers whose session is terminated", () => {
+		const view = renderPane({ ...worker, status: "merged", isTerminated: true });
 		try {
 			act(() => terminalLinkHandler?.("http://localhost:3000"));
 			expect(postMock).not.toHaveBeenCalled();

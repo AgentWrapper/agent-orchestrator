@@ -296,9 +296,18 @@ export function visibleForQuery(items: CommandItem[], query: string): CommandIte
 export type DisplayGroup = { id: string; label: string; items: CommandItem[] };
 
 export function displayGroups(items: CommandItem[], query: string): DisplayGroup[] {
-	const visible = visibleForQuery(items, query);
-	if (query.trim()) {
-		return visible.length > 0 ? [{ id: "results", label: "Results", items: visible }] : [];
-	}
-	return groupCommands(visible);
+	// Keep matches under their category headings (Cursor-style), including while typing.
+	const groups = groupCommands(visibleForQuery(items, query));
+	if (!query.trim()) return groups;
+	// The palette runs cmdk with shouldFilter:false and selects the first item in DOM
+	// order, so Enter follows category order. Rank categories by their best match to
+	// keep the highest-scoring hit — and therefore the Enter target — first.
+	return groups
+		.map((group, index) => ({
+			group,
+			index,
+			score: Math.max(...group.items.map((item) => matchScore(query, item))),
+		}))
+		.sort((a, b) => b.score - a.score || a.index - b.index)
+		.map((entry) => entry.group);
 }

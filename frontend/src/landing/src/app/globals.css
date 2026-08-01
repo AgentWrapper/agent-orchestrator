@@ -1,0 +1,30 @@
+@import "tailwindcss";
+/* Relative path avoids Turbopack resolving workspace CSS from frontend/src. */
+@import "../../packages/ui/src/globals.css";
+@import "../../../site-theme/tokens.css";
+@import "../../../site-theme/prose.css";
+@import "@xterm/xterm/css/xterm.css";
+
+@source "../../packages/ui/src/**/*.{ts,tsx}";
+
+/*
+ * Blog code blocks - force dark theme
+ * Note: !important is required to override Shiki's inline styles
+ */
+.blog-code-block > div {
+	background: #282c34;
+	border-color: #3e4451;
+}
+
+.blog-code-block pre {
+	background: #282c34;
+}
+
+/* Hide light theme, show dark theme */
+.blog-code-block .dark\:hidden {
+	display: none;
+}
+
+.blog-code-block .hidden.dark\:block {
+	display: block;
+}

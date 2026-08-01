@@ -31,8 +31,15 @@ const (
 	defaultEnterDelay = 300 * time.Millisecond
 	// defaultReapGrace is how long Destroy waits between SIGTERM and SIGKILL when
 	// reaping a pane's leftover background processes, giving them a chance to
-	// exit cleanly (release ports) before being forced (issue #2523).
+	// exit cleanly (release ports) before being forced (issue #2523). It is a
+	// ceiling, not a fixed wait: reapPollInterval decides how soon a pane that
+	// is already empty lets Destroy return.
 	defaultReapGrace = 5 * time.Second
+	// reapPollInterval is how often the reap rechecks for survivors while the
+	// grace runs. A plain shell exits within a tick or two, so Destroy returns
+	// in roughly this long instead of always burning the full grace — which the
+	// DELETE handler blocks on, and the user sees as a tab that will not close.
+	reapPollInterval = 50 * time.Millisecond
 )
 
 var sessionIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
@@ -78,36 +85,93 @@ type runner interface {
 // SIGKILLs survivors. Best-effort: `pkill` is absent on Windows, where tmux is
 // never the runtime, so the calls simply no-op there.
 func killSessionsByPID(ctx context.Context, pids []int, grace time.Duration) {
+	reapPaneSessions(ctx, pids, grace, signalSessions, sessionsHaveProcesses)
+}
+
+// reapPaneSessions is killSessionsByPID's logic with the pkill/pgrep calls
+// injected, so the SIGTERM → wait → SIGKILL sequence is testable without real
+// processes.
+func reapPaneSessions(
+	ctx context.Context,
+	pids []int,
+	grace time.Duration,
+	signal func(ctx context.Context, pids []int, sig string) bool,
+	hasProcesses func(ctx context.Context, pids []int) bool,
+) {
 	if len(pids) == 0 {
 		return
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), grace+5*time.Second)
 	defer cancel()
 
-	signalSessions(cleanupCtx, pids, "-TERM")
-	if !sessionsHaveProcesses(cleanupCtx, pids) {
+	// `-s` is a Linux procps extension; BSD/macOS pkill rejects it outright. When
+	// the platform cannot signal by session id, no amount of waiting reaps
+	// anything — the SIGTERM never landed and the SIGKILL would not either — so
+	// return instead of blocking the caller for the whole grace. Destroy runs
+	// inside the shell-terminal DELETE handler, and that dead wait was the
+	// several-second delay users saw when closing a terminal on macOS.
+	if !signal(cleanupCtx, pids, "-TERM") {
+		return
+	}
+	if !hasProcesses(cleanupCtx, pids) {
 		return
 	}
 
-	timer := time.NewTimer(grace)
-	defer timer.Stop()
-	select {
-	case <-cleanupCtx.Done():
-		return
-	case <-timer.C:
+	// Poll rather than sleep the whole grace. Callers block on this (Destroy runs
+	// inside the shell-terminal DELETE handler), and the common case — an
+	// interactive shell with nothing behind it — is empty almost immediately. A
+	// process that really needs the time still gets the full grace before SIGKILL.
+	deadline := time.NewTimer(grace)
+	defer deadline.Stop()
+	ticker := time.NewTicker(reapPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-cleanupCtx.Done():
+			return
+		case <-ticker.C:
+			if !hasProcesses(cleanupCtx, pids) {
+				return
+			}
+		case <-deadline.C:
+			if !hasProcesses(cleanupCtx, pids) {
+				return
+			}
+			signal(cleanupCtx, pids, "-KILL")
+			return
+		}
 	}
-	if !sessionsHaveProcesses(cleanupCtx, pids) {
-		return
-	}
-	signalSessions(cleanupCtx, pids, "-KILL")
 }
 
 // signalSessions sends a pkill signal flag (e.g. "-TERM") to every process in
-// each pane session, matched by session id via `pkill -s`.
-func signalSessions(ctx context.Context, pids []int, sig string) {
+// each pane session, matched by session id via `pkill -s`. It reports whether
+// the platform supports signalling by session id at all: exit 2 is a usage
+// error on both procps and BSD pkill, which is how macOS answers `-s`, and
+// there the call reaches no process.
+func signalSessions(ctx context.Context, pids []int, sig string) bool {
+	supported := false
 	for _, pid := range pids {
-		_ = exec.CommandContext(ctx, "pkill", sig, "-s", strconv.Itoa(pid)).Run()
+		err := exec.CommandContext(ctx, "pkill", sig, "-s", strconv.Itoa(pid)).Run()
+		if !isUnsupportedMatcher(err) {
+			supported = true
+		}
 	}
+	return supported
+}
+
+// isUnsupportedMatcher reports whether a pgrep/pkill invocation failed because
+// the platform rejects the matcher itself (exit 2, a usage error) rather than
+// because nothing matched (exit 1) or the process is missing entirely.
+func isUnsupportedMatcher(err error) bool {
+	if err == nil {
+		return false
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode() >= 2
+	}
+	// pkill/pgrep absent (Windows, minimal containers): equally unusable.
+	return true
 }
 
 // sessionsHaveProcesses reports whether any process remains in the pane
@@ -132,7 +196,44 @@ type execRunner struct{}
 func (execRunner) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = append(append([]string(nil), os.Environ()...), env...)
+	// Run from a stable directory, not whatever the daemon process's cwd happens
+	// to be. The first tmux CLI call auto-starts tmux's persistent server, which
+	// inherits ITS launching process's cwd and keeps it for the server's entire
+	// lifetime, regardless of what any later `new-session -c <dir>` asks for
+	// (issue #2775). A packaged desktop build can start the daemon with its cwd
+	// inside a Squirrel/ShipIt staging directory that the very next auto-update
+	// deletes, permanently pinning the tmux server to a path that no longer
+	// exists. os.TempDir() outlives app bundle swaps and update staging dirs, so
+	// pinning here keeps the server cwd valid across the app's lifetime.
+	cmd.Dir = stableRunDir()
 	return cmd.CombinedOutput()
+}
+
+// stableRunDir returns the directory execRunner.Run pins the tmux CLI to.
+//
+// os.TempDir() is the preferred answer (see execRunner.Run), but it returns
+// $TMPDIR verbatim without checking that it exists. A stale or bogus TMPDIR
+// would then make exec fail with "chdir <dir>: no such file or directory" on
+// EVERY tmux command, taking the whole runtime down for exactly the reason
+// #2775 did: a cwd that no longer exists. So stat the candidates and degrade
+// rather than hard-fail. The last resort is the empty string, which leaves
+// cmd.Dir unset so the command inherits the daemon's own cwd: that is the
+// pre-fix behavior and merely risks the poisoned-server race the pin avoids,
+// which the retry in verifyPaneWorkingDirectory already tolerates.
+func stableRunDir() string {
+	candidates := []string{os.TempDir()}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, home)
+	}
+	for _, dir := range candidates {
+		if dir == "" {
+			continue
+		}
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			return dir
+		}
+	}
+	return ""
 }
 
 // New builds a tmux Runtime, filling unset Options with defaults: binary "tmux"
@@ -244,16 +345,93 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	return handle, nil
 }
 
-func (r *Runtime) verifyPaneWorkingDirectory(ctx context.Context, id, want string) error {
-	out, err := r.run(ctx, paneCurrentPathArgs(id)...)
+// Restart replaces the command in an existing pane while preserving the tmux
+// session. This is used to resume an exited agent without discarding terminal
+// history or forcing attached clients onto a new handle.
+func (r *Runtime) Restart(ctx context.Context, handle ports.RuntimeHandle, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+	id, err := handleID(handle)
 	if err != nil {
-		return fmt.Errorf("tmux runtime: verify working directory %s: %w", id, err)
+		return ports.RuntimeHandle{}, err
 	}
-	got := strings.TrimSpace(string(out))
-	if sameDirectory(got, want) {
-		return nil
+	expectedID, err := tmuxSessionName(cfg.SessionID)
+	if err != nil {
+		return ports.RuntimeHandle{}, err
 	}
-	return fmt.Errorf("tmux runtime: session %s started in %q, want %q", id, got, want)
+	if expectedID != id {
+		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: restart handle %s does not match session %s", id, cfg.SessionID)
+	}
+	if cfg.WorkspacePath == "" {
+		return ports.RuntimeHandle{}, errors.New("tmux runtime: workspace path is required")
+	}
+	if len(cfg.Argv) == 0 {
+		return ports.RuntimeHandle{}, errors.New("tmux runtime: launch command is required")
+	}
+	if err := validateEnvKeys(cfg.Env); err != nil {
+		return ports.RuntimeHandle{}, err
+	}
+
+	launchCmd := buildLaunchCommand(cfg)
+	if _, err := r.run(ctx, respawnPaneArgs(id, cfg.WorkspacePath, r.shell, launchCmd)...); err != nil {
+		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: restart session %s: %w", id, err)
+	}
+	alive, err := r.IsAlive(ctx, handle)
+	if err != nil {
+		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: verify restarted session %s: %w", id, err)
+	}
+	if !alive {
+		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: session %s exited during restart", id)
+	}
+	return handle, nil
+}
+
+// paneCwdVerifyAttempts and paneCwdVerifyRetryDelay bound how long Create
+// waits for the pane's working directory to settle before giving up.
+// buildLaunchCommand's `cd '<workspace>' || exit;` guard corrects a pane that
+// started in the tmux server's own (possibly poisoned) cwd, but only once the
+// pane's shell actually runs that cd. Measured live on 2026-07-25:
+// #{pane_current_path} sampled immediately after `new-session` was stale, and
+// the same probe sampled 50ms later was already correct. A single-shot check
+// therefore lost that race every time and turned a spawn that was actually
+// going to succeed into a hard failure (issue #2775): retrying gives the cd
+// guard the moment it needs to run.
+const (
+	paneCwdVerifyAttempts   = 5
+	paneCwdVerifyRetryDelay = 50 * time.Millisecond
+)
+
+func (r *Runtime) verifyPaneWorkingDirectory(ctx context.Context, id, want string) error {
+	var lastErr error
+	for attempt := 0; attempt < paneCwdVerifyAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(paneCwdVerifyRetryDelay):
+			}
+		}
+		out, err := r.run(ctx, paneCurrentPathArgs(id)...)
+		if err != nil {
+			// A later transient probe failure (e.g. a one-off tmux CLI hiccup)
+			// must not overwrite an already-observed cwd mismatch: the mismatch
+			// is the classifiable, actionable error toAPIError maps via
+			// ports.ErrRuntimeWorkspaceCwdMismatch (Fix 4), and losing it here
+			// would silently regress that mapping back to a bare, unclassifiable
+			// 500 whenever the very last attempt happened to hit a probe error.
+			if !errors.Is(lastErr, ports.ErrRuntimeWorkspaceCwdMismatch) {
+				lastErr = fmt.Errorf("tmux runtime: verify working directory %s: %w", id, err)
+			}
+			continue
+		}
+		got := strings.TrimSpace(string(out))
+		if sameDirectory(got, want) {
+			return nil
+		}
+		lastErr = fmt.Errorf(
+			"%w: session %s started in %q, want %q (the worktree may be missing, or the tmux server may be pinned to a stale directory)",
+			ports.ErrRuntimeWorkspaceCwdMismatch, id, got, want,
+		)
+	}
+	return lastErr
 }
 
 // Destroy kills the handle's tmux session and reaps the pane processes it
@@ -332,6 +510,36 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 	return true, nil
 }
 
+// IsSupervisedProcessAlive reports whether the managed workload for ref is
+// still a descendant of this tmux pane. The initial launch is identified by
+// its exact AO supervisor. After that supervisor exits and leaves the
+// interactive shell behind, a child launched from that shell is treated as a
+// manually resumed workload. Command failures remain inconclusive.
+func (r *Runtime) IsSupervisedProcessAlive(ctx context.Context, handle ports.RuntimeHandle, ref ports.SupervisedProcessRef) (bool, error) {
+	id, err := handleID(handle)
+	if err != nil {
+		return false, err
+	}
+	paneOut, err := r.run(ctx, panePIDArgs(id)...)
+	if err != nil {
+		return false, fmt.Errorf("tmux runtime: inspect pane pid %s: %w", id, err)
+	}
+	panePID, err := strconv.Atoi(strings.TrimSpace(string(paneOut)))
+	if err != nil || panePID <= 0 {
+		return false, fmt.Errorf("tmux runtime: invalid pane pid %q", strings.TrimSpace(string(paneOut)))
+	}
+
+	processOut, err := r.runCommand(ctx, "ps", "-ww", "-axo", "pid=,ppid=,args=")
+	if err != nil {
+		return false, fmt.Errorf("tmux runtime: inspect process tree %s: %w", id, err)
+	}
+	entries, err := parseProcessTable(string(processOut))
+	if err != nil {
+		return false, fmt.Errorf("tmux runtime: parse process tree %s: %w", id, err)
+	}
+	return containsManagedWorkload(entries, panePID, string(ref.SessionID), ref.LaunchID), nil
+}
+
 // SendMessage sends literal text to the session (chunked via send-keys -l) then
 // presses Enter to submit. An empty message presses Enter alone (the nudge
 // contract on ports.AgentMessenger).
@@ -346,10 +554,24 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 	}
 	enterCtx := ctx
 	if message != "" {
-		for _, chunk := range chunks(message, r.chunkSize) {
-			if _, err := r.run(ctx, sendKeysLiteralArgs(id, chunk)...); err != nil {
+		messageChunks := chunks(message, r.chunkSize)
+		sendCtx := ctx
+		var finishCancel context.CancelFunc
+		for i, chunk := range messageChunks {
+			if _, err := r.run(sendCtx, sendKeysLiteralArgs(id, chunk)...); err != nil {
+				if finishCancel != nil {
+					finishCancel()
+				}
 				return fmt.Errorf("tmux runtime: send message %s: %w", id, err)
 			}
+			if i == 0 {
+				completionBudget := sendCompletionBudget(len(messageChunks), r.timeout, r.enterDelay)
+				enterCtx, finishCancel = context.WithTimeout(context.WithoutCancel(ctx), completionBudget)
+				sendCtx = enterCtx
+			}
+		}
+		if finishCancel != nil {
+			defer finishCancel()
 		}
 		// Give the target TUI a moment to accept the pasted text before the
 		// trailing Enter, mirroring conpty's ptyInputEnterDelay. Without it a
@@ -361,9 +583,9 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 		// the Enter are detached from the caller's cancellation (bounded by
 		// their own timeout instead): abandoning mid-pause would strand an
 		// unsubmitted draft that a retried send would then double-paste.
-		var cancel context.CancelFunc
-		enterCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), r.enterDelay+5*time.Second)
-		defer cancel()
+		// Errors reported by tmux after it accepts a chunk still return to the
+		// caller; they are not retried because AO cannot safely distinguish
+		// whether tmux applied the failed command.
 		if r.enterDelay > 0 {
 			select {
 			case <-enterCtx.Done():
@@ -376,6 +598,10 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 		return fmt.Errorf("tmux runtime: send enter %s: %w", id, err)
 	}
 	return nil
+}
+
+func sendCompletionBudget(chunkCount int, commandTimeout, enterDelay time.Duration) time.Duration {
+	return time.Duration(chunkCount)*commandTimeout + enterDelay
 }
 
 // Interrupt sends Ctrl-C to the foreground process without destroying the tmux
@@ -442,25 +668,44 @@ func (r *Runtime) attachCommand(handle ports.RuntimeHandle) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []string{r.binary, "-u", "attach-session", "-t", id}, nil
+	// The embedded xterm renderer supports 24-bit SGR colors. Tell this tmux
+	// client explicitly so tmux forwards RGB instead of quantizing it to the
+	// xterm-256color palette. -T is available in AO's minimum tmux version (3.2).
+	return []string{r.binary, "-u", "-T", "RGB", "attach-session", "-t", id}, nil
 }
 
 func attachEnv(base []string) []string {
 	env := append([]string(nil), base...)
+	hasTerm := false
+	hasColorTerm := false
 	for i, kv := range env {
-		if strings.HasPrefix(kv, "TERM=") {
+		switch {
+		case strings.HasPrefix(kv, "TERM="):
 			env[i] = "TERM=xterm-256color"
-			return env
+			hasTerm = true
+		case strings.HasPrefix(kv, "COLORTERM="):
+			env[i] = "COLORTERM=truecolor"
+			hasColorTerm = true
 		}
 	}
-	return append(env, "TERM=xterm-256color")
+	if !hasTerm {
+		env = append(env, "TERM=xterm-256color")
+	}
+	if !hasColorTerm {
+		env = append(env, "COLORTERM=truecolor")
+	}
+	return env
 }
 
 // run wraps runner.Run with a per-call timeout context.
 func (r *Runtime) run(ctx context.Context, args ...string) ([]byte, error) {
+	return r.runCommand(ctx, r.binary, args...)
+}
+
+func (r *Runtime) runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmdCtx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
-	out, err := r.runner.Run(cmdCtx, nil, r.binary, args...)
+	out, err := r.runner.Run(cmdCtx, nil, name, args...)
 	if cmdCtx.Err() != nil {
 		return out, cmdCtx.Err()
 	}
@@ -468,6 +713,104 @@ func (r *Runtime) run(ctx context.Context, args ...string) ([]byte, error) {
 		return out, commandError{err: err, output: strings.TrimSpace(string(out))}
 	}
 	return out, nil
+}
+
+type processEntry struct {
+	pid     int
+	ppid    int
+	command string
+}
+
+func parseProcessTable(out string) ([]processEntry, error) {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	entries := make([]processEntry, 0, len(lines))
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil {
+			return nil, fmt.Errorf("invalid pid in %q", line)
+		}
+		ppid, err := strconv.Atoi(fields[1])
+		if err != nil {
+			return nil, fmt.Errorf("invalid parent pid in %q", line)
+		}
+		entries = append(entries, processEntry{pid: pid, ppid: ppid, command: strings.Join(fields[2:], " ")})
+	}
+	return entries, nil
+}
+
+func descendantPIDs(entries []processEntry, rootPID int) map[int]bool {
+	descendants := map[int]bool{rootPID: true}
+	for changed := true; changed; {
+		changed = false
+		for _, entry := range entries {
+			if descendants[entry.pid] || !descendants[entry.ppid] {
+				continue
+			}
+			descendants[entry.pid] = true
+			changed = true
+		}
+	}
+	return descendants
+}
+
+func containsManagedWorkload(entries []processEntry, rootPID int, sessionID, launchID string) bool {
+	descendants := descendantPIDs(entries, rootPID)
+	hasChild := false
+	hasSupervisor := false
+	for _, entry := range entries {
+		if entry.pid == rootPID || !descendants[entry.pid] {
+			continue
+		}
+		hasChild = true
+		if !isAnySupervisorCommand(entry.command) {
+			continue
+		}
+		hasSupervisor = true
+		if isSupervisorCommand(entry.command, sessionID, launchID) {
+			return true
+		}
+	}
+
+	// A supervisor in the pane tree must match the current generation. Once no
+	// supervisor remains, the pane root is the preserved interactive shell and
+	// any child is a workload the operator launched from that shell.
+	return hasChild && !hasSupervisor
+}
+
+func containsSupervisor(entries []processEntry, rootPID int, sessionID, launchID string) bool {
+	descendants := descendantPIDs(entries, rootPID)
+	for _, entry := range entries {
+		if entry.pid != rootPID && descendants[entry.pid] && isSupervisorCommand(entry.command, sessionID, launchID) {
+			return true
+		}
+	}
+	return false
+}
+
+func isAnySupervisorCommand(command string) bool {
+	fields := strings.Fields(command)
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "agent-process" && fields[i+1] == "supervise" {
+			return true
+		}
+	}
+	return false
+}
+
+func isSupervisorCommand(command, sessionID, launchID string) bool {
+	fields := strings.Fields(command)
+	for i := 0; i+6 < len(fields); i++ {
+		if fields[i] == "agent-process" && fields[i+1] == "supervise" &&
+			fields[i+2] == "--session" && fields[i+3] == sessionID &&
+			fields[i+4] == "--launch" && fields[i+5] == launchID && fields[i+6] == "--" {
+			return true
+		}
+	}
+	return false
 }
 
 // -- session name helpers --
@@ -659,8 +1002,15 @@ func buildLaunchCommand(cfg ports.RuntimeConfig) string {
 	b.WriteString("cd ")
 	b.WriteString(shellQuote(cfg.WorkspacePath))
 	b.WriteString(" || exit; ")
+	if _, configured := cfg.Env["NO_COLOR"]; !configured {
+		// The daemon may be launched from another agent or CI environment that
+		// sets NO_COLOR for its own captured output. Do not leak that ambient
+		// preference into an interactive terminal session. A project can still
+		// opt out of color explicitly through its configured environment.
+		b.WriteString("unset NO_COLOR; ")
+	}
 	for _, key := range sortedKeys(cfg.Env) {
-		if key == "PATH" {
+		if key == "PATH" || key == "COLORTERM" {
 			continue
 		}
 		b.WriteString("export ")
@@ -669,6 +1019,10 @@ func buildLaunchCommand(cfg ports.RuntimeConfig) string {
 		b.WriteString(shellQuote(cfg.Env[key]))
 		b.WriteString("; ")
 	}
+	// The AO web terminal and tmux attach client both support 24-bit SGR color.
+	// Export this after caller env so agent color detection cannot accidentally
+	// downgrade rich syntax/diff colors to ANSI-256.
+	b.WriteString("export COLORTERM='truecolor'; ")
 	if path != "" {
 		b.WriteString("export PATH=")
 		b.WriteString(shellQuote(path))

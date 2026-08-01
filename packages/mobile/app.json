@@ -14,6 +14,7 @@
 			"backgroundColor": "#0a0b0d"
 		},
 		"ios": {
+			"icon": "./assets/AO.icon",
 			"supportsTablet": true,
 			"bundleIdentifier": "aoagents.ao",
 			"config": {
@@ -21,11 +22,12 @@
 			}
 		},
 		"android": {
-			"package": "aoagents.ao",
+			"package": "aoagents.dev",
 			"googleServicesFile": "./google-services.json",
 			"adaptiveIcon": {
 				"backgroundColor": "#0a0b0d",
-				"foregroundImage": "./assets/android-icon-foreground.png"
+				"foregroundImage": "./assets/android-icon-foreground.png",
+				"monochromeImage": "./assets/android-icon-monochrome.png"
 			},
 			"predictiveBackGestureEnabled": false,
 			"permissions": ["android.permission.CAMERA"]

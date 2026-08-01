@@ -19,8 +19,6 @@ const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
 const SIDEBAR_WIDTH = "var(--size-sidebar-default)";
 const SIDEBAR_WIDTH_MOBILE = "var(--size-sidebar-mobile)";
 const SIDEBAR_WIDTH_ICON = "var(--size-sidebar-icon)";
-const SIDEBAR_KEYBOARD_SHORTCUT = "b";
-
 type SidebarContextProps = {
 	state: "expanded" | "collapsed";
 	open: boolean;
@@ -49,11 +47,13 @@ function SidebarProvider({
 	className,
 	style,
 	children,
+	keyboardShortcut = true,
 	...props
 }: React.ComponentProps<"div"> & {
 	defaultOpen?: boolean;
 	open?: boolean;
 	onOpenChange?: (open: boolean) => void;
+	keyboardShortcut?: boolean;
 }) {
 	const isMobile = useIsMobile();
 	const [openMobile, setOpenMobile] = React.useState(false);
@@ -84,8 +84,9 @@ function SidebarProvider({
 
 	// Adds a keyboard shortcut to toggle the sidebar.
 	React.useEffect(() => {
+		if (!keyboardShortcut) return;
 		const handleKeyDown = (event: KeyboardEvent) => {
-			if (event.key === SIDEBAR_KEYBOARD_SHORTCUT && (event.metaKey || event.ctrlKey)) {
+			if (event.key === "b" && (event.metaKey || event.ctrlKey)) {
 				event.preventDefault();
 				toggleSidebar();
 			}
@@ -93,7 +94,7 @@ function SidebarProvider({
 
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [toggleSidebar]);
+	}, [keyboardShortcut, toggleSidebar]);
 
 	// We add a state so that we can do data-state="expanded" or "collapsed".
 	// This makes it easier to style the sidebar with Tailwind classes.
@@ -138,6 +139,7 @@ function Sidebar({
 	side = "left",
 	variant = "sidebar",
 	collapsible = "offcanvas",
+	overlay = false,
 	className,
 	children,
 	...props
@@ -145,6 +147,7 @@ function Sidebar({
 	side?: "left" | "right";
 	variant?: "sidebar" | "floating" | "inset";
 	collapsible?: "offcanvas" | "icon" | "none";
+	overlay?: boolean;
 }) {
 	const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
 
@@ -190,6 +193,7 @@ function Sidebar({
 			className="group peer hidden text-sidebar-foreground md:block"
 			data-state={state}
 			data-collapsible={state === "collapsed" ? collapsible : ""}
+			data-overlay={overlay ? "true" : "false"}
 			data-variant={variant}
 			data-side={side}
 			data-slot="sidebar"
@@ -200,6 +204,7 @@ function Sidebar({
 				className={cn(
 					"relative w-(--sidebar-width) bg-transparent transition-[width] duration-200 ease-linear",
 					"group-data-[collapsible=offcanvas]:w-0",
+					"group-data-[overlay=true]:w-0!",
 					"group-data-[side=right]:rotate-180",
 					variant === "floating" || variant === "inset"
 						? "group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4)))]"

@@ -186,7 +186,7 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAgentResolver: %v", err)
 	}
-	svc, reviewSvc, lc, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, log)
+	svc, reviewSvc, lc, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestWiring_StartSessionSpawnsScratchWithoutGitRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAgentResolver: %v", err)
 	}
-	svc, _, _, err := startSession(cfg, runtime, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, log)
+	svc, _, _, err := startSession(cfg, runtime, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -260,8 +260,12 @@ func TestWiring_StartSessionSpawnsScratchWithoutGitRepo(t *testing.T) {
 		t.Fatalf("scratch branch = %q, want empty", session.Metadata.Branch)
 	}
 	wantWorkspace := filepath.Join(dataDir, "worktrees", "scratch", "workers", string(session.ID))
-	if runtime.lastCfg.WorkspacePath != wantWorkspace {
-		t.Fatalf("runtime workspace = %q, want %q", runtime.lastCfg.WorkspacePath, wantWorkspace)
+	physicalWorkspace, err := filepath.EvalSymlinks(wantWorkspace)
+	if err != nil {
+		t.Fatalf("resolve scratch workspace %q: %v", wantWorkspace, err)
+	}
+	if runtime.lastCfg.WorkspacePath != physicalWorkspace {
+		t.Fatalf("runtime workspace = %q, want %q", runtime.lastCfg.WorkspacePath, physicalWorkspace)
 	}
 	if _, err := os.Stat(wantWorkspace); err != nil {
 		t.Fatalf("scratch workspace not created at %q: %v", wantWorkspace, err)
@@ -298,7 +302,7 @@ func TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken(t *testing.T) {
 	if agentsErr != nil {
 		t.Fatalf("buildAgentResolver: %v", agentsErr)
 	}
-	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, log)
+	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -357,7 +361,7 @@ func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
 	if agentsErr != nil {
 		t.Fatalf("buildAgentResolver: %v", agentsErr)
 	}
-	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, log)
+	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -615,6 +619,10 @@ type fakeSessionLifecycle struct {
 	restoreErr       error
 }
 
+func (f *fakeSessionLifecycle) Kill(_ context.Context, _ domain.SessionID) (bool, error) {
+	return false, nil
+}
+
 func (f *fakeSessionLifecycle) Reconcile(_ context.Context) error {
 	f.reconcileCalled = true
 	return f.reconcileErr
@@ -624,6 +632,8 @@ func (f *fakeSessionLifecycle) RestoreAll(_ context.Context) error {
 	f.restoreAllCalled = true
 	return f.restoreErr
 }
+
+func (f *fakeSessionLifecycle) SetShellTerminalCloser(sessionmanager.ShellTerminalCloser) {}
 
 // TestWiring_SessionLifecycleInterfaceInvokedByDaemon asserts the
 // sessionLifecycle interface is satisfied by *sessionmanager.Manager (compile

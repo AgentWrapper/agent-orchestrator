@@ -86,6 +86,13 @@ type Runtime interface {
 	IsAlive(ctx context.Context, handle RuntimeHandle) (bool, error)
 }
 
+// RuntimeRestarter is an optional runtime capability for replacing the process
+// inside an existing terminal session. Implementations should preserve the
+// handle when possible so attached clients do not need a new terminal identity.
+type RuntimeRestarter interface {
+	Restart(ctx context.Context, handle RuntimeHandle, cfg RuntimeConfig) (RuntimeHandle, error)
+}
+
 // RuntimeConfig is the spec for launching a session's process in a Runtime.
 // Argv is the agent's launch command as discrete arguments; each Runtime
 // shell-quotes it for its own shell, so the command survives args with spaces
@@ -101,6 +108,38 @@ type RuntimeConfig struct {
 // the concrete runtime adapter.
 type RuntimeHandle struct {
 	ID string
+}
+
+// SupervisedProcessRef identifies the AO-owned supervisor belonging to one
+// managed agent launch. LaunchID fences process observations from older
+// spawn/restore generations of the same session.
+type SupervisedProcessRef struct {
+	SessionID domain.SessionID
+	LaunchID  string
+}
+
+// SupervisedProcessInspector is an optional runtime capability used by the
+// reaper for agents without native exit hooks. Implementations may also detect
+// a workload relaunched from a preserved runtime shell. A false result is
+// definitive only when err is nil; inspection errors must never be interpreted
+// as exit.
+type SupervisedProcessInspector interface {
+	IsSupervisedProcessAlive(ctx context.Context, handle RuntimeHandle, ref SupervisedProcessRef) (bool, error)
+}
+
+// ContainerReaper removes Docker containers a worker session owns, identified
+// by the ao.session=<id> label convention (see EnvSessionID). It is an
+// optional capability: nil wiring means container reaping is a no-op, not an
+// error. Implementations MUST treat a container's ao.spare=true label as an
+// unconditional skip, and MUST bias toward sparing on any ambiguity (e.g. a
+// docker CLI probe failure reaps nothing rather than guessing) -- a wrongly
+// reaped container can cost a live worker its database.
+type ContainerReaper interface {
+	// ReapSessionContainers force-removes every non-spared container labeled
+	// for session id. removed is the count actually removed; err is non-nil
+	// only for a genuine adapter failure, never for "docker not installed" or
+	// "nothing found" (both return removed=0, err=nil).
+	ReapSessionContainers(ctx context.Context, id domain.SessionID) (removed int, err error)
 }
 
 // Stream is one live terminal attach: PTY-like bytes plus resize. Returned
@@ -181,6 +220,14 @@ var (
 	// this state after path-safety checks, while real preserve failures remain
 	// fatal.
 	ErrWorkspaceStale = errors.New("workspace: stale managed worktree")
+	// ErrWorkspaceLocked reports a registered git worktree whose directory is
+	// missing but whose registration is locked (`git worktree lock`). `git
+	// worktree prune` deliberately leaves a locked registration in place even
+	// when its directory is gone, and `git worktree add`/`remove` at the same
+	// path then fail with an opaque git error. Callers must not treat this as
+	// recoverable on their own; the operator has to unlock or remove the
+	// registration first.
+	ErrWorkspaceLocked = errors.New("workspace: registered worktree is locked")
 	// ErrPreservedConflict is returned by ApplyPreserved when replaying a
 	// preserved ref onto the worktree produces merge conflicts. The ref is
 	// kept intact (never deleted on conflict); the working tree is left with
@@ -190,6 +237,13 @@ var (
 	// ErrRuntimePrerequisite reports a missing host prerequisite for the selected
 	// runtime before a session can be created.
 	ErrRuntimePrerequisite = errors.New("runtime: prerequisite missing")
+	// ErrRuntimeWorkspaceCwdMismatch reports that a runtime session's working
+	// directory never settled on the wanted workspace path after Create's
+	// retried verification (see the tmux adapter's verifyPaneWorkingDirectory).
+	// Wrapping this sentinel lets the session service map it to a typed,
+	// actionable apierr instead of letting it fall through to an opaque 500
+	// with no message (issue #2775).
+	ErrRuntimeWorkspaceCwdMismatch = errors.New("runtime: session working directory mismatch")
 )
 
 // WorkspaceConfig is the spec for creating or restoring a session's workspace.

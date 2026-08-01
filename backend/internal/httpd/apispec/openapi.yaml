@@ -97,6 +97,130 @@ paths:
       summary: Refresh the cached local agent adapter catalog
       tags:
       - agents
+  /api/v1/browser/commands:
+    post:
+      operationId: executeBrowserCommand
+      parameters:
+      - description: Opaque browser capability injected into the owning AO worker.
+        in: header
+        name: X-AO-Browser-Capability
+        schema:
+          description: Opaque browser capability injected into the owning AO worker.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BrowserCommandRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrowserCommandResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Execute a target-scoped command in a session's desktop browser
+      tags:
+      - browser
+  /api/v1/browser/status:
+    get:
+      operationId: getBrowserStatus
+      parameters:
+      - description: AO session identifier.
+        in: query
+        name: sessionId
+        schema:
+          description: AO session identifier.
+          type: string
+      - description: Opaque browser capability injected into the owning AO worker.
+        in: header
+        name: X-AO-Browser-Capability
+        schema:
+          description: Opaque browser capability injected into the owning AO worker.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrowserStatusResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Check whether the desktop browser runtime is connected for a session
+      tags:
+      - browser
   /api/v1/dev/import-projects:
     post:
       operationId: runDevImportProjects
@@ -1313,6 +1437,57 @@ paths:
       summary: Mark a session terminated and tear down runtime/workspace resources
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/merge-policy:
+    patch:
+      operationId: setSessionMergePolicy
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetSessionMergePolicyRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetSessionMergePolicyResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Configure whether PR completion terminates the session
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/pr:
     get:
       operationId: listSessionPRs
@@ -1581,6 +1756,206 @@ paths:
       summary: Serve a static browser preview file from a session workspace
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/preview/server:
+    delete:
+      operationId: stopSessionPreviewServer
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Opaque browser capability injected into the owning AO worker.
+        in: header
+        name: X-AO-Browser-Capability
+        schema:
+          description: Opaque browser capability injected into the owning AO worker.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviewServerStatusResponse'
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Stop the managed preview server for a session
+      tags:
+      - sessions
+    get:
+      operationId: getSessionPreviewServer
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Opaque browser capability injected into the owning AO worker.
+        in: header
+        name: X-AO-Browser-Capability
+        schema:
+          description: Opaque browser capability injected into the owning AO worker.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviewServerStatusResponse'
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Get the managed preview server status for a session
+      tags:
+      - sessions
+    post:
+      operationId: startSessionPreviewServer
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Opaque browser capability injected into the owning AO worker.
+        in: header
+        name: X-AO-Browser-Capability
+        schema:
+          description: Opaque browser capability injected into the owning AO worker.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartPreviewServerRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviewServerStatusResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "408":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Request Timeout
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "504":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Gateway Timeout
+      summary: Start a session-owned server from .ao/launch.json and open its application
+        preview
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/restore:
     post:
       operationId: restoreSession
@@ -1618,6 +1993,51 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
       summary: Restore a terminated session
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/resume-agent:
+    post:
+      operationId: resumeAgent
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResumeAgentResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Resume an exited agent in its existing session
       tags:
       - sessions
   /api/v1/sessions/{sessionId}/reviews:
@@ -2111,6 +2531,56 @@ paths:
       summary: Close a standalone shell terminal and destroy its PTY
       tags:
       - shellTerminals
+    patch:
+      operationId: renameShellTerminal
+      parameters:
+      - description: Shell terminal runtime handle identifier.
+        in: path
+        name: handleId
+        required: true
+        schema:
+          description: Shell terminal runtime handle identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateShellTerminalRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShellTerminalEnvelope'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Rename a standalone shell terminal tab
+      tags:
+      - shellTerminals
 components:
   schemas:
     APIError:
@@ -2174,6 +2644,50 @@ components:
       required:
       - id
       - label
+      type: object
+    BrowserCommandRequest:
+      properties:
+        action:
+          type: string
+        args:
+          additionalProperties: {}
+          type: object
+        sessionId:
+          type: string
+      required:
+      - sessionId
+      - action
+      type: object
+    BrowserCommandResponse:
+      properties:
+        action:
+          type: string
+        requestId:
+          type: string
+        result: {}
+        sessionId:
+          type: string
+      required:
+      - requestId
+      - sessionId
+      - action
+      - result
+      type: object
+    BrowserStatusResponse:
+      properties:
+        connected:
+          type: boolean
+        connectedAt:
+          format: date-time
+          type: string
+        sessionId:
+          type: string
+        transport:
+          type: string
+      required:
+      - sessionId
+      - connected
+      - transport
       type: object
     CancelReviewResponse:
       properties:
@@ -2249,6 +2763,11 @@ components:
       - sessionId
       - reason
       type: object
+    ContainerReapConfig:
+      properties:
+        disabled:
+          type: boolean
+      type: object
     ControllersSessionView:
       properties:
         activity:
@@ -2281,6 +2800,17 @@ components:
           items:
             $ref: '#/components/schemas/SessionPRFacts'
           type: array
+        scmStatus:
+          enum:
+          - pr_open
+          - draft
+          - ci_failed
+          - review_pending
+          - changes_requested
+          - approved
+          - mergeable
+          - merged
+          type: string
         status:
           enum:
           - working
@@ -2293,12 +2823,15 @@ components:
           - mergeable
           - merged
           - needs_input
+          - exited
           - idle
           - terminated
           - no_signal
           type: string
         terminalHandleId:
           type: string
+        terminateOnPrMerge:
+          type: boolean
         updatedAt:
           format: date-time
           type: string
@@ -2308,6 +2841,7 @@ components:
       - kind
       - activity
       - isTerminated
+      - terminateOnPrMerge
       - createdAt
       - updatedAt
       - status
@@ -2627,6 +3161,15 @@ components:
       type: object
     ListWorkspaceFilesResponse:
       properties:
+        compareBaseRef:
+          type: string
+        compareBaseSha:
+          type: string
+        compareMode:
+          enum:
+          - base
+          - head_fallback
+          type: string
         files:
           items:
             $ref: '#/components/schemas/WorkspaceFileSummary'
@@ -2769,6 +3312,10 @@ components:
           description: Project whose root the shell starts in. Omitted opens the shell
             in the daemon data dir.
           type: string
+        sessionId:
+          description: Agent session the shell is scoped to, so it appears only in
+            that session's tab strip. Omitted makes it a standalone shell.
+          type: string
       type: object
     OrchestratorResponse:
       properties:
@@ -2810,6 +3357,43 @@ components:
       - title
       - targetSha
       - status
+      type: object
+    PreviewServerStatusResponse:
+      properties:
+        configuration:
+          type: string
+        error:
+          type: string
+        logs:
+          items:
+            type: string
+          type: array
+        port:
+          type: integer
+        sessionId:
+          type: string
+        startedAt:
+          format: date-time
+          type: string
+        state:
+          enum:
+          - stopped
+          - starting
+          - ready
+          - stopping
+          - failed
+          type: string
+        targetKind:
+          enum:
+          - app
+          - api
+          type: string
+        url:
+          type: string
+      required:
+      - sessionId
+      - state
+      - logs
       type: object
     ProbeAgentResponse:
       properties:
@@ -2866,6 +3450,8 @@ components:
           type: string
         agentRulesFile:
           type: string
+        containerReap:
+          $ref: '#/components/schemas/ContainerReapConfig'
         defaultBranch:
           type: string
         env:
@@ -3049,6 +3635,26 @@ components:
       - ok
       - sessionId
       - restoreMode
+      - session
+      type: object
+    ResumeAgentResponse:
+      properties:
+        ok:
+          type: boolean
+        resumeMode:
+          enum:
+          - native
+          - saved_prompt
+          - fresh
+          type: string
+        session:
+          $ref: '#/components/schemas/ControllersSessionView'
+        sessionId:
+          type: string
+      required:
+      - ok
+      - sessionId
+      - resumeMode
       - session
       type: object
     ReviewRun:
@@ -3345,6 +3951,11 @@ components:
         ciObservedAt:
           format: date-time
           type: string
+        createdAt:
+          format: date-time
+          type:
+          - "null"
+          - string
         deletions:
           type: integer
         headSha:
@@ -3378,6 +3989,11 @@ components:
           - merged
           - closed
           type: string
+        stateChangedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
         targetBranch:
           type: string
         title:
@@ -3451,6 +4067,9 @@ components:
         event:
           description: AO hook sub-command that produced this state (e.g. post-tool-use).
           type: string
+        launchId:
+          description: AO process generation that produced the signal.
+          type: string
         state:
           description: Agent activity state reported by an agent hook. Optional for
             metadata-only hooks.
@@ -3488,6 +4107,29 @@ components:
       required:
       - config
       type: object
+    SetSessionMergePolicyRequest:
+      properties:
+        terminateOnPrMerge:
+          type: boolean
+      required:
+      - terminateOnPrMerge
+      type: object
+    SetSessionMergePolicyResponse:
+      properties:
+        ok:
+          type: boolean
+        session:
+          $ref: '#/components/schemas/ControllersSessionView'
+        sessionId:
+          type: string
+        terminateOnPrMerge:
+          type: boolean
+      required:
+      - ok
+      - sessionId
+      - terminateOnPrMerge
+      - session
+      type: object
     SetSessionPreviewRequest:
       properties:
         url:
@@ -3510,6 +4152,8 @@ components:
         handleId:
           type: string
         projectId:
+          type: string
+        sessionId:
           type: string
         title:
           type: string
@@ -3603,6 +4247,13 @@ components:
       - promptBytes
       - systemPromptBytes
       type: object
+    StartPreviewServerRequest:
+      properties:
+        configuration:
+          description: Named preview configuration. Optional when exactly one configuration
+            exists.
+          type: string
+      type: object
     SubmitReviewInput:
       properties:
         body:
@@ -3693,12 +4344,29 @@ components:
       - displayName
       - config
       type: object
+    UpdateShellTerminalRequest:
+      properties:
+        title:
+          description: New tab title for the shell terminal. Trimmed; must be non-empty.
+          type: string
+      required:
+      - title
+      type: object
     WorkspaceFileResponse:
       properties:
         additions:
           type: integer
         binary:
           type: boolean
+        compareBaseRef:
+          type: string
+        compareBaseSha:
+          type: string
+        compareMode:
+          enum:
+          - base
+          - head_fallback
+          type: string
         content:
           type: string
         contentTruncated:
@@ -3712,6 +4380,8 @@ components:
         diffTruncated:
           type: boolean
         path:
+          type: string
+        previousPath:
           type: string
         sessionId:
           type: string
@@ -3749,6 +4419,8 @@ components:
         deletions:
           type: integer
         path:
+          type: string
+        previousPath:
           type: string
         size:
           format: int64
@@ -3805,3 +4477,5 @@ tags:
   name: dev
 - description: Connect Mobile LAN bridge control (loopback/desktop only)
   name: mobile
+- description: Target-isolated desktop browser runtime (loopback only)
+  name: browser

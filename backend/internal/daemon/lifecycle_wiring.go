@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
-	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitydispatch"
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/container/dockerreap"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
@@ -18,6 +18,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
+	activityobserver "github.com/aoagents/agent-orchestrator/backend/internal/observe/activity"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/reaper"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
@@ -37,16 +38,13 @@ type lifecycleStack struct {
 	// LCM is the Lifecycle Manager (the canonical write path). It is exposed so
 	// startSession can share the same reducer the reaper drives, rather than
 	// standing up a second store+LCM pair that would diverge under writes.
-	LCM         *lifecycle.Manager
-	reaperDone  <-chan struct{}
-	scmDone     <-chan struct{}
-	trackerDone <-chan struct{}
-	sweepDone   <-chan struct{}
+	LCM           *lifecycle.Manager
+	runtimeReaper *reaper.Reaper
+	reaperDone    <-chan struct{}
+	activityDone  <-chan struct{}
+	scmDone       <-chan struct{}
+	trackerDone   <-chan struct{}
 }
-
-// workerIdleSweepInterval is the low-frequency recovery cadence that redelivers
-// any worker_idle events left pending by a missed event-driven trigger.
-const workerIdleSweepInterval = 2 * time.Minute
 
 // startLifecycle constructs the Lifecycle Manager over the store and starts the
 // reaper. The goroutine stops when ctx is cancelled; Stop waits for it to drain.
@@ -56,10 +54,24 @@ func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runt
 	lcm := lifecycle.New(store, messenger,
 		lifecycle.WithNotificationSink(notifier),
 		lifecycle.WithTelemetry(telemetry),
+		lifecycle.WithContainerReaper(dockerreap.New(), store),
 		lifecycle.WithActiveSteering(activeTurnSteering(agents)),
 	)
 	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger})
-	return &lifecycleStack{LCM: lcm, reaperDone: rp.Start(ctx), sweepDone: startWorkerIdleSweep(ctx, lcm)}
+	activityPoller := activityobserver.New(store, lcm, runtime, agents, activityobserver.Config{Logger: logger})
+	return &lifecycleStack{
+		LCM:           lcm,
+		runtimeReaper: rp,
+		reaperDone:    rp.Start(ctx),
+		activityDone:  activityPoller.Start(ctx),
+	}
+}
+
+// ReconcileRuntime runs the same conservative runtime/workload observation as
+// the periodic reaper. The daemon calls it after session-manager reconciliation
+// so exits missed while AO was stopped are folded before the API starts serving.
+func (l *lifecycleStack) ReconcileRuntime(ctx context.Context) error {
+	return l.runtimeReaper.Tick(ctx)
 }
 
 // activeTurnSteering resolves the per-harness active-turn steering capability
@@ -81,32 +93,12 @@ func activeTurnSteering(agents ports.AgentResolver) func(domain.AgentHarness) bo
 	}
 }
 
-// startWorkerIdleSweep runs the low-frequency recovery sweep that redelivers
-// pending worker_idle events. The goroutine exits on ctx cancellation.
-func startWorkerIdleSweep(ctx context.Context, lcm *lifecycle.Manager) <-chan struct{} {
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		t := time.NewTicker(workerIdleSweepInterval)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				lcm.DispatchAllPendingWorkerIdleEvents(ctx)
-			}
-		}
-	}()
-	return done
-}
-
 // Stop waits for the reaper goroutine to exit. The caller must cancel the ctx
 // passed to startLifecycle before calling Stop.
 func (l *lifecycleStack) Stop() {
 	<-l.reaperDone
-	if l.sweepDone != nil {
-		<-l.sweepDone
+	if l.activityDone != nil {
+		<-l.activityDone
 	}
 	if l.scmDone != nil {
 		<-l.scmDone
@@ -127,6 +119,12 @@ func (l *lifecycleStack) Stop() {
 type sessionLifecycle interface {
 	Reconcile(ctx context.Context) error
 	RestoreAll(ctx context.Context) error
+	Kill(ctx context.Context, id domain.SessionID) (bool, error)
+	// SetShellTerminalCloser late-binds Kill/Cleanup to close a session's
+	// scoped shell terminals before its worktree is torn down. shellterm.Service
+	// is built after Session Manager during boot (see startShellTerminals), so
+	// this cannot be a constructor argument.
+	SetShellTerminalCloser(closer sessionmanager.ShellTerminalCloser)
 }
 
 // startSession builds the controller-facing session service: a session manager
@@ -134,7 +132,7 @@ type sessionLifecycle interface {
 // LCM, the per-session agent resolver, and the agent messenger. The returned
 // service is mounted at httpd APIDeps.Sessions. It also returns the manager so
 // the caller can wire Reconcile into the boot sequence.
-func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
+func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, previewLifecycle sessionmanager.PreviewLifecycle, browserLifecycle sessionmanager.BrowserLifecycle, browserCapabilities sessionmanager.BrowserCapabilityIssuer, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
 	gitWS, err := gitworktree.New(gitworktree.Options{
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
 		// override moves all durable per-user state together.
@@ -159,14 +157,17 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Projects: store,
 	})
 	mgr := sessionmanager.New(sessionmanager.Deps{
-		Runtime:   runtime,
-		Agents:    agents,
-		Workspace: ws,
-		Store:     store,
-		Messenger: messenger,
-		Lifecycle: lcm,
-		DataDir:   cfg.DataDir,
-		Logger:    log,
+		Runtime:             runtime,
+		Agents:              agents,
+		Workspace:           ws,
+		Store:               store,
+		Messenger:           messenger,
+		Lifecycle:           lcm,
+		Preview:             previewLifecycle,
+		Browser:             browserLifecycle,
+		BrowserCapabilities: browserCapabilities,
+		DataDir:             cfg.DataDir,
+		Logger:              log,
 	})
 	scmProvider, err := newGitHubSCMProvider(log)
 	if err != nil {
