@@ -624,4 +624,44 @@ describe("CommandPalette PR and review actions", () => {
 		fireEvent.click(screen.getByText("Reviewing... #7"));
 		expect(postMock).not.toHaveBeenCalled();
 	});
+
+	it("does not expose Run review from stale cached data when a background refetch fails", async () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		queryClient.setQueryData(
+			["session-reviews", "w-merge"],
+			{ reviewerHandleId: "", reviews: [reviewState("needs_review")] },
+			// Force this cached value to look well past the palette's 60s
+			// staleTime so opening the palette triggers a background refetch
+			// while still returning this (now-outdated) data synchronously.
+			{ updatedAt: Date.now() - 120_000 },
+		);
+		let rejectReviews: (error: Error) => void = () => {};
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/sessions/{sessionId}/reviews") {
+				return new Promise((_resolve, reject) => {
+					rejectReviews = reject;
+				});
+			}
+			return { data: undefined };
+		});
+		render(
+			<QueryClientProvider client={queryClient}>
+				<CommandPalette />
+			</QueryClientProvider>,
+		);
+		act(() => useUiStore.getState().setCommandPaletteOpen(true));
+		const input = await screen.findByPlaceholderText(/search projects/i);
+		fireEvent.change(input, { target: { value: "#7" } });
+		expect(await screen.findByText("Open PR #7")).toBeInTheDocument();
+		expect(screen.queryByText(/run review|re-run review/i)).toBeNull();
+		await act(async () => {
+			rejectReviews(new Error("network error"));
+		});
+		// TanStack Query keeps the stale cached data and flips isFetching back
+		// to false on a failed refetch — the stale "needs_review" value must
+		// still not be treated as resolved, so the row must stay hidden rather
+		// than reappearing as an enabled Run review.
+		await waitFor(() => expect(getMock).toHaveBeenCalled());
+		expect(screen.queryByText(/run review|re-run review/i)).toBeNull();
+	});
 });
