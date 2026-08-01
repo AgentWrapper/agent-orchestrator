@@ -155,6 +155,8 @@ describe("CreateProjectAgentSheet", () => {
 
 		const trigger = screen.getByLabelText("Default branch");
 		expect(trigger).toHaveTextContent("main");
+		const infoButton = screen.getByLabelText("What is the default branch?");
+		expect(infoButton).toBeInTheDocument();
 
 		await userEvent.click(trigger);
 		expect(await screen.findByPlaceholderText("Search branches...")).toBeInTheDocument();

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Check, ChevronDown, GitBranch, RefreshCw, Search, TriangleAlert, X, type LucideIcon } from "lucide-react";
+import { Check, ChevronDown, GitBranch, Info, RefreshCw, Search, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import { memo, useEffect, useState } from "react";
 import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
@@ -17,6 +17,7 @@ import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
@@ -531,9 +532,25 @@ export function SearchableBranchSelect({
 	return (
 		<div className="flex flex-col gap-1.5">
 			<div className="flex items-center justify-between">
-				<Label htmlFor={id} className="agents-sheet-label text-xs font-medium text-muted-foreground">
-					{label}
-				</Label>
+				<div className="flex items-center gap-1.5">
+					<Label htmlFor={id} className="agents-sheet-label text-xs font-medium text-muted-foreground">
+						{label}
+					</Label>
+					<TooltipProvider delayDuration={0}>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									type="button"
+									className="grid size-icon-base place-items-center rounded-full text-muted-foreground hover:text-foreground focus-visible:outline-none"
+									aria-label="What is the default branch?"
+								>
+									<Info className="size-3.5" aria-hidden="true" />
+								</button>
+							</TooltipTrigger>
+							<TooltipContent>Used for the first orchestrator worktree and subsequent session worktrees.</TooltipContent>
+						</Tooltip>
+					</TooltipProvider>
+				</div>
 				{canRefreshOrigin && onRefresh && (
 					<button
 						type="button"

@@ -217,6 +217,8 @@ describe("ProjectSettingsForm", () => {
 
 		expect(await screen.findByText("git@github.com:acme/project-one.git")).toBeInTheDocument();
 		expect(screen.getByLabelText("Default branch")).toHaveValue("develop");
+		const infoButton = screen.getByLabelText("About Default branch");
+		expect(infoButton).toBeInTheDocument();
 		expect(screen.getByLabelText("Session prefix")).toHaveValue("po");
 		expect(screen.getByLabelText("Model override")).toHaveValue("claude-opus-4-5");
 
