@@ -216,6 +216,66 @@ func TestMerge_PrefersSquashThenMergeThenRebase(t *testing.T) {
 	}
 }
 
+func TestMerge_Success_AppliesLifecycleReactionWithMergedObservation(t *testing.T) {
+	store := &fakePRStore{ok: true, pr: mergeablePR(42, "acme/widgets")}
+	scm := &fakeSCMMerger{sha: "abc123", settings: allowSquash()}
+	lc := &fakeLifecycle{}
+	svc := NewActionService(store, scm, lc)
+
+	if _, err := svc.Merge(context.Background(), "42", ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(lc.observed) != 1 {
+		t.Fatalf("lifecycle.ApplyPRObservation calls = %d, want 1", len(lc.observed))
+	}
+	if lc.ids[0] != "sess-1" {
+		t.Fatalf("session id = %q, want sess-1", lc.ids[0])
+	}
+	o := lc.observed[0]
+	if !o.Fetched || !o.Merged || o.URL == "" || o.Number != 42 {
+		t.Fatalf("observation = %#v, want Fetched+Merged with URL/Number set", o)
+	}
+}
+
+func TestMerge_Success_LifecycleFailureStaysBestEffort(t *testing.T) {
+	store := &fakePRStore{ok: true, pr: mergeablePR(42, "acme/widgets")}
+	scm := &fakeSCMMerger{sha: "abc123", settings: allowSquash()}
+	lc := &fakeLifecycle{err: errors.New("boom")}
+	svc := NewActionService(store, scm, lc)
+
+	res, err := svc.Merge(context.Background(), "42", "")
+	if err != nil {
+		t.Fatalf("merge should still succeed when the best-effort lifecycle reaction fails: %v", err)
+	}
+	if res.PRNumber != 42 {
+		t.Fatalf("res = %#v", res)
+	}
+	if len(lc.observed) != 1 {
+		t.Fatalf("lifecycle.ApplyPRObservation calls = %d, want 1 (must still be attempted)", len(lc.observed))
+	}
+}
+
+func TestMerge_ProviderSuccess_PersistenceFailureStillSucceedsAndAppliesLifecycle(t *testing.T) {
+	store := &fakePRStore{ok: true, pr: mergeablePR(42, "acme/widgets"), writeErr: errors.New("db write failed")}
+	scm := &fakeSCMMerger{sha: "abc123", settings: allowSquash()}
+	lc := &fakeLifecycle{}
+	svc := NewActionService(store, scm, lc)
+
+	res, err := svc.Merge(context.Background(), "42", "")
+	if err != nil {
+		t.Fatalf("local persistence failure after successful provider merge must not report as merge error (GitHub already merged): %v", err)
+	}
+	if res.PRNumber != 42 || res.Method != "squash" {
+		t.Fatalf("res = %#v", res)
+	}
+	if len(lc.observed) != 1 {
+		t.Fatalf("lifecycle calls = %d, want 1 (cleanup must proceed despite persistence failure)", len(lc.observed))
+	}
+	if !lc.observed[0].Merged {
+		t.Fatalf("observation.Merged = false, want true")
+	}
+}
+
 func TestResolveComments_ReturnsNotImplemented(t *testing.T) {
 	svc := NewActionService(&fakePRStore{}, &fakeSCMMerger{}, nil)
 	_, err := svc.ResolveComments(context.Background(), "1", nil)

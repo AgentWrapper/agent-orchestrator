@@ -1,5 +1,14 @@
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { sortedPRs, type PRState, type PullRequestFacts, type WorkspaceSession } from "../types/workspace";
+// Sentinel checkCount used only by the PullRequestFacts fallback below.
+// PullRequestFacts (the lightweight workspace-listing shape) carries no real
+// check-count fact. Reporting checkCount: 0 there would fabricate the
+// authoritative "no checks configured" signal that isPRMergeable trusts,
+// causing an incomplete/paginated CI rollup to render an enabled Merge
+// button before the real SessionPRSummary loads. Any value > 0 forces the
+// unknown-CI branch to fail closed instead. Never render this number to
+// the user — it carries no real count.
+export const UNKNOWN_CI_CHECK_COUNT_SENTINEL = 1;
 
 const prStateRank: Record<PRState, number> = { open: 0, draft: 1, merged: 2, closed: 3 };
 const ciStates = new Set<SessionPRSummary["ci"]["state"]>(["unknown", "pending", "passing", "failing"]);
@@ -87,12 +96,13 @@ function sessionPRFactToSummary(session: WorkspaceSession, pr: PullRequestFacts)
 		changedFiles: 0,
 		ci: {
 			state: toCIState(pr.ci),
-			// PullRequestFacts (the lightweight workspace listing shape) carries
-			// no check-count fact, so this synthetic placeholder can't know
-			// whether checks are still incomplete. It's superseded by the real
-			// SessionPRSummary (with an accurate checkCount) as soon as that
-			// fetch lands; the server re-validates readiness on merge regardless.
-			checkCount: 0,
+			// See UNKNOWN_CI_CHECK_COUNT_SENTINEL above — this fallback has no
+			// real check-count fact, so it must fail closed on unknown CI
+			// rather than fabricate the "no checks" sentinel (0). It's
+			// superseded by the real SessionPRSummary (with an accurate
+			// checkCount) as soon as that fetch lands; the server re-validates
+			// readiness on merge regardless.
+			checkCount: UNKNOWN_CI_CHECK_COUNT_SENTINEL,
 			failingChecks: [],
 		},
 		review: {

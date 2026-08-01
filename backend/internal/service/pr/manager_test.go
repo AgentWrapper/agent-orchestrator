@@ -30,11 +30,14 @@ func (f *fakeWriter) ClaimPR(_ context.Context, url string, sessionID domain.Ses
 
 type fakeLifecycle struct {
 	observed []ports.PRObservation
+	ids      []domain.SessionID
+	err      error
 }
 
-func (f *fakeLifecycle) ApplyPRObservation(_ context.Context, _ domain.SessionID, o ports.PRObservation) error {
+func (f *fakeLifecycle) ApplyPRObservation(_ context.Context, id domain.SessionID, o ports.PRObservation) error {
 	f.observed = append(f.observed, o)
-	return nil
+	f.ids = append(f.ids, id)
+	return f.err
 }
 
 func newPRManager() (*Manager, *fakeWriter, *fakeLifecycle) {

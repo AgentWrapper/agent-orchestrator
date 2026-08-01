@@ -142,15 +142,19 @@ func (s *ActionService) Merge(ctx context.Context, id, repo string) (MergeResult
 	pr.UpdatedAtProvider = now
 	pr.MergedAtProvider = now
 	pr.ObservedAt = now
+	// From this point on, the merge on GitHub has already happened and is
+	// irreversible. Everything below is best-effort local reconciliation —
+	// none of it may turn into a returned error, or the API/UI will report
+	// "Merge failed" and offer a Retry that would attempt to re-merge an
+	// already-merged PR. Failures here are logged; the SCM observer's next
+	// poll reconciles any local state that didn't get written.
 	if err := s.store.WriteSCMObservation(ctx, pr, checks, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
-		return MergeResult{}, err
+		slog.Default().Error("failed to persist merged PR snapshot after a successful provider merge; will reconcile on next SCM observation", "pr_url", pr.URL, "err", err)
 	}
-	// The merge itself has already succeeded and been persisted at this point,
-	// so a lifecycle failure here must not turn into a merge failure response
-	// (the caller already sees a merged PR either way). We still want the
-	// termination/worktree cleanup that normally follows an SCM observation to
-	// run now instead of waiting for the next observer poll, so best-effort
-	// apply it and only log on failure — it self-heals on the next poll.
+	// The termination/worktree cleanup that normally follows an SCM
+	// observation should run now instead of waiting for the next observer
+	// poll, regardless of whether the local persistence write above
+	// succeeded — the merge itself is real and GitHub-confirmed either way.
 	if s.lifecycle != nil {
 		obs := ports.PRObservation{
 			Fetched:      true,

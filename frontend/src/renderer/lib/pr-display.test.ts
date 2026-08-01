@@ -101,6 +101,42 @@ describe("sessionPRDisplaySummaries", () => {
 		expect(fallback.createdAt).toBeUndefined();
 		expect(fallback.stateChangedAt).toBeUndefined();
 	});
+
+	it("fails closed on unknown CI in the PullRequestFacts fallback instead of fabricating the no-checks sentinel", () => {
+		const session: WorkspaceSession = {
+			id: "sess-1",
+			workspaceId: "ws-1",
+			workspaceName: "repo",
+			title: "Fix timing",
+			provider: "codex",
+			branch: "feat/timing",
+			status: "review_pending",
+			updatedAt: "2026-06-15T12:00:00Z",
+			prs: [
+				{
+					url: "https://github.com/acme/repo/pull/7",
+					number: 7,
+					state: "open",
+					ci: "unknown",
+					review: "none",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-15T11:00:00Z",
+				},
+			],
+		};
+
+		// No summaries fetched yet — every PR falls through to the
+		// PullRequestFacts-derived fallback, which has no real check-count
+		// fact. It must not fabricate checkCount: 0 (the authoritative
+		// "no checks configured" sentinel isPRMergeable trusts), or an
+		// incomplete/paginated CI rollup would render an enabled Merge
+		// button before the real SessionPRSummary loads.
+		const [fallback] = sessionPRDisplaySummaries(session, []);
+
+		expect(fallback.ci.state).toBe("unknown");
+		expect(fallback.ci.checkCount).toBeGreaterThan(0);
+	});
 });
 
 describe("prSummaryParts", () => {
