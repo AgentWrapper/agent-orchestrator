@@ -14,6 +14,7 @@ export const dynamic = "force-static";
 export async function GET() {
 	const comparisons = getComparisonPages();
 	const baseUrl = COMPANY.MARKETING_URL;
+	const docsUrl = COMPANY.DOCS_URL;
 
 	const sections: string[] = [];
 
@@ -25,6 +26,18 @@ export async function GET() {
 			...buildWhenToUseSection(),
 			"",
 			...buildDeveloperResourcesSection(),
+		].join("\n"),
+	);
+
+	sections.push(
+		[
+			"---",
+			"",
+			"# Documentation",
+			"",
+			`- **[Documentation overview](${docsUrl}/index.html.md)**`,
+			`- **[Quickstart guide](${docsUrl}/quickstart/index.html.md)**`,
+			`- **[Command-line interface (CLI) reference](${docsUrl}/cli/index.html.md)**`,
 		].join("\n"),
 	);
 
