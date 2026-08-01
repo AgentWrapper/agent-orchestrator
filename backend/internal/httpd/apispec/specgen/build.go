@@ -131,6 +131,13 @@ func schemaName(_ reflect.Type, defaultName string) string {
 // by projectOperations(). Add an entry when a new contract type is introduced;
 // the drift test fails until the spec is regenerated, which flags the gap.
 var schemaNames = map[string]string{
+	"ControllersConversationSnapshotResponse":       "ConversationSnapshotResponse",
+	"ControllersConversationTurnResponse":           "ConversationTurnResponse",
+	"ControllersConversationMessageResponse":        "ConversationMessageResponse",
+	"ControllersConversationActivityResponse":       "ConversationActivityResponse",
+	"ControllersSendConversationMessageRequest":     "SendConversationMessageRequest",
+	"ControllersSendConversationMessageResponse":    "SendConversationMessageResponse",
+	"ControllersResolveConversationApprovalRequest": "ResolveConversationApprovalRequest",
 	// httpd/envelope
 	"EnvelopeAPIError": "APIError",
 	// domain
@@ -387,6 +394,58 @@ func browserOperations() []operation {
 // shells the user opens by hand, with no agent session behind them.
 func shellTerminalOperations() []operation {
 	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/conversation", id: "getSessionConversation", tag: "conversations",
+			summary:    "Read a chat session's durable conversation",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ConversationSnapshotResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/conversation/messages", id: "sendSessionConversationMessage", tag: "conversations",
+			summary:    "Send a message to a chat session's agent",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.SendConversationMessageRequest{},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.SendConversationMessageResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/conversation/approvals/{requestId}/resolve", id: "resolveSessionConversationApproval", tag: "conversations",
+			summary:    "Answer a pending approval in a chat session",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.ConversationRequestIDParam{}},
+			reqBody:    controllers.ResolveConversationApprovalRequest{},
+			resps: []respUnit{
+				{http.StatusNoContent, nil},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/conversation/interrupt", id: "interruptSessionConversationTurn", tag: "conversations",
+			summary:    "Cancel the in-flight turn in a chat session",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusNoContent, nil},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
 		{
 			method: http.MethodGet, path: "/api/v1/shell-terminals", id: "listShellTerminals", tag: "shellTerminals",
 			summary: "List the standalone shell terminals owned by the current app run",

@@ -504,6 +504,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/conversation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read a chat session's durable conversation */
+        get: operations["getSessionConversation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/approvals/{requestId}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Answer a pending approval in a chat session */
+        post: operations["resolveSessionConversationApproval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/interrupt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel the in-flight turn in a chat session */
+        post: operations["interruptSessionConversationTurn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send a message to a chat session's agent */
+        post: operations["sendSessionConversationMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/kill": {
         parameters: {
             query?: never;
@@ -941,6 +1009,8 @@ export interface components {
             isTerminated: boolean;
             issueId?: string;
             kind: string;
+            /** @enum {string} */
+            mode: "chat" | "tui";
             /** Format: int64 */
             previewRevision?: number;
             previewUrl?: string;
@@ -958,6 +1028,67 @@ export interface components {
         ControllersSpawnAttachmentInput: {
             data: string;
             mimeType?: string;
+        };
+        ConversationActivityResponse: {
+            /** @enum {string} */
+            activityKind: "command" | "file_change" | "plan" | "reasoning" | "approval" | "usage" | "error" | "system";
+            createdAt: string;
+            detail?: {
+                [key: string]: unknown;
+            };
+            id: string;
+            /** @enum {string} */
+            kind: "activity";
+            requestId?: string;
+            /** Format: int64 */
+            revision: number;
+            /** Format: int64 */
+            sequence: number;
+            /** @enum {string} */
+            status: "running" | "completed" | "failed" | "pending" | "resolved";
+            summary: string;
+            turnId?: string;
+        };
+        ConversationMessageResponse: {
+            createdAt: string;
+            id: string;
+            /** @enum {string} */
+            kind: "message";
+            /** @enum {string} */
+            origin: "human" | "automation" | "daemon" | "provider";
+            /** Format: int64 */
+            revision: number;
+            /** @enum {string} */
+            role: "user" | "assistant";
+            /** Format: int64 */
+            sequence: number;
+            streaming: boolean;
+            text: string;
+            turnId?: string;
+        };
+        ConversationSnapshotResponse: {
+            activities: components["schemas"]["ConversationActivityResponse"][];
+            /** @enum {string} */
+            controller: "connecting" | "ready" | "busy" | "recovering" | "stopped";
+            conversationId: string;
+            harness?: string;
+            /** Format: int64 */
+            latestSequence: number;
+            messages: components["schemas"]["ConversationMessageResponse"][];
+            /** @enum {string} */
+            mode: "chat" | "tui";
+            sessionId: string;
+            turns: components["schemas"]["ConversationTurnResponse"][];
+        };
+        ConversationTurnResponse: {
+            completedAt?: null | string;
+            errorMessage?: string;
+            id: string;
+            providerTurnId?: string;
+            requestedAt: string;
+            startedAt?: null | string;
+            /** @enum {string} */
+            state: "queued" | "running" | "completed" | "interrupted" | "failed";
         };
         DegradedProject: {
             id: string;
@@ -1241,6 +1372,9 @@ export interface components {
             ok: boolean;
             resolved: number;
         };
+        ResolveConversationApprovalRequest: {
+            decisionId: string;
+        };
         RestoreSessionResponse: {
             ok: boolean;
             /** @enum {string} */
@@ -1286,6 +1420,15 @@ export interface components {
             killed?: boolean;
             ok: boolean;
             sessionId: string;
+        };
+        SendConversationMessageRequest: {
+            clientMessageId?: string;
+            text: string;
+        };
+        SendConversationMessageResponse: {
+            duplicate: boolean;
+            providerTurnId?: string;
+            turnId?: string;
         };
         SendSessionMessageRequest: {
             message: string;
@@ -3294,6 +3437,266 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getSessionConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationSnapshotResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    resolveSessionConversationApproval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description Provider approval request identifier. Zero is a legitimate value. */
+                requestId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolveConversationApprovalRequest"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    interruptSessionConversationTurn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    sendSessionConversationMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendConversationMessageRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SendConversationMessageResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -19,17 +19,20 @@ import (
 
 // APIDeps bundles every service the API layer's controllers depend on.
 type APIDeps struct {
-	Agents              controllers.AgentCatalog
-	Projects            projectsvc.Manager
-	Sessions            controllers.SessionService
-	Activity            controllers.ActivityRecorder
-	PRs                 prsvc.ActionManager
-	Reviews             reviewsvc.Manager
-	Notifications       controllers.NotificationService
-	NotificationStream  controllers.NotificationStream
-	Push                controllers.PushRegistry
-	Import              controllers.ImportService
-	ShellTerminals      controllers.ShellTerminalService
+	Agents             controllers.AgentCatalog
+	Projects           projectsvc.Manager
+	Sessions           controllers.SessionService
+	Activity           controllers.ActivityRecorder
+	PRs                prsvc.ActionManager
+	Reviews            reviewsvc.Manager
+	Notifications      controllers.NotificationService
+	NotificationStream controllers.NotificationStream
+	Push               controllers.PushRegistry
+	Import             controllers.ImportService
+	ShellTerminals     controllers.ShellTerminalService
+	// Conversations is nil until a Chat driver is wired; the controller then
+	// answers 501 rather than panicking, matching the other optional surfaces.
+	Conversations       controllers.ConversationService
 	DevImport           controllers.DevImportService
 	CDC                 cdc.Source
 	Events              cdcSubscriber
@@ -53,6 +56,7 @@ type API struct {
 	push          *controllers.PushController
 	imports       *controllers.ImportController
 	shellTerms    *controllers.ShellTerminalsController
+	conversations *controllers.ConversationsController
 	dev           *controllers.DevController
 	browser       *controllers.BrowserController
 	events        *EventsController
@@ -82,6 +86,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		push:          &controllers.PushController{Registry: deps.Push},
 		imports:       &controllers.ImportController{Svc: deps.Import},
 		shellTerms:    &controllers.ShellTerminalsController{Svc: deps.ShellTerminals},
+		conversations: &controllers.ConversationsController{Svc: deps.Conversations},
 		dev:           &controllers.DevController{Import: deps.DevImport},
 		browser:       &controllers.BrowserController{Svc: deps.Browser},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
@@ -111,6 +116,7 @@ func (a *API) Register(root chi.Router) {
 			a.push.Register(r)
 			a.imports.Register(r)
 			a.shellTerms.Register(r)
+			a.conversations.Register(r)
 			a.dev.Register(r)
 			a.browser.Register(r)
 			// Sibling REST controllers plug in here.

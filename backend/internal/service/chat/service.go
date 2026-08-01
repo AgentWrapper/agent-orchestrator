@@ -31,6 +31,7 @@ type SessionReader interface {
 // Service owns the live Chat controllers.
 type Service struct {
 	store    Store
+	reader   SnapshotReader
 	sessions SessionReader
 	drivers  ports.ChatDriverRegistry
 	log      *slog.Logger
@@ -45,6 +46,7 @@ type Service struct {
 // are deterministic.
 type Options struct {
 	Store    Store
+	Reader   SnapshotReader
 	Sessions SessionReader
 	Drivers  ports.ChatDriverRegistry
 	Log      *slog.Logger
@@ -64,6 +66,7 @@ func New(opts Options) *Service {
 	}
 	return &Service{
 		store:       opts.Store,
+		reader:      opts.Reader,
 		sessions:    opts.Sessions,
 		drivers:     opts.Drivers,
 		log:         log,
@@ -264,4 +267,83 @@ func (s *Service) StopAll(ctx context.Context) {
 			s.log.Error("failed to close chat controller", "error", err)
 		}
 	}
+}
+
+// Snapshot is the durable read model a client bootstraps from.
+type Snapshot struct {
+	Conversation domain.ConversationRecord
+	SessionID    domain.SessionID
+	Harness      domain.AgentHarness
+	Mode         domain.SessionMode
+	Controller   ports.ChatControllerState
+	Turns        []domain.ConversationTurn
+	Messages     []domain.ConversationMessage
+	Activities   []domain.ConversationActivity
+}
+
+// SnapshotReader is the durable read the service serves snapshots from. Kept
+// separate from Store so the write path and the read path can be satisfied
+// independently.
+type SnapshotReader interface {
+	LoadConversationSnapshot(ctx context.Context, conversationID string) (ConversationRows, error)
+}
+
+// ConversationRows is the raw durable read.
+type ConversationRows struct {
+	Conversation domain.ConversationRecord
+	Turns        []domain.ConversationTurn
+	Messages     []domain.ConversationMessage
+	Activities   []domain.ConversationActivity
+}
+
+// Snapshot reads a session's conversation.
+//
+// It does not require a live controller: history must remain readable after the
+// agent process is gone, which is the whole point of persisting it. The
+// controller state is reported separately so the client can distinguish "no
+// history" from "agent not running".
+func (s *Service) Snapshot(ctx context.Context, id domain.SessionID) (Snapshot, error) {
+	record, err := s.requireChatSession(ctx, id)
+	if err != nil {
+		return Snapshot{}, err
+	}
+
+	conversation, err := s.store.ConversationForSession(ctx, id)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("conversation for %s: %w", id, err)
+	}
+
+	rows, err := s.reader.LoadConversationSnapshot(ctx, conversation.ID)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("load conversation %s: %w", conversation.ID, err)
+	}
+
+	state := ports.ChatControllerStopped
+	if controller, err := s.Controller(id); err == nil {
+		state = controller.State()
+	}
+
+	return Snapshot{
+		Conversation: rows.Conversation,
+		SessionID:    id,
+		Harness:      record.Harness,
+		Mode:         domain.NormalizeSessionMode(record.Mode),
+		Controller:   state,
+		Turns:        rows.Turns,
+		Messages:     rows.Messages,
+		Activities:   rows.Activities,
+	}, nil
+}
+
+// SnapshotReaderFunc adapts a plain function to SnapshotReader. The daemon wiring
+// uses it to convert the store's own snapshot type, so this package never has to
+// import the storage layer.
+type SnapshotReaderFunc func(ctx context.Context, conversationID string) (ConversationRows, error)
+
+// LoadConversationSnapshot satisfies SnapshotReader.
+func (f SnapshotReaderFunc) LoadConversationSnapshot(
+	ctx context.Context,
+	conversationID string,
+) (ConversationRows, error) {
+	return f(ctx, conversationID)
 }

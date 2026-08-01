@@ -841,3 +841,93 @@ type UnregisterPushDeviceResponse struct {
 	Token   string `json:"token"`
 	Deleted bool   `json:"deleted"`
 }
+
+/* ---- chat conversations ------------------------------------------------ */
+
+// SendConversationMessageRequest is a message for a Chat session's agent.
+type SendConversationMessageRequest struct {
+	Text string `json:"text"`
+	// ClientMessageID makes delivery idempotent. A retry carrying the same value
+	// must not produce a second provider turn.
+	ClientMessageID string `json:"clientMessageId,omitempty"`
+}
+
+// SendConversationMessageResponse reports what the send did.
+type SendConversationMessageResponse struct {
+	TurnID         string `json:"turnId,omitempty"`
+	ProviderTurnID string `json:"providerTurnId,omitempty"`
+	// Duplicate is true when this client message id was already delivered, so a
+	// retrying client can stop instead of assuming a new turn began.
+	Duplicate bool `json:"duplicate"`
+}
+
+// ResolveConversationApprovalRequest answers a pending approval. DecisionID must
+// be one the provider offered for that request; AO does not invent options.
+type ResolveConversationApprovalRequest struct {
+	DecisionID string `json:"decisionId"`
+}
+
+// ConversationTurnResponse is one request and the work that followed it.
+type ConversationTurnResponse struct {
+	ID             string  `json:"id"`
+	State          string  `json:"state" enum:"queued,running,completed,interrupted,failed"`
+	ProviderTurnID string  `json:"providerTurnId,omitempty"`
+	ErrorMessage   string  `json:"errorMessage,omitempty"`
+	RequestedAt    string  `json:"requestedAt"`
+	StartedAt      *string `json:"startedAt,omitempty"`
+	CompletedAt    *string `json:"completedAt,omitempty"`
+}
+
+// ConversationMessageResponse is one readable block of text.
+type ConversationMessageResponse struct {
+	Kind     string `json:"kind" enum:"message"`
+	ID       string `json:"id"`
+	TurnID   string `json:"turnId,omitempty"`
+	Sequence int64  `json:"sequence"`
+	Revision int64  `json:"revision"`
+	Role     string `json:"role" enum:"user,assistant"`
+	Origin   string `json:"origin" enum:"human,automation,daemon,provider"`
+	Text     string `json:"text"`
+	// Streaming is true while more deltas are expected for this message.
+	Streaming bool   `json:"streaming"`
+	CreatedAt string `json:"createdAt"`
+}
+
+// ConversationActivityResponse is one non-message timeline entry.
+type ConversationActivityResponse struct {
+	Kind         string `json:"kind" enum:"activity"`
+	ID           string `json:"id"`
+	TurnID       string `json:"turnId,omitempty"`
+	Sequence     int64  `json:"sequence"`
+	Revision     int64  `json:"revision"`
+	ActivityKind string `json:"activityKind" enum:"command,file_change,plan,reasoning,approval,usage,error,system"`
+	Status       string `json:"status" enum:"running,completed,failed,pending,resolved"`
+	Summary      string `json:"summary"`
+	// Detail is the provider-neutral typed payload for this kind. For an approval
+	// it carries the provider's own offered decisions, which is what the client
+	// renders buttons from.
+	Detail    map[string]any `json:"detail,omitempty"`
+	RequestID string         `json:"requestId,omitempty"`
+	CreatedAt string         `json:"createdAt"`
+}
+
+// ConversationSnapshotResponse is the durable read model a client bootstraps from.
+type ConversationSnapshotResponse struct {
+	ConversationID string `json:"conversationId"`
+	SessionID      string `json:"sessionId"`
+	Harness        string `json:"harness,omitempty"`
+	Mode           string `json:"mode" enum:"chat,tui"`
+	// Controller is reported separately from history so a client can tell "no
+	// messages yet" apart from "the agent is not running".
+	Controller     string                         `json:"controller" enum:"connecting,ready,busy,recovering,stopped"`
+	LatestSequence int64                          `json:"latestSequence"`
+	Turns          []ConversationTurnResponse     `json:"turns"`
+	Messages       []ConversationMessageResponse  `json:"messages"`
+	Activities     []ConversationActivityResponse `json:"activities"`
+}
+
+// ConversationRequestIDParam is the provider's approval request id. Resolving
+// matches on it, so a card left on screen cannot answer a newer request.
+type ConversationRequestIDParam struct {
+	RequestID string `path:"requestId" description:"Provider approval request identifier. Zero is a legitimate value."`
+}
