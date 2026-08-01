@@ -192,9 +192,12 @@ func TestReplacementEnvironmentBlocksHostProfileCredentialsAndDiscovery(t *testi
 		"ANTHROPIC_API_KEY": "host-secret", "OPENAI_API_KEY": "host-secret",
 		"GOOGLE_APPLICATION_CREDENTIALS": "/host/google.json",
 		"AWS_PROFILE":                    "host-profile",
+		"EDITOR":                         filepath.Join(hostHome, "hostile-editor"),
 		"GH_TOKEN":                       "host-secret",
 		"GOOSE_RECIPE_GITHUB_REPO":       "host/recipes",
+		"GOOSE_PROMPT_EDITOR":            filepath.Join(hostHome, "hostile-prompt-editor"),
 		"PATH":                           filepath.Join(hostHome, "hostile-bin"),
+		"VISUAL":                         filepath.Join(hostHome, "hostile-visual"),
 	} {
 		t.Setenv(key, value)
 	}
@@ -210,19 +213,28 @@ func TestReplacementEnvironmentBlocksHostProfileCredentialsAndDiscovery(t *testi
 	if env["GOOSE_DISABLE_KEYRING"] != "1" || env["CONTEXT_FILE_NAMES"] != "[]" {
 		t.Fatalf("keyring/project hints not disabled: %#v", env)
 	}
-	if env["GOOSE_PROVIDER"] != "openai" || env["GOOSE_MODEL"] != "ao-reviewer" || env["OPENAI_HOST"] != modelBrokerHost {
+	if env["GOOSE_PROVIDER"] != "openai" || env["GOOSE_MODEL"] != "ao-reviewer" || env["OPENAI_BASE_URL"] != modelBrokerHost {
 		t.Fatalf("model is not broker-only: %#v", env)
 	}
+	if got := strings.TrimRight(env["OPENAI_BASE_URL"], "/") + "/chat/completions"; got != "http://ao-review-model-broker/v1/chat/completions" || strings.Count(got, "/v1/") != 1 {
+		t.Fatalf("broker request URL = %q, want exactly one /v1 segment", got)
+	}
+	if env["GOOSE_SYSTEM_PROMPT_FILE_PATH"] != systemPromptPath || !strings.HasPrefix(systemPromptPath, containedRoot+"/") || !slices.Equal(spec.ReadOnlyFiles, []string{systemPromptPath}) {
+		t.Fatalf("system prompt is not the contained AO-owned path: %#v", env)
+	}
+	if env["GOOSE_MODE"] != "auto" || env["GOOSE_TELEMETRY_OFF"] != "1" || env["GOOSE_DISABLE_SESSION_NAMING"] != "true" {
+		t.Fatalf("Goose contained controls are not pinned: %#v", env)
+	}
 	for _, forbidden := range []string{
-		"USERPROFILE", "GOOSE_MODE", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+		"USERPROFILE", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENAI_HOST",
 		"GOOGLE_APPLICATION_CREDENTIALS", "AWS_PROFILE", "GH_TOKEN",
-		"GOOSE_RECIPE_GITHUB_REPO",
+		"GOOSE_PROMPT_EDITOR", "VISUAL", "EDITOR", "GOOSE_RECIPE_GITHUB_REPO",
 	} {
 		if _, ok := env[forbidden]; ok {
 			t.Fatalf("replacement environment inherited %s", forbidden)
 		}
 	}
-	if got, want := len(env), 10; got != want {
+	if got, want := len(env), 14; got != want {
 		t.Fatalf("replacement environment has %d keys, want exact allowlist of %d: %#v", got, want, env)
 	}
 	for _, path := range hostilePaths {

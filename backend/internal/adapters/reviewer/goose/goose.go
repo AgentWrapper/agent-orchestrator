@@ -31,6 +31,7 @@ const (
 	isolatedHome      = containedRoot + "/home"
 	isolatedGooseRoot = containedRoot + "/goose"
 	isolatedTemp      = containedRoot + "/tmp"
+	systemPromptPath  = containedRoot + "/prompts/system.md"
 	modelBrokerHost   = "http://ao-review-model-broker/v1"
 
 	// This is the SHA-256 of the exact stdout emitted by the official Goose
@@ -113,6 +114,7 @@ type containedProcessSpec struct {
 	Argv                 []string
 	Environment          []string
 	WorkingDirectory     string
+	ReadOnlyFiles        []string
 	InitialMessage       string
 	InjectAfterReadiness bool
 }
@@ -130,16 +132,21 @@ func containedCommand(initialMessage string) containedProcessSpec {
 		Environment: []string{
 			"CONTEXT_FILE_NAMES=[]",
 			"GOOSE_DISABLE_KEYRING=1",
+			"GOOSE_DISABLE_SESSION_NAMING=true",
 			"GOOSE_MODEL=ao-reviewer",
+			"GOOSE_MODE=auto",
 			"GOOSE_PATH_ROOT=" + isolatedGooseRoot,
 			"GOOSE_PROVIDER=openai",
+			"GOOSE_SYSTEM_PROMPT_FILE_PATH=" + systemPromptPath,
+			"GOOSE_TELEMETRY_OFF=1",
 			"HOME=" + isolatedHome,
-			"OPENAI_HOST=" + modelBrokerHost,
+			"OPENAI_BASE_URL=" + modelBrokerHost,
 			"PATH=/opt/ao/bin:/usr/bin:/bin",
 			"TERM=xterm-256color",
 			"TMPDIR=" + isolatedTemp,
 		},
 		WorkingDirectory:     neutralWorkingDir,
+		ReadOnlyFiles:        []string{systemPromptPath},
 		InitialMessage:       initialMessage,
 		InjectAfterReadiness: true,
 	}
