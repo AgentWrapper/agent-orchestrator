@@ -203,6 +203,10 @@ type Manager struct {
 	// chat launches the structured controller for a chat-mode session. Nil means
 	// this build cannot run chat sessions, and a chat spawn is refused rather
 	// than silently downgraded to a terminal.
+	// defaults resolves the daemon-owned default session interface for a spawn
+	// that names no mode. Nil falls back to the compatibility default, so a build
+	// without it behaves exactly as before.
+	defaults            SessionModeDefaults
 	chat                ChatLauncher
 	lcm                 lifecycleRecorder
 	preview             PreviewLifecycle
@@ -312,6 +316,9 @@ type Deps struct {
 	Workspace ports.Workspace
 	Store     Store
 	Messenger ports.AgentMessenger
+	// Defaults supplies the daemon-owned default session interface for spawns that
+	// name no mode. Nil means always use the compatibility default.
+	Defaults SessionModeDefaults
 	// Chat launches the structured controller for a chat-mode session. Nil means
 	// chat mode is unavailable, and a chat spawn is refused rather than silently
 	// downgraded to a terminal.
@@ -347,6 +354,7 @@ func New(d Deps) *Manager {
 		agents:              d.Agents,
 		workspace:           d.Workspace,
 		store:               d.Store,
+		defaults:            d.Defaults,
 		chat:                d.Chat,
 		lcm:                 d.Lifecycle,
 		preview:             d.Preview,
@@ -421,7 +429,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// cannot honor should cost nothing, not leave a terminated row and a worktree
 	// behind. It never falls back to TUI — that would put the user in a terminal
 	// they deliberately did not ask for.
-	mode := domain.NormalizeSessionMode(cfg.RequestedMode)
+	mode := m.resolveSessionMode(ctx, cfg.RequestedMode)
 	if mode == domain.SessionModeChat {
 		if m.chat == nil {
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: chat mode is not available in this build", ports.ErrChatUnsupported)

@@ -37,6 +37,7 @@ import (
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	settingssvc "github.com/aoagents/agent-orchestrator/backend/internal/service/settings"
 	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
@@ -169,6 +170,16 @@ func Run() error {
 	// selected runtime, routed git/scratch workspaces, the per-session agent
 	// resolver (AO_AGENT validated here for compatibility), and the agent
 	// messenger, then mount it on the API.
+	chatDrivers := chatdriverregistry.Build(log)
+
+	// Daemon-owned preferences. The store's type is field-compatible with the
+	// service's, adapted here so neither package imports the other.
+	settingsSvc := settingssvc.New(
+		settingsStore{store: store},
+		chatDrivers,
+		func() time.Time { return time.Now().UTC() },
+	)
+
 	// Chat service. The driver registry is the capability gate: a harness with no
 	// registered driver cannot start in chat mode, so an unsupported request fails
 	// loudly instead of silently becoming a TUI session.
@@ -189,12 +200,12 @@ func Run() error {
 				Activities:   rows.Activities,
 			}, nil
 		}),
-		Drivers: chatdriverregistry.Build(log),
+		Drivers: chatDrivers,
 		Log:     log,
 		NewID:   uuid.NewString,
 	})
 
-	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, log)
+	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, settingsSvc, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -282,6 +293,7 @@ func Run() error {
 		Import:             importsvc.New(importsvc.Deps{Store: store}),
 		ShellTerminals:     shellTermSvc,
 		Conversations:      chatSvc,
+		Settings:           settingsSvc,
 		CDC:                store,
 		Events:             cdcPipe.Broadcaster,
 		Activity:           lcStack.LCM,

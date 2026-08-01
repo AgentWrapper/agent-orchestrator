@@ -131,6 +131,8 @@ func schemaName(_ reflect.Type, defaultName string) string {
 // by projectOperations(). Add an entry when a new contract type is introduced;
 // the drift test fails until the spec is regenerated, which flags the gap.
 var schemaNames = map[string]string{
+	"ControllersSettingsResponse":                   "SettingsResponse",
+	"ControllersUpdateSessionInterfaceRequest":      "UpdateSessionInterfaceRequest",
 	"ControllersConversationSnapshotResponse":       "ConversationSnapshotResponse",
 	"ControllersConversationTurnResponse":           "ConversationTurnResponse",
 	"ControllersConversationMessageResponse":        "ConversationMessageResponse",
@@ -394,6 +396,26 @@ func browserOperations() []operation {
 // shells the user opens by hand, with no agent session behind them.
 func shellTerminalOperations() []operation {
 	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/settings", id: "getSettings", tag: "settings",
+			summary: "Read the daemon-owned user preferences",
+			resps: []respUnit{
+				{http.StatusOK, controllers.SettingsResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPatch, path: "/api/v1/settings/session-interface", id: "updateSessionInterface", tag: "settings",
+			summary: "Choose the default interface for new sessions",
+			reqBody: controllers.UpdateSessionInterfaceRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SettingsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
 		{
 			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/conversation", id: "getSessionConversation", tag: "conversations",
 			summary:    "Read a chat session's durable conversation",

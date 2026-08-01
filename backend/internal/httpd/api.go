@@ -32,7 +32,9 @@ type APIDeps struct {
 	ShellTerminals     controllers.ShellTerminalService
 	// Conversations is nil until a Chat driver is wired; the controller then
 	// answers 501 rather than panicking, matching the other optional surfaces.
-	Conversations       controllers.ConversationService
+	Conversations controllers.ConversationService
+	// Settings is the daemon-owned preference surface.
+	Settings            controllers.SettingsService
 	DevImport           controllers.DevImportService
 	CDC                 cdc.Source
 	Events              cdcSubscriber
@@ -57,6 +59,7 @@ type API struct {
 	imports       *controllers.ImportController
 	shellTerms    *controllers.ShellTerminalsController
 	conversations *controllers.ConversationsController
+	settings      *controllers.SettingsController
 	dev           *controllers.DevController
 	browser       *controllers.BrowserController
 	events        *EventsController
@@ -87,6 +90,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		imports:       &controllers.ImportController{Svc: deps.Import},
 		shellTerms:    &controllers.ShellTerminalsController{Svc: deps.ShellTerminals},
 		conversations: &controllers.ConversationsController{Svc: deps.Conversations},
+		settings:      &controllers.SettingsController{Svc: deps.Settings},
 		dev:           &controllers.DevController{Import: deps.DevImport},
 		browser:       &controllers.BrowserController{Svc: deps.Browser},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
@@ -117,6 +121,7 @@ func (a *API) Register(root chi.Router) {
 			a.imports.Register(r)
 			a.shellTerms.Register(r)
 			a.conversations.Register(r)
+			a.settings.Register(r)
 			a.dev.Register(r)
 			a.browser.Register(r)
 			// Sibling REST controllers plug in here.

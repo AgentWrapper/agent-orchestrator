@@ -153,3 +153,27 @@ func (m *Manager) stopChatBestEffort(ctx context.Context, id domain.SessionID) {
 		m.logger.Warn("spawn rollback: close chat controller", "sessionID", id, "error", err)
 	}
 }
+
+// SessionModeDefaults supplies the daemon-owned default session interface.
+type SessionModeDefaults interface {
+	DefaultSessionMode(ctx context.Context) domain.SessionMode
+}
+
+// resolveSessionMode applies the precedence for a spawn:
+//
+//  1. the mode the caller explicitly requested;
+//  2. the daemon-owned default;
+//  3. the compatibility default, TUI.
+//
+// The default is read here, at spawn time, so changing the preference affects only
+// sessions created afterwards. An existing session's mode is already persisted and
+// nothing re-resolves it.
+func (m *Manager) resolveSessionMode(ctx context.Context, requested domain.SessionMode) domain.SessionMode {
+	if requested.Valid() {
+		return requested
+	}
+	if m.defaults == nil {
+		return domain.DefaultSessionMode
+	}
+	return domain.NormalizeSessionMode(m.defaults.DefaultSessionMode(ctx))
+}

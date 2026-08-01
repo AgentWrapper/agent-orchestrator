@@ -140,6 +140,10 @@ sql:
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
               type: "ReviewVerdict"
+          - column: "app_settings.default_session_mode"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "SessionMode"
           - column: "sessions.session_mode"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"

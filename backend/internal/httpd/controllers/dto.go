@@ -938,3 +938,20 @@ type ConversationSnapshotResponse struct {
 type ConversationRequestIDParam struct {
 	RequestID string `path:"requestId" description:"Provider approval request identifier. Zero is a legitimate value."`
 }
+
+/* ---- settings ---------------------------------------------------------- */
+
+// SettingsResponse is the daemon-owned preference set.
+type SettingsResponse struct {
+	// DefaultSessionMode applies to sessions created from now on. Changing it
+	// never alters an existing session, whose mode is fixed at creation.
+	DefaultSessionMode string `json:"defaultSessionMode" enum:"chat,tui"`
+	// ChatHarnesses are the agents that can run in chat mode today. Empty means
+	// chat cannot be used yet, which a client should say plainly.
+	ChatHarnesses []string `json:"chatHarnesses"`
+}
+
+// UpdateSessionInterfaceRequest changes the default interface for new sessions.
+type UpdateSessionInterfaceRequest struct {
+	DefaultSessionMode string `json:"defaultSessionMode" enum:"chat,tui"`
+}
