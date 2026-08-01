@@ -2330,6 +2330,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 }
 
 .browser-panel__agent-status {
+	box-sizing: border-box;
 	position: absolute;
 	right: 12px;
 	bottom: 12px;
@@ -2337,9 +2338,10 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	display: flex;
 	align-items: center;
 	gap: 7px;
+	width: 116px;
+	height: 26px;
 	min-height: 26px;
-	max-width: 180px;
-	padding: 0 10px 0 8px;
+	padding: 0 8px;
 	border: 1px solid color-mix(in srgb, var(--color-status-working) 28%, var(--color-border));
 	border-radius: 999px;
 	background: color-mix(in srgb, var(--color-bg-secondary) 92%, transparent);
@@ -2353,14 +2355,26 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	font-weight: 650;
 	line-height: 1;
 	white-space: nowrap;
-	animation: browser-agent-status-in 180ms ease-out;
+	overflow: hidden;
+	animation:
+		browser-agent-status-in 180ms ease-out both,
+		browser-agent-status-collapse 2.2s cubic-bezier(0.22, 1, 0.36, 1) 180ms forwards;
+}
+
+.browser-panel__agent-status-label {
+	flex: 0 0 auto;
+	max-width: 78px;
+	overflow: hidden;
+	opacity: 1;
+	animation: browser-agent-status-label-collapse 2.2s cubic-bezier(0.22, 1, 0.36, 1) 180ms forwards;
 }
 
 .browser-panel__agent-status-dot {
-	width: 7px;
+	width: 12px;
 	height: 7px;
 	flex: 0 0 auto;
 	border-radius: 999px;
+	margin-left: auto;
 	background: var(--color-status-working);
 	box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-status-working) 16%, transparent);
 	animation: browser-agent-status-breathe 2.4s ease-in-out infinite;
@@ -2369,11 +2383,33 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 @keyframes browser-agent-status-in {
 	from {
 		opacity: 0;
-		transform: translateY(4px) scale(0.97);
 	}
 	to {
 		opacity: 1;
-		transform: translateY(0) scale(1);
+	}
+}
+
+@keyframes browser-agent-status-collapse {
+	0%,
+	64% {
+		width: 116px;
+		gap: 7px;
+	}
+	100% {
+		width: 30px;
+		gap: 0;
+	}
+}
+
+@keyframes browser-agent-status-label-collapse {
+	0%,
+	64% {
+		max-width: 78px;
+		opacity: 1;
+	}
+	100% {
+		max-width: 0;
+		opacity: 0;
 	}
 }
 
@@ -2390,7 +2426,12 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.browser-panel__agent-status,
+	.browser-panel__agent-status {
+		animation: browser-agent-status-collapse 0s 1.65s forwards;
+	}
+	.browser-panel__agent-status-label {
+		animation: browser-agent-status-label-collapse 0s 1.65s forwards;
+	}
 	.browser-panel__agent-status-dot {
 		animation: none;
 	}

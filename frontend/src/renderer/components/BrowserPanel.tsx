@@ -230,7 +230,7 @@ export function BrowserPanelView({
 	const {
 		viewId,
 		navState,
-		mirrorUrl,
+		mirrorFrame,
 		slotRef,
 		navigate,
 		goBack,
@@ -489,8 +489,21 @@ export function BrowserPanelView({
 			</form>
 			<div className="relative min-h-0 flex-1 overflow-hidden bg-background">
 				<div className="browser-panel__slot absolute inset-0 min-h-px min-w-px" ref={slotRef} />
-				{mirrorUrl ? (
-					<img alt="" className="absolute inset-0 h-full w-full object-cover" src={mirrorUrl} />
+				{mirrorFrame ? (
+					<img
+						alt=""
+						className="absolute left-0 top-0 max-w-none"
+						data-testid="browser-mirror-frame"
+						src={mirrorFrame.dataUrl}
+						style={{
+							height: mirrorFrame.cssHeight,
+							left: mirrorFrame.cssLeft,
+							objectFit: "fill",
+							objectPosition: "top left",
+							top: mirrorFrame.cssTop,
+							width: mirrorFrame.cssWidth,
+						}}
+					/>
 				) : null}
 				{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
 				{navState.url === "" ? (
@@ -516,8 +529,8 @@ export function BrowserPanelView({
 						role="status"
 						aria-live="polite"
 					>
+						<span className="browser-panel__agent-status-label">Agent working</span>
 						<span aria-hidden="true" className="browser-panel__agent-status-dot" />
-						Agent working
 					</div>
 				) : null}
 			</div>

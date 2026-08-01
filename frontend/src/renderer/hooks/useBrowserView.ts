@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
 	BrowserDevToolsState,
+	BrowserMirrorFrame,
 	BrowserNavState,
 	BrowserRect,
 	BrowserTabState,
@@ -44,7 +45,7 @@ type UseBrowserViewOptions = {
 export type BrowserViewModel = {
 	viewId: string;
 	navState: BrowserNavState;
-	mirrorUrl: string;
+	mirrorFrame: BrowserMirrorFrame | null;
 	slotRef: (node: HTMLDivElement | null) => void;
 	navigate: (url: string) => Promise<void>;
 	goBack: () => Promise<void>;
@@ -150,7 +151,7 @@ export function useBrowserView({
 }: UseBrowserViewOptions): BrowserViewModel {
 	const [viewId, setViewId] = useState("");
 	const [navState, setNavState] = useState<BrowserNavState>(EMPTY_NAV_STATE);
-	const [mirrorUrl, setMirrorUrl] = useState("");
+	const [mirrorFrame, setMirrorFrame] = useState<BrowserMirrorFrame | null>(null);
 	const [annotationMode, setAnnotationModeState] = useState(false);
 	const [tabsState, setTabsState] = useState<BrowserTabsState>(EMPTY_TABS_STATE);
 	const [devtoolsState, setDevtoolsState] = useState<BrowserDevToolsState>(EMPTY_DEVTOOLS_STATE);
@@ -471,15 +472,15 @@ export function useBrowserView({
 			const token = ++mirrorTokenRef.current;
 			const live = () =>
 				mirrorTokenRef.current === token && overlayOpenRef.current && viewIdRef.current === id;
-			const frame = await (window.ao?.browser.capture?.(id) ?? Promise.resolve("")).catch(() => "");
+			const frame = await (window.ao?.browser.capture?.(id) ?? Promise.resolve(null)).catch(() => null);
 			if (!live()) return;
 
 			// Do not move the native view until its replacement has painted. Moving
 			// it first exposes the empty renderer slot and causes the visible flash.
-			if (frame) {
-				await decodeMirrorFrame(frame);
+			if (frame?.dataUrl) {
+				await decodeMirrorFrame(frame.dataUrl);
 				if (!live()) return;
-				setMirrorUrl(frame);
+				setMirrorFrame(frame);
 				await afterNextPaint();
 				if (!live()) return;
 			}
@@ -516,7 +517,7 @@ export function useBrowserView({
 				clearMirrorTimer();
 				mirrorTimerRef.current = window.setTimeout(() => {
 					mirrorTimerRef.current = null;
-					setMirrorUrl("");
+					setMirrorFrame(null);
 				}, 320);
 			}
 		};
@@ -698,7 +699,7 @@ export function useBrowserView({
 		mirrorTokenRef.current += 1;
 		overlayOpenRef.current = false;
 		modalOpenRef.current = false;
-		setMirrorUrl("");
+		setMirrorFrame(null);
 		setNativeAgentStatus(id, false);
 		sendHiddenBounds(id);
 		window.ao?.browser.destroy(id);
@@ -719,7 +720,7 @@ export function useBrowserView({
 	return {
 		viewId,
 		navState,
-		mirrorUrl,
+		mirrorFrame,
 		slotRef,
 		navigate,
 		goBack: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.goBack(id)) : Promise.resolve()),

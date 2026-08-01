@@ -23,6 +23,23 @@ import type { AgentBrowserTarget, AgentBrowserTargetProvider } from "./agent-bro
 
 export type BrowserRect = Pick<Rectangle, "x" | "y" | "width" | "height">;
 
+/**
+ * A renderer replacement for a captured native browser viewport. The pixel
+ * size describes the encoded NativeImage (and therefore includes display
+ * scale), while the css* fields describe the rounded native viewport and its
+ * offset in the renderer's page-zoomed CSS pixels.
+ */
+export type BrowserMirrorFrame = {
+	dataUrl: string;
+	pixelWidth: number;
+	pixelHeight: number;
+	nativeBounds: BrowserRect;
+	cssLeft: number;
+	cssTop: number;
+	cssWidth: number;
+	cssHeight: number;
+};
+
 export type BrowserNavState = {
 	viewId: string;
 	url: string;
@@ -197,6 +214,8 @@ type BrowserSessionEntry = {
 	activeTabId: string;
 	nextTabNumber: number;
 	bounds: BrowserRect;
+	rendererBounds: BrowserRect;
+	zoomFactor: number;
 	visible: boolean;
 	parked: boolean;
 	networkTabId?: string;
@@ -275,18 +294,26 @@ const AGENT_STATUS_MARKUP = `
   :host {
     all: initial;
     position: fixed;
-    right: 16px;
-    bottom: 16px;
+    right: 12px;
+    bottom: 12px;
     z-index: 2147483647;
-    display: block;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    width: 116px;
+    height: 26px;
     pointer-events: none;
   }
   .badge {
+    box-sizing: border-box;
+    margin-left: auto;
     display: inline-flex;
     align-items: center;
     gap: 7px;
+    width: 116px;
+    height: 26px;
     min-height: 26px;
-    padding: 0 10px 0 8px;
+    padding: 0 8px;
     border: 1px solid rgba(255, 255, 255, 0.18);
     border-radius: 999px;
     background: rgba(25, 28, 34, 0.8);
@@ -298,15 +325,51 @@ const AGENT_STATUS_MARKUP = `
     pointer-events: none;
     user-select: none;
     -webkit-user-select: none;
+    overflow: hidden;
+    animation:
+      ao-agent-working-in 180ms ease-out both,
+      ao-agent-working-collapse 2.2s cubic-bezier(0.22, 1, 0.36, 1) 180ms forwards;
+  }
+  .label {
+    flex: 0 0 auto;
+    max-width: 78px;
+    overflow: hidden;
+    opacity: 1;
+    animation: ao-agent-working-label-collapse 2.2s cubic-bezier(0.22, 1, 0.36, 1) 180ms forwards;
   }
   .dot {
-    width: 7px;
+    width: 12px;
     height: 7px;
     flex: 0 0 auto;
     border-radius: 999px;
+    margin-left: auto;
     background: #75d69b;
     box-shadow: 0 0 0 3px rgba(117, 214, 155, 0.16);
     animation: ao-agent-working-breathe 2.4s ease-in-out infinite;
+  }
+  @keyframes ao-agent-working-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes ao-agent-working-collapse {
+    0%, 64% {
+      width: 116px;
+      gap: 7px;
+    }
+    100% {
+      width: 30px;
+      gap: 0;
+    }
+  }
+  @keyframes ao-agent-working-label-collapse {
+    0%, 64% {
+      max-width: 78px;
+      opacity: 1;
+    }
+    100% {
+      max-width: 0;
+      opacity: 0;
+    }
   }
   @keyframes ao-agent-working-breathe {
     0%, 100% {
@@ -319,10 +382,16 @@ const AGENT_STATUS_MARKUP = `
     }
   }
   @media (prefers-reduced-motion: reduce) {
+    .badge {
+      animation: ao-agent-working-collapse 0s 1.65s forwards;
+    }
+    .label {
+      animation: ao-agent-working-label-collapse 0s 1.65s forwards;
+    }
     .dot { animation: none; }
   }
 </style>
-<div class="badge" role="presentation"><span class="dot" aria-hidden="true"></span><span>Agent working</span></div>`;
+<div class="badge" role="presentation"><span class="label">Agent working</span><span class="dot" aria-hidden="true"></span></div>`;
 
 function agentStatusScript(active: boolean): string {
 	return `(() => {
@@ -598,6 +667,8 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				activeTabId: "",
 				nextTabNumber: 1,
 				bounds: OFFSCREEN_BOUNDS,
+				rendererBounds: OFFSCREEN_BOUNDS,
+				zoomFactor: 1,
 				visible: false,
 				parked: false,
 				agentBrowserCommands: 0,
@@ -801,9 +872,11 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const setBounds = ({ viewId, rect, visible, parked }: BrowserBoundsInput, zoomFactor = 1): void => {
 		const session = entries.get(viewId);
 		if (!session) return;
+		const effectiveZoomFactor = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
+		session.zoomFactor = effectiveZoomFactor;
 		const entry = activeEntry(session);
 		if (parked) {
-			const scaled = scaleBoundsForZoom(rect, zoomFactor);
+			const scaled = scaleBoundsForZoom(rect, effectiveZoomFactor);
 			const width = Math.max(1, Math.round(scaled.width));
 			const height = Math.max(1, Math.round(scaled.height));
 			session.bounds = { x: OFFSCREEN_BOUNDS.x, y: 0, width, height };
@@ -823,8 +896,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		// The renderer measures the slot in page-zoomed CSS pixels, while
 		// WebContentsView bounds are window coordinates. Convert before clamping so
 		// Cmd+/Cmd- page zoom does not detach the native view from its React slot.
+		session.rendererBounds = { ...rect };
 		session.bounds = clampBoundsToWindow(
-			scaleBoundsForZoom(rect, zoomFactor),
+			scaleBoundsForZoom(rect, effectiveZoomFactor),
 			options.mainWindow.getContentBounds(),
 		);
 		session.visible = true;
@@ -881,16 +955,27 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		return pushNavState(options, entry);
 	};
 
-	const capture = async (viewId: string): Promise<string> => {
+	const capture = async (viewId: string): Promise<BrowserMirrorFrame | null> => {
 		const session = entries.get(viewId);
-		if (!session) return "";
+		if (!session) return null;
 		const entry = activeEntry(session);
 		try {
 			const image = await entry.view.webContents.capturePage();
-			if (image.isEmpty()) return "";
-			return `data:image/jpeg;base64,${image.toJPEG(70).toString("base64")}`;
+			if (image.isEmpty()) return null;
+			const size = image.getSize();
+			const dataUrl = `data:image/jpeg;base64,${image.toJPEG(70).toString("base64")}`;
+			return {
+				dataUrl,
+				pixelWidth: size.width,
+				pixelHeight: size.height,
+				nativeBounds: { ...session.bounds },
+				cssLeft: session.bounds.x / session.zoomFactor - session.rendererBounds.x,
+				cssTop: session.bounds.y / session.zoomFactor - session.rendererBounds.y,
+				cssWidth: session.bounds.width / session.zoomFactor,
+				cssHeight: session.bounds.height / session.zoomFactor,
+			};
 		} catch {
-			return "";
+			return null;
 		}
 	};
 
@@ -1027,7 +1112,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	handle("browser:clear", (event, viewId: string) =>
 		isRendererOwned(event, viewId) ? clear(viewId) : emptyNavState(viewId),
 	);
-	handle("browser:capture", (event, viewId: string) => (isRendererOwned(event, viewId) ? capture(viewId) : ""));
+	handle("browser:capture", (event, viewId: string) => (isRendererOwned(event, viewId) ? capture(viewId) : null));
 	handle("browser:requestMirror", (event, viewId: string) => {
 		if (!mirrorSupported || !isRendererOwned(event, viewId) || !entries.has(viewId)) return false;
 		const frame = event.senderFrame;

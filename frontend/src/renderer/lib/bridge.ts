@@ -123,7 +123,7 @@ export const aoBridge: AoBridge =
 				activeTabId: "",
 			}),
 			destroy: () => undefined,
-			capture: async () => "",
+			capture: async () => null,
 			requestMirror: async () => false,
 			setAnnotationMode: async () => undefined,
 			onNavState: () => () => undefined,

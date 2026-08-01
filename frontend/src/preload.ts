@@ -5,6 +5,7 @@ import type {
 	BrowserAgentStatusInput,
 	BrowserDevToolsInput,
 	BrowserDevToolsState,
+	BrowserMirrorFrame,
 	BrowserNavState,
 	BrowserRect,
 	BrowserTabsState,
@@ -167,7 +168,7 @@ const api = {
 		navigate: (input: BrowserNavigateInput) =>
 			ipcRenderer.invoke("browser:navigate", input) as Promise<BrowserNavState>,
 		clear: (viewId: string) => ipcRenderer.invoke("browser:clear", viewId) as Promise<BrowserNavState>,
-		capture: (viewId: string) => ipcRenderer.invoke("browser:capture", viewId) as Promise<string>,
+		capture: (viewId: string) => ipcRenderer.invoke("browser:capture", viewId) as Promise<BrowserMirrorFrame | null>,
 		requestMirror: (viewId: string) => ipcRenderer.invoke("browser:requestMirror", viewId) as Promise<boolean>,
 		goBack: (viewId: string) => ipcRenderer.invoke("browser:goBack", viewId) as Promise<BrowserNavState>,
 		goForward: (viewId: string) => ipcRenderer.invoke("browser:goForward", viewId) as Promise<BrowserNavState>,

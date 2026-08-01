@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useBrowserView, type BrowserNavState } from "./useBrowserView";
+import type { BrowserMirrorFrame } from "../../main/browser-view-host";
 
 type Listener = (state: BrowserNavState) => void;
 type TabsListener = (state: import("../../main/browser-view-host").BrowserTabsState) => void;
@@ -51,7 +52,16 @@ function setupBridge() {
 		})),
 		setBounds: vi.fn(),
 		setAgentStatus: vi.fn(async () => undefined),
-		capture: vi.fn(async () => "data:image/jpeg;base64,snapshot"),
+		capture: vi.fn(async (): Promise<BrowserMirrorFrame> => ({
+			dataUrl: "data:image/jpeg;base64,snapshot",
+			pixelWidth: 640,
+			pixelHeight: 480,
+			nativeBounds: { x: 12, y: 34, width: 320, height: 240 },
+			cssLeft: 0,
+			cssTop: 0,
+			cssWidth: 320,
+			cssHeight: 240,
+		})),
 		requestMirror: vi.fn(async () => false),
 		navigate: vi.fn(async ({ viewId }: { viewId: string }) => bridge.stateFor(viewId)),
 		clear: vi.fn(async (viewId: string) => bridge.stateFor(viewId)),
@@ -416,7 +426,7 @@ describe("useBrowserView", () => {
 			}),
 		);
 		expect(bridge.capture).toHaveBeenCalledWith("42:sess-1");
-		await waitFor(() => expect(result.current.mirrorUrl).toBe("data:image/jpeg;base64,snapshot"));
+		await waitFor(() => expect(result.current.mirrorFrame?.dataUrl).toBe("data:image/jpeg;base64,snapshot"));
 
 		bridge.setBounds.mockClear();
 		await act(async () => {
@@ -430,7 +440,7 @@ describe("useBrowserView", () => {
 				visible: true,
 			}),
 		);
-		await waitFor(() => expect(result.current.mirrorUrl).toBe(""));
+		await waitFor(() => expect(result.current.mirrorFrame).toBeNull());
 	});
 
 	it("parks the native view while a browser overlay is open", async () => {
@@ -480,9 +490,9 @@ describe("useBrowserView", () => {
 
 	it("keeps the native view visible until the overlay snapshot has painted", async () => {
 		const bridge = setupBridge();
-		let releaseCapture: ((frame: string) => void) | undefined;
+		let releaseCapture: ((frame: BrowserMirrorFrame) => void) | undefined;
 		bridge.capture.mockImplementationOnce(
-			() => new Promise<string>((resolve) => {
+			() => new Promise<BrowserMirrorFrame>((resolve) => {
 				releaseCapture = resolve;
 			}),
 		);
@@ -515,9 +525,18 @@ describe("useBrowserView", () => {
 		expect(bridge.setBounds).not.toHaveBeenCalledWith(expect.objectContaining({ parked: true }));
 
 		await act(async () => {
-			releaseCapture?.("data:image/jpeg;base64,snapshot");
+			releaseCapture?.({
+				dataUrl: "data:image/jpeg;base64,snapshot",
+				pixelWidth: 640,
+				pixelHeight: 480,
+				nativeBounds: { x: 12, y: 34, width: 320, height: 240 },
+				cssLeft: 0,
+				cssTop: 0,
+				cssWidth: 320,
+				cssHeight: 240,
+			});
 		});
-		await waitFor(() => expect(result.current.mirrorUrl).toBe("data:image/jpeg;base64,snapshot"));
+		await waitFor(() => expect(result.current.mirrorFrame?.dataUrl).toBe("data:image/jpeg;base64,snapshot"));
 		await waitFor(() =>
 			expect(bridge.setBounds).toHaveBeenLastCalledWith({
 				viewId: "42:sess-1",

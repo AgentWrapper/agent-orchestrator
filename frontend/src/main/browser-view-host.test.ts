@@ -508,15 +508,49 @@ describe("browser:capture", () => {
 
 		const snapshot = await invoke("browser:capture", "1:sess-1");
 
-		expect(snapshot).toBe(`data:image/jpeg;base64,${Buffer.from("snapshot").toString("base64")}`);
+		expect(snapshot).toEqual({
+			dataUrl: `data:image/jpeg;base64,${Buffer.from("snapshot").toString("base64")}`,
+			pixelWidth: 640,
+			pixelHeight: 480,
+			nativeBounds: { x: -10_000, y: -10_000, width: 1280, height: 720 },
+			cssLeft: 0,
+			cssTop: 0,
+			cssWidth: 1280,
+			cssHeight: 720,
+		});
 	});
 
-	it("returns an empty string for an unknown view", async () => {
+	it("returns rounded native geometry in renderer CSS pixels across page zoom", async () => {
+		const { emit, invoke } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		emit("browser:setBounds", 1.25, {
+			viewId: "1:sess-1",
+			rect: { x: 100.25, y: 20.25, width: 319.5, height: 239.5 },
+			visible: true,
+		});
+
+		const snapshot = await invoke("browser:capture", "1:sess-1");
+
+		expect(snapshot).toEqual(
+			expect.objectContaining({
+				pixelWidth: 640,
+				pixelHeight: 480,
+				nativeBounds: { x: 125, y: 25, width: 399, height: 299 },
+				cssLeft: -0.25,
+				cssTop: -0.25,
+				cssWidth: 319.2,
+				cssHeight: 239.2,
+			}),
+		);
+	});
+
+	it("returns null for an unknown view", async () => {
 		const { invoke } = setupHost();
 
 		const snapshot = await invoke("browser:capture", "1:missing");
 
-		expect(snapshot).toBe("");
+		expect(snapshot).toBeNull();
 	});
 });
 
@@ -958,7 +992,7 @@ describe("browser:requestMirror", () => {
 		await invoke("browser:ensure", "sess-1");
 
 		const snapshot = await invoke("browser:capture", "7:sess-1");
-		expect(snapshot).toBe("");
+		expect(snapshot).toBeNull();
 	});
 });
 

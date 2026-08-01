@@ -22,6 +22,16 @@ const hookState = vi.hoisted(() => ({
 	goForward: vi.fn(),
 	reload: vi.fn(),
 	stop: vi.fn(),
+	mirrorFrame: null as {
+		dataUrl: string;
+		pixelWidth: number;
+		pixelHeight: number;
+		nativeBounds: { x: number; y: number; width: number; height: number };
+		cssLeft: number;
+		cssTop: number;
+		cssWidth: number;
+		cssHeight: number;
+	} | null,
 	selectTab: vi.fn(),
 	closeTab: vi.fn(),
 	openDevTools: vi.fn(),
@@ -49,6 +59,7 @@ vi.mock("../hooks/useBrowserView", () => ({
 		return {
 			viewId: "42:sess-1",
 			navState: hookState.navState,
+			mirrorFrame: hookState.mirrorFrame,
 			slotRef: vi.fn(),
 			navigate: hookState.navigate,
 			goBack: hookState.goBack,
@@ -140,6 +151,7 @@ describe("BrowserPanel", () => {
 		hookState.goForward.mockReset();
 		hookState.reload.mockReset();
 		hookState.stop.mockReset();
+		hookState.mirrorFrame = null;
 		hookState.selectTab.mockReset();
 		hookState.closeTab.mockReset();
 		hookState.openDevTools.mockReset();
@@ -237,6 +249,36 @@ describe("BrowserPanel", () => {
 		await userEvent.click(tabsButton);
 		await userEvent.click(screen.getByRole("menuitem", { name: "Close tab First app" }));
 		expect(hookState.closeTab).toHaveBeenCalledWith("t1");
+	});
+
+	it("renders a rounded native mirror viewport without edge-cropping", () => {
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
+		hookState.mirrorFrame = {
+			dataUrl: "data:image/jpeg;base64,snapshot",
+			pixelWidth: 798,
+			pixelHeight: 598,
+			nativeBounds: { x: 125, y: 25, width: 399, height: 299 },
+			cssLeft: -0.25,
+			cssTop: -0.25,
+			cssWidth: 319.2,
+			cssHeight: 239.2,
+		};
+
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		const frame = screen.getByTestId("browser-mirror-frame");
+		expect(frame).toHaveStyle({
+			height: "239.2px",
+			left: "-0.25px",
+			objectFit: "fill",
+			objectPosition: "top left",
+			top: "-0.25px",
+			width: "319.2px",
+		});
+		expect(frame).not.toHaveClass("object-cover");
 	});
 
 	it("opens DevTools from a direct toolbar control", async () => {
