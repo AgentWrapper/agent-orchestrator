@@ -18,10 +18,7 @@ const (
 	ReviewerOpenCode   ReviewerHarness = "opencode"
 	ReviewerKiro       ReviewerHarness = "kiro"
 	ReviewerPi         ReviewerHarness = "pi"
-	// ReviewerQwen reserves the Qwen reviewer identity. It is intentionally not
-	// in AllReviewerHarnesses until AO ships tested tmux and ConPTY isolation for
-	// Qwen's terminal-user shell escape.
-	ReviewerQwen ReviewerHarness = "qwen"
+	ReviewerQwen       ReviewerHarness = "qwen"
 )
 
 // AllReviewerHarnesses is the canonical set used to validate a configured
@@ -35,6 +32,7 @@ var AllReviewerHarnesses = []ReviewerHarness{
 	ReviewerOpenCode,
 	ReviewerKiro,
 	ReviewerPi,
+	ReviewerQwen,
 }
 
 // IsKnown reports whether h is one of the supported reviewer harnesses.

@@ -167,12 +167,17 @@ reviewers:
   - harness: kilocode
 ```
 
-Built-in reviewer harnesses are `claude-code`, `codex`, `copilot`, `cursor`, `kilocode`, and `opencode`. Kilo Code requires the
+Built-in reviewer harnesses are `claude-code`, `codex`, `copilot`, `cursor`, `kilocode`, `kiro`, `opencode`, `pi`, and `qwen`. Kilo Code requires the
 [`@kilocode/cli`](https://kilo.ai/docs/code-with-ai/platforms/cli) package and a configured model provider (`/connect`,
 `kilo auth login`, or a supported provider environment variable). AO launches Kilo Code in the worker checkout with a
 read-only review policy and its own GitHub/AO reporting instructions. It does not invoke Kilo's local `/review` command
 or parse `kilo run --format json`; the reviewer posts through `gh api` and records its verdict through
 `ao review submit`, like the other AO reviewer harnesses.
+
+Qwen reviewer support is experimental and host-trusted. AO launches its persistent TUI from a neutral AO-owned directory in
+plan mode, but that is not OS isolation: a terminal user can still invoke Qwen's `!` shell or change approval mode.
+Continue, Goose, and Vibe have staged adapters but are not selectable reviewers; they fail closed until their containment and
+review-gateway prerequisites are available.
 
 ## Tracker And SCM
 

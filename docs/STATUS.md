@@ -40,20 +40,20 @@ surface (`npm run sqlc`, `npm run api`).
   `/prs/{id}/resolve-comments`.
 - Review routes registered: `GET /reviews`, `POST /reviews/execute`,
   `POST /reviews/{id}/send`.
-- Interactive, long-lived reviewer panes for Claude Code, Codex, Kiro,
-  OpenCode, and Pi. Pi uses an AO-data-owned extension with built-in/project
+- Interactive, long-lived reviewer panes for Claude Code, Codex, GitHub
+  Copilot, Cursor, Kilo Code, Kiro, OpenCode, Pi, and experimental Qwen. Pi uses an AO-data-owned extension with built-in/project
   resources disabled, structured read-only inspection/reporting tools, and
   Escape-based turn cancellation. Kiro also uses its native Escape
-  cancellation; the other reviewers retain their Ctrl-C contract.
+  cancellation. Qwen also uses Escape cancellation and runs from an AO-owned
+  neutral directory in plan mode, but remains explicitly host-trusted because
+  a terminal user can invoke its shell or change approval mode. The other
+  reviewers retain their Ctrl-C contract.
 - The provider-neutral interactive-reviewer capability gateway and neutral
-  AO-owned working-directory contract are available. Agy and Qwen reviewers
-  remain disabled until tmux and ConPTY isolation providers pass the escape and
-  network acceptance tests in ADR 0002. Their staged adapters permanently pin
-  future launches to long-lived interactive TUIs and record their native
-  cancellation contracts, but fail closed before runtime creation and remain
-  absent from supported domain configuration, registry resolution, and desktop
-  choices. Agy validates custom-agent support; Qwen disables implicit project
-  discovery in its reserved interactive command shape.
+  AO-owned working-directory contract are available. Agy, Continue, Goose, and
+  Vibe remain disabled until their documented containment and gateway
+  prerequisites are implemented. Their staged adapters fail closed before
+  runtime creation and remain absent from supported domain configuration,
+  registry resolution, and desktop choices.
 - Durable dashboard notifications for `needs_input`, `ready_to_merge`,
   `pr_merged`, and `pr_closed_unmerged`: backend enrichment/persistence,
   cursor-paginated read/unread history, live notification stream, and read

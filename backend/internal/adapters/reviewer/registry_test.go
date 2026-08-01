@@ -26,7 +26,7 @@ func TestRegistryMatchesDomainVocabulary(t *testing.T) {
 			t.Errorf("reviewer harness %q does not implement cancellation", h)
 		} else if spec, err := canceller.ReviewCancel(context.Background()); err != nil {
 			t.Errorf("reviewer harness %q cancel spec: %v", h, err)
-		} else if h == domain.ReviewerKiro || h == domain.ReviewerPi {
+		} else if h == domain.ReviewerKiro || h == domain.ReviewerPi || h == domain.ReviewerQwen {
 			if spec.Mode != ports.ReviewCancelEscape || spec.Interrupts > 1 {
 				t.Errorf("TUI reviewer %q cancel spec = %+v, want one Escape", h, spec)
 			}
@@ -55,16 +55,12 @@ func TestNewResolverResolvesShippedReviewers(t *testing.T) {
 	if _, ok := resolver.Reviewer("nope"); ok {
 		t.Error("resolver returned an adapter for an unknown harness")
 	}
-	if _, ok := resolver.Reviewer("agy"); ok {
-		t.Error("resolver exposed Agy before its process isolation prerequisite exists")
-	}
-	if _, ok := resolver.Reviewer(domain.ReviewerQwen); ok {
-		t.Error("resolver enabled Qwen without a platform isolation provider")
-	}
-	if reason, ok := DisabledReason(domain.ReviewerQwen); !ok || reason == "" {
-		t.Fatalf("Qwen disabled reason = %q, %v", reason, ok)
-	}
-	if reason, ok := DisabledReason("agy"); !ok || reason == "" {
-		t.Fatalf("Agy disabled reason = %q, %v", reason, ok)
+	for _, h := range []domain.ReviewerHarness{"agy", "continue", "goose", "vibe"} {
+		if _, ok := resolver.Reviewer(h); ok {
+			t.Errorf("resolver exposed staged reviewer %q", h)
+		}
+		if reason, ok := DisabledReason(h); !ok || reason == "" {
+			t.Errorf("%s disabled reason = %q, %v", h, reason, ok)
+		}
 	}
 }

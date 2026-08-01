@@ -14,6 +14,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/kiro"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/opencode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/pi"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/qwen"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -36,6 +37,7 @@ func Constructors() []Adapter {
 		kiro.New(),
 		opencode.New(),
 		pi.New(),
+		qwen.New(),
 	}
 }
 
@@ -74,10 +76,14 @@ func (r *Resolver) Reviewer(harness domain.ReviewerHarness) (ports.Reviewer, boo
 // integration work but deliberately unavailable to configuration/resolution.
 func DisabledReason(harness domain.ReviewerHarness) (string, bool) {
 	switch harness {
-	case domain.ReviewerQwen:
-		return "secure interactive-TUI isolation is unavailable for Qwen shell escapes", true
 	case "agy":
 		return "secure interactive-TUI isolation and review-gateway transport are unavailable for Agy", true
+	case "continue":
+		return "reviewer containment, a capability broker, and Continue gateway transport are unavailable", true
+	case "goose":
+		return "an OCI reviewer supervisor, model broker, and review-gateway MCP transport are unavailable for Goose", true
+	case "vibe":
+		return "process and input containment, a replacement environment, model broker, and review-gateway MCP transport are unavailable for Vibe", true
 	}
 	return "", false
 }

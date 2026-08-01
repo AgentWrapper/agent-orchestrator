@@ -36,9 +36,12 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"good opencode reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerOpenCode}}}, false},
 		{"good kiro reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerKiro}}}, false},
 		{"good pi reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerPi}}}, false},
-		{"qwen reviewer disabled pending isolation", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerQwen}}}, true},
+		{"good experimental qwen reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerQwen}}}, false},
 		{"unknown reviewer harness", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: "nope"}}}, true},
 		{"agy reviewer remains disabled", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: "agy"}}}, true},
+		{"continue reviewer remains disabled", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: "continue"}}}, true},
+		{"goose reviewer remains disabled", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: "goose"}}}, true},
+		{"vibe reviewer remains disabled", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: "vibe"}}}, true},
 		{"worker-only harness is not auto a reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerHarness(HarnessAider)}}}, true},
 		{"empty reviewer harness", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ""}}}, true},
 		{"tracker intake assignee rule", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: "alice"}}, false},
@@ -145,8 +148,8 @@ func TestResolveReviewerHarness(t *testing.T) {
 	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessAider); got != FallbackReviewerHarness {
 		t.Fatalf("fallback = %q, want %q", got, FallbackReviewerHarness)
 	}
-	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessQwen); got != FallbackReviewerHarness {
-		t.Fatalf("qwen worker must not auto-enable pending reviewer: %q", got)
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessQwen); got != ReviewerQwen {
+		t.Fatalf("qwen worker = %q, want reviewer qwen", got)
 	}
 }
 

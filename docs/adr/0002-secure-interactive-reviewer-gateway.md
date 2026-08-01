@@ -41,7 +41,10 @@ future interactive reviewer adapters.
   listener behavior, database schema, or HTTP APIs.
 
 This is an enforceable capability API when invoked, but it is not by itself a
-process sandbox. Agy and Qwen reviewer adapters therefore remain unregistered.
+process sandbox. Agy therefore remains unregistered. Qwen is available only as
+an explicitly selected, experimental host-trusted reviewer; its plan mode and
+neutral directory reduce accidental authority but do not contain terminal-user
+shell escapes or approval-mode changes.
 
 ## Required isolation provider
 
@@ -86,5 +89,6 @@ command filtering is insufficient.
 Future reviewer adapters share one capability surface instead of embedding
 provider-specific command allowlists. Unit tests cover host-side authorization and
 command construction. Platform sandbox implementations and escape/network tests
-remain a separate prerequisite; until then, enabling Agy or Qwen as reviewers
-would overstate AO's read-only guarantee.
+remain a prerequisite for describing Agy or Qwen as contained/read-only. Until
+then, Qwen must retain its experimental host-trust warning and Agy must remain
+disabled.

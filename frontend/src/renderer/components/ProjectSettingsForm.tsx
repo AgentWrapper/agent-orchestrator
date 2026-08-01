@@ -58,6 +58,7 @@ const KNOWN_REVIEWER_HARNESS_IDS = new Set([
 	"kiro",
 	"opencode",
 	"pi",
+	"qwen",
 ]);
 
 const projectQueryKey = (id: string) => ["project", id] as const;
@@ -510,6 +511,7 @@ const REVIEWER_AGENT_PRIORITY = [
 	"kilocode",
 	"kiro",
 	"pi",
+	"qwen",
 	"aider",
 ] as const;
 const REVIEWER_AGENT_PRIORITY_RANK = new Map<string, number>(

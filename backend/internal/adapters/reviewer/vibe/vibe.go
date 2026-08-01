@@ -27,8 +27,8 @@ const (
 	// HarnessID stays package-local so Vibe cannot be selected in project
 	// configuration before all of its containment prerequisites are present.
 	HarnessID     domain.ReviewerHarness = "vibe"
-	pinnedVersion                        = "2.17.1"
-	reviewerAgent                        = "plan"
+	pinnedVersion string                 = "2.17.1"
+	reviewerAgent string                 = "plan"
 )
 
 var (
