@@ -1,0 +1,6 @@
+src/renderer/components/BrowserPanel.test.tsx(44,1): error TS1185: Merge conflict marker encountered.
+src/renderer/components/BrowserPanel.test.tsx(47,1): error TS1185: Merge conflict marker encountered.
+src/renderer/components/BrowserPanel.test.tsx(50,1): error TS1185: Merge conflict marker encountered.
+src/renderer/components/BrowserPanel.test.tsx(82,1): error TS1185: Merge conflict marker encountered.
+src/renderer/components/BrowserPanel.test.tsx(84,1): error TS1185: Merge conflict marker encountered.
+src/renderer/components/BrowserPanel.test.tsx(87,1): error TS1185: Merge conflict marker encountered.

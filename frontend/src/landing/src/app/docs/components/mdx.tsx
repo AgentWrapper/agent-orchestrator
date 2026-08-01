@@ -215,7 +215,7 @@ export function PlatformSupport({
   );
 }
 
-const RELEASES_URL = "https://github.com/AgentWrapper/agent-orchestrator/releases";
+const RELEASES_URL = "https://github.com/Untrivial-ai/agent-orchestrator/releases";
 
 export function InstallDownloads() {
   return (

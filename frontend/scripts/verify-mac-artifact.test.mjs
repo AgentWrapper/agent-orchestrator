@@ -91,6 +91,32 @@ describe("verify-mac-artifact.sh", () => {
 		expect(stderr).toContain("expected an .app bundle directory");
 	});
 
+	// A .dmg is a first-class input now: forge.config.ts's postMake seals the dmg
+	// and then gates on this script (#3267 decision 3 step 4). Same usage
+	// contract, so the same paths have to exit 2 rather than fall through to
+	// macOS-only tooling.
+	it("accepts .dmg as a known artifact type", async () => {
+		const { readFileSync } = await import("node:fs");
+		const src = readFileSync(SCRIPT, "utf8");
+		expect(src).toContain("*.dmg)");
+		const { stderr } = await run([]);
+		expect(stderr).toContain(".dmg");
+	});
+
+	it("exits 2 when a .dmg path is actually a directory", async () => {
+		const fake = join(dir, "bundle.dmg");
+		mkdirSync(fake, { recursive: true });
+		const { code, stderr } = await run([fake]);
+		expect(code).toBe(2);
+		expect(stderr).toContain("expected a .dmg file");
+	});
+
+	it("exits 2 for a nonexistent .dmg", async () => {
+		const { code, stderr } = await run([join(dir, "not-here.dmg")]);
+		expect(code).toBe(2);
+		expect(stderr).toContain("no such file");
+	});
+
 	it("encodes the verified command set (ditto, spctl -vv, stapler validate)", async () => {
 		const { readFileSync } = await import("node:fs");
 		const src = readFileSync(SCRIPT, "utf8");
@@ -100,7 +126,11 @@ describe("verify-mac-artifact.sh", () => {
 		expect(src).toContain("ditto -x -k");
 		expect(src).not.toMatch(/^\s*unzip /m);
 		expect(src).toContain("codesign --verify --deep --strict");
-		expect(src).toContain("spctl -a -vv -t exec");
 		expect(src).toContain("xcrun stapler validate");
+		// The .zip/.app path must keep assessing executable code...
+		expect(src).toContain("spctl -a -vv -t exec");
+		// ...and the dmg container must be assessed on open against the primary
+		// signature (#3267 decision 3 step 4), never with -t exec.
+		expect(src).toContain("spctl -a -vv -t open --context context:primary-signature");
 	});
 });

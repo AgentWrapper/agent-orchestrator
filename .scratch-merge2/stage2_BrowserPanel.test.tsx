@@ -1,0 +1,1050 @@
+import { act, render, renderHook, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { BrowserPanel, BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
+import { useBrowserView, type BrowserNavState } from "../hooks/useBrowserView";
+import type { WorkspaceSession } from "../types/workspace";
+import type {
+	BrowserAnnotationCancelPayload,
+	BrowserAnnotationSubmitPayload,
+	BrowserTextEditCancelPayload,
+	BrowserTextEditSubmitPayload,
+} from "../../shared/browser-annotations";
+
+const postMock = vi.hoisted(() => vi.fn());
+const invalidateQueriesMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../lib/api-client", () => ({
+	apiClient: { POST: postMock },
+	apiErrorMessage: (error: unknown, fallback = "Request failed") =>
+		typeof error === "object" && error !== null && "message" in error
+			? String((error as { message: unknown }).message)
+			: fallback,
+}));
+
+vi.mock("@tanstack/react-query", () => ({
+	useQueryClient: () => ({ invalidateQueries: invalidateQueriesMock }),
+}));
+
+const hookState = vi.hoisted(() => ({
+	navigate: vi.fn(),
+	goBack: vi.fn(),
+	goForward: vi.fn(),
+	reload: vi.fn(),
+	stop: vi.fn(),
+	selectTab: vi.fn(),
+	closeTab: vi.fn(),
+	setAnnotationMode: vi.fn(),
+	setTextEditMode: vi.fn(),
+	tabs: [{ id: "t1", url: "", title: "", active: true }],
+	activeTabId: "t1",
+	tabNotice: "",
+	agentBrowserActive: false,
+	annotationMode: false,
+	textEditMode: false,
+	previewUrl: undefined as string | undefined,
+	navState: {
+		viewId: "42:sess-1",
+		url: "",
+		title: "",
+		canGoBack: false,
+		canGoForward: false,
+		isLoading: false,
+	} as BrowserNavState,
+}));
+
+vi.mock("../hooks/useBrowserView", () => ({
+	useBrowserView: (options: { previewUrl?: string }) => {
+		hookState.previewUrl = options.previewUrl;
+		return {
+			viewId: "42:sess-1",
+			navState: hookState.navState,
+			slotRef: vi.fn(),
+			navigate: hookState.navigate,
+			goBack: hookState.goBack,
+			goForward: hookState.goForward,
+			reload: hookState.reload,
+			stop: hookState.stop,
+			tabs: hookState.tabs,
+			activeTabId: hookState.activeTabId,
+			tabNotice: hookState.tabNotice,
+			agentBrowserActive: hookState.agentBrowserActive,
+			selectTab: hookState.selectTab,
+			closeTab: hookState.closeTab,
+			annotationMode: hookState.annotationMode,
+			setAnnotationMode: hookState.setAnnotationMode,
+			textEditMode: hookState.textEditMode,
+			setTextEditMode: hookState.setTextEditMode,
+		};
+	},
+}));
+
+const session: WorkspaceSession = {
+	id: "sess-1",
+	workspaceId: "ws-1",
+	workspaceName: "my-app",
+	title: "do the thing",
+	provider: "claude-code",
+	kind: "worker",
+	branch: "feat/ns",
+	status: "needs_input",
+	updatedAt: "2026-06-15T00:00:00Z",
+	prs: [],
+};
+
+function annotationPayload(instruction: string): BrowserAnnotationSubmitPayload {
+	return {
+		viewId: "42:sess-1",
+		instruction,
+		context: {
+			url: "http://localhost:5173/",
+			tag: "button",
+			classes: [],
+			selector: "button",
+			rect: { x: 0, y: 0, width: 80, height: 30 },
+			nearbyText: [],
+			computedStyle: {},
+		},
+	};
+}
+
+function textEditPayload(overrides: Partial<BrowserTextEditSubmitPayload> = {}): BrowserTextEditSubmitPayload {
+	const baseContext: BrowserTextEditSubmitPayload["context"] = {
+		url: "http://localhost:5173/",
+		tag: "h1",
+		classes: [],
+		selector: "h1",
+		rect: { x: 0, y: 0, width: 120, height: 40 },
+		nearbyText: [],
+		computedStyle: {},
+	};
+	return {
+		viewId: "42:sess-1",
+		oldText: "Draft",
+		newText: "Published",
+		...overrides,
+		context: {
+			...baseContext,
+			...(overrides.context ?? {}),
+		},
+	};
+}
+
+function PersistentBrowserPanelView({
+	currentSession,
+	visible,
+}: {
+	currentSession: WorkspaceSession;
+	visible: boolean;
+}) {
+	const browserView = useBrowserView({
+		sessionId: currentSession.id,
+		active: true,
+		poppedOut: false,
+		previewUrl: currentSession.previewUrl,
+		previewRevision: currentSession.previewRevision,
+	});
+	const annotationQueue = useBrowserAnnotationQueue({
+		sessionId: currentSession.id,
+		navUrl: browserView.navState.url,
+	});
+	if (!visible) return null;
+	return (
+		<BrowserPanelView
+			active
+			annotationQueue={annotationQueue}
+			browserView={browserView}
+			onTogglePopOut={() => undefined}
+			poppedOut={false}
+			session={currentSession}
+		/>
+	);
+}
+
+describe("BrowserPanel", () => {
+	const annotationSubmitListeners = new Set<(payload: BrowserAnnotationSubmitPayload) => void>();
+	const annotationCancelListeners = new Set<(payload: BrowserAnnotationCancelPayload) => void>();
+	const textEditSubmitListeners = new Set<(payload: BrowserTextEditSubmitPayload) => void>();
+	const textEditCancelListeners = new Set<(payload: BrowserTextEditCancelPayload) => void>();
+
+	beforeEach(() => {
+		hookState.navigate.mockReset();
+		hookState.goBack.mockReset();
+		hookState.goForward.mockReset();
+		hookState.reload.mockReset();
+		hookState.stop.mockReset();
+		hookState.selectTab.mockReset();
+		hookState.closeTab.mockReset();
+		hookState.setAnnotationMode.mockReset();
+		hookState.setAnnotationMode.mockResolvedValue(undefined);
+		hookState.setTextEditMode.mockReset();
+		hookState.setTextEditMode.mockResolvedValue(undefined);
+		hookState.annotationMode = false;
+		hookState.textEditMode = false;
+		postMock.mockReset();
+		postMock.mockResolvedValue({ data: {} });
+		invalidateQueriesMock.mockReset();
+		invalidateQueriesMock.mockResolvedValue(undefined);
+		annotationSubmitListeners.clear();
+		annotationCancelListeners.clear();
+		textEditSubmitListeners.clear();
+		textEditCancelListeners.clear();
+		window.ao!.browser.onAnnotationSubmit = vi.fn((listener: (payload: BrowserAnnotationSubmitPayload) => void) => {
+			annotationSubmitListeners.add(listener);
+			return () => {
+				annotationSubmitListeners.delete(listener);
+			};
+		});
+		window.ao!.browser.onAnnotationCancel = vi.fn((listener: (payload: BrowserAnnotationCancelPayload) => void) => {
+			annotationCancelListeners.add(listener);
+			return () => {
+				annotationCancelListeners.delete(listener);
+			};
+		});
+		window.ao!.browser.onTextEditSubmit = vi.fn((listener: (payload: BrowserTextEditSubmitPayload) => void) => {
+			textEditSubmitListeners.add(listener);
+			return () => {
+				textEditSubmitListeners.delete(listener);
+			};
+		});
+		window.ao!.browser.onTextEditCancel = vi.fn((listener: (payload: BrowserTextEditCancelPayload) => void) => {
+			textEditCancelListeners.add(listener);
+			return () => {
+				textEditCancelListeners.delete(listener);
+			};
+		});
+		hookState.previewUrl = undefined;
+		hookState.tabs = [{ id: "t1", url: "", title: "", active: true }];
+		hookState.activeTabId = "t1";
+		hookState.tabNotice = "";
+		hookState.agentBrowserActive = false;
+		hookState.navState = {
+			viewId: "42:sess-1",
+			url: "",
+			title: "",
+			canGoBack: false,
+			canGoForward: false,
+			isLoading: false,
+		};
+	});
+
+	it("navigates to the entered URL on submit", async () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const input = screen.getByRole("textbox", { name: /browser url/i });
+
+		await userEvent.clear(input);
+		await userEvent.type(input, "localhost:5173{Enter}");
+
+		expect(hookState.navigate).toHaveBeenCalledWith("localhost:5173");
+	});
+
+	it("threads the session preview URL into the browser view (which drives navigation)", () => {
+		render(
+			<BrowserPanel
+				active
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={{ ...session, previewUrl: "file:///tmp/preview/index.html" }}
+			/>,
+		);
+
+		expect(hookState.previewUrl).toBe("file:///tmp/preview/index.html");
+	});
+
+	it("binds navigation controls to nav state", async () => {
+		hookState.navState = {
+			viewId: "42:sess-1",
+			url: "http://localhost:5173/",
+			title: "Local app",
+			canGoBack: true,
+			canGoForward: false,
+			isLoading: true,
+		};
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		await userEvent.click(screen.getByRole("button", { name: /back/i }));
+		await userEvent.click(screen.getByRole("button", { name: /stop/i }));
+
+		expect(hookState.goBack).toHaveBeenCalled();
+		expect(screen.getByRole("button", { name: /forward/i })).toBeDisabled();
+		expect(hookState.stop).toHaveBeenCalled();
+	});
+
+	it("shows a compact tab count and lets the user select and close tabs", async () => {
+		hookState.tabs = [
+			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
+			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
+		];
+		hookState.activeTabId = "t2";
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		const tabsButton = screen.getByRole("button", { name: "Browser tabs (2)" });
+		expect(tabsButton).toHaveClass("bg-accent-weak");
+		await userEvent.click(tabsButton);
+		await userEvent.click(screen.getByText("First app"));
+		expect(hookState.selectTab).toHaveBeenCalledWith("t1");
+
+		await userEvent.click(tabsButton);
+		await userEvent.click(screen.getByRole("menuitem", { name: "Close tab First app" }));
+		expect(hookState.closeTab).toHaveBeenCalledWith("t1");
+	});
+
+	it("surfaces a popup-created tab without adding a full tab strip", () => {
+		hookState.tabNotice = "Opened new tab";
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		expect(screen.getByRole("status")).toHaveTextContent("Opened new tab");
+		expect(screen.getByRole("button", { name: "Browser tabs (1)" })).toBeInTheDocument();
+	});
+
+	it("shows empty and error states", () => {
+		hookState.navState = { ...hookState.navState, error: "Connection refused" };
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		expect(screen.getByText("Enter a URL or click one in the terminal.")).toBeInTheDocument();
+		expect(screen.getByText("Connection refused")).toBeInTheDocument();
+	});
+
+	it("toggles pop-out mode", async () => {
+		const onTogglePopOut = vi.fn();
+		render(<BrowserPanel active onTogglePopOut={onTogglePopOut} poppedOut={false} session={session} />);
+
+		await userEvent.click(screen.getByRole("button", { name: /pop out/i }));
+
+		expect(onTogglePopOut).toHaveBeenCalledWith(true);
+	});
+
+	it("enables annotation mode from the toolbar when a page is loaded", async () => {
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		await userEvent.click(screen.getByRole("button", { name: /annotate/i }));
+
+		expect(hookState.setAnnotationMode).toHaveBeenCalledWith(true);
+	});
+
+	it("shows browser activity only for browser commands, not general worker activity", () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		const first = render(
+			<BrowserPanel
+				active
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={{
+					...session,
+					status: "idle",
+					activity: { state: "active", lastActivityAt: "2026-06-15T00:00:00Z" },
+				}}
+			/>,
+		);
+
+		expect(screen.getByRole("button", { name: /annotate/i })).toBeEnabled();
+		expect(screen.queryByText("Agent using browser")).not.toBeInTheDocument();
+
+		first.unmount();
+		hookState.agentBrowserActive = true;
+		render(
+			<BrowserPanel
+				active
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={{
+					...session,
+					status: "working",
+					activity: { state: "idle", lastActivityAt: "2026-06-15T00:00:00Z" },
+				}}
+			/>,
+		);
+
+		expect(screen.getByRole("button", { name: /annotate/i })).toBeEnabled();
+		expect(screen.getByText("Agent using browser")).toBeInTheDocument();
+	});
+
+	it("disables annotation mode when no page is loaded", () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		expect(screen.getByRole("button", { name: /annotate/i })).toBeDisabled();
+	});
+
+	it("enables text edit mode from the toolbar when a page is loaded", async () => {
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
+		render(
+			<BrowserPanel
+				active
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={{ ...session, previewUrl: "http://localhost:5173/" }}
+			/>,
+		);
+
+		await userEvent.click(screen.getByRole("button", { name: /edit page text/i }));
+
+		expect(hookState.setTextEditMode).toHaveBeenCalledWith(true);
+	});
+
+	it("disables text edit mode for loaded pages outside the session preview origin", () => {
+		hookState.navState = {
+			...hookState.navState,
+			url: "https://example.com/",
+		};
+		render(
+			<BrowserPanel
+				active
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={{ ...session, previewUrl: "http://localhost:5173/" }}
+			/>,
+		);
+
+		expect(screen.getByRole("button", { name: /edit page text/i })).toBeDisabled();
+	});
+
+	it("disables text edit mode for file URLs that are not the session preview file", () => {
+		hookState.navState = {
+			...hookState.navState,
+			url: "file:///workspace/other.html",
+		};
+		render(
+			<BrowserPanel
+				active
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={{ ...session, previewUrl: "file:///workspace/index.html" }}
+			/>,
+		);
+
+		expect(screen.getByRole("button", { name: /edit page text/i })).toBeDisabled();
+	});
+
+	it("applies submitted text edits to the session workspace", async () => {
+		postMock.mockResolvedValueOnce({
+			data: {
+				status: "applied",
+				sessionId: "sess-1",
+				path: "src/App.tsx",
+				line: 12,
+				occurrence: 0,
+				candidates: [],
+			},
+		});
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		act(() => {
+			textEditSubmitListeners.forEach((listener) => listener(textEditPayload()));
+		});
+
+		expect(await screen.findByText("Applied")).toBeInTheDocument();
+		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/text-edit", {
+			params: { path: { sessionId: "sess-1" } },
+			body: {
+				oldText: "Draft",
+				newText: "Published",
+				url: "http://localhost:5173/",
+				selector: "h1",
+				tag: "h1",
+			},
+		});
+		expect(invalidateQueriesMock).toHaveBeenCalledWith({
+			queryKey: ["session-workspace-files", "sess-1"],
+		});
+		expect(invalidateQueriesMock).toHaveBeenCalledWith({
+			queryKey: ["session-workspace-file", "sess-1"],
+		});
+	});
+
+	it("ignores stale text edit responses on the same URL", async () => {
+		let resolveFirst: (value: unknown) => void = () => undefined;
+		const firstResponse = new Promise((resolve) => {
+			resolveFirst = resolve;
+		});
+		postMock.mockReturnValueOnce(firstResponse).mockResolvedValueOnce({
+			data: {
+				status: "applied",
+				sessionId: "sess-1",
+				path: "src/App.tsx",
+				line: 12,
+				occurrence: 0,
+				candidates: [],
+			},
+		});
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		act(() => {
+			textEditSubmitListeners.forEach((listener) =>
+				listener(textEditPayload({ oldText: "First draft", newText: "First final" })),
+			);
+			textEditSubmitListeners.forEach((listener) =>
+				listener(textEditPayload({ oldText: "Second draft", newText: "Second final" })),
+			);
+		});
+
+		expect(await screen.findByText("Applied")).toBeInTheDocument();
+		await act(async () => {
+			resolveFirst({
+				data: {
+					status: "ambiguous",
+					sessionId: "sess-1",
+					candidates: [
+						{
+							path: "src/Stale.tsx",
+							occurrence: 0,
+							line: 3,
+							snippet: "<h1>First draft</h1>",
+							reason: "text_match",
+						},
+					],
+				},
+			});
+			await firstResponse;
+		});
+
+		expect(screen.queryByTestId("browser-text-edit-candidates")).not.toBeInTheDocument();
+		expect(screen.getByText("Applied")).toBeInTheDocument();
+	});
+
+	it("lets the user choose a source file when a text edit is ambiguous", async () => {
+		postMock
+			.mockResolvedValueOnce({
+				data: {
+					status: "ambiguous",
+					sessionId: "sess-1",
+					candidates: [
+						{
+							path: "src/App.tsx",
+							occurrence: 0,
+							line: 4,
+							snippet: "<h1>Draft</h1>",
+							reason: "exact text match",
+						},
+						{
+							path: "src/Home.tsx",
+							occurrence: 2,
+							line: 9,
+							snippet: "<button>Draft</button>",
+							reason: "exact text match",
+						},
+					],
+				},
+			})
+			.mockResolvedValueOnce({
+				data: {
+					status: "applied",
+					sessionId: "sess-1",
+					path: "src/Home.tsx",
+					line: 9,
+					occurrence: 2,
+					candidates: [],
+				},
+			});
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		act(() => {
+			textEditSubmitListeners.forEach((listener) =>
+				listener(
+					textEditPayload({
+						context: {
+							url: "http://localhost:5173/",
+							tag: "button",
+							classes: [],
+							selector: "button",
+							rect: { x: 8, y: 16, width: 120, height: 32 },
+							nearbyText: [],
+							computedStyle: {},
+						},
+					}),
+				),
+			);
+		});
+
+		const picker = await screen.findByTestId("browser-text-edit-candidates");
+		expect(within(picker).getByText("Choose source file")).toBeInTheDocument();
+		await userEvent.click(
+			screen.getByRole("button", {
+				name: /apply edit to src\/home\.tsx line 9/i,
+			}),
+		);
+
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+		expect(postMock.mock.calls[1][1]).toMatchObject({
+			params: { path: { sessionId: "sess-1" } },
+			body: {
+				oldText: "Draft",
+				newText: "Published",
+				url: "http://localhost:5173/",
+				selector: "button",
+				tag: "button",
+				target: { path: "src/Home.tsx", occurrence: 2 },
+			},
+		});
+		expect(await screen.findByText("Applied")).toBeInTheDocument();
+	});
+
+	it("clears an ambiguous text edit when the session changes", async () => {
+		postMock.mockResolvedValueOnce({
+			data: {
+				status: "ambiguous",
+				sessionId: "sess-1",
+				candidates: [
+					{
+						path: "src/App.tsx",
+						occurrence: 0,
+						line: 4,
+						snippet: "<h1>Draft</h1>",
+						reason: "exact text match",
+					},
+				],
+			},
+		});
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
+		const { rerender } = render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
+		);
+
+		act(() => {
+			textEditSubmitListeners.forEach((listener) => listener(textEditPayload()));
+		});
+		expect(await screen.findByTestId("browser-text-edit-candidates")).toBeInTheDocument();
+
+		rerender(
+			<BrowserPanel
+				active
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={{ ...session, id: "sess-2" }}
+			/>,
+		);
+
+		await waitFor(() => expect(screen.queryByTestId("browser-text-edit-candidates")).not.toBeInTheDocument());
+	});
+
+	it("clears an ambiguous text edit when the browser URL changes", async () => {
+		postMock.mockResolvedValueOnce({
+			data: {
+				status: "ambiguous",
+				sessionId: "sess-1",
+				candidates: [
+					{
+						path: "src/App.tsx",
+						occurrence: 0,
+						line: 4,
+						snippet: "<h1>Draft</h1>",
+						reason: "exact text match",
+					},
+				],
+			},
+		});
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
+		const { rerender } = render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
+		);
+
+		act(() => {
+			textEditSubmitListeners.forEach((listener) => listener(textEditPayload()));
+		});
+		expect(await screen.findByTestId("browser-text-edit-candidates")).toBeInTheDocument();
+
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/settings",
+		};
+		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		await waitFor(() => expect(screen.queryByTestId("browser-text-edit-candidates")).not.toBeInTheDocument());
+	});
+
+	it("sends submitted annotation instructions to the session agent", async () => {
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
+		render(
+			<BrowserPanel
+				active
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={{ ...session, status: "idle" }}
+			/>,
+		);
+
+		act(() => {
+			annotationSubmitListeners.forEach((listener) =>
+				listener({
+					viewId: "42:sess-1",
+					instruction: "Make this button blue.",
+					context: {
+						url: "http://localhost:5173/",
+						title: "Preview",
+						tag: "button",
+						id: "save",
+						classes: ["primary"],
+						selector: "button#save",
+						rect: { x: 16, y: 24, width: 140, height: 36 },
+						visibleText: "Save changes",
+						nearbyText: ["Profile settings"],
+						computedStyle: {},
+					},
+				}),
+			);
+		});
+
+		expect(await screen.findByText("Sent")).toBeInTheDocument();
+		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/send", {
+			params: { path: { sessionId: "sess-1" } },
+			body: {
+				message: expect.stringContaining("Make this button blue."),
+			},
+		});
+		const body = postMock.mock.calls[0][1].body as { message: string };
+		expect(body.message).toContain("button#save");
+		expect(body.message.length).toBeLessThanOrEqual(4096);
+	});
+
+	it("sends a follow-up annotation without waiting for an activity-state cycle", async () => {
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		act(() => {
+			annotationSubmitListeners.forEach((listener) => listener(annotationPayload("Make this button blue.")));
+		});
+		expect(await screen.findByText("Sent")).toBeInTheDocument();
+		expect(postMock).toHaveBeenCalledTimes(1);
+
+		act(() => {
+			annotationSubmitListeners.forEach((listener) => listener(annotationPayload("Make this button green.")));
+		});
+
+		expect(await screen.findByText("Sent")).toBeInTheDocument();
+		expect(postMock).toHaveBeenCalledTimes(2);
+		expect((postMock.mock.calls[1][1].body as { message: string }).message).toContain("Make this button green.");
+	});
+
+	it("serializes annotations in order exactly once while status remains working", async () => {
+		let resolveFirstPost: (value: unknown) => void = () => undefined;
+		let resolveSecondPost: (value: unknown) => void = () => undefined;
+		postMock
+			.mockReturnValueOnce(
+				new Promise((resolve) => {
+					resolveFirstPost = resolve;
+				}),
+			)
+			.mockReturnValueOnce(
+				new Promise((resolve) => {
+					resolveSecondPost = resolve;
+				}),
+			)
+			.mockResolvedValueOnce({ data: {} });
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
+		render(
+			<BrowserPanel
+				active
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={{ ...session, status: "working" }}
+			/>,
+		);
+		const instructions = ["Make this button blue.", "Make this heading shorter.", "Reduce the card padding."];
+
+		act(() => {
+			annotationSubmitListeners.forEach((listener) => {
+				instructions.forEach((instruction) => listener(annotationPayload(instruction)));
+			});
+		});
+
+		expect(postMock).toHaveBeenCalledTimes(1);
+		await act(async () => {
+			resolveFirstPost({ data: {} });
+		});
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+		expect(postMock).toHaveBeenCalledTimes(2);
+		await act(async () => {
+			resolveSecondPost({ data: {} });
+		});
+		expect(await screen.findByText("Sent")).toBeInTheDocument();
+		expect(postMock).toHaveBeenCalledTimes(3);
+		expect(
+			postMock.mock.calls.map(
+				(call) => (call[1].body as { message: string }).message.match(/Change request:\n(.+)/)?.[1],
+			),
+		).toEqual(instructions);
+	});
+
+	it("preserves queued annotations while the BrowserPanelView is unmounted", async () => {
+		let resolvePost: (value: unknown) => void = () => undefined;
+		postMock
+			.mockReturnValueOnce(
+				new Promise((resolve) => {
+					resolvePost = resolve;
+				}),
+			)
+			.mockResolvedValueOnce({ data: {} });
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
+		const { rerender } = render(<PersistentBrowserPanelView currentSession={session} visible />);
+
+		act(() => {
+			annotationSubmitListeners.forEach((listener) => {
+				listener(annotationPayload("Make this button blue."));
+				listener(annotationPayload("Make this heading shorter."));
+			});
+		});
+		expect(postMock).toHaveBeenCalledTimes(1);
+
+		rerender(<PersistentBrowserPanelView currentSession={session} visible={false} />);
+		expect(postMock).toHaveBeenCalledTimes(1);
+
+		await act(async () => {
+			resolvePost({ data: {} });
+		});
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+		expect(postMock).toHaveBeenCalledTimes(2);
+		expect((postMock.mock.calls[0][1].body as { message: string }).message).toContain("Make this button blue.");
+		expect((postMock.mock.calls[1][1].body as { message: string }).message).toContain("Make this heading shorter.");
+
+		rerender(<PersistentBrowserPanelView currentSession={session} visible />);
+		expect(await screen.findByText("Sent")).toBeInTheDocument();
+		expect((postMock.mock.calls[1][1].body as { message: string }).message).toContain("Make this heading shorter.");
+	});
+
+	it("continues queued delivery across activity status changes", async () => {
+		let resolvePost: (value: unknown) => void = () => undefined;
+		postMock
+			.mockReturnValueOnce(
+				new Promise((resolve) => {
+					resolvePost = resolve;
+				}),
+			)
+			.mockResolvedValueOnce({ data: {} });
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
+		const { rerender } = render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
+		);
+		const payload = {
+			viewId: "42:sess-1",
+			instruction: "Make this button yellow.",
+			context: {
+				url: "http://localhost:5173/",
+				tag: "button",
+				classes: [],
+				selector: "button",
+				rect: { x: 0, y: 0, width: 80, height: 30 },
+				nearbyText: [],
+				computedStyle: {},
+			},
+		};
+
+		act(() => {
+			annotationSubmitListeners.forEach((listener) => {
+				listener(payload);
+				listener({ ...payload, instruction: "Make this button blue." });
+			});
+		});
+		rerender(
+			<BrowserPanel
+				active
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={{ ...session, status: "working" }}
+			/>,
+		);
+		await act(async () => {
+			resolvePost({ data: {} });
+		});
+		rerender(
+			<BrowserPanel
+				active
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={{ ...session, status: "idle" }}
+			/>,
+		);
+		expect(await screen.findByText("Sent")).toBeInTheDocument();
+		expect(postMock).toHaveBeenCalledTimes(2);
+	});
+
+	it("sends submitted annotations while the session status is working", async () => {
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
+		render(
+			<BrowserPanel
+				active
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={{ ...session, status: "working" }}
+			/>,
+		);
+
+		act(() => {
+			annotationSubmitListeners.forEach((listener) =>
+				listener({
+					viewId: "42:sess-1",
+					instruction: "Move this card higher.",
+					context: {
+						url: "http://localhost:5173/",
+						tag: "section",
+						classes: [],
+						selector: "section",
+						rect: { x: 0, y: 0, width: 320, height: 180 },
+						nearbyText: [],
+						computedStyle: {},
+					},
+				}),
+			);
+		});
+
+		expect(await screen.findByText("Sent")).toBeInTheDocument();
+		expect(postMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("clears the annotation delivery confirmation after two seconds", async () => {
+		vi.useFakeTimers();
+		try {
+			const { result } = renderHook(() =>
+				useBrowserAnnotationQueue({
+					sessionId: "sess-1",
+					navUrl: "http://localhost:5173/",
+				}),
+			);
+
+			act(() => {
+				result.current.enqueue(annotationPayload("Make this button blue."));
+			});
+			await act(async () => {
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+			expect(result.current.status).toBe("sent");
+
+			act(() => {
+				vi.advanceTimersByTime(1_999);
+			});
+			expect(result.current.status).toBe("sent");
+
+			act(() => {
+				vi.advanceTimersByTime(1);
+			});
+			expect(result.current.status).toBe("idle");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("shows annotation send errors", async () => {
+		postMock.mockResolvedValue({
+			error: { message: "AO daemon is not ready." },
+		});
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		act(() => {
+			annotationSubmitListeners.forEach((listener) =>
+				listener({
+					viewId: "42:sess-1",
+					instruction: "Make this button blue.",
+					context: {
+						url: "http://localhost:5173/",
+						tag: "button",
+						classes: [],
+						selector: "button",
+						rect: { x: 0, y: 0, width: 80, height: 30 },
+						nearbyText: [],
+						computedStyle: {},
+					},
+				}),
+			);
+		});
+
+		expect(await screen.findByText("AO daemon is not ready.")).toBeInTheDocument();
+	});
+
+	it("keeps a failed annotation queued so the user can retry it", async () => {
+		postMock
+			.mockResolvedValueOnce({ error: { message: "AO daemon is not ready." } })
+			.mockResolvedValueOnce({ data: {} });
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const payload = annotationPayload("Keep my original annotation request.");
+
+		act(() => {
+			annotationSubmitListeners.forEach((listener) =>
+				listener({
+					...payload,
+					context: {
+						...payload.context,
+						selector: "button#save",
+					},
+				}),
+			);
+		});
+
+		expect(await screen.findByText("AO daemon is not ready.")).toBeInTheDocument();
+		expect(postMock).toHaveBeenCalledTimes(1);
+
+		await userEvent.click(screen.getByRole("button", { name: /retry annotation/i }));
+
+		expect(await screen.findByText("Sent")).toBeInTheDocument();
+		expect(postMock).toHaveBeenCalledTimes(2);
+		const retryBody = postMock.mock.calls[1][1].body as { message: string };
+		expect(retryBody.message).toContain("Keep my original annotation request.");
+		expect(retryBody.message).toContain("button#save");
+	});
+
+	it("clears picking state when the page cancels annotation mode", async () => {
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		await userEvent.click(screen.getByRole("button", { name: /annotate/i }));
+		expect(screen.getByText("Pick element")).toBeInTheDocument();
+
+		act(() => {
+			annotationCancelListeners.forEach((listener) => listener({ viewId: "42:sess-1", reason: "escape" }));
+		});
+
+		expect(screen.queryByText("Pick element")).not.toBeInTheDocument();
+	});
+});
