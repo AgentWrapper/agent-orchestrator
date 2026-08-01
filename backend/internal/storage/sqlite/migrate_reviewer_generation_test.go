@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestMigration0039BackfillsReviewerGenerationFromExistingHandle(t *testing.T) {
+func TestMigration0041BackfillsReviewerGenerationFromExistingHandle(t *testing.T) {
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+"?_pragma=busy_timeout(5000)")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
@@ -40,10 +40,19 @@ INSERT INTO review_run (
         '2026-07-30T11:00:00Z'
     );
 `); err != nil {
-		t.Fatalf("seed pre-0039 reviewer state: %v", err)
+		t.Fatalf("seed pre-0041 reviewer state: %v", err)
 	}
 
-	upTo(t, db, 39)
+	upTo(t, db, 41)
+	var applied int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM goose_db_version WHERE version_id = 41 AND is_applied = 1`,
+	).Scan(&applied); err != nil {
+		t.Fatalf("read reviewer generation migration version: %v", err)
+	}
+	if applied != 1 {
+		t.Fatalf("applied migration version 41 count = %d, want 1", applied)
+	}
 
 	var generation string
 	if err := db.QueryRow(
