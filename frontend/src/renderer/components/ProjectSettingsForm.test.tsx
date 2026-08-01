@@ -433,6 +433,7 @@ describe("ProjectSettingsForm", () => {
 		const qwen = { id: "qwen", label: "Qwen Code", authStatus: "authorized" };
 		const devin = { id: "devin", label: "Devin", authStatus: "authorized" };
 		const droid = { id: "droid", label: "Droid", authStatus: "authorized" };
+		const kimi = { id: "kimi", label: "Kimi", authStatus: "authorized" };
 		const experimental = [
 			{ id: "agy", label: "Agy", authStatus: "authorized" },
 			{ id: "continue", label: "Continue", authStatus: "authorized" },
@@ -442,9 +443,9 @@ describe("ProjectSettingsForm", () => {
 			if (path === "/api/v1/agents") {
 				return {
 					data: {
-						supported: [...agentCatalogResponse.data.supported, qwen, devin, droid, ...experimental],
-						installed: [...agentCatalogResponse.data.installed, qwen, devin, droid, ...experimental],
-						authorized: [...agentCatalogResponse.data.authorized, qwen, devin, droid, ...experimental],
+						supported: [...agentCatalogResponse.data.supported, qwen, devin, droid, kimi, ...experimental],
+						installed: [...agentCatalogResponse.data.installed, qwen, devin, droid, kimi, ...experimental],
+						authorized: [...agentCatalogResponse.data.authorized, qwen, devin, droid, kimi, ...experimental],
 					},
 					error: undefined,
 				};
@@ -466,6 +467,7 @@ describe("ProjectSettingsForm", () => {
 		expect(labels).toContain("Vibe");
 		expect(labels).toContain("Devin");
 		expect(labels).toContain("Droid");
+		expect(labels).toContain("Kimi");
 	});
 
 	it("shows unknown-auth agents as selectable with a warning in project settings", async () => {
