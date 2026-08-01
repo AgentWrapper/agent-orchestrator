@@ -19,7 +19,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref
+    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
+    session_mode, provider_conversation_id, controller_generation
 FROM sessions WHERE id = ?
 `
 
@@ -53,6 +54,9 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.TerminateOnPRMerge,
 		&i.DiffBaseSha,
 		&i.DiffBaseRef,
+		&i.SessionMode,
+		&i.ProviderConversationID,
+		&i.ControllerGeneration,
 	)
 	return i, err
 }
@@ -64,37 +68,41 @@ INSERT INTO sessions (
     branch, workspace_path, workspace_repo_path, diff_base_sha, diff_base_ref, runtime_handle_id,
     runtime_launch_id, agent_session_id, prompt,
     preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation,
+    session_mode, provider_conversation_id, controller_generation,
     created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSessionParams struct {
-	ID                 domain.SessionID
-	ProjectID          domain.ProjectID
-	Num                int64
-	IssueID            domain.IssueID
-	Kind               domain.SessionKind
-	Harness            domain.AgentHarness
-	DisplayName        string
-	ActivityState      domain.ActivityState
-	ActivityLastAt     time.Time
-	FirstSignalAt      sql.NullTime
-	IsTerminated       bool
-	Branch             string
-	WorkspacePath      string
-	WorkspaceRepoPath  string
-	DiffBaseSha        string
-	DiffBaseRef        string
-	RuntimeHandleID    string
-	RuntimeLaunchID    string
-	AgentSessionID     string
-	Prompt             string
-	PreviewURL         string
-	PreviewRevision    int64
-	TerminateOnPRMerge bool
-	CleanupGeneration  int64
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	ID                     domain.SessionID
+	ProjectID              domain.ProjectID
+	Num                    int64
+	IssueID                domain.IssueID
+	Kind                   domain.SessionKind
+	Harness                domain.AgentHarness
+	DisplayName            string
+	ActivityState          domain.ActivityState
+	ActivityLastAt         time.Time
+	FirstSignalAt          sql.NullTime
+	IsTerminated           bool
+	Branch                 string
+	WorkspacePath          string
+	WorkspaceRepoPath      string
+	DiffBaseSha            string
+	DiffBaseRef            string
+	RuntimeHandleID        string
+	RuntimeLaunchID        string
+	AgentSessionID         string
+	Prompt                 string
+	PreviewURL             string
+	PreviewRevision        int64
+	TerminateOnPRMerge     bool
+	CleanupGeneration      int64
+	SessionMode            domain.SessionMode
+	ProviderConversationID string
+	ControllerGeneration   string
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
 }
 
 func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) error {
@@ -123,6 +131,9 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.PreviewRevision,
 		arg.TerminateOnPRMerge,
 		arg.CleanupGeneration,
+		arg.SessionMode,
+		arg.ProviderConversationID,
+		arg.ControllerGeneration,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
@@ -135,7 +146,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref
+    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
+    session_mode, provider_conversation_id, controller_generation
 FROM sessions ORDER BY project_id, num
 `
 
@@ -175,6 +187,9 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.TerminateOnPRMerge,
 			&i.DiffBaseSha,
 			&i.DiffBaseRef,
+			&i.SessionMode,
+			&i.ProviderConversationID,
+			&i.ControllerGeneration,
 		); err != nil {
 			return nil, err
 		}
@@ -195,7 +210,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref
+    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
+    session_mode, provider_conversation_id, controller_generation
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -235,6 +251,9 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.TerminateOnPRMerge,
 			&i.DiffBaseSha,
 			&i.DiffBaseRef,
+			&i.SessionMode,
+			&i.ProviderConversationID,
+			&i.ControllerGeneration,
 		); err != nil {
 			return nil, err
 		}
@@ -348,34 +367,37 @@ UPDATE sessions SET
     branch = ?, workspace_path = ?, workspace_repo_path = ?, diff_base_sha = ?, diff_base_ref = ?, runtime_handle_id = ?,
     runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
     preview_url = ?, preview_revision = ?, terminate_on_pr_merge = ?,
-    cleanup_generation = ?, updated_at = ?
+    cleanup_generation = ?,
+    provider_conversation_id = ?, controller_generation = ?, updated_at = ?
 WHERE id = ?
 `
 
 type UpdateSessionParams struct {
-	IssueID            domain.IssueID
-	Kind               domain.SessionKind
-	Harness            domain.AgentHarness
-	DisplayName        string
-	ActivityState      domain.ActivityState
-	ActivityLastAt     time.Time
-	FirstSignalAt      sql.NullTime
-	IsTerminated       bool
-	Branch             string
-	WorkspacePath      string
-	WorkspaceRepoPath  string
-	DiffBaseSha        string
-	DiffBaseRef        string
-	RuntimeHandleID    string
-	RuntimeLaunchID    string
-	AgentSessionID     string
-	Prompt             string
-	PreviewURL         string
-	PreviewRevision    int64
-	TerminateOnPRMerge bool
-	CleanupGeneration  int64
-	UpdatedAt          time.Time
-	ID                 domain.SessionID
+	IssueID                domain.IssueID
+	Kind                   domain.SessionKind
+	Harness                domain.AgentHarness
+	DisplayName            string
+	ActivityState          domain.ActivityState
+	ActivityLastAt         time.Time
+	FirstSignalAt          sql.NullTime
+	IsTerminated           bool
+	Branch                 string
+	WorkspacePath          string
+	WorkspaceRepoPath      string
+	DiffBaseSha            string
+	DiffBaseRef            string
+	RuntimeHandleID        string
+	RuntimeLaunchID        string
+	AgentSessionID         string
+	Prompt                 string
+	PreviewURL             string
+	PreviewRevision        int64
+	TerminateOnPRMerge     bool
+	CleanupGeneration      int64
+	ProviderConversationID string
+	ControllerGeneration   string
+	UpdatedAt              time.Time
+	ID                     domain.SessionID
 }
 
 func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) error {
@@ -401,6 +423,8 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.PreviewRevision,
 		arg.TerminateOnPRMerge,
 		arg.CleanupGeneration,
+		arg.ProviderConversationID,
+		arg.ControllerGeneration,
 		arg.UpdatedAt,
 		arg.ID,
 	)

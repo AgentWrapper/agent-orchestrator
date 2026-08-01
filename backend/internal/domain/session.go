@@ -34,6 +34,16 @@ type SessionMetadata struct {
 	RuntimeLaunchID   string `json:"runtimeLaunchId,omitempty"`
 	AgentSessionID    string `json:"agentSessionId,omitempty"`
 	Prompt            string `json:"prompt,omitempty"`
+	// ProviderConversationID is the opaque handle a Chat driver needs to resume
+	// this session's provider conversation after a restart (a Codex thread id
+	// today). Empty for TUI sessions. Deliberately distinct from AgentSessionID,
+	// which describes the native-TUI resume path and is not interchangeable.
+	ProviderConversationID string `json:"providerConversationId,omitempty"`
+	// ControllerGeneration is rotated each time a Chat controller is started for
+	// this session. Events carrying an older generation are rejected, so a
+	// controller that is dying cannot mutate the session that replaced it. Not
+	// the same fence as RuntimeLaunchID, which covers terminal runtimes.
+	ControllerGeneration string `json:"controllerGeneration,omitempty"`
 	// PreviewURL is the browser preview target the desktop app opens for this
 	// session. Set via `ao preview` (POST /sessions/{id}/preview); persisted so
 	// it survives a daemon restart. Empty means no preview has been requested.

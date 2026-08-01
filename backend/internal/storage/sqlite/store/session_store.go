@@ -212,6 +212,7 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 		Kind:        row.Kind,
 		Harness:     row.Harness,
 		DisplayName: row.DisplayName,
+		Mode:        domain.NormalizeSessionMode(row.SessionMode),
 		Activity: domain.Activity{
 			State:          row.ActivityState,
 			LastActivityAt: row.ActivityLastAt,
@@ -231,6 +232,9 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 			Prompt:            row.Prompt,
 			PreviewURL:        row.PreviewURL,
 			PreviewRevision:   row.PreviewRevision,
+
+			ProviderConversationID: row.ProviderConversationID,
+			ControllerGeneration:   row.ControllerGeneration,
 		},
 		CleanupGeneration: row.CleanupGeneration,
 		CreatedAt:         row.CreatedAt,
@@ -265,8 +269,13 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		PreviewRevision:    rec.Metadata.PreviewRevision,
 		TerminateOnPRMerge: rec.TerminateOnPRMerge,
 		CleanupGeneration:  rec.CleanupGeneration,
-		CreatedAt:          rec.CreatedAt,
-		UpdatedAt:          rec.UpdatedAt,
+
+		SessionMode:            domain.NormalizeSessionMode(rec.Mode),
+		ProviderConversationID: rec.Metadata.ProviderConversationID,
+		ControllerGeneration:   rec.Metadata.ControllerGeneration,
+
+		CreatedAt: rec.CreatedAt,
+		UpdatedAt: rec.UpdatedAt,
 	}
 }
 
@@ -295,7 +304,11 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		PreviewRevision:    rec.Metadata.PreviewRevision,
 		TerminateOnPRMerge: rec.TerminateOnPRMerge,
 		CleanupGeneration:  rec.CleanupGeneration,
-		UpdatedAt:          rec.UpdatedAt,
+
+		ProviderConversationID: rec.Metadata.ProviderConversationID,
+		ControllerGeneration:   rec.Metadata.ControllerGeneration,
+
+		UpdatedAt: rec.UpdatedAt,
 	}
 }
 
