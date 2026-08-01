@@ -71,6 +71,16 @@ function setupBridge() {
 			activeTabId: "t1",
 			tabs: [{ id: "t1", url: "http://localhost:3000/", title: "First", active: true }],
 		})),
+		openTab: vi.fn(async (viewId: string) => ({
+			viewId,
+			activeTabId: "t2",
+			tabs: [
+				{ id: "t1", url: "http://localhost:3000/", title: "First", active: false },
+				{ id: "t2", url: "", title: "", active: true },
+			],
+		})),
+		notifyPanelFocus: vi.fn(),
+		notifyPanelBlur: vi.fn(),
 		destroy: vi.fn(),
 		setAnnotationMode: vi.fn(async () => undefined),
 		onNavState: vi.fn((listener: Listener) => {
@@ -172,6 +182,29 @@ describe("useBrowserView", () => {
 		expect(bridge.selectTab).toHaveBeenCalledWith({ viewId: "42:sess-1", tabId: "t1" });
 		await act(() => result.current.closeTab("t2"));
 		expect(bridge.closeTab).toHaveBeenCalledWith({ viewId: "42:sess-1", tabId: "t2" });
+	});
+
+	it("opens a new tab and applies the returned tabs state", async () => {
+		const bridge = setupBridge();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+
+		await act(() => result.current.openNewTab());
+
+		expect(bridge.openTab).toHaveBeenCalledWith("42:sess-1");
+		expect(result.current.tabs.map((tab) => tab.id)).toEqual(["t1", "t2"]);
+		expect(result.current.activeTabId).toBe("t2");
+	});
+
+	it("shows a transient notice instead of throwing when the tab limit is reached", async () => {
+		const bridge = setupBridge();
+		bridge.openTab.mockRejectedValueOnce(new Error("Browser tab limit of 16 reached"));
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+
+		await act(() => result.current.openNewTab());
+
+		expect(result.current.tabNotice).toBe("Tab limit reached");
 	});
 
 	it("tracks browser-command activity only for the current worker view", async () => {

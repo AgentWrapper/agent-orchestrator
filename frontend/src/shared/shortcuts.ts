@@ -15,9 +15,9 @@ export type ShortcutChord = {
 };
 
 export type AppShortcutId =
-	"new-session" | "new-shell-terminal" | "keyboard-shortcuts" | "toggle-sidebar" | "open-project" | "toggle-inspector" | "command-palette" | "open-settings" | "previous-session" | "next-session" | "focus-terminal";
+	"new-session" | "new-shell-terminal" | "keyboard-shortcuts" | "toggle-sidebar" | "open-project" | "toggle-inspector" | "command-palette" | "open-settings" | "previous-session" | "next-session" | "focus-terminal" | "browser-new-tab" | "browser-reopen-tab" | "browser-reload" | "browser-close-tab";
 
-export type ShortcutCategory = "General" | "Navigation" | "Session";
+export type ShortcutCategory = "General" | "Navigation" | "Session" | "Browser";
 
 export type ShortcutBinding = {
 	key: string;
@@ -38,7 +38,7 @@ export type ShortcutDefinition = {
 	customizable?: boolean;
 };
 
-export const SHORTCUT_CATEGORIES: readonly ShortcutCategory[] = ["General", "Navigation", "Session"];
+export const SHORTCUT_CATEGORIES: readonly ShortcutCategory[] = ["General", "Navigation", "Session", "Browser"];
 
 // The user-facing shortcut catalog. Bindings live exclusively in
 // defaultShortcutBindings so runtime matching and displayed labels cannot drift.
@@ -99,6 +99,28 @@ export const APP_SHORTCUTS: readonly ShortcutDefinition[] = [
 		label: "Focus terminal",
 		category: "Session",
 	},
+	{
+		id: "browser-new-tab",
+		label: "New browser tab",
+		category: "Browser",
+	},
+	{
+		id: "browser-reopen-tab",
+		label: "Reopen closed browser tab",
+		category: "Browser",
+	},
+	{
+		id: "browser-reload",
+		label: "Reload browser tab",
+		category: "Browser",
+		customizable: false,
+	},
+	{
+		id: "browser-close-tab",
+		label: "Close browser tab",
+		category: "Browser",
+		customizable: false,
+	},
 ];
 
 const binding = (
@@ -142,6 +164,14 @@ export function defaultShortcutBindings(id: AppShortcutId, isMac: boolean): read
 			return [isMac ? binding("ArrowDown", { meta: true, alt: true }) : binding("PageDown", { ctrl: true })];
 		case "focus-terminal":
 			return [isMac ? binding("t", { meta: true, shift: true }) : binding("t", { ctrl: true, shift: true })];
+		case "browser-new-tab":
+			return [isMac ? binding("t", { meta: true }) : binding("t", { ctrl: true })];
+		case "browser-reopen-tab":
+			return [isMac ? binding("t", { meta: true, shift: true }) : binding("t", { ctrl: true, shift: true })];
+		case "browser-reload":
+			return [isMac ? binding("r", { meta: true }) : binding("r", { ctrl: true })];
+		case "browser-close-tab":
+			return [isMac ? binding("w", { meta: true }) : binding("w", { ctrl: true })];
 	}
 }
 

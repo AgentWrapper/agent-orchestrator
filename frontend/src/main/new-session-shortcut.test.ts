@@ -163,6 +163,31 @@ describe("attachAppShortcuts", () => {
 		expect(target.send).toHaveBeenLastCalledWith(FOCUS_TERMINAL_SHORTCUT_CHANNEL);
 	});
 
+	it("skips excluded ids so another handler can claim the chord", () => {
+		const source = fakeSource();
+		const target = fakeTarget();
+		attachAppShortcuts(source, false, target, false, () => ({}), () => false, () => ["focus-terminal"]);
+
+		const event = source.emit({ key: "T", control: true, shift: true });
+
+		expect(target.send).not.toHaveBeenCalled();
+		expect(event.preventDefault).not.toHaveBeenCalled();
+	});
+
+	it("re-reads excluded ids on every keystroke without reattaching the listener", () => {
+		const source = fakeSource();
+		const target = fakeTarget();
+		let excluded: readonly string[] = ["focus-terminal"];
+		attachAppShortcuts(source, false, target, false, () => ({}), () => false, () => excluded as never);
+
+		source.emit({ key: "T", control: true, shift: true });
+		excluded = [];
+		source.emit({ key: "T", control: true, shift: true });
+
+		expect(target.send).toHaveBeenCalledTimes(1);
+		expect(target.send).toHaveBeenCalledWith(FOCUS_TERMINAL_SHORTCUT_CHANNEL);
+	});
+
 	it("does not intercept application shortcuts while a binding is being recorded", () => {
 		const source = fakeSource();
 		const target = fakeTarget();

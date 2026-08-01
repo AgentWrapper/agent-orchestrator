@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	APP_SHORTCUTS,
+	SHORTCUT_CATEGORIES,
 	matchesAppShortcut,
 	matchesFocusTerminalShortcut,
 	matchesKeyboardShortcutsHelpShortcut,
@@ -145,6 +146,40 @@ describe("shortcut catalog", () => {
 		expect(matchesAppShortcut("focus-terminal", chord({ key: "t", ctrl: true, shift: true }), false, overrides)).toBe(
 			false,
 		);
+	});
+});
+
+describe("browser shortcuts", () => {
+	it("registers a Browser category with the 4 new shortcuts", () => {
+		expect(SHORTCUT_CATEGORIES).toContain("Browser");
+		const browserIds = APP_SHORTCUTS.filter((s) => s.category === "Browser").map((s) => s.id);
+		expect(browserIds.sort()).toEqual(
+			["browser-close-tab", "browser-new-tab", "browser-reload", "browser-reopen-tab"].sort(),
+		);
+	});
+
+	it("marks reload and close-tab as fixed, new-tab and reopen-tab as customizable", () => {
+		const byId = Object.fromEntries(APP_SHORTCUTS.map((s) => [s.id, s]));
+		expect(byId["browser-reload"].customizable).toBe(false);
+		expect(byId["browser-close-tab"].customizable).toBe(false);
+		expect(byId["browser-new-tab"].customizable).not.toBe(false);
+		expect(byId["browser-reopen-tab"].customizable).not.toBe(false);
+	});
+
+	it("matches Ctrl+T / Ctrl+Shift+T / Ctrl+R / Ctrl+W on Windows and their ⌘ equivalents on macOS", () => {
+		expect(matchesAppShortcut("browser-new-tab", chord({ key: "t", ctrl: true }), false)).toBe(true);
+		expect(matchesAppShortcut("browser-new-tab", chord({ key: "t", meta: true }), true)).toBe(true);
+		expect(matchesAppShortcut("browser-reopen-tab", chord({ key: "t", ctrl: true, shift: true }), false)).toBe(true);
+		expect(matchesAppShortcut("browser-reopen-tab", chord({ key: "t", meta: true, shift: true }), true)).toBe(true);
+		expect(matchesAppShortcut("browser-reload", chord({ key: "r", ctrl: true }), false)).toBe(true);
+		expect(matchesAppShortcut("browser-reload", chord({ key: "r", meta: true }), true)).toBe(true);
+		expect(matchesAppShortcut("browser-close-tab", chord({ key: "w", ctrl: true }), false)).toBe(true);
+		expect(matchesAppShortcut("browser-close-tab", chord({ key: "w", meta: true }), true)).toBe(true);
+	});
+
+	it("does not confuse new-tab with reopen-tab (Shift matters)", () => {
+		expect(matchesAppShortcut("browser-new-tab", chord({ key: "t", ctrl: true, shift: true }), false)).toBe(false);
+		expect(matchesAppShortcut("browser-reopen-tab", chord({ key: "t", ctrl: true }), false)).toBe(false);
 	});
 });
 

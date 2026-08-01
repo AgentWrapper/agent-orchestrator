@@ -1,13 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 import {
 	type BrowserNavState,
+	type BrowserTabsState,
 	clampBoundsToWindow,
 	createBrowserViewHost,
 	isAllowedBrowserURL,
 	normalizeBrowserURL,
 	scaleBoundsForZoom,
 } from "./browser-view-host";
-import { NEW_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
+import { FOCUS_TERMINAL_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
+
+// Lets pending promise chains (e.g. the fire-and-forget openTab/reopenClosedTab
+// calls a keyboard shortcut triggers) settle before assertions run.
+async function flushMicrotasks(): Promise<void> {
+	for (let i = 0; i < 5; i += 1) await Promise.resolve();
+}
 
 type InvokeHandler = (event: unknown, ...args: unknown[]) => unknown;
 type EventHandler = (event: { sender: { id: number; getZoomFactor?: () => number } }, ...args: unknown[]) => unknown;
@@ -17,7 +24,11 @@ type DisplayHandler = (request: unknown, callback: (streams: { video?: unknown }
 function setupHost() {
 	let currentURL = "";
 	let displayHandler: DisplayHandler | null = null;
-	const webContentsListeners = new Map<string, (...args: never[]) => void>();
+	// Electron's real EventEmitter supports multiple listeners per event name
+	// (e.g. attachAppShortcuts and the browser-tab-shortcut listener both
+	// register their own "before-input-event" handler on the same webContents),
+	// so this stores an array per event rather than a single last-write-wins slot.
+	const webContentsListeners = new Map<string, Array<(...args: never[]) => void>>();
 	const debuggerListeners = new Map<string, (...args: never[]) => void>();
 	let debuggerAttached = false;
 	const debuggerSendCommand = vi.fn(async (method: string): Promise<unknown> => {
@@ -60,9 +71,11 @@ function setupHost() {
 			currentURL = url;
 		}),
 		on: (event: string, listener: (...args: never[]) => void) => {
-			webContentsListeners.set(event, listener);
+			const existing = webContentsListeners.get(event) ?? [];
+			existing.push(listener);
+			webContentsListeners.set(event, existing);
 		},
-		reload: () => undefined,
+		reload: vi.fn(),
 		send: vi.fn(),
 		setWindowOpenHandler: () => undefined,
 		stop: () => undefined,
@@ -128,19 +141,23 @@ function setupHost() {
 		isAutoRepeat?: boolean;
 	}) => {
 		const event = { preventDefault: vi.fn() };
-		webContentsListeners.get("before-input-event")?.(
-			event as never,
-			{
-				control: false,
-				meta: false,
-				shift: false,
-				alt: false,
-				type: "keyDown",
-				...input,
-			} as never,
-		);
+		const inputEvent = {
+			control: false,
+			meta: false,
+			shift: false,
+			alt: false,
+			type: "keyDown",
+			...input,
+		};
+		for (const listener of webContentsListeners.get("before-input-event") ?? []) {
+			listener(event as never, inputEvent as never);
+		}
 		return event;
 	};
+	// Events registered exactly once elsewhere in this suite (did-start-loading,
+	// console-message) — returns the sole listener so existing call sites can
+	// keep invoking it directly.
+	const soleListener = (event: string) => webContentsListeners.get(event)?.[0];
 	return {
 		emit,
 		emitBeforeInput,
@@ -154,6 +171,7 @@ function setupHost() {
 		setPermissionRequestHandler,
 		shellFocus,
 		shellSend,
+		soleListener,
 		view,
 		webContents,
 		webContentsListeners,
@@ -165,6 +183,7 @@ function setupHost() {
 function setupTabHost() {
 	const constructorOptions: Array<{ webPreferences: { partition?: string } }> = [];
 	const handlers = new Map<string, InvokeHandler>();
+	const eventHandlers = new Map<string, EventHandler>();
 	const sent: Array<{ channel: string; payload: unknown }> = [];
 	const views: Array<{
 		webContents: {
@@ -173,10 +192,20 @@ function setupTabHost() {
 			loadURL: ReturnType<typeof vi.fn>;
 			openWindow: (url: string) => void;
 			close: ReturnType<typeof vi.fn>;
+			reload: ReturnType<typeof vi.fn>;
 			};
 			setBounds: ReturnType<typeof vi.fn>;
 			setBorderRadius: ReturnType<typeof vi.fn>;
 			setVisible: ReturnType<typeof vi.fn>;
+			emitBeforeInput: (input: {
+				key: string;
+				control?: boolean;
+				meta?: boolean;
+				shift?: boolean;
+				alt?: boolean;
+				type?: string;
+				isAutoRepeat?: boolean;
+			}) => { preventDefault: ReturnType<typeof vi.fn> };
 		}> = [];
 	let nextID = 100;
 	const makeView = () => {
@@ -187,7 +216,10 @@ function setupTabHost() {
 					createWindow?: () => { loadURL: (url: string) => Promise<void> };
 			  })
 			| undefined;
-		const listeners = new Map<string, (...args: never[]) => void>();
+		// Array per event: real webContents.on supports multiple listeners for the
+		// same event (attachAppShortcuts and the per-tab browser-shortcut listener
+		// both register their own "before-input-event" handler on this webContents).
+		const listeners = new Map<string, Array<(...args: never[]) => void>>();
 		let debuggerAttached = false;
 		const webContents = {
 			id: nextID++,
@@ -236,8 +268,12 @@ function setupTabHost() {
 			loadURL: vi.fn(async (url: string) => {
 				currentURL = url;
 			}),
-			on: (event: string, listener: (...args: never[]) => void) => listeners.set(event, listener),
-			reload: () => undefined,
+			on: (event: string, listener: (...args: never[]) => void) => {
+				const existing = listeners.get(event) ?? [];
+				existing.push(listener);
+				listeners.set(event, existing);
+			},
+			reload: vi.fn(),
 			send: () => undefined,
 			setWindowOpenHandler: (
 				handler: (details: { url: string }) => {
@@ -256,7 +292,30 @@ function setupTabHost() {
 				}
 			},
 		};
-		const view = { webContents, setBounds: vi.fn(), setBorderRadius: vi.fn(), setVisible: vi.fn() };
+		const emitBeforeInput = (input: {
+			key: string;
+			control?: boolean;
+			meta?: boolean;
+			shift?: boolean;
+			alt?: boolean;
+			type?: string;
+			isAutoRepeat?: boolean;
+		}) => {
+			const event = { preventDefault: vi.fn() };
+			const inputEvent = {
+				control: false,
+				meta: false,
+				shift: false,
+				alt: false,
+				type: "keyDown",
+				...input,
+			};
+			for (const listener of listeners.get("before-input-event") ?? []) {
+				listener(event as never, inputEvent as never);
+			}
+			return event;
+		};
+		const view = { webContents, setBounds: vi.fn(), setBorderRadius: vi.fn(), setVisible: vi.fn(), emitBeforeInput };
 		views.push(view);
 		return view;
 	};
@@ -272,7 +331,7 @@ function setupTabHost() {
 		} as never,
 		ipcMain: {
 			handle: (channel: string, fn: InvokeHandler) => handlers.set(channel, fn),
-			on: () => undefined,
+			on: (channel: string, fn: EventHandler) => eventHandlers.set(channel, fn),
 			removeHandler: () => undefined,
 			off: () => undefined,
 		} as never,
@@ -286,7 +345,8 @@ function setupTabHost() {
 	});
 	const invoke = (channel: string, ...args: unknown[]) =>
 		handlers.get(channel)!({ sender: { id: 1 } }, ...args) as Promise<unknown>;
-	return { constructorOptions, host, invoke, sent, views };
+	const send = (channel: string, ...args: unknown[]) => eventHandlers.get(channel)!({ sender: { id: 1 } }, ...args);
+	return { constructorOptions, host, invoke, send, sent, views };
 }
 
 describe("new-session shortcut forwarding", () => {
@@ -743,7 +803,7 @@ describe("agent browser runtime", () => {
 	});
 
 	it("invalidates refs after navigation", async () => {
-		const { debuggerSendCommand, host, webContentsListeners } = setupHost();
+		const { debuggerSendCommand, host, soleListener } = setupHost();
 		debuggerSendCommand.mockImplementation(async (method: string) => {
 			if (method === "Accessibility.getFullAXTree") {
 				return {
@@ -753,7 +813,7 @@ describe("agent browser runtime", () => {
 			return {};
 		});
 		await host.execute("sess-1", "snapshot", {});
-		webContentsListeners.get("did-start-loading")?.();
+		soleListener("did-start-loading")?.();
 
 		await expect(host.execute("sess-1", "click", { ref: "e1" })).rejects.toMatchObject({
 			code: "STALE_REFERENCE",
@@ -761,9 +821,9 @@ describe("agent browser runtime", () => {
 	});
 
 	it("captures a PNG and separates errors from other console messages", async () => {
-		const { host, webContentsListeners } = setupHost();
+		const { host, soleListener } = setupHost();
 		const screenshot = (await host.execute("sess-1", "screenshot")) as { data: string; width: number };
-		const consoleListener = webContentsListeners.get("console-message");
+		const consoleListener = soleListener("console-message");
 		consoleListener?.({} as never, { level: "info", message: "ready" } as never);
 		consoleListener?.({} as never, { level: "error", message: "boom" } as never);
 
@@ -1387,6 +1447,140 @@ describe("getLastFocusedPanelContents", () => {
 
 		call("browser:destroy", "1:s");
 		expect(host.getLastFocusedPanelContents()).toBeNull();
+	});
+});
+
+describe("browser:openTab", () => {
+	it("opens a new tab and returns the updated tabs state", async () => {
+		const { host, invoke } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		const state = (await invoke("browser:openTab", "1:sess-1")) as unknown as BrowserTabsState;
+
+		expect(state.tabs).toHaveLength(2);
+		expect(state.activeTabId).toBe(state.tabs[1].id);
+		expect(host).toBeTruthy();
+	});
+
+	it("ignores a viewId the caller does not own", async () => {
+		const { invoke } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		const state = (await invoke("browser:openTab", "someone-elses-viewId")) as unknown as BrowserTabsState;
+
+		expect(state.tabs).toEqual([]);
+	});
+});
+
+describe("domain A: browser tab shortcuts while the native page has focus", () => {
+	it("opens a new tab on Ctrl+T", async () => {
+		const { invoke, views } = setupTabHost();
+		await invoke("browser:ensure", "sess-1");
+		expect(views).toHaveLength(1);
+
+		views[0].emitBeforeInput({ key: "t", control: true });
+		await flushMicrotasks();
+
+		expect(views).toHaveLength(2);
+	});
+
+	it("reloads only the active tab on Ctrl+R", async () => {
+		const { invoke, views } = setupTabHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:openTab", "1:sess-1");
+
+		views[1].emitBeforeInput({ key: "r", control: true });
+
+		expect(views[1].webContents.reload).toHaveBeenCalledTimes(1);
+		expect(views[0].webContents.reload).not.toHaveBeenCalled();
+	});
+
+	it("closes the active tab on Ctrl+W but no-ops rather than closing the last tab", async () => {
+		const { invoke, views } = setupTabHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:openTab", "1:sess-1");
+		expect(views).toHaveLength(2);
+
+		views[1].emitBeforeInput({ key: "w", control: true });
+		let state = (await invoke("browser:getTabs", "1:sess-1")) as BrowserTabsState;
+		expect(state.tabs).toHaveLength(1);
+
+		views[0].emitBeforeInput({ key: "w", control: true });
+		state = (await invoke("browser:getTabs", "1:sess-1")) as BrowserTabsState;
+		expect(state.tabs).toHaveLength(1);
+	});
+
+	it("reopens the last-closed tab on Ctrl+Shift+T without also forwarding focus-terminal", async () => {
+		const { invoke, sent, views } = setupTabHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:3000/" });
+		await invoke("browser:openTab", "1:sess-1");
+		let state = (await invoke("browser:getTabs", "1:sess-1")) as BrowserTabsState;
+		const firstTabId = state.tabs.find((tab) => tab.url.includes("3000"))!.id;
+
+		await invoke("browser:closeTab", { viewId: "1:sess-1", tabId: firstTabId });
+
+		views[1].emitBeforeInput({ key: "T", control: true, shift: true });
+		await flushMicrotasks();
+
+		state = (await invoke("browser:getTabs", "1:sess-1")) as BrowserTabsState;
+		expect(state.tabs.some((tab) => tab.url === "http://localhost:3000/")).toBe(true);
+		expect(sent.some((event) => event.channel === FOCUS_TERMINAL_SHORTCUT_CHANNEL)).toBe(false);
+	});
+});
+
+describe("domain B: browser tab shortcuts while the panel's own UI has focus", () => {
+	it("tracks panel focus/blur independently of the native-page focus tracking", async () => {
+		const { host, invoke, send } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		expect(host.isBrowserPanelDomFocused()).toBe(false);
+
+		send("browser:panelFocus", 1, "1:sess-1");
+		expect(host.isBrowserPanelDomFocused()).toBe(true);
+
+		send("browser:panelBlur", 1, "1:sess-1");
+		expect(host.isBrowserPanelDomFocused()).toBe(false);
+	});
+
+	it("dispatches a browser shortcut only while a panel is domain-B focused", async () => {
+		const { host, invoke, send, view } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		expect(host.handleBrowserPanelShortcut("browser-reload")).toBe(false);
+		expect(view.webContents.reload).not.toHaveBeenCalled();
+
+		send("browser:panelFocus", 1, "1:sess-1");
+		expect(host.handleBrowserPanelShortcut("browser-reload")).toBe(true);
+		expect(view.webContents.reload).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("closeFocusedTab", () => {
+	it("returns false when nothing browser-related is focused", async () => {
+		const { host, invoke } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		expect(host.closeFocusedTab()).toBe(false);
+	});
+
+	it("closes the active tab once the native page (domain A) has focus", async () => {
+		const { host, invoke, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:openTab", "1:sess-1");
+
+		for (const listener of webContentsListeners.get("focus") ?? []) listener();
+
+		expect(host.closeFocusedTab()).toBe(true);
+	});
+
+	it("closes the active tab once the panel's own UI (domain B) has focus", async () => {
+		const { host, invoke, send } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:openTab", "1:sess-1");
+
+		send("browser:panelFocus", 1, "1:sess-1");
+
+		expect(host.closeFocusedTab()).toBe(true);
 	});
 });
 

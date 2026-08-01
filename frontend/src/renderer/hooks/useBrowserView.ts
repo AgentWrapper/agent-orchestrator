@@ -56,6 +56,7 @@ export type BrowserViewModel = {
 	tabNotice: string;
 	selectTab: (tabId: string) => Promise<void>;
 	closeTab: (tabId: string) => Promise<void>;
+	openNewTab: () => Promise<void>;
 	prepareForOverlay: () => Promise<void>;
 	agentBrowserActive: boolean;
 	agentBrowserActivity: BrowserAgentActivityState | null;
@@ -592,6 +593,22 @@ export function useBrowserView({
 		[hasNativeBrowser],
 	);
 
+	const openNewTab = useCallback(async () => {
+		const viewId = viewIdRef.current;
+		if (!viewId || !hasNativeBrowser) return;
+		try {
+			const state = await window.ao!.browser.openTab(viewId);
+			if (viewIdRef.current === state.viewId) setTabsState(state);
+		} catch {
+			setTabNotice("Tab limit reached");
+			if (tabNoticeTimerRef.current !== null) window.clearTimeout(tabNoticeTimerRef.current);
+			tabNoticeTimerRef.current = window.setTimeout(() => {
+				tabNoticeTimerRef.current = null;
+				setTabNotice("");
+			}, 3_000);
+		}
+	}, [hasNativeBrowser]);
+
 	useEffect(() => {
 		const handleDone = (payload: BrowserAnnotationSubmitPayload | BrowserAnnotationCancelPayload) => {
 			if (payload.viewId !== viewIdRef.current) return;
@@ -701,6 +718,7 @@ export function useBrowserView({
 		tabNotice,
 		selectTab,
 		closeTab,
+		openNewTab,
 		prepareForOverlay,
 		agentBrowserActive,
 		agentBrowserActivity,

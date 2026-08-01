@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent } from "react";
+import {
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+	type FocusEvent,
+	type FormEvent,
+	type KeyboardEvent,
+	type PointerEvent,
+} from "react";
 import {
 	ArrowLeft,
 	ArrowRight,
@@ -8,6 +17,7 @@ import {
 	Maximize2,
 	Minimize2,
 	MousePointer2,
+	Plus,
 	RefreshCw,
 	X,
 } from "lucide-react";
@@ -239,6 +249,7 @@ export function BrowserPanelView({
 		tabNotice,
 		selectTab,
 		closeTab,
+		openNewTab,
 		prepareForOverlay,
 		agentBrowserActive,
 		agentBrowserActivity,
@@ -259,6 +270,14 @@ export function BrowserPanelView({
 	useEffect(() => {
 		setUrlInput(navState.url);
 	}, [navState.url]);
+
+	// Forget this panel's own-UI focus when it unmounts or its viewId changes, so
+	// a stale entry doesn't keep absorbing browser shortcuts after the panel goes away.
+	useEffect(() => {
+		return () => {
+			if (viewId) window.ao?.browser.notifyPanelBlur(viewId);
+		};
+	}, [viewId]);
 
 	useEffect(() => {
 		const offSubmit = window.ao?.browser.onAnnotationSubmit((payload) => {
@@ -368,6 +387,14 @@ export function BrowserPanelView({
 			)}
 			data-testid="browser-panel"
 			data-transition={visualTransition?.kind}
+			onBlurCapture={(event: FocusEvent<HTMLDivElement>) => {
+				if (viewId && !event.currentTarget.contains(event.relatedTarget)) {
+					window.ao?.browser.notifyPanelBlur(viewId);
+				}
+			}}
+			onFocusCapture={() => {
+				if (viewId) window.ao?.browser.notifyPanelFocus(viewId);
+			}}
 			role="tabpanel"
 		>
 			<form
@@ -481,7 +508,19 @@ export function BrowserPanelView({
 						</Button>
 					</DropdownMenuTrigger>
 					<DropdownMenuContent align="end" className="w-72" sideOffset={8}>
-						<DropdownMenuLabel>Browser tabs</DropdownMenuLabel>
+						<div className="flex items-center justify-between pr-1">
+							<DropdownMenuLabel>Browser tabs</DropdownMenuLabel>
+							<Button
+								aria-label="New tab"
+								className="size-6 shrink-0"
+								onClick={() => void openNewTab()}
+								size="icon-sm"
+								type="button"
+								variant="ghost"
+							>
+								<Plus aria-hidden="true" className="size-icon-sm" />
+							</Button>
+						</div>
 						{tabs.map((tab) => {
 							const label = browserTabLabel(tab.title, tab.url);
 							return (

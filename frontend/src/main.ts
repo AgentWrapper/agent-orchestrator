@@ -42,6 +42,7 @@ import type { DaemonStatus } from "./shared/daemon-status";
 import { attachAppShortcuts } from "./main/app-shortcuts";
 import {
 	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
+	matchesAppShortcut,
 	type KeybindingOverrides,
 } from "./shared/shortcuts";
 import {
@@ -240,7 +241,11 @@ function appendDaemonOutput(text: string): void {
 // DevTools, zoom, full screen, edit commands) and each acts on the *focused*
 // webContents — including a BrowserView panel — matching native menu behaviour.
 function buildWindowsAppMenu(): Menu {
-	return Menu.buildFromTemplate(buildWindowsAppMenuTemplate());
+	return Menu.buildFromTemplate(
+		buildWindowsAppMenuTemplate({
+			closeFocusedBrowserTab: () => browserViewHost?.closeFocusedTab() ?? false,
+		}),
+	);
 }
 
 function createWindow(): void {
@@ -317,7 +322,39 @@ function createWindow(): void {
 		false,
 		() => keybindingOverrides,
 		() => keybindingRecordingActive,
+		// "Browser wins when focused": while the browser panel's own address bar or
+		// toolbar has focus, Ctrl+Shift+T means reopen-closed-tab, not focus-terminal.
+		() => (browserViewHost?.isBrowserPanelDomFocused() ? ["focus-terminal"] : []),
 	);
+
+	// Browser panel shortcuts (Ctrl+T/Ctrl+Shift+T/Ctrl+R/Ctrl+W) while the panel's
+	// own UI — not the embedded page, wired separately per-tab in the browser host
+	// — has focus. Electron docs: preventDefault() here also suppresses the
+	// matching native menu accelerator (e.g. the Ctrl+W "Close" menu item) for the
+	// same keystroke.
+	const BROWSER_PANEL_SHORTCUT_IDS = [
+		"browser-new-tab",
+		"browser-reopen-tab",
+		"browser-reload",
+		"browser-close-tab",
+	] as const;
+	mainWindow.webContents.on("before-input-event", (event, input) => {
+		if (input.type !== "keyDown" || input.isAutoRepeat) return;
+		if (keybindingRecordingActive) return;
+		const chord = {
+			key: input.key,
+			code: input.code,
+			ctrl: input.control,
+			meta: input.meta,
+			shift: input.shift,
+			alt: input.alt,
+		};
+		for (const id of BROWSER_PANEL_SHORTCUT_IDS) {
+			if (!matchesAppShortcut(id, chord, isMac, keybindingOverrides)) continue;
+			if (browserViewHost?.handleBrowserPanelShortcut(id)) event.preventDefault();
+			return;
+		}
+	});
 
 	browserViewHost = createBrowserViewHost({
 		mainWindow,

@@ -54,8 +54,10 @@ const appShortcutChannel = (
 	chord: ShortcutChord,
 	isMac: boolean,
 	overrides: KeybindingOverrides,
+	excludedIds: readonly AppShortcutId[],
 ): string | null => {
 	for (const [id, channel] of mainShortcutChannels) {
+		if (excludedIds.includes(id)) continue;
 		if (matchesAppShortcut(id, chord, isMac, overrides)) return channel;
 	}
 	return null;
@@ -71,6 +73,7 @@ export function attachAppShortcuts(
 	focusTarget = false,
 	getOverrides: () => KeybindingOverrides = () => ({}),
 	isRecording: () => boolean = () => false,
+	getExcludedIds: () => readonly AppShortcutId[] = () => [],
 ): void {
 	contents.on("before-input-event", (event, input) => {
 		if (input.type !== "keyDown" || input.isAutoRepeat) return;
@@ -88,6 +91,7 @@ export function attachAppShortcuts(
 			},
 			isMac,
 			getOverrides(),
+			getExcludedIds(),
 		);
 		if (!channel) return;
 

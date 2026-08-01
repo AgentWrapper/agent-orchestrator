@@ -24,6 +24,7 @@ const hookState = vi.hoisted(() => ({
 	stop: vi.fn(),
 	selectTab: vi.fn(),
 	closeTab: vi.fn(),
+	openNewTab: vi.fn(),
 	prepareForOverlay: vi.fn(async () => undefined),
 	setAnnotationMode: vi.fn(),
 	tabs: [{ id: "t1", url: "", title: "", active: true }],
@@ -63,6 +64,7 @@ vi.mock("../hooks/useBrowserView", () => ({
 			visualTransition: hookState.visualTransition,
 			selectTab: hookState.selectTab,
 			closeTab: hookState.closeTab,
+			openNewTab: hookState.openNewTab,
 			prepareForOverlay: hookState.prepareForOverlay,
 			annotationMode: false,
 			setAnnotationMode: hookState.setAnnotationMode,
@@ -142,6 +144,7 @@ describe("BrowserPanel", () => {
 		hookState.stop.mockReset();
 		hookState.selectTab.mockReset();
 		hookState.closeTab.mockReset();
+		hookState.openNewTab.mockReset();
 		hookState.prepareForOverlay.mockReset();
 		hookState.setAnnotationMode.mockReset();
 		hookState.setAnnotationMode.mockResolvedValue(undefined);
@@ -237,6 +240,15 @@ describe("BrowserPanel", () => {
 		await userEvent.click(tabsButton);
 		await userEvent.click(screen.getByRole("menuitem", { name: "Close tab First app" }));
 		expect(hookState.closeTab).toHaveBeenCalledWith("t1");
+	});
+
+	it("opens a new tab from the tabs dropdown's + button", async () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "Browser tabs (1)" }));
+		await userEvent.click(screen.getByRole("button", { name: "New tab" }));
+
+		expect(hookState.openNewTab).toHaveBeenCalledTimes(1);
 	});
 
 	it("surfaces a popup-created tab without adding a full tab strip", () => {

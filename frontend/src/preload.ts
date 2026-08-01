@@ -175,6 +175,9 @@ const api = {
 			ipcRenderer.invoke("browser:selectTab", input) as Promise<BrowserTabsState>,
 		closeTab: (input: { viewId: string; tabId: string }) =>
 			ipcRenderer.invoke("browser:closeTab", input) as Promise<BrowserTabsState>,
+		openTab: (viewId: string) => ipcRenderer.invoke("browser:openTab", viewId) as Promise<BrowserTabsState>,
+		notifyPanelFocus: (viewId: string) => ipcRenderer.send("browser:panelFocus", viewId),
+		notifyPanelBlur: (viewId: string) => ipcRenderer.send("browser:panelBlur", viewId),
 		destroy: (viewId: string) => ipcRenderer.send("browser:destroy", viewId),
 		setAnnotationMode: (input: BrowserAnnotationModeInput) =>
 			ipcRenderer.invoke("browser:annotation:setMode", input) as Promise<void>,

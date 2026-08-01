@@ -1,6 +1,13 @@
 import type { MenuItemConstructorOptions } from "electron";
 
-export function buildWindowsAppMenuTemplate(): MenuItemConstructorOptions[] {
+export type BuildWindowsAppMenuDeps = {
+	// Closes the active tab of whichever browser panel is currently focused.
+	// Returns false when nothing browser-related is focused, so Ctrl+W falls back
+	// to the native "close the window" behaviour.
+	closeFocusedBrowserTab: () => boolean;
+};
+
+export function buildWindowsAppMenuTemplate(deps: BuildWindowsAppMenuDeps): MenuItemConstructorOptions[] {
 	return [
 		{
 			label: "Edit",
@@ -30,7 +37,17 @@ export function buildWindowsAppMenuTemplate(): MenuItemConstructorOptions[] {
 		},
 		{
 			label: "Window",
-			submenu: [{ role: "minimize" }, { role: "close" }],
+			submenu: [
+				{ role: "minimize" },
+				{
+					label: "Close",
+					accelerator: "CmdOrCtrl+W",
+					click: (_item, focusedWindow) => {
+						if (deps.closeFocusedBrowserTab()) return;
+						focusedWindow?.close();
+					},
+				},
+			],
 		},
 	];
 }

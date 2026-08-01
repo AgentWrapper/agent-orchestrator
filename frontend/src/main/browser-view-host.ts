@@ -17,7 +17,7 @@ import type {
 	BrowserAnnotationSubmitPayload,
 } from "../shared/browser-annotations";
 import { attachAppShortcuts } from "./app-shortcuts";
-import type { KeybindingOverrides } from "../shared/shortcuts";
+import { matchesAppShortcut, type KeybindingOverrides } from "../shared/shortcuts";
 
 export type BrowserRect = Pick<Rectangle, "x" | "y" | "width" | "height">;
 
@@ -146,6 +146,12 @@ export type BrowserViewHost = {
 	getLastFocusedPanelContents: () => WebContents | null;
 	// Drop the remembered panel; call when the shell gains focus for a real reason so a stale panel stops absorbing menu actions.
 	forgetLastFocusedPanel: () => void;
+	// True while the browser panel's own React UI (address bar/toolbar/tabs trigger) — not the embedded page — has focus.
+	isBrowserPanelDomFocused: () => boolean;
+	// Dispatches a browser keyboard shortcut against whichever panel currently has domain-B (own-UI) focus. Returns false if nothing is domain-B focused, so the caller knows whether to preventDefault.
+	handleBrowserPanelShortcut: (id: "browser-new-tab" | "browser-reopen-tab" | "browser-reload" | "browser-close-tab") => boolean;
+	// Closes the active tab of whichever browser panel (domain A or B) is currently focused. Returns false only when neither domain is focused, so the native menu accelerator can fall back to closing the window.
+	closeFocusedTab: () => boolean;
 };
 
 type BrowserEntry = {
@@ -173,7 +179,11 @@ type BrowserSessionEntry = {
 	parked: boolean;
 	networkTabId?: string;
 	agentBrowserCommands: number;
+	// URLs of recently closed tabs, most-recent-last; popped by Ctrl+Shift+T to reopen.
+	closedStack: string[];
 };
+
+const MAX_CLOSED_STACK = 10;
 
 type BrowserLogEntry = {
 	level: string;
@@ -305,6 +315,14 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const forgetIfFocused = (viewId: string): void => {
 		if (lastFocusedViewId === viewId) lastFocusedViewId = null;
 	};
+	// viewId of the panel whose own React UI (address bar/toolbar/tabs trigger) — not
+	// the embedded page — currently has focus. Set/cleared by the renderer via
+	// browser:panelFocus/browser:panelBlur. Independent of lastFocusedViewId, which
+	// tracks only the native WebContentsView's own OS focus.
+	let domainBFocusedViewId: string | null = null;
+	const forgetDomainBIfFocused = (viewId: string): void => {
+		if (domainBFocusedViewId === viewId) domainBFocusedViewId = null;
+	};
 	const setAgentBrowserActivity = (
 		session: BrowserSessionEntry,
 		action: string,
@@ -418,7 +436,38 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			true,
 			options.getKeybindingOverrides,
 			options.isKeybindingRecording,
+			() => ["focus-terminal"],
 		);
+		// Browser tab shortcuts (Ctrl+T/Ctrl+Shift+T/Ctrl+R/Ctrl+W) execute directly
+		// here rather than forwarding through attachAppShortcuts, since there's no
+		// renderer round-trip needed — these act on this tab's own session.
+		view.webContents.on("before-input-event", (event, input) => {
+			if (input.type !== "keyDown" || input.isAutoRepeat) return;
+			if (options.isKeybindingRecording?.()) return;
+			const chord = {
+				key: input.key,
+				code: input.code,
+				ctrl: input.control,
+				meta: input.meta,
+				shift: input.shift,
+				alt: input.alt,
+			};
+			const isMac = Boolean(options.isMac);
+			const overrides = options.getKeybindingOverrides?.() ?? {};
+			if (matchesAppShortcut("browser-new-tab", chord, isMac, overrides)) {
+				event.preventDefault();
+				void openTab(session, undefined, true).catch(() => {});
+			} else if (matchesAppShortcut("browser-reopen-tab", chord, isMac, overrides)) {
+				event.preventDefault();
+				void reopenClosedTab(session).catch(() => {});
+			} else if (matchesAppShortcut("browser-reload", chord, isMac, overrides)) {
+				event.preventDefault();
+				invokeNav(session.viewId, (contents) => contents.reload(), true);
+			} else if (matchesAppShortcut("browser-close-tab", chord, isMac, overrides)) {
+				event.preventDefault();
+				closeActiveTabSafely(session);
+			}
+		});
 		view.webContents.on("focus", () => {
 			lastFocusedViewId = session.viewId;
 		});
@@ -445,6 +494,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				visible: false,
 				parked: false,
 				agentBrowserCommands: 0,
+				closedStack: [],
 			};
 			entries.set(viewId, session);
 			viewIdsBySessionId.set(sessionId, viewId);
@@ -507,6 +557,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const tab = session.tabs.get(tabId);
 		if (!tab) throw browserError("TAB_NOT_FOUND", `Browser tab ${tabId} does not exist`);
 		const wasActive = tabId === session.activeTabId;
+		if (tab.state.url) {
+			session.closedStack.push(tab.state.url);
+			if (session.closedStack.length > MAX_CLOSED_STACK) session.closedStack.shift();
+		}
 		disposeNetworkCapture(tab, "tab-closed");
 		if (session.networkTabId === tabId) session.networkTabId = undefined;
 		session.tabs.delete(tabId);
@@ -519,6 +573,22 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const state = listTabs(session, { kind: "closed", tabId });
 		options.mainWindow.webContents.send("browser:tabsState", state);
 		return state;
+	}
+
+	// Closing the last tab is a no-op (mirrors the tabs dropdown's disabled close
+	// button) — it never falls back to closing the whole app window.
+	function closeActiveTabSafely(session: BrowserSessionEntry): void {
+		try {
+			closeTab(session);
+		} catch (err) {
+			if ((err as { code?: string })?.code !== "CANNOT_CLOSE_LAST_TAB") throw err;
+		}
+	}
+
+	async function reopenClosedTab(session: BrowserSessionEntry): Promise<void> {
+		const url = session.closedStack.pop();
+		if (url === undefined) return;
+		await openTab(session, url, true);
 	}
 
 	function applySessionBounds(session: BrowserSessionEntry, entry: BrowserEntry): void {
@@ -632,6 +702,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const session = entries.get(viewId);
 		if (!session) return;
 		entries.delete(viewId);
+		forgetDomainBIfFocused(viewId);
 		viewIdsBySessionId.delete(session.sessionId);
 		rendererOwnersByViewId.delete(viewId);
 		forgetIfFocused(viewId);
@@ -784,6 +855,18 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		return session && isRendererOwned(event, input.viewId)
 			? closeTab(session, input.tabId)
 			: emptyTabsState(input.viewId);
+	});
+	handle("browser:openTab", async (event, viewId: string) => {
+		const session = entries.get(viewId);
+		if (!session || !isRendererOwned(event, viewId)) return emptyTabsState(viewId);
+		await openTab(session, undefined, true);
+		return listTabs(session);
+	});
+	on("browser:panelFocus", (event, viewId: string) => {
+		if (isRendererOwned(event, viewId)) domainBFocusedViewId = viewId;
+	});
+	on("browser:panelBlur", (_event, viewId: string) => {
+		forgetDomainBIfFocused(viewId);
 	});
 	handle("browser:annotation:setMode", (event, input: BrowserAnnotationModeInput) => setAnnotationMode(event, input));
 	on("browser:destroy", (event, viewId: string) => {
@@ -943,6 +1026,37 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		},
 		forgetLastFocusedPanel: () => {
 			lastFocusedViewId = null;
+		},
+		isBrowserPanelDomFocused: () => domainBFocusedViewId !== null,
+		handleBrowserPanelShortcut: (id) => {
+			if (domainBFocusedViewId === null) return false;
+			const session = entries.get(domainBFocusedViewId);
+			if (!session) return false;
+			switch (id) {
+				case "browser-new-tab":
+					void openTab(session, undefined, true).catch(() => {});
+					return true;
+				case "browser-reopen-tab":
+					void reopenClosedTab(session).catch(() => {});
+					return true;
+				case "browser-reload":
+					invokeNav(session.viewId, (contents) => contents.reload(), true);
+					return true;
+				case "browser-close-tab":
+					closeActiveTabSafely(session);
+					return true;
+			}
+		},
+		closeFocusedTab: () => {
+			// Domain A (native page focus) takes priority; in practice the two are
+			// mutually exclusive since any domain-B focus event already clears
+			// lastFocusedViewId via the existing shell:focus/WindowTitlebar mechanism.
+			const viewId = lastFocusedViewId ?? domainBFocusedViewId;
+			if (viewId === null) return false;
+			const session = entries.get(viewId);
+			if (!session) return false;
+			closeActiveTabSafely(session);
+			return true;
 		},
 	};
 }
