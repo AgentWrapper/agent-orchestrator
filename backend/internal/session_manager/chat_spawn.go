@@ -1,0 +1,155 @@
+package sessionmanager
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+)
+
+// The chat-mode controller launch.
+//
+// It is deliberately a separate path rather than conditionals threaded through
+// the terminal launch: a chat session starts no agent process inside a runtime,
+// has no pane to write into, and has no prompt-delivery strategy. Sharing that
+// code would mean every step asking which kind of session it is in.
+//
+// What the two modes DO share is everything above this point — project
+// resolution, prompts, the seed row, the worktree, provisioning, attachments —
+// which is why the branch sits where it does and not higher.
+
+// ChatLauncher starts the structured controller for a chat session. Implemented
+// by the chat service; nil in a build without chat support.
+type ChatLauncher interface {
+	// PreflightChat reports whether a harness can start in chat mode right now.
+	// Called before any durable state exists so an unsupported request costs
+	// nothing.
+	PreflightChat(ctx context.Context, harness domain.AgentHarness) error
+	// StartChat launches the controller and returns the provider conversation
+	// handle to persist for resume.
+	StartChat(ctx context.Context, cfg ChatStart) (ChatStarted, error)
+	// StartChatTurn delivers the initial prompt as a normal turn. There is no
+	// paste-and-Enter equivalent in chat mode: the provider either accepts the
+	// turn or reports why.
+	StartChatTurn(ctx context.Context, id domain.SessionID, text string) (string, error)
+	// StopChat releases a session's controller.
+	StopChat(ctx context.Context, id domain.SessionID) error
+}
+
+// ChatStart is what the launcher needs. It mirrors the terminal path's
+// LaunchConfig in spirit: everything resolved, nothing left to look up.
+type ChatStart struct {
+	SessionID     domain.SessionID
+	ProjectID     domain.ProjectID
+	Harness       domain.AgentHarness
+	WorkspacePath string
+	// Env carries the HookPATH-pinned PATH, which is how the agent's own shell
+	// commands find `ao`. An orchestrator delegates by running `ao spawn`, so
+	// without this a chat orchestrator could talk but not work.
+	Env          map[string]string
+	Model        string
+	Permissions  ports.PermissionMode
+	SystemPrompt string
+}
+
+// ChatStarted is the durable result of a launch.
+type ChatStarted struct {
+	ProviderConversationID string
+	ControllerGeneration   string
+}
+
+// chatSpawn bundles the shared state the chat launch needs from Spawn, so the
+// signature does not grow to a dozen positional arguments.
+type chatSpawn struct {
+	cfg              ports.SpawnConfig
+	project          domain.ProjectRecord
+	projectKind      domain.ProjectKind
+	record           domain.SessionRecord
+	workspace        ports.WorkspaceInfo
+	workspaceProject *ports.WorkspaceProjectInfo
+	prompt           string
+	systemPrompt     string
+}
+
+// launchChatController starts the provider controller for a chat session and
+// marks it spawned.
+//
+// Rollback mirrors the terminal path's: a failure before the controller exists
+// tears the workspace down, and a failure after it exists closes the controller
+// first so no app-server process is left behind holding the worktree.
+func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domain.SessionRecord, error) {
+	id := in.record.ID
+	agentConfig := effectiveAgentConfig(in.cfg.Kind, in.project.Config)
+
+	// The same env the terminal path builds, including the HookPATH pin. The
+	// provider passes its environment through to the shell commands it runs, so
+	// this is what makes `ao` resolvable to the agent.
+	env := m.runtimeEnv(id, in.cfg.ProjectID, in.cfg.IssueID, in.project.Config.Env)
+
+	started, err := m.chat.StartChat(ctx, ChatStart{
+		SessionID:     id,
+		ProjectID:     in.cfg.ProjectID,
+		Harness:       in.cfg.Harness,
+		WorkspacePath: in.workspace.Path,
+		Env:           env,
+		Model:         agentConfig.Model,
+		Permissions:   agentConfig.Permissions,
+		SystemPrompt:  in.systemPrompt,
+	})
+	if err != nil {
+		// No controller exists, so nothing provider-side needs closing. The
+		// runtime was never touched, hence runtimeDestroyed=false.
+		m.rollbackSeedSpawnWorkspace(ctx, in.record, in.workspace, in.workspaceProject, false)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: chat controller: %w", id, err)
+	}
+
+	metadata := domain.SessionMetadata{
+		Branch:            in.workspace.Branch,
+		WorkspacePath:     in.workspace.Path,
+		WorkspaceRepoPath: in.workspace.RepoPath,
+		Prompt:            in.prompt,
+		// No RuntimeHandleID or RuntimeLaunchID: a chat session has no agent pane.
+		// Leaving them empty is what keeps the reaper from probing for a terminal
+		// that was never created.
+		ProviderConversationID: started.ProviderConversationID,
+		ControllerGeneration:   started.ControllerGeneration,
+	}
+	if in.projectKind == domain.ProjectKindSingleRepo {
+		metadata.DiffBaseSHA, metadata.DiffBaseRef = resolveSpawnDiffBase(
+			ctx, in.workspace.Path, in.project.Config.WithDefaults().DefaultBranch)
+	}
+
+	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
+		m.stopChatBestEffort(ctx, id)
+		m.rollbackPreparedSpawnWorkspace(ctx, in.record, in.workspace, in.workspaceProject, true)
+		m.markSpawnFailedTerminated(ctx, id)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: completed: %w", id, err)
+	}
+
+	// The initial prompt is a normal turn through the controller. There is no
+	// paste-and-Enter equivalent here, and no "deliver after start" variant: the
+	// provider either accepts the turn or reports why.
+	if in.prompt != "" {
+		if _, err := m.chat.StartChatTurn(ctx, id, in.prompt); err != nil {
+			m.stopChatBestEffort(ctx, id)
+			m.rollbackPreparedSpawnWorkspace(ctx, in.record, in.workspace, in.workspaceProject, true)
+			m.markSpawnFailedTerminated(ctx, id)
+			return domain.SessionRecord{}, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
+		}
+	}
+
+	return m.getRecord(ctx, id)
+}
+
+// stopChatBestEffort closes a controller during rollback. A failure here is
+// logged rather than returned: the spawn is already failing, and the caller's
+// error is the one worth surfacing.
+func (m *Manager) stopChatBestEffort(ctx context.Context, id domain.SessionID) {
+	if m.chat == nil {
+		return
+	}
+	if err := m.chat.StopChat(ctx, id); err != nil {
+		m.logger.Warn("spawn rollback: close chat controller", "sessionID", id, "error", err)
+	}
+}

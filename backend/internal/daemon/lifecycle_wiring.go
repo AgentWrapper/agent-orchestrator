@@ -22,6 +22,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/reaper"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
+	chatsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/chat"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
@@ -132,7 +133,7 @@ type sessionLifecycle interface {
 // LCM, the per-session agent resolver, and the agent messenger. The returned
 // service is mounted at httpd APIDeps.Sessions. It also returns the manager so
 // the caller can wire Reconcile into the boot sequence.
-func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, previewLifecycle sessionmanager.PreviewLifecycle, browserLifecycle sessionmanager.BrowserLifecycle, browserCapabilities sessionmanager.BrowserCapabilityIssuer, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
+func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, previewLifecycle sessionmanager.PreviewLifecycle, browserLifecycle sessionmanager.BrowserLifecycle, browserCapabilities sessionmanager.BrowserCapabilityIssuer, chat sessionmanager.ChatLauncher, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
 	gitWS, err := gitworktree.New(gitworktree.Options{
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
 		// override moves all durable per-user state together.
@@ -162,6 +163,7 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Workspace:           ws,
 		Store:               store,
 		Messenger:           messenger,
+		Chat:                chat,
 		Lifecycle:           lcm,
 		Preview:             previewLifecycle,
 		Browser:             browserLifecycle,
@@ -330,4 +332,45 @@ func (r projectRepoResolver) RepoPath(projectID domain.ProjectID) (string, error
 		return "", fmt.Errorf("project %q has no repo path on record: %w", projectID, sessionmanager.ErrProjectNotResolvable)
 	}
 	return rec.Path, nil
+}
+
+// chatLauncher adapts the chat service to session_manager.ChatLauncher.
+//
+// The two packages define their own request/result types on purpose so neither
+// depends on the other's; this is the one place that knows both, which keeps the
+// translation in the wiring rather than in either domain.
+type chatLauncher struct{ svc *chatsvc.Service }
+
+var _ sessionmanager.ChatLauncher = chatLauncher{}
+
+func (c chatLauncher) PreflightChat(ctx context.Context, harness domain.AgentHarness) error {
+	return c.svc.PreflightChat(ctx, harness)
+}
+
+func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStart) (sessionmanager.ChatStarted, error) {
+	out, err := c.svc.StartChat(ctx, chatsvc.ChatStartRequest{
+		SessionID:     cfg.SessionID,
+		ProjectID:     cfg.ProjectID,
+		Harness:       cfg.Harness,
+		WorkspacePath: cfg.WorkspacePath,
+		Env:           cfg.Env,
+		Model:         cfg.Model,
+		Permissions:   cfg.Permissions,
+		SystemPrompt:  cfg.SystemPrompt,
+	})
+	if err != nil {
+		return sessionmanager.ChatStarted{}, err
+	}
+	return sessionmanager.ChatStarted{
+		ProviderConversationID: out.ProviderConversationID,
+		ControllerGeneration:   out.ControllerGeneration,
+	}, nil
+}
+
+func (c chatLauncher) StartChatTurn(ctx context.Context, id domain.SessionID, text string) (string, error) {
+	return c.svc.StartChatTurn(ctx, id, text)
+}
+
+func (c chatLauncher) StopChat(ctx context.Context, id domain.SessionID) error {
+	return c.svc.StopChat(ctx, id)
 }

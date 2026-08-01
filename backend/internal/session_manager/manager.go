@@ -199,7 +199,11 @@ type Manager struct {
 	// each call site re-deriving the check. Send/confirmActive use Deliver for
 	// its Outcome; Spawn/Restore use the interface-level Send for
 	// initial-prompt delivery, where a blocked session is impossible.
-	messenger           *sessionguard.Guard
+	messenger *sessionguard.Guard
+	// chat launches the structured controller for a chat-mode session. Nil means
+	// this build cannot run chat sessions, and a chat spawn is refused rather
+	// than silently downgraded to a terminal.
+	chat                ChatLauncher
 	lcm                 lifecycleRecorder
 	preview             PreviewLifecycle
 	browser             BrowserLifecycle
@@ -303,11 +307,15 @@ const (
 
 // Deps are the collaborators a Session Manager needs; New wires them together.
 type Deps struct {
-	Runtime             runtimeController
-	Agents              ports.AgentResolver
-	Workspace           ports.Workspace
-	Store               Store
-	Messenger           ports.AgentMessenger
+	Runtime   runtimeController
+	Agents    ports.AgentResolver
+	Workspace ports.Workspace
+	Store     Store
+	Messenger ports.AgentMessenger
+	// Chat launches the structured controller for a chat-mode session. Nil means
+	// chat mode is unavailable, and a chat spawn is refused rather than silently
+	// downgraded to a terminal.
+	Chat                ChatLauncher
 	Lifecycle           lifecycleRecorder
 	Preview             PreviewLifecycle
 	Browser             BrowserLifecycle
@@ -339,6 +347,7 @@ func New(d Deps) *Manager {
 		agents:              d.Agents,
 		workspace:           d.Workspace,
 		store:               d.Store,
+		chat:                d.Chat,
 		lcm:                 d.Lifecycle,
 		preview:             d.Preview,
 		browser:             d.Browser,
@@ -407,8 +416,28 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: %q", ErrUnknownHarness, cfg.Harness)
 	}
 
-	if err := m.validateRuntimePrerequisites(); err != nil {
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
+	// Resolve the controller mode here, before anything durable is created, for
+	// the same reason an unknown harness is rejected above: a chat request AO
+	// cannot honor should cost nothing, not leave a terminated row and a worktree
+	// behind. It never falls back to TUI — that would put the user in a terminal
+	// they deliberately did not ask for.
+	mode := domain.NormalizeSessionMode(cfg.RequestedMode)
+	if mode == domain.SessionModeChat {
+		if m.chat == nil {
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: chat mode is not available in this build", ports.ErrChatUnsupported)
+		}
+		if err := m.chat.PreflightChat(ctx, cfg.Harness); err != nil {
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
+		}
+	}
+	cfg.RequestedMode = mode
+
+	// A chat session runs no agent inside a terminal runtime, so the terminal
+	// prerequisites are not its concern.
+	if mode == domain.SessionModeTUI {
+		if err := m.validateRuntimePrerequisites(); err != nil {
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
+		}
 	}
 
 	prompt, systemPrompt, err := m.buildSpawnTexts(ctx, cfg)
@@ -466,6 +495,26 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 			m.logger.Warn("spawn: exclude attachments dir", "sessionID", id, "error", err)
 		}
 		prompt = appendAttachmentReferences(prompt, refs)
+	}
+
+	// Everything above is shared: project, harness, prompts, seed row, worktree,
+	// provisioning, attachments. From here the two modes launch different
+	// controllers, and exactly one of them runs.
+	if mode == domain.SessionModeChat {
+		rec, err = m.launchChatController(ctx, chatSpawn{
+			cfg:              cfg,
+			project:          project,
+			projectKind:      projectKind,
+			record:           rec,
+			workspace:        ws,
+			workspaceProject: workspaceProject,
+			prompt:           prompt,
+			systemPrompt:     systemPrompt,
+		})
+		if err != nil {
+			return domain.SessionRecord{}, 0, 0, err
+		}
+		return rec, promptBytes, systemPromptBytes, nil
 	}
 
 	agent, ok := m.agents.Agent(cfg.Harness)
@@ -2310,6 +2359,9 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 		Harness:     cfg.Harness,
 		DisplayName: cfg.DisplayName,
 		Activity:    domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+		// Resolved before this point and persisted here. There is no UPDATE
+		// statement that can change it afterwards.
+		Mode: domain.NormalizeSessionMode(cfg.RequestedMode),
 	}
 }
 

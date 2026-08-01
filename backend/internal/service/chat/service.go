@@ -358,3 +358,94 @@ func (f SnapshotReaderFunc) LoadConversationSnapshot(
 ) (ConversationRows, error) {
 	return f(ctx, conversationID)
 }
+
+/* ---- session_manager.ChatLauncher ---------------------------------------- */
+
+// The methods below let the session manager launch a chat controller during spawn
+// without importing this package's config types. They are deliberately narrow:
+// the manager decides when, this package decides how.
+
+// PreflightChat reports whether a harness can start in chat mode right now.
+//
+// Called before any durable state exists, so an unsupported request costs nothing
+// — no terminated orphan row, no wasted worktree. It never downgrades to TUI:
+// that would put the user in a terminal they did not ask for.
+func (s *Service) PreflightChat(ctx context.Context, harness domain.AgentHarness) error {
+	driver, err := s.drivers.Driver(harness)
+	if err != nil {
+		return fmt.Errorf("%w: %s has no chat driver", ports.ErrChatUnsupported, harness)
+	}
+	caps, err := driver.Probe(ctx)
+	if err != nil {
+		return err
+	}
+	if missing := ports.MissingProductionCapabilities(caps); len(missing) > 0 {
+		return fmt.Errorf("%w: %s lacks %v", ports.ErrChatUnsupported, harness, missing)
+	}
+	return nil
+}
+
+// StartChat launches the controller for a freshly created session.
+func (s *Service) StartChat(ctx context.Context, cfg ChatStartRequest) (ChatStartResult, error) {
+	controller, err := s.Start(ctx, StartConfig{
+		SessionID:     cfg.SessionID,
+		ProjectID:     cfg.ProjectID,
+		Harness:       cfg.Harness,
+		WorkspacePath: cfg.WorkspacePath,
+		Env:           cfg.Env,
+		Model:         cfg.Model,
+		Permissions:   cfg.Permissions,
+		SystemPrompt:  cfg.SystemPrompt,
+	})
+	if err != nil {
+		return ChatStartResult{}, err
+	}
+	return ChatStartResult{
+		ProviderConversationID: controller.ProviderConversationID(),
+		ControllerGeneration:   controller.Generation(),
+	}, nil
+}
+
+// ChatStartRequest mirrors session_manager.ChatStart. Duplicated rather than
+// imported so the manager and this service do not depend on each other's types.
+type ChatStartRequest struct {
+	SessionID     domain.SessionID
+	ProjectID     domain.ProjectID
+	Harness       domain.AgentHarness
+	WorkspacePath string
+	Env           map[string]string
+	Model         string
+	Permissions   ports.PermissionMode
+	SystemPrompt  string
+}
+
+// ChatStartResult is the durable outcome of a launch.
+type ChatStartResult struct {
+	ProviderConversationID string
+	ControllerGeneration   string
+}
+
+// StartChatTurn delivers the initial prompt as a normal turn.
+//
+// It goes through the controller rather than the mode-gated Send, because the
+// session row is still being written when spawn calls this: reading the persisted
+// mode here would race the write that sets it.
+func (s *Service) StartChatTurn(ctx context.Context, id domain.SessionID, text string) (string, error) {
+	controller, err := s.Controller(id)
+	if err != nil {
+		return "", err
+	}
+	turn, err := controller.Send(ctx, ports.ChatUserMessage{
+		Text:   text,
+		Origin: domain.MessageOriginDaemon,
+	})
+	if err != nil {
+		return "", err
+	}
+	return turn.ID, nil
+}
+
+// StopChat releases a session's controller.
+func (s *Service) StopChat(ctx context.Context, id domain.SessionID) error {
+	return s.Stop(ctx, id)
+}

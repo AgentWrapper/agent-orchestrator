@@ -169,7 +169,32 @@ func Run() error {
 	// selected runtime, routed git/scratch workspaces, the per-session agent
 	// resolver (AO_AGENT validated here for compatibility), and the agent
 	// messenger, then mount it on the API.
-	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, log)
+	// Chat service. The driver registry is the capability gate: a harness with no
+	// registered driver cannot start in chat mode, so an unsupported request fails
+	// loudly instead of silently becoming a TUI session.
+	chatSvc := chatsvc.New(chatsvc.Options{
+		Store:    store,
+		Sessions: store,
+		// Adapts the store's own snapshot type, so the chat service never has to
+		// import the storage layer.
+		Reader: chatsvc.SnapshotReaderFunc(func(ctx context.Context, conversationID string) (chatsvc.ConversationRows, error) {
+			rows, err := store.LoadConversationSnapshot(ctx, conversationID)
+			if err != nil {
+				return chatsvc.ConversationRows{}, err
+			}
+			return chatsvc.ConversationRows{
+				Conversation: rows.Conversation,
+				Turns:        rows.Turns,
+				Messages:     rows.Messages,
+				Activities:   rows.Activities,
+			}, nil
+		}),
+		Drivers: chatdriverregistry.Build(log),
+		Log:     log,
+		NewID:   uuid.NewString,
+	})
+
+	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -245,31 +270,6 @@ func Run() error {
 		dispatcher := push.NewDispatcher(notificationHub, pushDevices, push.NewExpoClient(os.Getenv("EXPO_ACCESS_TOKEN")), log)
 		go dispatcher.Run(ctx)
 	}
-
-	// Chat service. The driver registry is the capability gate: a harness with no
-	// registered driver cannot start in chat mode, so an unsupported request fails
-	// loudly instead of silently becoming a TUI session.
-	chatSvc := chatsvc.New(chatsvc.Options{
-		Store:    store,
-		Sessions: store,
-		// Adapts the store's own snapshot type, so the chat service never has to
-		// import the storage layer.
-		Reader: chatsvc.SnapshotReaderFunc(func(ctx context.Context, conversationID string) (chatsvc.ConversationRows, error) {
-			rows, err := store.LoadConversationSnapshot(ctx, conversationID)
-			if err != nil {
-				return chatsvc.ConversationRows{}, err
-			}
-			return chatsvc.ConversationRows{
-				Conversation: rows.Conversation,
-				Turns:        rows.Turns,
-				Messages:     rows.Messages,
-				Activities:   rows.Activities,
-			}, nil
-		}),
-		Drivers: chatdriverregistry.Build(log),
-		Log:     log,
-		NewID:   uuid.NewString,
-	})
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectSvc,
