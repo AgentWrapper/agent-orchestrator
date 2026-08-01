@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NewTaskDialog } from "./NewTaskDialog";
@@ -35,7 +35,7 @@ function renderDialog() {
 	return { onCreated, onOpenChange };
 }
 
-function spawnBody() {
+function requestBody() {
 	return (postMock.mock.calls[0][1] as { body: Record<string, unknown> }).body;
 }
 
@@ -71,7 +71,7 @@ beforeEach(() => {
 			error: undefined,
 		};
 	});
-	postMock.mockReset().mockResolvedValue({ data: { session: { id: "task-1" } }, error: undefined });
+	postMock.mockReset().mockResolvedValue({ data: { ok: true, orchestratorId: "orch-1" }, error: undefined });
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -89,35 +89,37 @@ describe("NewTaskDialog", () => {
 		expect(screen.getByLabelText("Model")).toHaveValue("");
 		expect(screen.queryByLabelText("Title")).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Branch")).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Add image" })).not.toBeInTheDocument();
 	});
 
-	it("preselects the project's default agent and omits harness so the daemon applies it", async () => {
+	it("delegates the original task with project-default agent intent and optional model", async () => {
 		const { onCreated, onOpenChange } = renderDialog();
 		const user = userEvent.setup();
+		const brief = "  Restore the fallback renderer after WebGL init fails.  ";
 
 		await waitForAgentCatalog();
 
-		await user.type(screen.getByLabelText("Task"), "Restore the fallback renderer after WebGL init fails.");
+		await user.type(screen.getByLabelText("Task"), brief);
 		await user.type(screen.getByLabelText("Model"), "placeholder-model");
 		await user.click(screen.getByRole("button", { name: "Start task" }));
 
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions", {
+		expect(postMock).toHaveBeenCalledWith("/api/v1/orchestrators/delegate", {
 			body: {
 				projectId: "proj-1",
-				kind: "worker",
-				harness: undefined,
-				prompt: "Restore the fallback renderer after WebGL init fails.",
+				brief,
+				agent: undefined,
+				model: "placeholder-model",
 			},
 		});
-		expect(spawnBody()).not.toHaveProperty("issueId");
-		expect(spawnBody()).not.toHaveProperty("branch");
-		expect(spawnBody()).not.toHaveProperty("model");
-		expect(onCreated).toHaveBeenCalledWith("task-1");
+		expect(requestBody()).not.toHaveProperty("issueId");
+		expect(requestBody()).not.toHaveProperty("branch");
+		expect(requestBody()).not.toHaveProperty("harness");
+		expect(onCreated).toHaveBeenCalledWith("orch-1");
 		expect(onOpenChange).toHaveBeenCalledWith(false);
 	}, 20_000);
 
-	it("sends the chosen harness when the user overrides the default", async () => {
+	it("sends the chosen agent when the user overrides the default", async () => {
 		renderDialog();
 		const user = userEvent.setup();
 		await waitForAgentCatalog();
@@ -130,7 +132,7 @@ describe("NewTaskDialog", () => {
 		await user.click(screen.getByRole("button", { name: "Start task" }));
 
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		expect(spawnBody().harness).toBe("cursor");
+		expect(requestBody().agent).toBe("cursor");
 	});
 
 	it("allows selecting an installed agent with unknown auth", async () => {
@@ -148,73 +150,7 @@ describe("NewTaskDialog", () => {
 		await user.click(screen.getByRole("button", { name: "Start task" }));
 
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		expect(spawnBody().harness).toBe("kiro");
-	});
-
-	it("attaches a pasted image as a numbered chip and sends it in the spawn body", async () => {
-		renderDialog();
-		const user = userEvent.setup();
-		await waitForAgentCatalog();
-
-		const task = screen.getByLabelText("Task");
-		const png = new File([new Uint8Array([137, 80, 78, 71])], "shot.png", { type: "image/png" });
-		fireEvent.paste(task, { clipboardData: { files: [png], items: [] } });
-
-		expect(await screen.findByText("Image 1")).toBeInTheDocument();
-
-		await user.type(task, "B");
-		await user.click(screen.getByRole("button", { name: "Start task" }));
-
-		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		const attachments = spawnBody().attachments as Array<{ mimeType: string; data: string }>;
-		expect(attachments).toHaveLength(1);
-		expect(attachments[0].mimeType).toBe("image/png");
-		expect(attachments[0].data.length).toBeGreaterThan(0);
-	});
-
-	it("removes an attached image and renumbers the remaining chips", async () => {
-		renderDialog();
-		const user = userEvent.setup();
-		await waitForAgentCatalog();
-
-		const task = screen.getByLabelText("Task");
-		const a = new File([new Uint8Array([1, 2, 3])], "a.png", { type: "image/png" });
-		const b = new File([new Uint8Array([4, 5, 6])], "b.png", { type: "image/png" });
-		fireEvent.paste(task, { clipboardData: { files: [a, b], items: [] } });
-
-		expect(await screen.findByText("Image 1")).toBeInTheDocument();
-		expect(screen.getByText("Image 2")).toBeInTheDocument();
-
-		await user.click(screen.getByRole("button", { name: "Remove image 1" }));
-
-		await waitFor(() => expect(screen.queryByText("Image 2")).not.toBeInTheDocument());
-		expect(screen.getByText("Image 1")).toBeInTheDocument();
-	});
-
-	it("ignores a paste that carries no image", async () => {
-		renderDialog();
-		await waitForAgentCatalog();
-
-		const task = screen.getByLabelText("Task");
-		fireEvent.paste(task, { clipboardData: { files: [], items: [] } });
-
-		expect(screen.queryByText("Image 1")).not.toBeInTheDocument();
-	});
-
-	it("caps attachments at 8 and shows an inline error instead of a late submit rejection", async () => {
-		renderDialog();
-		await waitForAgentCatalog();
-
-		const task = screen.getByLabelText("Task");
-		const files = Array.from(
-			{ length: 10 },
-			(_, i) => new File([new Uint8Array([i + 1])], `shot-${i}.png`, { type: "image/png" }),
-		);
-		fireEvent.paste(task, { clipboardData: { files, items: [] } });
-
-		expect(await screen.findByText("Image 8")).toBeInTheDocument();
-		expect(screen.queryByText("Image 9")).not.toBeInTheDocument();
-		expect(screen.getByText(/up to 8 images/i)).toBeInTheDocument();
+		expect(requestBody().agent).toBe("kiro");
 	});
 
 	it("requires task text", async () => {
@@ -227,7 +163,7 @@ describe("NewTaskDialog", () => {
 		expect(postMock).not.toHaveBeenCalled();
 	});
 
-	it("shows an empty Model field for scratch projects and does not send it", async () => {
+	it("shows an empty Model field for scratch projects and omits it from delegation", async () => {
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/agents") {
 				return {
@@ -259,8 +195,8 @@ describe("NewTaskDialog", () => {
 		await user.click(screen.getByRole("button", { name: "Start task" }));
 
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		expect(spawnBody()).not.toHaveProperty("branch");
-		expect(spawnBody()).not.toHaveProperty("model");
+		expect(requestBody()).not.toHaveProperty("branch");
+		expect(requestBody().model).toBeUndefined();
 	});
 
 	it("submits on Enter and inserts a newline on Shift+Enter in the task", async () => {
@@ -278,7 +214,7 @@ describe("NewTaskDialog", () => {
 		// Plain Enter submits the task.
 		await user.keyboard("{Enter}");
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		expect(spawnBody().prompt).toContain("\n");
+		expect(requestBody().brief).toContain("\n");
 	});
 
 	it("does not submit on Alt+Enter or Shift+Enter but does on plain Enter in the task", async () => {
@@ -304,18 +240,18 @@ describe("NewTaskDialog", () => {
 
 	it.each([
 		{
-			code: "AGENT_BINARY_NOT_FOUND",
-			message: "agent binary not found on PATH",
+			code: "ACTIVE_ORCHESTRATOR_REQUIRED",
+			message: "Start an orchestrator for this project before starting a task.",
 		},
 		{
-			code: "RUNTIME_PREREQUISITE_MISSING",
-			message: "tmux required on macOS/Linux but not in PATH",
+			code: "SESSION_AWAITING_DECISION",
+			message: "orchestrator is waiting on a permission decision",
 		},
 		{
 			code: "INTERNAL",
-			message: "runtime launch failed",
+			message: "task delegation failed",
 		},
-	])("displays daemon spawn errors for $code", async ({ code, message }) => {
+	])("displays daemon delegation errors for $code", async ({ code, message }) => {
 		postMock.mockResolvedValueOnce({
 			data: undefined,
 			error: { code, message },
