@@ -1,6 +1,7 @@
 import type { ForgeConfig } from "@electron-forge/shared-types";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import MakerNSIS from "./makers/maker-nsis";
+import MakerDMG, { sealDmg, verifyDmg } from "./makers/maker-dmg";
 import MakerAppImage from "./makers/maker-appimage";
 import { writeFileSync } from "node:fs";
 
@@ -80,6 +81,31 @@ const config: ForgeConfig = {
 			].join("\n");
 			writeFileSync("app-update.yml", yml);
 		},
+		// The dmg container is NOT signed, notarized or stapled by any maker
+		// (neither Forge's maker-dmg nor app-builder-lib's dmg target does it), and
+		// the .app's own stapled ticket does not propagate through an unsealed
+		// container. So seal it here, after the maker has produced it, reusing the
+		// same credentials packagerConfig already consumes (#3267 decision 3).
+		// The .app inside was already signed + notarized + stapled by
+		// packagerConfig above, before any maker ran; nothing here touches it.
+		//
+		// Then PROVE the seal. sealDmg exiting 0 only says three commands ran on
+		// this machine; it does not say Gatekeeper accepts the published bytes with
+		// a stapled ticket. verify-mac-artifact.sh is the canonical gate for that
+		// (#3288 workstreams 1 and 2), and #3267 decision 3 step 4 asks for exactly
+		// this check on the dmg. Run only when sealDmg actually sealed: an unsigned
+		// local or desktop-testing build has nothing to verify and must keep
+		// producing its dmg.
+		postMake: async (_forgeConfig, makeResults) => {
+			for (const result of makeResults) {
+				if (result.platform !== "darwin") continue;
+				for (const artifact of result.artifacts) {
+					if (!artifact.endsWith(".dmg")) continue;
+					if (await sealDmg(artifact)) await verifyDmg(artifact);
+				}
+			}
+			return makeResults;
+		},
 	},
 	rebuildConfig: {},
 	makers: [
@@ -97,7 +123,21 @@ const config: ForgeConfig = {
 			},
 			["win32"],
 		),
+		// macOS auto-update artifact. This entry can NEVER be removed:
+		// MacUpdater.doDownloadUpdate looks for a "zip" and explicitly excludes
+		// .pkg/.dmg, throwing ERR_UPDATER_ZIP_FILE_NOT_FOUND otherwise, so the zip
+		// and latest-mac.yml must keep publishing forever (#3267 decision 2).
 		{ name: "@electron-forge/maker-zip", platforms: ["darwin"], config: {} },
+		// macOS FIRST-INSTALL artifact, additive to the zip above: a dmg has no
+		// user-driven extraction step, so a third-party unzip tool can no longer
+		// break the signature seal on the way in (see makers/maker-dmg.ts, #3267).
+		new MakerDMG(
+			{
+				appId: "dev.agent-orchestrator.desktop",
+				productName: "Agent Orchestrator",
+			},
+			["darwin"],
+		),
 		// Linux fetch-and-run artifact for `ao start`: a single self-contained
 		// AppImage the Go bootstrapper downloads and runs directly (see
 		// makers/maker-appimage.ts). The deb/rpm makers below stay for users who

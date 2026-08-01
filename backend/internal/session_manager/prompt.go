@@ -80,7 +80,7 @@ func buildSystemPromptText(cfg systemPromptConfig) string {
 		if orchestratorID := strings.TrimSpace(cfg.OrchestratorSessionID); orchestratorID != "" {
 			sections = append(sections, workerOrchestratorPrompt(orchestratorID))
 		}
-		sections = append(sections, workerMultiPRPrompt())
+		sections = append(sections, workerMultiPRPrompt(), workerContainerLabelPrompt())
 		if rules := strings.TrimSpace(cfg.ProjectRules); rules != "" {
 			sections = append(sections, "## Project Rules\n"+rules)
 		}
@@ -289,6 +289,20 @@ AO attributes PRs to this session when the source branch is this session branch 
 - To stack a PR on top of another, create the child branch from the parent branch and name it ` + "`<parent-branch>/<topic>`" + `, then target the parent branch in the PR.
 
 Keep branch names inside this session namespace so AO can track every PR you open.`
+}
+
+// workerContainerLabelPrompt tells a worker how to make any Docker containers
+// it starts reapable by AO on session end (#2652). AO does not run docker
+// itself -- this is the only place the ao.session/ao.spare convention reaches
+// an agent.
+func workerContainerLabelPrompt() string {
+	return `## Docker Containers Started By This Session
+
+If this task starts its own Docker containers (a local database, a queue, any ad-hoc service), label every one so AO can find and remove it when this session ends:
+
+- Add ` + "`" + `--label ao.session=$AO_SESSION_ID` + "`" + ` to every ` + "`" + `docker run` + "`" + `. AO force-removes containers carrying this label when the session is killed or otherwise terminates.
+- If a container is deliberately shared substrate that must outlive this session (a shared postgres, a registry), also add ` + "`" + `--label ao.spare=true` + "`" + ` -- AO never reaps a spared container.
+- Without the ` + "`" + `ao.session` + "`" + ` label, a container you start is not tracked and will not be cleaned up automatically.`
 }
 
 func projectContextSection(project promptProject) string {
