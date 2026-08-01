@@ -122,6 +122,31 @@ func (p *Provider) AuthenticatedIdentity(ctx context.Context) (ports.SCMIdentity
 	return p.identity, nil
 }
 
+// ReplyToReviewThread posts a reply comment to an existing GitHub pull request
+// review thread.
+func (p *Provider) ReplyToReviewThread(ctx context.Context, threadID, body string) error {
+	query := `mutation($threadId:ID!,$body:String!){
+  addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$threadId,body:$body}){ comment{ id } }
+}`
+	_, err := p.client.doGraphQL(ctx, query, map[string]any{"threadId": threadID, "body": body})
+	if err != nil {
+		return fmt.Errorf("github scm: reply to review thread %s: %w", threadID, err)
+	}
+	return nil
+}
+
+// ResolveReviewThread marks a GitHub pull request review thread resolved.
+func (p *Provider) ResolveReviewThread(ctx context.Context, threadID string) error {
+	query := `mutation($threadId:ID!){
+  resolveReviewThread(input:{threadId:$threadId}){ thread{ id isResolved } }
+}`
+	_, err := p.client.doGraphQL(ctx, query, map[string]any{"threadId": threadID})
+	if err != nil {
+		return fmt.Errorf("github scm: resolve review thread %s: %w", threadID, err)
+	}
+	return nil
+}
+
 // Observe fetches the current state of one PR by its github.com URL and
 // returns a normalized ports.PRObservation. Any required network call
 // failing yields Fetched=false (caller must not infer "PR closed" from a

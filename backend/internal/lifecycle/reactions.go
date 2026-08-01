@@ -79,7 +79,10 @@ func (m *Manager) ApplyReviewBatch(ctx context.Context, workerID domain.SessionI
 		if r.GithubReviewID != "" {
 			safeReviewID := domain.SanitizeControlChars(r.GithubReviewID)
 			fmt.Fprintf(&msg, "\nGitHub review: %s", safeReviewID)
-			fmt.Fprintf(&msg, "\nOnce you have addressed it, reply on GitHub review %s with how you addressed it, then resolve the review comment threads you addressed.", safeReviewID)
+		}
+		if r.RunID != "" {
+			fmt.Fprintf(&msg, "\nReview run ID: %s", domain.SanitizeControlChars(r.RunID))
+			fmt.Fprintf(&msg, "\nAfter pushing fixes, signal AO for each exact addressed thread: ao review submit --addressed --run %s --thread-id <thread-id> --body -", domain.SanitizeControlChars(r.RunID))
 		}
 		if r.Body != "" {
 			fmt.Fprintf(&msg, "\n\nReview body:\n%s\n", domain.SanitizeControlChars(r.Body))
@@ -281,7 +284,11 @@ func (m *Manager) ApplyReviewResult(ctx context.Context, workerID domain.Session
 	if r.GithubReviewID != "" {
 		safeReviewID := domain.SanitizeControlChars(r.GithubReviewID)
 		msg += fmt.Sprintf("\nGitHub review: %s", safeReviewID)
-		msg += fmt.Sprintf("\n\nOnce you have addressed it, reply on GitHub review %s with how you addressed it, then resolve the review comment threads you addressed.", safeReviewID)
+	}
+	if r.RunID != "" {
+		safeRunID := domain.SanitizeControlChars(r.RunID)
+		msg += fmt.Sprintf("\nReview run ID: %s", safeRunID)
+		msg += fmt.Sprintf("\n\nAfter pushing fixes, signal AO for each exact addressed thread: ao review submit --addressed --run %s --thread-id <thread-id> --body -", safeRunID)
 	}
 	if r.Body != "" {
 		msg += "\n\nReview body:\n" + domain.SanitizeControlChars(r.Body)
@@ -735,7 +742,7 @@ func formatReviewCommentsMessage(comments []ports.PRCommentObservation) string {
 		}
 		msg.WriteString("\n")
 	}
-	msg.WriteString("\nAddress each comment and push fixes. Use the thread ID to resolve each thread directly after pushing when available. You should not need to re-fetch review data unless you need additional context beyond what is provided here.")
+	msg.WriteString("\nAddress each comment and push fixes. After pushing, signal AO for each exact addressed thread with `ao review submit --addressed --run <review-run-id> --thread-id <thread-id> --body -`; AO will reply and resolve provider threads. You should not need to re-fetch review data unless you need additional context beyond what is provided here.")
 	return msg.String()
 }
 

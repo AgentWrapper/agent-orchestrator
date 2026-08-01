@@ -104,6 +104,41 @@ func TestReviewSubmitAcceptsUnderscoreFlags(t *testing.T) {
 	}
 }
 
+func TestReviewSubmitAddressedPostsExactThreadIDs(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := reviewServer(t, http.StatusOK, `{"resolved":2}`)
+	writeRunFileFor(t, cfg, srv)
+
+	deps := aliveDeps()
+	deps.In = strings.NewReader("Fixed both comments in abc123.")
+	out, errOut, err := executeCLI(t, deps,
+		"review", "submit", "mer-1", "--addressed", "--run", "run-1", "--thread-id", "thread-1", "--thread-id", "thread-2", "--body", "-")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.method != http.MethodPost || capture.path != "/api/v1/sessions/mer-1/reviews/addressed" {
+		t.Fatalf("request = %s %s", capture.method, capture.path)
+	}
+	var req addressedReviewRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if req.RunID != "run-1" || req.Body != "Fixed both comments in abc123." || len(req.ThreadIDs) != 2 || req.ThreadIDs[0] != "thread-1" || req.ThreadIDs[1] != "thread-2" {
+		t.Fatalf("request = %+v", req)
+	}
+	if !strings.Contains(out, "resolved 2 review thread(s) for mer-1") {
+		t.Fatalf("stdout = %q", out)
+	}
+}
+
+func TestReviewSubmitAddressedRequiresThreadID(t *testing.T) {
+	setConfigEnv(t)
+	_, _, err := executeCLI(t, aliveDeps(), "review", "submit", "mer-1", "--addressed", "--run", "run-1", "--body", "-")
+	if got := ExitCode(err); got != 2 {
+		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)
+	}
+}
+
 func TestReviewSubmitBatchReadsReviewsFromStdin(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, capture := reviewServer(t, http.StatusOK, `{"reviews":[{"id":"run-1","verdict":"changes_requested"},{"id":"run-2","verdict":"approved"}]}`)

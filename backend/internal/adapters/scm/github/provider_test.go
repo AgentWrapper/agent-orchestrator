@@ -129,6 +129,45 @@ func TestAuthenticatedIdentityCachesHumanUser(t *testing.T) {
 	}
 }
 
+func TestReviewFeedbackActionsReplyThenResolve(t *testing.T) {
+	f := newFakeGH(t)
+	f.on(http.MethodPost, "/graphql", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode graphql request: %v", err)
+		}
+		switch {
+		case strings.Contains(req.Query, "addPullRequestReviewThreadReply"):
+			if req.Variables["threadId"] != "thread-1" || req.Variables["body"] != "Fixed in abc123." {
+				t.Fatalf("reply variables = %+v", req.Variables)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"addPullRequestReviewThreadReply": map[string]any{"comment": map[string]any{"id": "reply-1"}}}})
+		case strings.Contains(req.Query, "resolveReviewThread"):
+			if req.Variables["threadId"] != "thread-1" {
+				t.Fatalf("resolve variables = %+v", req.Variables)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"resolveReviewThread": map[string]any{"thread": map[string]any{"id": "thread-1", "isResolved": true}}}})
+		default:
+			t.Fatalf("unexpected graphql query: %s", req.Query)
+		}
+	})
+	p := newProviderForTest(t, f)
+
+	if err := p.ReplyToReviewThread(ctx(), "thread-1", "Fixed in abc123."); err != nil {
+		t.Fatalf("ReplyToReviewThread: %v", err)
+	}
+	if err := p.ResolveReviewThread(ctx(), "thread-1"); err != nil {
+		t.Fatalf("ResolveReviewThread: %v", err)
+	}
+	calls := f.calls()
+	if len(calls) != 2 || !strings.Contains(calls[0].Body, "addPullRequestReviewThreadReply") || !strings.Contains(calls[1].Body, "resolveReviewThread") {
+		t.Fatalf("graphql calls out of order: %+v", calls)
+	}
+}
+
 func TestAuthenticatedIdentityClassifiesBot(t *testing.T) {
 	f := newFakeGH(t)
 	f.on(http.MethodGet, "/user", func(w http.ResponseWriter, _ *http.Request) {

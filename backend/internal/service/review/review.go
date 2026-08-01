@@ -7,6 +7,7 @@ package review
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -21,6 +22,7 @@ var (
 	ErrInvalid             = reviewcore.ErrInvalid
 	ErrNotFound            = reviewcore.ErrNotFound
 	ErrAgentBinaryNotFound = ports.ErrAgentBinaryNotFound
+	ErrNothingToResolve    = fmt.Errorf("%w: no requested review threads to resolve", ErrInvalid)
 )
 
 // Manager is the reviews surface the HTTP controller depends on.
@@ -29,6 +31,7 @@ type Manager interface {
 	Cancel(ctx context.Context, workerID domain.SessionID) (reviewcore.CancelResult, error)
 	Submit(ctx context.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body, githubReviewID string) (domain.ReviewRun, error)
 	SubmitMany(ctx context.Context, workerID domain.SessionID, reviews []SubmittedReview) ([]domain.ReviewRun, error)
+	Addressed(ctx context.Context, sessionID domain.SessionID, in AddressedFeedback) (AddressedResult, error)
 	List(ctx context.Context, workerID domain.SessionID) (reviewcore.SessionReviews, error)
 }
 
@@ -37,6 +40,7 @@ type Service struct {
 	engine    *reviewcore.Engine
 	store     Store
 	lifecycle Reducer
+	feedback  ports.ReviewFeedbackActions
 	clock     func() time.Time
 }
 
@@ -48,6 +52,7 @@ type Store interface {
 	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
 	MarkReviewRunDelivered(ctx context.Context, id string, deliveredAt time.Time) (bool, error)
 	ListPRsBySession(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error)
+	ListPRReviewThreads(ctx context.Context, prURL string) ([]domain.PullRequestReviewThread, error)
 }
 
 // Reducer is the lifecycle reaction boundary used after a review result has
@@ -68,6 +73,12 @@ func WithLifecycleReducer(r Reducer) Option {
 // WithClock overrides the service clock for tests.
 func WithClock(clock func() time.Time) Option {
 	return func(s *Service) { s.clock = clock }
+}
+
+// WithReviewFeedbackActions wires backend-owned reply/resolve side effects for
+// addressed review feedback.
+func WithReviewFeedbackActions(actions ports.ReviewFeedbackActions) Option {
+	return func(s *Service) { s.feedback = actions }
 }
 
 // New wraps a core review engine as the API-facing service.
@@ -99,6 +110,20 @@ type SubmittedReview struct {
 	Verdict        domain.ReviewVerdict
 	Body           string
 	GithubReviewID string
+}
+
+// AddressedFeedback is the intent submitted by an agent after it addressed
+// specific review feedback in code.
+type AddressedFeedback struct {
+	RunID     string
+	ThreadIDs []string
+	Body      string
+}
+
+// AddressedResult reports how many matching unresolved review threads AO
+// replied to and resolved through the configured review feedback action port.
+type AddressedResult struct {
+	Resolved int
 }
 
 // Submit records a reviewer's result for a specific worker review pass.
@@ -158,6 +183,71 @@ func (s *Service) SubmitMany(ctx context.Context, workerID domain.SessionID, rev
 	return runs, nil
 }
 
+// Addressed replies to and resolves explicitly requested review threads through
+// AO-owned feedback actions.
+func (s *Service) Addressed(ctx context.Context, sessionID domain.SessionID, in AddressedFeedback) (AddressedResult, error) {
+	if sessionID == "" {
+		return AddressedResult{}, fmt.Errorf("%w: session id is required", ErrInvalid)
+	}
+	runID := in.RunID
+	if runID == "" {
+		return AddressedResult{}, fmt.Errorf("%w: review run id is required", ErrInvalid)
+	}
+	body := in.Body
+	if strings.TrimSpace(body) == "" {
+		return AddressedResult{}, fmt.Errorf("%w: addressed body is required", ErrInvalid)
+	}
+	threadIDs, err := normalizeThreadIDs(in.ThreadIDs)
+	if err != nil {
+		return AddressedResult{}, err
+	}
+	if s.store == nil {
+		return AddressedResult{}, fmt.Errorf("review service store is not configured")
+	}
+	if s.feedback == nil {
+		return AddressedResult{}, fmt.Errorf("review service feedback actions are not configured")
+	}
+	run, ok, err := s.store.GetReviewRun(ctx, runID)
+	if err != nil {
+		return AddressedResult{}, err
+	}
+	if !ok {
+		return AddressedResult{}, fmt.Errorf("%w: review run %q", ErrNotFound, runID)
+	}
+	if run.SessionID != sessionID {
+		return AddressedResult{}, fmt.Errorf("%w: review run %q does not belong to session %q", ErrInvalid, runID, sessionID)
+	}
+	if run.PRURL == "" {
+		return AddressedResult{}, fmt.Errorf("%w: review run %q has no pull request", ErrInvalid, runID)
+	}
+	threads, err := s.store.ListPRReviewThreads(ctx, run.PRURL)
+	if err != nil {
+		return AddressedResult{}, err
+	}
+	byID := make(map[string]domain.PullRequestReviewThread, len(threads))
+	for _, th := range threads {
+		byID[th.ThreadID] = th
+	}
+	for _, id := range threadIDs {
+		th, ok := byID[id]
+		if !ok {
+			return AddressedResult{}, fmt.Errorf("%w: review thread %q does not belong to PR for review run %q", ErrInvalid, id, runID)
+		}
+		if th.Resolved {
+			return AddressedResult{}, fmt.Errorf("%w: review thread %q is already resolved", ErrInvalid, id)
+		}
+	}
+	for _, id := range threadIDs {
+		if err := s.feedback.ReplyToReviewThread(ctx, id, body); err != nil {
+			return AddressedResult{}, err
+		}
+		if err := s.feedback.ResolveReviewThread(ctx, id); err != nil {
+			return AddressedResult{}, err
+		}
+	}
+	return AddressedResult{Resolved: len(threadIDs)}, nil
+}
+
 func (s *Service) submitOne(ctx context.Context, workerID domain.SessionID, review SubmittedReview) (domain.ReviewRun, error) {
 	runID := review.RunID
 	verdict := review.Verdict
@@ -212,6 +302,26 @@ func (s *Service) submitOne(ctx context.Context, workerID domain.SessionID, revi
 		return domain.ReviewRun{}, fmt.Errorf("%w: review run %q is not running", ErrInvalid, runID)
 	}
 	return run, nil
+}
+
+func normalizeThreadIDs(ids []string) ([]string, error) {
+	seen := make(map[string]struct{}, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	if len(out) == 0 {
+		return nil, ErrNothingToResolve
+	}
+	return out, nil
 }
 
 func (s *Service) deliverSubmitted(ctx context.Context, workerID domain.SessionID, runs []domain.ReviewRun) ([]domain.ReviewRun, error) {
