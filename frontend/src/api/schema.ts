@@ -1612,6 +1612,8 @@ export interface components {
             issueId?: string;
             /** @enum {string} */
             kind?: "worker" | "orchestrator";
+            /** @enum {string} */
+            mode?: "chat" | "tui";
             projectId: string;
             prompt?: string;
         };

@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
+import { SessionChatSurface } from "./chat/SessionChatSurface";
 import { SessionFilesView } from "./SessionFilesView";
 import { SessionInspector } from "./SessionInspector";
 import { ShellTopbar } from "./ShellTopbar";
@@ -374,6 +375,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				{/* react-resizable-panels v4: bare numbers are PIXELS; percentages must
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
 				<ResizablePanel defaultSize="72%" id="terminal" minSize="45%">
+					{/* The central surface comes from the session's OWN persisted mode, not
+					    from the current default preference: a session created in chat mode
+					    stays chat forever, and one created in terminal mode never grows a
+					    chat surface. Exactly one controller exists per session, so exactly
+					    one surface may render it. */}
+					{session?.mode === "chat" ? (
+						<SessionChatSurface session={session} />
+					) : (
 					<CenterPane
 						daemonReady={daemonStatus.state === "ready"}
 						onCloseShellTerminal={closeShellTerminalByHandle}
@@ -387,6 +396,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						terminalTarget={terminalTarget}
 						theme={theme}
 					/>
+					)}
 				</ResizablePanel>
 				{hasInspector ? (
 					<>

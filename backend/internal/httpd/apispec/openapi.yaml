@@ -4539,6 +4539,11 @@ components:
           - worker
           - orchestrator
           type: string
+        mode:
+          enum:
+          - chat
+          - tui
+          type: string
         projectId:
           type: string
         prompt:

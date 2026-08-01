@@ -157,7 +157,14 @@ type SpawnSessionRequest struct {
 	Kind      domain.SessionKind  `json:"kind,omitempty" enum:"worker,orchestrator"`
 	Harness   domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand,fake"`
 	Branch    string              `json:"branch,omitempty"`
-	Prompt    string              `json:"prompt,omitempty" maxLength:"4096"`
+	// Mode picks the conversation controller: chat talks to the agent over a
+	// structured connection, tui opens the agent's native terminal interface.
+	// Omitted resolves to the daemon default (tui), which is why an upgrade
+	// changes nothing. It is fixed for the session's lifetime, so there is no
+	// endpoint to change it afterwards. An unsupported explicit request fails
+	// rather than quietly producing the other kind of session.
+	Mode   domain.SessionMode `json:"mode,omitempty" enum:"chat,tui"`
+	Prompt string             `json:"prompt,omitempty" maxLength:"4096"`
 	// DisplayName is the sidebar label for the session, capped at 20 characters.
 	// `ao spawn --name` always sets it; other clients (e.g. the desktop new-task
 	// dialog) may omit it and fall back to the session id in the read model.

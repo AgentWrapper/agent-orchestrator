@@ -117,6 +117,9 @@ export type PullRequestFacts = {
 	updatedAt: string;
 };
 
+/** The conversation controller a session was created with. Immutable. */
+export type SessionMode = "chat" | "tui";
+
 export type WorkspaceSession = {
 	id: string;
 	terminalHandleId?: string;
@@ -127,6 +130,13 @@ export type WorkspaceSession = {
 	issueId?: string;
 	provider: AgentProvider;
 	kind?: SessionKind;
+	/**
+	 * Which conversation controller this session was created with. Fixed at
+	 * creation, so the session surface renders from THIS value and never from the
+	 * current default preference — a chat session stays chat even if the default
+	 * later changes, and vice versa.
+	 */
+	mode?: SessionMode;
 	branch?: string;
 	status: SessionStatus;
 	/** Stack-aware PR context derived by the daemon independently of runtime activity. */
