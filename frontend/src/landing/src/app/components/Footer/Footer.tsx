@@ -74,7 +74,7 @@ export function Footer() {
                     label: "Releases",
                     external: true,
                   },
-                  { href: "/privacy", label: "Privacy" },
+                  { href: "/privacy/", label: "Privacy" },
                 ]}
               />
 
@@ -85,6 +85,11 @@ export function Footer() {
                   {
                     href: COMPANY.DISCORD_URL,
                     label: "Discord",
+                    external: true,
+                  },
+                  {
+                    href: COMPANY.LINKEDIN_URL,
+                    label: "LinkedIn",
                     external: true,
                   },
                   { href: COMPANY.X_URL, label: "X", external: true },
@@ -129,15 +134,15 @@ function FooterColumn({
                   href={link.href}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="group flex min-h-8 items-center justify-between gap-3 py-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+                  className="group flex min-h-8 items-center justify-between gap-1 py-1.5 text-[13px] text-muted-foreground transition-colors hover:text-foreground sm:gap-3 sm:text-sm"
                 >
                   {link.label}
-                  <ArrowUpRight className="h-3 w-3 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />
+                  <ArrowUpRight className="hidden h-3 w-3 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 sm:block" />
                 </a>
               ) : (
                 <Link
                   href={link.href}
-                  className="flex min-h-8 items-center justify-between gap-3 py-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+                  className="flex min-h-8 items-center justify-between gap-1 py-1.5 text-[13px] text-muted-foreground transition-colors hover:text-foreground sm:gap-3 sm:text-sm"
                 >
                   {link.label}
                 </Link>

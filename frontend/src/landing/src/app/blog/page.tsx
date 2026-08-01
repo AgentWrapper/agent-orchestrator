@@ -18,14 +18,14 @@ export const metadata: Metadata = {
     description:
       "News, updates, and insights from the Agent Orchestrator team about coding agent orchestration and developer productivity.",
     url: "/blog",
-    images: ["/opengraph-image"],
+    images: ["/og-image.png"],
   },
   twitter: {
     card: "summary_large_image",
     title: "Blog | Agent Orchestrator",
     description:
       "News, updates, and insights from the Agent Orchestrator team about coding agent orchestration and developer productivity.",
-    images: ["/opengraph-image"],
+    images: ["/og-image.png"],
   },
 };
 

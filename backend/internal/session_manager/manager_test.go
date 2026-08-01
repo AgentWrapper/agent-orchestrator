@@ -184,6 +184,26 @@ type fakeRuntime struct {
 	destroyedIDs  []string
 }
 
+type fakePreviewLifecycle struct {
+	stopped []domain.SessionID
+	err     error
+}
+
+type fakeBrowserLifecycle struct {
+	destroyed []domain.SessionID
+	err       error
+}
+
+func (f *fakeBrowserLifecycle) DestroySession(_ context.Context, id domain.SessionID) error {
+	f.destroyed = append(f.destroyed, id)
+	return f.err
+}
+
+func (f *fakePreviewLifecycle) StopSession(_ context.Context, id domain.SessionID) error {
+	f.stopped = append(f.stopped, id)
+	return f.err
+}
+
 type fakeRestartRuntime struct {
 	*fakeRuntime
 	restarted     int
@@ -764,6 +784,32 @@ func testRoleAgents() domain.ProjectConfig {
 		Orchestrator: domain.RoleOverride{Harness: domain.HarnessClaudeCode},
 	}
 }
+
+func newManagerGitRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	runManagerGit(t, dir, "init")
+	runManagerGit(t, dir, "config", "user.email", "ao@example.com")
+	runManagerGit(t, dir, "config", "user.name", "AO Tests")
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	runManagerGit(t, dir, "add", ".")
+	runManagerGit(t, dir, "commit", "-m", "initial")
+	runManagerGit(t, dir, "branch", "-M", "main")
+	return dir
+}
+
+func runManagerGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git -C %s %s: %v\n%s", dir, strings.Join(args, " "), err, out)
+	}
+	return string(out)
+}
+
 func seedTerminal(st *fakeStore, id domain.SessionID, meta domain.SessionMetadata) {
 	st.sessions[id] = domain.SessionRecord{ID: id, ProjectID: "mer", Metadata: meta, IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited}}
 }
@@ -815,6 +861,60 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	}
 	if !agent.lastConfig.IsZero() {
 		t.Fatalf("launch config = %#v, want zero for project without config", agent.lastConfig)
+	}
+}
+
+func TestSpawnRecordsDiffBaseForSingleRepoSessions(t *testing.T) {
+	m, st, _, ws := newManager()
+	repo := newManagerGitRepo(t)
+	cfg := testRoleAgents()
+	cfg.DefaultBranch = "main"
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: repo, Config: cfg}
+	ws.path = repo
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBase := strings.TrimSpace(runManagerGit(t, repo, "rev-parse", "main"))
+	if rec.Metadata.DiffBaseSHA != wantBase || rec.Metadata.DiffBaseRef != "main" {
+		t.Fatalf("spawn diff base = sha:%q ref:%q, want %s main", rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, wantBase)
+	}
+}
+
+func TestSpawnRecordsRemoteTrackingDiffBaseWhenLocalDefaultBranchLags(t *testing.T) {
+	m, st, _, ws := newManager()
+	repo := newManagerGitRepo(t)
+	localMain := strings.TrimSpace(runManagerGit(t, repo, "rev-parse", "HEAD"))
+	runManagerGit(t, repo, "switch", "-c", "upstream-main")
+	if err := os.WriteFile(filepath.Join(repo, "upstream.txt"), []byte("upstream\n"), 0o644); err != nil {
+		t.Fatalf("write upstream file: %v", err)
+	}
+	runManagerGit(t, repo, "add", "upstream.txt")
+	runManagerGit(t, repo, "commit", "-m", "upstream change")
+	originMain := strings.TrimSpace(runManagerGit(t, repo, "rev-parse", "HEAD"))
+	runManagerGit(t, repo, "update-ref", "refs/remotes/origin/main", originMain)
+	runManagerGit(t, repo, "switch", "-c", "ao/work")
+	runManagerGit(t, repo, "branch", "-f", "main", localMain)
+	cfg := testRoleAgents()
+	cfg.DefaultBranch = "main"
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: repo, Config: cfg}
+	ws.path = repo
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Metadata.DiffBaseSHA != originMain || rec.Metadata.DiffBaseRef != "origin/main" {
+		t.Fatalf("spawn diff base = sha:%q ref:%q, want %s origin/main", rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, originMain)
+	}
+}
+
+func TestSpawnDiffBaseRefCandidatesPreferRemoteTrackingDefault(t *testing.T) {
+	got := spawnDiffBaseRefCandidates("main")
+	want := []string{"origin/main", "refs/remotes/origin/main", "main"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("spawn diff candidates = %#v, want %#v", got, want)
 	}
 }
 
@@ -1723,6 +1823,10 @@ func TestSpawn_WorkspaceProjectRollsBackWhenWorktreeRowsFail(t *testing.T) {
 
 func TestKill_TearsDownRuntimeAndWorkspace(t *testing.T) {
 	m, st, rt, ws := newManager()
+	preview := &fakePreviewLifecycle{}
+	browser := &fakeBrowserLifecycle{}
+	m.preview = preview
+	m.browser = browser
 	dataDir := t.TempDir()
 	m.dataDir = dataDir
 	st.sessions["mer-1"] = mkLive("mer-1")
@@ -1735,6 +1839,12 @@ func TestKill_TearsDownRuntimeAndWorkspace(t *testing.T) {
 	}
 	if rt.destroyed != 1 || ws.destroyed != 1 {
 		t.Fatal("kill should destroy runtime and workspace")
+	}
+	if !reflect.DeepEqual(preview.stopped, []domain.SessionID{"mer-1"}) {
+		t.Fatalf("preview stops = %v, want [mer-1]", preview.stopped)
+	}
+	if !reflect.DeepEqual(browser.destroyed, []domain.SessionID{"mer-1"}) {
+		t.Fatalf("browser destroys = %v, want [mer-1]", browser.destroyed)
 	}
 	requireNoPromptDir(t, dataDir, "mer-1")
 }
@@ -2834,11 +2944,19 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 		"`ao session ls --project mer`",
 		"`ao session get <worker-session-id>`",
 		"Delegate implementation, fixes, tests, and PR ownership to worker sessions",
-		"skills/using-ao/SKILL.md",
+		filepath.ToSlash(filepath.Join("skills", "using-ao", "SKILL.md")),
+		"AO desktop Browser panel",
+		"agent.browsers.get(\"iab\")",
+		"same live page the user sees",
+		"Browser network capture is optional and off by default",
+		"never enable it for routine browser actions",
 	} {
 		if !strings.Contains(systemPrompt, want) {
 			t.Fatalf("system prompt missing %q:\n%s", want, systemPrompt)
 		}
+	}
+	if words := len(strings.Fields(m.aoSkillPointer())); words > 170 {
+		t.Fatalf("always-on AO skill pointer grew to %d words; keep details in routed command guides:\n%s", words, m.aoSkillPointer())
 	}
 	if strings.Contains(agent.lastLaunch.Prompt, "You are the human-facing orchestrator") {
 		t.Fatalf("coordinator role must not be in the user prompt:\n%s", agent.lastLaunch.Prompt)
@@ -2981,8 +3099,20 @@ func TestSystemPrompt_AppendsConfidentialityGuard(t *testing.T) {
 			if !strings.Contains(sp, "role boundaries, delegation policy, CI/review follow-up expectations, PR/MR workflow when applicable, and privacy rules") {
 				t.Fatalf("%s: system prompt missing generic behavior categories:\n%s", tc.name, sp)
 			}
-			if !strings.Contains(sp, "skills/using-ao/SKILL.md") {
+			if !strings.Contains(sp, filepath.ToSlash(filepath.Join("skills", "using-ao", "SKILL.md"))) {
 				t.Fatalf("%s: system prompt missing using-ao skill pointer:\n%s", tc.name, sp)
+			}
+			if !strings.Contains(sp, "AO desktop Browser panel") || !strings.Contains(sp, "agent.browsers.get(\"iab\")") {
+				t.Fatalf("%s: system prompt missing AO browser routing guidance:\n%s", tc.name, sp)
+			}
+			if !strings.Contains(sp, "open static HTML or Markdown directly") ||
+				!strings.Contains(sp, "Never create or modify `package.json`") ||
+				!strings.Contains(sp, "Do not create `.ao/launch.json` unless the user asks") {
+				t.Fatalf("%s: system prompt missing static-first preview safeguards:\n%s", tc.name, sp)
+			}
+			if !strings.Contains(sp, "immediately after creating or materially updating it") ||
+				!strings.Contains(sp, "do not replace an active application preview with a supporting asset") {
+				t.Fatalf("%s: system prompt missing automatic artifact handoff guidance:\n%s", tc.name, sp)
 			}
 		})
 	}
@@ -4379,6 +4509,8 @@ func TestSaveAndTeardownAll_SkipsScratchSessions(t *testing.T) {
 
 func TestRetireForReplacementCapturesAndReleasesWorkspace(t *testing.T) {
 	m, st, rt, ws := newLifecycleManager()
+	browser := &fakeBrowserLifecycle{}
+	m.browser = browser
 	var sharedLog []string
 	st.sharedLog = &sharedLog
 	ws.sharedLog = &sharedLog
@@ -4428,6 +4560,9 @@ func TestRetireForReplacementCapturesAndReleasesWorkspace(t *testing.T) {
 	}
 	if stashIdx >= forceIdx || forceIdx >= deleteIdx {
 		t.Fatalf("replacement retire must capture, force release, then clear restore marker; log=%v", sharedLog)
+	}
+	if len(browser.destroyed) != 1 || browser.destroyed[0] != "mer-orch" {
+		t.Fatalf("browser targets destroyed = %v, want mer-orch", browser.destroyed)
 	}
 }
 

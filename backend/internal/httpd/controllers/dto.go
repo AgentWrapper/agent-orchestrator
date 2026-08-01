@@ -194,35 +194,43 @@ type SpawnSessionResponse struct {
 
 // ListWorkspaceFilesResponse is the body of GET /api/v1/sessions/{sessionId}/workspace/files.
 type ListWorkspaceFilesResponse struct {
-	SessionID domain.SessionID       `json:"sessionId"`
-	Files     []WorkspaceFileSummary `json:"files"`
-	Truncated bool                   `json:"truncated"`
+	SessionID      domain.SessionID                `json:"sessionId"`
+	CompareBaseSHA string                          `json:"compareBaseSha,omitempty"`
+	CompareBaseRef string                          `json:"compareBaseRef,omitempty"`
+	CompareMode    sessionsvc.WorkspaceCompareMode `json:"compareMode,omitempty" enum:"base,head_fallback"`
+	Files          []WorkspaceFileSummary          `json:"files"`
+	Truncated      bool                            `json:"truncated"`
 }
 
 // WorkspaceFileSummary is one file row in the session workspace browser.
 type WorkspaceFileSummary struct {
-	Path      string                         `json:"path"`
-	Status    sessionsvc.WorkspaceFileStatus `json:"status" enum:"unmodified,modified,added,deleted,renamed"`
-	Additions int                            `json:"additions"`
-	Deletions int                            `json:"deletions"`
-	Size      int64                          `json:"size"`
-	Binary    bool                           `json:"binary"`
+	Path         string                         `json:"path"`
+	PreviousPath string                         `json:"previousPath,omitempty"`
+	Status       sessionsvc.WorkspaceFileStatus `json:"status" enum:"unmodified,modified,added,deleted,renamed"`
+	Additions    int                            `json:"additions"`
+	Deletions    int                            `json:"deletions"`
+	Size         int64                          `json:"size"`
+	Binary       bool                           `json:"binary"`
 }
 
 // WorkspaceFileResponse is the body of GET /api/v1/sessions/{sessionId}/workspace/file.
 type WorkspaceFileResponse struct {
-	SessionID        domain.SessionID               `json:"sessionId"`
-	Path             string                         `json:"path"`
-	Status           sessionsvc.WorkspaceFileStatus `json:"status" enum:"unmodified,modified,added,deleted,renamed"`
-	Additions        int                            `json:"additions"`
-	Deletions        int                            `json:"deletions"`
-	Size             int64                          `json:"size"`
-	Binary           bool                           `json:"binary"`
-	Deleted          bool                           `json:"deleted"`
-	Content          string                         `json:"content"`
-	ContentTruncated bool                           `json:"contentTruncated"`
-	Diff             string                         `json:"diff"`
-	DiffTruncated    bool                           `json:"diffTruncated"`
+	SessionID        domain.SessionID                `json:"sessionId"`
+	Path             string                          `json:"path"`
+	PreviousPath     string                          `json:"previousPath,omitempty"`
+	Status           sessionsvc.WorkspaceFileStatus  `json:"status" enum:"unmodified,modified,added,deleted,renamed"`
+	Additions        int                             `json:"additions"`
+	Deletions        int                             `json:"deletions"`
+	Size             int64                           `json:"size"`
+	Binary           bool                            `json:"binary"`
+	Deleted          bool                            `json:"deleted"`
+	Content          string                          `json:"content"`
+	ContentTruncated bool                            `json:"contentTruncated"`
+	Diff             string                          `json:"diff"`
+	DiffTruncated    bool                            `json:"diffTruncated"`
+	CompareBaseSHA   string                          `json:"compareBaseSha,omitempty"`
+	CompareBaseRef   string                          `json:"compareBaseRef,omitempty"`
+	CompareMode      sessionsvc.WorkspaceCompareMode `json:"compareMode,omitempty" enum:"base,head_fallback"`
 }
 
 // SessionPreviewResponse is the body of GET /api/v1/sessions/{sessionId}/preview.
@@ -242,6 +250,64 @@ type RenameSessionRequest struct {
 // session workspace; a non-empty url is used verbatim as the preview target.
 type SetSessionPreviewRequest struct {
 	URL string `json:"url,omitempty" description:"Preview target URL. When empty, the daemon autodetects a static entry point in the session workspace."`
+}
+
+// StartPreviewServerRequest selects one named entry from .ao/launch.json. The
+// name may be omitted when the file contains exactly one configuration.
+type StartPreviewServerRequest struct {
+	Configuration string `json:"configuration,omitempty" description:"Named preview configuration. Optional when exactly one configuration exists."`
+}
+
+// PreviewServerStatusResponse reports the deterministic server AO owns for one
+// session. Logs are bounded to the latest lines and never contain global
+// process or port discovery.
+type PreviewServerStatusResponse struct {
+	SessionID     domain.SessionID `json:"sessionId"`
+	State         string           `json:"state" enum:"stopped,starting,ready,stopping,failed"`
+	Configuration string           `json:"configuration,omitempty"`
+	TargetKind    string           `json:"targetKind,omitempty" enum:"app,api"`
+	URL           string           `json:"url,omitempty"`
+	Port          int              `json:"port,omitempty"`
+	StartedAt     time.Time        `json:"startedAt,omitempty"`
+	Error         string           `json:"error,omitempty"`
+	Logs          []string         `json:"logs"`
+}
+
+// BrowserStatusQuery selects the session whose logical browser is inspected.
+type BrowserStatusQuery struct {
+	SessionID domain.SessionID `query:"sessionId" description:"AO session identifier."`
+}
+
+// BrowserCapabilityHeader proves that the caller owns the target session.
+type BrowserCapabilityHeader struct {
+	Capability string `header:"X-AO-Browser-Capability" description:"Opaque browser capability injected into the owning AO worker."`
+}
+
+// BrowserStatusResponse reports whether the desktop-owned browser transport is
+// ready. A connected runtime can create the session target while its panel is
+// hidden; panel visibility is intentionally not part of this state.
+type BrowserStatusResponse struct {
+	SessionID   domain.SessionID `json:"sessionId"`
+	Connected   bool             `json:"connected"`
+	ConnectedAt time.Time        `json:"connectedAt,omitempty"`
+	Transport   string           `json:"transport"`
+}
+
+// BrowserCommandRequest is the stable daemon-facing command envelope. Action
+// arguments remain action-specific JSON so new target-scoped operations do not
+// require a new transport or Electron IPC surface.
+type BrowserCommandRequest struct {
+	SessionID domain.SessionID       `json:"sessionId"`
+	Action    string                 `json:"action"`
+	Args      map[string]interface{} `json:"args,omitempty"`
+}
+
+// BrowserCommandResponse returns a correlated result from the browser runtime.
+type BrowserCommandResponse struct {
+	RequestID string           `json:"requestId"`
+	SessionID domain.SessionID `json:"sessionId"`
+	Action    string           `json:"action"`
+	Result    interface{}      `json:"result"`
 }
 
 // SetSessionMergePolicyRequest is the body of PATCH /api/v1/sessions/{sessionId}/merge-policy.
@@ -569,13 +635,6 @@ type OrchestratorResponse struct {
 	ID          domain.SessionID `json:"id"`
 	ProjectID   domain.ProjectID `json:"projectId"`
 	ProjectName string           `json:"projectName,omitempty"`
-}
-
-// CompleteOrchestratorResponse is returned after the orchestrator declares its
-// assigned work complete.
-type CompleteOrchestratorResponse struct {
-	OK        bool             `json:"ok"`
-	SessionID domain.SessionID `json:"sessionId"`
 }
 
 // ListAgentsResponse is the body of GET /api/v1/agents.

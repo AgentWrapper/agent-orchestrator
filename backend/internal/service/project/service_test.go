@@ -1040,6 +1040,47 @@ func gitRepoWithCommitWithOrigin(t *testing.T, dir, origin string) string {
 	return dir
 }
 
+func TestManager_AddWorkspaceInsideAncestorRepo(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	m := newManager(t)
+	ancestor := t.TempDir()
+	if out, err := exec.Command("git", "-C", ancestor, "init", "-b", "main").CombinedOutput(); err != nil {
+		t.Fatalf("git init ancestor: %v (%s)", err, out)
+	}
+	commitEmpty(t, ancestor)
+	parent := filepath.Join(ancestor, "universe")
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parent, "package.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRepoWithCommit(t, filepath.Join(parent, "api"))
+	gitRepoWithCommit(t, filepath.Join(parent, "web"))
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws-ancestor"), AsWorkspace: true})
+	if err != nil {
+		t.Fatalf("Add workspace inside ancestor: %v", err)
+	}
+	if proj.Kind != domain.ProjectKindWorkspace {
+		t.Fatalf("Kind = %q, want workspace", proj.Kind)
+	}
+	if len(proj.WorkspaceRepos) != 2 {
+		t.Fatalf("expected 2 child repos, got %d", len(proj.WorkspaceRepos))
+	}
+	// Verify that a .git directory was created in the workspace parent (nested)
+	if _, err := os.Stat(filepath.Join(parent, ".git")); err != nil {
+		t.Fatalf("expected .git to exist in workspace parent (nested), but it does not: %v", err)
+	}
+	got, err := m.Get(ctx, "ws-ancestor")
+	if err != nil {
+		t.Fatalf("Get workspace: %v", err)
+	}
+	if got.Project == nil || got.Project.Kind != domain.ProjectKindWorkspace || len(got.Project.WorkspaceRepos) != 2 {
+		t.Fatalf("Get = %#v", got)
+	}
+}
+
 func TestManager_AddWorkspaceInitializesPlainParent(t *testing.T) {
 	configureCommitter(t)
 	ctx := context.Background()

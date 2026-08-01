@@ -1,4 +1,5 @@
 import path from "node:path";
+import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { MakerBase, type MakerOptions } from "@electron-forge/maker-base";
@@ -48,20 +49,39 @@ export default class MakerDMG extends MakerBase<MakerDMGConfig> {
 		return process.platform === "darwin";
 	}
 
-	async make({ dir, targetArch, appName }: MakerOptions): Promise<string[]> {
+	async make({ dir, makeDir, targetArch, appName }: MakerOptions): Promise<string[]> {
 		const { buildForge } = await import("app-builder-lib");
 		const cfg = this.config ?? {};
-		// Mirror buildForge's own output layout (<dir>/../make) so artifacts land
-		// where Forge's publisher expects them.
-		const output = path.join(path.dirname(path.resolve(dir)), "make");
-		return buildForge(
-			{ dir },
+		// buildForge's `dir` becomes electron-builder's `prepackaged`, and on macOS
+		// that value IS the app path: macPackager.packMacTargets does
+		// `appPath = prepackaged ?? join(computeAppOutDir(...), "<productFilename>.app")`
+		// and hands appPath straight to the dmg target, which copies it into the
+		// image renamed to "<productFilename>.app" (dmg.ts computeDmgOptions'
+		// default `contents` entry). Passing Forge's PACKAGE directory here would
+		// therefore copy the whole package dir in under that name and produce
+		// "Agent Orchestrator.app/Agent Orchestrator.app", an outer bundle with no
+		// Contents that cannot launch.
+		//
+		// maker-nsis.ts passes the bare `dir` and is correct to: winPackager goes
+		// through the generic platformPackager.pack, whose computeAppOutDir returns
+		// `prepackaged` as the app OUT DIR, and the NSIS target wants that
+		// directory. Windows has no .app wrapper, so there is nothing to descend
+		// into. The asymmetry is in electron-builder, not in these makers.
+		//
+		// appName is Forge's filenamify'd packagerConfig.name, the same name
+		// @electron/packager gives the bundle inside `dir`.
+		const appPath = path.join(dir, `${appName}.app`);
+		const artifacts = await buildForge(
+			{ dir: appPath },
 			{
 				mac: [`dmg:${targetArch}`],
 				config: {
 					appId: cfg.appId,
 					productName: cfg.productName ?? appName,
-					directories: { output },
+					// Forge already computed <out>/make and passes it as makeDir. Use it
+					// rather than letting buildForge default to dirname(dir)/make, which
+					// now that `dir` is the .app would land inside the package directory.
+					directories: { output: makeDir },
 					// Forge owns publishing (the workflow uploads via `gh release`).
 					// `null` stops electron-builder from inferring a GitHub publish
 					// target from package.json `repository` and trying to upload.
@@ -79,11 +99,24 @@ export default class MakerDMG extends MakerBase<MakerDMGConfig> {
 						// with notarization requirements." The dmg container is sealed
 						// afterwards by sealDmg() in forge.config.ts's postMake hook.
 						sign: false,
+						// dmg-builder defaults writeUpdateInfo ON: DmgTarget.build does
+						// `this.options.writeUpdateInfo === false ? null : createBlockmap(...)`.
+						// Two reasons that is wrong for us. It contradicts the permanent
+						// full-download-only baseline for macOS (#3151, #3267 decision 4),
+						// and the blockmap would be computed BEFORE postMake's sealDmg
+						// rewrites the dmg bytes, so the sidecar would describe a file that
+						// no longer exists by the time anything published it.
+						writeUpdateInfo: false,
 						...cfg.dmg,
 					},
 				},
 			},
 		);
+		// Enforcement, not just configuration: this array is what Forge hands its
+		// publisher, so a stale or policy-violating sidecar is filtered at the one
+		// boundary that decides what gets uploaded. Belt to writeUpdateInfo's
+		// braces, and it also covers a caller overriding it through cfg.dmg.
+		return artifacts.filter((artifact) => !artifact.endsWith(".dmg.blockmap"));
 	}
 }
 
@@ -110,8 +143,20 @@ function resolveNotaryArgs(env: NodeJS.ProcessEnv): string[] | undefined {
 	return undefined;
 }
 
+function assertCompleteAppStoreConnectCredentials(env: NodeJS.ProcessEnv): void {
+	const credentials = [env.APPLE_API_KEY, env.APPLE_API_KEY_ID, env.APPLE_API_ISSUER];
+	const supplied = credentials.filter((credential) => credential !== undefined);
+	if (supplied.length === 0) return;
+	if (supplied.length === credentials.length && credentials.every((credential) => credential)) return;
+	throw new Error(
+		"[dmg] incomplete App Store Connect credentials; APPLE_API_KEY, APPLE_API_KEY_ID, and APPLE_API_ISSUER must " +
+			"all be set and non-empty. Refusing to publish a dmg with partial notarization credentials.",
+	);
+}
+
 /**
- * sealDmg signs, notarizes and staples one .dmg.
+ * sealDmg signs, notarizes and staples one .dmg. Returns true when it actually
+ * sealed the file, false for the deliberate unsigned no-op.
  *
  * Neither maker-dmg nor app-builder-lib's dmg target does any of this, and the
  * .app's own stapled ticket does not propagate through an unsealed dmg
@@ -119,27 +164,48 @@ function resolveNotaryArgs(env: NodeJS.ProcessEnv): string[] | undefined {
  * Credentials are the exact same env vars packagerConfig already consumes; no
  * new secrets are introduced.
  *
- * With no signing material present this is a no-op with a warning, so unsigned
- * local builds and the unsigned desktop-testing pipeline still produce a dmg.
- * When credentials ARE present, any failure throws and fails the build: a
- * silently unsigned dmg published as a release asset is exactly the outcome
+ * There are exactly two acceptable credential states, and everything in between
+ * is a build failure:
+ *
+ *   - NEITHER a signing identity NOR notary credentials: a warned no-op. This is
+ *     the legitimate local/unsigned case and keeps unsigned local builds and the
+ *     unsigned desktop-testing pipeline producing a dmg.
+ *   - BOTH: sign, notarize, staple, and let any failure throw.
+ *
+ * A partial set fails closed in both directions. Signing material without notary
+ * credentials used to warn and return success, which let a signed-but-unnotarized
+ * dmg reach publishing; notary credentials without an identity returned even
+ * earlier and did nothing at all. Either way the release pipeline saw a green
+ * build and an artifact Gatekeeper would reject, which is precisely the outcome
  * this work exists to prevent.
  */
-export async function sealDmg(dmgPath: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+export async function sealDmg(dmgPath: string, env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
 	const identity = resolveSigningIdentity(env);
-	if (!identity) {
+	// Validate this before the zero-credential no-op: an incomplete trio cannot
+	// be treated as equivalent to no notarization credentials.
+	assertCompleteAppStoreConnectCredentials(env);
+	const notaryArgs = resolveNotaryArgs(env);
+
+	if (!identity && !notaryArgs) {
 		console.warn(`[dmg] no signing material (APPLE_SIGNING_IDENTITY / CSC_LINK); leaving ${dmgPath} unsigned`);
-		return;
+		return false;
+	}
+	if (!identity) {
+		throw new Error(
+			`[dmg] notarization credentials are set but no signing identity is (APPLE_SIGNING_IDENTITY / CSC_LINK); ` +
+				`refusing to publish an unsigned ${dmgPath}. Set both, or neither for an unsigned local build.`,
+		);
+	}
+	if (!notaryArgs) {
+		throw new Error(
+			`[dmg] a signing identity is set but no notarization credentials are (AO_NOTARY_PROFILE, or the ` +
+				`APPLE_API_KEY / APPLE_API_KEY_ID / APPLE_API_ISSUER trio); refusing to publish an unnotarized ` +
+				`${dmgPath}. Set both, or neither for an unsigned local build.`,
+		);
 	}
 
 	console.log(`[dmg] signing ${dmgPath}`);
 	await run("codesign", ["--sign", identity, "--timestamp", "--force", dmgPath]);
-
-	const notaryArgs = resolveNotaryArgs(env);
-	if (!notaryArgs) {
-		console.warn(`[dmg] no notarization credentials (AO_NOTARY_PROFILE / APPLE_API_KEY); ${dmgPath} is not notarized`);
-		return;
-	}
 
 	console.log(`[dmg] notarizing ${dmgPath} (this waits on Apple)`);
 	await run("xcrun", ["notarytool", "submit", dmgPath, ...notaryArgs, "--wait"], {
@@ -149,6 +215,32 @@ export async function sealDmg(dmgPath: string, env: NodeJS.ProcessEnv = process.
 
 	console.log(`[dmg] stapling ${dmgPath}`);
 	await run("xcrun", ["stapler", "staple", dmgPath]);
+	return true;
+}
+
+// The canonical verifier, resolved from the working directory. Forge is always
+// invoked from `frontend/` (its npm scripts), the same assumption the prePackage
+// hook already makes when it writes app-update.yml to a relative path.
+const VERIFY_SCRIPT = "scripts/verify-mac-artifact.sh";
+
+/**
+ * verifyDmg runs the canonical post-seal gate on a sealed .dmg.
+ *
+ * Sealing and proving the seal are different things: sealDmg only proves the
+ * three commands exited 0 on this machine, not that the published bytes are
+ * something Gatekeeper accepts with a stapled ticket. verify-mac-artifact.sh is
+ * the one canonical check (#3288 workstreams 1 and 2) and exists specifically so
+ * nobody hand-rolls a variant of it and draws a wrong conclusion.
+ *
+ * Only meaningful on a sealed dmg, so callers gate on sealDmg's return value.
+ */
+export async function verifyDmg(dmgPath: string, scriptPath: string = path.resolve(VERIFY_SCRIPT)): Promise<void> {
+	if (!existsSync(scriptPath)) {
+		throw new Error(`[dmg] cannot verify ${dmgPath}: ${scriptPath} not found (run electron-forge from frontend/)`);
+	}
+	console.log(`[dmg] verifying ${dmgPath}`);
+	const { stdout } = await run("bash", [scriptPath, dmgPath], { maxBuffer: 10 * 1024 * 1024 });
+	if (stdout) console.log(stdout.trim());
 }
 
 export { MakerDMG };

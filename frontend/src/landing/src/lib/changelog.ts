@@ -15,7 +15,7 @@ const CHANGELOG_DIR = path.join(process.cwd(), "content/changelog");
 // Releases are pulled from GitHub at build time, so the changelog refreshes
 // whenever the landing is redeployed (a push to main, or a manual deploy).
 // Curated MDX entries in content/changelog take precedence for the same version.
-const RELEASES_REPO = "AgentWrapper/agent-orchestrator";
+const RELEASES_REPO = "Untrivial-ai/agent-orchestrator";
 // Only stable vMAJOR.MINOR.PATCH tags — skips nightlies, per-PR prereleases,
 // and package tags like @composio/ao@x.
 const STABLE_TAG = /^v\d+\.\d+\.\d+$/;

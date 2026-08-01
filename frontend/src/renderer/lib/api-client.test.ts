@@ -211,6 +211,9 @@ describe("normalizeApiOperation", () => {
 		expect(normalizeApiOperation("GET", "/api/v1/sessions/ao-42/workspace/file")).toBe(
 			"GET /api/v1/sessions/:id/workspace/file",
 		);
+		expect(normalizeApiOperation("POST", "/api/v1/sessions/ao-42/preview/server")).toBe(
+			"POST /api/v1/sessions/:id/preview/server",
+		);
 	});
 
 	it("normalizes ids for resources a collection heuristic would miss", () => {

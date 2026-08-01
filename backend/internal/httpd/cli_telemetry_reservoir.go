@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
 )
 
 const cliTelemetryStateFile = "telemetry_cli_daily.json"
@@ -84,7 +86,7 @@ func activeCaptureSlot(now time.Time) int {
 }
 
 func cliInvokedReservationKey(actorType, commandPath string) string {
-	return actorType + "\t" + commandPath
+	return actorType + "\t" + telemetrymeta.NormalizeCommandPath(commandPath)
 }
 
 func (r *cliTelemetryReservoir) load() {
