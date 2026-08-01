@@ -1292,6 +1292,7 @@ export interface components {
             sessionId: string;
         };
         SessionPRCISummary: {
+            checkCount: number;
             failingChecks: components["schemas"]["SessionPRFailingCheck"][];
             /** @enum {string} */
             state: "unknown" | "pending" | "passing" | "failing";

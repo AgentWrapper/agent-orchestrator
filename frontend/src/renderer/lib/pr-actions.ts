@@ -5,12 +5,17 @@ import { sessionScmSummaryQueryKey, type SessionPRSummary } from "../hooks/useSe
 
 /**
  * True when this PR's pipeline is genuinely ready to merge — mirrors
- * domain.PRPipelineStatus's StatusMergeable branch server-side (the server
- * re-checks this too; this only drives the button's enabled/disabled state).
+ * domain.PRMergeReady's readiness rule server-side (the server re-checks this
+ * too; this only drives the button's enabled/disabled state).
  */
 export function isPRMergeable(pr: SessionPRSummary): boolean {
 	if (pr.state !== "open") return false;
 	if (pr.ci.state === "failing" || pr.ci.state === "pending") return false;
+	// Unknown CI is only safe to treat as ready when no checks were ever
+	// observed for this PR. If checks exist but the rollup hasn't resolved
+	// (incomplete/paginated fetch), checkCount > 0 and we must fail closed —
+	// otherwise the button would enable for PRs the server will reject.
+	if (pr.ci.state === "unknown" && pr.ci.checkCount > 0) return false;
 	if (pr.review.decision === "changes_requested" || pr.review.hasUnresolvedHumanComments) return false;
 	return pr.mergeability.state === "mergeable";
 }
@@ -21,7 +26,11 @@ export function mergeDisabledReason(pr: SessionPRSummary): string {
 	}
 	if (pr.ci.state === "failing") return "CI is failing";
 	if (pr.ci.state === "pending") return "CI checks are still running";
-	if (pr.ci.state === "unknown") return "No CI status reported for this PR yet";
+	if (pr.ci.state === "unknown") {
+		return pr.ci.checkCount > 0
+			? "CI checks haven't finished reporting for this PR"
+			: "No CI status reported for this PR yet";
+	}
 	if (pr.review.decision === "changes_requested" || pr.review.hasUnresolvedHumanComments) {
 		return "Has unresolved review feedback";
 	}

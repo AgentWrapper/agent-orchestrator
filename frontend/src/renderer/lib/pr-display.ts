@@ -87,6 +87,12 @@ function sessionPRFactToSummary(session: WorkspaceSession, pr: PullRequestFacts)
 		changedFiles: 0,
 		ci: {
 			state: toCIState(pr.ci),
+			// PullRequestFacts (the lightweight workspace listing shape) carries
+			// no check-count fact, so this synthetic placeholder can't know
+			// whether checks are still incomplete. It's superseded by the real
+			// SessionPRSummary (with an accurate checkCount) as soon as that
+			// fetch lands; the server re-validates readiness on merge regardless.
+			checkCount: 0,
 			failingChecks: [],
 		},
 		review: {

@@ -18,7 +18,7 @@ const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary =>
 	additions: 10,
 	deletions: 3,
 	changedFiles: 2,
-	ci: { state: "passing", failingChecks: [] },
+	ci: { state: "passing", checkCount: 0, failingChecks: [] },
 	review: { decision: "approved", hasUnresolvedHumanComments: false, unresolvedBy: [] },
 	mergeability: { state: "mergeable", reasons: [], prUrl: "https://github.com/acme/repo/pull/7" },
 	updatedAt: "2026-06-15T00:00:00Z",
@@ -32,7 +32,7 @@ describe("prStatusRows", () => {
 	it("formats the three PR states without exposing raw unknown", () => {
 		const rows = prStatusRows(
 			summary({
-				ci: { state: "unknown", failingChecks: [] },
+				ci: { state: "unknown", checkCount: 0, failingChecks: [] },
 				review: { decision: "none", hasUnresolvedHumanComments: false, unresolvedBy: [] },
 				mergeability: { state: "unknown", reasons: [], prUrl: "https://github.com/acme/repo/pull/7" },
 			}),
@@ -113,6 +113,7 @@ describe("prSummaryParts", () => {
 			summary({
 				ci: {
 					state: "failing",
+					checkCount: 1,
 					failingChecks: [
 						{ name: "copy-check", status: "failed", conclusion: "failure", url: "https://checks.example/copy" },
 					],
@@ -167,6 +168,7 @@ describe("prSummaryParts", () => {
 			summary({
 				ci: {
 					state: "failing",
+					checkCount: 3,
 					failingChecks: [
 						{ name: "unit", status: "failed", conclusion: "failure", url: "https://checks.example/unit" },
 						{ name: "lint", status: "failed", conclusion: "failure", url: "https://checks.example/lint" },
@@ -314,7 +316,7 @@ describe("prSummaryParts", () => {
 		const parts = prSummaryParts(
 			summary({
 				state: "merged",
-				ci: { state: "failing", failingChecks: [{ name: "unit", status: "failed", conclusion: "failure" }] },
+				ci: { state: "failing", checkCount: 1, failingChecks: [{ name: "unit", status: "failed", conclusion: "failure" }] },
 				review: { decision: "changes_requested", hasUnresolvedHumanComments: true, unresolvedBy: [] },
 				mergeability: { state: "conflicting", reasons: ["conflicts"], prUrl: "https://github.com/acme/repo/pull/7" },
 			}),

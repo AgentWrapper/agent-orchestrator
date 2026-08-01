@@ -43,6 +43,7 @@ type PRSummary struct {
 // PRCISummary describes the latest CI status and failing checks for a PR.
 type PRCISummary struct {
 	State         domain.CIState
+	CheckCount    int
 	FailingChecks []PRFailingCheck
 }
 
@@ -189,7 +190,7 @@ func summarizePRStateChangedAt(pr domain.PullRequest) time.Time {
 
 func summarizeCI(pr domain.PullRequest, checks []domain.PullRequestCheck) PRCISummary {
 	state := ciOrUnknown(pr.CI)
-	out := PRCISummary{State: state}
+	out := PRCISummary{State: state, CheckCount: len(checks)}
 	if state != domain.CIFailing || pr.Merged || pr.Closed {
 		return out
 	}

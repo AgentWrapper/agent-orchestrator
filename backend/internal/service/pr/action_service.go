@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -28,19 +29,25 @@ type SCMMerger interface {
 	RepoMergeSettings(ctx context.Context, owner, repo string) (ports.SCMRepoMergeSettings, error)
 }
 
-// ActionService implements ActionManager (declared in actions.go).
+// ActionService implements ActionManager (declared in actions.go). It reuses
+// the lifecycle interface declared in manager.go (same package) so a direct
+// merge gets the same termination/cleanup reaction as an SCM-observer-driven
+// merge, instead of waiting for the next poll to notice the PR is merged.
 type ActionService struct {
-	store Store
-	scm   SCMMerger // may be nil if the daemon started without SCM credentials
+	store     Store
+	scm       SCMMerger // may be nil if the daemon started without SCM credentials
+	lifecycle lifecycle // may be nil in tests that don't care about post-merge cleanup
 }
 
 var _ ActionManager = (*ActionService)(nil)
 
-// NewActionService wires the real store/SCM dependencies. scm may be nil
-// (e.g. no GitHub token at startup); Merge reports ErrPRPreconditions in
-// that case rather than panicking.
-func NewActionService(store Store, scm SCMMerger) *ActionService {
-	return &ActionService{store: store, scm: scm}
+// NewActionService wires the real store/SCM/lifecycle dependencies. scm may be
+// nil (e.g. no GitHub token at startup); Merge reports ErrPRPreconditions in
+// that case rather than panicking. lifecycle may be nil, in which case Merge
+// skips the post-merge reaction and cleanup falls back to the next SCM
+// observer pass.
+func NewActionService(store Store, scm SCMMerger, lifecycle lifecycle) *ActionService {
+	return &ActionService{store: store, scm: scm, lifecycle: lifecycle}
 }
 
 // Merge merges the PR identified by id, the PR's provider number (matches the
@@ -137,6 +144,28 @@ func (s *ActionService) Merge(ctx context.Context, id, repo string) (MergeResult
 	pr.ObservedAt = now
 	if err := s.store.WriteSCMObservation(ctx, pr, checks, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
 		return MergeResult{}, err
+	}
+	// The merge itself has already succeeded and been persisted at this point,
+	// so a lifecycle failure here must not turn into a merge failure response
+	// (the caller already sees a merged PR either way). We still want the
+	// termination/worktree cleanup that normally follows an SCM observation to
+	// run now instead of waiting for the next observer poll, so best-effort
+	// apply it and only log on failure — it self-heals on the next poll.
+	if s.lifecycle != nil {
+		obs := ports.PRObservation{
+			Fetched:      true,
+			URL:          pr.URL,
+			Number:       pr.Number,
+			Draft:        pr.Draft,
+			Merged:       pr.Merged,
+			Closed:       pr.Closed,
+			CI:           pr.CI,
+			Review:       pr.Review,
+			Mergeability: pr.Mergeability,
+		}
+		if err := s.lifecycle.ApplyPRObservation(ctx, pr.SessionID, obs); err != nil {
+			slog.Default().Error("post-merge lifecycle reaction failed; will retry on next SCM observation", "pr_url", pr.URL, "session_id", pr.SessionID, "err", err)
+		}
 	}
 	return MergeResult{PRNumber: pr.Number, Method: method}, nil
 }

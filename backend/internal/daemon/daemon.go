@@ -259,7 +259,7 @@ func Run() error {
 		Agents:             agentSvc,
 		Sessions:           sessionSvc,
 		Reviews:            reviewSvc,
-		PRs:                prsvc.NewActionService(store, prMerger),
+		PRs:                prsvc.NewActionService(store, prMerger, lcStack.LCM),
 		Notifications:      notifier,
 		NotificationStream: notificationHub,
 		Push:               pushRegistry,

@@ -23,9 +23,10 @@ vi.mock("./api-client", () => ({
 
 const PR_URL = "https://github.com/acme/widgets/pull/42";
 
-function ci(state: SessionPRSummary["ci"]["state"]): SessionPRSummary["ci"] {
+function ci(state: SessionPRSummary["ci"]["state"], checkCount = 0): SessionPRSummary["ci"] {
 	return {
 		state,
+		checkCount,
 		failingChecks: [],
 	};
 }
@@ -67,6 +68,14 @@ function pr(overrides: Partial<SessionPRSummary> = {}): SessionPRSummary {
 describe("isPRMergeable", () => {
 	it("is true for an open, passing, approved, mergeable PR", () => {
 		expect(isPRMergeable(pr())).toBe(true);
+	});
+
+    it("is true when CI is unknown and no checks were ever observed", () => {
+		expect(isPRMergeable(pr({ ci: ci("unknown", 0) }))).toBe(true);
+	});
+
+	it("is false when CI is unknown but checks exist and haven't resolved (incomplete/paginated rollup)", () => {
+		expect(isPRMergeable(pr({ ci: ci("unknown", 3) }))).toBe(false);
 	});
 
 	it("is false when the PR is not open", () => {
@@ -143,6 +152,17 @@ describe("mergeDisabledReason", () => {
 				}),
 			),
 		).toBe("Has unresolved review feedback");
+	});
+
+    it("explains failing, pending, and unknown CI distinctly", () => {
+		expect(mergeDisabledReason(pr({ ci: ci("failing") }))).toBe("CI is failing");
+		expect(mergeDisabledReason(pr({ ci: ci("pending") }))).toBe("CI checks are still running");
+		expect(mergeDisabledReason(pr({ ci: ci("unknown", 0) }))).toBe(
+			"No CI status reported for this PR yet",
+		);
+		expect(mergeDisabledReason(pr({ ci: ci("unknown", 4) }))).toBe(
+			"CI checks haven't finished reporting for this PR",
+		);
 	});
 
 	it("explains each non-mergeable mergeability state", () => {
