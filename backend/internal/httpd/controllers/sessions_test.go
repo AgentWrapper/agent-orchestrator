@@ -782,6 +782,18 @@ func TestSessionsAPI_SetPreviewLocalRelativePathResolvesToPreviewOrigin(t *testi
 	}
 }
 
+func TestSessionsAPI_SetPreviewBareFilenameNotFound(t *testing.T) {
+	svc := newFakeSessionService()
+	workspace := t.TempDir()
+	s := svc.sessions["ao-1"]
+	s.Metadata = domain.SessionMetadata{WorkspacePath: workspace}
+	svc.sessions["ao-1"] = s
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/sessions/ao-1/preview", `{"url":"-pr-3386-adapter-model-selection.html"}`)
+	assertErrorCode(t, body, status, http.StatusNotFound, "PREVIEW_FILE_NOT_FOUND")
+}
+
 func TestSessionsAPI_SetPreviewServesBrowserDisplayableArtifacts(t *testing.T) {
 	tests := []struct {
 		name        string

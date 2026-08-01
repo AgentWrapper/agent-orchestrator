@@ -1062,6 +1062,25 @@ func resolveLocalPreview(r *http.Request, id domain.SessionID, workspacePath, ra
 	return resolved, true, err
 }
 
+func looksLikePreviewPath(raw string) bool {
+	if raw == "" || hasURLScheme(raw) {
+		return false
+	}
+	if strings.Contains(raw, "/") || strings.Contains(raw, "\\") {
+		return true
+	}
+	if strings.HasPrefix(raw, ".") {
+		return true
+	}
+	ext := strings.TrimPrefix(strings.ToLower(path.Ext(raw)), ".")
+	switch ext {
+	case "html", "htm", "pdf", "png", "json", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "md", "markdown", "txt", "csv", "xml", "yml", "yaml", "css", "js", "ts", "jsx", "tsx", "map", "ico":
+		return true
+	default:
+		return false
+	}
+}
+
 func resolvePreviewTarget(r *http.Request, id domain.SessionID, workspacePath, raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if isAbsolutePreviewPath(raw) {
@@ -1069,6 +1088,9 @@ func resolvePreviewTarget(r *http.Request, id domain.SessionID, workspacePath, r
 	}
 	if resolved, ok, err := resolveLocalPreview(r, id, workspacePath, raw); ok || err != nil {
 		return resolved, err
+	}
+	if looksLikePreviewPath(raw) {
+		return "", errPreviewFileNotFound
 	}
 	return raw, nil
 }

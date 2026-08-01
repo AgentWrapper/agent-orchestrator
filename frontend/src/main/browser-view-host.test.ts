@@ -4,7 +4,9 @@ import {
 	clampBoundsToWindow,
 	createBrowserViewHost,
 	isAllowedBrowserURL,
+	looksLikeHost,
 	normalizeBrowserURL,
+	withDefaultScheme,
 	scaleBoundsForZoom,
 } from "./browser-view-host";
 import { NEW_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
@@ -344,6 +346,13 @@ describe("normalizeBrowserURL", () => {
 	it("allows file:// preview targets without mangling the scheme", () => {
 		expect(normalizeBrowserURL("file:///tmp/preview/index.html").href).toBe("file:///tmp/preview/index.html");
 		expect(normalizeBrowserURL("file:///C:/tmp/index.html").protocol).toBe("file:");
+	});
+
+	it("treats bare filenames with common extensions as search terms rather than hosts", () => {
+		expect(withDefaultScheme("file.html")).toBe("https://www.google.com/search?q=file.html");
+		expect(withDefaultScheme("index.html?foo=bar")).toBe("https://www.google.com/search?q=index.html%3Ffoo%3Dbar");
+		expect(looksLikeHost("file.html")).toBe(false);
+		expect(looksLikeHost("example.com")).toBe(true);
 	});
 
 	it("converts absolute local file paths to file URLs", () => {
