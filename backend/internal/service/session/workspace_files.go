@@ -14,6 +14,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/contract"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
@@ -26,26 +27,29 @@ const (
 )
 
 // WorkspaceFileStatus describes a session-worktree file relative to its compare base.
-type WorkspaceFileStatus string
+type WorkspaceFileStatus = contract.WorkspaceFileStatus
 
 // Workspace file status values reported by the session workspace browser.
 const (
-	WorkspaceFileUnmodified WorkspaceFileStatus = "unmodified"
-	WorkspaceFileModified   WorkspaceFileStatus = "modified"
-	WorkspaceFileAdded      WorkspaceFileStatus = "added"
-	WorkspaceFileDeleted    WorkspaceFileStatus = "deleted"
-	WorkspaceFileRenamed    WorkspaceFileStatus = "renamed"
+	WorkspaceFileUnmodified WorkspaceFileStatus = contract.WorkspaceFileUnmodified
+	WorkspaceFileModified   WorkspaceFileStatus = contract.WorkspaceFileModified
+	WorkspaceFileAdded      WorkspaceFileStatus = contract.WorkspaceFileAdded
+	WorkspaceFileDeleted    WorkspaceFileStatus = contract.WorkspaceFileDeleted
+	WorkspaceFileRenamed    WorkspaceFileStatus = contract.WorkspaceFileRenamed
+	WorkspaceFileUntracked  WorkspaceFileStatus = contract.WorkspaceFileUntracked
+	WorkspaceFileCopied     WorkspaceFileStatus = contract.WorkspaceFileCopied
+	WorkspaceFileChanged    WorkspaceFileStatus = contract.WorkspaceFileChanged
 )
 
 // WorkspaceCompareMode describes the Git revision used for workspace diffs.
-type WorkspaceCompareMode string
+type WorkspaceCompareMode = contract.WorkspaceCompareMode
 
 const (
 	// WorkspaceCompareBase means diffs are against the session's recorded base.
-	WorkspaceCompareBase WorkspaceCompareMode = "base"
+	WorkspaceCompareBase WorkspaceCompareMode = contract.WorkspaceCompareBase
 	// WorkspaceCompareHeadFallback means AO could not resolve a base and used the
 	// previous HEAD-only behavior.
-	WorkspaceCompareHeadFallback WorkspaceCompareMode = "head_fallback"
+	WorkspaceCompareHeadFallback WorkspaceCompareMode = contract.WorkspaceCompareHeadFallback
 )
 
 // WorkspaceFiles is the read model for the session workspace file browser.
@@ -59,15 +63,7 @@ type WorkspaceFiles struct {
 }
 
 // WorkspaceFileSummary is one file row in the session workspace browser.
-type WorkspaceFileSummary struct {
-	Path         string
-	PreviousPath string
-	Status       WorkspaceFileStatus
-	Additions    int
-	Deletions    int
-	Size         int64
-	Binary       bool
-}
+type WorkspaceFileSummary = contract.WorkspaceFileSummary
 
 // WorkspaceFileDetail is the selected file's current content and diff.
 type WorkspaceFileDetail struct {

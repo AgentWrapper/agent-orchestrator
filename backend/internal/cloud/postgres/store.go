@@ -23,6 +23,7 @@ import (
 	"github.com/pressly/goose/v3"
 
 	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/contract"
 )
 
 //go:embed migrations/*.sql
@@ -360,7 +361,7 @@ func (s *Store) CreateSession(
 		}
 		return CreateSessionResult{}, fmt.Errorf("insert session: %w", err)
 	}
-	session.Status = deriveCloudStatus(session, "", "", "", "")
+	session.Status = string(deriveCloudStatus(session, nil))
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO ao_session_sequences (session_id, next_sequence)
 		VALUES ($1, 1)
@@ -546,7 +547,7 @@ func loadCreateSessionResult(
 	if err != nil {
 		return CreateSessionResult{}, err
 	}
-	session.Status = deriveCloudStatus(session, "", "", "", "")
+	session.Status = string(deriveCloudStatus(session, nil))
 	sandbox, err := getSandboxTx(ctx, tx, accountID, receipt.SessionID)
 	if err != nil {
 		return CreateSessionResult{}, err
@@ -711,87 +712,84 @@ func (s *Store) sessionStatus(
 	accountID clouddomain.AccountID,
 	session clouddomain.Session,
 ) (string, error) {
-	var pullRequestID, state, ci, review, mergeability string
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, state, ci_state, review_state, mergeability
+	prs := make([]contract.PRFacts, 0)
+	rows, err := s.pool.Query(ctx, `
+		SELECT number, url, state, draft, ci_state, review_state, mergeability,
+			source_branch, target_branch, updated_at,
+			EXISTS (
+				SELECT 1
+				FROM ao_pr_review_threads t
+				WHERE t.pull_request_id = pr.id
+					AND t.is_resolved = false
+					AND t.is_outdated = false
+			) AS has_unresolved_threads
 		FROM ao_pull_requests
 		WHERE account_id = $1 AND session_id = $2
 		ORDER BY updated_at DESC
-		LIMIT 1
-	`, accountID, session.ID).Scan(&pullRequestID, &state, &ci, &review, &mergeability)
-	if errors.Is(err, pgx.ErrNoRows) {
-		var claimedState string
-		claimErr := s.pool.QueryRow(ctx, `
-			SELECT 'open'
-			FROM ao_pr_claims
-			WHERE account_id = $1 AND session_id = $2 AND released_at IS NULL
-			ORDER BY claimed_at DESC
-			LIMIT 1
-		`, accountID, session.ID).Scan(&claimedState)
-		if errors.Is(claimErr, pgx.ErrNoRows) {
-			return deriveCloudStatus(session, "", "", "", ""), nil
-		}
-		if claimErr != nil {
-			return "", fmt.Errorf("derive cloud session claim status: %w", claimErr)
-		}
-		return deriveCloudStatus(session, claimedState, "", "", ""), nil
-	}
+	`, accountID, session.ID)
 	if err != nil {
 		return "", fmt.Errorf("derive cloud session status: %w", err)
 	}
-	var unresolvedThreads int
-	if countErr := s.pool.QueryRow(ctx, `
-		SELECT count(*)
-		FROM ao_pr_review_threads
-		WHERE pull_request_id = $1 AND is_resolved = false AND is_outdated = false
-	`, pullRequestID).Scan(&unresolvedThreads); countErr != nil {
-		return "", fmt.Errorf("derive cloud session review thread status: %w", countErr)
+	defer rows.Close()
+	for rows.Next() {
+		var pr contract.PRFacts
+		var state, ci, review, mergeability string
+		if err := rows.Scan(
+			&pr.Number,
+			&pr.URL,
+			&state,
+			&pr.Draft,
+			&ci,
+			&review,
+			&mergeability,
+			&pr.SourceBranch,
+			&pr.TargetBranch,
+			&pr.UpdatedAt,
+			&pr.ReviewComments,
+		); err != nil {
+			return "", fmt.Errorf("scan cloud session PR status: %w", err)
+		}
+		pr.Merged = state == "merged"
+		pr.Closed = state == "closed"
+		pr.CI = contract.CIState(ci)
+		pr.Review = contract.ReviewState(review)
+		pr.Mergeability = contract.Mergeability(mergeability)
+		prs = append(prs, pr)
 	}
-	if unresolvedThreads > 0 {
-		review = "changes_requested"
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("scan cloud session PR statuses: %w", err)
 	}
-	return deriveCloudStatus(session, state, ci, review, mergeability), nil
+	if len(prs) == 0 {
+		claimRows, claimErr := s.pool.Query(ctx, `
+			SELECT number, url
+			FROM ao_pr_claims
+			WHERE account_id = $1 AND session_id = $2 AND released_at IS NULL
+			ORDER BY claimed_at DESC
+		`, accountID, session.ID)
+		if claimErr != nil {
+			return "", fmt.Errorf("derive cloud session claim status: %w", claimErr)
+		}
+		defer claimRows.Close()
+		for claimRows.Next() {
+			var pr contract.PRFacts
+			if err := claimRows.Scan(&pr.Number, &pr.URL); err != nil {
+				return "", fmt.Errorf("scan cloud session PR claim status: %w", err)
+			}
+			prs = append(prs, pr)
+		}
+		if err := claimRows.Err(); err != nil {
+			return "", fmt.Errorf("scan cloud session PR claim statuses: %w", err)
+		}
+	}
+	return string(deriveCloudStatus(session, prs)), nil
 }
 
-func deriveCloudStatus(
-	session clouddomain.Session,
-	prState, ciState, reviewState, mergeability string,
-) string {
-	if session.IsTerminated {
-		if prState == "merged" {
-			return "merged"
-		}
-		return "terminated"
-	}
-	switch session.ActivityState {
-	case "waiting_input", "blocked":
-		return "needs_input"
-	}
-	if session.ActiveTurn != nil {
-		return "working"
-	}
-	switch {
-	case prState == "merged":
-		return "merged"
-	case ciState == "failing":
-		return "ci_failed"
-	case reviewState == "changes_requested":
-		return "changes_requested"
-	case reviewState == "approved":
-		return "approved"
-	case mergeability == "mergeable":
-		return "mergeable"
-	case prState != "":
-		return "pr_open"
-	}
-	switch session.ActivityState {
-	case "active":
-		return "working"
-	case "exited":
-		return "exited"
-	default:
-		return "idle"
-	}
+func deriveCloudStatus(session clouddomain.Session, prs []contract.PRFacts) contract.SessionStatus {
+	return contract.DeriveSessionStatus(contract.SessionFacts{
+		Terminated:    session.IsTerminated,
+		Activity:      contract.ActivityState(session.ActivityState),
+		HasActiveTurn: session.ActiveTurn != nil,
+	}, prs)
 }
 
 // AppendEvent appends the next durable event for a session.

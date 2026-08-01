@@ -1,6 +1,10 @@
 package domain
 
-import "time"
+import (
+	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/contract"
+)
 
 // ---- PR read model ----
 
@@ -127,10 +131,10 @@ type CIState string
 
 // CI states.
 const (
-	CIUnknown CIState = "unknown"
-	CIPending CIState = "pending"
-	CIPassing CIState = "passing"
-	CIFailing CIState = "failing"
+	CIUnknown CIState = CIState(contract.CIUnknown)
+	CIPending CIState = CIState(contract.CIPending)
+	CIPassing CIState = CIState(contract.CIPassing)
+	CIFailing CIState = CIState(contract.CIFailing)
 )
 
 // ReviewDecision is the aggregate human-review verdict on a PR.
@@ -138,10 +142,10 @@ type ReviewDecision string
 
 // Review decisions.
 const (
-	ReviewNone           ReviewDecision = "none"
-	ReviewApproved       ReviewDecision = "approved"
-	ReviewChangesRequest ReviewDecision = "changes_requested"
-	ReviewRequired       ReviewDecision = "review_required"
+	ReviewNone           ReviewDecision = ReviewDecision(contract.ReviewNone)
+	ReviewApproved       ReviewDecision = ReviewDecision(contract.ReviewApproved)
+	ReviewChangesRequest ReviewDecision = ReviewDecision(contract.ReviewChangesRequested)
+	ReviewRequired       ReviewDecision = ReviewDecision(contract.ReviewRequired)
 )
 
 // Mergeability is whether a PR can currently be merged.
@@ -149,11 +153,11 @@ type Mergeability string
 
 // Mergeability states.
 const (
-	MergeUnknown     Mergeability = "unknown"
-	MergeMergeable   Mergeability = "mergeable"
-	MergeConflicting Mergeability = "conflicting"
-	MergeBlocked     Mergeability = "blocked"
-	MergeUnstable    Mergeability = "unstable"
+	MergeUnknown     Mergeability = Mergeability(contract.MergeUnknown)
+	MergeMergeable   Mergeability = Mergeability(contract.MergeMergeable)
+	MergeConflicting Mergeability = Mergeability(contract.MergeConflicting)
+	MergeBlocked     Mergeability = Mergeability(contract.MergeBlocked)
+	MergeUnstable    Mergeability = Mergeability(contract.MergeUnstable)
 )
 
 // PRState is the normalized lifecycle of one tracked pull request as stored in

@@ -83,6 +83,30 @@ localhost/file previews, and structured diff metadata: durable compare base
 ref/SHA, added/modified/deleted/renamed status, untracked non-ignored files,
 per-file additions/deletions, binary flags, and truncation markers.
 
+## Shared local/Cloud contracts
+
+Local AO and AO Cloud do not share storage, processes, or trust boundaries, but
+they do share portable semantics in `backend/internal/contract`. Treat that
+package as the source of truth for behavior that must not drift:
+
+- session role and activity vocabulary (`worker`, `orchestrator`, `active`,
+  `idle`, `waiting_input`, `blocked`, `exited`)
+- derived Kanban/status results (`working`, `needs_input`, `ci_failed`,
+  `changes_requested`, `mergeable`, `merged`, `no_signal`, and related states)
+- normalized PR/SCM facts (`ci`, review verdict, mergeability, draft/closed/
+  merged state, source/target branches, unresolved review comments)
+- workspace file and diff facts (file status, previous path, additions,
+  deletions, binary markers, compare mode)
+- shared lifecycle/SCM command names exposed through the local-like `ao` surface
+
+The local daemon maps SQLite/worktree/harness facts into these contracts. The
+Cloud control plane maps PostgreSQL/GitHub/sandbox facts into the same
+contracts. For example, both sides call the same status derivation: if PR facts
+contain `ci=failing`, the session becomes `ci_failed`; if the PR is cleanly
+mergeable and nothing more urgent is present, it becomes `mergeable`. This is
+how the local desktop board and Cloud Kanban stay semantically aligned while the
+infrastructure remains separate.
+
 ## Local development
 
 `npm run cloud:local` uses Compose for the control plane and PostgreSQL, builds

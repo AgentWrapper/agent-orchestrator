@@ -19,6 +19,31 @@ Cloud web app → authenticated AO Cloud control plane → cloud sandboxes
 - A browser never calls a sandbox directly. It uses the control plane for
   commands, events, terminal brokering, previews, and authorization.
 
+## Shared semantic contracts
+
+The shared boundary is `backend/internal/contract`. It is deliberately
+storage-free and authority-free: no SQLite, no PostgreSQL, no Docker, no
+Daytona, no Electron, no browser API. It only defines AO meanings that must stay
+the same across local and Cloud.
+
+The contract currently covers:
+
+- session roles, activity states, and derived display/Kanban statuses
+- normalized SCM facts for PR state, CI, review verdict, mergeability, stack
+  branch relationships, and unresolved review comments
+- shared status derivation, including stack-aware PR aggregation and `no_signal`
+  behavior
+- workspace file/diff vocabulary for file status, old path, additions,
+  deletions, binary markers, and compare mode
+- portable `ao` lifecycle/SCM command names used by local-like Cloud worker CLI
+  commands
+
+Local AO maps its SQLite, worktree, and harness-hook facts into these contract
+types. AO Cloud maps PostgreSQL, GitHub, and sandbox facts into the same types.
+The control plane remains the Cloud authority and the local daemon remains the
+desktop authority, but the rule "CI failing means `ci_failed`" or "a clean PR
+means `mergeable`" is implemented once.
+
 ## Design references
 
 - Product/UI direction: [`../../DESIGN.md`](../../DESIGN.md). Cloud retains AO's dense,

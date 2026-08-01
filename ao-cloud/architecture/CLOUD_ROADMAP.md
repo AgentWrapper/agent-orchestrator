@@ -37,9 +37,9 @@ can be accessed outside its tenant.
 
 ## Phase 2 — Control-plane API and schema migration
 
-- Make the Go control plane the complete Cloud authority for projects,
+- ~~Make the Go control plane the complete Cloud authority for projects,
   repositories, sessions, messages, interrupts, orchestration, terminals,
-  workspace, previews, and PR/review data.
+  workspace, previews, and PR/review data.~~
 - Properly migrate the existing schema to organization ownership, repository
   grants, quotas, audit records, and retention policy.
 - Publish a versioned Cloud API schema and generate the browser client.
@@ -51,12 +51,12 @@ talking to a database, sandbox, or local daemon directly.
 
 - Make Daytona the production sandbox provider while retaining the provider
   interface.
-- Harden reconciliation: create, boot, pause/resume, replacement, deletion,
-  retries, orphan cleanup, egress policy, resource limits, and retention.
+- Harden reconciliation: ~~create, boot, pause/resume, replacement, deletion,
+  retries,~~ orphan cleanup, egress policy, resource limits, and retention.
 - Build/publish an immutable worker image with no baked credentials.
-- Keep the shared interactive terminal path harness-neutral: Claude Code, Codex,
+- ~~Keep the shared interactive terminal path harness-neutral: Claude Code, Codex,
   and Cursor workers must all render and resize through the same full-pane PTY
-  viewport rather than a harness-specific transcript UI.
+  viewport rather than a harness-specific transcript UI.~~
 - Add new harnesses by baking their CLI and verified runtime prerequisites into
   the worker image, then implementing the matching AO adapter, credential
   delivery, prompt strategy, hooks/activity mapping, and lifecycle tests before
@@ -86,9 +86,9 @@ or permanent provider credential.
 
 ## Phase 5 — Browser-only product completion
 
-- Complete Clerk organization UX, cloud project/session controls, Kanban,
-  orchestrator/worker chat, terminal, files/diffs, private previews,
-  notifications, and PR/review surfaces.
+- Complete Clerk organization UX, ~~cloud project/session controls, Kanban,
+  orchestrator/worker chat, terminal, files/diffs, private previews,~~
+  notifications, and ~~PR/review surfaces.~~
 - Keep local-only controls absent rather than mocked.
 - Add end-to-end coverage from sign-in through worker delegation, reconnect,
   interrupt, preview, and deletion.

@@ -21,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	cloudworkerhub "github.com/aoagents/agent-orchestrator/backend/internal/cloud/workerhub"
+	"github.com/aoagents/agent-orchestrator/backend/internal/contract"
 )
 
 const (
@@ -81,16 +82,7 @@ type workspaceEntry struct {
 	ModTime string `json:"modTime"`
 }
 
-type workspaceDiffFile struct {
-	Path      string `json:"path"`
-	OldPath   string `json:"oldPath,omitempty"`
-	Status    string `json:"status"`
-	Staged    string `json:"staged,omitempty"`
-	Unstaged  string `json:"unstaged,omitempty"`
-	Additions int    `json:"additions"`
-	Deletions int    `json:"deletions"`
-	Binary    bool   `json:"binary"`
-}
+type workspaceDiffFile = contract.WorkspaceDiffFile
 
 func (r *Runner) dispatchWorkspaceCommand(
 	ctx context.Context,
@@ -411,9 +403,9 @@ func parseWorkspaceStatus(status string) (map[string]workspaceDiffFile, []string
 	return files, untracked
 }
 
-func workspaceStatusLabel(staged, unstaged string) string {
+func workspaceStatusLabel(staged, unstaged string) contract.WorkspaceFileStatus {
 	if staged == "?" && unstaged == "?" {
-		return "untracked"
+		return contract.WorkspaceFileUntracked
 	}
 	code := staged
 	if code == " " {
@@ -421,17 +413,17 @@ func workspaceStatusLabel(staged, unstaged string) string {
 	}
 	switch code {
 	case "A":
-		return "added"
+		return contract.WorkspaceFileAdded
 	case "D":
-		return "deleted"
+		return contract.WorkspaceFileDeleted
 	case "R":
-		return "renamed"
+		return contract.WorkspaceFileRenamed
 	case "C":
-		return "copied"
+		return contract.WorkspaceFileCopied
 	case "M":
-		return "modified"
+		return contract.WorkspaceFileModified
 	default:
-		return "changed"
+		return contract.WorkspaceFileChanged
 	}
 }
 
@@ -497,7 +489,7 @@ func mergeWorkspaceDiffFiles(
 		file := statusFiles[pathValue]
 		file.Path = pathValue
 		if file.Status == "" {
-			file.Status = "modified"
+			file.Status = contract.WorkspaceFileModified
 		}
 		if file.OldPath == "" {
 			file.OldPath = stat.OldPath

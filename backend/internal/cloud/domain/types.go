@@ -1,5 +1,5 @@
 // Package domain defines cloud-only durable facts. Shared AO session vocabulary
-// remains in internal/domain; these records describe account and sandbox
+// remains in internal/contract; these records describe account and sandbox
 // ownership that the local daemon deliberately does not have.
 package domain
 

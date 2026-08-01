@@ -21,6 +21,7 @@ import (
 	"github.com/spf13/cobra"
 
 	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/contract"
 )
 
 // Version is the cloud-agent CLI protocol version.
@@ -64,7 +65,7 @@ func newSpawnCommand(getenv environment, httpClient *http.Client) *cobra.Command
 	var name, prompt, harness string
 	var issueNumber int
 	command := &cobra.Command{
-		Use:   "spawn",
+		Use:   string(contract.CommandSpawn),
 		Short: "Spawn a worker in this project",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
@@ -138,7 +139,7 @@ func newSessionGetCommand(getenv environment, httpClient *http.Client) *cobra.Co
 
 func newClaimPRCommand(getenv environment, httpClient *http.Client) *cobra.Command {
 	return &cobra.Command{
-		Use:   "claim-pr <worker> <number-or-url>",
+		Use:   string(contract.CommandClaimPullRequest) + " <worker> <number-or-url>",
 		Short: "Claim a project pull request for a worker",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(command *cobra.Command, args []string) error {
@@ -164,7 +165,7 @@ func newClaimPRCommand(getenv environment, httpClient *http.Client) *cobra.Comma
 
 func newMergePRCommand(getenv environment, httpClient *http.Client) *cobra.Command {
 	return &cobra.Command{
-		Use:   "merge-pr <worker>",
+		Use:   string(contract.CommandMergePullRequest) + " <worker>",
 		Short: "Merge the pull request observed for a worker",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
@@ -201,7 +202,7 @@ func newMergePRCommand(getenv environment, httpClient *http.Client) *cobra.Comma
 
 func newResolveReviewThreadCommand(getenv environment, httpClient *http.Client) *cobra.Command {
 	return &cobra.Command{
-		Use:   "resolve-review-thread <worker> <thread-id>",
+		Use:   string(contract.CommandResolveReviewThread) + " <worker> <thread-id>",
 		Short: "Resolve a GitHub review thread observed for a worker",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(command *cobra.Command, args []string) error {
@@ -227,7 +228,7 @@ func newResolveReviewThreadCommand(getenv environment, httpClient *http.Client) 
 
 func newKillCommand(getenv environment, httpClient *http.Client) *cobra.Command {
 	return &cobra.Command{
-		Use:   "kill <worker>",
+		Use:   string(contract.CommandKill) + " <worker>",
 		Short: "Request deletion of a project worker",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
@@ -254,7 +255,7 @@ func newKillCommand(getenv environment, httpClient *http.Client) *cobra.Command 
 func newSendCommand(getenv environment, httpClient *http.Client) *cobra.Command {
 	var sessionID, message string
 	command := &cobra.Command{
-		Use:   "send",
+		Use:   string(contract.CommandSend),
 		Short: "Send a prompt to a project worker",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
@@ -286,7 +287,7 @@ func newSendCommand(getenv environment, httpClient *http.Client) *cobra.Command 
 func newBlockerCommand(getenv environment, httpClient *http.Client) *cobra.Command {
 	var message string
 	command := &cobra.Command{
-		Use:   "blocker",
+		Use:   string(contract.CommandReportBlocker),
 		Short: "Report a blocker to the project orchestrator",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
@@ -314,7 +315,7 @@ func newBlockerCommand(getenv environment, httpClient *http.Client) *cobra.Comma
 
 func newClaimOwnPRCommand(getenv environment, httpClient *http.Client) *cobra.Command {
 	return &cobra.Command{
-		Use:   "claim-pr <number-or-url>",
+		Use:   string(contract.CommandClaimPullRequest) + " <number-or-url>",
 		Short: "Attach this worker's pull request to its AO session",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
@@ -347,7 +348,7 @@ func newClaimOwnPRCommand(getenv environment, httpClient *http.Client) *cobra.Co
 
 func newStatusCommand(getenv environment, httpClient *http.Client) *cobra.Command {
 	return &cobra.Command{
-		Use:   "status",
+		Use:   string(contract.CommandStatus),
 		Short: "List sessions in this project",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
@@ -422,7 +423,7 @@ type sessionSCM struct {
 
 func newInspectCommand(getenv environment, httpClient *http.Client) *cobra.Command {
 	return &cobra.Command{
-		Use:   "inspect <worker>",
+		Use:   string(contract.CommandInspect) + " <worker>",
 		Short: "Inspect a project worker and its latest turn",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
@@ -522,7 +523,7 @@ func firstLine(value string) string {
 
 func newResultCommand(getenv environment, httpClient *http.Client) *cobra.Command {
 	return &cobra.Command{
-		Use:   "result <worker>",
+		Use:   string(contract.CommandResult) + " <worker>",
 		Short: "Print a worker's complete latest answer",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
@@ -546,7 +547,7 @@ func newResultCommand(getenv environment, httpClient *http.Client) *cobra.Comman
 func newWaitCommand(getenv environment, httpClient *http.Client) *cobra.Command {
 	var timeout, interval time.Duration
 	command := &cobra.Command{
-		Use:   "wait <worker>",
+		Use:   string(contract.CommandWait) + " <worker>",
 		Short: "Wait for a worker and print its complete answer",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
