@@ -86,12 +86,25 @@ function elementWithBounds(id: string, bounds: Bounds): HTMLButtonElement {
 
 // The preload script only reacts to trusted events (so a page script can't
 // synthesize clicks/keystrokes to drive the overlay) - see the "ignores
-// synthetic page events" test below. jsdom marks `isTrusted` as an unforgeable
-// own property (can't be redefined or reassigned), so tests exercising the
-// real interaction flow wrap the event in a Proxy that reports `isTrusted` as
-// true - the same way a genuine, OS-generated user click would be seen by the
-// page - while still dispatching (and being read back) as the real event.
+// synthetic page events" test below. jsdom's `dispatchEvent()` unconditionally
+// resets `isTrusted` to false as part of its own dispatch algorithm, so no
+// property trick on the event *before* dispatch survives - and jsdom invokes
+// listeners with its own cached wrapper for the event, not the object handed
+// to `dispatchEvent()`, so wrapping the event in a Proxy beforehand never even
+// reaches the listener. Instead, `markTrusted` tags the real event with a
+// marker, and a spy on `EventTarget.prototype.addEventListener` (below)
+// recognizes the marker and hands the preload script's listener a Proxy
+// reporting `isTrusted: true` - as a genuine user event would be seen - while
+// still calling through to the real, natively dispatched event for everything
+// else (target, composedPath, preventDefault, ...).
+const TRUSTED_EVENT = Symbol("trusted-for-test");
+
 function markTrusted<T extends Event>(event: T): T {
+	(event as unknown as Record<symbol, boolean>)[TRUSTED_EVENT] = true;
+	return event;
+}
+
+function withForcedTrust<T extends Event>(event: T): T {
 	return new Proxy(event, {
 		get(target, prop) {
 			if (prop === "isTrusted") return true;
@@ -100,6 +113,24 @@ function markTrusted<T extends Event>(event: T): T {
 		},
 	});
 }
+
+const originalAddEventListener = EventTarget.prototype.addEventListener;
+vi.spyOn(EventTarget.prototype, "addEventListener").mockImplementation(function (
+	this: EventTarget,
+	type: string,
+	listener: EventListenerOrEventListenerObject | null,
+	options?: boolean | AddEventListenerOptions,
+): void {
+	if (typeof listener !== "function") {
+		originalAddEventListener.call(this, type, listener, options);
+		return;
+	}
+	const wrapped: EventListener = (event) => {
+		const isMarkedTrusted = Boolean((event as unknown as Record<symbol, boolean>)[TRUSTED_EVENT]);
+		listener.call(this, isMarkedTrusted ? withForcedTrust(event) : event);
+	};
+	originalAddEventListener.call(this, type, wrapped, options);
+});
 
 function dispatchPageEvent(element: Element, type: string): Event {
 	const event = markTrusted(new MouseEvent(type, { bubbles: true, cancelable: true }));
