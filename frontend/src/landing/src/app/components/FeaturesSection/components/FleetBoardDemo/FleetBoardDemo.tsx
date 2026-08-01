@@ -10,7 +10,7 @@ import {
 
 const columns = [
 	{ id: "working", label: "Working", color: "#60a5fa" },
-	{ id: "staging", label: "Staging", color: "#38bdf8" },
+	{ id: "staging", label: "Staging", color: "#a78bfa" },
 	{ id: "in_review", label: "In Review", color: "#facc15" },
 	{ id: "merge", label: "Ready to merge", color: "#4ade80" },
 ] as const;
@@ -68,7 +68,7 @@ export function FleetBoardDemo() {
 									className="flex items-center gap-1.5 border-b border-[var(--preview-border)] px-2.5 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--preview-ring)]"
 								>
 									<span
-										className="size-2 shrink-0 rounded-[2px]"
+										className="size-2 shrink-0 rounded-full"
 										style={{ backgroundColor: column.color }}
 									/>
 									<span className="min-w-0 flex-1 truncate text-[10px] font-semibold tracking-[-0.5px] text-[var(--preview-muted-foreground)]">

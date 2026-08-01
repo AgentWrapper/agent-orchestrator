@@ -210,7 +210,7 @@ const COLUMN_CONFIG: Record<
 	{ title: string; color: string; weight: number }
 > = {
 	working: { title: "Working", color: "#60a5fa", weight: 4 },
-	staging: { title: "Staging", color: "#38bdf8", weight: 3 },
+	staging: { title: "Staging", color: "#a78bfa", weight: 3 },
 	in_review: { title: "In Review", color: "#facc15", weight: 2 },
 	merge: { title: "Ready to merge", color: "#4ade80", weight: 1 },
 };
@@ -1615,7 +1615,7 @@ function BoardColumn({
 	return (
 		<section className="flex min-h-0 min-w-0 snap-start flex-col border-r border-[var(--preview-border)] last:border-r-0">
 			<div className="flex items-center gap-2 border-b border-[var(--preview-border)] px-3 py-2.5">
-				<span className="h-2 w-2 rounded-[2px]" style={{ backgroundColor: color }} />
+				<span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
 				<div className="text-[11px] font-semibold tracking-[-0.5px] text-[var(--preview-muted-foreground)]">{title}</div>
 				<div className="ml-2 text-[10px] tabular-nums text-[var(--preview-muted-foreground)]">{count}</div>
 				{extraWaiting > 0 ? (
