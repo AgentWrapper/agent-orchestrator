@@ -745,9 +745,6 @@ function SessionCard({
 	onOpen,
 	onTerminate,
 	interactive = true,
-	restoreAction,
-	isRestoring = false,
-	isRestoreDisabled = false,
 }: {
 	session: WorkspaceSession;
 	onOpen?: () => void;
@@ -878,6 +875,11 @@ function SessionCard({
 					</span>
 				)}
 			</div>
+			{termination.error ? (
+				<div className="border-t border-border px-3.5 py-1.5 text-2xs text-destructive" role="alert">
+					{termination.error}
+				</div>
+			) : null}
 		</div>
 	);
 }
