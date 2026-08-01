@@ -305,6 +305,9 @@ type SendSessionMessageResponse struct {
 
 // DelegateTaskRequest is the body of POST /api/v1/orchestrators/delegate.
 // An omitted agent tells the orchestrator to use the project's worker default.
+// Attachments are intentionally absent from this MVP contract: delegation uses
+// the string-only guarded messenger and cannot safely hand image bytes to a
+// worker that does not exist yet without a durable attachment store.
 type DelegateTaskRequest struct {
 	ProjectID domain.ProjectID    `json:"projectId"`
 	Brief     string              `json:"brief" maxLength:"4096"`

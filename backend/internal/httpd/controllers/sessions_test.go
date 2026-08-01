@@ -1208,6 +1208,20 @@ func TestSessionsAPI_DelegateTaskValidationAndMissingOrchestrator(t *testing.T) 
 	assertErrorCode(t, body, status, http.StatusConflict, "ACTIVE_ORCHESTRATOR_REQUIRED")
 }
 
+func TestSessionsAPI_DelegateTaskRejectsOversizedBody(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	// A brief past the 32 KiB raw-body cap must fail during bounded decoding.
+	// Without MaxBytesReader this would decode and fail later as TASK_TOO_LONG.
+	oversized := `{"projectId":"ao","brief":"` + strings.Repeat("A", 40<<10) + `"}`
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", oversized)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
+	if svc.delegationInput.ProjectID != "" {
+		t.Fatalf("delegate service called with oversized body: %#v", svc.delegationInput)
+	}
+}
+
 func TestSessionsAPI_CleanupWithProjectFilter(t *testing.T) {
 	svc := newFakeSessionService()
 	svc.cleanupResult = []domain.SessionID{"ao-1"}

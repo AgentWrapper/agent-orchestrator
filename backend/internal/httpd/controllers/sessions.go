@@ -29,6 +29,10 @@ const (
 	maxMessageLen     = 4096
 	maxModelLen       = 256
 	maxDisplayNameLen = 20
+	// maxDelegateTaskBodyBytes bounds the LAN-served delegation request before
+	// JSON decoding. It leaves ample room for escaped representations of the
+	// 4 KiB brief and 256-character model while preventing unbounded reads.
+	maxDelegateTaskBodyBytes = 32 << 10
 
 	// Attachment limits guard the daemon against oversized spawn bodies. Images
 	// are pasted/dropped into the task brief and inlined as base64 in the JSON
@@ -643,6 +647,7 @@ func (c *SessionsController) delegateTask(w http.ResponseWriter, r *http.Request
 		apispec.NotImplemented(w, r, "POST", "/api/v1/orchestrators/delegate")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxDelegateTaskBodyBytes)
 	var in DelegateTaskRequest
 	if err := decodeJSON(r, &in); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
