@@ -32,10 +32,9 @@ export function VideoSection() {
 					<h2 className="text-2xl sm:text-3xl lg:text-4xl font-semibold text-foreground">
 						See it in action
 					</h2>
-					<p className="mt-3 text-base text-muted-foreground">
-						Watch AO run a fleet of agents end to end, from task to merged PR.
-					</p>
-				</div>
+				<p className="mt-3 text-base text-muted-foreground">
+					Watch AO run a fleet of agents end to end on a single repo, from task to merged PR.
+				</p>
 
 				<div className="relative mx-auto mt-12 w-full">
 					<div
