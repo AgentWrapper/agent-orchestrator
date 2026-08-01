@@ -10,8 +10,8 @@ import {
 
 const columns = [
 	{ id: "working", label: "Working", color: "#60a5fa" },
-	{ id: "action", label: "Needs you", color: "#fb923c" },
-	{ id: "review", label: "In review", color: "#facc15" },
+	{ id: "staging", label: "Staging", color: "#38bdf8" },
+	{ id: "in_review", label: "In Review", color: "#facc15" },
 	{ id: "merge", label: "Ready to merge", color: "#4ade80" },
 ] as const;
 
@@ -123,7 +123,7 @@ function BoardCard({
 		column === 0
 			? { label: "Editing files", color: "#9ca3af" }
 			: column === 1
-				? { label: "Paused for decision", color: previewStatus.warning }
+				? { label: "Running checks", color: "#9ca3af" }
 				: column === 2
 					? { label: "Reviewer assigned", color: "#93c5fd" }
 					: { label: "Approved", color: previewStatus.success };
