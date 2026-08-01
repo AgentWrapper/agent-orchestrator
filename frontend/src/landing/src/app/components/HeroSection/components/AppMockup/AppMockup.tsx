@@ -2133,7 +2133,7 @@ export function AppMockup() {
 								? {
 										...card,
 										activity: isReview
-											? "Reviewer requested changes"
+											? "Changes requested"
 											: "Needs your input",
 										activityState: "waiting" as const,
 										badge: isReview ? "Changes requested" : "Needs input",
