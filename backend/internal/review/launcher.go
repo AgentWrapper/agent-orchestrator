@@ -35,6 +35,9 @@ type Launcher interface {
 	Notify(ctx context.Context, handleID string, spec LaunchSpec) error
 	// Alive reports whether a reviewer pane is still running.
 	Alive(ctx context.Context, handleID string) (bool, error)
+	// Reusable reports whether the harness accepts another review task in its
+	// existing TUI. Reviewers with launch-fixed context return false.
+	Reusable(harness domain.ReviewerHarness) bool
 	// Cancel interrupts a running reviewer pane while keeping the terminal alive.
 	Cancel(ctx context.Context, handleID string, harness domain.ReviewerHarness) error
 }
@@ -278,6 +281,15 @@ func (l *agentLauncher) Alive(ctx context.Context, handleID string) (bool, error
 		return false, nil
 	}
 	return l.runtime.IsAlive(ctx, ports.RuntimeHandle{ID: handleID})
+}
+
+func (l *agentLauncher) Reusable(harness domain.ReviewerHarness) bool {
+	reviewer, ok := l.reviewers.Reviewer(harness)
+	if !ok {
+		return false
+	}
+	policy, ok := reviewer.(ports.ReviewerReusePolicy)
+	return !ok || policy.ReviewProcessReusable()
 }
 
 func (l *agentLauncher) Cancel(ctx context.Context, handleID string, harness domain.ReviewerHarness) error {

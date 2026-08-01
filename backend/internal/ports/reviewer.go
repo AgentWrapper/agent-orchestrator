@@ -49,6 +49,13 @@ type ReviewerCanceller interface {
 	ReviewCancel(ctx context.Context) (ReviewCancelSpec, error)
 }
 
+// ReviewerReusePolicy is implemented by interactive reviewer adapters that
+// need a fresh TUI for each task because request-scoped context is fixed at
+// process launch. Returning false forces a fresh launch for every pass.
+type ReviewerReusePolicy interface {
+	ReviewProcessReusable() bool
+}
+
 // ReviewInvocation describes one review pass for a reviewer to act on. All ids
 // the reviewer needs are passed explicitly here (and embedded in the prompt /
 // message), never through environment variables.

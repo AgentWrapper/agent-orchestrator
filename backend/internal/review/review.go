@@ -286,7 +286,7 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 
 	handleID := ""
 	queue := reviewQueue(created)
-	if hasReview && reviewRow.ReviewerHandleID != "" && prevHarness == harness {
+	if hasReview && reviewRow.ReviewerHandleID != "" && prevHarness == harness && e.launcher.Reusable(harness) {
 		alive, err := e.launcher.Alive(ctx, reviewRow.ReviewerHandleID)
 		if err != nil {
 			return TriggerResult{}, failRuns(0, err)

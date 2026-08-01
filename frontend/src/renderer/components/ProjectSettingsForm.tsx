@@ -51,6 +51,8 @@ const PERMISSION_MODE_OPTIONS = [
 
 const KNOWN_REVIEWER_HARNESS_IDS = new Set([
 	"agy",
+	"aider",
+	"amp",
 	"claude-code",
 	"codex",
 	"continue",
@@ -511,6 +513,8 @@ function PermissionModeSelect({ value, onChange }: { value: string; onChange: (v
 
 const REVIEWER_AGENT_PRIORITY = [
 	"agy",
+	"aider",
+	"amp",
 	"claude-code",
 	"codex",
 	"continue",
@@ -526,7 +530,6 @@ const REVIEWER_AGENT_PRIORITY = [
 	"pi",
 	"qwen",
 	"vibe",
-	"aider",
 ] as const;
 const REVIEWER_AGENT_PRIORITY_RANK = new Map<string, number>(
 	REVIEWER_AGENT_PRIORITY.map((agent, index) => [agent, index]),

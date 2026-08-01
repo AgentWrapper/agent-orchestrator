@@ -189,6 +189,7 @@ func (f *fakeLauncher) Notify(_ context.Context, handleID string, spec LaunchSpe
 func (f *fakeLauncher) Alive(_ context.Context, _ string) (bool, error) {
 	return f.alive || f.spawned, f.aliveErr
 }
+func (f *fakeLauncher) Reusable(domain.ReviewerHarness) bool { return true }
 func (f *fakeLauncher) Cancel(_ context.Context, handleID string, harness domain.ReviewerHarness) error {
 	f.cancelled = true
 	f.cancelledHandle = handleID

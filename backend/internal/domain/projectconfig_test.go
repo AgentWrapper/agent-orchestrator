@@ -45,7 +45,8 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"good experimental Droid reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerDroid}}}, false},
 		{"good experimental Kimi reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerKimi}}}, false},
 		{"unknown reviewer harness", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: "nope"}}}, true},
-		{"worker-only harness is not auto a reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerHarness(HarnessAider)}}}, true},
+		{"good interactive Amp reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerAmp}}}, false},
+		{"good interactive Aider reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerAider}}}, false},
 		{"empty reviewer harness", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ""}}}, true},
 		{"tracker intake assignee rule", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: "alice"}}, false},
 		{"tracker intake explicit github", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderGitHub, Assignee: "alice"}}, false},
@@ -148,8 +149,11 @@ func TestResolveReviewerHarness(t *testing.T) {
 	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessCrush); got != FallbackReviewerHarness {
 		t.Fatalf("crush worker = %q, want %q", got, FallbackReviewerHarness)
 	}
-	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessAider); got != FallbackReviewerHarness {
-		t.Fatalf("fallback = %q, want %q", got, FallbackReviewerHarness)
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessAider); got != ReviewerAider {
+		t.Fatalf("aider worker = %q, want reviewer aider", got)
+	}
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessAmp); got != ReviewerAmp {
+		t.Fatalf("amp worker = %q, want reviewer amp", got)
 	}
 	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessQwen); got != ReviewerQwen {
 		t.Fatalf("qwen worker = %q, want reviewer qwen", got)

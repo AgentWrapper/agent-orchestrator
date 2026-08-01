@@ -7,6 +7,8 @@ import (
 	"fmt"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/agy"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/aider"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/amp"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/codex"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/continueagent"
@@ -36,7 +38,9 @@ type Adapter interface {
 // here (and to domain.AllReviewerHarnesses) to register it.
 func Constructors() []Adapter {
 	return []Adapter{
+		aider.New(),
 		agy.New(),
+		amp.New(),
 		claudecode.New(),
 		codex.New(),
 		continueagent.New(),
