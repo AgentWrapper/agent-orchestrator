@@ -1,5 +1,62 @@
 @import "tailwindcss";
 @import "../styles/tokens.css";
+/* Bundled IDE typefaces (SIL OFL - see assets/fonts/NOTICE): Inter for UI chrome, JetBrains Mono for code/data. */
+@font-face {
+	font-family: "Inter";
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+	src: url("./assets/fonts/inter-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+	font-family: "Inter";
+	font-style: normal;
+	font-weight: 500;
+	font-display: swap;
+	src: url("./assets/fonts/inter-latin-500-normal.woff2") format("woff2");
+}
+@font-face {
+	font-family: "Inter";
+	font-style: normal;
+	font-weight: 600;
+	font-display: swap;
+	src: url("./assets/fonts/inter-latin-600-normal.woff2") format("woff2");
+}
+@font-face {
+	font-family: "Inter";
+	font-style: normal;
+	font-weight: 700;
+	font-display: swap;
+	src: url("./assets/fonts/inter-latin-700-normal.woff2") format("woff2");
+}
+@font-face {
+	font-family: "JetBrains Mono";
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+	src: url("./assets/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+	font-family: "JetBrains Mono";
+	font-style: normal;
+	font-weight: 500;
+	font-display: swap;
+	src: url("./assets/fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2");
+}
+@font-face {
+	font-family: "JetBrains Mono";
+	font-style: normal;
+	font-weight: 600;
+	font-display: swap;
+	src: url("./assets/fonts/jetbrains-mono-latin-600-normal.woff2") format("woff2");
+}
+@font-face {
+	font-family: "JetBrains Mono";
+	font-style: normal;
+	font-weight: 700;
+	font-display: swap;
+	src: url("./assets/fonts/jetbrains-mono-latin-700-normal.woff2") format("woff2");
+}
 
 @custom-media --layout-narrow (width <= 680px); /* --breakpoint-layout-narrow */
 
@@ -13,22 +70,25 @@
 	--font-sans: var(--font-family-base);
 	--font-mono: var(--font-family-mono);
 
-	/* Typography — align Tailwind text-* with token scale */
-	--text-xs: var(--font-size-sm);
-	--text-sm: var(--font-size-md);
-	--text-base: var(--font-size-md);
+	/* Typography - align Tailwind text-* with the consolidated token scale. */
+	--text-xs: var(--font-size-xs);
+	--text-sm: var(--font-size-sm);
+	--text-base: var(--font-size-sm);
+	--text-md: var(--font-size-md);
+	--text-lg: var(--font-size-lg);
 
-	/* Typography — token-named half-steps (text-control = dense 13px chrome) */
-	--text-micro: var(--font-size-xs);
-	--text-2xs: var(--font-size-2xs);
+	/* Typography - role-based names, plus legacy aliases for existing components. */
+	--text-micro: var(--font-size-micro);
 	--text-caption: var(--font-size-caption);
+	--text-heading: var(--font-size-heading);
+	--text-title: var(--font-size-title);
+	--text-2xs: var(--font-size-2xs);
 	--text-sm-md: var(--font-size-sm-md);
 	--text-md-sm: var(--font-size-md-sm);
 	--text-control: var(--font-size-base);
 	--text-brand: var(--font-size-brand);
 	--text-subtitle: var(--font-size-subtitle);
 	--text-heading-sm: var(--font-size-heading-sm);
-	--text-heading: var(--font-size-heading);
 	--text-heading-lg: var(--font-size-heading-lg);
 
 	/* Radius — align Tailwind rounded-* with token scale */

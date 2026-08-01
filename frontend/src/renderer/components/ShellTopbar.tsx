@@ -188,7 +188,7 @@ export function ShellTopbar() {
 							style={noDragStyle}
 							variant="accent"
 						>
-							<Plus className="size-icon-lg" aria-hidden="true" />
+							<Plus className="size-icon-md" aria-hidden="true" />
 							New task
 						</TopbarButton>
 						<TopbarButton
@@ -198,7 +198,7 @@ export function ShellTopbar() {
 							style={noDragStyle}
 							variant="primary"
 						>
-							<OrchestratorIcon className="size-icon-lg" aria-hidden="true" />
+							<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 							{orchestrator ? <OrchestratorActivityIndicator session={orchestrator} /> : null}
 							{isProjectRestarting
 								? "Restarting…"
@@ -222,11 +222,11 @@ export function ShellTopbar() {
 									style={noDragStyle}
 									variant="accent"
 								>
-									<Plus className="size-icon-lg" aria-hidden="true" />
+									<Plus className="size-icon-md" aria-hidden="true" />
 									New task
 								</TopbarButton>
 								<TopbarButton aria-label="Open Kanban" onClick={openBoard} style={noDragStyle} variant="primary">
-									<LayoutDashboard className="size-icon-lg" aria-hidden="true" />
+									<LayoutDashboard className="size-icon-md" aria-hidden="true" />
 									Kanban
 								</TopbarButton>
 							</>
@@ -258,7 +258,7 @@ export function ShellTopbar() {
 								style={noDragStyle}
 								variant="primary"
 							>
-								<OrchestratorIcon className="size-icon-lg" aria-hidden="true" />
+								<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 								{isProjectRestarting ? "Restarting…" : isSpawning ? "Spawning…" : "Orchestrator"}
 							</TopbarButton>
 						)}
@@ -273,9 +273,9 @@ export function ShellTopbar() {
 								variant="icon"
 							>
 								{isInspectorOpen ? (
-									<PanelRightClose className="size-5" aria-hidden="true" />
+									<PanelRightClose className="size-icon-base" aria-hidden="true" />
 								) : (
-									<PanelRightOpen className="size-5" aria-hidden="true" />
+									<PanelRightOpen className="size-icon-base" aria-hidden="true" />
 								)}
 							</TopbarButton>
 						)}
@@ -367,6 +367,6 @@ function ProjectTerminationFeedback({ projectId }: { projectId: string | undefin
 function SessionStatusPill({ session }: { session: WorkspaceSession }) {
 	const { label, tone, breathe } = getAgentActivityView(session.activity);
 	return (
-		<StatusPill label={label} tone={tone} breathe={breathe} leading="none" className="px-3.5 py-2 text-sm" />
+		<StatusPill label={label} tone={tone} breathe={breathe} leading="none" className="px-2.5 py-1.25 text-xs" />
 	);
 }
