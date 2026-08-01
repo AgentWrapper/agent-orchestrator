@@ -723,7 +723,7 @@ func (s *Store) sessionStatus(
 					AND t.is_resolved = false
 					AND t.is_outdated = false
 			) AS has_unresolved_threads
-		FROM ao_pull_requests
+		FROM ao_pull_requests pr
 		WHERE account_id = $1 AND session_id = $2
 		ORDER BY updated_at DESC
 	`, accountID, session.ID)
