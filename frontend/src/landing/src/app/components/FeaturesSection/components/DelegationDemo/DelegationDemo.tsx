@@ -704,9 +704,10 @@ export function DelegationDemo() {
 
 	const isOrc = active === "orc";
 	const worker = isOrc ? undefined : byId(active);
-	const filtered = spawned
-		.filter((id) => id !== "orc")
-		.filter((id) => byId(id)?.task.toLowerCase().includes(query.toLowerCase()));
+	const needle = query.toLowerCase();
+	const filtered = spawned.filter(
+		(id) => id !== "orc" && (byId(id)?.task.toLowerCase().includes(needle) ?? false),
+	);
 
 	const killActive = () => {
 		if (isOrc) return;
