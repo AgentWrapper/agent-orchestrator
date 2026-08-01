@@ -1532,9 +1532,11 @@ function BoardCard({
 				ease: [0.22, 1, 0.36, 1],
 				layout: { duration: 0.55, ease: [0.22, 1, 0.36, 1] },
 			}}
-			className={`cursor-pointer rounded-[8px] border ${attentionBorder} bg-[var(--preview-card)] p-[15px] shadow-[0_1px_1px_rgba(0,0,0,0.05)] outline-none transition-colors hover:bg-[var(--preview-muted)] focus-visible:ring-2 focus-visible:ring-[var(--preview-ring)] ${attentionAnim}`}
+			className="cursor-pointer rounded-[8px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--preview-ring)]"
 		>
-			<div className={shakeClass}>
+			<div
+				className={`rounded-[8px] border ${attentionBorder} bg-[var(--preview-card)] p-[15px] shadow-[0_1px_1px_rgba(0,0,0,0.05)] transition-colors hover:bg-[var(--preview-muted)] ${attentionAnim} ${shakeClass}`}
+			>
 				<div className="flex items-start gap-2">
 					<img
 						src={card.icon}
