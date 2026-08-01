@@ -1,11 +1,6 @@
 "use client";
 
-import {
-	AnimatePresence,
-	LayoutGroup,
-	motion,
-	useReducedMotion,
-} from "motion/react";
+import { AnimatePresence, LayoutGroup, motion } from "motion/react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 
@@ -1487,7 +1482,6 @@ function BoardCard({
 	onOpen: (card: PreviewCard) => void;
 }) {
 	const [canPressScale, setCanPressScale] = useState(true);
-	const shouldReduceMotion = useReducedMotion();
 	const prMatch = card.pr.match(/PR\s+#(\d+)/i);
 	const { prStatus, prClass, activityColor, activityIcon } =
 		getCardVisualState(card);
@@ -1498,8 +1492,12 @@ function BoardCard({
 	const attentionBorder = isWaiting
 		? "border-[#fb923c]/60"
 		: "border-[var(--preview-border)]";
+	// Pulse (box-shadow only) is safe on the outer motion.div. Shake
+	// (transform-based) is applied to an INNER wrapper so framer's `layout`
+	// FLIP measurements on the outer element are not disturbed by the
+	// keyframe transforms.
 	const attentionAnim = isWaiting && isPulsing ? "ao-attention-pulse" : "";
-	const isShaking = isWaiting && isPulsing && !shouldReduceMotion;
+	const shakeClass = isWaiting && isPulsing ? "ao-attention-shake" : "";
 
 	return (
 		<motion.div
@@ -1522,96 +1520,74 @@ function BoardCard({
 				}
 			}}
 			whileTap={canPressScale ? { scale: 0.96 } : undefined}
-			style={{ originX: 0.5, originY: 0.5 }}
 			initial={{ opacity: 0, scale: 0.98, y: -8 }}
 			animate={
 				card.merging
 					? { opacity: 0, scale: 0.96, y: -8 }
-					: isShaking
-						? {
-								opacity: 1,
-								scale: 1,
-								y: [0, -1.5, 1.5, -1.5, 1.5, 0, 0],
-								rotate: [0, -1.2, 1.2, -0.8, 0.8, 0, 0],
-							}
-						: { opacity: 1, scale: 1, y: 0, rotate: 0 }
+					: { opacity: 1, scale: 1, y: 0 }
 			}
 			exit={{ opacity: 0, scale: 0.96, y: -8 }}
 			transition={{
 				duration: 0.45,
 				ease: [0.22, 1, 0.36, 1],
 				layout: { duration: 0.55, ease: [0.22, 1, 0.36, 1] },
-				y: isShaking
-					? {
-							duration: 3.6,
-							repeat: Infinity,
-							ease: "easeInOut",
-							times: [0, 0.03, 0.06, 0.09, 0.12, 0.15, 1],
-						}
-					: { duration: 0.45 },
-				rotate: isShaking
-					? {
-							duration: 3.6,
-							repeat: Infinity,
-							ease: "easeInOut",
-							times: [0, 0.03, 0.06, 0.09, 0.12, 0.15, 1],
-						}
-					: { duration: 0.45 },
 			}}
 			className={`cursor-pointer rounded-[8px] border ${attentionBorder} bg-[var(--preview-card)] p-[15px] shadow-[0_1px_1px_rgba(0,0,0,0.05)] outline-none transition-colors hover:bg-[var(--preview-muted)] focus-visible:ring-2 focus-visible:ring-[var(--preview-ring)] ${attentionAnim}`}
 		>
-			<div className="flex items-start gap-2">
-				<img
-					src={card.icon}
-					alt=""
-					width={16}
-					height={16}
-					aria-hidden="true"
-					className="mt-0.5 h-4 w-4 shrink-0"
-					draggable="false"
-				/>
-				<div className="min-w-0 pr-2 text-[12px] font-medium leading-[16px] text-[var(--preview-card-foreground)]">
-					{card.title}
-				</div>
-			</div>
-			<div className="mt-3 text-[10px] leading-4 text-[var(--preview-muted-foreground)]">
-				<div className="flex items-center gap-1.5 py-1.5">
-					<BranchIcon className="h-3 w-3 shrink-0" />
-					<span className="truncate font-mono">{card.branch}</span>
-				</div>
-				{prMatch ? (
-					<div className={`flex items-center gap-1.5 border-t border-[var(--preview-border)] py-1.5 ${prClass}`}>
-						<GitHubIcon className="h-3 w-3 shrink-0" />
-						<span className="font-mono">#{prMatch[1]}</span>
-						<span className="truncate">{prStatus}</span>
+			<div className={shakeClass}>
+				<div className="flex items-start gap-2">
+					<img
+						src={card.icon}
+						alt=""
+						width={16}
+						height={16}
+						aria-hidden="true"
+						className="mt-0.5 h-4 w-4 shrink-0"
+						draggable="false"
+					/>
+					<div className="min-w-0 pr-2 text-[12px] font-medium leading-[16px] text-[var(--preview-card-foreground)]">
+						{card.title}
 					</div>
-				) : null}
+				</div>
+				<div className="mt-3 text-[10px] leading-4 text-[var(--preview-muted-foreground)]">
+					<div className="flex items-center gap-1.5 py-1.5">
+						<BranchIcon className="h-3 w-3 shrink-0" />
+						<span className="truncate font-mono">{card.branch}</span>
+					</div>
+					{prMatch ? (
+						<div className={`flex items-center gap-1.5 border-t border-[var(--preview-border)] py-1.5 ${prClass}`}>
+							<GitHubIcon className="h-3 w-3 shrink-0" />
+							<span className="font-mono">#{prMatch[1]}</span>
+							<span className="truncate">{prStatus}</span>
+						</div>
+					) : null}
+				</div>
+				{card.tone === "ready" ? (
+					<div className="mt-3 flex items-center justify-between gap-2">
+						<button
+							type="button"
+							onClick={(event) => {
+								event.stopPropagation();
+								onMerge(card.id);
+							}}
+							className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-[6px] bg-[var(--preview-primary)] px-2.5 text-[10px] font-semibold text-[var(--preview-primary-foreground)] transition-transform active:scale-[0.96]"
+						>
+							Review PR
+						</button>
+						<span className="shrink-0 text-[10px] text-[var(--preview-muted-foreground)]">{card.time}</span>
+					</div>
+				) : (
+					<div className="mt-3 flex items-center justify-between">
+						<span
+							className={`inline-flex items-center gap-1.5 text-[10px] ${activityColor}`}
+						>
+							<ActivityIcon id={activityIcon} />
+							{card.activity}
+						</span>
+						<span className="text-[10px] text-[var(--preview-muted-foreground)]">{card.time}</span>
+					</div>
+				)}
 			</div>
-			{card.tone === "ready" ? (
-				<div className="mt-3 flex items-center justify-between gap-2">
-					<button
-						type="button"
-						onClick={(event) => {
-							event.stopPropagation();
-							onMerge(card.id);
-						}}
-						className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-[6px] bg-[var(--preview-primary)] px-2.5 text-[10px] font-semibold text-[var(--preview-primary-foreground)] transition-transform active:scale-[0.96]"
-					>
-						Review PR
-					</button>
-					<span className="shrink-0 text-[10px] text-[var(--preview-muted-foreground)]">{card.time}</span>
-				</div>
-			) : (
-				<div className="mt-3 flex items-center justify-between">
-					<span
-						className={`inline-flex items-center gap-1.5 text-[10px] ${activityColor}`}
-					>
-						<ActivityIcon id={activityIcon} />
-						{card.activity}
-					</span>
-					<span className="text-[10px] text-[var(--preview-muted-foreground)]">{card.time}</span>
-				</div>
-			)}
 		</motion.div>
 	);
 }
@@ -2259,8 +2235,20 @@ export function AppMockup() {
 				.ao-attention-pulse {
 					animation: ao-attention-pulse-frames 2.2s ease-in-out infinite;
 				}
+				@keyframes ao-attention-shake-frames {
+					0%, 15%, 100% { transform: translateY(0) rotate(0deg); }
+					3%  { transform: translateY(-1.5px) rotate(-1.2deg); }
+					6%  { transform: translateY(1.5px) rotate(1.2deg); }
+					9%  { transform: translateY(-1.5px) rotate(-0.8deg); }
+					12% { transform: translateY(1.5px) rotate(0.8deg); }
+				}
+				.ao-attention-shake {
+					animation: ao-attention-shake-frames 3.6s ease-in-out infinite;
+					transform-origin: center center;
+				}
 				@media (prefers-reduced-motion: reduce) {
-					.ao-attention-pulse { animation: none; }
+					.ao-attention-pulse,
+					.ao-attention-shake { animation: none; }
 				}
 			`}</style>
 			<div className="flex h-full flex-col">
