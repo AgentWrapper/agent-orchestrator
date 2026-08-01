@@ -13,12 +13,12 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-func testReviewer(t *testing.T, version, help string, isolation error) *Reviewer {
+func testReviewer(t *testing.T, version, help string) *Reviewer {
 	t.Helper()
 	return &Reviewer{
 		dataDir:       t.TempDir(),
 		resolveBinary: func(context.Context) (string, error) { return "/opt/vibe/bin/vibe", nil },
-		run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		run: func(_ context.Context, _ map[string]string, _ string, args ...string) ([]byte, error) {
 			switch {
 			case slices.Equal(args, []string{"--version"}):
 				return []byte(version), nil
@@ -28,7 +28,6 @@ func testReviewer(t *testing.T, version, help string, isolation error) *Reviewer
 				return nil, errors.New("unexpected Vibe invocation")
 			}
 		},
-		isolationPreflight: func(context.Context) error { return isolation },
 	}
 }
 
@@ -36,6 +35,7 @@ func invocation(t *testing.T) ports.ReviewInvocation {
 	t.Helper()
 	root := t.TempDir()
 	return ports.ReviewInvocation{
+		DataDir:         filepath.Join(root, "ao-data"),
 		ReviewerID:      "review-worker-1",
 		WorkerSessionID: "worker-1",
 		WorkspacePath:   filepath.Join(root, "checkout"),
@@ -45,45 +45,28 @@ func invocation(t *testing.T) ports.ReviewInvocation {
 	}
 }
 
-func TestReviewCommandFailsClosedForEveryInvocationShape(t *testing.T) {
-	r := testReviewer(t, "", "", ErrIsolationUnavailable)
-	resolved := false
-	r.resolveBinary = func(context.Context) (string, error) {
-		resolved = true
-		return "/opt/vibe/bin/vibe", nil
-	}
-	for _, inv := range []ports.ReviewInvocation{
-		{},
-		{WorkspacePath: "/worker"},
-		invocation(t),
-	} {
-		spec, err := r.ReviewCommand(context.Background(), inv)
-		if !errors.Is(err, ErrIsolationUnavailable) {
-			t.Fatalf("ReviewCommand(%+v) err = %v, want isolation blocker", inv, err)
-		}
-		if !reflect.DeepEqual(spec, ports.ReviewCommandSpec{}) {
-			t.Fatalf("ReviewCommand(%+v) spec = %+v, want empty", inv, spec)
-		}
-	}
-	if resolved {
-		t.Fatal("ReviewCommand resolved a binary before returning the isolation blocker")
-	}
-}
-
-func TestReviewCommandFailsClosedBeforeRuntimeLaunch(t *testing.T) {
+func TestReviewCommandLaunchesHostTrustedPlanTUI(t *testing.T) {
 	inv := invocation(t)
-	if _, err := testReviewer(t, "", "", ErrIsolationUnavailable).ReviewCommand(context.Background(), inv); !errors.Is(err, ErrIsolationUnavailable) {
-		t.Fatalf("ReviewCommand err = %v, want isolation blocker", err)
+	spec, err := testReviewer(t, "vibe 2.17.1", strings.Join(requiredFlags, "\n")).ReviewCommand(context.Background(), inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/opt/vibe/bin/vibe", "--trust", "--workdir", inv.WorkspacePath, "--add-dir", inv.TaskPromptRoot, "--agent", "plan"}
+	if !reflect.DeepEqual(spec.Argv, want) || spec.InitialMessage != inv.Prompt || spec.WorkingDirectory != inv.WorkspacePath {
+		t.Fatalf("ReviewCommand spec = %+v, want argv %#v", spec, want)
+	}
+	if spec.Env["VIBE_HOME"] != filepath.Join(inv.DataDir, "reviewer-runtime", inv.ReviewerID, "config") || spec.Env["AO_DATA_DIR"] != inv.DataDir {
+		t.Fatalf("AO-owned Vibe profile = %#v", spec.Env)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := testReviewer(t, "", "", nil).ReviewCommand(ctx, inv); !errors.Is(err, context.Canceled) {
+	if _, err := testReviewer(t, "vibe 2.17.1", strings.Join(requiredFlags, "\n")).ReviewCommand(ctx, inv); !errors.Is(err, context.Canceled) {
 		t.Fatalf("ReviewCommand canceled context err = %v", err)
 	}
 }
 
 func TestContainedInteractiveSpecUsesExactTUIArgvAndPostReadinessTask(t *testing.T) {
-	r := testReviewer(t, "", "", ErrIsolationUnavailable)
+	r := testReviewer(t, "", "")
 	inv := invocation(t)
 	staged, err := r.containedInteractiveSpec(context.Background(), inv)
 	if err != nil {
@@ -110,7 +93,7 @@ func TestContainedInteractiveSpecRequiresReplacementEnvironmentAndNeutralDiscove
 	t.Setenv("VIBE_DEFAULT_AGENT", "auto-approve")
 	t.Setenv("VIBE_MCP_SERVERS", `[{"name":"hostile"}]`)
 	t.Setenv("EDITOR", "/tmp/hostile-editor")
-	r := testReviewer(t, "", "", ErrIsolationUnavailable)
+	r := testReviewer(t, "", "")
 	staged, err := r.containedInteractiveSpec(context.Background(), invocation(t))
 	if err != nil {
 		t.Fatal(err)
@@ -160,7 +143,7 @@ func TestContainedInteractiveSpecRequiresReplacementEnvironmentAndNeutralDiscove
 }
 
 func TestContainedInteractiveSpecModelsShellEditorAndApprovalToggleRisks(t *testing.T) {
-	staged, err := testReviewer(t, "", "", ErrIsolationUnavailable).containedInteractiveSpec(context.Background(), invocation(t))
+	staged, err := testReviewer(t, "", "").containedInteractiveSpec(context.Background(), invocation(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,31 +169,30 @@ func TestContainedInteractiveSpecModelsShellEditorAndApprovalToggleRisks(t *test
 	}
 }
 
-func TestReviewPreflightPinsVibe2171AndInteractiveFlags(t *testing.T) {
+func TestCompatibilityProbePinsVibe2171AndInteractiveFlags(t *testing.T) {
 	help := strings.Join(requiredFlags, "\n")
-	if err := testReviewer(t, "vibe 2.17.1\n", help, nil).ReviewPreflight(context.Background(), "/worker"); err != nil {
-		t.Fatalf("ReviewPreflight: %v", err)
+	if err := testReviewer(t, "vibe 2.17.1\n", help).verifyCompatibility(context.Background(), "/opt/vibe/bin/vibe", map[string]string{"HOME": "/ao/profile"}); err != nil {
+		t.Fatalf("verifyCompatibility: %v", err)
 	}
 	for _, version := range []string{"vibe 2.17.0", "vibe 2.18.0", "vibe unknown"} {
-		if err := testReviewer(t, version, help, nil).ReviewPreflight(context.Background(), "/worker"); err == nil || !strings.Contains(err.Error(), pinnedVersion) {
+		if err := testReviewer(t, version, help).verifyCompatibility(context.Background(), "/opt/vibe/bin/vibe", nil); err == nil || !strings.Contains(err.Error(), pinnedVersion) {
 			t.Fatalf("version %q err = %v, want pinned-version rejection", version, err)
 		}
 	}
-	missing := testReviewer(t, "vibe 2.17.1", strings.Replace(help, "--workdir", "", 1), nil)
-	if err := missing.ReviewPreflight(context.Background(), "/worker"); err == nil || !strings.Contains(err.Error(), "--workdir") {
+	missing := testReviewer(t, "vibe 2.17.1", strings.Replace(help, "--workdir", "", 1))
+	if err := missing.verifyCompatibility(context.Background(), "/opt/vibe/bin/vibe", nil); err == nil || !strings.Contains(err.Error(), "--workdir") {
 		t.Fatalf("missing flag err = %v", err)
 	}
 }
 
-func TestProductionPreflightReportsIsolationBlocker(t *testing.T) {
-	err := testReviewer(t, "vibe 2.17.1", strings.Join(requiredFlags, "\n"), ErrIsolationUnavailable).ReviewPreflight(context.Background(), "/worker")
-	if !errors.Is(err, ErrIsolationUnavailable) {
+func TestProductionPreflightResolvesHostTrustedCLI(t *testing.T) {
+	if err := testReviewer(t, "", "").ReviewPreflight(context.Background(), "/worker"); err != nil {
 		t.Fatalf("ReviewPreflight err = %v", err)
 	}
 }
 
 func TestReviewMessageReusesLivePaneAndCancelUsesOneEscape(t *testing.T) {
-	r := testReviewer(t, "", "", ErrIsolationUnavailable)
+	r := testReviewer(t, "", "")
 	message, err := r.ReviewMessage(context.Background(), ports.ReviewInvocation{Prompt: "task-ref-next"})
 	if err != nil || message != "task-ref-next" {
 		t.Fatalf("ReviewMessage = %q, %v", message, err)
@@ -221,14 +203,19 @@ func TestReviewMessageReusesLivePaneAndCancelUsesOneEscape(t *testing.T) {
 	}
 }
 
-func TestStagedHarnessIsNotDomainRegistered(t *testing.T) {
-	if New(t.TempDir()).Harness() != HarnessID || HarnessID.IsKnown() {
-		t.Fatal("Vibe reviewer must remain package-local and disabled")
+func TestReviewerHarnessAndHostTrustWarning(t *testing.T) {
+	if New().Harness() != HarnessID || !HarnessID.IsKnown() {
+		t.Fatal("Vibe reviewer must be domain registered")
+	}
+	for _, phrase := range []string{"host-trusted", "shell", "without OS isolation"} {
+		if !strings.Contains(HostTrustWarning, phrase) {
+			t.Fatalf("warning %q missing %q", HostTrustWarning, phrase)
+		}
 	}
 }
 
 func TestContainedInteractiveSpecRejectsUnsafePaths(t *testing.T) {
-	r := testReviewer(t, "", "", ErrIsolationUnavailable)
+	r := testReviewer(t, "", "")
 	r.resolveBinary = func(context.Context) (string, error) { return "vibe", nil }
 	if _, err := r.containedInteractiveSpec(context.Background(), invocation(t)); err == nil {
 		t.Fatal("relative executable accepted")

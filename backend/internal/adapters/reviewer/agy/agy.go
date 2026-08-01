@@ -1,71 +1,59 @@
-// Package agy defines the fail-closed Antigravity CLI reviewer adapter.
-//
-// Agy can preserve AO's long-lived interactive TUI contract, but AO does not
-// yet have the process sandbox and structured gateway transport required to
-// expose it safely. The adapter is deliberately not registered. Its production
-// preflight and launch paths return ErrIsolationUnavailable until those shared
-// prerequisites exist on tmux and ConPTY platforms.
+// Package agy defines AO's experimental host-trusted Antigravity reviewer.
 package agy
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	agentagy "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agy"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/reviewgateway"
 )
 
-const (
-	// HarnessID is intentionally package-local vocabulary rather than a domain
-	// reviewer constant: Agy must remain invalid in project configuration until
-	// the isolation prerequisite is implemented.
-	HarnessID      domain.ReviewerHarness = "agy"
-	minimumVersion string                 = "1.1.6"
-)
+// HarnessID identifies the Agy reviewer adapter.
+const HarnessID domain.ReviewerHarness = "agy"
+
+const minimumVersion = "1.1.6"
+
+// HostTrustWarning documents the authority retained by Agy's interactive TUI.
+const HostTrustWarning = "experimental host-trusted reviewer: Agy sandbox mode is not OS isolation and its built-in tools retain host authority"
 
 var requiredFlags = []string{"--agent", "--conversation", "--prompt-interactive", "--sandbox"}
 
-// ErrIsolationUnavailable prevents an Agy reviewer from being launched with a
-// misleading read-only promise. A neutral cwd and HOME hide common discovery
-// paths but are not a process sandbox and cannot contain built-in tools.
-var ErrIsolationUnavailable = errors.New("agy reviewer is disabled: AO has no fail-closed cross-platform TUI sandbox or Agy-to-review-gateway transport")
-
-// Reviewer describes Agy's TUI lifecycle while failing closed at the missing
-// security boundary. Function fields make compatibility behavior unit-testable
-// without installing or authenticating Agy in tests.
+// Reviewer describes Agy's host-trusted interactive lifecycle.
 type Reviewer struct {
-	resolveBinary      func(context.Context) (string, error)
-	run                func(context.Context, string, ...string) ([]byte, error)
-	isolationPreflight func(context.Context) error
+	resolveBinary func(context.Context) (string, error)
+	run           func(context.Context, map[string]string, string, ...string) ([]byte, error)
 }
 
-// New returns the staged production adapter. It is not added to the reviewer
-// registry until isolationPreflight has a real platform implementation.
+// New returns the experimental host-trusted adapter.
 func New() *Reviewer {
 	return &Reviewer{
 		resolveBinary: agentagy.ResolveAgyBinary,
-		run: func(ctx context.Context, binary string, args ...string) ([]byte, error) {
-			return exec.CommandContext(ctx, binary, args...).CombinedOutput()
+		run: func(ctx context.Context, env map[string]string, binary string, args ...string) ([]byte, error) {
+			cmd := exec.CommandContext(ctx, binary, args...)
+			cmd.Env = appendEnvironment(os.Environ(), env)
+			return cmd.CombinedOutput()
 		},
-		isolationPreflight: func(context.Context) error { return ErrIsolationUnavailable },
 	}
 }
 
-// Harness identifies the staged adapter without making it a supported domain
-// reviewer harness.
+// Harness identifies the Agy reviewer.
 func (*Reviewer) Harness() domain.ReviewerHarness { return HarnessID }
 
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
 
-// ReviewCommand returns only the executable for the launcher's generic binary
-// preflight. A real invocation fails before constructing runtime argv because
-// WorkingDirectory and environment overrides alone do not contain Agy.
+// ReviewCommand launches Agy's permanent interactive TUI in sandbox mode. The
+// checkout and AO prompt root are explicitly added because this experimental
+// mode is host-trusted rather than contained.
 func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
 	binary, err := r.resolveBinary(ctx)
 	if err != nil {
@@ -74,22 +62,38 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	if strings.TrimSpace(inv.TaskPromptRoot) == "" {
 		return ports.ReviewCommandSpec{Argv: []string{binary}}, nil
 	}
-	if err := r.isolationPreflight(ctx); err != nil {
+	if !filepath.IsAbs(binary) {
+		return ports.ReviewCommandSpec{}, errors.New("agy reviewer: resolved binary must be absolute")
+	}
+	env, err := reviewgateway.PrepareHostTrustedEnvironment(inv.DataDir, inv.ReviewerID)
+	if err != nil {
+		return ports.ReviewCommandSpec{}, fmt.Errorf("agy reviewer: prepare AO-owned profile: %w", err)
+	}
+	envVars := env.TUIEnvironment()
+	envVars["AO_DATA_DIR"] = env.DataDir
+	if err := r.verifyCompatibility(ctx, binary, envVars); err != nil {
 		return ports.ReviewCommandSpec{}, err
 	}
-	// Keep this fail-closed even if a caller injects a successful isolation
-	// probe: the gateway currently has no Agy-consumable IPC transport.
-	return ports.ReviewCommandSpec{}, ErrIsolationUnavailable
+	prompt := inv.Prompt
+	if strings.TrimSpace(inv.SystemPromptFile) != "" {
+		prompt = "Read and follow the reviewer system instructions at `" + filepath.ToSlash(inv.SystemPromptFile) + "`, then " + prompt
+	}
+	return ports.ReviewCommandSpec{
+		Argv:             interactiveArgv(binary, inv.WorkspacePath, inv.TaskPromptRoot, prompt),
+		Env:              envVars,
+		WorkingDirectory: inv.WorkspacePath,
+	}, nil
 }
 
-// ReviewPreflight verifies the minimum CLI surface before reporting the shared
-// isolation blocker. Markdown custom main agents landed in Agy 1.1.6.
+// ReviewPreflight verifies that the Agy executable is available. Compatibility
+// probing happens after AO-owned state roots are available in ReviewCommand.
 func (r *Reviewer) ReviewPreflight(ctx context.Context, _ string) error {
-	binary, err := r.resolveBinary(ctx)
-	if err != nil {
-		return err
-	}
-	help, err := r.run(ctx, binary, "--help")
+	_, err := r.resolveBinary(ctx)
+	return err
+}
+
+func (r *Reviewer) verifyCompatibility(ctx context.Context, binary string, env map[string]string) error {
+	help, err := r.run(ctx, env, binary, "--help")
 	if err != nil {
 		return fmt.Errorf("run agy --help: %w", err)
 	}
@@ -98,14 +102,22 @@ func (r *Reviewer) ReviewPreflight(ctx context.Context, _ string) error {
 			return fmt.Errorf("installed Agy is incompatible: required flag %s is unavailable", flag)
 		}
 	}
-	version, err := r.run(ctx, binary, "--version")
+	version, err := r.run(ctx, env, binary, "--version")
 	if err != nil {
 		return fmt.Errorf("run agy --version: %w", err)
 	}
 	if !versionAtLeast(strings.TrimSpace(string(version)), minimumVersion) {
 		return fmt.Errorf("installed Agy %q is incompatible: version %s or newer is required", strings.TrimSpace(string(version)), minimumVersion)
 	}
-	return r.isolationPreflight(ctx)
+	return nil
+}
+
+func appendEnvironment(base []string, overrides map[string]string) []string {
+	result := append([]string(nil), base...)
+	for key, value := range overrides {
+		result = append(result, key+"="+value)
+	}
+	return result
 }
 
 // ReviewMessage returns the short AO-owned task-file reference for a future
@@ -120,11 +132,15 @@ func (*Reviewer) ReviewCancel(context.Context) (ports.ReviewCancelSpec, error) {
 	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelInterrupt, Interrupts: 1}, nil
 }
 
-// interactiveArgv pins the only launch shape an enabled adapter may use. It is
-// kept separate so tests can guard against accidental print/headless flags while
-// the production path remains disabled.
-func interactiveArgv(binary, agentName, prompt string) []string {
-	return []string{binary, "--agent", agentName, "--sandbox", "--prompt-interactive", prompt}
+func interactiveArgv(binary, workspacePath, promptRoot, prompt string) []string {
+	argv := []string{binary, "--sandbox"}
+	if strings.TrimSpace(workspacePath) != "" {
+		argv = append(argv, "--add-dir", workspacePath)
+	}
+	if strings.TrimSpace(promptRoot) != "" {
+		argv = append(argv, "--add-dir", promptRoot)
+	}
+	return append(argv, "--prompt-interactive", prompt)
 }
 
 func versionAtLeast(got, minimum string) bool {

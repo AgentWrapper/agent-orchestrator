@@ -2,7 +2,6 @@ package goose
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -76,7 +75,7 @@ Options:
 func testReviewer(t *testing.T, version, help string) (*Reviewer, *[][]string) {
 	t.Helper()
 	calls := &[][]string{}
-	return &Reviewer{run: func(_ context.Context, binary string, args ...string) ([]byte, error) {
+	return &Reviewer{resolveBinary: func(context.Context) (string, error) { return "/opt/ao/bin/goose", nil }, run: func(_ context.Context, _ map[string]string, binary string, args ...string) ([]byte, error) {
 		*calls = append(*calls, append([]string{binary}, args...))
 		if slices.Equal(args, []string{"--version"}) {
 			return []byte(version), nil
@@ -85,22 +84,36 @@ func testReviewer(t *testing.T, version, help string) (*Reviewer, *[][]string) {
 	}}, calls
 }
 
-func TestReviewCommandFailsClosedBeforeRuntimeCreation(t *testing.T) {
-	_, err := New().ReviewCommand(context.Background(), ports.ReviewInvocation{
-		DataDir:        "/host/ao",
-		WorkspacePath:  "/host/worktree",
-		TaskPromptRoot: "/host/ao/prompts/reviewer",
-		Prompt:         "Read AO task ref 4f09.",
+func TestReviewCommandLaunchesHostTrustedInteractiveRun(t *testing.T) {
+	r, _ := testReviewer(t, pinnedVersion, pinnedSessionHelp)
+	dataDir := t.TempDir()
+	spec, err := r.ReviewCommand(context.Background(), ports.ReviewInvocation{
+		DataDir:          dataDir,
+		ReviewerID:       "review-worker-1",
+		WorkspacePath:    "/host/worktree",
+		TaskPromptRoot:   "/host/ao/prompts/reviewer",
+		SystemPromptFile: "/host/ao/prompts/reviewer/system.md",
+		Prompt:           "Read AO task ref 4f09.",
 	})
-	if !errors.Is(err, ErrIsolationUnavailable) {
-		t.Fatalf("ReviewCommand error = %v, want isolation blocker", err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/opt/ao/bin/goose", "run", "-t", "", "--interactive"}
+	if !reflect.DeepEqual(spec.Argv, want) || spec.InitialMessage != "Read AO task ref 4f09." || spec.WorkingDirectory != "/host/worktree" {
+		t.Fatalf("ReviewCommand spec = %+v", spec)
+	}
+	if spec.Env["GOOSE_MODE"] != "smart_approve" || spec.Env["GOOSE_SYSTEM_PROMPT_FILE_PATH"] != "/host/ao/prompts/reviewer/system.md" {
+		t.Fatalf("ReviewCommand env = %#v", spec.Env)
+	}
+	if spec.Env["HOME"] != filepath.Join(dataDir, "reviewer-runtime", "review-worker-1", "config") || spec.Env["GOOSE_PATH_ROOT"] != filepath.Join(dataDir, "reviewer-runtime", "review-worker-1", "state") {
+		t.Fatalf("AO-owned Goose profile = %#v", spec.Env)
 	}
 }
 
-func TestReviewPreflightPinsExactVersionAndHelp(t *testing.T) {
+func TestCompatibilityProbePinsExactVersionAndHelp(t *testing.T) {
 	r, calls := testReviewer(t, " 1.38.0\n", pinnedSessionHelp)
-	if err := r.ReviewPreflight(context.Background(), "/host/worktree"); !errors.Is(err, ErrIsolationUnavailable) {
-		t.Fatalf("ReviewPreflight error = %v, want isolation blocker after compatibility checks", err)
+	if err := r.verifyCompatibility(context.Background(), gooseBinary, map[string]string{"HOME": "/ao/profile"}); err != nil {
+		t.Fatalf("verifyCompatibility error = %v", err)
 	}
 	wantCalls := [][]string{
 		{gooseBinary, "--version"},
@@ -111,7 +124,7 @@ func TestReviewPreflightPinsExactVersionAndHelp(t *testing.T) {
 	}
 }
 
-func TestReviewPreflightFailsClosedOnVersionOrHelpDrift(t *testing.T) {
+func TestCompatibilityProbeFailsClosedOnVersionOrHelpDrift(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		version string
@@ -125,12 +138,9 @@ func TestReviewPreflightFailsClosedOnVersionOrHelpDrift(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, _ := testReviewer(t, tc.version, tc.help)
-			err := r.ReviewPreflight(context.Background(), "/host/worktree")
+			err := r.verifyCompatibility(context.Background(), gooseBinary, nil)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("ReviewPreflight error = %v, want %q", err, tc.want)
-			}
-			if errors.Is(err, ErrIsolationUnavailable) {
-				t.Fatalf("compatibility drift hidden by isolation blocker: %v", err)
 			}
 		})
 	}
@@ -256,9 +266,14 @@ func TestReviewMessageReusesLiveProcessAndCancelIsOneCtrlC(t *testing.T) {
 	}
 }
 
-func TestGooseReviewerIdentityRemainsOutsideDomain(t *testing.T) {
-	if New().Harness() != HarnessID || HarnessID.IsKnown() {
-		t.Fatalf("staged harness unexpectedly enabled: %q", New().Harness())
+func TestGooseReviewerIdentityAndHostTrustWarning(t *testing.T) {
+	if New().Harness() != HarnessID || !HarnessID.IsKnown() {
+		t.Fatalf("reviewer harness is not enabled: %q", New().Harness())
+	}
+	for _, phrase := range []string{"host-trusted", "developer tools", "without OS or network isolation"} {
+		if !strings.Contains(HostTrustWarning, phrase) {
+			t.Fatalf("warning %q missing %q", HostTrustWarning, phrase)
+		}
 	}
 }
 

@@ -41,15 +41,16 @@ future interactive reviewer adapters.
   listener behavior, database schema, or HTTP APIs.
 
 This is an enforceable capability API when invoked, but it is not by itself a
-process sandbox. Agy therefore remains unregistered. Qwen is available only as
-an explicitly selected, experimental host-trusted reviewer; its plan mode and
-neutral directory reduce accidental authority but do not contain terminal-user
-shell escapes or approval-mode changes.
+process sandbox. Agy, Continue, Goose, Qwen, and Vibe may be explicitly selected
+only as experimental host-trusted reviewers. Their restrictive modes reduce
+accidental authority but do not contain terminal-user shell escapes, profiles,
+project plugins, external editors, approval-mode changes, or network access.
 
 ## Required isolation provider
 
-Before either adapter is enabled, the runtime must consume a fail-closed reviewer
-isolation profile while preserving the visible TUI:
+Before any experimental host-trusted adapter is described or shipped as
+contained/read-only, the runtime must consume a fail-closed reviewer isolation
+profile while preserving the visible TUI:
 
 - macOS/Linux tmux: launch the TUI through an AO-owned sandbox process, mount the
   neutral root read/write and required executable/runtime files read-only, and do
@@ -89,6 +90,5 @@ command filtering is insufficient.
 Future reviewer adapters share one capability surface instead of embedding
 provider-specific command allowlists. Unit tests cover host-side authorization and
 command construction. Platform sandbox implementations and escape/network tests
-remain a prerequisite for describing Agy or Qwen as contained/read-only. Until
-then, Qwen must retain its experimental host-trust warning and Agy must remain
-disabled.
+remain a prerequisite for describing these experimental reviewers as
+contained/read-only. Until then, each must retain its host-trust warning.

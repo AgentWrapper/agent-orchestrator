@@ -6,15 +6,19 @@ package reviewer
 import (
 	"fmt"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/agy"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/codex"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/continueagent"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/copilot"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/cursor"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/goose"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/kilocode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/kiro"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/opencode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/pi"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/qwen"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/vibe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -29,15 +33,19 @@ type Adapter interface {
 // here (and to domain.AllReviewerHarnesses) to register it.
 func Constructors() []Adapter {
 	return []Adapter{
+		agy.New(),
 		claudecode.New(),
 		codex.New(),
+		continueagent.New(),
 		copilot.New(),
 		cursor.New(),
+		goose.New(),
 		kilocode.New(),
 		kiro.New(),
 		opencode.New(),
 		pi.New(),
 		qwen.New(),
+		vibe.New(),
 	}
 }
 
@@ -70,20 +78,4 @@ func NewResolver() (*Resolver, error) {
 func (r *Resolver) Reviewer(harness domain.ReviewerHarness) (ports.Reviewer, bool) {
 	rv, ok := r.reviewers[harness]
 	return rv, ok
-}
-
-// DisabledReason reports reviewer implementations that are present for
-// integration work but deliberately unavailable to configuration/resolution.
-func DisabledReason(harness domain.ReviewerHarness) (string, bool) {
-	switch harness {
-	case "agy":
-		return "secure interactive-TUI isolation and review-gateway transport are unavailable for Agy", true
-	case "continue":
-		return "reviewer containment, a capability broker, and Continue gateway transport are unavailable", true
-	case "goose":
-		return "an OCI reviewer supervisor, model broker, and review-gateway MCP transport are unavailable for Goose", true
-	case "vibe":
-		return "process and input containment, a replacement environment, model broker, and review-gateway MCP transport are unavailable for Vibe", true
-	}
-	return "", false
 }

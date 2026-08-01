@@ -1,11 +1,4 @@
-// Package vibe contains the staged Mistral Vibe reviewer adapter.
-//
-// Vibe 2.17.1 can preserve AO's long-lived interactive reviewer UX, but its
-// TUI also exposes a direct shell, an external-editor shortcut, and live agent
-// switching. AO does not yet have the process/input containment, model broker,
-// or review-gateway MCP transport required to expose those surfaces safely.
-// The adapter therefore models the eventual contained launch exactly while
-// failing closed before production runtime creation. It is not registered.
+// Package vibe contains AO's experimental host-trusted Mistral Vibe reviewer.
 package vibe
 
 import (
@@ -21,15 +14,19 @@ import (
 	agentvibe "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/vibe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/reviewgateway"
 )
 
 const (
-	// HarnessID stays package-local so Vibe cannot be selected in project
-	// configuration before all of its containment prerequisites are present.
-	HarnessID     domain.ReviewerHarness = "vibe"
-	pinnedVersion string                 = "2.17.1"
-	reviewerAgent string                 = "plan"
+	pinnedVersion = "2.17.1"
+	reviewerAgent = "plan"
 )
+
+// HarnessID identifies the Vibe reviewer adapter.
+const HarnessID domain.ReviewerHarness = "vibe"
+
+// HostTrustWarning documents the authority retained by Vibe's interactive TUI.
+const HostTrustWarning = "experimental host-trusted reviewer: Vibe exposes a shell, external editor, and approval-mode changes without OS isolation"
 
 var (
 	requiredFlags               = []string{"--agent", "--workdir", "--trust"}
@@ -40,11 +37,6 @@ var (
 		"approval-mode toggle",
 		"layered config discovery",
 	}
-
-	// ErrIsolationUnavailable is returned before runtime creation. A neutral
-	// cwd, plan agent, and clean config reduce discovery, but none is an OS
-	// boundary for Vibe's user shell or external editor.
-	ErrIsolationUnavailable = errors.New("vibe reviewer is disabled: AO lacks Vibe process and input containment, replacement runtime environment, model broker, and review-gateway MCP transport")
 )
 
 // stagedCommandSpec records requirements the current runtime contract cannot
@@ -57,59 +49,86 @@ type stagedCommandSpec struct {
 	UncontainedRisks       []string
 }
 
-// Reviewer describes Vibe's future interactive lifecycle while keeping its
-// production path disabled. Function fields keep compatibility tests local and
-// independent of an installed or authenticated Vibe binary.
+// Reviewer describes Vibe's host-trusted interactive lifecycle. Function
+// fields keep compatibility tests independent of an installed or authenticated
+// Vibe binary; dataDir remains for the future contained-launch contract.
 type Reviewer struct {
-	dataDir            string
-	resolveBinary      func(context.Context) (string, error)
-	run                func(context.Context, string, ...string) ([]byte, error)
-	isolationPreflight func(context.Context) error
+	dataDir       string
+	resolveBinary func(context.Context) (string, error)
+	run           func(context.Context, map[string]string, string, ...string) ([]byte, error)
 }
 
-// New returns the staged adapter. Registration remains deliberately absent.
-func New(dataDir string) *Reviewer {
+// New returns the experimental host-trusted adapter.
+func New() *Reviewer {
 	return &Reviewer{
-		dataDir:       dataDir,
 		resolveBinary: agentvibe.ResolveVibeBinary,
-		run: func(ctx context.Context, binary string, args ...string) ([]byte, error) {
-			return exec.CommandContext(ctx, binary, args...).CombinedOutput()
+		run: func(ctx context.Context, env map[string]string, binary string, args ...string) ([]byte, error) {
+			cmd := exec.CommandContext(ctx, binary, args...)
+			cmd.Env = appendEnvironment(os.Environ(), env)
+			return cmd.CombinedOutput()
 		},
-		isolationPreflight: func(context.Context) error { return ErrIsolationUnavailable },
 	}
 }
 
-// Harness identifies the staged adapter without enabling it in the domain.
+// Harness identifies the Vibe reviewer.
 func (*Reviewer) Harness() domain.ReviewerHarness { return HarnessID }
 
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
 
-// ReviewCommand always fails before resolving a binary or constructing runtime
-// state. Compatibility probing belongs exclusively to ReviewPreflight; no
-// invocation shape may bypass the disabled production boundary.
-func (*Reviewer) ReviewCommand(ctx context.Context, _ ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
+// ReviewCommand launches Vibe's persistent plan-agent TUI over the worker
+// checkout. The profile and terminal escape surfaces remain host-trusted.
+func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
 	if err := ctx.Err(); err != nil {
 		return ports.ReviewCommandSpec{}, err
 	}
-	return ports.ReviewCommandSpec{}, ErrIsolationUnavailable
-}
-
-// ReviewPreflight pins the only upstream release whose interactive and config
-// surfaces this staged adapter models, then reports the production blocker.
-func (r *Reviewer) ReviewPreflight(ctx context.Context, _ string) error {
 	binary, err := r.resolveBinary(ctx)
 	if err != nil {
-		return err
+		return ports.ReviewCommandSpec{}, err
 	}
-	version, err := r.run(ctx, binary, "--version")
+	if strings.TrimSpace(inv.TaskPromptRoot) == "" {
+		return ports.ReviewCommandSpec{Argv: []string{binary}}, nil
+	}
+	if !filepath.IsAbs(binary) {
+		return ports.ReviewCommandSpec{}, errors.New("vibe reviewer: resolved binary must be absolute")
+	}
+	env, err := reviewgateway.PrepareHostTrustedEnvironment(inv.DataDir, inv.ReviewerID)
+	if err != nil {
+		return ports.ReviewCommandSpec{}, fmt.Errorf("vibe reviewer: prepare AO-owned profile: %w", err)
+	}
+	envVars := env.TUIEnvironment()
+	envVars["AO_DATA_DIR"] = env.DataDir
+	envVars["VIBE_HOME"] = env.ConfigRoot
+	if err := r.verifyCompatibility(ctx, binary, envVars); err != nil {
+		return ports.ReviewCommandSpec{}, err
+	}
+	argv := []string{binary, "--trust"}
+	if strings.TrimSpace(inv.WorkspacePath) != "" {
+		argv = append(argv, "--workdir", inv.WorkspacePath)
+	}
+	if strings.TrimSpace(inv.TaskPromptRoot) != "" {
+		argv = append(argv, "--add-dir", inv.TaskPromptRoot)
+	}
+	argv = append(argv, "--agent", reviewerAgent)
+	return ports.ReviewCommandSpec{Argv: argv, Env: envVars, InitialMessage: inv.Prompt, WorkingDirectory: inv.WorkspacePath}, nil
+}
+
+// ReviewPreflight verifies that the Vibe executable is available. The pinned
+// CLI probe runs later with AO-owned state roots in ReviewCommand.
+func (r *Reviewer) ReviewPreflight(ctx context.Context, _ string) error {
+	_, err := r.resolveBinary(ctx)
+	return err
+}
+
+func (r *Reviewer) verifyCompatibility(ctx context.Context, binary string, env map[string]string) error {
+	version, err := r.run(ctx, env, binary, "--version")
 	if err != nil {
 		return fmt.Errorf("run vibe --version: %w", err)
 	}
 	if !isPinnedVersion(string(version)) {
 		return fmt.Errorf("installed Vibe %q is incompatible: exactly version %s is required", strings.TrimSpace(string(version)), pinnedVersion)
 	}
-	help, err := r.run(ctx, binary, "--help")
+	help, err := r.run(ctx, env, binary, "--help")
 	if err != nil {
 		return fmt.Errorf("run vibe --help: %w", err)
 	}
@@ -118,7 +137,15 @@ func (r *Reviewer) ReviewPreflight(ctx context.Context, _ string) error {
 			return fmt.Errorf("installed Vibe %s is incompatible: required flag %s is unavailable", pinnedVersion, flag)
 		}
 	}
-	return r.isolationPreflight(ctx)
+	return nil
+}
+
+func appendEnvironment(base []string, overrides map[string]string) []string {
+	result := append([]string(nil), base...)
+	for key, value := range overrides {
+		result = append(result, key+"="+value)
+	}
+	return result
 }
 
 // ReviewMessage reuses the live TUI and injects only AO's opaque task

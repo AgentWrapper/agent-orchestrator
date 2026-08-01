@@ -40,20 +40,19 @@ surface (`npm run sqlc`, `npm run api`).
   `/prs/{id}/resolve-comments`.
 - Review routes registered: `GET /reviews`, `POST /reviews/execute`,
   `POST /reviews/{id}/send`.
-- Interactive, long-lived reviewer panes for Claude Code, Codex, GitHub
-  Copilot, Cursor, Kilo Code, Kiro, OpenCode, Pi, and experimental Qwen. Pi uses an AO-data-owned extension with built-in/project
+- Interactive, long-lived reviewer panes for Agy, Claude Code, Codex,
+  Continue, GitHub Copilot, Cursor, Goose, Kilo Code, Kiro, OpenCode, Pi,
+  Qwen, and Vibe. Pi uses an AO-data-owned extension with built-in/project
   resources disabled, structured read-only inspection/reporting tools, and
   Escape-based turn cancellation. Kiro also uses its native Escape
-  cancellation. Qwen also uses Escape cancellation and runs from an AO-owned
-  neutral directory in plan mode, but remains explicitly host-trusted because
-  a terminal user can invoke its shell or change approval mode. The other
-  reviewers retain their Ctrl-C contract.
+  cancellation. Continue, Qwen, and Vibe also use Escape cancellation. Agy,
+  Continue, Goose, Qwen, and Vibe are explicitly experimental and host-trusted:
+  their restrictive modes and prompts are not OS or network containment.
 - The provider-neutral interactive-reviewer capability gateway and neutral
-  AO-owned working-directory contract are available. Agy, Continue, Goose, and
-  Vibe remain disabled until their documented containment and gateway
-  prerequisites are implemented. Their staged adapters fail closed before
-  runtime creation and remain absent from supported domain configuration,
-  registry resolution, and desktop choices.
+  AO-owned working-directory contract are available. The experimental
+  host-trusted adapters remain candidates for future contained execution once
+  their documented sandbox, environment-replacement, broker, and gateway
+  prerequisites are implemented.
 - Durable dashboard notifications for `needs_input`, `ready_to_merge`,
   `pr_merged`, and `pr_closed_unmerged`: backend enrichment/persistence,
   cursor-paginated read/unread history, live notification stream, and read

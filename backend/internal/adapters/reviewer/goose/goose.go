@@ -1,10 +1,4 @@
-// Package goose defines the staged, fail-closed Goose reviewer adapter.
-//
-// Goose can provide AO's visible, long-lived reviewer TUI, but its security
-// contract requires an OCI supervisor, a model broker, and the AO review
-// gateway MCP shim. None of those launch prerequisites exist yet, so this
-// package is deliberately absent from the reviewer domain and registry and
-// every production launch returns ErrIsolationUnavailable.
+// Package goose defines AO's experimental host-trusted Goose reviewer.
 package goose
 
 import (
@@ -12,17 +6,18 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
+	workergoose "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/goose"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/reviewgateway"
 )
 
 const (
-	// HarnessID remains adapter-local until the isolation boundary ships.
-	HarnessID domain.ReviewerHarness = "goose"
-
 	pinnedVersion     = "1.38.0"
 	gooseBinary       = "/opt/ao/bin/goose"
 	gatewayMCPBinary  = "/opt/ao/bin/ao-review-gateway-mcp"
@@ -40,45 +35,91 @@ const (
 	pinnedSessionHelpSHA256 = "7da45db07c6fd73d17f7cf4d6267f345ece2c033bb6a212fd54dd6738d9fbbf2"
 )
 
-// ErrIsolationUnavailable prevents the adapter from reaching runtime.Create.
-// Environment overrides on the current runtime are additive, whereas Goose
-// requires an OCI-enforced replacement environment and broker-only network.
-var ErrIsolationUnavailable = errors.New("goose reviewer is disabled: AO has no OCI reviewer supervisor, model broker, or review gateway MCP shim")
+// HarnessID identifies the Goose reviewer adapter.
+const HarnessID domain.ReviewerHarness = "goose"
+
+// HostTrustWarning documents the authority retained by Goose's interactive TUI.
+const HostTrustWarning = "experimental host-trusted reviewer: Goose can use developer tools and the network without OS or network isolation"
 
 // Reviewer records Goose's pinned compatibility and TUI lifecycle contracts.
 // The injected runner keeps preflight tests independent of a Goose install.
 type Reviewer struct {
-	run func(context.Context, string, ...string) ([]byte, error)
+	resolveBinary func(context.Context) (string, error)
+	run           func(context.Context, map[string]string, string, ...string) ([]byte, error)
 }
 
-// New returns the staged production adapter. It is intentionally unregistered.
+// New returns the experimental host-trusted adapter.
 func New() *Reviewer {
-	return &Reviewer{run: func(ctx context.Context, binary string, args ...string) ([]byte, error) {
-		return exec.CommandContext(ctx, binary, args...).CombinedOutput()
-	}}
+	return &Reviewer{
+		resolveBinary: workergoose.ResolveGooseBinary,
+		run: func(ctx context.Context, env map[string]string, binary string, args ...string) ([]byte, error) {
+			cmd := exec.CommandContext(ctx, binary, args...)
+			cmd.Env = appendEnvironment(os.Environ(), env)
+			return cmd.CombinedOutput()
+		},
+	}
 }
 
-// Harness identifies the staged adapter without enabling it in project config.
+// Harness identifies the Goose reviewer.
 func (*Reviewer) Harness() domain.ReviewerHarness { return HarnessID }
 
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
 
-// ReviewCommand always fails before a reviewer runtime can be created. The
-// future contained command is modeled separately because ReviewCommandSpec.Env
-// currently augments the host environment and therefore cannot express the
-// required replacement-environment boundary.
-func (*Reviewer) ReviewCommand(ctx context.Context, _ ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
+// ReviewCommand launches Goose's normal interactive run mode with AO-owned CLI
+// state. Host tools, inherited credentials, and network remain host-trusted.
+func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
 	if err := ctx.Err(); err != nil {
 		return ports.ReviewCommandSpec{}, err
 	}
-	return ports.ReviewCommandSpec{}, ErrIsolationUnavailable
+	binary, err := r.resolveBinary(ctx)
+	if err != nil {
+		return ports.ReviewCommandSpec{}, err
+	}
+	if strings.TrimSpace(inv.TaskPromptRoot) == "" {
+		return ports.ReviewCommandSpec{Argv: []string{binary}}, nil
+	}
+	if !filepath.IsAbs(binary) {
+		return ports.ReviewCommandSpec{}, errors.New("goose reviewer: resolved binary must be absolute")
+	}
+	profile, err := reviewgateway.PrepareHostTrustedEnvironment(inv.DataDir, inv.ReviewerID)
+	if err != nil {
+		return ports.ReviewCommandSpec{}, fmt.Errorf("goose reviewer: prepare AO-owned profile: %w", err)
+	}
+	env := profile.TUIEnvironment()
+	env["AO_DATA_DIR"] = profile.DataDir
+	for key, value := range map[string]string{
+		"CONTEXT_FILE_NAMES":           "[]",
+		"GOOSE_DISABLE_SESSION_NAMING": "true",
+		"GOOSE_MODE":                   "smart_approve",
+		"GOOSE_PATH_ROOT":              profile.StateRoot,
+		"GOOSE_TELEMETRY_OFF":          "1",
+	} {
+		env[key] = value
+	}
+	if strings.TrimSpace(inv.SystemPromptFile) != "" {
+		env["GOOSE_SYSTEM_PROMPT_FILE_PATH"] = inv.SystemPromptFile
+	}
+	if err := r.verifyCompatibility(ctx, binary, env); err != nil {
+		return ports.ReviewCommandSpec{}, err
+	}
+	return ports.ReviewCommandSpec{
+		Argv:             []string{binary, "run", "-t", "", "--interactive"},
+		Env:              env,
+		InitialMessage:   inv.Prompt,
+		WorkingDirectory: inv.WorkspacePath,
+	}, nil
 }
 
-// ReviewPreflight accepts only the official Goose 1.38.0 CLI and its exact
-// session help contract, then reports the missing isolation prerequisites.
+// ReviewPreflight verifies that the Goose executable is available. The pinned
+// CLI probe runs later with AO-owned state roots in ReviewCommand.
 func (r *Reviewer) ReviewPreflight(ctx context.Context, _ string) error {
-	version, err := r.run(ctx, gooseBinary, "--version")
+	_, err := r.resolveBinary(ctx)
+	return err
+}
+
+func (r *Reviewer) verifyCompatibility(ctx context.Context, binary string, env map[string]string) error {
+	version, err := r.run(ctx, env, binary, "--version")
 	if err != nil {
 		return fmt.Errorf("run goose --version: %w", err)
 	}
@@ -86,14 +127,22 @@ func (r *Reviewer) ReviewPreflight(ctx context.Context, _ string) error {
 		return fmt.Errorf("installed Goose %q is incompatible: exactly version %s is required", got, pinnedVersion)
 	}
 
-	help, err := r.run(ctx, gooseBinary, "session", "--help")
+	help, err := r.run(ctx, env, binary, "session", "--help")
 	if err != nil {
 		return fmt.Errorf("run goose session --help: %w", err)
 	}
 	if got := fmt.Sprintf("%x", sha256.Sum256(help)); got != pinnedSessionHelpSHA256 {
 		return fmt.Errorf("installed Goose %s is incompatible: session help contract drifted (sha256 %s)", pinnedVersion, got)
 	}
-	return ErrIsolationUnavailable
+	return nil
+}
+
+func appendEnvironment(base []string, overrides map[string]string) []string {
+	result := append([]string(nil), base...)
+	for key, value := range overrides {
+		result = append(result, key+"="+value)
+	}
+	return result
 }
 
 // ReviewMessage keeps subsequent reviews in the already-running TUI. AO's

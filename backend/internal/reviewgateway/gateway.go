@@ -80,6 +80,32 @@ func (e Environment) TUIEnvironment() map[string]string {
 	}
 }
 
+// PrepareHostTrustedEnvironment creates AO-owned discovery and state roots for
+// an experimental host-trusted reviewer. It limits where the CLI stores its own
+// files but intentionally does not claim process, filesystem, or network
+// containment.
+func PrepareHostTrustedEnvironment(dataDir, reviewerID string) (Environment, error) {
+	if strings.TrimSpace(dataDir) == "" || !filepath.IsAbs(dataDir) {
+		return Environment{}, errors.New("review gateway: absolute AO data directory is required")
+	}
+	if !safeID.MatchString(reviewerID) {
+		return Environment{}, errors.New("review gateway: invalid reviewer id")
+	}
+	root := filepath.Join(dataDir, "reviewer-runtime", reviewerID)
+	env := Environment{
+		DataDir: dataDir, Root: root,
+		WorkingDirectory: filepath.Join(root, "workspace"),
+		ConfigRoot:       filepath.Join(root, "config"), StateRoot: filepath.Join(root, "state"),
+		CacheRoot: filepath.Join(root, "cache"), TempRoot: filepath.Join(root, "tmp"),
+	}
+	for _, dir := range []string{env.Root, env.WorkingDirectory, env.ConfigRoot, env.StateRoot, env.CacheRoot, env.TempRoot} {
+		if err := ensurePrivateDir(dir); err != nil {
+			return Environment{}, err
+		}
+	}
+	return env, nil
+}
+
 // Operations is the capability surface an interactive reviewer adapter may
 // consume. It intentionally has no arbitrary command or filesystem method.
 type Operations interface {

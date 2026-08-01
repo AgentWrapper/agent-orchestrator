@@ -3,6 +3,7 @@ package continueagent
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -10,27 +11,30 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-func TestReviewCommandFailsClosedBeforeRuntime(t *testing.T) {
-	r := New()
-	for _, inv := range []ports.ReviewInvocation{
-		{},
-		{WorkspacePath: "/host/project"},
-		{TaskPromptRoot: "/ao/prompts/reviewer", Prompt: "task-ref:opaque"},
-	} {
-		spec, err := r.ReviewCommand(context.Background(), inv)
-		if !errors.Is(err, ErrIsolationUnavailable) {
-			t.Fatalf("ReviewCommand(%+v) error = %v, want isolation-unavailable", inv, err)
-		}
-		if len(spec.Argv) != 0 || len(spec.Env) != 0 || spec.InitialMessage != "" || spec.WorkingDirectory != "" {
-			t.Fatalf("failed launch leaked runtime spec: %+v", spec)
-		}
+func testReviewer() *Reviewer {
+	return &Reviewer{resolveBinary: func(context.Context) (string, error) { return "/opt/continue/bin/cn", nil }}
+}
+
+func TestReviewCommandLaunchesReadonlyHostTrustedTUI(t *testing.T) {
+	dataDir := t.TempDir()
+	spec, err := testReviewer().ReviewCommand(context.Background(), ports.ReviewInvocation{
+		DataDir: dataDir, ReviewerID: "review-worker-1", TaskPromptRoot: filepath.Join(dataDir, "prompts"),
+		WorkspacePath: "/host/project", Prompt: "task-ref:opaque",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(spec.Argv, []string{"/opt/continue/bin/cn", "--readonly"}) || spec.InitialMessage != "task-ref:opaque" || spec.WorkingDirectory != "/host/project" {
+		t.Fatalf("ReviewCommand spec = %+v", spec)
+	}
+	if spec.Env["HOME"] != filepath.Join(dataDir, "reviewer-runtime", "review-worker-1", "config") || spec.Env["CONTINUE_CLI_ENABLE_TELEMETRY"] != "0" {
+		t.Fatalf("AO-owned environment = %#v", spec.Env)
 	}
 }
 
-func TestReviewPreflightFailsClosedWithoutRuntime(t *testing.T) {
-	err := New().ReviewPreflight(context.Background(), "/host/project")
-	if !errors.Is(err, ErrIsolationUnavailable) {
-		t.Fatalf("ReviewPreflight error = %v, want isolation-unavailable", err)
+func TestReviewPreflightAcceptsResolvedBinary(t *testing.T) {
+	if err := testReviewer().ReviewPreflight(context.Background(), "/host/project"); err != nil {
+		t.Fatalf("ReviewPreflight error = %v", err)
 	}
 }
 
@@ -99,7 +103,7 @@ func TestAuditedContinuePackagePin(t *testing.T) {
 	}
 }
 
-func TestUnsafeInteractiveSurfacesCannotReachRuntime(t *testing.T) {
+func TestHostTrustWarningCoversUnsafeInteractiveSurfaces(t *testing.T) {
 	// These are independent escape/discovery surfaces in Continue 1.5.47.
 	// --readonly, an explicit config, neutral cwd, and replacement env reduce
 	// ambient discovery but do not enforce a security boundary against them.
@@ -122,23 +126,19 @@ func TestUnsafeInteractiveSurfacesCannotReachRuntime(t *testing.T) {
 		t.Fatalf("risk audit has %d entries", len(risks))
 	}
 	for _, risk := range risks {
-		t.Run(risk.name, func(t *testing.T) {
-			if strings.TrimSpace(risk.surface) == "" {
-				t.Fatal("risk needs an audited exploit surface")
-			}
-			_, err := New().ReviewCommand(context.Background(), ports.ReviewInvocation{
-				WorkspacePath: "/host/project",
-				Prompt:        "task-ref:opaque",
-			})
-			if !errors.Is(err, ErrIsolationUnavailable) {
-				t.Fatalf("%s reached runtime: %v", risk.surface, err)
-			}
-		})
+		if strings.TrimSpace(risk.surface) == "" {
+			t.Fatalf("risk %s needs an audited exploit surface", risk.name)
+		}
+	}
+	for _, phrase := range []string{"host-trusted", "not OS isolation", "readonly mode"} {
+		if !strings.Contains(HostTrustWarning, phrase) {
+			t.Fatalf("warning %q missing %q", HostTrustWarning, phrase)
+		}
 	}
 }
 
 func TestLiveReviewMessageReuseAndOneEscapeCancel(t *testing.T) {
-	r := New()
+	r := testReviewer()
 	message, err := r.ReviewMessage(context.Background(), ports.ReviewInvocation{Prompt: "task-ref:opaque-next"})
 	if err != nil || message != "task-ref:opaque-next" {
 		t.Fatalf("ReviewMessage = %q, %v", message, err)
@@ -155,7 +155,7 @@ func TestLiveReviewMessageReuseAndOneEscapeCancel(t *testing.T) {
 func TestMethodsRespectCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	r := New()
+	r := testReviewer()
 	if _, err := r.ReviewCommand(ctx, ports.ReviewInvocation{}); !errors.Is(err, context.Canceled) {
 		t.Errorf("ReviewCommand error = %v", err)
 	}

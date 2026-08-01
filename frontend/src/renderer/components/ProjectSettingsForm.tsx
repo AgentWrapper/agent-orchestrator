@@ -50,15 +50,19 @@ const PERMISSION_MODE_OPTIONS = [
 ] as const;
 
 const KNOWN_REVIEWER_HARNESS_IDS = new Set([
+	"agy",
 	"claude-code",
 	"codex",
+	"continue",
 	"copilot",
 	"cursor",
+	"goose",
 	"kilocode",
 	"kiro",
 	"opencode",
 	"pi",
 	"qwen",
+	"vibe",
 ]);
 
 const projectQueryKey = (id: string) => ["project", id] as const;
@@ -503,15 +507,19 @@ function PermissionModeSelect({ value, onChange }: { value: string; onChange: (v
 }
 
 const REVIEWER_AGENT_PRIORITY = [
+	"agy",
 	"claude-code",
 	"codex",
+	"continue",
 	"copilot",
 	"cursor",
+	"goose",
 	"opencode",
 	"kilocode",
 	"kiro",
 	"pi",
 	"qwen",
+	"vibe",
 	"aider",
 ] as const;
 const REVIEWER_AGENT_PRIORITY_RANK = new Map<string, number>(

@@ -2,7 +2,7 @@ package agy
 
 import (
 	"context"
-	"errors"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -10,50 +10,54 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-func testReviewer(help, version string, isolation error) *Reviewer {
+func testReviewer(help, version string) *Reviewer {
 	return &Reviewer{
-		resolveBinary: func(context.Context) (string, error) { return "agy", nil },
-		run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		resolveBinary: func(context.Context) (string, error) { return "/opt/agy/bin/agy", nil },
+		run: func(_ context.Context, _ map[string]string, _ string, args ...string) ([]byte, error) {
 			if slices.Equal(args, []string{"--help"}) {
 				return []byte(help), nil
 			}
 			return []byte(version), nil
 		},
-		isolationPreflight: func(context.Context) error { return isolation },
 	}
 }
 
 func TestReviewCommandPreflightShapeOnlyResolvesBinary(t *testing.T) {
-	spec, err := testReviewer("", "", ErrIsolationUnavailable).ReviewCommand(context.Background(), ports.ReviewInvocation{WorkspacePath: "/worker"})
+	spec, err := testReviewer("", "").ReviewCommand(context.Background(), ports.ReviewInvocation{WorkspacePath: "/worker"})
 	if err != nil {
 		t.Fatalf("ReviewCommand: %v", err)
 	}
-	if !slices.Equal(spec.Argv, []string{"agy"}) || spec.WorkingDirectory != "" || len(spec.Env) != 0 {
+	if !slices.Equal(spec.Argv, []string{"/opt/agy/bin/agy"}) || spec.WorkingDirectory != "" || len(spec.Env) != 0 {
 		t.Fatalf("preflight spec = %+v", spec)
 	}
 }
 
-func TestReviewCommandFailsClosedBeforeRuntimeLaunch(t *testing.T) {
-	_, err := testReviewer("", "", ErrIsolationUnavailable).ReviewCommand(context.Background(), ports.ReviewInvocation{
-		TaskPromptRoot: "/ao/prompts/worker/reviewer",
-		WorkspacePath:  "/worker",
-		Prompt:         "Read and follow `/ao/task.md`.",
+func TestReviewCommandLaunchesHostTrustedInteractiveTUI(t *testing.T) {
+	dataDir := t.TempDir()
+	spec, err := testReviewer(strings.Join(requiredFlags, "\n"), "1.1.9").ReviewCommand(context.Background(), ports.ReviewInvocation{
+		DataDir:          dataDir,
+		ReviewerID:       "review-worker-1",
+		TaskPromptRoot:   "/ao/prompts/worker/reviewer",
+		WorkspacePath:    "/worker",
+		SystemPromptFile: "/ao/prompts/worker/reviewer/system.md",
+		Prompt:           "Read and follow `/ao/task.md`.",
 	})
-	if !errors.Is(err, ErrIsolationUnavailable) {
-		t.Fatalf("ReviewCommand err = %v, want isolation blocker", err)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	// Even a future sandbox probe is insufficient until the structured gateway
-	// has an Agy-consumable transport.
-	_, err = testReviewer("", "", nil).ReviewCommand(context.Background(), ports.ReviewInvocation{TaskPromptRoot: "/ao/prompts"})
-	if !errors.Is(err, ErrIsolationUnavailable) {
-		t.Fatalf("ReviewCommand with isolation probe err = %v", err)
+	wantPrompt := "Read and follow the reviewer system instructions at `/ao/prompts/worker/reviewer/system.md`, then Read and follow `/ao/task.md`."
+	want := []string{"/opt/agy/bin/agy", "--sandbox", "--add-dir", "/worker", "--add-dir", "/ao/prompts/worker/reviewer", "--prompt-interactive", wantPrompt}
+	if !slices.Equal(spec.Argv, want) || spec.WorkingDirectory != "/worker" {
+		t.Fatalf("spec = %+v, want argv %#v", spec, want)
+	}
+	if spec.Env["HOME"] != filepath.Join(dataDir, "reviewer-runtime", "review-worker-1", "config") || spec.Env["AO_DATA_DIR"] != dataDir {
+		t.Fatalf("AO-owned environment = %#v", spec.Env)
 	}
 }
 
 func TestInteractiveArgvIsPermanentTUIOnly(t *testing.T) {
-	argv := interactiveArgv("agy", "ao-reviewer", "Read and follow `/ao/task.md`.")
-	want := []string{"agy", "--agent", "ao-reviewer", "--sandbox", "--prompt-interactive", "Read and follow `/ao/task.md`."}
+	argv := interactiveArgv("agy", "/worker", "/ao/prompts", "Read and follow `/ao/task.md`.")
+	want := []string{"agy", "--sandbox", "--add-dir", "/worker", "--add-dir", "/ao/prompts", "--prompt-interactive", "Read and follow `/ao/task.md`."}
 	if !slices.Equal(argv, want) {
 		t.Fatalf("argv = %#v, want %#v", argv, want)
 	}
@@ -62,38 +66,33 @@ func TestInteractiveArgvIsPermanentTUIOnly(t *testing.T) {
 			t.Fatalf("interactive argv contains forbidden %q: %#v", forbidden, argv)
 		}
 	}
-	if slices.Contains(argv, "--add-dir") {
-		t.Fatalf("interactive argv exposes worker checkout: %#v", argv)
-	}
 }
 
-func TestReviewPreflightRequiresCurrentInteractiveSurface(t *testing.T) {
+func TestCompatibilityProbeRequiresCurrentInteractiveSurface(t *testing.T) {
 	help := strings.Join(requiredFlags, "\n")
-	r := testReviewer(help, "1.1.9", nil)
-	if err := r.ReviewPreflight(context.Background(), "/worker"); err != nil {
-		t.Fatalf("ReviewPreflight: %v", err)
+	r := testReviewer(help, "1.1.9")
+	if err := r.verifyCompatibility(context.Background(), "/opt/agy/bin/agy", map[string]string{"HOME": "/ao/profile"}); err != nil {
+		t.Fatalf("verifyCompatibility: %v", err)
 	}
 
-	missing := testReviewer(strings.Replace(help, "--prompt-interactive", "", 1), "1.1.9", nil)
-	if err := missing.ReviewPreflight(context.Background(), "/worker"); err == nil || !strings.Contains(err.Error(), "--prompt-interactive") {
+	missing := testReviewer(strings.Replace(help, "--prompt-interactive", "", 1), "1.1.9")
+	if err := missing.verifyCompatibility(context.Background(), "/opt/agy/bin/agy", nil); err == nil || !strings.Contains(err.Error(), "--prompt-interactive") {
 		t.Fatalf("missing flag err = %v", err)
 	}
-	old := testReviewer(help, "1.1.5", nil)
-	if err := old.ReviewPreflight(context.Background(), "/worker"); err == nil || !strings.Contains(err.Error(), minimumVersion) {
+	old := testReviewer(help, "1.1.5")
+	if err := old.verifyCompatibility(context.Background(), "/opt/agy/bin/agy", nil); err == nil || !strings.Contains(err.Error(), minimumVersion) {
 		t.Fatalf("old version err = %v", err)
 	}
 }
 
-func TestProductionPreflightReportsIsolationBlocker(t *testing.T) {
-	help := strings.Join(requiredFlags, "\n")
-	err := testReviewer(help, "1.1.9", ErrIsolationUnavailable).ReviewPreflight(context.Background(), "/worker")
-	if !errors.Is(err, ErrIsolationUnavailable) {
+func TestProductionPreflightResolvesHostTrustedCLI(t *testing.T) {
+	if err := testReviewer("", "").ReviewPreflight(context.Background(), "/worker"); err != nil {
 		t.Fatalf("ReviewPreflight err = %v", err)
 	}
 }
 
 func TestReviewMessageAndSingleInterruptCancel(t *testing.T) {
-	r := testReviewer("", "", ErrIsolationUnavailable)
+	r := testReviewer("", "")
 	message, err := r.ReviewMessage(context.Background(), ports.ReviewInvocation{Prompt: "next task"})
 	if err != nil || message != "next task" {
 		t.Fatalf("ReviewMessage = %q, %v", message, err)
@@ -101,6 +100,14 @@ func TestReviewMessageAndSingleInterruptCancel(t *testing.T) {
 	cancel, err := r.ReviewCancel(context.Background())
 	if err != nil || cancel.Mode != ports.ReviewCancelInterrupt || cancel.Interrupts != 1 {
 		t.Fatalf("ReviewCancel = %+v, %v", cancel, err)
+	}
+}
+
+func TestHostTrustWarningIsExplicit(t *testing.T) {
+	for _, phrase := range []string{"host-trusted", "not OS isolation", "built-in tools"} {
+		if !strings.Contains(HostTrustWarning, phrase) {
+			t.Fatalf("warning %q missing %q", HostTrustWarning, phrase)
+		}
 	}
 }
 

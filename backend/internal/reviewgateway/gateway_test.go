@@ -101,6 +101,34 @@ func TestPrepareEnvironmentUsesPrivateAOOwnedDirectoriesAndImmutableManifest(t *
 	}
 }
 
+func TestPrepareHostTrustedEnvironmentUsesPrivateAOOwnedDirectories(t *testing.T) {
+	dataDir := t.TempDir()
+	env, err := PrepareHostTrustedEnvironment(dataDir, "review-worker-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{env.Root, env.WorkingDirectory, env.ConfigRoot, env.StateRoot, env.CacheRoot, env.TempRoot} {
+		rel, relErr := filepath.Rel(dataDir, path)
+		info, statErr := os.Stat(path)
+		if relErr != nil || strings.HasPrefix(rel, "..") || statErr != nil {
+			t.Fatalf("private AO-owned directory %q: rel=%q relErr=%v statErr=%v", path, rel, relErr, statErr)
+		}
+		if info.Mode().Perm() != 0o700 {
+			t.Fatalf("private AO-owned directory %q mode = %v", path, info.Mode().Perm())
+		}
+	}
+	got := env.TUIEnvironment()
+	if got["HOME"] != env.ConfigRoot || got["XDG_STATE_HOME"] != env.StateRoot || got["TMPDIR"] != env.TempRoot {
+		t.Fatalf("TUI environment = %#v", got)
+	}
+	if _, err := PrepareHostTrustedEnvironment("relative", "review-worker-1"); err == nil {
+		t.Fatal("relative AO data directory accepted")
+	}
+	if _, err := PrepareHostTrustedEnvironment(dataDir, "../escape"); err == nil {
+		t.Fatal("unsafe reviewer id accepted")
+	}
+}
+
 func TestPrepareEnvironmentRejectsTraversalAndInvalidAuthorization(t *testing.T) {
 	tests := []struct {
 		name   string

@@ -37,11 +37,11 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"good kiro reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerKiro}}}, false},
 		{"good pi reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerPi}}}, false},
 		{"good experimental qwen reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerQwen}}}, false},
+		{"good experimental agy reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerAgy}}}, false},
+		{"good experimental continue reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerContinue}}}, false},
+		{"good experimental goose reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerGoose}}}, false},
+		{"good experimental vibe reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerVibe}}}, false},
 		{"unknown reviewer harness", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: "nope"}}}, true},
-		{"agy reviewer remains disabled", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: "agy"}}}, true},
-		{"continue reviewer remains disabled", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: "continue"}}}, true},
-		{"goose reviewer remains disabled", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: "goose"}}}, true},
-		{"vibe reviewer remains disabled", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: "vibe"}}}, true},
 		{"worker-only harness is not auto a reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerHarness(HarnessAider)}}}, true},
 		{"empty reviewer harness", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ""}}}, true},
 		{"tracker intake assignee rule", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: "alice"}}, false},
@@ -150,6 +150,14 @@ func TestResolveReviewerHarness(t *testing.T) {
 	}
 	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessQwen); got != ReviewerQwen {
 		t.Fatalf("qwen worker = %q, want reviewer qwen", got)
+	}
+	for _, tc := range []struct {
+		worker AgentHarness
+		want   ReviewerHarness
+	}{{HarnessAgy, ReviewerAgy}, {HarnessContinue, ReviewerContinue}, {HarnessGoose, ReviewerGoose}, {HarnessVibe, ReviewerVibe}} {
+		if got := (ProjectConfig{}).ResolveReviewerHarness(tc.worker); got != tc.want {
+			t.Errorf("%s worker = %q, want reviewer %q", tc.worker, got, tc.want)
+		}
 	}
 }
 

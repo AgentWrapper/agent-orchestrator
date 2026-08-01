@@ -19,6 +19,10 @@ const (
 	ReviewerKiro       ReviewerHarness = "kiro"
 	ReviewerPi         ReviewerHarness = "pi"
 	ReviewerQwen       ReviewerHarness = "qwen"
+	ReviewerAgy        ReviewerHarness = "agy"
+	ReviewerContinue   ReviewerHarness = "continue"
+	ReviewerGoose      ReviewerHarness = "goose"
+	ReviewerVibe       ReviewerHarness = "vibe"
 )
 
 // AllReviewerHarnesses is the canonical set used to validate a configured
@@ -33,6 +37,10 @@ var AllReviewerHarnesses = []ReviewerHarness{
 	ReviewerKiro,
 	ReviewerPi,
 	ReviewerQwen,
+	ReviewerAgy,
+	ReviewerContinue,
+	ReviewerGoose,
+	ReviewerVibe,
 }
 
 // IsKnown reports whether h is one of the supported reviewer harnesses.

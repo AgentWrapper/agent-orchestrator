@@ -420,7 +420,7 @@ describe("ProjectSettingsForm", () => {
 		expect(labels).toContain("Pi");
 	});
 
-	it("offers experimental Qwen while keeping fail-closed reviewers out", async () => {
+	it("offers the experimental host-trusted reviewer set", async () => {
 		const project = {
 			id: "proj-1",
 			name: "Project One",
@@ -431,7 +431,8 @@ describe("ProjectSettingsForm", () => {
 			config: { worker: { agent: "qwen" }, orchestrator: { agent: "claude-code" } },
 		};
 		const qwen = { id: "qwen", label: "Qwen Code", authStatus: "authorized" };
-		const staged = [
+		const experimental = [
+			{ id: "agy", label: "Agy", authStatus: "authorized" },
 			{ id: "continue", label: "Continue", authStatus: "authorized" },
 			{ id: "vibe", label: "Vibe", authStatus: "authorized" },
 		];
@@ -439,9 +440,9 @@ describe("ProjectSettingsForm", () => {
 			if (path === "/api/v1/agents") {
 				return {
 					data: {
-						supported: [...agentCatalogResponse.data.supported, qwen, ...staged],
-						installed: [...agentCatalogResponse.data.installed, qwen, ...staged],
-						authorized: [...agentCatalogResponse.data.authorized, qwen, ...staged],
+						supported: [...agentCatalogResponse.data.supported, qwen, ...experimental],
+						installed: [...agentCatalogResponse.data.installed, qwen, ...experimental],
+						authorized: [...agentCatalogResponse.data.authorized, qwen, ...experimental],
 					},
 					error: undefined,
 				};
@@ -457,9 +458,10 @@ describe("ProjectSettingsForm", () => {
 		const options = await screen.findAllByRole("menuitem");
 		const labels = options.map((option) => option.textContent);
 		expect(labels).toContain("Qwen Code");
-		expect(labels).not.toContain("Continue");
-		expect(labels).not.toContain("Goose");
-		expect(labels).not.toContain("Vibe");
+		expect(labels).toContain("Agy");
+		expect(labels).toContain("Continue");
+		expect(labels).toContain("Goose");
+		expect(labels).toContain("Vibe");
 	});
 
 	it("shows unknown-auth agents as selectable with a warning in project settings", async () => {
@@ -635,7 +637,7 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByRole("menuitem", { name: "Kilo Code" })).toBeEnabled();
 	});
 
-	it("keeps the staged Agy adapter out of reviewer choices", async () => {
+	it("offers the experimental Agy reviewer", async () => {
 		const project = {
 			id: "proj-1",
 			name: "Project One",
@@ -666,7 +668,7 @@ describe("ProjectSettingsForm", () => {
 		const reviewerAgent = screen.getByRole("button", { name: "Default reviewer agent" });
 		await userEvent.click(reviewerAgent);
 		const options = await screen.findAllByRole("menuitem");
-		expect(options.map((option) => option.textContent)).not.toContain("Agy");
+		expect(options.map((option) => option.textContent)).toContain("Agy");
 	});
 
 	it("shows scratch identity and saves only scratch-supported settings", async () => {
