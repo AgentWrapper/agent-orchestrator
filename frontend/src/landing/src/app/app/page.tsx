@@ -1197,6 +1197,7 @@ export default function CloudAppPage() {
                 connections={connections}
                 sandboxProvider={sandboxProvider}
                 run={run}
+                loading={loading}
               />
             ) : view === "session" && selectedSession ? (
               terminalRuntimeAvailable ? (
@@ -1559,11 +1560,13 @@ function CloudSettings({
   connections,
   sandboxProvider,
   run,
+  loading,
 }: {
   api: CloudAPI;
   connections: ProviderConnection[];
   sandboxProvider: "daytona" | "fly";
   run: (operation: () => Promise<unknown>) => Promise<unknown>;
+  loading: boolean;
 }) {
   const [apiKey, setAPIKey] = useState("");
   const [target, setTarget] = useState<"us" | "eu">("us");
@@ -1604,6 +1607,7 @@ function CloudSettings({
                 agent={agent}
                 connection={connectedAgents.get(agent.id)}
                 run={run}
+                validating={loading}
                 connect={(credentialType, secret) =>
                   api.connectAgent(agent.id, { credentialType, secret })
                 }
@@ -1700,12 +1704,14 @@ function AgentConnectionRow({
   agent,
   connection,
   run,
+  validating,
   connect,
   disconnect,
 }: {
   agent: (typeof CLOUD_AGENTS)[number];
   connection?: ProviderConnection;
   run: (operation: () => Promise<unknown>) => Promise<unknown>;
+  validating: boolean;
   connect: (
     credentialType: AgentCredentialType,
     secret: string,
@@ -1742,6 +1748,7 @@ function AgentConnectionRow({
             <button
               type="button"
               className={button}
+              disabled={validating}
               onClick={() => setReplacing((value) => !value)}
             >
               {replacing ? "Cancel" : "Re-authenticate"}
@@ -1749,6 +1756,7 @@ function AgentConnectionRow({
             <button
               type="button"
               className={button}
+              disabled={validating}
               onClick={() => void run(disconnect)}
             >
               Disconnect
@@ -1791,8 +1799,8 @@ function AgentConnectionRow({
             autoComplete="off"
             required
           />
-          <button className={primaryButton} type="submit">
-            Connect
+          <button className={primaryButton} type="submit" disabled={validating}>
+            {validating ? "Validating…" : "Connect"}
           </button>
         </form>
       )}

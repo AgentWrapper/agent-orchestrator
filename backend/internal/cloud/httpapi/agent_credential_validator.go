@@ -11,11 +11,17 @@ import (
 	"time"
 )
 
-const defaultAnthropicAPIURL = "https://api.anthropic.com"
+const (
+	defaultAnthropicAPIURL = "https://api.anthropic.com"
+	defaultOpenAIAPIURL    = "https://api.openai.com/v1"
+	defaultCursorAPIURL    = "https://api.cursor.com"
+)
 
 type agentCredentialValidator struct {
 	client           *http.Client
 	anthropicBaseURL string
+	openAIBaseURL    string
+	cursorBaseURL    string
 }
 
 func newAgentCredentialValidator(client *http.Client) *agentCredentialValidator {
@@ -25,6 +31,8 @@ func newAgentCredentialValidator(client *http.Client) *agentCredentialValidator 
 	return &agentCredentialValidator{
 		client:           client,
 		anthropicBaseURL: defaultAnthropicAPIURL,
+		openAIBaseURL:    defaultOpenAIAPIURL,
+		cursorBaseURL:    defaultCursorAPIURL,
 	}
 }
 
@@ -37,17 +45,46 @@ func (v *agentCredentialValidator) Validate(
 	agent, credentialType string,
 	secret []byte,
 ) error {
-	if agent != "claude-code" {
-		return nil
-	}
-	// #nosec G101 -- this compares a public credential-kind label, not a credential value.
-	if credentialType == "oauth_token" {
-		token := string(secret)
-		if !strings.HasPrefix(token, "sk-ant-oat01-") || len(token) < 80 {
+	switch agent {
+	case "claude-code":
+		return v.validateClaude(ctx, credentialType, secret)
+	case "codex":
+		if credentialType != "api_key" {
+			return nil
+		}
+		return v.validateBearerEndpoint(
+			ctx,
+			"OpenAI",
+			strings.TrimRight(v.openAIBaseURL, "/")+"/models",
+			secret,
+			http.StatusOK,
+		)
+	case "cursor":
+		if credentialType != "api_key" {
 			return errInvalidAgentCredential
 		}
-		return nil
+		return v.validateBearerEndpoint(
+			ctx,
+			"Cursor",
+			strings.TrimRight(v.cursorBaseURL, "/")+"/v1/me",
+			secret,
+			http.StatusOK,
+		)
+	default:
+		return errInvalidAgentCredential
 	}
+}
+
+func (v *agentCredentialValidator) validateClaude(
+	ctx context.Context,
+	credentialType string,
+	secret []byte,
+) error {
+	if credentialType == "oauth_token" &&
+		(!strings.HasPrefix(string(secret), "sk-ant-oat01-") || len(secret) < 80) {
+		return errInvalidAgentCredential
+	}
+	// #nosec G101 -- this compares a public credential-kind label, not a credential value.
 	request, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
@@ -63,6 +100,10 @@ func (v *agentCredentialValidator) Validate(
 	switch credentialType {
 	case "api_key":
 		request.Header.Set("x-api-key", string(secret))
+	case "oauth_token":
+		request.Header.Set("Authorization", "Bearer "+string(secret))
+		request.Header.Set("anthropic-beta", "claude-code-20250219,oauth-2025-04-20")
+		request.Header.Set("x-app", "cli")
 	default:
 		return errInvalidAgentCredential
 	}
@@ -79,6 +120,33 @@ func (v *agentCredentialValidator) Validate(
 		return nil
 	default:
 		return fmt.Errorf("validate Claude credential: provider returned HTTP %d", response.StatusCode)
+	}
+}
+
+func (v *agentCredentialValidator) validateBearerEndpoint(
+	ctx context.Context,
+	provider, endpoint string,
+	secret []byte,
+	successStatus int,
+) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("build %s credential validation request: %w", provider, err)
+	}
+	request.Header.Set("Authorization", "Bearer "+string(secret))
+	response, err := v.client.Do(request)
+	if err != nil {
+		return fmt.Errorf("validate %s credential: %w", provider, err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
+	switch response.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return errInvalidAgentCredential
+	case successStatus, http.StatusTooManyRequests:
+		return nil
+	default:
+		return fmt.Errorf("validate %s credential: provider returned HTTP %d", provider, response.StatusCode)
 	}
 }
 
