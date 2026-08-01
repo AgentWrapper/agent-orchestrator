@@ -1,0 +1,171 @@
+package continueagent
+
+import (
+	"context"
+	"errors"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+)
+
+func TestReviewCommandFailsClosedBeforeRuntime(t *testing.T) {
+	r := New()
+	for _, inv := range []ports.ReviewInvocation{
+		{},
+		{WorkspacePath: "/host/project"},
+		{TaskPromptRoot: "/ao/prompts/reviewer", Prompt: "task-ref:opaque"},
+	} {
+		spec, err := r.ReviewCommand(context.Background(), inv)
+		if !errors.Is(err, ErrIsolationUnavailable) {
+			t.Fatalf("ReviewCommand(%+v) error = %v, want isolation-unavailable", inv, err)
+		}
+		if len(spec.Argv) != 0 || len(spec.Env) != 0 || spec.InitialMessage != "" || spec.WorkingDirectory != "" {
+			t.Fatalf("failed launch leaked runtime spec: %+v", spec)
+		}
+	}
+}
+
+func TestReviewPreflightFailsClosedWithoutRuntime(t *testing.T) {
+	err := New().ReviewPreflight(context.Background(), "/host/project")
+	if !errors.Is(err, ErrIsolationUnavailable) {
+		t.Fatalf("ReviewPreflight error = %v, want isolation-unavailable", err)
+	}
+}
+
+func TestContainedTUIContractIsExact(t *testing.T) {
+	launch := containedCommand(ports.ReviewInvocation{Prompt: "task-ref:opaque-7"})
+	wantArgv := []string{"cn", "--config", "/ao/config/continue/config.yaml", "--readonly"}
+	if !slices.Equal(launch.Command.Argv, wantArgv) {
+		t.Fatalf("argv = %#v, want %#v", launch.Command.Argv, wantArgv)
+	}
+	if launch.Command.WorkingDirectory != "/ao/empty" {
+		t.Fatalf("cwd = %q, want neutral container directory", launch.Command.WorkingDirectory)
+	}
+	if !launch.ReplaceEnvironment {
+		t.Fatal("contained launch must replace, not merge, the host environment")
+	}
+	if launch.Command.InitialMessage != "" {
+		t.Fatalf("current start-only delivery must remain unused, got %q", launch.Command.InitialMessage)
+	}
+	if launch.PostReadinessMessage != "task-ref:opaque-7" {
+		t.Fatalf("post-readiness message = %q", launch.PostReadinessMessage)
+	}
+	if launch.RestoreSupported {
+		t.Fatal("Continue reviewer must not restore a prior native session")
+	}
+	if slices.ContainsFunc(launch.Command.Argv, func(arg string) bool {
+		return strings.Contains(arg, "task-ref") || arg == "--resume" || arg == "--fork"
+	}) {
+		t.Fatalf("argv contains a task or restore input: %#v", launch.Command.Argv)
+	}
+}
+
+func TestContainedEnvironmentReplacesHostDiscoveryState(t *testing.T) {
+	t.Setenv("HOME", "/host/home")
+	t.Setenv("PATH", "/host/bin")
+	t.Setenv("ANTHROPIC_API_KEY", "host-secret")
+
+	launch := containedCommand(ports.ReviewInvocation{})
+	want := map[string]string{
+		"HOME": "/ao/home", "XDG_CONFIG_HOME": "/ao/config",
+		"XDG_STATE_HOME": "/ao/state", "XDG_CACHE_HOME": "/ao/cache",
+		"TMPDIR": "/ao/tmp", "TMP": "/ao/tmp", "TEMP": "/ao/tmp",
+		"PATH": "/usr/local/bin:/usr/bin:/bin", "CONTINUE_CLI_ENABLE_TELEMETRY": "0",
+	}
+	if len(launch.Command.Env) != len(want) {
+		t.Fatalf("replacement env = %#v, want %#v", launch.Command.Env, want)
+	}
+	for key, value := range want {
+		if launch.Command.Env[key] != value {
+			t.Errorf("env[%s] = %q, want %q", key, launch.Command.Env[key], value)
+		}
+	}
+	for _, forbidden := range []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AO_DATA_DIR", "AO_RUN_FILE", "GITHUB_TOKEN", "GH_TOKEN"} {
+		if _, ok := launch.Command.Env[forbidden]; ok {
+			t.Errorf("replacement env leaks %s", forbidden)
+		}
+	}
+}
+
+func TestAuditedContinuePackagePin(t *testing.T) {
+	if packageName != "@continuedev/cli" || packageVersion != "1.5.47" {
+		t.Fatalf("package pin = %s@%s", packageName, packageVersion)
+	}
+	wantIntegrity := "sha512-gtpewV3RoIOD9dyTtKIBi1SY0VOHRu3Ehe7C/mmnswm+j34MPyrcQhQaWj/m+jdfGO4fNIKdrgGIlLso1ULDFw=="
+	if packageIntegrity != wantIntegrity {
+		t.Fatalf("integrity = %q, want audited registry integrity", packageIntegrity)
+	}
+}
+
+func TestUnsafeInteractiveSurfacesCannotReachRuntime(t *testing.T) {
+	// These are independent escape/discovery surfaces in Continue 1.5.47.
+	// --readonly, an explicit config, neutral cwd, and replacement env reduce
+	// ambient discovery but do not enforce a security boundary against them.
+	risks := []struct {
+		name    string
+		surface string
+	}{
+		{"Shift-Tab mode switch", "Shift-Tab can change the interactive permission mode"},
+		{"bang shell", "a terminal user can enter ! shell mode"},
+		{"Bash tool", "the model can request arbitrary terminal commands"},
+		{"Fetch tool", "the model can request outbound network access"},
+		{"hooks", "Claude-compatible hooks can execute discovered commands"},
+		{"project discovery", "the CLI can inspect configuration relative to cwd"},
+		{"rules", "discovered rules can inject untrusted instructions"},
+		{"skills", "discovered Markdown skills can expand tool use"},
+		{"settings", "user or project settings can change permissions and hooks"},
+		{"MCP", "configured MCP servers can spawn processes or access the network"},
+	}
+	if len(risks) != 10 {
+		t.Fatalf("risk audit has %d entries", len(risks))
+	}
+	for _, risk := range risks {
+		t.Run(risk.name, func(t *testing.T) {
+			if strings.TrimSpace(risk.surface) == "" {
+				t.Fatal("risk needs an audited exploit surface")
+			}
+			_, err := New().ReviewCommand(context.Background(), ports.ReviewInvocation{
+				WorkspacePath: "/host/project",
+				Prompt:        "task-ref:opaque",
+			})
+			if !errors.Is(err, ErrIsolationUnavailable) {
+				t.Fatalf("%s reached runtime: %v", risk.surface, err)
+			}
+		})
+	}
+}
+
+func TestLiveReviewMessageReuseAndOneEscapeCancel(t *testing.T) {
+	r := New()
+	message, err := r.ReviewMessage(context.Background(), ports.ReviewInvocation{Prompt: "task-ref:opaque-next"})
+	if err != nil || message != "task-ref:opaque-next" {
+		t.Fatalf("ReviewMessage = %q, %v", message, err)
+	}
+	cancel, err := r.ReviewCancel(context.Background())
+	if err != nil {
+		t.Fatalf("ReviewCancel: %v", err)
+	}
+	if cancel.Mode != ports.ReviewCancelEscape || cancel.Interrupts != 1 || cancel.Input != "\x1b" {
+		t.Fatalf("ReviewCancel = %+v, want one Escape", cancel)
+	}
+}
+
+func TestMethodsRespectCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r := New()
+	if _, err := r.ReviewCommand(ctx, ports.ReviewInvocation{}); !errors.Is(err, context.Canceled) {
+		t.Errorf("ReviewCommand error = %v", err)
+	}
+	if err := r.ReviewPreflight(ctx, ""); !errors.Is(err, context.Canceled) {
+		t.Errorf("ReviewPreflight error = %v", err)
+	}
+	if _, err := r.ReviewMessage(ctx, ports.ReviewInvocation{}); !errors.Is(err, context.Canceled) {
+		t.Errorf("ReviewMessage error = %v", err)
+	}
+	if _, err := r.ReviewCancel(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("ReviewCancel error = %v", err)
+	}
+}
