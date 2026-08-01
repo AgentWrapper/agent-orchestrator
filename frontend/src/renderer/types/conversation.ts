@@ -86,6 +86,8 @@ export interface DecisionOption {
 }
 
 export interface CommandDetail {
+	/** Free text payload: a plan body, a reasoning summary, a message. */
+	text?: string;
 	command?: string;
 	rawCommand?: string;
 	cwd?: string;

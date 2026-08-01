@@ -13,7 +13,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, Loader2, MessageSquare, Square, TriangleAlert } from "lucide-react";
+import { ArrowDown, Brain, Loader2, MessageSquare, Square, TriangleAlert } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import {
@@ -56,6 +56,11 @@ export function ChatWorkspace({
 	const turn = activeTurn(snapshot);
 	const approval = pendingApproval(snapshot);
 	const [mode, setMode] = useState<PermissionMode>(permission);
+	// Reasoning is hidden by default. The provider emits a reasoning item per tool
+	// call, usually with no readable body, so showing them turns the timeline into
+	// a log. Kept behind a toggle rather than dropped, since they are occasionally
+	// the only explanation of why the agent did something.
+	const [showReasoning, setShowReasoning] = useState(false);
 
 	return (
 		<section
@@ -63,10 +68,19 @@ export function ChatWorkspace({
 			className="flex h-full min-h-0 flex-col bg-background"
 			data-session-mode={snapshot.mode}
 		>
-			<ChatHeader snapshot={snapshot} />
+			<ChatHeader
+				snapshot={snapshot}
+				showReasoning={showReasoning}
+				onToggleReasoning={() => setShowReasoning((prev) => !prev)}
+			/>
 			<ControllerBanner controller={snapshot.controller} />
 
-			<Timeline snapshot={snapshot} onDecide={onDecide} busy={busy} />
+			<Timeline
+				snapshot={snapshot}
+				onDecide={onDecide}
+				busy={busy}
+				showReasoning={showReasoning}
+			/>
 
 			<div className="flex shrink-0 flex-col gap-2 border-t border-border px-4 py-3">
 				{turn ? (
@@ -92,9 +106,90 @@ export function ChatWorkspace({
 	);
 }
 
+
+/**
+ * Batch consecutive plain activities into a run.
+ *
+ * A run of tool calls is one thought, not several, so it renders as one tight
+ * block on a shared rail. Messages and approvals break a run because each is
+ * something the reader stops on: prose to read, or a decision to make.
+ */
+type TimelineRun =
+	| { kind: "activities"; key: string; items: ConversationItem[] }
+	| { kind: "single"; key: string; items: [ConversationItem] };
+
+function runsOf(items: ConversationItem[]): TimelineRun[] {
+	const runs: TimelineRun[] = [];
+	for (const item of items) {
+		const runnable =
+			item.kind === "activity" && item.activityKind !== "approval" && item.activityKind !== "error";
+		const last = runs.at(-1);
+		if (runnable && last?.kind === "activities") {
+			last.items.push(item);
+			continue;
+		}
+		runs.push(
+			runnable
+				? { kind: "activities", key: `run-${item.sequence}`, items: [item] }
+				: { kind: "single", key: item.id, items: [item] },
+		);
+	}
+	return runs;
+}
+
+/**
+ * What belongs in a conversation, as opposed to what the provider happens to emit.
+ *
+ * Two kinds are dropped:
+ *
+ *   - usage. It is a running total, and the provider reports it after every tool
+ *     call. Rendering one row per report is what buried the actual conversation;
+ *     the total lives in the header instead.
+ *   - reasoning, unless asked for. The provider emits one per tool call and they
+ *     usually carry no readable body, so by default they are pure chrome.
+ *
+ * Everything else is kept, including an activity this build does not fully
+ * understand — dropping an unrecognized item would hide work the agent really did.
+ */
+function readableItems(snapshot: ConversationSnapshot, showReasoning: boolean): ConversationItem[] {
+	return snapshot.items.filter((item) => {
+		if (item.kind !== "activity") return true;
+		if (item.activityKind === "usage") return false;
+		if (item.activityKind === "reasoning") {
+			// Even when shown, a reasoning item with nothing to read is just a label.
+			return showReasoning && Boolean(item.detail?.reason || item.detail?.text);
+		}
+		return true;
+	});
+}
+
+/** The most recent token total the provider reported, for the header readout. */
+function latestUsage(snapshot: ConversationSnapshot): number | undefined {
+	for (let i = snapshot.items.length - 1; i >= 0; i -= 1) {
+		const item = snapshot.items[i];
+		if (item?.kind === "activity" && item.activityKind === "usage") {
+			const total = item.detail?.totalTokens;
+			if (typeof total === "number" && total > 0) return total;
+		}
+	}
+	return undefined;
+}
+
 /* -------------------------------------------------------------------------- */
 
-function ChatHeader({ snapshot }: { snapshot: ConversationSnapshot }) {
+function ChatHeader({
+	snapshot,
+	showReasoning,
+	onToggleReasoning,
+}: {
+	snapshot: ConversationSnapshot;
+	showReasoning: boolean;
+	onToggleReasoning: () => void;
+}) {
+	const usage = latestUsage(snapshot);
+	const hasReasoning = snapshot.items.some(
+		(item) => item.kind === "activity" && item.activityKind === "reasoning",
+	);
 	return (
 		<header className="flex h-toolbar shrink-0 items-center gap-3 border-b border-border px-4">
 			<MessageSquare aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
@@ -104,11 +199,33 @@ function ChatHeader({ snapshot }: { snapshot: ConversationSnapshot }) {
 				</strong>
 				<span className="shrink-0 text-xs text-muted-foreground">{snapshot.harness}</span>
 			</div>
-			{/* The mode is a durable session fact, so it is stated rather than implied
-			    by which surface happens to be open. */}
-			<span className="ml-auto shrink-0 rounded border border-border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-				chat
-			</span>
+			<div className="ml-auto flex shrink-0 items-center gap-2">
+				{/* A running total, not a timeline event. Emitting one row per tool call
+				    is what buried the conversation. */}
+				{usage ? (
+					<span className="tabular-nums text-[11px] text-muted-foreground">
+						{usage.toLocaleString()} tokens
+					</span>
+				) : null}
+				{hasReasoning ? (
+					<Button
+						type="button"
+						size="sm"
+						variant="ghost"
+						onClick={onToggleReasoning}
+						aria-pressed={showReasoning}
+						className="h-5 gap-1 px-1.5 text-[11px]"
+					>
+						<Brain aria-hidden="true" className="size-3" />
+						{showReasoning ? "Hide reasoning" : "Reasoning"}
+					</Button>
+				) : null}
+				{/* The mode is a durable session fact, so it is stated rather than
+				    implied by which surface happens to be open. */}
+				<span className="rounded border border-border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+					chat
+				</span>
+			</div>
 		</header>
 	);
 }
@@ -168,15 +285,20 @@ function Timeline({
 	snapshot,
 	onDecide,
 	busy,
+	showReasoning,
 }: {
 	snapshot: ConversationSnapshot;
 	onDecide?: (requestId: string, decisionId: string) => void;
 	busy?: boolean;
+	showReasoning: boolean;
 }) {
 	const scroller = useRef<HTMLDivElement>(null);
 	const [pinned, setPinned] = useState(true);
 
-	const groups = useMemo(() => groupByTurn(snapshot), [snapshot]);
+	const groups = useMemo(
+		() => groupByTurn({ ...snapshot, items: readableItems(snapshot, showReasoning) }),
+		[snapshot, showReasoning],
+	);
 
 	useEffect(() => {
 		if (!pinned) return;
@@ -191,7 +313,7 @@ function Timeline({
 		setPinned(distance < 64);
 	}
 
-	if (snapshot.items.length === 0) {
+	if (readableItems(snapshot, showReasoning).length === 0) {
 		return <EmptyState harness={snapshot.harness} />;
 	}
 
@@ -205,12 +327,24 @@ function Timeline({
 				aria-live="polite"
 				aria-label="Conversation"
 			>
-				<div className="mx-auto flex max-w-3xl flex-col gap-3">
+				<div className="mx-auto flex max-w-3xl flex-col gap-5">
 					{groups.map((group) => (
 						<div key={group.key} className="flex flex-col gap-3">
-							{group.items.map((item) => (
-								<TimelineItem key={item.id} item={item} onDecide={onDecide} busy={busy} />
-							))}
+							{runsOf(group.items).map((run) =>
+								run.kind === "activities" ? (
+									// One rail per run: tight rows, structurally attached to the turn.
+									<div
+										key={run.key}
+										className="flex flex-col overflow-hidden rounded-lg border border-border bg-surface/40"
+									>
+										{run.items.map((item) => (
+											<TimelineItem key={item.id} item={item} onDecide={onDecide} busy={busy} />
+										))}
+									</div>
+								) : (
+									<TimelineItem key={run.key} item={run.items[0]!} onDecide={onDecide} busy={busy} />
+								),
+							)}
 							{group.outcome ? (
 								<TurnOutcome
 									state={group.outcome.state}

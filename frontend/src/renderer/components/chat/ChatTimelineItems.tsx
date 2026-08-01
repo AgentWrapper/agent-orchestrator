@@ -19,9 +19,20 @@ import {
 	Loader2,
 	ShieldQuestion,
 	SquareTerminal,
-	Terminal,
 	User,
 } from "lucide-react";
+
+/** Fixed icon column, matching the prototype's row anatomy. */
+const activityIcon = {
+	command: SquareTerminal,
+	file_change: FileDiff,
+	plan: ListChecks,
+	reasoning: Brain,
+	approval: ShieldQuestion,
+	usage: Gauge,
+	error: AlertTriangle,
+	system: CircleAlert,
+} as const;
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import type {
@@ -36,6 +47,17 @@ const timeFormatter = new Intl.DateTimeFormat(undefined, {
 	minute: "2-digit",
 });
 
+/** Collapse the home directory so a long absolute path does not eat the row. */
+function shortenPaths(text: string): string {
+	return text.replace(/\/(?:Users|home)\/[^/\s]+/g, "~");
+}
+
+function formatDuration(ms: number): string {
+	if (ms < 1000) return `${ms}ms`;
+	if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+	return `${Math.round(ms / 60_000)}m`;
+}
+
 function formatTime(iso: string): string {
 	const parsed = new Date(iso);
 	return Number.isNaN(parsed.getTime()) ? "" : timeFormatter.format(parsed);
@@ -49,7 +71,7 @@ function formatTime(iso: string): string {
 export function HumanMessage({ message }: { message: ConversationMessage }) {
 	return (
 		<div className="flex flex-col items-end gap-1">
-			<div className="max-w-[85%] rounded-lg rounded-br-sm border border-border-strong bg-surface px-3.5 py-2.5 text-sm leading-relaxed text-foreground">
+			<div className="w-fit max-w-[min(78%,560px)] whitespace-pre-wrap rounded-[10px] border border-border bg-raised px-3 py-2.5 text-sm leading-[1.55] text-foreground">
 				{message.text}
 			</div>
 			{message.delivery && message.delivery !== "accepted" ? (
@@ -81,7 +103,7 @@ export function OriginMessage({ message }: { message: ConversationMessage }) {
 /** The agent's prose. A trailing caret marks text still arriving. */
 export function AssistantMessage({ message }: { message: ConversationMessage }) {
 	return (
-		<div className="text-sm leading-relaxed text-foreground">
+		<div className="text-sm leading-[1.58] text-foreground [&_code]:rounded [&_code]:bg-surface [&_code]:px-[5px] [&_code]:py-[2px] [&_code]:font-mono [&_code]:text-[11px] [&_code]:text-accent">
 			<p className="whitespace-pre-wrap">
 				{message.text}
 				{message.streaming ? (
@@ -124,17 +146,6 @@ function DeliveryNote({ state }: { state: DeliveryState }) {
 /* activities                                                                  */
 /* -------------------------------------------------------------------------- */
 
-const activityIcon = {
-	command: SquareTerminal,
-	file_change: FileDiff,
-	plan: ListChecks,
-	reasoning: Brain,
-	approval: ShieldQuestion,
-	usage: Gauge,
-	error: AlertTriangle,
-	system: CircleAlert,
-} as const;
-
 /**
  * A collapsed activity row: icon, label, target, state. Expands to its payload.
  *
@@ -143,76 +154,73 @@ const activityIcon = {
  */
 export function ActivityRow({ activity }: { activity: ConversationActivity }) {
 	const [open, setOpen] = useState(false);
-	const Icon = activityIcon[activity.activityKind] ?? Terminal;
+	const Icon = activityIcon[activity.activityKind] ?? SquareTerminal;
 	const detail = activity.detail;
-	const hasBody = Boolean(
-		detail?.output || detail?.reason || detail?.files?.length || detail?.totalTokens,
-	);
+	const hasBody = Boolean(detail?.output || detail?.reason || detail?.text || detail?.files?.length);
+	const { label, path } = splitSummary(activity);
 
 	return (
-		<div className="rounded-md border border-border bg-surface/50">
+		<div className="group/activity border-t border-border first:border-t-0">
 			<button
 				type="button"
 				onClick={() => setOpen((prev) => !prev)}
 				disabled={!hasBody}
 				aria-expanded={hasBody ? open : undefined}
 				className={cn(
-					"flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors",
+					"flex min-h-[35px] w-full items-center gap-[9px] px-[11px] py-2 text-left text-[11px] transition-colors",
 					hasBody && "hover:bg-interactive-hover",
 					!hasBody && "cursor-default",
 				)}
 			>
-				{hasBody ? (
-					<ChevronRight
-						aria-hidden="true"
-						className={cn(
-							"size-3.5 shrink-0 text-muted-foreground transition-transform",
-							open && "rotate-90",
-						)}
-					/>
-				) : (
-					<span aria-hidden="true" className="size-3.5 shrink-0" />
-				)}
 				<Icon
 					aria-hidden="true"
 					className={cn(
-						"size-3.5 shrink-0",
-						activity.status === "failed" ? "text-destructive" : "text-muted-foreground",
+						"w-[15px] shrink-0 text-center",
+						activity.status === "failed" ? "text-destructive" : "text-muted-foreground/70",
 					)}
+					size={13}
 				/>
-				<span className="min-w-0 flex-1 truncate font-mono text-foreground">
-					{activity.summary}
-				</span>
-				<ActivityState activity={activity} />
+				<strong
+					className={cn(
+						"shrink-0 font-medium",
+						activity.status === "failed" ? "text-destructive" : "text-foreground",
+					)}
+				>
+					{label}
+				</strong>
+				{path ? (
+					<span
+						className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-muted-foreground"
+						title={path}
+					>
+						{path}
+					</span>
+				) : (
+					<span className="flex-1" />
+				)}
+				<ActivityState activity={activity} open={open} hasBody={hasBody} />
 			</button>
 
 			{open && hasBody ? (
-				<div className="border-t border-border px-3 py-2.5">
+				<div className="flex flex-col gap-1.5 px-[11px] pb-2.5">
 					{detail?.files?.length ? <FileChangeList files={detail.files} /> : null}
-					{detail?.reason ? (
-						<pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-muted-foreground">
-							{detail.reason}
-						</pre>
+					{detail?.reason || detail?.text ? (
+						<p className="whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">
+							{detail.reason ?? detail.text}
+						</p>
 					) : null}
 					{detail?.output ? (
 						<>
-							<pre className="max-h-64 overflow-auto rounded bg-background px-2.5 py-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
+							<pre className="max-h-64 overflow-auto rounded-md border border-border bg-background px-2.5 py-2 font-mono text-[10.5px] leading-relaxed text-muted-foreground">
 								{detail.output}
 							</pre>
 							{detail.outputMayBePartial ? (
-								<p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
-									The provider streams command output on a best-effort basis; the beginning may be
-									missing. Open a shell in the worktree to see the full run.
+								<p className="text-[10px] leading-relaxed text-muted-foreground/70">
+									Output is streamed best-effort and may be missing its beginning. Open a shell in the
+									worktree for the full run.
 								</p>
 							) : null}
 						</>
-					) : null}
-					{detail?.totalTokens ? (
-						<div className="flex gap-5 text-xs tabular-nums text-muted-foreground">
-							<span>{detail.inputTokens?.toLocaleString()} in</span>
-							<span>{detail.outputTokens?.toLocaleString()} out</span>
-							<span className="text-foreground">{detail.totalTokens.toLocaleString()} total</span>
-						</div>
 					) : null}
 				</div>
 			) : null}
@@ -220,46 +228,78 @@ export function ActivityRow({ activity }: { activity: ConversationActivity }) {
 	);
 }
 
-function ActivityState({ activity }: { activity: ConversationActivity }) {
+/**
+ * Split a summary into a bold action and a muted target, which is how the row
+ * scans: what happened, then what it happened to. A command becomes its binary
+ * plus its arguments; anything without a natural split keeps its whole label.
+ */
+function splitSummary(activity: ConversationActivity): { label: string; path?: string } {
+	if (activity.activityKind === "command") {
+		const command = shortenPaths(activity.summary).trim();
+		const space = command.indexOf(" ");
+		if (space > 0) {
+			return { label: command.slice(0, space), path: command.slice(space + 1) };
+		}
+		return { label: command };
+	}
+	const files = activity.detail?.files;
+	if (activity.activityKind === "file_change" && files?.length === 1) {
+		return { label: "Edited", path: shortenPaths(files[0]!.path) };
+	}
+	return { label: activity.summary };
+}
+
+function ActivityState({
+	activity,
+	open,
+	hasBody,
+}: {
+	activity: ConversationActivity;
+	open: boolean;
+	hasBody: boolean;
+}) {
 	const { status, detail } = activity;
 
 	if (status === "running") {
 		return (
-			<span className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-				<Loader2 aria-hidden="true" className="size-3 animate-spin" />
-				Running
-			</span>
+			<Loader2
+				aria-label="running"
+				className="size-3 shrink-0 animate-spin self-center text-muted-foreground/60"
+			/>
 		);
 	}
 	if (detail?.files?.length) {
 		const additions = detail.files.reduce((sum, file) => sum + file.additions, 0);
 		const deletions = detail.files.reduce((sum, file) => sum + file.deletions, 0);
 		return (
-			<span className="flex shrink-0 gap-1.5 text-[11px] tabular-nums">
-				<span className="text-success">+{additions}</span>
+			<span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/70">
+				<span className="text-success">+{additions}</span>{" "}
 				<span className="text-destructive">&minus;{deletions}</span>
 			</span>
 		);
 	}
 	if (status === "failed") {
 		return (
-			<span className="shrink-0 text-[11px] tabular-nums text-destructive">
-				{detail?.exitCode !== undefined ? `exit ${detail.exitCode}` : "Failed"}
+			<span className="shrink-0 font-mono text-[10px] tabular-nums text-destructive">
+				{detail?.exitCode !== undefined ? `exit ${detail.exitCode}` : "failed"}
 			</span>
 		);
 	}
-	if (detail?.durationMs !== undefined) {
+	// Everything else settled fine, which is the boring majority. A chevron on
+	// hover is the whole affordance; a duration or timestamp on every row builds a
+	// column of numbers nobody reads.
+	if (hasBody) {
 		return (
-			<span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-				{detail.durationMs}ms
-			</span>
+			<ChevronRight
+				aria-hidden="true"
+				className={cn(
+					"size-3 shrink-0 self-center text-muted-foreground/50 transition-all",
+					open ? "rotate-90 opacity-100" : "opacity-0 group-hover/activity:opacity-100",
+				)}
+			/>
 		);
 	}
-	return (
-		<span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-			{formatTime(activity.createdAt)}
-		</span>
-	);
+	return null;
 }
 
 function FileChangeList({
@@ -393,22 +433,27 @@ export function TurnOutcome({
 	error?: string;
 }) {
 	const copy = {
-		completed: { label: "Turn complete", tone: "text-success" },
-		interrupted: { label: "Stopped by you", tone: "text-muted-foreground" },
-		failed: { label: "Turn failed", tone: "text-destructive" },
+		completed: { label: "Done", tone: "text-muted-foreground/70" },
+		interrupted: { label: "Stopped", tone: "text-muted-foreground/70" },
+		failed: { label: "Failed", tone: "text-destructive" },
 	}[state];
 
 	return (
-		<div className="flex items-center gap-2.5 py-0.5">
+		<div className="flex items-center gap-2 pt-1">
 			<span aria-hidden="true" className="h-px flex-1 bg-border" />
-			<span className={cn("shrink-0 text-[11px] font-medium", copy.tone)}>{copy.label}</span>
-			{durationMs !== undefined ? (
-				<span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-					{(durationMs / 1000).toFixed(1)}s
+			<span className={cn("shrink-0 text-[10px] uppercase tracking-[0.08em]", copy.tone)}>
+				{copy.label}
+			</span>
+			{durationMs !== undefined && durationMs > 0 ? (
+				<span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/70">
+					{formatDuration(durationMs)}
 				</span>
 			) : null}
-			{error ? <span className="shrink-0 text-[11px] text-destructive">{error}</span> : null}
-			<span aria-hidden="true" className="h-px flex-1 bg-border" />
+			{error ? (
+				<span className="shrink-0 text-[10px] text-destructive" title={error}>
+					{error.slice(0, 60)}
+				</span>
+			) : null}
 		</div>
 	);
 }
