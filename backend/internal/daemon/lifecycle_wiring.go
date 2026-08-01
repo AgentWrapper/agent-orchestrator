@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitydispatch"
@@ -206,6 +207,7 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("reviewer resolver: %w", err)
 	}
+	githubReviewPublisher := reviewcore.NewGitHubReviewPublisher()
 	var reviewSvc *reviewsvc.Service
 	completionHandler := func(resultCtx context.Context, workerID domain.SessionID, completions []reviewcore.ReviewCompletion) {
 		submitted := make([]reviewsvc.SubmittedReview, 0, len(completions))
@@ -216,10 +218,25 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 				}
 				continue
 			}
+			body := completion.Body
+			githubReviewID := ""
+			// Greptile's structured findings are published as one GitHub review
+			// with inline comments. A local AO result is still recorded when gh is
+			// unavailable, but the failure is visible in the stored review body.
+			if len(completion.Comments) > 0 {
+				publishedID, publishErr := githubReviewPublisher.Publish(resultCtx, completion.PRURL, completion.TargetSHA, body, completion.Comments)
+				if publishErr != nil {
+					log.Error("publish Greptile GitHub inline review", "worker", workerID, "run", completion.RunID, "error", publishErr)
+					body = strings.TrimSpace(body) + "\n\n> GitHub inline comments could not be posted: " + publishErr.Error()
+				} else {
+					githubReviewID = publishedID
+				}
+			}
 			submitted = append(submitted, reviewsvc.SubmittedReview{
-				RunID:   completion.RunID,
-				Verdict: completion.Verdict,
-				Body:    completion.Body,
+				RunID:          completion.RunID,
+				Verdict:        completion.Verdict,
+				Body:           body,
+				GithubReviewID: githubReviewID,
 			})
 		}
 		if len(submitted) == 0 {

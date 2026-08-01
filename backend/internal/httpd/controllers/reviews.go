@@ -15,8 +15,8 @@ import (
 )
 
 // ListReviewsResponse is the body of GET /api/v1/sessions/{sessionId}/reviews.
-// reviewerHandleId is the stable reviewer execution handle. Interactive
-// reviewers expose it over /mux; one-shot reviewers use it for cancellation.
+// reviewerHandleId is the stable reviewer execution handle. Interactive and
+// display-only one-shot reviewers expose it over /mux.
 type ListReviewsResponse struct {
 	ReviewerHandleID string                     `json:"reviewerHandleId"`
 	Reviews          []reviewcore.PRReviewState `json:"reviews"`

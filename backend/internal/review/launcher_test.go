@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/greptile"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -103,6 +104,19 @@ type fakeRuntime struct {
 	destroyed     string
 	destroyBefore bool
 	created       bool
+}
+
+type fakeTerminalRuntime struct{ fakeRuntime }
+
+func (f *fakeTerminalRuntime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+	if len(cfg.Argv) == 3 && cfg.Argv[0] == "ao" && cfg.Argv[1] == "review-terminal" {
+		_ = os.WriteFile(greptile.TerminalResultPath(cfg.Argv[2]), []byte(`{"complete":true,"results":[{"runId":"run-terminal","prUrl":"https://github.com/o/r/pull/1","targetSha":"sha1","verdict":"approved","body":"Looks good."}]}`), 0o600)
+	}
+	return f.fakeRuntime.Create(ctx, cfg)
+}
+
+func (f *fakeTerminalRuntime) GetOutput(context.Context, ports.RuntimeHandle, int) (string, error) {
+	return "", nil
 }
 
 func (f *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
@@ -246,6 +260,37 @@ func TestLauncherRunsOneShotReviewerWithoutRuntimePane(t *testing.T) {
 	}
 	if rt.created {
 		t.Fatal("one-shot reviewer unexpectedly created a runtime pane")
+	}
+}
+
+func TestLauncherRunsGreptileThroughDisplayTerminal(t *testing.T) {
+	rt := &fakeTerminalRuntime{}
+	completed := make(chan []ReviewCompletion, 1)
+	launcher := NewLauncher(
+		fakeReviewerResolver{reviewer: greptile.New(), ok: true},
+		rt,
+		t.TempDir(),
+		WithCompletionHandler(func(_ context.Context, _ domain.SessionID, completions []ReviewCompletion) {
+			completed <- completions
+		}),
+	)
+	spec := launchSpec()
+	spec.Harness = domain.ReviewerGreptile
+	spec.ReviewQueue = []ports.ReviewTask{{RunID: "run-terminal", PRURL: spec.PRURL, TargetSHA: spec.TargetSHA, TargetBranch: "main", WorkspacePath: spec.WorkspacePath}}
+	handle, err := launcher.Spawn(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if handle != "review-mer-1" || len(rt.createCfg.Argv) != 3 || rt.createCfg.Argv[0] != "ao" || rt.createCfg.Argv[1] != "review-terminal" {
+		t.Fatalf("terminal config = %+v", rt.createCfg)
+	}
+	select {
+	case completions := <-completed:
+		if len(completions) != 1 || completions[0].RunID != "run-terminal" || completions[0].Verdict != domain.VerdictApproved {
+			t.Fatalf("completions = %+v", completions)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for terminal completion")
 	}
 }
 

@@ -21,8 +21,7 @@ type Review struct {
 	Harness   ReviewerHarness `json:"harness"`
 	PRURL     string          `json:"prUrl"`
 	// ReviewerHandleID is the stable handle of the active reviewer execution.
-	// Interactive reviewers expose it as a terminal; one-shot reviewers use it
-	// only for liveness and cancellation.
+	// Interactive and display-only one-shot reviewers expose it as a terminal.
 	ReviewerHandleID string    `json:"reviewerHandleId"`
 	CreatedAt        time.Time `json:"createdAt"`
 	UpdatedAt        time.Time `json:"updatedAt"`

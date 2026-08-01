@@ -17,10 +17,13 @@ import (
 )
 
 // Adapter runs Greptile once per pull request. Unlike AO's interactive
-// reviewers, it does not own a terminal pane or accept follow-up messages.
+// reviewers, it does not accept follow-up messages; the terminal runner only
+// displays its progress and findings.
 type Adapter struct{}
 
 var _ ports.OneShotReviewer = Adapter{}
+var _ ports.TerminalOneShotReviewer = Adapter{}
+var _ ports.ReviewerCanceller = Adapter{}
 
 func New() Adapter { return Adapter{} }
 
@@ -38,6 +41,12 @@ func (Adapter) ReviewMessage(context.Context, ports.ReviewInvocation) (string, e
 	return "", errors.New("greptile is a one-shot reviewer and does not accept review messages")
 }
 
+// ReviewCancel lets AO interrupt the display-only terminal after a daemon
+// restart, when the in-memory one-shot job map is no longer available.
+func (Adapter) ReviewCancel(context.Context) (ports.ReviewCancelSpec, error) {
+	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelInterrupt, Interrupts: 1}, nil
+}
+
 type cliReview struct {
 	Summary             *string      `json:"summary"`
 	Confidence          *int         `json:"confidence"`
@@ -50,6 +59,7 @@ type cliComment struct {
 	Path          string  `json:"path"`
 	StartLine     int     `json:"startLine"`
 	EndLine       int     `json:"endLine"`
+	Side          string  `json:"side"`
 	Severity      string  `json:"severity"`
 	SecurityIssue bool    `json:"securityIssue"`
 	Body          string  `json:"body"`
@@ -71,8 +81,9 @@ func (Adapter) ParseReviewResult(output []byte) (ports.ReviewResult, error) {
 		verdict = domain.VerdictChangesRequested
 	}
 	return ports.ReviewResult{
-		Verdict: verdict,
-		Body:    formatReview(review),
+		Verdict:  verdict,
+		Body:     formatReview(review),
+		Comments: normalizeComments(review.Comments),
 	}, nil
 }
 
@@ -81,6 +92,32 @@ func targetBranch(inv ports.ReviewInvocation) string {
 		return strings.TrimSpace(inv.ReviewQueue[inv.ReviewIndex].TargetBranch)
 	}
 	return ""
+}
+
+func normalizeComments(comments []cliComment) []ports.ReviewComment {
+	out := make([]ports.ReviewComment, 0, len(comments))
+	for _, comment := range comments {
+		out = append(out, ports.ReviewComment{
+			Path:          strings.TrimSpace(comment.Path),
+			StartLine:     comment.StartLine,
+			EndLine:       comment.EndLine,
+			Side:          commentSide(comment.Side),
+			Body:          strings.TrimSpace(comment.Body),
+			Suggestion:    nonEmpty(comment.Suggestion),
+			Severity:      strings.TrimSpace(comment.Severity),
+			SecurityIssue: comment.SecurityIssue,
+		})
+	}
+	return out
+}
+
+func commentSide(side string) string {
+	switch strings.ToUpper(strings.TrimSpace(side)) {
+	case "LEFT":
+		return "LEFT"
+	default:
+		return "RIGHT"
+	}
 }
 
 func ensureJSONEOF(decoder *json.Decoder) error {

@@ -755,9 +755,7 @@ function ReviewsView({
 			}
 			if (data?.reviewerHandleId) {
 				const harness = started.latestRun.harness || "reviewer";
-				if (harness !== "greptile") {
-					onOpenReviewerTerminal?.({ handleId: data.reviewerHandleId, harness });
-				}
+				onOpenReviewerTerminal?.({ handleId: data.reviewerHandleId, harness });
 			}
 		},
 	});
@@ -951,7 +949,7 @@ function ReviewPanel({
 	const openReviewStates = reviewStates.filter((reviewState) => openPRURLs.has(reviewState.prUrl));
 	const latest = openReviewStates.find((review) => review.latestRun)?.latestRun;
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
-	const terminalEnabled = harness !== "greptile" && Boolean(reviewerHandleId && onOpenTerminal);
+	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
 	const reviewHasRun = reviewRunning || Boolean(latest);
 	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
@@ -1008,7 +1006,7 @@ function ReviewPanel({
 					{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
 					{reviewRunning ? (isCancelling ? "Cancelling..." : "Cancel review") : runAction}
 				</Button>
-				{reviewHasRun && harness !== "greptile" ? (
+				{reviewHasRun ? (
 					<Button
 						className="gap-1.5 [&_svg]:size-icon-sm"
 						disabled={!terminalEnabled}

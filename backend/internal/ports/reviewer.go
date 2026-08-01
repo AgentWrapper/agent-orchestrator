@@ -30,10 +30,53 @@ type OneShotReviewer interface {
 	ParseReviewResult(output []byte) (ReviewResult, error)
 }
 
+// TerminalOneShotReviewer is a one-shot reviewer that can run through AO's
+// display-only terminal runner. The runner keeps the review visible in the
+// same terminal surface as interactive reviewers while the daemon still
+// receives structured results from a small result file.
+type TerminalOneShotReviewer interface {
+	OneShotReviewer
+	PrepareTerminalRequest(path string, tasks []ReviewTask) (ReviewCommandSpec, error)
+	TerminalResultPath(requestPath string) string
+	ParseTerminalResult(output []byte) (TerminalReviewResult, error)
+}
+
 // ReviewResult is the reviewer-neutral result of a one-shot review.
 type ReviewResult struct {
-	Verdict domain.ReviewVerdict
-	Body    string
+	Verdict  domain.ReviewVerdict
+	Body     string
+	Comments []ReviewComment
+}
+
+// ReviewComment is a normalized inline finding emitted by a reviewer.
+type ReviewComment struct {
+	Path          string
+	StartLine     int
+	EndLine       int
+	Side          string
+	Body          string
+	Suggestion    string
+	Severity      string
+	SecurityIssue bool
+}
+
+// TerminalReviewResult is the durable result written by a display-only
+// one-shot reviewer terminal. Results are written incrementally, so Complete
+// is the only field the daemon uses to decide that the whole batch finished.
+type TerminalReviewResult struct {
+	Complete bool
+	Results  []TerminalReviewItem
+}
+
+// TerminalReviewItem is one queued review result, or one queued failure.
+type TerminalReviewItem struct {
+	RunID     string
+	PRURL     string
+	TargetSHA string
+	Verdict   domain.ReviewVerdict
+	Body      string
+	Comments  []ReviewComment
+	Error     string
 }
 
 // ReviewCancelMode names how AO should stop a running reviewer.

@@ -713,7 +713,7 @@ describe("SessionInspector reviews tab", () => {
 		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-pane", harness: "codex" });
 	});
 
-	it("does not open a terminal for the one-shot Greptile reviewer", async () => {
+	it("opens the display-only terminal for the Greptile reviewer", async () => {
 		mockCommonGets([], "", [reviewState(3, "needs_review")]);
 		postMock.mockResolvedValue({
 			response: { status: 201 },
@@ -742,7 +742,7 @@ describe("SessionInspector reviews tab", () => {
 		await userEvent.click(await screen.findByRole("button", { name: /run review/i }));
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
 
-		expect(onOpenReviewerTerminal).not.toHaveBeenCalled();
+		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-job", harness: "greptile" });
 	});
 
 	it("shows claude-code as the default reviewer before a run exists", async () => {

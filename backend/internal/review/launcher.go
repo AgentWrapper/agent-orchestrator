@@ -56,10 +56,13 @@ type LaunchSpec struct {
 // ReviewCompletion is one asynchronously completed one-shot review. Err is set
 // when the CLI failed before producing a usable result.
 type ReviewCompletion struct {
-	RunID   string
-	Verdict domain.ReviewVerdict
-	Body    string
-	Err     error
+	RunID     string
+	PRURL     string
+	TargetSHA string
+	Verdict   domain.ReviewVerdict
+	Body      string
+	Comments  []ports.ReviewComment
+	Err       error
 }
 
 // CompletionHandler records results emitted by a one-shot reviewer.
@@ -74,6 +77,14 @@ type reviewerRuntime interface {
 	Interrupt(ctx context.Context, handle ports.RuntimeHandle) error
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
 	SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error
+}
+
+// reviewerTerminalRuntime identifies the production runtimes that support a
+// durable visible terminal. The optional capability keeps lightweight launcher
+// fakes and third-party runtimes on the original background one-shot path.
+type reviewerTerminalRuntime interface {
+	reviewerRuntime
+	GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error)
 }
 
 // agentLauncher resolves a reviewer adapter from the registry and drives the
@@ -322,8 +333,8 @@ func (l *agentLauncher) Cancel(ctx context.Context, handleID string, harness dom
 	if handleID == "" {
 		return nil
 	}
-	if l.cancelOneShot(handleID) {
-		return nil
+	if handled, err := l.cancelOneShot(ctx, handleID); handled {
+		return err
 	}
 	reviewer, ok := l.reviewers.Reviewer(harness)
 	if !ok {

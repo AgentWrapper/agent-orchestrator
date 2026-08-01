@@ -133,12 +133,14 @@ PR actions are available through `ao pr merge` and
 Projects can also select `greptile` as their reviewer harness. Install and
 authenticate the Greptile CLI first (`greptile login`), then choose
 **Greptile CLI** in project settings. AO runs `greptile review --json` as a
-one-shot background review for each PR, using that PR's base branch and repo
-worktree. Findings are recorded in AO and routed back to the worker like other
+one-shot review for each PR, using that PR's base branch and repo worktree. The
+review runs in a display-only AO terminal, so you can watch its progress and
+findings without a chat prompt. Findings are recorded in AO and posted back to
+GitHub as inline review comments, then routed to the worker like other
 changes-requested reviews. Greptile is reviewer-only: it cannot be selected as
-a worker or orchestrator agent, and it does not expose an interactive reviewer
-terminal. `ao review cancel` stops the local CLI process; a remote Greptile run
-that has already started may continue on Greptile's service.
+a worker or orchestrator agent. `ao review cancel` stops the local CLI process;
+a remote Greptile run that has already started may continue on Greptile's
+service.
 
 ## Configuration
 
