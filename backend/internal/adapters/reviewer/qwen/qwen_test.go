@@ -2,7 +2,6 @@ package qwen
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -21,45 +20,46 @@ func invocation(t *testing.T) ports.ReviewInvocation {
 		t.Fatal(err)
 	}
 	task := filepath.Join(prompts, "task.md")
-	system := filepath.Join(prompts, "system.md")
-	if err := os.WriteFile(task, []byte("task"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(system, []byte("review read-only"), 0o600); err != nil {
+	if err := os.WriteFile(task, []byte("secret task contents"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return ports.ReviewInvocation{
 		ReviewerID: "review-worker-1", RunID: "run-1", WorkerSessionID: "worker-1",
 		PRURL: "https://github.com/acme/widgets/pull/42", TargetSHA: "0123456789abcdef",
-		WorkspacePath: filepath.Join(root, "checkout"), Prompt: "Read the hidden task file.",
-		SystemPromptFile: system, TaskPromptFile: task, TaskPromptRoot: prompts,
+		WorkspacePath: filepath.Join(root, "checkout"), DataDir: filepath.Join(root, "ao-data"),
+		Prompt: "Read the AO review task reference.", SystemPrompt: "secret system contents",
+		TaskPromptFile: task, TaskPromptRoot: prompts,
 	}
 }
 
-func TestInteractiveCommandSpecIsPermanentTUIInNeutralGatewayEnvironment(t *testing.T) {
-	reviewer := New(t.TempDir())
+func TestReviewCommandIsExactPermanentTUIWithPostReadinessReference(t *testing.T) {
+	reviewer := New()
 	reviewer.resolveBinary = func(context.Context) (string, error) { return "/opt/qwen/bin/qwen", nil }
 	inv := invocation(t)
 
-	spec, err := reviewer.interactiveCommandSpec(context.Background(), inv)
+	spec, err := reviewer.ReviewCommand(context.Background(), inv)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantPrefix := []string{
-		"/opt/qwen/bin/qwen", "--bare", "--approval-mode", "plan", "--chat-recording=false",
-		"--mcp-config", `{"mcpServers":{}}`, "--append-system-prompt", "review read-only",
-		"--prompt-interactive", "Read the hidden task file.",
+	want := []string{"/opt/qwen/bin/qwen", "--bare", "--approval-mode", "plan"}
+	if !reflect.DeepEqual(spec.Argv, want) {
+		t.Fatalf("argv = %#v, want %#v", spec.Argv, want)
 	}
-	if !reflect.DeepEqual(spec.Argv, wantPrefix) {
-		t.Fatalf("argv = %#v", spec.Argv)
+	if spec.InitialMessage != inv.Prompt {
+		t.Fatalf("initial message = %q, want short reference %q", spec.InitialMessage, inv.Prompt)
 	}
 	joined := strings.Join(spec.Argv, " ")
-	for _, forbidden := range []string{" -p ", "--prompt ", "--output-format", "--json-schema", "--acp", " serve", "--yolo"} {
+	for _, forbidden := range []string{
+		inv.Prompt, inv.SystemPrompt, inv.TaskPromptFile, "secret task contents",
+		"--prompt", "--prompt-interactive", " -p ", " -i ", "--output-format",
+		"--json", "--json-schema", "--acp", "serve", "--yolo", "--resume",
+		"--continue", "--worktree",
+	} {
 		if strings.Contains(" "+joined+" ", forbidden) {
-			t.Fatalf("interactive command contains forbidden mode %q: %q", forbidden, joined)
+			t.Fatalf("interactive command contains forbidden value %q: %q", forbidden, joined)
 		}
 	}
-	if spec.WorkingDirectory == inv.WorkspacePath || !strings.HasPrefix(spec.WorkingDirectory, reviewer.dataDir+string(filepath.Separator)) {
+	if spec.WorkingDirectory == inv.WorkspacePath || !strings.HasPrefix(spec.WorkingDirectory, inv.DataDir+string(filepath.Separator)) {
 		t.Fatalf("working directory = %q", spec.WorkingDirectory)
 	}
 	if spec.Env["HOME"] == "" || spec.Env["TMPDIR"] == "" || spec.Env["AO_REVIEW_GATEWAY_MANIFEST"] == "" {
@@ -73,51 +73,50 @@ func TestInteractiveCommandSpecIsPermanentTUIInNeutralGatewayEnvironment(t *test
 	}
 }
 
-func TestReviewCommandFailsClosedBeforeRuntimeLaunch(t *testing.T) {
-	reviewer := New(t.TempDir())
-	if _, err := reviewer.ReviewCommand(context.Background(), invocation(t)); !errors.Is(err, ErrIsolationUnavailable) {
-		t.Fatalf("ReviewCommand err = %v, want isolation blocker", err)
+func TestReviewCommandRequiresAODataDir(t *testing.T) {
+	inv := invocation(t)
+	inv.DataDir = ""
+	reviewer := New()
+	reviewer.resolveBinary = func(context.Context) (string, error) { return "/opt/qwen/bin/qwen", nil }
+	if _, err := reviewer.ReviewCommand(context.Background(), inv); err == nil || !strings.Contains(err.Error(), "AO data directory is required") {
+		t.Fatalf("ReviewCommand error = %v", err)
 	}
 }
 
-func TestInteractiveCommandSpecRejectsRelativeBinary(t *testing.T) {
-	reviewer := New(t.TempDir())
+func TestReviewCommandRejectsRelativeBinary(t *testing.T) {
+	reviewer := New()
 	reviewer.resolveBinary = func(context.Context) (string, error) { return "qwen", nil }
-	if _, err := reviewer.interactiveCommandSpec(context.Background(), invocation(t)); err == nil {
+	if _, err := reviewer.ReviewCommand(context.Background(), invocation(t)); err == nil {
 		t.Fatal("relative executable accepted")
 	}
 }
 
-func TestReviewMessageReusesPaneInjection(t *testing.T) {
-	reviewer := New(t.TempDir())
+func TestReviewMessageReusesPaneInjectionWithoutAddingAuthority(t *testing.T) {
 	inv := invocation(t)
 	inv.Prompt = "Read /ao/task.md"
-	message, err := reviewer.ReviewMessage(context.Background(), inv)
-	if err != nil || !strings.HasPrefix(message, "Read /ao/task.md\nAO review gateway manifest: `") {
+	message, err := New().ReviewMessage(context.Background(), inv)
+	if err != nil || message != inv.Prompt {
 		t.Fatalf("message = %q, %v", message, err)
-	}
-	manifest := strings.TrimSuffix(strings.TrimPrefix(message, "Read /ao/task.md\nAO review gateway manifest: `"), "`.")
-	if _, err := os.Stat(manifest); err != nil {
-		t.Fatalf("follow-up manifest: %v", err)
 	}
 }
 
-func TestReviewCancelUsesOneCtrlC(t *testing.T) {
-	reviewer := New(t.TempDir())
-	spec, err := reviewer.ReviewCancel(context.Background())
+func TestReviewCancelUsesOneEscapeAndNeverCtrlC(t *testing.T) {
+	spec, err := New().ReviewCancel(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spec.Mode != ports.ReviewCancelInterrupt || spec.Interrupts != 1 {
-		t.Fatalf("cancel spec = %+v", spec)
+	if spec.Mode != ports.ReviewCancelEscape || spec.Interrupts != 1 {
+		t.Fatalf("cancel spec = %+v, want one Escape", spec)
 	}
 }
 
-func TestQwenReviewerIdentityIsReservedButDisabled(t *testing.T) {
-	if New(t.TempDir()).Harness() != domain.ReviewerQwen {
+func TestQwenReviewerIdentityAndHostTrustWarning(t *testing.T) {
+	if New().Harness() != domain.ReviewerQwen {
 		t.Fatal("wrong harness")
 	}
-	if domain.ReviewerQwen.IsKnown() {
-		t.Fatal("Qwen must remain outside the enabled reviewer vocabulary")
+	for _, phrase := range []string{"host-trusted", "no OS isolation", "! shell"} {
+		if !strings.Contains(HostTrustWarning, phrase) {
+			t.Fatalf("warning %q does not contain %q", HostTrustWarning, phrase)
+		}
 	}
 }
