@@ -309,6 +309,17 @@ func (s *Service) Snapshot(ctx context.Context, id domain.SessionID) (Snapshot, 
 	}
 
 	conversation, err := s.store.ConversationForSession(ctx, id)
+	if errors.Is(err, domain.ErrNoConversation) {
+		// A chat session has no conversation until its controller first starts.
+		// That is an empty conversation, not a failure — returning an error here
+		// would make a brand-new session look broken.
+		return Snapshot{
+			SessionID:  id,
+			Harness:    record.Harness,
+			Mode:       domain.NormalizeSessionMode(record.Mode),
+			Controller: ports.ChatControllerStopped,
+		}, nil
+	}
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("conversation for %s: %w", id, err)
 	}

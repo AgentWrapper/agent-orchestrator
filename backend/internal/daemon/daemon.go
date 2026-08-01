@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	chatdriverregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/registry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
 	"github.com/aoagents/agent-orchestrator/backend/internal/browserruntime"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
@@ -31,6 +32,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	browsersvc "github.com/aoagents/agent-orchestrator/backend/internal/service/browser"
+	chatsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/chat"
 	devimportsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/devimport"
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
@@ -38,6 +40,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
+	"github.com/google/uuid"
 )
 
 // Run starts the daemon and blocks until it exits. SIGINT/SIGTERM drive
@@ -243,6 +246,31 @@ func Run() error {
 		go dispatcher.Run(ctx)
 	}
 
+	// Chat service. The driver registry is the capability gate: a harness with no
+	// registered driver cannot start in chat mode, so an unsupported request fails
+	// loudly instead of silently becoming a TUI session.
+	chatSvc := chatsvc.New(chatsvc.Options{
+		Store:    store,
+		Sessions: store,
+		// Adapts the store's own snapshot type, so the chat service never has to
+		// import the storage layer.
+		Reader: chatsvc.SnapshotReaderFunc(func(ctx context.Context, conversationID string) (chatsvc.ConversationRows, error) {
+			rows, err := store.LoadConversationSnapshot(ctx, conversationID)
+			if err != nil {
+				return chatsvc.ConversationRows{}, err
+			}
+			return chatsvc.ConversationRows{
+				Conversation: rows.Conversation,
+				Turns:        rows.Turns,
+				Messages:     rows.Messages,
+				Activities:   rows.Activities,
+			}, nil
+		}),
+		Drivers: chatdriverregistry.Build(log),
+		Log:     log,
+		NewID:   uuid.NewString,
+	})
+
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectSvc,
 		Agents:             agentSvc,
@@ -253,6 +281,7 @@ func Run() error {
 		Push:               pushRegistry,
 		Import:             importsvc.New(importsvc.Deps{Store: store}),
 		ShellTerminals:     shellTermSvc,
+		Conversations:      chatSvc,
 		CDC:                store,
 		Events:             cdcPipe.Broadcaster,
 		Activity:           lcStack.LCM,
@@ -350,6 +379,12 @@ func Run() error {
 	stop()
 	managedPreview.Close()
 	<-previewDone
+	// Close chat controllers before the lifecycle stack: each owns an app-server
+	// child process, and closing them also settles any turn left in flight so a
+	// restart does not read a half-finished turn as still working.
+	chatStopCtx, chatCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	chatSvc.StopAll(chatStopCtx)
+	chatCancel()
 	lcStack.Stop()
 	lanStopCtx, lanCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer lanCancel()

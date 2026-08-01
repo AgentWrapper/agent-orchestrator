@@ -25,8 +25,10 @@ import (
 //     same transaction. If the process dies between them, neither survives — so
 //     the archive can never disagree with the timeline it explains.
 
-// ErrConversationNotFound reports a lookup for a session that has none.
-var ErrConversationNotFound = errors.New("conversation not found")
+// ErrConversationNotFound reports a lookup for a session that has none. It
+// aliases the domain sentinel so a service can recognize it without importing the
+// storage layer.
+var ErrConversationNotFound = domain.ErrNoConversation
 
 // CreateConversation opens a session-scoped conversation. Returns the existing
 // one if it is already there, so a controller restart is idempotent.

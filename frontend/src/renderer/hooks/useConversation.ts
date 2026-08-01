@@ -44,6 +44,18 @@ export function conversationQueryKey(sessionId: string) {
 const ACTIVE_INTERVAL_MS = 1000;
 const IDLE_INTERVAL_MS = 5000;
 
+/**
+ * Answers that will never change on a retry. SESSION_MODE_MISMATCH is permanent
+ * because a session's mode is fixed at creation; the others describe a session or
+ * controller state the client should explain rather than poll at.
+ */
+const PERMANENT_CODES = new Set([
+	"SESSION_MODE_MISMATCH",
+	"SESSION_NOT_FOUND",
+	"SESSION_MODE_UNSUPPORTED",
+	"CHAT_AUTH_REQUIRED",
+]);
+
 export interface ConversationQueryResult {
 	snapshot?: ConversationSnapshot;
 	isLoading: boolean;
@@ -62,6 +74,15 @@ export function useConversation(sessionId: string | undefined): ConversationQuer
 			});
 			if (error) throw error;
 			return toSnapshot(data as WireSnapshot);
+		},
+		// A mode mismatch is permanent: the mode is immutable, so retrying cannot
+		// help and retrying would leave the surface stuck on a loading state
+		// instead of explaining why there is no conversation. Only genuinely
+		// transient failures are retried.
+		retry: (attempt, error) => {
+			const code = apiErrorCode(error);
+			if (code && PERMANENT_CODES.has(code)) return false;
+			return attempt < 2;
 		},
 		refetchInterval: (query) => {
 			const snapshot = query.state.data;

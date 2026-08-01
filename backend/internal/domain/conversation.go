@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // The durable conversation model for Chat-mode sessions.
 //
@@ -189,3 +192,8 @@ type ConversationActivity struct {
 	CreatedAt      time.Time `json:"createdAt"`
 	UpdatedAt      time.Time `json:"updatedAt"`
 }
+
+// ErrNoConversation reports that a session has no conversation row yet. It is not
+// a failure: a Chat session has no conversation until its controller first
+// starts, and a reader should show an empty conversation rather than an error.
+var ErrNoConversation = errors.New("session has no conversation")
