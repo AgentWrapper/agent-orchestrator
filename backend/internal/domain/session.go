@@ -54,7 +54,12 @@ type SessionRecord struct {
 	Kind        SessionKind  `json:"kind"`
 	Harness     AgentHarness `json:"harness,omitempty"`
 	DisplayName string       `json:"displayName,omitempty"`
-	Activity    Activity     `json:"activity"`
+	// Mode is the conversation controller this session was created with. It is
+	// immutable: every later spawn, send, restore, kill, and reaper decision
+	// dispatches from this field, not from the current default setting. Rows
+	// written before Chat mode existed read back as SessionModeTUI.
+	Mode     SessionMode `json:"mode" enum:"chat,tui"`
+	Activity Activity    `json:"activity"`
 	// FirstSignalAt is when the FIRST agent hook callback arrived for the
 	// current spawn/restore: raw signal receipt, independent of the derived
 	// activity state. Zero means no hook has ever reported, which deriveStatus
