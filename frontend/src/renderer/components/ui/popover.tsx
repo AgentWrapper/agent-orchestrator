@@ -13,7 +13,7 @@ export function PopoverContent({
 		<PopoverPrimitive.Portal>
 			<PopoverPrimitive.Content
 				className={cn(
-					"z-overlay rounded-lg border border-border bg-card text-popover-foreground outline-none",
+					"z-overlay rounded-lg border border-border bg-popover text-popover-foreground outline-none",
 					"shadow-[0_8px_32px_rgba(0,0,0,0.28),0_2px_8px_rgba(0,0,0,0.18)]",
 					"origin-(--radix-popover-content-transform-origin)",
 					"data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out",
