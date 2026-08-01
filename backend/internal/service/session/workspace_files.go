@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -667,6 +668,30 @@ func workspaceTextSnippet(content string, index, matchLen int) string {
 	return snippet
 }
 
+var (
+	workspaceTextEditLocksMu sync.Mutex
+	workspaceTextEditLocks   = map[string]*sync.Mutex{}
+)
+
+// lockWorkspaceTextEditFile serializes writeWorkspaceTextFileIfUnchanged calls
+// for the same workspace file. Without it, two overlapping calls can both read
+// a matching snapshot before either renames, so the second rename silently
+// clobbers the first even though it also reported success. Holding this lock
+// across the read-compare-rename sequence guarantees whichever call runs
+// second observes the first's write and correctly reports a conflict instead.
+func lockWorkspaceTextEditFile(file string) func() {
+	workspaceTextEditLocksMu.Lock()
+	mu := workspaceTextEditLocks[file]
+	if mu == nil {
+		mu = &sync.Mutex{}
+		workspaceTextEditLocks[file] = mu
+	}
+	workspaceTextEditLocksMu.Unlock()
+
+	mu.Lock()
+	return mu.Unlock
+}
+
 func writeWorkspaceTextFileIfUnchanged(file, snapshot, content string) (bool, error) {
 	dir := filepath.Dir(file)
 	temp, err := os.CreateTemp(dir, ".ao-text-edit-*")
@@ -687,19 +712,23 @@ func writeWorkspaceTextFileIfUnchanged(file, snapshot, content string) (bool, er
 	if err := temp.Close(); err != nil {
 		return false, err
 	}
-	current, binary, truncated, err := readWorkspaceTextFile(file, maxWorkspaceFileBytes)
-	if err != nil {
-		return false, err
-	}
-	if binary || truncated || current != snapshot {
-		return false, nil
-	}
 	info, err := os.Stat(file)
 	if err != nil {
 		return false, err
 	}
 	if err := os.Chmod(tempName, info.Mode().Perm()); err != nil {
 		return false, err
+	}
+
+	unlock := lockWorkspaceTextEditFile(file)
+	defer unlock()
+
+	current, binary, truncated, err := readWorkspaceTextFile(file, maxWorkspaceFileBytes)
+	if err != nil {
+		return false, err
+	}
+	if binary || truncated || current != snapshot {
+		return false, nil
 	}
 	if err := os.Rename(tempName, file); err != nil {
 		return false, err

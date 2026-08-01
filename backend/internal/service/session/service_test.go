@@ -442,6 +442,75 @@ func TestWriteWorkspaceTextFileIfUnchangedRejectsChangedSnapshot(t *testing.T) {
 	}
 }
 
+// TestWriteWorkspaceTextFileIfUnchangedSerializesConcurrentSaves proves that
+// two overlapping saves to the same file, both starting from a valid
+// snapshot, can never both "succeed": the per-file lock forces one to observe
+// the other's write and report a conflict instead of silently clobbering it.
+func TestWriteWorkspaceTextFileIfUnchangedSerializesConcurrentSaves(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "App.tsx")
+	snapshot := "<h1>Draft copy</h1>\n"
+	if err := os.WriteFile(file, []byte(snapshot), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	const attempts = 20
+	for i := 0; i < attempts; i++ {
+		if err := os.WriteFile(file, []byte(snapshot), 0o640); err != nil {
+			t.Fatal(err)
+		}
+
+		contentA := "<h1>Copy from tab A</h1>\n"
+		contentB := "<h1>Copy from tab B</h1>\n"
+
+		start := make(chan struct{})
+		results := make(chan struct {
+			label   string
+			content string
+			applied bool
+			err     error
+		}, 2)
+
+		run := func(label, content string) {
+			<-start
+			applied, err := writeWorkspaceTextFileIfUnchanged(file, snapshot, content)
+			results <- struct {
+				label   string
+				content string
+				applied bool
+				err     error
+			}{label, content, applied, err}
+		}
+		go run("A", contentA)
+		go run("B", contentB)
+		close(start)
+
+		first := <-results
+		second := <-results
+		if first.err != nil {
+			t.Fatalf("attempt %d: %s: %v", i, first.label, first.err)
+		}
+		if second.err != nil {
+			t.Fatalf("attempt %d: %s: %v", i, second.label, second.err)
+		}
+		if first.applied == second.applied {
+			t.Fatalf("attempt %d: applied=(%v,%v), want exactly one winner", i, first.applied, second.applied)
+		}
+
+		winner := first
+		if second.applied {
+			winner = second
+		}
+		got, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != winner.content {
+			t.Fatalf("attempt %d: content = %q, want winner %s's content %q", i, winner.label, got, winner.content)
+		}
+	}
+}
+
 func TestApplyWorkspaceTextEditAmbiguousMatchReturnsCandidates(t *testing.T) {
 	repo := newWorkspaceRepo(t)
 	writeWorkspaceFile(t, repo, "src/Footer.tsx", "export function Footer() {\n\treturn <span>Draft copy</span>;\n}\n")
