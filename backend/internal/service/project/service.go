@@ -3,6 +3,7 @@ package project
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -248,7 +249,14 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	// `master` (or any non-`main` default) falls back to DefaultBranchName and
 	// every spawn fails BRANCH_NOT_FETCHED. Only persist when it diverges from
 	// the default, so the common `main` repo keeps an empty (NULL) config.
-	if row.Config.DefaultBranch == "" {
+	if row.Config.DefaultBranch != "" {
+		if !branchExists(ctx, path, row.Config.DefaultBranch) {
+			return Project{}, apierr.Invalid("INVALID_DEFAULT_BRANCH", fmt.Sprintf("Default branch %q does not exist in repository", row.Config.DefaultBranch), map[string]any{
+				"branch": row.Config.DefaultBranch,
+				"path":   path,
+			})
+		}
+	} else {
 		if branch := resolveDefaultBranch(path); branch != "" && branch != domain.DefaultBranchName {
 			row.Config.DefaultBranch = branch
 		}
@@ -672,6 +680,19 @@ func resolveDefaultBranch(path string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func branchExists(ctx context.Context, repoPath, branch string) bool {
+	candidates := []string{
+		"refs/heads/" + branch,
+		"refs/remotes/origin/" + branch,
+	}
+	for _, ref := range candidates {
+		if _, err := aoprocess.CommandContext(ctx, "git", "-C", repoPath, "rev-parse", "--verify", "--quiet", ref).Output(); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // Remove stops live project sessions, reclaims safe managed workspaces, then

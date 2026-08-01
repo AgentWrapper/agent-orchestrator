@@ -129,4 +129,89 @@ describe("CreateProjectAgentSheet", () => {
 		expect(screen.queryByText("Repository")).not.toBeInTheDocument();
 		expect(screen.queryByText(/Reads credentials from/)).not.toBeInTheDocument();
 	});
+
+	it("renders Default branch selector preselected to inferred default for single_repo, allowing search and selection", async () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		queryClient.setQueryData(agentsQueryKey, {
+			supported: [{ id: "claude-code", label: "claude-code" }],
+			installed: [{ id: "claude-code", label: "claude-code", authStatus: "authorized" }],
+			authorized: [{ id: "claude-code", label: "claude-code", authStatus: "authorized" }],
+		});
+		const onSubmit = vi.fn().mockResolvedValue(undefined);
+		render(
+			<QueryClientProvider client={queryClient}>
+				<CreateProjectAgentSheet
+					defaultBranch="main"
+					branches={["main", "develop", "feature/auth"]}
+					isCreating={false}
+					kind="single_repo"
+					onOpenChange={() => undefined}
+					onSubmit={onSubmit}
+					open={true}
+					path="/repo/demo"
+				/>
+			</QueryClientProvider>,
+		);
+
+		const trigger = screen.getByLabelText("Default branch");
+		expect(trigger).toHaveTextContent("main");
+
+		await userEvent.click(trigger);
+		expect(await screen.findByPlaceholderText("Search branches...")).toBeInTheDocument();
+		expect(screen.getByRole("option", { name: "develop" })).toBeInTheDocument();
+		expect(screen.getByRole("option", { name: "feature/auth" })).toBeInTheDocument();
+
+		await userEvent.type(screen.getByPlaceholderText("Search branches..."), "dev");
+		expect(screen.getByRole("option", { name: "develop" })).toBeInTheDocument();
+		expect(screen.queryByRole("option", { name: "feature/auth" })).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("option", { name: "develop" }));
+		expect(trigger).toHaveTextContent("develop");
+
+		await userEvent.click(screen.getByRole("button", { name: "Create and start" }));
+		await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+		expect(onSubmit).toHaveBeenCalledWith(
+			expect.objectContaining({
+				defaultBranch: "develop",
+			}),
+		);
+	});
+
+	it("hides Default branch selector for workspace projects or when repository setup is needed", () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const { rerender } = render(
+			<QueryClientProvider client={queryClient}>
+				<CreateProjectAgentSheet
+					defaultBranch="main"
+					branches={["main", "develop"]}
+					isCreating={false}
+					kind="workspace"
+					onOpenChange={() => undefined}
+					onSubmit={vi.fn()}
+					open={true}
+					path="/repo/demo"
+				/>
+			</QueryClientProvider>,
+		);
+
+		expect(screen.queryByLabelText("Default branch")).not.toBeInTheDocument();
+
+		rerender(
+			<QueryClientProvider client={queryClient}>
+				<CreateProjectAgentSheet
+					defaultBranch="main"
+					branches={["main", "develop"]}
+					isCreating={false}
+					kind="single_repo"
+					repositorySetupNeeded={true}
+					onOpenChange={() => undefined}
+					onSubmit={vi.fn()}
+					open={true}
+					path="/repo/demo"
+				/>
+			</QueryClientProvider>,
+		);
+
+		expect(screen.queryByLabelText("Default branch")).not.toBeInTheDocument();
+	});
 });

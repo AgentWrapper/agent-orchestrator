@@ -63,10 +63,13 @@ describe("scanImportFolder", () => {
 		expect(scan.setupWarning).toContain("AO will initialize this folder as a separate repository.");
 	});
 
-	it("reports a true project repository root as importable", async () => {
+	it("reports a true project repository root as importable with discovered branches", async () => {
 		const root = await tempDir();
 		const repo = path.join(root, "repo");
 		await committedRepo(repo);
+		await git(["branch", "feature/login"], repo);
+		await git(["update-ref", "refs/remotes/origin/main", "HEAD"], repo);
+		await git(["update-ref", "refs/remotes/origin/dev", "HEAD"], repo);
 
 		const scan = await scanImportFolder(repo, "project");
 
@@ -76,6 +79,7 @@ describe("scanImportFolder", () => {
 				path: repo,
 				relativePath: ".",
 				branch: "main",
+				branches: ["dev", "feature/login", "main"],
 				hasRemote: true,
 				status: "ok",
 			}),

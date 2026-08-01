@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
-import { TriangleAlert, X, type LucideIcon } from "lucide-react";
+import { Check, ChevronDown, GitBranch, Search, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import { memo, useEffect, useState } from "react";
 import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
@@ -15,6 +15,7 @@ import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import type { ProjectKind } from "../types/workspace";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
@@ -25,6 +26,7 @@ export type CreateProjectAgentSelection = {
 	workerAgent: string;
 	orchestratorAgent: string;
 	trackerIntake?: TrackerIntakeConfig;
+	defaultBranch?: string;
 };
 
 const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "" };
@@ -34,6 +36,8 @@ const DEFAULT_AGENT_PRIORITY_RANK = new Map<string, number>(
 );
 
 type CreateProjectAgentSheetProps = {
+	defaultBranch?: string;
+	branches?: string[];
 	error?: string | null;
 	isCreating: boolean;
 	isInitializing?: boolean;
@@ -87,6 +91,8 @@ function projectSheetError(error: string): SheetError {
 }
 
 export function CreateProjectAgentSheet({
+	defaultBranch,
+	branches,
 	error,
 	isCreating,
 	isInitializing = false,
@@ -124,6 +130,7 @@ export function CreateProjectAgentSheet({
 		: agentsError;
 	const [workerAgent, setWorkerAgent] = useState("");
 	const [orchestratorAgent, setOrchestratorAgent] = useState("");
+	const [selectedBranch, setSelectedBranch] = useState(defaultBranch ?? "");
 	const [workerAgentTouched, setWorkerAgentTouched] = useState(false);
 	const [orchestratorAgentTouched, setOrchestratorAgentTouched] = useState(false);
 	const isBusy = isCreating || isInitializing;
@@ -140,14 +147,17 @@ export function CreateProjectAgentSheet({
 	}, [agentOptions, open, orchestratorAgentTouched, workerAgentTouched]);
 
 	useEffect(() => {
-		if (!open) {
+		if (open) {
+			setSelectedBranch(defaultBranch ?? "");
+		} else {
 			setWorkerAgent("");
 			setOrchestratorAgent("");
+			setSelectedBranch("");
 			setWorkerAgentTouched(false);
 			setOrchestratorAgentTouched(false);
 			setIntake(EMPTY_INTAKE);
 		}
-	}, [open, path]);
+	}, [defaultBranch, open, path]);
 
 	return (
 		<Dialog.Root open={open} onOpenChange={(next) => !isBusy && onOpenChange(next)}>
@@ -179,7 +189,12 @@ export function CreateProjectAgentSheet({
 						onSubmit={(event) => {
 							event.preventDefault();
 							if (!canSubmit) return;
-							void onSubmit({ workerAgent, orchestratorAgent, trackerIntake: buildIntake(intake) });
+							void onSubmit({
+								workerAgent,
+								orchestratorAgent,
+								trackerIntake: buildIntake(intake),
+								defaultBranch: selectedBranch || undefined,
+							});
 						}}
 					>
 						<div className="grid gap-4 sm:grid-cols-2">
@@ -218,6 +233,17 @@ export function CreateProjectAgentSheet({
 								}}
 							/>
 						</div>
+
+						{kind === "single_repo" && !repositorySetupNeeded && (
+							<SearchableBranchSelect
+								id="newProjectDefaultBranch"
+								label="Default branch"
+								value={selectedBranch || defaultBranch || "main"}
+								branches={branches && branches.length > 0 ? branches : [defaultBranch || "main"]}
+								onChange={setSelectedBranch}
+								disabled={isBusy}
+							/>
+						)}
 
 						{isLoadingAgents && (
 							<p className="text-xs leading-row text-[var(--color-text-agents-sheet-description)]">Loading agents...</p>
@@ -465,4 +491,99 @@ export function defaultAuthorizedAgent(authorizedAgents: AgentInfo[]): string {
 	const prioritized = DEFAULT_AGENT_PRIORITY.find((agent) => authorizedIds.has(agent));
 	if (prioritized) return prioritized;
 	return [...authorizedAgents].sort(agentLabelCompare)[0]?.id ?? "";
+}
+
+export function SearchableBranchSelect({
+	branches,
+	disabled = false,
+	id,
+	label,
+	onChange,
+	value,
+}: {
+	branches: string[];
+	disabled?: boolean;
+	id: string;
+	label: string;
+	onChange: (branch: string) => void;
+	value: string;
+}) {
+	const [open, setOpen] = useState(false);
+	const [search, setSearch] = useState("");
+
+	const filteredBranches = branches.filter((b) => b.toLowerCase().includes(search.toLowerCase().trim()));
+
+	return (
+		<div className="flex flex-col gap-1.5">
+			<Label htmlFor={id} className="agents-sheet-label text-xs font-medium text-muted-foreground">
+				{label}
+			</Label>
+			<Popover open={open} onOpenChange={setOpen}>
+				<PopoverTrigger asChild disabled={disabled}>
+					<button
+						type="button"
+						id={id}
+						aria-label={label}
+						className={cn(
+							"agents-sheet-control flex h-9 w-full items-center justify-between rounded-md border border-[var(--color-border-agents-sheet)] bg-[var(--color-bg-agents-sheet-control)] px-3 text-xs text-[var(--color-text-agents-sheet-title)] outline-none transition hover:bg-interactive-hover disabled:pointer-events-none disabled:opacity-50",
+						)}
+					>
+						<span className="flex items-center gap-2 truncate">
+							<GitBranch className="size-icon-sm shrink-0 opacity-70" aria-hidden="true" />
+							<span className="truncate">{value || "Select default branch"}</span>
+						</span>
+						<ChevronDown className="size-icon-sm shrink-0 opacity-70" aria-hidden="true" />
+					</button>
+				</PopoverTrigger>
+				<PopoverContent
+					side="bottom"
+					align="start"
+					sideOffset={4}
+					className="agents-sheet-menu z-overlay w-[var(--radix-popover-trigger-width)] max-h-select-menu-max overflow-hidden rounded-lg border border-[var(--color-border-agents-sheet)] bg-[var(--color-bg-agents-sheet)] p-2 shadow-md outline-none"
+				>
+					<div className="relative mb-2">
+						<Search className="pointer-events-none absolute left-2.5 top-1/2 size-icon-sm -translate-y-1/2 text-[var(--color-text-agents-sheet-description)]" />
+						<input
+							type="text"
+							className="w-full rounded-md border border-[var(--color-border-agents-sheet)] bg-[var(--color-bg-agents-sheet-control)] py-1.5 pl-8 pr-2.5 text-xs text-[var(--color-text-agents-sheet-title)] placeholder:text-[var(--color-text-agents-sheet-description)] focus:outline-none"
+							placeholder="Search branches..."
+							aria-label="Search branches"
+							value={search}
+							onChange={(e) => setSearch(e.target.value)}
+						/>
+					</div>
+					<div className="max-h-40 overflow-y-auto space-y-0.5" role="listbox" aria-label="Branch list">
+						{filteredBranches.length > 0 ? (
+							filteredBranches.map((branch) => (
+								<button
+									key={branch}
+									type="button"
+									role="option"
+									aria-selected={branch === value}
+									className={cn(
+										"flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-xs text-left transition",
+										branch === value
+											? "bg-[var(--color-bg-agents-sheet-control)] font-medium text-[var(--color-text-agents-sheet-title)]"
+											: "text-[var(--color-text-agents-sheet-description)] hover:bg-interactive-hover hover:text-[var(--color-text-agents-sheet-title)]",
+									)}
+									onClick={() => {
+										onChange(branch);
+										setOpen(false);
+										setSearch("");
+									}}
+								>
+									<span className="truncate">{branch}</span>
+									{branch === value && <Check className="size-icon-sm text-accent shrink-0" aria-hidden="true" />}
+								</button>
+							))
+						) : (
+							<p className="px-2.5 py-2 text-xs text-[var(--color-text-agents-sheet-description)]">
+								No matching branches
+							</p>
+						)}
+					</div>
+				</PopoverContent>
+			</Popover>
+		</div>
+	);
 }

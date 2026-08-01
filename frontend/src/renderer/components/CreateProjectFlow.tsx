@@ -78,6 +78,7 @@ export function CreateProjectFlow({
 					setFolderPickerOpen(true);
 					return;
 				}
+				setValidationScan(preflight.scan);
 				setRepositorySetup(preflight.setupCode);
 				setRepositorySetupWarning(preflight.setupWarning);
 			}
@@ -230,6 +231,8 @@ export function CreateProjectFlow({
 				</>
 			)}
 			<CreateProjectAgentSheet
+				defaultBranch={validationScan?.repos[0]?.branch}
+				branches={validationScan?.repos[0]?.branches}
 				error={error}
 				isCreating={isCreating}
 				isInitializing={isInitializing}
