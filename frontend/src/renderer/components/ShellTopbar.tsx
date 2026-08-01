@@ -2,7 +2,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { ConfirmDialog } from "./ConfirmDialog";
 import { NotificationCenter } from "./NotificationCenter";
 import {
 	findProjectOrchestrator,
@@ -12,15 +11,22 @@ import {
 	type WorkspaceSession,
 } from "../types/workspace";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
-import { useTerminateSession } from "../hooks/useTerminateSession";
+import {
+	clearTerminateSessionState,
+	useProjectTerminateSessionStates,
+	useTerminateSession,
+	useTerminateSessionState,
+} from "../hooks/useTerminateSession";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
+import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { getAgentActivityView } from "../lib/session-presentation";
 import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { StatusPill } from "./StatusPill";
 import { TopbarButton, TopbarKillError, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
+import { SessionTerminationPopover } from "./SessionTerminationPopover";
 
 const isMac = isMacPlatform();
 const boardActionsInPanel = usesBoardActionsInPanel();
@@ -70,6 +76,7 @@ export function ShellTopbar() {
 	const project = projectId ? all.find((workspace) => workspace.id === projectId) : undefined;
 	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : "Board");
 	const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
+	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity).label : undefined;
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
 
 	const openBoard = () =>
@@ -185,13 +192,14 @@ export function ShellTopbar() {
 							New task
 						</TopbarButton>
 						<TopbarButton
-							aria-label={orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
+							aria-label={orchestratorActivityLabel ? `Orchestrator, ${orchestratorActivityLabel}` : "Spawn Orchestrator"}
 							disabled={isSpawning || isProjectRestarting}
 							onClick={() => void openOrchestrator()}
 							style={noDragStyle}
 							variant="primary"
 						>
 							<OrchestratorIcon className="size-icon-lg" aria-hidden="true" />
+							{orchestrator ? <OrchestratorActivityIndicator session={orchestrator} /> : null}
 							{isProjectRestarting
 								? "Restarting…"
 								: isSpawning
@@ -206,6 +214,7 @@ export function ShellTopbar() {
 					<>
 						{isOrchestrator ? (
 							<>
+								<ProjectTerminationFeedback projectId={projectId} />
 								<TopbarButton
 									aria-label="New task"
 									disabled={isProjectRestarting}
@@ -279,11 +288,10 @@ export function ShellTopbar() {
 	);
 }
 
-// Compact kill control for the topbar actions row. Stop a running worker and
-// tear down its runtime/workspace. Kill is irreversible from the UI, so the
-// button arms a one-step confirmation before firing POST /sessions/{id}/kill,
-// then invalidates the workspace query so the session drops into the board's
-// terminated group.
+// Confirmation is modal, but teardown progress is not: confirming closes the
+// dialog and returns to the project's orchestrator while the daemon finishes.
+// Mutation-cache state is filtered by worker ID so rapid route switches never
+// carry another worker's Killing/error state into the current topbar.
 export function TopbarKillButton({
 	session,
 	orchestratorId,
@@ -294,46 +302,66 @@ export function TopbarKillButton({
 	onKilled: (workspaceId: string, orchestratorId?: string) => void;
 }) {
 	const [confirmOpen, setConfirmOpen] = useState(false);
+	const queryClient = useQueryClient();
 	const kill = useTerminateSession();
-	const error = kill.error instanceof Error ? kill.error.message : null;
+	const { error, isPending } = useTerminateSessionState(session.id);
+
+	const confirmKill = () => {
+		setConfirmOpen(false);
+		kill.mutate(session);
+		onKilled(session.workspaceId, orchestratorId);
+	};
 
 	return (
-		<>
-			<TopbarButton
-				aria-label="Kill session"
-				onClick={() => {
-					kill.reset();
-					setConfirmOpen(true);
-				}}
-				style={noDragStyle}
-				title="Kill session"
-				variant="kill"
-			>
-				<Trash2 className="size-icon-lg" aria-hidden="true" />
-				Kill
-			</TopbarButton>
-			<ConfirmDialog
+		<div className="inline-flex items-center gap-1.5" style={noDragStyle}>
+			<SessionTerminationPopover
+				onConfirm={confirmKill}
+				onOpenChange={setConfirmOpen}
 				open={confirmOpen}
-				onOpenChange={(open) => {
-					if (!kill.isPending) setConfirmOpen(open);
-				}}
-				title="Kill session?"
-				description={`Are you sure you want to kill "${session.title}"? This stops the agent and tears down its workspace. This cannot be undone.`}
-				confirmLabel={kill.isPending ? "Killing..." : "Kill session"}
-				destructive
-				busy={kill.isPending}
-				error={error}
-				onConfirm={() => {
-					kill.reset();
-					kill.mutate(session, {
-						onSuccess: (_data, terminatedSession) => {
-							setConfirmOpen(false);
-							onKilled(terminatedSession.workspaceId, orchestratorId);
-						},
-					});
-				}}
+				session={session}
+				trigger={
+					<TopbarButton
+						aria-label={isPending ? "Killing..." : "Kill session"}
+						disabled={isPending}
+						onClick={() => {
+							clearTerminateSessionState(queryClient, session.id);
+						}}
+						title="Kill session"
+						variant="kill"
+					>
+						<Trash2 className="size-icon-lg" aria-hidden="true" />
+						{isPending ? "Killing..." : "Kill"}
+					</TopbarButton>
+				}
 			/>
-		</>
+			{error ? <TopbarKillError>{error}</TopbarKillError> : null}
+		</div>
+	);
+}
+
+function ProjectTerminationFeedback({ projectId }: { projectId: string | undefined }) {
+	const states = useProjectTerminateSessionStates(projectId);
+	if (states.length === 0) return null;
+
+	return (
+		<div aria-label="Session termination status" className="flex max-w-content-max items-center gap-2">
+			{states.map((state) =>
+				state.error ? (
+					<TopbarKillError className="max-w-48 truncate" key={state.session.id} title={state.error}>
+						{state.session.title}: {state.error}
+					</TopbarKillError>
+				) : (
+					<span
+						className="max-w-40 truncate text-caption text-muted-foreground"
+						key={state.session.id}
+						role="status"
+						title={`Killing ${state.session.title}…`}
+					>
+						Killing {state.session.title}…
+					</span>
+				),
+			)}
+		</div>
 	);
 }
 function SessionStatusPill({ session }: { session: WorkspaceSession }) {

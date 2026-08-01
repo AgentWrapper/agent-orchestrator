@@ -1,5 +1,5 @@
-import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { useQueryClient } from "@tanstack/react-query";
+import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
+import { isCancelledError, useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { CommandPalette } from "../components/CommandPalette";
 import { CenterPanelShell } from "../components/CenterPanelShell";
@@ -19,14 +19,16 @@ import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useOpenShellTerminal } from "../hooks/useShellTerminals";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
-import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
+import { apiClient, apiErrorCode, apiErrorMessage, hasTrustedApiBaseUrl } from "../lib/api-client";
 import { refreshDaemonStatus } from "../lib/daemon-status";
+import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { ShellProvider } from "../lib/shell-context";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
 import { applyDocumentTheme } from "../lib/theme";
 import { aoBridge } from "../lib/bridge";
+import { handleModifierLinkClick } from "../lib/external-link-policy";
 import { cn } from "../lib/utils";
 import {
 	isLinuxPlatform,
@@ -46,6 +48,7 @@ export const Route = createFileRoute("/_shell")({
 	// nav target is warm before the click.
 	loader: async ({ context }) => {
 		await refreshDaemonStatus().catch(() => undefined);
+		if (!usesPreviewWorkspaceData && !hasTrustedApiBaseUrl()) return;
 		return context.queryClient.ensureQueryData(workspaceQueryOptions);
 	},
 	component: ShellLayout,
@@ -86,6 +89,8 @@ function ShellLayout() {
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const daemonStatus = useDaemonStatus(queryClient);
+	const [workspaceStartupState, setWorkspaceStartupState] = useState<"loading" | "ready" | "error">("loading");
+	const workspaceStartupBaselineRef = useRef(0);
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);
 	const { themePreference, resolvedTheme, isSidebarOpen, toggleSidebar } = useUiStore();
 	const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
@@ -128,11 +133,10 @@ function ShellLayout() {
 	const [isSidebarPeekOpen, setIsSidebarPeekOpen] = useState(false);
 	const sidebarPeekCloseTimerRef = useRef<number | undefined>(undefined);
 	const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
-	const routeSearch = useSearch({ strict: false }) as { tabOwner?: string };
-	const tabOwnerSession = routeSearch.tabOwner
-		? workspaces.flatMap((workspace) => workspace.sessions).find((session) => session.id === routeSearch.tabOwner)
-		: undefined;
-	const tabOwnerSessionId = tabOwnerSession?.id;
+	useEffect(() => {
+		document.addEventListener("click", handleModifierLinkClick);
+		return () => document.removeEventListener("click", handleModifierLinkClick);
+	}, []);
 	// Project in scope for a new-session shortcut: the route's project, or the
 	// workspace owning the open session (so the shortcut works from a worker's
 	// detail view, where the URL carries only a sessionId).
@@ -142,7 +146,11 @@ function ShellLayout() {
 			? workspaces.find((workspace) => workspace.sessions.some((session) => session.id === routeParams.sessionId))?.id
 			: undefined;
 	// First-launch root board only (no projects in scope).
-	const isWelcomeBoard = Boolean(matchRoute({ to: "/" })) && workspaces.length === 0;
+	const isWelcomeBoard =
+		Boolean(matchRoute({ to: "/" })) &&
+		workspaceStartupState === "ready" &&
+		workspaceQuery.isSuccess &&
+		workspaces.length === 0;
 	const isSettingsRoute =
 		Boolean(matchRoute({ to: "/settings", fuzzy: true })) ||
 		Boolean(matchRoute({ to: "/projects/$projectId/settings", fuzzy: true }));
@@ -156,6 +164,10 @@ function ShellLayout() {
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
 	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const replacementErrorProjectId = Object.keys(orchestratorReplacementErrors)[0] ?? null;
+	const isStartupLoading =
+		!usesPreviewWorkspaceData &&
+		!daemonStatus.code &&
+		(daemonStatus.state !== "ready" || workspaceStartupState === "loading");
 
 	const cancelSidebarPeekClose = useCallback(() => {
 		if (sidebarPeekCloseTimerRef.current === undefined) return;
@@ -364,6 +376,66 @@ function ShellLayout() {
 		applyDocumentTheme(resolvedTheme);
 	}, [resolvedTheme]);
 
+	// A daemon port is not enough to render a trustworthy empty state: the
+	// route loader may have cached [] before Electron reported the port. Fetch
+	// once against each ready daemon before allowing the board to decide
+	// between projects and the first-run import flow.
+	useEffect(() => {
+		let active = true;
+		if (usesPreviewWorkspaceData) {
+			workspaceStartupBaselineRef.current = 0;
+			setWorkspaceStartupState("ready");
+			return () => {
+				active = false;
+			};
+		}
+		if (daemonStatus.state !== "ready" || !daemonStatus.port) {
+			workspaceStartupBaselineRef.current = 0;
+			setWorkspaceStartupState("loading");
+			return () => {
+				active = false;
+			};
+		}
+
+		workspaceStartupBaselineRef.current =
+			queryClient.getQueryState(workspaceQueryKey)?.dataUpdatedAt ?? 0;
+		setWorkspaceStartupState("loading");
+		void queryClient
+			.fetchQuery({ ...workspaceQueryOptions, staleTime: 0 })
+			.then(() => {
+				if (active) setWorkspaceStartupState("ready");
+			})
+			.catch((error) => {
+				if (active && !isCancelledError(error)) setWorkspaceStartupState("error");
+			});
+
+		return () => {
+			active = false;
+		};
+	}, [daemonStatus.port, daemonStatus.state, queryClient]);
+
+	// The first confirmed fetch may fail transiently even though the daemon is
+	// ready. React Query keeps polling and the event transport may invalidate
+	// the workspace query later, so let a newer successful result recover the
+	// shell without requiring a daemon restart or port change.
+	useEffect(() => {
+		if (
+			usesPreviewWorkspaceData ||
+			daemonStatus.state !== "ready" ||
+			workspaceStartupState === "ready" ||
+			!workspaceQuery.isSuccess ||
+			workspaceQuery.dataUpdatedAt <= workspaceStartupBaselineRef.current
+		) {
+			return;
+		}
+		setWorkspaceStartupState("ready");
+	}, [
+		daemonStatus.state,
+		workspaceQuery.dataUpdatedAt,
+		workspaceQuery.isSuccess,
+		workspaceStartupState,
+	]);
+
 	// Keep Electron's nativeTheme in step with the shell so the embedded preview
 	// WebContentsView (which follows prefers-color-scheme) flips at the same time.
 	// Send the preference, not the resolved theme, so "system" keeps both surfaces
@@ -414,7 +486,6 @@ function ShellLayout() {
 		agentCatalogPortRef.current = daemonStatus.port;
 		void queryClient.invalidateQueries({ queryKey: agentsQueryKey });
 		void queryClient.fetchQuery({ ...agentsQueryOptions, queryFn: refreshAgents });
-		void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 	}, [daemonStatus.port, daemonStatus.state, queryClient]);
 
 	// Follow OS appearance while the user keeps Theme on System — updates
@@ -484,10 +555,7 @@ function ShellLayout() {
 		if (handledShellNonceRef.current === newShellTerminalNonce) return;
 		handledShellNonceRef.current = newShellTerminalNonce;
 		openShellTerminal.mutate(
-			{
-				projectId: tabOwnerSession?.workspaceId ?? scopedProjectId,
-				sessionId: tabOwnerSessionId ?? routeParams.sessionId,
-			},
+			{ projectId: scopedProjectId, sessionId: routeParams.sessionId },
 			{
 				onSuccess: (shell) => {
 					setActiveShellTerminal(shell.handleId);
@@ -502,8 +570,6 @@ function ShellLayout() {
 		openShellTerminal,
 		scopedProjectId,
 		routeParams.sessionId,
-		tabOwnerSession?.workspaceId,
-		tabOwnerSessionId,
 		navigate,
 		setActiveShellTerminal,
 	]);
@@ -528,7 +594,7 @@ function ShellLayout() {
 	);
 
 	return (
-		<ShellProvider value={{ daemonStatus, createProject, initializeProjectRepository }}>
+		<ShellProvider value={{ daemonStatus, workspaceStartupState, createProject, initializeProjectRepository }}>
 			<NotificationRuntime />
 			<GlobalNewTaskDialog />
 			<KeyboardShortcutsDialog
@@ -564,7 +630,7 @@ function ShellLayout() {
 						setIsSidebarPeekOpen(false);
 						if (open !== isSidebarOpen) toggleSidebar();
 					}}
-					open={isSidebarOpen || isSidebarPeekOpen}
+					open={!isStartupLoading && (isSidebarOpen || isSidebarPeekOpen)}
 					style={
 						{
 							"--sidebar-width": "var(--ao-sidebar-w, var(--size-sidebar-default))",
@@ -580,7 +646,7 @@ function ShellLayout() {
 						isOverlay={isSidebarPeekOpen && !isSidebarOpen}
 						onPreviewLeave={scheduleSidebarPeekClose}
 						underTopbar={isMac || isWindows || isLinux}
-						topbarOffset={isWindows ? "titlebar" : "toolbar"}
+						topbarOffset={isWindows ? "titlebar" : hideShellTopbar ? "trafficLights" : "toolbar"}
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}

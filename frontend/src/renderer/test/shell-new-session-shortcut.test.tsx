@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { CancelledError } from "@tanstack/react-query";
 import { Suspense, type ComponentType, type PropsWithChildren } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KeybindingOverrides } from "../../shared/shortcuts";
@@ -15,8 +16,20 @@ const shellMocks = vi.hoisted(() => {
 		nextSessionListener: undefined as (() => void) | undefined,
 		focusTerminalListener: undefined as (() => void) | undefined,
 		routeParams: {} as { projectId?: string; sessionId?: string },
-		routeSearch: {} as { tabOwner?: string },
+		routeSearch: {} as Record<string, unknown>,
 		workspaces: [] as WorkspaceSummary[],
+		workspaceQuery: {
+			data: [] as WorkspaceSummary[],
+			dataUpdatedAt: 0,
+			isError: false,
+			isSuccess: true,
+		},
+		daemonStatus: { state: "stopped" } as {
+			state: "ready" | "starting" | "stopped" | "error";
+			port?: number;
+			code?: "not_ready";
+		},
+		shellValue: undefined as { workspaceStartupState?: string } | undefined,
 	};
 	return {
 		navigate: vi.fn(),
@@ -55,6 +68,7 @@ const shellMocks = vi.hoisted(() => {
 		queryClient: {
 			ensureQueryData: vi.fn(),
 			fetchQuery: vi.fn(),
+			getQueryState: vi.fn(),
 			invalidateQueries: vi.fn(),
 			setQueryData: vi.fn(),
 		},
@@ -62,7 +76,8 @@ const shellMocks = vi.hoisted(() => {
 	};
 });
 
-vi.mock("@tanstack/react-query", () => ({
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@tanstack/react-query")>()),
 	useQueryClient: () => shellMocks.queryClient,
 }));
 
@@ -97,13 +112,13 @@ vi.mock("../lib/bridge", () => ({
 }));
 
 vi.mock("../hooks/useWorkspaceQuery", () => ({
-	useWorkspaceQuery: () => ({ data: shellMocks.state.workspaces, isError: false }),
+	useWorkspaceQuery: () => shellMocks.state.workspaceQuery,
 	workspaceQueryKey: ["workspaces"],
 	workspaceQueryOptions: {},
 }));
 
 vi.mock("../hooks/useDaemonStatus", () => ({
-	useDaemonStatus: () => ({ state: "stopped" }),
+	useDaemonStatus: () => shellMocks.state.daemonStatus,
 }));
 
 // The shell layout opens standalone terminals; this suite only covers the
@@ -144,7 +159,10 @@ vi.mock("../components/KeyboardShortcutsDialog", () => ({
 	KeyboardShortcutsDialog: ({ open }: { open: boolean }) => (open ? <div data-testid="keyboard-shortcuts" /> : null),
 }));
 vi.mock("../lib/shell-context", () => ({
-	ShellProvider: ({ children }: PropsWithChildren) => children,
+	ShellProvider: ({ children, value }: PropsWithChildren<{ value?: { workspaceStartupState?: string } }>) => {
+		shellMocks.state.shellValue = value;
+		return children;
+	},
 }));
 vi.mock("../components/ui/sidebar", () => ({
 	SidebarProvider: ({ children, open }: PropsWithChildren<{ open?: boolean }>) => (
@@ -179,6 +197,7 @@ vi.mock("../components/Sidebar", async () => {
 });
 
 import { Route } from "../routes/_shell";
+const ShellRoute = Route.options.component as ComponentType;
 
 const workspaces = [
 	{
@@ -201,21 +220,22 @@ const workspaces = [
 ] as unknown as WorkspaceSummary[];
 
 async function renderShell() {
-	const ShellRoute = Route.options.component as ComponentType;
+	let view: ReturnType<typeof render> | undefined;
 	await act(async () => {
-		render(
+		view = render(
 			<Suspense fallback={null}>
 				<ShellRoute />
 			</Suspense>,
 		);
 	});
-	await waitFor(() => expect(shellMocks.onNewSessionShortcut).toHaveBeenCalledTimes(1));
+	await waitFor(() => expect(shellMocks.onNewSessionShortcut).toHaveBeenCalledTimes(1), { timeout: 30_000 });
 	await waitFor(() => expect(shellMocks.onKeyboardShortcutsHelp).toHaveBeenCalledTimes(1));
 	await waitFor(() => expect(shellMocks.onNewShellTerminalShortcut).toHaveBeenCalledTimes(1));
 	await waitFor(() => expect(shellMocks.onOpenSettingsShortcut).toHaveBeenCalledTimes(1));
 	await waitFor(() => expect(shellMocks.onPreviousSessionShortcut).toHaveBeenCalledTimes(1));
 	await waitFor(() => expect(shellMocks.onNextSessionShortcut).toHaveBeenCalledTimes(1));
 	await waitFor(() => expect(shellMocks.onFocusTerminalShortcut).toHaveBeenCalledTimes(1));
+	return view!;
 }
 
 function emitShortcut() {
@@ -244,11 +264,120 @@ beforeEach(() => {
 	shellMocks.state.routeParams = {};
 	shellMocks.state.routeSearch = {};
 	shellMocks.state.workspaces = workspaces;
+	shellMocks.state.workspaceQuery = {
+		data: workspaces,
+		dataUpdatedAt: 0,
+		isError: false,
+		isSuccess: true,
+	};
+	shellMocks.state.daemonStatus = { state: "error", code: "not_ready" };
+	shellMocks.state.shellValue = undefined;
+	shellMocks.queryClient.fetchQuery.mockReset();
+	shellMocks.queryClient.getQueryState.mockReset().mockReturnValue({ dataUpdatedAt: 0 });
 	useUiStore.setState({
 		createProjectNonce: 0,
 		isSidebarOpen: true,
 		newTaskRequest: null,
 		newShellTerminalNonce: 0,
+	});
+});
+
+describe("shell workspace startup", () => {
+	it("forces a confirmed fetch and preserves a collapsed sidebar preference", async () => {
+		let resolveFetch: ((value: WorkspaceSummary[]) => void) | undefined;
+		useUiStore.setState({ isSidebarOpen: false });
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+		shellMocks.state.workspaceQuery = {
+			data: [],
+			dataUpdatedAt: 100,
+			isError: false,
+			isSuccess: true,
+		};
+		shellMocks.queryClient.getQueryState.mockReturnValue({ dataUpdatedAt: 100 });
+		shellMocks.queryClient.fetchQuery.mockReturnValueOnce(
+			new Promise<WorkspaceSummary[]>((resolve) => {
+				resolveFetch = resolve;
+			}),
+		);
+
+		const view = await renderShell();
+		expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("loading");
+		expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "false");
+		expect(shellMocks.queryClient.fetchQuery).toHaveBeenCalledWith(expect.objectContaining({ staleTime: 0 }));
+
+		await act(async () => resolveFetch?.(workspaces));
+
+		await waitFor(() => expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("ready"));
+		expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "false");
+		expect(useUiStore.getState().isSidebarOpen).toBe(false);
+		view.unmount();
+	});
+
+	it("does not turn a cancelled confirmed fetch into a startup error", async () => {
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+		shellMocks.state.workspaceQuery = {
+			data: [],
+			dataUpdatedAt: 100,
+			isError: false,
+			isSuccess: true,
+		};
+		shellMocks.queryClient.getQueryState.mockReturnValue({ dataUpdatedAt: 100 });
+		shellMocks.queryClient.fetchQuery.mockRejectedValueOnce(new CancelledError());
+
+		await renderShell();
+
+		await waitFor(() =>
+			expect(shellMocks.queryClient.fetchQuery).toHaveBeenCalledWith(expect.objectContaining({ staleTime: 0 })),
+		);
+		expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("loading");
+	});
+
+	it("forces a workspace fetch when a daemon returns ready on the same port", async () => {
+		shellMocks.state.daemonStatus = { state: "starting", port: 4777 };
+		shellMocks.queryClient.fetchQuery.mockResolvedValue(workspaces);
+
+		const view = await renderShell();
+		expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("loading");
+		expect(shellMocks.queryClient.fetchQuery).not.toHaveBeenCalled();
+
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+		view.rerender(
+			<Suspense fallback={null}>
+				<ShellRoute />
+			</Suspense>,
+		);
+
+		await waitFor(() =>
+			expect(shellMocks.queryClient.fetchQuery).toHaveBeenCalledWith(expect.objectContaining({ staleTime: 0 })),
+		);
+		await waitFor(() => expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("ready"));
+	});
+
+	it("recovers after a newer workspace query succeeds", async () => {
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+		shellMocks.state.workspaceQuery = {
+			data: workspaces,
+			dataUpdatedAt: 100,
+			isError: false,
+			isSuccess: true,
+		};
+		shellMocks.queryClient.getQueryState.mockReturnValue({ dataUpdatedAt: 100 });
+		shellMocks.queryClient.fetchQuery.mockRejectedValueOnce(new Error("temporary failure"));
+
+		const view = await renderShell();
+		await waitFor(() => expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("error"));
+
+		shellMocks.state.workspaceQuery = {
+			...shellMocks.state.workspaceQuery,
+			dataUpdatedAt: 200,
+		};
+		view.rerender(
+			<Suspense fallback={null}>
+				<ShellRoute />
+			</Suspense>,
+		);
+
+		await waitFor(() => expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("ready"));
 	});
 });
 
@@ -334,15 +463,16 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 		);
 	});
 
-	it("scopes the terminal to the originating session while viewing one of its pinned tabs", async () => {
+	// Session terminals always belong to the session on screen — there is no
+	// longer an "owner" session whose worktree could be borrowed here (#3208).
+	it("scopes the terminal to the session on screen, not the route's project alone", async () => {
 		shellMocks.state.routeParams = { projectId: "proj-2", sessionId: "sess-cross" };
-		shellMocks.state.routeSearch = { tabOwner: "sess-1" };
 		await renderShell();
 
 		pressNewShellTerminal();
 
 		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith(
-			expect.objectContaining({ projectId: "proj-1", sessionId: "sess-1" }),
+			expect.objectContaining({ projectId: "proj-2", sessionId: "sess-cross" }),
 			expect.anything(),
 		);
 	});

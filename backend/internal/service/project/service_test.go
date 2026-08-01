@@ -702,6 +702,34 @@ func TestManager_InitializeRepositoryRecovery(t *testing.T) {
 		}
 	})
 
+	t.Run("plain folder nested in parent repo initializes as separate repo root", func(t *testing.T) {
+		configureCommitter(t)
+		parent := filepath.Join(t.TempDir(), "parent")
+		gitRepoWithCommitNoOrigin(t, parent)
+		dir := filepath.Join(parent, "universe")
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := m.InitializeRepository(ctx, project.InitializeRepositoryInput{Path: dir}); err != nil {
+			t.Fatalf("InitializeRepository nested plain folder: %v", err)
+		}
+		if _, err := exec.Command("git", "-C", dir, "rev-parse", "--verify", "HEAD").CombinedOutput(); err != nil {
+			t.Fatalf("expected nested folder initial commit: %v", err)
+		}
+		top, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").CombinedOutput()
+		if err != nil {
+			t.Fatalf("git show-toplevel: %v (%s)", err, top)
+		}
+		want, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			t.Fatalf("EvalSymlinks: %v", err)
+		}
+		if got := strings.TrimSpace(string(top)); got != want {
+			t.Fatalf("show-toplevel = %q, want %q", got, want)
+		}
+	})
+
 	t.Run("unborn git repo", func(t *testing.T) {
 		dir := t.TempDir()
 		if out, err := exec.Command("git", "init", "-b", "main", dir).CombinedOutput(); err != nil {
@@ -730,16 +758,25 @@ func TestManager_InitializeRepositoryRecovery(t *testing.T) {
 		wantCode(t, err, "PROJECT_ALREADY_INITIALIZED")
 	})
 
-	t.Run("repo subdirectory is rejected", func(t *testing.T) {
+	t.Run("repo subdirectory initializes as separate repo root", func(t *testing.T) {
 		repo := gitRepo(t)
 		subdir := filepath.Join(repo, "nested")
 		if err := os.Mkdir(subdir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		_, err := m.InitializeRepository(ctx, project.InitializeRepositoryInput{Path: subdir})
-		wantCode(t, err, "PROJECT_PATH_NOT_REPO_ROOT")
-		if _, statErr := os.Stat(filepath.Join(subdir, ".git")); !errors.Is(statErr, os.ErrNotExist) {
-			t.Fatalf("unexpected nested .git after rejected init: %v", statErr)
+		if _, err := m.InitializeRepository(ctx, project.InitializeRepositoryInput{Path: subdir}); err != nil {
+			t.Fatalf("InitializeRepository repo subdirectory: %v", err)
+		}
+		top, err := exec.Command("git", "-C", subdir, "rev-parse", "--show-toplevel").CombinedOutput()
+		if err != nil {
+			t.Fatalf("git show-toplevel: %v (%s)", err, top)
+		}
+		want, err := filepath.EvalSymlinks(subdir)
+		if err != nil {
+			t.Fatalf("EvalSymlinks: %v", err)
+		}
+		if got := strings.TrimSpace(string(top)); got != want {
+			t.Fatalf("show-toplevel = %q, want %q", got, want)
 		}
 	})
 
@@ -782,6 +819,22 @@ func TestManager_InitializeRepositoryRecovery(t *testing.T) {
 			if _, statErr := os.Lstat(filepath.Join(path, ".git")); !errors.Is(statErr, os.ErrNotExist) {
 				t.Fatalf("unexpected .git after rejected broad path %s: %v", path, statErr)
 			}
+		}
+	})
+
+	t.Run("folder inside AO-managed worktrees is rejected before init", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
+		dir := filepath.Join(home, ".ao", "data", "worktrees", "project", "session")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := m.InitializeRepository(ctx, project.InitializeRepositoryInput{Path: dir})
+		wantCode(t, err, "PROJECT_SETUP_PATH_UNSAFE")
+		if _, statErr := os.Lstat(filepath.Join(dir, ".git")); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("unexpected .git after rejected AO worktree setup: %v", statErr)
 		}
 	})
 
@@ -850,6 +903,16 @@ func TestManager_AddValidationAndConflicts(t *testing.T) {
 	wantCode(t, err, "PATH_REQUIRED")
 
 	_, err = m.Add(ctx, project.AddInput{Path: t.TempDir()}) // exists but not a git repo
+	wantCode(t, err, "NOT_A_GIT_REPO")
+
+	configureCommitter(t)
+	parent := filepath.Join(t.TempDir(), "parent")
+	gitRepoWithCommitNoOrigin(t, parent)
+	nestedPlain := filepath.Join(parent, "universe")
+	if err := os.Mkdir(nestedPlain, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err = m.Add(ctx, project.AddInput{Path: nestedPlain})
 	wantCode(t, err, "NOT_A_GIT_REPO")
 
 	unborn := t.TempDir()
@@ -975,6 +1038,47 @@ func gitRepoWithCommitWithOrigin(t *testing.T, dir, origin string) string {
 		}
 	}
 	return dir
+}
+
+func TestManager_AddWorkspaceInsideAncestorRepo(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	m := newManager(t)
+	ancestor := t.TempDir()
+	if out, err := exec.Command("git", "-C", ancestor, "init", "-b", "main").CombinedOutput(); err != nil {
+		t.Fatalf("git init ancestor: %v (%s)", err, out)
+	}
+	commitEmpty(t, ancestor)
+	parent := filepath.Join(ancestor, "universe")
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parent, "package.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRepoWithCommit(t, filepath.Join(parent, "api"))
+	gitRepoWithCommit(t, filepath.Join(parent, "web"))
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws-ancestor"), AsWorkspace: true})
+	if err != nil {
+		t.Fatalf("Add workspace inside ancestor: %v", err)
+	}
+	if proj.Kind != domain.ProjectKindWorkspace {
+		t.Fatalf("Kind = %q, want workspace", proj.Kind)
+	}
+	if len(proj.WorkspaceRepos) != 2 {
+		t.Fatalf("expected 2 child repos, got %d", len(proj.WorkspaceRepos))
+	}
+	// Verify that a .git directory was created in the workspace parent (nested)
+	if _, err := os.Stat(filepath.Join(parent, ".git")); err != nil {
+		t.Fatalf("expected .git to exist in workspace parent (nested), but it does not: %v", err)
+	}
+	got, err := m.Get(ctx, "ws-ancestor")
+	if err != nil {
+		t.Fatalf("Get workspace: %v", err)
+	}
+	if got.Project == nil || got.Project.Kind != domain.ProjectKindWorkspace || len(got.Project.WorkspaceRepos) != 2 {
+		t.Fatalf("Get = %#v", got)
+	}
 }
 
 func TestManager_AddWorkspaceInitializesPlainParent(t *testing.T) {

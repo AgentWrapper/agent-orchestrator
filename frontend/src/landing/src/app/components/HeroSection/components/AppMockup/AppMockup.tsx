@@ -44,7 +44,8 @@ interface TrackItem {
 	summary: string;
 }
 
-const repoAvatar = "https://github.com/AgentWrapper.png?size=64";
+const repoName = "Untrivial-ai/agent-orchestrator";
+const repoAvatar = "https://github.com/Untrivial-ai.png?size=64";
 
 const previewTokenStyle = {
 	"--preview-background": "#0a0b0d",

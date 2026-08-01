@@ -1,6 +1,12 @@
-import { COMPANY } from "@ao/shared/constants";
+import { AGENT_HARNESSES, COMPANY } from "@ao/shared/constants";
 import type { Metadata } from "next";
 import Image from "next/image";
+import { preload } from "react-dom";
+import {
+  formatStatPlus,
+  getGitHubRepoStats,
+  monthsSince,
+} from "@/lib/github-stats";
 import {
   RoadmapSlideshow,
   type RoadmapPhase,
@@ -14,8 +20,15 @@ const MAILTO_HREF = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(
   "Hi Prateek,\n\nWe're interested in the AO design partner program.\n\nCompany:\nEngineering team size:\nAgent harnesses we use today (Claude Code / Codex / Cursor / ...):\nWhat we want out of AO:\n",
 )}`;
 
+/** Shown only if the GitHub API request fails. */
+const FALLBACK_STATS = {
+  stars: 8400,
+  forks: 1200,
+  months: 5,
+} as const;
+
 export const metadata: Metadata = {
-  title: "Design Partner Program - Agent Orchestrator",
+  title: "Design Partner Program",
   description:
     "Mission control for your agent fleet: shared sessions, ROI observability, and an engine room your org fully owns. Your engineers get leverage; your leadership gets answers.",
   openGraph: {
@@ -28,13 +41,6 @@ export const metadata: Metadata = {
     canonical: `${COMPANY.MARKETING_URL}/design-partners`,
   },
 };
-
-const STATS = [
-  { value: "8,400+", label: "stars in 5 months" },
-  { value: "1,200+", label: "forks" },
-  { value: "23", label: "agent harnesses" },
-  { value: "Nightly", label: "desktop releases" },
-];
 
 const partnerGets = [
   {
@@ -92,7 +98,7 @@ const phases: RoadmapPhase[] = [
     status: "building now - partners get it first",
     title: "Shared mission control",
     theme:
-      "The fleet becomes a team sport. Execution stays local; coordination moves to one workspace.",
+      "The fleet becomes a team. Execution stays local; coordination moves to one workspace.",
     unlocks: [
       "Team workspaces - the first cloud layer, opt-in by design",
       "Every session durably captured; hand a running fleet to a teammate",
@@ -107,7 +113,7 @@ const phases: RoadmapPhase[] = [
     status: "partners shape the spec",
     title: "The ROI answer",
     theme:
-      "What did the agents ship last week? What did it cost? Answered.",
+      "What did the agents ship last week? What did it cost? Now you have the numbers.",
     unlocks: [
       "Token spend by project, agent, and team",
       "Outcomes, not vibes: agent PRs merged, cycle time, human-rescue rate",
@@ -132,6 +138,14 @@ const phases: RoadmapPhase[] = [
     imageAlt:
       "A self-hosted control plane, security gate, and archive contained inside a private perimeter",
   },
+];
+
+// The hero is excluded: its <Image priority> already preloads it, and as the LCP
+// element it should stay the only image competing for early bandwidth. These are
+// all below the fold, so they warm the cache at low priority instead.
+const BELOW_FOLD_IMAGES = [
+  "/design-partners/shared-workspace-olive.png",
+  ...phases.map((phase) => phase.image),
 ];
 
 function ArrowIcon({ className = "" }: { className?: string }) {
@@ -177,7 +191,27 @@ function TextLink({
   );
 }
 
-export default function DesignPartnersPage() {
+export default async function DesignPartnersPage() {
+  // Emitted before the stats await so the browser can fetch artwork in parallel.
+  for (const image of BELOW_FOLD_IMAGES) {
+    preload(image, { as: "image", fetchPriority: "low" });
+  }
+
+  const repo = await getGitHubRepoStats();
+  const stars = repo?.stars ?? FALLBACK_STATS.stars;
+  const forks = repo?.forks ?? FALLBACK_STATS.forks;
+  const months = repo ? monthsSince(repo.createdAt) : FALLBACK_STATS.months;
+
+  const stats = [
+    {
+      value: formatStatPlus(stars),
+      label: `stars in ${months} month${months === 1 ? "" : "s"}`,
+    },
+    { value: formatStatPlus(forks), label: "forks" },
+    { value: String(AGENT_HARNESSES), label: "agent harnesses" },
+    { value: "Nightly", label: "desktop releases" },
+  ];
+
   return (
     <main className="bg-background text-foreground">
       <section className="relative overflow-hidden px-4 pb-20 pt-24 sm:px-8 sm:pb-28 sm:pt-32 lg:px-[30px] lg:pt-36">
@@ -190,9 +224,9 @@ export default function DesignPartnersPage() {
               </h1>
               <p className="mt-6 max-w-3xl text-pretty text-base leading-8 text-muted-foreground sm:text-xl">
                 Your engineers already run coding agents. Nobody runs the fleet.
-                AO puts every agent, branch, and PR on one board and routes CI
-                failures and review comments back to the agent that owns them.
-                More merged work from the subscriptions you already pay for.
+                AO puts every agent, branch, and PR on one board, routes CI
+                failures and review comments back to the agent that owns them,
+                and tells you what the spend actually produced.
               </p>
               <div className="mt-8 flex flex-wrap gap-3">
                 <a
@@ -228,7 +262,7 @@ export default function DesignPartnersPage() {
           </div>
 
           <div className="mt-16 grid overflow-hidden rounded-xl border border-border sm:grid-cols-2 lg:grid-cols-4">
-            {STATS.map((stat) => (
+            {stats.map((stat) => (
               <div
                 key={stat.label}
                 className="border-b border-border px-6 py-5 sm:border-r sm:[&:nth-child(2n)]:border-r-0 lg:border-b-0 lg:[&:nth-child(2n)]:border-r lg:last:border-r-0"
@@ -312,7 +346,7 @@ export default function DesignPartnersPage() {
           </div>
           <p className="mt-8 max-w-4xl text-sm leading-7 text-muted-foreground">
             Best fit: 10-100 engineers. Multiple agent subscriptions in use.
-            Leadership asking what the spend produces. AO ships a new build every
+            Leadership asking what all that agent spend actually produces. AO ships a new build every
             night - what we promise, you watch arrive.
           </p>
         </div>

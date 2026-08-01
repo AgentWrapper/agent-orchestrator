@@ -187,6 +187,8 @@ type Session struct {
 	RuntimeLaunchID    string
 	WorkspaceRepoPath  string
 	TerminateOnPRMerge bool
+	DiffBaseSha        string
+	DiffBaseRef        string
 }
 
 type SessionCleanupFact struct {
@@ -230,16 +232,6 @@ type TelemetryEvent struct {
 	SessionID   sql.NullString
 	RequestID   string
 	PayloadJson string
-}
-
-type WorkerIdleEvent struct {
-	ID            string
-	ProjectID     domain.ProjectID
-	WorkerID      domain.SessionID
-	TransitionAt  time.Time
-	DeliveryState string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
 }
 
 type WorkspaceRepo struct {

@@ -33,42 +33,42 @@ export function VideoSection() {
 						See it in action
 					</h2>
 					<p className="mt-3 text-base text-muted-foreground">
-						Watch AO run a fleet of agents end to end, from task to merged PR.
+						Watch AO run a fleet of agents end to end on a single repo, from task to merged PR.
 					</p>
-				</div>
 
-				<div className="relative mx-auto mt-12 w-full">
-					<div
-						data-testid="video-frame"
-						className="relative aspect-video overflow-hidden bg-black"
-					>
-						{playing ? (
-							<iframe
-								src={`https://player.mux.com/${MUX_PLAYBACK_ID}?autoplay=true&metadata-video-title=${ENCODED_VIDEO_TITLE}&video-title=${ENCODED_VIDEO_TITLE}`}
-								allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture"
-								allowFullScreen
-								className="absolute inset-0 h-full w-full border-none"
-								title={VIDEO_TITLE}
-							/>
-						) : (
-							<button
-								type="button"
-								onClick={() => setPlaying(true)}
-								aria-label={`Play video: ${VIDEO_TITLE}`}
-								className="group absolute inset-0 cursor-pointer"
-							>
-								<Image
-									src="/mux-video-preview.jpg"
-									alt="Still from the Agent Orchestrator demo video"
-									fill
-									sizes="(min-width: 1280px) 1280px, 100vw"
-									className="object-cover"
+					<div className="relative mx-auto mt-12 w-full">
+						<div
+							data-testid="video-frame"
+							className="relative aspect-video overflow-hidden bg-black"
+						>
+							{playing ? (
+								<iframe
+									src={`https://player.mux.com/${MUX_PLAYBACK_ID}?autoplay=true&metadata-video-title=${ENCODED_VIDEO_TITLE}&video-title=${ENCODED_VIDEO_TITLE}`}
+									allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture"
+									allowFullScreen
+									className="absolute inset-0 h-full w-full border-none"
+									title={VIDEO_TITLE}
 								/>
-								<span className="absolute inset-0 grid place-items-center">
-									<PlayIcon className="h-14 w-14 translate-x-[3px] text-white transition-transform duration-200 group-hover:scale-110 sm:h-16 sm:w-16" />
-								</span>
-							</button>
-						)}
+							) : (
+								<button
+									type="button"
+									onClick={() => setPlaying(true)}
+									aria-label={`Play video: ${VIDEO_TITLE}`}
+									className="group absolute inset-0 cursor-pointer"
+								>
+									<Image
+										src="/mux-video-preview.jpg"
+										alt="Still from the Agent Orchestrator demo video"
+										fill
+										sizes="(min-width: 1280px) 1280px, 100vw"
+										className="object-cover"
+									/>
+									<span className="absolute inset-0 grid place-items-center">
+										<PlayIcon className="h-14 w-14 translate-x-[3px] text-white transition-transform duration-200 group-hover:scale-110 sm:h-16 sm:w-16" />
+									</span>
+								</button>
+							)}
+						</div>
 					</div>
 				</div>
 			</div>

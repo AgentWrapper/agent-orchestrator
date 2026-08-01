@@ -1,14 +1,19 @@
 import { describe, expect, it } from "vitest";
+import { PostHog } from "posthog-js/dist/module.full.no-external";
 import {
+	buildPostHogConfig,
 	buildTelemetryContext,
+	postHogEventName,
 	reserveCapture,
 	reserveDailyActiveCapture,
+	reserveRouteViewCapture,
 	routeSurface,
 	sanitizePostHogEvent,
 	sanitizeReplayRequestName,
 	sanitizeRendererExceptionProperties,
 	sanitizeRendererProperties,
 	startDailyActiveHeartbeat,
+	withTelemetryContext,
 } from "./telemetry";
 import { ORCHESTRATOR_SPAWN_SOURCES } from "./orchestrator-spawn-sources";
 
@@ -23,16 +28,73 @@ function memoryStorage(initial: Record<string, string> = {}) {
 }
 
 describe("telemetry sanitizers", () => {
+	it("isolates anonymous AO installation identity from persisted PostHog person state", () => {
+		const config = buildPostHogConfig("ins_stable-install-id");
+
+		expect(config.persistence).toBe("memory");
+		expect(config.person_profiles).toBe("never");
+		expect(config.autocapture).toBe(false);
+		expect(config.capture_performance).toBe(false);
+		expect(config.disable_session_recording).toBe(true);
+		expect(config.bootstrap).toEqual({
+			distinctID: "ins_stable-install-id",
+			isIdentifiedID: false,
+		});
+	});
+
+	it("emits the stable AO installation id without creating a person profile", () => {
+		const client = new PostHog();
+		client.init("phc_test", {
+			...buildPostHogConfig("ins_stable-install-id"),
+			advanced_disable_decide: true,
+			advanced_disable_flags: true,
+			disable_session_recording: true,
+			disable_surveys: true,
+		});
+		try {
+			const captured = client.capture("ao.app.active", { channel: "renderer" });
+
+			expect(captured?.properties).toMatchObject({
+				distinct_id: "ins_stable-install-id",
+				$device_id: "ins_stable-install-id",
+				$is_identified: false,
+				$process_person_profile: false,
+			});
+		} finally {
+			const queue = client._requestQueue as unknown as
+				{ _queue: unknown[]; _clearFlushTimeout: () => void } | undefined;
+			if (queue) {
+				queue._queue.length = 0;
+				queue._clearFlushTimeout();
+			}
+		}
+	});
+
 	it("builds stable AO version context for PostHog events", () => {
 		expect(buildTelemetryContext(" 1.2.3-nightly.20260707 ", "linux")).toMatchObject({
 			app_version: "1.2.3-nightly.20260707",
 			ao_version: "1.2.3-nightly.20260707",
 			platform: "linux",
+			telemetry_schema_version: 2,
 		});
 		expect(buildTelemetryContext("", "darwin")).toMatchObject({
 			app_version: "unknown",
 			ao_version: "unknown",
 			platform: "darwin",
+			telemetry_schema_version: 2,
+		});
+	});
+
+	it("uses v2 PostHog event names for streams that have noisy legacy producers", () => {
+		expect(postHogEventName("ao.app.active")).toBe("ao.v2.app.active");
+		expect(postHogEventName("ao.renderer.route_viewed")).toBe("ao.v2.renderer.route_viewed");
+		expect(postHogEventName("ao.renderer.api_error")).toBe("ao.v2.renderer.api_error");
+		expect(postHogEventName("ao.session.spawned")).toBe("ao.session.spawned");
+	});
+
+	it("forces renderer events to stay anonymous in PostHog", () => {
+		expect(withTelemetryContext({ $process_person_profile: true })).toMatchObject({
+			$process_person_profile: false,
 		});
 	});
 
@@ -312,15 +374,19 @@ describe("reserveCapture", () => {
 });
 
 describe("daily active heartbeat", () => {
-	it("reserves one active capture per UTC date", () => {
+	it("reserves one active capture per six-hour UTC slot", () => {
 		const storage = memoryStorage();
 
-		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T23:59:00.000Z"))).toBe(true);
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T00:05:00.000Z"))).toBe(true);
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T05:59:59.000Z"))).toBe(false);
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T06:00:00.000Z"))).toBe(true);
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T12:00:00.000Z"))).toBe(true);
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T18:00:00.000Z"))).toBe(true);
 		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T23:59:59.000Z"))).toBe(false);
 		expect(reserveDailyActiveCapture(storage, new Date("2026-07-13T00:00:00.000Z"))).toBe(true);
 	});
 
-	it("emits at startup and then only after a later UTC date is observed on user activity", () => {
+	it("emits at startup and then only after a later UTC slot is observed on user activity", () => {
 		const storage = memoryStorage();
 		const captured: string[] = [];
 		let now = new Date("2026-07-12T08:00:00.000Z");
@@ -328,7 +394,9 @@ describe("daily active heartbeat", () => {
 		const stop = startDailyActiveHeartbeat({
 			storage,
 			now: () => now,
-			capture: () => captured.push(now.toISOString()),
+			capture: () => {
+				captured.push(now.toISOString());
+			},
 			window,
 			document,
 		});
@@ -339,11 +407,48 @@ describe("daily active heartbeat", () => {
 			document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
 			expect(captured).toHaveLength(1);
 
-			now = new Date("2026-07-13T09:00:00.000Z");
+			now = new Date("2026-07-12T12:00:00.000Z");
 			window.dispatchEvent(new Event("focus"));
-			expect(captured).toEqual(["2026-07-12T08:00:00.000Z", "2026-07-13T09:00:00.000Z"]);
+			expect(captured).toEqual(["2026-07-12T08:00:00.000Z", "2026-07-12T12:00:00.000Z"]);
 		} finally {
 			stop();
 		}
+	});
+
+	it("retries the same six-hour UTC slot when PostHog rejects the first capture", async () => {
+		const storage = memoryStorage();
+		let attempts = 0;
+		const slotTime = new Date("2026-07-23T08:00:00.000Z");
+		const stop = startDailyActiveHeartbeat({
+			storage,
+			now: () => slotTime,
+			capture: () => {
+				attempts += 1;
+				return attempts > 1;
+			},
+			window,
+			document,
+		});
+		try {
+			await Promise.resolve();
+			window.dispatchEvent(new Event("focus"));
+			await Promise.resolve();
+
+			expect(attempts).toBe(2);
+			expect(reserveDailyActiveCapture(storage, new Date("2026-07-23T09:00:00.000Z"))).toBe(false);
+		} finally {
+			stop();
+		}
+	});
+});
+
+describe("route view reservation", () => {
+	it("reserves one capture per surface per UTC date", () => {
+		const storage = memoryStorage();
+
+		expect(reserveRouteViewCapture(storage, "session_detail", new Date("2026-07-12T08:00:00.000Z"))).toBe(true);
+		expect(reserveRouteViewCapture(storage, "session_detail", new Date("2026-07-12T09:00:00.000Z"))).toBe(false);
+		expect(reserveRouteViewCapture(storage, "project_board", new Date("2026-07-12T09:00:00.000Z"))).toBe(true);
+		expect(reserveRouteViewCapture(storage, "session_detail", new Date("2026-07-13T00:00:00.000Z"))).toBe(true);
 	});
 });

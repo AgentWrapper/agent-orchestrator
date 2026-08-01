@@ -259,7 +259,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 		},
 		[session?.id],
 	);
-	const { attach, state, error } = useTerminalSession(attachSession, {
+	const { attach, state, error, replaySettled } = useTerminalSession(attachSession, {
 		daemonReady,
 		shellTerminalHandleId,
 		onOutput: watchLinks ? handleOutput : undefined,
@@ -363,6 +363,18 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 
 	const banner = bannerText(state, error);
 	const showEmptyState = !handleId;
+	// Cover xterm while the attachment buffers the initial replay, so the pane
+	// appears already drawn at the tail instead of visibly scrolling down to it.
+	// Deliberately NOT the empty state above: that renders a centered "Starting
+	// session" card, and flashing it on every session switch would be worse than
+	// the scroll it replaces.
+	// Only while a replay is actually imminent. Gating on the state as well as
+	// the gate keeps the cover from reappearing over a pane that is visibly
+	// disconnected: an open timeout lifts it, the backoff reconnect would
+	// otherwise pull it straight back down, and the "reattaching" banner already
+	// explains that window better than a blank overlay does.
+	const showReplayCover =
+		Boolean(handleId) && !replaySettled && (state === "connecting" || state === "attached");
 	const showEndedState = state === "exited" || canRestoreSession;
 	const emptyStateTitle = session ? "Starting session" : "Agent Orchestrator";
 	const emptyStateMessage = session
@@ -406,6 +418,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 						</div>
 					</div>
 				)}
+				{showReplayCover && <ReplayCover />}
 				{banner && (
 					<div className="absolute inset-x-3 top-2 rounded-md border border-border bg-surface/95 px-3 py-1.5 font-mono text-caption text-muted-foreground">
 						{banner}
@@ -422,6 +435,31 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					}}
 				/>
 			)}
+		</div>
+	);
+}
+
+// Blank terminal-coloured cover held over xterm while the initial replay is
+// buffered. A fast open (the common case) shows nothing at all — the label only
+// appears if the wait is long enough to read as a stall rather than a repaint,
+// so normal session switching never flashes a loader.
+const REPLAY_COVER_LABEL_MS = 120;
+
+function ReplayCover() {
+	const [showLabel, setShowLabel] = useState(false);
+	useEffect(() => {
+		const timer = window.setTimeout(() => setShowLabel(true), REPLAY_COVER_LABEL_MS);
+		return () => window.clearTimeout(timer);
+	}, []);
+	return (
+		// pointer-events-none: the cover is purely visual and xterm underneath is
+		// live the whole time, so clicks, selection and wheel must pass through
+		// rather than being swallowed for the length of the gate.
+		<div
+			className="pointer-events-none absolute inset-0 grid place-items-center bg-terminal"
+			data-testid="terminal-replay-cover"
+		>
+			{showLabel && <div className="font-mono text-caption text-terminal-dim">Loading latest output…</div>}
 		</div>
 	);
 }

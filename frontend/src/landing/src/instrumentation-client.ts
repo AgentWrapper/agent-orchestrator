@@ -16,13 +16,16 @@ if (POSTHOG_KEY) {
     capture_exceptions: true,
     debug: false,
     cross_subdomain_cookie: true,
-    person_profiles: "always",
+    person_profiles: "never",
+    opt_out_capturing_by_default: true,
     persistence: "cookie",
     persistence_name: POSTHOG_COOKIE_NAME,
     disable_session_recording: true,
     loaded: (posthog) => {
       const consent = localStorage.getItem(ANALYTICS_CONSENT_KEY);
-      if (consent === "declined") {
+      if (consent === "accepted") {
+        posthog.opt_in_capturing();
+      } else {
         posthog.opt_out_capturing();
       }
     },

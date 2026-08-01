@@ -235,15 +235,18 @@ func TestManifest(t *testing.T) {
 	}
 }
 
-func TestGetConfigSpecReturnsEmpty(t *testing.T) {
+func TestGetConfigSpecReportsModelField(t *testing.T) {
 	plugin := &Plugin{}
 
 	spec, err := plugin.GetConfigSpec(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(spec.Fields) != 0 {
-		t.Fatalf("unexpected config spec fields: got %d, want 0", len(spec.Fields))
+	if len(spec.Fields) != 1 {
+		t.Fatalf("unexpected config spec fields: got %d, want 1", len(spec.Fields))
+	}
+	if spec.Fields[0].Key != "model" {
+		t.Fatalf("unexpected config spec field key: got %q, want %q", spec.Fields[0].Key, "model")
 	}
 }
 
@@ -319,6 +322,147 @@ func TestGetAgentHooksMergesExistingCrushConfig(t *testing.T) {
 	}
 }
 
+func TestGetAgentHooksWritesModelOverride(t *testing.T) {
+	workspace := t.TempDir()
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "AO standing instructions",
+		Config:        ports.AgentConfig{Model: "anthropic/claude-sonnet-4-5"},
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	cfg := readCrushConfigForTest(t, crushConfigFile(workspace))
+	large := cfg["models"].(map[string]any)["large"].(map[string]any)
+	if large["provider"] != "anthropic" {
+		t.Fatalf("models.large.provider = %#v, want %q", large["provider"], "anthropic")
+	}
+	if large["model"] != "claude-sonnet-4-5" {
+		t.Fatalf("models.large.model = %#v, want %q", large["model"], "claude-sonnet-4-5")
+	}
+}
+
+func TestGetAgentHooksPreservesOtherModelFieldsOnOverride(t *testing.T) {
+	workspace := t.TempDir()
+	configPath := crushConfigFile(workspace)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{"models":{"large":{"model":"old-model","provider":"old-provider","max_tokens":4096},"small":{"model":"small-model","provider":"small-provider"}},"providers":{"openai":{"base_url":"https://example.test"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "AO standing instructions",
+		Config:        ports.AgentConfig{Model: "openai/gpt-5"},
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	cfg := readCrushConfigForTest(t, configPath)
+	models := cfg["models"].(map[string]any)
+	large := models["large"].(map[string]any)
+	if large["provider"] != "openai" || large["model"] != "gpt-5" {
+		t.Fatalf("models.large = %#v, want provider=openai model=gpt-5", large)
+	}
+	if large["max_tokens"] != float64(4096) {
+		t.Fatalf("models.large.max_tokens was dropped: %#v", large)
+	}
+	small := models["small"].(map[string]any)
+	if small["provider"] != "small-provider" || small["model"] != "small-model" {
+		t.Fatalf("models.small = %#v, want existing small model untouched", small)
+	}
+	providers := cfg["providers"].(map[string]any)
+	if _, ok := providers["openai"].(map[string]any); !ok {
+		t.Fatalf("providers were dropped: %#v", providers)
+	}
+}
+
+func TestGetAgentHooksLeavesModelUntouchedWhenNoOverride(t *testing.T) {
+	workspace := t.TempDir()
+	configPath := crushConfigFile(workspace)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{"models":{"large":{"model":"user-picked-model","provider":"user-provider"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "AO standing instructions",
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	large := readCrushConfigForTest(t, configPath)["models"].(map[string]any)["large"].(map[string]any)
+	if large["provider"] != "user-provider" || large["model"] != "user-picked-model" {
+		t.Fatalf("models.large = %#v, want the user's existing selection untouched", large)
+	}
+}
+
+func TestGetAgentHooksInfersProviderForBareModel(t *testing.T) {
+	workspace := t.TempDir()
+	configPath := crushConfigFile(workspace)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{"models":{"large":{"model":"old-model","provider":"anthropic","temperature":0.2}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "AO standing instructions",
+		Config:        ports.AgentConfig{Model: "claude-sonnet-4-5"},
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	large := readCrushConfigForTest(t, configPath)["models"].(map[string]any)["large"].(map[string]any)
+	if large["provider"] != "anthropic" || large["model"] != "claude-sonnet-4-5" {
+		t.Fatalf("models.large = %#v, want provider=anthropic model=claude-sonnet-4-5", large)
+	}
+	if large["temperature"] != 0.2 {
+		t.Fatalf("models.large.temperature was dropped: %#v", large)
+	}
+}
+
+func TestGetAgentHooksSkipsBareModelWithoutProvider(t *testing.T) {
+	workspace := t.TempDir()
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "AO standing instructions",
+		Config:        ports.AgentConfig{Model: "claude-sonnet-4-5"},
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	cfg := readCrushConfigForTest(t, crushConfigFile(workspace))
+	if _, ok := cfg["models"]; ok {
+		t.Fatalf("models were written for bare model with no provider to infer: %#v", cfg)
+	}
+}
+
+func TestGetAgentHooksSplitsModelOverrideOnFirstSlash(t *testing.T) {
+	workspace := t.TempDir()
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "AO standing instructions",
+		Config:        ports.AgentConfig{Model: "openrouter/anthropic/claude-x"},
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	large := readCrushConfigForTest(t, crushConfigFile(workspace))["models"].(map[string]any)["large"].(map[string]any)
+	if large["provider"] != "openrouter" || large["model"] != "anthropic/claude-x" {
+		t.Fatalf("models.large = %#v, want provider=openrouter model=anthropic/claude-x", large)
+	}
+}
+
 func TestGetAgentHooksGitignoresManagedCrushFiles(t *testing.T) {
 	workspace := t.TempDir()
 	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
@@ -340,6 +484,17 @@ func TestGetAgentHooksGitignoresManagedCrushFiles(t *testing.T) {
 	}
 	if strings.Contains(text, "/"+crushConfigFileName) {
 		t.Fatalf(".gitignore should not ignore project config %q:\n%s", crushConfigFileName, text)
+	}
+
+	// AO must not write/own a repo-root .gitignore: EnsureWorkspaceGitignore
+	// is a no-op when a root .gitignore already exists without AO's
+	// sentinel, and unconditionally overwrites one that does carry it on
+	// every subsequent call — neither is safe for a directory the user (or
+	// their repo) already owns. .crush.json churn in the agent's worktree
+	// is a known, pre-existing limitation left to a future AddExclude-based
+	// fix (writing to .git/info/exclude instead).
+	if _, err := os.Stat(filepath.Join(workspace, ".gitignore")); !os.IsNotExist(err) {
+		t.Fatalf("workspace root .gitignore should not be created by crush's adapter, stat err = %v", err)
 	}
 }
 
@@ -377,6 +532,23 @@ func TestGetAgentHooksEmptyPromptIsNoOp(t *testing.T) {
 	}
 	if _, err := os.Stat(crushConfigFile(workspace)); !os.IsNotExist(err) {
 		t.Fatalf("config file stat err = %v, want not exist", err)
+	}
+}
+
+func TestGetAgentHooksAppliesModelOverrideWithEmptyPrompt(t *testing.T) {
+	workspace := t.TempDir()
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		Config:        ports.AgentConfig{Model: "anthropic/claude-sonnet-4-5"},
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+	if _, err := os.Stat(crushSystemPromptFile(workspace)); !os.IsNotExist(err) {
+		t.Fatalf("system prompt file stat err = %v, want not exist", err)
+	}
+	large := readCrushConfigForTest(t, crushConfigFile(workspace))["models"].(map[string]any)["large"].(map[string]any)
+	if large["provider"] != "anthropic" || large["model"] != "claude-sonnet-4-5" {
+		t.Fatalf("models.large = %#v, want provider=anthropic model=claude-sonnet-4-5", large)
 	}
 }
 
