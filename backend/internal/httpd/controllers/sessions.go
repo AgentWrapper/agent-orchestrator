@@ -75,7 +75,6 @@ type SessionService interface {
 	Rename(ctx context.Context, id domain.SessionID, displayName string) error
 	SetPreview(ctx context.Context, id domain.SessionID, previewURL string) (domain.Session, error)
 	SetTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool) (domain.Session, error)
-	CompleteOrchestrator(ctx context.Context, id domain.SessionID) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
 	ListPRSummaries(ctx context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error)
 	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
@@ -143,7 +142,6 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Get("/orchestrators", c.listOrchestrators)
 	r.Post("/orchestrators", c.spawnOrchestrator)
 	r.Get("/orchestrators/{id}", c.getOrchestrator)
-	r.Post("/orchestrators/{id}/done", c.completeOrchestrator)
 }
 
 func (c *SessionsController) list(w http.ResponseWriter, r *http.Request) {
@@ -982,19 +980,6 @@ func (c *SessionsController) getOrchestrator(w http.ResponseWriter, r *http.Requ
 	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sessionView(sess)})
 }
 
-func (c *SessionsController) completeOrchestrator(w http.ResponseWriter, r *http.Request) {
-	if c.Svc == nil {
-		apispec.NotImplemented(w, r, "POST", "/api/v1/orchestrators/{id}/done")
-		return
-	}
-	id := orchestratorID(r)
-	if err := c.Svc.CompleteOrchestrator(r.Context(), id); err != nil {
-		envelope.WriteError(w, r, err)
-		return
-	}
-	envelope.WriteJSON(w, http.StatusOK, CompleteOrchestratorResponse{OK: true, SessionID: id})
-}
-
 func sessionID(r *http.Request) domain.SessionID {
 	return domain.SessionID(chi.URLParam(r, "sessionId"))
 }
@@ -1178,21 +1163,30 @@ func workspaceFilesResponse(files sessionsvc.WorkspaceFiles) ListWorkspaceFilesR
 	out := make([]WorkspaceFileSummary, 0, len(files.Files))
 	for _, file := range files.Files {
 		out = append(out, WorkspaceFileSummary{
-			Path:      file.Path,
-			Status:    file.Status,
-			Additions: file.Additions,
-			Deletions: file.Deletions,
-			Size:      file.Size,
-			Binary:    file.Binary,
+			Path:         file.Path,
+			PreviousPath: file.PreviousPath,
+			Status:       file.Status,
+			Additions:    file.Additions,
+			Deletions:    file.Deletions,
+			Size:         file.Size,
+			Binary:       file.Binary,
 		})
 	}
-	return ListWorkspaceFilesResponse{SessionID: files.SessionID, Files: out, Truncated: files.Truncated}
+	return ListWorkspaceFilesResponse{
+		SessionID:      files.SessionID,
+		CompareBaseSHA: files.CompareBaseSHA,
+		CompareBaseRef: files.CompareBaseRef,
+		CompareMode:    files.CompareMode,
+		Files:          out,
+		Truncated:      files.Truncated,
+	}
 }
 
 func workspaceFileResponse(file sessionsvc.WorkspaceFileDetail) WorkspaceFileResponse {
 	return WorkspaceFileResponse{
 		SessionID:        file.SessionID,
 		Path:             file.Path,
+		PreviousPath:     file.PreviousPath,
 		Status:           file.Status,
 		Additions:        file.Additions,
 		Deletions:        file.Deletions,
@@ -1203,6 +1197,9 @@ func workspaceFileResponse(file sessionsvc.WorkspaceFileDetail) WorkspaceFileRes
 		ContentTruncated: file.ContentTruncated,
 		Diff:             file.Diff,
 		DiffTruncated:    file.DiffTruncated,
+		CompareBaseSHA:   file.CompareBaseSHA,
+		CompareBaseRef:   file.CompareBaseRef,
+		CompareMode:      file.CompareMode,
 	}
 }
 

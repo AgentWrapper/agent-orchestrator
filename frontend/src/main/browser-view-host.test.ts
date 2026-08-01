@@ -62,7 +62,7 @@ function setupHost() {
 		on: (event: string, listener: (...args: never[]) => void) => {
 			webContentsListeners.set(event, listener);
 		},
-		reload: () => undefined,
+		reload: vi.fn(),
 		send: vi.fn(),
 		setWindowOpenHandler: () => undefined,
 		stop: () => undefined,
@@ -75,6 +75,7 @@ function setupHost() {
 	const view = {
 		webContents,
 		setBounds: vi.fn(),
+		setBorderRadius: vi.fn(),
 		setVisible: vi.fn(),
 	};
 	const handlers = new Map<string, InvokeHandler>();
@@ -172,10 +173,11 @@ function setupTabHost() {
 			loadURL: ReturnType<typeof vi.fn>;
 			openWindow: (url: string) => void;
 			close: ReturnType<typeof vi.fn>;
-		};
-		setBounds: ReturnType<typeof vi.fn>;
-		setVisible: ReturnType<typeof vi.fn>;
-	}> = [];
+			};
+			setBounds: ReturnType<typeof vi.fn>;
+			setBorderRadius: ReturnType<typeof vi.fn>;
+			setVisible: ReturnType<typeof vi.fn>;
+		}> = [];
 	let nextID = 100;
 	const makeView = () => {
 		let currentURL = "";
@@ -254,7 +256,7 @@ function setupTabHost() {
 				}
 			},
 		};
-		const view = { webContents, setBounds: vi.fn(), setVisible: vi.fn() };
+		const view = { webContents, setBounds: vi.fn(), setBorderRadius: vi.fn(), setVisible: vi.fn() };
 		views.push(view);
 		return view;
 	};
@@ -410,6 +412,42 @@ describe("agent browser runtime", () => {
 		const callback = vi.fn();
 		setPermissionRequestHandler.mock.calls[0][0]({}, "camera", callback);
 		expect(callback).toHaveBeenCalledWith(false);
+	});
+
+	it("rounds every native browser tab view to match the renderer shell", async () => {
+		const { host, views } = setupTabHost();
+
+		await host.execute("sess-1", "tabs");
+		await host.execute("sess-1", "tab-new");
+
+		expect(views).toHaveLength(2);
+		for (const view of views) {
+			expect(view.setBorderRadius).toHaveBeenCalled();
+			expect(view.setBorderRadius.mock.calls.every(([radius]) => radius === 8)).toBe(true);
+		}
+	});
+
+	it("emits started and finished browser activity with one command id", async () => {
+		const { host, sent } = setupHost();
+
+		await host.execute("sess-1", "tabs");
+
+		const activity = sent.filter((event) => event.channel === "browser:agentActivity");
+		expect(activity).toHaveLength(2);
+		expect(activity[0].payload).toMatchObject({
+			viewId: "0:sess-1",
+			active: true,
+			action: "tabs",
+			phase: "started",
+			commandId: expect.any(String),
+		});
+		expect(activity[1].payload).toMatchObject({
+			viewId: "0:sess-1",
+			active: false,
+			action: "tabs",
+			phase: "finished",
+			commandId: (activity[0].payload as { commandId: string }).commandId,
+		});
 	});
 
 	it("rejects local files and implicit searches from agent-originated navigation", async () => {
@@ -751,15 +789,23 @@ describe("agent browser runtime", () => {
 
 		const pendingSnapshot = host.execute("sess-1", "snapshot");
 		await vi.waitFor(() =>
-			expect(sent).toContainEqual({
-				channel: "browser:agentActivity",
-				payload: {
-					viewId: "0:sess-1",
-					active: true,
-					action: "snapshot",
-				},
-			}),
+			expect(sent).toContainEqual(
+				expect.objectContaining({
+					channel: "browser:agentActivity",
+					payload: expect.objectContaining({
+						viewId: "0:sess-1",
+						active: true,
+						action: "snapshot",
+						phase: "started",
+						commandId: expect.any(String),
+					}),
+				}),
+			),
 		);
+		const startedActivity = sent.find(({ channel, payload }) => {
+			if (channel !== "browser:agentActivity") return false;
+			return (payload as { active?: boolean; action?: string }).active === true;
+		})?.payload as { commandId: string };
 		await vi.waitFor(() => expect(debuggerSendCommand).toHaveBeenCalledWith("Accessibility.getFullAXTree"));
 
 		resolveSnapshot({ nodes: [] });
@@ -770,8 +816,20 @@ describe("agent browser runtime", () => {
 				.filter(({ channel }) => channel === "browser:agentActivity")
 				.map(({ payload }) => payload),
 		).toEqual([
-			{ viewId: "0:sess-1", active: true, action: "snapshot" },
-			{ viewId: "0:sess-1", active: false, action: "snapshot" },
+			expect.objectContaining({
+				viewId: "0:sess-1",
+				active: true,
+				action: "snapshot",
+				phase: "started",
+				commandId: startedActivity.commandId,
+			}),
+			expect.objectContaining({
+				viewId: "0:sess-1",
+				active: false,
+				action: "snapshot",
+				phase: "finished",
+				commandId: startedActivity.commandId,
+			}),
 		]);
 	});
 
@@ -1106,6 +1164,7 @@ describe("browser:setBounds parked", () => {
 	it("moves the view offscreen at full size while keeping it visible", async () => {
 		const { emit, invoke, view } = setupHost();
 		await invoke("browser:ensure", "sess-1");
+		view.setBorderRadius.mockClear();
 
 		emit("browser:setBounds", 1, {
 			viewId: "1:sess-1",
@@ -1115,6 +1174,10 @@ describe("browser:setBounds parked", () => {
 		});
 
 		expect(view.setBounds).toHaveBeenLastCalledWith({ x: -10_000, y: 0, width: 320, height: 240 });
+		expect(view.setBorderRadius).toHaveBeenLastCalledWith(8);
+		expect(view.setBounds.mock.invocationCallOrder.at(-1)).toBeLessThan(
+			view.setBorderRadius.mock.invocationCallOrder.at(-1)!,
+		);
 		expect(view.setVisible).toHaveBeenLastCalledWith(true);
 	});
 });
@@ -1123,6 +1186,7 @@ describe("browser:setBounds", () => {
 	it("converts page-zoomed renderer slot bounds before positioning the native view", async () => {
 		const { emit, invoke, view } = setupHost();
 		await invoke("browser:ensure", "sess-1");
+		view.setBorderRadius.mockClear();
 
 		emit("browser:setBounds", 1.25, {
 			viewId: "1:sess-1",
@@ -1131,6 +1195,55 @@ describe("browser:setBounds", () => {
 		});
 
 		expect(view.setBounds).toHaveBeenLastCalledWith({ x: 125, y: 25, width: 400, height: 300 });
+		expect(view.setBorderRadius).toHaveBeenLastCalledWith(8);
+		expect(view.setBounds.mock.invocationCallOrder.at(-1)).toBeLessThan(
+			view.setBorderRadius.mock.invocationCallOrder.at(-1)!,
+		);
+		expect(view.setVisible).toHaveBeenLastCalledWith(true);
+	});
+
+	it("does not let a hidden page navigation grant native visibility", async () => {
+		const { emit, invoke, view, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		emit("browser:setBounds", 1, {
+			viewId: "1:sess-1",
+			rect: { x: 100, y: 20, width: 320, height: 240 },
+			visible: true,
+		});
+		expect(view.setVisible).toHaveBeenLastCalledWith(true);
+		emit("browser:setBounds", 1, {
+			viewId: "1:sess-1",
+			rect: { x: 0, y: 0, width: 0, height: 0 },
+			visible: false,
+		});
+
+		view.setBounds.mockClear();
+		view.setVisible.mockClear();
+		webContentsListeners.get("did-navigate")?.();
+
+		expect(view.setVisible).not.toHaveBeenCalledWith(true);
+		expect(view.setVisible).toHaveBeenLastCalledWith(false);
+	});
+
+	it("restores renderer-owned bounds when reloading after a failed load", async () => {
+		const { emit, invoke, view, webContents, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		emit("browser:setBounds", 1, {
+			viewId: "1:sess-1",
+			rect: { x: 100, y: 20, width: 320, height: 240 },
+			visible: true,
+		});
+
+		webContentsListeners.get("did-fail-load")?.({} as never, -105 as never, "Name not resolved" as never);
+		expect(view.setVisible).toHaveBeenLastCalledWith(false);
+
+		view.setBounds.mockClear();
+		view.setVisible.mockClear();
+		await invoke("browser:reload", "1:sess-1");
+
+		expect(webContents.reload).toHaveBeenCalled();
+		expect(view.setBounds).toHaveBeenLastCalledWith({ x: 100, y: 20, width: 320, height: 240 });
 		expect(view.setVisible).toHaveBeenLastCalledWith(true);
 	});
 });

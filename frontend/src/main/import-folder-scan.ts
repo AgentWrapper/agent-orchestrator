@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { readdir, stat } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -50,7 +51,12 @@ async function gitOutput(cwd: string, args: string[], options: ScanOptions = {})
 
 function comparablePath(value: string): string {
 	const resolved = path.resolve(value);
-	return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+	try {
+		const real = realpathSync(resolved);
+		return process.platform === "win32" ? real.toLowerCase() : real;
+	} catch {
+		return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+	}
 }
 
 function samePath(a: string, b: string): boolean {
@@ -78,7 +84,7 @@ function projectSetupSafetyReason(repoPath: string, options: ScanOptions = {}): 
 	return undefined;
 }
 
-async function ancestorRepositorySetupWarning(repoPath: string, options: ScanOptions = {}): Promise<string | undefined> {
+export async function ancestorRepositorySetupWarning(repoPath: string, options: ScanOptions = {}): Promise<string | undefined> {
 	try {
 		const top = normalizeGitReportedPath(repoPath, await gitOutput(repoPath, ["rev-parse", "--show-toplevel"], options));
 		if (top && !samePath(top, repoPath)) {
@@ -246,16 +252,22 @@ export async function scanImportFolder(
 		};
 	}
 
-	const entries = (await readdir(rootPath, { withFileTypes: true }))
-		.filter((entry) => entry.isDirectory() && !IMPORT_SCAN_SKIP_DIRS.has(entry.name))
-		.slice(0, IMPORT_SCAN_MAX_ENTRIES);
-	const repos = await mapLimited(entries, IMPORT_SCAN_CONCURRENCY, (entry) =>
-		scanGitRepo(path.join(rootPath, entry.name), rootPath, options),
+	const [entries, ancestorWarning] = await Promise.all([
+		readdir(rootPath, { withFileTypes: true }),
+		ancestorRepositorySetupWarning(rootPath, options),
+	]);
+	const repos = await mapLimited(
+		entries
+			.filter((entry) => entry.isDirectory() && !IMPORT_SCAN_SKIP_DIRS.has(entry.name))
+			.slice(0, IMPORT_SCAN_MAX_ENTRIES),
+		IMPORT_SCAN_CONCURRENCY,
+		(entry) => scanGitRepo(path.join(rootPath, entry.name), rootPath, options),
 	);
 	return {
 		path: rootPath,
 		repos: repos
 			.filter((repo): repo is GitRepoScanResult => repo !== null)
 			.sort((a, b) => a.name.localeCompare(b.name)),
+		...(ancestorWarning ? { setupWarning: ancestorWarning } : {}),
 	};
 }

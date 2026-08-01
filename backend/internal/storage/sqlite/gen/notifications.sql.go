@@ -241,17 +241,3 @@ func (q *Queries) MarkNotificationRead(ctx context.Context, id string) (Notifica
 	)
 	return i, err
 }
-
-const sessionHasUnreadNotification = `-- name: SessionHasUnreadNotification :one
-SELECT EXISTS(
-    SELECT 1 FROM notifications
-    WHERE session_id = ? AND status = 'unread'
-) AS has_unread
-`
-
-func (q *Queries) SessionHasUnreadNotification(ctx context.Context, sessionID domain.SessionID) (bool, error) {
-	row := q.db.QueryRowContext(ctx, sessionHasUnreadNotification, sessionID)
-	var has_unread bool
-	err := row.Scan(&has_unread)
-	return has_unread, err
-}

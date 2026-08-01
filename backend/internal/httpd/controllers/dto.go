@@ -194,35 +194,43 @@ type SpawnSessionResponse struct {
 
 // ListWorkspaceFilesResponse is the body of GET /api/v1/sessions/{sessionId}/workspace/files.
 type ListWorkspaceFilesResponse struct {
-	SessionID domain.SessionID       `json:"sessionId"`
-	Files     []WorkspaceFileSummary `json:"files"`
-	Truncated bool                   `json:"truncated"`
+	SessionID      domain.SessionID                `json:"sessionId"`
+	CompareBaseSHA string                          `json:"compareBaseSha,omitempty"`
+	CompareBaseRef string                          `json:"compareBaseRef,omitempty"`
+	CompareMode    sessionsvc.WorkspaceCompareMode `json:"compareMode,omitempty" enum:"base,head_fallback"`
+	Files          []WorkspaceFileSummary          `json:"files"`
+	Truncated      bool                            `json:"truncated"`
 }
 
 // WorkspaceFileSummary is one file row in the session workspace browser.
 type WorkspaceFileSummary struct {
-	Path      string                         `json:"path"`
-	Status    sessionsvc.WorkspaceFileStatus `json:"status" enum:"unmodified,modified,added,deleted,renamed"`
-	Additions int                            `json:"additions"`
-	Deletions int                            `json:"deletions"`
-	Size      int64                          `json:"size"`
-	Binary    bool                           `json:"binary"`
+	Path         string                         `json:"path"`
+	PreviousPath string                         `json:"previousPath,omitempty"`
+	Status       sessionsvc.WorkspaceFileStatus `json:"status" enum:"unmodified,modified,added,deleted,renamed"`
+	Additions    int                            `json:"additions"`
+	Deletions    int                            `json:"deletions"`
+	Size         int64                          `json:"size"`
+	Binary       bool                           `json:"binary"`
 }
 
 // WorkspaceFileResponse is the body of GET /api/v1/sessions/{sessionId}/workspace/file.
 type WorkspaceFileResponse struct {
-	SessionID        domain.SessionID               `json:"sessionId"`
-	Path             string                         `json:"path"`
-	Status           sessionsvc.WorkspaceFileStatus `json:"status" enum:"unmodified,modified,added,deleted,renamed"`
-	Additions        int                            `json:"additions"`
-	Deletions        int                            `json:"deletions"`
-	Size             int64                          `json:"size"`
-	Binary           bool                           `json:"binary"`
-	Deleted          bool                           `json:"deleted"`
-	Content          string                         `json:"content"`
-	ContentTruncated bool                           `json:"contentTruncated"`
-	Diff             string                         `json:"diff"`
-	DiffTruncated    bool                           `json:"diffTruncated"`
+	SessionID        domain.SessionID                `json:"sessionId"`
+	Path             string                          `json:"path"`
+	PreviousPath     string                          `json:"previousPath,omitempty"`
+	Status           sessionsvc.WorkspaceFileStatus  `json:"status" enum:"unmodified,modified,added,deleted,renamed"`
+	Additions        int                             `json:"additions"`
+	Deletions        int                             `json:"deletions"`
+	Size             int64                           `json:"size"`
+	Binary           bool                            `json:"binary"`
+	Deleted          bool                            `json:"deleted"`
+	Content          string                          `json:"content"`
+	ContentTruncated bool                            `json:"contentTruncated"`
+	Diff             string                          `json:"diff"`
+	DiffTruncated    bool                            `json:"diffTruncated"`
+	CompareBaseSHA   string                          `json:"compareBaseSha,omitempty"`
+	CompareBaseRef   string                          `json:"compareBaseRef,omitempty"`
+	CompareMode      sessionsvc.WorkspaceCompareMode `json:"compareMode,omitempty" enum:"base,head_fallback"`
 }
 
 // SessionPreviewResponse is the body of GET /api/v1/sessions/{sessionId}/preview.
@@ -627,13 +635,6 @@ type OrchestratorResponse struct {
 	ID          domain.SessionID `json:"id"`
 	ProjectID   domain.ProjectID `json:"projectId"`
 	ProjectName string           `json:"projectName,omitempty"`
-}
-
-// CompleteOrchestratorResponse is returned after the orchestrator declares its
-// assigned work complete.
-type CompleteOrchestratorResponse struct {
-	OK        bool             `json:"ok"`
-	SessionID domain.SessionID `json:"sessionId"`
 }
 
 // ListAgentsResponse is the body of GET /api/v1/agents.

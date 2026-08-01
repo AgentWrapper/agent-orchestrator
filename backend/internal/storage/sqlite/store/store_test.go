@@ -59,6 +59,40 @@ func TestSessionCreateAllowsFakeHarness(t *testing.T) {
 	}
 }
 
+func TestSessionPersistsDiffBaseMetadata(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec := sampleRecord("mer")
+	rec.Metadata.DiffBaseSHA = "base-sha-1"
+	rec.Metadata.DiffBaseRef = "main"
+
+	created, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	got, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("get session: ok=%v err=%v", ok, err)
+	}
+	if got.Metadata.DiffBaseSHA != "base-sha-1" || got.Metadata.DiffBaseRef != "main" {
+		t.Fatalf("created diff base = sha:%q ref:%q", got.Metadata.DiffBaseSHA, got.Metadata.DiffBaseRef)
+	}
+
+	got.Metadata.DiffBaseSHA = "base-sha-2"
+	got.Metadata.DiffBaseRef = "develop"
+	if err := s.UpdateSession(ctx, got); err != nil {
+		t.Fatalf("update session: %v", err)
+	}
+	updated, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("get updated session: ok=%v err=%v", ok, err)
+	}
+	if updated.Metadata.DiffBaseSHA != "base-sha-2" || updated.Metadata.DiffBaseRef != "develop" {
+		t.Fatalf("updated diff base = sha:%q ref:%q", updated.Metadata.DiffBaseSHA, updated.Metadata.DiffBaseRef)
+	}
+}
+
 func TestProjectCRUDAndArchive(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

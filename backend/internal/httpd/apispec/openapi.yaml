@@ -715,51 +715,6 @@ paths:
       summary: Fetch one orchestrator session
       tags:
       - sessions
-  /api/v1/orchestrators/{id}/done:
-    post:
-      operationId: completeOrchestrator
-      parameters:
-      - description: Orchestrator session identifier, e.g. project-orchestrator.
-        in: path
-        name: id
-        required: true
-        schema:
-          description: Orchestrator session identifier, e.g. project-orchestrator.
-          type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CompleteOrchestratorResponse'
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Bad Request
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Found
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Internal Server Error
-        "501":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Implemented
-      summary: Declare an orchestrator complete and stop automatic re-engagement
-      tags:
-      - sessions
   /api/v1/projects:
     get:
       operationId: listProjects
@@ -2759,15 +2714,10 @@ components:
       - sessionId
       - reason
       type: object
-    CompleteOrchestratorResponse:
+    ContainerReapConfig:
       properties:
-        ok:
+        disabled:
           type: boolean
-        sessionId:
-          type: string
-      required:
-      - ok
-      - sessionId
       type: object
     ControllersSessionView:
       properties:
@@ -3111,6 +3061,15 @@ components:
       type: object
     ListWorkspaceFilesResponse:
       properties:
+        compareBaseRef:
+          type: string
+        compareBaseSha:
+          type: string
+        compareMode:
+          enum:
+          - base
+          - head_fallback
+          type: string
         files:
           items:
             $ref: '#/components/schemas/WorkspaceFileSummary'
@@ -3391,6 +3350,8 @@ components:
           type: string
         agentRulesFile:
           type: string
+        containerReap:
+          $ref: '#/components/schemas/ContainerReapConfig'
         defaultBranch:
           type: string
         env:
@@ -4297,6 +4258,15 @@ components:
           type: integer
         binary:
           type: boolean
+        compareBaseRef:
+          type: string
+        compareBaseSha:
+          type: string
+        compareMode:
+          enum:
+          - base
+          - head_fallback
+          type: string
         content:
           type: string
         contentTruncated:
@@ -4310,6 +4280,8 @@ components:
         diffTruncated:
           type: boolean
         path:
+          type: string
+        previousPath:
           type: string
         sessionId:
           type: string
@@ -4347,6 +4319,8 @@ components:
         deletions:
           type: integer
         path:
+          type: string
+        previousPath:
           type: string
         size:
           format: int64

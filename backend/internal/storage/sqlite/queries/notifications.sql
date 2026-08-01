@@ -48,8 +48,3 @@ SELECT *
 FROM notifications
 WHERE session_id = ? AND type = ? AND pr_url = ? AND status = 'unread'
 LIMIT 1;
--- name: SessionHasUnreadNotification :one
-SELECT EXISTS(
-    SELECT 1 FROM notifications
-    WHERE session_id = ? AND status = 'unread'
-) AS has_unread;
