@@ -1539,7 +1539,7 @@ function BoardCard({
 						width={16}
 						height={16}
 						aria-hidden="true"
-						className={`h-4 w-4 ${isWaiting ? "opacity-40" : ""}`}
+						className="h-4 w-4"
 						draggable="false"
 					/>
 					{isWaiting ? (
