@@ -13,6 +13,12 @@ export type { BrowserNavState };
 type UseBrowserViewOptions = {
 	sessionId: string;
 	active: boolean;
+	/**
+	 * Broad worker activity used to keep the browser presence latched across
+	 * fast, separate browser commands. Undefined preserves command-scoped
+	 * behavior for older callers that do not have session activity data.
+	 */
+	agentWorking?: boolean;
 	poppedOut: boolean;
 	/**
 	 * When true, the view is cleared and the daemon-driven preview is suppressed.
@@ -72,6 +78,7 @@ const EMPTY_TABS_STATE: BrowserTabsState = {
 };
 
 const HIDDEN_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 };
+const AGENT_BROWSER_ACTIVITY_FALLBACK_MS = 12_000;
 
 // The native WebContentsView is a window-level overlay, so DOM `overflow:
 // hidden` never clips it — it paints wherever the slot's bounding box lands.
@@ -111,6 +118,7 @@ function hiddenByFullscreen(node: HTMLElement): boolean {
 export function useBrowserView({
 	sessionId,
 	active,
+	agentWorking,
 	poppedOut,
 	terminated,
 	previewUrl,
@@ -137,12 +145,70 @@ export function useBrowserView({
 	const mirrorTokenRef = useRef(0);
 	const mirrorTimerRef = useRef<number | null>(null);
 	const tabNoticeTimerRef = useRef<number | null>(null);
+	const agentBrowserFallbackTimerRef = useRef<number | null>(null);
+	const agentBrowserLeaseRef = useRef(false);
+	const agentWorkingRef = useRef(agentWorking);
+	const previousAgentWorkingRef = useRef(agentWorking);
 	const mirrorStreamRef = useRef<MediaStream | null>(null);
 	const hasNativeBrowser = Boolean(window.ao?.browser);
+
+	const clearAgentBrowserFallback = useCallback(() => {
+		if (agentBrowserFallbackTimerRef.current === null) return;
+		window.clearTimeout(agentBrowserFallbackTimerRef.current);
+		agentBrowserFallbackTimerRef.current = null;
+	}, []);
+
+	const clearAgentBrowserActivity = useCallback(() => {
+		agentBrowserLeaseRef.current = false;
+		clearAgentBrowserFallback();
+		setAgentBrowserActive(false);
+	}, [clearAgentBrowserFallback]);
+	const setNativeAgentStatus = useCallback(
+		(id: string, active: boolean) => {
+			if (!hasNativeBrowser || !id) return;
+			const pending = window.ao?.browser.setAgentStatus?.({ viewId: id, active });
+			void pending?.catch(() => undefined);
+		},
+		[hasNativeBrowser],
+	);
+
+	const scheduleAgentBrowserFallback = useCallback(() => {
+		clearAgentBrowserFallback();
+		if (agentWorkingRef.current === true) return;
+		agentBrowserFallbackTimerRef.current = window.setTimeout(() => {
+			agentBrowserFallbackTimerRef.current = null;
+			if (agentWorkingRef.current !== true) {
+				agentBrowserLeaseRef.current = false;
+				setAgentBrowserActive(false);
+			}
+		}, AGENT_BROWSER_ACTIVITY_FALLBACK_MS);
+	}, [clearAgentBrowserFallback]);
 
 	useEffect(() => {
 		activeRef.current = active;
 	}, [active]);
+
+	useEffect(() => {
+		const previous = previousAgentWorkingRef.current;
+		previousAgentWorkingRef.current = agentWorking;
+		agentWorkingRef.current = agentWorking;
+		if (agentWorking === true) {
+			clearAgentBrowserFallback();
+			return;
+		}
+		// A known active -> idle/waiting transition is the authoritative end of
+		// the browser-work session. Do not clear on the initial false value: a
+		// browser command can arrive before the first activity CDC update.
+		if (agentWorking === false && previous === true) {
+			clearAgentBrowserActivity();
+		}
+	}, [agentWorking, clearAgentBrowserActivity, clearAgentBrowserFallback]);
+
+	useEffect(() => {
+		const id = viewIdRef.current;
+		if (!id || id !== viewId) return;
+		setNativeAgentStatus(id, agentBrowserActive);
+	}, [agentBrowserActive, setNativeAgentStatus, viewId]);
 
 	useEffect(() => {
 		hasUrlRef.current = Boolean(navState.url);
@@ -255,6 +321,8 @@ export function useBrowserView({
 		previewTriggerRef.current = null;
 		setTabsState(EMPTY_TABS_STATE);
 		setTabNotice("");
+		agentBrowserLeaseRef.current = false;
+		clearAgentBrowserFallback();
 		setAgentBrowserActive(false);
 		if (tabNoticeTimerRef.current !== null) {
 			window.clearTimeout(tabNoticeTimerRef.current);
@@ -290,8 +358,11 @@ export function useBrowserView({
 		});
 		return () => {
 			disposed = true;
+			clearAgentBrowserFallback();
+			agentBrowserLeaseRef.current = false;
 			const id = viewIdRef.current;
 			if (id) {
+				setNativeAgentStatus(id, false);
 				if (annotationModeRef.current) {
 					void window.ao?.browser.setAnnotationMode({ viewId: id, enabled: false });
 					setAnnotationModeState(false);
@@ -300,7 +371,14 @@ export function useBrowserView({
 			}
 			viewIdRef.current = "";
 		};
-	}, [hasNativeBrowser, scheduleSettleMeasure, sendHiddenBounds, sessionId]);
+	}, [
+		clearAgentBrowserFallback,
+		hasNativeBrowser,
+		scheduleSettleMeasure,
+		sendHiddenBounds,
+		sessionId,
+		setNativeAgentStatus,
+	]);
 
 	useEffect(() => {
 		return window.ao?.browser.onNavState((state) => {
@@ -326,15 +404,25 @@ export function useBrowserView({
 	useEffect(() => {
 		return window.ao?.browser.onAgentActivity((state) => {
 			if (state.viewId !== viewIdRef.current) return;
-			setAgentBrowserActive(state.active);
+			if (state.active) {
+				agentBrowserLeaseRef.current = true;
+				setAgentBrowserActive(true);
+				scheduleAgentBrowserFallback();
+				return;
+			}
+			// With session activity available, a command's completion is not the
+			// end of the agent's browser work. The activity transition effect above
+			// closes the latched presence when the worker finishes or hands off.
+			if (agentWorkingRef.current === undefined) clearAgentBrowserActivity();
 		});
-	}, []);
+	}, [clearAgentBrowserActivity, scheduleAgentBrowserFallback]);
 
 	useEffect(
 		() => () => {
 			if (tabNoticeTimerRef.current !== null) window.clearTimeout(tabNoticeTimerRef.current);
+			clearAgentBrowserFallback();
 		},
-		[],
+		[clearAgentBrowserFallback],
 	);
 
 	useEffect(() => {
@@ -578,6 +666,7 @@ export function useBrowserView({
 	}, [clear, navigate, previewRevision, previewUrl, terminated, viewId]);
 
 	const destroy = useCallback(() => {
+		clearAgentBrowserActivity();
 		const id = viewIdRef.current;
 		if (!id) return;
 		if (annotationModeRef.current) {
@@ -587,13 +676,14 @@ export function useBrowserView({
 		mirrorTokenRef.current += 1;
 		stopMirrorStream();
 		setMirrorUrl("");
+		setNativeAgentStatus(id, false);
 		sendHiddenBounds(id);
 		window.ao?.browser.destroy(id);
 		viewIdRef.current = "";
 		setViewId("");
 		setNavState(EMPTY_NAV_STATE);
 		setTabsState(EMPTY_TABS_STATE);
-	}, [sendHiddenBounds, stopMirrorStream]);
+	}, [clearAgentBrowserActivity, sendHiddenBounds, setNativeAgentStatus, stopMirrorStream]);
 
 	// Termination invalidates the complete session-owned browser, including all
 	// tabs, captures, profile state, and target mappings. `clear` remains the

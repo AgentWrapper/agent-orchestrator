@@ -280,7 +280,7 @@ describe("BrowserPanel", () => {
 		);
 
 		expect(screen.getByRole("button", { name: /annotate/i })).toBeEnabled();
-		expect(screen.queryByText("Agent using browser")).not.toBeInTheDocument();
+		expect(screen.queryByText("Agent working")).not.toBeInTheDocument();
 
 		first.unmount();
 		hookState.agentBrowserActive = true;
@@ -298,7 +298,9 @@ describe("BrowserPanel", () => {
 		);
 
 		expect(screen.getByRole("button", { name: /annotate/i })).toBeEnabled();
-		expect(screen.getByText("Agent using browser")).toBeInTheDocument();
+		const status = screen.getByTestId("browser-agent-status");
+		expect(status).toHaveTextContent("Agent working");
+		expect(status).toHaveClass("browser-panel__agent-status");
 	});
 
 	it("disables annotation mode when no page is loaded", () => {

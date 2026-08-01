@@ -65,6 +65,7 @@ export const aoBridge: AoBridge =
 				isLoading: false,
 			}),
 			setBounds: () => undefined,
+			setAgentStatus: async () => undefined,
 			navigate: async ({ viewId, url }) => ({
 				viewId,
 				url,

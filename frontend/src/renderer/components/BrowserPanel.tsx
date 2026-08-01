@@ -194,9 +194,12 @@ export function useBrowserAnnotationQueue({
 }
 
 export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: BrowserPanelProps) {
+	const agentWorking =
+		session.activity && session.activity.state !== "unknown" ? session.activity.state === "active" : undefined;
 	const browserView = useBrowserView({
 		sessionId: session.id,
 		active,
+		agentWorking,
 		poppedOut,
 		previewUrl: session.previewUrl,
 		previewRevision: session.previewRevision,
@@ -246,7 +249,8 @@ export function BrowserPanelView({
 	const [urlInput, setUrlInput] = useState(navState.url);
 	const { beginPicking, cancelPicking, enqueue, error, failPicking, queuedCount, retryQueued, status } =
 		annotationQueue;
-	const showStaticPreview = !window.ao?.browser && navState.url !== "";
+	const hasNativeBrowser = Boolean(window.ao?.browser);
+	const showStaticPreview = !hasNativeBrowser && navState.url !== "";
 	const canAnnotate = Boolean(window.ao?.browser && viewId && navState.url);
 	const canRetryAnnotation = status === "error" && queuedCount > 0;
 
@@ -381,10 +385,6 @@ export function BrowserPanelView({
 					>
 						{annotationStatusLabel}
 					</span>
-				) : agentBrowserActive ? (
-					<span className="browser-panel__annotation-status" role="status" aria-live="polite">
-						Agent using browser
-					</span>
 				) : null}
 				<div className="relative min-w-0 flex-1">
 					<Globe2
@@ -467,7 +467,7 @@ export function BrowserPanelView({
 				</Button>
 			</form>
 			<div className="relative min-h-0 flex-1 overflow-hidden bg-background">
-				<div className="absolute inset-0 min-h-px min-w-px" ref={slotRef} />
+				<div className="browser-panel__slot absolute inset-0 min-h-px min-w-px" ref={slotRef} />
 				{mirrorStream ? (
 					<MirrorVideo stream={mirrorStream} />
 				) : mirrorUrl ? (
@@ -489,6 +489,17 @@ export function BrowserPanelView({
 					>
 						{navState.error}
 					</p>
+				) : null}
+				{agentBrowserActive ? (
+					<div
+						className="browser-panel__agent-status"
+						data-testid="browser-agent-status"
+						role="status"
+						aria-live="polite"
+					>
+						<span aria-hidden="true" className="browser-panel__agent-status-dot" />
+						Agent working
+					</div>
 				) : null}
 			</div>
 		</div>

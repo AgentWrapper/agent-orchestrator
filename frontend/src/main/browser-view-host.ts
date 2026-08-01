@@ -56,6 +56,11 @@ export type BrowserAgentActivityState = {
 	action: string;
 };
 
+export type BrowserAgentStatusInput = {
+	viewId: string;
+	active: boolean;
+};
+
 type BrowserBoundsInput = {
 	viewId: string;
 	rect: BrowserRect;
@@ -81,6 +86,7 @@ type BrowserWebContents = Pick<
 	| "capturePage"
 	| "clearHistory"
 	| "debugger"
+	| "executeJavaScript"
 	| "mainFrame"
 	| "getTitle"
 	| "getURL"
@@ -169,6 +175,8 @@ type BrowserSessionEntry = {
 	parked: boolean;
 	networkTabId?: string;
 	agentBrowserCommands: number;
+	agentStatusActive: boolean;
+	agentStatusQueue: Promise<void>;
 };
 
 type BrowserLogEntry = {
@@ -231,6 +239,78 @@ const UNTRUSTED_END = "<<<END UNTRUSTED EXTERNAL CONTENT>>>";
 // The human-facing address bar may open local preview files. Agent commands use
 // normalizeAgentBrowserURL below, which permits only explicit HTTP(S) targets.
 const ALLOWED_PROTOCOLS = new Set(["http:", "https:", "file:"]);
+const AGENT_STATUS_HOST_ID = "__ao_agent_working_badge__";
+const AGENT_STATUS_MARKUP = `
+<style>
+  :host {
+    all: initial;
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 2147483647;
+    display: block;
+    pointer-events: none;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 26px;
+    padding: 0 10px 0 8px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 999px;
+    background: rgba(25, 28, 34, 0.8);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(10px);
+    color: rgba(255, 255, 255, 0.78);
+    font: 600 11px/1.1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    white-space: nowrap;
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .dot {
+    width: 7px;
+    height: 7px;
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: #75d69b;
+    box-shadow: 0 0 0 3px rgba(117, 214, 155, 0.16);
+    animation: ao-agent-working-breathe 2.4s ease-in-out infinite;
+  }
+  @keyframes ao-agent-working-breathe {
+    0%, 100% {
+      opacity: 0.88;
+      box-shadow: 0 0 0 3px rgba(117, 214, 155, 0.14);
+    }
+    50% {
+      opacity: 0.58;
+      box-shadow: 0 0 0 5px rgba(117, 214, 155, 0.04);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .dot { animation: none; }
+  }
+</style>
+<div class="badge" role="presentation"><span class="dot" aria-hidden="true"></span><span>Agent working</span></div>`;
+
+function agentStatusScript(active: boolean): string {
+	return `(() => {
+  const hostId = ${JSON.stringify(AGENT_STATUS_HOST_ID)};
+  const existing = document.getElementById(hostId);
+  if (!${active ? "true" : "false"}) {
+    existing?.remove();
+    return;
+  }
+  if (existing || !document.documentElement) return;
+  const host = document.createElement("div");
+  host.id = hostId;
+  host.setAttribute("aria-hidden", "true");
+  const shadow = host.attachShadow({ mode: "closed" });
+  shadow.innerHTML = ${JSON.stringify(AGENT_STATUS_MARKUP)};
+  document.documentElement.appendChild(host);
+})()`;
+}
 
 export function normalizeBrowserURL(input: string): URL {
 	const raw = input.trim();
@@ -305,6 +385,32 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			active: session.agentBrowserCommands > 0,
 			action,
 		} satisfies BrowserAgentActivityState);
+	};
+	const enqueueAgentStatus = (
+		session: BrowserSessionEntry,
+		active: boolean,
+		target: BrowserEntry | undefined = active ? activeEntry(session) : undefined,
+	): Promise<void> => {
+		const targets = active ? (target ? [target] : [activeEntry(session)]) : [...session.tabs.values()];
+		const update = async (): Promise<void> => {
+			await Promise.all(
+				targets.map(async (entry) => {
+					const executeJavaScript = entry.view.webContents.executeJavaScript;
+					if (!executeJavaScript) return;
+					try {
+						await executeJavaScript.call(entry.view.webContents, agentStatusScript(active));
+					} catch {
+						// The page may be between documents or the view may be closing.
+					}
+				}),
+			);
+		};
+		const next = session.agentStatusQueue.then(update, update);
+		session.agentStatusQueue = next.then(
+			() => undefined,
+			() => undefined,
+		);
+		return next;
 	};
 	let pendingMirror: { viewId: string; expires: number; frame: WebFrameMain } | null = null;
 
@@ -382,6 +488,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			() => entries.get(session.viewId)?.activeTabId === entry.tabId,
 			() => applySessionBounds(session, entry),
 			() => pushTabsState(options, session),
+			() => {
+				if (session.agentStatusActive) void enqueueAgentStatus(session, true, entry);
+			},
 		);
 		wireAutomationEvents(view.webContents, entry);
 		// The preview is a separate WebContentsView, so renderer-window keydown
@@ -421,6 +530,8 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				visible: false,
 				parked: false,
 				agentBrowserCommands: 0,
+				agentStatusActive: false,
+				agentStatusQueue: Promise.resolve(),
 			};
 			entries.set(viewId, session);
 			viewIdsBySessionId.set(sessionId, viewId);
@@ -470,6 +581,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		}
 		session.activeTabId = tabId;
 		applySessionBounds(session, next);
+		if (session.agentStatusActive) void enqueueAgentStatus(session, true, next);
 		pushNavState(options, next);
 		if (notify) pushTabsState(options, session, { kind: "selected", tabId });
 		return next;
@@ -732,6 +844,14 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	handle("browser:ensure", (event, sessionId: string) =>
 		pushNavState(options, activeEntry(ensureSession(sessionId, event.sender.id))),
 	);
+	handle("browser:setAgentStatus", (event, input: BrowserAgentStatusInput) => {
+		if (!input || typeof input.viewId !== "string" || typeof input.active !== "boolean") return;
+		if (!isRendererOwned(event, input.viewId)) return;
+		const session = entries.get(input.viewId);
+		if (!session) return;
+		session.agentStatusActive = input.active;
+		return enqueueAgentStatus(session, input.active);
+	});
 	on("browser:setBounds", (event, input: BrowserBoundsInput) => {
 		if (isRendererOwned(event, input.viewId)) setBounds(input, event.sender.getZoomFactor());
 	});
@@ -1093,6 +1213,7 @@ function wireNavEvents(
 	isActive: () => boolean,
 	syncActiveBounds: () => void,
 	syncTabs: () => void,
+	syncAgentStatus: () => void,
 ): void {
 	const update = () => {
 		syncTabs();
@@ -1100,6 +1221,7 @@ function wireNavEvents(
 	};
 	contents.on("did-navigate", () => {
 		if (isActive()) syncActiveBounds();
+		syncAgentStatus();
 		update();
 	});
 	contents.on("did-navigate-in-page", update);
@@ -1108,7 +1230,10 @@ function wireNavEvents(
 		cancelAnnotation(options, entry, "navigation");
 		update();
 	});
-	contents.on("did-stop-loading", update);
+	contents.on("did-stop-loading", () => {
+		syncAgentStatus();
+		update();
+	});
 	contents.on("did-fail-load", (_event, errorCode, errorDescription) => {
 		if (errorCode === -3) return;
 		if (isActive()) entry.view.setVisible?.(false);

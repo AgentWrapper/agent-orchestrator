@@ -172,9 +172,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const hasInspector = Boolean(session && !isOrchestrator);
 	const previewUrl = session?.previewUrl?.trim() || undefined;
 	const previewRevision = session?.previewRevision;
+	const agentWorking =
+		session?.activity && session.activity.state !== "unknown" ? session.activity.state === "active" : undefined;
 	const browserView = useBrowserView({
 		sessionId,
 		active: Boolean(session && hasInspector && (browserPoppedOut || isInspectorOpen)),
+		agentWorking,
 		poppedOut: browserPoppedOut,
 		terminated: session ? !sessionIsActive(session) : false,
 		previewUrl,

@@ -107,6 +107,7 @@ if (typeof window !== "undefined") {
 				isLoading: false,
 			}),
 			setBounds: () => undefined,
+			setAgentStatus: async () => undefined,
 			capture: async () => "",
 			requestMirror: async () => false,
 			navigate: async ({ viewId }: { viewId: string }) => ({

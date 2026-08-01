@@ -2329,6 +2329,73 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	min-height: 1px;
 }
 
+.browser-panel__agent-status {
+	position: absolute;
+	right: 12px;
+	bottom: 12px;
+	z-index: 3;
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	min-height: 26px;
+	max-width: 180px;
+	padding: 0 10px 0 8px;
+	border: 1px solid color-mix(in srgb, var(--color-status-working) 28%, var(--color-border));
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--color-bg-secondary) 92%, transparent);
+	box-shadow:
+		0 5px 18px rgb(0 0 0 / 0.16),
+		0 0 0 3px color-mix(in srgb, var(--color-status-working) 5%, transparent);
+	backdrop-filter: blur(10px);
+	pointer-events: none;
+	color: var(--color-text-muted);
+	font-size: 11px;
+	font-weight: 650;
+	line-height: 1;
+	white-space: nowrap;
+	animation: browser-agent-status-in 180ms ease-out;
+}
+
+.browser-panel__agent-status-dot {
+	width: 7px;
+	height: 7px;
+	flex: 0 0 auto;
+	border-radius: 999px;
+	background: var(--color-status-working);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-status-working) 16%, transparent);
+	animation: browser-agent-status-breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes browser-agent-status-in {
+	from {
+		opacity: 0;
+		transform: translateY(4px) scale(0.97);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+}
+
+@keyframes browser-agent-status-breathe {
+	0%,
+	100% {
+		opacity: 0.88;
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-status-working) 14%, transparent);
+	}
+	50% {
+		opacity: 0.58;
+		box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-status-working) 4%, transparent);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.browser-panel__agent-status,
+	.browser-panel__agent-status-dot {
+		animation: none;
+	}
+}
+
 .browser-panel__overlay {
 	position: absolute;
 	inset: 0;

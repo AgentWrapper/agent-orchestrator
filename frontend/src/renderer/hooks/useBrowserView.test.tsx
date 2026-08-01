@@ -48,6 +48,7 @@ function setupBridge() {
 			isLoading: false,
 		})),
 		setBounds: vi.fn(),
+		setAgentStatus: vi.fn(async () => undefined),
 		capture: vi.fn(async () => "data:image/jpeg;base64,snapshot"),
 		requestMirror: vi.fn(async () => false),
 		navigate: vi.fn(async ({ viewId }: { viewId: string }) => bridge.stateFor(viewId)),
@@ -193,6 +194,27 @@ describe("useBrowserView", () => {
 			bridge.emitActivity({ viewId: "42:sess-1", active: false, action: "click" });
 		});
 		expect(result.current.agentBrowserActive).toBe(false);
+	});
+
+	it("keeps browser presence latched until the worker hands off", async () => {
+		const bridge = setupBridge();
+		const { result, rerender } = renderHook(
+			({ agentWorking }: { agentWorking: boolean }) =>
+				useBrowserView({ sessionId: "sess-1", active: true, agentWorking, poppedOut: false }),
+			{ initialProps: { agentWorking: true } },
+		);
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+
+		act(() => {
+			bridge.emitActivity({ viewId: "42:sess-1", active: true, action: "snapshot" });
+			bridge.emitActivity({ viewId: "42:sess-1", active: false, action: "snapshot" });
+		});
+		expect(result.current.agentBrowserActive).toBe(true);
+		expect(bridge.setAgentStatus).toHaveBeenLastCalledWith({ viewId: "42:sess-1", active: true });
+
+		rerender({ agentWorking: false });
+		await waitFor(() => expect(result.current.agentBrowserActive).toBe(false));
+		expect(bridge.setAgentStatus).toHaveBeenLastCalledWith({ viewId: "42:sess-1", active: false });
 	});
 
 	it("clamps the native view to its resizable-panel column when the slot overspills", async () => {
