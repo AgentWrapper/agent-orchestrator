@@ -5,11 +5,12 @@ Status: Accepted (gateway); platform isolation required before adapter rollout
 
 ## Context
 
-Some reviewer CLIs are useful only as visible, long-lived interactive TUIs. Qwen
-Code and Agy also expose shell escapes or other general-purpose tools which cannot
-be made genuinely read-only by prompt text or launch flags. Running either TUI in
-a worker checkout would let it execute project startup resources, edit files, use
-Git hooks and filters, commit, push, or read unrelated host state.
+Some reviewer CLIs are useful only as visible interactive TUIs. Agy, Continue,
+Devin, Droid, Goose, Kimi, Qwen Code, and Vibe also expose shell escapes or
+other general-purpose tools which cannot be made genuinely read-only by prompt
+text or launch flags. Running one in a worker checkout can execute project
+startup resources, edit files, use Git hooks and filters, commit, push, or read
+unrelated host state.
 
 Headless, JSON, RPC, print, and one-shot modes are not acceptable substitutes for
 AO's reviewer terminal. A reusable boundary must preserve the real TUI while
@@ -41,8 +42,8 @@ future interactive reviewer adapters.
   listener behavior, database schema, or HTTP APIs.
 
 This is an enforceable capability API when invoked, but it is not by itself a
-process sandbox. Agy, Continue, Goose, Qwen, and Vibe may be explicitly selected
-only as experimental host-trusted reviewers. Their restrictive modes reduce
+process sandbox. Agy, Continue, Devin, Droid, Goose, Kimi, Qwen, and Vibe may be
+explicitly selected only as experimental host-trusted reviewers. Their restrictive modes reduce
 accidental authority but do not contain terminal-user shell escapes, profiles,
 project plugins, external editors, approval-mode changes, or network access.
 
@@ -71,7 +72,7 @@ command filtering is insufficient.
 
 ## Acceptance tests for adapter rollout
 
-1. The actual Qwen/Agy interactive TUI renders and accepts subsequent pane-injected
+1. The actual provider interactive TUI renders and accepts subsequent pane-injected
    review messages in tmux and ConPTY; cancellation uses the real TUI key.
 2. TUI shell escapes and arbitrary commands cannot read the checkout or home, write
    outside the neutral root, start project commands, commit, push, or connect to an
