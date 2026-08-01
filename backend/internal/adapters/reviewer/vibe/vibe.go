@@ -85,23 +85,13 @@ func (*Reviewer) Harness() domain.ReviewerHarness { return HarnessID }
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
 
-// ReviewCommand only returns the executable during the launcher's generic
-// binary probe. A request-scoped invocation fails before any runtime argv or
-// environment can be consumed.
-func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
-	binary, err := r.resolveBinary(ctx)
-	if err != nil {
+// ReviewCommand always fails before resolving a binary or constructing runtime
+// state. Compatibility probing belongs exclusively to ReviewPreflight; no
+// invocation shape may bypass the disabled production boundary.
+func (*Reviewer) ReviewCommand(ctx context.Context, _ ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
+	if err := ctx.Err(); err != nil {
 		return ports.ReviewCommandSpec{}, err
 	}
-	if strings.TrimSpace(inv.TaskPromptRoot) == "" {
-		return ports.ReviewCommandSpec{Argv: []string{binary}}, nil
-	}
-	if err := r.isolationPreflight(ctx); err != nil {
-		return ports.ReviewCommandSpec{}, err
-	}
-	// Containment alone is insufficient: credentials must come from the model
-	// broker and review access must come solely from the gateway MCP. Neither
-	// transport exists on this branch.
 	return ports.ReviewCommandSpec{}, ErrIsolationUnavailable
 }
 

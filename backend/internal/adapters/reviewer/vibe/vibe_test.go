@@ -45,14 +45,28 @@ func invocation(t *testing.T) ports.ReviewInvocation {
 	}
 }
 
-func TestReviewCommandPreflightShapeOnlyResolvesBinary(t *testing.T) {
+func TestReviewCommandFailsClosedForEveryInvocationShape(t *testing.T) {
 	r := testReviewer(t, "", "", ErrIsolationUnavailable)
-	spec, err := r.ReviewCommand(context.Background(), ports.ReviewInvocation{WorkspacePath: "/worker"})
-	if err != nil {
-		t.Fatalf("ReviewCommand: %v", err)
+	resolved := false
+	r.resolveBinary = func(context.Context) (string, error) {
+		resolved = true
+		return "/opt/vibe/bin/vibe", nil
 	}
-	if !reflect.DeepEqual(spec.Argv, []string{"/opt/vibe/bin/vibe"}) || spec.WorkingDirectory != "" || len(spec.Env) != 0 {
-		t.Fatalf("preflight spec = %+v", spec)
+	for _, inv := range []ports.ReviewInvocation{
+		{},
+		{WorkspacePath: "/worker"},
+		invocation(t),
+	} {
+		spec, err := r.ReviewCommand(context.Background(), inv)
+		if !errors.Is(err, ErrIsolationUnavailable) {
+			t.Fatalf("ReviewCommand(%+v) err = %v, want isolation blocker", inv, err)
+		}
+		if !reflect.DeepEqual(spec, ports.ReviewCommandSpec{}) {
+			t.Fatalf("ReviewCommand(%+v) spec = %+v, want empty", inv, spec)
+		}
+	}
+	if resolved {
+		t.Fatal("ReviewCommand resolved a binary before returning the isolation blocker")
 	}
 }
 
@@ -61,10 +75,10 @@ func TestReviewCommandFailsClosedBeforeRuntimeLaunch(t *testing.T) {
 	if _, err := testReviewer(t, "", "", ErrIsolationUnavailable).ReviewCommand(context.Background(), inv); !errors.Is(err, ErrIsolationUnavailable) {
 		t.Fatalf("ReviewCommand err = %v, want isolation blocker", err)
 	}
-	// A future process sandbox alone must not enable Vibe before its model
-	// broker and review-gateway MCP transports also exist.
-	if _, err := testReviewer(t, "", "", nil).ReviewCommand(context.Background(), inv); !errors.Is(err, ErrIsolationUnavailable) {
-		t.Fatalf("ReviewCommand with isolation probe err = %v", err)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := testReviewer(t, "", "", nil).ReviewCommand(ctx, inv); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ReviewCommand canceled context err = %v", err)
 	}
 }
 
