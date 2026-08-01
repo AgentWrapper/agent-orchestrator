@@ -107,7 +107,7 @@ func writeBrowserError(w http.ResponseWriter, r *http.Request, err error) {
 			status = http.StatusConflict
 			typeName = "conflict"
 		case "BROWSER_TARGET_UNAVAILABLE", "BROWSER_AUTOMATION_UNAVAILABLE", "AGENT_BROWSER_NOT_INSTALLED",
-			"AGENT_BROWSER_START_FAILED":
+			"AGENT_BROWSER_START_FAILED", "BROWSER_DEVTOOLS_UNAVAILABLE":
 			status = http.StatusServiceUnavailable
 			typeName = "unavailable"
 		}

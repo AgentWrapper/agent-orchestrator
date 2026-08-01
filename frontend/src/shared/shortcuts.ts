@@ -15,7 +15,7 @@ export type ShortcutChord = {
 };
 
 export type AppShortcutId =
-	"new-session" | "new-shell-terminal" | "keyboard-shortcuts" | "toggle-sidebar" | "open-project" | "toggle-inspector" | "command-palette" | "open-settings" | "previous-session" | "next-session" | "focus-terminal";
+	"new-session" | "new-shell-terminal" | "keyboard-shortcuts" | "toggle-sidebar" | "open-project" | "toggle-inspector" | "command-palette" | "open-settings" | "previous-session" | "next-session" | "focus-terminal" | "toggle-browser-devtools";
 
 export type ShortcutCategory = "General" | "Navigation" | "Session";
 
@@ -99,6 +99,11 @@ export const APP_SHORTCUTS: readonly ShortcutDefinition[] = [
 		label: "Focus terminal",
 		category: "Session",
 	},
+	{
+		id: "toggle-browser-devtools",
+		label: "Toggle browser DevTools",
+		category: "Session",
+	},
 ];
 
 const binding = (
@@ -142,6 +147,8 @@ export function defaultShortcutBindings(id: AppShortcutId, isMac: boolean): read
 			return [isMac ? binding("ArrowDown", { meta: true, alt: true }) : binding("PageDown", { ctrl: true })];
 		case "focus-terminal":
 			return [isMac ? binding("t", { meta: true, shift: true }) : binding("t", { ctrl: true, shift: true })];
+		case "toggle-browser-devtools":
+			return [isMac ? binding("i", { meta: true, alt: true }) : binding("i", { ctrl: true, shift: true })];
 	}
 }
 

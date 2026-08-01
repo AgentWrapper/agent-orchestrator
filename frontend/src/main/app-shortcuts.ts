@@ -71,24 +71,28 @@ export function attachAppShortcuts(
 	focusTarget = false,
 	getOverrides: () => KeybindingOverrides = () => ({}),
 	isRecording: () => boolean = () => false,
+	onShortcut?: (id: AppShortcutId) => void,
 ): void {
 	contents.on("before-input-event", (event, input) => {
 		if (input.type !== "keyDown" || input.isAutoRepeat) return;
 		// Let the renderer's capture listener receive application-owned chords
 		// while the user is recording a replacement binding.
 		if (isRecording()) return;
-		const channel = appShortcutChannel(
-			{
-				key: input.key,
-				code: input.code,
-				ctrl: input.control,
-				meta: input.meta,
-				shift: input.shift,
-				alt: input.alt,
-			},
-			isMac,
-			getOverrides(),
-		);
+		const chord = {
+			key: input.key,
+			code: input.code,
+			ctrl: input.control,
+			meta: input.meta,
+			shift: input.shift,
+			alt: input.alt,
+		};
+		if (onShortcut && matchesAppShortcut("toggle-browser-devtools", chord, isMac, getOverrides())) {
+			event.preventDefault();
+			if (focusTarget) target.focus();
+			onShortcut("toggle-browser-devtools");
+			return;
+		}
+		const channel = appShortcutChannel(chord, isMac, getOverrides());
 		if (!channel) return;
 
 		event.preventDefault();

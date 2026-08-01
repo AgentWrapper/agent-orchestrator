@@ -164,6 +164,20 @@ export class AgentBrowserRuntime {
 		}
 	}
 
+	/**
+	 * Returns a private, target-pinned CDP endpoint for the official Chromium
+	 * DevTools frontend. The endpoint is never exposed through the daemon or
+	 * agent command output; the BrowserViewHost loads it directly in Electron.
+	 */
+	async devtoolsEndpoint(
+		sessionId: string,
+		targetId: string,
+		provider: AgentBrowserTargetProvider,
+	): Promise<string> {
+		const runtime = await this.ensureSession(sessionId, provider);
+		return runtime.bridge.endpointForTarget(targetId);
+	}
+
 	async closeSession(sessionId: string): Promise<void> {
 		const runtime = this.sessions.get(sessionId);
 		if (!runtime) return;

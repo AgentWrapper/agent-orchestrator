@@ -75,6 +75,21 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		setBounds: vi.fn(),
 		setVisible: vi.fn(),
 	};
+	let devtoolsClosed: (() => void) | undefined;
+	const devtoolsWindow = {
+		webContents: {
+			loadURL: vi.fn(async (_url: string) => undefined),
+			focus: vi.fn(),
+			on: vi.fn(),
+		},
+		show: vi.fn(),
+		focus: vi.fn(),
+		close: vi.fn(),
+		isDestroyed: () => false,
+		on: vi.fn((event: string, listener: () => void) => {
+			if (event === "closed") devtoolsClosed = listener;
+		}),
+	};
 	const runtime =
 		agentBrowserRuntime ??
 		({
@@ -106,6 +121,10 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 				height: 480,
 				untrustedExternalContent: true as const,
 			})),
+			devtoolsEndpoint: vi.fn(
+				async (_sessionId: string, targetId: string) =>
+					`ws://127.0.0.1:1234/?target=${targetId}&client=devtools`,
+			),
 			closeSession: vi.fn(async () => undefined),
 			dispose: vi.fn(async () => undefined),
 		} as unknown as import("./agent-browser-runtime").AgentBrowserRuntime);
@@ -129,6 +148,7 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 				},
 			},
 		} as never,
+		createDevToolsWindow: () => devtoolsWindow,
 		ipcMain: {
 			handle: (channel: string, fn: InvokeHandler) => handlers.set(channel, fn),
 			on: (channel: string, fn: EventHandler) => eventHandlers.set(channel, fn),
@@ -174,6 +194,8 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		return event;
 	};
 	return {
+		devtoolsClosed: () => devtoolsClosed?.(),
+		devtoolsWindow,
 		emit,
 		emitBeforeInput,
 		getDisplayHandler: () => displayHandler,
@@ -308,6 +330,9 @@ function setupTabHost() {
 			return {};
 		}),
 		screenshot: vi.fn(async () => ({ data: "", width: 0, height: 0, untrustedExternalContent: true as const })),
+		devtoolsEndpoint: vi.fn(
+			async (_sessionId: string, targetId: string) => `ws://127.0.0.1:1234/?target=${targetId}`,
+		),
 		closeSession: vi.fn(async () => undefined),
 		dispose: vi.fn(async () => undefined),
 	} as unknown as import("./agent-browser-runtime").AgentBrowserRuntime;
@@ -367,6 +392,47 @@ describe("new-session shortcut forwarding", () => {
 
 		expect(shellFocus).not.toHaveBeenCalled();
 		expect(shellSend).not.toHaveBeenCalledWith(NEW_SESSION_SHORTCUT_CHANNEL);
+	});
+});
+
+describe("shared Chromium DevTools host", () => {
+	it("opens the official DevTools frontend in a detached window", async () => {
+		const { invoke, sent, devtoolsClosed, devtoolsWindow } = setupHost();
+		const nav = await invoke("browser:ensure", "sess-1");
+		const viewId = (nav as BrowserNavState).viewId;
+
+		const opened = await invoke("browser:devtools", {
+			viewId,
+			operation: "open",
+		});
+		expect(opened).toMatchObject({ viewId, open: true, activeTabId: "t1" });
+		const loadedURL = devtoolsWindow.webContents.loadURL.mock.calls[0]?.[0] as string;
+		expect(loadedURL).toContain("devtools://devtools/bundled/inspector.html");
+		expect(new URL(loadedURL).searchParams.has("targetType")).toBe(false);
+		// Chromium gates both docking and the Device Mode toolbar/preview on the
+		// presence of can_dock. It must be omitted rather than set to "false",
+		// because Chromium treats any non-empty query value as enabled.
+		expect(new URL(loadedURL).searchParams.has("can_dock")).toBe(false);
+		expect(new URL(loadedURL).searchParams.get("ws")).toBe("127.0.0.1:1234/?target=t1&client=devtools");
+		expect(loadedURL).not.toContain("ws%3A%2F%2F");
+		expect(devtoolsWindow.show).toHaveBeenCalled();
+		expect(devtoolsWindow.focus).toHaveBeenCalled();
+		expect(sent.some((entry) => entry.channel === "browser:devtoolsState")).toBe(true);
+
+		// A user closing the detached window updates AO's state without another
+		// browser-toolbar interaction. The fake emits Electron's `closed` event.
+		devtoolsClosed();
+		expect(sent.filter((entry) => entry.channel === "browser:devtoolsState").at(-1)?.payload).toMatchObject({
+			viewId,
+			open: false,
+		});
+
+		// Opening after a normal close creates a fresh detached window again.
+		const afterUserClose = await invoke("browser:devtools", { viewId, operation: "open" });
+		expect(afterUserClose).toMatchObject({ viewId, open: true });
+		const closed = await invoke("browser:devtools", { viewId, operation: "close" });
+		expect(closed).toMatchObject({ viewId, open: false });
+		expect(devtoolsWindow.close).toHaveBeenCalled();
 	});
 });
 

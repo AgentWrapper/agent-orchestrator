@@ -236,12 +236,19 @@ function appendDaemonOutput(text: string): void {
 	daemonOutput = (daemonOutput + text).slice(-MAX_DAEMON_OUTPUT_CHARS);
 }
 
-// Role-based menu installed on Windows where the native menu bar is hidden. The
-// bar stays out of sight, but the roles keep their accelerators alive (Reload,
-// DevTools, zoom, full screen, edit commands) and each acts on the *focused*
-// webContents — including a BrowserView panel — matching native menu behaviour.
+// Menu installed on Windows where the native menu bar is hidden. The bar stays
+// out of sight, but the roles keep their accelerators alive (Reload, zoom, full
+// screen, edit commands). DevTools uses the AO browser toggle so the focused
+// Browser panel opens the same detached window as the toolbar and shortcut.
 function buildWindowsAppMenu(): Menu {
-	return Menu.buildFromTemplate(buildWindowsAppMenuTemplate());
+	return Menu.buildFromTemplate(
+		buildWindowsAppMenuTemplate(() => {
+			const fallback = () => mainWindow?.webContents.toggleDevTools();
+			void browserViewHost?.toggleDevToolsForLastFocused().then((state) => {
+				if (!state) fallback();
+			}).catch(fallback);
+		}),
+	);
 }
 
 function createWindow(): void {
@@ -318,10 +325,29 @@ function createWindow(): void {
 		false,
 		() => keybindingOverrides,
 		() => keybindingRecordingActive,
+		(id) => {
+			if (id !== "toggle-browser-devtools") return;
+			void browserViewHost?.toggleDevToolsForLastFocused().catch(() => undefined);
+		},
 	);
 
 	browserViewHost = createBrowserViewHost({
 		mainWindow,
+		createDevToolsWindow: () =>
+			new BrowserWindow({
+				show: false,
+				width: 1100,
+				height: 760,
+				minWidth: 720,
+				minHeight: 480,
+				title: "Browser DevTools",
+				autoHideMenuBar: true,
+				webPreferences: {
+					contextIsolation: true,
+					nodeIntegration: false,
+					sandbox: false,
+				},
+			}),
 		ipcMain,
 		shell,
 		WebContentsView,
@@ -1277,7 +1303,10 @@ ipcMain.handle("menu:action", (_event, action: string) => {
 		case "view.reload":
 			return wc.reload();
 		case "view.devtools":
-			return wc.toggleDevTools();
+			return browserViewHost?.toggleDevToolsForLastFocused().then((state) => {
+				if (state) return state;
+				return wc.toggleDevTools();
+			}).catch(() => wc.toggleDevTools()) ?? wc.toggleDevTools();
 		case "view.zoomIn":
 			return wc.setZoomLevel(wc.getZoomLevel() + 0.5);
 		case "view.zoomOut":

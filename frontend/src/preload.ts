@@ -3,6 +3,8 @@ import { FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_
 import type {
 	BrowserAgentActivityState,
 	BrowserAgentStatusInput,
+	BrowserDevToolsInput,
+	BrowserDevToolsState,
 	BrowserNavState,
 	BrowserRect,
 	BrowserTabsState,
@@ -176,6 +178,8 @@ const api = {
 			ipcRenderer.invoke("browser:selectTab", input) as Promise<BrowserTabsState>,
 		closeTab: (input: { viewId: string; tabId: string }) =>
 			ipcRenderer.invoke("browser:closeTab", input) as Promise<BrowserTabsState>,
+		devtools: (input: BrowserDevToolsInput) =>
+			ipcRenderer.invoke("browser:devtools", input) as Promise<BrowserDevToolsState>,
 		destroy: (viewId: string) => ipcRenderer.send("browser:destroy", viewId),
 		setAnnotationMode: (input: BrowserAnnotationModeInput) =>
 			ipcRenderer.invoke("browser:annotation:setMode", input) as Promise<void>,
@@ -191,6 +195,13 @@ const api = {
 			ipcRenderer.on("browser:tabsState", wrapped);
 			return () => {
 				ipcRenderer.off("browser:tabsState", wrapped);
+			};
+		},
+		onDevToolsState: (listener: (state: BrowserDevToolsState) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, state: BrowserDevToolsState) => listener(state);
+			ipcRenderer.on("browser:devtoolsState", wrapped);
+			return () => {
+				ipcRenderer.off("browser:devtoolsState", wrapped);
 			};
 		},
 		onAgentActivity: (listener: (state: BrowserAgentActivityState) => void) => {

@@ -7,8 +7,11 @@ AO can run the pinned native Vercel `agent-browser` against the same Electron
 
 The implementation does not expose an Electron-wide debugging port. Electron
 creates a random, loopback-only WebSocket endpoint for one AO worker and keeps
-the endpoint inside the desktop process. The daemon still validates the
-worker's existing browser capability before forwarding a request.
+the endpoint inside the desktop process. The same worker-scoped CDP bridge is
+shared by the agent and Chromium's official DevTools frontend, so opening
+DevTools does not detach or pause the agent's automation session. The daemon
+still validates the worker's existing browser capability before forwarding a
+request.
 
 ## Development setup
 
@@ -32,6 +35,7 @@ ao browser fill e1 "hello"
 ao browser click e2
 ao browser wait --text "Saved"
 ao browser errors
+ao browser devtools open
 ```
 
 The native engine is internal. Ordinary `ao browser` commands translate to its
@@ -41,7 +45,10 @@ console/error operations while preserving AO's stable output contract.
 AO blocks commands and flags that could launch or attach to another browser,
 display the private CDP endpoint, reuse a personal profile, persist browser
 state, evaluate arbitrary JavaScript, read arbitrary files, alter network
-routes, or close AO Preview.
+routes, or close AO Preview. DevTools is the exception by design: it is the
+user-facing Chromium frontend attached to the current AO tab, with unrestricted
+inspection/debugging controls for the user. Its endpoint is never returned to
+the daemon or agent command output.
 
 ## Manual acceptance checks
 
@@ -50,11 +57,14 @@ routes, or close AO Preview.
 3. Fill and click controls, then wait for an asynchronous result.
 4. Confirm the actions are visible in the same AO Preview.
 5. Open a second worker and confirm commands cannot see its page or tabs.
-6. Open native DevTools; the active automation command should stop safely.
-   Close DevTools and confirm a fresh snapshot reconnects.
-7. Close the worker and confirm AO Preview closes without leaving an
+6. Open DevTools from the browser toolbar button (or the browser DevTools
+   shortcut), inspect Elements/Console/Network, and confirm the agent can
+   continue navigating or clicking while the detached window remains open.
+7. Close DevTools with its normal window close control, reopen it from the
+   toolbar, and confirm the active AO tab is still available.
+8. Close the worker and confirm AO Preview closes without leaving an
    `agent-browser` process.
-8. Wait five minutes after the last command and confirm the sidecar exits while
+9. Wait five minutes after the last command and confirm the sidecar exits while
    AO Preview stays open.
 
 AO retains its own bounded, metadata-only network capture so credentials,

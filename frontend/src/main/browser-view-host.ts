@@ -61,6 +61,19 @@ export type BrowserAgentStatusInput = {
 	active: boolean;
 };
 
+export type BrowserDevToolsState = {
+	viewId: string;
+	open: boolean;
+	activeTabId: string;
+};
+
+export type BrowserDevToolsInput = {
+	viewId: string;
+	operation: "open" | "close";
+};
+
+type InternalBrowserDevToolsOperation = BrowserDevToolsInput["operation"] | "toggle";
+
 type BrowserBoundsInput = {
 	viewId: string;
 	rect: BrowserRect;
@@ -87,6 +100,7 @@ type BrowserWebContents = Pick<
 	| "clearHistory"
 	| "debugger"
 	| "executeJavaScript"
+	| "focus"
 	| "mainFrame"
 	| "getTitle"
 	| "getURL"
@@ -122,6 +136,15 @@ type BrowserWindowLike = {
 	isDestroyed?: () => boolean;
 };
 
+type BrowserDevToolsWindowLike = {
+	webContents: Pick<BrowserWebContents, "focus" | "loadURL" | "on">;
+	show: () => void;
+	focus: () => void;
+	close: () => void;
+	isDestroyed?: () => boolean;
+	on: (event: "closed", listener: () => void) => unknown;
+};
+
 type ShellLike = {
 	openExternal: (url: string) => Promise<void>;
 };
@@ -130,6 +153,7 @@ type WebContentsViewConstructor = new (options: { webPreferences: Electron.WebPr
 
 export type BrowserViewHostOptions = {
 	mainWindow: BrowserWindowLike;
+	createDevToolsWindow?: () => BrowserDevToolsWindowLike;
 	ipcMain: Pick<IpcMain, "handle" | "on" | "removeHandler" | "off">;
 	shell: ShellLike;
 	WebContentsView: WebContentsViewConstructor;
@@ -150,6 +174,8 @@ export type BrowserViewHost = {
 	execute: (sessionId: string, action: string, args?: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>;
 	// webContents of the most recently focused browser panel (or null); the titlebar menu targets it for Edit/Reload/Zoom/DevTools.
 	getLastFocusedPanelContents: () => WebContents | null;
+	/** Toggle Chromium DevTools for the last focused AO browser panel. */
+	toggleDevToolsForLastFocused: () => Promise<BrowserDevToolsState | null>;
 	// Drop the remembered panel; call when the shell gains focus for a real reason so a stale panel stops absorbing menu actions.
 	forgetLastFocusedPanel: () => void;
 };
@@ -177,6 +203,10 @@ type BrowserSessionEntry = {
 	agentBrowserCommands: number;
 	agentStatusActive: boolean;
 	agentStatusQueue: Promise<void>;
+	devtools?: {
+		window: BrowserDevToolsWindowLike;
+		targetTabId: string;
+	};
 };
 
 type BrowserLogEntry = {
@@ -417,6 +447,38 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const sameFrame = (a: WebFrameMain, b: WebFrameMain | null | undefined): boolean =>
 		Boolean(b) && a.processId === b!.processId && a.routingId === b!.routingId;
 
+	const pushDevToolsState = (session: BrowserSessionEntry): BrowserDevToolsState => {
+		const state: BrowserDevToolsState = {
+			viewId: session.viewId,
+			open: Boolean(session.devtools),
+			activeTabId: session.activeTabId,
+		};
+		options.mainWindow.webContents.send("browser:devtoolsState", state);
+		return state;
+	};
+
+	const devtoolsURL = (endpoint: string): string => {
+		// Chromium's inspector frontend expects ws=<host/path>, not a nested
+		// ws:// URL. Passing the scheme through URLSearchParams produces
+		// ws=ws%3A%2F%2F..., which loads the frontend but leaves it disconnected.
+		const parsed = new URL(endpoint);
+		const websocketTarget = `${parsed.host}${parsed.pathname}${parsed.search}`;
+		// This endpoint is page-shaped, so use the inspector's normal frame target.
+		// targetType=tab expects Chromium to provide a separate child page target;
+		// forcing it here creates the empty intermediary target surface. Omit
+		// can_dock as well so the window stays detached and non-dockable.
+		const query = new URLSearchParams({ ws: websocketTarget });
+		return `devtools://devtools/bundled/inspector.html?${query.toString()}`;
+	};
+
+	const destroyDevTools = (session: BrowserSessionEntry): void => {
+		const devtools = session.devtools;
+		if (!devtools) return;
+		session.devtools = undefined;
+		if (!devtools.window.isDestroyed?.()) devtools.window.close();
+		pushDevToolsState(session);
+	};
+
 	const displayMediaSession = options.mainWindow.webContents.session;
 	const mirrorSupported = Boolean(displayMediaSession?.setDisplayMediaRequestHandler);
 	if (mirrorSupported) {
@@ -503,6 +565,15 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			true,
 			options.getKeybindingOverrides,
 			options.isKeybindingRecording,
+			(id) => {
+				if (id !== "toggle-browser-devtools") return;
+				lastFocusedViewId = session.viewId;
+				void devtoolsAction(session, "toggle")
+					.then((state) => {
+						if (state.open) session.devtools?.window.focus();
+					})
+					.catch(() => undefined);
+			},
 		);
 		view.webContents.on("focus", () => {
 			lastFocusedViewId = session.viewId;
@@ -584,6 +655,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (session.agentStatusActive) void enqueueAgentStatus(session, true, next);
 		pushNavState(options, next);
 		if (notify) pushTabsState(options, session, { kind: "selected", tabId });
+		if (session.devtools) pushDevToolsState(session);
+		if (session.devtools && session.devtools.targetTabId !== tabId) {
+			void retargetDevTools(session, tabId).catch(() => undefined);
+		}
 		return next;
 	}
 
@@ -626,6 +701,89 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			},
 		};
 	}
+
+	const retargetDevTools = async (
+		session: BrowserSessionEntry,
+		tabId = session.activeTabId,
+		reveal = false,
+	): Promise<BrowserDevToolsState> => {
+		const devtools = session.devtools;
+		if (!devtools) return pushDevToolsState(session);
+		const entry = session.tabs.get(tabId);
+		if (!entry) throw browserError("TAB_NOT_FOUND", `Browser tab ${tabId} does not exist`);
+		if (!options.agentBrowserRuntime) {
+			throw browserError("BROWSER_DEVTOOLS_UNAVAILABLE", "Browser DevTools are unavailable");
+		}
+		const endpoint = await options.agentBrowserRuntime.devtoolsEndpoint(
+			session.sessionId,
+			entry.tabId,
+			agentBrowserTargets(session),
+		);
+		await devtools.window.webContents.loadURL(devtoolsURL(endpoint));
+		devtools.targetTabId = entry.tabId;
+		if (reveal) {
+			devtools.window.show();
+			devtools.window.focus();
+		}
+		return pushDevToolsState(session);
+	};
+
+	const openDevTools = async (
+		session: BrowserSessionEntry,
+	): Promise<BrowserDevToolsState> => {
+		const entry = activeEntry(session);
+		if (!options.agentBrowserRuntime || !options.createDevToolsWindow) {
+			throw browserError("BROWSER_DEVTOOLS_UNAVAILABLE", "Browser DevTools are unavailable");
+		}
+		if (!session.devtools || session.devtools.window.isDestroyed?.()) {
+			const window = options.createDevToolsWindow();
+			// The detached DevTools window is outside the shell renderer, so keep
+			// the application-owned toggle shortcut available while it is focused.
+			attachAppShortcuts(
+				window.webContents,
+				Boolean(options.isMac),
+				options.mainWindow.webContents,
+				false,
+				options.getKeybindingOverrides,
+				options.isKeybindingRecording,
+				(id) => {
+					if (id !== "toggle-browser-devtools") return;
+					void devtoolsAction(session, "toggle")
+						.then((state) => {
+							if (state.open) session.devtools?.window.focus();
+							else activeEntry(session).view.webContents.focus?.();
+						})
+						.catch(() => undefined);
+				},
+			);
+			window.on("closed", () => {
+				if (session.devtools?.window !== window) return;
+				session.devtools = undefined;
+				pushDevToolsState(session);
+			});
+			session.devtools = { window, targetTabId: entry.tabId };
+		}
+		return retargetDevTools(session, entry.tabId, true);
+	};
+
+	const devtoolsAction = async (
+		session: BrowserSessionEntry,
+		operation: InternalBrowserDevToolsOperation,
+	): Promise<BrowserDevToolsState> => {
+		switch (operation) {
+			case "open":
+				return openDevTools(session);
+			case "toggle":
+				if (session.devtools) {
+					destroyDevTools(session);
+					return pushDevToolsState(session);
+				}
+				return openDevTools(session);
+			case "close":
+				destroyDevTools(session);
+				return pushDevToolsState(session);
+		}
+	};
 
 	function applySessionBounds(session: BrowserSessionEntry, entry: BrowserEntry): void {
 		if (!session.visible) {
@@ -672,6 +830,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		session.visible = true;
 		session.parked = false;
 		applySessionBounds(session, entry);
+		// The shell toolbar can receive focus immediately after the Browser panel
+		// becomes visible. Remember that active panel too, so the DevTools shortcut
+		// still targets the browser even when the native page itself is not focused.
+		lastFocusedViewId = viewId;
 	};
 
 	const navigate = async ({ viewId, url }: BrowserNavigateInput): Promise<BrowserNavState> => {
@@ -735,6 +897,8 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const destroy = (viewId: string): void => {
 		const session = entries.get(viewId);
 		if (!session) return;
+		if (options.mainWindow.isDestroyed?.()) session.devtools = undefined;
+		else destroyDevTools(session);
 		void options.agentBrowserRuntime?.closeSession(session.sessionId);
 		entries.delete(viewId);
 		viewIdsBySessionId.delete(session.sessionId);
@@ -841,9 +1005,11 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		ipcDisposers.push(() => options.ipcMain.off(channel, fn));
 	};
 
-	handle("browser:ensure", (event, sessionId: string) =>
-		pushNavState(options, activeEntry(ensureSession(sessionId, event.sender.id))),
-	);
+	handle("browser:ensure", (event, sessionId: string) => {
+		const session = ensureSession(sessionId, event.sender.id);
+		pushDevToolsState(session);
+		return pushNavState(options, activeEntry(session));
+	});
 	handle("browser:setAgentStatus", (event, input: BrowserAgentStatusInput) => {
 		if (!input || typeof input.viewId !== "string" || typeof input.active !== "boolean") return;
 		if (!isRendererOwned(event, input.viewId)) return;
@@ -898,6 +1064,17 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		return session && isRendererOwned(event, input.viewId)
 			? closeTab(session, input.tabId)
 			: emptyTabsState(input.viewId);
+	});
+	handle("browser:devtools", (event, input: BrowserDevToolsInput) => {
+		if (!input || typeof input.viewId !== "string" || !isRendererOwned(event, input.viewId)) {
+			return emptyDevToolsState(input?.viewId ?? "");
+		}
+		const session = entries.get(input.viewId);
+		if (!session) return emptyDevToolsState(input.viewId);
+		if (!["open", "close"].includes(input.operation)) {
+			throw browserError("INVALID_ARGUMENT", "Unsupported browser DevTools operation");
+		}
+		return devtoolsAction(session, input.operation);
 	});
 	handle("browser:annotation:setMode", (event, input: BrowserAnnotationModeInput) => setAnnotationMode(event, input));
 	on("browser:destroy", (event, viewId: string) => {
@@ -1014,6 +1191,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				case "frame":
 				case "dialog":
 					return runNative(action, args);
+				case "devtools-open":
+				case "devtools-close":
+				{
+					const operation = action.slice("devtools-".length) as BrowserDevToolsInput["operation"];
+					return devtoolsAction(session, operation);
+				}
 				case "screenshot":
 					if (!options.agentBrowserRuntime) {
 						throw browserError("BROWSER_AUTOMATION_UNAVAILABLE", "Browser automation runtime is unavailable");
@@ -1064,6 +1247,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			// Stored narrowed as BrowserWebContents but is a full WebContents at runtime.
 			const contents = entry.view.webContents as unknown as WebContents;
 			return contents.isDestroyed() ? null : contents;
+		},
+		toggleDevToolsForLastFocused: async () => {
+			if (lastFocusedViewId === null) return null;
+			const session = entries.get(lastFocusedViewId);
+			if (!session) return null;
+			return devtoolsAction(session, "toggle");
 		},
 		forgetLastFocusedPanel: () => {
 			lastFocusedViewId = null;
@@ -1138,6 +1327,10 @@ function emptyNavState(viewId: string): BrowserNavState {
 
 function emptyTabsState(viewId: string): BrowserTabsState {
 	return { viewId, activeTabId: "", tabs: [] };
+}
+
+function emptyDevToolsState(viewId: string): BrowserDevToolsState {
+	return { viewId, open: false, activeTabId: "" };
 }
 
 function activeEntry(session: BrowserSessionEntry): BrowserEntry {

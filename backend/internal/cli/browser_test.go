@@ -193,6 +193,28 @@ func TestBrowserCoreInteractionArguments(t *testing.T) {
 	}
 }
 
+func TestBrowserDevToolsCommands(t *testing.T) {
+	setBrowserIdentity(t)
+	cfg := setConfigEnv(t)
+	capture := &browserRequestCapture{}
+	srv := browserCLIServer(t, capture)
+	writeRunFileFor(t, cfg, srv)
+	deps := Deps{ProcessAlive: func(int) bool { return true }}
+
+	if _, _, err := executeCLI(t, deps, "browser", "devtools", "open"); err != nil {
+		t.Fatal(err)
+	}
+	if capture.body.Action != "devtools-open" || len(capture.body.Args) != 0 {
+		t.Fatalf("devtools open = %#v", capture.body)
+	}
+	if _, _, err := executeCLI(t, deps, "browser", "devtools", "close"); err != nil {
+		t.Fatal(err)
+	}
+	if capture.body.Action != "devtools-close" {
+		t.Fatalf("devtools close action = %q", capture.body.Action)
+	}
+}
+
 func TestBrowserTabsPrintStableIDsAndActiveTab(t *testing.T) {
 	setBrowserIdentity(t)
 	cfg := setConfigEnv(t)

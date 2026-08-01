@@ -232,6 +232,33 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 	})
 	cmd.AddCommand(tabCmd)
 
+	devtoolsCmd := &cobra.Command{
+		Use:   "devtools",
+		Short: "Open and control Chromium's DevTools for the active page",
+		Args:  noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return ctx.runBrowserAction(cmd, "devtools-open", nil, jsonOutput)
+		},
+	}
+	devtoolsOpen := &cobra.Command{
+		Use:   "open",
+		Short: "Open the real Chromium DevTools frontend",
+		Args:  noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return ctx.runBrowserAction(cmd, "devtools-open", nil, jsonOutput)
+		},
+	}
+	devtoolsCmd.AddCommand(devtoolsOpen)
+	devtoolsCmd.AddCommand(&cobra.Command{
+		Use:   "close",
+		Short: "Close Chromium DevTools",
+		Args:  noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return ctx.runBrowserAction(cmd, "devtools-close", nil, jsonOutput)
+		},
+	})
+	cmd.AddCommand(devtoolsCmd)
+
 	var scrollAmount int
 	scroll := &cobra.Command{
 		Use:   "scroll <up|down|left|right>",

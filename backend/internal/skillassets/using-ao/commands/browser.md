@@ -55,6 +55,9 @@ ao browser tabs [--json]
 ao browser tab new [url] [--json]
 ao browser tab select <tab-id> [--json]
 ao browser tab close [tab-id] [--json]
+ao browser devtools [--json]
+ao browser devtools open [--json]
+ao browser devtools close [--json]
 ao browser scroll <up|down|left|right> [--amount <pixels>] [--json]
 ao browser select <ref> <value> [--json]
 ao browser check <ref> [--json]
@@ -89,6 +92,17 @@ OS browser. Take a new snapshot after switching tabs because element refs are
 invalidated at the tab boundary. The user can select or close these same tabs
 from the compact tab control in the Browser toolbar; the next agent command
 uses whichever tab the user selected.
+`devtools` opens Chromium's official DevTools frontend for the active AO tab in
+a separate, normal desktop window. The user can use Elements, Console, Network,
+Sources, and the other normal DevTools panels while the agent continues using
+the same worker-scoped browser target. The Browser toolbar button, the titlebar
+View menu, and Ctrl+Shift+I (Cmd+Option+I on macOS) expose the same surface.
+Close the detached window with its normal window close control; the Browser
+toolbar button is also available to reopen it. DevTools is a user-facing
+debugging surface, not a second browser; never copy its private CDP endpoint
+into agent output. Agent commands should open or close it only when the user
+explicitly asks; use the structured console, errors, and network commands for
+agent-side diagnosis without stealing window focus.
 Use `wait --load` after navigation, `--text-gone` or `--selector-gone` for
 transient UI, and `--dom-stable <ms>` after HMR or a dynamic render. Conditional
 waits retry through brief execution-context replacement during navigation and

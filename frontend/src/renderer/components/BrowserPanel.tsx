@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import {
 	ArrowLeft,
 	ArrowRight,
+	Bug,
 	Check,
 	Globe2,
 	Layers3,
@@ -230,7 +231,6 @@ export function BrowserPanelView({
 		viewId,
 		navState,
 		mirrorUrl,
-		mirrorStream,
 		slotRef,
 		navigate,
 		goBack,
@@ -242,6 +242,9 @@ export function BrowserPanelView({
 		tabNotice,
 		selectTab,
 		closeTab,
+		devtoolsState = { viewId: "", open: false, activeTabId: "" },
+		openDevTools = async () => undefined,
+		closeDevTools = async () => undefined,
 		agentBrowserActive,
 		annotationMode,
 		setAnnotationMode,
@@ -253,6 +256,7 @@ export function BrowserPanelView({
 	const showStaticPreview = !hasNativeBrowser && navState.url !== "";
 	const canAnnotate = Boolean(window.ao?.browser && viewId && navState.url);
 	const canRetryAnnotation = status === "error" && queuedCount > 0;
+	const canUseDevTools = hasNativeBrowser && Boolean(viewId);
 
 	useEffect(() => {
 		setUrlInput(navState.url);
@@ -419,7 +423,12 @@ export function BrowserPanelView({
 							<span className="font-mono text-caption">{tabs.length}</span>
 						</Button>
 					</DropdownMenuTrigger>
-					<DropdownMenuContent align="end" className="w-72" sideOffset={8}>
+					<DropdownMenuContent
+						align="end"
+						className="w-72"
+						data-browser-native-overlay="true"
+						sideOffset={8}
+					>
 						<DropdownMenuLabel>Browser tabs</DropdownMenuLabel>
 						{tabs.map((tab) => {
 							const label = browserTabLabel(tab.title, tab.url);
@@ -453,6 +462,18 @@ export function BrowserPanelView({
 					</DropdownMenuContent>
 				</DropdownMenu>
 				<Button
+					aria-label={devtoolsState.open ? "Close DevTools" : "Open DevTools"}
+					className={cn(devtoolsState.open && "bg-accent-weak text-accent")}
+					disabled={!canUseDevTools}
+					onClick={() => void (devtoolsState.open ? closeDevTools() : openDevTools())}
+					size="icon-sm"
+					title={devtoolsState.open ? "Close DevTools" : "Open DevTools"}
+					type="button"
+					variant="ghost"
+				>
+					<Bug aria-hidden="true" className="size-icon-base" />
+				</Button>
+				<Button
 					aria-label={poppedOut ? "Return to panel" : "Pop out"}
 					onClick={() => onTogglePopOut(!poppedOut)}
 					size="icon-sm"
@@ -468,9 +489,7 @@ export function BrowserPanelView({
 			</form>
 			<div className="relative min-h-0 flex-1 overflow-hidden bg-background">
 				<div className="browser-panel__slot absolute inset-0 min-h-px min-w-px" ref={slotRef} />
-				{mirrorStream ? (
-					<MirrorVideo stream={mirrorStream} />
-				) : mirrorUrl ? (
+				{mirrorUrl ? (
 					<img alt="" className="absolute inset-0 h-full w-full object-cover" src={mirrorUrl} />
 				) : null}
 				{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
@@ -516,18 +535,6 @@ function browserTabLabel(title: string, url: string): { title: string; subtitle:
 	} catch {
 		return { title: cleanTitle || url, subtitle: url };
 	}
-}
-
-function MirrorVideo({ stream }: { stream: MediaStream }) {
-	const attach = useCallback(
-		(node: HTMLVideoElement | null) => {
-			if (node && node.srcObject !== stream) {
-				node.srcObject = stream;
-			}
-		},
-		[stream],
-	);
-	return <video autoPlay className="absolute inset-0 h-full w-full object-cover" muted playsInline ref={attach} />;
 }
 
 function StaticPreview({ url }: { url: string }) {

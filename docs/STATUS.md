@@ -77,6 +77,14 @@ surface (`npm run sqlc`, `npm run api`).
   have isolated cookies and web storage. The toolbar activity signal is scoped
   to actual agent browser commands; annotation progress is separate and its
   successful-delivery confirmation clears automatically.
+- Chromium's official DevTools frontend is available from the direct Browser
+  toolbar button, `Ctrl+Shift+I` (Cmd+Option+I on macOS), the titlebar View menu,
+  and `ao browser devtools`. It opens in a detached desktop window with normal
+  OS close controls and is attached through the same worker-scoped CDP
+  multiplexer as the agent, so Elements, Console, Network, Sources, and other
+  DevTools panels can remain open while agent automation continues. The
+  user-facing DevTools connection is unrestricted; agent CDP commands remain
+  policy-limited.
 - Preview targets are explicit: `ao preview`, `ao preview <target>`, or
   `ao preview start` selects what the panel shows. The desktop poller no longer
   auto-discovers a static entry point merely because a fresh worker exists.

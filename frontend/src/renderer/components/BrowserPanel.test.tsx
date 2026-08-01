@@ -24,6 +24,9 @@ const hookState = vi.hoisted(() => ({
 	stop: vi.fn(),
 	selectTab: vi.fn(),
 	closeTab: vi.fn(),
+	openDevTools: vi.fn(),
+	closeDevTools: vi.fn(),
+	devtoolsState: { viewId: "42:sess-1", open: false, activeTabId: "t1" },
 	setAnnotationMode: vi.fn(),
 	tabs: [{ id: "t1", url: "", title: "", active: true }],
 	activeTabId: "t1",
@@ -58,6 +61,9 @@ vi.mock("../hooks/useBrowserView", () => ({
 			agentBrowserActive: hookState.agentBrowserActive,
 			selectTab: hookState.selectTab,
 			closeTab: hookState.closeTab,
+			devtoolsState: hookState.devtoolsState,
+			openDevTools: hookState.openDevTools,
+			closeDevTools: hookState.closeDevTools,
 			annotationMode: false,
 			setAnnotationMode: hookState.setAnnotationMode,
 		};
@@ -136,6 +142,9 @@ describe("BrowserPanel", () => {
 		hookState.stop.mockReset();
 		hookState.selectTab.mockReset();
 		hookState.closeTab.mockReset();
+		hookState.openDevTools.mockReset();
+		hookState.closeDevTools.mockReset();
+		hookState.devtoolsState = { viewId: "42:sess-1", open: false, activeTabId: "t1" };
 		hookState.setAnnotationMode.mockReset();
 		hookState.setAnnotationMode.mockResolvedValue(undefined);
 		postMock.mockReset();
@@ -228,6 +237,18 @@ describe("BrowserPanel", () => {
 		await userEvent.click(tabsButton);
 		await userEvent.click(screen.getByRole("menuitem", { name: "Close tab First app" }));
 		expect(hookState.closeTab).toHaveBeenCalledWith("t1");
+	});
+
+	it("opens DevTools from a direct toolbar control", async () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "Open DevTools" }));
+		expect(hookState.openDevTools).toHaveBeenCalledOnce();
+
+		hookState.devtoolsState = { viewId: "42:sess-1", open: true, activeTabId: "t1" };
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		await userEvent.click(screen.getByRole("button", { name: "Close DevTools" }));
+		expect(hookState.closeDevTools).toHaveBeenCalledOnce();
 	});
 
 	it("surfaces a popup-created tab without adding a full tab strip", () => {
