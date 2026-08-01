@@ -104,21 +104,21 @@ describe("SessionFilesView", () => {
 
 	it("forwards containerRef to the root section for FLIP-transition measurement", async () => {
 		const containerRef = vi.fn();
-		renderWithQuery(<SessionFilesView containerRef={containerRef} onClose={vi.fn()} sessionId="sess-1" />);
+		renderWithQuery(<SessionFilesView containerRef={containerRef} sessionId="sess-1" />);
 
 		await screen.findByRole("button", { name: "Collapse src/App.tsx" });
 		expect(containerRef).toHaveBeenCalledWith(screen.getByLabelText("Session files"));
 	});
 
 	it("marks the root section with a stable data-flip-id so GSAP Flip can correlate it across the inline/maximized remount", async () => {
-		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
 
 		await screen.findByRole("button", { name: "Collapse src/App.tsx" });
 		expect(screen.getByLabelText("Session files")).toHaveAttribute("data-flip-id", "session-files-panel");
 	});
 
 	it("keeps a collapsed file's diff container mounted (inert) instead of removing it, so it can animate closed", async () => {
-		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
 
 		const toggle = await screen.findByRole("button", { name: "Collapse src/App.tsx" });
 		expect(await screen.findByText(diffLine("const value = 1;"))).toBeInTheDocument();
@@ -135,7 +135,7 @@ describe("SessionFilesView", () => {
 	});
 
 	it("loads the workspace files and requests detail for the selected file", async () => {
-		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
 
 		await screen.findByRole("button", { name: "Collapse src/App.tsx" });
 		expect(screen.getByText("2 files")).toBeInTheDocument();
@@ -154,7 +154,7 @@ describe("SessionFilesView", () => {
 	});
 
 	it("filters and expands a changed file from the review list", async () => {
-		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
 
 		await userEvent.click(await screen.findByRole("button", { name: "Search files" }));
 		await userEvent.type(await screen.findByPlaceholderText("Search changed files"), "guide");
@@ -211,7 +211,7 @@ describe("SessionFilesView", () => {
 			};
 		});
 
-		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
 
 		expect(await screen.findByText("src/OldName.tsx")).toBeInTheDocument();
 		expect(screen.getByText("src/NewName.tsx")).toBeInTheDocument();
@@ -232,20 +232,29 @@ describe("SessionFilesView", () => {
 			return { data: undefined };
 		});
 
-		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
 
 		expect(await screen.findByText("No changes against HEAD.")).toBeInTheDocument();
 	});
 
 	it("uses the terminal foreground color for diff content", async () => {
-		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
 
 		await screen.findByRole("button", { name: "Collapse src/App.tsx" });
 
-		const codePane = (await screen.findByText(diffLine("const value = 1;"))).closest(".session-files-diff-scrollbar");
+		const codePane = (await screen.findByText(diffLine("const value = 1;"))).closest(".bg-terminal");
 		expect(codePane).toHaveClass("text-terminal-foreground");
-		expect(codePane).toHaveClass("session-files-diff-scrollbar");
 		expect(codePane).not.toHaveClass("text-terminal");
+	});
+
+	it("uses the Files surface as the only scroll container instead of nesting one inside each diff", async () => {
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+
+		const diffLineElement = await screen.findByText(diffLine("const value = 1;"));
+		const codePane = diffLineElement.closest(".bg-terminal");
+
+		expect(codePane).not.toHaveClass("overflow-auto");
+		expect(codePane?.parentElement?.className).not.toContain("max-h-");
 	});
 
 	it("renders a real diff without git-header noise and with markers in the gutter", async () => {
@@ -278,7 +287,7 @@ describe("SessionFilesView", () => {
 			};
 		});
 
-		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
 		await screen.findByRole("button", { name: "Collapse src/App.tsx" });
 
 		// Content renders without the leading +/- marker (it lives in the gutter).
@@ -295,7 +304,7 @@ describe("SessionFilesView", () => {
 	});
 
 	it("wraps long diff lines by default without a toggle", async () => {
-		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
 
 		expect(await screen.findByText(diffLine("const value = 1;"))).toHaveClass("whitespace-pre-wrap");
 		expect(screen.queryByRole("button", { name: "Wrap long lines" })).not.toBeInTheDocument();
@@ -331,7 +340,7 @@ describe("SessionFilesView", () => {
 			};
 		});
 
-		const { container } = renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		const { container } = renderWithQuery(<SessionFilesView sessionId="sess-1" />);
 		await screen.findByText(diffLine("const value = 1;"));
 
 		// Only the differing token is highlighted on each side, not the whole line.
@@ -340,7 +349,7 @@ describe("SessionFilesView", () => {
 	});
 
 	it("switches between unified and side-by-side split diff", async () => {
-		const { container } = renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		const { container } = renderWithQuery(<SessionFilesView sessionId="sess-1" />);
 		await screen.findByText(diffLine("const value = 1;"));
 		expect(container.querySelector(".grid-cols-2")).toBeNull();
 
@@ -355,7 +364,7 @@ describe("SessionFilesView", () => {
 	});
 
 	it("moves focus between file rows with j and k", async () => {
-		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
 		const first = await screen.findByRole("button", { name: "Collapse src/App.tsx" });
 		const second = screen.getByRole("button", { name: "Expand docs/guide.md" });
 
@@ -368,7 +377,7 @@ describe("SessionFilesView", () => {
 	});
 
 	it("renders changed files as one integrated review list instead of boxed cards", async () => {
-		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
 
 		const activeRowButton = await screen.findByRole("button", { name: "Collapse src/App.tsx" });
 		const list = screen.getByRole("list");
@@ -385,28 +394,36 @@ describe("SessionFilesView", () => {
 	});
 
 	it("uses the full session panel width while maximized", async () => {
-		const { unmount } = renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		const { unmount } = renderWithQuery(<SessionFilesView sessionId="sess-1" />);
 		const railList = await screen.findByRole("list");
 		expect(railList.parentElement).toHaveClass("max-w-[1200px]");
 		unmount();
 
-		renderWithQuery(<SessionFilesView isMaximized onClose={vi.fn()} sessionId="sess-1" />);
+		renderWithQuery(<SessionFilesView isMaximized sessionId="sess-1" />);
 		const maximizedList = await screen.findByRole("list");
 		expect(maximizedList.parentElement).not.toHaveClass("max-w-[1200px]");
 	});
 
 	it("lets the caller toggle between rail and maximized layouts", async () => {
 		const onToggleMaximized = vi.fn();
-		renderWithQuery(<SessionFilesView onClose={vi.fn()} onToggleMaximized={onToggleMaximized} sessionId="sess-1" />);
+		renderWithQuery(<SessionFilesView onToggleMaximized={onToggleMaximized} sessionId="sess-1" />);
 
 		await userEvent.click(await screen.findByRole("button", { name: "Maximize files" }));
 		expect(onToggleMaximized).toHaveBeenCalledWith(true);
 	});
 
+	it("keeps the Files toolbar focused on review controls", async () => {
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+
+		await screen.findByRole("button", { name: "Collapse src/App.tsx" });
+		expect(screen.queryByRole("button", { name: "Refresh files" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Close files" })).not.toBeInTheDocument();
+	});
+
 	it("shows a minimize action while maximized", async () => {
 		const onToggleMaximized = vi.fn();
 		renderWithQuery(
-			<SessionFilesView isMaximized onClose={vi.fn()} onToggleMaximized={onToggleMaximized} sessionId="sess-1" />,
+			<SessionFilesView isMaximized onToggleMaximized={onToggleMaximized} sessionId="sess-1" />,
 		);
 
 		await userEvent.click(await screen.findByRole("button", { name: "Minimize files" }));

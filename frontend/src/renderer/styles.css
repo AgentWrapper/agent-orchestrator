@@ -944,36 +944,6 @@ select {
 	}
 }
 
-.session-files-diff-scrollbar {
-	scrollbar-width: thin;
-	scrollbar-color: var(--color-scrollbar) transparent;
-}
-
-.session-files-diff-scrollbar::-webkit-scrollbar {
-	width: 8px;
-	height: 8px;
-}
-
-.session-files-diff-scrollbar::-webkit-scrollbar-track {
-	background: transparent;
-}
-
-.session-files-diff-scrollbar::-webkit-scrollbar-thumb {
-	border: 2px solid transparent;
-	border-radius: var(--radius-full);
-	background: var(--color-scrollbar);
-	background-clip: content-box;
-}
-
-.session-files-diff-scrollbar::-webkit-scrollbar-thumb:hover {
-	background: var(--color-scrollbar-hover);
-	background-clip: content-box;
-}
-
-.session-files-diff-scrollbar::-webkit-scrollbar-corner {
-	background: transparent;
-}
-
 .terminal-pane-frame:fullscreen {
 	background: var(--color-bg-primary);
 }
@@ -2307,6 +2277,13 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 		inset 0 1px 0 color-mix(in srgb, white 7%, transparent),
 		0 1px 0 color-mix(in srgb, black 22%, transparent);
 	backdrop-filter: blur(10px);
+}
+
+/* The maximized browser reaches the native titlebar. Keep its navigation
+   controls to the right of macOS traffic lights while leaving other platforms
+   edge-aligned. */
+.browser-panel__toolbar--mac-maximized {
+	padding-left: calc(var(--size-titlebar-cluster-left) + var(--space-2));
 }
 
 .browser-panel__url,

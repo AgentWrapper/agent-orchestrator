@@ -469,7 +469,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 										session && !filesPoppedOut ? (
 											<SessionFilesView
 												containerRef={filesMaximize.setNodeRef}
-												onClose={() => setInspectorViewForSession(sessionId, "summary")}
 												onToggleMaximized={handleToggleFilesPopOut}
 												sessionId={session.id}
 											/>
@@ -497,10 +496,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					<SessionFilesView
 						containerRef={filesMaximize.setNodeRef}
 						isMaximized
-						onClose={() => {
-							setFilesPoppedOut(false);
-							setInspectorViewForSession(sessionId, "summary");
-						}}
 						onToggleMaximized={handleToggleFilesPopOut}
 						sessionId={session.id}
 					/>

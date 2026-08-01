@@ -129,6 +129,7 @@ describe("useFlipTransition", () => {
 	describe("duration", () => {
 		afterEach(() => {
 			document.documentElement.style.removeProperty("--duration-emphasized");
+			document.documentElement.style.removeProperty("--duration-normal");
 		});
 
 		function playAndReadDuration(): number {
@@ -161,6 +162,17 @@ describe("useFlipTransition", () => {
 			act(() => result.current.captureRect(node));
 			act(() => result.current.playFlip(node, { duration: 200 }));
 			expect(flipFromMock.mock.calls[0][1].duration).toBeCloseTo(0.2);
+		});
+
+		it("reads the normal motion token when requested", () => {
+			document.documentElement.style.setProperty("--duration-emphasized", "500ms");
+			document.documentElement.style.setProperty("--duration-normal", "150ms");
+			flipGetStateMock.mockReturnValue({ id: "captured-state" });
+			const { result } = renderHook(() => useFlipTransition());
+			act(() => result.current.captureRect(node));
+			act(() => result.current.playFlip(node, { timing: "normal" }));
+
+			expect(flipFromMock.mock.calls[0][1].duration).toBeCloseTo(0.15);
 		});
 	});
 

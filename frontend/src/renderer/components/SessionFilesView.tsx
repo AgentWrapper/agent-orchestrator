@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
 	Check,
 	ChevronDown,
@@ -10,9 +10,7 @@ import {
 	Copy,
 	Maximize2,
 	Minimize2,
-	RefreshCw,
 	Search,
-	X,
 } from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
@@ -35,7 +33,6 @@ type WorkspaceFileStatus = WorkspaceFileSummary["status"];
 
 type SessionFilesViewProps = {
 	sessionId: string;
-	onClose: () => void;
 	isMaximized?: boolean;
 	onToggleMaximized?: (next: boolean) => void;
 	/** Root element, for measuring/animating maximize-restore FLIP transitions. */
@@ -62,12 +59,10 @@ const statusTone: Record<WorkspaceFileStatus, string> = {
 
 export function SessionFilesView({
 	sessionId,
-	onClose,
 	isMaximized = false,
 	onToggleMaximized,
 	containerRef,
 }: SessionFilesViewProps) {
-	const queryClient = useQueryClient();
 	const [filter, setFilter] = useState("");
 	const [searchOpen, setSearchOpen] = useState(false);
 	const [split, setSplit] = useState(false);
@@ -112,11 +107,6 @@ export function SessionFilesView({
 	);
 	const changedCount = changedFiles.length;
 	const expandedVisibleCount = visibleFiles.filter((file) => expandedPaths.has(file.path)).length;
-
-	const refresh = () => {
-		void filesQuery.refetch();
-		void queryClient.invalidateQueries({ queryKey: ["session-workspace-file", sessionId] });
-	};
 
 	const toggleFile = (path: string) => {
 		setExpandedPaths((current) => {
@@ -230,17 +220,6 @@ export function SessionFilesView({
 				>
 					<Columns2 className="size-icon-sm" aria-hidden="true" />
 				</Button>
-				<Button
-					aria-label="Refresh files"
-					className="shrink-0"
-					disabled={filesQuery.isFetching}
-					onClick={refresh}
-					size="icon-sm"
-					type="button"
-					variant="ghost"
-				>
-					<RefreshCw className={cn("size-icon-sm", filesQuery.isFetching && "animate-spin")} aria-hidden="true" />
-				</Button>
 				{onToggleMaximized ? (
 					<Button
 						aria-label={isMaximized ? "Minimize files" : "Maximize files"}
@@ -257,16 +236,6 @@ export function SessionFilesView({
 						)}
 					</Button>
 				) : null}
-				<Button
-					aria-label="Close files"
-					className="shrink-0"
-					onClick={onClose}
-					size="icon-sm"
-					type="button"
-					variant="ghost"
-				>
-					<X className="size-icon-sm" aria-hidden="true" />
-				</Button>
 			</header>
 
 			<div className="min-h-0 flex-1 overflow-auto bg-background">
@@ -678,13 +647,13 @@ function DiffView({
 	wrap: boolean;
 }) {
 	return (
-		<div className="flex min-h-[180px] max-h-[min(620px,calc(100vh-18rem))] flex-col">
+		<div className="flex min-h-[180px] flex-col">
 			{truncated ? (
 				<div className="shrink-0 border-b border-border bg-warning/10 px-3 py-1.5 text-xs text-warning">
 					Diff preview truncated.
 				</div>
 			) : null}
-			<div className="session-files-diff-scrollbar min-h-0 flex-1 overflow-auto bg-terminal font-mono text-xs leading-row text-terminal-foreground">
+			<div className="min-h-0 flex-1 bg-terminal font-mono text-xs leading-row text-terminal-foreground">
 				{split ? (
 					<SplitDiff rows={rows} />
 				) : (

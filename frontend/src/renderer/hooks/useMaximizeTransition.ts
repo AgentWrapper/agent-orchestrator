@@ -30,7 +30,7 @@ export function useMaximizeTransition(maximized: boolean, onSettle?: () => void)
 		// animation) — always call it, rather than skipping onSettle entirely
 		// when the target is unmounted (e.g. a session switch mid-transition),
 		// which would otherwise leave a caller's begin/end pairing stuck open.
-		flip.playFlip(nodeRef.current, { onSettle });
+		flip.playFlip(nodeRef.current, maximized ? { onSettle } : { onSettle, timing: "normal" });
 		// Runs once per `maximized` flip, using whatever origin captureOrigin()
 		// last recorded (or none, which settles immediately with no animation).
 		// eslint-disable-next-line react-hooks/exhaustive-deps

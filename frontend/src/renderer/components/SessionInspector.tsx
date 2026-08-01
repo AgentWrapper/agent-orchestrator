@@ -1160,7 +1160,7 @@ function BrowserView({
 				<div className={cn(inspectorEmptyClass, "flex flex-col items-center gap-2 py-10 px-5 text-center")}>
 					<p className="text-md-sm text-muted-foreground">Browser preview is in the center pane.</p>
 					<Button onClick={() => onTogglePopOut?.(false)} size="sm" type="button" variant="outline">
-						Return to panel
+						Minimize browser
 					</Button>
 				</div>
 			</div>

@@ -6,7 +6,7 @@ gsap.registerPlugin(Flip);
 
 // Used only if the token cannot be read (no document, or a stylesheet that has
 // not applied yet); tokens.css is the source of truth.
-const FALLBACK_DURATION_MS = 320;
+const FALLBACK_DURATION_MS = { emphasized: 320, normal: 150 } as const;
 // GSAP's own ease, not a CSS one. `--ease-emphasized` in tokens.css is its
 // cubic-bezier equivalent, for CSS-driven parts of the same transition.
 const DEFAULT_EASE = "expo.out";
@@ -15,17 +15,21 @@ const DEFAULT_EASE = "expo.out";
 // motion scale in tokens.css rather than duplicated here. Read per play (not
 // memoised at module load) so a theme or stylesheet swap is picked up and so
 // the value is never captured before first paint.
-function emphasizedDurationMs(): number {
-	if (typeof window === "undefined" || typeof document === "undefined") return FALLBACK_DURATION_MS;
-	const raw = getComputedStyle(document.documentElement).getPropertyValue("--duration-emphasized").trim();
-	if (!raw) return FALLBACK_DURATION_MS;
+type MotionTiming = keyof typeof FALLBACK_DURATION_MS;
+
+function motionDurationMs(timing: MotionTiming): number {
+	const fallback = FALLBACK_DURATION_MS[timing];
+	if (typeof window === "undefined" || typeof document === "undefined") return fallback;
+	const raw = getComputedStyle(document.documentElement).getPropertyValue(`--duration-${timing}`).trim();
+	if (!raw) return fallback;
 	const value = Number.parseFloat(raw);
-	if (!Number.isFinite(value) || value <= 0) return FALLBACK_DURATION_MS;
+	if (!Number.isFinite(value) || value <= 0) return fallback;
 	return raw.endsWith("ms") ? value : value * 1000;
 }
 
 export type FlipOptions = {
 	duration?: number;
+	timing?: MotionTiming;
 	ease?: string;
 	onSettle?: () => void;
 };
@@ -76,7 +80,7 @@ export function useFlipTransition(): FlipController {
 				targets: node,
 				scale: false,
 				absolute: true,
-				duration: (options?.duration ?? emphasizedDurationMs()) / 1000,
+				duration: (options?.duration ?? motionDurationMs(options?.timing ?? "emphasized")) / 1000,
 				ease: options?.ease ?? DEFAULT_EASE,
 				onComplete: () => {
 					activeTimelineRef.current = null;

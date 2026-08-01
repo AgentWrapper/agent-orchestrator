@@ -57,6 +57,20 @@ describe("useMaximizeTransition", () => {
 		expect(playFlipMock).toHaveBeenCalledWith(node, { onSettle });
 	});
 
+	it("uses the shorter normal motion timing when restoring to the inspector", () => {
+		const onSettle = vi.fn();
+		const { result, rerender } = renderHook(
+			({ maximized }) => useMaximizeTransition(maximized, onSettle),
+			{ initialProps: { maximized: true } },
+		);
+		act(() => result.current.setNodeRef(node));
+		playFlipMock.mockClear();
+
+		act(() => rerender({ maximized: false }));
+
+		expect(playFlipMock).toHaveBeenCalledWith(node, { onSettle, timing: "normal" });
+	});
+
 	it("still calls playFlip (with a null node) when maximized changes but nothing is attached, so onSettle isn't stranded", () => {
 		// Regression: a popout transition begun just before a session switch
 		// (which unmounts the panel node) must still settle — playFlip itself
@@ -85,6 +99,6 @@ describe("useMaximizeTransition", () => {
 		const { container } = render(<Host />);
 
 		expect(playFlipMock).toHaveBeenCalledTimes(1);
-		expect(playFlipMock).toHaveBeenCalledWith(container.firstChild, { onSettle });
+		expect(playFlipMock).toHaveBeenCalledWith(container.firstChild, { onSettle, timing: "normal" });
 	});
 });
