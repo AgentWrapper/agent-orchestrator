@@ -53,8 +53,8 @@ It runs these steps in order:
 
 The runner overrides stale environment values so this path always uses local
 PostgreSQL, local auth, the loopback control plane, and Docker sandboxes. It
-does not invoke Fly, Daytona, or Supabase. Repository cloning and the selected
-coding agent can still make their normal external GitHub/provider API calls.
+does not invoke Daytona. Repository cloning and the selected coding agent can
+still make their normal external GitHub/provider API calls.
 
 The generated local secrets are required by the control plane:
 
@@ -74,15 +74,17 @@ gracefully stop each local AO worker sandbox (with a 15-second grace period),
 then stop the control-plane and PostgreSQL Compose services plus the web app.
 It preserves worker workspace volumes and the database volume.
 
-The runner reads the host `gh auth token` at startup. It injects that token into
-the control plane only; worker containers receive scoped, short-lived Git
-credentials instead. If `gh` is unavailable, add a fine-grained token to the
-gitignored `.env.cloud.local`:
+The runner reads the host `gh auth token` at startup. In local Docker mode, each
+worker stores that token in its persistent AO data directory with mode `0600`
+and configures the repository's Git credential helper to read it for clone,
+fetch, pull, and push. This temporary local-only path is not enabled by the
+hosted Daytona configuration; hosted deployments still require the planned
+account-scoped GitHub App. If `gh` is unavailable, add a fine-grained token to
+the gitignored `.env.cloud.local`:
 
 ```dotenv
 AO_SANDBOX_PROVIDER=docker
 AO_DOCKER_WORKER_IMAGE=ao-cloud-worker:local
-AO_CLOUD_AUTH_MODE=local
 
 AO_GITHUB_TOKEN=YOUR_FINE_GRAINED_GITHUB_TOKEN
 ```

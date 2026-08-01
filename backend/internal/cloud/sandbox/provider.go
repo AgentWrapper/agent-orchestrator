@@ -49,8 +49,8 @@ type Bootstrapper interface {
 	BootstrapWorker(context.Context, ID, WorkerBootstrap) error
 }
 
-// Recreator replaces stopped compute with a fresh worker launch while
-// preserving the sandbox's provider-managed workspace storage.
+// Recreator re-establishes compute with a fresh worker launch while preserving
+// the sandbox's provider-managed workspace storage.
 type Recreator interface {
 	Recreate(context.Context, ID, Spec) (Environment, error)
 }

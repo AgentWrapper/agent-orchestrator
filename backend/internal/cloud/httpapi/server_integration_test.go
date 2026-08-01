@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -48,15 +49,6 @@ func integrationAPIWithServer(
 		t.Fatalf("Open() error = %v", err)
 	}
 	t.Cleanup(store.Close)
-	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if token != "user-one" && token != "user-two" {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		_, _ = w.Write([]byte(`{"id":"` + tokenID(token) + `","email":"` + token + `@example.com"}`))
-	}))
-	t.Cleanup(authServer.Close)
 	secretCipher, err := cloudsecrets.New([]byte("01234567890123456789012345678901"))
 	if err != nil {
 		t.Fatalf("secrets.New() error = %v", err)
@@ -64,7 +56,7 @@ func integrationAPIWithServer(
 	api := New(
 		store,
 		cloudevents.New(store),
-		cloudauth.NewVerifier(authServer.URL, "anon", authServer.Client()),
+		integrationAuthenticator(),
 		cloudworker.NewTokenManager([]byte("01234567890123456789012345678901")),
 		secretCipher,
 		"daytona",
@@ -84,6 +76,49 @@ func integrationAPIWithServer(
 	server := httptest.NewServer(api.Handler())
 	t.Cleanup(server.Close)
 	return server, store, api
+}
+
+func localAuthIntegrationAPI(t *testing.T) *httptest.Server {
+	t.Helper()
+	databaseURL := os.Getenv("AO_CLOUD_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("AO_CLOUD_TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	if err := cloudpostgres.Migrate(ctx, databaseURL); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+	store, err := cloudpostgres.Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(store.Close)
+	secretCipher, err := cloudsecrets.New(
+		[]byte("01234567890123456789012345678901"),
+	)
+	if err != nil {
+		t.Fatalf("secrets.New() error = %v", err)
+	}
+	authenticator := cloudauth.NewLocalAuthenticator(store)
+	api := New(
+		store,
+		cloudevents.New(store),
+		authenticator,
+		cloudworker.NewTokenManager(
+			[]byte("01234567890123456789012345678901"),
+		),
+		secretCipher,
+		"docker",
+		"",
+		"",
+		cloudworkerhub.New(),
+		nil,
+		"http://127.0.0.1:5174",
+		nil,
+	)
+	server := httptest.NewServer(api.Handler())
+	t.Cleanup(server.Close)
+	return server
 }
 
 func tokenID(token string) string {
@@ -129,8 +164,128 @@ func requestJSON(
 	return response
 }
 
+func TestLocalAuthRoutesUsePostgresStore(t *testing.T) {
+	server := localAuthIntegrationAPI(t)
+	email := "local-" + uuid.NewString() + "@example.com"
+	signup := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/auth/signup",
+		"",
+		map[string]string{
+			"email":       email,
+			"password":    "correct-horse",
+			"displayName": "Local User",
+		},
+		nil,
+	)
+	defer signup.Body.Close()
+	if signup.StatusCode != http.StatusCreated {
+		payload, _ := io.ReadAll(signup.Body)
+		t.Fatalf("signup status = %d: %s", signup.StatusCode, payload)
+	}
+	var signupBody struct {
+		AccessToken string `json:"accessToken"`
+	}
+	if err := json.NewDecoder(signup.Body).Decode(&signupBody); err != nil {
+		t.Fatal(err)
+	}
+	logout := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/auth/logout",
+		signupBody.AccessToken,
+		nil,
+		nil,
+	)
+	defer logout.Body.Close()
+	if logout.StatusCode != http.StatusNoContent {
+		t.Fatalf("logout status = %d", logout.StatusCode)
+	}
+	login := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/auth/login",
+		"",
+		map[string]string{
+			"email":    email,
+			"password": "correct-horse",
+		},
+		nil,
+	)
+	defer login.Body.Close()
+	if login.StatusCode != http.StatusOK {
+		payload, _ := io.ReadAll(login.Body)
+		t.Fatalf("login status = %d: %s", login.StatusCode, payload)
+	}
+	var loginBody struct {
+		AccessToken string `json:"accessToken"`
+	}
+	if err := json.NewDecoder(login.Body).Decode(&loginBody); err != nil {
+		t.Fatal(err)
+	}
+	me := requestJSON(
+		t,
+		server,
+		http.MethodGet,
+		"/api/cloud/v1/me",
+		loginBody.AccessToken,
+		nil,
+		nil,
+	)
+	defer me.Body.Close()
+	if me.StatusCode != http.StatusOK {
+		t.Fatalf("PostgreSQL-backed session status = %d", me.StatusCode)
+	}
+	revoke := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/auth/logout",
+		loginBody.AccessToken,
+		nil,
+		nil,
+	)
+	defer revoke.Body.Close()
+	if revoke.StatusCode != http.StatusNoContent {
+		t.Fatalf("second logout status = %d", revoke.StatusCode)
+	}
+	revoked := requestJSON(
+		t,
+		server,
+		http.MethodGet,
+		"/api/cloud/v1/me",
+		loginBody.AccessToken,
+		nil,
+		nil,
+	)
+	defer revoked.Body.Close()
+	if revoked.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("revoked PostgreSQL session status = %d, want 401", revoked.StatusCode)
+	}
+}
+
 func TestAuthenticatedProjectAndIdempotentSessionFlow(t *testing.T) {
 	server, _ := integrationAPI(t)
+	connection := requestJSON(
+		t,
+		server,
+		http.MethodPut,
+		"/api/cloud/v1/provider-connections/agents/cursor",
+		"user-one",
+		map[string]string{
+			"credentialType": "api_key",
+			"secret":         "cursor-secret",
+		},
+		nil,
+	)
+	defer connection.Body.Close()
+	if connection.StatusCode != http.StatusOK {
+		t.Fatalf("agent connection status = %d", connection.StatusCode)
+	}
 	repositoryURL := "https://github.com/example/" + uuid.NewString()
 	projectResponse := requestJSON(t, server, http.MethodPost, "/api/cloud/v1/projects", "user-one", map[string]any{
 		"displayName":   "AO Cloud",
@@ -167,6 +322,25 @@ func TestAuthenticatedProjectAndIdempotentSessionFlow(t *testing.T) {
 		"displayName": "verify-cloud",
 		"prompt":      "Verify the cloud flow",
 	}
+	undersizedInput := maps.Clone(sessionInput)
+	undersizedInput["resource"] = map[string]int{
+		"cpu":    2,
+		"memory": 4,
+		"disk":   5,
+	}
+	undersized := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/sessions",
+		"user-one",
+		undersizedInput,
+		map[string]string{"Idempotency-Key": uuid.NewString()},
+	)
+	defer undersized.Body.Close()
+	if undersized.StatusCode != http.StatusBadRequest {
+		t.Fatalf("undersized resource status = %d, want 400", undersized.StatusCode)
+	}
 	first := requestJSON(t, server, http.MethodPost, "/api/cloud/v1/sessions", "user-one", sessionInput, map[string]string{
 		"Idempotency-Key": idempotencyKey,
 	})
@@ -200,6 +374,24 @@ func TestAuthenticatedProjectAndIdempotentSessionFlow(t *testing.T) {
 	}
 	if secondBody.Session.ID != firstBody.Session.ID {
 		t.Fatalf("session IDs = %q and %q", firstBody.Session.ID, secondBody.Session.ID)
+	}
+	conflictingInput := maps.Clone(sessionInput)
+	conflictingInput["prompt"] = "A different cloud flow"
+	conflicting := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/sessions",
+		"user-one",
+		conflictingInput,
+		map[string]string{"Idempotency-Key": idempotencyKey},
+	)
+	defer conflicting.Body.Close()
+	if conflicting.StatusCode != http.StatusConflict {
+		t.Fatalf(
+			"conflicting session receipt status = %d, want 409",
+			conflicting.StatusCode,
+		)
 	}
 	orchestratorInput := map[string]any{
 		"projectId":   projectBody.Project.ID,
@@ -351,10 +543,47 @@ func TestWorkerAndBrowserTerminalReplayLiveRouting(t *testing.T) {
 	}
 	var bootstrapBody struct {
 		WorkerToken string `json:"workerToken"`
+		WorkerID    string `json:"workerId"`
+		Epoch       int64  `json:"epoch"`
 	}
 	if err := json.NewDecoder(bootstrapResponse.Body).Decode(&bootstrapBody); err != nil {
 		t.Fatalf("decode bootstrap: %v", err)
 	}
+	retryResponse := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/worker/bootstrap",
+		"",
+		map[string]any{
+			"bootstrapToken": bootstrapTicket,
+			"version":        "test",
+			"capabilities":   []string{"pty.v1"},
+		},
+		nil,
+	)
+	defer retryResponse.Body.Close()
+	if retryResponse.StatusCode != http.StatusOK {
+		t.Fatalf("bootstrap retry status = %d", retryResponse.StatusCode)
+	}
+	var retryBody struct {
+		WorkerID string `json:"workerId"`
+		Epoch    int64  `json:"epoch"`
+	}
+	if err := json.NewDecoder(retryResponse.Body).Decode(&retryBody); err != nil {
+		t.Fatalf("decode bootstrap retry: %v", err)
+	}
+	if retryBody.WorkerID != bootstrapBody.WorkerID ||
+		retryBody.Epoch != bootstrapBody.Epoch {
+		t.Fatalf(
+			"bootstrap retry identity = %q/%d, want %q/%d",
+			retryBody.WorkerID,
+			retryBody.Epoch,
+			bootstrapBody.WorkerID,
+			bootstrapBody.Epoch,
+		)
+	}
+	markWorkerReady(t, server, bootstrapBody.WorkerToken)
 
 	workerURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/cloud/v1/worker/connect"
 	workerHeaders := http.Header{}
@@ -364,6 +593,39 @@ func TestWorkerAndBrowserTerminalReplayLiveRouting(t *testing.T) {
 		t.Fatalf("dial worker socket: %v", err)
 	}
 	defer workerSocket.Close(websocket.StatusNormalClosure, "test complete")
+
+	readyResponse := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/worker/events",
+		"",
+		map[string]any{
+			"type": "agent.activity",
+			"payload": map[string]any{
+				"event":       "session-start",
+				"state":       "",
+				"hasActivity": false,
+				"native":      map[string]string{"session_id": "native-session"},
+			},
+		},
+		map[string]string{"Authorization": "Worker " + bootstrapBody.WorkerToken},
+	)
+	defer readyResponse.Body.Close()
+	if readyResponse.StatusCode != http.StatusAccepted {
+		t.Fatalf("agent readiness event status = %d", readyResponse.StatusCode)
+	}
+	_, readyCommandData, err := workerSocket.Read(ctx)
+	if err != nil {
+		t.Fatalf("read agent readiness command: %v", err)
+	}
+	var readyCommand cloudworkerhub.Command
+	if err := json.Unmarshal(readyCommandData, &readyCommand); err != nil {
+		t.Fatalf("decode agent readiness command: %v", err)
+	}
+	if readyCommand.Type != "agent_ready" {
+		t.Fatalf("agent readiness command = %#v", readyCommand)
+	}
 
 	ticketResponse := requestJSON(
 		t,
@@ -811,22 +1073,36 @@ func TestChatMessageAuthIdempotencyAndWorkerReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("append follow-up without live notification: %v", err)
 	}
-	_, encodedCommand, err := socket.Read(ctx)
-	if err != nil {
-		t.Fatalf("read periodically replayed prompt: %v", err)
+	var periodicPrompt *cloudworkerhub.Command
+	for range 4 {
+		_, encodedCommand, err := socket.Read(ctx)
+		if err != nil {
+			t.Fatalf("read periodically replayed prompt: %v", err)
+		}
+		var command cloudworkerhub.Command
+		if err := json.Unmarshal(encodedCommand, &command); err != nil {
+			t.Fatalf("decode periodically replayed prompt: %v", err)
+		}
+		if command.Type != "prompt" {
+			t.Fatalf("periodically replayed command = %#v", command)
+		}
+		if command.Sequence == followUp.Sequence {
+			periodicPrompt = &command
+			break
+		}
+		if command.Sequence > followUp.Sequence {
+			t.Fatalf("unexpected replay sequence = %d", command.Sequence)
+		}
 	}
-	var command cloudworkerhub.Command
-	if err := json.Unmarshal(encodedCommand, &command); err != nil {
-		t.Fatalf("decode periodically replayed prompt: %v", err)
+	if periodicPrompt == nil {
+		t.Fatal("follow-up prompt was not periodically replayed")
 	}
-	decodedPrompt, err := base64.StdEncoding.DecodeString(command.Data)
+	decodedPrompt, err := base64.StdEncoding.DecodeString(periodicPrompt.Data)
 	if err != nil {
 		t.Fatalf("decode periodically replayed prompt data: %v", err)
 	}
-	if command.Type != "prompt" ||
-		command.Sequence != followUp.Sequence ||
-		string(decodedPrompt) != "periodic replay" {
-		t.Fatalf("periodically replayed prompt = %#v text=%q", command, decodedPrompt)
+	if string(decodedPrompt) != "periodic replay" {
+		t.Fatalf("periodically replayed prompt text = %q", decodedPrompt)
 	}
 }
 
@@ -1409,6 +1685,7 @@ func TestBrowserInterruptAndWorkerTurnActivity(t *testing.T) {
 		"worker:event",
 		"worker:terminal",
 	})
+	markWorkerReady(t, server, token)
 	workerURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/cloud/v1/worker/connect"
 	workerHeaders := http.Header{}
 	workerHeaders.Set("Authorization", "Worker "+token)
@@ -1458,16 +1735,26 @@ func TestBrowserInterruptAndWorkerTurnActivity(t *testing.T) {
 		interruptedSession.ActiveTurn.State != "cancel_requested" {
 		t.Fatalf("interrupt session = %#v, want active cancellation", interruptedSession)
 	}
-	_, encodedCommand, err := socket.Read(ctx)
-	if err != nil {
-		t.Fatal(err)
+	var interruptCommand *cloudworkerhub.Command
+	for range 2 {
+		_, encodedCommand, err := socket.Read(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var command cloudworkerhub.Command
+		if err := json.Unmarshal(encodedCommand, &command); err != nil {
+			t.Fatal(err)
+		}
+		if command.Type == "interrupt" {
+			interruptCommand = &command
+			break
+		}
+		if command.Type != "prompt" {
+			t.Fatalf("unexpected command before interrupt = %#v", command)
+		}
 	}
-	var command cloudworkerhub.Command
-	if err := json.Unmarshal(encodedCommand, &command); err != nil {
-		t.Fatal(err)
-	}
-	if command.Type != "interrupt" || command.Sequence <= 0 {
-		t.Fatalf("interrupt command = %#v", command)
+	if interruptCommand == nil || interruptCommand.Sequence <= 0 {
+		t.Fatalf("interrupt command = %#v", interruptCommand)
 	}
 
 	for _, event := range []struct {
@@ -1596,4 +1883,25 @@ func bootstrapWorker(
 		t.Fatal(err)
 	}
 	return body.WorkerToken
+}
+
+func markWorkerReady(t *testing.T, server *httptest.Server, token string) {
+	t.Helper()
+	response := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/worker/heartbeat",
+		"",
+		map[string]any{
+			"version":      "test",
+			"capabilities": []string{"chat.stream-json.v1"},
+		},
+		map[string]string{"Authorization": "Worker " + token},
+	)
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		payload, _ := io.ReadAll(response.Body)
+		t.Fatalf("worker heartbeat status = %d: %s", response.StatusCode, payload)
+	}
 }

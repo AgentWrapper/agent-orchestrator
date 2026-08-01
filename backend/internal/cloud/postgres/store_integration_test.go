@@ -74,6 +74,18 @@ func TestCreateSessionIsIdempotentAndEventsAreOrdered(t *testing.T) {
 	if second.Session.ID != first.Session.ID {
 		t.Fatalf("idempotent session ID = %q, want %q", second.Session.ID, first.Session.ID)
 	}
+	changedInput := input
+	changedInput.Prompt = "A different request"
+	if _, err := store.CreateSession(
+		ctx,
+		account.ID,
+		changedInput,
+	); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf(
+			"CreateSession(changed payload) error = %v, want ErrIdempotencyConflict",
+			err,
+		)
+	}
 	initialTurn, err := store.GetActiveTurn(ctx, account.ID, first.Session.ID)
 	if err != nil || initialTurn == nil || initialTurn.State != "provisioning" {
 		t.Fatalf("initial turn = %#v, error = %v", initialTurn, err)
@@ -93,6 +105,34 @@ func TestCreateSessionIsIdempotentAndEventsAreOrdered(t *testing.T) {
 	}
 	if beforeHeartbeat.RuntimeConnected {
 		t.Fatal("new session reported a connected runtime")
+	}
+	if err := store.RegisterWorkerBootstrap(
+		ctx,
+		account.ID,
+		first.Session.ID,
+		"worker-one",
+		"test",
+		1,
+		[]string{"chat.stream-json.v1"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	afterBootstrap, err := store.GetSession(ctx, account.ID, first.Session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterBootstrap.RuntimeConnected {
+		t.Fatal("bootstrap exchange reported a ready runtime before heartbeat")
+	}
+	current, err := store.WorkerConnectionCurrent(
+		ctx,
+		account.ID,
+		first.Session.ID,
+		"worker-one",
+		1,
+	)
+	if err != nil || !current {
+		t.Fatalf("bootstrap worker current = %t, error = %v", current, err)
 	}
 	if err := store.MarkWorkerSeen(
 		ctx,
@@ -189,6 +229,18 @@ func TestCreateSessionIsIdempotentAndEventsAreOrdered(t *testing.T) {
 		"different task",
 	); !errors.Is(err, ErrIdempotencyConflict) {
 		t.Fatalf("AppendUserMessage(conflict) error = %v, want ErrIdempotencyConflict", err)
+	}
+	crossKindInput := input
+	crossKindInput.IdempotencyKey = messageKey
+	if _, err := store.CreateSession(
+		ctx,
+		account.ID,
+		crossKindInput,
+	); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf(
+			"CreateSession(cross-kind key) error = %v, want ErrIdempotencyConflict",
+			err,
+		)
 	}
 	chatEvents, err := store.ChatEventsAfter(ctx, account.ID, first.Session.ID, 0, 500)
 	if err != nil {
@@ -314,6 +366,37 @@ func TestCreateSessionIsIdempotentAndEventsAreOrdered(t *testing.T) {
 	}
 	if _, err := store.ConsumeAccessTicket(ctx, ticket, "worker_bootstrap"); !errors.Is(err, ErrInvalidTicket) {
 		t.Fatalf("second ConsumeAccessTicket() error = %v, want ErrInvalidTicket", err)
+	}
+	retryableTicket, err := store.IssueAccessTicket(
+		ctx,
+		account.ID,
+		first.Session.ID,
+		"worker_bootstrap",
+		[]string{"worker:connect"},
+		time.Minute,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstRedemption, err := store.RedeemWorkerBootstrapTicket(ctx, retryableTicket)
+	if err != nil {
+		t.Fatalf("RedeemWorkerBootstrapTicket() error = %v", err)
+	}
+	secondRedemption, err := store.RedeemWorkerBootstrapTicket(ctx, retryableTicket)
+	if err != nil {
+		t.Fatalf("retry RedeemWorkerBootstrapTicket() error = %v", err)
+	}
+	if firstRedemption.SessionID != secondRedemption.SessionID ||
+		firstRedemption.WorkerEpoch <= 0 ||
+		firstRedemption.WorkerEpoch != secondRedemption.WorkerEpoch {
+		t.Fatalf("bootstrap retry changed ticket identity")
+	}
+	if firstRedemption.WorkerEpoch <= consumed.WorkerEpoch {
+		t.Fatalf(
+			"replacement bootstrap epoch = %d, want newer than %d",
+			firstRedemption.WorkerEpoch,
+			consumed.WorkerEpoch,
+		)
 	}
 }
 

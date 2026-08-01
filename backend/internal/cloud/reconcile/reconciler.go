@@ -158,20 +158,7 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, sandbox clouddomain.S
 			return r.observe(ctx, sandbox, string(environment.ID), "deleting", "", 2*time.Second)
 		case "stopped", "archived":
 			if recreator, ok := provider.(cloudsandbox.Recreator); ok {
-				spec, err := r.workerSpec(ctx, sandbox)
-				if err != nil {
-					return r.fail(ctx, sandbox, err)
-				}
-				r.log.Info("recreating stopped cloud sandbox",
-					"session_id", sandbox.SessionID,
-					"provider", sandbox.Provider,
-					"provider_id", environment.ID,
-				)
-				recreated, err := recreator.Recreate(ctx, environment.ID, spec)
-				if err != nil {
-					return r.fail(ctx, sandbox, err)
-				}
-				return r.observe(ctx, sandbox, string(recreated.ID), "bootstrapping", "", 2*time.Second)
+				return r.recreate(ctx, sandbox, environment, recreator)
 			}
 			r.log.Info("starting cloud sandbox",
 				"session_id", sandbox.SessionID,
@@ -183,6 +170,9 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, sandbox clouddomain.S
 			}
 			return r.observe(ctx, sandbox, string(environment.ID), "bootstrapping", "", 2*time.Second)
 		case "paused":
+			if recreator, ok := provider.(cloudsandbox.Recreator); ok {
+				return r.recreate(ctx, sandbox, environment, recreator)
+			}
 			r.log.Info("resuming cloud sandbox",
 				"session_id", sandbox.SessionID,
 				"provider", sandbox.Provider,
@@ -193,28 +183,36 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, sandbox clouddomain.S
 			}
 			return r.observe(ctx, sandbox, string(environment.ID), "bootstrapping", "", 2*time.Second)
 		case "started", "running", "ready":
-			staleBootstrap := sandbox.ObservedState == "bootstrapping" &&
+			startupExpired := (sandbox.ObservedState == "provisioning" ||
+				sandbox.ObservedState == "bootstrapping") &&
 				sandbox.WorkerLastSeenAt == nil &&
-				time.Since(sandbox.CreatedAt) >= 30*time.Second
-			if (sandbox.ObservedState == "provisioning" || sandbox.ObservedState == "failed" || staleBootstrap) &&
-				len(r.workerBinary) > 0 {
-				bootstrapper, ok := provider.(cloudsandbox.Bootstrapper)
-				if ok {
-					if err := bootstrapper.BootstrapWorker(
-						ctx,
-						environment.ID,
-						cloudsandbox.WorkerBootstrap{
-							Binary: r.workerBinary,
-							Environment: map[string]string{
-								"AO_CLOUD_PUBLIC_URL": r.publicURL,
-								"AO_CLOUD_SESSION_ID": string(sandbox.SessionID),
-								"AO_WORKSPACE_DIR":    "/workspace/repository",
+				time.Since(sandbox.UpdatedAt) >= 30*time.Second
+			heartbeatExpired := sandbox.WorkerLastSeenAt != nil &&
+				time.Since(*sandbox.WorkerLastSeenAt) >= time.Minute
+			if sandbox.ObservedState == "failed" || startupExpired || heartbeatExpired {
+				if recreator, ok := provider.(cloudsandbox.Recreator); ok {
+					return r.recreate(ctx, sandbox, environment, recreator)
+				}
+				if len(r.workerBinary) > 0 {
+					bootstrapper, ok := provider.(cloudsandbox.Bootstrapper)
+					if ok {
+						spec, err := r.workerSpec(ctx, sandbox)
+						if err != nil {
+							return r.fail(ctx, sandbox, err)
+						}
+						if err := bootstrapper.BootstrapWorker(
+							ctx,
+							environment.ID,
+							cloudsandbox.WorkerBootstrap{
+								Binary:      r.workerBinary,
+								Destination: "/home/ao/.local/bin/ao-worker",
+								Environment: spec.Environment,
 							},
-						},
-					); err != nil {
-						return r.fail(ctx, sandbox, err)
+						); err != nil {
+							return r.fail(ctx, sandbox, err)
+						}
+						return r.observe(ctx, sandbox, string(environment.ID), "bootstrapping", "", 30*time.Second)
 					}
-					return r.observe(ctx, sandbox, string(environment.ID), "bootstrapping", "", 30*time.Second)
 				}
 			}
 			state := sandbox.ObservedState
@@ -229,6 +227,28 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, sandbox clouddomain.S
 		}
 	}
 	return r.store.ReleaseSandboxClaim(ctx, r.owner, sandbox.SessionID, time.Now().Add(30*time.Second))
+}
+
+func (r *Reconciler) recreate(
+	ctx context.Context,
+	sandbox clouddomain.Sandbox,
+	environment cloudsandbox.Environment,
+	recreator cloudsandbox.Recreator,
+) error {
+	spec, err := r.workerSpec(ctx, sandbox)
+	if err != nil {
+		return r.fail(ctx, sandbox, err)
+	}
+	r.log.Info("recreating cloud sandbox with fresh worker credentials",
+		"session_id", sandbox.SessionID,
+		"provider", sandbox.Provider,
+		"provider_id", environment.ID,
+	)
+	recreated, err := recreator.Recreate(ctx, environment.ID, spec)
+	if err != nil {
+		return r.fail(ctx, sandbox, err)
+	}
+	return r.observe(ctx, sandbox, string(recreated.ID), "bootstrapping", "", 2*time.Second)
 }
 
 func (r *Reconciler) provision(

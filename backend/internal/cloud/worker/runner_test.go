@@ -1,11 +1,14 @@
 package worker
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -189,6 +192,144 @@ func TestRegressionSpawnedClaudePromptIsSubmittedAfterComposerUpdate(t *testing.
 	if !reflect.DeepEqual(terminal.writes, want) {
 		t.Fatalf("terminal writes = %#v, want %#v", terminal.writes, want)
 	}
+}
+
+func TestStreamOutputRetriesWithoutStoppingPTYDrain(t *testing.T) {
+	calls := 0
+	runner := &Runner{
+		outputRetryDelay: -1,
+		outputEvent: func(_ context.Context, eventType string, payload any) error {
+			calls++
+			if eventType != "terminal.output" {
+				t.Fatalf("event type = %q", eventType)
+			}
+			if calls < 3 {
+				return errors.New("temporary delivery failure")
+			}
+			values, _ := payload.(map[string]any)
+			if values["data"] != base64.StdEncoding.EncodeToString([]byte("agent output")) {
+				t.Fatalf("payload = %#v", payload)
+			}
+			return nil
+		},
+	}
+
+	err := runner.streamOutput(
+		context.Background(),
+		strings.NewReader("agent output"),
+		"terminal.output",
+	)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("streamOutput() error = %v, want EOF", err)
+	}
+	if calls != 3 {
+		t.Fatalf("delivery calls = %d, want 3", calls)
+	}
+}
+
+func TestStreamOutputFailsAfterBoundedDeliveryAttempts(t *testing.T) {
+	calls := 0
+	runner := &Runner{
+		outputRetryDelay: -1,
+		outputEvent: func(context.Context, string, any) error {
+			calls++
+			return errors.New("delivery unavailable")
+		},
+	}
+
+	err := runner.streamOutput(
+		context.Background(),
+		strings.NewReader("agent output"),
+		"terminal.output",
+	)
+	if err == nil || !strings.Contains(err.Error(), "after 5 attempts") {
+		t.Fatalf("streamOutput() error = %v", err)
+	}
+	if calls != terminalOutputMaxAttempts {
+		t.Fatalf("delivery calls = %d, want %d", calls, terminalOutputMaxAttempts)
+	}
+}
+
+func TestStreamOutputCancelsDeliveryWhenBoundedQueueFills(t *testing.T) {
+	runner := &Runner{
+		outputRetryDelay: -1,
+		outputEvent: func(ctx context.Context, _ string, _ any) error {
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	}
+	output := bytes.NewReader(
+		make([]byte, terminalOutputChunkBytes*(terminalOutputQueueDepth+2)),
+	)
+
+	err := runner.streamOutput(context.Background(), output, "terminal.output")
+	if !errors.Is(err, errTerminalOutputQueueFull) {
+		t.Fatalf("streamOutput() error = %v", err)
+	}
+}
+
+func TestLocalGitHubCredentialPersistsAndConfiguresGit(t *testing.T) {
+	workspaceDir := filepath.Join(t.TempDir(), "repository")
+	if err := os.MkdirAll(workspaceDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runGitTestCommand(t, workspaceDir, nil, "init")
+	runGitTestCommand(t, workspaceDir, nil, "remote", "add", "origin", "https://example.invalid/old.git")
+
+	runner := &Runner{
+		workspaceDir: workspaceDir,
+		dataDir:      t.TempDir(),
+		bootstrap: BootstrapResponse{
+			LocalGitHubToken: "github-token",
+			Launch: cloudpostgres.WorkerLaunchSpec{
+				RepositoryURL: "https://github.com/example/repository",
+			},
+		},
+	}
+	tokenPath, err := runner.persistLocalGitHubToken()
+	if err != nil {
+		t.Fatalf("persistLocalGitHubToken() error = %v", err)
+	}
+	if runner.bootstrap.LocalGitHubToken != "" {
+		t.Fatal("bootstrap retained local GitHub token")
+	}
+	info, err := os.Stat(tokenPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("token mode = %o, want 600", info.Mode().Perm())
+	}
+	if err := runner.configureLocalGitHubCredential(context.Background(), tokenPath); err != nil {
+		t.Fatalf("configureLocalGitHubCredential() error = %v", err)
+	}
+	remote := strings.TrimSpace(string(runGitTestCommand(t, workspaceDir, nil, "remote", "get-url", "origin")))
+	if remote != runner.bootstrap.Launch.RepositoryURL {
+		t.Fatalf("origin = %q, want %q", remote, runner.bootstrap.Launch.RepositoryURL)
+	}
+	credentialInput := []byte("protocol=https\nhost=github.com\n\n")
+	credential := string(runGitTestCommand(t, workspaceDir, credentialInput, "credential", "fill"))
+	if !strings.Contains(credential, "username=x-access-token") ||
+		!strings.Contains(credential, "password=github-token") {
+		t.Fatalf("credential output = %q", credential)
+	}
+}
+
+func runGitTestCommand(
+	t *testing.T,
+	dir string,
+	stdin []byte,
+	arguments ...string,
+) []byte {
+	t.Helper()
+	command := exec.Command("git", append([]string{"-C", dir}, arguments...)...)
+	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	command.Stdin = bytes.NewReader(stdin)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v: %s", arguments, err, output)
+	}
+	return output
 }
 
 func TestRegressionRestartedClaudeSessionUsesRestoreCommand(t *testing.T) {

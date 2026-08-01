@@ -30,6 +30,9 @@ type Client struct {
 	client     *http.Client
 }
 
+var _ cloudsandbox.Provider = (*Client)(nil)
+var _ cloudsandbox.Recreator = (*Client)(nil)
+
 // New creates a Daytona sandbox client.
 func New(baseURL, apiKey, target string, client *http.Client) *Client {
 	if client == nil {
@@ -159,6 +162,51 @@ func (c *Client) Delete(ctx context.Context, id cloudsandbox.ID) error {
 	return nil
 }
 
+// Recreate restarts a sandbox with fresh worker credentials while retaining
+// Daytona's persistent sandbox filesystem.
+func (c *Client) Recreate(
+	ctx context.Context,
+	id cloudsandbox.ID,
+	spec cloudsandbox.Spec,
+) (cloudsandbox.Environment, error) {
+	environment, err := c.Get(ctx, id)
+	if err != nil {
+		return cloudsandbox.Environment{}, err
+	}
+	switch environment.State {
+	case "paused":
+		if err := c.Resume(ctx, id); err != nil {
+			return cloudsandbox.Environment{}, err
+		}
+		if err := c.Stop(ctx, id); err != nil {
+			return cloudsandbox.Environment{}, err
+		}
+		if err := c.Start(ctx, id); err != nil {
+			return cloudsandbox.Environment{}, err
+		}
+	case "stopped", "archived":
+		if err := c.Start(ctx, id); err != nil {
+			return cloudsandbox.Environment{}, err
+		}
+	default:
+		if err := c.Stop(ctx, id); err != nil {
+			return cloudsandbox.Environment{}, err
+		}
+		if err := c.Start(ctx, id); err != nil {
+			return cloudsandbox.Environment{}, err
+		}
+	}
+	if err := c.launchWorker(
+		ctx,
+		id,
+		"/usr/local/bin/ao-worker",
+		spec.Environment,
+	); err != nil {
+		return cloudsandbox.Environment{}, err
+	}
+	return c.Get(ctx, id)
+}
+
 // BootstrapWorker uploads and launches an AO worker in a sandbox.
 func (c *Client) BootstrapWorker(
 	ctx context.Context,
@@ -202,9 +250,20 @@ func (c *Client) BootstrapWorker(
 	if err := c.doToolbox(ctx, id, http.MethodPost, uploadPath, writer.FormDataContentType(), &body, nil); err != nil {
 		return fmt.Errorf("upload AO worker: %w", err)
 	}
-	command := "chmod 0755 " + shellQuote(destination) +
-		" && ln -sf " + shellQuote(destination) + " /home/ao/.local/bin/ao" +
-		" && " + shellEnvironment(spec.Environment) + "nohup " + shellQuote(destination) +
+	return c.launchWorker(ctx, id, destination, spec.Environment)
+}
+
+func (c *Client) launchWorker(
+	ctx context.Context,
+	id cloudsandbox.ID,
+	destination string,
+	environment map[string]string,
+) error {
+	command := ""
+	if destination != "/usr/local/bin/ao-worker" {
+		command = "chmod 0755 " + shellQuote(destination) + " && "
+	}
+	command += shellEnvironment(environment) + "nohup " + shellQuote(destination) +
 		" >/home/ao/.ao/worker.log 2>&1 </dev/null &"
 	var executeResponse struct {
 		ExitCode int    `json:"exitCode"`
@@ -212,7 +271,7 @@ func (c *Client) BootstrapWorker(
 	}
 	if err := c.doToolboxJSON(ctx, id, http.MethodPost, "/process/execute", map[string]any{
 		"command": command,
-		"env":     spec.Environment,
+		"env":     environment,
 		"timeout": 10,
 	}, &executeResponse); err != nil {
 		return fmt.Errorf("launch AO worker: %w", err)

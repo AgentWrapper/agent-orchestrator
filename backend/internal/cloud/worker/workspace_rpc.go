@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -26,6 +27,44 @@ const (
 	maxInspectorFileBytes = 1 << 20
 	maxPreviewBodyBytes   = 4 << 20
 )
+
+var errWorkspaceOutputLimit = errors.New("workspace output exceeds the inspector limit")
+
+type cappedCommandBuffer struct {
+	mu       sync.Mutex
+	buffer   bytes.Buffer
+	limit    int64
+	exceeded bool
+	cancel   context.CancelFunc
+}
+
+func (w *cappedCommandBuffer) Write(value []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.exceeded {
+		return len(value), nil
+	}
+	remaining := w.limit - int64(w.buffer.Len())
+	if remaining <= 0 {
+		w.exceeded = true
+		w.cancel()
+		return len(value), nil
+	}
+	if int64(len(value)) > remaining {
+		_, _ = w.buffer.Write(value[:int(remaining)])
+		w.exceeded = true
+		w.cancel()
+		return len(value), nil
+	}
+	_, _ = w.buffer.Write(value)
+	return len(value), nil
+}
+
+func (w *cappedCommandBuffer) result() ([]byte, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]byte(nil), w.buffer.Bytes()...), w.exceeded
+}
 
 type workspaceRequest struct {
 	Path   string `json:"path,omitempty"`
@@ -334,16 +373,20 @@ func limitedCommandOutput(
 	name string,
 	args ...string,
 ) ([]byte, error) {
-	command := exec.CommandContext(ctx, name, args...)
+	commandContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	command := exec.CommandContext(commandContext, name, args...)
 	command.Dir = dir
-	var output bytes.Buffer
-	command.Stdout = &output
-	command.Stderr = &output
-	if err := command.Run(); err != nil {
-		return nil, fmt.Errorf("%s: %w: %s", name, err, strings.TrimSpace(output.String()))
+	output := &cappedCommandBuffer{limit: limit, cancel: cancel}
+	command.Stdout = output
+	command.Stderr = output
+	runErr := command.Run()
+	value, exceeded := output.result()
+	if exceeded {
+		return nil, errWorkspaceOutputLimit
 	}
-	if int64(output.Len()) > limit {
-		return nil, errors.New("workspace output exceeds the inspector limit")
+	if runErr != nil {
+		return nil, fmt.Errorf("%s: %w: %s", name, runErr, strings.TrimSpace(string(value)))
 	}
-	return output.Bytes(), nil
+	return value, nil
 }

@@ -31,8 +31,7 @@ func (TokenSource) Token(ctx context.Context) (string, error) {
 	return token, nil
 }
 
-// StaticTokenSource supplies a server-managed GitHub token for temporary hosted
-// deployments until the GitHub App credential source is enabled.
+// StaticTokenSource supplies an explicitly configured GitHub token.
 type StaticTokenSource string
 
 // Token returns the configured token without exposing it to sandboxes.
@@ -76,6 +75,12 @@ func NewWithTokenSource(tokens tokenSource, client *http.Client) *Client {
 		client = &http.Client{Timeout: 15 * time.Second}
 	}
 	return &Client{tokens: tokens, http: client}
+}
+
+// Token returns the current local GitHub credential. Callers must keep the
+// value scoped to explicitly local development flows.
+func (c *Client) Token(ctx context.Context) (string, error) {
+	return c.tokens.Token(ctx)
 }
 
 // ListRepositories returns repositories available to the authenticated user.

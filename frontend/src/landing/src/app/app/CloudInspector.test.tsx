@@ -1,14 +1,17 @@
 import { useState } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 
 import { CloudAPI } from "@/lib/cloud-api";
+import { removeWorkspaceSnapshots } from "@/lib/cloud-workspace-cache";
 import { CloudInspector, type CloudInspectorTab } from "./CloudInspector";
 
 vi.mock("./CloudTerminal", () => ({
   CloudTerminal: () => <div>Persistent terminal</div>,
 }));
+
+afterEach(() => removeWorkspaceSnapshots(new Set()));
 
 function inspectorAPI() {
   return {
@@ -73,6 +76,7 @@ it("switches between changes, files, and a capability-scoped browser preview", a
 
   await user.click(screen.getByRole("button", { name: "Files" }));
   const readme = await screen.findByRole("button", { name: /README\.md/ });
+  expect(screen.queryByText("Working tree is clean")).not.toBeInTheDocument();
   await user.click(readme);
   expect(await screen.findByText("# AO")).toBeInTheDocument();
 
@@ -140,7 +144,30 @@ it("keeps workspace tools unavailable until the worker connects", () => {
   ).not.toBeInTheDocument();
 });
 
-it("renders untracked files as readable additions with line numbers", async () => {
+it("does not mount or fetch inspector panes while closed", () => {
+  const api = inspectorAPI();
+  render(
+    <CloudInspector
+      api={api}
+      sessionId="session-one"
+      runtimeConnected
+      tab="changes"
+      open={false}
+      width={480}
+      onTabChange={vi.fn()}
+      onPreviewAddressChange={vi.fn()}
+      onWidthChange={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+
+  expect(api.workspaceDiff).not.toHaveBeenCalled();
+  expect(api.workspaceFiles).not.toHaveBeenCalled();
+  expect(screen.queryByText("Working tree is clean")).not.toBeInTheDocument();
+});
+
+it("loads untracked file contents only when the file is selected", async () => {
+  const user = userEvent.setup();
   const api = inspectorAPI();
   vi.mocked(api.workspaceDiff).mockResolvedValue({
     status: "?? index.html\n",
@@ -155,11 +182,19 @@ it("renders untracked files as readable additions with line numbers", async () =
 
   render(<InspectorHarness api={api} />);
 
+  const untracked = await screen.findByRole("button", {
+    name: /index\.html, 0 additions, 0 deletions/,
+  });
+  expect(api.workspaceFile).not.toHaveBeenCalled();
+
+  await user.click(untracked);
+
   expect(
     await screen.findByRole("button", {
       name: /index\.html, 3 additions, 0 deletions/,
     }),
   ).toBeVisible();
+  expect(api.workspaceFile).toHaveBeenCalledTimes(1);
   expect(screen.getAllByText("+3").length).toBeGreaterThan(0);
   expect(screen.getByText("AO Cloud")).toBeVisible();
   expect(screen.getByText("Untracked")).toBeVisible();

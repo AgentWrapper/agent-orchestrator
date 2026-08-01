@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -10,13 +11,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	cloudauth "github.com/aoagents/agent-orchestrator/backend/internal/cloud/auth"
 	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 	cloudpostgres "github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
 )
 
 type localAuthStore struct {
-	user     clouddomain.LocalUser
+	users    map[string]clouddomain.LocalUser
 	sessions map[string]string
 }
 
@@ -24,23 +27,28 @@ func (s *localAuthStore) CreateLocalUser(
 	_ context.Context,
 	email, displayName, passwordHash string,
 ) (clouddomain.LocalUser, error) {
-	if s.user.ID != "" {
+	if s.users == nil {
+		s.users = make(map[string]clouddomain.LocalUser)
+	}
+	if _, exists := s.users[email]; exists {
 		return clouddomain.LocalUser{}, cloudpostgres.ErrLocalUserExists
 	}
-	s.user = clouddomain.LocalUser{
-		ID:           "11111111-1111-4111-8111-111111111111",
+	user := clouddomain.LocalUser{
+		ID:           uuid.NewString(),
 		Email:        email,
 		DisplayName:  displayName,
 		PasswordHash: passwordHash,
 	}
-	return s.user, nil
+	s.users[email] = user
+	return user, nil
 }
 
 func (s *localAuthStore) LocalUserByEmail(_ context.Context, email string) (clouddomain.LocalUser, error) {
-	if s.user.ID == "" || s.user.Email != email {
+	user, ok := s.users[email]
+	if !ok {
 		return clouddomain.LocalUser{}, cloudpostgres.ErrLocalUserNotFound
 	}
-	return s.user, nil
+	return user, nil
 }
 
 func (s *localAuthStore) CreateLocalSession(
@@ -57,10 +65,16 @@ func (s *localAuthStore) CreateLocalSession(
 }
 
 func (s *localAuthStore) LocalUserBySessionTokenHash(_ context.Context, tokenHash []byte) (clouddomain.LocalUser, error) {
-	if s.sessions[string(tokenHash)] != s.user.ID {
+	userID := s.sessions[string(tokenHash)]
+	for _, user := range s.users {
+		if user.ID == userID {
+			return user, nil
+		}
+	}
+	if userID == "" {
 		return clouddomain.LocalUser{}, cloudpostgres.ErrLocalSessionNotFound
 	}
-	return s.user, nil
+	return clouddomain.LocalUser{}, cloudpostgres.ErrLocalSessionNotFound
 }
 
 func (s *localAuthStore) DeleteLocalSession(_ context.Context, tokenHash []byte) error {
@@ -114,4 +128,27 @@ func TestLocalAuthRoutesIssueAndRevokeBearerToken(t *testing.T) {
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("revoked token status = %d, want %d", response.Code, http.StatusUnauthorized)
 	}
+}
+
+func integrationAuthenticator() *cloudauth.LocalAuthenticator {
+	store := &localAuthStore{
+		users: map[string]clouddomain.LocalUser{
+			"user-one@example.com": {
+				ID:          tokenID("user-one"),
+				Email:       "user-one@example.com",
+				DisplayName: "User One",
+			},
+			"user-two@example.com": {
+				ID:          tokenID("user-two"),
+				Email:       "user-two@example.com",
+				DisplayName: "User Two",
+			},
+		},
+		sessions: make(map[string]string),
+	}
+	for _, token := range []string{"user-one", "user-two"} {
+		hash := sha256.Sum256([]byte(token))
+		store.sessions[string(hash[:])] = tokenID(token)
+	}
+	return cloudauth.NewLocalAuthenticator(store)
 }

@@ -3,7 +3,7 @@
 This roadmap rebuilds AO Cloud as a browser-only product:
 
 ```text
-Cloud web app → Clerk-authenticated control plane → Daytona sandbox worker
+Cloud web app → control-plane authentication → Daytona sandbox worker
 ```
 
 Electron, the local daemon, local SQLite, and local worktrees never call AO
@@ -19,22 +19,14 @@ brokering, and existing agent adapters.
 The current `ao_*` schema includes accounts, projects, sessions, commands,
 events, turns, sandboxes, worker connections, provider connections, tickets,
 and audit events. It needs to be properly reworked from a single-user
-`account_id` model into Clerk organization, membership, role, repository-grant,
+`account_id` model into organization, membership, role, repository-grant,
 quota, and tenant-audit ownership. See [`CLOUD_DESIGN.md`](CLOUD_DESIGN.md).
 
-## Phase 0 — Hosted-shaped developer baseline
 
-- Define the production contract: Cloud web app, Clerk, hosted PostgreSQL,
-  Azure Container Apps control plane, Daytona, and one worker image.
-- Provide Docker tooling for contributors and integration tests only.
-- Remove or quarantine Supabase, Render, and Fly production assumptions.
+## Phase 1 — Organization authorization and Auth
 
-**Outcome:** developers can validate the complete hosted-shaped stack locally,
-but users never run Cloud work through their laptop or local AO installation.
-
-## Phase 1 — Clerk and organization authorization
-
-- Replace Supabase browser auth and control-plane token verification with Clerk.
+- Evolve the control-plane-owned email/password authentication into
+  organization-aware authorization.
 - Add organizations, memberships, roles, personal-tenant bootstrap, and
   tenant-scoped authorization.
 - Test every project, session, event, terminal, workspace, preview, and

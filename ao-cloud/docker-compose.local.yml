@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: ao
       POSTGRES_DB: ao_cloud_dev
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - ao-cloud-postgres:/var/lib/postgresql/data
       - ./postgres-init.sql:/docker-entrypoint-initdb.d/10-create-test-db.sql:ro
@@ -37,7 +37,6 @@ services:
       AO_WEB_PUBLIC_URL: http://127.0.0.1:5174
       AO_DATABASE_URL: postgresql://ao:ao@postgres:5432/ao_cloud_dev?sslmode=disable
       AO_DATABASE_DIRECT_URL: postgresql://ao:ao@postgres:5432/ao_cloud_dev?sslmode=disable
-      AO_CLOUD_AUTH_MODE: local
       AO_SANDBOX_PROVIDER: docker
       AO_DOCKER_WORKER_IMAGE: ao-cloud-worker:local
       AO_ENCRYPTION_KEY: ${AO_ENCRYPTION_KEY:-}

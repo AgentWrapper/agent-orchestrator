@@ -1,8 +1,46 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 
 import type { CloudProject, CloudSession } from "@/lib/cloud-api";
-import { SessionBoard } from "./page";
+import CloudAppPage, { SessionBoard } from "./page";
+
+const apiMocks = vi.hoisted(() => ({
+  me: vi.fn(),
+  projects: vi.fn(),
+  sessions: vi.fn(),
+  repositories: vi.fn(),
+  providerConnections: vi.fn(),
+}));
+
+vi.mock("@/lib/cloud-api", () => ({
+  CloudAPI: class {
+    me = apiMocks.me;
+    projects = apiMocks.projects;
+    sessions = apiMocks.sessions;
+    repositories = apiMocks.repositories;
+    providerConnections = apiMocks.providerConnections;
+  },
+}));
+
+vi.mock("../auth/AuthProvider", () => ({
+  useAuth: () => ({
+    session: {
+      accessToken: "test-token",
+      user: {
+        id: "user-one",
+        email: "user@example.com",
+        displayName: "User",
+      },
+    },
+    status: "authenticated",
+    login: vi.fn(),
+    logout: vi.fn(),
+  }),
+}));
+
+vi.mock("../auth/PrismLogoGrid", () => ({
+  PrismLogoGrid: () => <div aria-label="Loading cloud application" />,
+}));
 
 const project: CloudProject = {
   id: "project-one",
@@ -65,4 +103,36 @@ it("offers to start the orchestrator only when the project has none", () => {
   expect(
     screen.queryByRole("region", { name: "Working sessions" }),
   ).not.toBeInTheDocument();
+});
+
+it("loads GitHub repositories only when the project form opens", async () => {
+  window.localStorage.clear();
+  apiMocks.me.mockResolvedValue({ sandboxProvider: "daytona" });
+  apiMocks.projects.mockResolvedValue({ projects: [project] });
+  apiMocks.sessions.mockResolvedValue({ sessions: [] });
+  apiMocks.providerConnections.mockResolvedValue({
+    providerConnections: [
+      {
+        id: "agent-one",
+        provider: "claude-code",
+        label: "Claude Code",
+        config: { credentialType: "oauth_token" },
+        validationState: "valid",
+      },
+    ],
+  });
+  apiMocks.repositories.mockRejectedValue(new Error("GitHub unavailable"));
+
+  render(<CloudAppPage />);
+
+  const addProject = await screen.findByRole("button", {
+    name: "Add cloud project",
+  });
+  expect(apiMocks.repositories).not.toHaveBeenCalled();
+
+  fireEvent.click(addProject);
+
+  expect(await screen.findByText("GitHub unavailable")).toBeVisible();
+  expect(apiMocks.repositories).toHaveBeenCalledTimes(1);
+  expect(screen.getByText(project.displayName)).toBeVisible();
 });

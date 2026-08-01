@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestWorkspaceInspectorListsReadsAndDiffsRepository(t *testing.T) {
@@ -135,6 +137,41 @@ func TestWorkspaceFilePreviewServesRepositoryAssets(t *testing.T) {
 		Path: "../outside.html",
 	}); err == nil {
 		t.Fatal("workspace file preview accepted a path escape")
+	}
+}
+
+func TestLimitedCommandOutputCancelsAtIngestLimit(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := limitedCommandOutput(
+		ctx,
+		t.TempDir(),
+		1024,
+		"sh",
+		"-c",
+		"while :; do printf 1234567890; done",
+	)
+	if !errors.Is(err, errWorkspaceOutputLimit) {
+		t.Fatalf("limitedCommandOutput() error = %v", err)
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("output command reached parent deadline: %v", ctx.Err())
+	}
+}
+
+func TestCappedCommandBufferNeverAllocatesPastLimit(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	writer := &cappedCommandBuffer{limit: 4, cancel: cancel}
+	if count, err := writer.Write([]byte("12345678")); err != nil || count != 8 {
+		t.Fatalf("Write() = %d, %v", count, err)
+	}
+	value, exceeded := writer.result()
+	if !exceeded || string(value) != "1234" {
+		t.Fatalf("result = %q, %t", value, exceeded)
+	}
+	if !errors.Is(ctx.Err(), context.Canceled) {
+		t.Fatalf("command context error = %v", ctx.Err())
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -110,6 +111,10 @@ func TestBootstrapWorkerUploadsAndLaunchesBinary(t *testing.T) {
 					!strings.Contains(input.Command, "/home/ao/.ao/worker.log") {
 					t.Fatalf("launch command = %q", input.Command)
 				}
+				if strings.Contains(input.Command, "/home/ao/.local/bin/ao\"") ||
+					strings.Contains(input.Command, "ln -sf") {
+					t.Fatalf("worker launch shadowed the AO CLI: %q", input.Command)
+				}
 				if !strings.Contains(input.Command, "env 'AO_WORKER_BOOTSTRAP_TOKEN=ticket' nohup") {
 					t.Fatalf("launch environment command = %q", input.Command)
 				}
@@ -134,6 +139,53 @@ func TestBootstrapWorkerUploadsAndLaunchesBinary(t *testing.T) {
 	}
 	if !prepared || !uploaded || !launched {
 		t.Fatalf("prepared=%v uploaded=%v launched=%v", prepared, uploaded, launched)
+	}
+}
+
+func TestRecreateRestartsDaytonaWithFreshWorkerEnvironment(t *testing.T) {
+	var getCalls int
+	var actions []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/sandbox/sandbox-one":
+			getCalls++
+			state := "stopped"
+			if getCalls > 1 {
+				state = "started"
+			}
+			_, _ = w.Write([]byte(`{"id":"sandbox-one","state":"` + state + `"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/sandbox/sandbox-one/start":
+			actions = append(actions, "start")
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && r.URL.Path == "/sandbox-one/process/execute":
+			var input struct {
+				Command     string            `json:"command"`
+				Environment map[string]string `json:"env"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(input.Command, "/usr/local/bin/ao-worker") ||
+				input.Environment["AO_WORKER_BOOTSTRAP_TOKEN"] != "fresh-ticket" {
+				t.Fatalf("worker launch = %#v", input)
+			}
+			actions = append(actions, "launch")
+			_, _ = w.Write([]byte(`{"exitCode":0,"result":""}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "secret", "us", server.Client()).WithToolboxURL(server.URL)
+	environment, err := client.Recreate(context.Background(), "sandbox-one", cloudsandbox.Spec{
+		Environment: map[string]string{"AO_WORKER_BOOTSTRAP_TOKEN": "fresh-ticket"},
+	})
+	if err != nil {
+		t.Fatalf("Recreate() error = %v", err)
+	}
+	if environment.ID != "sandbox-one" || !reflect.DeepEqual(actions, []string{"start", "launch"}) {
+		t.Fatalf("environment = %#v, actions = %#v", environment, actions)
 	}
 }
 

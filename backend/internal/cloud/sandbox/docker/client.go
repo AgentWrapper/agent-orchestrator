@@ -37,7 +37,7 @@ func (c *Client) Create(ctx context.Context, spec cloudsandbox.Spec) (cloudsandb
 		image = c.image
 	}
 	if image == "" {
-		return cloudsandbox.Environment{}, errors.New("Docker worker image is required")
+		return cloudsandbox.Environment{}, errors.New("docker worker image is required")
 	}
 	volume := volumeName(spec.SessionID)
 	if _, err := c.run(ctx, "volume", "create", volume); err != nil {
@@ -97,6 +97,7 @@ func (c *Client) FindBySession(ctx context.Context, sessionID clouddomain.Sessio
 	return value, err == nil, err
 }
 
+// Start starts a stopped worker container.
 func (c *Client) Start(ctx context.Context, id cloudsandbox.ID) error {
 	_, err := c.run(ctx, "start", string(id))
 	return providerError("start Docker sandbox", err)
@@ -115,16 +116,19 @@ func (c *Client) Recreate(
 	return c.Create(ctx, spec)
 }
 
+// Stop stops a worker container without deleting its workspace volume.
 func (c *Client) Stop(ctx context.Context, id cloudsandbox.ID) error {
 	_, err := c.run(ctx, "stop", "--time", "10", string(id))
 	return providerError("stop Docker sandbox", err)
 }
 
+// Pause pauses all processes in a worker container.
 func (c *Client) Pause(ctx context.Context, id cloudsandbox.ID) error {
 	_, err := c.run(ctx, "pause", string(id))
 	return providerError("pause Docker sandbox", err)
 }
 
+// Resume unpauses a worker container.
 func (c *Client) Resume(ctx context.Context, id cloudsandbox.ID) error {
 	_, err := c.run(ctx, "unpause", string(id))
 	return providerError("resume Docker sandbox", err)

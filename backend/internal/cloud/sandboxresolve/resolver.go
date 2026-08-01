@@ -25,7 +25,6 @@ type Resolver struct {
 	defaultTarget   string
 	defaultProvider cloudsandbox.Provider
 	dockerProvider  cloudsandbox.Provider
-	flyProvider     cloudsandbox.Provider
 }
 
 // New creates a sandbox provider resolver.
@@ -35,7 +34,6 @@ func New(
 	defaultAPIURL, defaultTarget string,
 	defaultProvider cloudsandbox.Provider,
 	dockerProvider cloudsandbox.Provider,
-	flyProvider cloudsandbox.Provider,
 ) *Resolver {
 	return &Resolver{
 		store:           store,
@@ -44,7 +42,6 @@ func New(
 		defaultTarget:   defaultTarget,
 		defaultProvider: defaultProvider,
 		dockerProvider:  dockerProvider,
-		flyProvider:     flyProvider,
 	}
 }
 
@@ -53,15 +50,9 @@ func (r *Resolver) Resolve(
 	ctx context.Context,
 	sandbox clouddomain.Sandbox,
 ) (cloudsandbox.Provider, error) {
-	if sandbox.Provider == "fly" {
-		if r.flyProvider == nil {
-			return nil, fmt.Errorf("fly sandbox provider is not configured")
-		}
-		return r.flyProvider, nil
-	}
 	if sandbox.Provider == "docker" {
 		if r.dockerProvider == nil {
-			return nil, fmt.Errorf("Docker sandbox provider is not configured")
+			return nil, fmt.Errorf("docker sandbox provider is not configured")
 		}
 		return r.dockerProvider, nil
 	}

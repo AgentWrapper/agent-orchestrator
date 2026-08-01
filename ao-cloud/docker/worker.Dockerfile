@@ -1,11 +1,13 @@
 # syntax=docker/dockerfile:1.7
-FROM golang:1.26-bookworm AS build
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS build
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /src/backend
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 COPY backend/ ./
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/ao-worker ./cmd/ao-worker \
-    && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/ao ./cmd/ao-cloud-agent
+RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" go build -trimpath -ldflags="-s -w" -o /out/ao-worker ./cmd/ao-worker \
+    && CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" go build -trimpath -ldflags="-s -w" -o /out/ao ./cmd/ao-cloud-agent
 
 FROM ubuntu:24.04
 ARG DEBIAN_FRONTEND=noninteractive

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 )
@@ -100,7 +101,22 @@ func (s *Store) UpdateSandboxObservation(
 			reconcile_after = $6,
 			reconcile_lease_owner = '',
 			reconcile_lease_until = NULL,
-			updated_at = now()
+			worker_last_seen_at = CASE
+				WHEN $4 IN ('requested', 'provisioning', 'bootstrapping')
+					AND (
+						provider_environment_id IS DISTINCT FROM NULLIF($3, '')
+						OR observed_state IS DISTINCT FROM $4
+					)
+					THEN NULL
+				ELSE worker_last_seen_at
+			END,
+			updated_at = CASE
+				WHEN provider_environment_id IS DISTINCT FROM NULLIF($3, '')
+					OR observed_state IS DISTINCT FROM $4
+					OR last_error IS DISTINCT FROM $5
+					THEN now()
+				ELSE updated_at
+			END
 		WHERE session_id = $1 AND reconcile_lease_owner = $2
 	`, sessionID, owner, providerEnvironmentID, observedState, lastError, reconcileAfter)
 	if err != nil {
@@ -187,6 +203,36 @@ func (s *Store) GetSandbox(
 	return sandbox, err
 }
 
+// RegisterWorkerBootstrap records the epoch authorized by a successful
+// bootstrap exchange without claiming that the worker runtime is ready.
+func (s *Store) RegisterWorkerBootstrap(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+	workerID, version string,
+	epoch int64,
+	capabilities []string,
+) error {
+	encodedCapabilities, err := json.Marshal(capabilities)
+	if err != nil {
+		return fmt.Errorf("encode worker capabilities: %w", err)
+	}
+	if err := upsertWorkerConnection(
+		ctx,
+		s.pool,
+		accountID,
+		sessionID,
+		workerID,
+		version,
+		epoch,
+		encodedCapabilities,
+		false,
+	); err != nil {
+		return fmt.Errorf("register worker bootstrap: %w", err)
+	}
+	return nil
+}
+
 // MarkWorkerSeen records a worker heartbeat and its current connection epoch.
 func (s *Store) MarkWorkerSeen(
 	ctx context.Context,
@@ -223,28 +269,64 @@ func (s *Store) MarkWorkerSeen(
 	if tag.RowsAffected() == 0 {
 		return ErrSessionNotFound
 	}
-	_, err = tx.Exec(ctx, `
-		INSERT INTO ao_worker_connections (
-			session_id, account_id, sandbox_id, epoch, worker_id, version,
-			capabilities, connected_at, last_seen_at, disconnected_at
-		)
-		VALUES ($1, $2, $1, $3, $4, $5, $6, now(), now(), NULL)
-		ON CONFLICT (session_id) DO UPDATE
-		SET epoch = EXCLUDED.epoch,
-			worker_id = EXCLUDED.worker_id,
-			version = EXCLUDED.version,
-			capabilities = EXCLUDED.capabilities,
-			last_seen_at = now(),
-			disconnected_at = NULL
-		WHERE ao_worker_connections.epoch <= EXCLUDED.epoch
-	`, sessionID, accountID, epoch, workerID, version, encodedCapabilities)
-	if err != nil {
+	if err := upsertWorkerConnection(
+		ctx,
+		tx,
+		accountID,
+		sessionID,
+		workerID,
+		version,
+		epoch,
+		encodedCapabilities,
+		true,
+	); err != nil {
 		return fmt.Errorf("upsert worker connection: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit worker heartbeat: %w", err)
 	}
 	return nil
+}
+
+type sqlExecutor interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+func upsertWorkerConnection(
+	ctx context.Context,
+	executor sqlExecutor,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+	workerID, version string,
+	epoch int64,
+	encodedCapabilities []byte,
+	ready bool,
+) error {
+	_, err := executor.Exec(ctx, `
+		INSERT INTO ao_worker_connections (
+			session_id, account_id, sandbox_id, epoch, worker_id, version,
+			capabilities, connected_at, last_seen_at, ready_at, disconnected_at
+		)
+		VALUES (
+			$1, $2, $1, $3, $4, $5, $6, now(), now(),
+			CASE WHEN $7 THEN now() ELSE NULL END,
+			NULL
+		)
+		ON CONFLICT (session_id) DO UPDATE
+		SET epoch = EXCLUDED.epoch,
+			worker_id = EXCLUDED.worker_id,
+			version = EXCLUDED.version,
+			capabilities = EXCLUDED.capabilities,
+			last_seen_at = now(),
+			ready_at = CASE
+				WHEN $7 THEN now()
+				WHEN ao_worker_connections.epoch < EXCLUDED.epoch THEN NULL
+				ELSE ao_worker_connections.ready_at
+			END,
+			disconnected_at = NULL
+		WHERE ao_worker_connections.epoch <= EXCLUDED.epoch
+	`, sessionID, accountID, epoch, workerID, version, encodedCapabilities, ready)
+	return err
 }
 
 type rowScanner interface {

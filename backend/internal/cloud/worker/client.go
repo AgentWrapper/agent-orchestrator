@@ -30,13 +30,14 @@ type AgentCredential struct {
 
 // BootstrapResponse contains worker credentials and the session launch specification.
 type BootstrapResponse struct {
-	WorkerToken     string                         `json:"workerToken"`
-	WorkerID        string                         `json:"workerId"`
-	Epoch           int64                          `json:"epoch"`
-	ExpiresIn       int                            `json:"expiresIn"`
-	SessionID       string                         `json:"sessionId"`
-	Launch          cloudpostgres.WorkerLaunchSpec `json:"launch"`
-	AgentCredential *AgentCredential               `json:"agentCredential,omitempty"`
+	WorkerToken      string                         `json:"workerToken"`
+	WorkerID         string                         `json:"workerId"`
+	Epoch            int64                          `json:"epoch"`
+	ExpiresIn        int                            `json:"expiresIn"`
+	SessionID        string                         `json:"sessionId"`
+	Launch           cloudpostgres.WorkerLaunchSpec `json:"launch"`
+	AgentCredential  *AgentCredential               `json:"agentCredential,omitempty"`
+	LocalGitHubToken string                         `json:"localGitHubToken,omitempty"`
 }
 
 // Client communicates with the AO Cloud worker API.

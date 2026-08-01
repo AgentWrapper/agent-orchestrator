@@ -19,7 +19,6 @@ import (
 	cloudsandbox "github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandbox"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandbox/daytona"
 	clouddocker "github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandbox/docker"
-	cloudfly "github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandbox/fly"
 	cloudsandboxresolve "github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandboxresolve"
 	cloudscm "github.com/aoagents/agent-orchestrator/backend/internal/cloud/scm"
 	cloudlocalgh "github.com/aoagents/agent-orchestrator/backend/internal/cloud/scm/localgh"
@@ -53,15 +52,7 @@ func run(log *slog.Logger) error {
 	defer store.Close()
 
 	eventService := cloudevents.New(store)
-	var authenticator cloudauth.Authenticator
-	switch cfg.AuthMode {
-	case "local":
-		authenticator = cloudauth.NewLocalAuthenticator(store)
-	case "supabase", "hosted":
-		authenticator = cloudauth.NewVerifier(cfg.SupabaseURL, cfg.SupabaseAnonKey, nil)
-	default:
-		return errors.New("unsupported AO Cloud authentication mode")
-	}
+	authenticator := cloudauth.NewLocalAuthenticator(store)
 	workerTokens := cloudworker.NewTokenManager(cfg.WorkerSigningKey)
 	workerHub := cloudworkerhub.New()
 	var localGitHub *cloudlocalgh.Client
@@ -95,23 +86,6 @@ func run(log *slog.Logger) error {
 	if cfg.SandboxProvider == "docker" {
 		dockerProvider = clouddocker.New(cfg.DockerWorkerImage)
 	}
-	var flyProvider cloudsandbox.Provider
-	if cfg.SandboxProvider == "fly" {
-		flyClient := cloudfly.New(cloudfly.Config{
-			BaseURL:     cfg.FlyAPIURL,
-			APIToken:    cfg.FlyAPIToken,
-			AppName:     cfg.FlyApp,
-			Region:      cfg.FlyRegion,
-			WorkerImage: cfg.FlyWorkerImage,
-		})
-		validateCtx, cancelValidate := context.WithTimeout(ctx, 15*time.Second)
-		validateErr := flyClient.Validate(validateCtx)
-		cancelValidate()
-		if validateErr != nil {
-			return validateErr
-		}
-		flyProvider = flyClient
-	}
 	providerResolver := cloudsandboxresolve.New(
 		store,
 		secretCipher,
@@ -119,7 +93,6 @@ func run(log *slog.Logger) error {
 		cfg.DaytonaTarget,
 		daytonaProvider,
 		dockerProvider,
-		flyProvider,
 	)
 	var workerBinary []byte
 	if cfg.WorkerBinaryPath != "" {

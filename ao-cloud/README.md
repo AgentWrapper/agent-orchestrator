@@ -27,8 +27,7 @@ There are two AO images:
 Workers and orchestrators are not fixed Compose services because the control
 plane creates, reconnects, suspends, and deletes them per session. Locally it
 creates Docker containers from `ao-cloud-worker:local`. In hosted deployments,
-Daytona creates sandboxes from the published worker snapshot (or Fly creates
-Machines from the worker image).
+Daytona creates sandboxes from the published worker snapshot.
 
 ## Terminal-first sessions
 
@@ -150,25 +149,6 @@ Set that snapshot name in `AO_DAYTONA_WORKER_SNAPSHOT` before deploying the
 control plane. See [`HOSTED_SETUP.md`](setup/HOSTED_SETUP.md) for the complete
 release sequence.
 
-## Fly Machines
-
-Set `AO_SANDBOX_PROVIDER=fly` to provision one private Fly Machine and encrypted
-10-GiB volume per session. The control plane needs:
-
-```text
-AO_FLY_API_URL=https://api.machines.dev/v1
-AO_FLY_API_TOKEN=<org- or app-scoped token>
-AO_FLY_APP=<worker app>
-AO_FLY_REGION=<region>
-```
-
-Publish `ao-cloud/docker/worker.Dockerfile` to the Fly app's private registry.
-AO defaults to `registry.fly.io/ao-workers-nihal-2026:stable`; use the optional
-`AO_FLY_WORKER_IMAGE` override only for another Fly app or a rollback.
-The image entrypoint prepares the mounted workspace as root, then drops to the
-unprivileged `ao` user before starting the worker. Pausing suspends the Machine
-so the one-time bootstrap credential is never reused.
-
 ## Tests
 
 ```bash
@@ -201,9 +181,6 @@ Follow [`HOSTED_SETUP.md`](setup/HOSTED_SETUP.md) to provision the VM, configure
 secrets, launch the stack, route HTTPS traffic, and operate backups. The
 compose definition is [`docker-compose.hosted.yml`](docker-compose.hosted.yml).
 
-`render.yaml` is a legacy deployment manifest and is not part of the supported
-single-VM hosted topology.
-
 ## Vercel deployment
 
 Import the repository into Vercel with:
@@ -219,8 +196,7 @@ Set:
 NEXT_PUBLIC_API_URL=https://YOUR-CLOUD-DOMAIN
 ```
 
-The browser uses PostgreSQL-backed control-plane email/password sessions; it
-does not require Supabase browser credentials.
+The browser uses PostgreSQL-backed control-plane email/password sessions.
 
 The product-level cloud design is in
 [`architecture/CLOUD_DESIGN.md`](architecture/CLOUD_DESIGN.md).

@@ -14,14 +14,26 @@ import {
   RefreshCw,
   TerminalSquare,
 } from "lucide-react";
-import { PointerEvent, useCallback, useEffect, useState } from "react";
+import {
+  PointerEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 import {
   CloudAPI,
   CloudWorkspaceDiff,
   CloudWorkspaceEntry,
 } from "@/lib/cloud-api";
-import { getWorkspaceSnapshot } from "@/lib/cloud-workspace-cache";
+import {
+  getWorkspaceSnapshot,
+  subscribeWorkspaceSnapshot,
+  warmWorkspaceSession,
+} from "@/lib/cloud-workspace-cache";
 
 import { CloudTerminal } from "./CloudTerminal";
 
@@ -65,6 +77,10 @@ export function CloudInspector({
   onWidthChange,
   onClose,
 }: CloudInspectorProps) {
+  useEffect(() => {
+    if (open && runtimeConnected) void warmWorkspaceSession(api, sessionId);
+  }, [api, open, runtimeConnected, sessionId]);
+
   const startResize = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     const originX = event.clientX;
@@ -141,43 +157,30 @@ export function CloudInspector({
         </div>
 
         <div className="relative min-h-0 flex-1">
-          {!runtimeConnected ? (
+          {!open ? null : !runtimeConnected ? (
             <InspectorUnavailable />
+          ) : tab === "changes" ? (
+            <ChangesView api={api} sessionId={sessionId} />
+          ) : tab === "browser" ? (
+            <BrowserView
+              api={api}
+              sessionId={sessionId}
+              requestedAddress={previewAddress}
+              onAddressChange={onPreviewAddressChange}
+            />
+          ) : tab === "terminal" ? (
+            <CloudTerminal api={api} sessionId={sessionId} kind="workspace" />
           ) : (
-            <>
-              <div className={tab === "changes" ? "h-full" : "hidden"}>
-                <ChangesView api={api} sessionId={sessionId} />
-              </div>
-              <div className={tab === "browser" ? "h-full" : "hidden"}>
-                <BrowserView
-                  api={api}
-                  sessionId={sessionId}
-                  requestedAddress={previewAddress}
-                  onAddressChange={onPreviewAddressChange}
-                />
-              </div>
-              <div
-                className={
-                  tab === "terminal"
-                    ? "h-full"
-                    : "pointer-events-none invisible absolute inset-0"
-                }
-              >
-                <CloudTerminal api={api} sessionId={sessionId} kind="workspace" />
-              </div>
-              <div className={tab === "files" ? "h-full" : "hidden"}>
-                <FilesView
-                  api={api}
-                  sessionId={sessionId}
-                  onPreview={(path) => {
-                    onPreviewAddressChange(
-                      `file:///workspace/repository/${path.replace(/^\/+/, "")}`,
-                    );
-                    onTabChange("browser");
-                  }}
-                />
-              </div>
-            </>
+            <FilesView
+              api={api}
+              sessionId={sessionId}
+              onPreview={(path) => {
+                onPreviewAddressChange(
+                  `file:///workspace/repository/${path.replace(/^\/+/, "")}`,
+                );
+                onTabChange("browser");
+              }}
+            />
           )}
         </div>
       </div>
@@ -194,6 +197,19 @@ function InspectorUnavailable() {
       </div>
     </div>
   );
+}
+
+function useWorkspaceSnapshot(sessionId: string) {
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      subscribeWorkspaceSnapshot(sessionId, listener),
+    [sessionId],
+  );
+  const getSnapshot = useCallback(
+    () => getWorkspaceSnapshot(sessionId),
+    [sessionId],
+  );
+  return useSyncExternalStore(subscribe, getSnapshot, () => undefined);
 }
 
 type DiffLineKind = "context" | "addition" | "deletion" | "hunk" | "meta";
@@ -216,76 +232,108 @@ interface InspectorDiffFile {
 }
 
 function ChangesView({ api, sessionId }: { api: CloudAPI; sessionId: string }) {
-  const cachedDiff = getWorkspaceSnapshot(sessionId)?.diff;
-  const [diff, setDiff] = useState<CloudWorkspaceDiff | null>(
-    cachedDiff ?? null,
-  );
-  const [files, setFiles] = useState<InspectorDiffFile[]>(() =>
-    cachedDiff ? parseWorkspaceDiff(cachedDiff) : [],
-  );
+  const snapshot = useWorkspaceSnapshot(sessionId);
+  const diff = snapshot?.diff ?? null;
   const [selectedKey, setSelectedKey] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(!cachedDiff);
-  const load = useCallback(
-    async (showLoading = true) => {
-      if (showLoading) setLoading(true);
-      setError("");
-      try {
-        const response = await api.workspaceDiff(sessionId);
-        const parsedFiles = parseWorkspaceDiff(response);
-        const representedPaths = new Set(parsedFiles.map((file) => file.path));
-        const statusOnlyFiles = await Promise.all(
-          parseGitStatus(response.status)
-            .filter((entry) => !representedPaths.has(entry.path))
-            .map(async (entry) => {
-              if (entry.code !== "??") {
-                return statusOnlyDiffFile(entry);
-              }
-              try {
-                const responseFile = await api.workspaceFile(
-                  sessionId,
-                  entry.path,
-                );
-                return untrackedDiffFile(entry.path, responseFile.content);
-              } catch (readError) {
-                return {
-                  ...statusOnlyDiffFile(entry),
-                  detail:
-                    readError instanceof Error
-                      ? readError.message
-                      : "Preview unavailable for this file.",
-                };
-              }
-            }),
-        );
-        const nextFiles = [...parsedFiles, ...statusOnlyFiles];
-        setDiff(response);
-        setFiles(nextFiles);
-        setSelectedKey((current) =>
-          nextFiles.some((file) => file.key === current)
-            ? current
-            : (nextFiles[0]?.key ?? ""),
-        );
-      } catch (loadError) {
-        setError(
-          loadError instanceof Error
-            ? loadError.message
-            : "Could not load changes.",
-        );
-      } finally {
-        if (showLoading) setLoading(false);
-      }
-    },
-    [api, sessionId],
-  );
+  const [refreshing, setRefreshing] = useState(false);
+  const [untrackedPreviews, setUntrackedPreviews] = useState<
+    Record<string, { content?: string; detail?: string; loading?: boolean }>
+  >({});
+  const untrackedRequests = useRef(new Set<string>());
+  const loadedUntrackedPreviews = useRef(new Set<string>());
+  const files = useMemo(() => {
+    if (!diff) return [];
+    const parsedFiles = parseWorkspaceDiff(diff);
+    const representedPaths = new Set(parsedFiles.map((file) => file.path));
+    const statusOnlyFiles = parseGitStatus(diff.status)
+      .filter((entry) => !representedPaths.has(entry.path))
+      .map((entry) => {
+        const statusFile = statusOnlyDiffFile(entry);
+        const preview = untrackedPreviews[entry.path];
+        if (entry.code !== "??" || !preview) return statusFile;
+        if (preview.content !== undefined) {
+          return {
+            ...untrackedDiffFile(entry.path, preview.content),
+            key: statusFile.key,
+          };
+        }
+        return {
+          ...statusFile,
+          detail: preview.loading ? "Loading preview…" : preview.detail,
+        };
+      });
+    return [...parsedFiles, ...statusOnlyFiles];
+  }, [diff, untrackedPreviews]);
+  const selectedFile =
+    files.find((file) => file.key === selectedKey) ?? null;
+  const selectedUntrackedPath = useMemo(() => {
+    if (!diff || !selectedKey) return "";
+    return (
+      parseGitStatus(diff.status).find(
+        (entry) =>
+          entry.code === "??" &&
+          statusOnlyDiffFile(entry).key === selectedKey,
+      )?.path ?? ""
+    );
+  }, [diff, selectedKey]);
 
   useEffect(() => {
-    void load();
-    const refreshTimer = window.setInterval(() => void load(false), 4_000);
-    return () => window.clearInterval(refreshTimer);
-  }, [load]);
-  const selectedFile =
-    files.find((file) => file.key === selectedKey) ?? files[0] ?? null;
+    if (
+      !selectedUntrackedPath ||
+      loadedUntrackedPreviews.current.has(selectedUntrackedPath) ||
+      untrackedRequests.current.has(selectedUntrackedPath)
+    ) {
+      return;
+    }
+    let cancelled = false;
+    untrackedRequests.current.add(selectedUntrackedPath);
+    setUntrackedPreviews((current) => ({
+      ...current,
+      [selectedUntrackedPath]: { loading: true },
+    }));
+    void api
+      .workspaceFile(sessionId, selectedUntrackedPath)
+      .then((response) => {
+        if (cancelled) return;
+        loadedUntrackedPreviews.current.add(selectedUntrackedPath);
+        setUntrackedPreviews((current) => ({
+          ...current,
+          [selectedUntrackedPath]: { content: response.content },
+        }));
+      })
+      .catch((readError: unknown) => {
+        if (cancelled) return;
+        loadedUntrackedPreviews.current.add(selectedUntrackedPath);
+        setUntrackedPreviews((current) => ({
+          ...current,
+          [selectedUntrackedPath]: {
+            detail:
+              readError instanceof Error
+                ? readError.message
+                : "Preview unavailable for this file.",
+          },
+        }));
+      })
+      .finally(() => {
+        untrackedRequests.current.delete(selectedUntrackedPath);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, selectedUntrackedPath, sessionId]);
+
+  useEffect(() => {
+    if (selectedKey && !selectedFile) setSelectedKey("");
+  }, [selectedFile, selectedKey]);
+
+  const refresh = useCallback(() => {
+    setRefreshing(true);
+    void warmWorkspaceSession(api, sessionId).finally(() =>
+      setRefreshing(false),
+    );
+  }, [api, sessionId]);
+  const loading = refreshing || (!diff && !snapshot?.diffError);
+  const error = snapshot?.diffError ?? "";
   const totals = files.reduce(
     (summary, file) => ({
       additions: summary.additions + file.additions,
@@ -299,7 +347,7 @@ function ChangesView({ api, sessionId }: { api: CloudAPI; sessionId: string }) {
       <InspectorToolbar
         label="Changes"
         loading={loading}
-        onRefresh={() => load()}
+        onRefresh={refresh}
         summary={
           files.length
             ? `${files.length} ${files.length === 1 ? "file" : "files"}`
@@ -804,7 +852,8 @@ function FilesView({
   sessionId: string;
   onPreview: (path: string) => void;
 }) {
-  const cachedRootEntries = getWorkspaceSnapshot(sessionId)?.rootEntries;
+  const snapshot = useWorkspaceSnapshot(sessionId);
+  const cachedRootEntries = snapshot?.rootEntries;
   const [path, setPath] = useState("");
   const [entries, setEntries] = useState<CloudWorkspaceEntry[]>(() =>
     sortWorkspaceEntries(cachedRootEntries ?? []),
@@ -820,6 +869,15 @@ function FilesView({
       setLoading(true);
       setError("");
       setFile(null);
+      if (target === "") {
+        setPath("");
+        try {
+          await warmWorkspaceSession(api, sessionId);
+        } finally {
+          setLoading(false);
+        }
+        return;
+      }
       try {
         const response = await api.workspaceFiles(sessionId, target);
         setPath(response.path === "." ? "" : response.path);
@@ -837,19 +895,14 @@ function FilesView({
     [api, sessionId],
   );
 
-  useEffect(() => void loadDirectory(""), [loadDirectory]);
   useEffect(() => {
-    if (file) return;
-    const refreshTimer = window.setInterval(async () => {
-      try {
-        const response = await api.workspaceFiles(sessionId, path);
-        setEntries(sortWorkspaceEntries(response.entries));
-      } catch {
-        // Keep the last good directory visible during transient reconnects.
-      }
-    }, 5_000);
-    return () => window.clearInterval(refreshTimer);
-  }, [api, file, path, sessionId]);
+    if (file || path) return;
+    if (snapshot?.rootEntries) {
+      setEntries(sortWorkspaceEntries(snapshot.rootEntries));
+      setLoading(false);
+    }
+    setError(snapshot?.filesError ?? "");
+  }, [file, path, snapshot]);
 
   const openFile = async (entry: CloudWorkspaceEntry) => {
     if (entry.isDir) {

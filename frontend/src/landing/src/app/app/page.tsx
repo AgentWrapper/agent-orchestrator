@@ -158,6 +158,10 @@ export default function CloudAppPage() {
   const [projects, setProjects] = useState<CloudProject[]>([]);
   const [sessions, setSessions] = useState<CloudSession[]>([]);
   const [repositories, setRepositories] = useState<CloudRepository[]>([]);
+  const [repositoriesLoading, setRepositoriesLoading] = useState(false);
+  const [repositoriesError, setRepositoriesError] = useState<string | null>(
+    null,
+  );
   const [connections, setConnections] = useState<ProviderConnection[]>([]);
   const [sandboxProvider, setSandboxProvider] = useState<"daytona" | "fly">(
     "daytona",
@@ -189,6 +193,9 @@ export default function CloudAppPage() {
     () => new Set(),
   );
   const refreshInFlight = useRef<Promise<void> | null>(null);
+  const repositoriesLoaded = useRef(false);
+  const repositoriesInFlight = useRef<Promise<void> | null>(null);
+  const repositoriesGeneration = useRef(0);
   const selectedInspector = selectedSessionId
     ? sessionInspectors[selectedSessionId]
     : undefined;
@@ -386,7 +393,7 @@ export default function CloudAppPage() {
       }
     };
     warmAll();
-    const refreshTimer = window.setInterval(warmAll, 5_000);
+    const refreshTimer = window.setInterval(warmAll, 3_000);
     return () => window.clearInterval(refreshTimer);
     // The stable key avoids restarting this timer on every status refresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -402,24 +409,61 @@ export default function CloudAppPage() {
   }, [api, connectedWorkspaceSessionKey]);
   useEffect(() => () => clearCloudTerminalConnections(), []);
 
+  const loadRepositories = useCallback(() => {
+    if (!api || repositoriesLoaded.current) return Promise.resolve();
+    if (repositoriesInFlight.current) return repositoriesInFlight.current;
+    const generation = repositoriesGeneration.current;
+    setRepositoriesLoading(true);
+    setRepositoriesError(null);
+    const request = api
+      .repositories()
+      .then((repositoryData) => {
+        if (repositoriesGeneration.current !== generation) return;
+        setRepositories(repositoryData.repositories);
+        repositoriesLoaded.current = true;
+      })
+      .catch((repositoryError: unknown) => {
+        if (repositoriesGeneration.current !== generation) return;
+        setRepositoriesError(
+          repositoryError instanceof Error
+            ? repositoryError.message
+            : "Could not load GitHub repositories.",
+        );
+      })
+      .finally(() => {
+        if (repositoriesGeneration.current !== generation) return;
+        repositoriesInFlight.current = null;
+        setRepositoriesLoading(false);
+      });
+    repositoriesInFlight.current = request;
+    return request;
+  }, [api]);
+
+  useEffect(() => {
+    repositoriesGeneration.current += 1;
+    repositoriesLoaded.current = false;
+    repositoriesInFlight.current = null;
+    setRepositories([]);
+    setRepositoriesError(null);
+    setRepositoriesLoading(false);
+  }, [api]);
+
+  useEffect(() => {
+    if (showProjectForm) void loadRepositories();
+  }, [loadRepositories, showProjectForm]);
+
   const refresh = useCallback(() => {
     if (!api) return Promise.resolve();
     if (refreshInFlight.current) return refreshInFlight.current;
     const request = (async () => {
       try {
-        const [
-          projectData,
-          sessionData,
-          repositoryData,
-          connectionData,
-          runtimeData,
-        ] = await Promise.all([
-          api.projects(),
-          api.sessions(),
-          api.repositories(),
-          api.providerConnections(),
-          api.me(),
-        ]);
+        const [projectData, sessionData, connectionData, runtimeData] =
+          await Promise.all([
+            api.projects(),
+            api.sessions(),
+            api.providerConnections(),
+            api.me(),
+          ]);
         setProjects(projectData.projects);
         setSessions(sessionData.sessions);
         const authoritativeActive = new Set(
@@ -432,7 +476,6 @@ export default function CloudAppPage() {
             .map(({ id }) => id),
         );
         setActiveChatSessionIds(authoritativeActive);
-        setRepositories(repositoryData.repositories);
         setConnections(connectionData.providerConnections);
         setSandboxProvider(runtimeData.sandboxProvider);
         setError(null);
@@ -1213,6 +1256,8 @@ export default function CloudAppPage() {
       {showProjectForm && (
         <ProjectForm
           repositories={repositories}
+          repositoriesLoading={repositoriesLoading}
+          repositoriesError={repositoriesError}
           loading={loading}
           onClose={() => setShowProjectForm(false)}
           onSubmit={createProjectAndPrewarmOrchestrator}
@@ -1787,11 +1832,15 @@ function Overlay({
 
 function ProjectForm({
   repositories,
+  repositoriesLoading,
+  repositoriesError,
   loading,
   onClose,
   onSubmit,
 }: {
   repositories: CloudRepository[];
+  repositoriesLoading: boolean;
+  repositoriesError: string | null;
   loading: boolean;
   onClose: () => void;
   onSubmit: (input: {
@@ -1803,6 +1852,13 @@ function ProjectForm({
   const [repositoryURL, setRepositoryURL] = useState(
     repositories[0]?.url ?? "",
   );
+  useEffect(() => {
+    setRepositoryURL((current) =>
+      repositories.some(({ url }) => url === current)
+        ? current
+        : (repositories[0]?.url ?? ""),
+    );
+  }, [repositories]);
   const selected = repositories.find(({ url }) => url === repositoryURL);
   return (
     <Overlay title="Add cloud project" onClose={onClose}>
@@ -1825,7 +1881,7 @@ function ProjectForm({
             className={`${field} mt-1.5`}
             value={repositoryURL}
             onChange={(event) => setRepositoryURL(event.target.value)}
-            disabled={loading}
+            disabled={loading || repositoriesLoading}
           >
             {repositories.map((repository) => (
               <option value={repository.url} key={repository.url}>
@@ -1835,11 +1891,17 @@ function ProjectForm({
             ))}
           </select>
         </label>
-        {repositories.length === 0 && (
+        {repositoriesLoading ? (
+          <p className="text-sm text-muted-foreground">
+            Loading GitHub repositories…
+          </p>
+        ) : repositoriesError ? (
+          <p className="text-sm text-destructive">{repositoriesError}</p>
+        ) : repositories.length === 0 ? (
           <p className="text-sm text-[#e8c14a]">
             No repositories were returned by the configured GitHub connection.
           </p>
-        )}
+        ) : null}
         <div className="flex justify-end gap-2">
           <button
             type="button"
@@ -1852,7 +1914,7 @@ function ProjectForm({
           <button
             type="submit"
             className={primaryButton}
-            disabled={!selected || loading}
+            disabled={!selected || loading || repositoriesLoading}
           >
             {loading ? "Starting…" : "Add project"}
           </button>

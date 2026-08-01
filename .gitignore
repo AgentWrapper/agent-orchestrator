@@ -44,6 +44,7 @@ frontend/.tanstack/
 .env
 .env.*
 !.env.example
+!/ao-cloud/.env.hosted.example
 
 # Editor / IDE
 .vscode/

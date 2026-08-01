@@ -211,8 +211,41 @@ func TestStaleBootstrapWithoutHeartbeatRetriesWorker(t *testing.T) {
 	if provider.bootstrap.Environment["AO_WORKSPACE_DIR"] != "/workspace/repository" {
 		t.Fatalf("bootstrap environment = %#v", provider.bootstrap.Environment)
 	}
+	if provider.bootstrap.Environment["AO_WORKER_BOOTSTRAP_TOKEN"] != "one-use-ticket" {
+		t.Fatalf("bootstrap environment = %#v", provider.bootstrap.Environment)
+	}
 	if store.state != "bootstrapping" || store.id != "provider-one" {
 		t.Fatalf("observation = %q %q", store.state, store.id)
+	}
+}
+
+func TestFreshBootstrapWaitsForWorkerReadiness(t *testing.T) {
+	store := &fakeStore{claimed: []clouddomain.Sandbox{{
+		SessionID:             "session-one",
+		AccountID:             "account-one",
+		Provider:              "daytona",
+		ProviderEnvironmentID: "provider-one",
+		DesiredState:          "running",
+		ObservedState:         "bootstrapping",
+		UpdatedAt:             time.Now(),
+	}}}
+	provider := &fakeBootstrapProvider{}
+	reconciler := New(
+		store,
+		fakeResolver{provider: provider},
+		"https://cloud.example",
+		"ao-worker-v1",
+		"",
+		time.Second,
+		[]byte("worker"),
+		nil,
+	)
+
+	if err := reconciler.reconcileOnce(context.Background()); err != nil {
+		t.Fatalf("reconcileOnce() error = %v", err)
+	}
+	if len(provider.bootstrap.Binary) != 0 {
+		t.Fatalf("fresh worker was repaired prematurely: %#v", provider.bootstrap)
 	}
 }
 
@@ -220,7 +253,7 @@ func TestBakedWorkerProviderDoesNotRequireBootstrapCapability(t *testing.T) {
 	store := &fakeStore{claimed: []clouddomain.Sandbox{{
 		SessionID:             "session-one",
 		AccountID:             "account-one",
-		Provider:              "fly",
+		Provider:              "daytona",
 		ProviderEnvironmentID: "provider-one",
 		DesiredState:          "running",
 		ObservedState:         "provisioning",
@@ -250,7 +283,7 @@ func TestDestroyedProviderEnvironmentIsClearedForReprovisioning(t *testing.T) {
 	store := &fakeStore{claimed: []clouddomain.Sandbox{{
 		SessionID:             "session-one",
 		AccountID:             "account-one",
-		Provider:              "fly",
+		Provider:              "docker",
 		ProviderEnvironmentID: "destroyed-machine",
 		DesiredState:          "running",
 		ObservedState:         "provisioning",
@@ -312,5 +345,70 @@ func TestRegressionStoppedWorkerVMIsRecreatedWithFreshBootstrapCredentials(t *te
 	}
 	if store.state != "bootstrapping" || store.id != "provider-two" {
 		t.Fatalf("observation = %q %q, want bootstrapping provider-two", store.state, store.id)
+	}
+}
+
+func TestRegressionPausedWorkerIsRecreatedWithFreshBootstrapCredentials(t *testing.T) {
+	store := &fakeStore{claimed: []clouddomain.Sandbox{{
+		SessionID:             "session-one",
+		AccountID:             "account-one",
+		Provider:              "docker",
+		ProviderEnvironmentID: "provider-one",
+		DesiredState:          "running",
+		ObservedState:         "paused",
+	}}}
+	provider := &fakeRecreatingProvider{fakeProvider: fakeProvider{
+		current: cloudsandbox.Environment{ID: "provider-one", State: "paused"},
+	}}
+	reconciler := New(
+		store,
+		fakeResolver{provider: provider},
+		"https://cloud.example",
+		"",
+		"",
+		time.Second,
+		nil,
+		nil,
+	)
+
+	if err := reconciler.reconcileOnce(context.Background()); err != nil {
+		t.Fatalf("reconcileOnce() error = %v", err)
+	}
+	if provider.recreatedSpec.Environment["AO_WORKER_BOOTSTRAP_TOKEN"] != "one-use-ticket" {
+		t.Fatalf("worker environment = %#v", provider.recreatedSpec.Environment)
+	}
+}
+
+func TestRegressionStaleWorkerHeartbeatRecreatesRuntime(t *testing.T) {
+	lastSeen := time.Now().Add(-2 * time.Minute)
+	store := &fakeStore{claimed: []clouddomain.Sandbox{{
+		SessionID:             "session-one",
+		AccountID:             "account-one",
+		Provider:              "docker",
+		ProviderEnvironmentID: "provider-one",
+		DesiredState:          "running",
+		ObservedState:         "running",
+		WorkerLastSeenAt:      &lastSeen,
+	}}}
+	provider := &fakeRecreatingProvider{fakeProvider: fakeProvider{
+		current: cloudsandbox.Environment{ID: "provider-one", State: "running"},
+	}}
+	reconciler := New(
+		store,
+		fakeResolver{provider: provider},
+		"https://cloud.example",
+		"",
+		"ao-cloud-worker:local",
+		time.Second,
+		nil,
+		nil,
+	)
+
+	if err := reconciler.reconcileOnce(context.Background()); err != nil {
+		t.Fatalf("reconcileOnce() error = %v", err)
+	}
+	if provider.recreatedID != "provider-one" ||
+		provider.recreatedSpec.Environment["AO_WORKER_BOOTSTRAP_TOKEN"] != "one-use-ticket" {
+		t.Fatalf("recreated worker = %q %#v", provider.recreatedID, provider.recreatedSpec)
 	}
 }

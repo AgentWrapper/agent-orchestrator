@@ -20,8 +20,7 @@ is not a Compose service: each orchestrator or worker session gets its own
 sandbox from that image. Orchestrators and workers intentionally share one
 worker image; AO changes their role through session configuration rather than
 maintaining separate images. For Daytona, publish that image as a snapshot and
-set `AO_DAYTONA_WORKER_SNAPSHOT`; for Fly, publish it to the Fly registry and
-use the Fly worker-image configuration.
+set `AO_DAYTONA_WORKER_SNAPSHOT`.
 
 ## Prerequisites
 
@@ -29,8 +28,7 @@ use the Fly worker-image configuration.
   Compose plugin installed.
 - A DNS name whose A/AAAA record points to the VM public IP. Caddy obtains and
   renews the TLS certificate automatically.
-- A Daytona API key and a published worker snapshot, or credentials for another
-  explicitly selected sandbox provider.
+- A Daytona API key and a published worker snapshot.
 
 Configure the VM network security group to allow TCP 80 and 443. Do not open
 TCP 3010 or 5432: Caddy is the only public Compose service.
@@ -142,9 +140,9 @@ production service.
 
 - PostgreSQL persists accounts, credentials, projects, session metadata, and
   terminal output required for reconnect.
-- Each Daytona/Fly sandbox retains its own provider-managed workspace volume;
-  the database does not reconstruct uncommitted filesystem changes if that
-  provider volume is deleted.
+- Each Daytona sandbox retains its own provider-managed workspace volume; the
+  database does not reconstruct uncommitted filesystem changes if that volume
+  is deleted.
 - If the VM or its disk is lost, recovery requires restoring the PostgreSQL
   backup and redeploying the control plane with the same
   `AO_ENCRYPTION_KEY` and `AO_WORKER_SIGNING_KEY`. Losing either key makes

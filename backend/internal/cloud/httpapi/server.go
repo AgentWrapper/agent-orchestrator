@@ -46,6 +46,8 @@ type store interface {
 	GetSandbox(context.Context, clouddomain.AccountID, clouddomain.SessionID) (clouddomain.Sandbox, error)
 	SetSandboxDesiredState(context.Context, clouddomain.AccountID, clouddomain.SessionID, string) error
 	ConsumeAccessTicket(context.Context, string, string) (cloudpostgres.ConsumedTicket, error)
+	RedeemWorkerBootstrapTicket(context.Context, string) (cloudpostgres.ConsumedTicket, error)
+	RegisterWorkerBootstrap(context.Context, clouddomain.AccountID, clouddomain.SessionID, string, string, int64, []string) error
 	MarkWorkerSeen(context.Context, clouddomain.AccountID, clouddomain.SessionID, string, string, int64, []string) error
 	WorkerLaunchSpec(context.Context, clouddomain.AccountID, clouddomain.SessionID) (cloudpostgres.WorkerLaunchSpec, error)
 	UpdateSessionActivity(context.Context, clouddomain.AccountID, clouddomain.SessionID, string) error
@@ -458,13 +460,18 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "INVALID_SESSION", "projectId and displayName are required.")
 		return
 	}
+	defaultResource := clouddomain.DefaultResourceProfile()
 	if input.Resource == (clouddomain.ResourceProfile{}) {
-		input.Resource = clouddomain.DefaultResourceProfile()
+		input.Resource = defaultResource
 	}
-	if input.Resource.CPU < 1 || input.Resource.CPU > 4 ||
-		input.Resource.Memory < 1 || input.Resource.Memory > 8 ||
-		input.Resource.Disk < 3 || input.Resource.Disk > 10 {
-		writeError(w, r, http.StatusBadRequest, "INVALID_RESOURCE_PROFILE", "Resource profile exceeds Cloud V1 limits.")
+	if input.Resource != defaultResource {
+		writeError(
+			w,
+			r,
+			http.StatusBadRequest,
+			"INVALID_RESOURCE_PROFILE",
+			"Cloud V1 requires 4 CPU, 8 GiB memory, and 10 GiB disk.",
+		)
 		return
 	}
 	credential, err := s.loadAgentCredential(r.Context(), account.ID, input.Harness)
@@ -497,6 +504,10 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		Provider:             s.sandboxProvider,
 		ProviderConnectionID: providerConnectionID(s.sandboxProvider, input.ProviderConnectionID),
 	})
+	if errors.Is(err, cloudpostgres.ErrIdempotencyConflict) {
+		writeError(w, r, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "Idempotency-Key was already used for another command.")
+		return
+	}
 	if errors.Is(err, cloudpostgres.ErrProjectNotFound) {
 		writeError(w, r, http.StatusNotFound, "PROJECT_NOT_FOUND", "The cloud project does not exist.")
 		return
@@ -938,7 +949,10 @@ func (s *Server) workerBootstrap(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	ticket, err := s.store.ConsumeAccessTicket(r.Context(), input.BootstrapToken, "worker_bootstrap")
+	ticket, err := s.store.RedeemWorkerBootstrapTicket(
+		r.Context(),
+		input.BootstrapToken,
+	)
 	if errors.Is(err, cloudpostgres.ErrInvalidTicket) {
 		writeError(w, r, http.StatusUnauthorized, "INVALID_BOOTSTRAP", "Worker bootstrap token is invalid or expired.")
 		return
@@ -974,9 +988,27 @@ func (s *Server) workerBootstrap(w http.ResponseWriter, r *http.Request) {
 	if agentCredential != nil {
 		defer func() { agentCredential.Secret = "" }()
 	}
-	epoch := time.Now().UnixNano()
+	localGitHubToken := ""
+	if s.sandboxProvider == "docker" && s.localGitHub != nil {
+		localGitHubToken, err = s.localGitHub.Token(r.Context())
+		if err != nil {
+			s.internalError(w, r, "load local GitHub credential for worker", err)
+			return
+		}
+	}
+	epoch := ticket.WorkerEpoch
+	if epoch <= 0 {
+		writeError(
+			w,
+			r,
+			http.StatusInternalServerError,
+			"BOOTSTRAP_FAILED",
+			"Worker bootstrap identity was not assigned.",
+		)
+		return
+	}
 	workerID := cloudworker.NextWorkerID(ticket.SessionID, epoch)
-	if err := s.store.MarkWorkerSeen(
+	if err := s.store.RegisterWorkerBootstrap(
 		r.Context(),
 		ticket.AccountID,
 		ticket.SessionID,
@@ -985,7 +1017,7 @@ func (s *Server) workerBootstrap(w http.ResponseWriter, r *http.Request) {
 		epoch,
 		input.Capabilities,
 	); err != nil {
-		s.internalError(w, r, "register worker", err)
+		s.internalError(w, r, "register worker bootstrap", err)
 		return
 	}
 	token, err := s.workerTokens.Issue(cloudworker.Claims{
@@ -1002,13 +1034,14 @@ func (s *Server) workerBootstrap(w http.ResponseWriter, r *http.Request) {
 	payload, _ := json.Marshal(map[string]any{"workerId": workerID, "epoch": epoch})
 	_, _ = s.events.Append(r.Context(), ticket.AccountID, ticket.SessionID, "worker.connected", payload)
 	writeJSON(w, http.StatusOK, cloudworker.BootstrapResponse{
-		WorkerToken:     token,
-		WorkerID:        workerID,
-		Epoch:           epoch,
-		ExpiresIn:       900,
-		SessionID:       string(ticket.SessionID),
-		Launch:          launchSpec,
-		AgentCredential: agentCredential,
+		WorkerToken:      token,
+		WorkerID:         workerID,
+		Epoch:            epoch,
+		ExpiresIn:        900,
+		SessionID:        string(ticket.SessionID),
+		Launch:           launchSpec,
+		AgentCredential:  agentCredential,
+		LocalGitHubToken: localGitHubToken,
 	})
 }
 
@@ -1359,6 +1392,13 @@ func (s *Server) workerEvent(w http.ResponseWriter, r *http.Request) {
 					s.internalError(w, r, "store agent session ID from activity", err)
 					return
 				}
+			}
+			if err := s.workerHub.Send(
+				claims.SessionID,
+				cloudworkerhub.Command{Type: "agent_ready"},
+			); err != nil {
+				s.internalError(w, r, "signal worker agent readiness", err)
+				return
 			}
 		}
 		if activity.HasActivity {

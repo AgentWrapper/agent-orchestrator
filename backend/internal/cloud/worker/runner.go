@@ -25,6 +25,16 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
+const (
+	terminalOutputChunkBytes  = 32 << 10
+	terminalOutputQueueDepth  = 64
+	terminalOutputMaxAttempts = 5
+	terminalOutputQueueWait   = time.Second
+	terminalOutputAttemptTTL  = 5 * time.Second
+)
+
+var errTerminalOutputQueueFull = errors.New("terminal output delivery queue is full")
+
 // Runner prepares a cloud workspace and runs its configured agent.
 type Runner struct {
 	client            *Client
@@ -32,6 +42,8 @@ type Runner struct {
 	workspaceDir      string
 	dataDir           string
 	credentialCommand func(context.Context, string, []string, io.Reader) error
+	outputEvent       func(context.Context, string, any) error
+	outputRetryDelay  time.Duration
 }
 
 // NewRunner creates a worker runner from bootstrap launch data.
@@ -42,6 +54,8 @@ func NewRunner(client *Client, bootstrap BootstrapResponse, workspaceDir, dataDi
 		workspaceDir:      workspaceDir,
 		dataDir:           dataDir,
 		credentialCommand: runCredentialCommand,
+		outputEvent:       client.Event,
+		outputRetryDelay:  250 * time.Millisecond,
 	}
 }
 
@@ -140,7 +154,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 	runtimeEnvironment := append(os.Environ(), envList(hookEnvironment)...)
 	clearEnvironmentSecret(hookEnvironment, credentialEnvironmentName)
-	return r.runInteractiveAgent(ctx, argv, launchConfig, runtimeEnvironment)
+	return r.runInteractiveAgent(ctx, argv, runtimeEnvironment)
 }
 
 func shouldRestoreAgentSession(
@@ -208,7 +222,6 @@ func cloudAgentCommand(
 func (r *Runner) runInteractiveAgent(
 	ctx context.Context,
 	argv []string,
-	launchConfig ports.LaunchConfig,
 	environment []string,
 ) error {
 	command := exec.CommandContext(ctx, argv[0], argv[1:]...)
@@ -236,7 +249,13 @@ func (r *Runner) runInteractiveAgent(
 	var terminalWriteMu sync.Mutex
 	var workspaceWriteMu sync.Mutex
 	go func() {
-		_ = r.streamOutput(ctx, workspaceTerminal, "workspace_terminal.output")
+		err := r.streamOutput(ctx, workspaceTerminal, "workspace_terminal.output")
+		if err != nil &&
+			!errors.Is(err, io.EOF) &&
+			ctx.Err() == nil &&
+			workspaceCommand.Process != nil {
+			_ = workspaceCommand.Process.Kill()
+		}
 	}()
 	_ = r.client.Event(ctx, "agent.started", map[string]any{
 		"harness": r.bootstrap.Launch.Session.Harness,
@@ -267,6 +286,12 @@ func (r *Runner) runInteractiveAgent(
 	}()
 
 	readErr := r.streamOutput(ctx, terminal, "terminal.output")
+	if readErr != nil &&
+		!errors.Is(readErr, io.EOF) &&
+		ctx.Err() == nil &&
+		command.Process != nil {
+		_ = command.Process.Kill()
+	}
 	waitErr := command.Wait()
 	cancelHeartbeat()
 	cancelCommands()
@@ -298,7 +323,28 @@ func (r *Runner) commandLoop(
 	backoff := time.Second
 	var highestPrompt atomic.Int64
 	var acknowledgedPrompt int64
-	firstPrompt := true
+	agentReady := false
+	pendingPrompts := make([]cloudworkerhub.Command, 0, 1)
+	deliverPrompt := func(command cloudworkerhub.Command) error {
+		if command.Sequence > 0 && command.Sequence <= highestPrompt.Load() {
+			return nil
+		}
+		decoded, err := base64.StdEncoding.DecodeString(command.Data)
+		if err != nil {
+			return fmt.Errorf("decode prompt: %w", err)
+		}
+		if err := submitInteractivePrompt(ctx, terminal, writeMu, decoded, 100*time.Millisecond); err != nil {
+			return err
+		}
+		if command.Sequence > 0 {
+			highestPrompt.Store(command.Sequence)
+			if err := r.acknowledgePrompt(ctx, command.Sequence); err != nil {
+				return err
+			}
+			acknowledgedPrompt = command.Sequence
+		}
+		return nil
+	}
 	for ctx.Err() == nil {
 		if highest := highestPrompt.Load(); highest > acknowledgedPrompt {
 			if err := r.acknowledgePrompt(ctx, highest); err != nil {
@@ -336,29 +382,24 @@ func (r *Runner) commandLoop(
 				_, err = workspaceTerminal.Write(decoded)
 				workspaceWriteMu.Unlock()
 				return err
+			case "agent_ready":
+				agentReady = true
+				for _, prompt := range pendingPrompts {
+					if err := deliverPrompt(prompt); err != nil {
+						return err
+					}
+				}
+				pendingPrompts = pendingPrompts[:0]
+				return nil
 			case "prompt":
 				if command.Sequence > 0 && command.Sequence <= highestPrompt.Load() {
 					return nil
 				}
-				if firstPrompt {
-					firstPrompt = false
-					if !waitForRetry(ctx, 1500*time.Millisecond) {
-						return ctx.Err()
-					}
+				if !agentReady {
+					pendingPrompts = append(pendingPrompts, command)
+					return nil
 				}
-				decoded, err := base64.StdEncoding.DecodeString(command.Data)
-				if err != nil {
-					return fmt.Errorf("decode prompt: %w", err)
-				}
-				err = submitInteractivePrompt(ctx, terminal, writeMu, decoded, 100*time.Millisecond)
-				if err == nil && command.Sequence > 0 {
-					highestPrompt.Store(command.Sequence)
-					if err := r.acknowledgePrompt(ctx, command.Sequence); err != nil {
-						return err
-					}
-					acknowledgedPrompt = command.Sequence
-				}
-				return err
+				return deliverPrompt(command)
 			case "resize":
 				return pty.Setsize(terminal, &pty.Winsize{Rows: command.Rows, Cols: command.Cols})
 			case "workspace_terminal_resize":
@@ -420,18 +461,46 @@ func (r *Runner) prepareRepository(ctx context.Context) error {
 	_ = r.client.Event(ctx, "repository.cloning", map[string]string{
 		"url": r.bootstrap.Launch.RepositoryURL,
 	})
+	localGitHubToken := strings.TrimSpace(r.bootstrap.LocalGitHubToken)
+	localGitHubTokenPath, err := r.persistLocalGitHubToken()
+	if err != nil {
+		return err
+	}
 	if info, err := os.Stat(filepath.Join(r.workspaceDir, ".git")); err == nil && info.IsDir() {
+		if localGitHubTokenPath != "" {
+			if err := r.configureLocalGitHubCredential(ctx, localGitHubTokenPath); err != nil {
+				return err
+			}
+		}
 		return r.checkoutBranch(ctx)
 	}
 	if err := os.MkdirAll(filepath.Dir(r.workspaceDir), 0o750); err != nil {
 		return fmt.Errorf("create workspace parent: %w", err)
 	}
-	cloneURL, err := cloudlocalgh.ProxyURL(
-		os.Getenv("AO_CLOUD_PUBLIC_URL"),
-		r.bootstrap.Launch.RepositoryURL,
-	)
-	if err != nil {
-		return err
+	cloneURL := r.bootstrap.Launch.RepositoryURL
+	commandEnvironment := os.Environ()
+	if localGitHubTokenPath == "" {
+		cloneURL, err = cloudlocalgh.ProxyURL(
+			os.Getenv("AO_CLOUD_PUBLIC_URL"),
+			r.bootstrap.Launch.RepositoryURL,
+		)
+		if err != nil {
+			return err
+		}
+		commandEnvironment = append(commandEnvironment,
+			"GIT_CONFIG_COUNT=1",
+			"GIT_CONFIG_KEY_0=http.extraHeader",
+			"GIT_CONFIG_VALUE_0=Authorization: Worker "+r.client.getToken(),
+		)
+	} else {
+		credential := base64.StdEncoding.EncodeToString(
+			[]byte("x-access-token:" + localGitHubToken),
+		)
+		commandEnvironment = append(commandEnvironment,
+			"GIT_CONFIG_COUNT=1",
+			"GIT_CONFIG_KEY_0=http.extraHeader",
+			"GIT_CONFIG_VALUE_0=Authorization: Basic "+credential,
+		)
 	}
 	// #nosec G702 -- repository URL and branch are passed as argv, never through a shell.
 	command := exec.CommandContext(
@@ -444,13 +513,14 @@ func (r *Runner) prepareRepository(ctx context.Context) error {
 		cloneURL,
 		r.workspaceDir,
 	)
-	command.Env = append(os.Environ(),
-		"GIT_CONFIG_COUNT=1",
-		"GIT_CONFIG_KEY_0=http.extraHeader",
-		"GIT_CONFIG_VALUE_0=Authorization: Worker "+r.client.getToken(),
-	)
+	command.Env = commandEnvironment
 	if output, err := command.CombinedOutput(); err != nil {
 		return fmt.Errorf("clone repository: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	if localGitHubTokenPath != "" {
+		if err := r.configureLocalGitHubCredential(ctx, localGitHubTokenPath); err != nil {
+			return err
+		}
 	}
 	if err := r.checkoutBranch(ctx); err != nil {
 		return err
@@ -459,6 +529,65 @@ func (r *Runner) prepareRepository(ctx context.Context) error {
 		"branch": r.bootstrap.Launch.Session.Branch,
 	})
 	return nil
+}
+
+func (r *Runner) persistLocalGitHubToken() (string, error) {
+	token := strings.TrimSpace(r.bootstrap.LocalGitHubToken)
+	r.bootstrap.LocalGitHubToken = ""
+	if token == "" {
+		return "", nil
+	}
+	if err := os.MkdirAll(r.dataDir, 0o700); err != nil {
+		return "", fmt.Errorf("create local GitHub credential directory: %w", err)
+	}
+	temporary, err := os.CreateTemp(r.dataDir, ".github-token-*")
+	if err != nil {
+		return "", fmt.Errorf("create local GitHub credential: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer func() { _ = os.Remove(temporaryPath) }()
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return "", fmt.Errorf("secure local GitHub credential: %w", err)
+	}
+	if _, err := temporary.WriteString(token + "\n"); err != nil {
+		_ = temporary.Close()
+		return "", fmt.Errorf("write local GitHub credential: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return "", fmt.Errorf("close local GitHub credential: %w", err)
+	}
+	path := filepath.Join(r.dataDir, "github-token")
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return "", fmt.Errorf("persist local GitHub credential: %w", err)
+	}
+	return path, nil
+}
+
+func (r *Runner) configureLocalGitHubCredential(ctx context.Context, tokenPath string) error {
+	helper := `!f() { test "$1" = get || exit 0; ` +
+		`printf 'username=x-access-token\npassword=%s\n' "$(cat ` +
+		shellQuote(tokenPath) + `)"; }; f`
+	commands := [][]string{
+		{"remote", "set-url", "origin", r.bootstrap.Launch.RepositoryURL},
+		{"config", "--local", "credential.helper", ""},
+		{"config", "--local", "credential.https://github.com.helper", helper},
+	}
+	for _, arguments := range commands {
+		command := exec.CommandContext(ctx, "git", append([]string{"-C", r.workspaceDir}, arguments...)...)
+		if output, err := command.CombinedOutput(); err != nil {
+			return fmt.Errorf(
+				"configure local GitHub credential: %w: %s",
+				err,
+				strings.TrimSpace(string(output)),
+			)
+		}
+	}
+	return nil
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func (r *Runner) checkoutBranch(ctx context.Context) error {
@@ -471,22 +600,100 @@ func (r *Runner) checkoutBranch(ctx context.Context) error {
 }
 
 func (r *Runner) streamOutput(ctx context.Context, terminal io.Reader, eventType string) error {
-	buffer := make([]byte, 32<<10)
-	for {
-		count, err := terminal.Read(buffer)
-		if count > 0 {
-			payload := map[string]any{
-				"encoding": "base64",
-				"data":     base64.StdEncoding.EncodeToString(buffer[:count]),
+	deliveryContext, cancelDelivery := context.WithCancel(ctx)
+	defer cancelDelivery()
+	output := make(chan []byte, terminalOutputQueueDepth)
+	readDone := make(chan error, 1)
+	go func() {
+		defer close(output)
+		buffer := make([]byte, terminalOutputChunkBytes)
+		for {
+			count, err := terminal.Read(buffer)
+			if count > 0 {
+				chunk := append([]byte(nil), buffer[:count]...)
+				select {
+				case output <- chunk:
+				case <-ctx.Done():
+					readDone <- ctx.Err()
+					return
+				default:
+					timer := time.NewTimer(terminalOutputQueueWait)
+					select {
+					case output <- chunk:
+						timer.Stop()
+					case <-ctx.Done():
+						timer.Stop()
+						readDone <- ctx.Err()
+						return
+					case <-timer.C:
+						readDone <- errTerminalOutputQueueFull
+						cancelDelivery()
+						return
+					}
+				}
 			}
-			if eventErr := r.client.Event(ctx, eventType, payload); eventErr != nil {
-				return eventErr
+			if err != nil {
+				readDone <- err
+				return
 			}
 		}
-		if err != nil {
+	}()
+	for chunk := range output {
+		payload := map[string]any{
+			"encoding": "base64",
+			"data":     base64.StdEncoding.EncodeToString(chunk),
+		}
+		if err := r.deliverOutputEvent(deliveryContext, eventType, payload); err != nil {
+			select {
+			case readErr := <-readDone:
+				if !errors.Is(readErr, io.EOF) {
+					return readErr
+				}
+			default:
+			}
 			return err
 		}
 	}
+	return <-readDone
+}
+
+func (r *Runner) deliverOutputEvent(
+	ctx context.Context,
+	eventType string,
+	payload any,
+) error {
+	delay := r.outputRetryDelay
+	for attempt := 1; attempt <= terminalOutputMaxAttempts; attempt++ {
+		attemptContext, cancelAttempt := context.WithTimeout(
+			ctx,
+			terminalOutputAttemptTTL,
+		)
+		var err error
+		if r.outputEvent != nil {
+			err = r.outputEvent(attemptContext, eventType, payload)
+		} else {
+			err = r.client.Event(attemptContext, eventType, payload)
+		}
+		cancelAttempt()
+		if err == nil {
+			return nil
+		}
+		if attempt == terminalOutputMaxAttempts {
+			return fmt.Errorf(
+				"deliver %s after %d attempts: %w",
+				eventType,
+				attempt,
+				err,
+			)
+		}
+		if delay > 0 && !waitForRetry(ctx, delay) {
+			return ctx.Err()
+		}
+		if delay > 0 && delay < 2*time.Second {
+			delay *= 2
+		}
+	}
+	return nil
 }
 
 func (r *Runner) acknowledgePrompt(ctx context.Context, sequence int64) error {

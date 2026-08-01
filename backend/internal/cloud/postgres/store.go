@@ -270,7 +270,13 @@ func (s *Store) CreateSession(
 	switch {
 	case err == nil:
 	case errors.Is(err, pgx.ErrNoRows):
-		existing, loadErr := loadCreateSessionResult(ctx, tx, accountID, input.IdempotencyKey)
+		existing, loadErr := loadCreateSessionResult(
+			ctx,
+			tx,
+			accountID,
+			input.IdempotencyKey,
+			input,
+		)
 		if loadErr != nil {
 			return CreateSessionResult{}, loadErr
 		}
@@ -468,12 +474,14 @@ func loadCreateSessionResult(
 	tx pgx.Tx,
 	accountID clouddomain.AccountID,
 	idempotencyKey string,
+	expectedInput CreateSessionInput,
 ) (CreateSessionResult, error) {
 	var receipt clouddomain.CommandReceipt
-	var resultRaw []byte
+	var payloadRaw, resultRaw []byte
 	err := tx.QueryRow(ctx, `
 		SELECT id, account_id, COALESCE(session_id::text, ''), idempotency_key,
-			kind, status, result, error_code, error_message, created_at, updated_at
+			kind, payload, status, result, error_code, error_message, created_at,
+			updated_at
 		FROM ao_commands
 		WHERE account_id = $1 AND idempotency_key = $2
 	`, accountID, idempotencyKey).Scan(
@@ -482,6 +490,7 @@ func loadCreateSessionResult(
 		&receipt.SessionID,
 		&receipt.IdempotencyKey,
 		&receipt.Kind,
+		&payloadRaw,
 		&receipt.Status,
 		&resultRaw,
 		&receipt.ErrorCode,
@@ -491,6 +500,12 @@ func loadCreateSessionResult(
 	)
 	if err != nil {
 		return CreateSessionResult{}, fmt.Errorf("load command receipt: %w", err)
+	}
+	var existingInput CreateSessionInput
+	if receipt.Kind != "session.create" ||
+		json.Unmarshal(payloadRaw, &existingInput) != nil ||
+		existingInput != expectedInput {
+		return CreateSessionResult{}, ErrIdempotencyConflict
 	}
 	_ = json.Unmarshal(resultRaw, &receipt.Result)
 	if receipt.SessionID == "" {
@@ -622,7 +637,8 @@ func (s *Store) sessionRuntime(
 	var connected bool
 	err := s.pool.QueryRow(ctx, `
 		SELECT capabilities,
-			disconnected_at IS NULL
+			ready_at IS NOT NULL
+				AND disconnected_at IS NULL
 				AND last_seen_at > now() - interval '45 seconds'
 		FROM ao_worker_connections
 		WHERE account_id = $1 AND session_id = $2
@@ -1151,10 +1167,11 @@ func (s *Store) IssueAccessTicket(
 
 // ConsumedTicket contains the identity and grants from a redeemed ticket.
 type ConsumedTicket struct {
-	AccountID clouddomain.AccountID
-	SessionID clouddomain.SessionID
-	Purpose   string
-	Scopes    []string
+	AccountID   clouddomain.AccountID
+	SessionID   clouddomain.SessionID
+	Purpose     string
+	Scopes      []string
+	WorkerEpoch int64
 }
 
 // ConsumeAccessTicket atomically redeems a valid access ticket.
@@ -1162,21 +1179,48 @@ func (s *Store) ConsumeAccessTicket(
 	ctx context.Context,
 	token, purpose string,
 ) (ConsumedTicket, error) {
+	return s.redeemAccessTicket(ctx, token, purpose, false)
+}
+
+// RedeemWorkerBootstrapTicket redeems a worker bootstrap ticket and permits
+// short-lived retries of the same exchange after an ambiguous HTTP failure.
+func (s *Store) RedeemWorkerBootstrapTicket(
+	ctx context.Context,
+	token string,
+) (ConsumedTicket, error) {
+	return s.redeemAccessTicket(ctx, token, "worker_bootstrap", true)
+}
+
+func (s *Store) redeemAccessTicket(
+	ctx context.Context,
+	token, purpose string,
+	allowRecentReplay bool,
+) (ConsumedTicket, error) {
 	hash := sha256.Sum256([]byte(token))
 	var ticket ConsumedTicket
 	err := s.pool.QueryRow(ctx, `
 		UPDATE ao_access_tickets
-		SET consumed_at = now()
+		SET
+			consumed_at = COALESCE(consumed_at, now()),
+			worker_epoch = CASE
+				WHEN purpose = 'worker_bootstrap'
+				THEN COALESCE(worker_epoch, nextval('ao_worker_epoch_sequence'))
+				ELSE worker_epoch
+			END
 		WHERE token_hash = $1
 			AND purpose = $2
-			AND consumed_at IS NULL
+			AND (
+				consumed_at IS NULL
+				OR ($3 AND consumed_at > now() - interval '2 minutes')
+			)
 			AND expires_at > now()
-		RETURNING account_id, session_id, purpose, scopes
-	`, hash[:], purpose).Scan(
+		RETURNING account_id, session_id, purpose, scopes, COALESCE(worker_epoch, 0)
+	`, hash[:], purpose, allowRecentReplay).Scan(
 		&ticket.AccountID,
 		&ticket.SessionID,
 		&ticket.Purpose,
 		&ticket.Scopes,
+		&ticket.WorkerEpoch,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ConsumedTicket{}, ErrInvalidTicket
