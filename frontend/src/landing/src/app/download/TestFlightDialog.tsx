@@ -1,15 +1,11 @@
 "use client";
 
-import { TESTFLIGHT_URL } from "@ao/shared/constants";
+import { TESTFLIGHT_APP_URL, TESTFLIGHT_URL } from "@ao/shared/constants";
 import { AnimatePresence, motion } from "motion/react";
 import { ExternalLink, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useCallback, useEffect, useState } from "react";
 import { FaApple } from "react-icons/fa";
-
-/** Apple's TestFlight on the App Store — step one, and useless to skip. */
-const TESTFLIGHT_APP_URL =
-  "https://apps.apple.com/app/testflight/id899247664";
 
 const STEPS = [
   {

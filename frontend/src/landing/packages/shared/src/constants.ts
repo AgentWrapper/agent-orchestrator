@@ -48,6 +48,9 @@ export const DOWNLOAD_URL_LINUX = "https://github.com/Untrivial-ai/agent-orchest
 // its way to Play (see docs/android-play-setup.md) and has no public link yet.
 export const TESTFLIGHT_URL = "https://testflight.apple.com/join/t4U3fu2H";
 
+/** Apple's TestFlight app itself — step one, and useless to skip. */
+export const TESTFLIGHT_APP_URL = "https://apps.apple.com/app/testflight/id899247664";
+
 export const AGENT_HARNESSES = 23;
 export const TAGLINE = "Stop babysitting agents. Start merging real work.";
 export const HERO_SUBHEADLINE = "Run a fleet of coding agents while keeping branches, reviews, and CI failures manageable.";
