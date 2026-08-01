@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -979,6 +980,8 @@ type fakeCommander struct {
 	cleanupErr      error
 	spawnErr        error
 	spawnRecord     domain.SessionRecord
+	spawnFunc       func(ports.SpawnConfig) domain.SessionRecord
+	spawnCalls      int
 	spawned         bool
 	spawnedCfg      ports.SpawnConfig
 	killsAtSpawn    int
@@ -991,8 +994,12 @@ func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.
 		return domain.SessionRecord{}, 0, 0, f.spawnErr
 	}
 	f.spawned = true
+	f.spawnCalls++
 	f.spawnedCfg = cfg
 	f.killsAtSpawn = len(f.retired)
+	if f.spawnFunc != nil {
+		return f.spawnFunc(cfg), len(cfg.Prompt), 0, nil
+	}
 	if f.spawnRecord.ID != "" {
 		return f.spawnRecord, len(cfg.Prompt), 0, nil
 	}
@@ -1579,6 +1586,162 @@ func TestResumeAgentMapsManagerModeToServiceView(t *testing.T) {
 	}
 	if got.Session.ID != "mer-1" || got.Mode != RestoreModeViewNative {
 		t.Fatalf("resume outcome = %+v", got)
+	}
+}
+
+func TestSpawnGenericOrchestratorReturnsExistingActiveSession(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID:        "mer-orch",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Harness:   domain.HarnessCodex,
+	}
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	got, promptBytes, systemPromptBytes, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID:   "mer",
+		Kind:        domain.KindOrchestrator,
+		Harness:     domain.HarnessClaudeCode,
+		Prompt:      "start another orchestrator",
+		DisplayName: "duplicate",
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if got.ID != "mer-orch" {
+		t.Fatalf("returned id = %q, want existing orchestrator mer-orch", got.ID)
+	}
+	if promptBytes != 0 || systemPromptBytes != 0 {
+		t.Fatalf("prompt sizes = (%d, %d), want zero for reused session", promptBytes, systemPromptBytes)
+	}
+	if fc.spawned {
+		t.Fatal("manager.Spawn must not be called when an active orchestrator already exists")
+	}
+}
+
+func TestSpawnGenericOrchestratorAllowsReplacementAfterTermination(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["mer-old"] = domain.SessionRecord{
+		ID:           "mer-old",
+		ProjectID:    "mer",
+		Kind:         domain.KindOrchestrator,
+		IsTerminated: true,
+	}
+	fc := &fakeCommander{spawnRecord: domain.SessionRecord{
+		ID:        "mer-new",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Harness:   domain.HarnessClaudeCode,
+	}}
+	svc := &Service{manager: fc, store: st}
+	cfg := ports.SpawnConfig{
+		ProjectID:   "mer",
+		Kind:        domain.KindOrchestrator,
+		Harness:     domain.HarnessClaudeCode,
+		Branch:      "feature/orchestrator",
+		Prompt:      "coordinate this project",
+		DisplayName: "coordinator",
+	}
+
+	got, _, _, err := svc.Spawn(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if got.ID != "mer-new" {
+		t.Fatalf("returned id = %q, want replacement mer-new", got.ID)
+	}
+	if fc.spawnCalls != 1 {
+		t.Fatalf("manager.Spawn calls = %d, want 1", fc.spawnCalls)
+	}
+	if fc.spawnedCfg.ProjectID != cfg.ProjectID ||
+		fc.spawnedCfg.Kind != cfg.Kind ||
+		fc.spawnedCfg.Harness != cfg.Harness ||
+		fc.spawnedCfg.Branch != cfg.Branch ||
+		fc.spawnedCfg.Prompt != cfg.Prompt ||
+		fc.spawnedCfg.DisplayName != cfg.DisplayName {
+		t.Fatalf("spawn config = %#v, want request config %#v", fc.spawnedCfg, cfg)
+	}
+}
+
+func TestSpawnGenericWorkerUnaffectedByActiveOrchestrator(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID:        "mer-orch",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+	}
+	fc := &fakeCommander{spawnRecord: domain.SessionRecord{
+		ID:        "mer-worker",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+	}}
+	svc := &Service{manager: fc, store: st}
+
+	got, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if got.ID != "mer-worker" || fc.spawnCalls != 1 {
+		t.Fatalf("worker spawn = %#v, manager.Spawn calls = %d", got, fc.spawnCalls)
+	}
+}
+
+func TestSpawnGenericOrchestratorSerializesConcurrentRequests(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	fc := &fakeCommander{}
+	fc.spawnFunc = func(cfg ports.SpawnConfig) domain.SessionRecord {
+		rec := domain.SessionRecord{
+			ID:        "mer-orch",
+			ProjectID: cfg.ProjectID,
+			Kind:      domain.KindOrchestrator,
+			Harness:   cfg.Harness,
+		}
+		st.sessions[rec.ID] = rec
+		return rec
+	}
+	svc := &Service{manager: fc, store: st}
+	cfg := ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator, Harness: domain.HarnessCodex}
+
+	start := make(chan struct{})
+	results := make(chan domain.Session, 2)
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			session, _, _, err := svc.Spawn(context.Background(), cfg)
+			results <- session
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	close(errs)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent Spawn: %v", err)
+		}
+	}
+	for session := range results {
+		if session.ID != "mer-orch" {
+			t.Fatalf("returned id = %q, want mer-orch", session.ID)
+		}
+	}
+	if fc.spawnCalls != 1 {
+		t.Fatalf("manager.Spawn calls = %d, want 1", fc.spawnCalls)
+	}
+	if len(st.sessions) != 1 {
+		t.Fatalf("session count = %d, want 1", len(st.sessions))
 	}
 }
 
