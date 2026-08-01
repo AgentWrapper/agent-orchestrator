@@ -26,13 +26,6 @@ import { workspaceQueryKey } from "./useWorkspaceQuery";
  */
 export type TerminalUserInputSource = "keyboard" | "paste" | "composition" | "shortcut" | "wheel";
 
-export type TerminalViewportAnchor = {
-	atBottom: boolean;
-	/** Opaque xterm marker that follows the top line through buffer reflow. */
-	markerId?: number;
-	viewportY: number;
-};
-
 export type AttachableTerminal = {
 	cols: number;
 	rows: number;
@@ -43,14 +36,13 @@ export type AttachableTerminal = {
 	 */
 	write: (data: Uint8Array, done?: () => void) => void;
 	writeln: (line: string) => void;
-	/** Capture logical buffer state; parked DOM scroll metrics may be stale. */
-	captureViewportAnchor: () => TerminalViewportAnchor;
 	/**
-	 * Reconcile a retained viewport while its container is still non-visible.
-	 * Resolves only after xterm has rendered the anchor and crossed a paint
-	 * boundary, so the owner can reveal without exposing an intermediate row.
+	 * Fit a retained terminal and move it to the latest output while its
+	 * container is still non-visible. Resolves only after xterm has rendered the
+	 * bottom viewport and crossed a paint boundary, so the owner can reveal
+	 * without exposing an intermediate row.
 	 */
-	prepareForActivation: (anchor: TerminalViewportAnchor) => Promise<void>;
+	prepareForActivation: () => Promise<void>;
 	/**
 	 * Erase screen + scrollback and home the cursor, preserving terminal modes.
 	 * Never a full reset (RIS): that would drop zellij's mouse-tracking mode

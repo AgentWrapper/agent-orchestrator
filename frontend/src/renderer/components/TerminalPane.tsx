@@ -21,7 +21,6 @@ import {
 	useTerminalSession,
 	type AttachableTerminal,
 	type TerminalSessionState,
-	type TerminalViewportAnchor,
 } from "../hooks/useTerminalSession";
 import { apiClient, getApiBaseUrl } from "../lib/api-client";
 import { createUrlWatcher, type UrlWatcher } from "../lib/detect-urls";
@@ -70,7 +69,6 @@ type CachedTerminalEntry = TerminalCacheDescriptor & {
 	discardOnDeactivate?: boolean;
 	props: TerminalPaneProps;
 	terminal?: AttachableTerminal;
-	viewportAnchor?: TerminalViewportAnchor;
 };
 
 type ActiveTerminalEntry = {
@@ -183,7 +181,6 @@ function setTerminalPhase(
 
 function parkTerminal(entry: CachedTerminalEntry, parking: HTMLDivElement): void {
 	entry.activationId += 1;
-	entry.viewportAnchor = entry.terminal?.captureViewportAnchor();
 	const rect = entry.container.getBoundingClientRect();
 	if (rect.width > 0) entry.container.style.width = `${rect.width}px`;
 	if (rect.height > 0) entry.container.style.height = `${rect.height}px`;
@@ -194,7 +191,10 @@ function parkTerminal(entry: CachedTerminalEntry, parking: HTMLDivElement): void
 
 function showTerminal(entry: CachedTerminalEntry, slot: HTMLDivElement): void {
 	entry.activationId += 1;
-	setTerminalPhase(entry, entry.viewportAnchor ? "preparing" : "visible");
+	// A retained renderer already has the latest hidden output. Prepare it at the
+	// bottom while hidden so returning to a worker never exposes the historical
+	// viewport the user happened to leave behind.
+	setTerminalPhase(entry, entry.terminal ? "preparing" : "visible");
 	if (entry.activationPhase === "visible") entry.container.style.visibility = "";
 	entry.container.style.width = "100%";
 	entry.container.style.height = "100%";
@@ -202,7 +202,6 @@ function showTerminal(entry: CachedTerminalEntry, slot: HTMLDivElement): void {
 }
 
 function revealTerminal(entry: CachedTerminalEntry): void {
-	entry.viewportAnchor = undefined;
 	setTerminalPhase(entry, "revealed");
 }
 
@@ -239,11 +238,10 @@ function CachedTerminalPortal({
 	);
 	useLayoutEffect(() => {
 		const terminal = entry.terminal;
-		const anchor = entry.viewportAnchor;
-		if (!active || entry.activationPhase !== "preparing" || !terminal || !anchor) return;
+		if (!active || entry.activationPhase !== "preparing" || !terminal) return;
 		const activationId = entry.activationId;
 		let current = true;
-		void terminal.prepareForActivation(anchor).then(() => {
+		void terminal.prepareForActivation().then(() => {
 			if (current) onPrepared(entry.cacheKey, activationId);
 		});
 		return () => {
@@ -255,7 +253,6 @@ function CachedTerminalPortal({
 		entry.activationId,
 		entry.activationPhase,
 		entry.terminal,
-		entry.viewportAnchor,
 		onPrepared,
 	]);
 	useLayoutEffect(() => {

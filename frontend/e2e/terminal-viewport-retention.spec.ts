@@ -53,6 +53,7 @@ type TestXterm = {
 	buffer: {
 		active: {
 			baseY: number;
+			cursorY: number;
 			getLine: (line: number) => { translateToString: (trimRight?: boolean) => string } | undefined;
 			viewportY: number;
 		};
@@ -194,7 +195,7 @@ async function installHarness(page: Page): Promise<void> {
 }
 
 test.describe("retained terminal viewport", () => {
-	test("retains the first of six live sessions with zero reopen and reveals only its synchronized frame", async ({
+	test("retains the first of six live sessions with zero reopen and reveals its latest output", async ({
 		page,
 	}) => {
 		await installHarness(page);
@@ -206,20 +207,15 @@ test.describe("retained terminal viewport", () => {
 		await activeTerminal(page).locator(".xterm-screen").hover();
 		await page.mouse.wheel(0, -1_400);
 		await expect.poll(() => activeBufferAtBottom(page)).toBe(false);
-		const historicalState = await activeTerminal(page)
+		const retainedState = await activeTerminal(page)
 			.locator("[aria-label='Session terminal']")
 			.evaluate((element) => {
 				const terminal = (element as HTMLElement & { __aoXtermForTest?: TestXterm }).__aoXtermForTest!;
 				terminal.selectLines(125, 125);
 				element.setAttribute("data-six-session-instance", "a");
-				const viewportElement = element.querySelector<HTMLElement>(".xterm-viewport")!;
-				return {
-					scrollTop: viewportElement.scrollTop,
-					selection: terminal.getSelection(),
-					viewportY: terminal.buffer.active.viewportY,
-				};
+				return { selection: terminal.getSelection() };
 			});
-		expect(historicalState.selection).toContain("A retained history");
+		expect(retainedState.selection).toContain("A retained history");
 
 		for (const session of [sessionB, sessionC, sessionD, sessionE, sessionF]) {
 			await openSession(page, session.title);
@@ -243,20 +239,7 @@ test.describe("retained terminal viewport", () => {
 			"data-six-session-instance",
 			"a",
 		);
-		await expect
-			.poll(() =>
-				activeTerminal(page)
-					.locator("[aria-label='Session terminal']")
-					.evaluate(
-						(element) =>
-							(element as HTMLElement & { __aoXtermForTest?: TestXterm }).__aoXtermForTest!.buffer.active
-								.viewportY,
-					),
-			)
-			.toBe(historicalState.viewportY);
-		expect(Math.round(await activeViewport(page).evaluate((element) => element.scrollTop))).toBe(
-			Math.round(historicalState.scrollTop),
-		);
+		await expect.poll(() => activeBufferAtBottom(page)).toBe(true);
 		expect(
 			await activeTerminal(page)
 				.locator("[aria-label='Session terminal']")
@@ -264,12 +247,11 @@ test.describe("retained terminal viewport", () => {
 					(element) =>
 						(element as HTMLElement & { __aoXtermForTest?: TestXterm }).__aoXtermForTest!.getSelection(),
 				),
-		).toBe(historicalState.selection);
+		).toBe(retainedState.selection);
 		const firstRevealSamples = await settledRevealSamples(page);
 		for (const sample of firstRevealSamples) {
-			expect(sample.viewportY).toBe(historicalState.viewportY);
-			expect(Math.round(sample.scrollTop)).toBe(Math.round(historicalState.scrollTop));
-			expect(sample.atBottom).toBe(false);
+			expect(sample.atBottom).toBe(true);
+			expect(Math.round(sample.domBottomDelta)).toBeLessThanOrEqual(1);
 		}
 		const firstRevealFrames = await revealFramePhases(page);
 		expect(firstRevealFrames).toContain("revealed");
@@ -287,17 +269,8 @@ test.describe("retained terminal viewport", () => {
 		expect(sixStats.sockets).toBe(1);
 		expect(sixStats.writers).toBe(6);
 
-		// A real width change reflows xterm's buffer. The retained top-line
-		// marker, rather than its old numeric row, must remain the visible anchor.
-		const topLineBeforeResize = await activeTerminal(page)
-			.locator("[aria-label='Session terminal']")
-			.evaluate((element) => {
-				const terminal = (element as HTMLElement & { __aoXtermForTest?: TestXterm }).__aoXtermForTest!;
-				return terminal.buffer.active
-					.getLine(terminal.buffer.active.viewportY)
-					?.translateToString(true);
-			});
-		expect(topLineBeforeResize).toBeTruthy();
+		// A real width and font-size change reflows xterm's buffer. Preparation
+		// must finish that reflow at the latest output before revealing the pane.
 		await openSession(page, sessionB.title);
 		const beforeParkedGridChange = await muxStats(page);
 		const aResizesBeforeReturn = beforeParkedGridChange.resizes[handleA]?.length ?? 0;
@@ -327,16 +300,9 @@ test.describe("retained terminal viewport", () => {
 		const resizedRevealSamples = await settledRevealSamples(page);
 		for (const sample of resizedRevealSamples) {
 			expect(sample.fontSize).toBe(fontSizeAfter);
+			expect(sample.atBottom).toBe(true);
+			expect(Math.round(sample.domBottomDelta)).toBeLessThanOrEqual(1);
 		}
-		const topLineAfterResize = await activeTerminal(page)
-			.locator("[aria-label='Session terminal']")
-			.evaluate((element) => {
-				const terminal = (element as HTMLElement & { __aoXtermForTest?: TestXterm }).__aoXtermForTest!;
-				return terminal.buffer.active
-					.getLine(terminal.buffer.active.viewportY)
-					?.translateToString(true);
-			});
-		expect(topLineAfterResize).toContain(topLineBeforeResize!.slice(0, 18));
 		expect((await muxStats(page)).opens[handleA]).toBe(1);
 		await page.setViewportSize({ width: 1280, height: 800 });
 
@@ -389,7 +355,6 @@ test.describe("retained terminal viewport", () => {
 				return metrics.top < metrics.max - 100 ? metrics.top : -1;
 			})
 			.toBeGreaterThanOrEqual(0);
-		const scrollTopBefore = await viewport.evaluate((element) => element.scrollTop);
 		await viewport.evaluate((element) => {
 			(element as HTMLElement & { __aoScrollEvents?: number }).__aoScrollEvents = 0;
 			element.addEventListener("scroll", () => {
@@ -430,9 +395,13 @@ test.describe("retained terminal viewport", () => {
 		await page.evaluate((handleId) => {
 			window.__aoFakeTerminalMux!.emit(handleId, "\r\nA output during return");
 		}, handleA);
+		await expect.poll(() => activeBufferAtBottom(page)).toBe(true);
 		await expect
-			.poll(() => activeViewport(page).evaluate((element) => Math.round(element.scrollTop)))
-			.toBe(Math.round(scrollTopBefore));
+			.poll(() => activeViewport(page).evaluate((element) => {
+				const max = Math.max(0, element.scrollHeight - element.clientHeight);
+				return Math.round(max - element.scrollTop);
+			}))
+			.toBeLessThanOrEqual(1);
 		expect(
 			await activeViewport(page).evaluate(
 				(element) => (element as HTMLElement & { __aoScrollEvents?: number }).__aoScrollEvents ?? 0,
@@ -452,16 +421,12 @@ test.describe("retained terminal viewport", () => {
 		await activeTerminal(page).locator(".xterm-screen").hover();
 		await page.mouse.wheel(0, -1_400);
 		await expect.poll(() => activeBufferAtBottom(page)).toBe(false);
-		const retainedReconnectState = await activeTerminal(page)
+		const retainedSelection = await activeTerminal(page)
 			.locator("[aria-label='Session terminal']")
 			.evaluate((element) => {
 				const terminal = (element as HTMLElement & { __aoXtermForTest?: TestXterm }).__aoXtermForTest!;
 				terminal.selectLines(125, 125);
-				return {
-					selection: terminal.getSelection(),
-					topLine: terminal.buffer.active.getLine(terminal.buffer.active.viewportY)?.translateToString(true),
-					viewportY: terminal.buffer.active.viewportY,
-				};
+				return terminal.getSelection();
 			});
 
 		// A hidden terminal stays connected for output but cannot accept
@@ -518,19 +483,14 @@ test.describe("retained terminal viewport", () => {
 		await expect(activeViewport(page)).toHaveAttribute("data-reconnect-instance", "a");
 		await expect(page.getByTestId("terminal-replay-cover")).toHaveCount(0);
 		await expect(activeViewport(page)).toHaveAttribute("data-reconnect-instance", "a");
-		const afterReconnect = await activeTerminal(page)
+		const afterReconnectSelection = await activeTerminal(page)
 			.locator("[aria-label='Session terminal']")
 			.evaluate((element) => {
 				const terminal = (element as HTMLElement & { __aoXtermForTest?: TestXterm }).__aoXtermForTest!;
-				return {
-					selection: terminal.getSelection(),
-					topLine: terminal.buffer.active.getLine(terminal.buffer.active.viewportY)?.translateToString(true),
-					viewportY: terminal.buffer.active.viewportY,
-				};
+				return terminal.getSelection();
 			});
-		expect(afterReconnect.viewportY).toBe(retainedReconnectState.viewportY);
-		expect(afterReconnect.topLine).toBe(retainedReconnectState.topLine);
-		expect(afterReconnect.selection).toBe(retainedReconnectState.selection);
+		await expect.poll(() => activeBufferAtBottom(page)).toBe(true);
+		expect(afterReconnectSelection).toBe(retainedSelection);
 		expect((await muxStats(page)).opens[handleA]).toBe(2);
 		const reconnectStats = await muxStats(page);
 		expect(reconnectStats.writers).toBe(3); // Exactly one writer for each retained A/B/C attachment.
@@ -545,7 +505,7 @@ test.describe("retained terminal viewport", () => {
 		await expect.poll(async () => (await muxStats(page)).sockets).toBe(0);
 	});
 
-	test("clamps an evicted historical anchor to the oldest retained line without exposing an intermediate frame", async ({
+	test("reveals the latest output after hidden output evicts old scrollback", async ({
 		page,
 	}) => {
 		await installHarness(page);
@@ -580,16 +540,20 @@ test.describe("retained terminal viewport", () => {
 			.evaluate((element) => {
 				const terminal = (element as HTMLElement & { __aoXtermForTest?: TestXterm }).__aoXtermForTest!;
 				return {
-					topLine: terminal.buffer.active.getLine(0)?.translateToString(true),
+					baseY: terminal.buffer.active.baseY,
+					latestLine: terminal.buffer.active
+						.getLine(terminal.buffer.active.baseY + terminal.buffer.active.cursorY)
+						?.translateToString(true),
 					viewportY: terminal.buffer.active.viewportY,
 				};
 			});
-		expect(restored.viewportY).toBe(0);
-		expect(restored.topLine).toContain("A eviction output");
+		expect(restored.viewportY).toBe(restored.baseY);
+		expect(restored.latestLine).toContain("A eviction output 5299");
 		const samples = await revealSamples(page);
 		expect(samples.length).toBeGreaterThan(0);
 		for (const sample of samples) {
-			expect(sample.viewportY).toBe(0);
+			expect(sample.atBottom).toBe(true);
+			expect(Math.round(sample.domBottomDelta)).toBeLessThanOrEqual(1);
 		}
 	});
 

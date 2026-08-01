@@ -20,7 +20,7 @@
 //    fits don't spam the PTY.
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Terminal, type IMarker } from "@xterm/xterm";
+import { Terminal } from "@xterm/xterm";
 import { useTranslation } from "react-i18next";
 import { CanvasAddon } from "@xterm/addon-canvas";
 import { FitAddon } from "@xterm/addon-fit";
@@ -31,7 +31,6 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import type {
 	AttachableTerminal,
 	TerminalUserInputSource,
-	TerminalViewportAnchor,
 } from "../hooks/useTerminalSession";
 import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
@@ -742,22 +741,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		host.addEventListener("drop", dropInput);
 
 		let cancelActivationPreparation: (() => void) | null = null;
-		let nextViewportMarkerId = 0;
-		const viewportMarkers = new Map<number, IMarker>();
-		const captureViewportAnchor = (): TerminalViewportAnchor => {
-			const buffer = term.buffer.active;
-			const atBottom = buffer.viewportY === buffer.baseY;
-			if (atBottom) return { atBottom, viewportY: buffer.viewportY };
-			const marker = term.registerMarker(buffer.viewportY - (buffer.baseY + buffer.cursorY));
-			const markerId = ++nextViewportMarkerId;
-			viewportMarkers.set(markerId, marker);
-			marker.onDispose(() => viewportMarkers.delete(markerId));
-			return { atBottom, markerId, viewportY: buffer.viewportY };
-		};
-		const prepareForActivation = (anchor: TerminalViewportAnchor): Promise<void> => {
+		const prepareForActivation = (): Promise<void> => {
 			cancelActivationPreparation?.();
 			return new Promise((resolve) => {
-				const marker = anchor.markerId ? viewportMarkers.get(anchor.markerId) : undefined;
 				let firstFrame: number | null = null;
 				let paintFrame: number | null = null;
 				let renderListener: { dispose: () => void } | null = null;
@@ -769,49 +755,44 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					if (firstFrame !== null) cancelAnimationFrame(firstFrame);
 					if (paintFrame !== null) cancelAnimationFrame(paintFrame);
 					if (cancelActivationPreparation === finish) cancelActivationPreparation = null;
-					marker?.dispose();
 					resolve();
 				};
 				cancelActivationPreparation = finish;
 
-				const restoreAnchor = () => {
-					const buffer = term.buffer.active;
-					if (anchor.atBottom) {
-						term.scrollToBottom();
-					} else {
-						// Once xterm trims the marker's line, that content no
-						// longer exists. Clamp to the oldest retained line instead
-						// of applying the stale numeric row to unrelated content.
-						const anchorLine = marker && !marker.isDisposed ? marker.line : 0;
-						term.scrollToLine(Math.min(anchorLine, buffer.baseY));
-					}
-					// scrollToLine is intentionally a no-op when xterm's logical
-					// viewport already equals the target. While parked, however,
-					// the offscreen DOM scrollbar can still be stale. Synchronize
-					// the public viewport element from canonical xterm state.
+				const showLatestOutput = () => {
+					term.scrollToBottom();
+					// Hidden output can leave the offscreen DOM scrollbar stale even
+					// after xterm's logical viewport moves. Synchronize it before the
+					// cache reveals the container.
 					const viewport = host.querySelector<HTMLElement>(".xterm-viewport");
 					if (!viewport) return;
-					const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
-					viewport.scrollTop = buffer.baseY > 0 ? maxScrollTop * (buffer.viewportY / buffer.baseY) : 0;
+					viewport.scrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
 				};
-
-				restoreAnchor();
 
 				renderListener = term.onRender(() => {
 					renderListener?.dispose();
 					renderListener = null;
 					firstFrame = requestAnimationFrame(() => {
 						firstFrame = null;
-						// DOM scrollTop can lag xterm's logical viewport while the
-						// renderer is parked. Reconcile after the render commit,
-						// then keep the container hidden through one paint boundary.
-						restoreAnchor();
+						// Reconcile again after fit/reflow has rendered, then keep the
+						// container hidden through one paint boundary.
+						showLatestOutput();
 						paintFrame = requestAnimationFrame(() => {
 							paintFrame = null;
 							finish();
 						});
 					});
 				});
+				// The container has already moved into its real slot but remains
+				// hidden. Fit locally now; useTerminalSession suppresses the emitted
+				// PTY resize until the terminal becomes fully visible.
+				try {
+					fit.fit();
+				} catch {
+					// A subsequent render/visibility fit retries if the slot is not
+					// measurable during this layout pass.
+				}
+				showLatestOutput();
 				term.refresh(0, Math.max(0, term.rows - 1));
 			});
 		};
@@ -830,7 +811,6 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// pane at the replay's settled scroll position (issue #3160).
 			write: (data, done) => term.write(data, done),
 			writeln: (line) => term.writeln(line),
-			captureViewportAnchor,
 			prepareForActivation,
 			clear: () => term.write(CLEAR_SEQUENCE),
 			onUserInput: (listener) => {
@@ -860,8 +840,6 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			host.removeEventListener("drop", dropInput);
 			contextMenuActionsRef.current = null;
 			cancelActivationPreparation?.();
-			for (const marker of viewportMarkers.values()) marker.dispose();
-			viewportMarkers.clear();
 			clearSuppressNativePaste();
 			keyInput.dispose();
 			userInputListeners.clear();

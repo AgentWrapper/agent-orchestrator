@@ -2,7 +2,7 @@
 
 ## Goal
 
-Retain the exact user-visible terminal state across navigation without allowing
+Retain each terminal and its latest output across navigation without allowing
 stale routed targets, duplicate attachments, hidden input, recovery regressions,
 or unbounded transport growth.
 
@@ -36,33 +36,24 @@ one replacement shared socket without duplicating handle writers.
 
 A parked or preparing terminal remains connected for output but is inert,
 blurred, hidden from accessibility, and unable to forward keyboard, paste,
-drop, wheel, or resize input. It becomes interactive only after its viewport
-has been synchronized and its first correct frame is ready.
+drop, wheel, or PTY resize input. It becomes interactive only after its latest
+viewport has been synchronized and its first correct frame is ready.
 
-There is no protocol acknowledgement that a SIGWINCH-driven application repaint
-has reached the browser. Preparation therefore never fits or resizes the PTY.
-If reparenting changed the available grid, the retained frame is painted while
-still inert and the normal interactive fit path performs the resize afterward.
+## Latest-output activation
 
-## Viewport restoration
+Returning to a retained terminal always shows its latest output. The terminal
+is a progress surface, so navigation does not preserve a historical viewport
+the user happened to leave behind. Manual scrolling still works while the
+terminal remains active, and the full 5,000-line xterm scrollback remains
+available.
 
-Parking captures xterm's canonical logical state:
-
-- bottom-follow when `viewportY === baseY`; or
-- a marker for the historical top line.
-
-Activation reparents the retained container while hidden, applies current local
-font metrics, restores the canonical anchor, synchronizes the public DOM
-scrollbar to that logical position, renders, and exposes that settled frame
-while the entry remains `aria-hidden`, inert, and unable to send input. After a
-browser paint boundary the entry becomes interactive. A changed grid is fitted
-only in that final phase, because local render completion cannot prove that a
-remote TUI repaint has landed.
-
-Exact restoration is bounded by xterm's existing 5,000-line scrollback. If
-hidden output evicts the marker, activation clamps to the oldest line still in
-the retained buffer. It never animates or repeatedly walks through intermediate
-rows. The fix does not reduce the terminal history available today.
+Activation reparents the retained container while hidden, fits xterm locally
+to the destination slot, scrolls its logical buffer to the bottom, synchronizes
+the public DOM scrollbar, renders, and crosses a paint boundary before reveal.
+The terminal-session hook suppresses the fit-generated PTY resize while the
+entry is preparing; the visible phase publishes one authoritative positive
+grid. No historical row or intermediate reflow position can paint during the
+switch.
 
 ## Errors, exits, and notifications
 
@@ -98,13 +89,13 @@ Unit and real-xterm Chromium coverage will exercise:
 - stale A-to-B reviewer and shell targets;
 - fatal pane errors with Restore controls intact;
 - hidden URL output;
-- same-handle reconnect preserving buffer, viewport, and selection;
+- same-handle reconnect preserving buffer and selection;
 - reviewer generation replacement, including an authoritative background
   update while parked;
 - one shared mux socket with independent writers and reconnect cleanup;
 - six visited sessions, rapid A-B-A, hidden and return-time output;
-- bottom and historical anchors, grid changes, and frame-sensitive reveal;
-- marker eviction beyond 5,000 lines clamping to the oldest retained content;
+- latest-output activation, grid changes, and frame-sensitive reveal;
+- hidden output beyond 5,000 lines still revealing the newest retained content;
 - authoritative session removal, handle replacement, and provider teardown.
 
 Focused tests run first, followed by the relevant frontend suite, typecheck,
@@ -116,7 +107,7 @@ Windows ConPTY replays a raw, bounded scrollback snapshot on every fresh host
 connection. Retaining xterm removes navigation-time reattachment, so ordinary
 session switching is covered. A genuine mux reconnect can still replay lines
 already present in the retained xterm because the ConPTY protocol carries no
-sequence or resume offset. Clearing or text matching would destroy viewport
-state or misclassify valid repeated output. Exact ConPTY reconnect
+sequence or resume offset. Clearing or text matching would destroy retained
+scrollback or misclassify valid repeated output. Exact ConPTY reconnect
 reconciliation therefore requires a versioned transport-level replay boundary
 or offset and is outside this frontend ownership change.

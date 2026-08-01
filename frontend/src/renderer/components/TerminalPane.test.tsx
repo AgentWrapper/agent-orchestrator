@@ -23,6 +23,7 @@ const {
 	terminalError,
 	terminalState,
 	replaySettled,
+	terminalPreparations,
 	terminalOutputHandlers,
 	xtermMounts,
 	xtermUnmounts,
@@ -44,6 +45,7 @@ const {
 		terminalError: { value: undefined as string | undefined },
 		terminalState: { value: "idle" },
 		replaySettled: { value: true },
+		terminalPreparations: { value: 0 },
 		terminalOutputHandlers: new Map<string, (text: string) => void>(),
 		xtermMounts: { value: 0 },
 		xtermUnmounts: { value: 0 },
@@ -80,8 +82,9 @@ vi.mock("./XtermTerminal", () => ({
 				rows: 24,
 				write: vi.fn((_data, done) => done?.()),
 				writeln: vi.fn(),
-				captureViewportAnchor: vi.fn(() => ({ atBottom: true, viewportY: 137 })),
-				prepareForActivation: vi.fn(async () => undefined),
+				prepareForActivation: vi.fn(async () => {
+					terminalPreparations.value += 1;
+				}),
 				clear: vi.fn(),
 				onUserInput: vi.fn(() => disposable),
 				onResize: vi.fn(() => disposable),
@@ -137,6 +140,7 @@ beforeEach(() => {
 	terminalError.value = undefined;
 	terminalState.value = "idle";
 	replaySettled.value = true;
+	terminalPreparations.value = 0;
 	terminalLinkHandler = undefined;
 	terminalOutputHandlers.clear();
 	attachMock.mockClear();
@@ -391,6 +395,27 @@ describe("TerminalCacheProvider", () => {
 			view.unmount();
 			expect(document.querySelectorAll("[data-terminal-cache-key]")).toHaveLength(0);
 			expect(xtermUnmounts.value).toBe(2);
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("prepares a retained terminal at the latest output before revealing it", async () => {
+		const view = renderCachedPane({ session: sessionA, sessions: [sessionA, sessionB] });
+		try {
+			const terminalA = await waitFor(() => activeXterm());
+			view.show(sessionB);
+			await waitFor(() => expect(activeXterm()).not.toBe(terminalA));
+			expect(terminalPreparations.value).toBe(0);
+
+			view.show(sessionA);
+			await waitFor(() => expect(activeXterm()).toBe(terminalA));
+			expect(terminalPreparations.value).toBe(1);
+			await waitFor(() =>
+				expect(
+					terminalA.closest("[data-terminal-cache-key]"),
+				).toHaveAttribute("data-terminal-activation-phase", "visible"),
+			);
 		} finally {
 			view.restore();
 		}

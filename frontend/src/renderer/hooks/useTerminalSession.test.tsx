@@ -111,7 +111,6 @@ function createFakeTerminal(): FakeTerminal {
 			done?.();
 		},
 		writeln: (line) => terminal.lines.push(line),
-		captureViewportAnchor: () => ({ atBottom: true, viewportY: 0 }),
 		prepareForActivation: async () => undefined,
 		clear: () => {
 			terminal.clears += 1;
