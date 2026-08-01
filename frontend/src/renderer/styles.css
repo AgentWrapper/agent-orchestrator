@@ -222,7 +222,7 @@
 	--color-primary: var(--primary);
 	--color-primary-foreground: var(--primary-foreground);
 	--color-accent: var(--accent);
-	--color-accent-foreground: var(--accent-foreground);
+	--color-accent-foreground: var(--primary-foreground);
 	--color-accent-weak: var(--bridge-accent-weak);
 	--color-accent-dim: var(--bridge-accent-dim);
 	--color-accent-strong: var(--bridge-accent-strong);
