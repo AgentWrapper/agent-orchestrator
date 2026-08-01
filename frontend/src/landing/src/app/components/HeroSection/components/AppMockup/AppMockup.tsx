@@ -1,6 +1,11 @@
 "use client";
 
-import { AnimatePresence, LayoutGroup, motion } from "motion/react";
+import {
+	AnimatePresence,
+	LayoutGroup,
+	motion,
+	useReducedMotion,
+} from "motion/react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 
@@ -1482,6 +1487,7 @@ function BoardCard({
 	onOpen: (card: PreviewCard) => void;
 }) {
 	const [canPressScale, setCanPressScale] = useState(true);
+	const shouldReduceMotion = useReducedMotion();
 	const prMatch = card.pr.match(/PR\s+#(\d+)/i);
 	const { prStatus, prClass, activityColor, activityIcon } =
 		getCardVisualState(card);
@@ -1493,6 +1499,7 @@ function BoardCard({
 		? "border-[#fb923c]/60"
 		: "border-[var(--preview-border)]";
 	const attentionAnim = isWaiting && isPulsing ? "ao-attention-pulse" : "";
+	const isShaking = isWaiting && isPulsing && !shouldReduceMotion;
 
 	return (
 		<motion.div
@@ -1519,13 +1526,36 @@ function BoardCard({
 			animate={
 				card.merging
 					? { opacity: 0, scale: 0.96, y: -8 }
-					: { opacity: 1, scale: 1, y: 0 }
+					: isShaking
+						? {
+								opacity: 1,
+								scale: 1,
+								y: [0, -1.5, 1.5, -1.5, 1.5, 0, 0],
+								rotate: [0, -1.2, 1.2, -0.8, 0.8, 0, 0],
+							}
+						: { opacity: 1, scale: 1, y: 0, rotate: 0 }
 			}
 			exit={{ opacity: 0, scale: 0.96, y: -8 }}
 			transition={{
 				duration: 0.45,
 				ease: [0.22, 1, 0.36, 1],
 				layout: { duration: 0.55, ease: [0.22, 1, 0.36, 1] },
+				y: isShaking
+					? {
+							duration: 3.6,
+							repeat: Infinity,
+							ease: "easeInOut",
+							times: [0, 0.03, 0.06, 0.09, 0.12, 0.15, 1],
+						}
+					: { duration: 0.45 },
+				rotate: isShaking
+					? {
+							duration: 3.6,
+							repeat: Infinity,
+							ease: "easeInOut",
+							times: [0, 0.03, 0.06, 0.09, 0.12, 0.15, 1],
+						}
+					: { duration: 0.45 },
 			}}
 			className={`cursor-pointer rounded-[8px] border ${attentionBorder} bg-[var(--preview-card)] p-[15px] shadow-[0_1px_1px_rgba(0,0,0,0.05)] outline-none transition-colors hover:bg-[var(--preview-muted)] focus-visible:ring-2 focus-visible:ring-[var(--preview-ring)] ${attentionAnim}`}
 		>
