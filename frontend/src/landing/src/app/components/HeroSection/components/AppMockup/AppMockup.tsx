@@ -1472,15 +1472,11 @@ function ActivityIcon({ id }: { id: ActivityIconId }) {
 
 function BoardCard({
 	card,
-	columnColor,
-	isHead,
 	isPulsing,
 	onMerge,
 	onOpen,
 }: {
 	card: PreviewCard;
-	columnColor: string;
-	isHead: boolean;
 	isPulsing: boolean;
 	onMerge: (id: string) => void;
 	onOpen: (card: PreviewCard) => void;
@@ -1497,9 +1493,6 @@ function BoardCard({
 		? "border-[#fb923c]/60"
 		: "border-[var(--preview-border)]";
 	const attentionAnim = isWaiting && isPulsing ? "ao-attention-pulse" : "";
-	// Head-of-line treatment: topmost card reads as "currently happening".
-	// Non-head cards are dimmed slightly so the eye lands on the head first.
-	const headOpacity = isHead ? "" : "opacity-[0.88]";
 
 	return (
 		<motion.div
@@ -1534,15 +1527,8 @@ function BoardCard({
 				ease: [0.22, 1, 0.36, 1],
 				layout: { duration: 0.55, ease: [0.22, 1, 0.36, 1] },
 			}}
-			className={`relative cursor-pointer rounded-[8px] border ${attentionBorder} bg-[var(--preview-card)] p-[15px] shadow-[0_1px_1px_rgba(0,0,0,0.05)] outline-none transition-colors hover:bg-[var(--preview-muted)] focus-visible:ring-2 focus-visible:ring-[var(--preview-ring)] ${attentionAnim} ${headOpacity}`}
+			className={`cursor-pointer rounded-[8px] border ${attentionBorder} bg-[var(--preview-card)] p-[15px] shadow-[0_1px_1px_rgba(0,0,0,0.05)] outline-none transition-colors hover:bg-[var(--preview-muted)] focus-visible:ring-2 focus-visible:ring-[var(--preview-ring)] ${attentionAnim}`}
 		>
-			{isHead ? (
-				<span
-					aria-hidden="true"
-					className="pointer-events-none absolute inset-y-1 left-0 w-[2px] rounded-r-[2px]"
-					style={{ backgroundColor: columnColor }}
-				/>
-			) : null}
 			<div className="flex items-start gap-2">
 				<img
 					src={card.icon}
@@ -1641,12 +1627,10 @@ function BoardColumn({
 			</div>
 			<div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2 scrollbar-hide">
 				<AnimatePresence initial={false}>
-					{sortedCards.map((card, index) => (
+					{sortedCards.map((card) => (
 						<BoardCard
 							key={`${card.id}-${card.column}`}
 							card={card}
-							columnColor={color}
-							isHead={index === 0}
 							isPulsing={card.id === pulsingId}
 							onMerge={onMerge}
 							onOpen={onOpen}
