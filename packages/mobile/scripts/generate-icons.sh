@@ -11,6 +11,13 @@
 # Outputs land in packages/mobile/assets/: the Icon Composer bundle AO.icon (iOS
 # 26 Liquid Glass) plus the flat rasters used by Android, web and Expo Go.
 #
+# Requirements (this is a manual, out-of-band tool -- the generated assets are
+# committed, so nothing in the app build or CI runs it):
+#   * Python 3 with Pillow      pip3 install Pillow
+#   * frontend/ dependencies    npm install --prefix frontend
+#     render-svg.mjs borrows frontend's Playwright Chromium rather than installing
+#     a second copy; see the note at the top of icon-build/render-svg.mjs.
+#
 # Verify the Liquid Glass result without a build:
 #   scripts/preview-icon.sh
 set -euo pipefail
@@ -18,6 +25,15 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 mobile="$(dirname "$here")"
 assets="$mobile/assets"
+root="$(cd "$mobile/../.." && pwd)"
+
+# Fail with an actionable message rather than a traceback three stages in.
+command -v python3 >/dev/null \
+  || { echo "python3 not found -- required by separate.py / compose.py" >&2; exit 1; }
+python3 -c 'import PIL' 2>/dev/null \
+  || { echo "Pillow not installed -- run: pip3 install Pillow" >&2; exit 1; }
+[ -d "$root/frontend/node_modules/playwright" ] \
+  || { echo "frontend's playwright not found -- run: npm install --prefix frontend" >&2; exit 1; }
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 

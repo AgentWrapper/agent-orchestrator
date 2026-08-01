@@ -1,14 +1,13 @@
 """Compose the app icon layers and every derived raster from the split artwork.
 
 Input is the wand / creature pair produced by separate.py at 4096px render width.
-Output is two families:
+Every run writes both output families into --out:
 
-* Icon Composer layers (`--layers`) -- clean artwork on transparent canvases, with
+* Icon Composer layers (`layers/`) -- clean artwork on transparent canvases, with
   no baked glow or shadow. iOS 26 adds specular highlight and shadow itself; baking
   them in fights the system and reads as dirty under Liquid Glass.
-* Flat rasters (`--flat`) -- the iOS <=18 / Android / web fallback, where the
-  gradient, rim glow and wand-tip bloom are baked in so it matches the Electron
-  desktop icon.
+* Flat rasters -- the iOS <=18 / Android / web fallback, where the gradient, rim
+  glow and wand-tip bloom are baked in so it matches the Electron desktop icon.
 
 The source creature is flat #79B0DC with bevel shading painted on top. To impose
 the Electron icon's vertical gradient without losing that bevel, each pixel's
@@ -16,7 +15,6 @@ luminance is measured as a ratio against the base fill and used to modulate the
 gradient ramp. Highlights and shadows survive; the eyes stay dark.
 """
 import argparse
-import colorsys
 from pathlib import Path
 
 from PIL import Image, ImageFilter
@@ -53,6 +51,12 @@ TIP_GLOW = (232, 242, 255)
 LOGO_WIDTH_FRACTION = 0.630
 LOGO_X_NUDGE = 0.0393
 LOGO_Y_NUDGE = -0.0781
+# The splash is drawn on a full-bleed background with no icon mask, so the wand-tip
+# clearance that pins LOGO_WIDTH_FRACTION does not apply and this is sized on its
+# own. Kept as-is rather than folded into LOGO_WIDTH_FRACTION: at resizeMode
+# "contain" the difference is ~1.6% of logo width, and matching them would rewrite
+# splash-icon.png for no visible gain.
+SPLASH_WIDTH_FRACTION = 0.62
 # Android guarantees only the central 66dp of the 108dp adaptive-icon canvas
 # survives masking. The logo is fitted to that circle by content radius.
 ANDROID_SAFE_DIAMETER = 66 / 108
@@ -219,7 +223,7 @@ def background_gradient(size):
     return canvas
 
 
-def flat_icon(creature, wand, size, background=BACKGROUND, alpha_bg=True):
+def flat_icon(creature, wand, size):
     canvas = background_gradient(size)
     creature_p, wand_p, span = place(
         creature, wand, size, LOGO_WIDTH_FRACTION, LOGO_X_NUDGE, LOGO_Y_NUDGE
@@ -279,7 +283,9 @@ def main():
     icon.convert("RGB").save(out / "icon.png")
 
     splash = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
-    sc, sw, sspan = place(creature, wand, 1024, 0.62, LOGO_X_NUDGE, LOGO_Y_NUDGE)
+    sc, sw, sspan = place(
+        creature, wand, 1024, SPLASH_WIDTH_FRACTION, LOGO_X_NUDGE, LOGO_Y_NUDGE
+    )
     scg, swg = graded(sc, sw, sspan)
     splash.alpha_composite(scg)
     splash.alpha_composite(swg)

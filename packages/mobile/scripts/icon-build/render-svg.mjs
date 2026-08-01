@@ -1,6 +1,12 @@
 // Rasterize assets/ao-logo.svg at high resolution using the Chromium bundled with
 // frontend's playwright. Chromium renders the traced logo's overlapping fills
 // faithfully; cairosvg is not an option (no libcairo on macOS by default).
+//
+// The import deliberately reaches across into frontend/node_modules instead of
+// adding playwright to packages/mobile: this script runs by hand a few times a
+// year, and a second Chromium download is ~150MB for every mobile dev who will
+// never run it. The cost is that `npm install --prefix frontend` is a hard
+// prerequisite -- generate-icons.sh checks for it up front.
 import { chromium } from '../../../../frontend/node_modules/playwright/index.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
