@@ -3,6 +3,7 @@ import { CheckCircle2, ChevronRight, Folder, FolderPlus, X, XCircle } from "luci
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ImportFolderScan } from "../../preload";
 import { aoBridge } from "../lib/bridge";
+import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { cn } from "../lib/utils";
 import type { ProjectKind } from "../types/workspace";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
@@ -46,11 +47,44 @@ export function CreateProjectFlow({
 	const [isChoosingPath, setIsChoosingPath] = useState(false);
 	const [isCreating, setIsCreating] = useState(false);
 	const [isInitializing, setIsInitializing] = useState(false);
+	const [isRefreshingBranches, setIsRefreshingBranches] = useState(false);
 	const [repositorySetup, setRepositorySetup] = useState<"NOT_A_GIT_REPO" | "PROJECT_UNBORN" | null>(null);
 	const [repositorySetupWarning, setRepositorySetupWarning] = useState<string | null>(null);
 
 	const hasModePicker = mode === "choose";
-	const isBusy = isChoosingPath || isCreating || isInitializing;
+	const isBusy = isChoosingPath || isCreating || isInitializing || isRefreshingBranches;
+
+	const handleRefreshBranches = async () => {
+		if (!selectedPath || isBusy) return;
+		setIsRefreshingBranches(true);
+		setError(null);
+		try {
+			const { data, error: apiErr } = await apiClient.POST("/api/v1/projects/discover-branches", {
+				body: { path: selectedPath, refreshOrigin: true },
+			});
+			if (apiErr) {
+				setError(apiErrorMessage(apiErr, "Failed to refresh origin branches"));
+				return;
+			}
+			if (data && validationScan) {
+				const updatedRepos = validationScan.repos.map((repo, idx) =>
+					idx === 0
+						? {
+								...repo,
+								branch: data.defaultBranch || repo.branch,
+								branches: data.branches || repo.branches,
+								hasRemote: data.hasOrigin,
+							}
+						: repo,
+				);
+				setValidationScan({ ...validationScan, repos: updatedRepos });
+			}
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Failed to refresh origin branches");
+		} finally {
+			setIsRefreshingBranches(false);
+		}
+	};
 
 	const openFolderStep = (kind: ProjectKind) => {
 		// Keep the selector mounted behind the native picker. Closing it first
@@ -233,6 +267,9 @@ export function CreateProjectFlow({
 			<CreateProjectAgentSheet
 				defaultBranch={validationScan?.repos[0]?.branch}
 				branches={validationScan?.repos[0]?.branches}
+				canRefreshOrigin={validationScan?.repos[0]?.hasRemote ?? false}
+				isRefreshingBranches={isRefreshingBranches}
+				onRefreshBranches={handleRefreshBranches}
 				error={error}
 				isCreating={isCreating}
 				isInitializing={isInitializing}

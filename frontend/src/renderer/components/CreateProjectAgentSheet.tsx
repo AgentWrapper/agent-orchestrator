@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Check, ChevronDown, GitBranch, Search, TriangleAlert, X, type LucideIcon } from "lucide-react";
+import { Check, ChevronDown, GitBranch, RefreshCw, Search, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import { memo, useEffect, useState } from "react";
 import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
@@ -38,6 +38,9 @@ const DEFAULT_AGENT_PRIORITY_RANK = new Map<string, number>(
 type CreateProjectAgentSheetProps = {
 	defaultBranch?: string;
 	branches?: string[];
+	canRefreshOrigin?: boolean;
+	isRefreshingBranches?: boolean;
+	onRefreshBranches?: () => void;
 	error?: string | null;
 	isCreating: boolean;
 	isInitializing?: boolean;
@@ -93,6 +96,9 @@ function projectSheetError(error: string): SheetError {
 export function CreateProjectAgentSheet({
 	defaultBranch,
 	branches,
+	canRefreshOrigin = false,
+	isRefreshingBranches = false,
+	onRefreshBranches,
 	error,
 	isCreating,
 	isInitializing = false,
@@ -133,7 +139,7 @@ export function CreateProjectAgentSheet({
 	const [selectedBranch, setSelectedBranch] = useState(defaultBranch ?? "");
 	const [workerAgentTouched, setWorkerAgentTouched] = useState(false);
 	const [orchestratorAgentTouched, setOrchestratorAgentTouched] = useState(false);
-	const isBusy = isCreating || isInitializing;
+	const isBusy = isCreating || isInitializing || isRefreshingBranches;
 	const [intake, setIntake] = useState<IntakeForm>(EMPTY_INTAKE);
 	const intakeIncomplete = intakeNeedsRule(intake);
 	const canSubmit = workerAgent !== "" && orchestratorAgent !== "" && !intakeIncomplete && !isBusy && !isLoadingAgents;
@@ -242,6 +248,9 @@ export function CreateProjectAgentSheet({
 								branches={branches && branches.length > 0 ? branches : [defaultBranch || "main"]}
 								onChange={setSelectedBranch}
 								disabled={isBusy}
+								canRefreshOrigin={canRefreshOrigin}
+								isRefreshing={isRefreshingBranches}
+								onRefresh={onRefreshBranches}
 							/>
 						)}
 
@@ -495,17 +504,23 @@ export function defaultAuthorizedAgent(authorizedAgents: AgentInfo[]): string {
 
 export function SearchableBranchSelect({
 	branches,
+	canRefreshOrigin = false,
 	disabled = false,
 	id,
+	isRefreshing = false,
 	label,
 	onChange,
+	onRefresh,
 	value,
 }: {
 	branches: string[];
+	canRefreshOrigin?: boolean;
 	disabled?: boolean;
 	id: string;
+	isRefreshing?: boolean;
 	label: string;
 	onChange: (branch: string) => void;
+	onRefresh?: () => void;
 	value: string;
 }) {
 	const [open, setOpen] = useState(false);
@@ -515,9 +530,23 @@ export function SearchableBranchSelect({
 
 	return (
 		<div className="flex flex-col gap-1.5">
-			<Label htmlFor={id} className="agents-sheet-label text-xs font-medium text-muted-foreground">
-				{label}
-			</Label>
+			<div className="flex items-center justify-between">
+				<Label htmlFor={id} className="agents-sheet-label text-xs font-medium text-muted-foreground">
+					{label}
+				</Label>
+				{canRefreshOrigin && onRefresh && (
+					<button
+						type="button"
+						aria-label="Refresh branches"
+						disabled={disabled || isRefreshing}
+						onClick={onRefresh}
+						className="flex items-center gap-1 text-xs text-[var(--color-text-agents-sheet-description)] transition hover:text-[var(--color-text-agents-sheet-title)] disabled:pointer-events-none disabled:opacity-50"
+					>
+						<RefreshCw className={cn("size-3 shrink-0", isRefreshing && "animate-spin")} aria-hidden="true" />
+						<span>{isRefreshing ? "Refreshing..." : "Refresh branches"}</span>
+					</button>
+				)}
+			</div>
 			<Popover open={open} onOpenChange={setOpen}>
 				<PopoverTrigger asChild disabled={disabled}>
 					<button

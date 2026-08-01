@@ -214,4 +214,55 @@ describe("CreateProjectAgentSheet", () => {
 
 		expect(screen.queryByLabelText("Default branch")).not.toBeInTheDocument();
 	});
+
+	it("renders Refresh branches button only when origin refresh is available, triggering onRefreshBranches on click", async () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		queryClient.setQueryData(agentsQueryKey, {
+			supported: [{ id: "claude-code", label: "claude-code" }],
+			installed: [{ id: "claude-code", label: "claude-code", authStatus: "authorized" }],
+			authorized: [{ id: "claude-code", label: "claude-code", authStatus: "authorized" }],
+		});
+		const onRefreshBranches = vi.fn();
+		const { rerender } = render(
+			<QueryClientProvider client={queryClient}>
+				<CreateProjectAgentSheet
+					defaultBranch="main"
+					branches={["main", "develop"]}
+					canRefreshOrigin={false}
+					onRefreshBranches={onRefreshBranches}
+					isCreating={false}
+					kind="single_repo"
+					onOpenChange={() => undefined}
+					onSubmit={vi.fn()}
+					open={true}
+					path="/repo/demo"
+				/>
+			</QueryClientProvider>,
+		);
+
+		expect(screen.queryByRole("button", { name: "Refresh branches" })).not.toBeInTheDocument();
+
+		rerender(
+			<QueryClientProvider client={queryClient}>
+				<CreateProjectAgentSheet
+					defaultBranch="main"
+					branches={["main", "develop"]}
+					canRefreshOrigin={true}
+					onRefreshBranches={onRefreshBranches}
+					isCreating={false}
+					kind="single_repo"
+					onOpenChange={() => undefined}
+					onSubmit={vi.fn()}
+					open={true}
+					path="/repo/demo"
+				/>
+			</QueryClientProvider>,
+		);
+
+		const refreshButton = screen.getByRole("button", { name: "Refresh branches" });
+		expect(refreshButton).toBeInTheDocument();
+
+		await userEvent.click(refreshButton);
+		expect(onRefreshBranches).toHaveBeenCalledTimes(1);
+	});
 });

@@ -366,6 +366,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/discover-branches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Discover repository branch choices and optionally refresh origin remote */
+        post: operations["discoverProjectBranches"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/initialize": {
         parameters: {
             query?: never;
@@ -883,6 +900,12 @@ export interface components {
             id: string;
             label: string;
         };
+        BranchDiscoverResult: {
+            branches: string[];
+            canRefreshOrigin: boolean;
+            defaultBranch: string;
+            hasOrigin: boolean;
+        };
         BrowserCommandRequest: {
             action: string;
             args?: {
@@ -989,6 +1012,10 @@ export interface components {
         };
         DevImportProjectsResponse: {
             report: components["schemas"]["DevImportProjectsReport"];
+        };
+        DiscoverBranchesRequest: {
+            path: string;
+            refreshOrigin?: boolean;
         };
         DomainActivity: {
             /** Format: date-time */
@@ -2786,6 +2813,48 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    discoverProjectBranches: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiscoverBranchesRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BranchDiscoverResult"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };

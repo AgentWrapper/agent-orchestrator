@@ -319,6 +319,42 @@ func TestProjectsAPI_InitializeRepository(t *testing.T) {
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects/initialize", `{"path":`+quote(committed)+`}`)
 	assertErrorCode(t, body, status, http.StatusConflict, "PROJECT_ALREADY_INITIALIZED")
 }
+
+func TestProjectsAPI_DiscoverBranches(t *testing.T) {
+	srv := newTestServer(t)
+
+	repo := gitRepo(t, "discover-repo")
+	if out, err := exec.Command("git", "-C", repo, "branch", "feature/login").CombinedOutput(); err != nil {
+		t.Fatalf("git branch: %v (%s)", err, out)
+	}
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/projects/discover-branches", `{"path":`+quote(repo)+`}`)
+	if status != http.StatusOK {
+		t.Fatalf("POST discover-branches = %d, want 200; body=%s", status, body)
+	}
+	var res struct {
+		DefaultBranch    string   `json:"defaultBranch"`
+		Branches         []string `json:"branches"`
+		HasOrigin        bool     `json:"hasOrigin"`
+		CanRefreshOrigin bool     `json:"canRefreshOrigin"`
+	}
+	mustJSON(t, []byte(body), &res)
+
+	if res.DefaultBranch != "main" {
+		t.Errorf("defaultBranch = %q, want main", res.DefaultBranch)
+	}
+	if res.HasOrigin || res.CanRefreshOrigin {
+		t.Errorf("hasOrigin/canRefreshOrigin = %v/%v, want false", res.HasOrigin, res.CanRefreshOrigin)
+	}
+	if len(res.Branches) != 2 || res.Branches[0] != "feature/login" || res.Branches[1] != "main" {
+		t.Errorf("branches = %v, want [feature/login, main]", res.Branches)
+	}
+
+	// Refreshing origin on repo with no origin returns 400 ORIGIN_NOT_CONFIGURED.
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects/discover-branches", `{"path":`+quote(repo)+`,"refreshOrigin":true}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "ORIGIN_NOT_CONFIGURED")
+}
+
 func TestProjectsAPI_Delete(t *testing.T) {
 
 	srv := newTestServer(t)
