@@ -115,6 +115,139 @@ describe("sessionPRDisplaySummaries", () => {
 		expect(got[0].title).toBe("first observed PR #7");
 	});
 
+	it("keeps same-number PRs from different repositories distinct", () => {
+		const got = sessionPRDisplaySummaries(session([]), [
+			summary({
+				url: "https://github.com/acme/api/pull/7",
+				htmlUrl: "https://github.com/acme/api/pull/7",
+				repo: "acme/api",
+				number: 7,
+				title: "API PR #7",
+			}),
+			summary({
+				url: "https://github.com/acme/web/pull/7",
+				htmlUrl: "https://github.com/acme/web/pull/7",
+				repo: "acme/web",
+				number: 7,
+				title: "Web PR #7",
+			}),
+		]);
+
+		expect(got.map((pr) => pr.title)).toEqual(["API PR #7", "Web PR #7"]);
+	});
+
+	it("keeps same-number PRs with the same repository basename from different owners distinct", () => {
+		const got = sessionPRDisplaySummaries(session([]), [
+			summary({
+				url: "https://github.com/acme/repo/pull/7",
+				htmlUrl: "https://github.com/acme/repo/pull/7",
+				repo: "acme/repo",
+				number: 7,
+				title: "Acme PR #7",
+				headSha: "acme-head",
+			}),
+			summary({
+				url: "https://github.com/other/repo/pull/7",
+				htmlUrl: "https://github.com/other/repo/pull/7",
+				repo: "other/repo",
+				number: 7,
+				title: "Other PR #7",
+				headSha: "other-head",
+			}),
+		]);
+
+		expect(got.map((pr) => pr.title)).toEqual(["Acme PR #7", "Other PR #7"]);
+	});
+
+	it("deduplicates transferred GitHub repository aliases", () => {
+		const got = sessionPRDisplaySummaries(session([]), [
+			summary({
+				url: "https://github.com/AgentWrapper/agent-orchestrator/pull/3193",
+				htmlUrl: "https://github.com/AgentWrapper/agent-orchestrator/pull/3193",
+				repo: "AgentWrapper/agent-orchestrator",
+				number: 3193,
+				title: "first observed alias",
+			}),
+			summary({
+				url: "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193",
+				htmlUrl: "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193",
+				repo: "Untrivial-ai/agent-orchestrator",
+				number: 3193,
+				title: "duplicate transferred alias",
+			}),
+		]);
+
+		expect(got).toHaveLength(1);
+		expect(got[0].title).toBe("first observed alias");
+	});
+
+	it("uses the enriched summary for a unique session fact when URL identities differ", () => {
+		const got = sessionPRDisplaySummaries(
+			session([
+				{
+					url: "https://example.com/pr/8",
+					number: 8,
+					state: "draft",
+					ci: "pending",
+					review: "none",
+					mergeability: "unknown",
+					reviewComments: false,
+					updatedAt: "2026-06-15T10:00:00Z",
+				},
+			]),
+			[
+				summary({
+					number: 8,
+					url: "https://api.github.com/repos/acme/repo/pulls/8",
+					htmlUrl: "https://github.com/acme/repo/pull/8",
+					title: "enriched PR #8",
+				}),
+			],
+		);
+
+		expect(got).toHaveLength(1);
+		expect(got[0]).toMatchObject({
+			number: 8,
+			title: "enriched PR #8",
+			htmlUrl: "https://github.com/acme/repo/pull/8",
+		});
+	});
+
+	it("keeps a same-number summary for another repository after an exact fact match", () => {
+		const got = sessionPRDisplaySummaries(
+			session([
+				{
+					url: "https://github.com/acme/api/pull/7",
+					number: 7,
+					state: "open",
+					ci: "passing",
+					review: "approved",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-15T10:00:00Z",
+				},
+			]),
+			[
+				summary({
+					url: "https://github.com/acme/api/pull/7",
+					htmlUrl: "https://github.com/acme/api/pull/7",
+					repo: "acme/api",
+					number: 7,
+					title: "API PR #7",
+				}),
+				summary({
+					url: "https://github.com/acme/web/pull/7",
+					htmlUrl: "https://github.com/acme/web/pull/7",
+					repo: "acme/web",
+					number: 7,
+					title: "Web PR #7",
+				}),
+			],
+		);
+
+		expect(got.map((pr) => pr.title)).toEqual(["API PR #7", "Web PR #7"]);
+	});
+
 	it("deduplicates repeated session facts and uses the enriched summary for the surviving card", () => {
 		const got = sessionPRDisplaySummaries(
 			session([

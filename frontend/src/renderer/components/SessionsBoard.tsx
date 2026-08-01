@@ -977,7 +977,7 @@ function BoardPRGroup({ group, linksInteractive = true }: { group: BoardPRGroup;
 		>
 			<span>PR</span>
 			{group.prs.map((pr, index) => (
-				<span className="inline-flex items-center" key={pr.number}>
+				<span className="inline-flex items-center" key={pr.url || pr.htmlUrl || pr.number}>
 					{linksInteractive ? (
 						<a
 							className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"

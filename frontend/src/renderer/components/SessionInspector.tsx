@@ -295,7 +295,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				) : (
 					<div className="flex flex-col gap-1.5">
 						{prSummaries.map((pr) => (
-							<PRSummaryCard key={pr.number} pr={pr} />
+							<PRSummaryCard key={pr.url || pr.htmlUrl || pr.number} pr={pr} />
 						))}
 					</div>
 				)}
