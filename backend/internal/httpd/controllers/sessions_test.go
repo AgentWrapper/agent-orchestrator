@@ -26,6 +26,8 @@ import (
 type fakeSessionService struct {
 	sessions        map[domain.SessionID]domain.Session
 	sent            string
+	delegationInput sessionsvc.DelegateTaskInput
+	delegationErr   error
 	cleanupProjects []domain.ProjectID
 	cleanupResult   []domain.SessionID
 	cleanupSkipped  []sessionsvc.CleanupSkipped
@@ -154,6 +156,14 @@ func (f *fakeSessionService) Rename(_ context.Context, id domain.SessionID, disp
 func (f *fakeSessionService) Send(_ context.Context, _ domain.SessionID, message string) error {
 	f.sent = message
 	return nil
+}
+
+func (f *fakeSessionService) DelegateTask(_ context.Context, in sessionsvc.DelegateTaskInput) (sessionsvc.DelegateTaskOutcome, error) {
+	f.delegationInput = in
+	if f.delegationErr != nil {
+		return sessionsvc.DelegateTaskOutcome{}, f.delegationErr
+	}
+	return sessionsvc.DelegateTaskOutcome{OrchestratorID: "ao-orch"}, nil
 }
 
 func (f *fakeSessionService) ListPRs(_ context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
@@ -1163,6 +1173,39 @@ func TestSessionsAPI_SendValidation(t *testing.T) {
 
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/send", `{"message":""}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "MESSAGE_REQUIRED")
+}
+
+func TestSessionsAPI_DelegateTask(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"Fix\u0000 it","agent":"cursor","model":" sonnet-custom "}`)
+	if status != http.StatusAccepted {
+		t.Fatalf("delegate = %d, want 202; body=%s", status, body)
+	}
+	var got struct {
+		OK             bool   `json:"ok"`
+		OrchestratorID string `json:"orchestratorId"`
+	}
+	mustJSON(t, body, &got)
+	if !got.OK || got.OrchestratorID != "ao-orch" {
+		t.Fatalf("response = %#v", got)
+	}
+	if svc.delegationInput.ProjectID != "ao" || svc.delegationInput.Brief != "Fix it" || svc.delegationInput.RequestedAgent != domain.HarnessCursor || svc.delegationInput.Model != "sonnet-custom" {
+		t.Fatalf("delegation input = %#v", svc.delegationInput)
+	}
+}
+
+func TestSessionsAPI_DelegateTaskValidationAndMissingOrchestrator(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"  "}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "TASK_REQUIRED")
+
+	svc.delegationErr = apierr.Conflict("ACTIVE_ORCHESTRATOR_REQUIRED", "Start an orchestrator for this project before starting a task.", nil)
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"Fix it"}`)
+	assertErrorCode(t, body, status, http.StatusConflict, "ACTIVE_ORCHESTRATOR_REQUIRED")
 }
 
 func TestSessionsAPI_CleanupWithProjectFilter(t *testing.T) {

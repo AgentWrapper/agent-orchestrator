@@ -303,6 +303,21 @@ type SendSessionMessageResponse struct {
 	Message   string           `json:"message"`
 }
 
+// DelegateTaskRequest is the body of POST /api/v1/orchestrators/delegate.
+// An omitted agent tells the orchestrator to use the project's worker default.
+type DelegateTaskRequest struct {
+	ProjectID domain.ProjectID    `json:"projectId"`
+	Brief     string              `json:"brief" maxLength:"4096"`
+	Agent     domain.AgentHarness `json:"agent,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand,fake"`
+	Model     string              `json:"model,omitempty" maxLength:"256"`
+}
+
+// DelegateTaskResponse confirms which active orchestrator received the task.
+type DelegateTaskResponse struct {
+	OK             bool             `json:"ok"`
+	OrchestratorID domain.SessionID `json:"orchestratorId"`
+}
+
 // SessionPRFacts is the pull-request read shape returned under session PR routes.
 type SessionPRFacts struct {
 	URL            string                `json:"url"`

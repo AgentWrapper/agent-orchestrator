@@ -27,6 +27,7 @@ import (
 const (
 	maxPromptLen      = 4096
 	maxMessageLen     = 4096
+	maxModelLen       = 256
 	maxDisplayNameLen = 20
 
 	// Attachment limits guard the daemon against oversized spawn bodies. Images
@@ -72,6 +73,7 @@ type SessionService interface {
 	Rename(ctx context.Context, id domain.SessionID, displayName string) error
 	SetPreview(ctx context.Context, id domain.SessionID, previewURL string) (domain.Session, error)
 	Send(ctx context.Context, id domain.SessionID, message string) error
+	DelegateTask(ctx context.Context, in sessionsvc.DelegateTaskInput) (sessionsvc.DelegateTaskOutcome, error)
 	ListPRSummaries(ctx context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error)
 	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
 	ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (sessionsvc.WorkspaceFiles, error)
@@ -116,6 +118,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/activity", c.activity)
 	r.Get("/orchestrators", c.listOrchestrators)
 	r.Post("/orchestrators", c.spawnOrchestrator)
+	r.Post("/orchestrators/delegate", c.delegateTask)
 	r.Get("/orchestrators/{id}", c.getOrchestrator)
 }
 
@@ -633,6 +636,46 @@ func (c *SessionsController) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, SendSessionMessageResponse{OK: true, SessionID: sessionID(r), Message: message})
+}
+
+func (c *SessionsController) delegateTask(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/orchestrators/delegate")
+		return
+	}
+	var in DelegateTaskRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	if in.ProjectID == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROJECT_ID_REQUIRED", "projectId is required", nil)
+		return
+	}
+	if strings.TrimSpace(in.Brief) == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "TASK_REQUIRED", "Task is required", nil)
+		return
+	}
+	if len(in.Brief) > maxPromptLen {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "TASK_TOO_LONG", "Task is too long", nil)
+		return
+	}
+	if utf8.RuneCountInString(strings.TrimSpace(in.Model)) > maxModelLen {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "MODEL_TOO_LONG", "Model must be 256 characters or fewer", nil)
+		return
+	}
+
+	out, err := c.Svc.DelegateTask(r.Context(), sessionsvc.DelegateTaskInput{
+		ProjectID:      in.ProjectID,
+		Brief:          domain.SanitizeControlChars(in.Brief),
+		RequestedAgent: in.Agent,
+		Model:          domain.SanitizeControlChars(strings.TrimSpace(in.Model)),
+	})
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusAccepted, DelegateTaskResponse{OK: true, OrchestratorID: out.OrchestratorID})
 }
 
 // activity records an agent activity-state signal reported by an agent hook
