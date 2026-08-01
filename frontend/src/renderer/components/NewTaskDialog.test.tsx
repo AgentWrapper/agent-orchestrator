@@ -77,16 +77,18 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("NewTaskDialog", () => {
-	it("aligns the Agent and Branch fields with matching labels and compact controls", async () => {
+	it("shows Task, Agent, and an empty Model field without Title or Branch", async () => {
 		renderDialog();
 		await waitForAgentCatalog();
 
 		const agentLabel = screen.getByText("Agent", { selector: "label" });
-		const branchLabel = screen.getByText("Branch", { selector: "label" });
+		const modelLabel = screen.getByText("Model", { selector: "label" });
 		expect(agentLabel).toHaveAttribute("data-slot", "label");
-		expect(branchLabel).toHaveAttribute("data-slot", "label");
+		expect(modelLabel).toHaveAttribute("data-slot", "label");
 		expect(screen.getByRole("combobox", { name: "Agent" })).toHaveAttribute("data-size", "sm");
-		expect(screen.getByLabelText("Branch")).toHaveClass("h-control-form");
+		expect(screen.getByLabelText("Model")).toHaveValue("");
+		expect(screen.queryByLabelText("Title")).not.toBeInTheDocument();
+		expect(screen.queryByLabelText("Branch")).not.toBeInTheDocument();
 	});
 
 	it("preselects the project's default agent and omits harness so the daemon applies it", async () => {
@@ -95,8 +97,8 @@ describe("NewTaskDialog", () => {
 
 		await waitForAgentCatalog();
 
-		await user.type(screen.getByLabelText("Title"), "Fix fallback renderer");
-		await user.type(screen.getByLabelText("Brief"), "Restore the fallback renderer after WebGL init fails.");
+		await user.type(screen.getByLabelText("Task"), "Restore the fallback renderer after WebGL init fails.");
+		await user.type(screen.getByLabelText("Model"), "placeholder-model");
 		await user.click(screen.getByRole("button", { name: "Start task" }));
 
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
@@ -105,10 +107,12 @@ describe("NewTaskDialog", () => {
 				projectId: "proj-1",
 				kind: "worker",
 				harness: undefined,
-				issueId: "Fix fallback renderer",
 				prompt: "Restore the fallback renderer after WebGL init fails.",
 			},
 		});
+		expect(spawnBody()).not.toHaveProperty("issueId");
+		expect(spawnBody()).not.toHaveProperty("branch");
+		expect(spawnBody()).not.toHaveProperty("model");
 		expect(onCreated).toHaveBeenCalledWith("task-1");
 		expect(onOpenChange).toHaveBeenCalledWith(false);
 	}, 20_000);
@@ -118,8 +122,7 @@ describe("NewTaskDialog", () => {
 		const user = userEvent.setup();
 		await waitForAgentCatalog();
 
-		await user.type(screen.getByLabelText("Title"), "T");
-		await user.type(screen.getByLabelText("Brief"), "B");
+		await user.type(screen.getByLabelText("Task"), "B");
 
 		await user.click(screen.getByRole("combobox", { name: "Agent" }));
 		await user.click(await screen.findByRole("option", { name: "Cursor" }));
@@ -141,8 +144,7 @@ describe("NewTaskDialog", () => {
 		expect(options[2]).not.toHaveAttribute("aria-disabled", "true");
 		await user.click(options[2]);
 
-		await user.type(screen.getByLabelText("Title"), "T");
-		await user.type(screen.getByLabelText("Brief"), "B");
+		await user.type(screen.getByLabelText("Task"), "B");
 		await user.click(screen.getByRole("button", { name: "Start task" }));
 
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
@@ -154,14 +156,13 @@ describe("NewTaskDialog", () => {
 		const user = userEvent.setup();
 		await waitForAgentCatalog();
 
-		const brief = screen.getByLabelText("Brief");
+		const task = screen.getByLabelText("Task");
 		const png = new File([new Uint8Array([137, 80, 78, 71])], "shot.png", { type: "image/png" });
-		fireEvent.paste(brief, { clipboardData: { files: [png], items: [] } });
+		fireEvent.paste(task, { clipboardData: { files: [png], items: [] } });
 
 		expect(await screen.findByText("Image 1")).toBeInTheDocument();
 
-		await user.type(screen.getByLabelText("Title"), "T");
-		await user.type(brief, "B");
+		await user.type(task, "B");
 		await user.click(screen.getByRole("button", { name: "Start task" }));
 
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
@@ -176,10 +177,10 @@ describe("NewTaskDialog", () => {
 		const user = userEvent.setup();
 		await waitForAgentCatalog();
 
-		const brief = screen.getByLabelText("Brief");
+		const task = screen.getByLabelText("Task");
 		const a = new File([new Uint8Array([1, 2, 3])], "a.png", { type: "image/png" });
 		const b = new File([new Uint8Array([4, 5, 6])], "b.png", { type: "image/png" });
-		fireEvent.paste(brief, { clipboardData: { files: [a, b], items: [] } });
+		fireEvent.paste(task, { clipboardData: { files: [a, b], items: [] } });
 
 		expect(await screen.findByText("Image 1")).toBeInTheDocument();
 		expect(screen.getByText("Image 2")).toBeInTheDocument();
@@ -194,8 +195,8 @@ describe("NewTaskDialog", () => {
 		renderDialog();
 		await waitForAgentCatalog();
 
-		const brief = screen.getByLabelText("Brief");
-		fireEvent.paste(brief, { clipboardData: { files: [], items: [] } });
+		const task = screen.getByLabelText("Task");
+		fireEvent.paste(task, { clipboardData: { files: [], items: [] } });
 
 		expect(screen.queryByText("Image 1")).not.toBeInTheDocument();
 	});
@@ -204,29 +205,29 @@ describe("NewTaskDialog", () => {
 		renderDialog();
 		await waitForAgentCatalog();
 
-		const brief = screen.getByLabelText("Brief");
+		const task = screen.getByLabelText("Task");
 		const files = Array.from(
 			{ length: 10 },
 			(_, i) => new File([new Uint8Array([i + 1])], `shot-${i}.png`, { type: "image/png" }),
 		);
-		fireEvent.paste(brief, { clipboardData: { files, items: [] } });
+		fireEvent.paste(task, { clipboardData: { files, items: [] } });
 
 		expect(await screen.findByText("Image 8")).toBeInTheDocument();
 		expect(screen.queryByText("Image 9")).not.toBeInTheDocument();
 		expect(screen.getByText(/up to 8 images/i)).toBeInTheDocument();
 	});
 
-	it("requires both title and brief", async () => {
+	it("requires task text", async () => {
 		renderDialog();
 		const user = userEvent.setup();
 
 		await user.click(screen.getByRole("button", { name: "Start task" }));
 
-		expect(await screen.findByText("Title and brief are required.")).toBeInTheDocument();
+		expect(await screen.findByText("Task is required.")).toBeInTheDocument();
 		expect(postMock).not.toHaveBeenCalled();
 	});
 
-	it("hides the branch field for scratch projects and omits branch from the spawn request", async () => {
+	it("shows an empty Model field for scratch projects and does not send it", async () => {
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/agents") {
 				return {
@@ -252,26 +253,26 @@ describe("NewTaskDialog", () => {
 		await waitForAgentCatalog();
 
 		expect(screen.queryByLabelText("Branch")).not.toBeInTheDocument();
+		expect(screen.getByLabelText("Model")).toHaveValue("");
 
-		await user.type(screen.getByLabelText("Title"), "Try scratch");
-		await user.type(screen.getByLabelText("Brief"), "Build a quick prototype in scratch.");
+		await user.type(screen.getByLabelText("Task"), "Build a quick prototype in scratch.");
 		await user.click(screen.getByRole("button", { name: "Start task" }));
 
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
 		expect(spawnBody()).not.toHaveProperty("branch");
+		expect(spawnBody()).not.toHaveProperty("model");
 	});
 
-	it("submits on Enter and inserts a newline on Shift+Enter in the brief", async () => {
+	it("submits on Enter and inserts a newline on Shift+Enter in the task", async () => {
 		renderDialog();
 		const user = userEvent.setup();
 		await waitForAgentCatalog();
 
-		await user.type(screen.getByLabelText("Title"), "Fix fallback renderer");
-		const brief = screen.getByLabelText("Brief");
-		await user.type(brief, "First line");
+		const task = screen.getByLabelText("Task");
+		await user.type(task, "First line");
 		// Shift+Enter must NOT submit — it adds a newline.
 		await user.keyboard("{Shift>}{Enter}{/Shift}");
-		await user.type(brief, "Second line");
+		await user.type(task, "Second line");
 		expect(postMock).not.toHaveBeenCalled();
 
 		// Plain Enter submits the task.
@@ -280,14 +281,13 @@ describe("NewTaskDialog", () => {
 		expect(spawnBody().prompt).toContain("\n");
 	});
 
-	it("does not submit on Alt+Enter or Shift+Enter but does on plain Enter in the brief", async () => {
+	it("does not submit on Alt+Enter or Shift+Enter but does on plain Enter in the task", async () => {
 		renderDialog();
 		const user = userEvent.setup();
 		await waitForAgentCatalog();
 
-		await user.type(screen.getByLabelText("Title"), "Fix fallback renderer");
-		const brief = screen.getByLabelText("Brief");
-		await user.type(brief, "Line");
+		const task = screen.getByLabelText("Task");
+		await user.type(task, "Line");
 
 		// Alt+Enter must NOT submit — Alt is excluded so it can't submit by accident.
 		await user.keyboard("{Alt>}{Enter}{/Alt}");
@@ -324,8 +324,7 @@ describe("NewTaskDialog", () => {
 		const user = userEvent.setup();
 		await waitForAgentCatalog();
 
-		await user.type(screen.getByLabelText("Title"), "Fix fallback renderer");
-		await user.type(screen.getByLabelText("Brief"), "Restore fallback renderer.");
+		await user.type(screen.getByLabelText("Task"), "Restore fallback renderer.");
 		await user.click(screen.getByRole("button", { name: "Start task" }));
 
 		expect(await screen.findByText(`${message} (${code})`)).toBeInTheDocument();

@@ -25,13 +25,11 @@ type NewTaskDialogProps = {
 
 export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewTaskDialogProps) {
 	const queryClient = useQueryClient();
-	const titleId = useId();
 	const promptId = useId();
-	const branchId = useId();
+	const modelId = useId();
 	const agentId = useId();
-	const [title, setTitle] = useState("");
 	const [prompt, setPrompt] = useState("");
-	const [branch, setBranch] = useState("");
+	const [model, setModel] = useState("");
 	const [agent, setAgent] = useState("");
 	const [agentTouched, setAgentTouched] = useState(false);
 	const [isSubmitting, setIsSubmitting] = useState(false);
@@ -68,14 +66,12 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 		onSuccess: (next) => queryClient.setQueryData(agentsQueryKey, next),
 	});
 	const defaultWorkerAgent = projectQuery.data?.config?.worker?.agent ?? "";
-	const isScratchProject = projectQuery.data?.kind === "scratch";
 	const agentCatalog = agentsQuery.data;
 
 	useEffect(() => {
 		if (!open) {
-			setTitle("");
 			setPrompt("");
-			setBranch("");
+			setModel("");
 			setAgent("");
 			setAgentTouched(false);
 			setError(undefined);
@@ -95,11 +91,9 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 		event.preventDefault();
 		if (!projectId || isSubmitting) return;
 
-		const cleanTitle = title.trim();
 		const cleanPrompt = prompt.trim();
-		const cleanBranch = branch.trim();
-		if (!cleanTitle || !cleanPrompt) {
-			setError("Title and brief are required.");
+		if (!cleanPrompt) {
+			setError("Task is required.");
 			return;
 		}
 
@@ -111,12 +105,8 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 				projectId,
 				kind: "worker",
 				harness: agentTouched && agent ? (agent as AgentProvider) : undefined,
-				issueId: cleanTitle,
 				prompt: cleanPrompt,
 			};
-			if (!isScratchProject && cleanBranch) {
-				body.branch = cleanBranch;
-			}
 			if (attachments.length > 0) {
 				body.attachments = toPayload();
 			}
@@ -185,22 +175,9 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 
 					<form onSubmit={submit} className="space-y-4 px-5 py-4">
 						<div className="space-y-1.5">
-							<label className="text-xs font-medium text-muted-foreground" htmlFor={titleId}>
-								Title
-							</label>
-							<Input
-								id={titleId}
-								autoFocus
-								placeholder="Fix WebGL fallback renderer"
-								value={title}
-								onChange={(event) => setTitle(event.target.value)}
-							/>
-						</div>
-
-						<div className="space-y-1.5">
 							<div className="flex items-center justify-between">
 								<label className="text-xs font-medium text-muted-foreground" htmlFor={promptId}>
-									Brief
+									Task
 								</label>
 								<button
 									type="button"
@@ -222,6 +199,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 							>
 								<textarea
 									id={promptId}
+									autoFocus
 									className="min-h-textarea-min w-full resize-y rounded-md bg-transparent px-3 py-2 text-control leading-relaxed text-foreground outline-none transition placeholder:text-passive focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent-weak"
 									placeholder="Describe the change, constraints, and expected verification. Paste or drop images to attach them."
 									value={prompt}
@@ -281,7 +259,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 							<p className="text-caption text-muted-foreground">Enter to start · Shift+Enter for a new line</p>
 						</div>
 
-						<div className={isScratchProject ? "grid gap-3" : "grid gap-3 sm:grid-cols-[1fr_1fr]"}>
+						<div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
 							<div className="space-y-1.5">
 								<RequiredAgentField
 									id={agentId}
@@ -306,19 +284,17 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 									{refreshAgentsMutation.isPending ? "Refreshing agents..." : "Refresh agents"}
 								</button>
 							</div>
-							{!isScratchProject && (
-								<div className="space-y-1.5">
-									<Label className="text-xs font-medium text-muted-foreground" htmlFor={branchId}>
-										Branch
-									</Label>
-									<Input
-										id={branchId}
-										placeholder="optional"
-										value={branch}
-										onChange={(event) => setBranch(event.target.value)}
-									/>
-								</div>
-							)}
+							<div className="space-y-1.5">
+								<Label className="text-xs font-medium text-muted-foreground" htmlFor={modelId}>
+									Model
+								</Label>
+								<Input
+									id={modelId}
+									placeholder="Project default"
+									value={model}
+									onChange={(event) => setModel(event.target.value)}
+								/>
+							</div>
 						</div>
 
 						{error && (
