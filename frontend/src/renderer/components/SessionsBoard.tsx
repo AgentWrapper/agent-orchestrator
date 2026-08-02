@@ -280,8 +280,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 							? "Orchestrator"
 							: "Spawn Orchestrator"}
 			</TopbarButton>
-			{/* The bell trails the actions row here too, matching ShellTopbar, so it
-			    stays put when navigating between board and session views. */}
 			{boardOwnsNotificationCenter ? <NotificationCenter /> : null}
 		</>
 	) : boardOwnsNotificationCenter ? (
