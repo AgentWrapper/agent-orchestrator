@@ -2577,6 +2577,8 @@ components:
           type: string
         permissions:
           type: string
+        reasoningEffort:
+          type: string
       type: object
     AgentInfo:
       properties:

@@ -6,6 +6,7 @@ import {
 	Fingerprint,
 	FolderGit2,
 	FolderOpen,
+	Gauge,
 	GitBranch,
 	Hash,
 	Layers,
@@ -31,6 +32,7 @@ import { newestActiveOrchestrator } from "../types/workspace";
 import { AgentAvatar } from "./AgentAvatar";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeNeedsRule } from "./IntakeFields";
+import { ModelOverrideSelect } from "./ModelOverrideSelect";
 import { AgentSelectMenuItem } from "./settings/AgentSelectMenuItem";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { SettingsPageShell } from "./settings/SettingsPageShell";
@@ -42,6 +44,11 @@ type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
+type EffectiveRoleConfig = {
+	model: string;
+	reasoningEffort: string;
+};
+
 const PERMISSION_MODE_OPTIONS = [
 	{ value: "default", label: "Default" },
 	{ value: "accept-edits", label: "Accept edits" },
@@ -51,7 +58,26 @@ const PERMISSION_MODE_OPTIONS = [
 
 const KNOWN_REVIEWER_HARNESS_IDS = new Set(["claude-code", "codex", "opencode"]);
 
+const REASONING_EFFORT_OPTIONS = [
+	{ value: "low", label: "Low" },
+	{ value: "medium", label: "Medium" },
+	{ value: "high", label: "High" },
+	{ value: "xhigh", label: "XHigh" },
+] as const;
+
 const projectQueryKey = (id: string) => ["project", id] as const;
+
+export function effectiveRoleConfig(
+	baseModel: string,
+	baseReasoningEffort: string,
+	roleModel: string,
+	roleReasoningEffort: string,
+): EffectiveRoleConfig {
+	return {
+		model: roleModel || baseModel || "Agent default",
+		reasoningEffort: roleReasoningEffort || baseReasoningEffort || "Agent default",
+	};
+}
 
 export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 	const navigate = useNavigate();
@@ -106,7 +132,12 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		sessionPrefix: config.sessionPrefix ?? "",
 		workerAgent: config.worker?.agent ?? "",
 		orchestratorAgent: config.orchestrator?.agent ?? "",
-		model: config.agentConfig?.model ?? "",
+		defaultModel: config.agentConfig?.model ?? "",
+		defaultReasoningEffort: config.agentConfig?.reasoningEffort ?? "",
+		workerModel: config.worker?.agentConfig?.model ?? "",
+		workerReasoningEffort: config.worker?.agentConfig?.reasoningEffort ?? "",
+		orchestratorModel: config.orchestrator?.agentConfig?.model ?? "",
+		orchestratorReasoningEffort: config.orchestrator?.agentConfig?.reasoningEffort ?? "",
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
 		intakeEnabled: intake.enabled ?? false,
@@ -139,6 +170,31 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		}));
 	const effectiveIntakeRepo = form.intakeRepo.trim() || deriveGitHubRepo(project.repo);
 	const intakeIncomplete = !isScratchProject && intakeNeedsRule(intakeForm);
+	const effectiveWorker = effectiveRoleConfig(
+		form.defaultModel,
+		form.defaultReasoningEffort,
+		form.workerModel,
+		form.workerReasoningEffort,
+	);
+	const effectiveOrchestrator = effectiveRoleConfig(
+		form.defaultModel,
+		form.defaultReasoningEffort,
+		form.orchestratorModel,
+		form.orchestratorReasoningEffort,
+	);
+
+	function applyCodexRolePreset() {
+		setForm((current) => ({
+			...current,
+			workerAgent: "codex",
+			orchestratorAgent: "codex",
+			defaultModel: "",
+			workerModel: "gpt-5.6-terra",
+			workerReasoningEffort: "medium",
+			orchestratorModel: "gpt-5.6-sol",
+			orchestratorReasoningEffort: "high",
+		}));
+	}
 
 	const mutation = useMutation({
 		mutationFn: async () => {
@@ -147,11 +203,20 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			const next: ProjectConfig = isScratchProject
 				? {
 						...scratchSupportedConfig(config),
-						worker: { ...config.worker, agent: form.workerAgent },
-						orchestrator: { ...config.orchestrator, agent: form.orchestratorAgent },
+						worker: {
+							...config.worker,
+							agent: form.workerAgent,
+							agentConfig: blankToUndefined({ ...config.worker?.agentConfig, model: form.workerModel || undefined, reasoningEffort: form.workerReasoningEffort || undefined }),
+						},
+						orchestrator: {
+							...config.orchestrator,
+							agent: form.orchestratorAgent,
+							agentConfig: blankToUndefined({ ...config.orchestrator?.agentConfig, model: form.orchestratorModel || undefined, reasoningEffort: form.orchestratorReasoningEffort || undefined }),
+						},
 						agentConfig: blankToUndefined({
 							...config.agentConfig,
-							model: form.model || undefined,
+							model: form.defaultModel || undefined,
+							reasoningEffort: form.defaultReasoningEffort || undefined,
 							permissions: form.permissions || undefined,
 						}),
 					}
@@ -159,11 +224,20 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						...config,
 						defaultBranch: form.defaultBranch || undefined,
 						sessionPrefix: form.sessionPrefix || undefined,
-						worker: { ...config.worker, agent: form.workerAgent },
-						orchestrator: { ...config.orchestrator, agent: form.orchestratorAgent },
+						worker: {
+							...config.worker,
+							agent: form.workerAgent,
+							agentConfig: blankToUndefined({ ...config.worker?.agentConfig, model: form.workerModel || undefined, reasoningEffort: form.workerReasoningEffort || undefined }),
+						},
+						orchestrator: {
+							...config.orchestrator,
+							agent: form.orchestratorAgent,
+							agentConfig: blankToUndefined({ ...config.orchestrator?.agentConfig, model: form.orchestratorModel || undefined, reasoningEffort: form.orchestratorReasoningEffort || undefined }),
+						},
 						agentConfig: blankToUndefined({
 							...config.agentConfig,
-							model: form.model || undefined,
+							model: form.defaultModel || undefined,
+							reasoningEffort: form.defaultReasoningEffort || undefined,
 							permissions: form.permissions || undefined,
 						}),
 						reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
@@ -327,14 +401,73 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				{missingRequiredAgent && (
 					<p className="px-1 text-xs leading-row text-error">Worker and orchestrator agents are required.</p>
 				)}
-				<SettingsInputRow
-					icon={Sparkles}
-					label="Model override"
-					id="model"
-					value={form.model}
-					placeholder="(agent default)"
-					onChange={(value) => setForm((f) => ({ ...f, model: value }))}
-				/>
+				<SettingsRow icon={Sparkles} label="Codex role preset">
+					<button
+						type="button"
+						className="settings-option-trigger inline-flex items-center gap-1.5"
+						onClick={applyCodexRolePreset}
+					>
+						Apply Sol and Terra preset
+					</button>
+				</SettingsRow>
+				<SettingsRow icon={Sparkles} label="Default model override">
+					<ModelOverrideSelect
+						ariaLabel="Default model override"
+						value={form.defaultModel}
+						onChange={(value) => setForm((f) => ({ ...f, defaultModel: value }))}
+					/>
+				</SettingsRow>
+				<SettingsRow icon={Gauge} label="Default reasoning effort">
+					<ReasoningEffortSelect
+						ariaLabel="Default reasoning effort"
+						value={form.defaultReasoningEffort}
+						onChange={(v) => setForm((f) => ({ ...f, defaultReasoningEffort: v }))}
+					/>
+				</SettingsRow>
+				<SettingsRow icon={Bot} label="Worker model override">
+					<ModelOverrideSelect
+						ariaLabel="Worker model override"
+						value={form.workerModel}
+						inheritLabel="Inherit default model"
+						onChange={(value) => setForm((f) => ({ ...f, workerModel: value }))}
+					/>
+				</SettingsRow>
+				<SettingsRow icon={Gauge} label="Worker reasoning effort">
+					<ReasoningEffortSelect
+						ariaLabel="Worker reasoning effort"
+						value={form.workerReasoningEffort}
+						onChange={(v) => setForm((f) => ({ ...f, workerReasoningEffort: v }))}
+					/>
+				</SettingsRow>
+				<SettingsRow icon={Network} label="Orchestrator model override">
+					<ModelOverrideSelect
+						ariaLabel="Orchestrator model override"
+						value={form.orchestratorModel}
+						inheritLabel="Inherit default model"
+						onChange={(value) => setForm((f) => ({ ...f, orchestratorModel: value }))}
+					/>
+				</SettingsRow>
+				<SettingsRow icon={Gauge} label="Orchestrator reasoning effort">
+					<ReasoningEffortSelect
+						ariaLabel="Orchestrator reasoning effort"
+						value={form.orchestratorReasoningEffort}
+						onChange={(v) => setForm((f) => ({ ...f, orchestratorReasoningEffort: v }))}
+					/>
+				</SettingsRow>
+				<div className="px-1 text-xs leading-row">
+					<p className="mb-2 font-medium text-settings-label">Effective configuration</p>
+					<div className="grid grid-cols-[minmax(0,110px)_minmax(0,1fr)] gap-x-3 gap-y-1.5">
+						<span className="text-settings-muted">Worker</span>
+						<span className="text-settings-label">
+							{effectiveWorker.model} · {reasoningEffortLabel(effectiveWorker.reasoningEffort)}
+						</span>
+						<span className="text-settings-muted">Orchestrator</span>
+						<span className="text-settings-label">
+							{effectiveOrchestrator.model} · {reasoningEffortLabel(effectiveOrchestrator.reasoningEffort)}
+						</span>
+					</div>
+					<p className="mt-2 text-settings-muted">Applies to new launches and restored sessions.</p>
+				</div>
 				<SettingsRow icon={Shield} label="Permission mode">
 					<PermissionModeSelect
 						value={form.permissions}
@@ -490,6 +623,34 @@ function PermissionModeSelect({ value, onChange }: { value: string; onChange: (v
 			onChange={(v) => onChange(v === "__default__" ? "" : v)}
 		/>
 	);
+}
+
+function ReasoningEffortSelect({
+	ariaLabel,
+	value,
+	onChange,
+}: {
+	ariaLabel: string;
+	value: string;
+	onChange: (value: string) => void;
+}) {
+	const options = [
+		{ value: "__default__", label: "Agent default" },
+		...REASONING_EFFORT_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label })),
+	];
+
+	return (
+		<SettingsOptionMenu
+			aria-label={ariaLabel}
+			value={value || "__default__"}
+			options={options}
+			onChange={(v) => onChange(v === "__default__" ? "" : v)}
+		/>
+	);
+}
+
+function reasoningEffortLabel(value: string): string {
+	return REASONING_EFFORT_OPTIONS.find((option) => option.value === value)?.label ?? value;
 }
 
 const REVIEWER_AGENT_PRIORITY = ["claude-code", "codex", "cursor", "opencode", "aider"] as const;

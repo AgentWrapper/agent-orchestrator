@@ -91,6 +91,12 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 				Type:        ports.ConfigFieldString,
 				Description: "Model override passed to `codex --model`.",
 			},
+			{
+				Key:         "reasoningEffort",
+				Type:        ports.ConfigFieldEnum,
+				Description: "Reasoning effort passed to Codex as `model_reasoning_effort`.",
+				Enum:        []string{"low", "medium", "high", "xhigh"},
+			},
 		},
 	}, nil
 }
@@ -115,6 +121,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.WorkspacePath)
 	appendModelFlag(&cmd, cfg.Config)
+	appendReasoningEffortFlag(&cmd, cfg.Config)
 
 	if cfg.SystemPrompt != "" {
 		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
@@ -157,6 +164,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.Session.WorkspacePath)
 	appendModelFlag(&cmd, cfg.Config)
+	appendReasoningEffortFlag(&cmd, cfg.Config)
 	if cfg.SystemPrompt != "" {
 		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
 	} else if cfg.SystemPromptFile != "" {
@@ -377,6 +385,12 @@ func appendTerminalCompatibilityFlags(cmd *[]string) {
 func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
 	if model := strings.TrimSpace(cfg.Model); model != "" {
 		*cmd = append(*cmd, "--model", model)
+	}
+}
+
+func appendReasoningEffortFlag(cmd *[]string, cfg ports.AgentConfig) {
+	if effort := strings.TrimSpace(cfg.ReasoningEffort); effort != "" {
+		*cmd = append(*cmd, "-c", `model_reasoning_effort="`+effort+`"`)
 	}
 }
 

@@ -873,6 +873,7 @@ export interface components {
         AgentConfig: {
             model?: string;
             permissions?: string;
+            reasoningEffort?: string;
         };
         AgentInfo: {
             /**

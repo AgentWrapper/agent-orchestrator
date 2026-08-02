@@ -232,6 +232,39 @@ func TestProjectsAPI_UpdateSettings(t *testing.T) {
 	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
 }
 
+func TestProjectsAPI_ReasoningEffortRoundTrip(t *testing.T) {
+	srv := newTestServer(t)
+	repo := gitRepo(t, "reasoning-effort")
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/projects", `{"path":`+quote(repo)+`,"projectId":"reasoning"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("seed create = %d, want 201; body=%s", status, body)
+	}
+
+	config := `{"config":{"orchestrator":{"agent":"codex","agentConfig":{"model":"gpt-5.6-sol","reasoningEffort":"high"}},"worker":{"agent":"codex","agentConfig":{"model":"gpt-5.6-terra","reasoningEffort":"medium"}}}}`
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/reasoning/config", config)
+	if status != http.StatusOK {
+		t.Fatalf("PUT config = %d, want 200; body=%s", status, body)
+	}
+
+	body, status, _ = doRequest(t, srv, "GET", "/api/v1/projects/reasoning", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET project = %d, want 200; body=%s", status, body)
+	}
+	var get struct {
+		Project struct {
+			Config domain.ProjectConfig `json:"config"`
+		} `json:"project"`
+	}
+	mustJSON(t, body, &get)
+	if got := get.Project.Config.Orchestrator.AgentConfig; got.Model != "gpt-5.6-sol" || got.ReasoningEffort != "high" {
+		t.Fatalf("orchestrator config = %#v, want gpt-5.6-sol/high", got)
+	}
+	if got := get.Project.Config.Worker.AgentConfig; got.Model != "gpt-5.6-terra" || got.ReasoningEffort != "medium" {
+		t.Fatalf("worker config = %#v, want gpt-5.6-terra/medium", got)
+	}
+}
+
 func TestProjectsAPI_AddValidationAndConflicts(t *testing.T) {
 
 	srv := newTestServer(t)

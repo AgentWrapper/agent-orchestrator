@@ -186,6 +186,106 @@ describe("ProjectSettingsForm", () => {
 		expect(screen.getByText("tg_content_factory_5863f66be3")).toBeInTheDocument();
 	});
 
+	it("applies the Sol and Terra preset and shows the effective role configuration", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "codex" },
+				agentConfig: {
+					model: "old-default-model",
+					reasoningEffort: "low",
+					permissions: "auto",
+				},
+			},
+		});
+
+		renderSettings();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Apply Sol and Terra preset" }));
+
+		expect(screen.getByText("Worker")).toBeInTheDocument();
+		expect(screen.getByText("gpt-5.6-terra · Medium")).toBeInTheDocument();
+		expect(screen.getByText("Orchestrator")).toBeInTheDocument();
+		expect(screen.getByText("gpt-5.6-sol · High")).toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith(
+			"/api/v1/projects/{id}",
+			expect.objectContaining({
+				body: expect.objectContaining({
+					config: expect.objectContaining({
+						agentConfig: {
+							reasoningEffort: "low",
+							permissions: "auto",
+						},
+						worker: {
+							agent: "codex",
+							agentConfig: { model: "gpt-5.6-terra", reasoningEffort: "medium" },
+						},
+						orchestrator: {
+							agent: "codex",
+							agentConfig: { model: "gpt-5.6-sol", reasoningEffort: "high" },
+						},
+					}),
+				}),
+			}),
+		);
+	});
+
+	it("resolves inherited values and preserves a custom orchestrator model", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				agentConfig: { model: "gpt-5.5", reasoningEffort: "low" },
+				worker: { agent: "codex", agentConfig: {} },
+				orchestrator: {
+					agent: "codex",
+					agentConfig: { model: "private-codex-model", reasoningEffort: "xhigh" },
+				},
+			},
+		});
+
+		renderSettings();
+
+		expect(await screen.findByText("Worker")).toBeInTheDocument();
+		expect(screen.getByText("gpt-5.5 · Low")).toBeInTheDocument();
+		expect(screen.getByText("Orchestrator")).toBeInTheDocument();
+		expect(screen.getByText("private-codex-model · XHigh")).toBeInTheDocument();
+		expect(screen.getByRole("textbox", { name: "Custom model ID" })).toHaveValue("private-codex-model");
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith(
+			"/api/v1/projects/{id}",
+			expect.objectContaining({
+				body: expect.objectContaining({
+					config: expect.objectContaining({
+						agentConfig: { model: "gpt-5.5", reasoningEffort: "low" },
+						worker: { agent: "codex" },
+						orchestrator: {
+							agent: "codex",
+							agentConfig: { model: "private-codex-model", reasoningEffort: "xhigh" },
+						},
+					}),
+				}),
+			}),
+		);
+	});
+
 	it("loads the current project settings and saves the exposed fields without dropping hidden config", async () => {
 		mockProject({
 			id: "proj-1",
@@ -202,11 +302,15 @@ describe("ProjectSettingsForm", () => {
 				postCreate: ["npm install"],
 				worker: {
 					agent: "codex",
-					agentConfig: { model: "worker-model" },
+					agentConfig: { model: "gpt-5.6-terra", reasoningEffort: "medium" },
 				},
-				orchestrator: { agent: "claude-code" },
+				orchestrator: {
+					agent: "claude-code",
+					agentConfig: { model: "gpt-5.6-sol", reasoningEffort: "high" },
+				},
 				agentConfig: {
 					model: "claude-opus-4-5",
+					reasoningEffort: "low",
 					permissions: "auto",
 				},
 				reviewers: [{ harness: "claude-code" }],
@@ -218,7 +322,13 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByText("git@github.com:acme/project-one.git")).toBeInTheDocument();
 		expect(screen.getByLabelText("Default branch")).toHaveValue("develop");
 		expect(screen.getByLabelText("Session prefix")).toHaveValue("po");
-		expect(screen.getByLabelText("Model override")).toHaveValue("claude-opus-4-5");
+		expect(screen.getByLabelText("Default model override")).toHaveTextContent("Custom model ID");
+		expect(screen.getByRole("textbox", { name: "Custom model ID" })).toHaveValue("claude-opus-4-5");
+		expect(screen.getByRole("button", { name: "Default reasoning effort" })).toHaveTextContent("Low");
+		expect(screen.getByLabelText("Worker model override")).toHaveTextContent("GPT-5.6 Terra");
+		expect(screen.getByRole("button", { name: "Worker reasoning effort" })).toHaveTextContent("Medium");
+		expect(screen.getByLabelText("Orchestrator model override")).toHaveTextContent("GPT-5.6 Sol");
+		expect(screen.getByRole("button", { name: "Orchestrator reasoning effort" })).toHaveTextContent("High");
 
 		const workerAgent = screen.getByRole("button", { name: "Default worker agent" });
 		const orchestratorAgent = screen.getByRole("button", { name: "Default orchestrator agent" });
@@ -233,8 +343,11 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.type(screen.getByLabelText("Default branch"), "release");
 		await userEvent.clear(screen.getByLabelText("Session prefix"));
 		await userEvent.type(screen.getByLabelText("Session prefix"), "rel");
-		await userEvent.clear(screen.getByLabelText("Model override"));
-		await userEvent.type(screen.getByLabelText("Model override"), "gpt-5-codex");
+		await userEvent.clear(screen.getByRole("textbox", { name: "Custom model ID" }));
+		await userEvent.type(screen.getByRole("textbox", { name: "Custom model ID" }), "gpt-5-codex");
+		await chooseOption(screen.getByRole("button", { name: "Default reasoning effort" }), "XHigh");
+		await chooseOption(screen.getByRole("button", { name: "Worker reasoning effort" }), "Low");
+		await chooseOption(screen.getByRole("button", { name: "Orchestrator reasoning effort" }), "Medium");
 		await chooseOption(workerAgent, "OpenCode");
 		await chooseOption(orchestratorAgent, "Goose");
 		await userEvent.click(permissionMode);
@@ -255,11 +368,15 @@ describe("ProjectSettingsForm", () => {
 					postCreate: ["npm install"],
 					worker: {
 						agent: "opencode",
-						agentConfig: { model: "worker-model" },
+						agentConfig: { model: "gpt-5.6-terra", reasoningEffort: "low" },
 					},
-					orchestrator: { agent: "goose" },
+					orchestrator: {
+						agent: "goose",
+						agentConfig: { model: "gpt-5.6-sol", reasoningEffort: "medium" },
+					},
 					agentConfig: {
 						model: "gpt-5-codex",
+						reasoningEffort: "xhigh",
 						permissions: "bypass-permissions",
 					},
 					reviewers: [{ harness: "claude-code" }],
