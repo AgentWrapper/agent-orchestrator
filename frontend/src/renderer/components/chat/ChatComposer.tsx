@@ -8,41 +8,24 @@
  * because the agent is one conversation and cannot run a second turn alongside
  * the first. The placeholder says so rather than leaving the user to guess where
  * their text went, and the queued message stays visible in the timeline.
+ *
+ * There is deliberately no approval-mode control here. A session's approval
+ * posture is fixed when its controller starts — AO sends it to the provider at
+ * launch — so a per-message control could not take effect, and AO already has one
+ * place to set it: the project's agent configuration.
  */
 
 import { useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ArrowUp, ChevronUp, Shield } from "lucide-react";
-import { cn } from "../../lib/utils";
+import { ArrowUp } from "lucide-react";
 import { Button } from "../ui/button";
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuLabel,
-	DropdownMenuTrigger,
-} from "../ui/dropdown-menu";
-
-/** AO's existing per-session approval policy, unchanged for Chat. */
-export type PermissionMode = "default" | "acceptEdits" | "auto" | "bypassPermissions";
-
-const PERMISSION_COPY: Record<PermissionMode, { label: string; hint: string }> = {
-	default: { label: "Default", hint: "Use the agent's standard approval behavior" },
-	acceptEdits: { label: "Accept edits", hint: "Allow file edits, still ask for other actions" },
-	auto: { label: "Auto", hint: "Auto-approve routine actions the agent supports" },
-	bypassPermissions: { label: "Bypass", hint: "Never ask — the worktree is the boundary" },
-};
 
 export function ChatComposer({
 	onSend,
-	permission,
-	onPermissionChange,
 	busy,
 	willQueue,
 	disabled,
 }: {
 	onSend: (text: string) => void;
-	permission: PermissionMode;
-	onPermissionChange: (mode: PermissionMode) => void;
 	/** A send is in flight. */
 	busy?: boolean;
 	/** The agent is mid-turn, so this message is held until the turn ends. */
@@ -62,8 +45,7 @@ export function ChatComposer({
 	}
 
 	function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-		// Enter sends; Shift+Enter makes a newline. Cmd/Ctrl+Enter also sends, so
-		// the habit from other editors does not silently do nothing.
+		// Enter sends; Shift+Enter makes a newline.
 		if (event.key !== "Enter") return;
 		if (event.shiftKey) return;
 		event.preventDefault();
@@ -94,44 +76,6 @@ export function ChatComposer({
 			/>
 
 			<div className="flex items-center gap-2">
-				<DropdownMenu>
-					<DropdownMenuTrigger asChild>
-						<Button type="button" variant="ghost" size="sm" className="gap-1.5">
-							<Shield aria-hidden="true" className="size-3.5" />
-							<span className="text-xs">Next run · {PERMISSION_COPY[permission].label}</span>
-							<ChevronUp aria-hidden="true" className="size-3" />
-						</Button>
-					</DropdownMenuTrigger>
-					<DropdownMenuContent align="start" side="top" className="w-72">
-						<DropdownMenuLabel className="flex items-baseline justify-between gap-2">
-							<span>Permission for next run</span>
-							<span className="text-[11px] font-normal text-muted-foreground">
-								Applied at launch
-							</span>
-						</DropdownMenuLabel>
-						{(Object.keys(PERMISSION_COPY) as PermissionMode[]).map((mode) => (
-							<DropdownMenuItem
-								key={mode}
-								onSelect={() => onPermissionChange(mode)}
-								className="flex flex-col items-start gap-0.5"
-							>
-								<span
-									className={cn(
-										"text-xs",
-										mode === permission ? "text-foreground" : "text-muted-foreground",
-									)}
-								>
-									{PERMISSION_COPY[mode].label}
-									{mode === permission ? " ·  current" : ""}
-								</span>
-								<span className="text-[11px] leading-snug text-muted-foreground">
-									{PERMISSION_COPY[mode].hint}
-								</span>
-							</DropdownMenuItem>
-						))}
-					</DropdownMenuContent>
-				</DropdownMenu>
-
 				<span className="ml-auto text-[11px] text-muted-foreground">
 					{willQueue ? "Enter to queue" : "Enter to send"}
 				</span>

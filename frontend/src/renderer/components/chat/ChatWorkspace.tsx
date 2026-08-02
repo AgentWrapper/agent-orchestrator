@@ -24,7 +24,7 @@ import {
 	OriginMessage,
 	TurnOutcome,
 } from "./ChatTimelineItems";
-import { ChatComposer, type PermissionMode } from "./ChatComposer";
+import { ChatComposer } from "./ChatComposer";
 import { ActivityRun } from "./ActivityRun";
 import {
 	activeTurn,
@@ -41,8 +41,6 @@ export interface ChatWorkspaceProps {
 	onSend?: (text: string) => void;
 	onDecide?: (requestId: string, decisionId: string) => void;
 	onInterrupt?: () => void;
-	permission?: PermissionMode;
-	onPermissionChange?: (mode: PermissionMode) => void;
 	/** A send or decision is in flight. */
 	busy?: boolean;
 }
@@ -52,14 +50,11 @@ export function ChatWorkspace({
 	onSend,
 	onDecide,
 	onInterrupt,
-	permission = "default",
-	onPermissionChange,
 	busy,
 }: ChatWorkspaceProps) {
 	const turn = activeTurn(snapshot);
 	const approval = pendingApproval(snapshot);
 	const queuedCount = queuedTurnIds(snapshot).size;
-	const [mode, setMode] = useState<PermissionMode>(permission);
 	// Reasoning is hidden by default. The provider emits a reasoning item per tool
 	// call, usually with no readable body, so showing them turns the timeline into
 	// a log. Kept behind a toggle rather than dropped, since they are occasionally
@@ -97,11 +92,6 @@ export function ChatWorkspace({
 				) : null}
 				<ChatComposer
 					onSend={(text) => onSend?.(text)}
-					permission={mode}
-					onPermissionChange={(next) => {
-						setMode(next);
-						onPermissionChange?.(next);
-					}}
 					busy={busy}
 					willQueue={Boolean(turn)}
 					disabled={snapshot.controller.state === "stopped"}

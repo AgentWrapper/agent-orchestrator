@@ -153,7 +153,6 @@ function FixtureChat() {
 					onSend={(text) => note(`send: ${text.slice(0, 48)}`)}
 					onDecide={decide}
 					onInterrupt={() => note("interrupt active turn")}
-					onPermissionChange={(mode) => note(`permission → ${mode}`)}
 				/>
 			</div>
 		</div>
