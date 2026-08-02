@@ -43,7 +43,7 @@ DROP TRIGGER IF EXISTS pr_checks_cdc_update;
 DROP TRIGGER IF EXISTS session_cleanup_facts_cdc_update;
 DROP TRIGGER IF EXISTS session_cleanup_facts_cdc_insert;
 
-CREATE TABLE change_log_new (
+CREATE TABLE IF NOT EXISTS change_log_new (
     seq        INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id TEXT NOT NULL REFERENCES projects (id),
     session_id TEXT REFERENCES sessions (id),
@@ -73,7 +73,7 @@ FROM change_log;
 DROP INDEX IF EXISTS idx_change_log_project;
 DROP TABLE change_log;
 ALTER TABLE change_log_new RENAME TO change_log;
-CREATE INDEX idx_change_log_project ON change_log (project_id, seq);
+CREATE INDEX IF NOT EXISTS idx_change_log_project ON change_log (project_id, seq);
 -- +goose StatementEnd
 
 -- Recreate the change_log-referencing CDC triggers (current definitions).
@@ -260,7 +260,7 @@ END;
 
 
 -- +goose StatementBegin
-CREATE TABLE pipeline_definitions (
+CREATE TABLE IF NOT EXISTS pipeline_definitions (
     id          TEXT PRIMARY KEY,
     project_id  TEXT NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     name        TEXT NOT NULL,
@@ -273,7 +273,7 @@ CREATE TABLE pipeline_definitions (
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE TABLE pipeline_runs (
+CREATE TABLE IF NOT EXISTS pipeline_runs (
     id                 TEXT PRIMARY KEY,
     project_id         TEXT NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     -- pipeline_id references the def this run came from but is NOT a foreign
@@ -295,15 +295,15 @@ CREATE TABLE pipeline_runs (
 -- +goose StatementBegin
 -- Runs list newest-first per project; the loop index feeds hydrate's
 -- currentRunByLoop / historySummaries reconstruction.
-CREATE INDEX idx_pipeline_runs_project_created ON pipeline_runs (project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pipeline_runs_project_created ON pipeline_runs (project_id, created_at DESC);
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE INDEX idx_pipeline_runs_loop ON pipeline_runs (project_id, session_id, pipeline_name, created_at);
+CREATE INDEX IF NOT EXISTS idx_pipeline_runs_loop ON pipeline_runs (project_id, session_id, pipeline_name, created_at);
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE TABLE pipeline_stage_runs (
+CREATE TABLE IF NOT EXISTS pipeline_stage_runs (
     run_id        TEXT NOT NULL REFERENCES pipeline_runs (id) ON DELETE CASCADE,
     project_id    TEXT NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     stage_name    TEXT NOT NULL,
@@ -319,7 +319,7 @@ CREATE TABLE pipeline_stage_runs (
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE TABLE pipeline_artifacts (
+CREATE TABLE IF NOT EXISTS pipeline_artifacts (
     id               TEXT PRIMARY KEY,
     pipeline_run_id  TEXT NOT NULL REFERENCES pipeline_runs (id) ON DELETE CASCADE,
     project_id       TEXT NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
@@ -340,11 +340,11 @@ CREATE TABLE pipeline_artifacts (
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE INDEX idx_pipeline_artifacts_run ON pipeline_artifacts (pipeline_run_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_pipeline_artifacts_run ON pipeline_artifacts (pipeline_run_id, created_at);
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE INDEX idx_pipeline_artifacts_stage_run ON pipeline_artifacts (stage_run_id);
+CREATE INDEX IF NOT EXISTS idx_pipeline_artifacts_stage_run ON pipeline_artifacts (stage_run_id);
 -- +goose StatementEnd
 
 -- Pipeline CDC triggers. All pipeline events are project-level (session_id NULL).

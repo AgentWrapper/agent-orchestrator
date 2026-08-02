@@ -4,7 +4,7 @@
 -- setting. The daemon reads these at boot regardless of who launched it (the
 -- Electron supervisor or `ao start`), which is why the flag lives here rather
 -- than in Electron userData. First consumer: "pipelines.enabled" (spec §4b T12).
-CREATE TABLE app_settings (
+CREATE TABLE IF NOT EXISTS app_settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );

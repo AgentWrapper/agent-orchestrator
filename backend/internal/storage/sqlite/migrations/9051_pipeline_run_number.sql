@@ -34,7 +34,7 @@ UPDATE pipeline_runs SET run_number = (
 -- within its statement; this index is what makes a duplicate impossible rather
 -- than merely unlikely, so two racing triggers for one pipeline can never end
 -- up both called #4.
-CREATE UNIQUE INDEX idx_pipeline_runs_number ON pipeline_runs (project_id, pipeline_name, run_number);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pipeline_runs_number ON pipeline_runs (project_id, pipeline_name, run_number);
 -- +goose StatementEnd
 
 -- +goose Down

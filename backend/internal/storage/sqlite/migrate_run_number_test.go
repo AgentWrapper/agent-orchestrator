@@ -6,20 +6,20 @@ import (
 	"testing"
 )
 
-// TestMigration0051BackfillsExistingRuns covers the upgrade path a dogfooding
+// TestMigration9051BackfillsExistingRuns covers the upgrade path a dogfooding
 // daemon actually takes: a database that already holds runs gets the run_number
 // column, and every existing run has to come out of it with a number. A run
 // left at the column default would collide with the first new run under the
 // unique index, which would wedge the next trigger.
-func TestMigration0051BackfillsExistingRuns(t *testing.T) {
+func TestMigration9051BackfillsExistingRuns(t *testing.T) {
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+"?_pragma=busy_timeout(5000)")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	// Stop just before 0051: pipeline_runs exists, run_number does not.
-	upTo(t, db, 50)
+	// Stop just before 9051: pipeline_runs exists, run_number does not.
+	upTo(t, db, 9050)
 
 	for _, p := range []string{"proj-1", "proj-2"} {
 		if _, err := db.Exec(
@@ -50,7 +50,7 @@ func TestMigration0051BackfillsExistingRuns(t *testing.T) {
 		}
 	}
 
-	upTo(t, db, 51)
+	upTo(t, db, 9051)
 
 	// Oldest first within each (project, pipeline name), each sequence from 1.
 	want := map[string]int{"run-r1": 1, "run-r2": 2, "run-r3": 3, "run-a1": 1, "run-o1": 1}

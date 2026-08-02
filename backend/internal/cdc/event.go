@@ -30,7 +30,7 @@ const (
 	EventPRReviewThreadResolved EventType = "pr_review_thread_resolved"
 
 	// Pipeline events ride the same change_log stream, emitted by the CDC
-	// triggers on the pipeline_* tables (migration 0040). They are project-level
+	// triggers on the pipeline_* tables (migration 9040). They are project-level
 	// (Event.SessionID is empty) because a run's session id may be a manual-run
 	// placeholder that is not a real sessions row.
 	EventPipelineDefinitionChanged EventType = "pipeline_definition_changed"

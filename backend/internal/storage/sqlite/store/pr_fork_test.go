@@ -9,7 +9,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// The is_from_fork tri-state (migration 0041) round-trips through the observer
+// The is_from_fork tri-state (migration 9041) round-trips through the observer
 // write path (WriteSCMObservation -> UpsertPR) and is projected onto PRFacts by
 // both the by-url and display reads the trigger bridge + command-executor gate
 // use. NULL (unpopulated) reads back as nil = unknown.

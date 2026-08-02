@@ -44,7 +44,7 @@ DROP TABLE IF EXISTS pipeline_runs;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE TABLE pipeline_runs (
+CREATE TABLE IF NOT EXISTS pipeline_runs (
     id              TEXT PRIMARY KEY,
     project_id      TEXT NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     -- pipeline_id names the definition this run came from but is NOT a foreign
@@ -79,16 +79,16 @@ CREATE TABLE pipeline_runs (
 
 -- +goose StatementBegin
 -- The Kanban board lists a project's runs newest-first.
-CREATE INDEX idx_pipeline_runs_project_created ON pipeline_runs (project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pipeline_runs_project_created ON pipeline_runs (project_id, created_at DESC);
 -- +goose StatementEnd
 
 -- +goose StatementBegin
 -- Hydration on engine start reads exactly the unsettled runs of one project.
-CREATE INDEX idx_pipeline_runs_unsettled ON pipeline_runs (project_id, created_at) WHERE settled_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_pipeline_runs_unsettled ON pipeline_runs (project_id, created_at) WHERE settled_at IS NULL;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE TABLE pipeline_stage_runs (
+CREATE TABLE IF NOT EXISTS pipeline_stage_runs (
     run_id         TEXT NOT NULL REFERENCES pipeline_runs (id) ON DELETE CASCADE,
     project_id     TEXT NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     stage_id       TEXT NOT NULL,
@@ -117,7 +117,7 @@ CREATE TABLE pipeline_stage_runs (
 -- +goose StatementBegin
 -- Append-only. The engine's SignalReader takes the newest row per (run, stage),
 -- so a post-nudge signal supersedes the first without losing it.
-CREATE TABLE pipeline_stage_signals (
+CREATE TABLE IF NOT EXISTS pipeline_stage_signals (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id     TEXT NOT NULL REFERENCES pipeline_runs (id) ON DELETE CASCADE,
     stage_id   TEXT NOT NULL,
@@ -128,14 +128,14 @@ CREATE TABLE pipeline_stage_signals (
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE INDEX idx_pipeline_stage_signals_stage ON pipeline_stage_signals (run_id, stage_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_pipeline_stage_signals_stage ON pipeline_stage_signals (run_id, stage_id, created_at DESC, id DESC);
 -- +goose StatementEnd
 
 -- +goose StatementBegin
 -- env_json is a JSON object of environment variables injected into a command
 -- stage's process at exec time. Same trust level as the gh token already on
 -- disk: no UI editor, no read path that echoes a value back.
-CREATE TABLE pipeline_credentials (
+CREATE TABLE IF NOT EXISTS pipeline_credentials (
     project_id TEXT NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     name       TEXT NOT NULL,
     env_json   TEXT NOT NULL CHECK (json_valid(env_json)),
