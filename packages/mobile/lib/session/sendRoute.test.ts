@@ -41,7 +41,25 @@ describe("terminalPayload", () => {
 		expect(terminalPayload("y")).toBe("y\r");
 	});
 
-	it("leaves the text otherwise untouched", () => {
+	it("leaves single-line text otherwise untouched", () => {
 		expect(terminalPayload("git commit -m 'x'")).toBe("git commit -m 'x'\r");
+	});
+
+	// The composer is multiline, so pasted or dictated text can carry newlines.
+	// A PTY reads each one as Enter, which would answer a dialog with the first
+	// fragment and feed the rest to whatever opened next.
+	it("collapses interior newlines so one message submits once", () => {
+		expect(terminalPayload("yes,\nuse the second option")).toBe("yes, use the second option\r");
+		expect(terminalPayload("a\r\nb")).toBe("a b\r");
+		expect(terminalPayload("a\n\n\nb")).toBe("a b\r");
+	});
+
+	it("drops surrounding whitespace so there is no empty second submission", () => {
+		expect(terminalPayload("approve\n")).toBe("approve\r");
+		expect(terminalPayload("\n approve \n")).toBe("approve\r");
+	});
+
+	it("still submits when the text is only newlines", () => {
+		expect(terminalPayload("\n\n")).toBe("\r");
 	});
 });

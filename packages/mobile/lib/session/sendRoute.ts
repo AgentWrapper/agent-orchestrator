@@ -34,9 +34,17 @@ export function shouldRetryOnTerminal(err: SendFailure): boolean {
  * What the PTY needs to receive for `text`. The trailing carriage return is the
  * Enter the user would otherwise have to press — a prompt answer that is never
  * submitted just sits on the line looking like nothing happened.
+ *
+ * Interior newlines are collapsed to spaces first. The composer is a multiline
+ * field, so a pasted or dictated answer can contain them, and a PTY reads every
+ * one as its own Enter: "yes,\nuse the second option" answers the dialog with
+ * "yes," and then feeds the remainder to whatever the dialog opened next. One
+ * message must submit once. A run of blank lines collapses to a single space
+ * rather than a gap, and surrounding whitespace is dropped so a trailing
+ * newline does not become a second, empty submission.
  */
 export function terminalPayload(text: string): string {
-	return `${text}\r`;
+	return `${text.replace(/[\r\n]+/g, " ").trim()}\r`;
 }
 
 /** Shown once after an automatic reroute, so the switch is never silent. */
