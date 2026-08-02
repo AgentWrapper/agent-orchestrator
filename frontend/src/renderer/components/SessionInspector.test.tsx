@@ -219,9 +219,10 @@ describe("SessionInspector PR section", () => {
 		expect(screen.getByText("Pull request")).toBeInTheDocument();
 		expect(screen.queryByText(/Pull requests \(/)).not.toBeInTheDocument();
 		expect(prSection("Pull request").getByText("PR #7")).toBeInTheDocument();
-		// CI/Merge/Review facts surface per card.
+		// Status/CI/Merge/Review facts surface per card as labelled rows.
 		expect(prSection("Pull request").getAllByText("Passing").length).toBeGreaterThan(0);
-		expect(prSection("Pull request").getByText("open")).toHaveClass("text-[9px]", "leading-none");
+		expect(prSection("Pull request").getByText("Status")).toBeInTheDocument();
+		expect(prSection("Pull request").getByText("Open", { selector: "span.text-pr-value" })).toBeInTheDocument();
 	});
 
 	it("hides the pull request section when there are no PRs", () => {

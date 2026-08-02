@@ -41,7 +41,7 @@ const session = (prs: WorkspaceSession["prs"]): WorkspaceSession => ({
 });
 
 describe("prStatusRows", () => {
-	it("formats the three PR states without exposing raw unknown", () => {
+	it("formats every PR state as a labelled row without exposing raw unknown", () => {
 		const rows = prStatusRows(
 			summary({
 				ci: { state: "unknown", failingChecks: [] },
@@ -50,7 +50,12 @@ describe("prStatusRows", () => {
 			}),
 		);
 
-		expect(rows.map((row) => `${row.label}:${row.value}`)).toEqual(["CI:Checking", "Merge:Checking", "Review:None"]);
+		expect(rows.map((row) => `${row.label}:${row.value}`)).toEqual([
+			"Status:Open",
+			"CI:Checking",
+			"Merge:Checking",
+			"Review:None",
+		]);
 	});
 
 	it("includes minimal diff detail on the merge row", () => {
@@ -329,8 +334,45 @@ describe("sessionPRDisplaySummaries", () => {
 });
 
 describe("prSummaryParts", () => {
-	it("always returns CI, Merge, and Review parts", () => {
-		expect(prSummaryParts(summary()).map((part) => part.label)).toEqual(["CI", "Merge", "Review"]);
+	it("always returns Status, CI, Merge, and Review parts", () => {
+		expect(prSummaryParts(summary()).map((part) => part.label)).toEqual(["Status", "CI", "Merge", "Review"]);
+	});
+
+	it("keeps every non-blocking state on the neutral tiers and hues only blockers", () => {
+		const clean = prSummaryParts(
+			summary({
+				ci: { state: "passing", failingChecks: [] },
+				review: { decision: "approved", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+				mergeability: { state: "mergeable", reasons: [], prUrl: "https://github.com/acme/repo/pull/7" },
+			}),
+		);
+		expect(clean.map((part) => part.tone)).toEqual(["value", "value", "value", "value"]);
+
+		const blocked = prSummaryParts(
+			summary({
+				ci: { state: "failing", failingChecks: [] },
+				review: { decision: "changes_requested", hasUnresolvedHumanComments: true, unresolvedBy: [] },
+				mergeability: { state: "blocked", reasons: [], prUrl: "https://github.com/acme/repo/pull/7" },
+			}),
+		);
+		expect(blocked.filter((part) => part.key !== "status").map((part) => part.tone)).toEqual([
+			"blocked",
+			"blocked",
+			"blocked",
+		]);
+
+		const empty = prSummaryParts(
+			summary({
+				ci: { state: "unknown", failingChecks: [] },
+				review: { decision: "none", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+				mergeability: { state: "unknown", reasons: [], prUrl: "https://github.com/acme/repo/pull/7" },
+			}),
+		);
+		expect(empty.filter((part) => part.key !== "status").map((part) => part.tone)).toEqual([
+			"muted",
+			"muted",
+			"muted",
+		]);
 	});
 
 	it("details active CI, merge, and review blockers under their parts", () => {
@@ -361,11 +403,11 @@ describe("prSummaryParts", () => {
 			}),
 		);
 
-		expect(parts.map((part) => part.key)).toEqual(["ci", "merge", "review"]);
+		expect(parts.map((part) => part.key)).toEqual(["status", "ci", "merge", "review"]);
 		expect(parts.find((part) => part.key === "ci")).toMatchObject({
 			status: "Failing",
 			summary: undefined,
-			tone: "error",
+			tone: "blocked",
 		});
 		expect(parts.find((part) => part.key === "ci")?.links[0]).toMatchObject({
 			label: "copy-check",
@@ -374,12 +416,12 @@ describe("prSummaryParts", () => {
 		expect(parts.find((part) => part.key === "merge")).toMatchObject({
 			status: "Blocked",
 			summary: undefined,
-			tone: "warning",
+			tone: "blocked",
 		});
 		expect(parts.find((part) => part.key === "review")).toMatchObject({
 			status: "Changes requested",
 			summary: undefined,
-			tone: "warning",
+			tone: "blocked",
 		});
 		expect(parts.find((part) => part.key === "review")?.links[0]).toMatchObject({
 			label: "alice +5",
@@ -545,7 +587,7 @@ describe("prSummaryParts", () => {
 			}),
 		);
 
-		expect(parts).toHaveLength(3);
+		expect(parts).toHaveLength(4);
 		expect(parts.find((part) => part.key === "merge")?.links).toEqual([]);
 		expect(parts.find((part) => part.key === "review")?.links).toEqual([]);
 	});
