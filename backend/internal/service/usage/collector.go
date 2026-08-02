@@ -574,6 +574,135 @@ func (c *Collector) preserveCodexBudgetState(
 	return state, errorCode, nil
 }
 
+type usageSourceIdentityKey struct {
+	kind            domain.UsageSourceKind
+	nativeSessionID string
+	fileIdentity    string
+}
+
+type bindingSourceInventory struct {
+	sources             []*domain.UsageSourceRecord
+	byID                map[int64]*domain.UsageSourceRecord
+	latestByPath        map[string]*domain.UsageSourceRecord
+	latestCodexByNative map[string]*domain.UsageSourceRecord
+	byIdentity          map[usageSourceIdentityKey][]*domain.UsageSourceRecord
+	codexLogicalIDs     map[string]struct{}
+	maxGeneration       int64
+}
+
+func newBindingSourceInventory(sources []domain.UsageSourceRecord) *bindingSourceInventory {
+	inventory := &bindingSourceInventory{}
+	for _, source := range sources {
+		inventory.sources = append(inventory.sources, &domain.UsageSourceRecord{})
+		*inventory.sources[len(inventory.sources)-1] = source
+	}
+	inventory.rebuildIndexes()
+	return inventory
+}
+
+func (i *bindingSourceInventory) rebuildIndexes() {
+	i.byID = make(map[int64]*domain.UsageSourceRecord, len(i.sources))
+	i.latestByPath = make(map[string]*domain.UsageSourceRecord, len(i.sources))
+	i.latestCodexByNative = make(map[string]*domain.UsageSourceRecord, len(i.sources))
+	i.byIdentity = make(map[usageSourceIdentityKey][]*domain.UsageSourceRecord, len(i.sources))
+	i.codexLogicalIDs = make(map[string]struct{}, len(i.sources))
+	i.maxGeneration = 0
+	for _, source := range i.sources {
+		i.indexSource(source)
+	}
+}
+
+func (i *bindingSourceInventory) indexSource(source *domain.UsageSourceRecord) {
+	if source.ID != 0 {
+		i.byID[source.ID] = source
+	}
+	if source.Generation >= i.maxGeneration {
+		i.maxGeneration = source.Generation
+	}
+	latest := i.latestByPath[source.ArtifactPath]
+	if latest == nil || source.Generation > latest.Generation {
+		i.latestByPath[source.ArtifactPath] = source
+	}
+	if source.Kind == domain.UsageSourceCodexRollout && source.NativeSessionID != "" {
+		i.codexLogicalIDs[source.NativeSessionID] = struct{}{}
+		latest = i.latestCodexByNative[source.NativeSessionID]
+		if latest == nil || source.Generation > latest.Generation ||
+			(source.Generation == latest.Generation && source.ID > latest.ID) {
+			i.latestCodexByNative[source.NativeSessionID] = source
+		}
+	}
+	key := usageSourceIdentityKey{
+		kind:            source.Kind,
+		nativeSessionID: source.NativeSessionID,
+		fileIdentity:    source.FileIdentity,
+	}
+	i.byIdentity[key] = append(i.byIdentity[key], source)
+}
+
+func (i *bindingSourceInventory) add(source domain.UsageSourceRecord) {
+	if existing := i.byID[source.ID]; source.ID != 0 && existing != nil {
+		*existing = source
+		i.rebuildIndexes()
+		return
+	}
+	record := &domain.UsageSourceRecord{}
+	*record = source
+	i.sources = append(i.sources, record)
+	i.indexSource(record)
+}
+
+func (i *bindingSourceInventory) identityMatch(
+	kind domain.UsageSourceKind,
+	nativeSessionID string,
+	fileIdentity string,
+	size int64,
+) *domain.UsageSourceRecord {
+	key := usageSourceIdentityKey{
+		kind:            kind,
+		nativeSessionID: nativeSessionID,
+		fileIdentity:    fileIdentity,
+	}
+	var match *domain.UsageSourceRecord
+	for _, source := range i.byIdentity[key] {
+		if size >= source.ByteOffset && (match == nil || source.Generation > match.Generation) {
+			match = source
+		}
+	}
+	return match
+}
+
+func (i *bindingSourceInventory) markState(
+	id int64,
+	state domain.UsageSourceState,
+	errorCode string,
+	now time.Time,
+) {
+	if source := i.byID[id]; source != nil {
+		source.State = state
+		source.LastErrorCode = errorCode
+		source.NextRetryAt = nil
+		source.UpdatedAt = now
+	}
+}
+
+func (i *bindingSourceInventory) reactivate(id int64, now time.Time) {
+	if source := i.byID[id]; source != nil {
+		source.State = domain.UsageSourceActive
+		source.FailureCount = 0
+		source.NextRetryAt = nil
+		source.LastErrorCode = ""
+		source.UpdatedAt = now
+	}
+}
+
+func (i *bindingSourceInventory) snapshot() []domain.UsageSourceRecord {
+	sources := make([]domain.UsageSourceRecord, 0, len(i.sources))
+	for _, source := range i.sources {
+		sources = append(sources, *source)
+	}
+	return sources
+}
+
 func (c *Collector) registerSource(
 	ctx context.Context,
 	binding domain.UsageBindingRecord,
@@ -592,7 +721,65 @@ func (c *Collector) registerSource(
 	if err != nil {
 		return false, err
 	}
-	if c.codexSourceBudgetExceeded(sources, kind, nativeSessionID, subagentID) {
+	return c.registerValidatedSource(
+		ctx,
+		binding,
+		kind,
+		nativeSessionID,
+		subagentID,
+		resolved,
+		identity,
+		size,
+		now,
+		reactivateExisting,
+		newBindingSourceInventory(sources),
+	)
+}
+
+func (c *Collector) registerSourceWithInventory(
+	ctx context.Context,
+	binding domain.UsageBindingRecord,
+	kind domain.UsageSourceKind,
+	nativeSessionID string,
+	subagentID string,
+	path string,
+	now time.Time,
+	reactivateExisting bool,
+	inventory *bindingSourceInventory,
+) (bool, error) {
+	resolved, identity, size, err := c.validateSourcePath(binding.Harness, path)
+	if err != nil {
+		return false, err
+	}
+	return c.registerValidatedSource(
+		ctx,
+		binding,
+		kind,
+		nativeSessionID,
+		subagentID,
+		resolved,
+		identity,
+		size,
+		now,
+		reactivateExisting,
+		inventory,
+	)
+}
+
+func (c *Collector) registerValidatedSource(
+	ctx context.Context,
+	binding domain.UsageBindingRecord,
+	kind domain.UsageSourceKind,
+	nativeSessionID string,
+	subagentID string,
+	resolved string,
+	identity string,
+	size int64,
+	now time.Time,
+	reactivateExisting bool,
+	inventory *bindingSourceInventory,
+) (bool, error) {
+	if c.codexSourceBudgetExceeded(inventory, kind, nativeSessionID, subagentID) {
 		state := binding.State
 		if state == domain.UsageBindingDiscovering || state == domain.UsageBindingActive {
 			state = domain.UsageBindingPartial
@@ -606,47 +793,48 @@ func (c *Collector) registerSource(
 		)
 		return false, err
 	}
-	var latest *domain.UsageSourceRecord
-	var identityMatch *domain.UsageSourceRecord
-	var latestNative *domain.UsageSourceRecord
-	var generation int64
-	for i := range sources {
-		source := &sources[i]
-		if source.Generation >= generation {
-			generation = source.Generation
-		}
-		if source.ArtifactPath == resolved && (latest == nil || source.Generation > latest.Generation) {
-			latest = source
-		}
-		if kind == domain.UsageSourceCodexRollout &&
-			source.Kind == kind && source.NativeSessionID == nativeSessionID &&
-			(latestNative == nil || source.Generation > latestNative.Generation ||
-				(source.Generation == latestNative.Generation && source.ID > latestNative.ID)) {
-			latestNative = source
-		}
-		if source.Kind == kind &&
-			source.NativeSessionID == nativeSessionID &&
-			source.FileIdentity == identity &&
-			size >= source.ByteOffset &&
-			(identityMatch == nil || source.Generation > identityMatch.Generation) {
-			identityMatch = source
-		}
-	}
+	latest := inventory.latestByPath[resolved]
+	latestNative := inventory.latestCodexByNative[nativeSessionID]
+	identityMatch := inventory.identityMatch(kind, nativeSessionID, identity, size)
+	generation := inventory.maxGeneration
 	if latest != nil && latest.FileIdentity == identity && size >= latest.ByteOffset {
 		if reactivateExisting || latest.State == domain.UsageSourceError {
 			changed, err := c.store.ReactivateUsageSource(ctx, latest.ID, now)
+			if err == nil && changed {
+				inventory.reactivate(latest.ID, now)
+			}
 			return changed, err
 		}
 		return false, nil
 	}
 	if latest != nil {
-		_, _ = c.store.MarkUsageSourceState(ctx, latest.ID, domain.UsageSourceComplete, domain.UsageErrorArtifactReplaced, nil, now)
+		changed, markErr := c.store.MarkUsageSourceState(
+			ctx,
+			latest.ID,
+			domain.UsageSourceComplete,
+			domain.UsageErrorArtifactReplaced,
+			nil,
+			now,
+		)
+		if markErr == nil && changed {
+			inventory.markState(latest.ID, domain.UsageSourceComplete, domain.UsageErrorArtifactReplaced, now)
+		}
 		generation = latest.Generation + 1
-	} else if len(sources) > 0 {
+	} else if len(inventory.sources) > 0 {
 		generation++
 	}
 	if kind == domain.UsageSourceCodexRollout && latest == nil && latestNative != nil {
-		_, _ = c.store.MarkUsageSourceState(ctx, latestNative.ID, domain.UsageSourceComplete, "", nil, now)
+		changed, markErr := c.store.MarkUsageSourceState(
+			ctx,
+			latestNative.ID,
+			domain.UsageSourceComplete,
+			"",
+			nil,
+			now,
+		)
+		if markErr == nil && changed {
+			inventory.markState(latestNative.ID, domain.UsageSourceComplete, "", now)
+		}
 	}
 	record := domain.UsageSourceRecord{
 		BindingID:       binding.ID,
@@ -661,16 +849,30 @@ func (c *Collector) registerSource(
 		UpdatedAt:       now,
 	}
 	if latest == nil && identityMatch != nil {
-		_, _ = c.store.MarkUsageSourceState(ctx, identityMatch.ID, domain.UsageSourceComplete, "", nil, now)
+		changed, markErr := c.store.MarkUsageSourceState(
+			ctx,
+			identityMatch.ID,
+			domain.UsageSourceComplete,
+			"",
+			nil,
+			now,
+		)
+		if markErr == nil && changed {
+			inventory.markState(identityMatch.ID, domain.UsageSourceComplete, "", now)
+		}
 		record.ByteOffset = identityMatch.ByteOffset
 		record.ParserStateJSON = identityMatch.ParserStateJSON
 	}
-	_, err = c.store.InsertUsageSource(ctx, record)
-	return err == nil, err
+	inserted, err := c.store.InsertUsageSource(ctx, record)
+	if err != nil {
+		return false, err
+	}
+	inventory.add(inserted)
+	return true, nil
 }
 
 func (c *Collector) codexSourceBudgetExceeded(
-	sources []domain.UsageSourceRecord,
+	inventory *bindingSourceInventory,
 	kind domain.UsageSourceKind,
 	nativeSessionID string,
 	subagentID string,
@@ -678,17 +880,10 @@ func (c *Collector) codexSourceBudgetExceeded(
 	if kind != domain.UsageSourceCodexRollout || nativeSessionID == "" || subagentID == "" {
 		return false
 	}
-	logicalSources := make(map[string]struct{})
-	for _, source := range sources {
-		if source.Kind != domain.UsageSourceCodexRollout || source.NativeSessionID == "" {
-			continue
-		}
-		logicalSources[source.NativeSessionID] = struct{}{}
-	}
-	if _, exists := logicalSources[nativeSessionID]; exists {
+	if _, exists := inventory.codexLogicalIDs[nativeSessionID]; exists {
 		return false
 	}
-	return len(logicalSources) >= c.codexLogicalSourceLimit
+	return len(inventory.codexLogicalIDs) >= c.codexLogicalSourceLimit
 }
 
 func (c *Collector) registerDiscoveredClaudeSubagents(
@@ -745,7 +940,21 @@ func (c *Collector) registerDiscoveredCodexChildren(
 	if err != nil {
 		return err
 	}
-	sources = latestCodexSourcesByNativeSession(sources)
+	return c.registerDiscoveredCodexChildrenWithInventory(
+		ctx,
+		binding,
+		now,
+		newBindingSourceInventory(sources),
+	)
+}
+
+func (c *Collector) registerDiscoveredCodexChildrenWithInventory(
+	ctx context.Context,
+	binding domain.UsageBindingRecord,
+	now time.Time,
+	inventory *bindingSourceInventory,
+) error {
+	sources := latestCodexSourcesByNativeSession(inventory.snapshot())
 	seen := make(map[string]struct{})
 	var errs []error
 	for _, source := range sources {
@@ -762,7 +971,7 @@ func (c *Collector) registerDiscoveredCodexChildren(
 			if path == "" {
 				continue
 			}
-			if _, err := c.registerSource(
+			if _, err := c.registerSourceWithInventory(
 				ctx,
 				binding,
 				domain.UsageSourceCodexRollout,
@@ -771,6 +980,7 @@ func (c *Collector) registerDiscoveredCodexChildren(
 				path,
 				now,
 				false,
+				inventory,
 			); err != nil {
 				errs = append(errs, err)
 			}

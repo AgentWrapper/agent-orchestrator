@@ -3,8 +3,10 @@ package usage
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,6 +29,19 @@ type codexBudgetFixture struct {
 	root      string
 	rootPath  string
 	now       time.Time
+}
+
+type countingUsageCollectorStore struct {
+	collectorStore
+	listUsageSourcesForBindingCalls atomic.Int64
+}
+
+func (s *countingUsageCollectorStore) ListUsageSourcesForBinding(
+	ctx context.Context,
+	bindingID int64,
+) ([]domain.UsageSourceRecord, error) {
+	s.listUsageSourcesForBindingCalls.Add(1)
+	return s.collectorStore.ListUsageSourcesForBinding(ctx, bindingID)
 }
 
 func TestCollectorCodexBudgetCountsLogicalIDsAndAllowsExistingGenerations(t *testing.T) {
@@ -149,6 +164,35 @@ func TestCollectorCodexBudgetCountsLogicalIDsAndAllowsExistingGenerations(t *tes
 	if err != nil || detail.Collection.State != domain.UsageCollectionPartial ||
 		!containsUsageString(detail.Collection.Warnings, testCodexBudgetCode) {
 		t.Fatalf("live detail summary=%+v err=%v", detail, err)
+	}
+}
+
+func TestCollectorCodexChildBatchLoadsBindingSourcesOnce(t *testing.T) {
+	const childCount = 64
+	fixture := newCodexBudgetFixture(t, childCount+1)
+	childIDs := make([]string, 0, childCount)
+	for i := 0; i < childCount; i++ {
+		childID := fmt.Sprintf("00000000-0000-4000-8000-%012x", i+2)
+		childIDs = append(childIDs, childID)
+		writeUsageFixture(
+			t,
+			filepath.Join(fixture.root, "2026", "08", "02", "rollout-child-"+childID+".jsonl"),
+			codexSessionMetaFixture(t, childID, testCodexRootID),
+		)
+	}
+	setCodexDiscoveredChildren(t, fixture.store, onlyBudgetSource(t, fixture), childIDs...)
+
+	countingStore := &countingUsageCollectorStore{collectorStore: fixture.store}
+	fixture.collector.store = countingStore
+	if err := fixture.collector.registerDiscoveredCodexChildren(
+		context.Background(),
+		fixture.binding,
+		fixture.now,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if calls := countingStore.listUsageSourcesForBindingCalls.Load(); calls != 1 {
+		t.Fatalf("ListUsageSourcesForBinding calls=%d, want 1 binding inventory load", calls)
 	}
 }
 
@@ -331,6 +375,14 @@ func TestCollectorCodexBudgetRestartFinalizesPersistedPartialForExitedSession(t 
 }
 
 func TestCollectorCodexBudgetFinalizationWaitsThenPersistsPartialAcrossRestart(t *testing.T) {
+	for _, hookEvent := range []string{"process-exited", "session-end"} {
+		t.Run(hookEvent, func(t *testing.T) {
+			testCollectorCodexBudgetFinalizationWaitsThenPersistsPartialAcrossRestart(t, hookEvent)
+		})
+	}
+}
+
+func testCollectorCodexBudgetFinalizationWaitsThenPersistsPartialAcrossRestart(t *testing.T, hookEvent string) {
 	ctx := context.Background()
 	dataDir := t.TempDir()
 	store, err := sqlite.Open(dataDir)
@@ -434,7 +486,7 @@ func TestCollectorCodexBudgetFinalizationWaitsThenPersistsPartialAcrossRestart(t
 
 	if err := collector.RecordHook(ctx, session.ID, HookSignal{
 		Harness:         domain.HarnessCodex,
-		Event:           "process-exited",
+		Event:           hookEvent,
 		NativeSessionID: testCodexRootID,
 		TranscriptPath:  rootPath,
 	}); err != nil {
