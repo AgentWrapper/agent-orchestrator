@@ -665,7 +665,7 @@ type AppToolSummary struct {
 	Title          *string `json:"title,omitempty"`
 }
 
-type AppToolsConfig json.RawMessage
+type AppToolsConfig = json.RawMessage
 
 type ApplyPatchApprovalParams struct {
 	// Use to correlate this with [codex_protocol::protocol::PatchApplyBeginEvent] and [codex_protocol::protocol::Pat…
@@ -745,9 +745,9 @@ type AppsReadResponse struct {
 	MissingAppIds []string            `json:"missingAppIds"`
 }
 
-type AskForApproval json.RawMessage
+type AskForApproval = json.RawMessage
 
-type AttestationGenerateParams json.RawMessage
+type AttestationGenerateParams = json.RawMessage
 
 // AuthMode: Authentication mode for OpenAI-backed providers.
 type AuthMode string
@@ -811,7 +811,7 @@ const (
 )
 
 // CapabilityRootLocation: Location used to resolve a selected capability root.
-type CapabilityRootLocation json.RawMessage
+type CapabilityRootLocation = json.RawMessage
 
 type ChatgptAuthTokensRefreshParams struct {
 	// Workspace/account identifier that Codex was previously using. Clients that manage multiple accounts/workspaces…
@@ -938,7 +938,7 @@ const (
 )
 
 // CodexErrorInfo: This translation layer make sure that we expose codex error code in camel case. When an upstream HTTP status i…
-type CodexErrorInfo json.RawMessage
+type CodexErrorInfo = json.RawMessage
 
 type CodexResponseHandoffMode string
 
@@ -1077,7 +1077,7 @@ type CommandExecResizeParams struct {
 }
 
 // CommandExecResizeResponse: Empty success response for `command/exec/resize`.
-type CommandExecResizeResponse json.RawMessage
+type CommandExecResizeResponse = json.RawMessage
 
 // CommandExecResponse: Final buffered result for `command/exec`.
 type CommandExecResponse struct {
@@ -1104,7 +1104,7 @@ type CommandExecTerminateParams struct {
 }
 
 // CommandExecTerminateResponse: Empty success response for `command/exec/terminate`.
-type CommandExecTerminateResponse json.RawMessage
+type CommandExecTerminateResponse = json.RawMessage
 
 // CommandExecWriteParams: Write stdin bytes to a running `command/exec` session, close stdin, or both.
 type CommandExecWriteParams struct {
@@ -1117,9 +1117,9 @@ type CommandExecWriteParams struct {
 }
 
 // CommandExecWriteResponse: Empty success response for `command/exec/write`.
-type CommandExecWriteResponse json.RawMessage
+type CommandExecWriteResponse = json.RawMessage
 
-type CommandExecutionApprovalDecision json.RawMessage
+type CommandExecutionApprovalDecision = json.RawMessage
 
 type CommandExecutionOutputDeltaNotification struct {
 	Delta    string `json:"delta"`
@@ -1476,7 +1476,7 @@ const (
 	DynamicToolCallStatusFailed     DynamicToolCallStatus = "failed"
 )
 
-type DynamicToolNamespaceTool json.RawMessage
+type DynamicToolNamespaceTool = json.RawMessage
 
 // A tagged union: Type selects which fields carry values.
 type DynamicToolSpec struct {
@@ -1819,7 +1819,7 @@ type FileUpdateChange struct {
 }
 
 // ForcedChatgptWorkspaceIds: Backward-compatible API shape for ChatGPT workspace login restrictions.
-type ForcedChatgptWorkspaceIds json.RawMessage
+type ForcedChatgptWorkspaceIds = json.RawMessage
 
 type ForcedLoginMethod string
 
@@ -1847,7 +1847,7 @@ type FsCopyParams struct {
 }
 
 // FsCopyResponse: Successful response for `fs/copy`.
-type FsCopyResponse json.RawMessage
+type FsCopyResponse = json.RawMessage
 
 // FsCreateDirectoryParams: Create a directory on the host filesystem.
 type FsCreateDirectoryParams struct {
@@ -1858,7 +1858,7 @@ type FsCreateDirectoryParams struct {
 }
 
 // FsCreateDirectoryResponse: Successful response for `fs/createDirectory`.
-type FsCreateDirectoryResponse json.RawMessage
+type FsCreateDirectoryResponse = json.RawMessage
 
 // FsGetMetadataParams: Request metadata for an absolute path.
 type FsGetMetadataParams struct {
@@ -1925,7 +1925,7 @@ type FsRemoveParams struct {
 }
 
 // FsRemoveResponse: Successful response for `fs/remove`.
-type FsRemoveResponse json.RawMessage
+type FsRemoveResponse = json.RawMessage
 
 // FsUnwatchParams: Stop filesystem watch notifications for a prior `fs/watch`.
 type FsUnwatchParams struct {
@@ -1934,7 +1934,7 @@ type FsUnwatchParams struct {
 }
 
 // FsUnwatchResponse: Successful response for `fs/unwatch`.
-type FsUnwatchResponse json.RawMessage
+type FsUnwatchResponse = json.RawMessage
 
 // FsWatchParams: Start filesystem watch notifications for an absolute path.
 type FsWatchParams struct {
@@ -1959,9 +1959,9 @@ type FsWriteFileParams struct {
 }
 
 // FsWriteFileResponse: Successful response for `fs/writeFile`.
-type FsWriteFileResponse json.RawMessage
+type FsWriteFileResponse = json.RawMessage
 
-type FunctionCallOutputBody json.RawMessage
+type FunctionCallOutputBody = json.RawMessage
 
 // FunctionCallOutputContentItem: Responses API compatible content items that can be returned by a tool call. This is a subset of ContentItem wi…
 //
@@ -2427,7 +2427,7 @@ type ListMcpServerStatusResponse struct {
 	NextCursor *string `json:"nextCursor,omitempty"`
 }
 
-type LocalShellAction json.RawMessage
+type LocalShellAction = json.RawMessage
 
 type LocalShellStatus string
 
@@ -2494,7 +2494,7 @@ const (
 	LoginAppBrandChatgpt LoginAppBrand = "chatgpt"
 )
 
-type LogoutAccountResponse json.RawMessage
+type LogoutAccountResponse = json.RawMessage
 
 type ManagedHooksRequirements struct {
 	PermissionRequest []ConfiguredHookMatcherGroup `json:"PermissionRequest"`
@@ -2590,7 +2590,7 @@ type McpElicitationConstOption struct {
 	Title string `json:"title"`
 }
 
-type McpElicitationEnumSchema json.RawMessage
+type McpElicitationEnumSchema = json.RawMessage
 
 type McpElicitationLegacyTitledEnumSchema struct {
 	Default     *string                  `json:"default,omitempty"`
@@ -2601,7 +2601,7 @@ type McpElicitationLegacyTitledEnumSchema struct {
 	Type        McpElicitationStringType `json:"type"`
 }
 
-type McpElicitationMultiSelectEnumSchema json.RawMessage
+type McpElicitationMultiSelectEnumSchema = json.RawMessage
 
 type McpElicitationNumberSchema struct {
 	Default     *float64                 `json:"default,omitempty"`
@@ -2625,7 +2625,7 @@ const (
 	McpElicitationObjectTypeObject McpElicitationObjectType = "object"
 )
 
-type McpElicitationPrimitiveSchema json.RawMessage
+type McpElicitationPrimitiveSchema = json.RawMessage
 
 // McpElicitationSchema: Typed form schema for MCP `elicitation/create` requests. This matches the `requestedSchema` shape from the MCP…
 type McpElicitationSchema struct {
@@ -2635,7 +2635,7 @@ type McpElicitationSchema struct {
 	Type       McpElicitationObjectType                 `json:"type"`
 }
 
-type McpElicitationSingleSelectEnumSchema json.RawMessage
+type McpElicitationSingleSelectEnumSchema = json.RawMessage
 
 type McpElicitationStringFormat string
 
@@ -2768,7 +2768,7 @@ type McpServerOauthLoginResponse struct {
 	AuthorizationURL string `json:"authorizationUrl"`
 }
 
-type McpServerRefreshResponse json.RawMessage
+type McpServerRefreshResponse = json.RawMessage
 
 type McpServerStartupFailureReason string
 
@@ -2945,7 +2945,7 @@ type ModelListResponse struct {
 	NextCursor *string `json:"nextCursor,omitempty"`
 }
 
-type ModelProviderCapabilitiesReadParams json.RawMessage
+type ModelProviderCapabilitiesReadParams = json.RawMessage
 
 type ModelProviderCapabilitiesReadResponse struct {
 	ImageGeneration bool `json:"imageGeneration"`
@@ -3007,7 +3007,7 @@ type ModelsRequirements struct {
 }
 
 // MultiAgentMode: Controls the effective multi-agent delegation instructions for a turn. `custom` means the configured mode hint…
-type MultiAgentMode json.RawMessage
+type MultiAgentMode = json.RawMessage
 
 type NetworkAccess string
 
@@ -3389,7 +3389,7 @@ type PluginShareDeleteParams struct {
 	RemotePluginID string `json:"remotePluginId"`
 }
 
-type PluginShareDeleteResponse json.RawMessage
+type PluginShareDeleteResponse = json.RawMessage
 
 type PluginShareDiscoverability string
 
@@ -3404,7 +3404,7 @@ type PluginShareListItem struct {
 	Plugin          PluginSummary    `json:"plugin"`
 }
 
-type PluginShareListParams json.RawMessage
+type PluginShareListParams = json.RawMessage
 
 type PluginShareListResponse struct {
 	Data []PluginShareListItem `json:"data"`
@@ -3540,7 +3540,7 @@ type PluginUninstallParams struct {
 	PluginID string `json:"pluginId"`
 }
 
-type PluginUninstallResponse json.RawMessage
+type PluginUninstallResponse = json.RawMessage
 
 type PluginsMigration struct {
 	MarketplaceName string   `json:"marketplaceName"`
@@ -3741,7 +3741,7 @@ const (
 	ReasoningItemContentTypeText          ReasoningItemContentType = "text"
 )
 
-type ReasoningItemReasoningSummary json.RawMessage
+type ReasoningItemReasoningSummary = json.RawMessage
 
 // ReasoningSummary: A summary of the reasoning performed by the model. This can be useful for debugging and understanding the mode…
 type ReasoningSummary string
@@ -3802,7 +3802,7 @@ type RemoteControlStatusChangedNotification struct {
 	Status         RemoteControlConnectionStatus `json:"status"`
 }
 
-type RequestID json.RawMessage
+type RequestID = json.RawMessage
 
 type RequestPermissionProfile struct {
 	FileSystem *AdditionalFileSystemPermissions `json:"fileSystem,omitempty"`
@@ -3829,7 +3829,7 @@ type Resource struct {
 }
 
 // ResourceContent: Contents returned when reading a resource from an MCP server.
-type ResourceContent json.RawMessage
+type ResourceContent = json.RawMessage
 
 // ResourceTemplate: A template description for resources available on the server.
 type ResourceTemplate struct {
@@ -4131,7 +4131,7 @@ type SessionMigration struct {
 	Title *string `json:"title,omitempty"`
 }
 
-type SessionSource json.RawMessage
+type SessionSource = json.RawMessage
 
 // Settings: Settings for a collaboration mode.
 type Settings struct {
@@ -4206,7 +4206,7 @@ type SkillToolDependency struct {
 }
 
 // SkillsChangedNotification: Notification emitted when watched local skill files change. Treat this as an invalidation signal and re-run `s…
-type SkillsChangedNotification json.RawMessage
+type SkillsChangedNotification = json.RawMessage
 
 type SkillsConfigWriteParams struct {
 	Enabled bool `json:"enabled"`
@@ -4224,7 +4224,7 @@ type SkillsExtraRootsSetParams struct {
 	ExtraRoots []AbsolutePathBuf `json:"extraRoots"`
 }
 
-type SkillsExtraRootsSetResponse json.RawMessage
+type SkillsExtraRootsSetResponse = json.RawMessage
 
 type SkillsListEntry struct {
 	Cwd    string           `json:"cwd"`
@@ -4265,7 +4265,7 @@ const (
 	SubAgentActivityKindInterrupted SubAgentActivityKind = "interrupted"
 )
 
-type SubAgentSource json.RawMessage
+type SubAgentSource = json.RawMessage
 
 type SubagentMigration struct {
 	Name string `json:"name"`
@@ -4358,13 +4358,13 @@ type ThreadApproveGuardianDeniedActionParams struct {
 	ThreadID string          `json:"threadId"`
 }
 
-type ThreadApproveGuardianDeniedActionResponse json.RawMessage
+type ThreadApproveGuardianDeniedActionResponse = json.RawMessage
 
 type ThreadArchiveParams struct {
 	ThreadID string `json:"threadId"`
 }
 
-type ThreadArchiveResponse json.RawMessage
+type ThreadArchiveResponse = json.RawMessage
 
 type ThreadArchivedNotification struct {
 	ThreadID string `json:"threadId"`
@@ -4378,20 +4378,20 @@ type ThreadCompactStartParams struct {
 	ThreadID string `json:"threadId"`
 }
 
-type ThreadCompactStartResponse json.RawMessage
+type ThreadCompactStartResponse = json.RawMessage
 
 type ThreadDeleteParams struct {
 	ThreadID string `json:"threadId"`
 }
 
-type ThreadDeleteResponse json.RawMessage
+type ThreadDeleteResponse = json.RawMessage
 
 type ThreadDeletedNotification struct {
 	ThreadID string `json:"threadId"`
 }
 
 // ThreadExtra: Extra app-server data for a thread.
-type ThreadExtra json.RawMessage
+type ThreadExtra = json.RawMessage
 
 // ThreadForkParams: There are two ways to fork a thread: 1. By thread_id: load the thread from disk by thread_id and fork it into …
 type ThreadForkParams struct {
@@ -4505,7 +4505,7 @@ type ThreadInjectItemsParams struct {
 	ThreadID string            `json:"threadId"`
 }
 
-type ThreadInjectItemsResponse json.RawMessage
+type ThreadInjectItemsResponse = json.RawMessage
 
 // A tagged union: Type selects which fields carry values.
 type ThreadItem struct {
@@ -4605,7 +4605,7 @@ type ThreadItemEntry struct {
 	TurnID string `json:"turnId"`
 }
 
-type ThreadListCwdFilter json.RawMessage
+type ThreadListCwdFilter = json.RawMessage
 
 type ThreadListParams struct {
 	// Optional archived filter; when set to true, only archived threads are returned. If false or null, only non-arc…
@@ -4847,7 +4847,7 @@ type ThreadSetNameParams struct {
 	ThreadID string `json:"threadId"`
 }
 
-type ThreadSetNameResponse json.RawMessage
+type ThreadSetNameResponse = json.RawMessage
 
 type ThreadSettings struct {
 	ActivePermissionProfile *ActivePermissionProfile `json:"activePermissionProfile,omitempty"`
@@ -4875,7 +4875,7 @@ type ThreadShellCommandParams struct {
 	ThreadID string `json:"threadId"`
 }
 
-type ThreadShellCommandResponse json.RawMessage
+type ThreadShellCommandResponse = json.RawMessage
 
 type ThreadSortKey string
 
@@ -5108,7 +5108,7 @@ type TurnInterruptParams struct {
 	TurnID   string `json:"turnId"`
 }
 
-type TurnInterruptResponse json.RawMessage
+type TurnInterruptResponse = json.RawMessage
 
 type TurnItemsView string
 

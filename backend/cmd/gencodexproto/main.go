@@ -721,7 +721,19 @@ func (g *generator) renderDef(b *strings.Builder, name string, s *schema, inline
 	// generator declines to guess at.
 	emitted[name] = true
 	doc(b, name, s.Description)
-	fmt.Fprintf(b, "type %s %s\n\n", name, g.goType(s, name, "", inline))
+	target := g.goType(s, name, "", inline)
+
+	// A DEFINED type over json.RawMessage does not inherit its UnmarshalJSON, so
+	// encoding/json falls back to treating it as []byte and demands a base64
+	// string. Every numeric value then fails to decode — silently, if the caller
+	// ignores the error. That cost us every `serverRequest/resolved` notification,
+	// because request ids arrive as numbers. A type ALIAS keeps the methods, so
+	// callers cannot be trapped by a name that looks decodable and is not.
+	if target == "json.RawMessage" {
+		fmt.Fprintf(b, "type %s = %s\n\n", name, target)
+		return
+	}
+	fmt.Fprintf(b, "type %s %s\n\n", name, target)
 }
 
 func (g *generator) renderStruct(b *strings.Builder, name string, s *schema, inline *[]inlineType, emitted map[string]bool) {
