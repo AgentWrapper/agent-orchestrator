@@ -49,7 +49,7 @@ const PERMISSION_MODE_OPTIONS = [
 	{ value: "bypass-permissions", label: "Bypass permissions" },
 ] as const;
 
-const KNOWN_REVIEWER_HARNESS_IDS = new Set(["claude-code", "codex", "opencode"]);
+const KNOWN_REVIEWER_HARNESS_IDS = new Set(["claude-code", "codex", "cursor", "opencode"]);
 
 const projectQueryKey = (id: string) => ["project", id] as const;
 

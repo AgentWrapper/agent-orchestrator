@@ -66,6 +66,7 @@ const agentCatalogResponse = {
 		supported: [
 			{ id: "claude-code", label: "Claude Code" },
 			{ id: "codex", label: "Codex" },
+			{ id: "cursor", label: "Cursor" },
 			{ id: "goose", label: "Goose" },
 			{ id: "kiro", label: "Kiro" },
 			{ id: "opencode", label: "OpenCode" },
@@ -73,6 +74,7 @@ const agentCatalogResponse = {
 		installed: [
 			{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
 			{ id: "codex", label: "Codex", authStatus: "authorized" },
+			{ id: "cursor", label: "Cursor", authStatus: "authorized" },
 			{ id: "goose", label: "Goose", authStatus: "authorized" },
 			{ id: "kiro", label: "Kiro", authStatus: "unknown" },
 			{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
@@ -80,6 +82,7 @@ const agentCatalogResponse = {
 		authorized: [
 			{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
 			{ id: "codex", label: "Codex", authStatus: "authorized" },
+			{ id: "cursor", label: "Cursor", authStatus: "authorized" },
 			{ id: "goose", label: "Goose", authStatus: "authorized" },
 			{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
 		],
@@ -239,6 +242,7 @@ describe("ProjectSettingsForm", () => {
 		await chooseOption(orchestratorAgent, "Goose");
 		await userEvent.click(permissionMode);
 		await userEvent.click(await screen.findByRole("menuitem", { name: "Bypass permissions" }));
+		await chooseOption(reviewerAgent, "Cursor");
 
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
@@ -262,7 +266,7 @@ describe("ProjectSettingsForm", () => {
 						model: "gpt-5-codex",
 						permissions: "bypass-permissions",
 					},
-					reviewers: [{ harness: "claude-code" }],
+					reviewers: [{ harness: "cursor" }],
 				},
 			},
 		});
@@ -408,11 +412,12 @@ describe("ProjectSettingsForm", () => {
 		expect(options.map((option) => option.textContent)).toEqual([
 			"Claude Code",
 			"Codex",
+			"Cursor",
 			"OpenCode",
 			"Goose",
 			"KiroAuth unknown",
 		]);
-		expect(options[4]).not.toHaveAttribute("aria-disabled", "true");
+		expect(options[5]).not.toHaveAttribute("aria-disabled", "true");
 	});
 
 	it("shows scratch identity and saves only scratch-supported settings", async () => {
