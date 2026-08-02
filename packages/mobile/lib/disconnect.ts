@@ -11,11 +11,20 @@ import { unregisterFromPush } from "./push";
 // it must run before the config is cleared — though in practice it reads its own
 // copy, doing it first also means a failure there is queued for retry before we
 // throw the credentials away.
+//
+// The `finally` is the point, not a formality. `unregisterFromPush` catches its
+// *network* failures, so a dead daemon is already handled — but it also does
+// unguarded SecureStore writes (clearRegistration, savePendingUnregisters), and
+// any of those throwing used to abort the disconnect with the host and password
+// still on disk. Disconnecting is the one operation that must not leave
+// credentials behind: whatever happens upstream, the config gets cleared.
 export async function forgetServer(): Promise<void> {
-	// Never throws by contract, so a dead daemon can't block the disconnect.
-	await unregisterFromPush();
-	await clearConfig();
-	// Re-arm onboarding: a user with no server should be offered the pairing flow
-	// again, not dropped on a bare Agents empty state.
-	await clearOnboardingSkipped();
+	try {
+		await unregisterFromPush();
+	} finally {
+		await clearConfig();
+		// Re-arm onboarding: a user with no server should be offered the pairing
+		// flow again, not dropped on a bare Agents empty state.
+		await clearOnboardingSkipped();
+	}
 }
