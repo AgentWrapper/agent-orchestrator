@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { aoBridge } from "../lib/bridge";
 import { pipelinesEnabledQueryKey } from "../hooks/usePipelinesEnabled";
 import { usePipelinesSetting, useSetPipelinesSetting } from "../hooks/usePipelinesSetting";
+import { useUiStore } from "../stores/ui-store";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Label } from "./ui/label";
@@ -13,10 +14,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 // the daemon HTTP API. The flag only takes effect on daemon boot, so saving
 // restarts the daemon, then invalidates usePipelinesEnabled's capability probe
 // so the sidebar picks up the change without a manual app restart.
+//
+// The card is developer-only: it is hidden unless Developer Mode is on. That is
+// a visibility gate ONLY. Developer Mode lives in the renderer's localStorage
+// and a headless daemon has no renderer, so the daemon-side resolution
+// (AO_PIPELINES override, then the persisted `pipelines.enabled` setting) stays
+// the single source of truth for whether engines start.
 export function PipelinesSection() {
 	const queryClient = useQueryClient();
 	const setting = usePipelinesSetting();
 	const save = useSetPipelinesSetting();
+	const developerMode = useUiStore((state) => state.developerMode);
 
 	const [enabled, setEnabled] = useState(false);
 	const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -27,6 +35,13 @@ export function PipelinesSection() {
 	useEffect(() => {
 		if (setting.enabled !== undefined) setEnabled(setting.enabled);
 	}, [setting.enabled]);
+
+	// Turning Developer Mode off never touches the persisted flag: engines keep
+	// running and the routes keep serving. To avoid stranding that choice behind
+	// a hidden toggle, the card stays visible while pipelines are enabled, the
+	// same way UpdatesSection still surfaces a Return action for a persisted
+	// feature pin with Developer Mode off.
+	if (!developerMode && !setting.enabled) return null;
 
 	const handleSave = () => {
 		setSavedAt(null);
@@ -50,6 +65,13 @@ export function PipelinesSection() {
 				<p className="text-xs leading-row text-passive">
 					Experimental. Toggling this restarts the AO daemon to apply the change.
 				</p>
+
+				{!developerMode && (
+					<p className="text-xs leading-row text-passive">
+						Pipelines stay enabled while Developer Mode is off. Disable them here, or turn Developer Mode
+						back on to keep this setting in view.
+					</p>
+				)}
 
 				<div className="flex flex-col gap-1.5">
 					<Label htmlFor="pipelinesEnabled" className="text-xs text-muted-foreground">

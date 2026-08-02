@@ -27,8 +27,9 @@ place the two differ on purpose.
 Pipelines are off by default and experimental. There are two ways to turn them
 on: a persisted setting for normal use, and an env override for dev/CI.
 
-**Settings toggle (recommended).** In the desktop app open Global settings and
-flip **Pipelines** to enabled, then Save. The choice persists in the daemon's
+**Settings toggle (recommended).** In the desktop app open Global settings, turn
+**Developer Mode** on to reveal the **Pipelines** card, flip **Pipelines** to
+enabled, then Save. The choice persists in the daemon's
 own store (a `pipelines.enabled` row in the `app_settings` table under `~/.ao`),
 so it survives restarts and applies no matter who launches the daemon (the
 Electron supervisor or a headless `ao start`). Saving restarts the daemon so the
@@ -54,6 +55,17 @@ When pipelines are off (whichever source resolved it):
 
 The settings endpoint itself (`/api/v1/settings/pipelines`) is never gated by
 the flag, so the toggle is always reachable.
+
+**Developer Mode is a visibility gate, nothing more.** Developer Mode lives in
+the renderer's `localStorage` (`ao.developerMode`) and a headless daemon has no
+renderer, so it never decides whether engines start: `AO_PIPELINES`, then the
+persisted `pipelines.enabled` setting, remain the only sources of truth. Turning
+Developer Mode off with pipelines already enabled therefore changes nothing on
+the daemon: the engines keep running, the routes keep serving, and the sidebar's
+Pipelines entry stays. To avoid stranding that choice behind a hidden toggle,
+the Pipelines card stays visible while pipelines are enabled even with Developer
+Mode off, so it can always be turned back off (the same escape `UpdatesSection`
+keeps for a persisted feature-build pin).
 
 ```bash
 # dev/CI override; forces pipelines on regardless of the persisted setting

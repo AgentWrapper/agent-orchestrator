@@ -163,10 +163,40 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.getByRole("button", { name: "Report a problem" })).toBeInTheDocument();
 	});
 
-	it("renders the Pipelines section inside the settings panel", async () => {
+	it("hides the Pipelines section when Developer Mode is off", async () => {
 		renderForm();
 		await screen.findByText("Updates");
-		expect(screen.getByText("Pipelines")).toBeInTheDocument();
+		expect(screen.queryByText("Pipelines")).not.toBeInTheDocument();
+	});
+
+	it("reveals the Pipelines section when Developer Mode is turned on", async () => {
+		renderForm();
+		await screen.findByText("Updates");
+		await userEvent.click(screen.getByRole("switch", { name: "Developer Mode" }));
+		expect(await screen.findByText("Pipelines")).toBeInTheDocument();
+		expect(screen.getByLabelText("Pipelines (experimental)")).toBeInTheDocument();
+	});
+
+	it("hides the Pipelines section again when Developer Mode is turned back off", async () => {
+		useUiStore.getState().setDeveloperMode(true);
+		renderForm();
+		expect(await screen.findByText("Pipelines")).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("switch", { name: "Developer Mode" }));
+		await waitFor(() => expect(screen.queryByText("Pipelines")).not.toBeInTheDocument());
+	});
+
+	it("keeps the Pipelines section reachable with Developer Mode off once pipelines are enabled", async () => {
+		// The persisted daemon-side flag is on; Developer Mode is off (default).
+		// This is a visibility gate only, so the setting must be untouched and the
+		// card must stay reachable rather than stranding the user without a toggle.
+		getMock.mockResolvedValue({ data: { enabled: true }, error: undefined });
+		renderForm();
+		expect(await screen.findByText("Pipelines")).toBeInTheDocument();
+		expect(
+			screen.getByText(/Pipelines stay enabled while Developer Mode is off\./i),
+		).toBeInTheDocument();
+		expect(putMock).not.toHaveBeenCalled();
+		expect(daemonRestart).not.toHaveBeenCalled();
 	});
 
 	it("closes settings with Escape", async () => {
