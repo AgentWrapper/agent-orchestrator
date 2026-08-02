@@ -1281,6 +1281,7 @@ describe("browser annotation IPC", () => {
 					classes: [],
 					selector: "button",
 					rect: { x: 0, y: 0, width: 80, height: 30 },
+					nearbyText: [],
 					computedStyle: {},
 				},
 			},
@@ -1314,6 +1315,7 @@ describe("browser annotation IPC", () => {
 						classes: [],
 						selector: "button#a",
 						rect: { x: 0, y: 0, width: 80, height: 30 },
+						nearbyText: [],
 						computedStyle: {},
 					},
 					{
@@ -1322,6 +1324,7 @@ describe("browser annotation IPC", () => {
 						classes: [],
 						selector: "button#b",
 						rect: { x: 100, y: 0, width: 80, height: 30 },
+						nearbyText: [],
 						computedStyle: {},
 					},
 				],
@@ -1351,6 +1354,47 @@ describe("browser annotation IPC", () => {
 		send("browser:annotation:submit", 99, {
 			instruction: "Make this button blue.",
 			selection: { kind: "elements", contexts: [] },
+		});
+
+		expect(sent.some((entry) => entry.channel === "browser:annotation:submitted")).toBe(false);
+	});
+
+	it("ignores a single-element selection whose context is missing required fields", async () => {
+		const { invoke, send, sent } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		send("browser:annotation:submit", 99, {
+			instruction: "Make this button blue.",
+			selection: {
+				kind: "element",
+				context: { tag: "button" },
+			},
+		});
+
+		expect(sent.some((entry) => entry.channel === "browser:annotation:submitted")).toBe(false);
+	});
+
+	it("ignores a multi-element selection containing a malformed context entry", async () => {
+		const { invoke, send, sent } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		send("browser:annotation:submit", 99, {
+			instruction: "Align these two.",
+			selection: {
+				kind: "elements",
+				contexts: [
+					{
+						url: "http://localhost/",
+						tag: "button",
+						classes: [],
+						selector: "button",
+						rect: { x: 0, y: 0, width: 1, height: 1 },
+						nearbyText: [],
+						computedStyle: {},
+					},
+					null,
+				],
+			},
 		});
 
 		expect(sent.some((entry) => entry.channel === "browser:annotation:submitted")).toBe(false);

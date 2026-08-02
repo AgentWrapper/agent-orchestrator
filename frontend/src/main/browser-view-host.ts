@@ -11,6 +11,7 @@ import type {
 import { randomUUID } from "node:crypto";
 import type {
 	BrowserAnnotationCancelPayload,
+	BrowserAnnotationContext,
 	BrowserAnnotationModeInput,
 	BrowserAnnotationPageCancelPayload,
 	BrowserAnnotationPageSubmitPayload,
@@ -20,14 +21,48 @@ import type {
 import { attachAppShortcuts } from "./app-shortcuts";
 import type { KeybindingOverrides } from "../shared/shortcuts";
 
+function isValidAnnotationContext(value: unknown): value is BrowserAnnotationContext {
+	if (typeof value !== "object" || value === null) return false;
+	const context = value as {
+		url?: unknown;
+		tag?: unknown;
+		classes?: unknown;
+		selector?: unknown;
+		rect?: unknown;
+		nearbyText?: unknown;
+		computedStyle?: unknown;
+	};
+	if (typeof context.url !== "string") return false;
+	if (typeof context.tag !== "string") return false;
+	if (!Array.isArray(context.classes)) return false;
+	if (typeof context.selector !== "string") return false;
+	if (typeof context.rect !== "object" || context.rect === null) return false;
+	const rect = context.rect as { x?: unknown; y?: unknown; width?: unknown; height?: unknown };
+	if (
+		typeof rect.x !== "number" ||
+		typeof rect.y !== "number" ||
+		typeof rect.width !== "number" ||
+		typeof rect.height !== "number"
+	) {
+		return false;
+	}
+	if (!Array.isArray(context.nearbyText)) return false;
+	if (typeof context.computedStyle !== "object" || context.computedStyle === null) return false;
+	return true;
+}
+
 function isValidAnnotationSelection(value: unknown): value is BrowserAnnotationSelection {
 	if (typeof value !== "object" || value === null) return false;
 	const selection = value as { kind?: unknown; context?: unknown; contexts?: unknown };
 	if (selection.kind === "element") {
-		return typeof selection.context === "object" && selection.context !== null;
+		return isValidAnnotationContext(selection.context);
 	}
 	if (selection.kind === "elements") {
-		return Array.isArray(selection.contexts) && selection.contexts.length > 0;
+		return (
+			Array.isArray(selection.contexts) &&
+			selection.contexts.length > 0 &&
+			selection.contexts.every(isValidAnnotationContext)
+		);
 	}
 	return false;
 }
