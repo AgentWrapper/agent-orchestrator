@@ -2,15 +2,19 @@ import { Feather } from "@expo/vector-icons";
 import { Pressable, StyleSheet, TextInput, View } from "react-native";
 import { useTheme, useThemedStyles, useThemeState } from "../ThemeProvider";
 import type { Theme } from "../theme";
+import type { SendTarget } from "./sendRoute";
 
-// One field, one send button. There is no mode to choose: the screen sends to
-// the agent, and reroutes to the PTY by itself when the daemon reports the
-// session is paused on a permission prompt (see sendRoute.ts).
+// One field, one send button. The normal route sends a message to the agent; the
+// terminal route is an explicit escape hatch for prompts that need a literal
+// character, and the session screen auto-engages it when the daemon reports a
+// blocked permission prompt (see sendRoute.ts).
 export function Composer({
 	value,
 	onChangeText,
 	onSend,
 	sending,
+	target,
+	onTargetChange,
 	keyboardVisible,
 	onDismissKeyboard,
 }: {
@@ -18,6 +22,8 @@ export function Composer({
 	onChangeText: (v: string) => void;
 	onSend: () => void;
 	sending: boolean;
+	target: SendTarget;
+	onTargetChange: (target: SendTarget) => void;
 	keyboardVisible: boolean;
 	onDismissKeyboard: () => void;
 }) {
@@ -33,7 +39,7 @@ export function Composer({
 					style={styles.input}
 					value={value}
 					onChangeText={onChangeText}
-					placeholder="Message the agent…"
+					placeholder={target === "terminal" ? "Send to terminal..." : "Message the agent..."}
 					placeholderTextColor={t.textFaint}
 					multiline
 					keyboardAppearance={scheme}
@@ -41,6 +47,24 @@ export function Composer({
 					// No autoFocus: the bar is always mounted now, so focusing on mount
 					// would pop the keyboard over the terminal every time the screen opens.
 				/>
+				<Pressable
+					accessibilityRole="button"
+					accessibilityLabel={target === "terminal" ? "Send to agent" : "Send to terminal"}
+					accessibilityState={{ selected: target === "terminal" }}
+					onPress={() => onTargetChange(target === "terminal" ? "agent" : "terminal")}
+					hitSlop={6}
+					style={({ pressed }) => [
+						styles.routeToggle,
+						target === "terminal" && styles.routeToggleActive,
+						pressed && { opacity: 0.7 },
+					]}
+				>
+					<Feather
+						name={target === "terminal" ? "terminal" : "message-square"}
+						size={15}
+						color={target === "terminal" ? t.blue : t.textTertiary}
+					/>
+				</Pressable>
 				{/* Only offered while there is a keyboard to dismiss, instead of a
 				    permanent toggle that claimed to hide a keyboard it did not own. */}
 				{keyboardVisible ? (
@@ -105,6 +129,14 @@ const makeStyles = (t: Theme) =>
 		maxHeight: 106,
 	},
 	dismiss: { width: 28, height: CONTROL_SIZE, alignItems: "center", justifyContent: "center" },
+	routeToggle: {
+		width: CONTROL_SIZE,
+		height: CONTROL_SIZE,
+		alignItems: "center",
+		justifyContent: "center",
+		borderRadius: 8,
+	},
+	routeToggleActive: { backgroundColor: t.tintBlue },
 	// Rounded square rather than a circle, so it matches the radius of the field
 	// beside it instead of being the only circle in the dock.
 	send: {

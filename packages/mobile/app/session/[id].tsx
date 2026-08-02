@@ -13,7 +13,14 @@ import { MuxClient, type MuxStatus } from "../../lib/mux";
 import { Composer } from "../../lib/session/Composer";
 import { dockInset } from "../../lib/session/keyboardInset";
 import { KeyRow } from "../../lib/session/KeyRow";
-import { REROUTED_NOTICE, shouldRetryOnTerminal, terminalPayload } from "../../lib/session/sendRoute";
+import {
+	REROUTED_NOTICE,
+	routeForSend,
+	terminalPayload,
+	TERMINAL_MODE_NOTICE,
+	TERMINAL_UNAVAILABLE_NOTICE,
+	type SendTarget,
+} from "../../lib/session/sendRoute";
 import { useApp } from "../../lib/store";
 import { useTheme, useThemedStyles, useThemeState } from "../../lib/ThemeProvider";
 
@@ -535,6 +542,7 @@ export default function TerminalScreen() {
 	const [kbVisible, setKbVisible] = useState(false); // both platforms
 	const [msg, setMsg] = useState("");
 	const [sending, setSending] = useState(false);
+	const [sendTarget, setSendTarget] = useState<SendTarget>("agent");
 	// Terminal font size. Smaller font = more rows/cols, which is the only way to
 	// see more of a full-screen TUI (alt-screen apps have no scrollback). Changing
 	// it remounts the xterm; the PTY persists and re-attaches at the denser grid.
@@ -781,8 +789,8 @@ export default function TerminalScreen() {
 		[id, projectId],
 	);
 
-	// Send the composed text to the agent, rerouting to the PTY by itself when
-	// that is the only channel that can accept it.
+	// Send the composed text to the selected route. The agent route can still
+	// auto-engage the terminal route when the daemon reports a blocked prompt.
 	//
 	// AO's /send is the right route for a message: the daemon hands it to the
 	// harness and submits it. But it sanitises control characters and refuses
@@ -799,6 +807,18 @@ export default function TerminalScreen() {
 	const sendPrompt = useCallback(async () => {
 		const text = msg.trim();
 		if (!text) return;
+		if (routeForSend(sendTarget) === "terminal") {
+			if (muxRef.current && status === "open") {
+				muxRef.current.sendInput(id, terminalPayload(text), projectId);
+				haptics.success();
+				setMsg("");
+				setBanner(TERMINAL_MODE_NOTICE);
+			} else {
+				haptics.error();
+				setBanner(TERMINAL_UNAVAILABLE_NOTICE);
+			}
+			return;
+		}
 		setSending(true);
 		try {
 			const config = cfg ?? (await loadConfig());
@@ -809,10 +829,11 @@ export default function TerminalScreen() {
 			const failure = e instanceof ApiError ? e : null;
 			// Only reroute onto a mux we actually hold open — otherwise the write is
 			// a no-op and we would clear the field having sent nothing.
-			if (shouldRetryOnTerminal(failure) && muxRef.current && status === "open") {
+			if (routeForSend(sendTarget, failure) === "terminal" && muxRef.current && status === "open") {
 				muxRef.current.sendInput(id, terminalPayload(text), projectId);
 				haptics.success();
 				setMsg("");
+				setSendTarget("terminal");
 				setBanner(REROUTED_NOTICE);
 			} else {
 				haptics.error();
@@ -821,7 +842,7 @@ export default function TerminalScreen() {
 		} finally {
 			setSending(false);
 		}
-	}, [msg, cfg, id, projectId, status]);
+	}, [msg, sendTarget, cfg, id, projectId, status]);
 
 	// Toggle the in-app browser. The poll above keeps `preview` current, so a tap
 	// just shows/hides the overlay. A bare README (the detector's markdown fallback)
@@ -1110,6 +1131,8 @@ export default function TerminalScreen() {
 					onChangeText={setMsg}
 					onSend={sendPrompt}
 					sending={sending}
+					target={sendTarget}
+					onTargetChange={setSendTarget}
 					keyboardVisible={kbVisible}
 					onDismissKeyboard={Keyboard.dismiss}
 				/>

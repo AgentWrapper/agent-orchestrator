@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AWAITING_DECISION, shouldRetryOnTerminal, terminalPayload } from "./sendRoute";
+import { AWAITING_DECISION, routeForSend, shouldRetryOnTerminal, terminalPayload } from "./sendRoute";
 
 describe("shouldRetryOnTerminal", () => {
 	it("retries when the daemon says the session is paused on a decision", () => {
@@ -33,6 +33,26 @@ describe("shouldRetryOnTerminal", () => {
 	// contract and would break this silently if it were ever reworded.
 	it("ignores a matching message when the code is absent", () => {
 		expect(shouldRetryOnTerminal({ status: 409, code: undefined })).toBe(false);
+	});
+});
+
+describe("routeForSend", () => {
+	it("sends to the agent by default", () => {
+		expect(routeForSend("agent")).toBe("agent");
+	});
+
+	it("honours the explicit terminal target", () => {
+		expect(routeForSend("terminal")).toBe("terminal");
+		expect(routeForSend("terminal", { status: 500, code: "INTERNAL" })).toBe("terminal");
+	});
+
+	it("auto-engages the terminal route for a blocked prompt", () => {
+		expect(routeForSend("agent", { status: 409, code: AWAITING_DECISION })).toBe("terminal");
+	});
+
+	it("keeps ordinary failures on the agent route", () => {
+		expect(routeForSend("agent", { status: 401 })).toBe("agent");
+		expect(routeForSend("agent", { status: 409, code: "SESSION_TERMINATED" })).toBe("agent");
 	});
 });
 

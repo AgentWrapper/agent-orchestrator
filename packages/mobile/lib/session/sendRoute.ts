@@ -25,9 +25,15 @@ export const AWAITING_DECISION = "SESSION_AWAITING_DECISION";
 
 /** Shape of the mobile ApiError, kept structural so this module stays pure. */
 export type SendFailure = { status?: number; code?: string } | null | undefined;
+export type SendTarget = "agent" | "terminal";
 
 export function shouldRetryOnTerminal(err: SendFailure): boolean {
 	return err?.code === AWAITING_DECISION;
+}
+
+export function routeForSend(target: SendTarget, err?: SendFailure): SendTarget {
+	if (target === "terminal") return "terminal";
+	return shouldRetryOnTerminal(err) ? "terminal" : "agent";
 }
 
 /**
@@ -49,3 +55,5 @@ export function terminalPayload(text: string): string {
 
 /** Shown once after an automatic reroute, so the switch is never silent. */
 export const REROUTED_NOTICE = "Agent was paused on a prompt — sent straight to the terminal.";
+export const TERMINAL_MODE_NOTICE = "Sending composer text straight to the terminal.";
+export const TERMINAL_UNAVAILABLE_NOTICE = "Terminal is not connected yet — text was not sent.";
