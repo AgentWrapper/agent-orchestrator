@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -425,6 +427,7 @@ func TestModelsRejectsUnknownProjectScope(t *testing.T) {
 }
 
 func TestModelsUsesTextFallbackWhenDiscoveryCannotRun(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	svc := NewWithAgents([]agentregistry.HarnessAgent{
 		harnessAgent("opencode", "OpenCode", ports.ErrAgentBinaryNotFound),
 	})
@@ -437,6 +440,40 @@ func TestModelsUsesTextFallbackWhenDiscoveryCannotRun(t *testing.T) {
 	}
 	if !got.Stale || got.Warning == "" {
 		t.Fatalf("catalog = %#v, want discovery warning on manual fallback", got)
+	}
+}
+
+func TestModelsReturnsAndCachesPartialConfigCatalogWhenCLIIsUnavailable(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	configDir := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "opencode.json"), []byte(`{
+		"model":"zai/glm-5",
+		"provider":{"zai":{"models":{"glm-5":{"name":"GLM 5"}}}}
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cache := &fakeModelCache{}
+	svc := newService([]agentregistry.HarnessAgent{
+		harnessAgent("opencode", "OpenCode", ports.ErrAgentBinaryNotFound),
+	}, cache, nil)
+	got, err := svc.Models(context.Background(), "opencode", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SelectionMode != ports.ModelSelectionCatalog || len(got.Models) != 1 || got.Models[0].ID != "zai/glm-5" {
+		t.Fatalf("catalog = %#v", got)
+	}
+	if !got.Stale || got.Warning == "" || got.Source != "config" {
+		t.Fatalf("catalog = %#v, want partial config catalog with warning", got)
+	}
+	if cache.puts != 1 {
+		t.Fatalf("cache puts = %d, want 1", cache.puts)
 	}
 }
 

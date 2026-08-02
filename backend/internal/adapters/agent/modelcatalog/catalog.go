@@ -1,5 +1,5 @@
 // Package modelcatalog normalizes the heterogeneous model-list surfaces
-// exposed by supported agent CLIs.
+// exposed by supported agent CLIs and declarative configuration files.
 package modelcatalog
 
 import (
@@ -68,7 +68,7 @@ func Base(agentID string) ports.AgentModelCatalog {
 		c.SelectionMode = ports.ModelSelectionModeList
 		return c
 	default:
-		if _, ok := commandSpecs[agentID]; ok {
+		if hasDiscoverySource(agentID) {
 			return ports.AgentModelCatalog{
 				AgentID:       agentID,
 				SelectionMode: ports.ModelSelectionCatalog,
@@ -99,31 +99,66 @@ func Manual(agentID string) ports.AgentModelCatalog {
 // agent exposes one. Static catalogs are returned without executing the binary.
 func Discover(ctx context.Context, agentID, binary, workingDir string) (ports.AgentModelCatalog, error) {
 	base := Base(agentID)
+	configured, configErr := ConfigModels(agentID, workingDir)
 	spec, ok := commandSpecs[agentID]
 	if !ok {
+		if len(configured) > 0 {
+			base.Models = normalize(configured)
+			base.Source = "config"
+			base.FetchedAt = time.Now().UTC()
+			return base, configErr
+		}
+		if _, configBacked := configSpecs[agentID]; configBacked {
+			if configErr != nil {
+				return base, configErr
+			}
+			return base, fmt.Errorf("%s configuration contains no models", agentID)
+		}
 		return base, nil
 	}
 	if strings.TrimSpace(binary) == "" {
-		return base, errors.New("agent binary is not installed")
+		if len(configured) > 0 {
+			base.Models = normalize(configured)
+			base.Source = "config"
+			base.FetchedAt = time.Now().UTC()
+			return base, errors.Join(errors.New("agent binary is not installed"), configErr)
+		}
+		return base, errors.Join(errors.New("agent binary is not installed"), configErr)
 	}
 	runCtx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
 	cmd := modelCommand(runCtx, binary, spec.args, workingDir)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return base, fmt.Errorf("%s model discovery: %w", agentID, err)
+		if len(configured) > 0 {
+			base.Models = normalize(configured)
+			base.Source = "config"
+			base.FetchedAt = time.Now().UTC()
+		}
+		return base, errors.Join(fmt.Errorf("%s model discovery: %w", agentID, err), configErr)
 	}
 	models, err := spec.parser(output)
 	if err != nil {
 		return base, fmt.Errorf("%s model discovery: %w", agentID, err)
 	}
+	models = normalize(append(models, configured...))
 	if len(models) == 0 {
-		return base, fmt.Errorf("%s model discovery returned no models", agentID)
+		return base, errors.Join(fmt.Errorf("%s model discovery returned no models", agentID), configErr)
 	}
 	base.Models = models
-	base.Source = "cli"
+	if len(configured) > 0 {
+		base.Source = "cli+config"
+	} else {
+		base.Source = "cli"
+	}
 	base.FetchedAt = time.Now().UTC()
-	return base, nil
+	return base, configErr
+}
+
+func hasDiscoverySource(agentID string) bool {
+	_, hasCommand := commandSpecs[agentID]
+	_, hasConfig := configSpecs[agentID]
+	return hasCommand || hasConfig
 }
 
 func modelCommand(ctx context.Context, binary string, args []string, workingDir string) *exec.Cmd {
@@ -347,8 +382,13 @@ func normalize(models []ports.AgentModelInfo) []ports.AgentModelInfo {
 		}
 		if previous, ok := byID[item.ID]; ok {
 			if previous.Label == previous.ID && item.Label != item.ID {
-				byID[item.ID] = item
+				previous.Label = item.Label
 			}
+			if previous.Provider == "" {
+				previous.Provider = item.Provider
+			}
+			previous.IsDefault = previous.IsDefault || item.IsDefault
+			byID[item.ID] = previous
 			continue
 		}
 		byID[item.ID] = item

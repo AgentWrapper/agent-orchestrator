@@ -224,6 +224,9 @@ func (s *Service) Models(ctx context.Context, agentID, projectID string, refresh
 		}
 	}
 	version := modelcatalog.BinaryVersion(ctx, binary)
+	if configVersion := modelcatalog.ConfigVersion(agentID, workingDir); configVersion != "" {
+		version += ";config=" + configVersion
+	}
 
 	cached, hasCached, err := s.cachedCatalog(ctx, agentID, projectID)
 	if err != nil {
@@ -236,6 +239,14 @@ func (s *Service) Models(ctx context.Context, agentID, projectID string, refresh
 	discovered, discoverErr := modelcatalog.Discover(ctx, agentID, binary, workingDir)
 	discovered.BinaryVersion = version
 	if discoverErr != nil {
+		if len(discovered.Models) > 0 {
+			discovered.Stale = true
+			discovered.Warning = discoverErr.Error()
+			if err := s.saveCatalog(ctx, projectID, discovered); err != nil {
+				return ports.AgentModelCatalog{}, err
+			}
+			return discovered, nil
+		}
 		if hasCached {
 			cached.Catalog.Stale = true
 			cached.Catalog.Warning = discoverErr.Error()
