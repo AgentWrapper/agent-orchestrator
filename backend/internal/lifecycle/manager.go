@@ -723,5 +723,13 @@ func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
 	base.RuntimeLaunchID = in.RuntimeLaunchID
 	set(&base.AgentSessionID, in.AgentSessionID)
 	set(&base.Prompt, in.Prompt)
+	// The chat controller's resume handle. Without this a restart has no thread to
+	// resume and the conversation is stranded — the provider still holds it, but
+	// AO no longer knows its id.
+	set(&base.ProviderConversationID, in.ProviderConversationID)
+	// Assigned rather than set: a relaunch rotates the generation, and the whole
+	// point is that the new value replaces the old one so events from the
+	// controller this one superseded can be told apart.
+	base.ControllerGeneration = in.ControllerGeneration
 	return base
 }

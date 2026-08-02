@@ -2195,3 +2195,49 @@ func TestRuntimeObservation_WorkloadDeathAloneDoesNotReap(t *testing.T) {
 		t.Fatalf("expected no reap call for a non-terminal transition, got %v", cr.sessions)
 	}
 }
+
+// mergeMetadata is an explicit allowlist, so a field added to SessionMetadata
+// without a line here is silently dropped on every spawn and restore. That
+// happened to the chat resume handle: the provider still held the conversation,
+// but AO forgot its id, so no restart could ever resume it — and nothing failed
+// loudly, the column was just empty.
+func TestMarkSpawnedPersistsChatControllerFacts(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Mode: domain.SessionModeChat}
+	m := New(st, nil)
+
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{
+		WorkspacePath:          "/ws",
+		ProviderConversationID: "thread-abc",
+		ControllerGeneration:   "gen-1",
+	}); err != nil {
+		t.Fatalf("MarkSpawned: %v", err)
+	}
+
+	got, _, err := st.GetSession(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if got.Metadata.ProviderConversationID != "thread-abc" {
+		t.Fatalf("provider conversation id = %q; without it a restart cannot resume",
+			got.Metadata.ProviderConversationID)
+	}
+	if got.Metadata.ControllerGeneration != "gen-1" {
+		t.Fatalf("controller generation = %q", got.Metadata.ControllerGeneration)
+	}
+
+	// A relaunch rotates the generation: the new value must replace the old, or
+	// events from the superseded controller could not be told apart.
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{
+		WorkspacePath:          "/ws",
+		ProviderConversationID: "thread-abc",
+		ControllerGeneration:   "gen-2",
+	}); err != nil {
+		t.Fatalf("second MarkSpawned: %v", err)
+	}
+	got, _, _ = st.GetSession(ctx, "mer-1")
+	if got.Metadata.ControllerGeneration != "gen-2" {
+		t.Fatalf("generation = %q after relaunch, want it rotated to gen-2", got.Metadata.ControllerGeneration)
+	}
+}
