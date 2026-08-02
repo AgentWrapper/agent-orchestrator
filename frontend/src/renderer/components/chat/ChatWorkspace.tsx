@@ -12,7 +12,7 @@
  * has scrolled away from.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	Archive,
 	ArrowDown,
@@ -24,6 +24,7 @@ import {
 	Undo2,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { sameContent, useStableList } from "../../lib/stable-list";
 import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ConfirmDialog";
 import {
@@ -478,6 +479,14 @@ function ControllerBanner({
  * Auto-scroll only follows new items while the user is already near the bottom.
  * Once they scroll up to read, new output must not yank them away — it surfaces a
  * jump control instead.
+ *
+ * Everything below the scroller is memoized per turn, and the reason is the poll
+ * loop rather than the item count: `useConversation` rebuilds the snapshot from
+ * JSON every second while a turn runs, so an idle conversation re-renders on a
+ * timer. Measured on a 1,400-item history that cost 60ms of main-thread work per
+ * poll — four dropped frames a second for a conversation nobody was touching.
+ * Scrolling the same history never exceeded a 16.7ms frame, which is why this is
+ * memoization and not virtualization: the DOM was never the problem.
  */
 function Timeline({
 	snapshot,
@@ -495,11 +504,13 @@ function Timeline({
 	const scroller = useRef<HTMLDivElement>(null);
 	const [pinned, setPinned] = useState(true);
 	const queued = useMemo(() => queuedTurnIds(snapshot), [snapshot]);
+	const decide = useStableCallback(onDecide);
+	const rollback = useStableCallback(onRollback);
 
-	const groups = useMemo(
-		() => groupByTurn({ ...snapshot, items: readableItems(snapshot, showReasoning) }),
-		[snapshot, showReasoning],
-	);
+	const readable = useMemo(() => readableItems(snapshot, showReasoning), [snapshot, showReasoning]);
+	const items = useStableList(readable, itemKey, sameContent);
+	const grouped = useMemo(() => groupByTurn({ ...snapshot, items }), [snapshot, items]);
+	const groups = useStableList(grouped, groupKey, sameGroup);
 
 	useEffect(() => {
 		if (!pinned) return;
@@ -514,7 +525,7 @@ function Timeline({
 		setPinned(distance < 64);
 	}
 
-	if (readableItems(snapshot, showReasoning).length === 0) {
+	if (items.length === 0) {
 		return <EmptyState harness={snapshot.harness} />;
 	}
 
@@ -530,44 +541,18 @@ function Timeline({
 			>
 				<div className="mx-auto flex max-w-3xl flex-col gap-5">
 					{groups.map((group) => (
-						<div key={group.key} className="flex flex-col gap-3">
-							{runsOf(group.items).map((run) =>
-								run.kind === "activities" ? (
-									<ActivityRun
-										key={run.key}
-										activities={run.items.filter(
-											(item): item is ConversationActivity => item.kind === "activity",
-										)}
-									/>
-								) : (
-									<TimelineItem
-										key={run.key}
-										item={run.items[0]!}
-										onDecide={onDecide}
-										busy={busy}
-										queuedTurns={queued}
-									/>
-								),
-							)}
-							{/* Above the outcome divider: the changed files are part of what the
-							    turn did, and belong inside it rather than after it closes. */}
-							{group.diff ? <TurnChangedFiles diff={group.diff} live={group.live} /> : null}
-							{group.outcome ? (
-								<TurnOutcome
-									state={group.outcome.state}
-									durationMs={group.outcome.durationMs}
-									error={group.outcome.error}
-									// Only a turn the provider actually accepted can be undone: a turn
-									// it never saw holds no history to discard, and the daemon refuses
-									// it rather than hiding rows the agent still remembers.
-									onRollback={
-										onRollback && group.turnId && group.rollbackable
-											? () => onRollback(group.turnId as string)
-											: undefined
-									}
-								/>
-							) : null}
-						</div>
+						<TurnGroup
+							key={group.key}
+							group={group}
+							onDecide={decide}
+							onRollback={rollback}
+							// Only a turn the provider actually accepted can be undone: a turn it
+							// never saw holds no history to discard, and the daemon refuses it
+							// rather than hiding rows the agent still remembers.
+							canRollback={Boolean(onRollback && group.turnId && group.rollbackable)}
+							busy={busy}
+							queued={Boolean(group.turnId && queued.has(group.turnId))}
+						/>
 					))}
 				</div>
 			</div>
@@ -588,21 +573,81 @@ function Timeline({
 	);
 }
 
+/**
+ * One turn, and the memo boundary that keeps a poll from re-rendering the whole
+ * conversation. A turn is the right granularity because it is what changes: while
+ * the agent works, one group grows and every other group is finished history.
+ */
+const TurnGroup = memo(function TurnGroup({
+	group,
+	onDecide,
+	onRollback,
+	canRollback,
+	busy,
+	queued,
+}: {
+	group: TimelineGroup;
+	onDecide: (requestId: string, decisionId: string) => void;
+	onRollback: (turnId: string) => void;
+	/** The daemon would accept a rollback of this turn, so offer the affordance. */
+	canRollback: boolean;
+	busy?: boolean;
+	/** This turn was recorded but not sent, so its message can say so. */
+	queued: boolean;
+}) {
+	const runs = useMemo(() => runsOf(group.items), [group.items]);
+	return (
+		<div className="flex flex-col gap-3">
+			{runs.map((run) =>
+				run.kind === "activities" ? (
+					<ActivityRun
+						key={run.key}
+						activities={run.items.filter(
+							(item): item is ConversationActivity => item.kind === "activity",
+						)}
+					/>
+				) : (
+					<TimelineItem
+						key={run.key}
+						item={run.items[0]!}
+						onDecide={onDecide}
+						busy={busy}
+						queued={queued}
+					/>
+				),
+			)}
+			{/* Above the outcome divider: the changed files are part of what the turn
+			    did, and belong inside it rather than after it closes. */}
+			{group.diff ? <TurnChangedFiles diff={group.diff} live={group.live} /> : null}
+			{group.outcome ? (
+				<TurnOutcome
+					state={group.outcome.state}
+					durationMs={group.outcome.durationMs}
+					error={group.outcome.error}
+					onRollback={canRollback ? () => onRollback(group.turnId as string) : undefined}
+				/>
+			) : null}
+		</div>
+	);
+});
+
 function TimelineItem({
 	item,
 	onDecide,
 	busy,
-	queuedTurns,
+	queued,
 }: {
 	item: ConversationItem;
 	onDecide?: (requestId: string, decisionId: string) => void;
 	busy?: boolean;
-	/** Turns recorded but not yet sent, so a waiting message can say so. */
-	queuedTurns?: Set<string>;
+	/**
+	 * The enclosing turn was recorded but not yet sent, so a waiting message can say
+	 * so. A group is one turn, so this holds for every item in it.
+	 */
+	queued?: boolean;
 }) {
 	if (item.kind === "message") {
 		if (item.role === "assistant") return <AssistantMessage message={item} />;
-		const queued = Boolean(item.turnId && queuedTurns?.has(item.turnId));
 		// A user-role message that did not come from this human is an automation or
 		// worker relay, and is attributed differently.
 		if (item.origin === "human") return <HumanMessage message={item} queued={queued} />;
@@ -615,6 +660,44 @@ function TimelineItem({
 		return <CompactionMarker activity={item} />;
 	}
 	return <ActivityRow activity={item} />;
+}
+
+/* -------------------------------------------------------------------------- */
+/* identity                                                                    */
+/* -------------------------------------------------------------------------- */
+
+const itemKey = (item: ConversationItem): string => item.id;
+const groupKey = (group: TimelineGroup): string => group.key;
+
+function sameGroup(a: TimelineGroup, b: TimelineGroup): boolean {
+	return (
+		a.anchor === b.anchor &&
+		a.turnId === b.turnId &&
+		sameContent(a.outcome, b.outcome) &&
+		a.items.length === b.items.length &&
+		// The items are already identity-stable by the time a group is compared, so a
+		// reference check here is exact and avoids walking their contents twice.
+		a.items.every((item, index) => item === b.items[index])
+	);
+}
+
+/**
+ * A callback whose identity survives its caller re-rendering.
+ *
+ * `useConversationCommands` returns fresh arrows every render and the preview
+ * harness passes literals, so without this every memo boundary below would be
+ * invalidated by the one prop that never meaningfully changes.
+ */
+function useStableCallback<Args extends unknown[]>(
+	fn: ((...args: Args) => void) | undefined,
+): (...args: Args) => void {
+	const latest = useRef(fn);
+	useEffect(() => {
+		latest.current = fn;
+	});
+	// Only ever called from an event handler, which runs after the commit that
+	// updated the ref — there is no render-phase caller to read a stale closure.
+	return useCallback((...args: Args) => latest.current?.(...args), []);
 }
 
 type TimelineGroup = {

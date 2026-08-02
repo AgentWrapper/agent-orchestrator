@@ -14,7 +14,11 @@
  *    provider does start commands it then supersedes.
  */
 
-import type { ConversationSnapshot } from "../types/conversation";
+import type {
+	ConversationItem,
+	ConversationSnapshot,
+	ConversationTurn,
+} from "../types/conversation";
 
 /**
  * Timestamps are relative to load so the live turn's elapsed counter reads
@@ -143,7 +147,36 @@ export const chatFixture: ConversationSnapshot = {
 			text:
 				"Two files are modified against the base commit. `manager.go` carries the spawn split, " +
 				"and `chat.go` adds the driver port. Nothing is staged yet, so the worktree is safe to reset " +
-				"if you want to start over.",
+				"if you want to start over.\n\n" +
+				"```go\n" +
+				"// Spawn hands the worker its own worktree before the agent starts.\n" +
+				"func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (*Session, error) {\n" +
+				'\tif req.Project == "" {\n' +
+				'\t\treturn nil, fmt.Errorf("spawn: %w", ErrProjectRequired)\n' +
+				"\t}\n" +
+				"\ttree, err := m.worktrees.Create(ctx, req.Project, req.Branch)\n" +
+				"\tif err != nil {\n" +
+				"\t\treturn nil, err\n" +
+				"\t}\n" +
+				"\treturn m.start(ctx, tree, req.Kind == KindOrchestrator)\n" +
+				"}\n" +
+				"```\n\n" +
+				"The port itself is small:\n\n" +
+				"```ts\n" +
+				"export interface ChatDriver {\n" +
+				"\tsend(text: string, settings?: TurnSettings): Promise<TurnId>;\n" +
+				"\tresolve(requestId: string, decisionId: string): Promise<void>;\n" +
+				"\tinterrupt(): Promise<void>;\n" +
+				"}\n" +
+				"```\n\n" +
+				"One line you will want to wrap rather than scroll:\n\n" +
+				"```sh\n" +
+				"AO_DATA_DIR=~/.ao go test ./internal/... -run 'TestConversation|TestSpawn' -count=1 -race -timeout 300s -coverprofile=/tmp/ao-cover.out && go tool cover -func=/tmp/ao-cover.out | tail -1\n" +
+				"```\n\n" +
+				"A fence with no language is still a block, not inline code:\n\n" +
+				"```\n" +
+				"ok  \tgithub.com/aoagents/ao/internal/domain\t0.412s\n" +
+				"```",
 			streaming: false,
 			createdAt: t(32, 30),
 		},
@@ -292,6 +325,135 @@ export const chatFixtureSettled: ConversationSnapshot = {
 			: turn,
 	),
 };
+
+/**
+ * A long conversation, for the case the fixtures above cannot show: an
+ * orchestrator session that has been running for hours.
+ *
+ * Generated rather than transcribed because the point is the shape and the count,
+ * not the content — a real capture of this length would be thousands of lines of
+ * fixture nobody reads. The proportions are taken from real sessions: a few tool
+ * calls per turn, prose at the end of most of them, code in about one in three.
+ */
+export function chatFixtureLongHistory(turns: number): ConversationSnapshot {
+	const items: ConversationItem[] = [];
+	const conversationTurns: ConversationTurn[] = [];
+	let sequence = 0;
+
+	for (let index = 0; index < turns; index += 1) {
+		const turnId = `turn-h${index}`;
+		const minute = index * 3;
+		conversationTurns.push({
+			id: turnId,
+			state: "completed",
+			requestedAt: t(minute),
+			startedAt: t(minute, 1),
+			completedAt: t(minute, 40 + (index % 20)),
+		});
+
+		items.push({
+			kind: "message",
+			id: `hm-${index}`,
+			turnId,
+			sequence: (sequence += 1),
+			revision: 0,
+			role: "user",
+			origin: "human",
+			text: `${QUESTIONS[index % QUESTIONS.length]} (round ${index + 1})`,
+			streaming: false,
+			delivery: "accepted",
+			createdAt: t(minute),
+		});
+
+		for (let call = 0; call < 3 + (index % 3); call += 1) {
+			items.push({
+				kind: "activity",
+				id: `ha-${index}-${call}`,
+				turnId,
+				sequence: (sequence += 1),
+				revision: 0,
+				activityKind: "command",
+				status: "completed",
+				summary: COMMANDS[(index + call) % COMMANDS.length]!,
+				detail: {
+					command: COMMANDS[(index + call) % COMMANDS.length]!,
+					output: `line one\nline two\nline three\n`,
+					exitCode: 0,
+					durationMs: 12 + call * 7,
+				},
+				createdAt: t(minute, 5 + call * 3),
+			});
+		}
+
+		items.push({
+			kind: "activity",
+			id: `hf-${index}`,
+			turnId,
+			sequence: (sequence += 1),
+			revision: 0,
+			activityKind: "file_change",
+			status: "completed",
+			summary: "Edited 1 file",
+			detail: {
+				files: [
+					{
+						path: `backend/internal/${SUBJECTS[index % SUBJECTS.length]}/handler.go`,
+						additions: 12 + index,
+						deletions: index % 7,
+					},
+				],
+			},
+			createdAt: t(minute, 25),
+		});
+
+		items.push({
+			kind: "message",
+			id: `hr-${index}`,
+			turnId,
+			sequence: (sequence += 1),
+			revision: 2,
+			role: "assistant",
+			origin: "provider",
+			text:
+				`Done. ${SUBJECTS[index % SUBJECTS.length]} now returns the durable snapshot instead of ` +
+				`re-deriving it, and the handler is thinner by ${8 + index} lines.` +
+				(index % 3 === 0
+					? `\n\n\`\`\`go\nfunc (h *Handler) snapshot(ctx context.Context, id string) (*Conversation, error) {\n\treturn h.store.Snapshot(ctx, id)\n}\n\`\`\``
+					: ""),
+			streaming: false,
+			createdAt: t(minute, 38),
+		});
+	}
+
+	return {
+		conversationId: "conv-ao-long",
+		sessionId: "ao-long",
+		harness: "codex",
+		mode: "chat",
+		controller: { state: "ready" },
+		latestSequence: sequence,
+		settings: { model: "gpt-5.6-terra", reasoningEffort: "medium" },
+		turns: conversationTurns,
+		items,
+	};
+}
+
+const QUESTIONS = [
+	"Wire the snapshot endpoint into the handler",
+	"Why is the conversation store re-deriving turn state?",
+	"Move the approval fan-out behind the port",
+	"Check the migration applies on an existing database",
+];
+
+const COMMANDS = [
+	"rg -n 'Snapshot' backend/internal",
+	"go build ./...",
+	"git diff --stat",
+	"sed -n '1,80p' backend/internal/domain/conversation.go",
+	"go test ./internal/conversation/...",
+];
+
+const SUBJECTS = ["conversation", "session_manager", "httpd", "ports"];
 
 /** A third: an empty conversation, the first thing a new session shows. */
 export const chatFixtureEmpty: ConversationSnapshot = {

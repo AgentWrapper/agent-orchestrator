@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { ChatMarkdown } from "./ChatMarkdown";
 
@@ -82,5 +83,78 @@ describe("ChatMarkdown", () => {
 		render(<ChatMarkdown text={"```ts\nconst x = 1;"} />);
 		expect(screen.getByText("const x = 1;")).toBeInTheDocument();
 		expect(document.body.textContent).not.toContain("```");
+	});
+
+	it("renders a fence with no language as a block, not as inline code", () => {
+		// Matching on the `language-*` class alone used to send these down the inline
+		// path, where a whole `go test` transcript rendered as one accent-coloured run.
+		render(<ChatMarkdown text={"```\nok\tgithub.com/aoagents/ao\t0.4s\n```"} />);
+		const code = screen.getByText(/aoagents/);
+		expect(code.closest("pre")).not.toBeNull();
+		expect(screen.getByRole("button", { name: /copy code/i })).toBeInTheDocument();
+	});
+});
+
+/* -------------------------------------------------------------------------- */
+
+describe("ChatMarkdown code highlighting", () => {
+	const block = (language: string, code: string) => `\`\`\`${language}\n${code}\n\`\`\``;
+
+	/** The tokens land as `hljs-*` classes; `code-theme.css` colours them. */
+	function tokens(): Element[] {
+		return [...document.querySelectorAll("pre [class*='hljs-']")];
+	}
+
+	it("highlights a known language, leaving the code itself untouched", async () => {
+		render(<ChatMarkdown text={block("go", "func main() {}")} />);
+		await waitFor(() => expect(tokens().length).toBeGreaterThan(0));
+		expect(document.querySelector("pre")?.textContent).toBe("func main() {}");
+	});
+
+	it("leaves an unknown language as plain monospace rather than guessing", async () => {
+		render(<ChatMarkdown text={block("brainfuck", "++++[>++++<-]")} />);
+		// Nothing to wait for — there is no grammar to load — so a flush is enough to
+		// prove no upgrade is coming.
+		await waitFor(() => expect(screen.getByText("++++[>++++<-]")).toBeInTheDocument());
+		expect(tokens()).toHaveLength(0);
+		expect(screen.getByText("brainfuck")).toBeInTheDocument();
+	});
+
+	it("does not tokenize a fence that is still streaming, and does once it settles", async () => {
+		const code = "type Session struct {\n\tID string\n}";
+		const { rerender } = render(<ChatMarkdown text={block("go", code)} streaming />);
+		expect(tokens()).toHaveLength(0);
+		expect(document.querySelector("pre")?.textContent).toBe(code);
+
+		rerender(<ChatMarkdown text={block("go", code)} />);
+		await waitFor(() => expect(tokens().length).toBeGreaterThan(0));
+		expect(document.querySelector("pre")?.textContent).toBe(code);
+	});
+
+	it("shows a settled block highlighted on its first render, from cache", async () => {
+		const code = "SELECT 1 FROM turns;";
+		const first = render(<ChatMarkdown text={block("sql", code)} />);
+		await waitFor(() => expect(tokens().length).toBeGreaterThan(0));
+		first.unmount();
+
+		// A remount is what scrolling does. Without the cache this would flash plain
+		// again; with it the very first commit is already highlighted.
+		render(<ChatMarkdown text={block("sql", code)} />);
+		expect(tokens().length).toBeGreaterThan(0);
+	});
+
+	it("toggles wrapping for long lines without re-tokenizing", async () => {
+		const user = userEvent.setup();
+		render(<ChatMarkdown text={block("sh", "echo one && echo two && echo three")} />);
+		const wrap = screen.getByRole("button", { name: /wrap long lines/i });
+		const wrapper = document.querySelector(".chat-code");
+
+		expect(wrapper).toHaveAttribute("data-wrap", "false");
+		await user.click(wrap);
+		expect(wrapper).toHaveAttribute("data-wrap", "true");
+		expect(wrap).toHaveAttribute("aria-pressed", "true");
+
+		await user.click(wrap);
+		expect(wrapper).toHaveAttribute("data-wrap", "false");
 	});
 });
