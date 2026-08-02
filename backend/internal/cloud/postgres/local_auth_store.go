@@ -69,10 +69,12 @@ func (s *Store) LocalUserByEmail(ctx context.Context, email string) (clouddomain
 	return user, nil
 }
 
+// UpdateUserProfileInput contains editable profile fields.
 type UpdateUserProfileInput struct {
 	DisplayName string
 }
 
+// UpdateUserProfile updates the shared AO user and local-auth profile.
 func (s *Store) UpdateUserProfile(
 	ctx context.Context,
 	userID string,

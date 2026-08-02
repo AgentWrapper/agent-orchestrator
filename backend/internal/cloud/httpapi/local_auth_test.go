@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -128,27 +127,4 @@ func TestLocalAuthRoutesIssueAndRevokeBearerToken(t *testing.T) {
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("revoked token status = %d, want %d", response.Code, http.StatusUnauthorized)
 	}
-}
-
-func integrationAuthenticator() *cloudauth.LocalAuthenticator {
-	store := &localAuthStore{
-		users: map[string]clouddomain.LocalUser{
-			"user-one@example.com": {
-				ID:          tokenID("user-one"),
-				Email:       "user-one@example.com",
-				DisplayName: "User One",
-			},
-			"user-two@example.com": {
-				ID:          tokenID("user-two"),
-				Email:       "user-two@example.com",
-				DisplayName: "User Two",
-			},
-		},
-		sessions: make(map[string]string),
-	}
-	for _, token := range []string{"user-one", "user-two"} {
-		hash := sha256.Sum256([]byte(token))
-		store.sessions[string(hash[:])] = tokenID(token)
-	}
-	return cloudauth.NewLocalAuthenticator(store)
 }

@@ -13,6 +13,7 @@ import (
 	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 )
 
+// CreateOrgInvitationInput contains the fields needed to invite a user.
 type CreateOrgInvitationInput struct {
 	Email           string
 	InvitedByUserID clouddomain.UserID
@@ -20,6 +21,7 @@ type CreateOrgInvitationInput struct {
 	ExpiresAt       time.Time
 }
 
+// CreateOrgInvitation records a pending invitation for an organization.
 func (s *Store) CreateOrgInvitation(
 	ctx context.Context,
 	orgID clouddomain.OrgID,
@@ -71,6 +73,7 @@ func (s *Store) CreateOrgInvitation(
 	return invite, nil
 }
 
+// ListOrgInvitations returns invitations created for an organization.
 func (s *Store) ListOrgInvitations(
 	ctx context.Context,
 	orgID clouddomain.OrgID,
@@ -92,6 +95,7 @@ func (s *Store) ListOrgInvitations(
 	return scanInvitations(rows)
 }
 
+// ListUserInvitations returns pending invitations visible to a user.
 func (s *Store) ListUserInvitations(
 	ctx context.Context,
 	userID string,
@@ -119,6 +123,7 @@ func (s *Store) ListUserInvitations(
 	return scanInvitations(rows)
 }
 
+// AcceptOrgInvitation accepts a pending invitation and activates membership.
 func (s *Store) AcceptOrgInvitation(
 	ctx context.Context,
 	userID string,
@@ -196,6 +201,7 @@ func (s *Store) AcceptOrgInvitation(
 	return membership, nil
 }
 
+// DeclineOrgInvitation marks a pending invitation declined by the invitee.
 func (s *Store) DeclineOrgInvitation(ctx context.Context, userID, email, invitationID string) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE ao_org_invitations
@@ -213,6 +219,7 @@ func (s *Store) DeclineOrgInvitation(ctx context.Context, userID, email, invitat
 	return nil
 }
 
+// RevokeOrgInvitation revokes a pending organization invitation.
 func (s *Store) RevokeOrgInvitation(ctx context.Context, orgID clouddomain.OrgID, invitationID string) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE ao_org_invitations
@@ -258,6 +265,8 @@ func scanInvitations(rows pgx.Rows) ([]clouddomain.OrgInvitation, error) {
 }
 
 var (
-	ErrOrgInvitationExists   = errors.New("cloud organization invitation already exists")
+	// ErrOrgInvitationExists means a pending invitation already exists.
+	ErrOrgInvitationExists = errors.New("cloud organization invitation already exists")
+	// ErrOrgInvitationNotFound means an invitation does not exist or is not actionable.
 	ErrOrgInvitationNotFound = errors.New("cloud organization invitation not found")
 )

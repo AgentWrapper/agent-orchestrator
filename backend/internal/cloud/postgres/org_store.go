@@ -11,16 +11,19 @@ import (
 	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 )
 
+// CreateOrganizationInput contains fields for a user-created organization.
 type CreateOrganizationInput struct {
 	UserID      string
 	DisplayName string
 	Kind        string
 }
 
+// UpdateOrganizationInput contains editable organization fields.
 type UpdateOrganizationInput struct {
 	DisplayName string
 }
 
+// CreateOrganization creates an organization and owner membership for a user.
 func (s *Store) CreateOrganization(
 	ctx context.Context,
 	input CreateOrganizationInput,
@@ -75,6 +78,7 @@ func (s *Store) CreateOrganization(
 	return s.GetOrgMembership(ctx, input.UserID, clouddomain.OrgID(account.ID))
 }
 
+// UpdateOrganization updates mutable organization metadata.
 func (s *Store) UpdateOrganization(
 	ctx context.Context,
 	orgID clouddomain.OrgID,
@@ -186,7 +190,9 @@ func (s *Store) ListUserOrganizations(ctx context.Context, userID string) ([]clo
 }
 
 var (
-	ErrInvalidOrganization  = errors.New("cloud organization is invalid")
+	// ErrInvalidOrganization means organization input failed validation.
+	ErrInvalidOrganization = errors.New("cloud organization is invalid")
+	// ErrOrganizationNotFound means the organization does not exist or is inactive.
 	ErrOrganizationNotFound = errors.New("cloud organization not found")
 )
 
@@ -243,6 +249,7 @@ func (s *Store) GetOrgMembership(
 	return item, nil
 }
 
+// ListOrgMembers returns active members for an organization.
 func (s *Store) ListOrgMembers(ctx context.Context, orgID clouddomain.OrgID) ([]clouddomain.OrgMember, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT
@@ -295,6 +302,7 @@ func (s *Store) ListOrgMembers(ctx context.Context, orgID clouddomain.OrgID) ([]
 	return members, rows.Err()
 }
 
+// UpdateOrgMemberRole changes a member's role and returns the updated member.
 func (s *Store) UpdateOrgMemberRole(
 	ctx context.Context,
 	orgID clouddomain.OrgID,

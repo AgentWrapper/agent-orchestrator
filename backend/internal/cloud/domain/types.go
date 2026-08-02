@@ -80,6 +80,7 @@ type UserOrganization struct {
 	Membership   OrgMembership `json:"membership"`
 }
 
+// OrgMember combines a user's profile with their organization membership.
 type OrgMember struct {
 	User       User          `json:"user"`
 	Membership OrgMembership `json:"membership"`
