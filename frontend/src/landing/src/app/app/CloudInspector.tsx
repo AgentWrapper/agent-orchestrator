@@ -41,6 +41,7 @@ export type CloudInspectorTab = "changes" | "browser" | "terminal" | "files";
 
 interface CloudInspectorProps {
   api: CloudAPI;
+  orgId: string;
   sessionId: string;
   runtimeConnected: boolean;
   previewAddress?: string;
@@ -66,6 +67,7 @@ const inspectorTabs: {
 
 export function CloudInspector({
   api,
+  orgId,
   sessionId,
   runtimeConnected,
   previewAddress,
@@ -78,8 +80,8 @@ export function CloudInspector({
   onClose,
 }: CloudInspectorProps) {
   useEffect(() => {
-    if (open && runtimeConnected) void warmWorkspaceSession(api, sessionId);
-  }, [api, open, runtimeConnected, sessionId]);
+    if (open && runtimeConnected) void warmWorkspaceSession(api, orgId, sessionId);
+  }, [api, open, orgId, runtimeConnected, sessionId]);
 
   const startResize = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -160,19 +162,26 @@ export function CloudInspector({
           {!open ? null : !runtimeConnected ? (
             <InspectorUnavailable />
           ) : tab === "changes" ? (
-            <ChangesView api={api} sessionId={sessionId} />
+            <ChangesView api={api} orgId={orgId} sessionId={sessionId} />
           ) : tab === "browser" ? (
             <BrowserView
               api={api}
+              orgId={orgId}
               sessionId={sessionId}
               requestedAddress={previewAddress}
               onAddressChange={onPreviewAddressChange}
             />
           ) : tab === "terminal" ? (
-            <CloudTerminal api={api} sessionId={sessionId} kind="workspace" />
+            <CloudTerminal
+              api={api}
+              orgId={orgId}
+              sessionId={sessionId}
+              kind="workspace"
+            />
           ) : (
             <FilesView
               api={api}
+              orgId={orgId}
               sessionId={sessionId}
               onPreview={(path) => {
                 onPreviewAddressChange(
@@ -231,7 +240,15 @@ interface InspectorDiffFile {
   detail?: string;
 }
 
-function ChangesView({ api, sessionId }: { api: CloudAPI; sessionId: string }) {
+function ChangesView({
+  api,
+  orgId,
+  sessionId,
+}: {
+  api: CloudAPI;
+  orgId: string;
+  sessionId: string;
+}) {
   const snapshot = useWorkspaceSnapshot(sessionId);
   const diff = snapshot?.diff ?? null;
   const [selectedKey, setSelectedKey] = useState("");
@@ -292,7 +309,7 @@ function ChangesView({ api, sessionId }: { api: CloudAPI; sessionId: string }) {
       [selectedUntrackedPath]: { loading: true },
     }));
     void api
-      .workspaceFile(sessionId, selectedUntrackedPath)
+      .workspaceFile(orgId, sessionId, selectedUntrackedPath)
       .then((response) => {
         if (cancelled) return;
         loadedUntrackedPreviews.current.add(selectedUntrackedPath);
@@ -328,7 +345,7 @@ function ChangesView({ api, sessionId }: { api: CloudAPI; sessionId: string }) {
 
   const refresh = useCallback(() => {
     setRefreshing(true);
-    void warmWorkspaceSession(api, sessionId).finally(() =>
+    void warmWorkspaceSession(api, orgId, sessionId).finally(() =>
       setRefreshing(false),
     );
   }, [api, sessionId]);
@@ -713,11 +730,13 @@ function diffDirectory(path: string) {
 
 function BrowserView({
   api,
+  orgId,
   sessionId,
   requestedAddress,
   onAddressChange,
 }: {
   api: CloudAPI;
+  orgId: string;
   sessionId: string;
   requestedAddress?: string;
   onAddressChange: (address: string) => void;
@@ -737,12 +756,14 @@ function BrowserView({
         const parsed = parsePreviewAddress(target);
         if (parsed.kind === "file") {
           const response = await api.workspaceFilePreviewTicket(
+            orgId,
             sessionId,
             parsed.path,
           );
           setPreviewURL(response.url);
         } else {
           const response = await api.workspacePreviewTicket(
+            orgId,
             sessionId,
             parsed.port,
           );
@@ -764,7 +785,7 @@ function BrowserView({
         setLoading(false);
       }
     },
-    [api, onAddressChange, sessionId],
+    [api, onAddressChange, orgId, sessionId],
   );
 
   useEffect(() => {
@@ -845,10 +866,12 @@ function BrowserView({
 
 function FilesView({
   api,
+  orgId,
   sessionId,
   onPreview,
 }: {
   api: CloudAPI;
+  orgId: string;
   sessionId: string;
   onPreview: (path: string) => void;
 }) {
@@ -872,14 +895,14 @@ function FilesView({
       if (target === "") {
         setPath("");
         try {
-          await warmWorkspaceSession(api, sessionId);
+          await warmWorkspaceSession(api, orgId, sessionId);
         } finally {
           setLoading(false);
         }
         return;
       }
       try {
-        const response = await api.workspaceFiles(sessionId, target);
+        const response = await api.workspaceFiles(orgId, sessionId, target);
         setPath(response.path === "." ? "" : response.path);
         setEntries(sortWorkspaceEntries(response.entries));
       } catch (loadError) {
@@ -892,7 +915,7 @@ function FilesView({
         setLoading(false);
       }
     },
-    [api, sessionId],
+    [api, orgId, sessionId],
   );
 
   useEffect(() => {
@@ -912,7 +935,7 @@ function FilesView({
     setLoading(true);
     setError("");
     try {
-      const response = await api.workspaceFile(sessionId, entry.path);
+      const response = await api.workspaceFile(orgId, sessionId, entry.path);
       setFile(response);
     } catch (loadError) {
       setError(

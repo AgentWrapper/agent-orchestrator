@@ -36,6 +36,18 @@ func (s *Store) CreateLocalUser(
 		}
 		return clouddomain.LocalUser{}, fmt.Errorf("create local user: %w", err)
 	}
+	if _, err := s.EnsureAccount(ctx, user.ID, displayName); err != nil {
+		return clouddomain.LocalUser{}, err
+	}
+	if _, err := s.pool.Exec(ctx, `
+		UPDATE ao_users
+		SET email = $2,
+			display_name = $3,
+			updated_at = now()
+		WHERE id = $1
+	`, user.ID, email, displayName); err != nil {
+		return clouddomain.LocalUser{}, fmt.Errorf("update cloud local user: %w", err)
+	}
 	return user, nil
 }
 

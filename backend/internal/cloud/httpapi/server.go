@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"strconv"
 	"strings"
@@ -34,6 +35,14 @@ import (
 type store interface {
 	Ping(context.Context) error
 	EnsureAccount(context.Context, string, string) (clouddomain.Account, error)
+	ListUserOrganizations(context.Context, string) ([]clouddomain.UserOrganization, error)
+	GetOrgMembership(context.Context, string, clouddomain.OrgID) (clouddomain.UserOrganization, error)
+	CreateOrgInvitation(context.Context, clouddomain.OrgID, cloudpostgres.CreateOrgInvitationInput) (clouddomain.OrgInvitation, error)
+	ListOrgInvitations(context.Context, clouddomain.OrgID) ([]clouddomain.OrgInvitation, error)
+	ListUserInvitations(context.Context, string, string) ([]clouddomain.OrgInvitation, error)
+	AcceptOrgInvitation(context.Context, string, string, string) (clouddomain.OrgMembership, error)
+	DeclineOrgInvitation(context.Context, string, string, string) error
+	RevokeOrgInvitation(context.Context, clouddomain.OrgID, string) error
 	CreateProject(context.Context, clouddomain.AccountID, cloudpostgres.CreateProjectInput) (clouddomain.Project, error)
 	ListProjects(context.Context, clouddomain.AccountID) ([]clouddomain.Project, error)
 	GetProject(context.Context, clouddomain.AccountID, clouddomain.ProjectID) (clouddomain.Project, error)
@@ -144,10 +153,16 @@ func (s *Server) Handler() http.Handler {
 }
 
 type accountContextKey struct{}
+type orgContextKey struct{}
 
 func accountFromContext(ctx context.Context) (clouddomain.Account, bool) {
 	account, ok := ctx.Value(accountContextKey{}).(clouddomain.Account)
 	return account, ok
+}
+
+func orgFromContext(ctx context.Context) (clouddomain.UserOrganization, bool) {
+	org, ok := ctx.Value(orgContextKey{}).(clouddomain.UserOrganization)
+	return org, ok
 }
 
 func (s *Server) routes() http.Handler {
@@ -194,6 +209,12 @@ func (s *Server) routes() http.Handler {
 			protected.Use(s.auth.Middleware)
 			protected.Use(s.ensureAccount)
 			protected.Get("/me", s.me)
+			protected.Get("/orgs", s.listOrgs)
+			protected.Get("/invitations", s.listMyInvitations)
+			protected.Post("/invitations/{invitationId}/accept", s.acceptInvitation)
+			protected.Post("/invitations/{invitationId}/decline", s.declineInvitation)
+			// Compatibility aliases for existing local tests/tools. The browser UI
+			// uses the explicit /orgs/{orgId}/... routes below.
 			protected.Get("/projects", s.listProjects)
 			protected.Post("/projects", s.createProject)
 			protected.Get("/sessions", s.listSessions)
@@ -218,6 +239,36 @@ func (s *Server) routes() http.Handler {
 			protected.Put("/provider-connections/agents/{agent}", s.putAgentConnection)
 			protected.Delete("/provider-connections/agents/{agent}", s.deleteAgentConnection)
 			protected.Get("/repositories", s.listRepositories)
+			protected.Route("/orgs/{orgId}", func(org chi.Router) {
+				org.Use(s.requireOrg)
+				org.Get("/invitations", s.listOrgInvitations)
+				org.Post("/invitations", s.createOrgInvitation)
+				org.Post("/invitations/{invitationId}/revoke", s.revokeInvitation)
+				org.Get("/projects", s.listProjects)
+				org.With(s.requireOrgRole("member")).Post("/projects", s.createProject)
+				org.Get("/sessions", s.listSessions)
+				org.With(s.requireOrgRole("member")).Post("/sessions", s.createSession)
+				org.Get("/sessions/{sessionId}", s.getSession)
+				org.Get("/sessions/{sessionId}/active-turn", s.activeTurn)
+				org.With(s.requireOrgRole("member")).Post("/sessions/{sessionId}/desired-state", s.setDesiredState)
+				org.Get("/sessions/{sessionId}/chat-events", s.chatEvents)
+				org.With(s.requireOrgRole("member")).Post("/sessions/{sessionId}/messages", s.sendMessage)
+				org.With(s.requireOrgRole("member")).Post("/sessions/{sessionId}/interrupt", s.interruptSession)
+				org.Get("/sessions/{sessionId}/events", s.streamEvents)
+				org.Get("/sessions/{sessionId}/scm", s.sessionSCM)
+				org.Get("/sessions/{sessionId}/workspace/files", s.workspaceFiles)
+				org.Get("/sessions/{sessionId}/workspace/file", s.workspaceFile)
+				org.Get("/sessions/{sessionId}/workspace/diff", s.workspaceDiff)
+				org.With(s.requireOrgRole("member")).Post("/sessions/{sessionId}/workspace/preview", s.workspacePreview)
+				org.With(s.requireOrgRole("member")).Post("/sessions/{sessionId}/workspace/preview-ticket", s.issueWorkspacePreview)
+				org.With(s.requireOrgRole("member")).Post("/sessions/{sessionId}/workspace/file-preview-ticket", s.issueWorkspaceFilePreview)
+				org.With(s.requireOrgRole("member")).Post("/sessions/{sessionId}/terminal-ticket", s.issueTerminalTicket)
+				org.Get("/provider-connections", s.listProviderConnections)
+				org.With(s.requireOrgRole("admin")).Put("/provider-connections/daytona", s.putDaytonaConnection)
+				org.With(s.requireOrgRole("admin")).Put("/provider-connections/agents/{agent}", s.putAgentConnection)
+				org.With(s.requireOrgRole("admin")).Delete("/provider-connections/agents/{agent}", s.deleteAgentConnection)
+				org.Get("/repositories", s.listRepositories)
+			})
 		})
 	})
 	return router
@@ -296,6 +347,11 @@ func (s *Server) ensureAccount(next http.Handler) http.Handler {
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	principal, _ := cloudauth.PrincipalFromContext(r.Context())
 	account, _ := accountFromContext(r.Context())
+	organizations, err := s.store.ListUserOrganizations(r.Context(), principal.UserID)
+	if err != nil {
+		s.internalError(w, r, "list user organizations", err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user": map[string]string{
 			"id":          principal.UserID,
@@ -303,8 +359,230 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 			"displayName": principal.DisplayName,
 		},
 		"account":         account,
+		"organizations":   organizations,
 		"sandboxProvider": s.sandboxProvider,
 	})
+}
+
+func (s *Server) listOrgs(w http.ResponseWriter, r *http.Request) {
+	principal, _ := cloudauth.PrincipalFromContext(r.Context())
+	organizations, err := s.store.ListUserOrganizations(r.Context(), principal.UserID)
+	if err != nil {
+		s.internalError(w, r, "list user organizations", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"organizations": organizations})
+}
+
+func (s *Server) listMyInvitations(w http.ResponseWriter, r *http.Request) {
+	principal, _ := cloudauth.PrincipalFromContext(r.Context())
+	invitations, err := s.store.ListUserInvitations(r.Context(), principal.UserID, principal.Email)
+	if err != nil {
+		s.internalError(w, r, "list user invitations", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"invitations": invitations})
+}
+
+func (s *Server) listOrgInvitations(w http.ResponseWriter, r *http.Request) {
+	org, _ := orgFromContext(r.Context())
+	if !orgRoleAtLeast(org.Membership.Role, "admin") {
+		writeError(w, r, http.StatusForbidden, "ORG_ROLE_REQUIRED", "Only organization admins can view invitations.")
+		return
+	}
+	invitations, err := s.store.ListOrgInvitations(r.Context(), org.Organization.ID)
+	if err != nil {
+		s.internalError(w, r, "list org invitations", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"invitations": invitations})
+}
+
+func (s *Server) createOrgInvitation(w http.ResponseWriter, r *http.Request) {
+	org, _ := orgFromContext(r.Context())
+	if !orgRoleAtLeast(org.Membership.Role, "admin") {
+		writeError(w, r, http.StatusForbidden, "ORG_ROLE_REQUIRED", "Only organization admins can invite people.")
+		return
+	}
+	principal, _ := cloudauth.PrincipalFromContext(r.Context())
+	var input struct {
+		Email string `json:"email"`
+		Role  string `json:"role"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	email, err := normalizeCloudEmail(input.Email)
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, "INVALID_EMAIL", "A valid invite email is required.")
+		return
+	}
+	role := strings.TrimSpace(input.Role)
+	if role == "" {
+		role = "member"
+	}
+	if !validOrgRole(role) || role == "owner" {
+		writeError(w, r, http.StatusBadRequest, "INVALID_ROLE", "Invite role must be admin, member, or viewer.")
+		return
+	}
+	invitation, err := s.store.CreateOrgInvitation(
+		r.Context(),
+		org.Organization.ID,
+		cloudpostgres.CreateOrgInvitationInput{
+			Email:           email,
+			InvitedByUserID: clouddomain.UserID(principal.UserID),
+			Role:            role,
+		},
+	)
+	if errors.Is(err, cloudpostgres.ErrOrgInvitationExists) {
+		writeError(w, r, http.StatusConflict, "INVITATION_EXISTS", "This email already has a pending invitation.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "create org invitation", err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"invitation": invitation})
+}
+
+func (s *Server) acceptInvitation(w http.ResponseWriter, r *http.Request) {
+	principal, _ := cloudauth.PrincipalFromContext(r.Context())
+	membership, err := s.store.AcceptOrgInvitation(
+		r.Context(),
+		principal.UserID,
+		principal.Email,
+		chi.URLParam(r, "invitationId"),
+	)
+	if errors.Is(err, cloudpostgres.ErrOrgInvitationNotFound) {
+		writeError(w, r, http.StatusNotFound, "INVITATION_NOT_FOUND", "The invitation is no longer available.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "accept org invitation", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"membership": membership})
+}
+
+func (s *Server) declineInvitation(w http.ResponseWriter, r *http.Request) {
+	principal, _ := cloudauth.PrincipalFromContext(r.Context())
+	err := s.store.DeclineOrgInvitation(
+		r.Context(),
+		principal.UserID,
+		principal.Email,
+		chi.URLParam(r, "invitationId"),
+	)
+	if errors.Is(err, cloudpostgres.ErrOrgInvitationNotFound) {
+		writeError(w, r, http.StatusNotFound, "INVITATION_NOT_FOUND", "The invitation is no longer available.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "decline org invitation", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) revokeInvitation(w http.ResponseWriter, r *http.Request) {
+	org, _ := orgFromContext(r.Context())
+	if !orgRoleAtLeast(org.Membership.Role, "admin") {
+		writeError(w, r, http.StatusForbidden, "ORG_ROLE_REQUIRED", "Only organization admins can revoke invitations.")
+		return
+	}
+	err := s.store.RevokeOrgInvitation(r.Context(), org.Organization.ID, chi.URLParam(r, "invitationId"))
+	if errors.Is(err, cloudpostgres.ErrOrgInvitationNotFound) {
+		writeError(w, r, http.StatusNotFound, "INVITATION_NOT_FOUND", "The invitation is no longer available.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "revoke org invitation", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) requireOrg(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := cloudauth.PrincipalFromContext(r.Context())
+		if !ok {
+			writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "A valid AO Cloud login is required.")
+			return
+		}
+		orgID := clouddomain.OrgID(strings.TrimSpace(chi.URLParam(r, "orgId")))
+		if orgID == "" {
+			writeError(w, r, http.StatusBadRequest, "ORG_REQUIRED", "An organization is required.")
+			return
+		}
+		org, err := s.store.GetOrgMembership(r.Context(), principal.UserID, orgID)
+		if errors.Is(err, cloudpostgres.ErrOrgMembershipNotFound) {
+			writeError(w, r, http.StatusForbidden, "ORG_FORBIDDEN", "You do not have access to this organization.")
+			return
+		}
+		if err != nil {
+			s.internalError(w, r, "authorize organization", err)
+			return
+		}
+		account := clouddomain.Account{
+			ID:          clouddomain.AccountID(org.Organization.ID),
+			OwnerUserID: principal.UserID,
+			DisplayName: org.Organization.DisplayName,
+			CreatedAt:   org.Organization.CreatedAt,
+			UpdatedAt:   org.Organization.UpdatedAt,
+		}
+		ctx := context.WithValue(r.Context(), orgContextKey{}, org)
+		ctx = context.WithValue(ctx, accountContextKey{}, account)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func (s *Server) requireOrgRole(required string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			org, ok := orgFromContext(r.Context())
+			if !ok || !orgRoleAtLeast(org.Membership.Role, required) {
+				writeError(w, r, http.StatusForbidden, "ORG_ROLE_REQUIRED", "Your organization role cannot perform this action.")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func normalizeCloudEmail(value string) (string, error) {
+	email := strings.ToLower(strings.TrimSpace(value))
+	parsed, err := mail.ParseAddress(email)
+	if err != nil || parsed.Address != email {
+		return "", errors.New("invalid email")
+	}
+	return email, nil
+}
+
+func validOrgRole(role string) bool {
+	switch role {
+	case "owner", "admin", "member", "viewer":
+		return true
+	default:
+		return false
+	}
+}
+
+func orgRoleAtLeast(actual, required string) bool {
+	return orgRoleRank(actual) >= orgRoleRank(required)
+}
+
+func orgRoleRank(role string) int {
+	switch role {
+	case "owner":
+		return 3
+	case "admin":
+		return 2
+	case "member":
+		return 1
+	case "viewer":
+		return 0
+	default:
+		return -1
+	}
 }
 
 func (s *Server) localSignUp(w http.ResponseWriter, r *http.Request) {

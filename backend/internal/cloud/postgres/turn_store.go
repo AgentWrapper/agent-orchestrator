@@ -19,11 +19,11 @@ func (s *Store) GetActiveTurn(
 	sessionID clouddomain.SessionID,
 ) (*clouddomain.Turn, error) {
 	turn, err := scanTurn(s.pool.QueryRow(ctx, `
-		SELECT id, account_id, session_id, user_message_sequence, state,
+		SELECT id, account_id, org_id, session_id, user_message_sequence, state,
 			worker_epoch, attempt_count, error_message, started_at, completed_at,
 			created_at, updated_at
 		FROM ao_turns
-		WHERE account_id = $1
+		WHERE org_id = $1
 			AND session_id = $2
 			AND state = ANY($3)
 		LIMIT 1
@@ -45,11 +45,11 @@ func (s *Store) GetLatestTurn(
 	sessionID clouddomain.SessionID,
 ) (*clouddomain.Turn, error) {
 	turn, err := scanTurn(s.pool.QueryRow(ctx, `
-		SELECT id, account_id, session_id, user_message_sequence, state,
+		SELECT id, account_id, org_id, session_id, user_message_sequence, state,
 			worker_epoch, attempt_count, error_message, started_at, completed_at,
 			created_at, updated_at
 		FROM ao_turns
-		WHERE account_id = $1
+		WHERE org_id = $1
 			AND session_id = $2
 		ORDER BY created_at DESC
 		LIMIT 1
@@ -84,7 +84,7 @@ func (s *Store) TransitionActiveTurn(
 				ELSE completed_at
 			END,
 			updated_at = now()
-		WHERE account_id = $1
+		WHERE org_id = $1
 			AND session_id = $2
 			AND state = ANY($5)
 			AND (
@@ -95,7 +95,7 @@ func (s *Store) TransitionActiveTurn(
 				$3 <> 'running'
 				OR state IN ('queued', 'provisioning', 'running')
 			)
-		RETURNING id, account_id, session_id, user_message_sequence, state,
+		RETURNING id, account_id, org_id, session_id, user_message_sequence, state,
 			worker_epoch, attempt_count, error_message, started_at, completed_at,
 			created_at, updated_at
 	`, accountID, sessionID, state, errorMessage, activeTurnStates))
@@ -124,7 +124,7 @@ func (s *Store) ClaimActiveTurn(
 				ELSE attempt_count + 1
 			END,
 			updated_at = now()
-		WHERE account_id = $1
+		WHERE org_id = $1
 			AND session_id = $2
 			AND user_message_sequence = $3
 			AND state = ANY($5)
@@ -150,7 +150,7 @@ func (s *Store) PrepareActiveTurnForWorker(
 			worker_epoch = 0,
 			started_at = NULL,
 			updated_at = now()
-		WHERE account_id = $1
+		WHERE org_id = $1
 			AND session_id = $2
 			AND state IN ('queued', 'provisioning', 'running')
 			AND worker_epoch > 0
@@ -171,6 +171,7 @@ func scanTurn(row rowScanner) (clouddomain.Turn, error) {
 	err := row.Scan(
 		&turn.ID,
 		&turn.AccountID,
+		&turn.OrgID,
 		&turn.SessionID,
 		&turn.UserMessageSequence,
 		&turn.State,

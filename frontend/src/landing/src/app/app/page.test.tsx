@@ -10,6 +10,8 @@ const apiMocks = vi.hoisted(() => ({
   sessions: vi.fn(),
   repositories: vi.fn(),
   providerConnections: vi.fn(),
+  invitations: vi.fn(),
+  orgInvitations: vi.fn(),
 }));
 
 vi.mock("@/lib/cloud-api", () => ({
@@ -19,6 +21,8 @@ vi.mock("@/lib/cloud-api", () => ({
     sessions = apiMocks.sessions;
     repositories = apiMocks.repositories;
     providerConnections = apiMocks.providerConnections;
+    invitations = apiMocks.invitations;
+    orgInvitations = apiMocks.orgInvitations;
   },
 }));
 
@@ -44,6 +48,7 @@ vi.mock("../auth/PrismLogoGrid", () => ({
 
 const project: CloudProject = {
   id: "project-one",
+  orgId: "org-one",
   displayName: "AO",
   repositoryUrl: "https://github.com/aoagents/agent-orchestrator",
   defaultBranch: "main",
@@ -107,7 +112,28 @@ it("offers to start the orchestrator only when the project has none", () => {
 
 it("loads GitHub repositories only when the project form opens", async () => {
   window.localStorage.clear();
-  apiMocks.me.mockResolvedValue({ sandboxProvider: "daytona" });
+  apiMocks.me.mockResolvedValue({
+    sandboxProvider: "daytona",
+    organizations: [
+      {
+        organization: {
+          id: "org-one",
+          slug: "personal",
+          displayName: "Personal",
+          kind: "personal",
+          plan: "free",
+          status: "active",
+        },
+        membership: {
+          id: "membership-one",
+          orgId: "org-one",
+          userId: "user-one",
+          role: "owner",
+          status: "active",
+        },
+      },
+    ],
+  });
   apiMocks.projects.mockResolvedValue({ projects: [project] });
   apiMocks.sessions.mockResolvedValue({ sessions: [] });
   apiMocks.providerConnections.mockResolvedValue({
@@ -121,6 +147,8 @@ it("loads GitHub repositories only when the project form opens", async () => {
       },
     ],
   });
+  apiMocks.invitations.mockResolvedValue({ invitations: [] });
+  apiMocks.orgInvitations.mockResolvedValue({ invitations: [] });
   apiMocks.repositories.mockRejectedValue(new Error("GitHub unavailable"));
 
   render(<CloudAppPage />);

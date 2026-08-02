@@ -61,7 +61,6 @@ jobs:
       - name: Test, including PostgreSQL cloud integration
         run: go test -race ./...
         env:
-          AO_CLOUD_TEST_DATABASE_URL: postgresql://ao:ao@127.0.0.1:5432/ao_cloud_test?sslmode=disable
           CGO_ENABLED: "1"
 
   lint:

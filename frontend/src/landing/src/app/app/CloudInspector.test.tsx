@@ -54,6 +54,7 @@ function InspectorHarness({ api }: { api: CloudAPI }) {
   return (
     <CloudInspector
       api={api}
+      orgId="org-one"
       sessionId="session-one"
       runtimeConnected
       tab={tab}
@@ -98,6 +99,7 @@ it("switches between changes, files, and a capability-scoped browser preview", a
   await user.keyboard("{Enter}");
   await waitFor(() =>
     expect(api.workspacePreviewTicket).toHaveBeenLastCalledWith(
+      "org-one",
       "session-one",
       5002,
     ),
@@ -117,6 +119,7 @@ it("switches between changes, files, and a capability-scoped browser preview", a
     ),
   );
   expect(api.workspaceFilePreviewTicket).toHaveBeenCalledWith(
+    "org-one",
     "session-one",
     "examples/index.html",
   );
@@ -126,6 +129,7 @@ it("keeps workspace tools unavailable until the worker connects", () => {
   render(
     <CloudInspector
       api={inspectorAPI()}
+      orgId="org-one"
       sessionId="session-one"
       runtimeConnected={false}
       tab="terminal"
@@ -149,6 +153,7 @@ it("does not mount or fetch inspector panes while closed", () => {
   render(
     <CloudInspector
       api={api}
+      orgId="org-one"
       sessionId="session-one"
       runtimeConnected
       tab="changes"
@@ -195,6 +200,7 @@ it("loads a nested untracked file diff only when the file is selected", async ()
     }),
   ).toBeVisible();
   expect(api.workspaceFile).toHaveBeenCalledWith(
+    "org-one",
     "session-one",
     "examples/dummy/index.html",
   );

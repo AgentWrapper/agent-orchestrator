@@ -11,6 +11,10 @@ import (
 type (
 	// AccountID uniquely identifies a cloud account.
 	AccountID string
+	// UserID uniquely identifies an AO Cloud user.
+	UserID string
+	// OrgID uniquely identifies an AO Cloud organization/tenant.
+	OrgID string
 	// ProjectID uniquely identifies a cloud project.
 	ProjectID string
 	// SessionID uniquely identifies a cloud session.
@@ -28,6 +32,71 @@ type Account struct {
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
+// User is AO's durable identity row. Local auth and future Clerk auth both map
+// into this table.
+type User struct {
+	ID             UserID    `json:"id"`
+	AuthProvider   string    `json:"authProvider"`
+	ExternalUserID string    `json:"externalUserId"`
+	Email          string    `json:"email"`
+	DisplayName    string    `json:"displayName"`
+	AvatarURL      string    `json:"avatarUrl,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+}
+
+// Organization is the AO tenant. Personal, team, and enterprise ownership all
+// use the same resource model.
+type Organization struct {
+	ID              OrgID     `json:"id"`
+	AuthProvider    string    `json:"authProvider"`
+	ExternalOrgID   string    `json:"externalOrgId,omitempty"`
+	Slug            string    `json:"slug"`
+	DisplayName     string    `json:"displayName"`
+	Kind            string    `json:"kind"`
+	Plan            string    `json:"plan"`
+	Status          string    `json:"status"`
+	CreatedByUserID UserID    `json:"createdByUserId,omitempty"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+}
+
+// OrgMembership links a user to an organization with a role.
+type OrgMembership struct {
+	ID                   string    `json:"id"`
+	OrgID                OrgID     `json:"orgId"`
+	UserID               UserID    `json:"userId"`
+	ExternalMembershipID string    `json:"externalMembershipId,omitempty"`
+	Role                 string    `json:"role"`
+	Status               string    `json:"status"`
+	CreatedAt            time.Time `json:"createdAt"`
+	UpdatedAt            time.Time `json:"updatedAt"`
+}
+
+// UserOrganization is one organization visible to a signed-in user, annotated
+// with the user's role in that organization.
+type UserOrganization struct {
+	Organization Organization  `json:"organization"`
+	Membership   OrgMembership `json:"membership"`
+}
+
+// OrgInvitation records an invitation to join an organization.
+type OrgInvitation struct {
+	ID              string     `json:"id"`
+	OrgID           OrgID      `json:"orgId"`
+	Email           string     `json:"email"`
+	InvitedUserID   UserID     `json:"invitedUserId,omitempty"`
+	InvitedByUserID UserID     `json:"invitedByUserId"`
+	Role            string     `json:"role"`
+	Status          string     `json:"status"`
+	ExpiresAt       time.Time  `json:"expiresAt"`
+	AcceptedAt      *time.Time `json:"acceptedAt,omitempty"`
+	DeclinedAt      *time.Time `json:"declinedAt,omitempty"`
+	RevokedAt       *time.Time `json:"revokedAt,omitempty"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	UpdatedAt       time.Time  `json:"updatedAt"`
+}
+
 // LocalUser is an email/password identity used when AO Cloud runs locally.
 type LocalUser struct {
 	ID           string
@@ -40,6 +109,7 @@ type LocalUser struct {
 type Project struct {
 	ID            ProjectID       `json:"id"`
 	AccountID     AccountID       `json:"accountId"`
+	OrgID         OrgID           `json:"orgId"`
 	DisplayName   string          `json:"displayName"`
 	RepositoryURL string          `json:"repositoryUrl"`
 	DefaultBranch string          `json:"defaultBranch"`
@@ -52,6 +122,7 @@ type Project struct {
 type Issue struct {
 	ID         string    `json:"id"`
 	AccountID  AccountID `json:"accountId"`
+	OrgID      OrgID     `json:"orgId"`
 	ProjectID  ProjectID `json:"projectId"`
 	Provider   string    `json:"provider"`
 	Repository string    `json:"repository"`
@@ -67,6 +138,7 @@ type Issue struct {
 type PRClaim struct {
 	ID         string    `json:"id"`
 	AccountID  AccountID `json:"accountId"`
+	OrgID      OrgID     `json:"orgId"`
 	SessionID  SessionID `json:"sessionId"`
 	Provider   string    `json:"provider"`
 	Repository string    `json:"repository"`
@@ -79,6 +151,7 @@ type PRClaim struct {
 type Session struct {
 	ID               SessionID `json:"id"`
 	AccountID        AccountID `json:"accountId"`
+	OrgID            OrgID     `json:"orgId"`
 	ProjectID        ProjectID `json:"projectId"`
 	Kind             string    `json:"kind"`
 	Harness          string    `json:"harness"`
@@ -100,6 +173,7 @@ type Session struct {
 type Turn struct {
 	ID                  string     `json:"id"`
 	AccountID           AccountID  `json:"accountId"`
+	OrgID               OrgID      `json:"orgId"`
 	SessionID           SessionID  `json:"sessionId"`
 	UserMessageSequence int64      `json:"userMessageSequence"`
 	State               string     `json:"state"`
@@ -128,6 +202,7 @@ func DefaultResourceProfile() ResourceProfile {
 type Sandbox struct {
 	SessionID             SessionID       `json:"sessionId"`
 	AccountID             AccountID       `json:"accountId"`
+	OrgID                 OrgID           `json:"orgId"`
 	Provider              string          `json:"provider"`
 	ProviderEnvironmentID string          `json:"providerEnvironmentId,omitempty"`
 	ProviderConnectionID  string          `json:"providerConnectionId,omitempty"`
@@ -154,6 +229,7 @@ type Event struct {
 type CommandReceipt struct {
 	ID             CommandID      `json:"id"`
 	AccountID      AccountID      `json:"accountId"`
+	OrgID          OrgID          `json:"orgId"`
 	SessionID      SessionID      `json:"sessionId,omitempty"`
 	IdempotencyKey string         `json:"idempotencyKey"`
 	Kind           string         `json:"kind"`

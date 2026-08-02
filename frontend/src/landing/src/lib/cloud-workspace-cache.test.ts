@@ -28,8 +28,8 @@ it("single-flights workspace polling per session", async () => {
     ),
   } as unknown as CloudAPI;
 
-  const first = warmWorkspaceSession(api, "session-one");
-  const second = warmWorkspaceSession(api, "session-one");
+  const first = warmWorkspaceSession(api, "org-one", "session-one");
+  const second = warmWorkspaceSession(api, "org-one", "session-one");
 
   expect(second).toBe(first);
   expect(api.workspaceDiff).toHaveBeenCalledTimes(1);
@@ -52,7 +52,7 @@ it("publishes partial refreshes without discarding cached data", async () => {
     workspaceDiff: vi.fn().mockResolvedValue(initialDiff),
     workspaceFiles: vi.fn().mockResolvedValue({ path: ".", entries: [] }),
   } as unknown as CloudAPI;
-  await warmWorkspaceSession(initialAPI, "session-one");
+  await warmWorkspaceSession(initialAPI, "org-one", "session-one");
 
   const listener = vi.fn();
   const unsubscribe = subscribeWorkspaceSnapshot("session-one", listener);
@@ -73,7 +73,7 @@ it("publishes partial refreshes without discarding cached data", async () => {
     }),
   } as unknown as CloudAPI;
 
-  await warmWorkspaceSession(refreshAPI, "session-one");
+  await warmWorkspaceSession(refreshAPI, "org-one", "session-one");
 
   const snapshot = getWorkspaceSnapshot("session-one");
   expect(snapshot?.diff).toEqual(initialDiff);

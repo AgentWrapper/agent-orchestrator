@@ -22,7 +22,7 @@ type SCMTarget struct {
 // ListSCMTargets returns active session branches to observe.
 func (s *Store) ListSCMTargets(ctx context.Context) ([]SCMTarget, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT session.account_id, session.id, project.repository_url, session.branch
+		SELECT session.org_id, session.id, project.repository_url, session.branch
 		FROM ao_sessions session
 		JOIN ao_projects project ON project.id = session.project_id
 		WHERE session.is_terminated = false
@@ -63,13 +63,13 @@ func (s *Store) WriteSCMObservation(
 	var pullRequestID string
 	err = tx.QueryRow(ctx, `
 		INSERT INTO ao_pull_requests (
-			account_id, session_id, provider, repository, number, url, title,
+			account_id, org_id, session_id, provider, repository, number, url, title,
 			state, draft, head_sha, source_branch, target_branch, ci_state,
 			review_state, mergeability, observed_at
 		)
-		VALUES ($1, $2, 'github', $3, $4, $5, $6, $7, $8, $9, $10, $11,
+		VALUES ($1, $1, $2, 'github', $3, $4, $5, $6, $7, $8, $9, $10, $11,
 			$12, $13, $14, $15)
-		ON CONFLICT (account_id, repository, number) DO UPDATE
+		ON CONFLICT (org_id, provider, repository, number) DO UPDATE
 		SET session_id = EXCLUDED.session_id,
 			url = EXCLUDED.url,
 			title = EXCLUDED.title,
@@ -99,10 +99,10 @@ func (s *Store) WriteSCMObservation(
 	for _, check := range observation.Checks {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO ao_pr_checks (
-				pull_request_id, name, status, conclusion, url, observed_at
+				org_id, pull_request_id, name, status, conclusion, url, observed_at
 			)
-			VALUES ($1, $2, $3, $4, $5, $6)
-		`, pullRequestID, check.Name, check.Status, check.Conclusion, check.URL, check.ObservedAt); err != nil {
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`, accountID, pullRequestID, check.Name, check.Status, check.Conclusion, check.URL, check.ObservedAt); err != nil {
 			return fmt.Errorf("insert cloud PR check: %w", err)
 		}
 	}
@@ -112,10 +112,10 @@ func (s *Store) WriteSCMObservation(
 	for _, thread := range observation.ReviewThreads {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO ao_pr_review_threads (
-				account_id, pull_request_id, provider_thread_id, is_resolved,
+				account_id, org_id, pull_request_id, provider_thread_id, is_resolved,
 				is_outdated, path, line, body, author_login, observed_at
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, 0), $8, $9, $10)
+			VALUES ($1, $1, $2, $3, $4, $5, $6, NULLIF($7, 0), $8, $9, $10)
 		`, accountID, pullRequestID, thread.ID, thread.IsResolved, thread.IsOutdated,
 			thread.Path, thread.Line, thread.Body, thread.AuthorLogin, thread.ObservedAt); err != nil {
 			return fmt.Errorf("insert cloud PR review thread: %w", err)
@@ -146,7 +146,7 @@ func (s *Store) SessionSCM(
 			source_branch, target_branch, ci_state, review_state, mergeability,
 			observed_at
 		FROM ao_pull_requests
-		WHERE account_id = $1 AND session_id = $2
+		WHERE org_id = $1 AND session_id = $2
 		ORDER BY updated_at DESC
 		LIMIT 1
 	`, accountID, sessionID).Scan(

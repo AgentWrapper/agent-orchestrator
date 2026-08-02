@@ -16,6 +16,7 @@ import (
 type ProviderConnection struct {
 	ID              string                `json:"id"`
 	AccountID       clouddomain.AccountID `json:"accountId"`
+	OrgID           clouddomain.OrgID     `json:"orgId"`
 	Provider        string                `json:"provider"`
 	Label           string                `json:"label"`
 	Config          json.RawMessage       `json:"config"`
@@ -39,22 +40,23 @@ func (s *Store) UpsertProviderConnection(
 	var connection ProviderConnection
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO ao_provider_connections (
-			account_id, provider, label, encrypted_secret, secret_nonce, config,
+			account_id, org_id, provider, label, encrypted_secret, secret_nonce, config,
 			validation_state, validated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, 'valid', now())
-		ON CONFLICT (account_id, provider, label) DO UPDATE
+		VALUES ($1, $1, $2, $3, $4, $5, $6, 'valid', now())
+		ON CONFLICT (org_id, provider, label) DO UPDATE
 		SET encrypted_secret = EXCLUDED.encrypted_secret,
 			secret_nonce = EXCLUDED.secret_nonce,
 			config = EXCLUDED.config,
 			validation_state = 'valid',
 			validated_at = now(),
 			updated_at = now()
-		RETURNING id, account_id, provider, label, config, validation_state,
+		RETURNING id, account_id, org_id, provider, label, config, validation_state,
 			validated_at, created_at, updated_at
 	`, accountID, provider, label, encryptedSecret, nonce, config).Scan(
 		&connection.ID,
 		&connection.AccountID,
+		&connection.OrgID,
 		&connection.Provider,
 		&connection.Label,
 		&connection.Config,
@@ -75,10 +77,10 @@ func (s *Store) ListProviderConnections(
 	accountID clouddomain.AccountID,
 ) ([]ProviderConnection, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, account_id, provider, label, config, validation_state,
+		SELECT id, account_id, org_id, provider, label, config, validation_state,
 			validated_at, created_at, updated_at
 		FROM ao_provider_connections
-		WHERE account_id = $1
+		WHERE org_id = $1
 		ORDER BY provider, label
 	`, accountID)
 	if err != nil {
@@ -91,6 +93,7 @@ func (s *Store) ListProviderConnections(
 		if err := rows.Scan(
 			&connection.ID,
 			&connection.AccountID,
+			&connection.OrgID,
 			&connection.Provider,
 			&connection.Label,
 			&connection.Config,
@@ -115,7 +118,7 @@ func (s *Store) ProviderConnectionSecret(
 	err = s.pool.QueryRow(ctx, `
 		SELECT encrypted_secret, secret_nonce, config, label
 		FROM ao_provider_connections
-		WHERE account_id = $1 AND id = $2
+		WHERE org_id = $1 AND id = $2
 	`, accountID, connectionID).Scan(&encryptedSecret, &nonce, &config, &label)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil, nil, "", ErrProviderConnectionNotFound
@@ -136,7 +139,7 @@ func (s *Store) ProviderConnectionSecretByProvider(
 	err = s.pool.QueryRow(ctx, `
 		SELECT encrypted_secret, secret_nonce, config
 		FROM ao_provider_connections
-		WHERE account_id = $1
+		WHERE org_id = $1
 			AND provider = $2
 			AND label = $3
 			AND validation_state = 'valid'
@@ -158,7 +161,7 @@ func (s *Store) DeleteProviderConnection(
 ) error {
 	if _, err := s.pool.Exec(ctx, `
 		DELETE FROM ao_provider_connections
-		WHERE account_id = $1 AND provider = $2 AND label = $3
+		WHERE org_id = $1 AND provider = $2 AND label = $3
 	`, accountID, provider, label); err != nil {
 		return fmt.Errorf("delete provider connection: %w", err)
 	}

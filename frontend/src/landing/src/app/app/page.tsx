@@ -31,9 +31,11 @@ import {
   CloudAPI,
   type AgentCredentialType,
   type CloudAgent,
+  type CloudOrgInvitation,
   type CloudProject,
   type CloudRepository,
   type CloudSession,
+  type CloudUserOrganization,
   type ProviderConnection,
 } from "@/lib/cloud-api";
 import {
@@ -157,6 +159,13 @@ export default function CloudAppPage() {
   );
   const [projects, setProjects] = useState<CloudProject[]>([]);
   const [sessions, setSessions] = useState<CloudSession[]>([]);
+  const [organizations, setOrganizations] = useState<CloudUserOrganization[]>(
+    [],
+  );
+  const [incomingInvitations, setIncomingInvitations] = useState<
+    CloudOrgInvitation[]
+  >([]);
+  const [orgInvitations, setOrgInvitations] = useState<CloudOrgInvitation[]>([]);
   const [repositories, setRepositories] = useState<CloudRepository[]>([]);
   const [repositoriesLoading, setRepositoriesLoading] = useState(false);
   const [repositoriesError, setRepositoriesError] = useState<string | null>(
@@ -169,6 +178,7 @@ export default function CloudAppPage() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
     null,
   );
+  const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null,
   );
@@ -193,6 +203,7 @@ export default function CloudAppPage() {
     () => new Set(),
   );
   const refreshInFlight = useRef<Promise<void> | null>(null);
+  const selectedOrgIdRef = useRef<string | null>(null);
   const repositoriesLoaded = useRef(false);
   const repositoriesInFlight = useRef<Promise<void> | null>(null);
   const repositoriesGeneration = useRef(0);
@@ -384,12 +395,15 @@ export default function CloudAppPage() {
   );
   const connectedWorkspaceSessionKey = connectedWorkspaceSessionIDs.join(",");
   useEffect(() => {
-    if (!api) return;
+    selectedOrgIdRef.current = selectedOrgId;
+  }, [selectedOrgId]);
+  useEffect(() => {
+    if (!api || !selectedOrgId) return;
     const activeSessionIDs = new Set(connectedWorkspaceSessionIDs);
     removeWorkspaceSnapshots(activeSessionIDs);
     const warmAll = () => {
       for (const sessionID of connectedWorkspaceSessionIDs) {
-        void warmWorkspaceSession(api, sessionID);
+        void warmWorkspaceSession(api, selectedOrgId, sessionID);
       }
     };
     warmAll();
@@ -397,26 +411,27 @@ export default function CloudAppPage() {
     return () => window.clearInterval(refreshTimer);
     // The stable key avoids restarting this timer on every status refresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, connectedWorkspaceSessionKey]);
+  }, [api, connectedWorkspaceSessionKey, selectedOrgId]);
   useEffect(() => {
-    if (!api) {
+    if (!api || !selectedOrgId) {
       clearCloudTerminalConnections();
       return;
     }
-    syncCloudTerminalConnections(api, connectedWorkspaceSessionIDs);
+    syncCloudTerminalConnections(api, selectedOrgId, connectedWorkspaceSessionIDs);
     // The stable key avoids reconnecting every terminal on status refresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, connectedWorkspaceSessionKey]);
+  }, [api, connectedWorkspaceSessionKey, selectedOrgId]);
   useEffect(() => () => clearCloudTerminalConnections(), []);
 
   const loadRepositories = useCallback(() => {
-    if (!api || repositoriesLoaded.current) return Promise.resolve();
+    const orgId = selectedOrgIdRef.current;
+    if (!api || !orgId || repositoriesLoaded.current) return Promise.resolve();
     if (repositoriesInFlight.current) return repositoriesInFlight.current;
     const generation = repositoriesGeneration.current;
     setRepositoriesLoading(true);
     setRepositoriesError(null);
     const request = api
-      .repositories()
+      .repositories(orgId)
       .then((repositoryData) => {
         if (repositoriesGeneration.current !== generation) return;
         setRepositories(repositoryData.repositories);
@@ -437,7 +452,7 @@ export default function CloudAppPage() {
       });
     repositoriesInFlight.current = request;
     return request;
-  }, [api]);
+  }, [api, selectedOrgId]);
 
   useEffect(() => {
     repositoriesGeneration.current += 1;
@@ -446,7 +461,7 @@ export default function CloudAppPage() {
     setRepositories([]);
     setRepositoriesError(null);
     setRepositoriesLoading(false);
-  }, [api]);
+  }, [api, selectedOrgId]);
 
   useEffect(() => {
     if (showProjectForm) void loadRepositories();
@@ -457,13 +472,50 @@ export default function CloudAppPage() {
     if (refreshInFlight.current) return refreshInFlight.current;
     const request = (async () => {
       try {
-        const [projectData, sessionData, connectionData, runtimeData] =
-          await Promise.all([
-            api.projects(),
-            api.sessions(),
-            api.providerConnections(),
-            api.me(),
-          ]);
+        const runtimeData = await api.me();
+        const nextOrganizations = runtimeData.organizations ?? [];
+        setOrganizations(nextOrganizations);
+        const nextOrgId =
+          selectedOrgIdRef.current &&
+          nextOrganizations.some(
+            ({ organization }) => organization.id === selectedOrgIdRef.current,
+          )
+            ? selectedOrgIdRef.current
+            : (nextOrganizations[0]?.organization.id ?? null);
+        if (selectedOrgIdRef.current !== nextOrgId) {
+          selectedOrgIdRef.current = nextOrgId;
+          setSelectedOrgId(nextOrgId);
+        }
+        if (!nextOrgId) {
+          setProjects([]);
+          setSessions([]);
+          setConnections([]);
+          setIncomingInvitations([]);
+          setOrgInvitations([]);
+          setError(null);
+          return;
+        }
+        const selectedOrgMembership = nextOrganizations.find(
+          ({ organization }) => organization.id === nextOrgId,
+        )?.membership;
+        const canLoadOrgInvitations =
+          selectedOrgMembership?.role === "owner" ||
+          selectedOrgMembership?.role === "admin";
+        const [
+          projectData,
+          sessionData,
+          connectionData,
+          incomingInvitationData,
+          orgInvitationData,
+        ] = await Promise.all([
+          api.projects(nextOrgId),
+          api.sessions(nextOrgId),
+          api.providerConnections(nextOrgId),
+          api.invitations(),
+          canLoadOrgInvitations
+            ? api.orgInvitations(nextOrgId)
+            : Promise.resolve({ invitations: [] }),
+        ]);
         setProjects(projectData.projects);
         setSessions(sessionData.sessions);
         const authoritativeActive = new Set(
@@ -477,6 +529,8 @@ export default function CloudAppPage() {
         );
         setActiveChatSessionIds(authoritativeActive);
         setConnections(connectionData.providerConnections);
+        setIncomingInvitations(incomingInvitationData.invitations);
+        setOrgInvitations(orgInvitationData.invitations);
         setSandboxProvider(runtimeData.sandboxProvider);
         setError(null);
       } catch (refreshError) {
@@ -515,6 +569,14 @@ export default function CloudAppPage() {
 
   const selectedProject = projects.find(({ id }) => id === selectedProjectId);
   const selectedSession = sessions.find(({ id }) => id === selectedSessionId);
+  const selectedOrg = organizations.find(
+    ({ organization }) => organization.id === selectedOrgId,
+  );
+  const selectedOrgRole = selectedOrg?.membership.role ?? "viewer";
+  const canEditOrg =
+    selectedOrgRole === "owner" ||
+    selectedOrgRole === "admin" ||
+    selectedOrgRole === "member";
   const terminalRuntimeAvailable =
     selectedSession?.capabilities?.includes("runtime.pty.v1") === true;
   const daytonaConnections = connections.filter(
@@ -602,9 +664,10 @@ export default function CloudAppPage() {
   };
 
   const startOrchestrator = () => {
-    if (!api || !selectedProjectId || !defaultAgent) return;
+    if (!api || !selectedOrgId || !selectedProjectId || !defaultAgent || !canEditOrg) return;
     void createSessionAndOpen(() =>
       api.createSession(
+        selectedOrgId,
         {
           projectId: selectedProjectId,
           kind: "orchestrator",
@@ -623,17 +686,18 @@ export default function CloudAppPage() {
     repositoryUrl: string;
     defaultBranch: string;
   }) => {
-    if (!api || !defaultAgent) {
+    if (!api || !selectedOrgId || !defaultAgent || !canEditOrg) {
       setError("Connect a coding agent before creating a cloud project.");
       setView("settings");
       return;
     }
     setLoading(true);
     try {
-      const { project } = await api.createProject(input);
+      const { project } = await api.createProject(selectedOrgId, input);
       let orchestrator: CloudSession | null = null;
       if (defaultAgent) {
         const result = await api.createSession(
+          selectedOrgId,
           {
             projectId: project.id,
             kind: "orchestrator",
@@ -664,13 +728,13 @@ export default function CloudAppPage() {
   };
 
   const deleteSelectedWorkerMachine = async () => {
-    if (!api || !selectedSession || selectedSession.kind !== "worker") return;
+    if (!api || !selectedOrgId || !selectedSession || selectedSession.kind !== "worker") return;
     const confirmed = window.confirm(
-		`Delete ${selectedSession.displayName}'s cloud session, machine, and workspace volume?\n\nThis removes the worker from the board after the control plane tears down its sandbox.`,
+      `Delete ${selectedSession.displayName}'s cloud session, machine, and workspace volume?\n\nThis removes the worker from the board after the control plane tears down its sandbox.`,
     );
     if (!confirmed) return;
     const deleted = await run(() =>
-      api.setDesiredState(selectedSession.id, "deleted"),
+      api.setDesiredState(selectedOrgId, selectedSession.id, "deleted"),
     );
     if (!deleted) return;
     setActiveChatSessionIds((current) => {
@@ -813,6 +877,34 @@ export default function CloudAppPage() {
               )}
             </button>
           </div>
+          {!sidebarCollapsed ? (
+            <div className="mx-1.5 mb-2 rounded-lg border border-white/[0.06] bg-[#111317] p-2">
+              <label className="block font-mono text-[9px] uppercase tracking-[0.12em] text-white/30">
+                Workspace
+              </label>
+              <select
+                className="mt-1 h-8 w-full rounded-md border border-white/[0.08] bg-[#171a1f] px-2 text-sm text-white outline-none focus:border-[#4d8dff]"
+                value={selectedOrgId ?? ""}
+                onChange={(event) => {
+                  const nextOrgId = event.target.value || null;
+                  selectedOrgIdRef.current = nextOrgId;
+                  setSelectedOrgId(nextOrgId);
+                  setSelectedProjectId(null);
+                  setSelectedSessionId(null);
+                  setView("board");
+                }}
+              >
+                {organizations.map(({ organization, membership }) => (
+                  <option key={organization.id} value={organization.id}>
+                    {organization.displayName} · {membership.role}
+                  </option>
+                ))}
+              </select>
+              <div className="mt-1 truncate text-[11px] text-white/35">
+                {session?.user.email ?? "Signed in"}
+              </div>
+            </div>
+          ) : null}
           <button
             className={`mx-1.5 flex h-8 shrink-0 items-center rounded-lg text-left text-sm ${
               sidebarCollapsed ? "justify-center px-0" : "gap-2 px-2"
@@ -847,18 +939,18 @@ export default function CloudAppPage() {
             <button
               className="grid size-5 place-items-center rounded-md text-[#646a73] transition-colors hover:bg-white/[0.04] hover:text-white"
               onClick={() => {
-                if (defaultAgent) setShowProjectForm(true);
+                if (defaultAgent && canEditOrg) setShowProjectForm(true);
                 else setView("settings");
               }}
               aria-label="Add cloud project"
               title={
                 sidebarCollapsed
-                  ? defaultAgent
+                  ? defaultAgent && canEditOrg
                     ? "Add project"
-                    : "Connect an agent first"
-                  : defaultAgent
+                    : "Connect an agent and use an editable org"
+                  : defaultAgent && canEditOrg
                     ? "Add project"
-                    : "Connect an agent first"
+                    : "Connect an agent and use an editable org"
               }
             >
               <Plus className="size-[15px]" />
@@ -1074,7 +1166,7 @@ export default function CloudAppPage() {
                 <>
                   <button
                     className={button}
-                    disabled={loading}
+                    disabled={loading || !canEditOrg}
                     onClick={() => setShowSessionForm(true)}
                     aria-label="New task"
                   >
@@ -1144,7 +1236,7 @@ export default function CloudAppPage() {
                   <button
                     className={primaryButton}
                     onClick={() => setShowSessionForm(true)}
-                    disabled={loading}
+                    disabled={loading || !canEditOrg}
                   >
                     <Plus className="size-3.5" />
                     New task
@@ -1152,7 +1244,9 @@ export default function CloudAppPage() {
                   <button
                     className={button}
                     disabled={
-                      loading || (!selectedProjectOrchestrator && !defaultAgent)
+                      loading ||
+                      !canEditOrg ||
+                      (!selectedProjectOrchestrator && !defaultAgent)
                     }
                     onClick={() => {
                       if (selectedProjectOrchestrator) {
@@ -1194,17 +1288,21 @@ export default function CloudAppPage() {
             ) : view === "settings" ? (
               <CloudSettings
                 api={api}
+                selectedOrg={selectedOrg}
+                incomingInvitations={incomingInvitations}
+                orgInvitations={orgInvitations}
                 connections={connections}
                 sandboxProvider={sandboxProvider}
                 run={run}
                 loading={loading}
               />
-            ) : view === "session" && selectedSession ? (
+            ) : view === "session" && selectedSession && selectedOrgId ? (
               terminalRuntimeAvailable ? (
                 <div className="flex h-full min-h-0 min-w-0">
                   <div className="min-h-0 min-w-0 flex-1">
                     <CloudTerminal
                       api={api}
+                      orgId={selectedOrgId}
                       sessionId={selectedSession.id}
                       layoutKey={inspectorOpen ? "inspector-open" : "inspector-closed"}
                     />
@@ -1212,6 +1310,7 @@ export default function CloudAppPage() {
                   <CloudInspector
                     key={selectedSession.id}
                     api={api}
+                    orgId={selectedOrgId}
                     sessionId={selectedSession.id}
                     runtimeConnected={selectedSession.runtimeConnected}
                     previewAddress={selectedInspector?.previewAddress}
@@ -1241,6 +1340,7 @@ export default function CloudAppPage() {
                 onCreateOrchestrator={
                   selectedProjectId &&
                   defaultAgent &&
+                  canEditOrg &&
                   !selectedProjectOrchestrator
                     ? startOrchestrator
                     : undefined
@@ -1264,7 +1364,7 @@ export default function CloudAppPage() {
           onSubmit={createProjectAndPrewarmOrchestrator}
         />
       )}
-      {showSessionForm && selectedProjectId && (
+      {showSessionForm && selectedOrgId && selectedProjectId && (
         <SessionForm
           projectId={selectedProjectId}
           providerConnectionId={daytonaConnections[0]?.id}
@@ -1277,7 +1377,7 @@ export default function CloudAppPage() {
           onClose={() => setShowSessionForm(false)}
           onSubmit={async (input) => {
             const created = await createSessionAndOpen(() =>
-              api.createSession(input, crypto.randomUUID()),
+              api.createSession(selectedOrgId, input, crypto.randomUUID()),
             );
             if (created) setShowSessionForm(false);
           }}
@@ -1557,19 +1657,33 @@ export function SessionBoard({
 
 function CloudSettings({
   api,
+  selectedOrg,
+  incomingInvitations,
+  orgInvitations,
   connections,
   sandboxProvider,
   run,
   loading,
 }: {
   api: CloudAPI;
+  selectedOrg?: CloudUserOrganization;
+  incomingInvitations: CloudOrgInvitation[];
+  orgInvitations: CloudOrgInvitation[];
   connections: ProviderConnection[];
   sandboxProvider: "daytona" | "fly";
   run: (operation: () => Promise<unknown>) => Promise<unknown>;
   loading: boolean;
 }) {
   const [apiKey, setAPIKey] = useState("");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<"admin" | "member" | "viewer">(
+    "member",
+  );
   const [target, setTarget] = useState<"us" | "eu">("us");
+  const selectedOrgId = selectedOrg?.organization.id;
+  const canAdminOrg =
+    selectedOrg?.membership.role === "owner" ||
+    selectedOrg?.membership.role === "admin";
   const connectedAgents = new Map(
     connections
       .filter(
@@ -1586,6 +1700,138 @@ function CloudSettings({
       <div className="max-w-2xl space-y-10">
         <section>
           <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-white/35">
+            Organization
+          </p>
+          <h2 className="mt-2 text-base">
+            {selectedOrg?.organization.displayName ?? "No organization selected"}
+          </h2>
+          <p className="mt-2 max-w-xl text-sm leading-6 text-white/45">
+            AO Cloud scopes projects, provider connections, workers, and
+            invitations to the selected organization. Your current role is{" "}
+            <span className="font-medium text-white/70">
+              {selectedOrg?.membership.role ?? "viewer"}
+            </span>
+            .
+          </p>
+          <div className="mt-4 rounded-lg border border-white/10 bg-[#15171b] p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm">Pending invitations</p>
+                <p className="text-xs text-white/35">
+                  Invites persist in Postgres until accepted, declined, revoked,
+                  or expired.
+                </p>
+              </div>
+              <span className="font-mono text-[10px] uppercase text-white/35">
+                {orgInvitations.length} pending
+              </span>
+            </div>
+            {orgInvitations.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {orgInvitations.map((invitation) => (
+                  <div
+                    key={invitation.id}
+                    className="flex items-center gap-3 rounded-md border border-white/[0.06] bg-[#101216] px-3 py-2 text-sm"
+                  >
+                    <span className="min-w-0 flex-1 truncate">
+                      {invitation.email}
+                    </span>
+                    <span className="font-mono text-[10px] uppercase text-white/35">
+                      {invitation.role}
+                    </span>
+                    {selectedOrgId && (
+                      <button
+                        type="button"
+                        className={button}
+                        onClick={() =>
+                          void run(() =>
+                            api.revokeInvitation(selectedOrgId, invitation.id),
+                          )
+                        }
+                      >
+                        Revoke
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            {incomingInvitations.length > 0 && (
+              <div className="mt-4 rounded-md border border-[#4d8dff]/20 bg-[#4d8dff]/10 p-3">
+                <p className="text-sm text-white/80">Invitations for you</p>
+                <div className="mt-2 space-y-2">
+                  {incomingInvitations.map((invitation) => (
+                    <div
+                      key={invitation.id}
+                      className="flex items-center gap-2 text-sm"
+                    >
+                      <span className="min-w-0 flex-1 truncate">
+                        {invitation.email} as {invitation.role}
+                      </span>
+                      <button
+                        type="button"
+                        className={button}
+                        onClick={() =>
+                          void run(() => api.acceptInvitation(invitation.id))
+                        }
+                      >
+                        Accept
+                      </button>
+                      <button
+                        type="button"
+                        className={button}
+                        onClick={() =>
+                          void run(() => api.declineInvitation(invitation.id))
+                        }
+                      >
+                        Decline
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {canAdminOrg && selectedOrgId && (
+              <form
+                className="mt-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_130px_auto]"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void run(() =>
+                    api.inviteToOrg(selectedOrgId, {
+                      email: inviteEmail,
+                      role: inviteRole,
+                    }),
+                  ).then(() => setInviteEmail(""));
+                }}
+              >
+                <input
+                  className={field}
+                  type="email"
+                  value={inviteEmail}
+                  onChange={(event) => setInviteEmail(event.target.value)}
+                  placeholder="teammate@example.com"
+                  required
+                />
+                <select
+                  className={field}
+                  value={inviteRole}
+                  onChange={(event) =>
+                    setInviteRole(event.target.value as typeof inviteRole)
+                  }
+                >
+                  <option value="admin">Admin</option>
+                  <option value="member">Member</option>
+                  <option value="viewer">Viewer</option>
+                </select>
+                <button className={primaryButton} type="submit">
+                  Invite
+                </button>
+              </form>
+            )}
+          </div>
+        </section>
+        <section>
+          <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-white/35">
             Coding agents
           </p>
           <h2 className="mt-2 text-base">Provider connections</h2>
@@ -1600,24 +1846,45 @@ function CloudSettings({
             securely replace it; AO never returns the saved secret to this
             browser.
           </p>
-          <div className="mt-5 divide-y divide-white/10 border-y border-white/10">
-            {CLOUD_AGENTS.map((agent) => (
-              <AgentConnectionRow
-                key={agent.id}
-                agent={agent}
-                connection={connectedAgents.get(agent.id)}
-                run={run}
-                validating={loading}
-                connect={(credentialType, secret) =>
-                  api.connectAgent(agent.id, { credentialType, secret })
-                }
-                disconnect={() => api.disconnectAgent(agent.id)}
-              />
-            ))}
-          </div>
+          {canAdminOrg && selectedOrgId ? (
+            <div className="mt-5 divide-y divide-white/10 border-y border-white/10">
+              {CLOUD_AGENTS.map((agent) => (
+                <AgentConnectionRow
+                  key={agent.id}
+                  agent={agent}
+                  connection={connectedAgents.get(agent.id)}
+                  run={run}
+                  validating={loading}
+                  connect={(credentialType, secret) =>
+                    api.connectAgent(selectedOrgId, agent.id, {
+                      credentialType,
+                      secret,
+                    })
+                  }
+                  disconnect={() =>
+                    api.disconnectAgent(selectedOrgId, agent.id)
+                  }
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="mt-5 rounded-lg border border-white/10 bg-[#15171b] px-3 py-2 text-sm text-white/45">
+              Ask an organization admin to manage coding-agent connections.
+            </div>
+          )}
         </section>
 
-        {sandboxProvider === "fly" ? (
+        {!canAdminOrg || !selectedOrgId ? (
+          <section>
+            <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-white/35">
+              Sandbox provider
+            </p>
+            <h2 className="mt-2 text-base">Provider settings</h2>
+            <p className="mt-2 text-sm leading-6 text-white/45">
+              Only organization admins can change sandbox provider settings.
+            </p>
+          </section>
+        ) : sandboxProvider === "fly" ? (
           <section>
             <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-white/35">
               Sandbox provider
@@ -1661,7 +1928,7 @@ function CloudSettings({
               onSubmit={(event) => {
                 event.preventDefault();
                 void run(() =>
-                  api.connectDaytona({
+                  api.connectDaytona(selectedOrgId, {
                     label: "personal",
                     apiKey,
                     apiUrl: "https://app.daytona.io/api",

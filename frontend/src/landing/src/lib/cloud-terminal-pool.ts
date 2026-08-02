@@ -39,6 +39,7 @@ class CloudTerminalConnection {
 
   constructor(
     private readonly api: CloudAPI,
+    private readonly orgId: string,
     private readonly sessionId: string,
     private readonly kind: CloudTerminalKind,
   ) {
@@ -103,7 +104,11 @@ class CloudTerminalConnection {
     this.connectInFlight = true;
     this.setState("connecting");
     try {
-      const { ticket } = await this.api.terminalTicket(this.sessionId, this.kind);
+      const { ticket } = await this.api.terminalTicket(
+        this.orgId,
+        this.sessionId,
+        this.kind,
+      );
       if (this.closed) return;
       const socket = new WebSocket(
         this.api.terminalURL(ticket, this.lastSequence, this.kind),
@@ -197,31 +202,33 @@ const connections = new Map<string, CloudTerminalConnection>();
 
 export function ensureCloudTerminalConnection(
   api: CloudAPI,
+  orgId: string,
   sessionId: string,
   kind: CloudTerminalKind = "agent",
 ) {
   if (poolAPI && poolAPI !== api) clearCloudTerminalConnections();
   poolAPI = api;
-  const key = `${sessionId}:${kind}`;
+  const key = `${orgId}:${sessionId}:${kind}`;
   const existing = connections.get(key);
   if (existing) return existing;
-  const connection = new CloudTerminalConnection(api, sessionId, kind);
+  const connection = new CloudTerminalConnection(api, orgId, sessionId, kind);
   connections.set(key, connection);
   return connection;
 }
 
 export function syncCloudTerminalConnections(
   api: CloudAPI,
+  orgId: string,
   sessionIds: string[],
 ) {
   if (poolAPI && poolAPI !== api) clearCloudTerminalConnections();
   poolAPI = api;
   const active = new Set(sessionIds);
   for (const sessionId of sessionIds) {
-    ensureCloudTerminalConnection(api, sessionId);
+    ensureCloudTerminalConnection(api, orgId, sessionId);
   }
   for (const [key, connection] of connections) {
-    const sessionId = key.split(":", 1)[0];
+    const [, sessionId] = key.split(":");
     if (active.has(sessionId)) continue;
     connection.close();
     connections.delete(key);

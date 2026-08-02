@@ -44,14 +44,18 @@ export function removeWorkspaceSnapshots(activeSessionIds: Set<string>) {
   }
 }
 
-export function warmWorkspaceSession(api: CloudAPI, sessionId: string) {
+export function warmWorkspaceSession(
+  api: CloudAPI,
+  orgId: string,
+  sessionId: string,
+) {
   const existing = inFlight.get(sessionId);
   if (existing) return existing;
   const generation = generations.get(sessionId) ?? 0;
   let request: Promise<void>;
   request = Promise.allSettled([
-    api.workspaceDiff(sessionId),
-    api.workspaceFiles(sessionId),
+    api.workspaceDiff(orgId, sessionId),
+    api.workspaceFiles(orgId, sessionId),
   ])
     .then(([diffResult, filesResult]) => {
       if ((generations.get(sessionId) ?? 0) !== generation) return;

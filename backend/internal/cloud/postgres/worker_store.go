@@ -28,9 +28,10 @@ func (s *Store) WorkerLaunchSpec(
 	var spec WorkerLaunchSpec
 	err := s.pool.QueryRow(ctx, `
 		SELECT
-			session.account_id,
+			session.org_id,
 			session.id,
 			session.account_id,
+			session.org_id,
 			session.project_id,
 			session.kind,
 			session.harness,
@@ -47,11 +48,12 @@ func (s *Store) WorkerLaunchSpec(
 			project.config
 		FROM ao_sessions session
 		JOIN ao_projects project ON project.id = session.project_id
-		WHERE session.account_id = $1 AND session.id = $2
+		WHERE session.org_id = $1 AND session.id = $2
 	`, accountID, sessionID).Scan(
 		&spec.AccountID,
 		&spec.Session.ID,
 		&spec.Session.AccountID,
+		&spec.Session.OrgID,
 		&spec.Session.ProjectID,
 		&spec.Session.Kind,
 		&spec.Session.Harness,
@@ -86,7 +88,7 @@ func (s *Store) UpdateSessionActivity(
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE ao_sessions
 		SET activity_state = $3, updated_at = now()
-		WHERE account_id = $1 AND id = $2
+		WHERE org_id = $1 AND id = $2
 	`, accountID, sessionID, state)
 	if err != nil {
 		return fmt.Errorf("update cloud session activity: %w", err)
@@ -110,7 +112,7 @@ func (s *Store) WorkerConnectionCurrent(
 		SELECT EXISTS (
 			SELECT 1
 			FROM ao_worker_connections
-			WHERE account_id = $1
+			WHERE org_id = $1
 				AND session_id = $2
 				AND worker_id = $3
 				AND epoch = $4

@@ -13,6 +13,7 @@ import {
 
 interface CloudTerminalProps {
   api: CloudAPI;
+  orgId: string;
   sessionId: string;
   layoutKey?: string;
   kind?: CloudTerminalKind;
@@ -20,6 +21,7 @@ interface CloudTerminalProps {
 
 export function CloudTerminal({
   api,
+  orgId,
   sessionId,
   layoutKey = "",
   kind = "agent",
@@ -75,7 +77,12 @@ export function CloudTerminal({
       window.requestAnimationFrame(fitTerminal);
     });
 
-    const persistentConnection = ensureCloudTerminalConnection(api, sessionId, kind);
+    const persistentConnection = ensureCloudTerminalConnection(
+      api,
+      orgId,
+      sessionId,
+      kind,
+    );
     const unsubscribe = persistentConnection.subscribe((event) => {
       if (event.type === "state") {
         setConnection(event.state);
@@ -111,7 +118,7 @@ export function CloudTerminal({
       resize.dispose();
       terminal.dispose();
     };
-  }, [api, kind, layoutKey, sessionId]);
+  }, [api, kind, layoutKey, orgId, sessionId]);
 
   return (
     <div className="relative h-full min-h-0 w-full bg-[#101317]">

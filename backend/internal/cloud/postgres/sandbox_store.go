@@ -51,7 +51,7 @@ func (s *Store) ClaimSandboxes(
 			updated_at = now()
 		FROM candidates
 		WHERE sandbox.session_id = candidates.session_id
-		RETURNING sandbox.session_id, sandbox.account_id, sandbox.provider,
+		RETURNING sandbox.session_id, sandbox.account_id, sandbox.org_id, sandbox.provider,
 			COALESCE(sandbox.provider_environment_id, ''),
 			COALESCE(sandbox.provider_connection_id::text, ''),
 			sandbox.desired_state, sandbox.observed_state,
@@ -171,7 +171,7 @@ func (s *Store) SetSandboxDesiredState(
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE ao_sandboxes
 		SET desired_state = $3, reconcile_after = now(), updated_at = now()
-		WHERE account_id = $1 AND session_id = $2
+		WHERE org_id = $1 AND session_id = $2
 	`, accountID, sessionID, desiredState)
 	if err != nil {
 		return fmt.Errorf("set sandbox desired state: %w", err)
@@ -189,13 +189,13 @@ func (s *Store) GetSandbox(
 	sessionID clouddomain.SessionID,
 ) (clouddomain.Sandbox, error) {
 	sandbox, err := scanSandbox(s.pool.QueryRow(ctx, `
-		SELECT session_id, account_id, provider,
+		SELECT session_id, account_id, org_id, provider,
 			COALESCE(provider_environment_id, ''),
 			COALESCE(provider_connection_id::text, ''),
 			desired_state, observed_state, resource_profile, worker_last_seen_at,
 			last_error, reconcile_after, created_at, updated_at
 		FROM ao_sandboxes
-		WHERE account_id = $1 AND session_id = $2
+		WHERE org_id = $1 AND session_id = $2
 	`, accountID, sessionID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return clouddomain.Sandbox{}, ErrSessionNotFound
@@ -261,7 +261,7 @@ func (s *Store) MarkWorkerSeen(
 			END,
 			reconcile_after = now() + interval '30 seconds',
 			updated_at = now()
-		WHERE account_id = $1 AND session_id = $2
+		WHERE org_id = $1 AND session_id = $2
 	`, accountID, sessionID)
 	if err != nil {
 		return fmt.Errorf("mark sandbox worker seen: %w", err)
@@ -304,11 +304,11 @@ func upsertWorkerConnection(
 ) error {
 	_, err := executor.Exec(ctx, `
 		INSERT INTO ao_worker_connections (
-			session_id, account_id, sandbox_id, epoch, worker_id, version,
+			session_id, account_id, org_id, sandbox_id, epoch, worker_id, version,
 			capabilities, connected_at, last_seen_at, ready_at, disconnected_at
 		)
 		VALUES (
-			$1, $2, $1, $3, $4, $5, $6, now(), now(),
+			$1, $2, $2, $1, $3, $4, $5, $6, now(), now(),
 			CASE WHEN $7 THEN now() ELSE NULL END,
 			NULL
 		)
@@ -339,6 +339,7 @@ func scanSandbox(row rowScanner) (clouddomain.Sandbox, error) {
 	if err := row.Scan(
 		&sandbox.SessionID,
 		&sandbox.AccountID,
+		&sandbox.OrgID,
 		&sandbox.Provider,
 		&sandbox.ProviderEnvironmentID,
 		&sandbox.ProviderConnectionID,
