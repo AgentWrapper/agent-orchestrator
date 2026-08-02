@@ -2228,6 +2228,140 @@ func TestListPRSummariesOnlyEmitsMergeReasonsForBlockedStates(t *testing.T) {
 	}
 }
 
+func TestListPRSummariesCollapsesTransferredRepoAliases(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	now := time.Date(2026, 7, 31, 10, 0, 0, 0, time.UTC)
+	oldURL := "https://github.com/AgentWrapper/agent-orchestrator/pull/3193"
+	newURL := "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193"
+	stList := &multiPRFakeStore{fakeStore: st, prs: []domain.PullRequest{
+		{
+			URL:          oldURL,
+			SessionID:    "mer-1",
+			Number:       3193,
+			Provider:     "github",
+			Host:         "github.com",
+			Repo:         "AgentWrapper/agent-orchestrator",
+			SourceBranch: "ao/mer-1/fix-sigpipe",
+			TargetBranch: "main",
+			HeadSHA:      "same-head",
+			Title:        "old alias",
+			CI:           domain.CIFailing,
+			UpdatedAt:    now,
+		},
+		{
+			URL:          newURL,
+			HTMLURL:      newURL,
+			SessionID:    "mer-1",
+			Number:       3193,
+			Provider:     "github",
+			Host:         "github.com",
+			Repo:         "Untrivial-ai/agent-orchestrator",
+			SourceBranch: "ao/mer-1/fix-sigpipe",
+			TargetBranch: "main",
+			HeadSHA:      "same-head",
+			Title:        "new alias",
+			CI:           domain.CIFailing,
+			UpdatedAt:    now.Add(time.Minute),
+		},
+	}}
+	stList.checks[oldURL] = []domain.PullRequestCheck{{
+		Name: "old-check", CommitHash: "same-head", Status: domain.PRCheckFailed, Conclusion: "failure", URL: "https://ci.example/old",
+	}}
+	stList.checks[newURL] = []domain.PullRequestCheck{{
+		Name: "new-check", CommitHash: "same-head", Status: domain.PRCheckFailed, Conclusion: "failure", URL: "https://ci.example/new",
+	}}
+
+	got, err := (&Service{store: stList}).ListPRSummaries(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("summaries = %d, want 1: %+v", len(got), got)
+	}
+	if got[0].URL != newURL || got[0].Title != "new alias" {
+		t.Fatalf("summary primary = %q %q, want new alias", got[0].URL, got[0].Title)
+	}
+	if names := failingCheckNames(got[0].CI.FailingChecks); !sameStrings(names, []string{"old-check", "new-check"}) {
+		t.Fatalf("failing checks = %v, want old and new alias checks", names)
+	}
+}
+
+func TestDeduplicatePRFactsKeepsSameNumberAcrossDifferentRepos(t *testing.T) {
+	now := time.Date(2026, 7, 31, 10, 0, 0, 0, time.UTC)
+	got := deduplicatePRFacts([]domain.PRFacts{
+		{
+			URL:          "https://github.com/acme/api/pull/7",
+			Number:       7,
+			SourceBranch: "fix-tests",
+			UpdatedAt:    now,
+		},
+		{
+			URL:          "https://github.com/acme/web/pull/7",
+			Number:       7,
+			SourceBranch: "fix-tests",
+			UpdatedAt:    now.Add(time.Minute),
+		},
+	})
+	if len(got) != 2 {
+		t.Fatalf("facts = %d, want distinct same-number PRs from different repos: %+v", len(got), got)
+	}
+}
+
+func TestDeduplicatePRFactsKeepsSameBasenameAcrossDifferentOwners(t *testing.T) {
+	now := time.Date(2026, 7, 31, 10, 0, 0, 0, time.UTC)
+	got := deduplicatePRFacts([]domain.PRFacts{
+		{
+			URL:          "https://github.com/acme/repo/pull/7",
+			Number:       7,
+			SourceBranch: "fix-tests",
+			TargetBranch: "main",
+			HeadSHA:      "acme-head",
+			UpdatedAt:    now,
+		},
+		{
+			URL:          "https://github.com/other/repo/pull/7",
+			Number:       7,
+			SourceBranch: "fix-tests",
+			TargetBranch: "main",
+			HeadSHA:      "other-head",
+			UpdatedAt:    now.Add(time.Minute),
+		},
+	})
+	if len(got) != 2 {
+		t.Fatalf("facts = %d, want distinct same-basename PRs from different owners: %+v", len(got), got)
+	}
+}
+
+func TestDeduplicatePRFactsCollapsesTransferredRepoAliasesWithSameHead(t *testing.T) {
+	now := time.Date(2026, 7, 31, 10, 0, 0, 0, time.UTC)
+	got := deduplicatePRFacts([]domain.PRFacts{
+		{
+			URL:            "https://github.com/AgentWrapper/agent-orchestrator/pull/3193",
+			Number:         3193,
+			ReviewComments: true,
+			SourceBranch:   "ao/mer-1/fix-sigpipe",
+			TargetBranch:   "main",
+			HeadSHA:        "same-head",
+			UpdatedAt:      now,
+		},
+		{
+			URL:          "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193",
+			Number:       3193,
+			SourceBranch: "ao/mer-1/fix-sigpipe",
+			TargetBranch: "main",
+			HeadSHA:      "same-head",
+			UpdatedAt:    now.Add(time.Minute),
+		},
+	})
+	if len(got) != 1 {
+		t.Fatalf("facts = %d, want transferred aliases collapsed: %+v", len(got), got)
+	}
+	if got[0].URL != "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193" || !got[0].ReviewComments {
+		t.Fatalf("merged facts = %+v, want newest URL and preserved comments", got[0])
+	}
+}
+
 type multiPRFakeStore struct {
 	*fakeStore
 	prs []domain.PullRequest
@@ -2244,4 +2378,29 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func failingCheckNames(checks []PRFailingCheck) []string {
+	out := make([]string, 0, len(checks))
+	for _, check := range checks {
+		out = append(out, check.Name)
+	}
+	return out
+}
+
+func sameStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	seen := map[string]int{}
+	for _, value := range got {
+		seen[value]++
+	}
+	for _, value := range want {
+		seen[value]--
+		if seen[value] < 0 {
+			return false
+		}
+	}
+	return true
 }

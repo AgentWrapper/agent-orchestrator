@@ -119,25 +119,36 @@ func (s *Service) ListPRSummaries(ctx context.Context, id domain.SessionID) ([]P
 	if err != nil {
 		return nil, err
 	}
-	out := make([]PRSummary, 0, len(prs))
-	for _, pr := range prs {
-		checks, err := s.store.ListChecks(ctx, pr.URL)
-		if err != nil {
-			return nil, err
+	groups := groupPullRequestAliases(prs)
+	out := make([]PRSummary, 0, len(groups))
+	for _, group := range groups {
+		var checks []domain.PullRequestCheck
+		var threads []domain.PullRequestReviewThread
+		var reviews []domain.PullRequestReview
+		var comments []domain.PullRequestComment
+		for _, pr := range group.aliases {
+			prChecks, err := s.store.ListChecks(ctx, pr.URL)
+			if err != nil {
+				return nil, err
+			}
+			checks = append(checks, prChecks...)
+			prThreads, err := s.store.ListPRReviewThreads(ctx, pr.URL)
+			if err != nil {
+				return nil, err
+			}
+			threads = append(threads, prThreads...)
+			prReviews, err := s.store.ListPRReviews(ctx, pr.URL)
+			if err != nil {
+				return nil, err
+			}
+			reviews = append(reviews, prReviews...)
+			prComments, err := s.store.ListPRComments(ctx, pr.URL)
+			if err != nil {
+				return nil, err
+			}
+			comments = append(comments, prComments...)
 		}
-		threads, err := s.store.ListPRReviewThreads(ctx, pr.URL)
-		if err != nil {
-			return nil, err
-		}
-		reviews, err := s.store.ListPRReviews(ctx, pr.URL)
-		if err != nil {
-			return nil, err
-		}
-		comments, err := s.store.ListPRComments(ctx, pr.URL)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, summarizePR(pr, checks, reviews, threads, comments))
+		out = append(out, summarizePR(group.primary, checks, reviews, threads, comments))
 	}
 	sortPRSummaries(out)
 	return out, nil
