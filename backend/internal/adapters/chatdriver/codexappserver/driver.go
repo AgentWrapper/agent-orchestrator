@@ -100,9 +100,14 @@ func capabilities() ports.ChatCapabilities {
 		ports.ChatCapabilityFork:     true,
 		ports.ChatCapabilityRename:   true,
 		ports.ChatCapabilitySkills:   true,
-		// turn/steer exists in the protocol but AO does not use it yet, so it is
-		// not advertised: a capability AO cannot drive must not gate UI on.
-		ports.ChatCapabilitySteer: false,
+		// Guidance into a turn already in flight, over turn/steer. Advertised only
+		// after being driven against a live app-server (TestLiveSteerKeepsTheTurnAndItsWork
+		// on codex-cli 0.146.0): the steered turn kept its id, emitted one
+		// turn/started and one turn/completed, settled `completed` rather than
+		// interrupted, and followed the correction. Strictly better than
+		// interrupt-and-resend, which throws the turn's context and in-flight work
+		// away.
+		ports.ChatCapabilitySteer: true,
 	}
 }
 
