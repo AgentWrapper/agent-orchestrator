@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -313,20 +315,41 @@ func spawnAppServer(ctx context.Context, bin, workdir string, env []string) (*pr
 	}, nil
 }
 
-// envSlice converts AO's env map into the KEY=VALUE form exec wants. Sorted so a
-// relaunch is byte-identical, which makes process diffs readable.
+// envSlice merges AO's session env OVER the daemon's own, in the KEY=VALUE form
+// exec wants. Sorted so a relaunch is byte-identical, which makes process diffs
+// readable.
+//
+// The merge is the point. AO's map is an OVERLAY -- session id, project id, the
+// HookPATH-pinned PATH -- not a whole environment; the terminal path gets away
+// with treating it as one only because tmux inherits the daemon's env underneath.
+// Using it as a replacement launched the provider with eight variables and no
+// HOME, USER, TMPDIR, LANG or SSH_AUTH_SOCK. The provider itself survived that
+// (its home-directory lookup falls back to the passwd database), which is why it
+// went unnoticed, but every shell command the agent runs inherits this env too:
+// no SSH agent means `git push` over SSH fails, no HOME means global git config
+// and every toolchain cache is missing. Found while writing the Claude driver,
+// where the same shape failed outright with "Not logged in".
 func envSlice(env map[string]string) []string {
-	if len(env) == 0 {
-		return nil
+	merged := make(map[string]string, len(os.Environ())+len(env))
+	for _, entry := range os.Environ() {
+		if key, value, ok := strings.Cut(entry, "="); ok {
+			merged[key] = value
+		}
 	}
-	keys := make([]string, 0, len(env))
-	for k := range env {
+	// AO's values win: a session must not inherit a stale AO_SESSION from whatever
+	// shell started the daemon.
+	for key, value := range env {
+		merged[key] = value
+	}
+
+	keys := make([]string, 0, len(merged))
+	for k := range merged {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	out := make([]string, 0, len(keys))
 	for _, k := range keys {
-		out = append(out, k+"="+env[k])
+		out = append(out, k+"="+merged[k])
 	}
 	return out
 }

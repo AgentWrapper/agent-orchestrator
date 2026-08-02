@@ -600,13 +600,27 @@ func TestApprovalSettingsMirrorTUIPosture(t *testing.T) {
 }
 
 func TestEnvSliceIsSortedForReproducibleRelaunch(t *testing.T) {
-	got := envSlice(map[string]string{"PATH": "/a:/b", "HOME": "/h", "AO_SESSION": "ao-1"})
-	want := []string{"AO_SESSION=ao-1", "HOME=/h", "PATH=/a:/b"}
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("envSlice = %v, want %v", got, want)
+	// Sortedness is still the contract: a relaunch should be byte-identical so a
+	// process diff is readable. What changed is that the overlay is merged over the
+	// daemon's environment rather than replacing it.
+	//
+	// This test used to assert envSlice(nil) == nil, "so exec inherits the parent
+	// env". The intent was right and the mechanism never worked: the slice is only
+	// nil when the overlay is empty, which it never is in practice, so the provider
+	// was always launched with a replaced environment.
+	got := envSlice(map[string]string{"ZZ_LAST": "z", "AA_FIRST": "a"})
+	var previous string
+	for _, entry := range got {
+		if previous != "" && entry < previous {
+			t.Fatalf("env not sorted: %q came after %q", entry, previous)
+		}
+		previous = entry
 	}
-	if envSlice(nil) != nil {
-		t.Error("envSlice(nil) should stay nil so exec inherits the parent env")
+	joined := strings.Join(got, "\n")
+	for _, want := range []string{"AA_FIRST=a", "ZZ_LAST=z"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("overlay entry %q missing from %v", want, got)
+		}
 	}
 }
 
@@ -940,5 +954,56 @@ func TestCompactionClaimsNoFiguresItDoesNotHave(t *testing.T) {
 func TestCompactionIsAdvertised(t *testing.T) {
 	if !capabilities().Has(ports.ChatCapabilityCompaction) {
 		t.Fatal("compaction capability is not advertised")
+	}
+}
+
+// AO's session env is an overlay, not a whole environment. Replacing the process
+// env with it launched the provider with no HOME, USER, TMPDIR or SSH_AUTH_SOCK --
+// and every shell command the agent runs inherits that same env, so `git push` over
+// SSH and every toolchain cache would fail. The provider survived it because its
+// home lookup falls back to the passwd database, which is exactly why nobody
+// noticed.
+func TestEnvSliceMergesOverTheDaemonEnvironment(t *testing.T) {
+	t.Setenv("HOME", "/Users/someone")
+	t.Setenv("SSH_AUTH_SOCK", "/tmp/agent.sock")
+	t.Setenv("AO_SESSION", "stale-from-the-shell-that-started-the-daemon")
+
+	got := map[string]string{}
+	for _, entry := range envSlice(map[string]string{
+		"AO_SESSION": "p1-1",
+		"PATH":       "/pinned/bin:/usr/bin",
+	}) {
+		key, value, _ := strings.Cut(entry, "=")
+		got[key] = value
+	}
+
+	// Inherited, because the agent's shell needs them.
+	if got["HOME"] != "/Users/someone" {
+		t.Errorf("HOME = %q, want it inherited from the daemon", got["HOME"])
+	}
+	if got["SSH_AUTH_SOCK"] != "/tmp/agent.sock" {
+		t.Errorf("SSH_AUTH_SOCK = %q; without it the agent cannot push over SSH", got["SSH_AUTH_SOCK"])
+	}
+	// AO's overlay wins: a session must not inherit a stale id.
+	if got["AO_SESSION"] != "p1-1" {
+		t.Errorf("AO_SESSION = %q, want the session's own id to win", got["AO_SESSION"])
+	}
+	if got["PATH"] != "/pinned/bin:/usr/bin" {
+		t.Errorf("PATH = %q, want the HookPATH-pinned value to win", got["PATH"])
+	}
+}
+
+// An empty overlay still has to hand the provider a usable environment.
+func TestEnvSliceWithNoOverlayStillInheritsTheEnvironment(t *testing.T) {
+	t.Setenv("HOME", "/Users/someone")
+	entries := envSlice(nil)
+	var sawHome bool
+	for _, entry := range entries {
+		if entry == "HOME=/Users/someone" {
+			sawHome = true
+		}
+	}
+	if !sawHome {
+		t.Error("an empty overlay produced an environment with no HOME")
 	}
 }
