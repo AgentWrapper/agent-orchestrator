@@ -66,6 +66,9 @@ func (r *Runner) Run(ctx context.Context) error {
 	if err := os.MkdirAll(r.dataDir, 0o700); err != nil {
 		return fmt.Errorf("create worker data dir: %w", err)
 	}
+	if err := prepareWorkerHome(); err != nil {
+		return err
+	}
 	restoreAgent, err := shouldRestoreAgentSession(
 		r.bootstrap.Launch.Session,
 		r.dataDir,
@@ -163,6 +166,19 @@ func (r *Runner) Run(ctx context.Context) error {
 	runtimeEnvironment := append(os.Environ(), envList(hookEnvironment)...)
 	clearEnvironmentSecret(hookEnvironment, credentialEnvironmentName)
 	return r.runInteractiveAgent(ctx, argv, runtimeEnvironment)
+}
+
+func prepareWorkerHome() error {
+	for _, name := range []string{"HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR"} {
+		value := strings.TrimSpace(os.Getenv(name))
+		if value == "" {
+			continue
+		}
+		if err := os.MkdirAll(value, 0o700); err != nil {
+			return fmt.Errorf("create %s directory: %w", name, err)
+		}
+	}
+	return nil
 }
 
 func shouldRestoreAgentSession(
@@ -619,6 +635,7 @@ func (r *Runner) installSessionBranchGuard() error {
 		return nil
 	}
 	hooksDir := filepath.Join(r.workspaceDir, ".git", "hooks")
+	//nolint:gosec // Git hooks directories need executable bits for Git to traverse them.
 	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
 		return fmt.Errorf("create git hooks directory: %w", err)
 	}
@@ -631,6 +648,7 @@ if [ "$current" != %s ]; then
   exit 1
 fi
 `, shellQuote(branch), branch)
+	//nolint:gosec // Git hook files must be executable.
 	if err := os.WriteFile(filepath.Join(hooksDir, "pre-push"), []byte(hook), 0o755); err != nil {
 		return fmt.Errorf("install session branch pre-push hook: %w", err)
 	}
