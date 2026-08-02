@@ -107,6 +107,8 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
+	const isBoardEmpty = Boolean(projectId) && sessions.length === 0;
+	const boardHeaderActionVariant = isBoardEmpty ? "accent" : "primary";
 	const health = workspace ? orchestratorHealth(workspace, isProjectRestarting) : { state: "ok" as const };
 	const visibleSpawnError = spawnError ?? orchestratorStartupError;
 	// The board instance survives project-to-project navigation (same route,
@@ -260,7 +262,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				aria-label="New task"
 				disabled={isProjectRestarting}
 				onClick={() => projectId && requestNewTask(projectId)}
-				variant="accent"
+				variant={isBoardEmpty ? "accent" : "accent"}
 			>
 				<Plus className="size-icon-md" aria-hidden="true" />
 				New task
@@ -269,7 +271,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				aria-label={orchestratorActivityLabel ? `Orchestrator, ${orchestratorActivityLabel}` : "Spawn Orchestrator"}
 				disabled={isSpawning || isProjectRestarting}
 				onClick={() => void openOrchestrator()}
-				variant="primary"
+				variant={boardHeaderActionVariant}
 			>
 				<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 				{orchestrator ? <OrchestratorActivityIndicator session={orchestrator} /> : null}
@@ -748,6 +750,9 @@ function SessionCard({
 	onOpen?: () => void;
 	onTerminate?: () => void;
 	interactive?: boolean;
+	restoreAction?: (event: MouseEvent<HTMLButtonElement>) => void;
+	isRestoring?: boolean;
+	isRestoreDisabled?: boolean;
 }) {
 	const queryClient = useQueryClient();
 	const [confirmOpen, setConfirmOpen] = useState(false);
@@ -768,11 +773,11 @@ function SessionCard({
 	};
 	const cardBodyProps = interactive
 		? {
-				onClick: onOpen,
-				onKeyDown: handleKeyDown,
-				role: "button",
-				tabIndex: 0,
-			}
+			onClick: onOpen,
+			onKeyDown: handleKeyDown,
+			role: "button",
+			tabIndex: 0,
+		}
 		: {};
 	return (
 		<div

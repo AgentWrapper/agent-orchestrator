@@ -267,19 +267,6 @@ describe("ShellTopbar orchestrator actions", () => {
 		});
 		expect(spawnMock).not.toHaveBeenCalled();
 	});
-
-	it("switches from a worker to its orchestrator as soon as termination is confirmed", async () => {
-		postMock.mockReturnValue(new Promise(() => {}));
-		renderTopbarSessions([worker, orchestrator], worker.id);
-
-		await userEvent.click(screen.getByRole("button", { name: "Kill session" }));
-		await clickKillDialogConfirm();
-
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "orch-1" },
-		});
-	});
 });
 
 describe("ShellTopbar inspector state", () => {

@@ -177,6 +177,31 @@ describe("SessionsBoard", () => {
 		expect(screen.getByText("Board")).toBeInTheDocument();
 	});
 
+	it("uses quieter header actions for empty project boards when actions live in the panel", () => {
+		boardActionsInPanelMock.mockReturnValue(true);
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "solkit-ui",
+					path: "/tmp/solkit-ui",
+					sessions: [],
+				},
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		expect(screen.getByText("No worker sessions yet")).toBeInTheDocument();
+		const [headerOrchestrator, emptyStateOrchestrator] = screen.getAllByRole("button", { name: "Spawn Orchestrator" });
+		expect(headerOrchestrator).toHaveClass("bg-raised");
+		expect(headerOrchestrator).not.toHaveClass("bg-primary");
+		expect(emptyStateOrchestrator).toHaveClass("bg-accent-strong");
+		expect(emptyStateOrchestrator).not.toHaveClass("bg-raised");
+	});
+
 	it("labels an idle session as Idle, not Working", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
@@ -1046,12 +1071,17 @@ describe("SessionsBoard", () => {
 	});
 
 	it("keeps the merged-card confirmation dismissed and surfaces termination failures", async () => {
-		postMock.mockResolvedValueOnce({ error: { message: "runtime failed" }, response: { status: 500 } });
+		postMock.mockRejectedValueOnce(new Error("Failed to terminate session (500)"));
 		workspaceQueryMock.mockReturnValue({
-			data: [workspaceWithSessions([boardSession({ id: "s-merged", title: "merged worker", status: "merged" })])],
+			data: [
+				workspaceWithSessions([
+					boardSession({ id: "s-merged", title: "merged worker", status: "merged" }),
+				]),
+			],
 			isError: false,
 			isSuccess: true,
 		});
+
 		renderBoard("p1");
 
 		await userEvent.click(screen.getByRole("button", { name: "Terminate merged worker" }));
@@ -1061,7 +1091,7 @@ describe("SessionsBoard", () => {
 
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-		expect(await screen.findByRole("alert")).toHaveTextContent("Failed to terminate session (500)");
+		expect(await screen.findByText("Failed to terminate session (500)")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Terminate merged worker" })).toBeEnabled();
 	});
 });

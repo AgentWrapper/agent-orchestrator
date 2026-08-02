@@ -8,6 +8,7 @@ import {
 	hasConfiguredOrchestratorAgent,
 	isOrchestratorSession,
 	sessionIsActive,
+	workerSessions,
 	type WorkspaceSession,
 } from "../types/workspace";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -74,7 +75,9 @@ export function ShellTopbar() {
 	const isProjectBoardRoute = !isSessionRoute && Boolean(projectId);
 	const isRootBoardRoute = !isSessionRoute && !isProjectBoardRoute;
 	const project = projectId ? all.find((workspace) => workspace.id === projectId) : undefined;
+	const isBoardEmpty = isProjectBoardRoute && workerSessions(project?.sessions ?? []).length === 0;
 	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : "Board");
+	const boardHeaderActionVariant = isBoardEmpty ? "accent" : "primary";
 	const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
 	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity).label : undefined;
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
@@ -163,8 +166,7 @@ export function ShellTopbar() {
 						) : null}
 						{session ? <SessionStatusPill session={session} /> : null}
 					</div>
-				) : (isProjectBoardRoute && boardActionsInPanel) ||
-				  (isMac && isRootBoardRoute && boardActionsInPanel) ? null : (
+				) : (isProjectBoardRoute || (isMac && isRootBoardRoute)) && boardActionsInPanel ? null : (
 					<div className="inline-flex min-w-0 items-center gap-1.5">
 						<span className={topbarProjectLabelClass}>{projectLabel}</span>
 					</div>
@@ -186,7 +188,7 @@ export function ShellTopbar() {
 							disabled={isProjectRestarting}
 							onClick={openNewTask}
 							style={noDragStyle}
-							variant="accent"
+							variant={boardHeaderActionVariant}
 						>
 							<Plus className="size-icon-lg" aria-hidden="true" />
 							New task
@@ -196,7 +198,7 @@ export function ShellTopbar() {
 							disabled={isSpawning || isProjectRestarting}
 							onClick={() => void openOrchestrator()}
 							style={noDragStyle}
-							variant="primary"
+							variant={boardHeaderActionVariant}
 						>
 							<OrchestratorIcon className="size-icon-lg" aria-hidden="true" />
 							{orchestrator ? <OrchestratorActivityIndicator session={orchestrator} /> : null}
@@ -256,7 +258,7 @@ export function ShellTopbar() {
 								disabled={isSpawning || isProjectRestarting}
 								onClick={() => void openOrchestrator()}
 								style={noDragStyle}
-								variant="primary"
+								variant="primary" /** worker session pages keep primary variant */
 							>
 								<OrchestratorIcon className="size-icon-lg" aria-hidden="true" />
 								{isProjectRestarting ? "Restarting…" : isSpawning ? "Spawning…" : "Orchestrator"}
