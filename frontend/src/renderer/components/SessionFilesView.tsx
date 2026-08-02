@@ -23,6 +23,7 @@ import {
 } from "../hooks/useSessionWorkspaceFiles";
 import { cn } from "../lib/utils";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./ui/accordion";
+import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 
@@ -59,6 +60,14 @@ const statusTone: Record<WorkspaceFileStatus, string> = {
 	unmodified: "border-border bg-raised text-passive",
 };
 
+// Split (old | new) view only means something when both sides have content to
+// compare. Added files have nothing on the old side; deleted files have
+// nothing on the new side — splitting them just wastes half the pane on an
+// empty column, so those always render unified regardless of the toggle.
+function canSplitCompare(status: WorkspaceFileStatus): boolean {
+	return status === "modified" || status === "renamed";
+}
+
 export function SessionFilesView({
 	sessionId,
 	onClose,
@@ -74,6 +83,7 @@ export function SessionFilesView({
 	const filesQuery = useQuery(sessionWorkspaceFilesQueryOptions(sessionId));
 	const files = filesQuery.data?.files ?? emptyFiles;
 	const changedFiles = useMemo(() => files.filter(isChangedWorkspaceFile), [files]);
+	const changedCount = changedFiles.length;
 
 	useEffect(() => {
 		initializedExpansionFor.current = null;
@@ -145,6 +155,15 @@ export function SessionFilesView({
 						value={filter}
 					/>
 				</label>
+				{changedCount > 0 ? (
+					<Badge
+						aria-label={`${changedCount} changed ${changedCount === 1 ? "file" : "files"}`}
+						className="mx-1 h-5 shrink-0"
+						title={`${changedCount} changed ${changedCount === 1 ? "file" : "files"}`}
+					>
+						{changedCount}
+					</Badge>
+				) : null}
 				<Button
 					aria-label={expandedVisibleCount > 0 ? "Collapse all files" : "Expand all files"}
 					className="shrink-0"
@@ -325,7 +344,7 @@ function ReviewFileCard({
 						</PanelMessage>
 					) : null}
 					{!detailQuery.isPending && !detailQuery.error && detailQuery.data ? (
-						<ReviewDiffBody detail={detailQuery.data} split={split} wrap={wrap} />
+						<ReviewDiffBody detail={detailQuery.data} split={split && canSplitCompare(file.status)} wrap={wrap} />
 					) : null}
 				</AccordionContent>
 			</li>

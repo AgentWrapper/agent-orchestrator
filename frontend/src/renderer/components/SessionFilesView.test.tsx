@@ -112,6 +112,7 @@ describe("SessionFilesView", () => {
 		expect(screen.queryByRole("button", { name: "Diff layout" })).not.toBeInTheDocument();
 		expect(screen.queryByText("Stacked")).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Refresh files" })).not.toBeInTheDocument();
+		expect(screen.getByLabelText("2 changed files")).toHaveTextContent("2");
 
 		await waitFor(() =>
 			expect(getMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/file", {
@@ -214,6 +215,7 @@ describe("SessionFilesView", () => {
 		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
 
 		expect(await screen.findByText("No changes against HEAD.")).toBeInTheDocument();
+		expect(screen.queryByLabelText(/changed files?$/)).not.toBeInTheDocument();
 	});
 
 	it("uses the terminal foreground color for diff content", async () => {
@@ -331,6 +333,26 @@ describe("SessionFilesView", () => {
 
 		await userEvent.click(screen.getByRole("button", { name: "Unified diff view" }));
 		expect(container.querySelector(".grid-cols-2")).toBeNull();
+	});
+
+	it("ignores split view for an added file — there is no old side to compare", async () => {
+		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		await screen.findByText(diffLine("const value = 1;"));
+
+		// docs/guide.md is an added file in the shared mock data.
+		await userEvent.click(await screen.findByRole("button", { name: "Expand docs/guide.md" }));
+		await waitFor(() =>
+			expect(getMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/file", {
+				params: { path: { sessionId: "sess-1" }, query: { path: "docs/guide.md" } },
+			}),
+		);
+
+		await userEvent.click(screen.getByRole("button", { name: "Split diff view" }));
+
+		const modifiedRow = screen.getByRole("button", { name: "Collapse src/App.tsx" }).closest("li");
+		const addedRow = screen.getByRole("button", { name: "Collapse docs/guide.md" }).closest("li");
+		expect(modifiedRow?.querySelector(".grid-cols-2")).not.toBeNull();
+		expect(addedRow?.querySelector(".grid-cols-2")).toBeNull();
 	});
 
 	it("moves focus between file rows with j and k", async () => {
