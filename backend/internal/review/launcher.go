@@ -161,7 +161,10 @@ func (l *agentLauncher) invocation(spec LaunchSpec) ports.ReviewInvocation {
 // Reviewer panes are shared by desktop, mobile, and direct runtime attaches,
 // so keeping the full text out of the PTY is the only device-independent way
 // to hide it.
-func (l *agentLauncher) prepareInvocation(spec LaunchSpec) (ports.ReviewInvocation, error) {
+func (l *agentLauncher) prepareInvocation(ctx context.Context, spec LaunchSpec) (ports.ReviewInvocation, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ReviewInvocation{}, err
+	}
 	inv := l.invocation(spec)
 	if strings.TrimSpace(l.dataDir) == "" {
 		return ports.ReviewInvocation{}, fmt.Errorf("reviewer prompt data directory is required")
@@ -174,9 +177,15 @@ func (l *agentLauncher) prepareInvocation(spec LaunchSpec) (ports.ReviewInvocati
 	if err := os.MkdirAll(requestDir, 0o700); err != nil {
 		return ports.ReviewInvocation{}, fmt.Errorf("create reviewer prompt directory: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		return ports.ReviewInvocation{}, err
+	}
 	taskPath := filepath.Join(requestDir, "task.md")
 	if err := os.WriteFile(taskPath, []byte(strings.TrimRight(inv.Prompt, "\n")+"\n"), 0o600); err != nil {
 		return ports.ReviewInvocation{}, fmt.Errorf("write reviewer task prompt: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return ports.ReviewInvocation{}, err
 	}
 	systemPath := filepath.Join(promptRoot, "system.md")
 	systemPrompt := strings.TrimRight(inv.SystemPrompt, "\n") + "\n\n" +
@@ -184,6 +193,9 @@ func (l *agentLauncher) prepareInvocation(spec LaunchSpec) (ports.ReviewInvocati
 		"read the exact file path in that request first and follow it completely.\n"
 	if err := os.WriteFile(systemPath, []byte(systemPrompt), 0o600); err != nil {
 		return ports.ReviewInvocation{}, fmt.Errorf("write reviewer system prompt: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return ports.ReviewInvocation{}, err
 	}
 	inv.Prompt = reviewerTaskMessagePrefix + filepath.ToSlash(taskPath) + "`."
 	inv.SystemPrompt = ""
@@ -199,7 +211,7 @@ func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (string, err
 		return "", fmt.Errorf("no reviewer adapter for harness %q", spec.Harness)
 	}
 	handleID := reviewerHandleID(spec.WorkerID)
-	inv, err := l.prepareInvocation(spec)
+	inv, err := l.prepareInvocation(ctx, spec)
 	if err != nil {
 		return "", err
 	}
@@ -328,7 +340,7 @@ func (l *agentLauncher) Notify(ctx context.Context, handleID string, spec Launch
 	if !ok {
 		return fmt.Errorf("no reviewer adapter for harness %q", spec.Harness)
 	}
-	inv, err := l.prepareInvocation(spec)
+	inv, err := l.prepareInvocation(ctx, spec)
 	if err != nil {
 		return err
 	}

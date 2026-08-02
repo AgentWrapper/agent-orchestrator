@@ -1,12 +1,16 @@
 import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 const workspace = mustEnv("AO_PI_REVIEW_WORKSPACE");
 const promptRoot = mustEnv("AO_PI_REVIEW_PROMPT_ROOT");
 const workerSession = mustValue("AO_PI_REVIEW_SESSION");
+const manifestPointer = mustEnv("AO_PI_REVIEW_MANIFEST_POINTER");
 const maxOutput = 100_000;
+
+type ReviewTask = { runId: string; prUrl: string; targetSha: string };
+type ReviewManifest = { version: number; workerSessionId: string; tasks: ReviewTask[] };
 
 function mustEnv(name: string): string {
 	return resolve(mustValue(name));
@@ -48,17 +52,40 @@ async function run(pi: ExtensionAPI, command: string, args: string[], signal: Ab
 	return result(output.stdout || output.stderr || "ok");
 }
 
-async function taskText(): Promise<string> {
-	const chunks: string[] = [];
-	async function walk(dir: string): Promise<void> {
-		for (const entry of await readdir(dir, { withFileTypes: true })) {
-			const path = join(dir, entry.name);
-			if (entry.isDirectory()) await walk(path);
-			else if (entry.isFile() && entry.name === "task.md") chunks.push(await readFile(path, "utf8"));
+function pathWithin(root: string, path: string): boolean {
+	const rel = relative(root, path);
+	return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
+}
+
+async function activeManifest(): Promise<ReviewManifest> {
+	const pointerPath = await realpath(manifestPointer);
+	if (pointerPath !== manifestPointer) throw new Error("active manifest pointer must be a regular AO-owned path");
+	const manifestPath = await realpath((await readFile(pointerPath, "utf8")).trim());
+	const manifestRoot = await realpath(join(dirname(pointerPath), "manifests"));
+	if (!pathWithin(manifestRoot, manifestPath)) throw new Error("active manifest is outside the AO manifest directory");
+	const parsed = JSON.parse(await readFile(manifestPath, "utf8")) as ReviewManifest;
+	if (parsed.version !== 1 || parsed.workerSessionId !== workerSession || !Array.isArray(parsed.tasks) || parsed.tasks.length === 0) {
+		throw new Error("invalid active review manifest");
+	}
+	for (const task of parsed.tasks) {
+		if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(task.runId) || !/^[0-9a-fA-F]{7,64}$/.test(task.targetSha)) {
+			throw new Error("invalid task in active review manifest");
+		}
+		const url = new URL(task.prUrl);
+		if (url.hostname !== "github.com" || !url.pathname.match(/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+\/?$/)) {
+			throw new Error("invalid pull request in active review manifest");
 		}
 	}
-	await walk(join(promptRoot, "requests"));
-	return chunks.join("\n");
+	return parsed;
+}
+
+async function authorizedTask(runId: string, prUrl: string, targetSha: string): Promise<ReviewTask> {
+	const manifest = await activeManifest();
+	const task = manifest.tasks.find((candidate) => candidate.runId === runId);
+	if (!task || task.prUrl !== prUrl || task.targetSha !== targetSha) {
+		throw new Error("run, pull request, and target commit are not an exact active AO review task");
+	}
+	return task;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -131,13 +158,12 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "github_post_review",
 		label: "Post GitHub review",
-		description: "Post one COMMENT review, including optional inline findings, to a pull request explicitly named in an AO task file. Returns the GitHub review id.",
-		parameters: Type.Object({ prUrl: Type.String(), body: Type.String(), comments: Type.Optional(Type.Array(Type.Object({ path: Type.String(), line: Type.Integer({ minimum: 1 }), body: Type.String() }))) }),
+		description: "Post one COMMENT review, including optional inline findings, to the exact run, pull request, and target commit authorized by AO's active manifest. Returns the GitHub review id.",
+		parameters: Type.Object({ runId: Type.String(), prUrl: Type.String(), targetSha: Type.String(), body: Type.String(), comments: Type.Optional(Type.Array(Type.Object({ path: Type.String(), line: Type.Integer({ minimum: 1 }), body: Type.String() }))) }),
 		async execute(_id, params, signal) {
 			let dir = "";
 			try {
-				const tasks = await taskText();
-				if (!tasks.includes(params.prUrl)) throw new Error("pull request is not in an AO review task");
+				const task = await authorizedTask(params.runId, params.prUrl, params.targetSha);
 				const url = new URL(params.prUrl);
 				const match = url.hostname === "github.com" && url.pathname.match(/^\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/(\d+)\/?$/);
 				if (!match) throw new Error("unsupported GitHub pull request URL");
@@ -147,7 +173,7 @@ export default function (pi: ExtensionAPI) {
 				}
 				dir = await mkdtemp(join(promptRoot, "github-review-"));
 				const input = join(dir, "review.json");
-				await writeFile(input, JSON.stringify({ event: "COMMENT", body: params.body, ...(params.comments?.length ? { comments: params.comments } : {}) }), { mode: 0o600 });
+				await writeFile(input, JSON.stringify({ event: "COMMENT", body: params.body, commit_id: task.targetSha, ...(params.comments?.length ? { comments: params.comments } : {}) }), { mode: 0o600 });
 				return await run(pi, "gh", ["api", "--method", "POST", `repos/${match[1]}/${match[2]}/pulls/${match[3]}/reviews`, "--input", input, "--jq", ".id"], signal);
 			} catch (error) { return result(String(error), true); }
 			finally { if (dir) await rm(dir, { recursive: true, force: true }); }
@@ -157,13 +183,13 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "ao_review_submit",
 		label: "Submit AO review",
-		description: "Submit structured results for AO run ids present in the AO review task files. The worker session is fixed by AO.",
+		description: "Submit structured results for run ids in AO's exact active review manifest. The worker session is fixed by AO.",
 		parameters: Type.Object({ reviews: Type.Array(Type.Object({ runId: Type.String(), verdict: Type.Union([Type.Literal("approved"), Type.Literal("changes_requested")]), githubReviewId: Type.Optional(Type.String()), body: Type.String() }), { minItems: 1 }) }),
 		async execute(_id, params, signal) {
 			let dir = "";
 			try {
-				const tasks = await taskText();
-				for (const review of params.reviews) if (!tasks.includes(`run ${review.runId})`)) throw new Error(`run ${review.runId} is not in an AO review task`);
+				const manifest = await activeManifest();
+				for (const review of params.reviews) if (!manifest.tasks.some((task) => task.runId === review.runId)) throw new Error(`run ${review.runId} is not in the active AO review manifest`);
 				dir = await mkdtemp(join(promptRoot, "ao-submit-"));
 				const input = join(dir, "reviews.json");
 				await writeFile(input, JSON.stringify({ reviews: params.reviews }), { mode: 0o600 });

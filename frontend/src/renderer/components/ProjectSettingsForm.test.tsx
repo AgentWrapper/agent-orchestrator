@@ -420,6 +420,34 @@ describe("ProjectSettingsForm", () => {
 		expect(labels).toContain("Pi");
 	});
 
+	it("orders reviewers the same way as worker and orchestrator agents", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Default worker agent" }));
+		const workerLabels = (await screen.findAllByRole("menuitem")).map((option) => option.textContent);
+		await userEvent.keyboard("{Escape}");
+
+		await userEvent.click(screen.getByRole("button", { name: "Default reviewer agent" }));
+		const reviewerLabels = (await screen.findAllByRole("menuitem"))
+			.map((option) => option.textContent)
+			.filter((label) => label !== "Project default");
+
+		expect(reviewerLabels).toEqual(workerLabels);
+	});
+
 	it("offers the experimental host-trusted reviewer set", async () => {
 		const project = {
 			id: "proj-1",

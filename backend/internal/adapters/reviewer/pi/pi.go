@@ -10,12 +10,15 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	agentpi "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/pi"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/reviewgateway"
 )
 
 const extensionFilename = "ao-pi-reviewer.ts"
+const manifestPointerFilename = "pi-active-manifest"
 
 var requiredFlags = []string{
 	"--no-builtin-tools",
@@ -104,6 +107,10 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		return ports.ReviewCommandSpec{}, fmt.Errorf("create Pi reviewer session directory: %w", err)
 	}
+	manifestPointer, err := activateManifest(inv)
+	if err != nil {
+		return ports.ReviewCommandSpec{}, fmt.Errorf("prepare Pi reviewer manifest: %w", err)
+	}
 
 	argv := []string{
 		binary,
@@ -128,16 +135,50 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	return ports.ReviewCommandSpec{
 		Argv: argv,
 		Env: map[string]string{
-			"AO_PI_REVIEW_WORKSPACE":   inv.WorkspacePath,
-			"AO_PI_REVIEW_PROMPT_ROOT": inv.TaskPromptRoot,
-			"AO_PI_REVIEW_SESSION":     string(inv.WorkerSessionID),
+			"AO_PI_REVIEW_WORKSPACE":        inv.WorkspacePath,
+			"AO_PI_REVIEW_PROMPT_ROOT":      inv.TaskPromptRoot,
+			"AO_PI_REVIEW_SESSION":          string(inv.WorkerSessionID),
+			"AO_PI_REVIEW_MANIFEST_POINTER": manifestPointer,
 		},
 	}, nil
 }
 
 // ReviewMessage returns the short task-file reference for the long-lived TUI.
-func (*Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
+func (*Reviewer) ReviewMessage(ctx context.Context, inv ports.ReviewInvocation) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if _, err := activateManifest(inv); err != nil {
+		return "", fmt.Errorf("prepare Pi reviewer manifest: %w", err)
+	}
 	return inv.Prompt, nil
+}
+
+func activateManifest(inv ports.ReviewInvocation) (string, error) {
+	tasks := inv.ReviewQueue
+	if len(tasks) == 0 {
+		tasks = []ports.ReviewTask{{RunID: inv.RunID, PRURL: inv.PRURL, TargetSHA: inv.TargetSHA}}
+	}
+	manifestTasks := make([]reviewgateway.Task, 0, len(tasks))
+	for _, task := range tasks {
+		manifestTasks = append(manifestTasks, reviewgateway.Task{
+			RunID: task.RunID, PRURL: task.PRURL, TargetSHA: task.TargetSHA,
+			TaskPromptFile: inv.TaskPromptFile,
+		})
+	}
+	env, err := reviewgateway.PrepareEnvironment(inv.DataDir, reviewgateway.Manifest{
+		ReviewerID: inv.ReviewerID, WorkerSessionID: inv.WorkerSessionID,
+		WorkspacePath: inv.WorkspacePath, TaskPromptRoot: inv.TaskPromptRoot,
+		Tasks: manifestTasks,
+	})
+	if err != nil {
+		return "", err
+	}
+	pointerPath := filepath.Join(env.Root, manifestPointerFilename)
+	if err := hookutil.AtomicWriteFile(pointerPath, []byte(env.ManifestPath+"\n"), 0o600); err != nil {
+		return "", fmt.Errorf("write active manifest pointer: %w", err)
+	}
+	return pointerPath, nil
 }
 
 // ReviewCancel selects Pi's official interactive Escape cancellation key.

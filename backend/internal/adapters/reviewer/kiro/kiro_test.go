@@ -77,8 +77,20 @@ func TestReviewCommandBuildsReadOnlyInteractiveTUI(t *testing.T) {
 		t.Fatalf("shell policy = %+v", cfg.ToolsSettings.Shell)
 	}
 	for _, command := range cfg.ToolsSettings.Shell.AllowedCommands {
-		if strings.Contains(command, "git commit") || strings.Contains(command, "git push") || command == ".*" {
+		if !strings.HasPrefix(command, "^") || !strings.HasSuffix(command, "$") {
+			t.Fatalf("shell allowance is not a full-command match %q", command)
+		}
+		if strings.Contains(command, "git commit") || strings.Contains(command, "git push") || command == "^.*$" {
 			t.Fatalf("unsafe shell allowance %q", command)
+		}
+	}
+	systemPrompt, err := os.ReadFile(filepath.Join(spec.WorkingDirectory, "system.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, phrase := range []string{"supported git shell shapes are exactly", "whitespace-free", "intentionally unsupported"} {
+		if !strings.Contains(string(systemPrompt), phrase) {
+			t.Fatalf("Kiro shell policy does not document %q:\n%s", phrase, systemPrompt)
 		}
 	}
 }

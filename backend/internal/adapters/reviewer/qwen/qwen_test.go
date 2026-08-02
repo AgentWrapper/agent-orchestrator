@@ -83,6 +83,18 @@ func TestReviewCommandRequiresAODataDir(t *testing.T) {
 	}
 }
 
+func TestReviewCommandPreflightShapeNeedsNoRequestData(t *testing.T) {
+	reviewer := New()
+	reviewer.resolveBinary = func(context.Context) (string, error) { return "/opt/qwen/bin/qwen", nil }
+	spec, err := reviewer.ReviewCommand(context.Background(), ports.ReviewInvocation{WorkspacePath: "/ws"})
+	if err != nil {
+		t.Fatalf("ReviewCommand: %v", err)
+	}
+	if !reflect.DeepEqual(spec.Argv, []string{"/opt/qwen/bin/qwen"}) {
+		t.Fatalf("argv = %#v", spec.Argv)
+	}
+}
+
 func TestReviewCommandRejectsRelativeBinary(t *testing.T) {
 	reviewer := New()
 	reviewer.resolveBinary = func(context.Context) (string, error) { return "qwen", nil }

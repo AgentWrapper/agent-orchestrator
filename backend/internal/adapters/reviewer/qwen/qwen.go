@@ -53,6 +53,12 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	if !filepath.IsAbs(binary) {
 		return ports.ReviewCommandSpec{}, errors.New("qwen reviewer: resolved binary must be absolute")
 	}
+	// Launcher preflight runs before request-scoped prompt and gateway state
+	// exists. It only needs the resolved interactive executable; production
+	// launches always carry an absolute task prompt root.
+	if strings.TrimSpace(inv.TaskPromptRoot) == "" {
+		return ports.ReviewCommandSpec{Argv: []string{binary}}, nil
+	}
 	env, err := r.prepareEnvironment(inv)
 	if err != nil {
 		return ports.ReviewCommandSpec{}, err

@@ -23,7 +23,7 @@ import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
-import { buildRankedAgentOptions } from "../lib/agent-select-options";
+import { buildRankedAgentOptions, DEFAULT_AGENT_PRIORITY_RANK } from "../lib/agent-select-options";
 import { captureRendererEvent } from "../lib/telemetry";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { cn } from "../lib/utils";
@@ -521,30 +521,6 @@ function PermissionModeSelect({ value, onChange }: { value: string; onChange: (v
 	);
 }
 
-const REVIEWER_AGENT_PRIORITY = [
-	"agy",
-	"aider",
-	"amp",
-	"claude-code",
-	"codex",
-	"continue",
-	"copilot",
-	"cursor",
-	"devin",
-	"droid",
-	"goose",
-	"opencode",
-	"kilocode",
-	"kiro",
-	"kimi",
-	"pi",
-	"qwen",
-	"vibe",
-] as const;
-const REVIEWER_AGENT_PRIORITY_RANK = new Map<string, number>(
-	REVIEWER_AGENT_PRIORITY.map((agent, index) => [agent, index]),
-);
-
 const HOST_TRUSTED_REVIEWERS = new Set(["agy", "continue", "devin", "droid", "goose", "kimi", "qwen", "vibe"]);
 const USER_APPROVED_REVIEWERS = new Set(["auggie", "autohand", "cline", "crush", "grok"]);
 
@@ -583,7 +559,7 @@ function ReviewerSelect({
 		supported: supportedAgents,
 		installed,
 		authorized,
-		priorityRank: REVIEWER_AGENT_PRIORITY_RANK,
+		priorityRank: DEFAULT_AGENT_PRIORITY_RANK,
 		fallbackAgents,
 	});
 

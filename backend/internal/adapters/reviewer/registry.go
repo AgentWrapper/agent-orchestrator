@@ -91,6 +91,11 @@ func NewResolver() (*Resolver, error) {
 		}
 		m[h] = a
 	}
+	for _, harness := range domain.AllReviewerHarnesses {
+		if _, ok := m[harness]; !ok {
+			return nil, fmt.Errorf("reviewer harness %q has no registered adapter", harness)
+		}
+	}
 	return &Resolver{reviewers: m}, nil
 }
 

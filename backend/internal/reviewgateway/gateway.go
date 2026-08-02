@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -326,9 +327,9 @@ func (g *Gateway) Search(ctx context.Context, runID, query string, maxResults in
 		if readErr != nil || bytes.IndexByte(content, 0) >= 0 {
 			continue
 		}
-		for index, line := range strings.Split(string(content), "\n") {
-			if strings.Contains(line, query) {
-				matches = append(matches, Match{Path: path, Line: index + 1, Text: line})
+		for index, line := range bytes.Split(content, []byte{'\n'}) {
+			if bytes.Contains(line, []byte(query)) {
+				matches = append(matches, Match{Path: path, Line: index + 1, Text: string(line)})
 				if len(matches) == maxResults {
 					return matches, nil
 				}
@@ -503,9 +504,17 @@ func validateManifest(manifest *Manifest) error {
 	return nil
 }
 
-func validateRepoPath(path string) error {
-	clean := filepath.ToSlash(filepath.Clean(path))
-	if path == "" || filepath.IsAbs(path) || clean != filepath.ToSlash(path) || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.HasPrefix(clean, "-") || strings.ContainsAny(path, "\x00\r\n") {
+func validateRepoPath(rawPath string) error {
+	// Repository paths are slash-separated, relative, already canonical, and
+	// never option-like. Requiring path.Clean to be an identity operation rejects
+	// empty segments, dot segments, and embedded traversal in one check; the
+	// explicit parent-prefix check rejects canonical paths that still escape.
+	if rawPath == "" || filepath.IsAbs(rawPath) || strings.ContainsAny(rawPath, "\x00\r\n") {
+		return errors.New("review gateway: invalid repository path")
+	}
+	slashPath := filepath.ToSlash(rawPath)
+	cleanPath := pathpkg.Clean(slashPath)
+	if cleanPath != slashPath || cleanPath == "." || cleanPath == ".." || strings.HasPrefix(cleanPath, "../") || strings.HasPrefix(cleanPath, "-") {
 		return errors.New("review gateway: invalid repository path")
 	}
 	return nil

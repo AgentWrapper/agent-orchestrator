@@ -221,6 +221,19 @@ func TestReadFileUsesObjectLookupAndNeverRevPathSyntax(t *testing.T) {
 	}
 }
 
+func TestValidateRepoPathAcceptsOnlyCanonicalRelativePaths(t *testing.T) {
+	for _, valid := range []string{"README.md", "internal/review file.go", "a/b/c.go"} {
+		if err := validateRepoPath(valid); err != nil {
+			t.Errorf("valid path %q rejected: %v", valid, err)
+		}
+	}
+	for _, invalid := range []string{"", ".", "..", "../secret", "a/../secret", "a/./b", "a//b", "/etc/passwd", "-config", "a\nb"} {
+		if err := validateRepoPath(invalid); err == nil {
+			t.Errorf("invalid path %q accepted", invalid)
+		}
+	}
+}
+
 func TestDiffDisablesHooksExternalDiffAndTextconv(t *testing.T) {
 	executor := &fakeExecutor{}
 	gateway, env := openTestGateway(t, executor)

@@ -687,7 +687,7 @@ func TestGetAgentHooksInstallsCopilotHooks(t *testing.T) {
 	}
 }
 
-func TestGetAgentHooksInstallsSessionCopilotAgent(t *testing.T) {
+func TestInstallAgentProfileInstallsSessionCopilotAgent(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "copilot"}
 	workspace := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workspace, ".git", "info"), 0o755); err != nil {

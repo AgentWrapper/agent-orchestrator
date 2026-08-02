@@ -2,10 +2,13 @@ package reviewer
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/review"
 )
 
 // TestRegistryMatchesDomainVocabulary enforces that the shipped reviewer
@@ -58,5 +61,23 @@ func TestNewResolverResolvesShippedReviewers(t *testing.T) {
 	}
 	if _, ok := resolver.Reviewer("nope"); ok {
 		t.Error("resolver returned an adapter for an unknown harness")
+	}
+}
+
+func TestQwenRegistryAdapterPassesLauncherPreflightWithoutRequestData(t *testing.T) {
+	binDir := t.TempDir()
+	qwenPath := filepath.Join(binDir, "qwen")
+	if err := os.WriteFile(qwenPath, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+
+	resolver, err := NewResolver()
+	if err != nil {
+		t.Fatal(err)
+	}
+	launcher := review.NewLauncher(resolver, nil, "")
+	if err := launcher.Preflight(context.Background(), domain.ReviewerQwen, t.TempDir()); err != nil {
+		t.Fatalf("Qwen preflight: %v", err)
 	}
 }

@@ -297,6 +297,21 @@ func TestLauncherNotifySendsMessageToHandle(t *testing.T) {
 	}
 }
 
+func TestLauncherNotifyHonorsCancelledContextBeforePromptWrites(t *testing.T) {
+	dataDir := t.TempDir()
+	l := NewLauncher(fakeReviewerResolver{reviewer: &fakeReviewer{}, ok: true}, &fakeRuntime{}, dataDir)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := l.Notify(ctx, "review-mer-1", launchSpec())
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Notify error = %v, want context cancellation", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dataDir, "prompts")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("prompt directory created after cancellation: %v", statErr)
+	}
+}
+
 func TestLauncherNotifyKeepsEarlierTaskReferenceImmutable(t *testing.T) {
 	reviewer := &fakeReviewer{}
 	rt := &fakeRuntime{}
