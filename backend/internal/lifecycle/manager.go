@@ -53,7 +53,7 @@ type sessionTerminator interface {
 }
 
 type sessionUsageFinalizer interface {
-	FinalizeSession(ctx context.Context, id domain.SessionID) error
+	FinalizeSession(ctx context.Context, id domain.SessionID, expectedRuntimeLaunchID string) error
 }
 
 type pendingLaunch struct {
@@ -267,7 +267,7 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 		return err
 	}
 
-	finalizeSessionUsage(ctx, id, finalizer)
+	finalizeSessionUsage(ctx, id, terminationLaunch, finalizer)
 
 	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
 		if cur.IsTerminated || cur.Metadata.RuntimeLaunchID != terminationLaunch || !matchesLaunch(cur) ||
@@ -863,7 +863,7 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 	m.mu.Lock()
 	finalizer := m.usageFinalizer
 	m.mu.Unlock()
-	finalizeSessionUsage(ctx, id, finalizer)
+	finalizeSessionUsage(ctx, id, launchID, finalizer)
 	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
 		if cur.IsTerminated || cur.Metadata.RuntimeLaunchID != launchID {
 			return cur, false
@@ -875,11 +875,11 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 	})
 }
 
-func finalizeSessionUsage(ctx context.Context, id domain.SessionID, finalizer sessionUsageFinalizer) {
+func finalizeSessionUsage(ctx context.Context, id domain.SessionID, expectedRuntimeLaunchID string, finalizer sessionUsageFinalizer) {
 	if finalizer == nil {
 		return
 	}
-	if err := finalizer.FinalizeSession(ctx, id); err != nil {
+	if err := finalizer.FinalizeSession(ctx, id, expectedRuntimeLaunchID); err != nil {
 		slog.Default().Warn("lifecycle: finalize session usage before termination", "session", id, "err", err)
 	}
 }

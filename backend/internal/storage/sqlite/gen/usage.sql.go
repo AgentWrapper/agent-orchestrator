@@ -218,6 +218,67 @@ func (q *Queries) CompleteUsageBindingIfSettled(ctx context.Context, arg Complet
 	return result.RowsAffected()
 }
 
+const finalizeUsageBindingsForSessionLaunch = `-- name: FinalizeUsageBindingsForSessionLaunch :many
+UPDATE usage_bindings
+SET state = 'finalizing',
+    last_error_code = CASE
+        WHEN usage_bindings.last_error_code = 'codex_source_budget_exceeded'
+        THEN usage_bindings.last_error_code
+        ELSE ''
+    END,
+    last_seen_at = ?1,
+    updated_at = ?1
+WHERE usage_bindings.session_id = ?2
+  AND EXISTS (
+      SELECT 1
+      FROM sessions
+      WHERE sessions.id = usage_bindings.session_id
+        AND sessions.runtime_launch_id = ?3
+        AND sessions.is_terminated = 0
+  )
+RETURNING id, session_id, harness, native_root_id, initial_model_id, state, last_error_code, first_seen_at, last_seen_at, updated_at
+`
+
+type FinalizeUsageBindingsForSessionLaunchParams struct {
+	FinalizedAt             time.Time
+	SessionID               domain.SessionID
+	ExpectedRuntimeLaunchID string
+}
+
+func (q *Queries) FinalizeUsageBindingsForSessionLaunch(ctx context.Context, arg FinalizeUsageBindingsForSessionLaunchParams) ([]UsageBinding, error) {
+	rows, err := q.db.QueryContext(ctx, finalizeUsageBindingsForSessionLaunch, arg.FinalizedAt, arg.SessionID, arg.ExpectedRuntimeLaunchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UsageBinding{}
+	for rows.Next() {
+		var i UsageBinding
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.Harness,
+			&i.NativeRootID,
+			&i.InitialModelID,
+			&i.State,
+			&i.LastErrorCode,
+			&i.FirstSeenAt,
+			&i.LastSeenAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getModelUsageEventByKey = `-- name: GetModelUsageEventByKey :one
 SELECT
     provider, model_id, observed_at, input_tokens, uncached_input_tokens,

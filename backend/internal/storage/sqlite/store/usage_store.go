@@ -63,6 +63,31 @@ func (s *Store) ListUsageBindingsForSession(ctx context.Context, sessionID domai
 	return out, nil
 }
 
+// FinalizeUsageBindingsForSessionLaunch atomically moves a live session's
+// bindings into finalization only while its durable runtime generation matches.
+func (s *Store) FinalizeUsageBindingsForSessionLaunch(
+	ctx context.Context,
+	sessionID domain.SessionID,
+	expectedRuntimeLaunchID string,
+	at time.Time,
+) ([]domain.UsageBindingRecord, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.FinalizeUsageBindingsForSessionLaunch(ctx, gen.FinalizeUsageBindingsForSessionLaunchParams{
+		SessionID:               sessionID,
+		ExpectedRuntimeLaunchID: expectedRuntimeLaunchID,
+		FinalizedAt:             timeOrNow(at),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("finalize usage bindings for session %s launch %q: %w", sessionID, expectedRuntimeLaunchID, err)
+	}
+	out := make([]domain.UsageBindingRecord, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, usageBindingFromGen(row))
+	}
+	return out, nil
+}
+
 // UpdateUsageBindingState updates only the binding lifecycle/error state.
 func (s *Store) UpdateUsageBindingState(ctx context.Context, id int64, state domain.UsageBindingState, lastErrorCode string, at time.Time) (bool, error) {
 	s.writeMu.Lock()

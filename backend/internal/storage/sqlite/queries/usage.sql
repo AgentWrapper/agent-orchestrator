@@ -37,6 +37,26 @@ FROM usage_bindings
 WHERE session_id = ?
 ORDER BY first_seen_at, id;
 
+-- name: FinalizeUsageBindingsForSessionLaunch :many
+UPDATE usage_bindings
+SET state = 'finalizing',
+    last_error_code = CASE
+        WHEN usage_bindings.last_error_code = 'codex_source_budget_exceeded'
+        THEN usage_bindings.last_error_code
+        ELSE ''
+    END,
+    last_seen_at = sqlc.arg(finalized_at),
+    updated_at = sqlc.arg(finalized_at)
+WHERE usage_bindings.session_id = sqlc.arg(session_id)
+  AND EXISTS (
+      SELECT 1
+      FROM sessions
+      WHERE sessions.id = usage_bindings.session_id
+        AND sessions.runtime_launch_id = sqlc.arg(expected_runtime_launch_id)
+        AND sessions.is_terminated = 0
+  )
+RETURNING *;
+
 -- name: InsertUsageSource :one
 INSERT INTO usage_sources (
     binding_id, kind, native_session_id, subagent_id, artifact_path,

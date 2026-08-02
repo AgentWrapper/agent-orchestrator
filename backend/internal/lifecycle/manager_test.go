@@ -211,6 +211,9 @@ func TestRuntimeObservation_CrashFinalizesUsageBeforeTermination(t *testing.T) {
 	if finalizer.calls != 1 || finalizer.sawTerminated {
 		t.Fatalf("finalizer calls=%d sawTerminated=%v, want 1/false", finalizer.calls, finalizer.sawTerminated)
 	}
+	if finalizer.launchID != "launch-1" {
+		t.Fatalf("finalizer launch id=%q, want launch-1", finalizer.launchID)
+	}
 	if !st.sessions[rec.ID].IsTerminated {
 		t.Fatal("crashed session was not terminated")
 	}
@@ -308,7 +311,7 @@ func TestRuntimeObservation_DoesNotTerminateNewRuntimeGenerationAfterFinalizatio
 	rec.Metadata.RuntimeLaunchID = "launch-old"
 	st.sessions[rec.ID] = rec
 	finalizer := &fakeUsageFinalizer{store: st}
-	finalizer.onFinalize = func(id domain.SessionID) error {
+	finalizer.onFinalize = func(id domain.SessionID, _ string) error {
 		return m.MarkSpawned(ctx, id, domain.SessionMetadata{RuntimeLaunchID: "launch-new"})
 	}
 	m.SetUsageFinalizer(finalizer)
@@ -346,7 +349,7 @@ func TestRuntimeObservation_DoesNotTerminateAfterActivityDuringFinalization(t *t
 	}
 	st.sessions[rec.ID] = rec
 	finalizer := &fakeUsageFinalizer{store: st}
-	finalizer.onFinalize = func(id domain.SessionID) error {
+	finalizer.onFinalize = func(id domain.SessionID, _ string) error {
 		return m.ApplyActivitySignal(ctx, id, ports.ActivitySignal{
 			Valid:     true,
 			State:     domain.ActivityIdle,
@@ -776,15 +779,17 @@ type fakeUsageFinalizer struct {
 	store         *fakeStore
 	calls         int
 	sawTerminated bool
+	launchID      string
 	err           error
-	onFinalize    func(domain.SessionID) error
+	onFinalize    func(domain.SessionID, string) error
 }
 
-func (f *fakeUsageFinalizer) FinalizeSession(_ context.Context, id domain.SessionID) error {
+func (f *fakeUsageFinalizer) FinalizeSession(_ context.Context, id domain.SessionID, launchID string) error {
 	f.calls++
 	f.sawTerminated = f.store.sessions[id].IsTerminated
+	f.launchID = launchID
 	if f.onFinalize != nil {
-		return f.onFinalize(id)
+		return f.onFinalize(id, launchID)
 	}
 	return f.err
 }
@@ -818,13 +823,16 @@ func TestMarkTerminatedDoesNotTerminateNewRuntimeGeneration(t *testing.T) {
 	rec.Metadata.RuntimeLaunchID = "launch-old"
 	st.sessions[rec.ID] = rec
 	finalizer := &fakeUsageFinalizer{store: st}
-	finalizer.onFinalize = func(id domain.SessionID) error {
+	finalizer.onFinalize = func(id domain.SessionID, _ string) error {
 		return m.MarkSpawned(ctx, id, domain.SessionMetadata{RuntimeLaunchID: "launch-new"})
 	}
 	m.SetUsageFinalizer(finalizer)
 
 	if err := m.MarkTerminated(ctx, rec.ID); err != nil {
 		t.Fatal(err)
+	}
+	if finalizer.launchID != "launch-old" {
+		t.Fatalf("finalizer launch id=%q, want launch-old", finalizer.launchID)
 	}
 	got := st.sessions[rec.ID]
 	if got.IsTerminated || got.Metadata.RuntimeLaunchID != "launch-new" {

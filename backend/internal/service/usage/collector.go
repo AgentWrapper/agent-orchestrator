@@ -76,6 +76,7 @@ type collectorStore interface {
 	UpsertUsageBinding(context.Context, domain.UsageBindingRecord) (domain.UsageBindingRecord, error)
 	GetUsageBinding(context.Context, domain.SessionID, domain.AgentHarness, string) (domain.UsageBindingRecord, bool, error)
 	ListUsageBindingsForSession(context.Context, domain.SessionID) ([]domain.UsageBindingRecord, error)
+	FinalizeUsageBindingsForSessionLaunch(context.Context, domain.SessionID, string, time.Time) ([]domain.UsageBindingRecord, error)
 	ListUsageDiscoveryBindings(context.Context, int64) ([]domain.UsageBindingRecord, error)
 	ListUsageBindingsForCodexParent(context.Context, string) ([]domain.UsageBindingRecord, error)
 	UpdateUsageBindingState(context.Context, int64, domain.UsageBindingState, string, time.Time) (bool, error)
@@ -121,11 +122,32 @@ func newCollectorWithCodexSourceLimit(
 	}
 }
 
-// FinalizeSession moves every known native binding into finalization and asks
-// the ingestion pipeline to collect a stable final cursor. It is idempotent and
-// safe to call before a session is marked terminated.
-func (c *Collector) FinalizeSession(ctx context.Context, sessionID domain.SessionID) error {
-	return c.RecordHook(ctx, sessionID, HookSignal{Event: "process-exited"})
+// FinalizeSession moves every known native binding for one runtime generation
+// into finalization and asks the ingestion pipeline to collect a stable final
+// cursor. It is idempotent and safe to call before the session is terminated.
+func (c *Collector) FinalizeSession(ctx context.Context, sessionID domain.SessionID, expectedRuntimeLaunchID string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	now := c.now().UTC()
+	bindings, err := c.store.FinalizeUsageBindingsForSessionLaunch(
+		ctx,
+		sessionID,
+		boundedUsageMetadata(expectedRuntimeLaunchID),
+		now,
+	)
+	if err != nil {
+		return err
+	}
+	for _, binding := range bindings {
+		if _, err := c.reactivateLatestSources(ctx, binding.ID, now); err != nil {
+			return err
+		}
+	}
+	if len(bindings) > 0 {
+		c.notifySourceInventory(false)
+	}
+	return nil
 }
 
 // RecordHook registers transcript metadata and updates collection lifecycle for

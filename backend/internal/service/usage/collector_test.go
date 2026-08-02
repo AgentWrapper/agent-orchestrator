@@ -138,6 +138,121 @@ func TestCollectorSerializesFinalizationAgainstEarlierHook(t *testing.T) {
 	}
 }
 
+type delayedFinalizeStore struct {
+	collectorStore
+	entered chan<- struct{}
+	release <-chan struct{}
+}
+
+func (s *delayedFinalizeStore) FinalizeUsageBindingsForSessionLaunch(
+	ctx context.Context,
+	sessionID domain.SessionID,
+	expectedLaunchID string,
+	at time.Time,
+) ([]domain.UsageBindingRecord, error) {
+	close(s.entered)
+	<-s.release
+	return s.collectorStore.FinalizeUsageBindingsForSessionLaunch(ctx, sessionID, expectedLaunchID, at)
+}
+
+func TestCollectorFinalizationSkipsRelaunchCommittedBeforeStorageFence(t *testing.T) {
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessCodex, "native-relaunched", false)
+	session.Metadata.RuntimeLaunchID = "launch-old"
+	if err := store.UpdateSession(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1700000000, 0).UTC()
+	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
+		SessionID:    session.ID,
+		Harness:      session.Harness,
+		NativeRootID: "native-relaunched",
+		State:        domain.UsageBindingActive,
+		FirstSeenAt:  now,
+		LastSeenAt:   now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	collector := NewCollector(&delayedFinalizeStore{
+		collectorStore: store,
+		entered:        entered,
+		release:        release,
+	}, SourceRoots{}, nil)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- collector.FinalizeSession(context.Background(), session.ID, "launch-old")
+	}()
+	<-entered
+	session.Metadata.RuntimeLaunchID = "launch-new"
+	session.UpdatedAt = now.Add(time.Second)
+	if err := store.UpdateSession(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok, err := store.GetUsageBinding(context.Background(), session.ID, session.Harness, binding.NativeRootID)
+	if err != nil || !ok {
+		t.Fatalf("binding ok=%v err=%v", ok, err)
+	}
+	if got.State != domain.UsageBindingActive {
+		t.Fatalf("stale finalizer changed live binding state to %s", got.State)
+	}
+}
+
+func TestCollectorSessionStartReactivatesAfterOldGenerationFinalization(t *testing.T) {
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessCodex, "native-reactivated", false)
+	session.Metadata.RuntimeLaunchID = "launch-old"
+	if err := store.UpdateSession(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), "sessions")
+	path := filepath.Join(root, "rollout-native-reactivated.jsonl")
+	writeUsageFixture(t, path, codexSessionMetaFixture(t, "native-reactivated", ""))
+	collector := NewCollector(store, SourceRoots{CodexSessions: root}, nil)
+
+	if err := collector.RecordHook(context.Background(), session.ID, HookSignal{
+		Event:           "session-start",
+		LaunchID:        "launch-old",
+		NativeSessionID: "native-reactivated",
+		TranscriptPath:  path,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := collector.FinalizeSession(context.Background(), session.ID, "launch-old"); err != nil {
+		t.Fatal(err)
+	}
+	bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	if err != nil || len(bindings) != 1 || bindings[0].State != domain.UsageBindingFinalizing {
+		t.Fatalf("finalized bindings=%+v err=%v", bindings, err)
+	}
+
+	session.Metadata.RuntimeLaunchID = "launch-new"
+	if err := store.UpdateSession(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
+	if err := collector.RecordHook(context.Background(), session.ID, HookSignal{
+		Event:           "session-start",
+		LaunchID:        "launch-new",
+		NativeSessionID: "native-reactivated",
+		TranscriptPath:  path,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	bindings, err = store.ListUsageBindingsForSession(context.Background(), session.ID)
+	if err != nil || len(bindings) != 1 || bindings[0].State != domain.UsageBindingActive {
+		t.Fatalf("reactivated bindings=%+v err=%v", bindings, err)
+	}
+}
+
 func TestCollectorIgnoresUsageSignalFromStaleRuntimeLaunch(t *testing.T) {
 	store := collectorTestStore(t)
 	now := time.Now().UTC()
@@ -983,7 +1098,7 @@ func TestCollectorFinalizationReactivatesOnlyLatestCodexGenerationPerNativeSessi
 	}
 
 	collector := NewCollector(store, SourceRoots{}, nil)
-	if err := collector.FinalizeSession(context.Background(), session.ID); err != nil {
+	if err := collector.FinalizeSession(context.Background(), session.ID, session.Metadata.RuntimeLaunchID); err != nil {
 		t.Fatalf("finalize relocated rollout: %v", err)
 	}
 	oldContext, _, _ := store.GetUsageSourceForIngestion(context.Background(), oldSource.ID)
