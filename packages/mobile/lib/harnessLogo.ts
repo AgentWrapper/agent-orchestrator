@@ -13,9 +13,9 @@ export type BackdropPolarity = "neutral" | "needs-dark" | "needs-light";
 // Node cannot require a PNG. `harnessLogo.test.ts` checks the two against the
 // real asset directory, so they cannot drift apart silently.
 export const LOGO_KEYS: ReadonlySet<string> = new Set([
-	"aider", "amp", "claude", "claude-code", "cline", "codex", "continue",
-	"copilot", "crush", "cursor", "devin", "droid", "goose", "grok", "kilocode",
-	"kimi", "kiro", "opencode", "pi", "qwen", "vibe",
+	"agy", "aider", "amp", "auggie", "autohand", "claude-code", "cline", "codex",
+	"continue", "copilot", "crush", "cursor", "devin", "droid", "goose", "grok",
+	"kilocode", "kimi", "kiro", "opencode", "pi", "qwen", "vibe",
 ]);
 
 /** Normalised lookup key, or "" when there is no usable harness. */
@@ -64,8 +64,8 @@ export function backdropFor(harness?: string | null): BackdropPolarity {
  * Desktop's `toAgentProvider()` funnels every unrecognised harness into
  * `default: return "codex"`, so an unknown agent renders as the Codex logo —
  * confidently wrong. An initial says "some agent I don't have a mark for",
- * which is true. Four real harnesses (agy, auggie, autohand, fake) have no
- * asset even on desktop and always land here.
+ * which is true. The fake harness intentionally has no brand asset and lands
+ * here.
  */
 export function harnessInitial(harness?: string | null): string {
 	const key = harness?.trim();

@@ -7,9 +7,11 @@ import { logoKey } from "./harnessLogo";
 // Keys must match LOGO_KEYS in harnessLogo.ts — harnessLogo.test.ts checks both
 // against the real asset directory so a rename cannot silently drop a mark.
 const LOGOS: Record<string, number> = {
+	agy: require("../assets/agents/agy.png"),
 	aider: require("../assets/agents/aider.png"),
 	amp: require("../assets/agents/amp.png"),
-	claude: require("../assets/agents/claude.png"),
+	auggie: require("../assets/agents/auggie.png"),
+	autohand: require("../assets/agents/autohand.png"),
 	"claude-code": require("../assets/agents/claude-code.png"),
 	cline: require("../assets/agents/cline.png"),
 	codex: require("../assets/agents/codex.png"),

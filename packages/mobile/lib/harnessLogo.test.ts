@@ -10,8 +10,8 @@ const ALL_HARNESSES = [
 	"cline", "kimi", "kiro", "kilocode", "vibe", "pi", "autohand", "fake",
 ];
 
-// The four with no asset on desktop either.
-const NO_ASSET = ["agy", "auggie", "autohand", "fake"];
+// The fake harness exists only for tests and intentionally has no brand asset.
+const NO_ASSET = ["fake"];
 
 describe("logo registry", () => {
 	it("has a mark for every harness that ships one", () => {
@@ -91,7 +91,7 @@ describe("backdropFor", () => {
 
 describe("harnessInitial", () => {
 	it("gives the uppercase initial", () => {
-		expect(harnessInitial("agy")).toBe("A");
+		expect(harnessInitial("unknown-agent")).toBe("U");
 		expect(harnessInitial("fake")).toBe("F");
 	});
 
