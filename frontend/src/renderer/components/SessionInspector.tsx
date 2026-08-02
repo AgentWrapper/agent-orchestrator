@@ -35,7 +35,8 @@ import { StatusPill } from "./StatusPill";
 import { CodexIcon } from "./icons";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { Switch } from "./ui/switch";
-import { useT } from "../stores/locale-store";
+import { t as translate } from "../i18n";
+import { activeLocale, useT } from "../stores/locale-store";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -187,7 +188,7 @@ export function SessionInspector({
 		return (
 			<aside className={inspectorShellClass} aria-label={t("inspector.aria")}>
 				<div className={inspectorBodyClass}>
-					<p className={inspectorEmptyClass}>Loading session…</p>
+					<p className={inspectorEmptyClass}>{t("inspector.loadingSession")}</p>
 				</div>
 			</aside>
 		);
@@ -288,7 +289,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 	const t = useT();
 	const query = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
-	const prSectionTitle = prSummaries.length > 1 ? `Pull requests (${prSummaries.length})` : "Pull request";
+	const prSectionTitle = prSummaries.length > 1 ? t("inspector.pullRequests", { count: prSummaries.length }) : t("inspector.pullRequest");
 	const issueId = canonicalTrackerIssueId(session.issueId);
 
 	const hasPRs = prSummaries.length > 0;
@@ -309,18 +310,18 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 
 			{showCompletion ? <CompletionControls session={session} /> : null}
 
-			<Section title="Activity">
+			<Section title={t("inspector.activity")}>
 				<ActivityTimeline prs={prSummaries} session={session} />
 				<ResumeAgentControl session={session} />
 			</Section>
 
-			<Section title="Overview">
+			<Section title={t("inspector.overview")}>
 				<dl className="flex flex-col gap-1">
-					<Row k="Agent" v={session.provider} mono />
-					{issueId && <Row k="Issue" v={issueId} mono />}
-					{session.branch && <Row k="Branch" v={session.branch} mono />}
+					<Row k={t("inspector.agent")} v={session.provider} mono />
+					{issueId && <Row k={t("inspector.issue")} v={issueId} mono />}
+					{session.branch && <Row k={t("inspector.branch")} v={session.branch} mono />}
 					<Row k={t("inspector.started")} v={formatTimeCompact(session.createdAt ?? session.updatedAt)} mono />
-					<Row k="Session" v={session.id} mono />
+					<Row k={t("inspector.session")} v={session.id} mono />
 				</dl>
 			</Section>
 		</div>
@@ -346,7 +347,7 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 					.show({
 						id: `resume-agent-fallback:${session.id}:${Date.now()}`,
 						title: t("inspector.startedFromPrompt"),
-						body: "AO could not resume the native agent session, so it started a new conversation from the saved prompt.",
+						body: t("inspector.resumeFallbackBody"),
 					})
 					.catch((err) => {
 						console.warn("Unable to show resume fallback notification", err);
@@ -369,7 +370,7 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 				variant="outline"
 			>
 				<Play className="size-icon-sm" aria-hidden="true" />
-				{resume.isPending ? "Resuming agent…" : "Resume agent"}
+				{resume.isPending ? t("inspector.resumingAgent") : t("inspector.resumeAgent")}
 			</Button>
 			{error ? (
 				<p className="mt-2 text-2xs leading-normal text-error" role="status">
@@ -431,10 +432,10 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 	if (session.isTerminated === true) return null;
 
 	return (
-		<Section title="Completion">
+		<Section title={t("inspector.completion")}>
 			{canTerminateNow ? (
 				<div className="flex items-center justify-between gap-3 py-1">
-					<span className="min-w-0 text-xs font-medium text-settings-label">Terminate</span>
+					<span className="min-w-0 text-xs font-medium text-settings-label">{t("inspector.terminateShort")}</span>
 					<SessionTerminationPopover
 						onConfirm={confirmTermination}
 						onOpenChange={setConfirmOpen}
@@ -456,7 +457,7 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 				<>
 					<div className="flex items-center justify-between gap-3 py-1">
 						<label className="min-w-0 text-xs font-medium text-settings-label" htmlFor={`merge-policy-${session.id}`}>
-							Terminate on merge
+							{t("inspector.terminateOnMergeShort")}
 						</label>
 						<Switch
 							aria-label={t("inspector.terminateOnMerge")}
@@ -533,14 +534,14 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 
 	history.push({
 		tone: "neutral",
-		node: <>Created workspace</>,
+		node: <>{translate(activeLocale(), "inspector.timeline.createdWorkspace")}</>,
 		ts: formatTimeCompact(session.createdAt ?? session.updatedAt),
 	});
 
 	for (const pr of prs.filter((pr) => pr.state === "draft")) {
 		history.push({
 			tone: "neutral",
-			node: <PRTimelineLink pr={pr} verb="Draft" />,
+			node: <PRTimelineLink pr={pr} verb={translate(activeLocale(), "inspector.timeline.draft")} />,
 			ts: prStateTime(pr),
 		});
 	}
@@ -548,7 +549,7 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 	for (const pr of prs.filter((pr) => pr.state !== "draft")) {
 		history.push({
 			tone: "neutral",
-			node: <PRTimelineLink pr={pr} verb="Opened" />,
+			node: <PRTimelineLink pr={pr} verb={translate(activeLocale(), "inspector.timeline.opened")} />,
 			ts: prCreatedTime(pr),
 		});
 	}
@@ -556,7 +557,7 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 	for (const pr of prs.filter((pr) => pr.state === "merged")) {
 		history.push({
 			tone: "good",
-			node: <PRTimelineLink pr={pr} verb="Merged" />,
+			node: <PRTimelineLink pr={pr} verb={translate(activeLocale(), "inspector.timeline.merged")} />,
 			ts: prStateTime(pr),
 		});
 	}
@@ -564,7 +565,7 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 	if (session.status === "merged") {
 		history.push({
 			tone: "good",
-			node: <>Done</>,
+			node: <>{translate(activeLocale(), "inspector.timeline.done")}</>,
 			ts: latestMergedTime(prs),
 		});
 	}
@@ -627,7 +628,7 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 	);
 }
 
-function PRTimelineLink({ pr, verb }: { pr: SessionPRSummary; verb: "Draft" | "Opened" | "Merged" }) {
+function PRTimelineLink({ pr, verb }: { pr: SessionPRSummary; verb: string }) {
 	return (
 		<a
 			aria-label={`${verb} PR #${pr.number}`}
@@ -666,14 +667,16 @@ function latestMergedTime(prs: SessionPRSummary[]): string | null {
 
 type ScmTimelineState = "ci_failed" | "changes_requested" | "conflict";
 
-const CONFLICT_PILL = { label: "Conflict", tone: "var(--color-danger)", breathe: false };
+function conflictPill() {
+	return { label: translate(activeLocale(), "inspector.conflict"), tone: "var(--color-danger)", breathe: false };
+}
 
 function InspectorActivityPill({ activity }: { activity?: WorkspaceSession["activity"] }) {
 	return <TimelinePill {...getAgentActivityView(activity)} />;
 }
 
 function InspectorScmPill({ state }: { state: ScmTimelineState }) {
-	if (state === "conflict") return <TimelinePill {...CONFLICT_PILL} />;
+	if (state === "conflict") return <TimelinePill {...conflictPill()} />;
 	return <TimelinePill {...getSessionTimelinePillView(state)} />;
 }
 
@@ -940,11 +943,12 @@ function ReviewPanel({
 	onCancel: () => void;
 	onOpenTerminal?: OpenReviewerTerminal;
 }) {
+	const t = useT();
 	if (sortedPRs(session).length === 0) {
-		return <p className={inspectorEmptyClass}>No pull request opened yet.</p>;
+		return <p className={inspectorEmptyClass}>{t("inspector.noPROpened")}</p>;
 	}
 	if (isLoading) {
-		return <p className={inspectorEmptyClass}>Loading reviews...</p>;
+		return <p className={inspectorEmptyClass}>{t("inspector.loadingReviews")}</p>;
 	}
 
 	const openPRURLs = new Set(
@@ -972,7 +976,7 @@ function ReviewPanel({
 		<div className="flex flex-col gap-3">
 			{error ? (
 				<p className="m-0 rounded-md border border-error/28 bg-error/8 px-2.5 py-2 text-sm-md leading-normal text-error">
-					{apiErrorMessage(error, "Review request failed")}
+					{apiErrorMessage(error, t("inspector.reviewRequestFailed"))}
 				</p>
 			) : null}
 			{notice ? (
@@ -986,7 +990,7 @@ function ReviewPanel({
 			</p>
 			<div className="flex flex-col divide-y divide-border">
 				{openReviewStates.length === 0 ? (
-					<p className={cn(inspectorEmptyClass, "py-1")}>No open pull requests to review.</p>
+					<p className={cn(inspectorEmptyClass, "py-1")}>{t("inspector.noOpenPRsToReview")}</p>
 				) : (
 					openReviewStates.map((reviewState, index) => (
 						<ReviewDisclosure
@@ -1010,7 +1014,7 @@ function ReviewPanel({
 					variant="ghost"
 				>
 					{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
-					{reviewRunning ? (isCancelling ? "Cancelling..." : "Cancel review") : runAction}
+					{reviewRunning ? (isCancelling ? translate(activeLocale(), "inspector.review.cancelling") : translate(activeLocale(), "inspector.review.cancel")) : runAction}
 				</Button>
 				{reviewHasRun ? (
 					<Button
@@ -1071,21 +1075,21 @@ function runReviewVerdict(run: NonNullable<PRReviewState["latestRun"]>): {
 	tone: "neutral" | "running" | "success" | "danger";
 } {
 	if (run.status === "failed") {
-		return { label: "Failed", tone: "danger" };
+		return { label: translate(activeLocale(), "inspector.review.failed"), tone: "danger" };
 	}
 	if (run.status === "cancelled") {
-		return { label: "Cancelled", tone: "neutral" };
+		return { label: translate(activeLocale(), "inspector.review.cancelled"), tone: "neutral" };
 	}
 	if (run.status === "running") {
-		return { label: "Reviewing...", tone: "running" };
+		return { label: translate(activeLocale(), "inspector.review.reviewing"), tone: "running" };
 	}
 	switch (run.verdict) {
 		case "approved":
-			return { label: "Approved", tone: "success" };
+			return { label: translate(activeLocale(), "inspector.review.approved"), tone: "success" };
 		case "changes_requested":
-			return { label: "Changes requested", tone: "danger" };
+			return { label: translate(activeLocale(), "inspector.review.changesRequested"), tone: "danger" };
 		default:
-			return { label: "Not run", tone: "neutral" };
+			return { label: translate(activeLocale(), "inspector.review.notRun"), tone: "neutral" };
 	}
 }
 
@@ -1101,33 +1105,34 @@ function reviewVerdict(reviewState: PRReviewState): {
 	tone: "neutral" | "running" | "success" | "danger";
 } {
 	if (reviewState.latestRun?.status === "failed") {
-		return { label: "Failed", tone: "danger" };
+		return { label: translate(activeLocale(), "inspector.review.failed"), tone: "danger" };
 	}
 	if (reviewState.latestRun?.status === "cancelled") {
-		return { label: "Cancelled", tone: "neutral" };
+		return { label: translate(activeLocale(), "inspector.review.cancelled"), tone: "neutral" };
 	}
 	switch (reviewState.status) {
 		case "running":
-			return { label: "Reviewing...", tone: "running" };
+			return { label: translate(activeLocale(), "inspector.review.reviewing"), tone: "running" };
 		case "up_to_date":
-			return { label: "Approved", tone: "success" };
+			return { label: translate(activeLocale(), "inspector.review.approved"), tone: "success" };
 		case "changes_requested":
-			return { label: "Changes requested", tone: "danger" };
+			return { label: translate(activeLocale(), "inspector.review.changesRequested"), tone: "danger" };
 		case "needs_review":
 		case "ineligible":
-			return { label: "Not run", tone: "neutral" };
+			return { label: translate(activeLocale(), "inspector.review.notRun"), tone: "neutral" };
 	}
-	return { label: "Not run", tone: "neutral" };
+	return { label: translate(activeLocale(), "inspector.review.notRun"), tone: "neutral" };
 }
 
 function reviewSessionRunAction(reviewStates: PRReviewState[], isTriggering: boolean): string {
+	const locale = activeLocale();
 	if (isTriggering || reviewStates.some((reviewState) => reviewState.status === "running")) {
-		return "Reviewing...";
+		return translate(locale, "inspector.review.reviewing");
 	}
 	if (reviewStates.some((reviewState) => reviewState.status === "changes_requested" || reviewState.latestRun)) {
-		return "Re-run review";
+		return translate(locale, "inspector.review.rerun");
 	}
-	return "Run review";
+	return translate(locale, "inspector.review.run");
 }
 
 function BrowserView({

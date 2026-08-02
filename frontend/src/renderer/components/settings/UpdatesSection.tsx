@@ -305,7 +305,7 @@ function FeatureBuildsSelect({
 			<SettingsOptionMenu
 				aria-label={t("settings.updates.featureBuild")}
 				value={currentPr === null ? "__none__" : currentPr.toString()}
-				placeholder="Select a feature build..."
+				placeholder={t("settings.updates.selectFeature")}
 				options={options}
 				disabled={buildsQuery.isLoading}
 				onChange={(nextPr) => {
@@ -404,19 +404,23 @@ function UpdateStatusLine({ status }: { status: UpdateStatus }) {
 	const t = useT();
 	switch (status.state) {
 		case "checking":
-			return <span className="text-xs text-settings-muted">Checking for updates…</span>;
+			return <span className="text-xs text-settings-muted">{t("settings.updates.checking")}</span>;
 		case "available":
 			return (
 				<span className="text-xs text-settings-muted">
-					Update available{status.version ? ` (v${status.version})` : ""}.
+					{t("settings.updates.available", { version: status.version ? ` (v${status.version})` : "" })}
 				</span>
 			);
 		case "downloading":
-			return <span className="text-xs text-settings-muted">Downloading… {status.percent ?? 0}%</span>;
+			return (
+				<span className="text-xs text-settings-muted">
+					{t("settings.updates.downloading", { percent: status.percent ?? 0 })}
+				</span>
+			);
 		case "downloaded":
-			return <span className="text-xs text-success">Downloaded. Restart to finish updating.</span>;
+			return <span className="text-xs text-success">{t("settings.updates.downloaded")}</span>;
 		case "not-available":
-			return <span className="text-xs text-settings-muted">You're on the latest version.</span>;
+			return <span className="text-xs text-settings-muted">{t("settings.updates.latest")}</span>;
 		case "unsupported":
 			return (
 				<span className="text-xs text-settings-muted">
@@ -424,7 +428,9 @@ function UpdateStatusLine({ status }: { status: UpdateStatus }) {
 				</span>
 			);
 		case "error":
-			return <span className="text-xs text-error">{status.message ?? "Update failed."}</span>;
+			return (
+				<span className="text-xs text-error">{status.message ?? t("settings.updates.updateFailed")}</span>
+			);
 		default:
 			return null;
 	}

@@ -16,6 +16,7 @@ import type { ProjectKind } from "../types/workspace";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { useT } from "../stores/locale-store";
 
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
@@ -98,6 +99,7 @@ export function CreateProjectAgentSheet({
 	repositorySetupNeeded = false,
 	repositorySetupWarning = null,
 }: CreateProjectAgentSheetProps) {
+	const t = useT();
 	const queryClient = useQueryClient();
 	const agentsQuery = useQuery({
 		...agentsQueryOptions,
@@ -157,7 +159,7 @@ export function CreateProjectAgentSheet({
 					<div className="flex items-start justify-between gap-4 border-b border-[var(--color-border-agents-sheet)] px-6 py-5">
 						<div className="min-w-0">
 							<Dialog.Title className="text-subtitle font-semibold text-[var(--color-text-agents-sheet-title)]">
-								{kind === "workspace" ? "Workspace agents" : "Project agents"}
+								{kind === "workspace" ? t("createProject.workspaceAgents") : t("createProject.projectAgents")}
 							</Dialog.Title>
 							<Dialog.Description className="mt-1 break-all text-xs text-[var(--color-text-agents-sheet-description)]">
 								{path ?? ""}
@@ -167,7 +169,7 @@ export function CreateProjectAgentSheet({
 							<button
 								type="button"
 								className="grid size-7 shrink-0 place-items-center rounded-md text-[var(--color-text-agents-sheet-description)] transition hover:bg-interactive-hover hover:text-[var(--color-text-agents-sheet-title)] disabled:pointer-events-none disabled:opacity-50"
-								aria-label="Close project agents dialog"
+								aria-label={t("createProject.closeAgents")}
 								disabled={isBusy}
 							>
 								<X className="size-icon-base" aria-hidden="true" />
@@ -185,8 +187,8 @@ export function CreateProjectAgentSheet({
 						<div className="grid gap-4 sm:grid-cols-2">
 							<RequiredAgentField
 								id="newProjectWorkerAgent"
-								label="Worker agent"
-								placeholder="Select worker agent"
+								label={t("createProject.workerAgent")}
+								placeholder={t("createProject.selectWorker")}
 								value={workerAgent}
 								authorized={agentOptions}
 								installed={installedAgents}
@@ -202,8 +204,8 @@ export function CreateProjectAgentSheet({
 							/>
 							<RequiredAgentField
 								id="newProjectOrchestratorAgent"
-								label="Orchestrator agent"
-								placeholder="Select orchestrator agent"
+								label={t("createProject.orchestratorAgent")}
+								placeholder={t("createProject.selectOrchestrator")}
 								value={orchestratorAgent}
 								authorized={agentOptions}
 								installed={installedAgents}
@@ -220,18 +222,18 @@ export function CreateProjectAgentSheet({
 						</div>
 
 						{isLoadingAgents && (
-							<p className="text-xs leading-row text-[var(--color-text-agents-sheet-description)]">Loading agents...</p>
+							<p className="text-xs leading-row text-[var(--color-text-agents-sheet-description)]">{t("createProject.loadingAgents")}</p>
 						)}
 
 						<div className="flex items-center justify-between gap-3 text-xs leading-row text-[var(--color-text-agents-sheet-description)]">
-							<span>Agent availability is cached.</span>
+							<span>{t("createProject.agentsCached")}</span>
 							<button
 								type="button"
 								className="shrink-0 rounded text-[var(--color-text-agents-sheet-title)] underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
 								disabled={refreshAgentsMutation.isPending}
 								onClick={() => refreshAgentsMutation.mutate()}
 							>
-								{refreshAgentsMutation.isPending ? "Refreshing..." : "Refresh agents"}
+								{refreshAgentsMutation.isPending ? t("createProject.refreshing") : t("createProject.refreshAgents")}
 							</button>
 						</div>
 
@@ -244,7 +246,7 @@ export function CreateProjectAgentSheet({
 									disabled={refreshAgentsMutation.isPending}
 									onClick={() => refreshAgentsMutation.mutate()}
 								>
-									Retry
+									{t("createProject.retry")}
 								</button>
 							</div>
 						)}

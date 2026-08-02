@@ -10,6 +10,8 @@ import { createUrlWatcher, type UrlWatcher } from "../lib/detect-urls";
 import { cn } from "../lib/utils";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { useRestoreSession } from "../hooks/useRestoreSession";
+import { t } from "../i18n";
+import { activeLocale } from "../stores/locale-store";
 import { XtermTerminal } from "./XtermTerminal";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 
@@ -215,8 +217,9 @@ export function providerScrollsByKeyboard(provider?: string): boolean {
 }
 
 function bannerText(state: TerminalSessionState, error?: string): string | undefined {
-	if (state === "reattaching") return "Terminal disconnected — reattaching…";
-	if (state === "error") return `Terminal error: ${error ?? "connection failed"}`;
+	const locale = activeLocale();
+	if (state === "reattaching") return t(locale, "terminal.reattaching");
+	if (state === "error") return t(locale, "terminal.error", { error: error ?? t(locale, "terminal.connectionFailed") });
 	return undefined;
 }
 
@@ -356,7 +359,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	if (initFailed) {
 		return (
 			<div className="grid h-full place-items-center bg-terminal p-4 font-mono text-xs text-muted-foreground">
-				Terminal failed to initialize on this GPU/driver. Restart the app to retry.
+				{t(activeLocale(), "terminal.initFailed")}
 			</div>
 		);
 	}
@@ -473,12 +476,13 @@ type TerminalEndedStripProps = {
 };
 
 function TerminalEndedStrip({ canRestore, error, isRestoring, onRestore, variant }: TerminalEndedStripProps) {
+	const locale = activeLocale();
 	const message = canRestore
 		? "Restore the session to attach a live terminal and continue writing."
 		: variant === "reviewer"
 			? "This reviewer terminal has ended. Re-run review from the summary panel, or switch back to the agent terminal."
 			: variant === "shell"
-				? "This shell exited. Close the tab, or open a new terminal."
+				? t(locale, "terminal.shellExited")
 				: "This terminal process ended, but the session is not marked terminated yet.";
 
 	return (
@@ -486,7 +490,7 @@ function TerminalEndedStrip({ canRestore, error, isRestoring, onRestore, variant
 			<div className="flex min-h-control-board items-center gap-3">
 				<div className="min-w-0 flex-1">
 					<div className="font-mono text-caption font-medium uppercase tracking-wide-md text-muted-foreground">
-						Terminal ended
+						{t(locale, "terminal.ended")}
 					</div>
 					<div className="mt-0.5 truncate text-xs text-muted-foreground">{message}</div>
 				</div>

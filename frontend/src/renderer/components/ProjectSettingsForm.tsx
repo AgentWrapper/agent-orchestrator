@@ -43,18 +43,14 @@ type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
-const PERMISSION_MODE_OPTIONS = [
-	{ value: "default", label: "Default" },
-	{ value: "accept-edits", label: "Accept edits" },
-	{ value: "auto", label: "Auto" },
-	{ value: "bypass-permissions", label: "Bypass permissions" },
-] as const;
+const PERMISSION_MODE_VALUES = ["default", "accept-edits", "auto", "bypass-permissions"] as const;
 
 const KNOWN_REVIEWER_HARNESS_IDS = new Set(["claude-code", "codex", "opencode"]);
 
 const projectQueryKey = (id: string) => ["project", id] as const;
 
 export function ProjectSettingsForm({ projectId }: { projectId: string }) {
+	const t = useT();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const closeSettings = () => navigate({ to: "/projects/$projectId", params: { projectId } });
@@ -75,10 +71,10 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 		<SettingsPageShell>
 			<SettingsPanel onClose={closeSettings} subtitle={query.data?.path}>
 				{query.isLoading ? (
-					<p className="text-sm text-settings-muted">Loading project settings…</p>
+					<p className="text-sm text-settings-muted">{t("settings.project.loading")}</p>
 				) : query.isError || !query.data ? (
 					<p className="text-sm text-error">
-						{query.error instanceof Error ? query.error.message : "Could not load project."}
+						{query.error instanceof Error ? query.error.message : t("settings.project.loadFailed")}
 					</p>
 				) : (
 					<SettingsBody
@@ -211,15 +207,15 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				setSavedAt(null);
 				setReplacementError(null);
 				if (missingRequiredAgent) {
-					setValidationError("Worker and orchestrator agents are required.");
+					setValidationError(t("settings.project.agentsRequired"));
 					return;
 				}
 				if (form.displayName.trim() === "") {
-					setValidationError("Project name is required.");
+					setValidationError(t("settings.project.nameRequired"));
 					return;
 				}
 				if (intakeIncomplete) {
-					setValidationError("Enabling intake requires an assignee.");
+					setValidationError(t("settings.project.intakeAssigneeRequired"));
 					return;
 				}
 				setValidationError(null);
@@ -284,7 +280,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					variant="settings-row"
 					icon={Bot}
 					value={form.workerAgent}
-					placeholder="Select worker agent"
+					placeholder={t("settings.project.selectWorker")}
 					label={t("settings.project.defaultWorker")}
 					authorized={agentCatalog?.authorized}
 					installed={agentCatalog?.installed}
@@ -298,7 +294,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					variant="settings-row"
 					icon={Network}
 					value={form.orchestratorAgent}
-					placeholder="Select orchestrator agent"
+					placeholder={t("settings.project.selectOrchestrator")}
 					label={t("settings.project.defaultOrchestrator")}
 					authorized={agentCatalog?.authorized}
 					installed={agentCatalog?.installed}
@@ -316,14 +312,14 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						onClick={() => refreshAgentsMutation.mutate()}
 					>
 						<RefreshCw className={cn("size-icon-base", refreshAgentsMutation.isPending && "animate-spin")} aria-hidden="true" />
-						{refreshAgentsMutation.isPending ? "Refreshing…" : "Refresh"}
+						{refreshAgentsMutation.isPending ? t("settings.project.refreshing") : t("settings.project.refresh")}
 					</button>
 				</SettingsRow>
 				{refreshAgentsMutation.isError && (
 					<p className="px-1 text-xs leading-row text-error">
 						{refreshAgentsMutation.error instanceof Error
 							? refreshAgentsMutation.error.message
-							: "Could not refresh agent catalog."}
+							: t("settings.project.refreshFailed")}
 					</p>
 				)}
 				{missingRequiredAgent && (
@@ -482,12 +478,22 @@ function PermissionModeSelect({ value, onChange }: { value: string; onChange: (v
 	const t = useT();
 	const options = [
 		{ value: "__default__", label: t("settings.project.default") },
-		...PERMISSION_MODE_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label })),
+		...PERMISSION_MODE_VALUES.map((value) => ({
+			value,
+			label:
+				value === "default"
+					? t("settings.project.permissionDefault")
+					: value === "accept-edits"
+						? t("settings.project.permissionAcceptEdits")
+						: value === "auto"
+							? t("settings.project.permissionAuto")
+							: t("settings.project.permissionBypass"),
+		})),
 	];
 
 	return (
 		<SettingsOptionMenu
-			aria-label="Permission mode"
+			aria-label={t("settings.project.permissionMode")}
 			value={value || "__default__"}
 			options={options}
 			onChange={(v) => onChange(v === "__default__" ? "" : v)}
@@ -538,7 +544,7 @@ function ReviewerSelect({
 
 	return (
 		<SettingsOptionMenu
-			aria-label="Default reviewer agent"
+			aria-label={t("settings.project.defaultReviewer")}
 			value={selectedValue}
 			options={menuOptions}
 			disabled={disabled}

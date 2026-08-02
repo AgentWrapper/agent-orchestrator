@@ -145,8 +145,8 @@ export function KeyboardShortcutsSettingsDialog({
 			setRecordingState(next);
 		} catch {
 			showToast({
-				title: "Could not record shortcut",
-				body: "Try reopening keyboard shortcut settings.",
+				title: t("shortcut.couldNotRecord"),
+				body: t("shortcut.tryReopen"),
 			});
 		}
 	};
@@ -193,7 +193,7 @@ export function KeyboardShortcutsSettingsDialog({
 				: `${targetLabel} → ${shortcutBindingLabel(candidate, isMac)}`,
 			undo: async () => {
 				await setOverrides(before);
-				showToast({ title: "Shortcut change undone" });
+				showToast({ title: t("shortcut.undone") });
 			},
 		});
 	};
@@ -271,7 +271,7 @@ export function KeyboardShortcutsSettingsDialog({
 			body: `${definition(id)?.label ?? id} now uses its default binding.`,
 			undo: async () => {
 				await setOverrides(before);
-				showToast({ title: "Shortcut change undone" });
+				showToast({ title: t("shortcut.undone") });
 			},
 		});
 	};
@@ -286,7 +286,7 @@ export function KeyboardShortcutsSettingsDialog({
 			body: removed ? `${definition(id)?.label ?? id} no longer uses ${shortcutBindingLabel(removed, isMac)}.` : undefined,
 			undo: async () => {
 				await setOverrides(before);
-				showToast({ title: "Shortcut change undone" });
+				showToast({ title: t("shortcut.undone") });
 			},
 		});
 	};
@@ -460,7 +460,7 @@ export function KeyboardShortcutsSettingsDialog({
 									onClick={() => {
 										void resetAll().then(() => {
 											setConfirmResetAll(false);
-											showToast({ title: "Keyboard shortcuts restored to defaults" });
+											showToast({ title: t("shortcut.restoredDefaults") });
 										});
 									}}
 								>

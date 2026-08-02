@@ -55,9 +55,9 @@ export function KeyboardShortcutsDialog({
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent className="max-h-[min(680px,calc(100svh-32px))] max-w-xl gap-0 overflow-hidden border-border bg-popover p-0 text-popover-foreground">
 				<DialogHeader className="border-b border-border px-5 py-4">
-					<DialogTitle className="text-[15px]">Keyboard shortcuts</DialogTitle>
+					<DialogTitle className="text-[15px]">{t("shortcut.dialogTitle")}</DialogTitle>
 					<DialogDescription className="text-xs">
-						Move around Agent Orchestrator without leaving the keyboard.
+						{t("shortcut.dialogDescription")}
 					</DialogDescription>
 				</DialogHeader>
 

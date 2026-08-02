@@ -6,6 +6,7 @@ import { aoBridge } from "../lib/bridge";
 import { cn } from "../lib/utils";
 import type { ProjectKind } from "../types/workspace";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
+import { useT } from "../stores/locale-store";
 import { Button } from "./ui/button";
 
 export type CreateProjectInput = { path: string; asWorkspace?: boolean } & CreateProjectAgentSelection;
@@ -18,7 +19,7 @@ type CreateProjectFlowMode = ProjectKind | "choose";
 export function CreateProjectFlow({
 	children,
 	embedded = false,
-	idleLabel = "New project",
+	idleLabel,
 	mode = "single_repo",
 	onCreateProject,
 	onInitializeProject,
@@ -37,6 +38,8 @@ export function CreateProjectFlow({
 	// create-project flow instead of a separate delegating component.
 	openSignal?: number;
 }) {
+	const t = useT();
+	const resolvedIdleLabel = idleLabel ?? t("createProject.newProject");
 	const [error, setError] = useState<string | null>(null);
 	const [modePickerOpen, setModePickerOpen] = useState(false);
 	const [folderPickerOpen, setFolderPickerOpen] = useState(false);
@@ -67,7 +70,7 @@ export function CreateProjectFlow({
 		setIsChoosingPath(true);
 		try {
 			const path = await aoBridge.app.chooseDirectory(
-				kind === "workspace" ? "Choose a workspace folder" : "Choose a project repository",
+				kind === "workspace" ? t("createProject.chooseWorkspace") : t("createProject.chooseRepo"),
 			);
 			if (path && kind === "single_repo") {
 				const preflight = await projectRepositoryPreflight(path);
@@ -98,7 +101,7 @@ export function CreateProjectFlow({
 				setFolderPickerOpen(false);
 			}
 		} catch (err) {
-			setError(err instanceof Error ? err.message : "Could not add project");
+			setError(err instanceof Error ? err.message : t("createProject.couldNotAdd"));
 		} finally {
 			setIsChoosingPath(false);
 		}
@@ -139,7 +142,7 @@ export function CreateProjectFlow({
 			setSelectedPath(null);
 		} catch (err) {
 			const code = err instanceof Error && "code" in err ? (err.code as string | undefined) : undefined;
-			const message = err instanceof Error ? err.message : "Could not add project";
+			const message = err instanceof Error ? err.message : t("createProject.couldNotAdd");
 			if (selectedKind === "single_repo" && isRepositorySetupRecoveryCode(code)) setRepositorySetup(code);
 			setError(message);
 			if (hasModePicker) {
@@ -166,14 +169,14 @@ export function CreateProjectFlow({
 	};
 
 	const label = isChoosingPath
-		? "Opening..."
+		? t("createProject.opening")
 		: isInitializing
 			? hasModePicker
-				? "Initializing..."
-				: "Setting up..."
+				? t("createProject.initializing")
+				: t("createProject.settingUp")
 			: isCreating
-				? "Creating..."
-				: idleLabel;
+				? t("createProject.creating")
+				: resolvedIdleLabel;
 
 	return (
 		<>
@@ -338,33 +341,34 @@ function ImportModePicker({
 	onClose?: () => void;
 	onSelect: (kind: ProjectKind) => void;
 }) {
+	const t = useT();
 	return (
 		<div
 			className="relative isolate flex w-full max-w-(--size-import-modal-max) flex-col items-stretch gap-8 rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] p-8 shadow-[var(--shadow-import-modal)]"
 			role={dialog ? undefined : "group"}
-			aria-label={dialog ? undefined : "Import to Agent Orchestrator"}
+			aria-label={dialog ? undefined : t("createProject.importTitle")}
 		>
 			<div className={cn("relative z-[1] flex flex-col items-start gap-1", onClose && "pr-8")}>
 				{dialog ? (
-					<Dialog.Title className="import-title">Import to Agent Orchestrator</Dialog.Title>
+					<Dialog.Title className="import-title">{t("createProject.importTitle")}</Dialog.Title>
 				) : (
-					<h2 className="import-title">Import to Agent Orchestrator</h2>
+					<h2 className="import-title">{t("createProject.importTitle")}</h2>
 				)}
 				{dialog ? (
-					<Dialog.Description className="import-description">What are you importing?</Dialog.Description>
+					<Dialog.Description className="import-description">{t("createProject.importWhat")}</Dialog.Description>
 				) : (
-					<p className="import-description">What are you importing?</p>
+					<p className="import-description">{t("createProject.importWhat")}</p>
 				)}
 			</div>
 			<div className="relative z-[2] flex flex-row items-stretch justify-center gap-6 self-stretch">
 				<ProjectModeButton
-					description="Several Git repos that live under one parent folder."
+					description={t("createProject.workspaceDesc")}
 					disabled={disabled}
 					kind="workspace"
 					onClick={() => onSelect("workspace")}
 				/>
 				<ProjectModeButton
-					description="A single Git repository - tracked in a single codebase."
+					description={t("createProject.projectDesc")}
 					disabled={disabled}
 					kind="single_repo"
 					onClick={() => onSelect("single_repo")}
@@ -374,7 +378,7 @@ function ImportModePicker({
 				<button
 					type="button"
 					className="import-close-button"
-					aria-label="Close new project dialog"
+					aria-label={t("createProject.closeDialog")}
 					disabled={disabled}
 					onClick={onClose}
 				>
@@ -396,11 +400,13 @@ function ProjectModeButton({
 	kind: ProjectKind;
 	onClick: () => void;
 }) {
+	const t = useT();
 	const isWorkspace = kind === "workspace";
+	const title = isWorkspace ? t("createProject.workspace") : t("createProject.project");
 	return (
 		<button
 			type="button"
-			aria-label={isWorkspace ? "Workspace" : "Project"}
+			aria-label={title}
 			className="flex min-h-(--size-import-mode-card-min) w-full flex-1 flex-col justify-start gap-6 self-stretch rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-6 text-left transition-colors hover:bg-[var(--color-bg-import-card-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50 sm:min-h-(--size-import-mode-card-min-sm)"
 			disabled={disabled}
 			onClick={onClick}
@@ -446,7 +452,7 @@ function ProjectModeButton({
 			</span>
 			<span className="mt-auto flex w-full flex-col items-start gap-2">
 				<span className="text-[16px] font-bold leading-6 text-[var(--color-text-import-title)]">
-					{isWorkspace ? "Workspace" : "Project"}
+					{title}
 				</span>
 				<span className="text-[14px] font-normal leading-[23px] text-[var(--color-text-import-muted)]">
 					{description}
