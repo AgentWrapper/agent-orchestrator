@@ -88,7 +88,11 @@ func TestPrepareTerminalRequestWritesDisplayOnlyCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PrepareTerminalRequest: %v", err)
 	}
-	if strings.Join(command.Argv, " ") != "ao review-terminal "+path {
+	aoExecutable, err := resolveAOExecutable()
+	if err != nil {
+		t.Fatalf("resolveAOExecutable: %v", err)
+	}
+	if strings.Join(command.Argv, " ") != aoExecutable+" review-terminal "+path {
 		t.Fatalf("command = %#v", command.Argv)
 	}
 	raw, err := os.ReadFile(path)

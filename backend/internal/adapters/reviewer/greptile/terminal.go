@@ -66,6 +66,10 @@ func (Adapter) PrepareTerminalRequest(path string, tasks []ports.ReviewTask) (po
 	if len(tasks) == 0 {
 		return ports.ReviewCommandSpec{}, fmt.Errorf("greptile terminal request has no review tasks")
 	}
+	aoExecutable, err := resolveAOExecutable()
+	if err != nil {
+		return ports.ReviewCommandSpec{}, err
+	}
 	request := terminalRequest{
 		ResultPath: TerminalResultPath(path),
 		Tasks:      make([]terminalTask, 0, len(tasks)),
@@ -85,7 +89,29 @@ func (Adapter) PrepareTerminalRequest(path string, tasks []ports.ReviewTask) (po
 	if err := writeJSONFile(path, request); err != nil {
 		return ports.ReviewCommandSpec{}, fmt.Errorf("write greptile terminal request: %w", err)
 	}
-	return ports.ReviewCommandSpec{Argv: []string{"ao", "review-terminal", path}}, nil
+	return ports.ReviewCommandSpec{Argv: []string{aoExecutable, "review-terminal", path}}, nil
+}
+
+// resolveAOExecutable returns the exact AO binary that is currently running.
+// Reviewer terminals may start in a worker worktree where the bare `ao`
+// command is not on PATH (notably when the dev daemon was started with
+// `go run`), so the terminal must not depend on PATH or its working directory
+// to find AO's hidden command.
+func resolveAOExecutable() (string, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("resolve AO executable: %w", err)
+	}
+	if strings.TrimSpace(executable) == "" {
+		return "", fmt.Errorf("resolve AO executable: empty executable path")
+	}
+	if !filepath.IsAbs(executable) {
+		executable, err = filepath.Abs(executable)
+		if err != nil {
+			return "", fmt.Errorf("resolve AO executable path: %w", err)
+		}
+	}
+	return executable, nil
 }
 
 // TerminalResultPath returns the result sidecar paired with a request file.

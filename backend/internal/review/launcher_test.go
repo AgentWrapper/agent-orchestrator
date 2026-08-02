@@ -109,7 +109,7 @@ type fakeRuntime struct {
 type fakeTerminalRuntime struct{ fakeRuntime }
 
 func (f *fakeTerminalRuntime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
-	if len(cfg.Argv) == 3 && cfg.Argv[0] == "ao" && cfg.Argv[1] == "review-terminal" {
+	if len(cfg.Argv) == 3 && cfg.Argv[1] == "review-terminal" {
 		_ = os.WriteFile(greptile.TerminalResultPath(cfg.Argv[2]), []byte(`{"complete":true,"results":[{"runId":"run-terminal","prUrl":"https://github.com/o/r/pull/1","targetSha":"sha1","verdict":"approved","body":"Looks good."}]}`), 0o600)
 	}
 	return f.fakeRuntime.Create(ctx, cfg)
@@ -281,7 +281,7 @@ func TestLauncherRunsGreptileThroughDisplayTerminal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
-	if handle != "review-mer-1" || len(rt.createCfg.Argv) != 3 || rt.createCfg.Argv[0] != "ao" || rt.createCfg.Argv[1] != "review-terminal" {
+	if handle != "review-mer-1" || len(rt.createCfg.Argv) != 3 || !filepath.IsAbs(rt.createCfg.Argv[0]) || rt.createCfg.Argv[1] != "review-terminal" {
 		t.Fatalf("terminal config = %+v", rt.createCfg)
 	}
 	select {
