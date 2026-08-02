@@ -896,7 +896,8 @@ func (c *Collector) registerValidatedSource(
 	latestNative := inventory.latestCodexByNative[nativeSessionID]
 	identityMatch := inventory.identityMatch(kind, nativeSessionID, identity, size)
 	generation := inventory.maxGeneration
-	if latest != nil && latest.FileIdentity == identity && size >= latest.ByteOffset {
+	if latest != nil && latest.FileIdentity == identity && size >= latest.ByteOffset &&
+		latest.LastErrorCode != domain.UsageErrorArtifactReplaced {
 		if reactivateExisting || latest.State == domain.UsageSourceError {
 			changed, err := c.store.ReactivateUsageSource(ctx, latest.ID, now)
 			if err == nil && changed {
@@ -1288,8 +1289,11 @@ func validateSourceAttribution(
 		if !ok || meta.NativeSessionID != nativeSessionID {
 			return rejected()
 		}
-		if subagentID != "" &&
-			(subagentID != nativeSessionID || expectedParentID == "" || meta.ParentThreadID != expectedParentID) {
+		if subagentID == "" {
+			if meta.ParentThreadID != "" {
+				return rejected()
+			}
+		} else if subagentID != nativeSessionID || expectedParentID == "" || meta.ParentThreadID != expectedParentID {
 			return rejected()
 		}
 	case domain.UsageSourceClaudeMain:

@@ -180,6 +180,106 @@ func TestIngestorReplaysReplacementWithUnknownProviderTimestampAcrossClocks(t *t
 	}
 }
 
+func TestIngestorReplaysClaudeReplacementAgainstLegacyProviderState(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	store, err := sqlite.Open(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Unix(1700000000, 0).UTC()
+	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "usage", Path: t.TempDir(), RegisteredAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	session, err := store.CreateSession(ctx, domain.SessionRecord{
+		ProjectID: "usage",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessClaudeCode,
+		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := store.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
+		SessionID:    session.ID,
+		Harness:      domain.HarnessClaudeCode,
+		NativeRootID: "claude-root",
+		State:        domain.UsageBindingActive,
+		FirstSeenAt:  now,
+		LastSeenAt:   now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "claude-root.jsonl")
+	line := `{"timestamp":"2026-07-28T10:00:00Z","type":"assistant","uuid":"native-message","message":{"id":"msg-1","model":"claude-x","stop_reason":"end_turn","usage":{"input_tokens":8,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2}}}` + "\n"
+	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := usagesvc.SourceIdentity(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := store.InsertUsageSource(ctx, domain.UsageSourceRecord{
+		BindingID:       binding.ID,
+		Kind:            domain.UsageSourceClaudeMain,
+		NativeSessionID: "claude-root",
+		ArtifactPath:    path,
+		FileIdentity:    identity,
+		ParserStateJSON: `{"version":1,"source_kind":"claude_main","claude":{"model_id":"claude-x","provider":"claude-code"}}`,
+		State:           domain.UsageSourcePending,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ingestor := NewIngestor(store, IngestorConfig{Clock: func() time.Time { return now }})
+	if _, err := ingestor.Ingest(ctx, source.ID); err != nil {
+		t.Fatalf("ingest legacy source: %v", err)
+	}
+
+	replacementPath := path + ".replacement"
+	if err := os.WriteFile(replacementPath, []byte(line), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacementPath, path); err != nil {
+		t.Fatal(err)
+	}
+	replaced, err := ingestor.Ingest(ctx, source.ID)
+	if err != nil {
+		t.Fatalf("replace legacy source: %v", err)
+	}
+	if replaced.ReplacementSourceID == 0 {
+		t.Fatalf("replacement result = %+v", replaced)
+	}
+	if _, err := ingestor.Ingest(ctx, replaced.ReplacementSourceID); err != nil {
+		t.Fatalf("replay replacement: %v", err)
+	}
+
+	got, ok, err := store.GetUsageSourceForIngestion(ctx, replaced.ReplacementSourceID)
+	if err != nil || !ok {
+		t.Fatalf("get replacement: ok=%v err=%v", ok, err)
+	}
+	if got.Source.ByteOffset != int64(len(line)) || got.Source.LastErrorCode != "" {
+		t.Fatalf("replacement source = %+v, want replayed duplicate", got.Source)
+	}
+	if strings.Contains(got.Source.ParserStateJSON, "claude-code") {
+		t.Fatalf("fresh parser state retained legacy provider: %s", got.Source.ParserStateJSON)
+	}
+	aggregates, err := store.ListUsageModelAggregates(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(aggregates) != 1 || aggregates[0].EventCount != 1 {
+		t.Fatalf("aggregates = %+v, want one replay-deduplicated event", aggregates)
+	}
+}
+
 func TestIngestorReadsIdentityAndContentFromSingleDescriptorAcrossAtomicReplacement(t *testing.T) {
 	ctx := context.Background()
 	store, source, path, now := seedCodexIngestionSource(t, t.TempDir())
@@ -229,6 +329,93 @@ func TestIngestorReadsIdentityAndContentFromSingleDescriptorAcrossAtomicReplacem
 		t.Fatalf("ingest replacement generation: %v", err)
 	}
 	assertTokenAggregate(t, store, sourceSessionID(t, store, source.ID), 340)
+}
+
+func TestIngestorDoesNotApplyChunkWhenDescriptorMutatesAfterRead(t *testing.T) {
+	ctx := context.Background()
+	store, source, path, now := seedCodexIngestionSource(t, t.TempDir())
+	beforeContent := string(codexTokenLine("2026-07-28T10:00:00Z", 100, 60, 0, 20, 5)) + "\n"
+	afterContent := string(codexTokenLine("2026-07-28T11:00:00Z", 200, 70, 0, 30, 5)) + "\n"
+	if len(beforeContent) != len(afterContent) {
+		t.Fatalf("fixture lengths = %d/%d, want equal", len(beforeContent), len(afterContent))
+	}
+	if err := os.WriteFile(path, []byte(beforeContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	beforeModTime := now.Add(-time.Hour)
+	if err := os.Chtimes(path, beforeModTime, beforeModTime); err != nil {
+		t.Fatal(err)
+	}
+
+	ingestor := NewIngestor(store, IngestorConfig{Clock: func() time.Time { return now }})
+	ingestor.afterRead = func() {
+		if err := os.WriteFile(path, []byte(afterContent), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := ingestor.Ingest(ctx, source.ID)
+	if err == nil || result.RetryAt == nil {
+		t.Fatalf("mutated ingest result = %+v, err=%v, want retry", result, err)
+	}
+	got, ok, err := store.GetUsageSourceForIngestion(ctx, source.ID)
+	if err != nil || !ok {
+		t.Fatalf("get source: ok=%v err=%v", ok, err)
+	}
+	if got.Source.ByteOffset != 0 || got.Source.ParserStateJSON != "{}" || got.Source.FailureCount != 1 {
+		t.Fatalf("mutated source advanced: %+v", got.Source)
+	}
+	aggregates, err := store.ListUsageModelAggregates(ctx, got.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(aggregates) != 0 {
+		t.Fatalf("mutated read emitted events: %+v", aggregates)
+	}
+
+	ingestor.afterRead = nil
+	if _, err := ingestor.Ingest(ctx, source.ID); err != nil {
+		t.Fatalf("retry stable descriptor: %v", err)
+	}
+	assertTokenAggregate(t, store, got.SessionID, 230)
+}
+
+func TestIngestorPersistsParsedCheckpointWhenRewriteFollowsFinalVerification(t *testing.T) {
+	ctx := context.Background()
+	store, source, path, now := seedCodexIngestionSource(t, t.TempDir())
+	beforeContent := string(codexTokenLine("2026-07-28T10:00:00Z", 100, 60, 0, 20, 5)) + "\n"
+	afterContent := string(codexTokenLine("2026-07-28T11:00:00Z", 200, 70, 0, 30, 5)) + "\n"
+	if len(beforeContent) != len(afterContent) {
+		t.Fatalf("fixture lengths = %d/%d, want equal", len(beforeContent), len(afterContent))
+	}
+	if err := os.WriteFile(path, []byte(beforeContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	interleaved := &applyInterleavingStore{Store: store}
+	interleaved.beforeApply = func() {
+		if err := os.WriteFile(path, []byte(afterContent), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ingestor := NewIngestor(interleaved, IngestorConfig{Clock: func() time.Time { return now }})
+	if _, err := ingestor.Ingest(ctx, source.ID); err != nil {
+		t.Fatalf("ingest verified bytes: %v", err)
+	}
+	assertTokenAggregate(t, store, sourceSessionID(t, store, source.ID), 120)
+
+	result, err := ingestor.Ingest(ctx, source.ID)
+	if err != nil {
+		t.Fatalf("detect post-verification rewrite: %v", err)
+	}
+	if result.ReplacementSourceID == 0 {
+		t.Fatalf("rewrite result = %+v, want replacement generation", result)
+	}
+	if _, err := ingestor.Ingest(ctx, result.ReplacementSourceID); err != nil {
+		t.Fatalf("ingest replacement generation: %v", err)
+	}
+	assertTokenAggregate(t, store, sourceSessionID(t, store, source.ID), 350)
 }
 
 func TestIngestorReplacesSameInodeWhenPreCursorCheckpointChanges(t *testing.T) {
@@ -290,6 +477,71 @@ func TestIngestorReplacesSameInodeWhenPreCursorCheckpointChanges(t *testing.T) {
 				t.Fatalf("ingest replacement generation: %v", err)
 			}
 			assertTokenAggregate(t, store, replacement.SessionID, 350)
+		})
+	}
+}
+
+func TestIngestorReplaysCompletedLegacyCursorWithoutCheckpoint(t *testing.T) {
+	tests := []struct {
+		name       string
+		appendLine string
+		wantTokens int64
+	}{
+		{name: "equal size", wantTokens: 120},
+		{
+			name:       "larger size",
+			appendLine: string(codexTokenLine("2026-07-28T10:01:00Z", 150, 90, 0, 30, 8)) + "\n",
+			wantTokens: 180,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			dataDir := t.TempDir()
+			store, source, path, now := seedCodexIngestionSource(t, dataDir)
+			initial := string(codexTokenLine("2026-07-28T10:00:00Z", 100, 60, 0, 20, 5)) + "\n"
+			if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			ingestor := NewIngestor(store, IngestorConfig{Clock: func() time.Time { return now }})
+			if _, err := ingestor.Ingest(ctx, source.ID); err != nil {
+				t.Fatalf("seed current source: %v", err)
+			}
+			writeParserStateJSON(t, dataDir, source.ID, withoutParserIntegrity(t, readParserStateJSON(t, dataDir, source.ID)))
+			if _, err := store.MarkUsageSourceState(
+				ctx,
+				source.ID,
+				domain.UsageSourceComplete,
+				"",
+				nil,
+				now,
+			); err != nil {
+				t.Fatal(err)
+			}
+			if test.appendLine != "" {
+				if err := osAppend(path, test.appendLine); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			result, err := ingestor.Ingest(ctx, source.ID)
+			if err != nil {
+				t.Fatalf("reset legacy cursor: %v", err)
+			}
+			if result.ReplacementSourceID == 0 {
+				t.Fatalf("legacy result = %+v, want replacement generation", result)
+			}
+			replacement, ok, err := store.GetUsageSourceForIngestion(ctx, result.ReplacementSourceID)
+			if err != nil || !ok {
+				t.Fatalf("get replacement: ok=%v err=%v", ok, err)
+			}
+			if replacement.Source.ByteOffset != 0 || replacement.Source.Generation != source.Generation+1 {
+				t.Fatalf("replacement source = %+v", replacement.Source)
+			}
+			if _, err := ingestor.Ingest(ctx, replacement.Source.ID); err != nil {
+				t.Fatalf("replay replacement: %v", err)
+			}
+			assertTokenAggregate(t, store, replacement.SessionID, test.wantTokens)
 		})
 	}
 }
@@ -378,6 +630,20 @@ func writeParserStateJSON(t *testing.T, dataDir string, sourceID int64, state st
 	if _, err := db.Exec("UPDATE usage_sources SET parser_state_json = ? WHERE id = ?", state, sourceID); err != nil {
 		t.Fatalf("write parser state: %v", err)
 	}
+}
+
+func withoutParserIntegrity(t *testing.T, raw string) string {
+	t.Helper()
+	var state map[string]any
+	if err := json.Unmarshal([]byte(raw), &state); err != nil {
+		t.Fatal(err)
+	}
+	delete(state, "integrity")
+	encoded, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
 }
 
 func assertCodexParserState(t *testing.T, raw string, input int64, model, provider string) {
@@ -1161,6 +1427,25 @@ func ingestSourceFully(ctx context.Context, t *testing.T, ingestor *Ingestor, so
 		}
 	}
 	t.Fatalf("usage source %d did not reach EOF", sourceID)
+}
+
+type applyInterleavingStore struct {
+	*sqlite.Store
+	beforeApply func()
+}
+
+func (s *applyInterleavingStore) ApplyUsageChunk(
+	ctx context.Context,
+	sourceID int64,
+	expectedOffset int64,
+	nextState domain.SourceCursorState,
+	events []domain.ModelUsageEvent,
+) (domain.ApplyUsageChunkResult, error) {
+	if beforeApply := s.beforeApply; beforeApply != nil {
+		s.beforeApply = nil
+		beforeApply()
+	}
+	return s.Store.ApplyUsageChunk(ctx, sourceID, expectedOffset, nextState, events)
 }
 
 func assertTokenAggregate(t *testing.T, store *sqlite.Store, sessionID domain.SessionID, total int64) {

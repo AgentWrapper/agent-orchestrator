@@ -363,7 +363,7 @@ func (s *Store) ApplyUsageChunk(ctx context.Context, sourceID, expectedOffset in
 				return err
 			}
 			if err == nil {
-				if !usageEventMatches(existing, ev) {
+				if !usageEventMatches(source.Kind, existing, ev) {
 					return fmt.Errorf("%w: binding %d event %q", domain.ErrUsageSourceEventConflict, source.BindingID, ev.SourceEventKey)
 				}
 				result.DuplicateEvents++
@@ -551,11 +551,11 @@ func usageEventInsertParams(source gen.GetUsageSourceWithBindingAndSessionRow, e
 	}
 }
 
-func usageEventMatches(existing gen.GetModelUsageEventByKeyRow, event domain.ModelUsageEvent) bool {
+func usageEventMatches(sourceKind domain.UsageSourceKind, existing gen.GetModelUsageEventByKeyRow, event domain.ModelUsageEvent) bool {
 	reasoning := ptrInt64ToNull(event.Tokens.ReasoningTokens)
 	cost := ptrInt64ToNull(event.Cost.CostNanos)
 	pricingVersion := ptrStringToNull(event.Cost.PricingVersion)
-	return existing.Provider == event.Provider &&
+	return usageProviderMatches(sourceKind, existing.Provider, event.Provider) &&
 		existing.ModelID == event.ModelID &&
 		existing.ObservedAt.Equal(event.ObservedAt) &&
 		existing.InputTokens == event.Tokens.InputTokens &&
@@ -566,6 +566,20 @@ func usageEventMatches(existing gen.GetModelUsageEventByKeyRow, event domain.Mod
 		existing.ReasoningTokens == reasoning &&
 		existing.CostNanos == cost &&
 		existing.PricingVersion == pricingVersion
+}
+
+func usageProviderMatches(sourceKind domain.UsageSourceKind, existing, replayed string) bool {
+	if existing == replayed {
+		return true
+	}
+	if sourceKind != domain.UsageSourceClaudeMain && sourceKind != domain.UsageSourceClaudeSubagent {
+		return false
+	}
+	return unknownClaudeProvider(existing) && unknownClaudeProvider(replayed)
+}
+
+func unknownClaudeProvider(provider string) bool {
+	return provider == "" || provider == "unknown" || provider == "claude-code"
 }
 
 func usageAggregateFromGen(row gen.AggregateUsageBySessionHarnessModelRow) domain.UsageModelAggregate {

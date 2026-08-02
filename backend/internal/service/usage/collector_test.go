@@ -961,6 +961,25 @@ func TestCollectorRejectsHookPathAttributionMismatches(t *testing.T) {
 		assertNoUsageSourcesForSession(t, store, session.ID)
 	})
 
+	t.Run("Codex child claimed as root", func(t *testing.T) {
+		store := collectorTestStore(t)
+		session := collectorTestSession(t, store, domain.HarnessCodex, "codex-child", false)
+		root := filepath.Join(t.TempDir(), "sessions")
+		path := filepath.Join(root, "2026", "08", "02", "child.jsonl")
+		writeUsageFixture(t, path, codexSessionMetaFixture(t, "codex-child", "codex-parent"))
+		collector := NewCollector(store, SourceRoots{CodexSessions: root}, nil)
+
+		err := collector.RecordHook(context.Background(), session.ID, HookSignal{
+			Event:           "session-start",
+			NativeSessionID: "codex-child",
+			TranscriptPath:  path,
+		})
+		if err == nil {
+			t.Fatal("Codex child rollout was accepted as a root source")
+		}
+		assertNoUsageSourcesForSession(t, store, session.ID)
+	})
+
 	t.Run("Claude main filename", func(t *testing.T) {
 		store := collectorTestStore(t)
 		session := collectorTestSession(t, store, domain.HarnessClaudeCode, "claude-claimed", false)
@@ -1056,6 +1075,55 @@ func TestCollectorRejectsCodexChildPathWithWrongParent(t *testing.T) {
 		t.Fatal("Codex child path with another parent was accepted")
 	}
 	assertNoUsageSourcesForSession(t, store, session.ID)
+}
+
+func TestCollectorDoesNotDoubleAttributeCodexChildAsRoot(t *testing.T) {
+	ctx := context.Background()
+	store := collectorTestStore(t)
+	parentSession := collectorTestSession(t, store, domain.HarnessCodex, "codex-parent", false)
+	root := filepath.Join(t.TempDir(), "sessions")
+	childPath := filepath.Join(root, "2026", "08", "02", "child.jsonl")
+	writeUsageFixture(t, childPath, codexSessionMetaFixture(t, "codex-child", "codex-parent"))
+	collector := NewCollector(store, SourceRoots{CodexSessions: root}, nil)
+	now := time.Unix(1700000000, 0).UTC()
+	parentBinding, err := store.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
+		SessionID:    parentSession.ID,
+		Harness:      domain.HarnessCodex,
+		NativeRootID: "codex-parent",
+		State:        domain.UsageBindingActive,
+		FirstSeenAt:  now,
+		LastSeenAt:   now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := collector.registerSource(
+		ctx,
+		parentBinding,
+		domain.UsageSourceCodexRollout,
+		"codex-child",
+		"codex-child",
+		childPath,
+		now,
+		false,
+	); err != nil {
+		t.Fatalf("register child under parent: %v", err)
+	}
+
+	childSession := collectorTestSession(t, store, domain.HarnessCodex, "codex-child", false)
+	if err := collector.RecordHook(ctx, childSession.ID, HookSignal{
+		Event:           "session-start",
+		NativeSessionID: "codex-child",
+		TranscriptPath:  childPath,
+	}); err == nil {
+		t.Fatal("child rollout was also accepted as a root source")
+	}
+	parentSources, err := store.ListUsageSourcesForBinding(ctx, parentBinding.ID)
+	if err != nil || len(parentSources) != 1 || parentSources[0].SubagentID != "codex-child" {
+		t.Fatalf("parent sources = %+v, err=%v", parentSources, err)
+	}
+	assertNoUsageSourcesForSession(t, store, childSession.ID)
 }
 
 func TestCollectorAttributionMismatchDoesNotReplaceExistingSource(t *testing.T) {

@@ -392,6 +392,76 @@ func TestApplyUsageChunkRejectsChangedProviderTimestampForStableKey(t *testing.T
 	assertUsageSourceOffset(t, s, source.ID, 10)
 }
 
+func TestApplyUsageChunkCanonicalizesOnlyUnknownClaudeProviders(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	sess := seedUsageSession(t, s, domain.HarnessClaudeCode)
+	now := time.Unix(1700000000, 0).UTC()
+	binding, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
+		SessionID:    sess.ID,
+		Harness:      sess.Harness,
+		NativeRootID: "claude-root",
+		State:        domain.UsageBindingActive,
+		FirstSeenAt:  now,
+		LastSeenAt:   now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+		BindingID:       binding.ID,
+		Kind:            domain.UsageSourceClaudeMain,
+		NativeSessionID: "claude-root",
+		ArtifactPath:    "/tmp/claude/claude-root.jsonl",
+		FileIdentity:    "dev:ino",
+		State:           domain.UsageSourcePending,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := usageEvent("event-1", now, domain.UsageTokenMetrics{
+		InputTokens:         10,
+		UncachedInputTokens: 10,
+		OutputTokens:        1,
+	}, nil)
+	event.Provider = "claude-code"
+	if _, err := s.ApplyUsageChunk(ctx, source.ID, 0, domain.SourceCursorState{
+		ByteOffset: 10,
+		State:      domain.UsageSourceActive,
+		UpdatedAt:  now,
+	}, []domain.ModelUsageEvent{event}); err != nil {
+		t.Fatalf("seed legacy event: %v", err)
+	}
+	for index, provider := range []string{"", "unknown"} {
+		replayed := event
+		replayed.Provider = provider
+		expectedOffset := int64(10 + index*10)
+		result, err := s.ApplyUsageChunk(ctx, source.ID, expectedOffset, domain.SourceCursorState{
+			ByteOffset: expectedOffset + 10,
+			State:      domain.UsageSourceActive,
+			UpdatedAt:  now,
+		}, []domain.ModelUsageEvent{replayed})
+		if err != nil {
+			t.Fatalf("replay provider %q: %v", provider, err)
+		}
+		if result.DuplicateEvents != 1 || result.InsertedEvents != 0 {
+			t.Fatalf("replay provider %q result = %+v", provider, result)
+		}
+	}
+	conflict := event
+	conflict.Provider = "bedrock"
+	if _, err := s.ApplyUsageChunk(ctx, source.ID, 30, domain.SourceCursorState{
+		ByteOffset: 40,
+		State:      domain.UsageSourceActive,
+		UpdatedAt:  now,
+	}, []domain.ModelUsageEvent{conflict}); !errors.Is(err, domain.ErrUsageSourceEventConflict) {
+		t.Fatalf("actual provider conflict = %v, want ErrUsageSourceEventConflict", err)
+	}
+	assertUsageSourceOffset(t, s, source.ID, 30)
+}
 func TestApplyUsageChunkRejectsConflictsAndPreservesCursor(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
