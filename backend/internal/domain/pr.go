@@ -19,6 +19,7 @@ type PRFacts struct {
 	CheckCount     int  // number of persisted CI checks observed for this PR
 	SourceBranch   string
 	TargetBranch   string
+	HeadSHA        string
 	UpdatedAt      time.Time
 }
 

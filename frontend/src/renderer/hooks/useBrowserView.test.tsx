@@ -476,6 +476,40 @@ describe("useBrowserView", () => {
 		expect(bridge.destroy).not.toHaveBeenCalled();
 	});
 
+	it("hides the native view synchronously when the browser slot unmounts", async () => {
+		const bridge = setupBridge();
+		const slot = createSlot();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
+		act(() => result.current.slotRef(slot));
+		await waitFor(() =>
+			expect(bridge.setBounds).toHaveBeenCalledWith({
+				viewId: "42:sess-1",
+				rect: { x: 12, y: 34, width: 320, height: 240 },
+				visible: true,
+			}),
+		);
+
+		bridge.setBounds.mockClear();
+		act(() => result.current.slotRef(null));
+
+		expect(bridge.setBounds).toHaveBeenLastCalledWith({
+			viewId: "42:sess-1",
+			rect: { x: 0, y: 0, width: 0, height: 0 },
+			visible: false,
+		});
+	});
+
 	it("parks the view and mirrors frames while a modal dialog is open, then restores it on close", async () => {
 		const bridge = setupBridge();
 		const slot = createSlot();

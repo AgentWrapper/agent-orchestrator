@@ -62,6 +62,7 @@ SELECT
     pr.review_decision,
     pr.ci_state,
     pr.mergeability,
+    pr.head_sha,
     pr.updated_at,
     (
         SELECT COUNT(*)
@@ -90,6 +91,7 @@ type GetDisplayPRFactsBySessionRow struct {
 	ReviewDecision domain.ReviewDecision
 	CIState        domain.CIState
 	Mergeability   domain.Mergeability
+	HeadSha        string
 	UpdatedAt      time.Time
 	CheckCount     int64
 	ReviewComments bool
@@ -105,6 +107,7 @@ func (q *Queries) GetDisplayPRFactsBySession(ctx context.Context, sessionID doma
 		&i.ReviewDecision,
 		&i.CIState,
 		&i.Mergeability,
+		&i.HeadSha,
 		&i.UpdatedAt,
 		&i.CheckCount,
 		&i.ReviewComments,
@@ -352,6 +355,7 @@ SELECT
     pr.mergeability,
     pr.source_branch,
     pr.target_branch,
+    pr.head_sha,
     pr.updated_at,
     (
         SELECT COUNT(*)
@@ -379,6 +383,7 @@ type ListPRFactsBySessionRow struct {
 	Mergeability   domain.Mergeability
 	SourceBranch   string
 	TargetBranch   string
+	HeadSha        string
 	UpdatedAt      time.Time
 	CheckCount     int64
 	ReviewComments bool
@@ -405,6 +410,7 @@ func (q *Queries) ListPRFactsBySession(ctx context.Context, sessionID domain.Ses
 			&i.Mergeability,
 			&i.SourceBranch,
 			&i.TargetBranch,
+			&i.HeadSha,
 			&i.UpdatedAt,
 			&i.CheckCount,
 			&i.ReviewComments,

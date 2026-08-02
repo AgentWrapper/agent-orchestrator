@@ -272,17 +272,22 @@ func (s *Service) listPRFacts(ctx context.Context, id domain.SessionID) ([]domai
 	if err != nil {
 		return nil, err
 	}
-	facts := make([]domain.PRFacts, 0, len(prs))
-	for _, pr := range prs {
-		comments, err := s.store.ListPRComments(ctx, pr.URL)
+	groups := groupPullRequestAliases(prs)
+	facts := make([]domain.PRFacts, 0, len(groups))
+	for _, group := range groups {
+		var comments []domain.PullRequestComment
+		for _, pr := range group.aliases {
+			prComments, err := s.store.ListPRComments(ctx, pr.URL)
+			if err != nil {
+				return nil, err
+			}
+			comments = append(comments, prComments...)
+		}
+		checks, err := s.store.ListChecks(ctx, group.primary.URL)
 		if err != nil {
 			return nil, err
 		}
-		checks, err := s.store.ListChecks(ctx, pr.URL)
-		if err != nil {
-			return nil, err
-		}
-		facts = append(facts, pullRequestFacts(pr, comments, len(checks)))
+		facts = append(facts, pullRequestFacts(group.primary, comments, len(checks)))
 	}
 	sortPRFacts(facts)
 	return facts, nil
@@ -296,7 +301,7 @@ func pullRequestFacts(pr domain.PullRequest, comments []domain.PullRequestCommen
 			break
 		}
 	}
-	return domain.PRFacts{URL: pr.URL, Number: pr.Number, Draft: pr.Draft, Merged: pr.Merged, Closed: pr.Closed, CI: pr.CI, Review: pr.Review, Mergeability: pr.Mergeability, ReviewComments: unresolved, CheckCount: checkCount, UpdatedAt: pr.UpdatedAt}
+	return domain.PRFacts{URL: pr.URL, Number: pr.Number, Draft: pr.Draft, Merged: pr.Merged, Closed: pr.Closed, CI: pr.CI, Review: pr.Review, Mergeability: pr.Mergeability, ReviewComments: unresolved, CheckCount: checkCount, SourceBranch: pr.SourceBranch, TargetBranch: pr.TargetBranch, HeadSHA: pr.HeadSHA, UpdatedAt: pr.UpdatedAt}
 }
 
 func sortPRFacts(prs []domain.PRFacts) {

@@ -300,7 +300,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				<Section title={prSectionTitle}>
 					<div className="flex flex-col gap-1.5">
 						{prSummaries.map((pr) => (
-							<PRSummaryCard key={pr.number} pr={pr} sessionId={session.id} />
+							<PRSummaryCard key={pr.url || pr.htmlUrl || pr.number} pr={pr} sessionId={session.id} />
 						))}
 					</div>
 				</Section>

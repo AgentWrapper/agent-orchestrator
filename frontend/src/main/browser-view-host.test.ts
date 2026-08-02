@@ -62,7 +62,7 @@ function setupHost() {
 		on: (event: string, listener: (...args: never[]) => void) => {
 			webContentsListeners.set(event, listener);
 		},
-		reload: () => undefined,
+		reload: vi.fn(),
 		send: vi.fn(),
 		setWindowOpenHandler: () => undefined,
 		stop: () => undefined,
@@ -1199,6 +1199,51 @@ describe("browser:setBounds", () => {
 		expect(view.setBounds.mock.invocationCallOrder.at(-1)).toBeLessThan(
 			view.setBorderRadius.mock.invocationCallOrder.at(-1)!,
 		);
+		expect(view.setVisible).toHaveBeenLastCalledWith(true);
+	});
+
+	it("does not let a hidden page navigation grant native visibility", async () => {
+		const { emit, invoke, view, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		emit("browser:setBounds", 1, {
+			viewId: "1:sess-1",
+			rect: { x: 100, y: 20, width: 320, height: 240 },
+			visible: true,
+		});
+		expect(view.setVisible).toHaveBeenLastCalledWith(true);
+		emit("browser:setBounds", 1, {
+			viewId: "1:sess-1",
+			rect: { x: 0, y: 0, width: 0, height: 0 },
+			visible: false,
+		});
+
+		view.setBounds.mockClear();
+		view.setVisible.mockClear();
+		webContentsListeners.get("did-navigate")?.();
+
+		expect(view.setVisible).not.toHaveBeenCalledWith(true);
+		expect(view.setVisible).toHaveBeenLastCalledWith(false);
+	});
+
+	it("restores renderer-owned bounds when reloading after a failed load", async () => {
+		const { emit, invoke, view, webContents, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		emit("browser:setBounds", 1, {
+			viewId: "1:sess-1",
+			rect: { x: 100, y: 20, width: 320, height: 240 },
+			visible: true,
+		});
+
+		webContentsListeners.get("did-fail-load")?.({} as never, -105 as never, "Name not resolved" as never);
+		expect(view.setVisible).toHaveBeenLastCalledWith(false);
+
+		view.setBounds.mockClear();
+		view.setVisible.mockClear();
+		await invoke("browser:reload", "1:sess-1");
+
+		expect(webContents.reload).toHaveBeenCalled();
+		expect(view.setBounds).toHaveBeenLastCalledWith({ x: 100, y: 20, width: 320, height: 240 });
 		expect(view.setVisible).toHaveBeenLastCalledWith(true);
 	});
 });

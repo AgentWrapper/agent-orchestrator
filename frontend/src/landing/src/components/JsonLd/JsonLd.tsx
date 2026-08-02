@@ -1,5 +1,11 @@
 import { COMPANY } from "@ao/shared/constants";
 
+const ORGANIZATION_ID = `${COMPANY.MARKETING_URL}/#organization`;
+const WEBSITE_ID = `${COMPANY.MARKETING_URL}/#website`;
+const SOFTWARE_ID = `${COMPANY.MARKETING_URL}/#software`;
+const PRODUCT_DESCRIPTION =
+	"Open-source desktop application and local CLI (ao) to run 10+ parallel AI coding agents in isolated Git worktrees without file conflicts or API proxying.";
+
 function serializeJsonLd(schema: unknown): string {
 	const json = JSON.stringify(schema);
 
@@ -34,10 +40,11 @@ export function OrganizationJsonLd() {
 	const schema = {
 		"@context": "https://schema.org",
 		"@type": "Organization",
+		"@id": ORGANIZATION_ID,
 		name: COMPANY.NAME,
 		url: COMPANY.MARKETING_URL,
 		logo: `${COMPANY.MARKETING_URL}/ao-logo.svg`,
-		description: "Run 10+ parallel coding agents on your machine",
+		description: PRODUCT_DESCRIPTION,
 		email: supportEmail,
 		contactPoint: {
 			"@type": "ContactPoint",
@@ -66,7 +73,11 @@ export function SoftwareApplicationJsonLd() {
 	const schema = {
 		"@context": "https://schema.org",
 		"@type": "SoftwareApplication",
+		"@id": SOFTWARE_ID,
 		name: COMPANY.NAME,
+		publisher: {
+			"@id": ORGANIZATION_ID,
+		},
 		operatingSystem: "macOS, Windows, Linux",
 		applicationCategory: "DeveloperApplication",
 		applicationSubCategory: "Developer Tools",
@@ -75,7 +86,7 @@ export function SoftwareApplicationJsonLd() {
 			price: "0",
 			priceCurrency: "USD",
 		},
-		description: "Run 10+ parallel coding agents on your machine",
+		description: PRODUCT_DESCRIPTION,
 		url: COMPANY.MARKETING_URL,
 	};
 
@@ -119,6 +130,7 @@ export function ArticleJsonLd({
 		},
 		publisher: {
 			"@type": "Organization",
+			"@id": ORGANIZATION_ID,
 			name: COMPANY.NAME,
 			logo: {
 				"@type": "ImageObject",
@@ -172,6 +184,7 @@ export function ComparisonJsonLd({
 		...(keywords && keywords.length > 0 && { keywords }),
 		publisher: {
 			"@type": "Organization",
+			"@id": ORGANIZATION_ID,
 			name: COMPANY.NAME,
 			logo: {
 				"@type": "ImageObject",
@@ -199,8 +212,12 @@ export function WebsiteJsonLd() {
 	const schema = {
 		"@context": "https://schema.org",
 		"@type": "WebSite",
+		"@id": WEBSITE_ID,
 		name: COMPANY.NAME,
 		url: COMPANY.MARKETING_URL,
+		publisher: {
+			"@id": ORGANIZATION_ID,
+		},
 	};
 
 	return <JsonLdScript schema={schema} />;
@@ -212,9 +229,10 @@ export function HomeWebPageJsonLd() {
 		"@type": "WebPage",
 		"@id": COMPANY.MARKETING_URL,
 		url: COMPANY.MARKETING_URL,
-		name: `${COMPANY.NAME}, Run 10+ parallel coding agents on your machine`,
+		name: `${COMPANY.NAME}, ${PRODUCT_DESCRIPTION}`,
 		isPartOf: {
 			"@type": "WebSite",
+			"@id": WEBSITE_ID,
 			name: COMPANY.NAME,
 			url: COMPANY.MARKETING_URL,
 		},
@@ -237,6 +255,7 @@ export function ServiceJsonLd() {
 			"Run and orchestrate parallel AI coding agents (Claude Code, Codex, OpenCode, and any CLI agent) in isolated Git worktrees, with diff review, persistent terminals, scheduled automations, and an MCP server for programmatic control.",
 		provider: {
 			"@type": "Organization",
+			"@id": ORGANIZATION_ID,
 			name: COMPANY.NAME,
 			url: COMPANY.MARKETING_URL,
 		},

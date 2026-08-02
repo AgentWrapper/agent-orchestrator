@@ -47,6 +47,7 @@ func (s *Store) ListPRFactsForSession(ctx context.Context, id domain.SessionID) 
 			CheckCount:     int(r.CheckCount),
 			SourceBranch:   r.SourceBranch,
 			TargetBranch:   r.TargetBranch,
+			HeadSHA:        r.HeadSha,
 			UpdatedAt:      r.UpdatedAt,
 		})
 	}
@@ -66,6 +67,7 @@ func prFactsFromGen(r gen.GetDisplayPRFactsBySessionRow) domain.PRFacts {
 		Mergeability:   r.Mergeability,
 		ReviewComments: r.ReviewComments,
 		CheckCount:     int(r.CheckCount),
+		HeadSHA:        r.HeadSha,
 		UpdatedAt:      r.UpdatedAt,
 	}
 }
