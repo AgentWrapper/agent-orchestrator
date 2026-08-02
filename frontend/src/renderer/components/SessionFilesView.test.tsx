@@ -106,12 +106,12 @@ describe("SessionFilesView", () => {
 		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
 
 		await screen.findByRole("button", { name: "Collapse src/App.tsx" });
-		expect(screen.getByText("2 files")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /README\.md/ })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Download src/App.tsx" })).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Copy path for src/App.tsx" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Diff layout" })).not.toBeInTheDocument();
 		expect(screen.queryByText("Stacked")).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Refresh files" })).not.toBeInTheDocument();
 
 		await waitFor(() =>
 			expect(getMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/file", {
@@ -124,7 +124,6 @@ describe("SessionFilesView", () => {
 	it("filters and expands a changed file from the review list", async () => {
 		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
 
-		await userEvent.click(await screen.findByRole("button", { name: "Search files" }));
 		await userEvent.type(await screen.findByPlaceholderText("Search changed files"), "guide");
 		expect(screen.queryByRole("button", { name: /src\/App\.tsx/ })).not.toBeInTheDocument();
 
@@ -135,6 +134,18 @@ describe("SessionFilesView", () => {
 				params: { path: { sessionId: "sess-1" }, query: { path: "docs/guide.md" } },
 			}),
 		);
+	});
+
+	it("keeps multiple files expanded at once", async () => {
+		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+
+		// src/App.tsx is expanded by default; expanding a second file must not
+		// collapse it.
+		await screen.findByRole("button", { name: "Collapse src/App.tsx" });
+		await userEvent.click(await screen.findByRole("button", { name: "Expand docs/guide.md" }));
+
+		expect(await screen.findByRole("button", { name: "Collapse docs/guide.md" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Collapse src/App.tsx" })).toBeInTheDocument();
 	});
 
 	it("renders previous and current paths for renamed files", async () => {
@@ -340,7 +351,7 @@ describe("SessionFilesView", () => {
 
 		const activeRowButton = await screen.findByRole("button", { name: "Collapse src/App.tsx" });
 		const list = screen.getByRole("list");
-		const row = activeRowButton.closest("article");
+		const row = activeRowButton.closest("li");
 
 		expect(list).toHaveClass("session-files-review-list");
 		expect(row).toHaveClass("session-files-review-row");
@@ -379,5 +390,20 @@ describe("SessionFilesView", () => {
 
 		await userEvent.click(await screen.findByRole("button", { name: "Minimize files" }));
 		expect(onToggleMaximized).toHaveBeenCalledWith(false);
+	});
+
+	it("hides the close button in the embedded (non-maximized) toolbar", async () => {
+		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+
+		await screen.findByRole("button", { name: "Collapse src/App.tsx" });
+		expect(screen.queryByRole("button", { name: "Close files" })).not.toBeInTheDocument();
+	});
+
+	it("shows a close button that exits back to the panel while maximized", async () => {
+		const onClose = vi.fn();
+		renderWithQuery(<SessionFilesView isMaximized onClose={onClose} sessionId="sess-1" />);
+
+		await userEvent.click(await screen.findByRole("button", { name: "Close files" }));
+		expect(onClose).toHaveBeenCalledTimes(1);
 	});
 });

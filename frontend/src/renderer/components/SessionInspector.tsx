@@ -24,6 +24,7 @@ import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { canonicalTrackerIssueId, findProjectOrchestrator, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
+import { useSessionWorkspaceFilesChangedCount } from "../hooks/useSessionWorkspaceFiles";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
 import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { useUiStore } from "../stores/ui-store";
@@ -174,6 +175,10 @@ export function SessionInspector({
 	const browserUnseen = useUiStore((state) =>
 		session ? Boolean(state.inspectorSessions[session.id]?.browserUnseen) : false,
 	);
+	// Cache-only: reflects whatever SessionFilesView's own polling query has
+	// already fetched, without triggering a fetch of its own. undefined until
+	// the user has opened the Files tab at least once this session.
+	const filesChangedCount = useSessionWorkspaceFilesChangedCount(session?.id);
 	const setView = (next: InspectorView) => {
 		setInternalView(next);
 		onViewChange?.(next);
@@ -193,34 +198,40 @@ export function SessionInspector({
 	return (
 		<aside className={inspectorShellClass} aria-label="Session inspector">
 			<div className="flex h-inspector-tabs shrink-0 items-center gap-1 border-b border-border px-2.5" role="tablist">
-				{VIEWS.map((entry) => (
-					<button
-						aria-label={entry.label}
-						key={entry.id}
-						type="button"
-						role="tab"
-						aria-selected={view === entry.id}
-						className={cn(
-							"inline-flex h-control-md shrink-0 items-center justify-center gap-1.5 rounded-md px-1.5 text-sm-md font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
-							view === entry.id && "bg-interactive-active text-foreground",
-						)}
-						onClick={() => setView(entry.id)}
-						title={entry.label}
-					>
-						<span className="relative inline-flex shrink-0 [&_svg]:size-icon-md">
-							{entry.icon}
-							{entry.id === "browser" && browserUnseen ? (
-								<span aria-hidden="true" className="absolute -right-1 -top-1 inline-flex size-dot-sm">
-									{/* Pinging halo + solid core: a glowing beacon that draws the eye to
-									    a link that arrived in the terminal, cleared once the tab opens. */}
-									<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
-									<span className="relative inline-flex size-dot-sm rounded-full bg-primary ring-2 ring-background" />
-								</span>
-							) : null}
-						</span>
-						<span className="truncate @max-[350px]/inspector:hidden">{entry.label}</span>
-					</button>
-				))}
+				{VIEWS.map((entry) => {
+					const displayLabel =
+						entry.id === "files" && filesChangedCount !== undefined
+							? `${filesChangedCount} ${filesChangedCount === 1 ? "File" : "Files"}`
+							: entry.label;
+					return (
+						<button
+							aria-label={entry.label}
+							key={entry.id}
+							type="button"
+							role="tab"
+							aria-selected={view === entry.id}
+							className={cn(
+								"inline-flex h-control-md shrink-0 items-center justify-center gap-1.5 rounded-md px-1.5 text-sm-md font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
+								view === entry.id && "bg-interactive-active text-foreground",
+							)}
+							onClick={() => setView(entry.id)}
+							title={entry.label}
+						>
+							<span className="relative inline-flex shrink-0 [&_svg]:size-icon-md">
+								{entry.icon}
+								{entry.id === "browser" && browserUnseen ? (
+									<span aria-hidden="true" className="absolute -right-1 -top-1 inline-flex size-dot-sm">
+										{/* Pinging halo + solid core: a glowing beacon that draws the eye to
+										    a link that arrived in the terminal, cleared once the tab opens. */}
+										<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+										<span className="relative inline-flex size-dot-sm rounded-full bg-primary ring-2 ring-background" />
+									</span>
+								) : null}
+							</span>
+							<span className="truncate @max-[350px]/inspector:hidden">{displayLabel}</span>
+						</button>
+					);
+				})}
 			</div>
 
 			<div

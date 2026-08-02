@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
 	Check,
 	ChevronDown,
@@ -10,32 +10,33 @@ import {
 	Copy,
 	Maximize2,
 	Minimize2,
-	RefreshCw,
 	Search,
 	X,
 } from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import {
+	isChangedWorkspaceFile,
+	sessionWorkspaceFilesQueryOptions,
+	type WorkspaceCompareMode,
+	type WorkspaceFileSummary,
+} from "../hooks/useSessionWorkspaceFiles";
 import { cn } from "../lib/utils";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./ui/accordion";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 
-type WorkspaceCompareMode = "base" | "head_fallback";
-type WorkspaceFileSummary = components["schemas"]["WorkspaceFileSummary"] & {
-	previousPath?: string;
-};
 type WorkspaceFileDetail = components["schemas"]["WorkspaceFileResponse"] & {
 	previousPath?: string;
-	compareMode?: WorkspaceCompareMode;
-};
-type WorkspaceFilesResponse = components["schemas"]["ListWorkspaceFilesResponse"] & {
 	compareMode?: WorkspaceCompareMode;
 };
 type WorkspaceFileStatus = WorkspaceFileSummary["status"];
 
 type SessionFilesViewProps = {
 	sessionId: string;
-	onClose: () => void;
+	/** Only rendered as a button when `isMaximized` — the embedded panel has
+	 *  the inspector's tab strip for that, right above the toolbar. */
+	onClose?: () => void;
 	isMaximized?: boolean;
 	onToggleMaximized?: (next: boolean) => void;
 };
@@ -64,27 +65,15 @@ export function SessionFilesView({
 	isMaximized = false,
 	onToggleMaximized,
 }: SessionFilesViewProps) {
-	const queryClient = useQueryClient();
 	const [filter, setFilter] = useState("");
-	const [searchOpen, setSearchOpen] = useState(false);
 	const [split, setSplit] = useState(false);
 	const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
 	const initializedExpansionFor = useRef<string | null>(null);
 	const rootRef = useRef<HTMLElement>(null);
 
-	const filesQuery = useQuery({
-		queryKey: ["session-workspace-files", sessionId],
-		refetchInterval: 3500,
-		queryFn: async () => {
-			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/workspace/files", {
-				params: { path: { sessionId } },
-			});
-			if (error) throw new Error(apiErrorMessage(error, "Unable to load workspace files"));
-			return (data ?? { sessionId, files: [], truncated: false }) as WorkspaceFilesResponse;
-		},
-	});
+	const filesQuery = useQuery(sessionWorkspaceFilesQueryOptions(sessionId));
 	const files = filesQuery.data?.files ?? emptyFiles;
-	const changedFiles = useMemo(() => files.filter(isChanged), [files]);
+	const changedFiles = useMemo(() => files.filter(isChangedWorkspaceFile), [files]);
 
 	useEffect(() => {
 		initializedExpansionFor.current = null;
@@ -107,25 +96,7 @@ export function SessionFilesView({
 				: changedFiles,
 		[changedFiles, normalizedFilter],
 	);
-	const changedCount = changedFiles.length;
 	const expandedVisibleCount = visibleFiles.filter((file) => expandedPaths.has(file.path)).length;
-
-	const refresh = () => {
-		void filesQuery.refetch();
-		void queryClient.invalidateQueries({ queryKey: ["session-workspace-file", sessionId] });
-	};
-
-	const toggleFile = (path: string) => {
-		setExpandedPaths((current) => {
-			const next = new Set(current);
-			if (next.has(path)) {
-				next.delete(path);
-			} else {
-				next.add(path);
-			}
-			return next;
-		});
-	};
 
 	const toggleVisibleFiles = () => {
 		setExpandedPaths((current) => {
@@ -165,38 +136,15 @@ export function SessionFilesView({
 			aria-label="Session files"
 		>
 			<header className="flex h-11 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-1.5">
-				{searchOpen ? (
-					<label className="relative mr-auto min-w-0 flex-1 max-w-[280px]">
-						<Search className="pointer-events-none absolute left-2.5 top-1/2 size-icon-sm -translate-y-1/2 text-passive" />
-						<Input
-							autoFocus
-							className="h-8 pl-8 font-mono text-xs"
-							onChange={(event) => setFilter(event.target.value)}
-							placeholder="Search changed files"
-							value={filter}
-						/>
-					</label>
-				) : (
-					<span className="mr-auto min-w-0 truncate pl-1.5 font-mono text-caption text-passive">
-						{changedCount === 1 ? "1 file" : `${changedCount} files`}
-					</span>
-				)}
-				<Button
-					aria-label={searchOpen ? "Close search" : "Search files"}
-					aria-pressed={searchOpen}
-					className={cn("shrink-0", searchOpen && "text-accent")}
-					onClick={() => {
-						setSearchOpen((open) => {
-							if (open) setFilter("");
-							return !open;
-						});
-					}}
-					size="icon-sm"
-					type="button"
-					variant="ghost"
-				>
-					<Search className="size-icon-sm" aria-hidden="true" />
-				</Button>
+				<label className="relative mr-auto min-w-0 max-w-[280px] flex-1">
+					<Search className="pointer-events-none absolute left-2.5 top-1/2 size-icon-sm -translate-y-1/2 text-passive" />
+					<Input
+						className="h-8 pl-8 font-mono text-xs"
+						onChange={(event) => setFilter(event.target.value)}
+						placeholder="Search changed files"
+						value={filter}
+					/>
+				</label>
 				<Button
 					aria-label={expandedVisibleCount > 0 ? "Collapse all files" : "Expand all files"}
 					className="shrink-0"
@@ -223,17 +171,6 @@ export function SessionFilesView({
 				>
 					<Columns2 className="size-icon-sm" aria-hidden="true" />
 				</Button>
-				<Button
-					aria-label="Refresh files"
-					className="shrink-0"
-					disabled={filesQuery.isFetching}
-					onClick={refresh}
-					size="icon-sm"
-					type="button"
-					variant="ghost"
-				>
-					<RefreshCw className={cn("size-icon-sm", filesQuery.isFetching && "animate-spin")} aria-hidden="true" />
-				</Button>
 				{onToggleMaximized ? (
 					<Button
 						aria-label={isMaximized ? "Minimize files" : "Maximize files"}
@@ -250,16 +187,18 @@ export function SessionFilesView({
 						)}
 					</Button>
 				) : null}
-				<Button
-					aria-label="Close files"
-					className="shrink-0"
-					onClick={onClose}
-					size="icon-sm"
-					type="button"
-					variant="ghost"
-				>
-					<X className="size-icon-sm" aria-hidden="true" />
-				</Button>
+				{isMaximized && onClose ? (
+					<Button
+						aria-label="Close files"
+						className="shrink-0"
+						onClick={onClose}
+						size="icon-sm"
+						type="button"
+						variant="ghost"
+					>
+						<X className="size-icon-sm" aria-hidden="true" />
+					</Button>
+				) : null}
 			</header>
 
 			<div className="min-h-0 flex-1 overflow-auto bg-background">
@@ -270,8 +209,8 @@ export function SessionFilesView({
 						expandedPaths={expandedPaths}
 						files={visibleFiles}
 						isLoading={filesQuery.isPending}
+						onExpandedPathsChange={setExpandedPaths}
 						onRetry={() => void filesQuery.refetch()}
-						onToggle={toggleFile}
 						sessionId={sessionId}
 						split={split}
 						wrap={true}
@@ -288,8 +227,8 @@ function ReviewFileList({
 	expandedPaths,
 	files,
 	isLoading,
+	onExpandedPathsChange,
 	onRetry,
-	onToggle,
 	sessionId,
 	split,
 	wrap,
@@ -299,8 +238,8 @@ function ReviewFileList({
 	expandedPaths: Set<string>;
 	files: WorkspaceFileSummary[];
 	isLoading: boolean;
+	onExpandedPathsChange: (next: Set<string>) => void;
 	onRetry: () => void;
-	onToggle: (path: string) => void;
 	sessionId: string;
 	split: boolean;
 	wrap: boolean;
@@ -317,34 +256,37 @@ function ReviewFileList({
 		return <PanelMessage>{emptyFilesMessage(compareMode)}</PanelMessage>;
 	}
 	return (
-		<ul className="session-files-review-list overflow-hidden border-y border-border/70">
-			{files.map((file) => (
-				<li className="border-b border-border/60 last:border-b-0" key={file.path}>
+		<Accordion
+			asChild
+			onValueChange={(next: string[]) => onExpandedPathsChange(new Set(next))}
+			type="multiple"
+			value={Array.from(expandedPaths)}
+		>
+			<ul className="session-files-review-list flex flex-col gap-0.5">
+				{files.map((file) => (
 					<ReviewFileCard
 						expanded={expandedPaths.has(file.path)}
 						file={file}
-						onToggle={() => onToggle(file.path)}
+						key={file.path}
 						sessionId={sessionId}
 						split={split}
 						wrap={wrap}
 					/>
-				</li>
-			))}
-		</ul>
+				))}
+			</ul>
+		</Accordion>
 	);
 }
 
 function ReviewFileCard({
 	expanded,
 	file,
-	onToggle,
 	sessionId,
 	split,
 	wrap,
 }: {
 	expanded: boolean;
 	file: WorkspaceFileSummary;
-	onToggle: () => void;
 	sessionId: string;
 	split: boolean;
 	wrap: boolean;
@@ -357,21 +299,14 @@ function ReviewFileCard({
 	});
 
 	return (
-		<article className="session-files-review-row overflow-hidden bg-transparent">
-			<div
-				className={cn(
-					"group/row flex min-h-10 items-center transition-colors",
-					expanded ? "bg-interactive-active/45" : "hover:bg-interactive-hover/50",
-				)}
-			>
-				<button
-					aria-controls={`workspace-diff-${file.path}`}
-					aria-expanded={expanded}
+		<AccordionItem asChild value={file.path}>
+			<li className="session-files-review-row overflow-hidden bg-transparent">
+				<AccordionTrigger
 					aria-label={`${expanded ? "Collapse" : "Expand"} ${fileLabel(file)}`}
-					className="flex min-w-0 flex-1 items-center gap-2 px-3 py-1.5 text-left"
+					className="gap-2 px-3 py-1.5"
 					data-file-toggle=""
-					onClick={onToggle}
-					type="button"
+					headerClassName="min-h-10 hover:bg-interactive-hover/50 data-[state=open]:bg-interactive-active/45"
+					trailing={<CopyPathButton path={file.path} />}
 				>
 					{expanded ? (
 						<ChevronDown className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
@@ -381,11 +316,8 @@ function ReviewFileCard({
 					<StatusMark status={file.status} />
 					<FilePathLabel file={file} />
 					<ChangeBadges additions={file.additions} deletions={file.deletions} />
-				</button>
-				<CopyPathButton path={file.path} />
-			</div>
-			{expanded ? (
-				<div id={`workspace-diff-${file.path}`} className="border-t border-border/60 bg-background/40">
+				</AccordionTrigger>
+				<AccordionContent className="border-t border-border/60 bg-background/40">
 					{detailQuery.isPending ? <PanelMessage>Loading diff...</PanelMessage> : null}
 					{!detailQuery.isPending && detailQuery.error ? (
 						<PanelMessage action={<RetryButton onClick={() => void detailQuery.refetch()} />}>
@@ -395,9 +327,9 @@ function ReviewFileCard({
 					{!detailQuery.isPending && !detailQuery.error && detailQuery.data ? (
 						<ReviewDiffBody detail={detailQuery.data} split={split} wrap={wrap} />
 					) : null}
-				</div>
-			) : null}
-		</article>
+				</AccordionContent>
+			</li>
+		</AccordionItem>
 	);
 }
 
@@ -840,8 +772,4 @@ function StatusMark({ status }: { status: WorkspaceFileStatus }) {
 			{label}
 		</span>
 	);
-}
-
-function isChanged(file: WorkspaceFileSummary) {
-	return file.status !== "unmodified";
 }
