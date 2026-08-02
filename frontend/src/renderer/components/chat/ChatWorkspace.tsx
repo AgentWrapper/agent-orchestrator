@@ -25,11 +25,13 @@ import {
 	TurnOutcome,
 } from "./ChatTimelineItems";
 import { ChatComposer, type PermissionMode } from "./ChatComposer";
+import { ActivityRun } from "./ActivityRun";
 import {
 	activeTurn,
 	pendingApproval,
 	type ConversationSnapshot,
 	type ControllerState,
+	type ConversationActivity,
 	type ConversationItem,
 } from "../../types/conversation";
 
@@ -122,7 +124,12 @@ function runsOf(items: ConversationItem[]): TimelineRun[] {
 	const runs: TimelineRun[] = [];
 	for (const item of items) {
 		const runnable =
-			item.kind === "activity" && item.activityKind !== "approval" && item.activityKind !== "error";
+			item.kind === "activity" &&
+			item.activityKind !== "approval" &&
+			item.activityKind !== "error" &&
+			// An edit is a result, not a mechanic. Burying it in a summary would hide
+			// the one kind of activity that changed the user's worktree.
+			item.activityKind !== "file_change";
 		const last = runs.at(-1);
 		if (runnable && last?.kind === "activities") {
 			last.items.push(item);
@@ -332,15 +339,12 @@ function Timeline({
 						<div key={group.key} className="flex flex-col gap-3">
 							{runsOf(group.items).map((run) =>
 								run.kind === "activities" ? (
-									// One rail per run: tight rows, structurally attached to the turn.
-									<div
+									<ActivityRun
 										key={run.key}
-										className="flex flex-col overflow-hidden rounded-lg border border-border bg-surface/40"
-									>
-										{run.items.map((item) => (
-											<TimelineItem key={item.id} item={item} onDecide={onDecide} busy={busy} />
-										))}
-									</div>
+										activities={run.items.filter(
+											(item): item is ConversationActivity => item.kind === "activity",
+										)}
+									/>
 								) : (
 									<TimelineItem key={run.key} item={run.items[0]!} onDecide={onDecide} busy={busy} />
 								),
