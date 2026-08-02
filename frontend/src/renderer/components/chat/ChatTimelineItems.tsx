@@ -35,6 +35,7 @@ const activityIcon = {
 } as const;
 import { cn } from "../../lib/utils";
 import { ChatMarkdown } from "./ChatMarkdown";
+import { CopyButton } from "./CopyButton";
 import { Button } from "../ui/button";
 import type {
 	ConversationActivity,
@@ -123,14 +124,28 @@ export function OriginMessage({ message }: { message: ConversationMessage }) {
 /** The agent's prose. A trailing caret marks text still arriving. */
 export function AssistantMessage({ message }: { message: ConversationMessage }) {
 	return (
-		<div className="relative">
-			<ChatMarkdown text={message.text} />
+		<div className="group/message relative">
+			<ChatMarkdown text={message.text} streaming={message.streaming} />
 			{message.streaming ? (
 				<span
 					aria-label="still writing"
 					className="ml-0.5 inline-block h-4 w-[2px] translate-y-0.5 animate-pulse bg-accent align-baseline"
 				/>
-			) : null}
+			) : (
+				// Absent rather than disabled while streaming: half a message is not what
+				// the reader means by "copy this". The row keeps its height either way so
+				// settling does not shift the prose above it.
+				<div className="flex h-[18px] items-center opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/message:opacity-100">
+					{/* The stored markdown, not a re-serialization of what was rendered:
+					    pasting it into an editor has to give back what the agent wrote. */}
+					<CopyButton
+						text={message.text}
+						label="Copy message as markdown"
+						compact
+						className="-ml-1.5"
+					/>
+				</div>
+			)}
 		</div>
 	);
 }

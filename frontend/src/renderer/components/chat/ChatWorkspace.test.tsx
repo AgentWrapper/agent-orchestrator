@@ -1,0 +1,137 @@
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ChatWorkspace } from "./ChatWorkspace";
+import { chatFixture, chatFixtureEmpty, chatFixtureLongHistory } from "../../lib/chat-fixture";
+import type { ConversationSnapshot } from "../../types/conversation";
+
+const writeText = vi.fn(async (_text: string) => undefined);
+
+vi.mock("../../lib/bridge", () => ({
+	aoBridge: { clipboard: { writeText: (text: string) => writeText(text) } },
+}));
+
+/** A refetch: identical content, all-new objects, which is what JSON parsing gives. */
+function poll(snapshot: ConversationSnapshot): ConversationSnapshot {
+	return structuredClone(snapshot);
+}
+
+/** jsdom has no layout, so the scroller's geometry has to be stated. */
+function stubGeometry(node: HTMLElement, { scrollHeight, clientHeight, scrollTop }: {
+	scrollHeight: number;
+	clientHeight: number;
+	scrollTop: number;
+}) {
+	Object.defineProperty(node, "scrollHeight", { configurable: true, value: scrollHeight });
+	Object.defineProperty(node, "clientHeight", { configurable: true, value: clientHeight });
+	Object.defineProperty(node, "scrollTop", { configurable: true, writable: true, value: scrollTop });
+}
+
+beforeEach(() => {
+	writeText.mockClear();
+});
+
+describe("ChatWorkspace timeline", () => {
+	it("explains itself instead of showing an empty scroller", () => {
+		render(<ChatWorkspace snapshot={chatFixtureEmpty} />);
+		expect(screen.getByText("Start the conversation")).toBeInTheDocument();
+		expect(screen.queryByRole("log")).not.toBeInTheDocument();
+	});
+
+	it("keeps a turn as one block, positioned by its first item", () => {
+		// The fixture's automation relay carries sequence 8, in the middle of turn-2's
+		// items. Reading strictly by sequence would split turn-2 around it; the rule is
+		// that a turn takes the position of its first item and stays contiguous.
+		render(<ChatWorkspace snapshot={chatFixture} />);
+		const log = screen.getByRole("log");
+		const text = log.textContent ?? "";
+		const question = text.indexOf("Run the backend tests");
+		const answer = text.indexOf("Tests are still running");
+		const relay = text.indexOf("Checks failed on the base branch");
+
+		expect(question).toBeGreaterThan(-1);
+		expect(answer).toBeGreaterThan(question);
+		expect(relay).toBeGreaterThan(answer);
+	});
+
+	it("offers Jump to latest only once the reader has scrolled away from the bottom", async () => {
+		const user = userEvent.setup();
+		render(<ChatWorkspace snapshot={chatFixtureLongHistory(8)} />);
+		const log = screen.getByRole("log");
+
+		expect(screen.queryByRole("button", { name: /jump to latest/i })).not.toBeInTheDocument();
+
+		stubGeometry(log, { scrollHeight: 4000, clientHeight: 800, scrollTop: 100 });
+		log.dispatchEvent(new Event("scroll"));
+		const jump = await screen.findByRole("button", { name: /jump to latest/i });
+
+		// Taking the jump re-arms following, so the control retires itself.
+		await user.click(jump);
+		expect(log.scrollTop).toBe(4000);
+		await waitFor(() =>
+			expect(screen.queryByRole("button", { name: /jump to latest/i })).not.toBeInTheDocument(),
+		);
+	});
+
+	it("does not yank a reader who scrolled up when the next poll arrives", async () => {
+		const snapshot = chatFixtureLongHistory(8);
+		const { rerender } = render(<ChatWorkspace snapshot={snapshot} />);
+		const log = screen.getByRole("log");
+
+		stubGeometry(log, { scrollHeight: 4000, clientHeight: 800, scrollTop: 1200 });
+		log.dispatchEvent(new Event("scroll"));
+		await screen.findByRole("button", { name: /jump to latest/i });
+
+		rerender(<ChatWorkspace snapshot={{ ...poll(snapshot), latestSequence: 999 }} />);
+		expect(log.scrollTop).toBe(1200);
+	});
+
+	it("follows new output while the reader is already at the bottom", () => {
+		const snapshot = chatFixtureLongHistory(8);
+		const { rerender } = render(<ChatWorkspace snapshot={snapshot} />);
+		const log = screen.getByRole("log");
+		stubGeometry(log, { scrollHeight: 4000, clientHeight: 800, scrollTop: 0 });
+
+		rerender(<ChatWorkspace snapshot={{ ...poll(snapshot), latestSequence: 999 }} />);
+		expect(log.scrollTop).toBe(4000);
+	});
+
+	it("survives a poll without disturbing what the reader opened", async () => {
+		const user = userEvent.setup();
+		const snapshot = chatFixtureLongHistory(3);
+		const { rerender } = render(<ChatWorkspace snapshot={snapshot} />);
+
+		// A run of tool calls is collapsed; opening one is local state that a poll must
+		// not reset, which is what remounting the subtree on every refetch would do.
+		const run = screen.getAllByRole("button", { expanded: false })[0]!;
+		await user.click(run);
+		expect(run).toHaveAttribute("aria-expanded", "true");
+
+		rerender(<ChatWorkspace snapshot={poll(snapshot)} />);
+		expect(run).toHaveAttribute("aria-expanded", "true");
+	});
+});
+
+describe("ChatWorkspace message actions", () => {
+	it("copies an assistant message as the markdown the agent wrote", async () => {
+		const user = userEvent.setup();
+		render(<ChatWorkspace snapshot={chatFixture} />);
+
+		const copy = screen.getAllByRole("button", { name: /copy message as markdown/i })[0]!;
+		await user.click(copy);
+
+		expect(writeText).toHaveBeenCalledTimes(1);
+		const copied = writeText.mock.calls[0]![0];
+		// The stored text, fences and all — not a re-serialization of the rendered DOM.
+		expect(copied).toContain("```go");
+		expect(copied).toContain("func (m *Manager) Spawn");
+	});
+
+	it("offers no copy on a message that is still arriving", () => {
+		render(<ChatWorkspace snapshot={chatFixture} />);
+		// The fixture's last assistant message is mid-stream; half a message is not
+		// what the reader means by "copy this".
+		const streaming = screen.getByLabelText("still writing").closest("div");
+		expect(streaming?.querySelector('[aria-label*="Copy message"]')).toBeNull();
+	});
+});

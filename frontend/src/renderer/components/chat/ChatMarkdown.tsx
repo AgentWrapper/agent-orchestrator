@@ -6,86 +6,198 @@
  * appeared as literal hashes, a table as a wall of pipes, a code block bracketed by
  * visible backticks.
  *
- * Three deliberate choices about what this does NOT do:
+ * Two deliberate choices about what this does NOT do:
  *
  *   - Raw HTML is escaped, not rendered. Agent output is only as trustworthy as the
  *     files it just read, so `rehype-raw` is deliberately absent; markdown-only is
- *     the whole sanitization story and there is no schema to get wrong.
- *   - No syntax highlighting yet. A fenced block gets its language label, a copy
- *     button, and a horizontal scroll of its own. Tokenizing means shipping
- *     grammars, and the block is readable without them.
+ *     the whole sanitization story and there is no schema to get wrong. Syntax
+ *     highlighting keeps that property — it renders a token tree as elements
+ *     rather than injecting the highlighter's HTML string.
  *   - Nothing here re-parses or re-orders content. It renders exactly the text the
- *     daemon stored, so the rendered form and the record cannot disagree.
+ *     daemon stored, so the rendered form and the record cannot disagree. That is
+ *     also why "copy as markdown" copies the stored text and not a re-serialized
+ *     version of the DOM.
  *
- * Streaming is fine unstyled-first: an unclosed fence renders as a code block with
- * partial content and settles when the closing fence arrives.
+ * Streaming is fine unstyled-first: an unclosed fence renders as a plain code
+ * block with partial content, and gains its colours when the closing fence
+ * arrives. See `lib/code-highlight.ts` for why it is not tokenized before then.
  */
 
-import { memo, useCallback, useState, type ReactNode } from "react";
+import {
+	createContext,
+	isValidElement,
+	memo,
+	useContext,
+	useEffect,
+	useReducer,
+	useState,
+	type ReactNode,
+} from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Check, Copy } from "lucide-react";
+import { WrapText } from "lucide-react";
+import type { Root, RootContent } from "hast";
 import { cn } from "../../lib/utils";
+import {
+	canonicalLanguage,
+	highlight,
+	highlightSync,
+	type GrammarName,
+} from "../../lib/code-highlight";
+import { CopyButton } from "./CopyButton";
+import "./code-theme.css";
 
 /** GitHub-flavoured markdown: tables, strikethrough, task lists, autolinks. */
 const PLUGINS = [remarkGfm];
 
-export const ChatMarkdown = memo(function ChatMarkdown({ text }: { text: string }) {
+/**
+ * Whether the prose is still arriving, for the fences inside it.
+ *
+ * A context rather than a prop because `COMPONENTS` has to stay module-level:
+ * rebuilding that map per render would defeat react-markdown's own memoization
+ * and re-parse every message on every poll.
+ */
+const StreamingProse = createContext(false);
+
+export const ChatMarkdown = memo(function ChatMarkdown({
+	text,
+	streaming = false,
+}: {
+	text: string;
+	streaming?: boolean;
+}) {
 	return (
-		<div className="chat-md text-sm leading-[1.58] text-foreground">
-			<Markdown remarkPlugins={PLUGINS} components={COMPONENTS}>
-				{text}
-			</Markdown>
-		</div>
+		<StreamingProse.Provider value={streaming}>
+			<div className="chat-md text-sm leading-[1.58] text-foreground">
+				<Markdown remarkPlugins={PLUGINS} components={COMPONENTS}>
+					{text}
+				</Markdown>
+			</div>
+		</StreamingProse.Provider>
 	);
 });
 
 /**
- * A fenced code block: language on the left, copy on the right, its own scroll.
+ * Wrapping is a reading preference, not a property of one block: a fence that
+ * scrolled out of view and back must not silently lose it, and a reader who
+ * turned wrapping on is usually about to want it again — so the last choice seeds
+ * the next block. Deliberately not persisted; reflowing every block of a
+ * conversation on launch because of a choice made days ago is worse than starting
+ * from the readable default.
+ */
+let preferredWrap = false;
+
+/**
+ * A fenced code block: language on the left, quiet actions on the right, its own
+ * scroll.
  *
  * The block scrolls rather than wrapping because a wrapped line of code is harder
  * to read than a scrolled one, and it must never widen the conversation column.
+ * The toggle is there for the case that argument loses — a single 300-character
+ * line, where scrolling means losing the rest of the block.
  */
 function CodeBlock({ code, language }: { code: string; language?: string }) {
-	const [copied, setCopied] = useState(false);
-
-	const copy = useCallback(() => {
-		void navigator.clipboard.writeText(code).then(
-			() => {
-				setCopied(true);
-				setTimeout(() => setCopied(false), 1400);
-			},
-			() => {
-				// Clipboard denied. Saying nothing is better than a false "Copied".
-			},
-		);
-	}, [code]);
+	const streaming = useContext(StreamingProse);
+	const grammar = canonicalLanguage(language);
+	const tokens = useHighlighted(code, grammar, streaming);
+	const [wrap, setWrap] = useState(preferredWrap);
 
 	return (
-		<div className="my-2.5 overflow-hidden rounded-lg border border-border bg-surface">
+		<div
+			className="chat-code group/code my-2.5 overflow-hidden rounded-lg border border-border bg-surface"
+			data-wrap={wrap ? "true" : "false"}
+		>
 			<div className="flex items-center gap-2 border-b border-border bg-raised/40 px-2.5 py-1">
 				<span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
 					{language || "text"}
 				</span>
-				<button
-					type="button"
-					onClick={copy}
-					aria-label={copied ? "Copied" : "Copy code"}
-					className="ml-auto flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
-				>
-					{copied ? (
-						<Check aria-hidden="true" className="size-3 text-success" />
-					) : (
-						<Copy aria-hidden="true" className="size-3" />
-					)}
-					{copied ? "Copied" : "Copy"}
-				</button>
+				{/* Hover-revealed, and focus-revealed so the keyboard can reach it. The
+				    timeline's whole point is that prose dominates; a permanent row of
+				    controls on every fence is the opposite. */}
+				<div className="ml-auto flex items-center gap-0.5 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/code:opacity-100">
+					<button
+						type="button"
+						onClick={() => {
+							preferredWrap = !wrap;
+							setWrap(!wrap);
+						}}
+						aria-pressed={wrap}
+						aria-label="Wrap long lines"
+						title="Wrap long lines"
+						className={cn(
+							"flex items-center rounded px-1.5 py-0.5 transition-colors hover:bg-interactive-hover hover:text-foreground",
+							wrap ? "text-accent" : "text-muted-foreground",
+						)}
+					>
+						<WrapText aria-hidden="true" className="size-3" />
+					</button>
+					<CopyButton text={code} label="Copy code" />
+				</div>
 			</div>
 			<pre className="overflow-x-auto px-3 py-2.5">
-				<code className="font-mono text-[12px] leading-[1.6] text-foreground">{code}</code>
+				<code className="font-mono text-[12px] leading-[1.6] text-foreground">
+					{tokens ? renderTokens(tokens.children) : code}
+				</code>
 			</pre>
 		</div>
 	);
+}
+
+/**
+ * The token tree for a settled block, as soon as one can be had.
+ *
+ * Two paths, because the flash between them is the whole problem: a cached or
+ * already-warm block is highlighted in its first render, and only a cold one
+ * renders plain for a beat while the grammars load. The cache is the state — the
+ * async path writes into it and this re-reads it, so nothing here can hold a tree
+ * that disagrees with the one the next block will get.
+ */
+function useHighlighted(
+	code: string,
+	language: GrammarName | undefined,
+	streaming: boolean,
+): Root | undefined {
+	// A streaming fence has no settled content: its text changes on every delta, so
+	// tokenizing it would re-parse per delta and fill the cache with keys nothing
+	// will ever read again.
+	const wanted = Boolean(language) && !streaming;
+	const tokens = wanted ? highlightSync(code, language!) : undefined;
+	const [, reread] = useReducer((count: number) => count + 1, 0);
+
+	useEffect(() => {
+		if (!wanted || tokens) return;
+		let live = true;
+		void highlight(code, language!).then(() => {
+			if (live) reread();
+		});
+		return () => {
+			live = false;
+		};
+	}, [code, language, wanted, tokens]);
+
+	return tokens;
+}
+
+/**
+ * highlight.js output as React elements rather than as an HTML string.
+ *
+ * `dangerouslySetInnerHTML` is the usual way to do this and it is what the
+ * comment at the top of this file rules out: the escaping guarantee would then
+ * depend on the highlighter rather than on there being no HTML path at all. The
+ * tree is only spans carrying class names, so walking it is cheap. Index keys are
+ * correct here — the tree is rebuilt whole or read from cache, never patched.
+ */
+function renderTokens(nodes: readonly RootContent[]): ReactNode {
+	return nodes.map((node, index) => {
+		if (node.type === "text") return node.value;
+		if (node.type !== "element") return null;
+		const className = node.properties.className;
+		return (
+			<span key={index} className={Array.isArray(className) ? className.join(" ") : undefined}>
+				{renderTokens(node.children)}
+			</span>
+		);
+	});
 }
 
 /** The text inside a node, for the copy button and language sniffing. */
@@ -100,6 +212,15 @@ function textOf(children: ReactNode): string {
 }
 
 const LANGUAGE_CLASS = /language-([\w+#-]+)/;
+
+/** The fence inside a `pre`, or undefined if this is not a fenced block. */
+function fenceOf(children: ReactNode): { code: string; language?: string } | undefined {
+	if (!isValidElement<{ className?: string; children?: ReactNode }>(children)) return undefined;
+	return {
+		code: textOf(children.props.children).replace(/\n$/, ""),
+		language: LANGUAGE_CLASS.exec(children.props.className ?? "")?.[1],
+	};
+}
 
 const COMPONENTS: Components = {
 	// Headings step down in size but stay in the conversation's voice — an agent's
@@ -150,20 +271,20 @@ const COMPONENTS: Components = {
 			/>
 		) : null,
 
-	code: ({ className, children }) => {
-		const language = LANGUAGE_CLASS.exec(className ?? "")?.[1];
-		// react-markdown routes both inline code and fenced blocks here; a fence is
-		// the one carrying a language class, and `pre` below unwraps the rest.
-		if (language) return <CodeBlock code={textOf(children).replace(/\n$/, "")} language={language} />;
-		return (
-			<code className="rounded bg-surface px-[5px] py-[2px] font-mono text-[11.5px] text-accent">
-				{children}
-			</code>
-		);
+	// A fenced block arrives as `pre > code`, with the language — when the agent
+	// gave one — as a class on the inner element. It is claimed here rather than in
+	// `code` because a fence with no language carries no class at all, and matching
+	// on the class alone rendered those as inline code.
+	pre: ({ children }) => {
+		const fence = fenceOf(children);
+		return fence ? <CodeBlock code={fence.code} language={fence.language} /> : <>{children}</>;
 	},
-	// A fenced block already rendered itself through `code`; `pre` would otherwise
-	// wrap it in a second box.
-	pre: ({ children }) => <>{children}</>,
+	// Only inline code reaches here; `pre` above takes every fence.
+	code: ({ children }) => (
+		<code className="rounded bg-surface px-[5px] py-[2px] font-mono text-[11.5px] text-accent">
+			{children}
+		</code>
+	),
 
 	// Wide tables scroll inside their own container so the conversation column
 	// never scrolls sideways.

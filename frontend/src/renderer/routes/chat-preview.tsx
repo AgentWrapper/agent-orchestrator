@@ -22,7 +22,12 @@ import {
 	useConversationCommands,
 	useConversationModels,
 } from "../hooks/useConversation";
-import { chatFixture, chatFixtureEmpty, chatFixtureRecovering } from "../lib/chat-fixture";
+import {
+	chatFixture,
+	chatFixtureEmpty,
+	chatFixtureLongHistory,
+	chatFixtureRecovering,
+} from "../lib/chat-fixture";
 import type { ConversationSnapshot } from "../types/conversation";
 
 export const Route = createFileRoute("/chat-preview")({
@@ -32,10 +37,14 @@ export const Route = createFileRoute("/chat-preview")({
 	component: ChatPreview,
 });
 
+/** Turns, not items: the generator emits six or seven items per turn. */
+const LONG_HISTORY_TURNS = 60;
+
 const SCENARIOS = {
 	live: { label: "Live turn", snapshot: chatFixture },
 	recovering: { label: "Controller lost", snapshot: chatFixtureRecovering },
 	empty: { label: "New session", snapshot: chatFixtureEmpty },
+	long: { label: "Long history", snapshot: chatFixtureLongHistory(LONG_HISTORY_TURNS) },
 } satisfies Record<string, { label: string; snapshot: ConversationSnapshot }>;
 
 type ScenarioKey = keyof typeof SCENARIOS;
@@ -103,12 +112,17 @@ function LiveChat({ sessionId }: { sessionId: string }) {
 function FixtureChat() {
 	const [scenario, setScenario] = useState<ScenarioKey>("live");
 	const [overrides, setOverrides] = useState<Partial<ConversationSnapshot>>({});
+	const [polls, setPolls] = useState(0);
 	const [log, setLog] = useState<string[]>([]);
 
-	const snapshot = useMemo(
-		() => ({ ...SCENARIOS[scenario].snapshot, ...overrides }),
-		[scenario, overrides],
-	);
+	const snapshot = useMemo(() => {
+		const base = { ...SCENARIOS[scenario].snapshot, ...overrides };
+		// `useConversation` rebuilds the snapshot from JSON on every refetch — once a
+		// second while a turn runs — so nothing in it keeps its identity between
+		// polls. Reproducing that here is the only way the harness can show what an
+		// idle-but-polling conversation actually costs to re-render.
+		return polls === 0 ? base : { ...base, items: base.items.map((item) => ({ ...item })) };
+	}, [scenario, overrides, polls]);
 
 	const note = useCallback((entry: string) => {
 		setLog((prev) => [entry, ...prev].slice(0, 6));
@@ -152,6 +166,15 @@ function FixtureChat() {
 						{SCENARIOS[key].label}
 					</Button>
 				))}
+				<Button
+					type="button"
+					size="sm"
+					variant="ghost"
+					data-testid="simulate-poll"
+					onClick={() => setPolls((count) => count + 1)}
+				>
+					Poll
+				</Button>
 			</PreviewBar>
 
 			<div className="min-h-0 flex-1">
@@ -177,12 +200,15 @@ function PreviewBar({
 	note?: string;
 	children?: React.ReactNode;
 }) {
+	// The row wraps rather than overflows: the scenario buttons are wider than a
+	// narrow window, and a harness that makes the page scroll sideways hides the one
+	// thing the conversation column is here to be checked for.
 	return (
-		<div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2">
+		<div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-4 py-2">
 			<span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
 				chat preview · {label}
 			</span>
-			{children ? <div className="ml-2 flex gap-1.5">{children}</div> : null}
+			{children ? <div className="flex flex-wrap gap-1.5">{children}</div> : null}
 			{note ? (
 				<span className="ml-auto truncate font-mono text-[11px] text-muted-foreground">{note}</span>
 			) : null}
