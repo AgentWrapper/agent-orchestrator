@@ -228,7 +228,16 @@ function elementsInLasso(polygon: LassoPoint[], bounds: LassoBounds): Element[] 
 		if (!target || found.includes(target) || multiSelectElements.includes(target)) continue;
 		found.push(target);
 	}
-	return capByVisibleArea(found, LASSO_MAX_NEW_ELEMENTS);
+	return capByVisibleArea(dropAncestors(found), LASSO_MAX_NEW_ELEMENTS);
+}
+
+// A grid point landing on a container's own padding/whitespace resolves (via
+// annotationTarget's classed-ancestor fallback) to that container, even though
+// a more specific descendant elsewhere in the sweep is what the user meant to
+// select. Drop any found element that contains another found element — the
+// more specific descendant wins.
+function dropAncestors(elements: Element[]): Element[] {
+	return elements.filter((element) => !elements.some((other) => other !== element && element.contains(other)));
 }
 
 function capByVisibleArea(elements: Element[], max: number): Element[] {

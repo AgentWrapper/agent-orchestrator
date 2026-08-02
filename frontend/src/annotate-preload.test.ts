@@ -34,8 +34,8 @@ function setAnnotationMode(enabled: boolean): void {
 	listener({}, { enabled });
 }
 
-function elementWithBounds(id: string, bounds: Bounds): HTMLButtonElement {
-	const element = document.createElement("button");
+function elementWithBounds(id: string, bounds: Bounds, tag = "button"): HTMLElement {
+	const element = document.createElement(tag);
 	element.id = id;
 	Object.defineProperty(element, "getBoundingClientRect", {
 		configurable: true,
@@ -393,5 +393,30 @@ describe("annotate preload", () => {
 		// none of the cap's 15 slots should be spent re-confirming the element
 		// that was already selected before this lasso pass.
 		expect(selectionBoxes()).toHaveLength(16);
+	});
+
+	it("does not select a container element when a more specific descendant inside the lasso is also found", () => {
+		const container = elementWithBounds("card", { left: 0, top: 0, width: 400, height: 400 }, "div");
+		const childA = elementWithBounds("name-field", { left: 10, top: 10, width: 30, height: 30 });
+		const childB = elementWithBounds("role-field", { left: 360, top: 360, width: 30, height: 30 });
+		container.appendChild(childA);
+		container.appendChild(childB);
+		// Children checked before the container: a grid point inside a child's
+		// rect must resolve to the child, matching real elementFromPoint stacking
+		// order; a point that only lands on the container's own whitespace falls
+		// through to the container.
+		stubElementFromPoint([childA, childB, container]);
+
+		shiftKeyDown();
+		dragLasso([
+			{ x: 0, y: 0 },
+			{ x: 400, y: 0 },
+			{ x: 400, y: 400 },
+			{ x: 0, y: 400 },
+		]);
+
+		const boxes = selectionBoxes();
+		expect(boxes).toHaveLength(2);
+		expect(boxes.every((box) => box.style.width === "30px")).toBe(true);
 	});
 });
