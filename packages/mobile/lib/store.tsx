@@ -17,6 +17,7 @@ import {
 	type ProjectInfo,
 } from "./api";
 import { isConfigured, loadConfig, type ServerConfig } from "./config";
+import { shouldKeepPolling } from "./connectionError";
 import { collectPRs } from "./prView";
 
 const ACTIVE_PROJECT_KEY = "ao.activeProject";
@@ -166,11 +167,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			// human copy via describeConnectionFailure instead of surfacing strings
 			// like "401 - missing or invalid connection password". Null means the
 			// server was never reached (DNS failure, refused, timeout).
-			setErrorStatus(e instanceof ApiError ? e.status : null);
+			const status = e instanceof ApiError ? e.status : undefined;
+			setErrorStatus(status ?? null);
 			setConnection("closed");
 			// Auth failures are not transient — don't keep polling into a lockout.
 			// Network/other errors are transient, so keep polling for recovery.
-			return !(msg.startsWith("401") || msg.startsWith("429"));
+			// Decided from the status, not the message text: see shouldKeepPolling.
+			return shouldKeepPolling(status);
 		} finally {
 			setLoading(false);
 		}

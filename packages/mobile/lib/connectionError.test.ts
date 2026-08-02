@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { classifyConnectionFailure, describeConnectionFailure, isLocalNetworkHost } from "./connectionError";
+import {
+	classifyConnectionFailure,
+	describeConnectionFailure,
+	isLocalNetworkHost,
+	shouldKeepPolling,
+} from "./connectionError";
 
 const target = (over: Partial<{ host: string; port: string; platform: string }> = {}) => ({
 	host: "192.168.1.5",
@@ -130,5 +135,31 @@ describe("describeConnectionFailure", () => {
 			const d = describeConnectionFailure("auth", target({ platform: "ios", host: "192.168.1.5" }));
 			expect(d.showLocalNetworkHint).toBe(false);
 		});
+	});
+});
+
+describe("shouldKeepPolling", () => {
+	// Rejection is permanent until the user acts, and the daemon locks a device
+	// out after five failed auths — polling into that blocks the pairing scan
+	// meant to fix it.
+	it("stops on rejection", () => {
+		expect(shouldKeepPolling(401)).toBe(false);
+		expect(shouldKeepPolling(403)).toBe(false);
+		expect(shouldKeepPolling(429)).toBe(false);
+	});
+
+	// These recover on their own, so the poll is what notices.
+	it("keeps going on transient failures", () => {
+		expect(shouldKeepPolling(undefined)).toBe(true);
+		expect(shouldKeepPolling(500)).toBe(true);
+		expect(shouldKeepPolling(502)).toBe(true);
+		expect(shouldKeepPolling(404)).toBe(true);
+	});
+
+	// The previous implementation matched the error *message* against "401"/"429"
+	// prefixes. 403 never matched at all, and any rewording of the wire copy
+	// silently turned the guard off.
+	it("catches 403, which prefix-matching on the message never did", () => {
+		expect(shouldKeepPolling(403)).toBe(false);
 	});
 });

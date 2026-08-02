@@ -26,6 +26,26 @@ export function classifyConnectionFailure(status: number | undefined): Connectio
 }
 
 /**
+ * Whether the board poll should keep running after a failed tick.
+ *
+ * Rejection is not the same as failure. A wrong or rotated password will be
+ * wrong on the next tick too, and the daemon locks a device out for a minute
+ * after five failed auths — so polling into a 401 walks the phone into a
+ * lockout that then blocks the pairing scan meant to fix it. A 429 says that
+ * has already started. Everything else (unreachable, 5xx) is transient by
+ * nature, so the poll keeps going and recovers on its own.
+ *
+ * Keyed on the status the daemon actually returned rather than on the text of
+ * the error, which was the previous approach: it matched `message` against
+ * "401"/"429" prefixes, so it silently stopped working whenever the wire copy
+ * was reworded, and never fired at all for a 403.
+ */
+export function shouldKeepPolling(status: number | undefined): boolean {
+	const failure = classifyConnectionFailure(status);
+	return failure !== "auth" && failure !== "rate-limited";
+}
+
+/**
  * True for addresses on the phone's own LAN — the ones iOS gates behind the
  * Local Network permission prompt.
  *
