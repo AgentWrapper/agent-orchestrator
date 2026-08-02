@@ -462,14 +462,21 @@ func (a activity) decisions() []decisionOpt {
 	return detail.Decisions
 }
 
+type turnSettings struct {
+	Model           string `json:"model"`
+	ReasoningEffort string `json:"reasoningEffort"`
+	ApprovalMode    string `json:"approvalMode"`
+}
+
 type snapshot struct {
-	ConversationID string     `json:"conversationId"`
-	Mode           string     `json:"mode"`
-	Controller     string     `json:"controller"`
-	LatestSequence int64      `json:"latestSequence"`
-	Turns          []turn     `json:"turns"`
-	Messages       []message  `json:"messages"`
-	Activities     []activity `json:"activities"`
+	ConversationID string       `json:"conversationId"`
+	Settings       turnSettings `json:"settings"`
+	Mode           string       `json:"mode"`
+	Controller     string       `json:"controller"`
+	LatestSequence int64        `json:"latestSequence"`
+	Turns          []turn       `json:"turns"`
+	Messages       []message    `json:"messages"`
+	Activities     []activity   `json:"activities"`
 }
 
 func (s snapshot) turnByID(id string) (turn, bool) {

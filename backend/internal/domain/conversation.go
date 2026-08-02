@@ -122,9 +122,28 @@ type ConversationRecord struct {
 	// LatestSequence is the highest sequence handed out in this conversation.
 	// New messages and activities take LatestSequence+1 under the same
 	// transaction that bumps it, so ordering has a single writer.
-	LatestSequence int64     `json:"latestSequence"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+	LatestSequence int64 `json:"latestSequence"`
+	// Settings are the provider choices for the conversation's NEXT turn. Empty
+	// fields mean the provider's own default, which is why a conversation nobody
+	// configures behaves exactly as it did before these existed.
+	Settings  ConversationSettings `json:"settings"`
+	CreatedAt time.Time            `json:"createdAt"`
+	UpdatedAt time.Time            `json:"updatedAt"`
+}
+
+// ConversationSettings are the per-turn provider choices AO remembers.
+//
+// Durable rather than client-side because they must apply to turns AO dispatches
+// on the user's behalf: a queued message draining after a restart, a relay from
+// `ao send`. A preference held in the renderer would quietly stop applying the
+// moment the user was not the one pressing send.
+type ConversationSettings struct {
+	// Model is the provider's model id. Empty means the provider's default.
+	Model string `json:"model,omitempty"`
+	// ReasoningEffort is how much thinking to spend, from the model's own list.
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
+	// ApprovalMode is AO's permission vocabulary, applied per turn.
+	ApprovalMode PermissionMode `json:"approvalMode,omitempty"`
 }
 
 // ConversationTurn is one user or automation request plus the agent work it

@@ -234,6 +234,38 @@ func (s *Store) SettleOrphanedTurns(ctx context.Context, session domain.SessionI
 	return nil
 }
 
+// SetConversationSettings records the provider choices for the next turn.
+//
+// An empty field is stored as NULL rather than as an empty string, so "the user
+// cleared this" and "the user never chose" stay the same thing: fall back to the
+// provider's default.
+func (s *Store) SetConversationSettings(
+	ctx context.Context,
+	conversationID string,
+	settings domain.ConversationSettings,
+	now time.Time,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if err := s.qw.UpdateConversationTurnSettings(ctx, gen.UpdateConversationTurnSettingsParams{
+		Model:           nullableString(settings.Model),
+		ReasoningEffort: nullableString(settings.ReasoningEffort),
+		ApprovalMode:    nullableString(string(settings.ApprovalMode)),
+		UpdatedAt:       now,
+		ID:              conversationID,
+	}); err != nil {
+		return fmt.Errorf("set conversation settings for %s: %w", conversationID, err)
+	}
+	return nil
+}
+
+func nullableString(value string) sql.NullString {
+	if value == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: value, Valid: true}
+}
+
 // NextQueuedTurn returns the oldest message recorded while the agent was busy,
 // or ErrNoQueuedTurn when the queue is empty.
 //
@@ -619,8 +651,13 @@ func conversationToDomain(row gen.Conversation) domain.ConversationRecord {
 		Scope:          row.Scope,
 		ProjectID:      row.ProjectID,
 		LatestSequence: row.LatestSequence,
-		CreatedAt:      row.CreatedAt,
-		UpdatedAt:      row.UpdatedAt,
+		Settings: domain.ConversationSettings{
+			Model:           row.Model.String,
+			ReasoningEffort: row.ReasoningEffort.String,
+			ApprovalMode:    domain.PermissionMode(row.ApprovalMode.String),
+		},
+		CreatedAt: row.CreatedAt,
+		UpdatedAt: row.UpdatedAt,
 	}
 	if row.SessionID != nil {
 		rec.SessionID = *row.SessionID

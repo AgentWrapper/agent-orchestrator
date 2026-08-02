@@ -9,13 +9,12 @@
  * the first. The placeholder says so rather than leaving the user to guess where
  * their text went, and the queued message stays visible in the timeline.
  *
- * There is deliberately no approval-mode control here. A session's approval
- * posture is fixed when its controller starts — AO sends it to the provider at
- * launch — so a per-message control could not take effect, and AO already has one
- * place to set it: the project's agent configuration.
+ * The model, reasoning effort and approval controls belong here rather than in
+ * settings because the provider takes all three per turn: choosing one changes the
+ * next message and never restarts the agent.
  */
 
-import { useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { ArrowUp } from "lucide-react";
 import { Button } from "../ui/button";
 
@@ -24,8 +23,11 @@ export function ChatComposer({
 	busy,
 	willQueue,
 	disabled,
+	settings,
 }: {
 	onSend: (text: string) => void;
+	/** The next-turn controls, rendered inline. Omitted in the fixture preview. */
+	settings?: ReactNode;
 	/** A send is in flight. */
 	busy?: boolean;
 	/** The agent is mid-turn, so this message is held until the turn ends. */
@@ -76,6 +78,7 @@ export function ChatComposer({
 			/>
 
 			<div className="flex items-center gap-2">
+				{settings}
 				<span className="ml-auto text-[11px] text-muted-foreground">
 					{willQueue ? "Enter to queue" : "Enter to send"}
 				</span>

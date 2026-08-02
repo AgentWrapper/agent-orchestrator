@@ -16,6 +16,7 @@ import type { components } from "../../api/schema";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
 import type {
 	ActivityKind,
+	ApprovalMode,
 	ActivityStatus,
 	ConversationActivity,
 	ConversationItem,
@@ -25,7 +26,9 @@ import type {
 	DecisionOption,
 	MessageOrigin,
 	MessageRole,
+	ChatModel,
 	SessionMode,
+	TurnSettings,
 	TurnState,
 } from "../types/conversation";
 
@@ -161,15 +164,62 @@ export function useConversationCommands(sessionId: string | undefined) {
 		onSuccess: invalidate,
 	});
 
+	const chooseSettings = useMutation({
+		mutationFn: async (settings: TurnSettings) => {
+			const { error } = await apiClient.PATCH(
+				"/api/v1/sessions/{sessionId}/conversation/settings",
+				{ params: { path: { sessionId: sessionId as string } }, body: settings },
+			);
+			if (error) throw error;
+		},
+		// The snapshot carries the selection, so refetching is what confirms it took
+		// rather than the composer trusting its own optimistic state.
+		onSuccess: invalidate,
+	});
+
 	return {
 		send: (text: string) => send.mutate(text),
 		resolve: (requestId: string, decisionId: string) => resolve.mutate({ requestId, decisionId }),
 		interrupt: () => interrupt.mutate(),
+		chooseSettings: (settings: TurnSettings) => chooseSettings.mutate(settings),
 		busy: send.isPending || resolve.isPending || interrupt.isPending,
 		error:
-			send.error || resolve.error || interrupt.error
-				? apiErrorMessage(send.error ?? resolve.error ?? interrupt.error)
+			send.error || resolve.error || interrupt.error || chooseSettings.error
+				? apiErrorMessage(
+						send.error ?? resolve.error ?? interrupt.error ?? chooseSettings.error,
+					)
 				: undefined,
+	};
+}
+
+/**
+ * The models the provider offers for this session.
+ *
+ * Fetched from the live conversation rather than a table in AO, and only while a
+ * session is open: the catalog depends on the account's entitlements, which the
+ * provider knows and AO does not.
+ */
+export function useConversationModels(sessionId: string | undefined, enabled: boolean) {
+	const query = useQuery({
+		queryKey: ["conversation-models", sessionId ?? ""],
+		enabled: Boolean(sessionId) && enabled,
+		// The catalog changes on the scale of provider releases, not turns.
+		staleTime: 5 * 60 * 1000,
+		retry: false,
+		queryFn: async () => {
+			const { data, error } = await apiClient.GET(
+				"/api/v1/sessions/{sessionId}/conversation/models",
+				{ params: { path: { sessionId: sessionId as string } } },
+			);
+			if (error) throw error;
+			return (data?.models ?? []) as ChatModel[];
+		},
+	});
+	return {
+		// An empty list is a real answer: this agent offers no choice, so the picker
+		// hides itself rather than showing an error the user cannot act on.
+		models: query.data ?? [],
+		isLoading: query.isLoading,
 	};
 }
 
@@ -195,6 +245,11 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 		mode: wire.mode as SessionMode,
 		controller: { state: wire.controller as ControllerState },
 		latestSequence: wire.latestSequence,
+		settings: {
+			model: wire.settings?.model || undefined,
+			reasoningEffort: wire.settings?.reasoningEffort || undefined,
+			approvalMode: (wire.settings?.approvalMode as ApprovalMode | undefined) || undefined,
+		},
 		turns: (wire.turns ?? []).map((turn) => ({
 			id: turn.id,
 			state: turn.state as TurnState,

@@ -1553,6 +1553,108 @@ paths:
       summary: Send a message to a chat session's agent
       tags:
       - conversations
+  /api/v1/sessions/{sessionId}/conversation/models:
+    get:
+      operationId: listSessionConversationModels
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationModelsResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List the models the provider offers for a chat session
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/settings:
+    patch:
+      operationId: setSessionConversationTurnSettings
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConversationTurnSettingsPayload'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationTurnSettingsPayload'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Choose the model, reasoning effort and approval mode for the next turn
+      tags:
+      - conversations
   /api/v1/sessions/{sessionId}/kill:
     post:
       operationId: killSession
@@ -3178,6 +3280,39 @@ components:
       - streaming
       - createdAt
       type: object
+    ConversationModelResponse:
+      properties:
+        default:
+          type: boolean
+        defaultEffort:
+          type: string
+        description:
+          type: string
+        displayName:
+          type: string
+        efforts:
+          items:
+            type: string
+          type: array
+        id:
+          type: string
+      required:
+      - id
+      - displayName
+      - default
+      type: object
+    ConversationModelsResponse:
+      properties:
+        models:
+          items:
+            $ref: '#/components/schemas/ConversationModelResponse'
+          type: array
+        selected:
+          $ref: '#/components/schemas/ConversationTurnSettingsPayload'
+      required:
+      - models
+      - selected
+      type: object
     ConversationSnapshotResponse:
       properties:
         activities:
@@ -3210,6 +3345,8 @@ components:
           type: string
         sessionId:
           type: string
+        settings:
+          $ref: '#/components/schemas/ConversationTurnSettingsPayload'
         turns:
           items:
             $ref: '#/components/schemas/ConversationTurnResponse'
@@ -3223,6 +3360,7 @@ components:
       - turns
       - messages
       - activities
+      - settings
       type: object
     ConversationTurnResponse:
       properties:
@@ -3254,6 +3392,20 @@ components:
       - id
       - state
       - requestedAt
+      type: object
+    ConversationTurnSettingsPayload:
+      properties:
+        approvalMode:
+          enum:
+          - default
+          - accept-edits
+          - auto
+          - bypass-permissions
+          type: string
+        model:
+          type: string
+        reasoningEffort:
+          type: string
       type: object
     DegradedProject:
       properties:

@@ -33,6 +33,7 @@ export const chatFixture: ConversationSnapshot = {
 	mode: "chat",
 	controller: { state: "busy" },
 	latestSequence: 12,
+	settings: { model: "gpt-5.6-terra", reasoningEffort: "high" },
 	turns: [
 		{
 			id: "turn-1",
@@ -255,6 +256,7 @@ export const chatFixtureEmpty: ConversationSnapshot = {
 	mode: "chat",
 	controller: { state: "ready" },
 	latestSequence: 0,
+	settings: {},
 	turns: [],
 	items: [],
 };

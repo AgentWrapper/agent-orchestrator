@@ -9,12 +9,19 @@
 
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { ChatWorkspace } from "./ChatWorkspace";
-import { useConversation, useConversationCommands } from "../../hooks/useConversation";
+import {
+	useConversation,
+	useConversationCommands,
+	useConversationModels,
+} from "../../hooks/useConversation";
 import type { WorkspaceSession } from "../../types/workspace";
 
 export function SessionChatSurface({ session }: { session: WorkspaceSession }) {
 	const { snapshot, isLoading, unavailable, error } = useConversation(session.id);
 	const commands = useConversationCommands(session.id);
+	// Only asked for once the conversation is actually readable: the catalog comes
+	// from the live controller, so there is nothing to fetch before then.
+	const { models } = useConversationModels(session.id, Boolean(snapshot));
 
 	if (isLoading) {
 		return (
@@ -61,6 +68,8 @@ export function SessionChatSurface({ session }: { session: WorkspaceSession }) {
 			onSend={commands.send}
 			onDecide={commands.resolve}
 			onInterrupt={commands.interrupt}
+			models={models}
+			onChooseSettings={commands.chooseSettings}
 		/>
 	);
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -27,6 +28,8 @@ type ConversationService interface {
 	Send(ctx context.Context, session domain.SessionID, msg ports.ChatUserMessage) (domain.ConversationTurn, error)
 	Resolve(ctx context.Context, session domain.SessionID, requestID string, decision ports.ChatDecision) error
 	Interrupt(ctx context.Context, session domain.SessionID) error
+	Models(ctx context.Context, session domain.SessionID) ([]ports.ChatModel, domain.ConversationSettings, error)
+	SetTurnSettings(ctx context.Context, session domain.SessionID, settings domain.ConversationSettings) (domain.ConversationSettings, error)
 }
 
 // ConversationsController owns the Chat routes for a session.
@@ -44,6 +47,96 @@ func (c *ConversationsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/conversation/messages", c.send)
 	r.Post("/sessions/{sessionId}/conversation/approvals/{requestId}/resolve", c.resolve)
 	r.Post("/sessions/{sessionId}/conversation/interrupt", c.interrupt)
+	r.Get("/sessions/{sessionId}/conversation/models", c.models)
+	r.Patch("/sessions/{sessionId}/conversation/settings", c.setSettings)
+}
+
+// models serves the provider's catalog for this session plus the current choice.
+func (c *ConversationsController) models(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/conversation/models")
+		return
+	}
+	session := domain.SessionID(chi.URLParam(r, "sessionId"))
+	models, selected, err := c.Svc.Models(r.Context(), session)
+	if err != nil {
+		if errors.Is(err, chatsvc.ErrModelsUnsupported) {
+			// Not a failure: this agent simply offers no choice. An empty list with
+			// the current selection lets the client hide the picker rather than
+			// show an error the user cannot act on.
+			envelope.WriteJSON(w, http.StatusOK, ConversationModelsResponse{
+				Models:   []ConversationModelResponse{},
+				Selected: turnSettingsPayload(selected),
+			})
+			return
+		}
+		writeConversationError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, conversationModelsResponse(models, selected))
+}
+
+// setSettings records the provider choices for the next turn.
+func (c *ConversationsController) setSettings(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "PATCH", "/api/v1/sessions/{sessionId}/conversation/settings")
+		return
+	}
+	var req ConversationTurnSettingsPayload
+	if !decodeConversationBody(w, r, &req) {
+		return
+	}
+	// An unknown approval mode is refused rather than normalized: silently
+	// downgrading a permission choice is the one direction that must never happen
+	// by accident.
+	approval := domain.PermissionMode(req.ApprovalMode)
+	if req.ApprovalMode != "" && !approval.Valid() {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation",
+			"CHAT_APPROVAL_MODE_INVALID",
+			fmt.Sprintf("unknown approval mode %q", req.ApprovalMode), nil)
+		return
+	}
+
+	settings, err := c.Svc.SetTurnSettings(r.Context(),
+		domain.SessionID(chi.URLParam(r, "sessionId")), domain.ConversationSettings{
+			Model:           req.Model,
+			ReasoningEffort: req.ReasoningEffort,
+			ApprovalMode:    approval,
+		})
+	if err != nil {
+		writeConversationError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, turnSettingsPayload(settings))
+}
+
+func conversationModelsResponse(
+	models []ports.ChatModel,
+	selected domain.ConversationSettings,
+) ConversationModelsResponse {
+	out := ConversationModelsResponse{
+		Models:   make([]ConversationModelResponse, 0, len(models)),
+		Selected: turnSettingsPayload(selected),
+	}
+	for _, model := range models {
+		out.Models = append(out.Models, ConversationModelResponse{
+			ID:            model.ID,
+			DisplayName:   model.DisplayName,
+			Description:   model.Description,
+			Default:       model.Default,
+			Efforts:       model.Efforts,
+			DefaultEffort: model.DefaultEffort,
+		})
+	}
+	return out
+}
+
+func turnSettingsPayload(settings domain.ConversationSettings) ConversationTurnSettingsPayload {
+	return ConversationTurnSettingsPayload{
+		Model:           settings.Model,
+		ReasoningEffort: settings.ReasoningEffort,
+		ApprovalMode:    string(settings.ApprovalMode),
+	}
 }
 
 func (c *ConversationsController) snapshot(w http.ResponseWriter, r *http.Request) {
@@ -221,6 +314,7 @@ func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotRespon
 		Turns:          make([]ConversationTurnResponse, 0, len(s.Turns)),
 		Messages:       make([]ConversationMessageResponse, 0, len(s.Messages)),
 		Activities:     make([]ConversationActivityResponse, 0, len(s.Activities)),
+		Settings:       turnSettingsPayload(s.Conversation.Settings),
 	}
 
 	for _, turn := range s.Turns {

@@ -71,6 +71,9 @@ const (
 	ChatCapabilityUsage       ChatCapability = "usage"
 	ChatCapabilityDiffs       ChatCapability = "diffs"
 	ChatCapabilityPlans       ChatCapability = "plans"
+	// ChatCapabilityModels means the provider can enumerate the models it offers
+	// and accept one per turn.
+	ChatCapabilityModels ChatCapability = "models"
 	ChatCapabilityInteractive ChatCapability = "user_input"
 )
 
@@ -140,6 +143,57 @@ type ChatUserMessage struct {
 	// Origin records who is speaking. Automation shares the queue with the user
 	// and can never resolve an approval.
 	Origin domain.MessageOrigin
+	// Settings are the per-turn provider choices for this message. Zero means the
+	// conversation's own defaults.
+	Settings ChatTurnSettings
+}
+
+// ChatTurnSettings are the per-turn choices a provider accepts alongside the
+// message text.
+//
+// Per turn, not per session: the provider takes these on every turn/start, so a
+// user can change model or approval posture between messages without restarting
+// the agent. Empty fields mean "use whatever the conversation was started with",
+// which is what makes this additive — a caller that sets nothing behaves exactly
+// as before.
+type ChatTurnSettings struct {
+	// Model is the provider's model id, from ChatModel.ID.
+	Model string
+	// Effort is how much reasoning to spend, from ChatModel.Efforts.
+	Effort string
+	// Approval is AO's permission mode for this turn. The driver maps it onto
+	// whatever approval policy and sandbox its provider understands.
+	Approval PermissionMode
+}
+
+// IsZero reports whether nothing was chosen, so a dispatch can omit the fields
+// entirely rather than sending empty strings the provider would have to interpret.
+func (s ChatTurnSettings) IsZero() bool {
+	return s.Model == "" && s.Effort == "" && s.Approval == ""
+}
+
+// ChatModel is one model the provider offers for a conversation.
+//
+// The list comes from the provider, never from a table in AO. A hardcoded catalog
+// is wrong within a week: models are added, renamed, hidden per account, and
+// gated by entitlement the provider knows about and AO does not.
+type ChatModel struct {
+	ID          string
+	DisplayName string
+	Description string
+	// Default marks the model the provider would pick on its own.
+	Default bool
+	// Efforts are the reasoning levels this model supports, in the provider's
+	// order. Empty means the model does not take one.
+	Efforts []string
+	// DefaultEffort is the level the provider uses when none is chosen.
+	DefaultEffort string
+}
+
+// ChatModelLister is implemented by drivers whose provider can enumerate models.
+// Optional: a driver without it simply offers no choice, and the UI shows none.
+type ChatModelLister interface {
+	ListModels(ctx context.Context) ([]ChatModel, error)
 }
 
 // ChatTurnRef identifies a turn the provider accepted.

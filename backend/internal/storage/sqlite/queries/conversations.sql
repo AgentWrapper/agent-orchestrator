@@ -15,6 +15,15 @@ SELECT * FROM conversations WHERE session_id = ? LIMIT 1;
 -- name: SelectConversationByID :one
 SELECT * FROM conversations WHERE id = ? LIMIT 1;
 
+-- The next turn's provider choices. Written only when the user picks something,
+-- so NULL keeps meaning "use whatever the conversation was started with".
+-- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+-- offset, so a multi-byte character here silently corrupts later queries.
+-- name: UpdateConversationTurnSettings :exec
+UPDATE conversations
+SET model = ?, reasoning_effort = ?, approval_mode = ?, updated_at = ?
+WHERE id = ?;
+
 -- name: NextConversationSequence :one
 UPDATE conversations
 SET latest_sequence = latest_sequence + 1, updated_at = ?

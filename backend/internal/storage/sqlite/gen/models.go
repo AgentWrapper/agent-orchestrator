@@ -28,13 +28,16 @@ type ChangeLog struct {
 }
 
 type Conversation struct {
-	ID             string
-	Scope          domain.ConversationScope
-	ProjectID      domain.ProjectID
-	SessionID      *domain.SessionID
-	LatestSequence int64
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID              string
+	Scope           domain.ConversationScope
+	ProjectID       domain.ProjectID
+	SessionID       *domain.SessionID
+	LatestSequence  int64
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	Model           sql.NullString
+	ReasoningEffort sql.NullString
+	ApprovalMode    sql.NullString
 }
 
 type ConversationActivity struct {

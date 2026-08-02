@@ -445,3 +445,105 @@ func TestChatProviderEventsAreArchived(t *testing.T) {
 func contains(haystack, needle string) bool {
 	return strings.Contains(haystack, needle)
 }
+
+// Model selection has to reach the provider, not just be accepted by AO. The
+// catalog comes from the provider — models are added, renamed and gated per
+// account — and the choice applies per turn, so nothing restarts.
+func TestChatModelSelectionComesFromTheProviderAndAppliesToTheNextTurn(t *testing.T) {
+	requireE2E(t)
+	d := startDaemon(t, t.TempDir())
+	project := seedProject(t, d, "models")
+	session := chatSession(t, d, project, "Reply with exactly: READY")
+
+	var catalog struct {
+		Models []struct {
+			ID          string   `json:"id"`
+			DisplayName string   `json:"displayName"`
+			Default     bool     `json:"default"`
+			Efforts     []string `json:"efforts"`
+		} `json:"models"`
+		Selected struct {
+			Model           string `json:"model"`
+			ReasoningEffort string `json:"reasoningEffort"`
+			ApprovalMode    string `json:"approvalMode"`
+		} `json:"selected"`
+	}
+	d.mustCall("GET", "/sessions/"+session+"/conversation/models", http.StatusOK, nil, &catalog)
+
+	if len(catalog.Models) == 0 {
+		t.Fatal("the provider offered no models; a chat session cannot expose a choice")
+	}
+	// Nothing is chosen until the user chooses, so the provider's default applies.
+	if catalog.Selected.Model != "" {
+		t.Errorf("a fresh conversation already has model %q selected", catalog.Selected.Model)
+	}
+	var defaults int
+	for _, model := range catalog.Models {
+		if model.ID == "" || model.DisplayName == "" {
+			t.Errorf("model %+v is missing an id or a label, so it cannot be rendered", model)
+		}
+		if model.Default {
+			defaults++
+		}
+	}
+	if defaults != 1 {
+		t.Errorf("provider reported %d default models, want exactly 1", defaults)
+	}
+
+	// Pick something that is NOT the default, so the assertion cannot pass by
+	// accident when the choice is ignored.
+	var chosen string
+	var effort string
+	for _, model := range catalog.Models {
+		if !model.Default {
+			chosen = model.ID
+			if len(model.Efforts) > 0 {
+				effort = model.Efforts[0]
+			}
+			break
+		}
+	}
+	if chosen == "" {
+		t.Skip("provider offers only one model; nothing to switch to")
+	}
+
+	var applied struct {
+		Model           string `json:"model"`
+		ReasoningEffort string `json:"reasoningEffort"`
+		ApprovalMode    string `json:"approvalMode"`
+	}
+	d.mustCall("PATCH", "/sessions/"+session+"/conversation/settings", http.StatusOK,
+		map[string]any{"model": chosen, "reasoningEffort": effort, "approvalMode": "default"}, &applied)
+	if applied.Model != chosen {
+		t.Fatalf("settings echoed model %q, want %q", applied.Model, chosen)
+	}
+
+	// The snapshot is what the composer labels itself from, so the choice has to be
+	// visible there rather than only in the PATCH response.
+	snap := d.conversation(session)
+	if snap.Settings.Model != chosen {
+		t.Errorf("snapshot reports model %q, want %q", snap.Settings.Model, chosen)
+	}
+
+	// And the next turn actually runs. A model the provider rejects fails the turn,
+	// which is what makes this more than an echo test.
+	send(t, d, session, "Reply with exactly: SWITCHED", "model-switch")
+	answered := d.awaitConversation(session, 3*time.Minute, "a turn on the chosen model",
+		func(s snapshot) bool { return terminal(s.Turns[len(s.Turns)-1].State) })
+	last := answered.Turns[len(answered.Turns)-1]
+	if last.State != "completed" {
+		t.Fatalf("turn on model %q ended as %q (err=%q)", chosen, last.State, last.ErrorMessage)
+	}
+	if !contains(answered.assistantText(), "SWITCHED") {
+		t.Errorf("the agent did not answer on the chosen model:\n%s", describe(answered))
+	}
+
+	// An approval mode outside AO's vocabulary is refused rather than normalized:
+	// silently downgrading a permission choice is the one direction that must never
+	// happen by accident.
+	status, body := d.callExpectingError("PATCH", "/sessions/"+session+"/conversation/settings",
+		map[string]any{"approvalMode": "acceptEdits"})
+	if status != http.StatusBadRequest {
+		t.Errorf("camelCase approval mode returned %d, want 400 (%+v)", status, body)
+	}
+}

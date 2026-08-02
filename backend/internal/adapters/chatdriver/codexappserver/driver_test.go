@@ -53,6 +53,14 @@ func (s *scriptedServer) push(raw string) {
 	}
 }
 
+// reply scripts the result for a method. Guarded because the server goroutine
+// reads the same map while it is serving the connection.
+func (s *scriptedServer) reply(method, result string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.responses[method] = result
+}
+
 // awaitFrame waits for a frame matching pred among everything the client sent.
 func (s *scriptedServer) awaitFrame(pred func(frame) bool) frame {
 	s.t.Helper()
@@ -588,4 +596,118 @@ func TestControllerStopIsAnnounced(t *testing.T) {
 		t.Fatalf("controller state = %q, want stopped", ev.ControllerState)
 	}
 	_ = conv.Close()
+}
+
+// The per-turn shapes are not the same as the thread-level ones: a thread takes
+// `sandbox: "workspace-write"`, a turn takes a tagged
+// `sandboxPolicy: {type:"workspaceWrite"}`. Sending a thread's shape to a turn is
+// rejected as a missing `type`, so this pins the difference.
+func TestTurnSettingsUseTheTurnLevelWireShapes(t *testing.T) {
+	d, srv := newTestDriver(t)
+	conv, err := d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = conv.Close() }()
+
+	if _, err := conv.SendTurn(context.Background(), ports.ChatUserMessage{
+		Text: "go",
+		Settings: ports.ChatTurnSettings{
+			Model:    "gpt-5.6-terra",
+			Effort:   "high",
+			Approval: ports.PermissionModeAcceptEdits,
+		},
+	}); err != nil {
+		t.Fatalf("SendTurn: %v", err)
+	}
+
+	sent := srv.awaitFrame(func(f frame) bool { return f.Method == "turn/start" })
+	var params struct {
+		Model          string `json:"model"`
+		Effort         string `json:"effort"`
+		ApprovalPolicy string `json:"approvalPolicy"`
+		SandboxPolicy  struct {
+			Type string `json:"type"`
+		} `json:"sandboxPolicy"`
+	}
+	if err := json.Unmarshal(sent.Params, &params); err != nil {
+		t.Fatalf("decode turn/start params: %v: %s", err, sent.Params)
+	}
+	if params.Model != "gpt-5.6-terra" || params.Effort != "high" {
+		t.Errorf("model/effort not forwarded: %+v", params)
+	}
+	if params.ApprovalPolicy != "on-request" {
+		t.Errorf("approvalPolicy = %q, want on-request", params.ApprovalPolicy)
+	}
+	if params.SandboxPolicy.Type != "workspaceWrite" {
+		t.Errorf("sandboxPolicy.type = %q; a turn needs the tagged shape", params.SandboxPolicy.Type)
+	}
+}
+
+// A caller that chooses nothing must produce exactly the payload it did before
+// per-turn settings existed: an empty field is not a value the provider has to
+// interpret.
+func TestNoTurnSettingsSendsNoSettingsFields(t *testing.T) {
+	d, srv := newTestDriver(t)
+	conv, err := d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = conv.Close() }()
+
+	if _, err := conv.SendTurn(context.Background(), ports.ChatUserMessage{Text: "go"}); err != nil {
+		t.Fatalf("SendTurn: %v", err)
+	}
+
+	sent := srv.awaitFrame(func(f frame) bool { return f.Method == "turn/start" })
+	var params map[string]json.RawMessage
+	if err := json.Unmarshal(sent.Params, &params); err != nil {
+		t.Fatalf("decode turn/start params: %v", err)
+	}
+	for _, key := range []string{"model", "effort", "approvalPolicy", "sandboxPolicy"} {
+		if _, present := params[key]; present {
+			t.Errorf("unset setting %q was sent anyway", key)
+		}
+	}
+}
+
+// The catalog is the provider's. Hidden models are dropped because the provider
+// marks them hidden when the account should not be offered them, and offering one
+// anyway is a choice that then fails.
+func TestListModelsDropsHiddenAndKeepsProviderOrder(t *testing.T) {
+	d, srv := newTestDriver(t)
+	// Scripted before Start: the server goroutine reads this map, so writing it
+	// afterwards would race the connection it is already serving.
+	srv.reply("model/list", `{"data":[{"id":"a","displayName":"Model A","description":"first","isDefault":true,"hidden":false,"defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"high"}]},{"id":"secret","displayName":"Hidden","isDefault":false,"hidden":true,"defaultReasoningEffort":"low","supportedReasoningEfforts":[]},{"id":"b","displayName":"Model B","isDefault":false,"hidden":false,"defaultReasoningEffort":"low","supportedReasoningEfforts":[]}]}`)
+
+	conv, err := d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = conv.Close() }()
+
+	lister, ok := conv.(ports.ChatModelLister)
+	if !ok {
+		t.Fatal("conversation does not implement ChatModelLister")
+	}
+
+	models, err := lister.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("got %d models, want the 2 visible ones: %+v", len(models), models)
+	}
+	if models[0].ID != "a" || models[1].ID != "b" {
+		t.Errorf("provider order not preserved: %+v", models)
+	}
+	if !models[0].Default {
+		t.Error("the provider's default was not carried through")
+	}
+	if got := models[0].Efforts; len(got) != 2 || got[0] != "low" || got[1] != "high" {
+		t.Errorf("efforts = %v, want [low high]", got)
+	}
+	if models[0].DefaultEffort != "medium" {
+		t.Errorf("default effort = %q, want medium", models[0].DefaultEffort)
+	}
 }

@@ -486,6 +486,56 @@ func (s *Service) StartChatTurn(ctx context.Context, id domain.SessionID, text s
 	return turn.ID, nil
 }
 
+// ErrModelsUnsupported reports a driver whose provider cannot enumerate models.
+// Distinct from an empty list: "this agent does not offer a choice" is a different
+// answer for a client to render than "you have no models available".
+var ErrModelsUnsupported = errors.New("chat driver cannot list models")
+
+// Models reports what the provider offers for this session, plus what is selected.
+//
+// Read from the live conversation rather than a table in AO: models are added,
+// renamed, hidden per account and gated by entitlement the provider knows about.
+func (s *Service) Models(ctx context.Context, id domain.SessionID) ([]ports.ChatModel, domain.ConversationSettings, error) {
+	if _, err := s.requireChatSession(ctx, id); err != nil {
+		return nil, domain.ConversationSettings{}, err
+	}
+	controller, err := s.Controller(id)
+	if err != nil {
+		return nil, domain.ConversationSettings{}, err
+	}
+	lister, ok := controller.conv.(ports.ChatModelLister)
+	if !ok {
+		return nil, controller.Settings(), ErrModelsUnsupported
+	}
+	models, err := lister.ListModels(ctx)
+	if err != nil {
+		return nil, controller.Settings(), err
+	}
+	return models, controller.Settings(), nil
+}
+
+// SetTurnSettings records the provider choices for this session's next turn.
+//
+// Applied per turn, so nothing restarts: the running turn keeps whatever it was
+// dispatched with, and the choice takes effect on the next one.
+func (s *Service) SetTurnSettings(
+	ctx context.Context,
+	id domain.SessionID,
+	settings domain.ConversationSettings,
+) (domain.ConversationSettings, error) {
+	if _, err := s.requireChatSession(ctx, id); err != nil {
+		return domain.ConversationSettings{}, err
+	}
+	controller, err := s.Controller(id)
+	if err != nil {
+		return domain.ConversationSettings{}, err
+	}
+	if err := controller.SetSettings(ctx, settings); err != nil {
+		return domain.ConversationSettings{}, err
+	}
+	return controller.Settings(), nil
+}
+
 // RelayChatTurn delivers a message AO is carrying for someone else.
 //
 // Origin is automation, not human: `ao send` and an orchestrator writing to a

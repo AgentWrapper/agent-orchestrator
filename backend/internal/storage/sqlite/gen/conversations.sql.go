@@ -407,7 +407,7 @@ func (q *Queries) SelectConversationActivityByProviderItem(ctx context.Context, 
 }
 
 const selectConversationByID = `-- name: SelectConversationByID :one
-SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at FROM conversations WHERE id = ? LIMIT 1
+SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode FROM conversations WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) SelectConversationByID(ctx context.Context, id string) (Conversation, error) {
@@ -421,12 +421,15 @@ func (q *Queries) SelectConversationByID(ctx context.Context, id string) (Conver
 		&i.LatestSequence,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Model,
+		&i.ReasoningEffort,
+		&i.ApprovalMode,
 	)
 	return i, err
 }
 
 const selectConversationBySession = `-- name: SelectConversationBySession :one
-SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at FROM conversations WHERE session_id = ? LIMIT 1
+SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode FROM conversations WHERE session_id = ? LIMIT 1
 `
 
 func (q *Queries) SelectConversationBySession(ctx context.Context, sessionID *domain.SessionID) (Conversation, error) {
@@ -440,6 +443,9 @@ func (q *Queries) SelectConversationBySession(ctx context.Context, sessionID *do
 		&i.LatestSequence,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Model,
+		&i.ReasoningEffort,
+		&i.ApprovalMode,
 	)
 	return i, err
 }
@@ -796,5 +802,34 @@ type SettleOrphanedConversationTurnsParams struct {
 // completed.
 func (q *Queries) SettleOrphanedConversationTurns(ctx context.Context, arg SettleOrphanedConversationTurnsParams) error {
 	_, err := q.db.ExecContext(ctx, settleOrphanedConversationTurns, arg.CompletedAt, arg.HandledBySessionID)
+	return err
+}
+
+const updateConversationTurnSettings = `-- name: UpdateConversationTurnSettings :exec
+UPDATE conversations
+SET model = ?, reasoning_effort = ?, approval_mode = ?, updated_at = ?
+WHERE id = ?
+`
+
+type UpdateConversationTurnSettingsParams struct {
+	Model           sql.NullString
+	ReasoningEffort sql.NullString
+	ApprovalMode    sql.NullString
+	UpdatedAt       time.Time
+	ID              string
+}
+
+// The next turn's provider choices. Written only when the user picks something,
+// so NULL keeps meaning "use whatever the conversation was started with".
+// NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+// offset, so a multi-byte character here silently corrupts later queries.
+func (q *Queries) UpdateConversationTurnSettings(ctx context.Context, arg UpdateConversationTurnSettingsParams) error {
+	_, err := q.db.ExecContext(ctx, updateConversationTurnSettings,
+		arg.Model,
+		arg.ReasoningEffort,
+		arg.ApprovalMode,
+		arg.UpdatedAt,
+		arg.ID,
+	)
 	return err
 }

@@ -141,6 +141,33 @@ export interface ConversationActivity {
 /** One ordered entry in the timeline. */
 export type ConversationItem = ConversationMessage | ConversationActivity;
 
+/** AO's permission vocabulary, applied per turn in chat mode. */
+export type ApprovalMode = "default" | "accept-edits" | "auto" | "bypass-permissions";
+
+/**
+ * The provider choices for the next turn.
+ *
+ * Every field is optional and empty means the provider's own default, so clearing
+ * a choice and never making one are the same thing.
+ */
+export interface TurnSettings {
+	model?: string;
+	reasoningEffort?: string;
+	approvalMode?: ApprovalMode;
+}
+
+/** One model the provider offers for this session. */
+export interface ChatModel {
+	id: string;
+	displayName: string;
+	description?: string;
+	/** The model the provider would pick on its own. */
+	default: boolean;
+	/** Reasoning levels this model supports, in the provider's order. */
+	efforts?: string[];
+	defaultEffort?: string;
+}
+
 /** Health of the daemon's connection to the provider. */
 export type ControllerState = "connecting" | "ready" | "busy" | "recovering" | "stopped";
 
@@ -154,6 +181,9 @@ export interface ConversationSnapshot {
 	/** Already ordered by sequence. The renderer does not re-sort. */
 	items: ConversationItem[];
 	latestSequence: number;
+	/** What the next turn will be sent with. Daemon-owned, so it survives a
+	 *  restart and applies to turns AO dispatches on the user's behalf. */
+	settings: TurnSettings;
 }
 
 /**

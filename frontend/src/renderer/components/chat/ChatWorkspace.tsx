@@ -26,14 +26,17 @@ import {
 } from "./ChatTimelineItems";
 import { ChatComposer } from "./ChatComposer";
 import { ActivityRun } from "./ActivityRun";
+import { TurnSettingsBar } from "./TurnSettingsBar";
 import {
 	activeTurn,
 	pendingApproval,
 	queuedTurnIds,
 	type ConversationSnapshot,
 	type ControllerState,
+	type ChatModel,
 	type ConversationActivity,
 	type ConversationItem,
+	type TurnSettings,
 } from "../../types/conversation";
 
 export interface ChatWorkspaceProps {
@@ -43,6 +46,9 @@ export interface ChatWorkspaceProps {
 	onInterrupt?: () => void;
 	/** A send or decision is in flight. */
 	busy?: boolean;
+	/** The provider's model catalog. Empty hides the model control. */
+	models?: ChatModel[];
+	onChooseSettings?: (settings: TurnSettings) => void;
 }
 
 export function ChatWorkspace({
@@ -51,6 +57,8 @@ export function ChatWorkspace({
 	onDecide,
 	onInterrupt,
 	busy,
+	models,
+	onChooseSettings,
 }: ChatWorkspaceProps) {
 	const turn = activeTurn(snapshot);
 	const approval = pendingApproval(snapshot);
@@ -92,6 +100,16 @@ export function ChatWorkspace({
 				) : null}
 				<ChatComposer
 					onSend={(text) => onSend?.(text)}
+					settings={
+						onChooseSettings ? (
+							<TurnSettingsBar
+								models={models ?? []}
+								settings={snapshot.settings}
+								onChange={onChooseSettings}
+								disabled={snapshot.controller.state === "stopped"}
+							/>
+						) : null
+					}
 					busy={busy}
 					willQueue={Boolean(turn)}
 					disabled={snapshot.controller.state === "stopped"}

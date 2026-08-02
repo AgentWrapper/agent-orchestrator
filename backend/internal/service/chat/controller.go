@@ -39,6 +39,8 @@ type Store interface {
 	SettleTurnByID(ctx context.Context, turnID string, state domain.TurnState, errMessage string, now time.Time) error
 	SettleOrphanedTurns(ctx context.Context, session domain.SessionID, now time.Time) error
 
+	SetConversationSettings(ctx context.Context, conversationID string, settings domain.ConversationSettings, now time.Time) error
+
 	NextQueuedTurn(ctx context.Context, conversationID string) (domain.QueuedTurn, error)
 	CancelQueuedTurns(ctx context.Context, conversationID string, cutoff, now time.Time) error
 
@@ -95,6 +97,10 @@ type Controller struct {
 	// provider refuses to cancel a turn it has not acknowledged yet.
 	ackedTurnID string
 	state       ports.ChatControllerState
+	// settings are the provider choices applied to the next dispatch. Held here as
+	// well as on disk so a dispatch does not need a read, and updated together with
+	// the row so the two cannot drift.
+	settings domain.ConversationSettings
 	// cancelQueuedAt is set when the user interrupts, and is the cutoff for the
 	// queue that interrupt cancels. Zero means nothing is being cancelled.
 	cancelQueuedAt time.Time
@@ -128,6 +134,7 @@ func newController(
 		newID:        newID,
 		now:          now,
 		state:        ports.ChatControllerReady,
+		settings:     conversation.Settings,
 		stopped:      make(chan struct{}),
 	}
 	go c.project()
@@ -202,6 +209,37 @@ func (c *Controller) Send(ctx context.Context, msg ports.ChatUserMessage) (domai
 	return c.dispatch(ctx, turnID, msg, now)
 }
 
+// Settings reports the provider choices for the next turn.
+func (c *Controller) Settings() domain.ConversationSettings {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.settings
+}
+
+// SetSettings records the provider choices for the next turn.
+//
+// The row is written first: if that fails, the in-memory copy must not move, or a
+// restart would silently revert a choice the user watched take effect.
+func (c *Controller) SetSettings(ctx context.Context, settings domain.ConversationSettings) error {
+	if err := c.store.SetConversationSettings(ctx, c.conversation.ID, settings, c.now()); err != nil {
+		return fmt.Errorf("record conversation settings: %w", err)
+	}
+	c.mu.Lock()
+	c.settings = settings
+	c.mu.Unlock()
+	return nil
+}
+
+// turnSettings converts the stored choices into what a driver takes per turn.
+func (c *Controller) turnSettings() ports.ChatTurnSettings {
+	current := c.Settings()
+	return ports.ChatTurnSettings{
+		Model:    current.Model,
+		Effort:   current.ReasoningEffort,
+		Approval: ports.PermissionMode(current.ApprovalMode),
+	}
+}
+
 // busy reports whether a provider turn is in flight.
 func (c *Controller) busy() bool {
 	c.mu.Lock()
@@ -216,6 +254,12 @@ func (c *Controller) dispatch(
 	msg ports.ChatUserMessage,
 	requestedAt time.Time,
 ) (domain.ConversationTurn, error) {
+	// Every dispatch carries the conversation's choices, including one AO makes on
+	// the user's behalf: a queued message draining, or a relay from `ao send`. A
+	// setting that only applied when the user pressed send would silently stop
+	// applying exactly when they were not watching.
+	msg.Settings = c.turnSettings()
+
 	ref, err := c.conv.SendTurn(ctx, msg)
 	if err != nil {
 		// The provider may or may not have accepted it. Settle the turn as failed

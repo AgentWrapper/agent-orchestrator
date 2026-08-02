@@ -140,6 +140,9 @@ var schemaNames = map[string]string{
 	"ControllersSendConversationMessageRequest":     "SendConversationMessageRequest",
 	"ControllersSendConversationMessageResponse":    "SendConversationMessageResponse",
 	"ControllersResolveConversationApprovalRequest": "ResolveConversationApprovalRequest",
+	"ControllersConversationModelsResponse":         "ConversationModelsResponse",
+	"ControllersConversationModelResponse":          "ConversationModelResponse",
+	"ControllersConversationTurnSettingsPayload":    "ConversationTurnSettingsPayload",
 	// httpd/envelope
 	"EnvelopeAPIError": "APIError",
 	// domain
@@ -449,6 +452,32 @@ func shellTerminalOperations() []operation {
 			reqBody:    controllers.ResolveConversationApprovalRequest{},
 			resps: []respUnit{
 				{http.StatusNoContent, nil},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/conversation/models", id: "listSessionConversationModels", tag: "conversations",
+			summary:    "List the models the provider offers for a chat session",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ConversationModelsResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPatch, path: "/api/v1/sessions/{sessionId}/conversation/settings", id: "setSessionConversationTurnSettings", tag: "conversations",
+			summary:    "Choose the model, reasoning effort and approval mode for the next turn",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.ConversationTurnSettingsPayload{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ConversationTurnSettingsPayload{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},

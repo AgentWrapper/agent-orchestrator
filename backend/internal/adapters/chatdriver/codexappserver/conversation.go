@@ -65,6 +65,11 @@ type conversation struct {
 
 var _ ports.ChatConversation = (*conversation)(nil)
 
+// Asserted here so a refactor cannot silently drop model listing: the service
+// feature-detects this interface, and a missed method would just mean "no models"
+// with nothing to notice.
+var _ ports.ChatModelLister = (*conversation)(nil)
+
 func newConversation(proc *process, log *slog.Logger) *conversation {
 	c := &conversation{
 		proc:     proc,
@@ -169,6 +174,7 @@ func (c *conversation) SendTurn(ctx context.Context, msg ports.ChatUserMessage) 
 		// must not produce a second turn.
 		params["clientUserMessageId"] = msg.ClientMessageID
 	}
+	applyTurnSettings(params, msg.Settings)
 
 	var resp struct {
 		Turn struct {
@@ -184,6 +190,104 @@ func (c *conversation) SendTurn(ctx context.Context, msg ports.ChatUserMessage) 
 	c.mu.Unlock()
 
 	return ports.ChatTurnRef{ProviderTurnID: resp.Turn.ID}, nil
+}
+
+// applyTurnSettings folds the caller's per-turn choices into a turn/start payload.
+//
+// Only fields the caller actually chose are sent. An omitted field lets the
+// provider fall back to what the thread was started with, which is why a caller
+// that chooses nothing behaves exactly as it did before per-turn settings existed.
+func applyTurnSettings(params map[string]any, settings ports.ChatTurnSettings) {
+	if settings.Model != "" {
+		params["model"] = settings.Model
+	}
+	if settings.Effort != "" {
+		params["effort"] = settings.Effort
+	}
+	if settings.Approval != "" {
+		// The same posture thread/start applies, so a per-turn choice and a launch
+		// choice cannot mean different things. The wire shapes differ though: a
+		// thread takes `sandbox: "workspace-write"`, a turn takes a tagged
+		// `sandboxPolicy: {type: "workspaceWrite"}`. Sending a thread's shape to a
+		// turn is rejected as a missing `type`, so the two are mapped separately
+		// rather than assumed to be interchangeable.
+		policy, sandbox := approvalSettings(settings.Approval)
+		params["approvalPolicy"] = policy
+		params["sandboxPolicy"] = turnSandboxPolicy(sandbox)
+	}
+}
+
+// turnSandboxPolicy converts a thread-level sandbox name into the tagged object
+// turn/start expects.
+func turnSandboxPolicy(sandbox string) map[string]any {
+	switch sandbox {
+	case "workspace-write":
+		return map[string]any{"type": "workspaceWrite"}
+	case "read-only":
+		return map[string]any{"type": "readOnly"}
+	default:
+		return map[string]any{"type": "dangerFullAccess"}
+	}
+}
+
+// ListModels asks the provider which models this account may use.
+//
+// The provider is the only honest source: models get added, renamed, hidden per
+// account, and gated by entitlement that AO cannot see. A table in AO would be
+// wrong within a week.
+func (c *conversation) ListModels(ctx context.Context) ([]ports.ChatModel, error) {
+	var resp struct {
+		Data []struct {
+			ID          string `json:"id"`
+			Model       string `json:"model"`
+			DisplayName string `json:"displayName"`
+			Description string `json:"description"`
+			IsDefault   bool   `json:"isDefault"`
+			Hidden      bool   `json:"hidden"`
+			DefaultEff  string `json:"defaultReasoningEffort"`
+			Efforts     []struct {
+				ReasoningEffort string `json:"reasoningEffort"`
+			} `json:"supportedReasoningEfforts"`
+		} `json:"data"`
+	}
+	if err := c.conn.request(ctx, "model/list", map[string]any{}, &resp); err != nil {
+		return nil, fmt.Errorf("model/list: %w", err)
+	}
+
+	models := make([]ports.ChatModel, 0, len(resp.Data))
+	for _, entry := range resp.Data {
+		if entry.Hidden {
+			// The provider marks a model hidden when the account should not be
+			// offered it. Showing it anyway would offer a choice that then fails.
+			continue
+		}
+		id := entry.ID
+		if id == "" {
+			id = entry.Model
+		}
+		if id == "" {
+			continue
+		}
+		efforts := make([]string, 0, len(entry.Efforts))
+		for _, effort := range entry.Efforts {
+			if effort.ReasoningEffort != "" {
+				efforts = append(efforts, effort.ReasoningEffort)
+			}
+		}
+		display := entry.DisplayName
+		if display == "" {
+			display = id
+		}
+		models = append(models, ports.ChatModel{
+			ID:            id,
+			DisplayName:   display,
+			Description:   entry.Description,
+			Default:       entry.IsDefault,
+			Efforts:       efforts,
+			DefaultEffort: entry.DefaultEff,
+		})
+	}
+	return models, nil
 }
 
 // Interrupt cancels a turn. An empty turn id targets the active one.

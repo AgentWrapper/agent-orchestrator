@@ -873,6 +873,37 @@ type SendConversationMessageResponse struct {
 	Duplicate bool `json:"duplicate"`
 }
 
+// ConversationModelsResponse is the provider's model catalog plus what is selected.
+type ConversationModelsResponse struct {
+	Models   []ConversationModelResponse    `json:"models"`
+	Selected ConversationTurnSettingsPayload `json:"selected"`
+}
+
+// ConversationModelResponse is one model the provider offers.
+type ConversationModelResponse struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"displayName"`
+	Description string `json:"description,omitempty"`
+	// Default marks the model the provider would pick on its own, so a client can
+	// label it rather than inventing its own idea of a default.
+	Default bool `json:"default"`
+	// Efforts are the reasoning levels this model supports, in the provider's
+	// order. Empty means the model does not take one.
+	Efforts       []string `json:"efforts,omitempty"`
+	DefaultEffort string   `json:"defaultEffort,omitempty"`
+}
+
+// ConversationTurnSettingsPayload is the provider choices for the next turn. It is
+// both the request body for changing them and the echo of what is now stored.
+//
+// Every field is optional and an empty value means "use the provider's default",
+// so clearing a choice and never making one are the same thing.
+type ConversationTurnSettingsPayload struct {
+	Model           string `json:"model,omitempty"`
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
+	ApprovalMode    string `json:"approvalMode,omitempty" enum:"default,accept-edits,auto,bypass-permissions"`
+}
+
 // ResolveConversationApprovalRequest answers a pending approval. DecisionID must
 // be one the provider offered for that request; AO does not invent options.
 type ResolveConversationApprovalRequest struct {
@@ -936,6 +967,10 @@ type ConversationSnapshotResponse struct {
 	Turns          []ConversationTurnResponse     `json:"turns"`
 	Messages       []ConversationMessageResponse  `json:"messages"`
 	Activities     []ConversationActivityResponse `json:"activities"`
+	// Settings are the provider choices for the next turn. Carried on the snapshot
+	// the client already polls so the composer can label itself without a second
+	// request, and so a choice made on another client shows up here.
+	Settings ConversationTurnSettingsPayload `json:"settings"`
 }
 
 // ConversationRequestIDParam is the provider's approval request id. Resolving

@@ -17,7 +17,11 @@ import { useCallback, useMemo, useState } from "react";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { ChatWorkspace } from "../components/chat/ChatWorkspace";
 import { Button } from "../components/ui/button";
-import { useConversation, useConversationCommands } from "../hooks/useConversation";
+import {
+	useConversation,
+	useConversationCommands,
+	useConversationModels,
+} from "../hooks/useConversation";
 import { chatFixture, chatFixtureEmpty, chatFixtureRecovering } from "../lib/chat-fixture";
 import type { ConversationSnapshot } from "../types/conversation";
 
@@ -46,6 +50,7 @@ function ChatPreview() {
 function LiveChat({ sessionId }: { sessionId: string }) {
 	const { snapshot, isLoading, unavailable, error } = useConversation(sessionId);
 	const commands = useConversationCommands(sessionId);
+	const { models } = useConversationModels(sessionId, Boolean(snapshot));
 
 	return (
 		<div className="flex h-screen flex-col bg-background">
@@ -84,6 +89,8 @@ function LiveChat({ sessionId }: { sessionId: string }) {
 						onSend={commands.send}
 						onDecide={commands.resolve}
 						onInterrupt={commands.interrupt}
+						models={models}
+						onChooseSettings={commands.chooseSettings}
 					/>
 				) : null}
 			</div>
