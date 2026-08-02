@@ -359,4 +359,26 @@ describe("annotate preload", () => {
 		expect(boxes).toHaveLength(15);
 		expect(boxes.every((box) => box.style.width === "30px")).toBe(true);
 	});
+
+	it("excludes already-selected elements from the cap so new elements are not wasted on duplicates", () => {
+		const alreadySelected = elementWithBounds("already-selected", { left: 50, top: 50, width: 40, height: 40 });
+		const newElement = elementWithBounds("new-element", { left: 150, top: 150, width: 40, height: 40 });
+		stubElementFromPoint([alreadySelected, newElement]);
+
+		// First click to select one element
+		shiftKeyDown();
+		dispatchPageEvent(alreadySelected, "click");
+		expect(selectionBoxes()).toHaveLength(1);
+
+		// Now drag a lasso that sweeps over the already-selected element and a new one
+		dragLasso([
+			{ x: 0, y: 0 },
+			{ x: 200, y: 0 },
+			{ x: 200, y: 200 },
+			{ x: 0, y: 200 },
+		]);
+
+		// Both should be selected, and the already-selected one should not waste a cap slot
+		expect(selectionBoxes()).toHaveLength(2);
+	});
 });

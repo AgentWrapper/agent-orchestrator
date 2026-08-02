@@ -215,9 +215,7 @@ function toggleMultiSelectElement(target: Element): void {
 function finishLasso(): void {
 	const polygon = closeLassoPath(lassoPoints);
 	const bounds = boundingRectOfPoints(polygon);
-	for (const element of elementsInLasso(polygon, bounds)) {
-		if (!multiSelectElements.includes(element)) multiSelectElements.push(element);
-	}
+	multiSelectElements.push(...elementsInLasso(polygon, bounds));
 	renderMultiSelections();
 	renderHint();
 }
@@ -227,7 +225,7 @@ function elementsInLasso(polygon: LassoPoint[], bounds: LassoBounds): Element[] 
 	for (const point of sampleGridPoints(bounds, LASSO_GRID_SIZE, LASSO_GRID_SIZE)) {
 		if (!pointInPolygon(point, polygon)) continue;
 		const target = annotationTarget(document.elementFromPoint(point.x, point.y));
-		if (!target || found.includes(target)) continue;
+		if (!target || found.includes(target) || multiSelectElements.includes(target)) continue;
 		found.push(target);
 	}
 	return capByVisibleArea(found, LASSO_MAX_NEW_ELEMENTS);
