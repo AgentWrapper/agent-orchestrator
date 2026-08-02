@@ -98,6 +98,29 @@ function submitPrompt(instruction: string): BrowserAnnotationPageSubmitPayload {
 	return submitCall[1] as BrowserAnnotationPageSubmitPayload;
 }
 
+function dispatchPointerEvent(target: EventTarget, type: string, point: { x: number; y: number }): void {
+	const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: point.x, clientY: point.y, button: 0 });
+	target.dispatchEvent(event);
+}
+
+function dragLasso(points: { x: number; y: number }[]): void {
+	dispatchPointerEvent(document.body, "pointerdown", points[0]);
+	for (const point of points.slice(1)) {
+		dispatchPointerEvent(document.body, "pointermove", point);
+	}
+	dispatchPointerEvent(document.body, "pointerup", points[points.length - 1]);
+}
+
+function stubElementFromPoint(elements: Element[]): void {
+	document.elementFromPoint = (x: number, y: number): Element | null => {
+		for (const element of elements) {
+			const rect = element.getBoundingClientRect();
+			if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) return element;
+		}
+		return null;
+	};
+}
+
 describe("annotate preload", () => {
 	beforeEach(() => {
 		document.body.innerHTML = "";
@@ -109,6 +132,7 @@ describe("annotate preload", () => {
 		setAnnotationMode(false);
 		document.body.innerHTML = "";
 		electronMocks.send.mockClear();
+		document.elementFromPoint = () => null;
 	});
 
 	it("keeps the selected highlight locked while the prompt is open", () => {
@@ -232,5 +256,107 @@ describe("annotate preload", () => {
 
 		expect(electronMocks.send).toHaveBeenCalledWith("browser:annotation:cancel", { reason: "escape" });
 		expect(document.querySelector("[data-ao-annotation-root]")).toBeNull();
+	});
+
+	it("adds every element enclosed by a freehand lasso drag to the selection", () => {
+		const first = elementWithBounds("first", { left: 10, top: 10, width: 40, height: 40 });
+		const second = elementWithBounds("second", { left: 200, top: 200, width: 40, height: 40 });
+		const outside = elementWithBounds("outside", { left: 500, top: 500, width: 40, height: 40 });
+		stubElementFromPoint([first, second, outside]);
+
+		shiftKeyDown();
+		dragLasso([
+			{ x: 0, y: 0 },
+			{ x: 260, y: 0 },
+			{ x: 260, y: 260 },
+			{ x: 0, y: 260 },
+		]);
+
+		expect(selectionBoxes()).toHaveLength(2);
+		expect(overlayRoot().querySelector(".hint")?.textContent).toContain("2 elements selected");
+	});
+
+	it("treats a pointer drag below the movement threshold as a plain click toggle, not a lasso", () => {
+		const first = elementWithBounds("first", { left: 10, top: 10, width: 40, height: 40 });
+
+		shiftKeyDown();
+		dispatchPointerEvent(document.body, "pointerdown", { x: 30, y: 30 });
+		dispatchPointerEvent(document.body, "pointermove", { x: 31, y: 30 });
+		dispatchPointerEvent(document.body, "pointerup", { x: 31, y: 30 });
+		dispatchPageEvent(first, "click");
+
+		expect(selectionBoxes()).toHaveLength(1);
+	});
+
+	it("suppresses the click that follows a completed lasso drag so swept elements are not immediately toggled back off", () => {
+		const first = elementWithBounds("first", { left: 10, top: 10, width: 40, height: 40 });
+		const second = elementWithBounds("second", { left: 200, top: 200, width: 40, height: 40 });
+		stubElementFromPoint([first, second]);
+
+		shiftKeyDown();
+		dragLasso([
+			{ x: 0, y: 0 },
+			{ x: 260, y: 0 },
+			{ x: 260, y: 260 },
+			{ x: 0, y: 260 },
+		]);
+		expect(selectionBoxes()).toHaveLength(2);
+
+		dispatchPageEvent(first, "click");
+
+		expect(selectionBoxes()).toHaveLength(2);
+	});
+
+	it("renders the lasso path while dragging and clears it after release", () => {
+		shiftKeyDown();
+		dispatchPointerEvent(document.body, "pointerdown", { x: 0, y: 0 });
+		dispatchPointerEvent(document.body, "pointermove", { x: 100, y: 0 });
+
+		const path = overlayRoot().querySelector<SVGPolygonElement>(".lasso__path");
+		expect(path?.getAttribute("points")).toBe("0,0 100,0");
+
+		dispatchPointerEvent(document.body, "pointerup", { x: 100, y: 0 });
+
+		expect(path?.getAttribute("points")).toBe("");
+	});
+
+	it("clears an in-progress lasso drag when annotation mode is disabled mid-drag", () => {
+		const first = elementWithBounds("first", { left: 10, top: 10, width: 40, height: 40 });
+
+		shiftKeyDown();
+		dispatchPointerEvent(document.body, "pointerdown", { x: 0, y: 0 });
+		dispatchPointerEvent(document.body, "pointermove", { x: 100, y: 0 });
+
+		setAnnotationMode(false);
+		electronMocks.send.mockClear();
+		setAnnotationMode(true);
+		shiftKeyDown();
+		dispatchPageEvent(first, "click");
+
+		expect(selectionBoxes()).toHaveLength(1);
+	});
+
+	it("caps newly-added lasso elements to 15, preferring the largest by visible area", () => {
+		const gridX = [25, 75, 125, 175, 225, 275, 325, 375];
+		const points = [...gridX.map((x) => ({ x, y: 25 })), ...gridX.map((x) => ({ x, y: 75 }))];
+		const big = points
+			.slice(0, 15)
+			.map((point, index) =>
+				elementWithBounds(`big-${index}`, { left: point.x - 15, top: point.y - 15, width: 30, height: 30 }),
+			);
+		const tiny = elementWithBounds("tiny", { left: points[15].x - 2, top: points[15].y - 2, width: 4, height: 4 });
+		stubElementFromPoint([...big, tiny]);
+
+		shiftKeyDown();
+		dragLasso([
+			{ x: 0, y: 0 },
+			{ x: 400, y: 0 },
+			{ x: 400, y: 400 },
+			{ x: 0, y: 400 },
+		]);
+
+		const boxes = selectionBoxes();
+		expect(boxes).toHaveLength(15);
+		expect(boxes.every((box) => box.style.width === "30px")).toBe(true);
 	});
 });

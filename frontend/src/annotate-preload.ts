@@ -5,7 +5,21 @@ import {
 	type BrowserAnnotationContext,
 	type BrowserAnnotationPageSubmitPayload,
 } from "./shared/browser-annotations";
-import { promptPositionForRect, type AnnotationRectLike } from "./shared/browser-annotation-overlay";
+import {
+	boundingRectOfPoints,
+	closeLassoPath,
+	pointInPolygon,
+	promptPositionForRect,
+	sampleGridPoints,
+	shouldAppendLassoPoint,
+	type AnnotationRectLike,
+	type LassoBounds,
+	type LassoPoint,
+} from "./shared/browser-annotation-overlay";
+
+const LASSO_MOVEMENT_THRESHOLD_PX = 4;
+const LASSO_GRID_SIZE = 8;
+const LASSO_MAX_NEW_ELEMENTS = 15;
 
 let enabled = false;
 let selectedElement: Element | null = null;
@@ -13,6 +27,10 @@ let selectedContext: BrowserAnnotationContext | null = null;
 let multiSelectActive = false;
 let multiSelectElements: Element[] = [];
 let multiSelectContexts: BrowserAnnotationContext[] | null = null;
+let dragStart: LassoPoint | null = null;
+let lassoActive = false;
+let lassoPoints: LassoPoint[] = [];
+let suppressNextClick = false;
 let host: HTMLDivElement | null = null;
 let shadow: ShadowRoot | null = null;
 
@@ -34,6 +52,7 @@ function setEnabled(next: boolean, cancelReason: BrowserAnnotationCancelReason):
 	multiSelectActive = false;
 	multiSelectElements = [];
 	multiSelectContexts = null;
+	resetLassoState();
 	if (enabled) {
 		ensureOverlay();
 		installListeners();
@@ -48,6 +67,8 @@ function setEnabled(next: boolean, cancelReason: BrowserAnnotationCancelReason):
 function installListeners(): void {
 	document.addEventListener("pointerover", handlePointerMove, true);
 	document.addEventListener("pointermove", handlePointerMove, true);
+	document.addEventListener("pointerdown", handlePointerDown, true);
+	document.addEventListener("pointerup", handlePointerUp, true);
 	document.addEventListener("click", handleClick, true);
 	document.addEventListener("keydown", handleKeyDown, true);
 	window.addEventListener("scroll", refreshHighlight, true);
@@ -57,6 +78,8 @@ function installListeners(): void {
 function removeListeners(): void {
 	document.removeEventListener("pointerover", handlePointerMove, true);
 	document.removeEventListener("pointermove", handlePointerMove, true);
+	document.removeEventListener("pointerdown", handlePointerDown, true);
+	document.removeEventListener("pointerup", handlePointerUp, true);
 	document.removeEventListener("click", handleClick, true);
 	document.removeEventListener("keydown", handleKeyDown, true);
 	window.removeEventListener("scroll", refreshHighlight, true);
@@ -64,7 +87,12 @@ function removeListeners(): void {
 }
 
 function handlePointerMove(event: PointerEvent): void {
-	if (!enabled || selectedContext || multiSelectContexts || isOverlayEvent(event)) return;
+	if (!enabled || isOverlayEvent(event)) return;
+	if (dragStart) {
+		handleLassoPointerMove(event);
+		return;
+	}
+	if (selectedContext || multiSelectContexts) return;
 	const target = annotationTarget(event.target);
 	if (!target || target === selectedElement) return;
 	selectedElement = target;
@@ -72,8 +100,47 @@ function handlePointerMove(event: PointerEvent): void {
 	renderHighlight(target, false);
 }
 
+function handlePointerDown(event: PointerEvent): void {
+	if (!enabled || !multiSelectActive || isOverlayEvent(event) || event.button !== 0) return;
+	dragStart = { x: event.clientX, y: event.clientY };
+}
+
+function handleLassoPointerMove(event: PointerEvent): void {
+	const point: LassoPoint = { x: event.clientX, y: event.clientY };
+	if (!lassoActive) {
+		if (!shouldAppendLassoPoint(dragStart, point, LASSO_MOVEMENT_THRESHOLD_PX)) return;
+		lassoActive = true;
+		hideHoverHighlight();
+		lassoPoints = dragStart ? [dragStart, point] : [point];
+		renderLassoPath(lassoPoints);
+		return;
+	}
+	if (!shouldAppendLassoPoint(lassoPoints[lassoPoints.length - 1] ?? null, point, LASSO_MOVEMENT_THRESHOLD_PX)) return;
+	lassoPoints.push(point);
+	renderLassoPath(lassoPoints);
+}
+
+function handlePointerUp(event: PointerEvent): void {
+	if (!enabled || isOverlayEvent(event) || !dragStart) return;
+	if (lassoActive) {
+		finishLasso();
+		suppressNextClick = true;
+	}
+	dragStart = null;
+	lassoActive = false;
+	lassoPoints = [];
+	clearLassoPath();
+}
+
 function handleClick(event: MouseEvent): void {
 	if (!enabled || isOverlayEvent(event)) return;
+	if (suppressNextClick) {
+		suppressNextClick = false;
+		event.preventDefault();
+		event.stopPropagation();
+		event.stopImmediatePropagation();
+		return;
+	}
 	if (selectedContext || multiSelectContexts) {
 		event.preventDefault();
 		event.stopPropagation();
@@ -124,6 +191,7 @@ function startMultiSelect(): void {
 
 function finishMultiSelect(): void {
 	multiSelectActive = false;
+	resetLassoState();
 	hideHoverHighlight();
 	if (multiSelectElements.length === 0) {
 		renderHint();
@@ -142,6 +210,44 @@ function toggleMultiSelectElement(target: Element): void {
 	}
 	renderMultiSelections();
 	renderHint();
+}
+
+function finishLasso(): void {
+	const polygon = closeLassoPath(lassoPoints);
+	const bounds = boundingRectOfPoints(polygon);
+	for (const element of elementsInLasso(polygon, bounds)) {
+		if (!multiSelectElements.includes(element)) multiSelectElements.push(element);
+	}
+	renderMultiSelections();
+	renderHint();
+}
+
+function elementsInLasso(polygon: LassoPoint[], bounds: LassoBounds): Element[] {
+	const found: Element[] = [];
+	for (const point of sampleGridPoints(bounds, LASSO_GRID_SIZE, LASSO_GRID_SIZE)) {
+		if (!pointInPolygon(point, polygon)) continue;
+		const target = annotationTarget(document.elementFromPoint(point.x, point.y));
+		if (!target || found.includes(target)) continue;
+		found.push(target);
+	}
+	return capByVisibleArea(found, LASSO_MAX_NEW_ELEMENTS);
+}
+
+function capByVisibleArea(elements: Element[], max: number): Element[] {
+	if (elements.length <= max) return elements;
+	return [...elements].sort((a, b) => elementArea(b) - elementArea(a)).slice(0, max);
+}
+
+function elementArea(element: Element): number {
+	const rect = element.getBoundingClientRect();
+	return rect.width * rect.height;
+}
+
+function resetLassoState(): void {
+	dragStart = null;
+	lassoActive = false;
+	lassoPoints = [];
+	suppressNextClick = false;
 }
 
 function hideHoverHighlight(): void {
@@ -204,6 +310,19 @@ function ensureOverlay(): ShadowRoot {
 				box-shadow:
 					0 0 0 1px rgba(255, 255, 255, 0.20),
 					0 12px 36px rgba(0, 0, 0, 0.24);
+			}
+			.lasso {
+				position: fixed;
+				inset: 0;
+				width: 100%;
+				height: 100%;
+				pointer-events: none;
+			}
+			.lasso__path {
+				fill: rgba(77, 141, 255, 0.10);
+				stroke: #4d8dff;
+				stroke-width: 1.5;
+				stroke-dasharray: 4 3;
 			}
 			.prompt {
 				position: fixed;
@@ -324,6 +443,7 @@ function ensureOverlay(): ShadowRoot {
 			}
 		</style>
 		<div class="highlight" hidden></div>
+		<svg class="lasso"><polygon class="lasso__path" points=""></polygon></svg>
 		<div class="selections"></div>
 		<div class="mount"></div>
 	`;
@@ -342,10 +462,10 @@ function hintText(): string {
 		return "Click an element to annotate, or press Shift to select multiple. Press Esc to cancel.";
 	}
 	if (multiSelectElements.length === 0) {
-		return "Click elements to select them. Press Shift again to finish.";
+		return "Click elements to select them, or drag to lasso-select several. Press Shift again to finish.";
 	}
 	const count = multiSelectElements.length;
-	return `${count} element${count === 1 ? "" : "s"} selected. Click more, or press Shift to finish.`;
+	return `${count} element${count === 1 ? "" : "s"} selected. Click or drag to add more, or press Shift to finish.`;
 }
 
 function renderHighlight(element: Element, locked: boolean): void {
@@ -376,6 +496,17 @@ function renderMultiSelections(): void {
 		box.style.height = `${Math.max(0, rect.height)}px`;
 		container.appendChild(box);
 	}
+}
+
+function renderLassoPath(points: LassoPoint[]): void {
+	const root = ensureOverlay();
+	const polygon = root.querySelector<SVGPolygonElement>(".lasso__path");
+	if (!polygon) return;
+	polygon.setAttribute("points", points.map((point) => `${point.x},${point.y}`).join(" "));
+}
+
+function clearLassoPath(): void {
+	renderLassoPath([]);
 }
 
 function renderPrompt(element: Element, context: BrowserAnnotationContext): void {
