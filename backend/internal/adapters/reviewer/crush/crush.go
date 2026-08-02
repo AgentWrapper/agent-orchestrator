@@ -29,6 +29,12 @@ func (*Reviewer) Harness() domain.ReviewerHarness { return domain.ReviewerCrush 
 
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
+var _ ports.ReviewerPromptReadinessProvider = (*Reviewer)(nil)
+
+// ReviewPromptReadinessHints reuses Crush's worker-TUI prompt markers.
+func (*Reviewer) ReviewPromptReadinessHints(ctx context.Context) (ports.PromptReadinessHints, error) {
+	return workercrush.New().PromptReadinessHints(ctx, ports.LaunchConfig{})
+}
 
 // ReviewCommand starts Crush's normal interactive TUI and injects the first
 // task after startup. It writes no reviewer configuration into the checkout.

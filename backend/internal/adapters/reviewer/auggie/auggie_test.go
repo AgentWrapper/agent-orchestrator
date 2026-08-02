@@ -16,11 +16,11 @@ func TestReviewCommandUsesRulesAndUserPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"/opt/auggie", "--print", "--rules", "/ao/prompts/system.md", "--", "read task"}
+	want := []string{"/opt/auggie", "--rules", "/ao/prompts/system.md"}
 	if !slices.Equal(spec.Argv, want) {
 		t.Fatalf("argv = %#v, want %#v", spec.Argv, want)
 	}
-	if r.ReviewProcessReusable() {
-		t.Fatal("Auggie print reviewer must respawn for each task")
+	if spec.InitialMessage != "read task" {
+		t.Fatalf("initial message = %q, want interactive task", spec.InitialMessage)
 	}
 }

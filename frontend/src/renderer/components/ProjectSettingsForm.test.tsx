@@ -484,6 +484,41 @@ describe("ProjectSettingsForm", () => {
 		expect(labels).toContain("Grok");
 	});
 
+	it("warns when an experimental reviewer is selected", async () => {
+		const qwen = { id: "qwen", label: "Qwen Code", authStatus: "authorized" };
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				return {
+					data: {
+						supported: [...agentCatalogResponse.data.supported, qwen],
+						installed: [...agentCatalogResponse.data.installed, qwen],
+						authorized: [...agentCatalogResponse.data.authorized, qwen],
+					},
+					error: undefined,
+				};
+			}
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "proj-1",
+						name: "Project One",
+						kind: "single_repo",
+						path: "/repo/project-one",
+						repo: "",
+						defaultBranch: "main",
+						config: { worker: { agent: "codex" }, orchestrator: { agent: "claude-code" } },
+					},
+				},
+				error: undefined,
+			};
+		});
+
+		renderSettings();
+		await chooseOption(await screen.findByRole("button", { name: "Default reviewer agent" }), "Qwen Code");
+		expect(screen.getByRole("status")).toHaveTextContent("Experimental host-trusted reviewer");
+	});
+
 	it("shows unknown-auth agents as selectable with a warning in project settings", async () => {
 		mockProject({
 			id: "proj-1",

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -15,6 +16,10 @@ import (
 type fakeReviewer struct {
 	gotInv           ports.ReviewInvocation
 	workingDirectory string
+}
+
+func (f fakeReviewer) ReviewPromptReadinessHints(context.Context) (ports.PromptReadinessHints, error) {
+	return ports.PromptReadinessHints{}, nil
 }
 
 func (f *fakeReviewer) ReviewCommand(_ context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
@@ -65,7 +70,8 @@ type fakeReviewerForPreflight struct {
 }
 
 type fakeReviewerWithLaunchSpec struct {
-	spec ports.ReviewCommandSpec
+	spec  ports.ReviewCommandSpec
+	hints ports.PromptReadinessHints
 }
 
 func (f *fakeReviewerWithLaunchSpec) ReviewCommand(context.Context, ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
@@ -73,6 +79,9 @@ func (f *fakeReviewerWithLaunchSpec) ReviewCommand(context.Context, ports.Review
 }
 func (f *fakeReviewerWithLaunchSpec) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
 	return inv.Prompt, nil
+}
+func (f *fakeReviewerWithLaunchSpec) ReviewPromptReadinessHints(context.Context) (ports.PromptReadinessHints, error) {
+	return f.hints, nil
 }
 
 func (f *fakeReviewerForPreflight) ReviewCommand(_ context.Context, _ ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
@@ -116,6 +125,8 @@ type fakeRuntime struct {
 	destroyed     string
 	destroyBefore bool
 	created       bool
+	output        string
+	outputReads   int
 }
 
 func (f *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
@@ -132,6 +143,10 @@ func (f *fakeRuntime) Destroy(_ context.Context, handle ports.RuntimeHandle) err
 }
 func (f *fakeRuntime) IsAlive(_ context.Context, _ ports.RuntimeHandle) (bool, error) {
 	return f.alive, nil
+}
+func (f *fakeRuntime) GetOutput(_ context.Context, _ ports.RuntimeHandle, _ int) (string, error) {
+	f.outputReads++
+	return f.output, nil
 }
 func (f *fakeRuntime) Interrupt(_ context.Context, handle ports.RuntimeHandle) error {
 	f.interrupt = handle.ID
@@ -391,6 +406,23 @@ func TestLauncherSpawnUsesReviewerWorkingDirectoryAndInitialMessage(t *testing.T
 	}
 	if rt.createCfg.WorkspacePath != "/ao/reviewer" || rt.sentMsg != "task ref" {
 		t.Fatalf("create = %+v, sent = %q", rt.createCfg, rt.sentMsg)
+	}
+}
+
+func TestLauncherWaitsForReviewerPromptMarkerBeforeInitialMessage(t *testing.T) {
+	reviewer := &fakeReviewerWithLaunchSpec{
+		spec: ports.ReviewCommandSpec{Argv: []string{"agent"}, InitialMessage: "task ref"},
+		hints: ports.PromptReadinessHints{
+			Patterns: []string{"READY>"}, PollInterval: time.Millisecond, Timeout: time.Second, Lines: 20,
+		},
+	}
+	rt := &fakeRuntime{output: "banner\nREADY>"}
+	l := newTestLauncher(t, reviewer, rt)
+	if _, err := l.Spawn(context.Background(), launchSpec()); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if rt.outputReads == 0 || rt.sentMsg != "task ref" {
+		t.Fatalf("output reads = %d, sent = %q", rt.outputReads, rt.sentMsg)
 	}
 }
 

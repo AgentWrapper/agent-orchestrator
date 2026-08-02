@@ -56,6 +56,13 @@ type ReviewerReusePolicy interface {
 	ReviewProcessReusable() bool
 }
 
+// ReviewerPromptReadinessProvider lets an interactive reviewer describe when
+// its terminal prompt is ready for InitialMessage injection. Reviewers without
+// this capability receive a conservative startup delay from the launcher.
+type ReviewerPromptReadinessProvider interface {
+	ReviewPromptReadinessHints(ctx context.Context) (PromptReadinessHints, error)
+}
+
 // ReviewInvocation describes one review pass for a reviewer to act on. All ids
 // the reviewer needs are passed explicitly here (and embedded in the prompt /
 // message), never through environment variables.

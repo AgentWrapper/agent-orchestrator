@@ -388,6 +388,11 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 							disabled={agentsQuery.isFetching && agentCatalog === undefined}
 						/>
 					</SettingsRow>
+					{reviewerTrustWarning(form.reviewerHarness) ? (
+						<p className="px-1 text-xs leading-row text-warning" role="status">
+							{reviewerTrustWarning(form.reviewerHarness)}
+						</p>
+					) : null}
 				</SettingsSection>
 			)}
 
@@ -539,6 +544,19 @@ const REVIEWER_AGENT_PRIORITY = [
 const REVIEWER_AGENT_PRIORITY_RANK = new Map<string, number>(
 	REVIEWER_AGENT_PRIORITY.map((agent, index) => [agent, index]),
 );
+
+const HOST_TRUSTED_REVIEWERS = new Set(["agy", "continue", "devin", "droid", "goose", "kimi", "qwen", "vibe"]);
+const USER_APPROVED_REVIEWERS = new Set(["auggie", "autohand", "cline", "crush", "grok"]);
+
+function reviewerTrustWarning(harness: string): string | null {
+	if (HOST_TRUSTED_REVIEWERS.has(harness)) {
+		return "Experimental host-trusted reviewer: this agent is not OS-isolated and may retain shell, plugin, editor, and network access.";
+	}
+	if (USER_APPROVED_REVIEWERS.has(harness)) {
+		return "Experimental user-approved reviewer: AO keeps the agent's native permission prompts enabled; review execution may pause for your approval.";
+	}
+	return null;
+}
 
 function ReviewerSelect({
 	value,

@@ -514,8 +514,8 @@ func TestTriggerSupersedesOlderRunningRunOnNewCommit(t *testing.T) {
 	if old := store.runs[0]; old.ID != "run-old" || old.Status != domain.ReviewRunFailed {
 		t.Fatalf("expected older running run to be failed, got %+v", old)
 	}
-	if !launcher.notified || launcher.spawned {
-		t.Fatalf("expected live reviewer pane reused for new commit: %+v", launcher)
+	if !launcher.spawned || launcher.notified {
+		t.Fatalf("expected superseded active reviewer pane replaced for new commit: %+v", launcher)
 	}
 }
 

@@ -29,6 +29,12 @@ func (*Reviewer) Harness() domain.ReviewerHarness { return domain.ReviewerCline 
 
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
+var _ ports.ReviewerPromptReadinessProvider = (*Reviewer)(nil)
+
+// ReviewPromptReadinessHints reuses Cline's worker-TUI prompt markers.
+func (*Reviewer) ReviewPromptReadinessHints(ctx context.Context) (ports.PromptReadinessHints, error) {
+	return workercline.New().PromptReadinessHints(ctx, ports.LaunchConfig{})
+}
 
 // ReviewCommand starts Cline's normal interactive TUI, injects AO's role using
 // Cline's native system-prompt flag, and sends the task after startup.

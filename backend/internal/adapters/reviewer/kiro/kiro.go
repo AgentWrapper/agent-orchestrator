@@ -32,6 +32,12 @@ func (r *Reviewer) Harness() domain.ReviewerHarness { return domain.ReviewerKiro
 
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
+var _ ports.ReviewerPromptReadinessProvider = (*Reviewer)(nil)
+
+// ReviewPromptReadinessHints reuses Kiro's worker-TUI prompt markers.
+func (*Reviewer) ReviewPromptReadinessHints(ctx context.Context) (ports.PromptReadinessHints, error) {
+	return workeragent.New().PromptReadinessHints(ctx, ports.LaunchConfig{})
+}
 
 // ReviewCommand launches Kiro as a persistent interactive TUI. It deliberately
 // avoids positional input and --no-interactive; AO injects InitialMessage only

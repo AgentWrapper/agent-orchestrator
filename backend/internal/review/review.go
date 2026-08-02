@@ -235,13 +235,16 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 
 	var created []domain.ReviewRun
 	batchID := ""
+	supersededRunning := false
 	for _, reviewState := range reviews {
 		if reviewState.Status != ReviewStateNeedsReview && reviewState.Status != ReviewStateChangesRequested {
 			continue
 		}
-		if _, err := e.store.SupersedeStaleRunningReviewRuns(ctx, workerID, reviewState.PRURL, reviewState.TargetSHA, "superseded by a review trigger for a newer commit"); err != nil {
+		superseded, err := e.store.SupersedeStaleRunningReviewRuns(ctx, workerID, reviewState.PRURL, reviewState.TargetSHA, "superseded by a review trigger for a newer commit")
+		if err != nil {
 			return TriggerResult{}, err
 		}
+		supersededRunning = supersededRunning || superseded > 0
 		if batchID == "" {
 			batchID = e.newID()
 		}
@@ -286,7 +289,7 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 
 	handleID := ""
 	queue := reviewQueue(created)
-	if hasReview && reviewRow.ReviewerHandleID != "" && prevHarness == harness && e.launcher.Reusable(harness) {
+	if !supersededRunning && hasReview && reviewRow.ReviewerHandleID != "" && prevHarness == harness && e.launcher.Reusable(harness) {
 		alive, err := e.launcher.Alive(ctx, reviewRow.ReviewerHandleID)
 		if err != nil {
 			return TriggerResult{}, failRuns(0, err)

@@ -16,6 +16,8 @@ import (
 
 const cancelInterruptDelay = 150 * time.Millisecond
 
+const defaultReviewerInitialDelay = 500 * time.Millisecond
+
 const reviewerTaskMessagePrefix = "Read and follow the AO review task in `"
 
 // Launcher spawns, re-notifies, and probes a reviewer over a worker's worktree.
@@ -65,6 +67,7 @@ type reviewerRuntime interface {
 	SendInput(ctx context.Context, handle ports.RuntimeHandle, input string) error
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
 	SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error
+	GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error)
 }
 
 // agentLauncher resolves a reviewer adapter from the registry and drives the
@@ -232,11 +235,74 @@ func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (string, err
 		return "", fmt.Errorf("reviewer runtime: %w", err)
 	}
 	if cmd.InitialMessage != "" {
+		if err := l.waitForPromptReadiness(ctx, reviewer, handle); err != nil {
+			return "", fmt.Errorf("reviewer prompt readiness: %w", err)
+		}
 		if err := l.runtime.SendMessage(ctx, handle, cmd.InitialMessage); err != nil {
 			return "", fmt.Errorf("reviewer initial message: %w", err)
 		}
 	}
 	return handle.ID, nil
+}
+
+func (l *agentLauncher) waitForPromptReadiness(ctx context.Context, reviewer ports.Reviewer, handle ports.RuntimeHandle) error {
+	hints := ports.PromptReadinessHints{InitialDelay: defaultReviewerInitialDelay}
+	if provider, ok := reviewer.(ports.ReviewerPromptReadinessProvider); ok {
+		provided, err := provider.ReviewPromptReadinessHints(ctx)
+		if err != nil {
+			return err
+		}
+		hints = provided
+	}
+	if hints.InitialDelay > 0 {
+		timer := time.NewTimer(hints.InitialDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	if len(hints.Patterns) == 0 || hints.Timeout <= 0 {
+		return nil
+	}
+	poll := hints.PollInterval
+	if poll <= 0 {
+		poll = 200 * time.Millisecond
+	}
+	lines := hints.Lines
+	if lines <= 0 {
+		lines = 80
+	}
+	deadline := time.NewTimer(hints.Timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+	for {
+		output, err := l.runtime.GetOutput(ctx, handle, lines)
+		if err == nil && outputContainsAny(output, hints.Patterns) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			// Readiness is best-effort: never block a review forever when a CLI
+			// changes its prompt marker. The startup delay still prevents an
+			// immediate write into process initialization.
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+func outputContainsAny(output string, patterns []string) bool {
+	for _, pattern := range patterns {
+		if pattern != "" && strings.Contains(output, pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 // pinnedEnv returns the reviewer command's env with PATH pinned to the daemon's

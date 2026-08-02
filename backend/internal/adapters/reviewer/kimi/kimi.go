@@ -37,6 +37,12 @@ func (*Reviewer) Harness() domain.ReviewerHarness { return domain.ReviewerKimi }
 
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
+var _ ports.ReviewerPromptReadinessProvider = (*Reviewer)(nil)
+
+// ReviewPromptReadinessHints reuses Kimi's worker-TUI prompt markers.
+func (*Reviewer) ReviewPromptReadinessHints(ctx context.Context) (ports.PromptReadinessHints, error) {
+	return workerkimi.New().PromptReadinessHints(ctx, ports.LaunchConfig{})
+}
 
 // ReviewCommand starts only Kimi's normal interactive TUI. The initial task is
 // injected after the pane starts; --prompt, --print, --quiet, --command, ACP,

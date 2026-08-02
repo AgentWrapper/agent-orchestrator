@@ -122,48 +122,25 @@ func TestResolveReviewerHarness(t *testing.T) {
 		t.Fatalf("configured reviewer = %q, want claude-code", got)
 	}
 
-	// No reviewer configured: reuse the worker's harness when it is itself a
-	// supported reviewer.
+	// No reviewer configured: preserve automatic inheritance only for the
+	// original unattended-safe reviewer set.
 	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessClaudeCode); got != ReviewerClaudeCode {
 		t.Fatalf("claude-code worker = %q, want reviewer claude-code", got)
 	}
 	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessCodex); got != ReviewerCodex {
 		t.Fatalf("codex worker = %q, want reviewer codex", got)
 	}
-	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessCopilot); got != ReviewerCopilot {
-		t.Fatalf("copilot worker = %q, want reviewer copilot", got)
-	}
-	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessCursor); got != ReviewerCursor {
-		t.Fatalf("cursor worker = %q, want reviewer cursor", got)
-	}
 	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessOpenCode); got != ReviewerOpenCode {
 		t.Fatalf("opencode worker = %q, want reviewer opencode", got)
 	}
-	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessKilocode); got != ReviewerKiloCode {
-		t.Fatalf("Kilo Code worker = %q, want reviewer kilocode", got)
-	}
-	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessKiro); got != ReviewerKiro {
-		t.Fatalf("kiro worker = %q, want reviewer kiro", got)
-	}
-	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessPi); got != ReviewerPi {
-		t.Fatalf("pi worker = %q, want reviewer pi", got)
-	}
-
-	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessAider); got != ReviewerAider {
-		t.Fatalf("aider worker = %q, want reviewer aider", got)
-	}
-	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessAmp); got != ReviewerAmp {
-		t.Fatalf("amp worker = %q, want reviewer amp", got)
-	}
-	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessQwen); got != ReviewerQwen {
-		t.Fatalf("qwen worker = %q, want reviewer qwen", got)
-	}
-	for _, tc := range []struct {
-		worker AgentHarness
-		want   ReviewerHarness
-	}{{HarnessAgy, ReviewerAgy}, {HarnessContinue, ReviewerContinue}, {HarnessGoose, ReviewerGoose}, {HarnessVibe, ReviewerVibe}, {HarnessDevin, ReviewerDevin}, {HarnessDroid, ReviewerDroid}, {HarnessKimi, ReviewerKimi}, {HarnessGrok, ReviewerGrok}, {HarnessCrush, ReviewerCrush}, {HarnessAuggie, ReviewerAuggie}, {HarnessCline, ReviewerCline}, {HarnessAutohand, ReviewerAutohand}} {
-		if got := (ProjectConfig{}).ResolveReviewerHarness(tc.worker); got != tc.want {
-			t.Errorf("%s worker = %q, want reviewer %q", tc.worker, got, tc.want)
+	for _, worker := range []AgentHarness{
+		HarnessCopilot, HarnessCursor, HarnessKilocode, HarnessKiro, HarnessPi,
+		HarnessAider, HarnessAmp, HarnessQwen, HarnessAgy, HarnessContinue,
+		HarnessGoose, HarnessVibe, HarnessDevin, HarnessDroid, HarnessKimi,
+		HarnessGrok, HarnessCrush, HarnessAuggie, HarnessCline, HarnessAutohand,
+	} {
+		if got := (ProjectConfig{}).ResolveReviewerHarness(worker); got != FallbackReviewerHarness {
+			t.Errorf("%s worker = %q, want explicit-selection fallback %q", worker, got, FallbackReviewerHarness)
 		}
 	}
 }

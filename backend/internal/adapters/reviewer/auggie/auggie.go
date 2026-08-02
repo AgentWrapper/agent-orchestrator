@@ -26,7 +26,6 @@ func (*Reviewer) Harness() domain.ReviewerHarness { return domain.ReviewerAuggie
 
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
-var _ ports.ReviewerReusePolicy = (*Reviewer)(nil)
 
 // ReviewCommand launches Auggie with AO's system rules and task prompt. AO
 // emits no blanket approval flag; users answer requests in the reviewer pane.
@@ -38,7 +37,10 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	if strings.TrimSpace(inv.TaskPromptRoot) == "" {
 		return ports.ReviewCommandSpec{Argv: []string{binary}}, nil
 	}
-	return ports.ReviewCommandSpec{Argv: []string{binary, "--print", "--rules", inv.SystemPromptFile, "--", inv.Prompt}}, nil
+	return ports.ReviewCommandSpec{
+		Argv:           []string{binary, "--rules", inv.SystemPromptFile},
+		InitialMessage: inv.Prompt,
+	}, nil
 }
 
 // ReviewMessage returns the next AO-owned task reference.
@@ -50,6 +52,3 @@ func (*Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (s
 func (*Reviewer) ReviewCancel(context.Context) (ports.ReviewCancelSpec, error) {
 	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelInterrupt, Interrupts: 2}, nil
 }
-
-// ReviewProcessReusable reports false because Auggie exits after each print task.
-func (*Reviewer) ReviewProcessReusable() bool { return false }

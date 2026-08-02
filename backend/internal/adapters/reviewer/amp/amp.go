@@ -26,6 +26,12 @@ func (*Reviewer) Harness() domain.ReviewerHarness { return domain.ReviewerAmp }
 
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
+var _ ports.ReviewerPromptReadinessProvider = (*Reviewer)(nil)
+
+// ReviewPromptReadinessHints reuses Amp's worker-TUI prompt markers.
+func (*Reviewer) ReviewPromptReadinessHints(ctx context.Context) (ports.PromptReadinessHints, error) {
+	return workeramp.New().PromptReadinessHints(ctx, ports.LaunchConfig{})
+}
 
 // ReviewCommand launches Amp's permanent interactive TUI. AO never uses
 // --execute; the review task is injected after the pane starts.
