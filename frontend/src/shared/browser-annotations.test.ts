@@ -3,6 +3,8 @@ import {
 	MAX_BROWSER_ANNOTATION_MESSAGE_LENGTH,
 	createBrowserAnnotationContext,
 	formatBrowserAnnotationMessage,
+	type BrowserAnnotationContext,
+	type BrowserAnnotationSubmitPayload,
 } from "./browser-annotations";
 
 describe("createBrowserAnnotationContext", () => {
@@ -67,61 +69,85 @@ describe("createBrowserAnnotationContext", () => {
 	});
 });
 
-describe("formatBrowserAnnotationMessage", () => {
-	it("formats the user instruction and selected element context for the agent", () => {
-		const message = formatBrowserAnnotationMessage({
-			viewId: "42:sess-1",
-			instruction: "Make the save button blue and larger.",
-			context: {
-				url: "http://localhost:5173/settings",
-				title: "Settings",
-				tag: "button",
-				id: "save",
-				classes: ["primary"],
-				selector: "button#save",
-				rect: { x: 16, y: 24, width: 140, height: 36 },
-				visibleText: "Save changes",
-				ariaLabel: "Save profile",
-				nearbyText: ["Profile settings"],
-				computedStyle: {
-					display: "inline-flex",
-					position: "static",
-					color: "rgb(255, 255, 255)",
-					backgroundColor: "rgb(0, 0, 0)",
-					fontSize: "14px",
-					fontWeight: "600",
-					padding: "8px 12px",
-					margin: "0px",
-				},
-			},
-		});
+function context(overrides: Partial<BrowserAnnotationContext> = {}): BrowserAnnotationContext {
+	return {
+		url: "http://localhost:5173/",
+		tag: "button",
+		classes: [],
+		selector: "button#save",
+		rect: { x: 10, y: 20, width: 80, height: 30 },
+		nearbyText: [],
+		computedStyle: {},
+		...overrides,
+	};
+}
 
-		expect(message).toContain("Make the save button blue and larger.");
-		expect(message).toContain("http://localhost:5173/settings");
-		expect(message).toContain("button#save");
-		expect(message).toContain("Save changes");
-		expect(message).toContain("Do not start, restart, or background a dev server");
-		expect(message).toContain("Do not run watch-mode or long-running commands");
+describe("formatBrowserAnnotationMessage", () => {
+	it("formats a single-element selection exactly as before", () => {
+		const payload: BrowserAnnotationSubmitPayload = {
+			viewId: "1:sess-1",
+			instruction: "Make this button blue.",
+			selection: { kind: "element", context: context({ id: "save", selector: "button#save" }) },
+		};
+
+		const message = formatBrowserAnnotationMessage(payload);
+
+		expect(message).toBe(
+			[
+				"The user selected an element in the AO browser preview and asked for a change.",
+				"",
+				"Change request:",
+				"Make this button blue.",
+				"",
+				"Selected element context:",
+				"- URL: http://localhost:5173/",
+				"- Element: button#save",
+				"- Selector: button#save",
+				"- Bounds: x=10, y=20, width=80, height=30",
+				"",
+				"Execution constraints:",
+				"- Make the smallest source change that satisfies the request.",
+				"- Do not start, restart, or background a dev server.",
+				"- Do not run watch-mode or long-running commands.",
+				"- If verification is needed, use a finite command only; otherwise rely on the existing preview watcher or dev-server refresh.",
+			].join("\n"),
+		);
 	});
 
-	it("keeps the message below the daemon send-message limit", () => {
-		const message = formatBrowserAnnotationMessage({
-			viewId: "42:sess-1",
-			instruction: "Change this. ".repeat(800),
-			context: {
-				url: "http://localhost:5173/",
-				title: "Preview",
-				tag: "div",
-				classes: [],
-				selector: "body > div:nth-of-type(1)",
-				rect: { x: 0, y: 0, width: 100, height: 100 },
-				visibleText: "Long visible text ".repeat(500),
-				nearbyText: ["Nearby copy ".repeat(500)],
-				computedStyle: {},
+	it("lists every element for a multi-element selection", () => {
+		const payload: BrowserAnnotationSubmitPayload = {
+			viewId: "1:sess-1",
+			instruction: "Align these two buttons.",
+			selection: {
+				kind: "elements",
+				contexts: [
+					context({ id: "save", selector: "button#save" }),
+					context({ id: "cancel", selector: "button#cancel" }),
+				],
 			},
-		});
+		};
+
+		const message = formatBrowserAnnotationMessage(payload);
+
+		expect(message).toContain("The user selected 2 elements in the AO browser preview and asked for a change.");
+		expect(message).toContain("Selected elements (2) at http://localhost:5173/:");
+		expect(message).toContain("1. button#save (selector: button#save, bounds: x=10, y=20, width=80, height=30)");
+		expect(message).toContain("2. button#cancel (selector: button#cancel, bounds: x=10, y=20, width=80, height=30)");
+	});
+
+	it("truncates an oversized multi-element message to the shared cap", () => {
+		const contexts = Array.from({ length: 200 }, (_, index) =>
+			context({ id: `el-${index}`, selector: `button#el-${index}` }),
+		);
+		const payload: BrowserAnnotationSubmitPayload = {
+			viewId: "1:sess-1",
+			instruction: "Update all of these.",
+			selection: { kind: "elements", contexts },
+		};
+
+		const message = formatBrowserAnnotationMessage(payload);
 
 		expect(message.length).toBeLessThanOrEqual(MAX_BROWSER_ANNOTATION_MESSAGE_LENGTH);
-		expect(message).toContain("[truncated]");
+		expect(message.endsWith("[truncated]")).toBe(true);
 	});
 });
