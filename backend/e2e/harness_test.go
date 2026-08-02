@@ -481,6 +481,9 @@ type snapshot struct {
 	// having reported yet is not the same as a conversation using no tokens.
 	Usage      *usageState      `json:"usage"`
 	RateLimits *rateLimitsState `json:"rateLimits"`
+	// Nil until a compaction has run, which is the distinction the compaction
+	// scenarios assert on.
+	CompactedAt *string `json:"compactedAt"`
 }
 
 // usageState is the conversation's token position, carried as current state on the
@@ -502,6 +505,16 @@ type rateLimitsState struct {
 	PrimaryResetsInSeconds   int64   `json:"primaryResetsInSeconds"`
 	SecondaryResetsInSeconds int64   `json:"secondaryResetsInSeconds"`
 	PlanLabel                string  `json:"planLabel"`
+	// CompactedAt is when history was last summarized to reclaim context, empty if
+	// never. On the snapshot because a client consults it on every render and must
+	// not have to scan an unbounded timeline for it.
+	CompactedAt    string     `json:"compactedAt"`
+	Mode           string     `json:"mode"`
+	Controller     string     `json:"controller"`
+	LatestSequence int64      `json:"latestSequence"`
+	Turns          []turn     `json:"turns"`
+	Messages       []message  `json:"messages"`
+	Activities     []activity `json:"activities"`
 }
 
 func (s snapshot) turnByID(id string) (turn, bool) {

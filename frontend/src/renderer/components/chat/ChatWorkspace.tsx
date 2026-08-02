@@ -13,13 +13,22 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, Brain, Loader2, MessageSquare, Square, TriangleAlert } from "lucide-react";
+import {
+	Archive,
+	ArrowDown,
+	Brain,
+	Loader2,
+	MessageSquare,
+	Square,
+	TriangleAlert,
+} from "lucide-react";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import {
 	ActivityRow,
 	ApprovalCard,
 	AssistantMessage,
+	CompactionMarker,
 	HumanMessage,
 	OriginMessage,
 	TurnOutcome,
@@ -30,6 +39,7 @@ import { TurnSettingsBar } from "./TurnSettingsBar";
 import { ContextMeter } from "./ContextMeter";
 import {
 	activeTurn,
+	isCompaction,
 	pendingApproval,
 	queuedTurnIds,
 	type ConversationSnapshot,
@@ -50,6 +60,12 @@ export interface ChatWorkspaceProps {
 	/** The provider's model catalog. Empty hides the model control. */
 	models?: ChatModel[];
 	onChooseSettings?: (settings: TurnSettings) => void;
+	/** Summarize earlier history to reclaim context. */
+	onCompact?: () => void;
+	/** A compaction is running provider-side. It takes seconds, not milliseconds. */
+	compacting?: boolean;
+	/** Why compaction is not available right now, from the daemon's typed refusal. */
+	compactUnavailable?: string;
 }
 
 export function ChatWorkspace({
@@ -60,6 +76,9 @@ export function ChatWorkspace({
 	busy,
 	models,
 	onChooseSettings,
+	onCompact,
+	compacting,
+	compactUnavailable,
 }: ChatWorkspaceProps) {
 	const turn = activeTurn(snapshot);
 	const approval = pendingApproval(snapshot);
@@ -80,6 +99,13 @@ export function ChatWorkspace({
 				snapshot={snapshot}
 				showReasoning={showReasoning}
 				onToggleReasoning={() => setShowReasoning((prev) => !prev)}
+				onCompact={onCompact}
+				compacting={compacting}
+				compactUnavailable={compactUnavailable}
+				// The daemon refuses a compaction mid-turn, because the provider would
+				// silently discard the running turn to make room. Said here too so the
+				// control explains itself before it is pressed.
+				turnInFlight={Boolean(turn)}
 			/>
 			<ControllerBanner controller={snapshot.controller} />
 
@@ -141,7 +167,11 @@ function runsOf(items: ConversationItem[]): TimelineRun[] {
 			item.activityKind !== "error" &&
 			// An edit is a result, not a mechanic. Burying it in a summary would hide
 			// the one kind of activity that changed the user's worktree.
-			item.activityKind !== "file_change";
+			item.activityKind !== "file_change" &&
+			// A compaction is a boundary in the conversation, not a step in one. Folding
+			// it into a run of tool calls would hide that everything above it is no
+			// longer what the agent sees verbatim.
+			!isCompaction(item);
 		const last = runs.at(-1);
 		if (runnable && last?.kind === "activities") {
 			last.items.push(item);
@@ -190,10 +220,18 @@ function ChatHeader({
 	snapshot,
 	showReasoning,
 	onToggleReasoning,
+	onCompact,
+	compacting,
+	compactUnavailable,
+	turnInFlight,
 }: {
 	snapshot: ConversationSnapshot;
 	showReasoning: boolean;
 	onToggleReasoning: () => void;
+	onCompact?: () => void;
+	compacting?: boolean;
+	compactUnavailable?: string;
+	turnInFlight?: boolean;
 }) {
 	const hasReasoning = snapshot.items.some(
 		(item) => item.kind === "activity" && item.activityKind === "reasoning",
@@ -214,6 +252,15 @@ function ChatHeader({
 				    not answer the question the user actually has -- how full is this,
 				    and am I about to hit a quota wall. */}
 				<ContextMeter usage={snapshot.usage} rateLimits={snapshot.rateLimits} />
+				{/* Beside the meter on purpose: the meter is what tells a user the
+				    context is filling, and this is what they can do about it. */}
+				<CompactButton
+					onCompact={onCompact}
+					compacting={compacting}
+					unavailable={compactUnavailable}
+					turnInFlight={turnInFlight}
+					compactedAt={snapshot.compactedAt}
+				/>
 				{hasReasoning ? (
 					<Button
 						type="button"
@@ -234,6 +281,68 @@ function ChatHeader({
 				</span>
 			</div>
 		</header>
+	);
+}
+
+/**
+ * Reclaim context by summarizing earlier history.
+ *
+ * Worth a control of its own because without it a long conversation eventually
+ * cannot accept another turn at all: every turn re-sends the history, so context
+ * fills whether or not the user does anything unusual. This is the difference
+ * between a session that works for an hour and one that works for a day.
+ *
+ * Disabled mid-turn rather than hidden: the daemon refuses it then, because the
+ * provider would silently discard the running turn to make room, and a control
+ * that vanishes teaches nothing. The tooltip says which of those it is.
+ *
+ * A harness whose provider cannot compact makes the control disappear once the
+ * daemon has said so. It is not hidden up front because the snapshot does not
+ * carry driver capabilities, and adding them for one button would be a wider
+ * contract change than the affordance is worth.
+ */
+function CompactButton({
+	onCompact,
+	compacting,
+	unavailable,
+	turnInFlight,
+	compactedAt,
+}: {
+	onCompact?: () => void;
+	compacting?: boolean;
+	unavailable?: string;
+	turnInFlight?: boolean;
+	compactedAt?: string;
+}) {
+	if (!onCompact) return null;
+	if (unavailable === "This agent cannot compact its history") {
+		return <span className="text-[11px] text-muted-foreground">{unavailable}</span>;
+	}
+
+	const title = turnInFlight
+		? "Finish or stop the current turn before compacting"
+		: compactedAt
+			? `Summarize earlier history to reclaim context. Last compacted ${new Date(compactedAt).toLocaleString()}.`
+			: "Summarize earlier history to reclaim context";
+
+	return (
+		<Button
+			type="button"
+			size="sm"
+			variant="ghost"
+			onClick={onCompact}
+			disabled={compacting || turnInFlight}
+			title={title}
+			aria-label="Compact conversation history"
+			className="h-5 gap-1 px-1.5 text-[11px]"
+		>
+			{compacting ? (
+				<Loader2 aria-hidden="true" className="size-3 animate-spin" />
+			) : (
+				<Archive aria-hidden="true" className="size-3" />
+			)}
+			{compacting ? "Compacting…" : "Compact"}
+		</Button>
 	);
 }
 
@@ -406,6 +515,9 @@ function TimelineItem({
 	}
 	if (item.activityKind === "approval") {
 		return <ApprovalCard activity={item} onDecide={onDecide} busy={busy} />;
+	}
+	if (isCompaction(item)) {
+		return <CompactionMarker activity={item} />;
 	}
 	return <ActivityRow activity={item} />;
 }

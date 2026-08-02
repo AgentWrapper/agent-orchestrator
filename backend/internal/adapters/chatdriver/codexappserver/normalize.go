@@ -32,6 +32,13 @@ const (
 	itemMcpToolCall      = "mcpToolCall"
 	itemWebSearch        = "webSearch"
 	itemError            = "error"
+	// itemContextCompaction is how a current app-server reports that it summarized
+	// earlier history to reclaim context. The schema also declares a
+	// `thread/compacted` notification for the same thing and marks it "Deprecated:
+	// use the ContextCompaction item type instead" — and 0.146.0 emits ONLY the
+	// item, never the notification. Reading the notification alone would mean AO
+	// silently never noticed a compaction on any current provider.
+	itemContextCompaction = "contextCompaction"
 )
 
 // threadItem is the subset of Codex's ThreadItem that AO reads. Fields absent
@@ -146,6 +153,47 @@ type rateLimitsEnvelope struct {
 	} `json:"rateLimits"`
 }
 
+// contextEnvelope reads the conversation's position in the model's context out of
+// a thread/tokenUsage/updated notification.
+//
+// `last` and `total` are different questions and only one of them answers "how
+// full is this conversation". Measured across a compaction: total stayed at 15650
+// (cumulative spend, which compaction cannot undo) while last fell from 15650 to
+// 4632. So last.totalTokens is the context position, and it is the only figure
+// from which a reclaim can be computed.
+type contextEnvelope struct {
+	TokenUsage struct {
+		Last struct {
+			TotalTokens int64 `json:"totalTokens"`
+		} `json:"last"`
+		ModelContextWindow *int64 `json:"modelContextWindow"`
+	} `json:"tokenUsage"`
+}
+
+// compactedEnvelope is the params shape of the deprecated thread/compacted
+// notification. It carries no token figures at all, which is why the reclaim has
+// to be bracketed from token-usage reports rather than read off the event.
+type compactedEnvelope struct {
+	ThreadID string `json:"threadId"`
+	TurnID   string `json:"turnId"`
+}
+
+// contextPositionFrom reports the conversation's context position, or ok=false for
+// a notification that is not a token-usage report.
+func contextPositionFrom(n notification) (used, window int64, ok bool) {
+	if n.Method != "thread/tokenUsage/updated" {
+		return 0, 0, false
+	}
+	var p contextEnvelope
+	if err := json.Unmarshal(n.Params, &p); err != nil {
+		return 0, 0, false
+	}
+	if p.TokenUsage.ModelContextWindow != nil {
+		window = *p.TokenUsage.ModelContextWindow
+	}
+	return p.TokenUsage.Last.TotalTokens, window, true
+}
+
 // resolvedEnvelope is the params shape of serverRequest/resolved, which the
 // provider broadcasts once a request has been answered. It is how a second
 // client learns an approval is no longer actionable.
@@ -245,6 +293,18 @@ func normalizeNotification(n notification, now time.Time) []ports.ChatEvent {
 		}
 		limits := rateLimitsFrom(p, now)
 		return []ports.ChatEvent{{Kind: ports.ChatEventRateLimits, RateLimits: &limits}}
+	case "thread/compacted":
+		// The deprecated spelling, kept for a provider build old enough to send it.
+		// A build that sends both this and the contextCompaction item would report
+		// one compaction twice, so the conversation dedupes on the turn id.
+		var p compactedEnvelope
+		if err := json.Unmarshal(n.Params, &p); err != nil {
+			return nil
+		}
+		return []ports.ChatEvent{{
+			Kind:           ports.ChatEventCompacted,
+			ProviderTurnID: p.TurnID,
+		}}
 
 	case "serverRequest/resolved":
 		var p resolvedEnvelope
@@ -332,6 +392,21 @@ func normalizeItem(params json.RawMessage, completed bool) []ports.ChatEvent {
 	// the timeline entry.
 	if it.Type == itemUserMessage {
 		return nil
+	}
+
+	if it.Type == itemContextCompaction {
+		if !completed {
+			// A compaction in flight is not yet a fact about the conversation, and the
+			// reclaim is unknown until it settles: the reduced token figure arrives
+			// between the item starting and completing. Emitting on start would put a
+			// row in the timeline that has to be rewritten with the real numbers.
+			return nil
+		}
+		return []ports.ChatEvent{{
+			Kind:           ports.ChatEventCompacted,
+			ProviderTurnID: p.TurnID,
+			ProviderItemID: it.ID,
+		}}
 	}
 
 	if it.Type == itemAgentMessage {

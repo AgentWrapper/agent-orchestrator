@@ -131,8 +131,13 @@ type ConversationRecord struct {
 	Usage *ConversationUsage `json:"usage,omitempty"`
 	// RateLimits is where the account stands. Nil until the provider reports.
 	RateLimits *ConversationRateLimits `json:"rateLimits,omitempty"`
-	CreatedAt  time.Time               `json:"createdAt"`
-	UpdatedAt  time.Time               `json:"updatedAt"`
+	// CompactedAt is when the provider last summarized earlier history to reclaim
+	// context. Nil means never. Held as conversation state as well as a timeline
+	// entry so a client can tell whether compaction has run without walking an
+	// unbounded timeline on every render.
+	CompactedAt *time.Time `json:"compactedAt,omitempty"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	UpdatedAt   time.Time  `json:"updatedAt"`
 }
 
 // ConversationUsage is the conversation's token position.

@@ -766,3 +766,150 @@ func TestCapabilitiesAdvertiseUsageAndRateLimits(t *testing.T) {
 		t.Error("rate limit capability not advertised")
 	}
 }
+
+/* ---- compaction --------------------------------------------------------- */
+
+// The wire shape, and the reason compaction exists: without it a long
+// conversation eventually cannot accept another turn at all.
+//
+// thread/compact/start takes the thread id and nothing else. It is deliberately
+// asserted here rather than assumed, because the sibling turn-level calls take a
+// turn id and a tagged sandbox policy, and sending a turn's params to a thread
+// method is rejected outright.
+func TestCompactSendsOnlyTheThreadID(t *testing.T) {
+	d, srv := newTestDriver(t)
+	srv.reply("thread/compact/start", `{}`)
+
+	conv, err := d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = conv.Close() }()
+
+	compactor, ok := conv.(ports.ChatCompactor)
+	if !ok {
+		t.Fatal("conversation does not implement ChatCompactor")
+	}
+	if _, err := compactor.Compact(context.Background()); err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	sent := srv.awaitFrame(func(f frame) bool { return f.Method == "thread/compact/start" })
+	var params map[string]any
+	if err := json.Unmarshal(sent.Params, &params); err != nil {
+		t.Fatalf("compact params: %v", err)
+	}
+	if params["threadId"] != "thread-1" {
+		t.Errorf("threadId = %v, want thread-1", params["threadId"])
+	}
+	if len(params) != 1 {
+		t.Errorf("compact sent %v; the method takes threadId alone", params)
+	}
+}
+
+// The reclaim figures, end to end over the transport.
+//
+// The provider reports NO tokens on its own compaction event, so before/after are
+// bracketed from the token-usage reports either side of the compaction turn. This
+// replays the exact sequence a live app-server sent: a usage report with the old
+// figure arrives AFTER compaction is requested and before the compaction turn
+// starts, which is why "before" is snapshotted at turn start rather than at the
+// moment Compact is called.
+func TestCompactionReportsWhatItReclaimed(t *testing.T) {
+	d, srv := newTestDriver(t)
+	conv, err := d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = conv.Close() }()
+
+	srv.push(`{"method":"thread/tokenUsage/updated","params":{"threadId":"thread-1","turnId":"turn-1","tokenUsage":{"total":{"totalTokens":15650},"last":{"totalTokens":15650},"modelContextWindow":258400}}}`)
+	srv.push(`{"method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"compact-turn","status":"inProgress","items":[]}}}`)
+	srv.push(`{"method":"item/started","params":{"item":{"type":"contextCompaction","id":"cc-1"},"threadId":"thread-1","turnId":"compact-turn"}}`)
+	srv.push(`{"method":"thread/tokenUsage/updated","params":{"threadId":"thread-1","turnId":"compact-turn","tokenUsage":{"total":{"totalTokens":15650},"last":{"totalTokens":4632},"modelContextWindow":258400}}}`)
+	srv.push(`{"method":"item/completed","params":{"item":{"type":"contextCompaction","id":"cc-1"},"threadId":"thread-1","turnId":"compact-turn"}}`)
+
+	ev := nextEvent(t, conv.Events(), ports.ChatEventCompacted)
+	if ev.ProviderItemID != "cc-1" {
+		t.Errorf("provider item id = %q, want cc-1", ev.ProviderItemID)
+	}
+	var detail struct {
+		TokensBefore    int64 `json:"tokensBefore"`
+		TokensAfter     int64 `json:"tokensAfter"`
+		TokensReclaimed int64 `json:"tokensReclaimed"`
+		ContextWindow   int64 `json:"contextWindow"`
+	}
+	if err := json.Unmarshal(ev.Detail, &detail); err != nil {
+		t.Fatalf("compaction detail: %v", err)
+	}
+	if detail.TokensBefore != 15650 || detail.TokensAfter != 4632 {
+		t.Errorf("bracket = %d -> %d, want 15650 -> 4632", detail.TokensBefore, detail.TokensAfter)
+	}
+	if detail.TokensReclaimed != 11018 {
+		t.Errorf("reclaimed = %d, want 11018", detail.TokensReclaimed)
+	}
+	if detail.ContextWindow != 258400 {
+		t.Errorf("context window = %d, want 258400", detail.ContextWindow)
+	}
+	if !strings.Contains(ev.Summary, "11.0k") {
+		t.Errorf("summary = %q, want the reclaimed amount named", ev.Summary)
+	}
+}
+
+// A provider build that emits both the deprecated notification and the item
+// reports one compaction, not two. The turn id is the only key both carry.
+func TestCompactionIsReportedOncePerTurn(t *testing.T) {
+	d, srv := newTestDriver(t)
+	conv, err := d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = conv.Close() }()
+
+	srv.push(`{"method":"item/completed","params":{"item":{"type":"contextCompaction","id":"cc-1"},"threadId":"thread-1","turnId":"compact-turn"}}`)
+	srv.push(`{"method":"thread/compacted","params":{"threadId":"thread-1","turnId":"compact-turn"}}`)
+	// A marker after both, so the test can prove nothing compaction-shaped came
+	// between them without waiting on a timeout.
+	srv.push(`{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"compact-turn","status":"completed","items":[]}}}`)
+
+	nextEvent(t, conv.Events(), ports.ChatEventCompacted)
+	for {
+		ev, ok := <-conv.Events()
+		if !ok {
+			t.Fatal("stream closed before the marker arrived")
+		}
+		if ev.Kind == ports.ChatEventCompacted {
+			t.Fatal("one compaction was reported twice")
+		}
+		if ev.Kind == ports.ChatEventTurnCompleted {
+			return
+		}
+	}
+}
+
+// AO has no context figure until the provider reports one, so a compaction right
+// after a restart genuinely does not know what it saved. Claiming "reclaimed 0
+// tokens" would be a lie rather than a gap.
+func TestCompactionClaimsNoFiguresItDoesNotHave(t *testing.T) {
+	if got := compactionSummary(0, 0); got != "Compacted the conversation history" {
+		t.Errorf("summary with no figures = %q", got)
+	}
+	// Context can also grow across a compaction on a nearly-empty thread: the
+	// summary plus the system prompt outweighed what was there. Measured: an empty
+	// thread compacted from nothing to 4702 tokens.
+	if got := compactionSummary(1000, 4702); got != "Compacted the conversation history" {
+		t.Errorf("summary with no reclaim = %q, want no invented saving", got)
+	}
+	if got := compactionSummary(15650, 4632); !strings.Contains(got, "11.0k tokens") {
+		t.Errorf("summary = %q", got)
+	}
+}
+
+// Compaction is advertised so the UI can offer the control at all. A driver that
+// can compact but does not say so leaves the affordance hidden and the user with
+// no way out of a full context.
+func TestCompactionIsAdvertised(t *testing.T) {
+	if !capabilities().Has(ports.ChatCapabilityCompaction) {
+		t.Fatal("compaction capability is not advertised")
+	}
+}

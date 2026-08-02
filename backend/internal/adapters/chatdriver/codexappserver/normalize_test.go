@@ -363,3 +363,73 @@ func TestUnwrapShellLeavesPlainCommands(t *testing.T) {
 		}
 	}
 }
+
+// A current app-server reports compaction ONLY as a contextCompaction item. The
+// schema still declares a thread/compacted notification and marks it deprecated;
+// 0.146.0 never sends it. Reading only the notification would mean AO silently
+// never noticed a compaction, and a conversation that quietly lost half its
+// history with nothing to mark where reads as if the agent simply forgot.
+func TestNormalizeContextCompactionItem(t *testing.T) {
+	ev := normalizeOne(t, "item/completed",
+		`{"item":{"type":"contextCompaction","id":"cc-1"},"threadId":"th1","turnId":"t1","completedAtMs":1785669337435}`)
+	if ev.Kind != ports.ChatEventCompacted {
+		t.Fatalf("kind = %q, want %q", ev.Kind, ports.ChatEventCompacted)
+	}
+	if ev.ProviderItemID != "cc-1" || ev.ProviderTurnID != "t1" {
+		t.Fatalf("ids = %q/%q, want cc-1/t1", ev.ProviderItemID, ev.ProviderTurnID)
+	}
+}
+
+// The reclaim is unknown until the item settles: the reduced token figure arrives
+// between start and completion. A row emitted on start would have to be rewritten
+// with the real numbers.
+func TestNormalizeContextCompactionStartIsIgnored(t *testing.T) {
+	normalizeNone(t, "item/started",
+		`{"item":{"type":"contextCompaction","id":"cc-1"},"threadId":"th1","turnId":"t1"}`)
+}
+
+// The deprecated spelling, for a provider old enough to send it. It carries only
+// ids: no token figures at all, which is why the reclaim has to be bracketed from
+// token-usage reports rather than read off the event.
+func TestNormalizeDeprecatedCompactedNotification(t *testing.T) {
+	ev := normalizeOne(t, "thread/compacted", `{"threadId":"th1","turnId":"t1"}`)
+	if ev.Kind != ports.ChatEventCompacted {
+		t.Fatalf("kind = %q", ev.Kind)
+	}
+	if ev.ProviderTurnID != "t1" {
+		t.Fatalf("turn id = %q, want t1", ev.ProviderTurnID)
+	}
+	normalizeNone(t, "thread/compacted", `"not an object"`)
+}
+
+// `last` and `total` answer different questions and only one of them is the
+// context position. Measured across a compaction: total stayed at 15650 while last
+// fell to 4632, because compaction cannot undo cumulative spend. Reading total
+// would report every compaction as reclaiming nothing.
+func TestContextPositionReadsLastNotTotal(t *testing.T) {
+	used, window, ok := contextPositionFrom(notification{
+		Method: "thread/tokenUsage/updated",
+		Params: json.RawMessage(`{"threadId":"th1","turnId":"t1","tokenUsage":{"total":{"totalTokens":15650},"last":{"totalTokens":4632},"modelContextWindow":258400}}`),
+	})
+	if !ok {
+		t.Fatal("token usage was not recognized")
+	}
+	if used != 4632 {
+		t.Errorf("context used = %d, want 4632 (last, not total)", used)
+	}
+	if window != 258400 {
+		t.Errorf("context window = %d, want 258400", window)
+	}
+
+	// The window is optional; a report without it must still yield the position.
+	if used, window, ok := contextPositionFrom(notification{
+		Method: "thread/tokenUsage/updated",
+		Params: json.RawMessage(`{"tokenUsage":{"last":{"totalTokens":10},"total":{"totalTokens":10}}}`),
+	}); !ok || used != 10 || window != 0 {
+		t.Errorf("used/window/ok = %d/%d/%v, want 10/0/true", used, window, ok)
+	}
+
+	if _, _, ok := contextPositionFrom(notification{Method: "turn/started"}); ok {
+		t.Error("a non-usage notification was read as a context position")
+	}
+}

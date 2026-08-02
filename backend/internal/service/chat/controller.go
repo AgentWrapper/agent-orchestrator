@@ -54,6 +54,7 @@ type Store interface {
 	SettleAssistantMessage(ctx context.Context, conversationID, providerItemID, providerTurnID, text, messageID string, now time.Time) error
 
 	UpsertActivity(ctx context.Context, conversationID, providerTurnID string, activity domain.ConversationActivity, now time.Time) error
+	MarkCompacted(ctx context.Context, conversationID string, at time.Time) error
 	ResolveApproval(ctx context.Context, conversationID, requestID, detailJSON string, now time.Time) error
 	FailPendingApprovals(ctx context.Context, conversationID string, now time.Time) error
 
@@ -411,6 +412,53 @@ func (c *Controller) Resolve(ctx context.Context, requestID string, decision por
 	return nil
 }
 
+// ErrCompactionUnsupported reports a driver whose provider cannot summarize
+// history. Distinct from a failed compaction: "this agent has no way to reclaim
+// context" is a permanent answer a client should stop offering, not something to
+// retry.
+var ErrCompactionUnsupported = errors.New("chat driver cannot compact history")
+
+// ErrCompactionWhileBusy reports a compaction requested while a turn is running.
+//
+// Refused rather than forwarded because of what the provider does with it:
+// `thread/compact/start` mid-turn silently INTERRUPTS the running turn, reports it
+// as interrupted, and then compacts. Measured twice against a live app-server.
+// Losing work the user is waiting on as a side effect of a housekeeping action is
+// not something they should discover afterwards from the timeline, so AO makes them
+// stop the turn themselves.
+var ErrCompactionWhileBusy = errors.New("cannot compact while a turn is in flight")
+
+// Compact summarizes earlier history to reclaim context.
+//
+// Without it a long conversation eventually cannot accept another turn at all:
+// every turn re-sends the history, so context fills whether or not the user is
+// doing anything unusual.
+//
+// It takes sendMu for the same reason a dispatch does, and the reason matters here:
+// the busy check and the provider call have to be one step. Split, a message
+// arriving in between would start a turn that the compaction then destroys — the
+// exact outcome the check exists to prevent.
+//
+// The lock is released as soon as the provider accepts. The compaction itself runs
+// as a provider turn for the next ten seconds or so, and holding sendMu across that
+// would make the whole conversation unresponsive; the provider's own single-turn
+// rule is what keeps a send from landing mid-compaction, and a send that arrives
+// then queues behind the compaction turn like any other.
+func (c *Controller) Compact(ctx context.Context) (ports.ChatCompactionResult, error) {
+	compactor, ok := c.conv.(ports.ChatCompactor)
+	if !ok {
+		return ports.ChatCompactionResult{}, ErrCompactionUnsupported
+	}
+
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+
+	if c.busy() {
+		return ports.ChatCompactionResult{}, ErrCompactionWhileBusy
+	}
+	return compactor.Compact(ctx)
+}
+
 // turnAckWait bounds how long Interrupt waits for the provider to acknowledge a
 // turn it has only just been handed.
 //
@@ -629,6 +677,34 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 				ProviderItemID: event.ProviderItemID,
 			}, now)
 
+	case ports.ChatEventCompacted:
+		// A fact about the conversation, not about a turn: the provider ran it in a
+		// turn of its own that AO never dispatched, so binding the row to that turn
+		// would file the entry under work the user never asked for. Passing no
+		// provider turn id leaves turn_id NULL, which puts it in the timeline between
+		// the turns it separates rather than inside one of them.
+		//
+		// Recorded because it is the one thing the timeline cannot show without a
+		// row: after a restart the reclaim figures are gone from memory, and a
+		// conversation that silently lost half its history with nothing to mark where
+		// reads as if the agent simply forgot.
+		if err := c.store.UpsertActivity(ctx, c.conversation.ID, "",
+			domain.ConversationActivity{
+				ID:     c.newID(),
+				Kind:   domain.ActivityKindSystem,
+				Status: domain.ActivityStatusCompleted,
+				// Falls back to a plain label rather than an empty row: a driver that
+				// reports a compaction without a summary still happened.
+				Summary: firstNonEmpty(event.Summary, "Compacted the conversation history"),
+				Detail:  compactionDetail(event),
+				// The provider's own item id, so a compaction replayed across a
+				// reconnect updates the existing row instead of adding a second.
+				ProviderItemID: event.ProviderItemID,
+			}, now); err != nil {
+			return err
+		}
+		return c.store.MarkCompacted(ctx, c.conversation.ID, now)
+
 	case ports.ChatEventApprovalRequested:
 		// Blocked on a person, which is distinct from working and from idle: the
 		// board should surface it as needing attention.
@@ -741,6 +817,36 @@ func normalizeOrigin(origin domain.MessageOrigin) domain.MessageOrigin {
 	default:
 		return domain.MessageOriginHuman
 	}
+}
+
+// compactionDetail stamps the driver's reclaim figures with what kind of system
+// event this row is.
+//
+// `system` is a general bucket, so a reader cannot tell a compaction from whatever
+// else lands there next. The discriminator is set here rather than in a driver
+// because the choice of kind is this projection's, not the provider's — and a
+// compaction rendered as a generic notice would lose the one thing that matters
+// about it: that the history above it is no longer what the agent sees.
+func compactionDetail(event ports.ChatEvent) []byte {
+	merged := map[string]any{}
+	if len(event.Detail) > 0 {
+		_ = json.Unmarshal(event.Detail, &merged)
+	}
+	merged["event"] = "compaction"
+	encoded, err := json.Marshal(merged)
+	if err != nil {
+		return event.Detail
+	}
+	return encoded
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func nonEmptyJSON(raw []byte) []byte {

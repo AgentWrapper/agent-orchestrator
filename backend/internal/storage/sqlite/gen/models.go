@@ -38,6 +38,7 @@ type Conversation struct {
 	Model                      sql.NullString
 	ReasoningEffort            sql.NullString
 	ApprovalMode               sql.NullString
+	CompactedAt                sql.NullTime
 	ContextUsed                sql.NullInt64
 	ContextWindow              sql.NullInt64
 	UsageInputTokens           sql.NullInt64

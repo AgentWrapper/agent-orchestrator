@@ -164,6 +164,32 @@ export function useConversationCommands(sessionId: string | undefined) {
 		onSuccess: invalidate,
 	});
 
+	/**
+	 * Summarize earlier history to reclaim context.
+	 *
+	 * Without this a long conversation eventually cannot accept another turn at all:
+	 * every turn re-sends the history, so context fills on its own. It is the
+	 * difference between a session that works for an hour and one that works for a
+	 * day.
+	 *
+	 * The daemon answers as soon as the provider accepts, and the provider then does
+	 * the work over the next several seconds. So there is nothing to show on success
+	 * beyond the refetch — the reclaim arrives on the timeline as its own entry,
+	 * which is where it belongs, since it is durable history rather than the answer
+	 * to one request.
+	 */
+	const compact = useMutation({
+		mutationFn: async () => {
+			const { data, error } = await apiClient.POST(
+				"/api/v1/sessions/{sessionId}/conversation/compact",
+				{ params: { path: { sessionId: sessionId as string } } },
+			);
+			if (error) throw error;
+			return data;
+		},
+		onSuccess: invalidate,
+	});
+
 	const chooseSettings = useMutation({
 		mutationFn: async (settings: TurnSettings) => {
 			const { error } = await apiClient.PATCH(
@@ -181,7 +207,23 @@ export function useConversationCommands(sessionId: string | undefined) {
 		send: (text: string) => send.mutate(text),
 		resolve: (requestId: string, decisionId: string) => resolve.mutate({ requestId, decisionId }),
 		interrupt: () => interrupt.mutate(),
+		compact: () => compact.mutate(),
 		chooseSettings: (settings: TurnSettings) => chooseSettings.mutate(settings),
+		/** A compaction is in flight provider-side and takes seconds, so it reads as
+		 *  its own state rather than folding into the generic busy flag, which also
+		 *  gates the composer. */
+		compacting: compact.isPending,
+		/**
+		 * The daemon refuses a compaction while a turn is running, because the
+		 * provider would silently discard that turn to make room. Surfaced so the
+		 * control can explain itself instead of appearing to do nothing.
+		 */
+		compactUnavailable:
+			apiErrorCode(compact.error) === "CHAT_COMPACTION_UNSUPPORTED"
+				? "This agent cannot compact its history"
+				: apiErrorCode(compact.error) === "CHAT_COMPACTION_BUSY"
+					? "Stop the current turn before compacting"
+					: undefined,
 		busy: send.isPending || resolve.isPending || interrupt.isPending,
 		error:
 			send.error || resolve.error || interrupt.error || chooseSettings.error
@@ -254,6 +296,7 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 		// nothing rather than as an empty bar.
 		usage: wire.usage ? { ...wire.usage } : undefined,
 		rateLimits: wire.rateLimits ? { ...wire.rateLimits } : undefined,
+		compactedAt: wire.compactedAt ?? undefined,
 		turns: (wire.turns ?? []).map((turn) => ({
 			id: turn.id,
 			state: turn.state as TurnState,
