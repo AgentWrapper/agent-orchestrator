@@ -28,22 +28,15 @@ import {
 	isValidElement,
 	memo,
 	useContext,
-	useEffect,
-	useReducer,
 	useState,
 	type ReactNode,
 } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { WrapText } from "lucide-react";
-import type { Root, RootContent } from "hast";
 import { cn } from "../../lib/utils";
-import {
-	canonicalLanguage,
-	highlight,
-	highlightSync,
-	type GrammarName,
-} from "../../lib/code-highlight";
+import { canonicalLanguage } from "../../lib/code-highlight";
+import { HighlightedCode } from "./HighlightedCode";
 import { CopyButton } from "./CopyButton";
 import "./code-theme.css";
 
@@ -62,13 +55,25 @@ const StreamingProse = createContext(false);
 export const ChatMarkdown = memo(function ChatMarkdown({
 	text,
 	streaming = false,
+	muted = false,
 }: {
 	text: string;
 	streaming?: boolean;
+	/**
+	 * Prose that is not the answer. Reasoning is the case: it reads alongside the
+	 * agent's reply and must not compete with it, so it steps back a tone rather than
+	 * being dimmed with opacity — which would wash out code and links too.
+	 */
+	muted?: boolean;
 }) {
 	return (
 		<StreamingProse.Provider value={streaming}>
-			<div className="chat-md text-sm leading-[1.58] text-foreground">
+			<div
+				className={cn(
+					"chat-md leading-[1.58]",
+					muted ? "text-[13px] text-muted-foreground" : "text-sm text-foreground",
+				)}
+			>
 				<Markdown remarkPlugins={PLUGINS} components={COMPONENTS}>
 					{text}
 				</Markdown>
@@ -99,7 +104,6 @@ let preferredWrap = false;
 function CodeBlock({ code, language }: { code: string; language?: string }) {
 	const streaming = useContext(StreamingProse);
 	const grammar = canonicalLanguage(language);
-	const tokens = useHighlighted(code, grammar, streaming);
 	const [wrap, setWrap] = useState(preferredWrap);
 
 	return (
@@ -136,68 +140,11 @@ function CodeBlock({ code, language }: { code: string; language?: string }) {
 			</div>
 			<pre className="overflow-x-auto px-3 py-2.5">
 				<code className="font-mono text-[12px] leading-[1.6] text-foreground">
-					{tokens ? renderTokens(tokens.children) : code}
+					<HighlightedCode code={code} language={grammar} streaming={streaming} />
 				</code>
 			</pre>
 		</div>
 	);
-}
-
-/**
- * The token tree for a settled block, as soon as one can be had.
- *
- * Two paths, because the flash between them is the whole problem: a cached or
- * already-warm block is highlighted in its first render, and only a cold one
- * renders plain for a beat while the grammars load. The cache is the state — the
- * async path writes into it and this re-reads it, so nothing here can hold a tree
- * that disagrees with the one the next block will get.
- */
-function useHighlighted(
-	code: string,
-	language: GrammarName | undefined,
-	streaming: boolean,
-): Root | undefined {
-	// A streaming fence has no settled content: its text changes on every delta, so
-	// tokenizing it would re-parse per delta and fill the cache with keys nothing
-	// will ever read again.
-	const wanted = Boolean(language) && !streaming;
-	const tokens = wanted ? highlightSync(code, language!) : undefined;
-	const [, reread] = useReducer((count: number) => count + 1, 0);
-
-	useEffect(() => {
-		if (!wanted || tokens) return;
-		let live = true;
-		void highlight(code, language!).then(() => {
-			if (live) reread();
-		});
-		return () => {
-			live = false;
-		};
-	}, [code, language, wanted, tokens]);
-
-	return tokens;
-}
-
-/**
- * highlight.js output as React elements rather than as an HTML string.
- *
- * `dangerouslySetInnerHTML` is the usual way to do this and it is what the
- * comment at the top of this file rules out: the escaping guarantee would then
- * depend on the highlighter rather than on there being no HTML path at all. The
- * tree is only spans carrying class names, so walking it is cheap. Index keys are
- * correct here — the tree is rebuilt whole or read from cache, never patched.
- */
-function renderTokens(nodes: readonly RootContent[]): ReactNode {
-	return nodes.map((node, index) => {
-		if (node.type === "text") return node.value;
-		if (node.type !== "element") return null;
-		const className = node.properties.className;
-		return (
-			<span key={index} className={Array.isArray(className) ? className.join(" ") : undefined}>
-				{renderTokens(node.children)}
-			</span>
-		);
-	});
 }
 
 /** The text inside a node, for the copy button and language sniffing. */

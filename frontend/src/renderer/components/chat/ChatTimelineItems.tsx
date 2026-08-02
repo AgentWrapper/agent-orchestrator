@@ -7,24 +7,31 @@
  * re-sorting. Those belong to the daemon.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
 	AlertTriangle,
 	Archive,
 	Brain,
 	ChevronRight,
 	CircleAlert,
+	CornerDownRight,
 	FileDiff,
 	Gauge,
+	KeyRound,
+	Keyboard,
 	ListChecks,
 	Loader2,
+	Plug,
+	Shuffle,
+	ShieldCheck,
 	ShieldQuestion,
+	ShieldX,
 	SquareTerminal,
 	User,
 } from "lucide-react";
 
 /** Fixed icon column, matching the prototype's row anatomy. */
-const activityIcon = {
+const activityIcon: Record<ActivityKind, typeof SquareTerminal> = {
 	command: SquareTerminal,
 	file_change: FileDiff,
 	plan: ListChecks,
@@ -33,18 +40,26 @@ const activityIcon = {
 	usage: Gauge,
 	error: AlertTriangle,
 	system: CircleAlert,
-} as const;
+	mcp_tool: Plug,
+	auto_review: ShieldCheck,
+};
 import { cn } from "../../lib/utils";
+import { caretNotation, stripAnsi } from "../../lib/ansi";
 import { ChatMarkdown } from "./ChatMarkdown";
+import { HighlightedCode } from "./HighlightedCode";
 import { CopyButton } from "./CopyButton";
 import { Button } from "../ui/button";
-import type {
-	ConversationActivity,
-	ConversationMessage,
-	DecisionOption,
-	DeliveryState,
-	DiffStatus,
-	TurnDiff,
+import {
+	fileChangeFiles,
+	reviewedPaths,
+	type ActivityKind,
+	type ConversationActivity,
+	type ConversationMessage,
+	type DecisionOption,
+	type DeliveryState,
+	type DiffStatus,
+	type FileChangeFile,
+	type TurnDiff,
 } from "../../types/conversation";
 
 const timeFormatter = new Intl.DateTimeFormat(undefined, {
@@ -183,12 +198,29 @@ function DeliveryNote({ state }: { state: DeliveryState }) {
 /* -------------------------------------------------------------------------- */
 
 /**
+ * One activity, routed to the renderer for its kind.
+ *
+ * The dispatch lives here rather than in the timeline because a run collapses
+ * activities too, and both paths must agree about what an MCP call looks like. A
+ * kind this build does not recognize still renders as a generic row — dropping it
+ * would hide work the agent really did.
+ */
+export function ActivityRow({ activity }: { activity: ConversationActivity }) {
+	if (activity.activityKind === "mcp_tool") return <McpToolRow activity={activity} />;
+	if (activity.activityKind === "auto_review") return <AutoReviewRow activity={activity} />;
+	if (activity.activityKind === "reasoning") return <ReasoningBlock activity={activity} />;
+	if (activity.detail?.event === "model.rerouted") return <RerouteRow activity={activity} />;
+	if (activity.detail?.event === "auth.reauth_required") return <ReauthRow activity={activity} />;
+	return <GenericActivityRow activity={activity} />;
+}
+
+/**
  * A collapsed activity row: icon, label, target, state. Expands to its payload.
  *
  * A `running` activity with no completion is a real terminal state here, not a
  * spinner that hangs forever — a provider can start a command and supersede it.
  */
-export function ActivityRow({ activity }: { activity: ConversationActivity }) {
+function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 	// null means "nobody has decided", which is what lets a running command open
 	// itself and then close again once it settles. Once the user clicks, their
 	// choice sticks: auto-collapsing a log someone is reading is worse than leaving
@@ -196,7 +228,10 @@ export function ActivityRow({ activity }: { activity: ConversationActivity }) {
 	const [override, setOverride] = useState<boolean | null>(null);
 	const Icon = activityIcon[activity.activityKind] ?? SquareTerminal;
 	const detail = activity.detail;
-	const hasBody = Boolean(detail?.output || detail?.reason || detail?.text || detail?.files?.length);
+	const files = fileChangeFiles(activity);
+	const hasBody = Boolean(
+		detail?.output || detail?.reason || detail?.text || detail?.terminalInput || files.length,
+	);
 	const { label, path } = splitSummary(activity);
 
 	// Live output is only live if it is on screen, so a command that is still
@@ -248,14 +283,53 @@ export function ActivityRow({ activity }: { activity: ConversationActivity }) {
 
 			{open && hasBody ? (
 				<div className="flex flex-col gap-1.5 px-[11px] pb-2.5">
-					{detail?.files?.length ? <FileChangeList files={detail.files} /> : null}
+					{files.length ? <FileChangeList files={files} /> : null}
 					{detail?.reason || detail?.text ? (
 						<p className="whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">
 							{detail.reason ?? detail.text}
 						</p>
 					) : null}
+					{detail?.terminalInput ? (
+						<TerminalInput
+							text={detail.terminalInput}
+							truncated={detail.terminalInputTruncated}
+						/>
+					) : null}
 					{detail?.output ? <CommandOutput activity={activity} /> : null}
 				</div>
+			) : null}
+		</div>
+	);
+}
+
+/**
+ * What the agent typed into a running command's terminal.
+ *
+ * Shown apart from the output, and labelled as input, because it is the one thing in
+ * the row the agent did rather than observed — usually `^C` on a command that was
+ * never going to finish. The daemon keeps it out of `output` for the same reason it
+ * is drawn separately here: the PTY echoes keystrokes, so merging them would print
+ * the abort twice and leave no way to tell which was which.
+ *
+ * Control characters are spelled the way a terminal spells them. Stripping them
+ * would leave an empty box where the interesting thing happened: an abort IS one
+ * unprintable byte.
+ */
+function TerminalInput({ text, truncated }: { text: string; truncated?: boolean }) {
+	const shown = useMemo(() => caretNotation(text), [text]);
+	return (
+		<div className="flex flex-col gap-1">
+			<span className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.08em] text-muted-foreground/70">
+				<Keyboard aria-hidden="true" className="size-3" />
+				Agent typed
+			</span>
+			<pre className="overflow-x-auto rounded-md border border-dashed border-border-strong bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-accent">
+				{shown}
+			</pre>
+			{truncated ? (
+				<p className="text-[10px] text-muted-foreground/70">
+					AO stopped recording keystrokes at its cap; more were sent.
+				</p>
 			) : null}
 		</div>
 	);
@@ -273,11 +347,20 @@ export function ActivityRow({ activity }: { activity: ConversationActivity }) {
  * The caveat below it is not boilerplate. The provider drops output, and it does
  * so differently per source, so the note says which source this is and why it may
  * be incomplete rather than hedging the same way about both.
+ *
+ * The text is what a terminal would have shown, not the bytes: output arrives with
+ * its escape sequences intact — nothing in the stack strips them — so a colourized
+ * test run rendered here verbatim is a wall of `[0m`, and a progress bar is a
+ * hundred stacked copies of itself. See `lib/ansi.ts` for why this is a text pass
+ * rather than a terminal.
  */
 function CommandOutput({ activity }: { activity: ConversationActivity }) {
 	const pre = useRef<HTMLPreElement>(null);
 	const detail = activity.detail;
-	const output = detail?.output ?? "";
+	const raw = detail?.output ?? "";
+	// Memoized per row: the timeline re-renders once a second while a turn runs, and
+	// only the rows a reader has opened pay for this at all.
+	const output = useMemo(() => stripAnsi(raw), [raw]);
 	const streaming = activity.status === "running";
 
 	useEffect(() => {
@@ -329,8 +412,8 @@ function splitSummary(activity: ConversationActivity): { label: string; path?: s
 		}
 		return { label: command };
 	}
-	const files = activity.detail?.files;
-	if (activity.activityKind === "file_change" && files?.length === 1) {
+	const files = fileChangeFiles(activity);
+	if (activity.activityKind === "file_change" && files.length === 1) {
 		return { label: "Edited", path: shortenPaths(files[0]!.path) };
 	}
 	return { label: activity.summary };
@@ -346,6 +429,7 @@ function ActivityState({
 	hasBody: boolean;
 }) {
 	const { status, detail } = activity;
+	const files = fileChangeFiles(activity);
 
 	if (status === "running") {
 		return (
@@ -355,9 +439,9 @@ function ActivityState({
 			/>
 		);
 	}
-	if (detail?.files?.length) {
-		const additions = detail.files.reduce((sum, file) => sum + file.additions, 0);
-		const deletions = detail.files.reduce((sum, file) => sum + file.deletions, 0);
+	if (files.length) {
+		const additions = files.reduce((sum, file) => sum + file.additions, 0);
+		const deletions = files.reduce((sum, file) => sum + file.deletions, 0);
 		return (
 			<span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/70">
 				<span className="text-success">+{additions}</span>{" "}
@@ -389,24 +473,567 @@ function ActivityState({
 	return null;
 }
 
-function FileChangeList({
-	files,
-}: {
-	files: NonNullable<ConversationActivity["detail"]>["files"];
-}) {
-	if (!files?.length) return null;
+/**
+ * The files one edit touched, and what it did to them.
+ *
+ * Every field here is new signal. The daemon normalizes the provider's change kind
+ * — which arrives as an object — into a plain status, so a row can finally say
+ * whether a file was added, deleted or renamed instead of only counting lines. And
+ * each file now carries its own patch, which is the difference between being told
+ * something changed and being able to read the change without leaving the
+ * conversation.
+ */
+export function FileChangeList({ files }: { files: FileChangeFile[] }) {
+	if (!files.length) return null;
 	return (
-		<ul className="flex flex-col gap-1">
+		<ul className="flex flex-col gap-0.5">
 			{files.map((file) => (
-				<li key={file.path} className="flex items-center gap-3 text-xs">
-					<span className="min-w-0 flex-1 truncate font-mono text-muted-foreground">
-						{file.path}
-					</span>
-					<span className="shrink-0 tabular-nums text-success">+{file.additions}</span>
-					<span className="shrink-0 tabular-nums text-destructive">&minus;{file.deletions}</span>
-				</li>
+				<FileChangeRow key={`${file.oldPath ?? ""}→${file.path}`} file={file} />
 			))}
 		</ul>
+	);
+}
+
+function FileChangeRow({ file }: { file: FileChangeFile }) {
+	const [open, setOpen] = useState(false);
+	const status = diffStatusMark[file.status ?? "modified"] ?? diffStatusMark.modified;
+	const hasPatch = Boolean(file.patch);
+
+	const line = (
+		<>
+			<span
+				aria-label={status.label}
+				className={cn("w-3 shrink-0 text-center font-mono text-[10px] font-semibold", status.tone)}
+				title={status.label}
+			>
+				{status.mark}
+			</span>
+			<span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground" title={file.path}>
+				{file.oldPath ? (
+					<>
+						<span className="text-muted-foreground/60">{shortenPaths(file.oldPath)}</span>
+						<span aria-hidden="true" className="px-1 text-muted-foreground/40">
+							&rarr;
+						</span>
+					</>
+				) : null}
+				{shortenPaths(file.path)}
+			</span>
+			<span className="shrink-0 font-mono text-[10px] tabular-nums text-success">
+				+{file.additions}
+			</span>
+			<span className="shrink-0 font-mono text-[10px] tabular-nums text-destructive">
+				&minus;{file.deletions}
+			</span>
+		</>
+	);
+
+	// A file with no patch is not a button: nothing opens, and a control that does
+	// nothing when pressed is worse than plain text.
+	if (!hasPatch) {
+		return <li className="flex items-center gap-2.5 px-0.5 py-1">{line}</li>;
+	}
+
+	return (
+		<li className="flex flex-col">
+			<button
+				type="button"
+				onClick={() => setOpen((prev) => !prev)}
+				aria-expanded={open}
+				className="flex items-center gap-2.5 rounded-sm px-0.5 py-1 text-left transition-colors hover:bg-interactive-hover"
+			>
+				{line}
+				<ChevronRight
+					aria-hidden="true"
+					className={cn(
+						"size-3 shrink-0 text-muted-foreground/50 transition-transform",
+						open && "rotate-90",
+					)}
+				/>
+			</button>
+			{open ? <Patch patch={file.patch!} truncated={file.patchTruncated} /> : null}
+		</li>
+	);
+}
+
+/**
+ * One file's unified diff.
+ *
+ * Highlighted by the same engine the prose fences use — `diff` is one of the shipped
+ * grammars — rather than by a second highlighter that would double the payload and
+ * eventually disagree with the first.
+ *
+ * An added file's "patch" is its whole contents with no hunk header, which the diff
+ * grammar renders as plain text. That is the right outcome: there is no diff to
+ * colour, only a new file to read.
+ */
+function Patch({ patch, truncated }: { patch: string; truncated?: boolean }) {
+	return (
+		// `chat-code` is what the token colours are scoped to, so a patch without it
+		// tokenizes correctly and renders in one flat colour.
+		<div className="chat-code mb-1 mt-0.5 overflow-hidden rounded-md border border-border bg-background">
+			<pre className="max-h-72 overflow-auto px-2.5 py-2">
+				<code className="font-mono text-[10.5px] leading-[1.55] text-foreground">
+					<HighlightedCode code={patch} language="diff" />
+				</code>
+			</pre>
+			{truncated ? (
+				<p className="border-t border-border px-2.5 py-1.5 text-[10px] leading-relaxed text-warning">
+					This patch is longer than AO stores, so it stops early. The whole change is in the
+					worktree and in the turn&rsquo;s diff.
+				</p>
+			) : null}
+		</div>
+	);
+}
+
+/* -------------------------------------------------------------------------- */
+/* reasoning                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The model's own account of what it is doing.
+ *
+ * Rendered as prose on a rail rather than as a collapsed row, because a reader only
+ * ever sees this after deliberately turning reasoning on — hiding it again behind a
+ * second click would make the toggle do nothing. It is markdown: the provider writes
+ * bolded section headers into its summaries, and showing those as literal asterisks
+ * was the visible half of this being unread.
+ *
+ * The text streams. Earlier builds read a field the payload does not have, so these
+ * rows arrived blank even when the provider was sending; it now lands in `text`
+ * while the model works and is replaced by the provider's settled summary when the
+ * item completes, so one field is read either way.
+ */
+function ReasoningBlock({ activity }: { activity: ConversationActivity }) {
+	const text = activity.detail?.text ?? activity.detail?.reason ?? "";
+	if (!text) return null;
+	const streaming = activity.status === "running";
+
+	return (
+		<div className="flex gap-2.5 border-l-2 border-border-strong py-0.5 pl-3">
+			<Brain aria-hidden="true" className="mt-[3px] size-3.5 shrink-0 text-muted-foreground/70" />
+			<div className="min-w-0 flex-1">
+				<div className="flex items-center gap-2">
+					<span className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground/70">
+						{streaming ? "Thinking" : "Thought"}
+					</span>
+					{streaming ? (
+						<Loader2
+							aria-label="still thinking"
+							className="size-3 animate-spin text-muted-foreground/50"
+						/>
+					) : null}
+				</div>
+				<ChatMarkdown text={text} streaming={streaming} muted />
+				{activity.detail?.textTruncated ? (
+					<p className="mt-1 text-[10px] text-muted-foreground/70">
+						This summary is longer than AO stores, so it stops early.
+					</p>
+				) : null}
+			</div>
+		</div>
+	);
+}
+
+/* -------------------------------------------------------------------------- */
+/* MCP tool calls                                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A call to a tool served by an MCP server.
+ *
+ * Deliberately not shaped like a command row. These used to render as though the
+ * agent had run something in the worktree, which is a different and more alarming
+ * claim than "it asked a tool server a question": nothing was executed here, and the
+ * cwd it appeared to run in did not exist. So the row names the server and the tool,
+ * and opens onto the arguments and the answer rather than onto terminal output.
+ */
+function McpToolRow({ activity }: { activity: ConversationActivity }) {
+	const [open, setOpen] = useState(false);
+	const detail = activity.detail;
+	const tool = detail?.toolName ?? activity.summary;
+	const server = detail?.server ?? detail?.namespace;
+	const failed = activity.status === "failed" || detail?.success === false || Boolean(detail?.error);
+	const hasBody = Boolean(
+		detail?.arguments !== undefined ||
+			detail?.result !== undefined ||
+			detail?.error ||
+			detail?.progress,
+	);
+
+	return (
+		<div className="group/activity border-t border-border first:border-t-0">
+			<button
+				type="button"
+				onClick={() => setOpen((prev) => !prev)}
+				disabled={!hasBody}
+				aria-expanded={hasBody ? open : undefined}
+				className={cn(
+					"flex min-h-[35px] w-full items-center gap-[9px] px-[11px] py-2 text-left text-[11px] transition-colors",
+					hasBody && "hover:bg-interactive-hover",
+					!hasBody && "cursor-default",
+				)}
+			>
+				<Plug
+					aria-hidden="true"
+					className={cn(
+						"w-[15px] shrink-0 text-center",
+						failed ? "text-destructive" : "text-accent-dim",
+					)}
+					size={13}
+				/>
+				{/* The server is named first and in its own colour: which server answered is
+				    the part a shell command row could never have said. */}
+				{server ? (
+					<span className="shrink-0 font-mono text-[10.5px] text-muted-foreground">
+						{server}
+						<span aria-hidden="true" className="px-0.5 text-muted-foreground/40">
+							/
+						</span>
+					</span>
+				) : null}
+				<strong className={cn("shrink-0 font-medium", failed ? "text-destructive" : "text-foreground")}>
+					{tool}
+				</strong>
+				<span className="min-w-0 flex-1 truncate text-[10.5px] text-muted-foreground/70">
+					{detail?.progress ? lastLine(detail.progress) : "MCP tool"}
+				</span>
+				{activity.status === "running" ? (
+					<Loader2
+						aria-label="running"
+						className="size-3 shrink-0 animate-spin text-muted-foreground/60"
+					/>
+				) : failed ? (
+					<span className="shrink-0 text-[10px] text-destructive">failed</span>
+				) : hasBody ? (
+					<ChevronRight
+						aria-hidden="true"
+						className={cn(
+							"size-3 shrink-0 text-muted-foreground/50 transition-all",
+							open ? "rotate-90 opacity-100" : "opacity-0 group-hover/activity:opacity-100",
+						)}
+					/>
+				) : null}
+			</button>
+
+			{open && hasBody ? (
+				<div className="flex flex-col gap-2 px-[11px] pb-2.5">
+					{detail?.error ? (
+						<p className="rounded border border-destructive/30 bg-background px-2.5 py-1.5 text-[11px] leading-relaxed text-destructive">
+							{detail.error}
+						</p>
+					) : null}
+					{detail?.arguments !== undefined ? (
+						<JsonPayload label="Arguments" value={detail.arguments} />
+					) : null}
+					{detail?.result !== undefined ? (
+						<JsonPayload label="Result" value={detail.result} />
+					) : null}
+					{detail?.progress ? (
+						<div className="flex flex-col gap-1">
+							<span className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground/70">
+								Progress
+							</span>
+							<pre className="max-h-40 overflow-auto rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-muted-foreground">
+								{detail.progress}
+							</pre>
+						</div>
+					) : null}
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+/**
+ * A tool's arguments or answer, as JSON.
+ *
+ * A payload the daemon could not store arrives as a stand-in object rather than as
+ * the real thing, and printing that stand-in as if it were the tool's answer would
+ * be a small lie with a confusing shape. It is recognized and said plainly instead.
+ */
+function JsonPayload({ label, value }: { label: string; value: unknown }) {
+	const capped = truncationNote(value);
+	const text = useMemo(() => (capped ? "" : formatJson(value)), [capped, value]);
+
+	return (
+		<div className="flex flex-col gap-1">
+			<span className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground/70">
+				{label}
+			</span>
+			{capped ? (
+				<p className="rounded-md border border-border bg-background px-2.5 py-1.5 text-[10.5px] leading-relaxed text-muted-foreground">
+					{capped}
+				</p>
+			) : (
+				<pre className="chat-code max-h-56 overflow-auto rounded-md border border-border bg-background px-2.5 py-1.5">
+					<code className="font-mono text-[10.5px] leading-[1.55] text-foreground">
+						<HighlightedCode code={text} language="json" />
+					</code>
+				</pre>
+			)}
+		</div>
+	);
+}
+
+/** The daemon's stand-in for a payload past its cap, or nothing. */
+function truncationNote(value: unknown): string | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const record = value as { truncated?: unknown; bytes?: unknown; note?: unknown };
+	if (record.truncated !== true) return undefined;
+	const bytes = typeof record.bytes === "number" ? ` (${formatBytes(record.bytes)})` : "";
+	return `This payload${bytes} was larger than AO stores, so it was not kept.`;
+}
+
+function formatBytes(bytes: number): string {
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatJson(value: unknown): string {
+	if (typeof value === "string") return value;
+	try {
+		return JSON.stringify(value, null, 2) ?? String(value);
+	} catch {
+		return String(value);
+	}
+}
+
+/** The most recent line of a progress stream, for the collapsed row. */
+function lastLine(text: string): string {
+	const lines = text.trimEnd().split("\n");
+	return lines[lines.length - 1] ?? "";
+}
+
+/* -------------------------------------------------------------------------- */
+/* auto review                                                                 */
+/* -------------------------------------------------------------------------- */
+
+const RISK_TONE: Record<string, string> = {
+	low: "text-muted-foreground",
+	medium: "text-warning",
+	high: "text-destructive",
+	critical: "text-destructive",
+};
+
+/**
+ * A decision the provider made instead of asking.
+ *
+ * This is not an approval card and must not read like one: nobody was asked, and
+ * there is nothing to answer. What the row owes the user is the fact that a decision
+ * was taken on their behalf, what it allowed, and — reachable rather than shouted —
+ * the reasoning that allowed it. Denials are called out more loudly than approvals,
+ * because a denial is why something the user expected did not happen.
+ */
+function AutoReviewRow({ activity }: { activity: ConversationActivity }) {
+	const [open, setOpen] = useState(false);
+	const detail = activity.detail;
+	const denied = (detail?.status ?? "").toLowerCase().includes("den");
+	const Icon = denied ? ShieldX : ShieldCheck;
+	const paths = reviewedPaths(activity);
+	const hasBody = Boolean(
+		detail?.rationale || detail?.command || detail?.cwd || detail?.host || paths.length,
+	);
+
+	return (
+		<div className="group/activity border-t border-border first:border-t-0">
+			<button
+				type="button"
+				onClick={() => setOpen((prev) => !prev)}
+				disabled={!hasBody}
+				aria-expanded={hasBody ? open : undefined}
+				className={cn(
+					"flex min-h-[35px] w-full items-center gap-[9px] px-[11px] py-2 text-left text-[11px] transition-colors",
+					hasBody && "hover:bg-interactive-hover",
+					!hasBody && "cursor-default",
+				)}
+			>
+				<Icon
+					aria-hidden="true"
+					className={cn(
+						"w-[15px] shrink-0 text-center",
+						denied ? "text-destructive" : "text-muted-foreground/70",
+					)}
+					size={13}
+				/>
+				<strong className="shrink-0 font-medium text-foreground">
+					{denied ? "Auto-declined" : "Auto-approved"}
+				</strong>
+				<span
+					className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-muted-foreground"
+					title={activity.summary}
+				>
+					{shortenPaths(activity.summary)}
+				</span>
+				{detail?.riskLevel ? (
+					<span
+						className={cn(
+							"shrink-0 text-[10px] uppercase tracking-[0.06em]",
+							RISK_TONE[detail.riskLevel.toLowerCase()] ?? "text-muted-foreground",
+						)}
+						title={`Risk assessed as ${detail.riskLevel}`}
+					>
+						{detail.riskLevel}
+					</span>
+				) : null}
+				{hasBody ? (
+					<ChevronRight
+						aria-hidden="true"
+						className={cn(
+							"size-3 shrink-0 text-muted-foreground/50 transition-all",
+							open ? "rotate-90 opacity-100" : "opacity-0 group-hover/activity:opacity-100",
+						)}
+					/>
+				) : null}
+			</button>
+
+			{open && hasBody ? (
+				<div className="flex flex-col gap-2 px-[11px] pb-2.5">
+					{/* Said in full rather than implied by the label: "auto-approved" alone
+					    leaves it ambiguous whether the user set something up that did this. */}
+					<p className="text-[11px] leading-relaxed text-muted-foreground">
+						{denied
+							? "The agent asked to do this and the provider declined on your behalf. You were not asked."
+							: "The agent asked to do this and the provider allowed it on your behalf. You were not asked."}
+					</p>
+					{detail?.rationale ? (
+						<p className="rounded border border-border bg-background px-2.5 py-1.5 text-[11px] leading-relaxed text-foreground">
+							{detail.rationale}
+						</p>
+					) : null}
+					<dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 font-mono text-[10.5px] leading-relaxed">
+						{detail?.command ? (
+							<>
+								<dt className="text-muted-foreground/70">command</dt>
+								<dd className="min-w-0 break-all text-foreground">{detail.command}</dd>
+							</>
+						) : null}
+						{detail?.cwd ? (
+							<>
+								<dt className="text-muted-foreground/70">cwd</dt>
+								<dd className="min-w-0 break-all text-muted-foreground">
+									{shortenPaths(detail.cwd)}
+								</dd>
+							</>
+						) : null}
+						{detail?.host ? (
+							<>
+								<dt className="text-muted-foreground/70">host</dt>
+								<dd className="min-w-0 break-all text-muted-foreground">{detail.host}</dd>
+							</>
+						) : null}
+						{paths.length ? (
+							<>
+								<dt className="text-muted-foreground/70">files</dt>
+								<dd className="min-w-0 break-all text-muted-foreground">
+									{paths.map((path) => shortenPaths(path)).join(", ")}
+								</dd>
+							</>
+						) : null}
+						{detail?.decisionSource ? (
+							<>
+								<dt className="text-muted-foreground/70">decided by</dt>
+								<dd className="text-muted-foreground">
+									{/* A model making the call is a materially different thing to be
+									    told than a policy rule matching, so the provider's own word
+									    for it is carried rather than flattened to "automatically". */}
+									{detail.decisionSource}
+									{detail.durationMs !== undefined && detail.durationMs > 0
+										? ` · ${formatDuration(detail.durationMs)}`
+										: ""}
+								</dd>
+							</>
+						) : null}
+					</dl>
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+/* -------------------------------------------------------------------------- */
+/* system events                                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Where the provider swapped the model out.
+ *
+ * On the timeline as well as in the composer because it happened at a point in the
+ * conversation: everything after this row was answered by a different model than
+ * everything before it, and only a timeline entry can say where the line is.
+ */
+function RerouteRow({ activity }: { activity: ConversationActivity }) {
+	const detail = activity.detail;
+	return (
+		<div className="flex items-start gap-2.5 rounded-md border border-border bg-surface/60 px-3 py-2">
+			<Shuffle aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+			<div className="flex min-w-0 flex-col gap-0.5">
+				<span className="text-[11px] text-foreground">
+					Answered by{" "}
+					<strong className="font-medium">{detail?.toModel ?? "another model"}</strong>
+					{detail?.fromModel ? (
+						<>
+							{" "}
+							instead of <span className="text-muted-foreground">{detail.fromModel}</span>
+						</>
+					) : null}
+				</span>
+				{detail?.reason ? (
+					<span className="text-[10.5px] leading-snug text-muted-foreground">{detail.reason}</span>
+				) : null}
+			</div>
+		</div>
+	);
+}
+
+/**
+ * Where the provider stopped accepting work until someone signs in.
+ *
+ * The banner above the timeline is what the user acts on; this row is the record of
+ * when it happened, so a turn that failed for this reason is not left looking like an
+ * ordinary failure.
+ */
+function ReauthRow({ activity }: { activity: ConversationActivity }) {
+	return (
+		<div className="flex items-start gap-2.5 rounded-md border border-destructive/40 bg-surface px-3 py-2">
+			<KeyRound aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+			<div className="flex min-w-0 flex-col gap-0.5">
+				<strong className="text-[11px] font-medium text-destructive">
+					The provider asked you to sign in again
+				</strong>
+				{activity.detail?.reason ? (
+					<span className="text-[10.5px] leading-snug text-muted-foreground">
+						{activity.detail.reason}
+					</span>
+				) : null}
+			</div>
+		</div>
+	);
+}
+
+/**
+ * Guidance the user delivered into a turn that was already running.
+ *
+ * Drawn as the user's own words, because they are — the daemon records it as an
+ * activity only because a message would have opened a second turn. It carries a
+ * marker rather than looking identical to an ordinary message: a reader scrolling
+ * back needs to see that this arrived mid-turn, since it explains why the agent
+ * changed course without a new exchange starting.
+ */
+export function SteerMessage({ activity }: { activity: ConversationActivity }) {
+	const text = activity.detail?.text ?? activity.summary;
+	return (
+		<div className="flex flex-col items-end gap-1">
+			<div className="w-fit max-w-[min(78%,560px)] whitespace-pre-wrap rounded-[10px] border border-accent-dim bg-raised px-3 py-2.5 text-sm leading-[1.55] text-foreground">
+				{text}
+			</div>
+			<span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+				<CornerDownRight aria-hidden="true" className="size-3" />
+				Steered into the running turn
+			</span>
+		</div>
 	);
 }
 

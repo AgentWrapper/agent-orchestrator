@@ -25,11 +25,15 @@ import type {
 	ControllerState,
 	DecisionOption,
 	DiffStatus,
+	McpServer,
 	MessageOrigin,
 	MessageRole,
 	ChatModel,
 	ChatSkill,
+	PlanStep,
+	PlanStepStatus,
 	SessionMode,
+	ThreadStatus,
 	TurnSettings,
 	TurnState,
 } from "../types/conversation";
@@ -211,6 +215,53 @@ export function useConversationCommands(sessionId: string | undefined) {
 	 * so a success has to be followed by a refetch rather than an optimistic edit —
 	 * how much was discarded is the daemon's answer, not the client's guess.
 	 */
+	/**
+	 * Guidance delivered INTO the running turn.
+	 *
+	 * Not interrupt-then-resend. An interrupt throws the turn away — its reasoning,
+	 * its half-finished tool calls, the command it has running — and the resend starts
+	 * from a cold start. A steer leaves all of it in place: the turn keeps its id, its
+	 * context and its in-flight work, and settles `completed`.
+	 *
+	 * Refusals are ordinary outcomes here, not failures, and they are kept apart
+	 * because the advice differs: one means "send this as a new message instead", one
+	 * means "wait and try again", and one means this harness cannot do it at all.
+	 */
+	const steer = useMutation({
+		mutationFn: async (text: string) => {
+			const { data, error } = await apiClient.POST(
+				"/api/v1/sessions/{sessionId}/conversation/steer",
+				{
+					params: { path: { sessionId: sessionId as string } },
+					body: { text, clientMessageId: crypto.randomUUID() },
+				},
+			);
+			if (error) throw error;
+			return data;
+		},
+		onSuccess: invalidate,
+	});
+
+	/**
+	 * Restart the tool servers.
+	 *
+	 * Worth offering because a server that failed to start is not a transient blip the
+	 * agent will retry: it will simply never call those tools, and nothing in the
+	 * timeline says so. Refused mid-turn, which is why the control is disabled rather
+	 * than allowed to fail.
+	 */
+	const reloadMcp = useMutation({
+		mutationFn: async () => {
+			const { data, error } = await apiClient.POST(
+				"/api/v1/sessions/{sessionId}/conversation/mcp/reload",
+				{ params: { path: { sessionId: sessionId as string } } },
+			);
+			if (error) throw error;
+			return data;
+		},
+		onSuccess: invalidate,
+	});
+
 	const rollback = useMutation({
 		mutationFn: async (turnId: string) => {
 			const { data, error } = await apiClient.POST(
@@ -247,6 +298,28 @@ export function useConversationCommands(sessionId: string | undefined) {
 		rollback: (turnId: string) => rollback.mutateAsync(turnId),
 		rollbackPending: rollback.isPending,
 		rollbackError: rollback.error ? apiErrorMessage(rollback.error) : undefined,
+		steer: (text: string) => steer.mutateAsync(text),
+		steerPending: steer.isPending,
+		/**
+		 * Why the last steer was refused, or undefined. Only the retryable and
+		 * send-instead cases produce copy: `CHAT_STEER_UNSUPPORTED` is answered by
+		 * hiding the control entirely, since the harness will never accept one.
+		 */
+		steerRefusal: steerRefusal(steer.error),
+		/**
+		 * A harness that cannot steer at all. Learned from the daemon's typed refusal
+		 * rather than from the harness name, and sticky for the life of the surface: the
+		 * answer is a property of the driver, not of the moment.
+		 */
+		steerUnsupported: apiErrorCode(steer.error) === "CHAT_STEER_UNSUPPORTED",
+		reloadMcpServers: () => reloadMcp.mutateAsync(),
+		reloadingMcpServers: reloadMcp.isPending,
+		mcpReloadUnsupported:
+			apiErrorCode(reloadMcp.error) === "CHAT_MCP_RELOAD_UNSUPPORTED",
+		mcpReloadError:
+			reloadMcp.error && apiErrorCode(reloadMcp.error) !== "CHAT_MCP_RELOAD_UNSUPPORTED"
+				? apiErrorMessage(reloadMcp.error)
+				: undefined,
 		busy: send.isPending || resolve.isPending || interrupt.isPending,
 		error:
 			send.error || resolve.error || interrupt.error || chooseSettings.error
@@ -255,6 +328,31 @@ export function useConversationCommands(sessionId: string | undefined) {
 					)
 				: undefined,
 	};
+}
+
+/**
+ * What to tell the user about a refused steer.
+ *
+ * The daemon's own message is preferred for the retryable case because only it knows
+ * which kind of turn refused — a compaction and a review read differently, and
+ * "cannot be steered" alone leaves the user with nothing to do next.
+ */
+function steerRefusal(error: unknown): string | undefined {
+	const code = apiErrorCode(error);
+	if (!code) return undefined;
+	switch (code) {
+		case "CHAT_NO_ACTIVE_TURN":
+			return "The turn finished before this landed. Send it as a message instead.";
+		case "CHAT_TURN_NOT_STEERABLE":
+			return `${apiErrorMessage(error)} Try again once it finishes.`;
+		case "CHAT_STEER_UNSUPPORTED":
+			// Answered by hiding the control, so there is nothing to say.
+			return undefined;
+		case "CHAT_STEER_TEXT_REQUIRED":
+			return "Type something to steer with.";
+		default:
+			return apiErrorMessage(error);
+	}
 }
 
 /**
@@ -416,6 +514,46 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 		rateLimits: wire.rateLimits ? { ...wire.rateLimits } : undefined,
 		compactedAt: wire.compactedAt ?? undefined,
 		title: wire.title || undefined,
+		// What actually answered, as opposed to what was asked for. Kept separate from
+		// `settings` all the way through, because collapsing them would lose exactly the
+		// fact worth showing.
+		modelReroute: wire.modelReroute
+			? {
+					fromModel: wire.modelReroute.fromModel || undefined,
+					toModel: wire.modelReroute.toModel,
+					reason: wire.modelReroute.reason || undefined,
+					providerTurnId: wire.modelReroute.providerTurnId || undefined,
+					at: wire.modelReroute.at,
+				}
+			: undefined,
+		account: wire.account
+			? {
+					authMode: wire.account.authMode || undefined,
+					planLabel: wire.account.planLabel || undefined,
+					reauthRequiredAt: wire.account.reauthRequiredAt ?? undefined,
+					reauthReason: wire.account.reauthReason || undefined,
+				}
+			: undefined,
+		// The provider's lifecycle view, kept apart from `controller` on purpose: they
+		// answer different questions and routinely disagree.
+		threadState: wire.threadState
+			? {
+					status: (wire.threadState.status as ThreadStatus | undefined) || undefined,
+					waitingOn: wire.threadState.waitingOn?.length ? wire.threadState.waitingOn : undefined,
+					archivedAt: wire.threadState.archivedAt ?? undefined,
+					closedAt: wire.threadState.closedAt ?? undefined,
+				}
+			: undefined,
+		mcpServers: wire.mcpServers?.length
+			? wire.mcpServers.map(
+					(server): McpServer => ({
+						name: server.name,
+						status: server.status as McpServer["status"],
+						error: server.error || undefined,
+						failureReason: server.failureReason || undefined,
+					}),
+				)
+			: undefined,
 		turns: (wire.turns ?? []).map((turn) => ({
 			id: turn.id,
 			state: turn.state as TurnState,
@@ -436,6 +574,20 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 							oldPath: file.oldPath || undefined,
 						})),
 						truncated: turn.diff.truncated,
+					}
+				: undefined,
+			// Current state of the turn rather than history: the provider re-sends the
+			// whole plan on every revision and the daemon overwrites this, which is why
+			// the surface reads it here instead of walking the timeline for plan rows.
+			plan: turn.plan
+				? {
+						explanation: turn.plan.explanation || undefined,
+						steps: (turn.plan.steps ?? []).map(
+							(step): PlanStep => ({
+								text: step.text,
+								status: step.status as PlanStepStatus,
+							}),
+						),
 					}
 				: undefined,
 			rolledBack: turn.rolledBack ?? undefined,

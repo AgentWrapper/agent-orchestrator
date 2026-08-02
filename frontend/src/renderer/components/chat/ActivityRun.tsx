@@ -95,10 +95,22 @@ function summarize(activities: ConversationActivity[]): string {
 	let vcs = 0;
 	let other = 0;
 	let plans = 0;
+	let tools = 0;
+	let reviews = 0;
 
 	for (const activity of activities) {
 		if (activity.activityKind === "plan") {
 			plans += 1;
+			continue;
+		}
+		// Counted apart from commands, and named apart, because that is the whole
+		// distinction the kind exists to draw: nothing ran in the worktree.
+		if (activity.activityKind === "mcp_tool") {
+			tools += 1;
+			continue;
+		}
+		if (activity.activityKind === "auto_review") {
+			reviews += 1;
 			continue;
 		}
 		const binary = firstWord(activity.detail?.command ?? activity.summary);
@@ -113,6 +125,10 @@ function summarize(activities: ConversationActivity[]): string {
 	if (searches > 0) parts.push(`${searches} ${searches === 1 ? "search" : "searches"}`);
 	if (vcs > 0) parts.push(`${vcs} git ${vcs === 1 ? "check" : "checks"}`);
 	if (other > 0) parts.push(`${other} ${other === 1 ? "command" : "commands"}`);
+	if (tools > 0) parts.push(`${tools} tool ${tools === 1 ? "call" : "calls"}`);
+	// Said even though nobody was asked, because "the provider decided 3 things for
+	// you" is not something a summary should quietly leave out.
+	if (reviews > 0) parts.push(`${reviews} auto-${reviews === 1 ? "decision" : "decisions"}`);
 	if (plans > 0) parts.push("updated plan");
 
 	if (parts.length === 0) return `${activities.length} steps`;

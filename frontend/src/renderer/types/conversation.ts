@@ -25,6 +25,14 @@ export type MessageRole = "user" | "assistant";
  */
 export type MessageOrigin = "human" | "automation" | "daemon" | "provider";
 
+/**
+ * `mcp_tool` and `auto_review` are deliberately not folded into their nearest
+ * neighbour. An MCP call is not a `command`: it has a server, a tool name and
+ * structured arguments, and drawing it as a shell command claimed the agent had run
+ * something in the worktree. An auto-review is not an `approval`: an approval is a
+ * question waiting on a person, an auto-review is a decision already taken for them,
+ * and those are opposites.
+ */
 export type ActivityKind =
 	| "command"
 	| "file_change"
@@ -33,7 +41,9 @@ export type ActivityKind =
 	| "approval"
 	| "usage"
 	| "error"
-	| "system";
+	| "system"
+	| "mcp_tool"
+	| "auto_review";
 
 /**
  * `running` can be where an activity stops: a provider may start a command and
@@ -48,6 +58,27 @@ export type ActivityStatus = "running" | "completed" | "failed" | "pending" | "r
  * connection, and silently retrying would run the work twice.
  */
 export type DeliveryState = "queued" | "sending" | "accepted" | "uncertain" | "failed";
+
+/** How far the agent has got with one step of its plan. */
+export type PlanStepStatus = "pending" | "in_progress" | "completed";
+
+export interface PlanStep {
+	text: string;
+	status: PlanStepStatus;
+}
+
+/**
+ * The agent's plan for a turn.
+ *
+ * Current state, not history: the provider re-sends the whole plan every time it
+ * changes, and the daemon overwrites the turn's copy. That is why this is on the turn
+ * rather than being read out of the timeline — a row per revision would read as
+ * though the agent had planned three separate times in one turn.
+ */
+export interface ConversationPlan {
+	explanation?: string;
+	steps: PlanStep[];
+}
 
 export interface ConversationTurn {
 	id: string;
@@ -70,6 +101,8 @@ export interface ConversationTurn {
 	 * empty changed-files panel as if the turn had been inspected.
 	 */
 	diff?: TurnDiff;
+	/** The agent's plan for this turn, or absent when it made none. */
+	plan?: ConversationPlan;
 }
 
 /** How a file changed. The daemon's neutral names, not a provider's. */
@@ -117,8 +150,16 @@ export interface DecisionOption {
 }
 
 export interface CommandDetail {
-	/** Free text payload: a plan body, a reasoning summary, a message. */
+	/**
+	 * Free text payload: a plan body, a reasoning summary, a message.
+	 *
+	 * For reasoning this is one field whether the item is still streaming or already
+	 * settled — the provider's finished summary lands under the same key the deltas
+	 * accumulate into, so a reader never has to know which state it is in.
+	 */
 	text?: string;
+	/** The accumulated text stopped at the daemon's cap; the model wrote more. */
+	textTruncated?: boolean;
 	command?: string;
 	rawCommand?: string;
 	cwd?: string;
@@ -148,10 +189,126 @@ export interface CommandDetail {
 	exitCode?: number;
 	durationMs?: number;
 	reason?: string;
+	/**
+	 * What the agent typed into a running command's terminal — usually `^C` to abort
+	 * one that will not finish on its own.
+	 *
+	 * Kept out of `output` on purpose: the PTY echoes keystrokes, so merging the two
+	 * would print the abort twice and leave no way to tell what the command said from
+	 * what was done to it.
+	 */
+	terminalInput?: string;
+	terminalInputTruncated?: boolean;
+	/** The provider's own process handle, when it reported one. */
+	processId?: number;
+}
+
+/**
+ * One changed file, as the daemon now normalizes it.
+ *
+ * Before, this carried a path and two counts and nothing else: the provider spells a
+ * change's kind as an object, so no client could read a status at all. `status` is a
+ * plain string now, and `patch` is this file's own unified diff — which is what lets
+ * a change be read where it happened instead of only counted.
+ *
+ * `status` stays optional because rows written by earlier builds are still on disk
+ * and have none; a missing status is drawn as a modification rather than dropping the
+ * file.
+ */
+export interface FileChangeFile {
+	path: string;
+	/** Set only for a rename: where the file was before. */
+	oldPath?: string;
+	status?: DiffStatus;
+	additions: number;
+	deletions: number;
+	patch?: string;
+	/** The patch was cut at the daemon's cap, so it is not the whole change. */
+	patchTruncated?: boolean;
 }
 
 export interface FileChangeDetail {
-	files?: { path: string; additions: number; deletions: number }[];
+	/**
+	 * Objects for a `file_change`; bare paths for an `auto_review`, whose action names
+	 * the files it was allowed to touch. The key is shared on the wire, so the kind is
+	 * what disambiguates — read it through `fileChangeFiles` or `reviewedPaths` rather
+	 * than by hand.
+	 */
+	files?: FileChangeFile[] | string[];
+	/** Accumulated patch text for a change still being written. */
+	patchOutput?: string;
+	patchOutputTruncated?: boolean;
+}
+
+/**
+ * A call to a tool served by an MCP server.
+ *
+ * `arguments` and `result` are whatever JSON the tool takes and returns, so they are
+ * `unknown` and rendered as JSON. When a payload exceeded the daemon's cap it is
+ * replaced by `{ truncated, bytes, note }` — a stand-in the UI has to recognize
+ * rather than print as the tool's actual answer.
+ */
+export interface McpToolDetail {
+	server?: string;
+	toolName?: string;
+	/** The provider's grouping when the tool is namespaced rather than server-scoped. */
+	namespace?: string;
+	arguments?: unknown;
+	result?: unknown;
+	error?: string;
+	success?: boolean;
+	/** Progress notes streamed while a long call runs. */
+	progress?: string;
+	progressTruncated?: boolean;
+}
+
+/** How much of a risk the provider judged an action to be. */
+export type ReviewRiskLevel = "low" | "medium" | "high" | "critical";
+
+/**
+ * A decision the provider made on the user's behalf.
+ *
+ * Not an approval: nobody was asked. The row exists so an action that ran unattended
+ * is still on the record, with the reasoning that allowed it.
+ */
+export interface AutoReviewDetail {
+	reviewId?: string;
+	/** The item the review gated, so the decision can be tied to the command it let run. */
+	targetItemId?: string;
+	actionType?: string;
+	riskLevel?: string;
+	rationale?: string;
+	/** Who decided: a policy rule matching, or a model making the call. */
+	decisionSource?: string;
+	/** The provider's own verdict — `approved`, `denied`, and so on. */
+	status?: string;
+	userAuthorization?: string;
+	/** Set when the action was network access. */
+	host?: string;
+	commandSource?: string;
+}
+
+/**
+ * A `system` activity's discriminator and the fields that belong to it.
+ *
+ * The kind is a general bucket, so the daemon stamps the event rather than leaving
+ * the renderer to infer a compaction from the presence of token counts or a steer
+ * from the presence of text. Read the discriminator, never the kind.
+ */
+export interface SystemEventDetail {
+	event?: "compaction" | "model.rerouted" | "auth.reauth_required" | "steer" | "plan";
+	/** model.rerouted */
+	fromModel?: string;
+	toModel?: string;
+	/** steer: the user's own words, delivered into a turn already running. */
+	origin?: string;
+	clientMessageId?: string;
+}
+
+/** A `plan` activity's payload, which is the same plan the turn carries. */
+export interface PlanDetail {
+	explanation?: string;
+	steps?: PlanStep[];
 }
 
 export interface UsageDetail {
@@ -170,12 +327,6 @@ export interface UsageDetail {
  * than showing a zero.
  */
 export interface CompactionDetail {
-	/**
-	 * Which kind of system event this row is. `system` is a general bucket, so the
-	 * daemon stamps the discriminator rather than leaving the renderer to guess a
-	 * compaction from the presence of token fields, which are all optional.
-	 */
-	event?: "compaction";
 	tokensBefore?: number;
 	tokensAfter?: number;
 	tokensReclaimed?: number;
@@ -193,6 +344,48 @@ export function isCompaction(item: ConversationItem): boolean {
 	return item.kind === "activity" && item.detail?.event === "compaction";
 }
 
+/**
+ * Whether a timeline item is a steer: the user's own words, delivered into a turn
+ * that was already running.
+ *
+ * Read by the `event` discriminator and not by the kind, the same convention a
+ * compaction follows. A steer has to be an activity rather than a message because it
+ * joins a turn in flight, and AO's only durable write that can attach to one is the
+ * activity row — but it is still something a person said, and the timeline shows it
+ * that way.
+ */
+export function isSteer(item: ConversationItem): boolean {
+	return item.kind === "activity" && item.detail?.event === "steer";
+}
+
+/** The structured changed files on a `file_change`, or none. */
+export function fileChangeFiles(activity: ConversationActivity): FileChangeFile[] {
+	const files = activity.detail?.files;
+	if (!Array.isArray(files)) return [];
+	return files.filter((file): file is FileChangeFile => typeof file === "object" && file !== null);
+}
+
+/** The bare paths an `auto_review` action named, or none. */
+export function reviewedPaths(activity: ConversationActivity): string[] {
+	const files = activity.detail?.files;
+	if (!Array.isArray(files)) return [];
+	return files.filter((file): file is string => typeof file === "string");
+}
+
+/**
+ * The plan an activity carries, when it is a plan row the turn did not absorb.
+ *
+ * The daemon writes both: the turn column answers "what is the plan now" and this
+ * row answers "where in the conversation did the agent plan". They cannot disagree —
+ * both are written from one event — so the surface prefers the turn's copy and only
+ * falls back to this for a plan whose turn predates the controller.
+ */
+export function activityPlan(activity: ConversationActivity): ConversationPlan | undefined {
+	const steps = activity.detail?.steps;
+	if (!Array.isArray(steps) || steps.length === 0) return undefined;
+	return { explanation: activity.detail?.explanation, steps };
+}
+
 export interface ConversationActivity {
 	kind: "activity";
 	id: string;
@@ -203,7 +396,21 @@ export interface ConversationActivity {
 	status: ActivityStatus;
 	/** The one-line label shown when collapsed. */
 	summary: string;
-	detail?: CommandDetail & FileChangeDetail & UsageDetail & CompactionDetail;
+	/**
+	 * The typed payload for this kind. One intersection rather than a discriminated
+	 * union because the daemon's `detail` is one JSON column read by every kind, and
+	 * a union would force a cast at every access for no safety the fields do not
+	 * already have — every one of them is optional, because every one of them is
+	 * something a provider may not report.
+	 */
+	detail?: CommandDetail &
+		FileChangeDetail &
+		UsageDetail &
+		CompactionDetail &
+		McpToolDetail &
+		AutoReviewDetail &
+		SystemEventDetail &
+		PlanDetail;
 	/**
 	 * The provider's identifier for an approval. Resolving matches on this, so a
 	 * card left on screen cannot answer a request that replaced it.
@@ -300,6 +507,64 @@ export interface ConversationRateLimits {
 	planLabel?: string;
 }
 
+/**
+ * The provider answering with a model other than the one that was asked for.
+ *
+ * Deliberately separate from `settings`: settings say what the user chose, this says
+ * what actually replied. Without it the surface keeps advertising a model that is not
+ * the one producing the answers.
+ */
+export interface ModelReroute {
+	fromModel?: string;
+	toModel: string;
+	/** The provider's own word for why, carried verbatim rather than translated. */
+	reason?: string;
+	/** The turn it happened on, so the substitution can be pointed at an exchange. */
+	providerTurnId?: string;
+	at: string;
+}
+
+/** The provider account this conversation runs under. */
+export interface ConversationAccount {
+	authMode?: string;
+	planLabel?: string;
+	/**
+	 * When the provider last demanded credentials AO does not hold. Present means the
+	 * session has stopped working for a reason no retry will fix.
+	 */
+	reauthRequiredAt?: string;
+	reauthReason?: string;
+}
+
+/** The provider's own lifecycle view of a thread. */
+export type ThreadStatus = "active" | "idle" | "not_loaded" | "system_error" | "closed";
+
+/**
+ * The provider's thread lifecycle, which is NOT AO's controller state.
+ *
+ * The controller banner reports the daemon's connection to the agent process. This
+ * reports what the provider says about the thread behind it, and the two disagree
+ * routinely — a healthy controller can be attached to a thread the provider has put
+ * into `system_error`.
+ */
+export interface ConversationThreadState {
+	status?: ThreadStatus;
+	/** The provider's active flags. A thread can be active AND blocked on a person. */
+	waitingOn?: string[];
+	archivedAt?: string;
+	closedAt?: string;
+}
+
+/** One tool server's startup state. */
+export interface McpServer {
+	name: string;
+	status: "starting" | "ready" | "failed" | "cancelled" | (string & {});
+	/** The provider's failure text. */
+	error?: string;
+	/** Its classification of the failure, which is actionable in a way a message is not. */
+	failureReason?: string;
+}
+
 export interface ConversationSnapshot {
 	conversationId: string;
 	sessionId: string;
@@ -330,6 +595,42 @@ export interface ConversationSnapshot {
 	 * the header rather than for the sidebar.
 	 */
 	title?: string;
+	/** Present when the provider answered with a model other than the chosen one. */
+	modelReroute?: ModelReroute;
+	/** Absent until the provider says anything about the account. */
+	account?: ConversationAccount;
+	/** The provider's lifecycle view of the thread, which is not the controller's. */
+	threadState?: ConversationThreadState;
+	/**
+	 * The tool servers this conversation can reach.
+	 *
+	 * It answers a question the timeline cannot: a tool call that never happened
+	 * because its server failed to start reads, from the timeline alone, as the agent
+	 * choosing not to use it.
+	 */
+	mcpServers?: McpServer[];
+}
+
+/**
+ * Which model actually produced the answers.
+ *
+ * The reroute wins over the selection, because it is a correction to a claim the
+ * selection already made.
+ */
+export function answeringModel(snapshot: ConversationSnapshot): string | undefined {
+	return snapshot.modelReroute?.toModel ?? snapshot.settings.model;
+}
+
+/** Tool servers that will not answer, so the agent silently lacks their tools. */
+export function brokenMcpServers(snapshot: ConversationSnapshot): McpServer[] {
+	return (snapshot.mcpServers ?? []).filter(
+		(server) => server.status === "failed" || server.status === "cancelled",
+	);
+}
+
+/** Whether the provider is demanding credentials the daemon does not hold. */
+export function needsReauth(snapshot: ConversationSnapshot): boolean {
+	return Boolean(snapshot.account?.reauthRequiredAt);
 }
 
 /**
