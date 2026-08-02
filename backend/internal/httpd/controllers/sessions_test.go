@@ -1537,25 +1537,15 @@ func TestSessionsAPI_DelegateTask(t *testing.T) {
 	}
 }
 
-func TestSessionsAPI_DelegateTaskWithoutBrief(t *testing.T) {
+func TestSessionsAPI_DelegateTaskValidationAndMissingOrchestrator(t *testing.T) {
 	svc := newFakeSessionService()
 	srv := newSessionTestServer(t, svc)
 
-	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao"}`)
-	if status != http.StatusAccepted {
-		t.Fatalf("delegate without brief = %d, want 202; body=%s", status, body)
-	}
-	if svc.delegationInput.ProjectID != "ao" || svc.delegationInput.Brief != "" {
-		t.Fatalf("delegation input = %#v", svc.delegationInput)
-	}
-}
-
-func TestSessionsAPI_DelegateTaskMissingOrchestrator(t *testing.T) {
-	svc := newFakeSessionService()
-	srv := newSessionTestServer(t, svc)
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"  "}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "TASK_REQUIRED")
 
 	svc.delegationErr = apierr.Conflict("ACTIVE_ORCHESTRATOR_REQUIRED", "Start an orchestrator for this project before starting a task.", nil)
-	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao"}`)
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"Fix it"}`)
 	assertErrorCode(t, body, status, http.StatusConflict, "ACTIVE_ORCHESTRATOR_REQUIRED")
 }
 

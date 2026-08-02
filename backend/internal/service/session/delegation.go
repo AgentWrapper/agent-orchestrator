@@ -12,8 +12,7 @@ import (
 
 // DelegateTaskInput describes a task the active project orchestrator should
 // turn into a worker session. Empty RequestedAgent means the orchestrator
-// should use the project's worker-agent default. Empty Brief means the
-// orchestrator should inspect project state and choose the next useful task.
+// should use the project's worker-agent default.
 type DelegateTaskInput struct {
 	ProjectID      domain.ProjectID
 	Brief          string
@@ -28,7 +27,7 @@ type DelegateTaskOutcome struct {
 
 type taskDelegationMessage struct {
 	Type  string              `json:"type"`
-	Brief string              `json:"brief,omitempty"`
+	Brief string              `json:"brief"`
 	Agent taskDelegationAgent `json:"agent"`
 	Model string              `json:"model,omitempty"`
 }
@@ -45,6 +44,9 @@ type taskDelegationAgent struct {
 func (s *Service) DelegateTask(ctx context.Context, in DelegateTaskInput) (DelegateTaskOutcome, error) {
 	if _, err := s.requireProject(ctx, in.ProjectID); err != nil {
 		return DelegateTaskOutcome{}, err
+	}
+	if strings.TrimSpace(in.Brief) == "" {
+		return DelegateTaskOutcome{}, apierr.Invalid("TASK_REQUIRED", "Task is required", nil)
 	}
 	if in.RequestedAgent != "" && !in.RequestedAgent.IsKnown() {
 		return DelegateTaskOutcome{}, apierr.Invalid("UNKNOWN_HARNESS", "Unknown requested agent", nil)
@@ -82,11 +84,7 @@ func (s *Service) DelegateTask(ctx context.Context, in DelegateTaskInput) (Deleg
 	}
 
 	orchestrator := newestSession(orchestrators)
-	instruction := "Choose the worker name and final prompt, then spawn the worker."
-	if strings.TrimSpace(in.Brief) == "" {
-		instruction = "Inspect the current project state, choose the next useful implementation task, choose the worker name and final prompt, then spawn the worker."
-	}
-	message := "AO TASK DELEGATION\n" + instruction + " Do not implement this task in the orchestrator session.\n" + string(payload)
+	message := "AO TASK DELEGATION\nChoose the worker name and final prompt, then spawn the worker. Do not implement this task in the orchestrator session.\n" + string(payload)
 	if err := s.manager.Send(ctx, orchestrator.ID, message); err != nil {
 		return DelegateTaskOutcome{}, toAPIError(err)
 	}

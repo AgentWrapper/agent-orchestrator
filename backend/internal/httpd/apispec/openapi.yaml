@@ -2918,6 +2918,7 @@ components:
           type: string
       required:
       - projectId
+      - brief
       type: object
     DelegateTaskResponse:
       properties:

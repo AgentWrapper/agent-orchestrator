@@ -77,13 +77,18 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 		event.preventDefault();
 		if (!projectId || isSubmitting) return;
 
+		if (!prompt.trim()) {
+			setError("Task is required.");
+			return;
+		}
+
 		setIsSubmitting(true);
 		setError(undefined);
 		void captureRendererEvent("ao.renderer.task_create_requested", { project_id: projectId });
 		try {
 			const body: components["schemas"]["DelegateTaskRequest"] = {
 				projectId,
-				brief: prompt.trim() ? prompt : undefined,
+				brief: prompt,
 				agent: agentTouched && agent ? (agent as AgentProvider) : undefined,
 				model: model.trim() || undefined,
 			};
@@ -130,14 +135,14 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 					<form onSubmit={submit} className="space-y-4 px-5 py-4">
 						<div className="space-y-1.5">
 							<label className="text-xs font-medium text-muted-foreground" htmlFor={promptId}>
-								Task (optional)
+								Task
 							</label>
 							<div className="rounded-md border border-border transition">
 								<textarea
 									id={promptId}
 									autoFocus
 									className="min-h-textarea-min w-full resize-y rounded-md bg-transparent px-3 py-2 text-control leading-relaxed text-foreground outline-none transition placeholder:text-passive focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent-weak"
-									placeholder="Leave blank for the orchestrator to choose the next task."
+									placeholder="Describe the change, constraints, and expected verification."
 									value={prompt}
 									onChange={(event) => setPrompt(event.target.value)}
 									onKeyDown={(event) => {

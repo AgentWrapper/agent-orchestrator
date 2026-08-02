@@ -392,13 +392,12 @@ type SendSessionMessageResponse struct {
 
 // DelegateTaskRequest is the body of POST /api/v1/orchestrators/delegate.
 // An omitted agent tells the orchestrator to use the project's worker default.
-// An omitted brief tells it to inspect project state and choose the next task.
 // Attachments are intentionally absent from this MVP contract: delegation uses
 // the string-only guarded messenger and cannot safely hand image bytes to a
 // worker that does not exist yet without a durable attachment store.
 type DelegateTaskRequest struct {
 	ProjectID domain.ProjectID    `json:"projectId"`
-	Brief     string              `json:"brief,omitempty" maxLength:"4096"`
+	Brief     string              `json:"brief" maxLength:"4096"`
 	Agent     domain.AgentHarness `json:"agent,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand,fake"`
 	Model     string              `json:"model,omitempty" maxLength:"256"`
 }
