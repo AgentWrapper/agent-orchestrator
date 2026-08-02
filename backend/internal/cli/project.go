@@ -90,6 +90,7 @@ type trackerIntakeConfig struct {
 	Enabled  bool   `json:"enabled,omitempty"`
 	Provider string `json:"provider,omitempty"`
 	Repo     string `json:"repo,omitempty"`
+	Scope    string `json:"scope,omitempty"`
 	Assignee string `json:"assignee,omitempty"`
 }
 
@@ -131,7 +132,9 @@ type projectSetConfigOptions struct {
 	symlink           []string
 	postCreate        []string
 	trackerIntake     bool
+	trackerProvider   string
 	trackerRepo       string
+	trackerScope      string
 	trackerAssignee   string
 	configJSON        string
 	clear             bool
@@ -321,9 +324,11 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f.StringArrayVar(&opts.env, "env", nil, "Env var KEY=VALUE forwarded into sessions (repeatable)")
 	f.StringArrayVar(&opts.symlink, "symlink", nil, "Repo-relative path to symlink into workspaces (repeatable)")
 	f.StringArrayVar(&opts.postCreate, "post-create", nil, "Command to run after workspace creation (repeatable)")
-	f.BoolVar(&opts.trackerIntake, "tracker-intake", false, "Enable GitHub issue intake for matching issues")
+	f.BoolVar(&opts.trackerIntake, "tracker-intake", false, "Enable tracker issue intake for matching issues")
+	f.StringVar(&opts.trackerProvider, "tracker-provider", "", "Tracker provider: github or linear (default: github)")
 	f.StringVar(&opts.trackerRepo, "tracker-repo", "", "GitHub repo for issue intake (owner/repo; default: derive from git origin)")
-	f.StringVar(&opts.trackerAssignee, "tracker-assignee", "", "GitHub issue assignee required for intake eligibility")
+	f.StringVar(&opts.trackerScope, "tracker-scope", "", `Linear scope for issue intake ("team:<id>" or "project:<id>")`)
+	f.StringVar(&opts.trackerAssignee, "tracker-assignee", "", "Issue assignee required for intake eligibility")
 	f.StringVar(&opts.configJSON, "config-json", "", "Full config as a JSON object (overrides field flags)")
 	f.BoolVar(&opts.clear, "clear", false, "Clear all config")
 	f.BoolVar(&opts.json, "json", false, "Output the updated project as JSON")
@@ -366,6 +371,7 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 			Enabled:  opts.trackerIntake,
 			Provider: trackerProviderForFlags(opts),
 			Repo:     opts.trackerRepo,
+			Scope:    opts.trackerScope,
 			Assignee: opts.trackerAssignee,
 		},
 	}
@@ -376,7 +382,10 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 }
 
 func trackerProviderForFlags(opts projectSetConfigOptions) string {
-	if opts.trackerIntake || opts.trackerRepo != "" || opts.trackerAssignee != "" {
+	if opts.trackerProvider != "" {
+		return opts.trackerProvider
+	}
+	if opts.trackerIntake || opts.trackerRepo != "" || opts.trackerScope != "" || opts.trackerAssignee != "" {
 		return "github"
 	}
 	return ""

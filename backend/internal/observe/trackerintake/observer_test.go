@@ -59,6 +59,47 @@ func TestPollSpawnsWorkerForEligibleIssue(t *testing.T) {
 	}
 }
 
+func TestPollSpawnsWorkerForEligibleLinearIssue(t *testing.T) {
+	store := &fakeStore{projects: []domain.ProjectRecord{{
+		ID: "demo",
+		Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{
+			Enabled:  true,
+			Provider: domain.TrackerProviderLinear,
+			Scope:    "team:team-id",
+			Assignee: "Alice",
+		}},
+	}}}
+	linearTracker := &fakeTracker{issues: []domain.Issue{{
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderLinear, Native: "linear-uuid"},
+		Title:     "Linear task",
+		Body:      "Implement the requested feature.",
+		State:     domain.IssueOpen,
+		URL:       "https://linear.app/acme/issue/AO-17",
+		Assignees: []string{"Alice"},
+	}}}
+	spawner := &fakeSpawner{}
+	resolver := MapTrackerResolver{
+		domain.TrackerProviderGitHub: &fakeTracker{},
+		domain.TrackerProviderLinear: linearTracker,
+	}
+
+	if err := New(resolver, store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 {
+		t.Fatalf("spawn calls = %d, want 1", len(spawner.calls))
+	}
+	if got := spawner.calls[0].IssueID; got != "linear:linear-uuid" {
+		t.Fatalf("IssueID = %q, want stable provider-prefixed Linear id", got)
+	}
+	if len(linearTracker.repos) != 1 {
+		t.Fatalf("Linear tracker scopes = %d, want 1", len(linearTracker.repos))
+	}
+	if got := linearTracker.repos[0]; got.Provider != domain.TrackerProviderLinear || got.Native != "team:team-id" {
+		t.Fatalf("Linear tracker scope = %+v", got)
+	}
+}
+
 func TestPollSkipsExistingIssueSessionsAfterRestart(t *testing.T) {
 	store := &fakeStore{
 		projects: []domain.ProjectRecord{{
@@ -311,9 +352,26 @@ func TestBuildIssuePromptCapsLargeIssueBody(t *testing.T) {
 	if !strings.HasSuffix(prompt, intakePromptFooter) {
 		t.Fatalf("prompt missing footer:\n%s", prompt)
 	}
+	if !strings.Contains(prompt, "untrusted external task context") {
+		t.Fatalf("prompt must mark tracker-authored content as untrusted:\n%s", prompt)
+	}
 }
 
-func TestTrackerRepoUsesConfiguredRepo(t *testing.T) {
+func TestBuildIssuePromptSanitizesUntrustedTrackerContent(t *testing.T) {
+	prompt := BuildIssuePrompt(domain.Issue{
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderLinear, Native: "issue-id"},
+		Title: "Feature\x1b[2J request",
+		Body:  "Keep this text\x00 and remove controls.",
+	})
+	if strings.ContainsAny(prompt, "\x00\x1b") {
+		t.Fatalf("prompt contains unsafe terminal control characters:\n%q", prompt)
+	}
+	if !strings.Contains(prompt, "Feature[2J request") || !strings.Contains(prompt, "Keep this text and remove controls.") {
+		t.Fatalf("prompt lost safe issue content:\n%s", prompt)
+	}
+}
+
+func TestTrackerScopeUsesConfiguredRepo(t *testing.T) {
 	project := domain.ProjectRecord{
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/wrong/repo.git",
@@ -323,12 +381,28 @@ func TestTrackerRepoUsesConfiguredRepo(t *testing.T) {
 			Assignee: "alice",
 		}},
 	}
-	repo, ok := trackerRepo(project, project.Config.TrackerIntake.WithDefaults())
+	repo, ok := trackerScope(project, project.Config.TrackerIntake.WithDefaults())
 	if !ok {
-		t.Fatal("trackerRepo ok = false")
+		t.Fatal("trackerScope ok = false")
 	}
 	if repo.Native != "acme/demo" {
 		t.Fatalf("repo.Native = %q, want acme/demo", repo.Native)
+	}
+}
+
+func TestTrackerScopeUsesExplicitLinearScope(t *testing.T) {
+	project := domain.ProjectRecord{ID: "demo", Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{
+		Enabled:  true,
+		Provider: domain.TrackerProviderLinear,
+		Scope:    "project:project-id",
+		Assignee: "Alice",
+	}}}
+	scope, ok := trackerScope(project, project.Config.TrackerIntake)
+	if !ok {
+		t.Fatal("trackerScope ok = false")
+	}
+	if scope.Provider != domain.TrackerProviderLinear || scope.Native != "project:project-id" {
+		t.Fatalf("scope = %+v", scope)
 	}
 }
 
@@ -354,7 +428,7 @@ type fakeTracker struct {
 	issues       []domain.Issue
 	issuesByRepo map[string][]domain.Issue
 	failRepos    map[string]error
-	repos        []domain.TrackerRepo
+	repos        []domain.TrackerScope
 	filters      []domain.ListFilter
 }
 
@@ -362,7 +436,7 @@ func (f *fakeTracker) Get(context.Context, domain.TrackerID) (domain.Issue, erro
 	return domain.Issue{}, nil
 }
 
-func (f *fakeTracker) List(_ context.Context, repo domain.TrackerRepo, filter domain.ListFilter) ([]domain.Issue, error) {
+func (f *fakeTracker) List(_ context.Context, repo domain.TrackerScope, filter domain.ListFilter) ([]domain.Issue, error) {
 	f.repos = append(f.repos, repo)
 	f.filters = append(f.filters, filter)
 	if err := f.failRepos[repo.Native]; err != nil {

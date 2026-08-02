@@ -1233,7 +1233,7 @@ func (f *fakeTracker) Get(_ context.Context, id domain.TrackerID) (domain.Issue,
 	return f.issue, nil
 }
 
-func (f *fakeTracker) List(context.Context, domain.TrackerRepo, domain.ListFilter) ([]domain.Issue, error) {
+func (f *fakeTracker) List(context.Context, domain.TrackerScope, domain.ListFilter) ([]domain.Issue, error) {
 	return nil, nil
 }
 

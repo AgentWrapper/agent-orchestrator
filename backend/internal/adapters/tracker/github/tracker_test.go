@@ -437,7 +437,7 @@ func TestList_HappyPathAndDefaults(t *testing.T) {
 		]`))
 	})
 	tr := newTrackerForTest(t, f)
-	issues, err := tr.List(ctx(), domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "o/r"}, domain.ListFilter{})
+	issues, err := tr.List(ctx(), domain.TrackerScope{Provider: domain.TrackerProviderGitHub, Native: "o/r"}, domain.ListFilter{})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -464,7 +464,7 @@ func TestList_FiltersOutPullRequests(t *testing.T) {
 		]`))
 	})
 	tr := newTrackerForTest(t, f)
-	issues, err := tr.List(ctx(), domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "o/r"}, domain.ListFilter{})
+	issues, err := tr.List(ctx(), domain.TrackerScope{Provider: domain.TrackerProviderGitHub, Native: "o/r"}, domain.ListFilter{})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -511,7 +511,7 @@ func TestList_QueryEncoding(t *testing.T) {
 				_, _ = w.Write([]byte(`[]`))
 			})
 			tr := newTrackerForTest(t, f)
-			if _, err := tr.List(ctx(), domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "o/r"}, tc.filter); err != nil {
+			if _, err := tr.List(ctx(), domain.TrackerScope{Provider: domain.TrackerProviderGitHub, Native: "o/r"}, tc.filter); err != nil {
 				t.Fatalf("List: %v", err)
 			}
 		})
@@ -533,7 +533,7 @@ func TestList_PaginatesAcrossLinkNext(t *testing.T) {
 	})
 	tr := newTrackerForTest(t, f)
 
-	issues, err := tr.List(ctx(), domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "o/r"}, domain.ListFilter{})
+	issues, err := tr.List(ctx(), domain.TrackerScope{Provider: domain.TrackerProviderGitHub, Native: "o/r"}, domain.ListFilter{})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -577,7 +577,7 @@ func TestList_ConditionalRevalidationContinuesCachedPageChain(t *testing.T) {
 		}
 	})
 	tr := newTrackerForTest(t, f)
-	repo := domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "o/r"}
+	repo := domain.TrackerScope{Provider: domain.TrackerProviderGitHub, Native: "o/r"}
 
 	first, err := tr.List(ctx(), repo, domain.ListFilter{})
 	if err != nil {
@@ -622,7 +622,7 @@ func TestList_PageCountShrinkIgnoresOrphanedCachedPage(t *testing.T) {
 		}
 	})
 	tr := newTrackerForTest(t, f)
-	repo := domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "o/r"}
+	repo := domain.TrackerScope{Provider: domain.TrackerProviderGitHub, Native: "o/r"}
 
 	first, err := tr.List(ctx(), repo, domain.ListFilter{})
 	if err != nil {
@@ -707,7 +707,7 @@ func TestList_ConditionalRevalidationReturns304CachedIssues(t *testing.T) {
 		}
 	})
 	tr := newTrackerForTest(t, f)
-	repo := domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "o/r"}
+	repo := domain.TrackerScope{Provider: domain.TrackerProviderGitHub, Native: "o/r"}
 
 	first, err := tr.List(ctx(), repo, domain.ListFilter{})
 	if err != nil {
@@ -754,7 +754,7 @@ func TestList_ETagUpdatesWhenIssuesChange(t *testing.T) {
 		}
 	})
 	tr := newTrackerForTest(t, f)
-	repo := domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "o/r"}
+	repo := domain.TrackerScope{Provider: domain.TrackerProviderGitHub, Native: "o/r"}
 
 	if _, err := tr.List(ctx(), repo, domain.ListFilter{}); err != nil {
 		t.Fatalf("first List: %v", err)
@@ -794,7 +794,7 @@ func TestList_SeparateCacheKeyPerFilter(t *testing.T) {
 		}
 	})
 	tr := newTrackerForTest(t, f)
-	repo := domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "o/r"}
+	repo := domain.TrackerScope{Provider: domain.TrackerProviderGitHub, Native: "o/r"}
 
 	first, err := tr.List(ctx(), repo, domain.ListFilter{Labels: []string{"bug"}})
 	if err != nil {
@@ -823,7 +823,7 @@ func TestList_NoETagHeaderNotCached(t *testing.T) {
 		_, _ = w.Write([]byte(`[{"number":1,"title":"uncached","state":"open","html_url":"https://github.com/o/r/issues/1"}]`))
 	})
 	tr := newTrackerForTest(t, f)
-	repo := domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "o/r"}
+	repo := domain.TrackerScope{Provider: domain.TrackerProviderGitHub, Native: "o/r"}
 
 	if _, err := tr.List(ctx(), repo, domain.ListFilter{}); err != nil {
 		t.Fatalf("first List: %v", err)
@@ -839,7 +839,7 @@ func TestList_NoETagHeaderNotCached(t *testing.T) {
 func TestList_RejectsWrongProvider(t *testing.T) {
 	f := newFakeGH(t)
 	tr := newTrackerForTest(t, f)
-	_, err := tr.List(ctx(), domain.TrackerRepo{Provider: domain.TrackerProvider("gitlab"), Native: "g/p"}, domain.ListFilter{})
+	_, err := tr.List(ctx(), domain.TrackerScope{Provider: domain.TrackerProvider("gitlab"), Native: "g/p"}, domain.ListFilter{})
 	if !errors.Is(err, ErrWrongProvider) {
 		t.Fatalf("err = %v, want ErrWrongProvider", err)
 	}
@@ -870,7 +870,7 @@ func TestList_RejectsBadRepo(t *testing.T) {
 		t.Run(native, func(t *testing.T) {
 			f := newFakeGH(t)
 			tr := newTrackerForTest(t, f)
-			_, err := tr.List(ctx(), domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: native}, domain.ListFilter{})
+			_, err := tr.List(ctx(), domain.TrackerScope{Provider: domain.TrackerProviderGitHub, Native: native}, domain.ListFilter{})
 			if !errors.Is(err, ErrBadID) {
 				t.Fatalf("native=%q: err = %v, want ErrBadID", native, err)
 			}
