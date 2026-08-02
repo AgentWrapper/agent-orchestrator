@@ -12,10 +12,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/pelletier/go-toml/v2"
-
 	yaml "gopkg.in/yaml.v3"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 const maxConfigFileSize = 4 << 20
