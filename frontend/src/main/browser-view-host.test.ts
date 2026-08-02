@@ -62,6 +62,7 @@ function setupHost() {
 		on: (event: string, listener: (...args: never[]) => void) => {
 			webContentsListeners.set(event, listener);
 		},
+		focus: vi.fn(),
 		reload: vi.fn(),
 		send: vi.fn(),
 		setWindowOpenHandler: () => undefined,
@@ -1265,6 +1266,26 @@ describe("browser annotation IPC", () => {
 		await invoke("browser:annotation:setMode", { viewId: "2:sess-1", enabled: true });
 
 		expect(webContents.send).not.toHaveBeenCalledWith("browser:annotation:setMode", { enabled: true });
+	});
+
+	it("focuses the preview webContents when annotation mode is enabled, so a keypress reaches it without a prior click", async () => {
+		const { invoke, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+
+		expect(webContents.focus).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not steal focus when annotation mode is turned off", async () => {
+		const { invoke, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+		webContents.focus.mockClear();
+
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: false });
+
+		expect(webContents.focus).not.toHaveBeenCalled();
 	});
 
 	it("forwards a single-element preview annotation submission to the renderer-owned view", async () => {

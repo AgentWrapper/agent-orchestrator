@@ -129,6 +129,7 @@ type BrowserWebContents = Pick<
 	| "capturePage"
 	| "clearHistory"
 	| "debugger"
+	| "focus"
 	| "mainFrame"
 	| "getTitle"
 	| "getURL"
@@ -732,6 +733,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const entry = activeEntry(session);
 		entry.annotationEnabled = input.enabled;
 		entry.view.webContents.send("browser:annotation:setMode", { enabled: input.enabled });
+		// The preview WebContentsView is a separate native surface from AO's own
+		// window. A plain click transfers OS focus into it as a side effect, but
+		// the Shift-toggle multi-select gesture is meant to work as the very
+		// first keypress after enabling the tool — with no click yet to carry
+		// focus over. Without this, that keydown goes to AO's own window instead.
+		if (input.enabled) entry.view.webContents.focus();
 	};
 
 	const forwardAnnotationSubmit = (
