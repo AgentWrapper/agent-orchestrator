@@ -1267,19 +1267,22 @@ describe("browser annotation IPC", () => {
 		expect(webContents.send).not.toHaveBeenCalledWith("browser:annotation:setMode", { enabled: true });
 	});
 
-	it("forwards preview annotation submissions to the renderer-owned view", async () => {
+	it("forwards a single-element preview annotation submission to the renderer-owned view", async () => {
 		const { invoke, send, sent } = setupHost();
 		await invoke("browser:ensure", "sess-1");
 
 		send("browser:annotation:submit", 99, {
 			instruction: "Make this button blue.",
-			context: {
-				url: "http://localhost:5173/",
-				tag: "button",
-				classes: [],
-				selector: "button",
-				rect: { x: 0, y: 0, width: 80, height: 30 },
-				computedStyle: {},
+			selection: {
+				kind: "element",
+				context: {
+					url: "http://localhost:5173/",
+					tag: "button",
+					classes: [],
+					selector: "button",
+					rect: { x: 0, y: 0, width: 80, height: 30 },
+					computedStyle: {},
+				},
 			},
 		});
 
@@ -1288,9 +1291,69 @@ describe("browser annotation IPC", () => {
 			payload: expect.objectContaining({
 				viewId: "1:sess-1",
 				instruction: "Make this button blue.",
-				context: expect.objectContaining({ selector: "button" }),
+				selection: expect.objectContaining({
+					kind: "element",
+					context: expect.objectContaining({ selector: "button" }),
+				}),
 			}),
 		});
+	});
+
+	it("forwards a multi-element preview annotation submission to the renderer-owned view", async () => {
+		const { invoke, send, sent } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		send("browser:annotation:submit", 99, {
+			instruction: "Align these two.",
+			selection: {
+				kind: "elements",
+				contexts: [
+					{
+						url: "http://localhost:5173/",
+						tag: "button",
+						classes: [],
+						selector: "button#a",
+						rect: { x: 0, y: 0, width: 80, height: 30 },
+						computedStyle: {},
+					},
+					{
+						url: "http://localhost:5173/",
+						tag: "button",
+						classes: [],
+						selector: "button#b",
+						rect: { x: 100, y: 0, width: 80, height: 30 },
+						computedStyle: {},
+					},
+				],
+			},
+		});
+
+		expect(sent).toContainEqual({
+			channel: "browser:annotation:submitted",
+			payload: expect.objectContaining({
+				viewId: "1:sess-1",
+				instruction: "Align these two.",
+				selection: expect.objectContaining({
+					kind: "elements",
+					contexts: [
+						expect.objectContaining({ selector: "button#a" }),
+						expect.objectContaining({ selector: "button#b" }),
+					],
+				}),
+			}),
+		});
+	});
+
+	it("ignores a malformed annotation selection instead of forwarding it", async () => {
+		const { invoke, send, sent } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		send("browser:annotation:submit", 99, {
+			instruction: "Make this button blue.",
+			selection: { kind: "elements", contexts: [] },
+		});
+
+		expect(sent.some((entry) => entry.channel === "browser:annotation:submitted")).toBe(false);
 	});
 
 	it("ignores preview annotation events after the view is destroyed", async () => {

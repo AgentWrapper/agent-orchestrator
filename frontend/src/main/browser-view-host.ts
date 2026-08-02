@@ -14,10 +14,23 @@ import type {
 	BrowserAnnotationModeInput,
 	BrowserAnnotationPageCancelPayload,
 	BrowserAnnotationPageSubmitPayload,
+	BrowserAnnotationSelection,
 	BrowserAnnotationSubmitPayload,
 } from "../shared/browser-annotations";
 import { attachAppShortcuts } from "./app-shortcuts";
 import type { KeybindingOverrides } from "../shared/shortcuts";
+
+function isValidAnnotationSelection(value: unknown): value is BrowserAnnotationSelection {
+	if (typeof value !== "object" || value === null) return false;
+	const selection = value as { kind?: unknown; context?: unknown; contexts?: unknown };
+	if (selection.kind === "element") {
+		return typeof selection.context === "object" && selection.context !== null;
+	}
+	if (selection.kind === "elements") {
+		return Array.isArray(selection.contexts) && selection.contexts.length > 0;
+	}
+	return false;
+}
 
 export type BrowserRect = Pick<Rectangle, "x" | "y" | "width" | "height">;
 
@@ -697,8 +710,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			!entry ||
 			!payload ||
 			typeof payload.instruction !== "string" ||
-			typeof payload.context !== "object" ||
-			payload.context === null
+			!isValidAnnotationSelection(payload.selection)
 		) {
 			return;
 		}
@@ -706,7 +718,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const forwarded: BrowserAnnotationSubmitPayload = {
 			viewId,
 			instruction: payload.instruction,
-			context: payload.context,
+			selection: payload.selection,
 		};
 		options.mainWindow.webContents.send("browser:annotation:submitted", forwarded);
 	};
