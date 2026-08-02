@@ -7,7 +7,9 @@ import "time"
 type SessionKind string
 
 const (
-	KindWorker       SessionKind = "worker"
+	// KindWorker is a delegated implementation session.
+	KindWorker SessionKind = "worker"
+	// KindOrchestrator is a coordination session that manages workers.
 	KindOrchestrator SessionKind = "orchestrator"
 )
 
@@ -15,11 +17,16 @@ const (
 type ActivityState string
 
 const (
-	ActivityActive       ActivityState = "active"
-	ActivityIdle         ActivityState = "idle"
+	// ActivityActive means the runtime is actively working.
+	ActivityActive ActivityState = "active"
+	// ActivityIdle means the runtime is available and not actively working.
+	ActivityIdle ActivityState = "idle"
+	// ActivityWaitingInput means progress is blocked on user input.
 	ActivityWaitingInput ActivityState = "waiting_input"
-	ActivityBlocked      ActivityState = "blocked"
-	ActivityExited       ActivityState = "exited"
+	// ActivityBlocked means progress is blocked on an external issue.
+	ActivityBlocked ActivityState = "blocked"
+	// ActivityExited means the runtime process exited.
+	ActivityExited ActivityState = "exited"
 )
 
 // SessionStatus is the dashboard/Kanban display status. It is derived from
@@ -27,20 +34,34 @@ const (
 type SessionStatus string
 
 const (
-	StatusWorking          SessionStatus = "working"
-	StatusPROpen           SessionStatus = "pr_open"
-	StatusDraft            SessionStatus = "draft"
-	StatusCIFailed         SessionStatus = "ci_failed"
-	StatusReviewPending    SessionStatus = "review_pending"
+	// StatusWorking means the session is actively progressing.
+	StatusWorking SessionStatus = "working"
+	// StatusPROpen means a pull request exists but has no stronger status.
+	StatusPROpen SessionStatus = "pr_open"
+	// StatusDraft means the pull request is currently a draft.
+	StatusDraft SessionStatus = "draft"
+	// StatusCIFailed means CI has failed for the session PR.
+	StatusCIFailed SessionStatus = "ci_failed"
+	// StatusReviewPending means the session PR is waiting for review.
+	StatusReviewPending SessionStatus = "review_pending"
+	// StatusChangesRequested means review feedback requires worker action.
 	StatusChangesRequested SessionStatus = "changes_requested"
-	StatusApproved         SessionStatus = "approved"
-	StatusMergeable        SessionStatus = "mergeable"
-	StatusMerged           SessionStatus = "merged"
-	StatusNeedsInput       SessionStatus = "needs_input"
-	StatusExited           SessionStatus = "exited"
-	StatusIdle             SessionStatus = "idle"
-	StatusTerminated       SessionStatus = "terminated"
-	StatusNoSignal         SessionStatus = "no_signal"
+	// StatusApproved means the session PR has approval.
+	StatusApproved SessionStatus = "approved"
+	// StatusMergeable means the session PR is ready to merge.
+	StatusMergeable SessionStatus = "mergeable"
+	// StatusMerged means the session PR has merged.
+	StatusMerged SessionStatus = "merged"
+	// StatusNeedsInput means the session needs user input or has a blocker.
+	StatusNeedsInput SessionStatus = "needs_input"
+	// StatusExited means the runtime process exited.
+	StatusExited SessionStatus = "exited"
+	// StatusIdle means the session is available but inactive.
+	StatusIdle SessionStatus = "idle"
+	// StatusTerminated means the session was intentionally terminated.
+	StatusTerminated SessionStatus = "terminated"
+	// StatusNoSignal means a signal-capable session has not reported activity.
+	StatusNoSignal SessionStatus = "no_signal"
 )
 
 // SessionFacts are portable facts used to derive a session's display status.

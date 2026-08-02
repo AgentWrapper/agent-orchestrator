@@ -4,21 +4,31 @@ package contract
 type WorkspaceFileStatus string
 
 const (
+	// WorkspaceFileUnmodified means the file matches its compare base.
 	WorkspaceFileUnmodified WorkspaceFileStatus = "unmodified"
-	WorkspaceFileModified   WorkspaceFileStatus = "modified"
-	WorkspaceFileAdded      WorkspaceFileStatus = "added"
-	WorkspaceFileDeleted    WorkspaceFileStatus = "deleted"
-	WorkspaceFileRenamed    WorkspaceFileStatus = "renamed"
-	WorkspaceFileUntracked  WorkspaceFileStatus = "untracked"
-	WorkspaceFileCopied     WorkspaceFileStatus = "copied"
-	WorkspaceFileChanged    WorkspaceFileStatus = "changed"
+	// WorkspaceFileModified means the file changed in place.
+	WorkspaceFileModified WorkspaceFileStatus = "modified"
+	// WorkspaceFileAdded means the file was added.
+	WorkspaceFileAdded WorkspaceFileStatus = "added"
+	// WorkspaceFileDeleted means the file was deleted.
+	WorkspaceFileDeleted WorkspaceFileStatus = "deleted"
+	// WorkspaceFileRenamed means the file moved from a previous path.
+	WorkspaceFileRenamed WorkspaceFileStatus = "renamed"
+	// WorkspaceFileUntracked means Git does not track the file.
+	WorkspaceFileUntracked WorkspaceFileStatus = "untracked"
+	// WorkspaceFileCopied means Git detected the file as copied.
+	WorkspaceFileCopied WorkspaceFileStatus = "copied"
+	// WorkspaceFileChanged is a fallback for non-specific change states.
+	WorkspaceFileChanged WorkspaceFileStatus = "changed"
 )
 
 // WorkspaceCompareMode describes the Git revision used for workspace diffs.
 type WorkspaceCompareMode string
 
 const (
-	WorkspaceCompareBase         WorkspaceCompareMode = "base"
+	// WorkspaceCompareBase means diffs are relative to the intended base.
+	WorkspaceCompareBase WorkspaceCompareMode = "base"
+	// WorkspaceCompareHeadFallback means no durable base was available.
 	WorkspaceCompareHeadFallback WorkspaceCompareMode = "head_fallback"
 )
 

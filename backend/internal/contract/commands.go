@@ -4,15 +4,26 @@ package contract
 type AOCommand string
 
 const (
-	CommandSpawn               AOCommand = "spawn"
-	CommandSend                AOCommand = "send"
-	CommandStatus              AOCommand = "status"
-	CommandInspect             AOCommand = "inspect"
-	CommandWait                AOCommand = "wait"
-	CommandResult              AOCommand = "result"
-	CommandKill                AOCommand = "kill"
-	CommandClaimPullRequest    AOCommand = "claim-pr"
-	CommandMergePullRequest    AOCommand = "merge-pr"
+	// CommandSpawn creates a delegated worker session.
+	CommandSpawn AOCommand = "spawn"
+	// CommandSend sends a message to an existing session.
+	CommandSend AOCommand = "send"
+	// CommandStatus reports session state.
+	CommandStatus AOCommand = "status"
+	// CommandInspect reads session workspace and runtime context.
+	CommandInspect AOCommand = "inspect"
+	// CommandWait waits for session progress or completion.
+	CommandWait AOCommand = "wait"
+	// CommandResult reports final worker output.
+	CommandResult AOCommand = "result"
+	// CommandKill terminates a session.
+	CommandKill AOCommand = "kill"
+	// CommandClaimPullRequest associates a PR with a session.
+	CommandClaimPullRequest AOCommand = "claim-pr"
+	// CommandMergePullRequest merges a claimed PR.
+	CommandMergePullRequest AOCommand = "merge-pr"
+	// CommandResolveReviewThread marks a review thread resolved.
 	CommandResolveReviewThread AOCommand = "resolve-review-thread"
-	CommandReportBlocker       AOCommand = "blocker"
+	// CommandReportBlocker reports a worker blocker to the orchestrator.
+	CommandReportBlocker AOCommand = "blocker"
 )

@@ -22,9 +22,13 @@ type PRFacts struct {
 type CIState string
 
 const (
+	// CIUnknown means CI state has not been observed.
 	CIUnknown CIState = "unknown"
+	// CIPending means at least one required check is still running.
 	CIPending CIState = "pending"
+	// CIPassing means observed required checks are passing.
 	CIPassing CIState = "passing"
+	// CIFailing means at least one required check failed.
 	CIFailing CIState = "failing"
 )
 
@@ -32,21 +36,30 @@ const (
 type ReviewState string
 
 const (
-	ReviewNone             ReviewState = "none"
-	ReviewApproved         ReviewState = "approved"
+	// ReviewNone means no meaningful review verdict has been observed.
+	ReviewNone ReviewState = "none"
+	// ReviewApproved means the PR has an approving review.
+	ReviewApproved ReviewState = "approved"
+	// ReviewChangesRequested means a reviewer requested changes.
 	ReviewChangesRequested ReviewState = "changes_requested"
-	ReviewRequired         ReviewState = "review_required"
+	// ReviewRequired means a required review is still missing.
+	ReviewRequired ReviewState = "review_required"
 )
 
 // Mergeability is whether a PR can currently be merged.
 type Mergeability string
 
 const (
-	MergeUnknown     Mergeability = "unknown"
-	MergeMergeable   Mergeability = "mergeable"
+	// MergeUnknown means mergeability has not been observed.
+	MergeUnknown Mergeability = "unknown"
+	// MergeMergeable means the PR can currently be merged.
+	MergeMergeable Mergeability = "mergeable"
+	// MergeConflicting means the PR has merge conflicts.
 	MergeConflicting Mergeability = "conflicting"
-	MergeBlocked     Mergeability = "blocked"
-	MergeUnstable    Mergeability = "unstable"
+	// MergeBlocked means repository rules currently block merging.
+	MergeBlocked Mergeability = "blocked"
+	// MergeUnstable means mergeability is transient or pending recomputation.
+	MergeUnstable Mergeability = "unstable"
 )
 
 type stackInfo struct {
