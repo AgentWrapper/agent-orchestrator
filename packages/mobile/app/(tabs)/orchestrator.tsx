@@ -1,6 +1,6 @@
 import { useRouter } from "expo-router";
-import { useState } from "react";
-import { Alert, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useMemo, useState } from "react";
+import { ActivityIndicator, Alert, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AgentLogo } from "../../lib/AgentLogo";
 import { ApiError, type DashboardSession, type OrchestratorLink } from "../../lib/api";
@@ -11,7 +11,7 @@ import { useApp } from "../../lib/store";
 import { attentionMetaFor, type AttentionLevel, type Theme } from "../../lib/theme";
 import { useTheme, useThemedStyles } from "../../lib/ThemeProvider";
 import { useTabScrollToTop } from "../../lib/useTabScrollToTop";
-import { cardShell, Dot, EmptyState, IconButton, ScreenHeader } from "../../lib/ui";
+import { Button, cardShell, Dot, EmptyState, IconButton, ScreenHeader } from "../../lib/ui";
 
 const ZONE_ORDER: AttentionLevel[] = ["merge", "respond", "review", "pending", "working", "done"];
 
@@ -19,10 +19,20 @@ export default function OrchestratorScreen() {
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
 	const insets = useSafeAreaInsets();
-	const { configured, connection, projects, sessions, orchestrators, refresh } = useApp();
+	const { configured, loading, error, errorStatus, connection, config, projects, sessions, orchestrators, refresh } =
+		useApp();
 	const [refreshing, setRefreshing] = useState(false);
 
 	const scrollRef = useTabScrollToTop<ScrollView>();
+	const failure = useMemo(
+		() =>
+			describeConnectionFailure(classifyConnectionFailure(errorStatus ?? undefined), {
+				host: config?.host ?? "",
+				port: config?.httpPort ?? "",
+				platform: Platform.OS,
+			}),
+		[errorStatus, config?.host, config?.httpPort],
+	);
 
 	const onRefresh = async () => {
 		haptics.tap();
@@ -45,30 +55,45 @@ export default function OrchestratorScreen() {
 			<View style={{ height: insets.top }} />
 			<ScreenHeader title="Orchestrator" status={connection} />
 
-			<ScrollView
-				ref={scrollRef}
-				contentContainerStyle={{ paddingBottom: 110, paddingTop: 4 }}
-				refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={t.blue} />}
-			>
-				{/* Deliberately every project, ignoring the active-project filter the
-				    other tabs honour: this tab is the one cross-project overview. */}
-				{projects.length === 0 ? (
-					<EmptyState icon="folder" title="No projects" message="Add a project in AO to get started." />
-				) : (
-					projects.map((p) => {
-						const link = orchestrators.find((o) => o.projectId === p.id) ?? null;
-						return (
-							<OrchestratorCard
-								key={p.id}
-								projectId={p.id}
-								projectName={p.name}
-								link={link}
-								workers={workersOf(sessions, p.id, link)}
+			{loading && projects.length === 0 ? (
+				<View style={styles.center}>
+					<ActivityIndicator color={t.blue} />
+				</View>
+			) : (
+				<ScrollView
+					ref={scrollRef}
+					contentContainerStyle={{ paddingBottom: 110, paddingTop: 4 }}
+					refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={t.blue} />}
+				>
+					{/* Deliberately every project, ignoring the active-project filter the
+					    other tabs honour: this tab is the one cross-project overview. */}
+					{projects.length === 0 ? (
+						error ? (
+							<EmptyState
+								icon="wifi-off"
+								title={failure.title}
+								message={failure.message}
+								action={<Button title="Retry" icon="refresh-cw" variant="ghost" onPress={onRefresh} />}
 							/>
-						);
-					})
-				)}
-			</ScrollView>
+						) : (
+							<EmptyState icon="folder" title="No projects" message="Add a project in AO to get started." />
+						)
+					) : (
+						projects.map((p) => {
+							const link = orchestrators.find((o) => o.projectId === p.id) ?? null;
+							return (
+								<OrchestratorCard
+									key={p.id}
+									projectId={p.id}
+									projectName={p.name}
+									link={link}
+									workers={workersOf(sessions, p.id, link)}
+								/>
+							);
+						})
+					)}
+				</ScrollView>
+			)}
 		</View>
 	);
 }
@@ -214,6 +239,7 @@ function OrchestratorCard({
 const makeStyles = (t: Theme) =>
 	StyleSheet.create({
 		screen: { flex: 1, backgroundColor: t.bgBase },
+		center: { flex: 1, alignItems: "center", justifyContent: "center" },
 		card: cardShell(t),
 		head: { flexDirection: "row", alignItems: "center", gap: 10 },
 		projName: { color: t.textPrimary, fontSize: 15, fontWeight: "600" },
