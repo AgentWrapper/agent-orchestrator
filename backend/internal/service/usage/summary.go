@@ -71,10 +71,11 @@ func (r *SummaryReader) Get(ctx context.Context, sessionID domain.SessionID) (do
 	warnings := make(map[string]struct{})
 	for _, binding := range bindings {
 		aggregate.BindingCount++
-		switch binding.State {
-		case domain.UsageBindingComplete:
+		if binding.State == domain.UsageBindingComplete {
 			aggregate.CompleteBindingCount++
-		case domain.UsageBindingPartial:
+		}
+		if binding.State == domain.UsageBindingPartial ||
+			binding.LastErrorCode == domain.UsageErrorCodexSourceBudgetExceeded {
 			aggregate.PartialBindingCount++
 		}
 		addUsageWarning(warnings, binding.LastErrorCode)

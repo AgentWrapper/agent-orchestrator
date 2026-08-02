@@ -21,11 +21,12 @@ import (
 )
 
 const (
-	maxUsageMetadataBytes = 256
-	maxUsagePathBytes     = 4096
-	maxCodexSessionMeta   = 64 << 10
-	maxCodexChildIDs      = 4096
-	defaultDiscoveryLimit = 64
+	maxUsageMetadataBytes          = 256
+	maxUsagePathBytes              = 4096
+	maxCodexSessionMeta            = 64 << 10
+	maxCodexChildIDs               = 4096
+	defaultCodexLogicalSourceLimit = 4096
+	defaultDiscoveryLimit          = 64
 )
 
 var nativeUsageIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
@@ -88,20 +89,34 @@ type collectorStore interface {
 // Collector registers provider transcript files and coordinates their source
 // lifecycle. Parsing and cursor advancement remain in the usage ingestor.
 type Collector struct {
-	store                collectorStore
-	roots                SourceRoots
-	notifySourcesChanged func(reconcile bool)
-	now                  func() time.Time
-	mu                   sync.Mutex
+	store                   collectorStore
+	roots                   SourceRoots
+	notifySourcesChanged    func(reconcile bool)
+	codexLogicalSourceLimit int
+	now                     func() time.Time
+	mu                      sync.Mutex
 }
 
 // NewCollector constructs a transcript source registrar.
 func NewCollector(store collectorStore, roots SourceRoots, notifySourcesChanged func(reconcile bool)) *Collector {
+	return newCollectorWithCodexSourceLimit(store, roots, notifySourcesChanged, defaultCodexLogicalSourceLimit)
+}
+
+func newCollectorWithCodexSourceLimit(
+	store collectorStore,
+	roots SourceRoots,
+	notifySourcesChanged func(reconcile bool),
+	limit int,
+) *Collector {
+	if limit <= 0 {
+		limit = defaultCodexLogicalSourceLimit
+	}
 	return &Collector{
-		store:                store,
-		roots:                roots,
-		notifySourcesChanged: notifySourcesChanged,
-		now:                  time.Now,
+		store:                   store,
+		roots:                   roots,
+		notifySourcesChanged:    notifySourcesChanged,
+		codexLogicalSourceLimit: limit,
+		now:                     time.Now,
 	}
 }
 
@@ -463,7 +478,10 @@ func (c *Collector) reconcileBinding(ctx context.Context, binding domain.UsageBi
 
 	targetState := binding.State
 	if session.Activity.State == domain.ActivityExited &&
-		(binding.State == domain.UsageBindingDiscovering || binding.State == domain.UsageBindingActive) {
+		(binding.State == domain.UsageBindingDiscovering ||
+			binding.State == domain.UsageBindingActive ||
+			(binding.State == domain.UsageBindingPartial &&
+				binding.LastErrorCode == domain.UsageErrorCodexSourceBudgetExceeded)) {
 		targetState = domain.UsageBindingFinalizing
 	}
 
@@ -474,7 +492,16 @@ func (c *Collector) reconcileBinding(ctx context.Context, binding domain.UsageBi
 				return childErr
 			}
 		}
-		_, err = c.store.UpdateUsageBindingState(ctx, binding.ID, targetState, domain.UsageErrorSourceDiscoveryPending, now)
+		targetState, lastErrorCode, stateErr := c.preserveCodexBudgetState(
+			ctx,
+			binding,
+			targetState,
+			domain.UsageErrorSourceDiscoveryPending,
+		)
+		if stateErr != nil {
+			return stateErr
+		}
+		_, err = c.store.UpdateUsageBindingState(ctx, binding.ID, targetState, lastErrorCode, now)
 		return err
 	}
 	if targetState == domain.UsageBindingDiscovering {
@@ -502,6 +529,15 @@ func (c *Collector) reconcileBinding(ctx context.Context, binding domain.UsageBi
 		!pathWithinRoot(path, c.roots.CodexSessions) {
 		lastErrorCode = domain.UsageErrorSourceDiscoveryPending
 	}
+	targetState, lastErrorCode, err = c.preserveCodexBudgetState(
+		ctx,
+		binding,
+		targetState,
+		lastErrorCode,
+	)
+	if err != nil {
+		return err
+	}
 	if _, err := c.store.UpdateUsageBindingState(ctx, binding.ID, targetState, lastErrorCode, now); err != nil {
 		return err
 	}
@@ -509,6 +545,33 @@ func (c *Collector) reconcileBinding(ctx context.Context, binding domain.UsageBi
 		return c.settleFinalizingBinding(ctx, binding.ID, now)
 	}
 	return nil
+}
+
+func (c *Collector) preserveCodexBudgetState(
+	ctx context.Context,
+	binding domain.UsageBindingRecord,
+	state domain.UsageBindingState,
+	errorCode string,
+) (domain.UsageBindingState, string, error) {
+	if binding.Harness != domain.HarnessCodex {
+		return state, errorCode, nil
+	}
+	current, ok, err := c.store.GetUsageBinding(
+		ctx,
+		binding.SessionID,
+		binding.Harness,
+		binding.NativeRootID,
+	)
+	if err != nil || !ok {
+		return state, errorCode, err
+	}
+	if current.LastErrorCode == domain.UsageErrorCodexSourceBudgetExceeded {
+		if state == domain.UsageBindingFinalizing {
+			return state, current.LastErrorCode, nil
+		}
+		return current.State, current.LastErrorCode, nil
+	}
+	return state, errorCode, nil
 }
 
 func (c *Collector) registerSource(
@@ -527,6 +590,20 @@ func (c *Collector) registerSource(
 	}
 	sources, err := c.store.ListUsageSourcesForBinding(ctx, binding.ID)
 	if err != nil {
+		return false, err
+	}
+	if c.codexSourceBudgetExceeded(sources, kind, nativeSessionID, subagentID) {
+		state := binding.State
+		if state == domain.UsageBindingDiscovering || state == domain.UsageBindingActive {
+			state = domain.UsageBindingPartial
+		}
+		_, err := c.store.UpdateUsageBindingState(
+			ctx,
+			binding.ID,
+			state,
+			domain.UsageErrorCodexSourceBudgetExceeded,
+			now,
+		)
 		return false, err
 	}
 	var latest *domain.UsageSourceRecord
@@ -590,6 +667,28 @@ func (c *Collector) registerSource(
 	}
 	_, err = c.store.InsertUsageSource(ctx, record)
 	return err == nil, err
+}
+
+func (c *Collector) codexSourceBudgetExceeded(
+	sources []domain.UsageSourceRecord,
+	kind domain.UsageSourceKind,
+	nativeSessionID string,
+	subagentID string,
+) bool {
+	if kind != domain.UsageSourceCodexRollout || nativeSessionID == "" || subagentID == "" {
+		return false
+	}
+	logicalSources := make(map[string]struct{})
+	for _, source := range sources {
+		if source.Kind != domain.UsageSourceCodexRollout || source.NativeSessionID == "" {
+			continue
+		}
+		logicalSources[source.NativeSessionID] = struct{}{}
+	}
+	if _, exists := logicalSources[nativeSessionID]; exists {
+		return false
+	}
+	return len(logicalSources) >= c.codexLogicalSourceLimit
 }
 
 func (c *Collector) registerDiscoveredClaudeSubagents(
@@ -760,7 +859,13 @@ func (c *Collector) settleFinalizingBinding(ctx context.Context, bindingID int64
 }
 
 func (c *Collector) reactivateBinding(ctx context.Context, binding domain.UsageBindingRecord, now time.Time) (bool, error) {
-	if _, err := c.store.UpdateUsageBindingState(ctx, binding.ID, domain.UsageBindingActive, "", now); err != nil {
+	state := domain.UsageBindingActive
+	errorCode := ""
+	if binding.LastErrorCode == domain.UsageErrorCodexSourceBudgetExceeded {
+		errorCode = binding.LastErrorCode
+		state = domain.UsageBindingPartial
+	}
+	if _, err := c.store.UpdateUsageBindingState(ctx, binding.ID, state, errorCode, now); err != nil {
 		return false, err
 	}
 	return c.reactivateLatestSources(ctx, binding.ID, now)
@@ -800,7 +905,11 @@ func (c *Collector) finalizeSession(ctx context.Context, sessionID domain.Sessio
 		return err
 	}
 	for _, binding := range bindings {
-		if _, err := c.store.UpdateUsageBindingState(ctx, binding.ID, domain.UsageBindingFinalizing, "", now); err != nil {
+		errorCode := ""
+		if binding.LastErrorCode == domain.UsageErrorCodexSourceBudgetExceeded {
+			errorCode = binding.LastErrorCode
+		}
+		if _, err := c.store.UpdateUsageBindingState(ctx, binding.ID, domain.UsageBindingFinalizing, errorCode, now); err != nil {
 			return err
 		}
 		if _, err := c.reactivateLatestSources(ctx, binding.ID, now); err != nil {

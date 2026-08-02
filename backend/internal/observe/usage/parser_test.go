@@ -92,6 +92,43 @@ func TestParseCodexCounterResetNeverEmitsNegativeUsage(t *testing.T) {
 	}
 }
 
+func TestDecodeParserStateTreatsWhitespaceOnlyObjectAsFreshState(t *testing.T) {
+	tests := []struct {
+		name string
+		kind domain.UsageSourceKind
+		raw  string
+	}{
+		{name: "claude spaces", kind: domain.UsageSourceClaudeMain, raw: "{ }"},
+		{name: "claude newline", kind: domain.UsageSourceClaudeSubagent, raw: "{\n\t}"},
+		{name: "codex spaces", kind: domain.UsageSourceCodexRollout, raw: "{   }"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			state, err := decodeParserState(domain.UsageSourceRecord{
+				Kind:            test.kind,
+				ParserStateJSON: test.raw,
+			})
+			if err != nil {
+				t.Fatalf("decode semantically empty parser state: %v", err)
+			}
+			if state.Version != parserStateVersion || state.SourceKind != test.kind {
+				t.Fatalf("state = %+v, want fresh %s state", state, test.kind)
+			}
+			switch test.kind {
+			case domain.UsageSourceCodexRollout:
+				if state.Codex == nil || state.Claude != nil {
+					t.Fatalf("Codex state = %+v", state)
+				}
+			default:
+				if state.Claude == nil || state.Codex != nil {
+					t.Fatalf("Claude state = %+v", state)
+				}
+			}
+		})
+	}
+}
+
 func TestParsersRejectInvalidTokenVectorsAndAdvanceCursor(t *testing.T) {
 	now := time.Unix(1700000000, 0).UTC()
 	tests := []struct {

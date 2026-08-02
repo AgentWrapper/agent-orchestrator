@@ -15,6 +15,8 @@ ON CONFLICT (session_id, harness, native_root_id) DO UPDATE SET
         ELSE excluded.state
     END,
     last_error_code = CASE
+        WHEN usage_bindings.last_error_code = 'codex_source_budget_exceeded'
+        THEN usage_bindings.last_error_code
         WHEN usage_bindings.state IN ('finalizing', 'complete', 'partial')
           AND excluded.state IN ('discovering', 'active')
         THEN usage_bindings.last_error_code
@@ -89,11 +91,15 @@ FROM usage_bindings ub
 JOIN sessions s ON s.id = ub.session_id
 WHERE (s.is_terminated = 0 OR ub.state = 'finalizing')
   AND ub.harness IN ('claude-code', 'codex')
-  AND ub.state IN ('discovering', 'active', 'finalizing')
+  AND (
+      ub.state IN ('discovering', 'active', 'finalizing')
+      OR (ub.state = 'partial' AND ub.last_error_code = 'codex_source_budget_exceeded')
+  )
   AND (
       ub.harness = 'claude-code'
       OR ub.state = 'discovering'
       OR ub.state = 'finalizing'
+      OR ub.last_error_code = 'codex_source_budget_exceeded'
       OR ub.last_error_code = 'source_discovery_pending'
       OR NOT EXISTS (
           SELECT 1
@@ -173,7 +179,10 @@ JOIN sessions s ON s.id = ub.session_id
 JOIN usage_sources parent ON parent.binding_id = ub.id
 WHERE (s.is_terminated = 0 OR ub.state = 'finalizing')
   AND ub.harness = 'codex'
-  AND ub.state IN ('discovering', 'active', 'finalizing')
+  AND (
+      ub.state IN ('discovering', 'active', 'finalizing')
+      OR (ub.state = 'partial' AND ub.last_error_code = 'codex_source_budget_exceeded')
+  )
   AND parent.kind = 'codex_rollout'
   AND parent.native_session_id = sqlc.arg(parent_native_session_id)
   AND parent.id = (
@@ -259,23 +268,32 @@ WHERE id = ?;
 
 -- name: UpdateUsageBindingState :execrows
 UPDATE usage_bindings SET
-    state = ?,
-    last_error_code = ?,
-    last_seen_at = ?,
-    updated_at = ?
-WHERE id = ?;
+    state = sqlc.arg(state),
+    last_error_code = CASE
+        WHEN usage_bindings.last_error_code = 'codex_source_budget_exceeded'
+        THEN usage_bindings.last_error_code
+        ELSE sqlc.arg(last_error_code)
+    END,
+    last_seen_at = sqlc.arg(last_seen_at),
+    updated_at = sqlc.arg(updated_at)
+WHERE id = sqlc.arg(id);
 
 -- name: UpdateUsageBindingErrorCode :execrows
 UPDATE usage_bindings SET
-    last_error_code = ?,
-    last_seen_at = ?,
-    updated_at = ?
-WHERE id = ?;
+    last_error_code = CASE
+        WHEN usage_bindings.last_error_code = 'codex_source_budget_exceeded'
+        THEN usage_bindings.last_error_code
+        ELSE sqlc.arg(last_error_code)
+    END,
+    last_seen_at = sqlc.arg(last_seen_at),
+    updated_at = sqlc.arg(updated_at)
+WHERE id = sqlc.arg(id);
 
 -- name: CompleteUsageBindingIfSettled :execrows
 UPDATE usage_bindings
 SET state = CASE
-        WHEN EXISTS (
+        WHEN usage_bindings.last_error_code = 'codex_source_budget_exceeded'
+          OR EXISTS (
             SELECT 1
             FROM usage_sources
             WHERE usage_sources.binding_id = sqlc.arg(usage_binding_id)
@@ -283,7 +301,11 @@ SET state = CASE
         ) THEN 'partial'
         ELSE 'complete'
     END,
-    last_error_code = '',
+    last_error_code = CASE
+        WHEN usage_bindings.last_error_code = 'codex_source_budget_exceeded'
+        THEN usage_bindings.last_error_code
+        ELSE ''
+    END,
     last_seen_at = sqlc.arg(updated_at),
     updated_at = sqlc.arg(updated_at)
 WHERE id = sqlc.arg(usage_binding_id)
@@ -299,7 +321,9 @@ WHERE id = sqlc.arg(usage_binding_id)
       WHERE usage_sources.binding_id = sqlc.arg(usage_binding_id)
         AND state <> 'complete'
 	)
-	AND NOT EXISTS (
+	AND (
+	    usage_bindings.last_error_code = 'codex_source_budget_exceeded'
+	    OR NOT EXISTS (
 	    SELECT 1
 	    FROM usage_sources spawning
 	    JOIN json_each(
@@ -351,6 +375,7 @@ WHERE id = sqlc.arg(usage_binding_id)
 	            AND registered.kind = 'codex_rollout'
 	            AND registered.native_session_id = CAST(discovered.value AS TEXT)
 	      )
+	    )
 	)
 	AND NOT EXISTS (
 	    SELECT 1
@@ -434,7 +459,9 @@ SELECT
     s.harness,
     COUNT(DISTINCT ub.id) AS binding_count,
     COUNT(DISTINCT CASE WHEN ub.state = 'complete' THEN ub.id END) AS complete_binding_count,
-    COUNT(DISTINCT CASE WHEN ub.state = 'partial' THEN ub.id END) AS partial_binding_count,
+    COUNT(DISTINCT CASE
+        WHEN ub.state = 'partial' OR ub.last_error_code = 'codex_source_budget_exceeded' THEN ub.id
+    END) AS partial_binding_count,
     COUNT(DISTINCT us.id) AS source_count,
     COUNT(DISTINCT CASE WHEN us.state = 'complete' THEN us.id END) AS complete_source_count,
     COUNT(DISTINCT CASE WHEN us.state = 'error' THEN us.id END) AS error_source_count,

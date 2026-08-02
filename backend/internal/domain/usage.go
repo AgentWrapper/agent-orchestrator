@@ -78,6 +78,7 @@ const (
 	UsageErrorNonMonotonicCumulativeUsage = "non_monotonic_cumulative_usage"
 	UsageErrorInvalidParserState          = "invalid_parser_state"
 	UsageErrorUnresolvedSpawnCall         = "unresolved_spawn_call"
+	UsageErrorCodexSourceBudgetExceeded   = "codex_source_budget_exceeded"
 	UsageErrorPartialReasoningCoverage    = "partial_reasoning_coverage"
 )
 

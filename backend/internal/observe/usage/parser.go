@@ -101,11 +101,15 @@ type codexParserStateV1 struct {
 
 func decodeParserState(source domain.UsageSourceRecord) (*parserStateEnvelope, error) {
 	raw := strings.TrimSpace(source.ParserStateJSON)
-	if raw == "{}" {
-		return newParserState(source.Kind)
-	}
 	if raw == "" || raw[0] != '{' {
 		return nil, errors.New("state must be a JSON object")
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &object); err != nil {
+		return nil, err
+	}
+	if len(object) == 0 {
+		return newParserState(source.Kind)
 	}
 	var state parserStateEnvelope
 	decoder := json.NewDecoder(bytes.NewReader([]byte(raw)))

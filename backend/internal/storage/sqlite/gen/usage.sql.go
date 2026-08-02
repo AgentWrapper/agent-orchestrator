@@ -102,7 +102,8 @@ func (q *Queries) AggregateUsageBySessionHarnessModel(ctx context.Context, sessi
 const completeUsageBindingIfSettled = `-- name: CompleteUsageBindingIfSettled :execrows
 UPDATE usage_bindings
 SET state = CASE
-        WHEN EXISTS (
+        WHEN usage_bindings.last_error_code = 'codex_source_budget_exceeded'
+          OR EXISTS (
             SELECT 1
             FROM usage_sources
             WHERE usage_sources.binding_id = ?1
@@ -110,7 +111,11 @@ SET state = CASE
         ) THEN 'partial'
         ELSE 'complete'
     END,
-    last_error_code = '',
+    last_error_code = CASE
+        WHEN usage_bindings.last_error_code = 'codex_source_budget_exceeded'
+        THEN usage_bindings.last_error_code
+        ELSE ''
+    END,
     last_seen_at = ?2,
     updated_at = ?2
 WHERE id = ?1
@@ -126,7 +131,9 @@ WHERE id = ?1
       WHERE usage_sources.binding_id = ?1
         AND state <> 'complete'
 	)
-	AND NOT EXISTS (
+	AND (
+	    usage_bindings.last_error_code = 'codex_source_budget_exceeded'
+	    OR NOT EXISTS (
 	    SELECT 1
 	    FROM usage_sources spawning
 	    JOIN json_each(
@@ -178,6 +185,7 @@ WHERE id = ?1
 	            AND registered.kind = 'codex_rollout'
 	            AND registered.native_session_id = CAST(discovered.value AS TEXT)
 	      )
+	    )
 	)
 	AND NOT EXISTS (
 	    SELECT 1
@@ -537,7 +545,9 @@ SELECT
     s.harness,
     COUNT(DISTINCT ub.id) AS binding_count,
     COUNT(DISTINCT CASE WHEN ub.state = 'complete' THEN ub.id END) AS complete_binding_count,
-    COUNT(DISTINCT CASE WHEN ub.state = 'partial' THEN ub.id END) AS partial_binding_count,
+    COUNT(DISTINCT CASE
+        WHEN ub.state = 'partial' OR ub.last_error_code = 'codex_source_budget_exceeded' THEN ub.id
+    END) AS partial_binding_count,
     COUNT(DISTINCT us.id) AS source_count,
     COUNT(DISTINCT CASE WHEN us.state = 'complete' THEN us.id END) AS complete_source_count,
     COUNT(DISTINCT CASE WHEN us.state = 'error' THEN us.id END) AS error_source_count,
@@ -614,7 +624,10 @@ JOIN sessions s ON s.id = ub.session_id
 JOIN usage_sources parent ON parent.binding_id = ub.id
 WHERE (s.is_terminated = 0 OR ub.state = 'finalizing')
   AND ub.harness = 'codex'
-  AND ub.state IN ('discovering', 'active', 'finalizing')
+  AND (
+      ub.state IN ('discovering', 'active', 'finalizing')
+      OR (ub.state = 'partial' AND ub.last_error_code = 'codex_source_budget_exceeded')
+  )
   AND parent.kind = 'codex_rollout'
   AND parent.native_session_id = ?1
   AND parent.id = (
@@ -710,11 +723,15 @@ FROM usage_bindings ub
 JOIN sessions s ON s.id = ub.session_id
 WHERE (s.is_terminated = 0 OR ub.state = 'finalizing')
   AND ub.harness IN ('claude-code', 'codex')
-  AND ub.state IN ('discovering', 'active', 'finalizing')
+  AND (
+      ub.state IN ('discovering', 'active', 'finalizing')
+      OR (ub.state = 'partial' AND ub.last_error_code = 'codex_source_budget_exceeded')
+  )
   AND (
       ub.harness = 'claude-code'
       OR ub.state = 'discovering'
       OR ub.state = 'finalizing'
+      OR ub.last_error_code = 'codex_source_budget_exceeded'
       OR ub.last_error_code = 'source_discovery_pending'
       OR NOT EXISTS (
           SELECT 1
@@ -1068,10 +1085,14 @@ func (q *Queries) ReactivateUsageSource(ctx context.Context, arg ReactivateUsage
 
 const updateUsageBindingErrorCode = `-- name: UpdateUsageBindingErrorCode :execrows
 UPDATE usage_bindings SET
-    last_error_code = ?,
-    last_seen_at = ?,
-    updated_at = ?
-WHERE id = ?
+    last_error_code = CASE
+        WHEN usage_bindings.last_error_code = 'codex_source_budget_exceeded'
+        THEN usage_bindings.last_error_code
+        ELSE ?1
+    END,
+    last_seen_at = ?2,
+    updated_at = ?3
+WHERE id = ?4
 `
 
 type UpdateUsageBindingErrorCodeParams struct {
@@ -1096,11 +1117,15 @@ func (q *Queries) UpdateUsageBindingErrorCode(ctx context.Context, arg UpdateUsa
 
 const updateUsageBindingState = `-- name: UpdateUsageBindingState :execrows
 UPDATE usage_bindings SET
-    state = ?,
-    last_error_code = ?,
-    last_seen_at = ?,
-    updated_at = ?
-WHERE id = ?
+    state = ?1,
+    last_error_code = CASE
+        WHEN usage_bindings.last_error_code = 'codex_source_budget_exceeded'
+        THEN usage_bindings.last_error_code
+        ELSE ?2
+    END,
+    last_seen_at = ?3,
+    updated_at = ?4
+WHERE id = ?5
 `
 
 type UpdateUsageBindingStateParams struct {
@@ -1185,6 +1210,8 @@ ON CONFLICT (session_id, harness, native_root_id) DO UPDATE SET
         ELSE excluded.state
     END,
     last_error_code = CASE
+        WHEN usage_bindings.last_error_code = 'codex_source_budget_exceeded'
+        THEN usage_bindings.last_error_code
         WHEN usage_bindings.state IN ('finalizing', 'complete', 'partial')
           AND excluded.state IN ('discovering', 'active')
         THEN usage_bindings.last_error_code
