@@ -311,7 +311,7 @@ func (s *Server) workspacePreviewProxy(w http.ResponseWriter, r *http.Request) {
 	if preview.ContentType != "" {
 		w.Header().Set("Content-Type", preview.ContentType)
 	}
-	w.Header().Set("Cache-Control", "no-store")
+	setPreviewProxyHeaders(w)
 	if preview.Location != "" {
 		w.Header().Set("Location", rewritePreviewLocation(preview.Location, prefix, tokenValue.Port))
 	}
@@ -323,6 +323,11 @@ func (s *Server) workspacePreviewProxy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodHead {
 		_, _ = w.Write(body) // #nosec G705 -- body is isolated inside a sandboxed, capability-scoped preview.
 	}
+}
+
+func setPreviewProxyHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
 }
 
 func (s *Server) runWorkspaceRequest(

@@ -26,7 +26,7 @@ const noSignalGrace = 90 * time.Second
 // parent is still open are exempt from the aggregation since they cannot merge
 // until the parent does. Merged/closed PRs only matter once no open PR remains.
 func deriveStatus(rec domain.SessionRecord, prs []domain.PRFacts, now time.Time, signalCapable bool) domain.SessionStatus {
-	return domain.SessionStatus(contract.DeriveSessionStatus(contract.SessionFacts{
+	return contract.DeriveSessionStatus(contract.SessionFacts{
 		Terminated:      rec.IsTerminated,
 		Activity:        contract.ActivityState(rec.Activity.State),
 		SignalCapable:   signalCapable,
@@ -34,13 +34,13 @@ func deriveStatus(rec domain.SessionRecord, prs []domain.PRFacts, now time.Time,
 		LastActivityAt:  rec.Activity.LastActivityAt,
 		Now:             now,
 		NoSignalGrace:   noSignalGrace,
-	}, contractPRFacts(prs)))
+	}, contractPRFacts(prs))
 }
 
 // deriveSCMStatus returns the session's stack-aware PR context independently
 // of runtime activity. It is empty when the session has no open or merged PR.
 func deriveSCMStatus(prs []domain.PRFacts) domain.SessionStatus {
-	return domain.SessionStatus(contract.DeriveSCMStatus(contractPRFacts(prs)))
+	return contract.DeriveSCMStatus(contractPRFacts(prs))
 }
 
 func contractPRFacts(prs []domain.PRFacts) []contract.PRFacts {

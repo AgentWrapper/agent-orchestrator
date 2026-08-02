@@ -80,11 +80,11 @@ func (v *agentCredentialValidator) validateClaude(
 	credentialType string,
 	secret []byte,
 ) error {
+	// #nosec G101 -- this compares a public credential-kind label, not a credential value.
 	if credentialType == "oauth_token" &&
 		(!strings.HasPrefix(string(secret), "sk-ant-oat01-") || len(secret) < 80) {
 		return errInvalidAgentCredential
 	}
-	// #nosec G101 -- this compares a public credential-kind label, not a credential value.
 	request, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
@@ -129,7 +129,7 @@ func (v *agentCredentialValidator) validateBearerEndpoint(
 	secret []byte,
 	successStatus int,
 ) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("build %s credential validation request: %w", provider, err)
 	}

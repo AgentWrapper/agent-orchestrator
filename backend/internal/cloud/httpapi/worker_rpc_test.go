@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -57,5 +58,18 @@ func TestPreviewTokenPreservesRequestedPort(t *testing.T) {
 		if value.Port != port {
 			t.Fatalf("preview token port = %d, want %d", value.Port, port)
 		}
+	}
+}
+
+func TestPreviewProxyHeadersDoNotLeakCapabilityURL(t *testing.T) {
+	response := httptest.NewRecorder()
+
+	setPreviewProxyHeaders(response)
+
+	if got := response.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	if got := response.Header().Get("Referrer-Policy"); got != "no-referrer" {
+		t.Fatalf("Referrer-Policy = %q, want no-referrer", got)
 	}
 }

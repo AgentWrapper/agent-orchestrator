@@ -465,14 +465,14 @@ func parseNumstatCount(value string) (int, bool) {
 
 func parseRenamePath(value string) (string, string) {
 	open := strings.Index(value, "{")
-	close := strings.Index(value, "}")
-	if open < 0 || close < open {
+	closeIndex := strings.Index(value, "}")
+	if open < 0 || closeIndex < open {
 		parts := strings.Split(value, " => ")
 		return parts[0], parts[len(parts)-1]
 	}
 	prefix := value[:open]
-	suffix := value[close+1:]
-	middle := value[open+1 : close]
+	suffix := value[closeIndex+1:]
+	middle := value[open+1 : closeIndex]
 	before, after, ok := strings.Cut(middle, " => ")
 	if !ok {
 		parts := strings.Split(value, " => ")
