@@ -50,7 +50,7 @@ var getenv = os.Getenv
 // New), so the zero value is usable.
 type Options struct {
 	Binary     string        // default "tmux" (resolved via exec.LookPath)
-	Shell      string        // default $SHELL else /bin/sh
+	Shell      string        // POSIX sh for the pane interpreter (the keep-alive exec still uses $SHELL); see New
 	Timeout    time.Duration // default 5s
 	ChunkSize  int           // default 16*1024
 	EnterDelay time.Duration // pause after pasting a non-empty message before pressing Enter; default defaultEnterDelay. Conpty already does this (ptyInputEnterDelay); tmux lacked it, so a large multiline paste could absorb the trailing Enter and leave the prompt unsubmitted (issue #2342).
@@ -992,14 +992,28 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
-// ambientColorSuppressors are variables that make agent TUIs drop color. A
-// daemon started from a coding agent or CI terminal inherits them for that
-// context's captured output, and they must not follow into an interactive
-// session. tmux widens the blast radius: a pane inherits the tmux SERVER's
+// ambientEnvSuppressors lists environment variables that should not leak from
+// the daemon's launch context into interactive pane sessions. tmux widens the
+// blast radius beyond the daemon process: a pane inherits the tmux SERVER's
 // environment, frozen from whatever first started the server, so scrubbing the
-// daemon's own environment is not enough. A project can still opt out of color
-// by setting any of these explicitly in its configured environment.
-var ambientColorSuppressors = []string{"CI", "COLOR", "FORCE_COLOR", "NO_COLOR"}
+// daemon's own environment is not enough. A project can still opt in to any of
+// these by setting them explicitly in its configured environment.
+//
+// Color-output variables (NO_COLOR, COLOR, FORCE_COLOR): tools respect these to
+// suppress or force colour. Inside a real pty they should not be inherited from
+// a CI/agent context that may have disabled colour for piped output.
+// FORCE_COLOR enables colour (value 1/2/3 = colour depth); only 0 or absence
+// suppresses it. Unsetting it drops the force-on signal — low risk in a pty
+// since COLORTERM=truecolor is exported separately, but the comment above
+// reflects the accurate direction.
+// COLOR is not a NO_COLOR-family standard; it is included defensively for tools
+// that happen to read it.
+//
+// CI: not a colour variable. CI=true changes npm/yarn/pnpm install strictness,
+// Jest/Vitest watch mode, Playwright, Husky, Next.js build output, and most
+// CLI progress bars. An interactive pane should behave as a developer workstation,
+// not a CI runner, so we unset it here. ao itself does not read CI.
+var ambientEnvSuppressors = []string{"CI", "COLOR", "FORCE_COLOR", "NO_COLOR"}
 
 // buildLaunchCommand builds the shell command string passed to `sh -c`. It
 // exports env vars, then runs argv, then execs a keep-alive interactive shell
@@ -1017,7 +1031,7 @@ func buildLaunchCommand(cfg ports.RuntimeConfig) string {
 	b.WriteString("cd ")
 	b.WriteString(shellQuote(cfg.WorkspacePath))
 	b.WriteString(" || exit; ")
-	for _, key := range ambientColorSuppressors {
+	for _, key := range ambientEnvSuppressors {
 		if _, configured := cfg.Env[key]; configured {
 			continue
 		}
