@@ -34,6 +34,7 @@ const activityIcon = {
 	system: CircleAlert,
 } as const;
 import { cn } from "../../lib/utils";
+import { ChatMarkdown } from "./ChatMarkdown";
 import { Button } from "../ui/button";
 import type {
 	ConversationActivity,
@@ -122,16 +123,14 @@ export function OriginMessage({ message }: { message: ConversationMessage }) {
 /** The agent's prose. A trailing caret marks text still arriving. */
 export function AssistantMessage({ message }: { message: ConversationMessage }) {
 	return (
-		<div className="text-sm leading-[1.58] text-foreground [&_code]:rounded [&_code]:bg-surface [&_code]:px-[5px] [&_code]:py-[2px] [&_code]:font-mono [&_code]:text-[11px] [&_code]:text-accent">
-			<p className="whitespace-pre-wrap">
-				{message.text}
-				{message.streaming ? (
-					<span
-						aria-label="still writing"
-						className="ml-0.5 inline-block h-4 w-[2px] translate-y-0.5 animate-pulse bg-accent align-baseline"
-					/>
-				) : null}
-			</p>
+		<div className="relative">
+			<ChatMarkdown text={message.text} />
+			{message.streaming ? (
+				<span
+					aria-label="still writing"
+					className="ml-0.5 inline-block h-4 w-[2px] translate-y-0.5 animate-pulse bg-accent align-baseline"
+				/>
+			) : null}
 		</div>
 	);
 }
