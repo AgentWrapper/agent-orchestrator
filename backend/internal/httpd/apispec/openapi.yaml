@@ -1349,6 +1349,57 @@ paths:
       summary: Report an agent activity-state signal for a session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/attachments:
+    post:
+      operationId: stageSessionAttachments
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StageSessionAttachmentsRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StageSessionAttachmentsResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Write images into a running session's worktree and return their paths
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/conversation:
     get:
       operationId: getSessionConversation
@@ -1653,6 +1704,51 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Choose the model, reasoning effort and approval mode for the next turn
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/skills:
+    get:
+      operationId: listSessionConversationSkills
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationSkillsResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List the named skills the provider offers for a chat session
       tags:
       - conversations
   /api/v1/sessions/{sessionId}/kill:
@@ -3313,6 +3409,29 @@ components:
       - models
       - selected
       type: object
+    ConversationSkillResponse:
+      properties:
+        description:
+          type: string
+        displayName:
+          type: string
+        name:
+          type: string
+        source:
+          type: string
+      required:
+      - name
+      - displayName
+      type: object
+    ConversationSkillsResponse:
+      properties:
+        skills:
+          items:
+            $ref: '#/components/schemas/ConversationSkillResponse'
+          type: array
+      required:
+      - skills
+      type: object
     ConversationSnapshotResponse:
       properties:
         activities:
@@ -4801,6 +4920,27 @@ components:
       - session
       - promptBytes
       - systemPromptBytes
+      type: object
+    StageSessionAttachmentsRequest:
+      properties:
+        attachments:
+          items:
+            $ref: '#/components/schemas/ControllersSpawnAttachmentInput'
+          type: array
+      required:
+      - attachments
+      type: object
+    StageSessionAttachmentsResponse:
+      properties:
+        paths:
+          items:
+            type: string
+          type: array
+        sessionId:
+          type: string
+      required:
+      - sessionId
+      - paths
       type: object
     StartPreviewServerRequest:
       properties:

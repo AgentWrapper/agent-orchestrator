@@ -142,6 +142,8 @@ var schemaNames = map[string]string{
 	"ControllersResolveConversationApprovalRequest": "ResolveConversationApprovalRequest",
 	"ControllersConversationModelsResponse":         "ConversationModelsResponse",
 	"ControllersConversationModelResponse":          "ConversationModelResponse",
+	"ControllersConversationSkillsResponse":         "ConversationSkillsResponse",
+	"ControllersConversationSkillResponse":          "ConversationSkillResponse",
 	"ControllersConversationTurnSettingsPayload":    "ConversationTurnSettingsPayload",
 	// httpd/envelope
 	"EnvelopeAPIError": "APIError",
@@ -184,6 +186,8 @@ var schemaNames = map[string]string{
 	"ControllersCleanupSessionsResponse":          "CleanupSessionsResponse",
 	"ControllersCleanupSkippedSession":            "CleanupSkippedSession",
 	"ControllersWorkspaceFileQuery":               "WorkspaceFileQuery",
+	"ControllersStageSessionAttachmentsRequest":   "StageSessionAttachmentsRequest",
+	"ControllersStageSessionAttachmentsResponse":  "StageSessionAttachmentsResponse",
 	"ControllersListWorkspaceFilesResponse":       "ListWorkspaceFilesResponse",
 	"ControllersWorkspaceFileSummary":             "WorkspaceFileSummary",
 	"ControllersWorkspaceFileResponse":            "WorkspaceFileResponse",
@@ -465,6 +469,18 @@ func shellTerminalOperations() []operation {
 			pathParams: []any{controllers.SessionIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.ConversationModelsResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/conversation/skills", id: "listSessionConversationSkills", tag: "conversations",
+			summary:    "List the named skills the provider offers for a chat session",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ConversationSkillsResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
@@ -1025,6 +1041,19 @@ func sessionOperations() []operation {
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 			contentTypes: map[int]string{http.StatusOK: "text/html"},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/attachments", id: "stageSessionAttachments", tag: "sessions",
+			summary:    "Write images into a running session's worktree and return their paths",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.StageSessionAttachmentsRequest{},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.StageSessionAttachmentsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
 		},
 		{
 			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/workspace/files", id: "listSessionWorkspaceFiles", tag: "sessions",

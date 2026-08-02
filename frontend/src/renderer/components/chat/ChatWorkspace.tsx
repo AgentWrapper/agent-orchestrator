@@ -34,6 +34,7 @@ import {
 	type ConversationSnapshot,
 	type ControllerState,
 	type ChatModel,
+	type ChatSkill,
 	type ConversationActivity,
 	type ConversationItem,
 	type TurnSettings,
@@ -49,6 +50,18 @@ export interface ChatWorkspaceProps {
 	/** The provider's model catalog. Empty hides the model control. */
 	models?: ChatModel[];
 	onChooseSettings?: (settings: TurnSettings) => void;
+	/** The provider's skills. Empty leaves `/` an ordinary character. */
+	skills?: ChatSkill[];
+	/** Worktree paths offered for `@`. */
+	filePaths?: string[];
+	/** The path list was capped by the daemon rather than being all of them. */
+	filePathsTruncated?: boolean;
+	/**
+	 * Writes staged images into the worktree and answers with the paths the agent
+	 * can open. Absent means no attach control is offered — the fixture preview has
+	 * no worktree to write into.
+	 */
+	onStageAttachments?: (attachments: { mimeType: string; data: string }[]) => Promise<string[]>;
 }
 
 export function ChatWorkspace({
@@ -59,6 +72,10 @@ export function ChatWorkspace({
 	busy,
 	models,
 	onChooseSettings,
+	skills,
+	filePaths,
+	filePathsTruncated,
+	onStageAttachments,
 }: ChatWorkspaceProps) {
 	const turn = activeTurn(snapshot);
 	const approval = pendingApproval(snapshot);
@@ -113,6 +130,10 @@ export function ChatWorkspace({
 					busy={busy}
 					willQueue={Boolean(turn)}
 					disabled={snapshot.controller.state === "stopped"}
+					skills={skills}
+					filePaths={filePaths}
+					filePathsTruncated={filePathsTruncated}
+					onStageAttachments={onStageAttachments}
 				/>
 			</div>
 		</section>

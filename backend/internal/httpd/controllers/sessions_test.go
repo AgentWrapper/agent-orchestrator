@@ -38,6 +38,9 @@ type fakeSessionService struct {
 	claimErr        error
 	listPRErr       error
 	workspaceErr    error
+	staged          []ports.SpawnAttachment
+	stagedPaths     []string
+	stageErr        error
 }
 
 type fakeManagedPreviewServer struct {
@@ -299,6 +302,21 @@ func (f *fakeSessionService) ClaimPR(_ context.Context, id domain.SessionID, ref
 	}
 	prs, _ := f.ListPRs(context.Background(), id)
 	return sessionsvc.ClaimPRResult{PRs: prs, TakenOverFrom: []domain.SessionID{}, BranchChanged: true}, nil
+}
+
+func (f *fakeSessionService) StageAttachments(
+	_ context.Context,
+	id domain.SessionID,
+	attachments []ports.SpawnAttachment,
+) ([]string, error) {
+	if f.stageErr != nil {
+		return nil, f.stageErr
+	}
+	if _, ok := f.sessions[id]; !ok {
+		return nil, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	f.staged = attachments
+	return f.stagedPaths, nil
 }
 
 func (f *fakeSessionService) ListWorkspaceFiles(_ context.Context, id domain.SessionID) (sessionsvc.WorkspaceFiles, error) {

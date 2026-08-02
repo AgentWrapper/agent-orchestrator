@@ -13,6 +13,9 @@ import {
 	useConversation,
 	useConversationCommands,
 	useConversationModels,
+	useConversationSkills,
+	useStageAttachments,
+	useWorkspaceFilePaths,
 } from "../../hooks/useConversation";
 import type { WorkspaceSession } from "../../types/workspace";
 
@@ -22,6 +25,9 @@ export function SessionChatSurface({ session }: { session: WorkspaceSession }) {
 	// Only asked for once the conversation is actually readable: the catalog comes
 	// from the live controller, so there is nothing to fetch before then.
 	const { models } = useConversationModels(session.id, Boolean(snapshot));
+	const { skills } = useConversationSkills(session.id, Boolean(snapshot));
+	const { paths, truncated } = useWorkspaceFilePaths(session.id, Boolean(snapshot));
+	const stageAttachments = useStageAttachments(session.id);
 
 	if (isLoading) {
 		return (
@@ -70,6 +76,10 @@ export function SessionChatSurface({ session }: { session: WorkspaceSession }) {
 			onInterrupt={commands.interrupt}
 			models={models}
 			onChooseSettings={commands.chooseSettings}
+			skills={skills}
+			filePaths={paths}
+			filePathsTruncated={truncated}
+			onStageAttachments={stageAttachments}
 		/>
 	);
 }

@@ -29,6 +29,7 @@ type ConversationService interface {
 	Resolve(ctx context.Context, session domain.SessionID, requestID string, decision ports.ChatDecision) error
 	Interrupt(ctx context.Context, session domain.SessionID) error
 	Models(ctx context.Context, session domain.SessionID) ([]ports.ChatModel, domain.ConversationSettings, error)
+	Skills(ctx context.Context, session domain.SessionID) ([]ports.ChatSkill, error)
 	SetTurnSettings(ctx context.Context, session domain.SessionID, settings domain.ConversationSettings) (domain.ConversationSettings, error)
 }
 
@@ -48,6 +49,7 @@ func (c *ConversationsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/conversation/approvals/{requestId}/resolve", c.resolve)
 	r.Post("/sessions/{sessionId}/conversation/interrupt", c.interrupt)
 	r.Get("/sessions/{sessionId}/conversation/models", c.models)
+	r.Get("/sessions/{sessionId}/conversation/skills", c.skills)
 	r.Patch("/sessions/{sessionId}/conversation/settings", c.setSettings)
 }
 
