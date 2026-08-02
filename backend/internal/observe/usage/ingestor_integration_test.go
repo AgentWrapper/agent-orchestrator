@@ -180,6 +180,120 @@ func TestIngestorReplaysReplacementWithUnknownProviderTimestampAcrossClocks(t *t
 	}
 }
 
+func TestIngestorReadsIdentityAndContentFromSingleDescriptorAcrossAtomicReplacement(t *testing.T) {
+	ctx := context.Background()
+	store, source, path, now := seedCodexIngestionSource(t, t.TempDir())
+	openedContent := `{"type":"turn_context","payload":{"model":"gpt-opened"}}` + "\n" +
+		string(codexTokenLine("2026-07-28T10:00:00Z", 100, 60, 0, 20, 5)) + "\n"
+	replacementContent := `{"type":"turn_context","payload":{"model":"gpt-replacement"}}` + "\n" +
+		string(codexTokenLine("2026-07-28T11:00:00Z", 200, 120, 0, 20, 5)) + "\n"
+	if err := os.WriteFile(path, []byte(openedContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	replacementPath := path + ".replacement"
+	if err := os.WriteFile(replacementPath, []byte(replacementContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ingestor := NewIngestor(store, IngestorConfig{Clock: func() time.Time { return now }})
+	replacedPath := false
+	ingestor.openTranscript = func(name string) (*os.File, error) {
+		file, err := os.Open(name) //nolint:gosec // test-controlled path.
+		if err == nil && !replacedPath {
+			replacedPath = true
+			if renameErr := os.Rename(replacementPath, path); renameErr != nil {
+				_ = file.Close()
+				return nil, renameErr
+			}
+		}
+		return file, err
+	}
+
+	first, err := ingestor.Ingest(ctx, source.ID)
+	if err != nil {
+		t.Fatalf("ingest opened generation: %v", err)
+	}
+	if first.ReplacementSourceID != 0 {
+		t.Fatalf("opened generation was misclassified as replacement: %+v", first)
+	}
+	assertTokenAggregate(t, store, sourceSessionID(t, store, source.ID), 120)
+
+	second, err := ingestor.Ingest(ctx, source.ID)
+	if err != nil {
+		t.Fatalf("detect pathname replacement: %v", err)
+	}
+	if second.ReplacementSourceID == 0 {
+		t.Fatalf("replacement result = %+v", second)
+	}
+	if _, err := ingestor.Ingest(ctx, second.ReplacementSourceID); err != nil {
+		t.Fatalf("ingest replacement generation: %v", err)
+	}
+	assertTokenAggregate(t, store, sourceSessionID(t, store, source.ID), 340)
+}
+
+func TestIngestorReplacesSameInodeWhenPreCursorCheckpointChanges(t *testing.T) {
+	tests := []struct {
+		name   string
+		suffix string
+	}{
+		{name: "equal size"},
+		{name: "larger size", suffix: `{"type":"turn_context","payload":{"model":"gpt-after"}}` + "\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			store, source, path, now := seedCodexIngestionSource(t, t.TempDir())
+			beforeContent := string(codexTokenLine("2026-07-28T10:00:00Z", 100, 60, 0, 20, 5)) + "\n"
+			afterContent := string(codexTokenLine("2026-07-28T11:00:00Z", 200, 70, 0, 30, 5)) + "\n" + test.suffix
+			if test.suffix == "" && len(afterContent) != len(beforeContent) {
+				t.Fatalf("equal-size fixture lengths = %d/%d", len(beforeContent), len(afterContent))
+			}
+			if err := os.WriteFile(path, []byte(beforeContent), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			identity, err := usagesvc.SourceIdentity(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ingestor := NewIngestor(store, IngestorConfig{Clock: func() time.Time { return now }})
+			if _, err := ingestor.Ingest(ctx, source.ID); err != nil {
+				t.Fatalf("ingest original generation: %v", err)
+			}
+			assertTokenAggregate(t, store, sourceSessionID(t, store, source.ID), 120)
+
+			if err := rewriteUsageFixture(path, afterContent); err != nil {
+				t.Fatal(err)
+			}
+			rewrittenIdentity, err := usagesvc.SourceIdentity(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rewrittenIdentity != identity {
+				t.Fatalf("rewrite changed identity: %q != %q", rewrittenIdentity, identity)
+			}
+
+			result, err := ingestor.Ingest(ctx, source.ID)
+			if err != nil {
+				t.Fatalf("detect same-inode rewrite: %v", err)
+			}
+			if result.ReplacementSourceID == 0 {
+				t.Fatalf("rewrite result = %+v, want a replacement generation", result)
+			}
+			replacement, ok, err := store.GetUsageSourceForIngestion(ctx, result.ReplacementSourceID)
+			if err != nil || !ok {
+				t.Fatalf("replacement source: ok=%v err=%v", ok, err)
+			}
+			if replacement.Source.Generation != source.Generation+1 || replacement.Source.ByteOffset != 0 {
+				t.Fatalf("replacement source = %+v", replacement.Source)
+			}
+			if _, err := ingestor.Ingest(ctx, replacement.Source.ID); err != nil {
+				t.Fatalf("ingest replacement generation: %v", err)
+			}
+			assertTokenAggregate(t, store, replacement.SessionID, 350)
+		})
+	}
+}
+
 func seedCodexIngestionSource(t *testing.T, dataDir string) (*sqlite.Store, domain.UsageSourceRecord, string, time.Time) {
 	t.Helper()
 	ctx := context.Background()
@@ -683,6 +797,138 @@ func TestIngestorPersistsAppendOnlyUsageAcrossRestartAndFinalization(t *testing.
 	}
 }
 
+func TestIngestorRestartsFinalTailQuiescenceWhenTailChanges(t *testing.T) {
+	ctx := context.Background()
+	store, source, path, now := seedCodexIngestionSource(t, t.TempDir())
+	completePrefix := `{"type":"turn_context","payload":{"model":"gpt-tail"}}` + "\n"
+	finalRecord := string(codexTokenLine("2026-07-28T10:00:00Z", 100, 60, 0, 20, 5))
+	split := len(finalRecord) / 2
+	if err := os.WriteFile(path, []byte(completePrefix+finalRecord[:split]), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpdateUsageBindingState(
+		ctx,
+		source.BindingID,
+		domain.UsageBindingFinalizing,
+		"",
+		now,
+	); err != nil {
+		t.Fatal(err)
+	}
+	ingestor := NewIngestor(store, IngestorConfig{Clock: func() time.Time { return now }})
+
+	first, err := ingestor.Ingest(ctx, source.ID)
+	if err != nil {
+		t.Fatalf("observe partial tail: %v", err)
+	}
+	if first.RetryAt == nil {
+		t.Fatalf("first result = %+v, want quiet retry", first)
+	}
+	now = now.Add(defaultFinalizationWait + time.Second)
+	if err := osAppend(path, finalRecord[split:]); err != nil {
+		t.Fatal(err)
+	}
+	second, err := ingestor.Ingest(ctx, source.ID)
+	if err != nil {
+		t.Fatalf("observe changed valid tail: %v", err)
+	}
+	if second.RetryAt == nil || !second.RetryAt.After(now) {
+		t.Fatalf("changed-tail result = %+v, want restarted quiet retry", second)
+	}
+	got, ok, err := store.GetUsageSourceForIngestion(ctx, source.ID)
+	if err != nil || !ok {
+		t.Fatalf("source after changed tail: ok=%v err=%v", ok, err)
+	}
+	if got.Source.ByteOffset != int64(len(completePrefix)) || got.Source.State == domain.UsageSourceComplete {
+		t.Fatalf("changed tail advanced source: %+v", got.Source)
+	}
+	assertTokenAggregate(t, store, got.SessionID, 0)
+
+	now = now.Add(defaultFinalizationWait + time.Second)
+	third, err := ingestor.Ingest(ctx, source.ID)
+	if err != nil {
+		t.Fatalf("consume stable valid tail: %v", err)
+	}
+	if third.RetryAt != nil {
+		t.Fatalf("stable valid tail result = %+v", third)
+	}
+	got, ok, err = store.GetUsageSourceForIngestion(ctx, source.ID)
+	if err != nil || !ok {
+		t.Fatalf("completed source: ok=%v err=%v", ok, err)
+	}
+	if got.Source.State != domain.UsageSourceComplete || got.Source.ByteOffset != int64(len(completePrefix+finalRecord)) {
+		t.Fatalf("completed source = %+v", got.Source)
+	}
+	assertTokenAggregate(t, store, got.SessionID, 120)
+}
+
+func TestIngestorDropsMalformedFinalTailOnlyAfterTwoQuietObservations(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	store, source, path, now := seedCodexIngestionSource(t, dataDir)
+	completePrefix := `{"type":"turn_context","payload":{"model":"gpt-tail"}}` + "\n"
+	malformedTail := `{"type":"event_msg","payload":`
+	if err := os.WriteFile(path, []byte(completePrefix+malformedTail), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpdateUsageBindingState(
+		ctx,
+		source.BindingID,
+		domain.UsageBindingFinalizing,
+		"",
+		now,
+	); err != nil {
+		t.Fatal(err)
+	}
+	ingestor := NewIngestor(store, IngestorConfig{Clock: func() time.Time { return now }})
+
+	first, err := ingestor.Ingest(ctx, source.ID)
+	if err != nil {
+		t.Fatalf("observe malformed tail: %v", err)
+	}
+	if first.RetryAt == nil {
+		t.Fatalf("first result = %+v, want quiet retry", first)
+	}
+	persistedState := readParserStateJSON(t, dataDir, source.ID)
+	if strings.Contains(persistedState, malformedTail) {
+		t.Fatalf("parser state persisted transcript tail: %s", persistedState)
+	}
+	now = now.Add(defaultFinalizationWait + time.Second)
+	second, err := ingestor.Ingest(ctx, source.ID)
+	if err != nil {
+		t.Fatalf("first quiet observation: %v", err)
+	}
+	if second.RetryAt == nil || !second.RetryAt.After(now) {
+		t.Fatalf("first quiet result = %+v, want additional quiet retry", second)
+	}
+	got, ok, err := store.GetUsageSourceForIngestion(ctx, source.ID)
+	if err != nil || !ok {
+		t.Fatalf("pending source: ok=%v err=%v", ok, err)
+	}
+	if got.Source.ByteOffset != int64(len(completePrefix)) || got.Source.AnomalyCount != 0 ||
+		got.Source.State == domain.UsageSourceComplete {
+		t.Fatalf("malformed tail consumed too early: %+v", got.Source)
+	}
+
+	now = now.Add(defaultFinalizationWait + time.Second)
+	third, err := ingestor.Ingest(ctx, source.ID)
+	if err != nil {
+		t.Fatalf("second quiet observation: %v", err)
+	}
+	if third.RetryAt != nil {
+		t.Fatalf("second quiet result = %+v", third)
+	}
+	got, ok, err = store.GetUsageSourceForIngestion(ctx, source.ID)
+	if err != nil || !ok {
+		t.Fatalf("completed source: ok=%v err=%v", ok, err)
+	}
+	if got.Source.State != domain.UsageSourceComplete ||
+		got.Source.ByteOffset != int64(len(completePrefix+malformedTail)) ||
+		got.Source.AnomalyCount != 1 || got.Source.LastErrorCode != domain.UsageErrorMalformedJSONL {
+		t.Fatalf("completed malformed source = %+v", got.Source)
+	}
+}
+
 func TestIngestorLateAppendReturnsCompletedBindingToFinalizing(t *testing.T) {
 	ctx := context.Background()
 	store, err := sqlite.Open(t.TempDir())
@@ -964,6 +1210,18 @@ func appendJSONLRecord(t *testing.T, path string, record []byte) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func rewriteUsageFixture(path, content string) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := file.WriteString(content); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
 }
 
 func waitForTokenAggregate(t *testing.T, store *sqlite.Store, sessionID domain.SessionID, total int64) {

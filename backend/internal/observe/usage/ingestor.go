@@ -3,6 +3,8 @@ package usage
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -57,6 +59,7 @@ type Ingestor struct {
 	recordBytes      int
 	finalizationWait time.Duration
 	now              func() time.Time
+	openTranscript   func(string) (*os.File, error)
 }
 
 // NewIngestor constructs a bounded transcript ingestor.
@@ -79,6 +82,7 @@ func NewIngestor(store ingestorStore, cfg IngestorConfig) *Ingestor {
 		recordBytes:      cfg.RecordBytes,
 		finalizationWait: cfg.FinalizationWait,
 		now:              cfg.Clock,
+		openTranscript:   os.Open,
 	}
 }
 
@@ -92,7 +96,8 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 		return IngestResult{}, err
 	}
 	result := IngestResult{BindingID: source.Source.BindingID}
-	if _, err := decodeParserState(source.Source); err != nil {
+	parserState, err := decodeParserState(source.Source)
+	if err != nil {
 		return i.retrySource(
 			ctx,
 			source.Source,
@@ -101,11 +106,16 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 			fmt.Errorf("decode parser state: %w", err),
 		)
 	}
-	info, err := os.Stat(source.Source.ArtifactPath)
+	file, err := i.openTranscript(source.Source.ArtifactPath) //nolint:gosec // path was validated at registration.
+	if err != nil {
+		return i.retrySource(ctx, source.Source, domain.UsageErrorArtifactMissing, now, nil)
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() {
 		return i.retrySource(ctx, source.Source, domain.UsageErrorArtifactMissing, now, nil)
 	}
-	identity, err := usagesvc.SourceIdentity(source.Source.ArtifactPath)
+	identity, err := usagesvc.SourceIdentityFromFile(file)
 	if err != nil {
 		return i.retrySource(ctx, source.Source, domain.UsageErrorSourceReadFailed, now, nil)
 	}
@@ -113,6 +123,13 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 		if source.Source.Kind == domain.UsageSourceCodexRollout && source.Source.SubagentID != "" {
 			return i.retireCodexChildForReconciliation(ctx, source, now)
 		}
+		return i.replaceSource(ctx, source, identity, now)
+	}
+	checkpointMatches, err := matchesParserCheckpoint(file, source.Source.ByteOffset, parserState.Integrity.Checkpoint)
+	if err != nil {
+		return i.retrySource(ctx, source.Source, domain.UsageErrorSourceReadFailed, now, nil)
+	}
+	if !checkpointMatches {
 		return i.replaceSource(ctx, source, identity, now)
 	}
 	if source.Source.State == domain.UsageSourceComplete &&
@@ -134,8 +151,8 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 		source.BindingState = domain.UsageBindingFinalizing
 	}
 
-	chunk, err := readJSONLChunk(
-		source.Source.ArtifactPath,
+	chunk, err := readJSONLChunkFromFile(
+		file,
 		source.Source.ByteOffset,
 		i.chunkBytes,
 		i.recordBytes,
@@ -144,23 +161,52 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 	if err != nil {
 		return i.retrySource(ctx, source.Source, domain.UsageErrorSourceReadFailed, now, nil)
 	}
-	stableFinalTail := false
 	finalizationSettled := source.Source.NextRetryAt != nil && !source.Source.NextRetryAt.After(now)
-	if source.BindingState == domain.UsageBindingFinalizing &&
-		finalizationSettled &&
-		chunk.readToEOF &&
-		len(chunk.trailing) > 0 {
-		if tail := bytes.TrimSpace(chunk.trailing); len(tail) > 0 {
-			chunk.records = append(chunk.records, jsonlRecord{
-				Data:   append([]byte(nil), tail...),
-				Offset: chunk.trailingOffset,
-			})
+	finalTailSettled := false
+	tailPending := false
+	restartQuietPeriod := false
+	if source.BindingState == domain.UsageBindingFinalizing && chunk.readToEOF && len(chunk.trailing) > 0 {
+		observedTail := stableTailObservation(chunk.trailingOffset, chunk.trailing)
+		previousTail := parserState.Integrity.StableTail
+		switch {
+		case !sameStableTail(previousTail, observedTail):
+			parserState.Integrity.StableTail = observedTail
+			tailPending = true
+			restartQuietPeriod = true
+		case !finalizationSettled:
+			tailPending = true
+		case json.Valid(bytes.TrimSpace(chunk.trailing)) || len(bytes.TrimSpace(chunk.trailing)) == 0:
+			if tail := bytes.TrimSpace(chunk.trailing); len(tail) > 0 {
+				chunk.records = append(chunk.records, jsonlRecord{
+					Data:   append([]byte(nil), tail...),
+					Offset: chunk.trailingOffset,
+				})
+			}
+			chunk.nextOffset = chunk.fileSize
+			chunk.atEOF = true
+			parserState.Integrity.StableTail = nil
+			finalTailSettled = true
+		case previousTail.QuietObservations == 0:
+			previousTail.QuietObservations = 1
+			tailPending = true
+			restartQuietPeriod = true
+		default:
+			chunk.nextOffset = chunk.fileSize
+			chunk.atEOF = true
+			chunk.anomalies++
+			chunk.errorCode = domain.UsageErrorMalformedJSONL
+			parserState.Integrity.StableTail = nil
+			finalTailSettled = true
 		}
-		chunk.nextOffset = chunk.fileSize
-		chunk.atEOF = true
-		stableFinalTail = true
+	} else {
+		parserState.Integrity.StableTail = nil
 	}
-	parsed := parseRecords(source, chunk.records, chunk.nextOffset, now)
+	checkpoint, err := parserCheckpointAt(file, chunk.nextOffset)
+	if err != nil {
+		return i.retrySource(ctx, source.Source, domain.UsageErrorSourceReadFailed, now, nil)
+	}
+	parserState.Integrity.Checkpoint = checkpoint
+	parsed := parseRecordsWithState(source, chunk.records, chunk.nextOffset, now, parserState)
 	if parsed.err != nil {
 		return i.retrySource(ctx, source.Source, domain.UsageErrorInvalidParserState, now, parsed.err)
 	}
@@ -169,16 +215,25 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 		parsed.Cursor.LastErrorCode = chunk.errorCode
 	}
 	progressed := chunk.nextOffset > source.Source.ByteOffset
-	if source.BindingState == domain.UsageBindingFinalizing &&
+	if source.BindingState == domain.UsageBindingFinalizing && tailPending {
+		settleAt := nextFinalizationRetry(now, i.finalizationWait, source.Source.NextRetryAt, restartQuietPeriod)
+		parsed.Cursor.NextRetryAt = &settleAt
+		result.RetryAt = &settleAt
+	} else if source.BindingState == domain.UsageBindingFinalizing &&
 		(chunk.atEOF || !progressed) {
-		if finalizationSettled && chunk.atEOF && (!progressed || stableFinalTail) {
+		if finalizationSettled && chunk.atEOF && (!progressed || finalTailSettled) {
 			parsed.Cursor.State = domain.UsageSourceComplete
 			if parsed.pendingCodexSpawnCalls > 0 {
 				parsed.Cursor.AnomalyCount++
 				parsed.Cursor.LastErrorCode = domain.UsageErrorUnresolvedSpawnCall
 			}
 		} else {
-			settleAt := now.Add(i.finalizationWait)
+			settleAt := nextFinalizationRetry(
+				now,
+				i.finalizationWait,
+				source.Source.NextRetryAt,
+				progressed,
+			)
 			parsed.Cursor.NextRetryAt = &settleAt
 			result.RetryAt = &settleAt
 		}
@@ -206,8 +261,71 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 	if parsed.Cursor.State == domain.UsageSourceComplete {
 		return result, i.completeBinding(ctx, source.Source.BindingID, now)
 	}
-	result.More = progressed && !chunk.atEOF
+	result.More = progressed && !chunk.atEOF && !chunk.readToEOF
 	return result, nil
+}
+
+func stableTailObservation(offset int64, tail []byte) *stableTailStateV1 {
+	digest := sha256.Sum256(tail)
+	return &stableTailStateV1{
+		Offset:    offset,
+		ByteCount: int64(len(tail)),
+		SHA256:    fmt.Sprintf("%x", digest),
+	}
+}
+
+func sameStableTail(left, right *stableTailStateV1) bool {
+	return left != nil && right != nil &&
+		left.Offset == right.Offset &&
+		left.ByteCount == right.ByteCount &&
+		left.SHA256 == right.SHA256
+}
+
+func nextFinalizationRetry(
+	now time.Time,
+	wait time.Duration,
+	existing *time.Time,
+	restart bool,
+) time.Time {
+	if !restart && existing != nil && existing.After(now) {
+		return existing.UTC()
+	}
+	return now.Add(wait)
+}
+
+func matchesParserCheckpoint(file *os.File, offset int64, expected *parserCheckpointV1) (bool, error) {
+	if expected == nil {
+		return true, nil
+	}
+	actual, err := parserCheckpointAt(file, offset)
+	if err != nil {
+		return false, err
+	}
+	return actual != nil &&
+		actual.EndOffset == expected.EndOffset &&
+		actual.ByteCount == expected.ByteCount &&
+		actual.SHA256 == expected.SHA256, nil
+}
+
+func parserCheckpointAt(file *os.File, offset int64) (*parserCheckpointV1, error) {
+	if offset <= 0 {
+		return nil, nil
+	}
+	byteCount := min(offset, int64(integrityCheckpointBytes))
+	data := make([]byte, byteCount)
+	read, err := file.ReadAt(data, offset-byteCount)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	if int64(read) != byteCount {
+		return nil, io.ErrUnexpectedEOF
+	}
+	digest := sha256.Sum256(data)
+	return &parserCheckpointV1{
+		EndOffset: offset,
+		ByteCount: byteCount,
+		SHA256:    fmt.Sprintf("%x", digest),
+	}, nil
 }
 
 func (i *Ingestor) retireCodexChildForReconciliation(
@@ -341,12 +459,7 @@ type jsonlChunk struct {
 	errorCode      string
 }
 
-func readJSONLChunk(path string, offset, maxBytes int64, maxRecord int, previousError string) (jsonlChunk, error) {
-	file, err := os.Open(path) //nolint:gosec // path was validated at registration.
-	if err != nil {
-		return jsonlChunk{}, err
-	}
-	defer func() { _ = file.Close() }()
+func readJSONLChunkFromFile(file *os.File, offset, maxBytes int64, maxRecord int, previousError string) (jsonlChunk, error) {
 	if _, err := file.Seek(offset, io.SeekStart); err != nil {
 		return jsonlChunk{}, err
 	}

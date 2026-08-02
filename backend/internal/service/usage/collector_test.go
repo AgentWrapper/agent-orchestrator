@@ -25,7 +25,7 @@ func TestCollectorRegistersFinalizesAndReactivatesSource(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("{\"type\":\"session_meta\"}\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(codexSessionMetaFixture(t, "native-1", "")), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	wakes := 0
@@ -880,7 +880,7 @@ func TestCollectorIgnoresUsageSignalFromStaleRuntimeLaunch(t *testing.T) {
 	}
 	root := filepath.Join(t.TempDir(), "sessions")
 	path := filepath.Join(root, "2026", "07", "28", "rollout-native-fenced.jsonl")
-	writeUsageFixture(t, path, "{\"type\":\"session_meta\"}\n")
+	writeUsageFixture(t, path, codexSessionMetaFixture(t, "native-fenced", ""))
 	collector := NewCollector(store, SourceRoots{CodexSessions: root}, nil)
 
 	if err := collector.RecordHook(context.Background(), session.ID, HookSignal{
@@ -938,6 +938,167 @@ func TestCollectorRejectsPathOutsideProviderRootAndSymlinkEscape(t *testing.T) {
 	signal.TranscriptPath = link
 	if err := collector.RecordHook(context.Background(), session.ID, signal); err == nil {
 		t.Fatal("symlink escape accepted")
+	}
+}
+
+func TestCollectorRejectsHookPathAttributionMismatches(t *testing.T) {
+	t.Run("Codex session id", func(t *testing.T) {
+		store := collectorTestStore(t)
+		session := collectorTestSession(t, store, domain.HarnessCodex, "codex-claimed", false)
+		root := filepath.Join(t.TempDir(), "sessions")
+		path := filepath.Join(root, "2026", "08", "02", "rollout.jsonl")
+		writeUsageFixture(t, path, codexSessionMetaFixture(t, "codex-other", ""))
+		collector := NewCollector(store, SourceRoots{CodexSessions: root}, nil)
+
+		err := collector.RecordHook(context.Background(), session.ID, HookSignal{
+			Event:           "session-start",
+			NativeSessionID: "codex-claimed",
+			TranscriptPath:  path,
+		})
+		if err == nil {
+			t.Fatal("Codex path with another session id was accepted")
+		}
+		assertNoUsageSourcesForSession(t, store, session.ID)
+	})
+
+	t.Run("Claude main filename", func(t *testing.T) {
+		store := collectorTestStore(t)
+		session := collectorTestSession(t, store, domain.HarnessClaudeCode, "claude-claimed", false)
+		root := filepath.Join(t.TempDir(), "projects")
+		path := filepath.Join(root, "workspace", "claude-other.jsonl")
+		writeUsageFixture(t, path, "{}\n")
+		collector := NewCollector(store, SourceRoots{ClaudeProjects: root}, nil)
+
+		err := collector.RecordHook(context.Background(), session.ID, HookSignal{
+			Event:           "session-start",
+			NativeSessionID: "claude-claimed",
+			TranscriptPath:  path,
+		})
+		if err == nil {
+			t.Fatal("Claude path with another root filename was accepted")
+		}
+		assertNoUsageSourcesForSession(t, store, session.ID)
+	})
+
+	t.Run("Claude subagent root", func(t *testing.T) {
+		store := collectorTestStore(t)
+		session := collectorTestSession(t, store, domain.HarnessClaudeCode, "claude-root", false)
+		root := filepath.Join(t.TempDir(), "projects")
+		path := filepath.Join(root, "workspace", "claude-other", "subagents", "agent-sub-1.jsonl")
+		writeUsageFixture(t, path, "{}\n")
+		collector := NewCollector(store, SourceRoots{ClaudeProjects: root}, nil)
+
+		err := collector.RecordHook(context.Background(), session.ID, HookSignal{
+			Event:                  "subagent-stop",
+			NativeSessionID:        "claude-root",
+			SubagentID:             "sub-1",
+			SubagentTranscriptPath: path,
+		})
+		if err == nil {
+			t.Fatal("Claude subagent path under another root session was accepted")
+		}
+		assertNoUsageSourcesForSession(t, store, session.ID)
+	})
+
+	t.Run("Claude subagent id", func(t *testing.T) {
+		store := collectorTestStore(t)
+		session := collectorTestSession(t, store, domain.HarnessClaudeCode, "claude-root", false)
+		root := filepath.Join(t.TempDir(), "projects")
+		path := filepath.Join(root, "workspace", "claude-root", "subagents", "agent-sub-other.jsonl")
+		writeUsageFixture(t, path, "{}\n")
+		collector := NewCollector(store, SourceRoots{ClaudeProjects: root}, nil)
+
+		err := collector.RecordHook(context.Background(), session.ID, HookSignal{
+			Event:                  "subagent-stop",
+			NativeSessionID:        "claude-root",
+			SubagentID:             "sub-1",
+			SubagentTranscriptPath: path,
+		})
+		if err == nil {
+			t.Fatal("Claude subagent path with another agent id was accepted")
+		}
+		assertNoUsageSourcesForSession(t, store, session.ID)
+	})
+}
+
+func TestCollectorRejectsCodexChildPathWithWrongParent(t *testing.T) {
+	ctx := context.Background()
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessCodex, "codex-root", false)
+	now := time.Unix(1700000000, 0).UTC()
+	binding, err := store.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
+		SessionID:    session.ID,
+		Harness:      session.Harness,
+		NativeRootID: "codex-root",
+		State:        domain.UsageBindingActive,
+		FirstSeenAt:  now,
+		LastSeenAt:   now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), "sessions")
+	path := filepath.Join(root, "2026", "08", "02", "child.jsonl")
+	writeUsageFixture(t, path, codexSessionMetaFixture(t, "codex-child", "codex-wrong-parent"))
+	collector := NewCollector(store, SourceRoots{CodexSessions: root}, nil)
+
+	if _, err := collector.registerSource(
+		ctx,
+		binding,
+		domain.UsageSourceCodexRollout,
+		"codex-child",
+		"codex-child",
+		path,
+		now,
+		false,
+	); err == nil {
+		t.Fatal("Codex child path with another parent was accepted")
+	}
+	assertNoUsageSourcesForSession(t, store, session.ID)
+}
+
+func TestCollectorAttributionMismatchDoesNotReplaceExistingSource(t *testing.T) {
+	ctx := context.Background()
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessCodex, "codex-root", false)
+	root := filepath.Join(t.TempDir(), "sessions")
+	path := filepath.Join(root, "2026", "08", "02", "rollout.jsonl")
+	writeUsageFixture(t, path, codexSessionMetaFixture(t, "codex-root", ""))
+	collector := NewCollector(store, SourceRoots{CodexSessions: root}, nil)
+	signal := HookSignal{
+		Event:           "session-start",
+		NativeSessionID: "codex-root",
+		TranscriptPath:  path,
+	}
+	if err := collector.RecordHook(ctx, session.ID, signal); err != nil {
+		t.Fatalf("register original source: %v", err)
+	}
+	binding, ok, err := store.GetUsageBinding(ctx, session.ID, session.Harness, "codex-root")
+	if err != nil || !ok {
+		t.Fatalf("binding: ok=%v err=%v", ok, err)
+	}
+	sources, err := store.ListUsageSourcesForBinding(ctx, binding.ID)
+	if err != nil || len(sources) != 1 {
+		t.Fatalf("original sources=%+v err=%v", sources, err)
+	}
+	original := sources[0]
+	replacement := path + ".replacement"
+	writeUsageFixture(t, replacement, codexSessionMetaFixture(t, "codex-other", ""))
+	if err := os.Rename(replacement, path); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := collector.RecordHook(ctx, session.ID, signal); err == nil {
+		t.Fatal("mismatched replacement was accepted")
+	}
+	sources, err = store.ListUsageSourcesForBinding(ctx, binding.ID)
+	if err != nil || len(sources) != 1 {
+		t.Fatalf("sources after rejection=%+v err=%v", sources, err)
+	}
+	if sources[0].ID != original.ID || sources[0].State != original.State ||
+		sources[0].LastErrorCode != original.LastErrorCode {
+		t.Fatalf("original source changed after rejection: before=%+v after=%+v", original, sources[0])
 	}
 }
 
@@ -1608,7 +1769,8 @@ func TestCollectorDoesNotTransferCursorAcrossNativeSessions(t *testing.T) {
 	root := t.TempDir()
 	firstPath := filepath.Join(root, "first.jsonl")
 	secondPath := filepath.Join(root, "second.jsonl")
-	if err := os.WriteFile(firstPath, []byte(strings.Repeat("x", 256)), 0o600); err != nil {
+	firstContent := codexSessionMetaFixture(t, "native-a", "") + strings.Repeat(" ", 256)
+	if err := os.WriteFile(firstPath, []byte(firstContent), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Link(firstPath, secondPath); err != nil {
@@ -1636,6 +1798,10 @@ func TestCollectorDoesNotTransferCursorAcrossNativeSessions(t *testing.T) {
 		State:      domain.UsageSourceActive,
 		UpdatedAt:  now,
 	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	secondContent := codexSessionMetaFixture(t, "native-b", "") + strings.Repeat(" ", 256)
+	if err := rewriteCollectorFixture(secondPath, secondContent); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := collector.registerSource(
@@ -1823,6 +1989,23 @@ func collectorTestStore(t *testing.T) *sqlite.Store {
 	return store
 }
 
+func assertNoUsageSourcesForSession(t *testing.T, store *sqlite.Store, sessionID domain.SessionID) {
+	t.Helper()
+	bindings, err := store.ListUsageBindingsForSession(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, binding := range bindings {
+		sources, err := store.ListUsageSourcesForBinding(context.Background(), binding.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(sources) != 0 {
+			t.Fatalf("unexpected usage sources: %+v", sources)
+		}
+	}
+}
+
 func collectorTestSession(t *testing.T, store *sqlite.Store, harness domain.AgentHarness, nativeID string, terminated bool) domain.SessionRecord {
 	return collectorTestSessionWithActivity(t, store, harness, nativeID, terminated, domain.ActivityIdle)
 }
@@ -1863,6 +2046,18 @@ func writeUsageFixture(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func rewriteCollectorFixture(path, content string) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := file.WriteString(content); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
 }
 
 func codexSessionMetaFixture(t *testing.T, id, parentID string) string {

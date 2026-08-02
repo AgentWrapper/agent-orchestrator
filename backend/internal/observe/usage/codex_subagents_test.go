@@ -179,6 +179,7 @@ func TestIngestorSignalsReconcileOnlyForNewlyCommittedCodexChild(t *testing.T) {
 	}
 	firstState, err := decodeParserState(domain.UsageSourceRecord{
 		Kind:            domain.UsageSourceCodexRollout,
+		ByteOffset:      int64(len(call) + 1),
 		ParserStateJSON: readParserStateJSON(t, dataDir, source.ID),
 	})
 	if err != nil || len(firstState.Codex.PendingSpawnCallIDs) != 1 {

@@ -3,6 +3,7 @@ package usage
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +35,16 @@ func parseRecords(source domain.UsageSourceContext, records []jsonlRecord, nextO
 	if err != nil {
 		return parseResult{err: fmt.Errorf("decode parser state: %w", err)}
 	}
+	return parseRecordsWithState(source, records, nextOffset, now, state)
+}
+
+func parseRecordsWithState(
+	source domain.UsageSourceContext,
+	records []jsonlRecord,
+	nextOffset int64,
+	now time.Time,
+	state *parserStateEnvelope,
+) parseResult {
 	result := parseResult{Cursor: cursorFromSource(source.Source, nextOffset, now)}
 	switch source.Source.Kind {
 	case domain.UsageSourceClaudeMain, domain.UsageSourceClaudeSubagent:
@@ -70,6 +81,7 @@ const parserStateVersion = 1
 const (
 	maxCodexAttributionIDBytes = 256
 	maxCodexAttributionIDs     = 4096
+	integrityCheckpointBytes   = 4 << 10
 )
 
 type codexTokenVector struct {
@@ -81,10 +93,29 @@ type codexTokenVector struct {
 }
 
 type parserStateEnvelope struct {
-	Version    int                    `json:"version"`
-	SourceKind domain.UsageSourceKind `json:"source_kind"`
-	Claude     *claudeParserStateV1   `json:"claude,omitempty"`
-	Codex      *codexParserStateV1    `json:"codex,omitempty"`
+	Version    int                     `json:"version"`
+	SourceKind domain.UsageSourceKind  `json:"source_kind"`
+	Integrity  *parserIntegrityStateV1 `json:"integrity,omitempty"`
+	Claude     *claudeParserStateV1    `json:"claude,omitempty"`
+	Codex      *codexParserStateV1     `json:"codex,omitempty"`
+}
+
+type parserIntegrityStateV1 struct {
+	Checkpoint *parserCheckpointV1 `json:"checkpoint,omitempty"`
+	StableTail *stableTailStateV1  `json:"stable_tail,omitempty"`
+}
+
+type parserCheckpointV1 struct {
+	EndOffset int64  `json:"end_offset"`
+	ByteCount int64  `json:"byte_count"`
+	SHA256    string `json:"sha256"`
+}
+
+type stableTailStateV1 struct {
+	Offset            int64  `json:"offset"`
+	ByteCount         int64  `json:"byte_count"`
+	SHA256            string `json:"sha256"`
+	QuietObservations int    `json:"quiet_observations"`
 }
 
 type claudeParserStateV1 struct {
@@ -127,6 +158,12 @@ func decodeParserState(source domain.UsageSourceRecord) (*parserStateEnvelope, e
 	if state.SourceKind != source.Kind {
 		return nil, fmt.Errorf("source kind %q does not match %q", state.SourceKind, source.Kind)
 	}
+	if state.Integrity == nil {
+		state.Integrity = &parserIntegrityStateV1{}
+	}
+	if err := validateParserIntegrityState(source, state.Integrity); err != nil {
+		return nil, err
+	}
 	switch source.Kind {
 	case domain.UsageSourceClaudeMain, domain.UsageSourceClaudeSubagent:
 		if state.Claude == nil || state.Codex != nil {
@@ -152,7 +189,11 @@ func decodeParserState(source domain.UsageSourceRecord) (*parserStateEnvelope, e
 }
 
 func newParserState(kind domain.UsageSourceKind) (*parserStateEnvelope, error) {
-	state := &parserStateEnvelope{Version: parserStateVersion, SourceKind: kind}
+	state := &parserStateEnvelope{
+		Version:    parserStateVersion,
+		SourceKind: kind,
+		Integrity:  &parserIntegrityStateV1{},
+	}
 	switch kind {
 	case domain.UsageSourceClaudeMain, domain.UsageSourceClaudeSubagent:
 		state.Claude = &claudeParserStateV1{}
@@ -165,6 +206,31 @@ func newParserState(kind domain.UsageSourceKind) (*parserStateEnvelope, error) {
 		return nil, fmt.Errorf("unsupported source kind %q", kind)
 	}
 	return state, nil
+}
+
+func validateParserIntegrityState(source domain.UsageSourceRecord, state *parserIntegrityStateV1) error {
+	if checkpoint := state.Checkpoint; checkpoint != nil {
+		if checkpoint.EndOffset != source.ByteOffset ||
+			checkpoint.ByteCount != min(checkpoint.EndOffset, int64(integrityCheckpointBytes)) ||
+			!validSHA256Digest(checkpoint.SHA256) {
+			return errors.New("invalid integrity checkpoint")
+		}
+	}
+	if tail := state.StableTail; tail != nil {
+		if tail.Offset != source.ByteOffset || tail.ByteCount <= 0 ||
+			tail.QuietObservations < 0 || tail.QuietObservations > 1 || !validSHA256Digest(tail.SHA256) {
+			return errors.New("invalid stable tail state")
+		}
+	}
+	return nil
+}
+
+func validSHA256Digest(value string) bool {
+	if len(value) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 func ensureJSONEOF(decoder *json.Decoder) error {
@@ -184,9 +250,11 @@ type claudeTranscriptRecord struct {
 	UUID        string `json:"uuid"`
 	IsSidechain bool   `json:"isSidechain"`
 	Timestamp   string `json:"timestamp"`
+	Provider    string `json:"provider"`
 	Message     struct {
 		ID         string  `json:"id"`
 		Model      string  `json:"model"`
+		Provider   string  `json:"provider"`
 		StopReason *string `json:"stop_reason"`
 		Usage      *struct {
 			InputTokens              int64 `json:"input_tokens"`
@@ -233,7 +301,7 @@ func parseClaude(source domain.UsageSourceContext, records []jsonlRecord, now ti
 		}
 		model := firstNonEmpty(native.Message.Model, state.ModelID, source.InitialModelID, "unknown")
 		state.ModelID = model
-		state.Provider = firstNonEmpty(state.Provider, "claude-code")
+		state.Provider = firstNonEmpty(native.Message.Provider, native.Provider, state.Provider)
 		observedAt := parseTimestamp(native.Timestamp)
 		keyID := firstNonEmpty(native.Message.ID, native.UUID, strconv.FormatInt(record.Offset, 10))
 		event := domain.ModelUsageEvent{

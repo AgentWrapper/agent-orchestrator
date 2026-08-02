@@ -43,6 +43,45 @@ func TestParseClaudeSubagentIncludesSidechainTranscript(t *testing.T) {
 	}
 }
 
+func TestParseClaudeUsesTranscriptProviderWithoutHarnessFallback(t *testing.T) {
+	tests := []struct {
+		name   string
+		record string
+		want   string
+	}{
+		{
+			name:   "top-level provider",
+			record: `{"type":"assistant","provider":"anthropic","uuid":"one","message":{"id":"msg-1","model":"claude-x","stop_reason":"end_turn","usage":{"input_tokens":8,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2}}}`,
+			want:   "anthropic",
+		},
+		{
+			name:   "message provider",
+			record: `{"type":"assistant","uuid":"two","message":{"id":"msg-2","model":"claude-x","provider":"bedrock","stop_reason":"end_turn","usage":{"input_tokens":8,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2}}}`,
+			want:   "bedrock",
+		},
+		{
+			name:   "provider absent",
+			record: `{"type":"assistant","uuid":"three","message":{"id":"msg-3","model":"claude-x","stop_reason":"end_turn","usage":{"input_tokens":8,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2}}}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := parseRecords(
+				usageSource(domain.UsageSourceClaudeMain),
+				[]jsonlRecord{{Data: []byte(test.record)}},
+				int64(len(test.record)),
+				time.Unix(1700000000, 0).UTC(),
+			)
+			if result.err != nil || len(result.Events) != 1 {
+				t.Fatalf("result events=%+v err=%v", result.Events, result.err)
+			}
+			if result.Events[0].Provider != test.want {
+				t.Fatalf("provider = %q, want %q", result.Events[0].Provider, test.want)
+			}
+		})
+	}
+}
+
 func TestParseCodexCumulativeDeltasAndRepeats(t *testing.T) {
 	now := time.Unix(1700000000, 0).UTC()
 	source := usageSource(domain.UsageSourceCodexRollout)
@@ -126,6 +165,48 @@ func TestDecodeParserStateTreatsWhitespaceOnlyObjectAsFreshState(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDecodeParserStateKeepsV1BackwardCompatibleAndIntegrityStrict(t *testing.T) {
+	legacy := `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":[]}}`
+	state, err := decodeParserState(domain.UsageSourceRecord{
+		Kind:            domain.UsageSourceCodexRollout,
+		ByteOffset:      12,
+		ParserStateJSON: legacy,
+	})
+	if err != nil {
+		t.Fatalf("decode legacy state: %v", err)
+	}
+	if state.Integrity == nil || state.Codex == nil {
+		t.Fatalf("legacy state = %+v", state)
+	}
+
+	digest := strings.Repeat("a", 64)
+	valid := `{"version":1,"source_kind":"codex_rollout","integrity":{"checkpoint":{"end_offset":12,"byte_count":12,"sha256":"` + digest + `"}},"codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":[]}}`
+	if _, err := decodeParserState(domain.UsageSourceRecord{
+		Kind:            domain.UsageSourceCodexRollout,
+		ByteOffset:      12,
+		ParserStateJSON: valid,
+	}); err != nil {
+		t.Fatalf("decode valid integrity state: %v", err)
+	}
+
+	invalid := []string{
+		`{"version":1,"source_kind":"codex_rollout","integrity":{"unknown":true},"codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":[]}}`,
+		`{"version":1,"source_kind":"codex_rollout","integrity":{"checkpoint":{"end_offset":11,"byte_count":11,"sha256":"` + digest + `"}},"codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":[]}}`,
+		`{"version":1,"source_kind":"codex_rollout","integrity":{"checkpoint":{"end_offset":12,"byte_count":12,"sha256":"short"}},"codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":[]}}`,
+		`{"version":1,"source_kind":"codex_rollout","integrity":{"stable_tail":{"offset":12,"byte_count":4,"sha256":"` + digest + `","quiet_observations":2}},"codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":[]}}`,
+		`{"version":1,"source_kind":"codex_rollout","integrity":{"stable_tail":{"offset":12,"byte_count":4,"sha256":"` + digest + `","quiet_observations":0,"content":"private"}},"codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":[]}}`,
+	}
+	for index, raw := range invalid {
+		if _, err := decodeParserState(domain.UsageSourceRecord{
+			Kind:            domain.UsageSourceCodexRollout,
+			ByteOffset:      12,
+			ParserStateJSON: raw,
+		}); err == nil {
+			t.Errorf("invalid state %d was accepted", index)
+		}
 	}
 }
 
@@ -273,7 +354,7 @@ func TestReadJSONLChunkRetainsPartialTailAndSkipsOversizedRecord(t *testing.T) {
 	if err := osWrite(path, `{"a":1}`+"\n"+`{"b":`); err != nil {
 		t.Fatal(err)
 	}
-	first, err := readJSONLChunk(path, 0, 1024, 32, "")
+	first, err := readJSONLChunkAtPath(path, 0, 1024, 32, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +366,7 @@ func TestReadJSONLChunkRetainsPartialTailAndSkipsOversizedRecord(t *testing.T) {
 	if err := osAppend(path, `2}`+"\n"); err != nil {
 		t.Fatal(err)
 	}
-	second, err := readJSONLChunk(path, first.nextOffset, 1024, 32, "")
+	second, err := readJSONLChunkAtPath(path, first.nextOffset, 1024, 32, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,12 +377,40 @@ func TestReadJSONLChunkRetainsPartialTailAndSkipsOversizedRecord(t *testing.T) {
 	if err := osWrite(path, strings.Repeat("x", 40)+"\n"); err != nil {
 		t.Fatal(err)
 	}
-	large, err := readJSONLChunk(path, 0, 1024, 16, "")
+	large, err := readJSONLChunkAtPath(path, 0, 1024, 16, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if large.anomalies != 1 || large.errorCode != domain.UsageErrorRecordTooLarge || large.nextOffset != 41 {
 		t.Fatalf("oversized chunk = %+v", large)
+	}
+}
+
+func TestReadJSONLChunkFromFileSurvivesAtomicPathReplacement(t *testing.T) {
+	root := t.TempDir()
+	path := root + "/rollout.jsonl"
+	replacement := root + "/replacement.jsonl"
+	if err := osWrite(path, `{"generation":"opened"}`+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := osWrite(replacement, `{"generation":"replacement"}`+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = file.Close() }()
+	if err := os.Rename(replacement, path); err != nil {
+		t.Fatal(err)
+	}
+
+	chunk, err := readJSONLChunkFromFile(file, 0, 1024, 128, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunk.records) != 1 || string(chunk.records[0].Data) != `{"generation":"opened"}` {
+		t.Fatalf("chunk records = %+v, want the opened generation", chunk.records)
 	}
 }
 
@@ -322,7 +431,11 @@ func parserStateFromResult(t *testing.T, result parseResult, kind domain.UsageSo
 	if result.err != nil {
 		t.Fatalf("parse records: %v", result.err)
 	}
-	state, err := decodeParserState(domain.UsageSourceRecord{Kind: kind, ParserStateJSON: result.Cursor.ParserStateJSON})
+	state, err := decodeParserState(domain.UsageSourceRecord{
+		Kind:            kind,
+		ByteOffset:      result.Cursor.ByteOffset,
+		ParserStateJSON: result.Cursor.ParserStateJSON,
+	})
 	if err != nil {
 		t.Fatalf("decode result parser state: %v", err)
 	}
@@ -338,6 +451,21 @@ func codexTokenLine(timestamp string, input, cached, cacheWrite, output, reasoni
 
 func osWrite(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0o600)
+}
+
+func readJSONLChunkAtPath(
+	path string,
+	offset int64,
+	maxBytes int64,
+	maxRecord int,
+	previousError string,
+) (jsonlChunk, error) {
+	file, err := os.Open(path) //nolint:gosec // test-controlled path.
+	if err != nil {
+		return jsonlChunk{}, err
+	}
+	defer func() { _ = file.Close() }()
+	return readJSONLChunkFromFile(file, offset, maxBytes, maxRecord, previousError)
 }
 
 func osAppend(path, content string) error {

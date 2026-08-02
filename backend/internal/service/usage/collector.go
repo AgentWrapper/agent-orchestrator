@@ -500,7 +500,7 @@ func (c *Collector) ReconcilePath(ctx context.Context, path string) error {
 		if !latestCodexSourceDiscovers(sources, meta.ParentThreadID, meta.NativeSessionID) {
 			continue
 		}
-		if _, registerErr := c.registerSource(
+		if _, registerErr := c.registerSourceWithExpectedParent(
 			ctx,
 			binding,
 			domain.UsageSourceCodexRollout,
@@ -509,6 +509,7 @@ func (c *Collector) ReconcilePath(ctx context.Context, path string) error {
 			resolved,
 			now,
 			false,
+			meta.ParentThreadID,
 		); registerErr != nil {
 			errs = append(errs, registerErr)
 		}
@@ -762,8 +763,46 @@ func (c *Collector) registerSource(
 	now time.Time,
 	reactivateExisting bool,
 ) (bool, error) {
+	expectedParentID := ""
+	if kind == domain.UsageSourceCodexRollout && subagentID != "" {
+		expectedParentID = binding.NativeRootID
+	}
+	return c.registerSourceWithExpectedParent(
+		ctx,
+		binding,
+		kind,
+		nativeSessionID,
+		subagentID,
+		path,
+		now,
+		reactivateExisting,
+		expectedParentID,
+	)
+}
+
+func (c *Collector) registerSourceWithExpectedParent(
+	ctx context.Context,
+	binding domain.UsageBindingRecord,
+	kind domain.UsageSourceKind,
+	nativeSessionID string,
+	subagentID string,
+	path string,
+	now time.Time,
+	reactivateExisting bool,
+	expectedParentID string,
+) (bool, error) {
 	resolved, identity, size, err := c.validateSourcePath(binding.Harness, path)
 	if err != nil {
+		return false, err
+	}
+	if err := validateSourceAttribution(
+		binding,
+		kind,
+		nativeSessionID,
+		subagentID,
+		resolved,
+		expectedParentID,
+	); err != nil {
 		return false, err
 	}
 	sources, err := c.store.ListUsageSourcesForBinding(ctx, binding.ID)
@@ -795,9 +834,20 @@ func (c *Collector) registerSourceWithInventory(
 	now time.Time,
 	reactivateExisting bool,
 	inventory *bindingSourceInventory,
+	expectedParentID string,
 ) (bool, error) {
 	resolved, identity, size, err := c.validateSourcePath(binding.Harness, path)
 	if err != nil {
+		return false, err
+	}
+	if err := validateSourceAttribution(
+		binding,
+		kind,
+		nativeSessionID,
+		subagentID,
+		resolved,
+		expectedParentID,
+	); err != nil {
 		return false, err
 	}
 	return c.registerValidatedSource(
@@ -1030,6 +1080,7 @@ func (c *Collector) registerDiscoveredCodexChildrenWithInventory(
 				now,
 				false,
 				inventory,
+				source.NativeSessionID,
 			); err != nil {
 				errs = append(errs, err)
 			}
@@ -1217,6 +1268,48 @@ func (c *Collector) validateSourcePath(harness domain.AgentHarness, path string)
 		return "", "", 0, err
 	}
 	return resolved, identity, info.Size(), nil
+}
+
+func validateSourceAttribution(
+	binding domain.UsageBindingRecord,
+	kind domain.UsageSourceKind,
+	nativeSessionID string,
+	subagentID string,
+	resolved string,
+	expectedParentID string,
+) error {
+	rejected := func() error { return errors.New(domain.UsageErrorArtifactPathRejected) }
+	switch kind {
+	case domain.UsageSourceCodexRollout:
+		if binding.Harness != domain.HarnessCodex {
+			return rejected()
+		}
+		meta, ok := readCodexSessionMeta(resolved)
+		if !ok || meta.NativeSessionID != nativeSessionID {
+			return rejected()
+		}
+		if subagentID != "" &&
+			(subagentID != nativeSessionID || expectedParentID == "" || meta.ParentThreadID != expectedParentID) {
+			return rejected()
+		}
+	case domain.UsageSourceClaudeMain:
+		if binding.Harness != domain.HarnessClaudeCode || nativeSessionID != binding.NativeRootID ||
+			filepath.Base(resolved) != nativeSessionID+".jsonl" {
+			return rejected()
+		}
+	case domain.UsageSourceClaudeSubagent:
+		subagentsDir := filepath.Dir(resolved)
+		rootSessionDir := filepath.Dir(subagentsDir)
+		if binding.Harness != domain.HarnessClaudeCode || nativeSessionID != binding.NativeRootID ||
+			subagentID == "" || filepath.Base(subagentsDir) != "subagents" ||
+			filepath.Base(rootSessionDir) != binding.NativeRootID ||
+			filepath.Base(resolved) != "agent-"+subagentID+".jsonl" {
+			return rejected()
+		}
+	default:
+		return rejected()
+	}
+	return nil
 }
 
 func (c *Collector) allowedRoots(harness domain.AgentHarness) []string {
@@ -1408,6 +1501,12 @@ func SourceIdentity(path string) (string, error) {
 		return "", errors.New(domain.UsageErrorSourceReadFailed)
 	}
 	defer func() { _ = file.Close() }()
+	return SourceIdentityFromFile(file)
+}
+
+// SourceIdentityFromFile returns the filesystem's stable id for an already
+// opened transcript descriptor.
+func SourceIdentityFromFile(file *os.File) (string, error) {
 	fileID, err := sourceFileID(file)
 	if err != nil {
 		return "", errors.New(domain.UsageErrorSourceReadFailed)
