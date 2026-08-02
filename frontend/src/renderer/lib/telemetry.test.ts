@@ -3,6 +3,7 @@ import { PostHog } from "posthog-js/dist/module.full.no-external";
 import {
 	buildPostHogConfig,
 	buildTelemetryContext,
+	isDeniedEvent,
 	postHogEventName,
 	reserveCapture,
 	reserveDailyActiveCapture,
@@ -42,16 +43,38 @@ describe("telemetry sanitizers", () => {
 		});
 	});
 
+	// The daemon enforces the same list on its own sink, but renderer events go
+	// straight to PostHog, so the policy has to be honoured here too or the kill
+	// switch only covers half the producers.
+	it("honours the supervisor deny list, by either internal or exported name", () => {
+		expect(isDeniedEvent("ao.app.active", ["ao.v2.app.active"])).toBe(true);
+		expect(isDeniedEvent("ao.app.active", ["ao.app.active"])).toBe(true);
+		expect(isDeniedEvent("ao.app.active", ["  AO.V2.APP.ACTIVE  "])).toBe(true);
+		expect(isDeniedEvent("ao.renderer.route_viewed", ["ao.renderer.*"])).toBe(true);
+		expect(isDeniedEvent("$exception", ["$exception"])).toBe(true);
+
+		expect(isDeniedEvent("ao.session.spawned", ["ao.renderer.*"])).toBe(false);
+		expect(isDeniedEvent("ao.app.active", [])).toBe(false);
+		// A bare "*" must not silence everything by accident.
+		expect(isDeniedEvent("ao.app.active", ["", "  ", "*"])).toBe(false);
+	});
+
 	it("allowlists only enum-like fields on update events", async () => {
 		const safe = await sanitizeRendererProperties("ao.renderer.update_failed", {
 			to_version: "0.11.2",
 			error_category: "network",
 			phase: "download",
+			trigger: "automatic",
 			// Must be dropped: raw updater text can carry feed URLs and local paths.
 			message: "EACCES /Users/someone/Library/Caches/ao-updater",
 			stack: "at Object.<anonymous>",
 		});
-		expect(safe).toEqual({ to_version: "0.11.2", error_category: "network", phase: "download" });
+		expect(safe).toEqual({
+			to_version: "0.11.2",
+			error_category: "network",
+			phase: "download",
+			trigger: "automatic",
+		});
 
 		// An unrecognized phase is not passed through as-is.
 		const bogus = await sanitizeRendererProperties("ao.renderer.update_failed", { phase: "sideload" });

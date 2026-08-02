@@ -13,7 +13,7 @@ import (
 
 func TestPostHogSinkCapturesEvent(t *testing.T) {
 	requests := make(chan map[string]any, 1)
-	sink, err := NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", roundTripClient(func(req *http.Request) (*http.Response, error) {
+	sink, err := NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", "", roundTripClient(func(req *http.Request) (*http.Response, error) {
 		defer req.Body.Close()
 		var body map[string]any
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -73,7 +73,7 @@ func TestPostHogSinkCapturesEvent(t *testing.T) {
 
 func TestPostHogSinkSanitizesPayloads(t *testing.T) {
 	requests := make(chan map[string]any, 1)
-	sink, err := NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", roundTripClient(func(req *http.Request) (*http.Response, error) {
+	sink, err := NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", "", roundTripClient(func(req *http.Request) (*http.Response, error) {
 		defer req.Body.Close()
 		var body map[string]any
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -139,7 +139,7 @@ func TestPostHogSinkSanitizesPayloads(t *testing.T) {
 
 func TestPostHogSinkSanitizesAppActivePayload(t *testing.T) {
 	requests := make(chan map[string]any, 1)
-	sink, err := NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", roundTripClient(func(req *http.Request) (*http.Response, error) {
+	sink, err := NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", "", roundTripClient(func(req *http.Request) (*http.Response, error) {
 		defer req.Body.Close()
 		var body map[string]any
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -215,8 +215,8 @@ var _ postHogClient = roundTripClient(nil)
 // because the daemon binary has none that release tooling sets.
 func TestPostHogSinkStampsAppVersionWhenSupplied(t *testing.T) {
 	requests := make(chan map[string]any, 1)
-	newSink := func(opts ...PostHogOption) *PostHogSink {
-		sink, err := NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", roundTripClient(func(req *http.Request) (*http.Response, error) {
+	newSink := func(appVersion string) *PostHogSink {
+		sink, err := NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", appVersion, roundTripClient(func(req *http.Request) (*http.Response, error) {
 			defer req.Body.Close()
 			var body map[string]any
 			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -224,7 +224,7 @@ func TestPostHogSinkStampsAppVersionWhenSupplied(t *testing.T) {
 			}
 			requests <- body
 			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: http.NoBody}, nil
-		}), nil, opts...)
+		}), nil)
 		if err != nil {
 			t.Fatalf("NewPostHogSink: %v", err)
 		}
@@ -251,14 +251,14 @@ func TestPostHogSinkStampsAppVersionWhenSupplied(t *testing.T) {
 		}
 	}
 
-	props := emit(newSink(WithAppVersion(" 0.11.2 ")))
+	props := emit(newSink(" 0.11.2 "))
 	if props["app_version"] != "0.11.2" || props["ao_version"] != "0.11.2" {
 		t.Fatalf("version properties = %#v / %#v, want trimmed 0.11.2", props["app_version"], props["ao_version"])
 	}
 
 	// An unset supervisor env var must leave the properties off rather than
 	// reporting a misleading placeholder that would pollute version breakdowns.
-	props = emit(newSink())
+	props = emit(newSink(""))
 	if _, ok := props["app_version"]; ok {
 		t.Fatalf("app_version present without the option: %#v", props["app_version"])
 	}

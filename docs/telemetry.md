@@ -20,11 +20,20 @@ ingestion drop rules, see [posthog-cost-controls.md](posthog-cost-controls.md).
   transitions, HTTP 5xx, and daemon panics
 - Desktop update outcomes: `ao.renderer.update_failed`,
   `ao.renderer.update_downloaded`, and `ao.renderer.update_unsupported`. These
-  carry a coarse `error_category`, the `phase` that failed (`check` or
-  `download`), and the target version. The updater's raw error message is never
-  sent, because it can contain feed URLs and local staging paths; it is bucketed
-  into a category first. Progress (`downloading`) is deliberately not reported,
-  since it fires per percent tick and the UI already shows it
+  carry a coarse `error_category`, the `phase` (`check` or `download`), whether
+  the operation was `automatic` or `manual`, and the target version. The
+  updater's raw error message is never sent, because it can contain feed URLs
+  and local staging paths; it is bucketed into a category first. Progress is not
+  reported, since it fires per percent tick and the UI already shows it.
+
+  These are decided in the **main process**, at the updater's operation
+  boundary, and pushed to the renderer on a channel separate from
+  `updates:status`. That separation matters: `auto-updater.ts` deliberately
+  suppresses the UI status when an *automatic* check fails, and automatic checks
+  run hourly. A renderer observer watching statuses would therefore miss the
+  silent-failure case these exist to diagnose. Owning it in main also makes
+  `phase` and `to_version` authoritative, since only main knows which operation
+  was running and what it was fetching
 - AO version context (`app_version` / `ao_version`), platform, and build mode
 
 PostHog session recording is disabled in the client via
@@ -274,6 +283,17 @@ AO_TELEMETRY_DISABLED_EVENTS="ao.v2.app.active, ao.renderer.*"
 An entry ending in `*` matches by prefix. Matching is case-insensitive and
 accepts either the internal name (`ao.app.active`) or the exported PostHog alias
 (`ao.v2.app.active`), so the name visible in PostHog works without translation.
+
+The list is enforced in two places, because AO has two producers: the daemon's
+billed sink, and the renderer, which talks to PostHog directly. The supervisor
+passes the list to the daemon as an environment variable and to the renderer on
+the telemetry bootstrap, so denying `ao.v2.app.active` silences both rather than
+leaving the renderer sending under the same exported name.
+
+Renderer export is additionally off by default on unpackaged builds, so a
+developer's ordinary session does not appear in the production project as a real
+install. `AO_TELEMETRY_RENDERER=on` opts a dev build back in for deliberate
+testing; `off` opts a packaged build out.
 
 This exists because every other control in this document is compiled into the
 build. Silencing a stream previously meant shipping a release and waiting for

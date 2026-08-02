@@ -85,7 +85,7 @@ func (f wiringTestRoundTripper) Do(req *http.Request) (*http.Response, error) { 
 // reaching PostHog even once aggregation ran correctly).
 func TestTelemetryWiringAggregatesUsageErrorsAndPreservesCountOnTheWire(t *testing.T) {
 	requests := make(chan map[string]any, 1)
-	remote, err := telemetryadapter.NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com",
+	remote, err := telemetryadapter.NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", "",
 		wiringTestRoundTripper(func(req *http.Request) (*http.Response, error) {
 			defer req.Body.Close()
 			var body map[string]any

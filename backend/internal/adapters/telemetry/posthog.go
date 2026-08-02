@@ -188,6 +188,9 @@ type PostHogSink struct {
 	apiKey     string
 	host       string
 	distinctID string
+	// appVersion stamps app_version/ao_version on every exported event. Empty
+	// leaves the properties off entirely rather than reporting a misleading
+	// "unknown" that would show up as a real version in release breakdowns.
 	appVersion string
 	client     postHogClient
 	log        *slog.Logger
@@ -196,22 +199,8 @@ type PostHogSink struct {
 	closeOnce  sync.Once
 }
 
-// PostHogOption configures a sink at construction. Options are applied before
-// the export goroutine starts, so the fields they set are only ever written on
-// the constructing goroutine and read on the export one.
-type PostHogOption func(*PostHogSink)
-
-// WithAppVersion stamps app_version/ao_version on every exported event. Empty
-// values are ignored so an unset supervisor env var leaves the properties off
-// entirely rather than reporting a misleading "unknown".
-func WithAppVersion(version string) PostHogOption {
-	return func(s *PostHogSink) {
-		s.appVersion = strings.TrimSpace(version)
-	}
-}
-
 // NewPostHogSink starts a buffered PostHog exporter with a stable install ID.
-func NewPostHogSink(dataDir, apiKey, host string, client postHogClient, log *slog.Logger, opts ...PostHogOption) (*PostHogSink, error) {
+func NewPostHogSink(dataDir, apiKey, host, appVersion string, client postHogClient, log *slog.Logger) (*PostHogSink, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, fmt.Errorf("posthog api key is required")
 	}
@@ -231,12 +220,8 @@ func NewPostHogSink(dataDir, apiKey, host string, client postHogClient, log *slo
 		distinctID: distinctID,
 		client:     client,
 		log:        telemetryLogger(log),
+		appVersion: strings.TrimSpace(appVersion),
 		ch:         make(chan ports.TelemetryEvent, postHogBufferSize),
-	}
-	for _, opt := range opts {
-		if opt != nil {
-			opt(s)
-		}
 	}
 	s.wg.Add(1)
 	go s.loop()

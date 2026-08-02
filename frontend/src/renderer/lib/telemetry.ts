@@ -99,6 +99,38 @@ export function postHogEventName(event: string): string {
 	return POSTHOG_EVENT_NAME_ALIASES[event] ?? event;
 }
 
+// Streams the supervisor has silenced, delivered on the telemetry bootstrap.
+// The daemon enforces the same list on its own sink, but renderer events go
+// straight to PostHog, so without this the kill switch would only cover half
+// the producers.
+let disabledEventMatchers: string[] = [];
+
+/**
+ * Whether a stream is silenced.
+ *
+ * Mirrors the daemon's DenylistSink: case-insensitive, `*` matches by prefix,
+ * and both the internal name and the exported alias are checked so an operator
+ * can type whichever one they see.
+ */
+export function isDeniedEvent(event: string, denied: string[] = disabledEventMatchers): boolean {
+	if (denied.length === 0) return false;
+	const candidates = [event.trim().toLowerCase(), postHogEventName(event).trim().toLowerCase()];
+	return denied.some((raw) => {
+		const rule = raw.trim().toLowerCase();
+		if (rule === "" || rule === "*") return false;
+		if (rule.endsWith("*")) {
+			const prefix = rule.slice(0, -1);
+			return prefix !== "" && candidates.some((name) => name.startsWith(prefix));
+		}
+		return candidates.includes(rule);
+	});
+}
+
+/** Test seam: the real value arrives with the bootstrap in initTelemetry. */
+export function setDisabledEventsForTest(denied: string[]): void {
+	disabledEventMatchers = denied;
+}
+
 export function reserveDailyActiveCapture(storage?: DailyActiveStorage, now = new Date()): boolean {
 	const utcDate = now.toISOString().slice(0, 10);
 	const slot = activeCaptureSlot(now);
@@ -435,6 +467,7 @@ export async function sanitizeRendererProperties(
 			if (typeof properties?.to_version === "string") safe.to_version = properties.to_version;
 			if (typeof properties?.error_category === "string") safe.error_category = properties.error_category;
 			if (properties?.phase === "check" || properties?.phase === "download") safe.phase = properties.phase;
+			if (properties?.trigger === "automatic" || properties?.trigger === "manual") safe.trigger = properties.trigger;
 			break;
 	}
 	return safe;
@@ -520,7 +553,10 @@ export async function initTelemetry(): Promise<boolean> {
 	initPromise = (async () => {
 		if (!POSTHOG_KEY) return false;
 		const bootstrap = await aoBridge.telemetry.getBootstrap();
+		// Null means the supervisor withheld it: no key, no data dir, or an
+		// unpackaged build that has not opted in. The client is never created.
 		if (!bootstrap) return false;
+		disabledEventMatchers = bootstrap.disabledEvents ?? [];
 		telemetryContext = buildTelemetryContext(bootstrap.appVersion, bootstrap.platform);
 		posthog.init(POSTHOG_KEY, buildPostHogConfig(bootstrap.distinctId));
 		posthog.register({
@@ -533,7 +569,9 @@ export async function initTelemetry(): Promise<boolean> {
 			window,
 			document,
 			capture: async () =>
-				Boolean(
+				isDeniedEvent("ao.app.active")
+					? true
+					: Boolean(
 					posthog.capture(
 						postHogEventName("ao.app.active"),
 						withTelemetryContext(await sanitizeRendererProperties("ao.app.active", { channel: "renderer" })),
@@ -541,16 +579,22 @@ export async function initTelemetry(): Promise<boolean> {
 					),
 				),
 		});
-		posthog.capture(
-			postHogEventName("ao.renderer.loaded"),
-			withTelemetryContext(await sanitizeRendererProperties("ao.renderer.loaded")),
-		);
+		if (!isDeniedEvent("ao.renderer.loaded")) {
+			posthog.capture(
+				postHogEventName("ao.renderer.loaded"),
+				withTelemetryContext(await sanitizeRendererProperties("ao.renderer.loaded")),
+			);
+		}
 		return true;
 	})().catch(() => false);
 	return initPromise;
 }
 
 export async function captureRendererEvent(event: string, properties?: Record<string, unknown>): Promise<void> {
+	// Checked before the reservations so a silenced stream does not consume a
+	// rate-limit slot on its way to being discarded, matching the daemon, where
+	// the denylist sits outermost.
+	if (isDeniedEvent(event)) return;
 	const sanitizedProperties = await sanitizeRendererProperties(event, properties);
 	if (event === "ao.renderer.route_viewed") {
 		const surface = typeof sanitizedProperties.surface === "string" ? sanitizedProperties.surface : "other";
@@ -564,6 +608,9 @@ export async function captureRendererEvent(event: string, properties?: Record<st
 }
 
 export async function captureRendererException(error: unknown, properties?: Record<string, unknown>): Promise<void> {
+	// "$exception" is the name this lands under in PostHog, so that is what an
+	// operator would type to silence a crash loop.
+	if (isDeniedEvent("$exception")) return;
 	if (!reserveCapture(`exception:${exceptionName(error)}`)) return;
 	if (!(await initTelemetry())) return;
 	const safeProperties = withTelemetryContext(await sanitizeRendererExceptionProperties(error, properties));

@@ -10,6 +10,7 @@ import type { DaemonStatus } from "./shared/daemon-status";
 import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
+import type { UpdateOutcome } from "./shared/update-telemetry";
 import type { UpdateCheckOptions } from "./main/auto-updater";
 import type { FeatureBuild } from "./main/feature-builds";
 import type {
@@ -251,6 +252,15 @@ const api = {
 			ipcRenderer.on("updates:status", wrapped);
 			return () => {
 				ipcRenderer.off("updates:status", wrapped);
+			};
+		},
+		// Separate from onStatus: the main process suppresses the *status* for
+		// automatic failures but still reports the outcome here.
+		onTelemetry: (listener: (outcome: UpdateOutcome) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, outcome: UpdateOutcome) => listener(outcome);
+			ipcRenderer.on("updates:telemetry", wrapped);
+			return () => {
+				ipcRenderer.off("updates:telemetry", wrapped);
 			};
 		},
 	},
