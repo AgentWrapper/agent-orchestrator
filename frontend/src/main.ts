@@ -244,6 +244,7 @@ function buildWindowsAppMenu(): Menu {
 	return Menu.buildFromTemplate(
 		buildWindowsAppMenuTemplate({
 			closeFocusedBrowserTab: () => browserViewHost?.closeFocusedTab() ?? false,
+			reloadFocusedTab: () => browserViewHost?.reloadFocusedTab() ?? false,
 		}),
 	);
 }

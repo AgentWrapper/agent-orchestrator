@@ -1584,6 +1584,35 @@ describe("closeFocusedTab", () => {
 	});
 });
 
+describe("reloadFocusedTab", () => {
+	it("returns false when nothing browser-related is focused", async () => {
+		const { host, invoke } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		expect(host.reloadFocusedTab()).toBe(false);
+	});
+
+	it("reloads the active tab once the native page (domain A) has focus", async () => {
+		const { host, invoke, view, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		for (const listener of webContentsListeners.get("focus") ?? []) listener();
+
+		expect(host.reloadFocusedTab()).toBe(true);
+		expect(view.webContents.reload).toHaveBeenCalledTimes(1);
+	});
+
+	it("reloads the active tab once the panel's own UI (domain B) has focus", async () => {
+		const { host, invoke, send, view } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		send("browser:panelFocus", 1, "1:sess-1");
+
+		expect(host.reloadFocusedTab()).toBe(true);
+		expect(view.webContents.reload).toHaveBeenCalledTimes(1);
+	});
+});
+
 describe("clampBoundsToWindow", () => {
 	it("rounds and clamps bounds to the window content area", () => {
 		expect(

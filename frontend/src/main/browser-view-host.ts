@@ -152,6 +152,8 @@ export type BrowserViewHost = {
 	handleBrowserPanelShortcut: (id: "browser-new-tab" | "browser-reopen-tab" | "browser-reload" | "browser-close-tab") => boolean;
 	// Closes the active tab of whichever browser panel (domain A or B) is currently focused. Returns false only when neither domain is focused, so the native menu accelerator can fall back to closing the window.
 	closeFocusedTab: () => boolean;
+	// Reloads the active tab of whichever browser panel (domain A or B) is currently focused. Returns false only when neither domain is focused, so the native menu accelerator can fall back to its default reload behaviour.
+	reloadFocusedTab: () => boolean;
 };
 
 type BrowserEntry = {
@@ -1056,6 +1058,14 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			const session = entries.get(viewId);
 			if (!session) return false;
 			closeActiveTabSafely(session);
+			return true;
+		},
+		reloadFocusedTab: () => {
+			const viewId = lastFocusedViewId ?? domainBFocusedViewId;
+			if (viewId === null) return false;
+			const session = entries.get(viewId);
+			if (!session) return false;
+			invokeNav(session.viewId, (contents) => contents.reload(), true);
 			return true;
 		},
 	};

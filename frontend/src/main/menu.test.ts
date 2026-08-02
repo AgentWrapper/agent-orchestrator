@@ -4,12 +4,15 @@ import { buildWindowsAppMenuTemplate } from "./menu";
 type MenuItem = ReturnType<typeof buildWindowsAppMenuTemplate>[number];
 type SubmenuItem = NonNullable<Extract<MenuItem["submenu"], readonly unknown[]>>[number];
 
-function buildTemplate(closeFocusedBrowserTab: () => boolean = () => false) {
-	return buildWindowsAppMenuTemplate({ closeFocusedBrowserTab });
+function buildTemplate(overrides: { closeFocusedBrowserTab?: () => boolean; reloadFocusedTab?: () => boolean } = {}) {
+	return buildWindowsAppMenuTemplate({
+		closeFocusedBrowserTab: overrides.closeFocusedBrowserTab ?? (() => false),
+		reloadFocusedTab: overrides.reloadFocusedTab ?? (() => false),
+	});
 }
 
-function viewSubmenu(): readonly SubmenuItem[] {
-	const viewMenu = buildTemplate().find((item) => item.label === "View");
+function viewSubmenu(reloadFocusedTab?: () => boolean): readonly SubmenuItem[] {
+	const viewMenu = buildTemplate({ reloadFocusedTab }).find((item) => item.label === "View");
 	if (!viewMenu || !Array.isArray(viewMenu.submenu)) {
 		throw new Error("View menu not found");
 	}
@@ -17,7 +20,7 @@ function viewSubmenu(): readonly SubmenuItem[] {
 }
 
 function windowSubmenu(closeFocusedBrowserTab?: () => boolean): readonly SubmenuItem[] {
-	const windowMenu = buildTemplate(closeFocusedBrowserTab).find((item) => item.label === "Window");
+	const windowMenu = buildTemplate({ closeFocusedBrowserTab }).find((item) => item.label === "Window");
 	if (!windowMenu || !Array.isArray(windowMenu.submenu)) {
 		throw new Error("Window menu not found");
 	}
@@ -38,6 +41,34 @@ describe("buildWindowsAppMenuTemplate", () => {
 
 	it("keeps the direct minus accelerator for zoom out", () => {
 		expect(viewSubmenu()).toContainEqual(expect.objectContaining({ accelerator: "Ctrl+-", role: "zoomOut" }));
+	});
+
+	it("replaces the reload role with a custom Ctrl+R item", () => {
+		const reloadItem = viewSubmenu().find((item) => item.label === "Reload");
+		expect(reloadItem).toBeDefined();
+		expect(reloadItem?.role).toBeUndefined();
+		expect(reloadItem?.accelerator).toBe("CmdOrCtrl+R");
+	});
+
+	it("reloads the focused browser tab instead of the whole window when one is focused", () => {
+		const reloadFocusedTab = vi.fn(() => true);
+		const reloadItem = viewSubmenu(reloadFocusedTab).find((item) => item.label === "Reload");
+		const focusedWindow = { webContents: { reload: vi.fn() } };
+
+		reloadItem?.click?.({} as never, focusedWindow as never, {} as never);
+
+		expect(reloadFocusedTab).toHaveBeenCalledTimes(1);
+		expect(focusedWindow.webContents.reload).not.toHaveBeenCalled();
+	});
+
+	it("falls back to reloading the window when no browser tab is focused", () => {
+		const reloadFocusedTab = vi.fn(() => false);
+		const reloadItem = viewSubmenu(reloadFocusedTab).find((item) => item.label === "Reload");
+		const focusedWindow = { webContents: { reload: vi.fn() } };
+
+		reloadItem?.click?.({} as never, focusedWindow as never, {} as never);
+
+		expect(focusedWindow.webContents.reload).toHaveBeenCalledTimes(1);
 	});
 
 	it("replaces the close role with a custom Ctrl+W item", () => {

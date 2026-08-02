@@ -196,15 +196,31 @@ describe("useBrowserView", () => {
 		expect(result.current.activeTabId).toBe("t2");
 	});
 
-	it("shows a transient notice instead of throwing when the tab limit is reached", async () => {
+	it("shows a transient notice when the tab limit is reached", async () => {
 		const bridge = setupBridge();
-		bridge.openTab.mockRejectedValueOnce(new Error("Browser tab limit of 16 reached"));
+		bridge.openTab.mockRejectedValueOnce(
+			Object.assign(new Error("Browser tab limit of 16 reached"), { code: "BROWSER_TAB_LIMIT" }),
+		);
 		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
 		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
 
 		await act(() => result.current.openNewTab());
 
 		expect(result.current.tabNotice).toBe("Tab limit reached");
+	});
+
+	it("does not show the tab-limit notice for an unrelated failure", async () => {
+		const bridge = setupBridge();
+		const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		bridge.openTab.mockRejectedValueOnce(new Error("No handler registered for 'browser:openTab'"));
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+
+		await act(() => result.current.openNewTab());
+
+		expect(result.current.tabNotice).toBe("");
+		expect(consoleError).toHaveBeenCalled();
+		consoleError.mockRestore();
 	});
 
 	it("tracks browser-command activity only for the current worker view", async () => {

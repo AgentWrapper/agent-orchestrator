@@ -599,7 +599,12 @@ export function useBrowserView({
 		try {
 			const state = await window.ao!.browser.openTab(viewId);
 			if (viewIdRef.current === state.viewId) setTabsState(state);
-		} catch {
+		} catch (err) {
+			const code = err instanceof Error && "code" in err ? (err as Error & { code?: string }).code : undefined;
+			if (code !== "BROWSER_TAB_LIMIT") {
+				console.error("Failed to open a new browser tab", err);
+				return;
+			}
 			setTabNotice("Tab limit reached");
 			if (tabNoticeTimerRef.current !== null) window.clearTimeout(tabNoticeTimerRef.current);
 			tabNoticeTimerRef.current = window.setTimeout(() => {
