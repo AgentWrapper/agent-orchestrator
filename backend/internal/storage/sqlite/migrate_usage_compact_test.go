@@ -66,7 +66,7 @@ func TestMigrateCompactsLegacyUsageTablesWithoutLosingEvents(t *testing.T) {
 		t.Fatalf("seed widened usage schema: %v", err)
 	}
 
-	if _, err := db.Exec(`DELETE FROM goose_db_version WHERE version_id = 41`); err != nil {
+	if _, err := db.Exec(`DELETE FROM goose_db_version WHERE version_id = 43`); err != nil {
 		t.Fatalf("rewind compaction migration: %v", err)
 	}
 	if err := migrate(db); err != nil {

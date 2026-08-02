@@ -22,39 +22,12 @@ func orchestratorCommandServer(t *testing.T) (*httptest.Server, *sessionRequestL
 				sessionJSON("other-orch", "other", "orchestrator", "idle", false)+`,`+
 				sessionJSON("demo-worker", "demo", "worker", "working", false)+`,`+
 				sessionJSON("demo-orch", "demo", "orchestrator", "working", false)+`]}`)
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/orchestrators/demo-orch/done":
-			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-orch"}`)
 		default:
 			http.NotFound(w, r)
 		}
 	}))
 	t.Cleanup(srv.Close)
 	return srv, log
-}
-
-func TestOrchestratorDone(t *testing.T) {
-	cfg := setConfigEnv(t)
-	srv, log := orchestratorCommandServer(t)
-	writeRunFileFor(t, cfg, srv)
-
-	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "orchestrator", "done", "--session", "demo-orch")
-	if err != nil {
-		t.Fatalf("orchestrator done failed: %v\nstderr=%s", err, errOut)
-	}
-	if !strings.Contains(out, "Orchestrator demo-orch marked done.") {
-		t.Fatalf("output = %q", out)
-	}
-	want := []string{"POST /api/v1/orchestrators/demo-orch/done"}
-	if got := log.all(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("requests = %#v, want %#v", got, want)
-	}
-}
-
-func TestOrchestratorDoneRequiresSession(t *testing.T) {
-	_, _, err := executeCLI(t, Deps{}, "orchestrator", "done")
-	if err == nil || ExitCode(err) != 2 {
-		t.Fatalf("error = %v, exit = %d; want usage error", err, ExitCode(err))
-	}
 }
 
 func TestOrchestratorList_TableOutput(t *testing.T) {

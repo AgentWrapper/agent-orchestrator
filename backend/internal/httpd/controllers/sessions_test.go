@@ -38,7 +38,6 @@ type fakeSessionService struct {
 	claimErr        error
 	listPRErr       error
 	workspaceErr    error
-	completedID     domain.SessionID
 }
 
 type fakeManagedPreviewServer struct {
@@ -177,11 +176,6 @@ func (f *fakeSessionService) SetTerminateOnPRMerge(_ context.Context, id domain.
 	s.TerminateOnPRMerge = terminate
 	f.sessions[id] = s
 	return s, nil
-}
-
-func (f *fakeSessionService) CompleteOrchestrator(_ context.Context, id domain.SessionID) error {
-	f.completedID = id
-	return nil
 }
 
 func (f *fakeSessionService) Restore(_ context.Context, id domain.SessionID) (sessionsvc.RestoreOutcome, error) {
@@ -1304,10 +1298,13 @@ func TestSessionsAPI_KillLeavesPreviewTeardownToSessionLifecycle(t *testing.T) {
 func TestSessionsAPI_ListWorkspaceFiles(t *testing.T) {
 	svc := newFakeSessionService()
 	svc.workspaceFiles = sessionsvc.WorkspaceFiles{
-		SessionID: "ao-1",
+		SessionID:      "ao-1",
+		CompareBaseSHA: "base-sha",
+		CompareBaseRef: "main",
+		CompareMode:    sessionsvc.WorkspaceCompareBase,
 		Files: []sessionsvc.WorkspaceFileSummary{
 			{Path: "README.md", Status: sessionsvc.WorkspaceFileModified, Additions: 2, Deletions: 1, Size: 48},
-			{Path: "notes.txt", Status: sessionsvc.WorkspaceFileAdded, Additions: 1, Size: 11},
+			{Path: "notes.txt", PreviousPath: "old-notes.txt", Status: sessionsvc.WorkspaceFileRenamed, Additions: 1, Size: 11},
 		},
 	}
 	srv := newSessionTestServer(t, svc)
@@ -1318,35 +1315,49 @@ func TestSessionsAPI_ListWorkspaceFiles(t *testing.T) {
 		t.Fatalf("GET workspace files = %d, want 200; body=%s", status, body)
 	}
 	var got struct {
-		SessionID string `json:"sessionId"`
-		Files     []struct {
-			Path      string `json:"path"`
-			Status    string `json:"status"`
-			Additions int    `json:"additions"`
-			Deletions int    `json:"deletions"`
-			Size      int64  `json:"size"`
+		SessionID      string `json:"sessionId"`
+		CompareBaseSHA string `json:"compareBaseSha"`
+		CompareBaseRef string `json:"compareBaseRef"`
+		CompareMode    string `json:"compareMode"`
+		Files          []struct {
+			Path         string `json:"path"`
+			PreviousPath string `json:"previousPath"`
+			Status       string `json:"status"`
+			Additions    int    `json:"additions"`
+			Deletions    int    `json:"deletions"`
+			Size         int64  `json:"size"`
 		} `json:"files"`
 	}
 	mustJSON(t, body, &got)
 	if got.SessionID != "ao-1" || len(got.Files) != 2 {
 		t.Fatalf("response = %#v", got)
 	}
+	if got.CompareMode != "base" || got.CompareBaseSHA != "base-sha" || got.CompareBaseRef != "main" {
+		t.Fatalf("compare metadata = mode:%q sha:%q ref:%q", got.CompareMode, got.CompareBaseSHA, got.CompareBaseRef)
+	}
 	if got.Files[0].Path != "README.md" || got.Files[0].Status != "modified" || got.Files[0].Additions != 2 || got.Files[0].Deletions != 1 {
 		t.Fatalf("first file = %#v", got.Files[0])
+	}
+	if got.Files[1].Path != "notes.txt" || got.Files[1].PreviousPath != "old-notes.txt" || got.Files[1].Status != "renamed" {
+		t.Fatalf("second file = %#v", got.Files[1])
 	}
 }
 
 func TestSessionsAPI_GetWorkspaceFile(t *testing.T) {
 	svc := newFakeSessionService()
 	svc.workspaceFile = sessionsvc.WorkspaceFileDetail{
-		SessionID: "ao-1",
-		Path:      "README.md",
-		Status:    sessionsvc.WorkspaceFileModified,
-		Additions: 1,
-		Deletions: 1,
-		Size:      14,
-		Content:   "hello\nupdated\n",
-		Diff:      "@@ -1 +1 @@\n-hello\n+updated\n",
+		SessionID:      "ao-1",
+		Path:           "README.md",
+		PreviousPath:   "README.old.md",
+		Status:         sessionsvc.WorkspaceFileModified,
+		Additions:      1,
+		Deletions:      1,
+		Size:           14,
+		Content:        "hello\nupdated\n",
+		Diff:           "@@ -1 +1 @@\n-hello\n+updated\n",
+		CompareBaseSHA: "base-sha",
+		CompareBaseRef: "main",
+		CompareMode:    sessionsvc.WorkspaceCompareBase,
 	}
 	srv := newSessionTestServer(t, svc)
 
@@ -1356,14 +1367,21 @@ func TestSessionsAPI_GetWorkspaceFile(t *testing.T) {
 		t.Fatalf("GET workspace file = %d, want 200; body=%s", status, body)
 	}
 	var got struct {
-		SessionID string `json:"sessionId"`
-		Path      string `json:"path"`
-		Content   string `json:"content"`
-		Diff      string `json:"diff"`
+		SessionID      string `json:"sessionId"`
+		Path           string `json:"path"`
+		PreviousPath   string `json:"previousPath"`
+		Content        string `json:"content"`
+		Diff           string `json:"diff"`
+		CompareBaseSHA string `json:"compareBaseSha"`
+		CompareBaseRef string `json:"compareBaseRef"`
+		CompareMode    string `json:"compareMode"`
 	}
 	mustJSON(t, body, &got)
 	if got.SessionID != "ao-1" || got.Path != "README.md" || got.Content == "" || got.Diff == "" {
 		t.Fatalf("response = %#v", got)
+	}
+	if got.PreviousPath != "README.old.md" || got.CompareMode != "base" || got.CompareBaseSHA != "base-sha" || got.CompareBaseRef != "main" {
+		t.Fatalf("workspace file metadata = %#v", got)
 	}
 }
 
@@ -1478,31 +1496,6 @@ func TestSessionsAPI_ListOrchestratorsOnly(t *testing.T) {
 	}
 	if _, ok := got["ao-1"]; ok {
 		t.Fatalf("worker session leaked into orchestrator list: %#v", got)
-	}
-}
-
-func TestSessionsAPI_CompleteOrchestrator(t *testing.T) {
-	svc := newFakeSessionService()
-	now := time.Now().UTC()
-	svc.sessions["ao-orch"] = domain.Session{SessionRecord: domain.SessionRecord{
-		ID: "ao-orch", ProjectID: "ao", Kind: domain.KindOrchestrator,
-		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
-		CreatedAt: now, UpdatedAt: now,
-	}}
-	srv := newSessionTestServer(t, svc)
-	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/orchestrators/ao-orch/done", "")
-	if status != http.StatusOK {
-		t.Fatalf("complete orchestrator = %d, want 200; body=%s", status, body)
-	}
-	if svc.completedID != "ao-orch" {
-		t.Fatalf("completed id = %q, want ao-orch", svc.completedID)
-	}
-	var got controllers.CompleteOrchestratorResponse
-	if err := json.Unmarshal(body, &got); err != nil {
-		t.Fatal(err)
-	}
-	if !got.OK || got.SessionID != "ao-orch" {
-		t.Fatalf("response = %#v", got)
 	}
 }
 

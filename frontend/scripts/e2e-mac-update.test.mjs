@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { homedir } from "node:os";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseArgs } from "./e2e-mac-update.mjs";
+import { assertSentinelCapable, launchEnv, parseArgs, removeRunFile, seedUpdateSettings } from "./e2e-mac-update.mjs";
 
 // The harness itself needs a real macOS runner, a real signed N-1 install and a
 // real published N feed, so it cannot run here. What IS testable anywhere is the
@@ -57,5 +58,115 @@ describe("e2e-mac-update parseArgs", () => {
 		const opts = parseArgs([...required, "--state-dir", "/tmp/ao-e2e", "--run-file", "/tmp/ao-e2e/run.json"]);
 		expect(opts.stateDir).toBe("/tmp/ao-e2e");
 		expect(opts.runFile).toBe("/tmp/ao-e2e/run.json");
+	});
+
+	// The app does `stateDir = path.dirname(runFilePath())` and reads
+	// update-settings.json from there (main.ts initAutoUpdates), so the settings
+	// directory follows --run-file, not --state-dir, when the two diverge.
+	it("derives the settings dir from the run file, which is what the app reads", () => {
+		expect(parseArgs(required).settingsDir).toBe(join(homedir(), ".ao"));
+		const moved = parseArgs([...required, "--state-dir", "/tmp/ao-e2e", "--run-file", "/tmp/elsewhere/run.json"]);
+		expect(moved.settingsDir).toBe("/tmp/elsewhere");
+	});
+
+	// Mirrors backend/internal/config resolveDataDir's default of <ao home>/data,
+	// so an overridden --state-dir keeps the daemon's SQLite out of the real ~/.ao.
+	it("derives the daemon data dir under the state dir", () => {
+		expect(parseArgs([...required, "--state-dir", "/tmp/ao-e2e"]).dataDir).toBe(join("/tmp/ao-e2e", "data"));
+	});
+
+	it("constrains --run-file to an absolute path", () => {
+		expect(() => parseArgs([...required, "--run-file", "run.json"])).toThrow(/absolute path/);
+		expect(() => parseArgs([...required, "--state-dir", "relative/dir"])).toThrow(/absolute path/);
+	});
+
+	it("refuses to delete an unrelated absolute JSON file passed as --run-file", () => {
+		const dir = mkdtempSync(join(tmpdir(), "ao-e2e-run-file-"));
+		const unrelated = join(dir, "package.json");
+		writeFileSync(unrelated, '{"name":"not-a-run-file"}\n');
+		try {
+			expect(() => removeRunFile(unrelated)).toThrow(/not an AO running\.json handshake/);
+			expect(readFileSync(unrelated, "utf8")).toContain("not-a-run-file");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+// The bug these cover: --state-dir and --run-file were parsed and used by the
+// harness, but neither launch passed AO_DATA_DIR or AO_RUN_FILE to the app. The
+// harness seeded and polled paths the app never used, so it could only time out.
+describe("e2e-mac-update launch environment", () => {
+	const opts = parseArgs([
+		"--app",
+		"/Applications/Agent Orchestrator.app",
+		"--expect-version",
+		"0.10.4",
+		"--state-dir",
+		"/tmp/ao-e2e",
+	]);
+
+	it("hands the app every override the harness itself relies on", () => {
+		const env = launchEnv(opts, "/tmp/sentinel.json", { PATH: "/usr/bin" });
+		expect(env.AO_E2E_UPDATE_SENTINEL).toBe("/tmp/sentinel.json");
+		expect(env.AO_RUN_FILE).toBe(opts.runFile);
+		expect(env.AO_DATA_DIR).toBe(opts.dataDir);
+		// Still an inherited environment, not a replacement one.
+		expect(env.PATH).toBe("/usr/bin");
+	});
+
+	it("seeds update settings where the app will look for them", () => {
+		const dir = mkdtempSync(join(tmpdir(), "ao-e2e-settings-"));
+		try {
+			const moved = parseArgs([
+				"--app",
+				"/Applications/Agent Orchestrator.app",
+				"--expect-version",
+				"0.10.4",
+				"--run-file",
+				join(dir, "nested", "running.json"),
+			]);
+			seedUpdateSettings(moved.settingsDir, "nightly");
+			const written = JSON.parse(readFileSync(join(dir, "nested", "update-settings.json"), "utf8"));
+			// Shape must match UpdateSettings in src/main/update-settings.ts, and
+			// enabled:true is what makes startAutoUpdates run without a dialog.
+			expect(written).toEqual({ enabled: true, channel: "nightly", nightlyAck: true, feature: null });
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+// A baseline published before the AO_E2E_UPDATE_SENTINEL listener existed
+// ignores the env var, so the harness could only ever burn its full download
+// timeout and report a "never staged" failure that looks like a broken update.
+describe("e2e-mac-update assertSentinelCapable", () => {
+	let dir;
+	const bundle = (name, asarContents) => {
+		const app = join(dir, `${name}.app`);
+		mkdirSync(join(app, "Contents", "Resources"), { recursive: true });
+		if (asarContents !== null) writeFileSync(join(app, "Contents", "Resources", "app.asar"), asarContents);
+		return app;
+	};
+
+	beforeAll(() => {
+		dir = mkdtempSync(join(tmpdir(), "ao-e2e-baseline-"));
+	});
+	afterAll(() => {
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("accepts a bundle whose app.asar carries the sentinel env var", () => {
+		expect(() => assertSentinelCapable(bundle("Capable", 'process.env["AO_E2E_UPDATE_SENTINEL"]'))).not.toThrow();
+	});
+
+	it("fails fast, naming the cause, on a baseline that predates the listener", () => {
+		expect(() => assertSentinelCapable(bundle("Old", "some older bundle without it"))).toThrow(
+			/no AO_E2E_UPDATE_SENTINEL listener/,
+		);
+	});
+
+	it("fails when the path is not a packaged bundle at all", () => {
+		expect(() => assertSentinelCapable(bundle("Unpackaged", null))).toThrow(/packaged build/);
 	});
 });

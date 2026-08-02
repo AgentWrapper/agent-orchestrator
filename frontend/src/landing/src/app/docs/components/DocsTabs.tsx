@@ -18,7 +18,7 @@ export function Tabs({ items, children }: { items?: string[]; children: ReactNod
 
   return (
     <div className="my-6 overflow-hidden rounded-xl border border-border bg-muted/25">
-      <div className="flex flex-wrap gap-1 border-b border-border bg-background p-1.5">
+      <div data-doc-tab-list className="flex flex-wrap gap-1 border-b border-border bg-background p-1.5">
         {labels.map((label, i) => (
           <button
             key={label}
@@ -35,7 +35,11 @@ export function Tabs({ items, children }: { items?: string[]; children: ReactNod
         ))}
       </div>
       <div className="prose prose-invert max-w-none px-4 py-4 prose-p:my-2 prose-pre:my-2">
-        {tabs[active]?.props.children}
+        {tabs.map((tab, i) => (
+          <section key={labels[i]} data-doc-tab-panel data-doc-tab-label={labels[i]} hidden={i !== active}>
+            {tab.props.children}
+          </section>
+        ))}
       </div>
     </div>
   );

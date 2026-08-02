@@ -69,7 +69,12 @@ var (
 	ErrAwaitingDecision = errors.New("session: awaiting a user decision")
 )
 
-// Env vars a spawned process reads to learn who it is.
+// Env vars a spawned process reads to learn who it is. A worker that starts
+// its own Docker containers (a database, a queue, any ad-hoc service) should
+// label them `--label ao.session=$AO_SESSION_ID` so AO's container reaper
+// (dockerreap) removes them on session kill/terminal state — see #2652. Add
+// `--label ao.spare=true` to a deliberately shared container that must
+// survive past this session.
 const (
 	EnvSessionID = "AO_SESSION_ID"
 	EnvProjectID = "AO_PROJECT_ID"
@@ -538,6 +543,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		RuntimeLaunchID:   launchID,
 		Prompt:            prompt,
 	}
+	if projectKind == domain.ProjectKindSingleRepo {
+		metadata.DiffBaseSHA, metadata.DiffBaseRef = resolveSpawnDiffBase(ctx, ws.Path, project.Config.WithDefaults().DefaultBranch)
+	}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		runtimeDestroyed := m.runtime.Destroy(ctx, handle) == nil
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject, runtimeDestroyed)
@@ -639,6 +647,54 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 		}
 	}
 	return info.Root, &info, nil
+}
+
+func resolveSpawnDiffBase(ctx context.Context, root, defaultBranch string) (string, string) {
+	for _, ref := range spawnDiffBaseRefCandidates(defaultBranch) {
+		if sha, ok := spawnGitSingleLine(ctx, root, "merge-base", "HEAD", ref); ok {
+			return sha, ref
+		}
+	}
+	if sha, ok := spawnGitSingleLine(ctx, root, "rev-parse", "HEAD"); ok {
+		return sha, "HEAD"
+	}
+	return "", ""
+}
+
+func spawnDiffBaseRefCandidates(defaultBranch string) []string {
+	defaultBranch = strings.TrimSpace(defaultBranch)
+	if defaultBranch == "" {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	var refs []string
+	add := func(ref string) {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			return
+		}
+		if _, ok := seen[ref]; ok {
+			return
+		}
+		seen[ref] = struct{}{}
+		refs = append(refs, ref)
+	}
+	if !strings.HasPrefix(defaultBranch, "origin/") && !strings.HasPrefix(defaultBranch, "refs/") {
+		add("origin/" + defaultBranch)
+		add("refs/remotes/origin/" + defaultBranch)
+	}
+	add(defaultBranch)
+	return refs
+}
+
+func spawnGitSingleLine(ctx context.Context, root string, args ...string) (string, bool) {
+	cmd := aoprocess.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	value := strings.TrimSpace(string(out))
+	return value, value != ""
 }
 
 func (m *Manager) destroySpawnWorkspace(ctx context.Context, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo) bool {

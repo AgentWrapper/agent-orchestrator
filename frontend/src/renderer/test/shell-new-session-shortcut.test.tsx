@@ -16,7 +16,7 @@ const shellMocks = vi.hoisted(() => {
 		nextSessionListener: undefined as (() => void) | undefined,
 		focusTerminalListener: undefined as (() => void) | undefined,
 		routeParams: {} as { projectId?: string; sessionId?: string },
-		routeSearch: {} as { tabOwner?: string },
+		routeSearch: {} as Record<string, unknown>,
 		workspaces: [] as WorkspaceSummary[],
 		workspaceQuery: {
 			data: [] as WorkspaceSummary[],
@@ -463,15 +463,16 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 		);
 	});
 
-	it("scopes the terminal to the originating session while viewing one of its pinned tabs", async () => {
+	// Session terminals always belong to the session on screen — there is no
+	// longer an "owner" session whose worktree could be borrowed here (#3208).
+	it("scopes the terminal to the session on screen, not the route's project alone", async () => {
 		shellMocks.state.routeParams = { projectId: "proj-2", sessionId: "sess-cross" };
-		shellMocks.state.routeSearch = { tabOwner: "sess-1" };
 		await renderShell();
 
 		pressNewShellTerminal();
 
 		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith(
-			expect.objectContaining({ projectId: "proj-1", sessionId: "sess-1" }),
+			expect.objectContaining({ projectId: "proj-2", sessionId: "sess-cross" }),
 			expect.anything(),
 		);
 	});
