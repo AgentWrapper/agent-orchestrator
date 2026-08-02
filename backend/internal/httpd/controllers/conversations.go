@@ -326,6 +326,7 @@ func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotRespon
 			RequestedAt:    turn.RequestedAt.UTC().Format(time.RFC3339),
 			StartedAt:      optionalTimestamp(turn.StartedAt),
 			CompletedAt:    optionalTimestamp(turn.CompletedAt),
+			Diff:           turnDiffPayload(turn.Diff),
 		})
 	}
 
@@ -354,12 +355,61 @@ func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotRespon
 			ActivityKind: string(activity.Kind),
 			Status:       string(activity.Status),
 			Summary:      activity.Summary,
-			Detail:       decodeDetail(activity.Detail),
+			Detail:       activityDetailPayload(activity),
 			RequestID:    activity.RequestID,
 			CreatedAt:    activity.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
 	return out
+}
+
+// turnDiffPayload maps a turn's changed-file summary onto the wire shape.
+func turnDiffPayload(diff *domain.ConversationTurnDiff) *ConversationTurnDiffResponse {
+	if diff == nil {
+		return nil
+	}
+	out := &ConversationTurnDiffResponse{
+		Truncated: diff.Truncated,
+		Files:     make([]ConversationDiffFileResponse, 0, len(diff.Files)),
+	}
+	for _, file := range diff.Files {
+		out.Files = append(out.Files, ConversationDiffFileResponse{
+			Path:      file.Path,
+			Additions: file.Additions,
+			Deletions: file.Deletions,
+			Status:    file.Status,
+			OldPath:   file.OldPath,
+		})
+	}
+	return out
+}
+
+// activityDetailPayload folds accumulated command output into the typed payload.
+//
+// The two output sources are not equivalent and the client is told which it has.
+// The streamed accumulation exists while the command runs and survives a command
+// that never completes; the provider's own aggregate only appears on completion.
+// Neither is complete -- measured on codex-cli 0.146.0, a command printing
+// tick-1..tick-8 lost tick-1 from the delta stream and from the aggregate alike --
+// so outputMayBePartial stays set either way. `outputSource` exists so the UI can
+// explain WHY it is partial instead of hedging identically about both.
+func activityDetailPayload(activity domain.ConversationActivity) map[string]any {
+	detail := decodeDetail(activity.Detail)
+	if activity.CommandOutput == "" {
+		return detail
+	}
+	if detail == nil {
+		detail = map[string]any{}
+	}
+	// The stream wins over the aggregate: it is the only one that exists mid-command,
+	// and once both exist they carry the same text.
+	detail["output"] = activity.CommandOutput
+	detail["outputSource"] = "stream"
+	detail["outputMayBePartial"] = true
+	if activity.CommandOutputTruncated {
+		detail["outputTruncated"] = true
+	}
+	return detail
 }
 
 // decodeDetail turns the stored payload into a JSON object. A payload this build

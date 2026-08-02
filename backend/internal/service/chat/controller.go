@@ -47,6 +47,9 @@ type Store interface {
 	AppendAssistantDelta(ctx context.Context, conversationID, providerItemID, providerTurnID, delta, messageID string, now time.Time) error
 	SettleAssistantMessage(ctx context.Context, conversationID, providerItemID, providerTurnID, text, messageID string, now time.Time) error
 
+	AppendCommandOutput(ctx context.Context, conversationID, providerItemID, delta string, now time.Time) (bool, error)
+	SetTurnDiff(ctx context.Context, conversationID, providerTurnID string, diff domain.ConversationTurnDiff, now time.Time) (bool, error)
+
 	UpsertActivity(ctx context.Context, conversationID, providerTurnID string, activity domain.ConversationActivity, now time.Time) error
 	ResolveApproval(ctx context.Context, conversationID, requestID, detailJSON string, now time.Time) error
 	FailPendingApprovals(ctx context.Context, conversationID string, now time.Time) error
@@ -493,7 +496,7 @@ func (c *Controller) project() {
 // archive records the raw event. This is what makes a projection bug recoverable:
 // without it, a wrong projection is the only surviving account of what happened.
 func (c *Controller) archive(ctx context.Context, event ports.ChatEvent) {
-	payload, err := json.Marshal(map[string]any{
+	record := map[string]any{
 		"kind":           event.Kind,
 		"providerTurnId": event.ProviderTurnID,
 		"providerItemId": event.ProviderItemID,
@@ -501,7 +504,16 @@ func (c *Controller) archive(ctx context.Context, event ports.ChatEvent) {
 		"detail":         json.RawMessage(nonEmptyJSON(event.Detail)),
 		"requestId":      event.RequestID,
 		"turnState":      event.TurnState,
-	})
+	}
+	if event.Diff != nil {
+		// A turn diff is low-frequency and IS the payload, so archiving it is what
+		// makes a wrong diff projection recoverable. Deltas are deliberately not
+		// archived by content: they arrive many times per command, and doubling that
+		// write volume to duplicate text the projection already accumulates would
+		// cost more than it could ever repay.
+		record["diff"] = event.Diff
+	}
+	payload, err := json.Marshal(record)
 	if err != nil {
 		c.log.Error("failed to encode provider event for archive", "error", err)
 		return
@@ -568,6 +580,55 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 	case ports.ChatEventMessageCompleted:
 		return c.store.SettleAssistantMessage(ctx, c.conversation.ID,
 			event.ProviderItemID, event.ProviderTurnID, event.Text, c.newID(), now)
+
+	case ports.ChatEventCommandOutputDelta:
+		// Appended to the command's own activity row, not added to the timeline: a
+		// row per delta would bury the conversation under one noisy command.
+		//
+		// A delta whose activity does not exist yet is dropped. The provider can
+		// emit output before the item/started that creates the row, and inventing an
+		// activity from a delta would mint a timeline entry with no command on it.
+		found, err := c.store.AppendCommandOutput(ctx, c.conversation.ID,
+			event.ProviderItemID, event.Delta, now)
+		if err != nil {
+			return err
+		}
+		if !found {
+			c.log.Debug("command output delta had no activity to append to",
+				"session", c.sessionID, "item", event.ProviderItemID)
+		}
+		return nil
+
+	case ports.ChatEventTurnDiff:
+		// Per-turn state, overwritten. The provider re-sends the whole diff on every
+		// update, so appending a timeline row per notification would show the same
+		// edits over and over as if they had happened repeatedly.
+		if event.Diff == nil {
+			return nil
+		}
+		diff := domain.ConversationTurnDiff{
+			Truncated: event.Summary == domain.ChatDiffTruncatedSummary,
+			Files:     make([]domain.ConversationDiffFile, 0, len(event.Diff.Files)),
+		}
+		for _, file := range event.Diff.Files {
+			diff.Files = append(diff.Files, domain.ConversationDiffFile{
+				Path:      file.Path,
+				Additions: file.Additions,
+				Deletions: file.Deletions,
+				Status:    file.Status,
+				OldPath:   file.OldPath,
+			})
+		}
+		found, err := c.store.SetTurnDiff(ctx, c.conversation.ID, event.ProviderTurnID, diff, now)
+		if err != nil {
+			return err
+		}
+		if !found {
+			// A turn from before this controller existed, seen after a restart.
+			c.log.Debug("turn diff had no turn to attach to",
+				"session", c.sessionID, "providerTurn", event.ProviderTurnID)
+		}
+		return nil
 
 	case ports.ChatEventActivityStarted, ports.ChatEventActivityCompleted:
 		return c.store.UpsertActivity(ctx, c.conversation.ID, event.ProviderTurnID,

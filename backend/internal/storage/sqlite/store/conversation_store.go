@@ -513,6 +513,82 @@ func (s *Store) UpsertActivity(
 	})
 }
 
+// MaxCommandOutputChars caps the streamed output stored for one command.
+//
+// A command that prints without bound (a build, a test run with verbose logging, a
+// `yes`) must not put megabytes into a row that every conversation snapshot reads.
+// 64K is comfortably more than a person reads in a timeline card and is where the
+// full record belongs to a shell in the worktree instead.
+//
+// Exported so the truncation boundary is testable and so a caller can state the
+// limit rather than restating a magic number.
+const MaxCommandOutputChars = 64 * 1024
+
+// AppendCommandOutput folds a streamed output delta into its activity.
+//
+// Reports whether a row was found. A delta for an activity AO has not recorded is
+// an ordinary race, not a failure: the provider can emit a delta before the
+// item/started that creates the row, and the aggregate on item/completed still
+// lands. Silently dropping it is correct; claiming an error is not.
+func (s *Store) AppendCommandOutput(
+	ctx context.Context,
+	conversationID, providerItemID, delta string,
+	now time.Time,
+) (bool, error) {
+	if delta == "" {
+		return false, nil
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	rows, err := s.qw.AppendConversationActivityOutput(ctx,
+		gen.AppendConversationActivityOutputParams{
+			Delta:          delta,
+			MaxOutputChars: MaxCommandOutputChars,
+			UpdatedAt:      now,
+			ConversationID: conversationID,
+			ProviderItemID: providerItemID,
+		})
+	if err != nil {
+		return false, fmt.Errorf("append command output to %s: %w", providerItemID, err)
+	}
+	return rows > 0, nil
+}
+
+// SetTurnDiff overwrites a turn's changed-file summary.
+//
+// Reports whether the turn was found. A diff for a turn AO never recorded happens
+// after a restart, when a controller reattaches to a provider turn that predates
+// it, and there is nothing to update.
+func (s *Store) SetTurnDiff(
+	ctx context.Context,
+	conversationID, providerTurnID string,
+	diff domain.ConversationTurnDiff,
+	now time.Time,
+) (bool, error) {
+	if providerTurnID == "" {
+		// Without a turn id there is no row to attribute this to, and guessing the
+		// most recent turn would attach one turn's edits to another.
+		return false, nil
+	}
+	encoded, err := json.Marshal(diff)
+	if err != nil {
+		return false, fmt.Errorf("encode turn diff for %s: %w", providerTurnID, err)
+	}
+
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.UpdateConversationTurnDiff(ctx, gen.UpdateConversationTurnDiffParams{
+		DiffJson:       string(encoded),
+		ConversationID: conversationID,
+		ProviderTurnID: providerTurnID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("set turn diff for %s: %w", providerTurnID, err)
+	}
+	return rows > 0, nil
+}
+
 // ResolveApproval marks an approval answered. It only matches a still-pending
 // row, so a card the user left on screen cannot answer a newer request.
 func (s *Store) ResolveApproval(
@@ -683,6 +759,15 @@ func turnToDomain(row gen.ConversationTurn) domain.ConversationTurn {
 		completed := row.CompletedAt.Time
 		turn.CompletedAt = &completed
 	}
+	if row.DiffJson != "" {
+		var diff domain.ConversationTurnDiff
+		// A payload this build cannot parse is dropped rather than surfaced half
+		// decoded: a diff summary that lists some of the files is worse than one
+		// that admits it has nothing, because only the first looks authoritative.
+		if err := json.Unmarshal([]byte(row.DiffJson), &diff); err == nil {
+			turn.Diff = &diff
+		}
+	}
 	return turn
 }
 
@@ -709,17 +794,19 @@ func messageToDomain(row gen.ConversationMessage) domain.ConversationMessage {
 
 func activityToDomain(row gen.ConversationActivity) domain.ConversationActivity {
 	activity := domain.ConversationActivity{
-		ID:             row.ID,
-		ConversationID: row.ConversationID,
-		Sequence:       row.Sequence,
-		Revision:       row.Revision,
-		Kind:           row.Kind,
-		Status:         row.Status,
-		Summary:        row.Summary,
-		RequestID:      row.RequestID,
-		ProviderItemID: row.ProviderItemID,
-		CreatedAt:      row.CreatedAt,
-		UpdatedAt:      row.UpdatedAt,
+		ID:                     row.ID,
+		ConversationID:         row.ConversationID,
+		Sequence:               row.Sequence,
+		Revision:               row.Revision,
+		Kind:                   row.Kind,
+		Status:                 row.Status,
+		Summary:                row.Summary,
+		RequestID:              row.RequestID,
+		ProviderItemID:         row.ProviderItemID,
+		CreatedAt:              row.CreatedAt,
+		UpdatedAt:              row.UpdatedAt,
+		CommandOutput:          row.CommandOutput,
+		CommandOutputTruncated: row.CommandOutputTruncated != 0,
 	}
 	if row.TurnID.Valid {
 		activity.TurnID = row.TurnID.String

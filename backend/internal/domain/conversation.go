@@ -163,6 +163,43 @@ type ConversationTurn struct {
 	RequestedAt  time.Time  `json:"requestedAt"`
 	StartedAt    *time.Time `json:"startedAt,omitempty"`
 	CompletedAt  *time.Time `json:"completedAt,omitempty"`
+	// Diff is what the turn has changed on disk so far. Nil when the provider has
+	// reported nothing, which is not the same as "changed nothing": a provider
+	// without diff support never reports at all.
+	Diff *ConversationTurnDiff `json:"diff,omitempty"`
+}
+
+// ConversationTurnDiff is the turn's changed-file summary.
+//
+// Per-turn state rather than a timeline entry: the provider re-sends the whole
+// diff on each update, so this is overwritten, and a reader sees the current
+// answer instead of a stack of repeats.
+type ConversationTurnDiff struct {
+	Files []ConversationDiffFile `json:"files"`
+	// Truncated reports that the file list was cut at AO's cap. A cut list shown
+	// as a whole one would understate the size of the change.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// ChatDiffTruncatedSummary marks a turn-diff event whose file list the driver had
+// to cut at its cap.
+//
+// It travels in the event's Summary because ports.ChatTurnDiff has no field for
+// it, and the fact cannot simply be dropped: a cut list rendered as a complete one
+// would understate the size of the change. Declared here so the adapter that sets
+// it and the projection that reads it share one spelling rather than two string
+// literals that can drift apart silently.
+const ChatDiffTruncatedSummary = "diff file list truncated"
+
+// ConversationDiffFile is one changed path in a turn diff.
+type ConversationDiffFile struct {
+	Path      string `json:"path"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	// Status is the change kind: added, modified, deleted, renamed.
+	Status string `json:"status"`
+	// OldPath is set only for a rename.
+	OldPath string `json:"oldPath,omitempty"`
 }
 
 // QueuedTurn is a turn that was recorded but never dispatched, paired with the
@@ -225,6 +262,17 @@ type ConversationActivity struct {
 	ProviderItemID string    `json:"providerItemId,omitempty"`
 	CreatedAt      time.Time `json:"createdAt"`
 	UpdatedAt      time.Time `json:"updatedAt"`
+	// CommandOutput is streamed command output accumulated from output deltas.
+	// Held outside Detail because it is appended to many times per command, while
+	// Detail is written whole.
+	//
+	// Its presence does not make the output complete: the provider was measured
+	// dropping the first chunk from the delta stream and the aggregate alike. What
+	// it buys is output while the command is still running, and output at all for a
+	// command that never completes.
+	CommandOutput string `json:"commandOutput,omitempty"`
+	// CommandOutputTruncated reports that accumulation stopped at AO's cap.
+	CommandOutputTruncated bool `json:"commandOutputTruncated,omitempty"`
 }
 
 // ErrNoConversation reports that a session has no conversation row yet. It is not

@@ -41,19 +41,21 @@ type Conversation struct {
 }
 
 type ConversationActivity struct {
-	ID             string
-	ConversationID string
-	TurnID         sql.NullString
-	Sequence       int64
-	Revision       int64
-	Kind           domain.ActivityKind
-	Status         domain.ActivityStatus
-	Summary        string
-	DetailJson     string
-	RequestID      string
-	ProviderItemID string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID                     string
+	ConversationID         string
+	TurnID                 sql.NullString
+	Sequence               int64
+	Revision               int64
+	Kind                   domain.ActivityKind
+	Status                 domain.ActivityStatus
+	Summary                string
+	DetailJson             string
+	RequestID              string
+	ProviderItemID         string
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+	CommandOutput          string
+	CommandOutputTruncated int64
 }
 
 type ConversationMessage struct {
@@ -93,6 +95,7 @@ type ConversationTurn struct {
 	RequestedAt          time.Time
 	StartedAt            sql.NullTime
 	CompletedAt          sql.NullTime
+	DiffJson             string
 }
 
 type Notification struct {

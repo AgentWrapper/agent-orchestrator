@@ -1117,6 +1117,14 @@ export interface components {
             summary: string;
             turnId?: string;
         };
+        ConversationDiffFileResponse: {
+            additions: number;
+            deletions: number;
+            oldPath?: string;
+            path: string;
+            /** @enum {string} */
+            status: "added" | "modified" | "deleted" | "renamed";
+        };
         ConversationMessageResponse: {
             createdAt: string;
             id: string;
@@ -1161,8 +1169,13 @@ export interface components {
             settings: components["schemas"]["ConversationTurnSettingsPayload"];
             turns: components["schemas"]["ConversationTurnResponse"][];
         };
+        ConversationTurnDiffResponse: {
+            files: components["schemas"]["ConversationDiffFileResponse"][];
+            truncated?: boolean;
+        };
         ConversationTurnResponse: {
             completedAt?: null | string;
+            diff?: components["schemas"]["ConversationTurnDiffResponse"];
             errorMessage?: string;
             id: string;
             providerTurnId?: string;
