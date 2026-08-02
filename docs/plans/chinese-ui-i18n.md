@@ -42,10 +42,12 @@ Synthesizes prior analysis from architecture, no-library verdict, and scope/impa
 | IPC + preload types | `uiSettings:get` / `uiSettings:set` |
 | Renderer locale store + `document.documentElement.lang` | `locale-store` |
 | Language control next to Theme | `GeneralSettingsSection` |
-| Proof string migration | Settings labels only (General, Theme options, Language, Connect Mobile) |
-| Tests | `t()` fallback/interpolation; ui-settings coerce; settings switch smoke; default `en` keeps existing tests green |
+| Proof + expanded migration | Settings + presentation maps + shell chrome + notifications chrome + inspector tabs + New Task/Confirm |
+| Tests | `t()` fallback; presentation maps; settings switch; default `en` keeps English assertions green |
 
-**Out of this PR:** mass string extraction, main menus/dialogs, notifications display-layer, mobile, landing, docs site, CLI, agent/SCM content, daemon notify templates.
+**Landed in this PR (beyond skeleton):** session status/activity/zone labels, PR display chrome, relative time, daemon failure copy, board columns/empty states, sidebar, topbar/titlebar, notification center chrome, updates/developer/project settings labels, keyboard shortcut labels, New Task dialog, Confirm cancel/close.
+
+**Still English (intentional / follow-up):** agent terminal I/O, PR titles/bodies, daemon notify payloads, Create Project flow copy, many inspector detail section titles (Overview/Activity/Completion row labels), Connect Mobile setup, landing/mobile/CLI, brand “Agent Orchestrator”.
 
 ---
 
