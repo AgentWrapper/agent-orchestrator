@@ -47,7 +47,6 @@ type IngestResult struct {
 	Reconcile           bool
 	ReconcilePath       string
 	RetryAt             *time.Time
-	BindingID           int64
 	ReplacementSourceID int64
 }
 
@@ -96,7 +95,7 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 	if err != nil || !ok {
 		return IngestResult{}, err
 	}
-	result := IngestResult{BindingID: source.Source.BindingID}
+	result := IngestResult{}
 	parserState, err := decodeParserState(source.Source)
 	if err != nil {
 		return i.retrySource(
@@ -434,7 +433,6 @@ func (i *Ingestor) retireCodexChildForReconciliation(
 	now time.Time,
 ) (IngestResult, error) {
 	result := IngestResult{
-		BindingID:     source.Source.BindingID,
 		Refresh:       true,
 		Reconcile:     true,
 		ReconcilePath: source.Source.ArtifactPath,
@@ -469,7 +467,7 @@ func (i *Ingestor) replaceSource(
 	identity string,
 	now time.Time,
 ) (IngestResult, error) {
-	result := IngestResult{BindingID: source.Source.BindingID, Refresh: true}
+	result := IngestResult{Refresh: true}
 	replacement, err := i.store.ReplaceUsageSource(
 		ctx,
 		source.Source.ID,
@@ -516,7 +514,7 @@ func (i *Ingestor) retrySource(
 	failures := source.FailureCount + 1
 	delay := retryDelay(failures)
 	next := now.Add(delay)
-	result := IngestResult{BindingID: source.BindingID, RetryAt: &next}
+	result := IngestResult{RetryAt: &next}
 	if code == domain.UsageErrorArtifactMissing {
 		result.Reconcile = true
 	}

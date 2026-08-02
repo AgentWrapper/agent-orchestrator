@@ -266,8 +266,6 @@ function Section({
 	action?: ReactNode;
 	children: ReactNode;
 	className?: string;
-	/** Accepted for call-site compatibility; all sections use the settings-row box. */
-	surface?: boolean;
 	title: string;
 }) {
 	// Boxed sections match the settings page row surface (bg + radius) with the
@@ -1290,7 +1288,7 @@ function ReviewsView({
 	return (
 		<div role="tabpanel">
 			{/* AO code reviews lead: the flow is run AO review first, then raise the PR for others. */}
-			<Section surface title="AO code reviews">
+			<Section title="AO code reviews">
 				<ReviewPanel
 					config={projectConfigQuery.data}
 					error={reviewsQuery.error ?? triggerReview.error ?? cancelReview.error}

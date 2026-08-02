@@ -148,13 +148,6 @@ type UsageTokenMetrics struct {
 	ReasoningTokens     *int64
 }
 
-// UsageCostMetrics is the reserved money vector for one persisted usage event.
-// Values are nano-USD. Nil means unavailable, not zero.
-type UsageCostMetrics struct {
-	CostNanos      *int64
-	PricingVersion *string
-}
-
 // ModelUsageEvent is one append-only normalized usage fact.
 type ModelUsageEvent struct {
 	ID             int64
@@ -167,7 +160,6 @@ type ModelUsageEvent struct {
 	ModelID        string
 	ObservedAt     time.Time
 	Tokens         UsageTokenMetrics
-	Cost           UsageCostMetrics
 	SourceEventKey string
 	CreatedAt      time.Time
 }

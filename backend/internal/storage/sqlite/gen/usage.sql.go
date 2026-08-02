@@ -289,8 +289,7 @@ func (q *Queries) FinalizeUsageBindingsForSessionLaunch(ctx context.Context, arg
 const getModelUsageEventByKey = `-- name: GetModelUsageEventByKey :one
 SELECT
     provider, model_id, observed_at, input_tokens, uncached_input_tokens,
-    cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens,
-    cost_nanos, pricing_version
+    cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens
 FROM model_usage_events
 WHERE binding_id = ? AND source_event_key = ?
 `
@@ -310,8 +309,6 @@ type GetModelUsageEventByKeyRow struct {
 	CacheWriteTokens    int64
 	OutputTokens        int64
 	ReasoningTokens     sql.NullInt64
-	CostNanos           sql.NullInt64
-	PricingVersion      sql.NullString
 }
 
 func (q *Queries) GetModelUsageEventByKey(ctx context.Context, arg GetModelUsageEventByKeyParams) (GetModelUsageEventByKeyRow, error) {
@@ -327,8 +324,6 @@ func (q *Queries) GetModelUsageEventByKey(ctx context.Context, arg GetModelUsage
 		&i.CacheWriteTokens,
 		&i.OutputTokens,
 		&i.ReasoningTokens,
-		&i.CostNanos,
-		&i.PricingVersion,
 	)
 	return i, err
 }
@@ -460,7 +455,7 @@ INSERT INTO model_usage_events (
     model_id, observed_at, input_tokens, uncached_input_tokens,
     cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens,
     cost_nanos, pricing_version, source_event_key, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
 `
 
 type InsertModelUsageEventParams struct {
@@ -478,8 +473,6 @@ type InsertModelUsageEventParams struct {
 	CacheWriteTokens    int64
 	OutputTokens        int64
 	ReasoningTokens     sql.NullInt64
-	CostNanos           sql.NullInt64
-	PricingVersion      sql.NullString
 	SourceEventKey      string
 	CreatedAt           time.Time
 }
@@ -500,8 +493,6 @@ func (q *Queries) InsertModelUsageEvent(ctx context.Context, arg InsertModelUsag
 		arg.CacheWriteTokens,
 		arg.OutputTokens,
 		arg.ReasoningTokens,
-		arg.CostNanos,
-		arg.PricingVersion,
 		arg.SourceEventKey,
 		arg.CreatedAt,
 	)

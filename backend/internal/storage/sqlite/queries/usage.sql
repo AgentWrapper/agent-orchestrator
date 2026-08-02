@@ -433,8 +433,7 @@ WHERE id = sqlc.arg(usage_binding_id)
 -- name: GetModelUsageEventByKey :one
 SELECT
     provider, model_id, observed_at, input_tokens, uncached_input_tokens,
-    cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens,
-    cost_nanos, pricing_version
+    cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens
 FROM model_usage_events
 WHERE binding_id = ? AND source_event_key = ?;
 
@@ -444,7 +443,7 @@ INSERT INTO model_usage_events (
     model_id, observed_at, input_tokens, uncached_input_tokens,
     cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens,
     cost_nanos, pricing_version, source_event_key, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?);
 
 -- name: AggregateUsageBySessionHarnessModel :many
 SELECT

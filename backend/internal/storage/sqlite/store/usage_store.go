@@ -544,8 +544,6 @@ func usageEventInsertParams(source gen.GetUsageSourceWithBindingAndSessionRow, e
 		CacheWriteTokens:    ev.Tokens.CacheWriteTokens,
 		OutputTokens:        ev.Tokens.OutputTokens,
 		ReasoningTokens:     ptrInt64ToNull(ev.Tokens.ReasoningTokens),
-		CostNanos:           ptrInt64ToNull(ev.Cost.CostNanos),
-		PricingVersion:      ptrStringToNull(ev.Cost.PricingVersion),
 		SourceEventKey:      ev.SourceEventKey,
 		CreatedAt:           timeOrNow(ev.CreatedAt),
 	}
@@ -553,8 +551,6 @@ func usageEventInsertParams(source gen.GetUsageSourceWithBindingAndSessionRow, e
 
 func usageEventMatches(sourceKind domain.UsageSourceKind, existing gen.GetModelUsageEventByKeyRow, event domain.ModelUsageEvent) bool {
 	reasoning := ptrInt64ToNull(event.Tokens.ReasoningTokens)
-	cost := ptrInt64ToNull(event.Cost.CostNanos)
-	pricingVersion := ptrStringToNull(event.Cost.PricingVersion)
 	return usageProviderMatches(sourceKind, existing.Provider, event.Provider) &&
 		existing.ModelID == event.ModelID &&
 		existing.ObservedAt.Equal(event.ObservedAt) &&
@@ -563,9 +559,7 @@ func usageEventMatches(sourceKind domain.UsageSourceKind, existing gen.GetModelU
 		existing.CacheReadTokens == event.Tokens.CacheReadTokens &&
 		existing.CacheWriteTokens == event.Tokens.CacheWriteTokens &&
 		existing.OutputTokens == event.Tokens.OutputTokens &&
-		existing.ReasoningTokens == reasoning &&
-		existing.CostNanos == cost &&
-		existing.PricingVersion == pricingVersion
+		existing.ReasoningTokens == reasoning
 }
 
 func usageProviderMatches(sourceKind domain.UsageSourceKind, existing, replayed string) bool {
@@ -664,13 +658,6 @@ func ptrInt64ToNull(v *int64) sql.NullInt64 {
 		return sql.NullInt64{}
 	}
 	return sql.NullInt64{Int64: *v, Valid: true}
-}
-
-func ptrStringToNull(v *string) sql.NullString {
-	if v == nil || *v == "" {
-		return sql.NullString{}
-	}
-	return sql.NullString{String: *v, Valid: true}
 }
 
 func int64PtrWhen(v int64, ok bool) *int64 {
