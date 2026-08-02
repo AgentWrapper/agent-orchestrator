@@ -1,15 +1,16 @@
 type Agent = { name: string; src: string };
 
 // All 23 supported agents, each with its brand logo. Most come from the app's
-// agent assets; goose/kilocode use whitened marks and agy (Antigravity) /
-// auggie (Augment) / autohand use their own brand favicons so every mark reads
-// on the dark background.
+// agent assets; goose uses a whitened mark and agy (Antigravity) / auggie
+// (Augment) / autohand use their own brand favicons so every mark reads on
+// the dark background. Copilot and Codex marks come from the LobeHub icon
+// set; Kilo Code uses the Kilo-Org brand tile.
 const AGENTS: Agent[] = [
   { name: "Claude Code", src: "/app-icons/agents/claude-code.svg" },
   { name: "Codex", src: "/app-icons/agents/codex.svg" },
   { name: "Cursor", src: "/app-icons/agents/cursor.svg" },
   { name: "OpenCode", src: "/app-icons/agents/opencode.svg" },
-  { name: "Copilot", src: "/app-icons/agents/copilot.png" },
+  { name: "Copilot", src: "/app-icons/agents/copilot-color.svg" },
   { name: "Aider", src: "/app-icons/agents/aider.png" },
   { name: "Grok", src: "/app-icons/agents/grok.png" },
   { name: "Droid", src: "/app-icons/agents/droid.png" },
@@ -20,7 +21,7 @@ const AGENTS: Agent[] = [
   { name: "Devin", src: "/app-icons/agents/devin.png" },
   { name: "Kimi", src: "/app-icons/agents/kimi.png" },
   { name: "Kiro", src: "/app-icons/agents/kiro.png" },
-  { name: "Kilo Code", src: "/app-icons/agents/kilocode.svg" },
+  { name: "Kilo Code", src: "/app-icons/agents/kilocode.png" },
   { name: "Mistral Vibe", src: "/app-icons/agents/vibe.png" },
   { name: "Pi", src: "/app-icons/agents/pi.png" },
   { name: "Amp", src: "/app-icons/agents/amp.svg" },
