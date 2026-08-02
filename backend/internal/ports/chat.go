@@ -258,6 +258,49 @@ type ChatDiffFile struct {
 	Patch string
 }
 
+// ChatModelReroute is the provider answering with a model other than the one that
+// was asked for.
+type ChatModelReroute struct {
+	FromModel string
+	ToModel   string
+	// Reason is the provider's own word for why, carried verbatim.
+	Reason string
+}
+
+// ChatAccount is what the provider says about the account a conversation runs
+// under.
+type ChatAccount struct {
+	AuthMode  string
+	PlanLabel string
+	// ReauthRequired means the provider asked for credentials the client is
+	// expected to supply. AO does not hold provider credentials, so this is
+	// reported to the user rather than answered.
+	ReauthRequired bool
+	// ReauthReason is the provider's stated reason, e.g. "unauthorized".
+	ReauthReason string
+}
+
+// ChatThreadState is the provider's lifecycle view of the thread.
+type ChatThreadState struct {
+	// Status is AO's neutral spelling of the provider's state.
+	Status domain.ThreadStatus
+	// WaitingOn are the provider's active flags in AO's spelling.
+	WaitingOn []string
+	// Archived is tri-state: nil means this report says nothing about archiving,
+	// which is different from saying it is not archived.
+	Archived *bool
+	// Closed is set only by a report that the thread was closed.
+	Closed bool
+}
+
+// ChatMCPServer is one tool server's startup state.
+type ChatMCPServer struct {
+	Name          string
+	Status        string
+	Error         string
+	FailureReason string
+}
+
 // ChatSkill is one capability the provider exposes to the agent, which a user can
 // invoke by name.
 type ChatSkill struct {
@@ -309,6 +352,13 @@ type (
 	// cases where waiting for the next notification is too late to be useful.
 	ChatUsageReporter interface {
 		ReadRateLimits(ctx context.Context) (ChatRateLimits, error)
+	}
+	// ChatMCPReloader restarts the provider's tool servers. It exists because the
+	// failure it addresses is not the agent's: a server that failed to start, or
+	// whose config changed on disk, leaves the agent short of tools for the rest of
+	// the conversation, and the only alternative is throwing the session away.
+	ChatMCPReloader interface {
+		ReloadMCPServers(ctx context.Context) ([]ChatMCPServer, error)
 	}
 )
 
@@ -378,6 +428,35 @@ const (
 	ChatEventThreadRenamed ChatEventKind = "thread.renamed"
 	// ChatEventPlanUpdated is the agent's current plan for the turn.
 	ChatEventPlanUpdated ChatEventKind = "turn.plan"
+
+	// ChatEventReasoningDelta is streamed reasoning text for a reasoning activity.
+	// It is a delta rather than a message because reasoning is not prose the user is
+	// being addressed with: it belongs to the activity it explains, and a reader
+	// must be able to hide it without losing the answer.
+	ChatEventReasoningDelta ChatEventKind = "reasoning.delta"
+	// ChatEventCommandInput is a keystroke stream the agent sent INTO a running
+	// command's terminal. Separate from command output on purpose: a PTY echoes what
+	// is typed, so folding input into the output stream would print it twice, and a
+	// transcript that cannot distinguish the two cannot say who did what.
+	ChatEventCommandInput ChatEventKind = "command.input"
+	// ChatEventActivityText is streamed provider prose for an activity that is not
+	// reasoning: MCP tool-call progress, patch application output. Folded into the
+	// same accumulation, which is why one kind covers both.
+	ChatEventActivityText ChatEventKind = "activity.text"
+	// ChatEventModelRerouted reports the provider answering with a model other than
+	// the one asked for. Without it a client keeps naming the model the user chose
+	// while a different one is answering.
+	ChatEventModelRerouted ChatEventKind = "model.rerouted"
+	// ChatEventAccountChanged reports the provider account's auth mode, plan, or its
+	// need for credentials AO does not hold.
+	ChatEventAccountChanged ChatEventKind = "account.changed"
+	// ChatEventThreadState reports the provider's own lifecycle view of the thread:
+	// working, idle, archived, closed.
+	ChatEventThreadState ChatEventKind = "thread.state"
+	// ChatEventMCPServers reports the startup state of the tool servers this
+	// conversation can reach, which is what explains a tool call that failed for a
+	// reason the agent had no part in.
+	ChatEventMCPServers ChatEventKind = "mcp.servers"
 )
 
 // ChatControllerState is the health of the driver's connection to the provider.
@@ -437,6 +516,19 @@ type ChatEvent struct {
 	Diff *ChatTurnDiff
 	// Title is set on thread.renamed.
 	Title string
+
+	// Plan is set on turn.plan. Nil elsewhere.
+	Plan *domain.ConversationPlan
+	// Reroute is set on model.rerouted.
+	Reroute *ChatModelReroute
+	// Account is set on account.changed.
+	Account *ChatAccount
+	// ThreadState is set on thread.state.
+	ThreadState *ChatThreadState
+	// MCPServers is set on mcp.servers. A single-server update carries one entry:
+	// the provider reports servers one at a time, so a consumer merges by name
+	// rather than replacing its whole list.
+	MCPServers []ChatMCPServer
 
 	// Err carries a structured failure. Its presence does not imply the
 	// conversation is over; check ControllerState for that.

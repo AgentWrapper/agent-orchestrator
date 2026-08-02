@@ -163,8 +163,9 @@ func TestNormalizeOtherItemKinds(t *testing.T) {
 	}{
 		{"file change", `{"turnId":"t","item":{"id":"i","type":"fileChange","changes":[]}}`, domain.ActivityKindFileChange},
 		{"plan", `{"turnId":"t","item":{"id":"i","type":"plan","text":"1. do it"}}`, domain.ActivityKindPlan},
-		{"reasoning", `{"turnId":"t","item":{"id":"i","type":"reasoning","summary":"thinking"}}`, domain.ActivityKindReasoning},
-		{"mcp tool", `{"turnId":"t","item":{"id":"i","type":"mcpToolCall","toolName":"grep"}}`, domain.ActivityKindCommand},
+		{"reasoning", `{"turnId":"t","item":{"id":"i","type":"reasoning","summary":["thinking"]}}`, domain.ActivityKindReasoning},
+		// An MCP call is not a shell command and must not render as one.
+		{"mcp tool", `{"turnId":"t","item":{"id":"i","type":"mcpToolCall","server":"s","tool":"grep"}}`, domain.ActivityKindMCPTool},
 		{"error", `{"turnId":"t","item":{"id":"i","type":"error","message":"boom"}}`, domain.ActivityKindError},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -186,16 +187,25 @@ func TestNormalizeUnknownItemTypeIsDropped(t *testing.T) {
 // three-turn session emitted alongside the useful ones.
 func TestNormalizeIgnoresProviderBookkeeping(t *testing.T) {
 	for _, method := range []string{
-		"mcpServer/startupStatus/updated",
 		"hook/started",
 		"hook/completed",
-		"thread/status/changed",
 		"remoteControl/status/changed",
 		"thread/goal/cleared",
 		"thread/started",
 		// The provider says when a model is being buffered for safety review. It
 		// affects latency, not the conversation, and AO has nothing to do with it.
 		"model/safetyBuffering/updated",
+		// guardianWarning restates an auto-approval decision in prose. The
+		// autoApprovalReview pair carries the same rationale as structure, so reading
+		// both would put one decision on the timeline twice.
+		"guardianWarning",
+		// The client-driven exec API. AO never asks the server to run anything, so an
+		// agent tool call never arrives on these.
+		"command/exec/outputDelta",
+		"process/outputDelta",
+		// The voice surface. AO has none.
+		"thread/realtime/transcript/delta",
+		"thread/realtime/outputAudio/delta",
 		"someMethodAddedNextRelease",
 	} {
 		t.Run(method, func(t *testing.T) { normalizeNone(t, method, `{}`) })

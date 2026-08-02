@@ -227,13 +227,29 @@ func TestNormalizeTruncatedTurnDiffCarriesTheMarker(t *testing.T) {
 	}
 }
 
-// The deprecated and the item-scoped file-change notifications stay unhandled, so
-// AO never reconciles two accounts of the same edits.
-func TestNormalizeIgnoresOtherFileChangeStreams(t *testing.T) {
-	normalizeNone(t, "item/fileChange/outputDelta",
+// The item-scoped file-change notifications are read, and they do NOT compete with
+// the turn diff: they land on the ITEM they belong to, while turn/diff/updated lands
+// on the turn. Two accounts of the same edits would be a problem only if both wrote
+// the same row, and neither does. See normalize_ingest_test.go for their payloads.
+//
+// The client-driven exec API stays unhandled: AO never asks the server to run
+// anything, so an agent tool call never arrives on those methods.
+func TestNormalizeItemFileChangeStreamsLandOnTheItem(t *testing.T) {
+	patch := normalizeOne(t, "item/fileChange/patchUpdated",
+		`{"threadId":"t","turnId":"u","itemId":"i","changes":[{"path":"a.txt","kind":{"type":"add"},"diff":"x\n"}]}`)
+	if patch.ProviderItemID != "i" {
+		t.Errorf("patchUpdated item id = %q, want the item it belongs to", patch.ProviderItemID)
+	}
+	if patch.Diff != nil {
+		t.Error("patchUpdated wrote a turn diff: that is turn/diff/updated's row")
+	}
+
+	output := normalizeOne(t, "item/fileChange/outputDelta",
 		`{"threadId":"t","turnId":"u","itemId":"i","delta":"whatever"}`)
-	normalizeNone(t, "item/fileChange/patchUpdated",
-		`{"threadId":"t","turnId":"u","itemId":"i","changes":[{"path":"a.txt","kind":{"type":"add"},"diff":"+x"}]}`)
-	normalizeNone(t, "command/exec/outputDelta",
-		`{"processId":"p","delta":"out"}`)
+	if output.ProviderItemID != "i" || output.Diff != nil {
+		t.Errorf("outputDelta -> %+v", output)
+	}
+
+	normalizeNone(t, "command/exec/outputDelta", `{"processId":"p","delta":"out"}`)
+	normalizeNone(t, "process/outputDelta", `{"processId":"p","delta":"out"}`)
 }

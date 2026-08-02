@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/codexappserver/codexproto"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -32,10 +33,10 @@ var errConversationClosed = errors.New("conversation closed")
 // user must make. Anything else the provider asks is refused: answering a request
 // AO does not model risks consenting to something on the user's behalf.
 var approvalMethods = map[string]domain.ActivityKind{
-	"item/commandExecution/requestApproval": domain.ActivityKindCommand,
-	"item/fileChange/requestApproval":       domain.ActivityKindFileChange,
-	"item/permissions/requestApproval":      domain.ActivityKindApproval,
-	"item/tool/requestUserInput":            domain.ActivityKindApproval,
+	codexproto.MethodItemCommandExecutionRequestApproval: domain.ActivityKindCommand,
+	codexproto.MethodItemFileChangeRequestApproval:       domain.ActivityKindFileChange,
+	codexproto.MethodItemPermissionsRequestApproval:      domain.ActivityKindApproval,
+	codexproto.MethodItemToolRequestUserInput:            domain.ActivityKindApproval,
 }
 
 // conversation is one live Codex thread. It is the only writer to that thread.
@@ -93,6 +94,10 @@ var _ ports.ChatUsageReporter = (*conversation)(nil)
 // Same reason, for compaction. Losing this method does not break a build; it just
 // makes the control disappear and long conversations start failing again.
 var _ ports.ChatCompactor = (*conversation)(nil)
+
+// Same reason, for the MCP reload: a dropped method makes the affordance vanish and
+// leaves a session with a dead tool server no way back.
+var _ ports.ChatMCPReloader = (*conversation)(nil)
 
 func newConversation(proc *process, log *slog.Logger) *conversation {
 	c := &conversation{
@@ -182,10 +187,17 @@ func (c *conversation) emit(ev ports.ChatEvent) {
 	default:
 	}
 
-	if ev.Kind == ports.ChatEventMessageDelta {
-		// The settled text arrives on message.completed, so a dropped delta
-		// costs smoothness, not correctness.
-		c.log.Warn("dropped chat message delta: consumer behind", "item", ev.ProviderItemID)
+	switch ev.Kind {
+	case ports.ChatEventMessageDelta, ports.ChatEventReasoningDelta:
+		// The settled text arrives on item/completed for both of these — a message's
+		// as `text`, a reasoning item's as `summary` — so a dropped delta costs
+		// smoothness, not correctness.
+		//
+		// The other streams are deliberately NOT droppable. Command output, terminal
+		// keystrokes and tool progress have no settled restatement: the delta is the
+		// only account of them, so losing one loses the record.
+		c.log.Warn("dropped chat delta: consumer behind",
+			"kind", ev.Kind, "item", ev.ProviderItemID)
 		return
 	}
 
@@ -584,6 +596,13 @@ func (p *parkedRequest) offeredIDs() []string {
 // than answering immediately. Everything AO does not model is refused with an
 // error, never with a fabricated decision.
 func (c *conversation) handleServerRequest(ctx context.Context, req serverRequest) (any, error) {
+	switch req.Method {
+	case codexproto.MethodAccountChatgptAuthTokensRefresh:
+		return nil, c.reportAuthRefreshRequest(req.Params)
+	case codexproto.MethodItemToolCall:
+		return nil, c.refuseDynamicToolCall(req.Params)
+	}
+
 	kind, known := approvalMethods[req.Method]
 	if !known {
 		c.log.Warn("refusing unmodelled app-server request", "method", req.Method)
@@ -634,6 +653,102 @@ func (c *conversation) handleServerRequest(ctx context.Context, req serverReques
 		c.discardPending(requestID)
 		return nil, ctx.Err()
 	}
+}
+
+// reportAuthRefreshRequest surfaces the provider asking for ChatGPT credentials and
+// returns the refusal to send back.
+//
+// AO does not hold provider credentials. Codex owns its own ChatGPT OAuth tokens
+// (authMode `chatgpt`) and refreshes them itself; this request belongs to authMode
+// `chatgptAuthTokens`, where an external host app supplies them, and the generated
+// schema marks that mode OpenAI-internal. So the honest answer is an error — but the
+// error alone would only reach a log, and what the user needs to know is that the
+// session has stopped working for a reason no retry will fix.
+//
+// NEVER OBSERVED live: reaching it requires the provider to take a 401 while running
+// in a mode AO does not use, which a test cannot arrange without breaking real auth.
+func (c *conversation) reportAuthRefreshRequest(params json.RawMessage) error {
+	var p codexproto.ChatgptAuthTokensRefreshParams
+	// A payload this build cannot parse still means the same thing: the provider
+	// asked for credentials AO cannot supply.
+	_ = json.Unmarshal(params, &p)
+
+	reason := string(p.Reason)
+	if reason == "" {
+		reason = "unauthorized"
+	}
+	c.log.Warn("app-server asked for ChatGPT auth tokens AO does not hold", "reason", reason)
+	c.emit(ports.ChatEvent{
+		Kind: ports.ChatEventAccountChanged,
+		Account: &ports.ChatAccount{
+			ReauthRequired: true,
+			ReauthReason:   reason,
+		},
+	})
+	return fmt.Errorf("%w: this client does not supply ChatGPT auth tokens (reason: %s)",
+		ports.ErrChatAuthRequired, reason)
+}
+
+// refuseDynamicToolCall declines a request to run a tool AO never offered.
+//
+// `item/tool/call` asks the CLIENT to execute a tool the client declared during
+// initialize. AO declares none, so a well-behaved provider will never send this and
+// one that does is asking AO to run something it has no definition for. Refusing is
+// the only safe answer: inventing a result would feed the model a fabrication.
+func (c *conversation) refuseDynamicToolCall(params json.RawMessage) error {
+	var p codexproto.DynamicToolCallParams
+	_ = json.Unmarshal(params, &p)
+	c.log.Warn("refusing dynamic tool call: AO declares no client-side tools",
+		"tool", p.Tool, "callId", p.CallID)
+	return fmt.Errorf("client declares no tools; %q is not available", p.Tool)
+}
+
+// ReloadMCPServers restarts the provider's tool servers and reports their state.
+//
+// Worth a typed operation because of the failure it addresses: a server that failed
+// to start stays failed for the life of the app-server process, so without this the
+// only way to recover a tool the agent needs is to throw the conversation away. The
+// provider re-announces every server's startup state as notifications afterwards, so
+// the returned list is a convenience for the caller that asked, not the only path by
+// which AO learns the outcome.
+func (c *conversation) ReloadMCPServers(ctx context.Context) ([]ports.ChatMCPServer, error) {
+	// config/mcpServer/reload takes no params, verified against a live app-server.
+	if err := c.conn.request(ctx, codexproto.MethodConfigMcpServerReload, map[string]any{}, nil); err != nil {
+		return nil, fmt.Errorf("%s: %w", codexproto.MethodConfigMcpServerReload, err)
+	}
+
+	var resp struct {
+		Data []struct {
+			Name       string `json:"name"`
+			AuthStatus string `json:"authStatus"`
+		} `json:"data"`
+	}
+	if err := c.conn.request(ctx, codexproto.MethodMcpServerStatusList, map[string]any{
+		// The summary form: the full one returns every tool's JSON Schema, which for a
+		// handful of servers is hundreds of kilobytes AO would immediately discard.
+		"detail":   "summary",
+		"threadId": c.threadID,
+	}, &resp); err != nil {
+		// The reload itself succeeded, and that is the part the caller asked for. The
+		// pushed notifications will report the outcome regardless.
+		c.log.Debug("mcp server list after reload failed", "error", err)
+		return nil, nil
+	}
+
+	servers := make([]ports.ChatMCPServer, 0, len(resp.Data))
+	for _, entry := range resp.Data {
+		if entry.Name == "" {
+			continue
+		}
+		// A server that answers the inventory call is running. Its startup state is
+		// reported separately by mcpServer/startupStatus/updated, which is the
+		// authoritative source; this list only says who came back.
+		servers = append(servers, ports.ChatMCPServer{
+			Name:   entry.Name,
+			Status: string(codexproto.McpServerStartupStateReady),
+		})
+	}
+	return servers, nil
 }
 
 func (c *conversation) discardPending(requestID string) {
