@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Shield, Terminal as TerminalIcon, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Maximize2, Minimize2, RefreshCw, Shield, Terminal as TerminalIcon, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type WheelEvent } from "react";
 import { useOverflowScroll } from "../hooks/useOverflowScroll";
 import { useTruncatedText } from "../hooks/useTruncatedText";
@@ -63,6 +63,7 @@ export function CenterPane({
 	const [isFullscreen, setIsFullscreen] = useState(false);
 	const tabOverflowWatch = `${session?.id ?? ""}|${shellTerminals.map((terminal) => terminal.handleId).join("|")}`;
 	const tabsOverflow = useOverflowScroll<HTMLDivElement>(tabOverflowWatch);
+	const [refreshToken, setRefreshToken] = useState(0);
 	const target = terminalTarget ?? { kind: "worker" };
 
 	useEffect(() => {
@@ -211,6 +212,7 @@ export function CenterPane({
 				<TerminalPane
 					daemonReady={daemonReady}
 					fontSize={fontSize}
+					refreshToken={refreshToken}
 					session={session}
 					terminalTarget={target}
 					theme={theme}
@@ -240,6 +242,16 @@ export function CenterPane({
 						type="button"
 					>
 						+
+					</button>
+					<button
+						aria-label="Refresh terminal"
+						className="ml-1.5 inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color,opacity] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-passive"
+						disabled={!daemonReady || !session?.terminalHandleId || session?.status === "terminated"}
+						onClick={() => setRefreshToken((current) => current + 1)}
+						title="Refresh terminal"
+						type="button"
+					>
+						<RefreshCw aria-hidden="true" className="size-icon-md" />
 					</button>
 					<button
 						aria-label={isFullscreen ? "Exit terminal fullscreen" : "Open terminal fullscreen"}

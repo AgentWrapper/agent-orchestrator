@@ -1,13 +1,18 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession } from "../types/workspace";
 import { CenterPane } from "./CenterPane";
 
 // The terminal body pulls in xterm/SSE machinery irrelevant to the header under test.
-vi.mock("./TerminalPane", () => ({ TerminalPane: () => <div>terminal body</div> }));
+vi.mock("./TerminalPane", () => ({
+	TerminalPane: ({ refreshToken }: { refreshToken?: number }) => (
+		<div data-refresh-token={String(refreshToken ?? 0)}>terminal body</div>
+	),
+}));
 
 const worker = {
 	id: "sess-1",
+	terminalHandleId: "handle-1",
 	workspaceId: "proj-1",
 	workspaceName: "my-app",
 	title: "do the thing",
@@ -126,5 +131,13 @@ describe("CenterPane toolbar session label", () => {
 		scrollBy.mockClear();
 		fireEvent.wheel(scrollRegion, { deltaY: 80, ctrlKey: true });
 		expect(scrollBy).not.toHaveBeenCalled();
+	});
+
+	it("refreshes the terminal from the toolbar", () => {
+		render(<CenterPane session={worker} theme="dark" daemonReady />);
+
+		expect(screen.getByText("terminal body")).toHaveAttribute("data-refresh-token", "0");
+		fireEvent.click(screen.getByRole("button", { name: "Refresh terminal" }));
+		return waitFor(() => expect(screen.getByText("terminal body")).toHaveAttribute("data-refresh-token", "1"));
 	});
 });

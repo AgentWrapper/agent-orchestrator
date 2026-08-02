@@ -19,9 +19,10 @@ type TerminalPaneProps = {
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
 	fontSize: number;
+	refreshToken?: number;
 };
 
-export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
+export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize, refreshToken = 0 }: TerminalPaneProps) {
 	const terminalKey =
 		terminalTarget?.kind === "reviewer" || terminalTarget?.kind === "shell"
 			? terminalTarget.handleId
@@ -85,6 +86,7 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 			theme={theme}
 			daemonReady={daemonReady}
 			fontSize={fontSize}
+			refreshToken={refreshToken}
 			terminalTarget={terminalTarget}
 		/>
 	);
@@ -220,7 +222,7 @@ function bannerText(state: TerminalSessionState, error?: string): string | undef
 	return undefined;
 }
 
-function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
+function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSize, refreshToken = 0 }: TerminalPaneProps) {
 	const attachSession =
 		session && terminalTarget?.kind === "reviewer"
 			? { ...session, terminalHandleId: terminalTarget.handleId }
@@ -259,7 +261,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 		},
 		[session?.id],
 	);
-	const { attach, state, error, replaySettled } = useTerminalSession(attachSession, {
+	const { attach, refresh, state, error, replaySettled } = useTerminalSession(attachSession, {
 		daemonReady,
 		shellTerminalHandleId,
 		onOutput: watchLinks ? handleOutput : undefined,
@@ -267,6 +269,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const handleId = shellTerminalHandleId ?? attachSession?.terminalHandleId;
 	const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : session?.provider;
 	const hadAttachmentRef = useRef(false);
+	const previousRefreshTokenRef = useRef(refreshToken);
 	const isSessionActive = session ? sessionIsActive(session) : false;
 	// A standalone shell is never restorable: there is no session row to restore.
 	const canRestoreSession =
@@ -352,6 +355,12 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 		hadAttachmentRef.current = true;
 		return attach(terminal);
 	}, [terminal, handleId, attach, attachSession?.id]);
+
+	useEffect(() => {
+		if (previousRefreshTokenRef.current === refreshToken) return;
+		previousRefreshTokenRef.current = refreshToken;
+		refresh();
+	}, [refresh, refreshToken]);
 
 	if (initFailed) {
 		return (
