@@ -250,6 +250,7 @@ function Section({
 	children,
 	className,
 	title,
+	titleClassName,
 }: {
 	action?: ReactNode;
 	children: ReactNode;
@@ -257,13 +258,20 @@ function Section({
 	/** Accepted for call-site compatibility; all sections use the settings-row box. */
 	surface?: boolean;
 	title: string;
+	/** Overrides the kicker colour; the PR section uses its own palette. */
+	titleClassName?: string;
 }) {
 	// Boxed sections match the settings page row surface (bg + radius) with the
 	// uppercase muted kicker kept inside the card, as in the inspector refs.
 	return (
 		<section className={cn("mb-2.5 last:mb-0", className)} data-testid="inspector-section">
 			<div className="overflow-hidden rounded-settings-row bg-settings-row px-3.5 py-3">
-				<div className="mb-2 flex items-center justify-between gap-2 text-2xs font-bold uppercase tracking-settings-section text-settings-muted">
+				<div
+					className={cn(
+						"mb-2 flex items-center justify-between gap-2 text-2xs font-bold uppercase tracking-settings-section text-settings-muted",
+						titleClassName,
+					)}
+				>
 					<span>{title}</span>
 					{action ?? null}
 				</div>
@@ -286,7 +294,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 	return (
 		<div role="tabpanel">
 			{hasPRs ? (
-				<Section title={prSectionTitle}>
+				<Section title={prSectionTitle} titleClassName="text-pr-label">
 					<div className="flex flex-col gap-1.5">
 						{prSummaries.map((pr) => (
 							<PRSummaryCard key={pr.url || pr.htmlUrl || pr.number} pr={pr} />
