@@ -61,19 +61,32 @@ type ChatCapability string
 
 // The capabilities AO currently checks.
 const (
-	ChatCapabilityStreaming   ChatCapability = "streaming"
-	ChatCapabilityTools       ChatCapability = "tools"
-	ChatCapabilityApprovals   ChatCapability = "approvals"
-	ChatCapabilityInterrupt   ChatCapability = "interrupt"
-	ChatCapabilitySteer       ChatCapability = "steer"
-	ChatCapabilityResume      ChatCapability = "resume"
-	ChatCapabilityHistory     ChatCapability = "history"
-	ChatCapabilityUsage       ChatCapability = "usage"
-	ChatCapabilityDiffs       ChatCapability = "diffs"
-	ChatCapabilityPlans       ChatCapability = "plans"
+	ChatCapabilityStreaming ChatCapability = "streaming"
+	ChatCapabilityTools     ChatCapability = "tools"
+	ChatCapabilityApprovals ChatCapability = "approvals"
+	ChatCapabilityInterrupt ChatCapability = "interrupt"
+	ChatCapabilitySteer     ChatCapability = "steer"
+	ChatCapabilityResume    ChatCapability = "resume"
+	ChatCapabilityHistory   ChatCapability = "history"
+	ChatCapabilityUsage     ChatCapability = "usage"
+	ChatCapabilityDiffs     ChatCapability = "diffs"
+	ChatCapabilityPlans     ChatCapability = "plans"
 	// ChatCapabilityModels means the provider can enumerate the models it offers
 	// and accept one per turn.
 	ChatCapabilityModels ChatCapability = "models"
+	// ChatCapabilityCompaction means the provider can summarize earlier history to
+	// reclaim context.
+	ChatCapabilityCompaction ChatCapability = "compaction"
+	// ChatCapabilityRollback means history can be discarded back to a turn.
+	ChatCapabilityRollback ChatCapability = "rollback"
+	// ChatCapabilityFork means a conversation can be branched.
+	ChatCapabilityFork ChatCapability = "fork"
+	// ChatCapabilityRename means the thread carries a title AO can set.
+	ChatCapabilityRename ChatCapability = "rename"
+	// ChatCapabilitySkills means named skills can be enumerated and invoked.
+	ChatCapabilitySkills ChatCapability = "skills"
+	// ChatCapabilityRateLimits means the account's quota position is readable.
+	ChatCapabilityRateLimits  ChatCapability = "rate_limits"
 	ChatCapabilityInteractive ChatCapability = "user_input"
 )
 
@@ -196,6 +209,109 @@ type ChatModelLister interface {
 	ListModels(ctx context.Context) ([]ChatModel, error)
 }
 
+// ChatUsage is token accounting for a conversation.
+//
+// ContextWindow and ContextUsed are what make a "how full is this conversation"
+// readout possible; without the window the used figure is a number with no scale.
+type ChatUsage struct {
+	InputTokens  int64
+	OutputTokens int64
+	CachedTokens int64
+	TotalTokens  int64
+	// ContextUsed and ContextWindow are the conversation's position in the model's
+	// context, not a running total of the session's spend.
+	ContextUsed   int64
+	ContextWindow int64
+}
+
+// ChatRateLimits is the account's quota position.
+//
+// Modelled because it explains a class of failure the user cannot otherwise
+// diagnose: a turn that fails for a reason unrelated to what they asked.
+type ChatRateLimits struct {
+	// PrimaryUsedPercent and SecondaryUsedPercent are the provider's own windows
+	// (typically a short and a long one). Negative means not reported.
+	PrimaryUsedPercent   float64
+	SecondaryUsedPercent float64
+	// PrimaryResetsInSeconds is how long until the tighter window refills.
+	PrimaryResetsInSeconds   int64
+	SecondaryResetsInSeconds int64
+	// PlanLabel is the provider's name for the account tier, when it says.
+	PlanLabel string
+}
+
+// ChatTurnDiff is the running diff of what a turn changed on disk.
+type ChatTurnDiff struct {
+	Files []ChatDiffFile
+}
+
+// ChatDiffFile is one changed path in a turn diff.
+type ChatDiffFile struct {
+	Path      string
+	Additions int
+	Deletions int
+	// Status is the provider's change kind: added, modified, deleted, renamed.
+	Status string
+	// OldPath is set for a rename.
+	OldPath string
+	// Patch is the unified diff for this file when the provider sends one.
+	Patch string
+}
+
+// ChatSkill is one capability the provider exposes to the agent, which a user can
+// invoke by name.
+type ChatSkill struct {
+	Name        string
+	DisplayName string
+	Description string
+	// Source says where it came from (built-in, a plugin, the project), so a user
+	// can tell an AO-provided skill from one the provider ships.
+	Source string
+}
+
+// ChatCompactionResult reports what a compaction did.
+type ChatCompactionResult struct {
+	// TokensBefore and TokensAfter bracket the reclaim, so the UI can say what was
+	// gained rather than only that something happened.
+	TokensBefore int64
+	TokensAfter  int64
+}
+
+// Optional driver interfaces. Each is feature-detected, so a driver that cannot do
+// one of these simply does not offer it and AO hides the affordance rather than
+// showing a control that fails.
+type (
+	// ChatCompactor summarizes earlier history to reclaim context. Without it a
+	// long conversation eventually cannot accept another turn at all.
+	ChatCompactor interface {
+		Compact(ctx context.Context) (ChatCompactionResult, error)
+	}
+	// ChatRollbacker discards history back to a turn, provider-side. This is undo:
+	// it changes what the agent remembers, which is why it is a provider call and
+	// not a UI filter.
+	ChatRollbacker interface {
+		Rollback(ctx context.Context, providerTurnID string) error
+	}
+	// ChatForker branches a conversation, so an alternative approach can be tried
+	// without destroying the original.
+	ChatForker interface {
+		Fork(ctx context.Context) (providerConversationID string, err error)
+	}
+	// ChatRenamer sets or reads a human title the provider derived for the thread.
+	ChatRenamer interface {
+		SetTitle(ctx context.Context, title string) error
+	}
+	// ChatSkillLister enumerates the named skills a user can invoke.
+	ChatSkillLister interface {
+		ListSkills(ctx context.Context) ([]ChatSkill, error)
+	}
+	// ChatUsageReporter reads the account's quota position on demand, for the
+	// cases where waiting for the next notification is too late to be useful.
+	ChatUsageReporter interface {
+		ReadRateLimits(ctx context.Context) (ChatRateLimits, error)
+	}
+)
+
 // ChatTurnRef identifies a turn the provider accepted.
 type ChatTurnRef struct {
 	ProviderTurnID string
@@ -239,6 +355,29 @@ const (
 	ChatEventApprovalResolved  ChatEventKind = "approval.resolved"
 	ChatEventControllerState   ChatEventKind = "controller.state"
 	ChatEventError             ChatEventKind = "error"
+
+	// Kinds below carry provider signal AO previously discarded. Each is modelled
+	// rather than folded into an activity so a reader can tell "the agent produced
+	// output" from "the conversation itself changed".
+
+	// ChatEventCommandOutputDelta is streamed output from a running command. The
+	// final aggregate can be incomplete, so a reader that wants the whole output
+	// has to accumulate these.
+	ChatEventCommandOutputDelta ChatEventKind = "command.output.delta"
+	// ChatEventTurnDiff is the running diff of what the turn has changed on disk.
+	ChatEventTurnDiff ChatEventKind = "turn.diff"
+	// ChatEventCompacted reports that the provider summarized earlier history to
+	// reclaim context. It is a fact about the conversation, not a turn.
+	ChatEventCompacted ChatEventKind = "thread.compacted"
+	// ChatEventUsage is a token accounting update for the conversation.
+	ChatEventUsage ChatEventKind = "usage"
+	// ChatEventRateLimits is the account's quota position, which is why a turn can
+	// fail for reasons that have nothing to do with the request.
+	ChatEventRateLimits ChatEventKind = "account.rateLimits"
+	// ChatEventThreadRenamed reports a title the provider derived for the thread.
+	ChatEventThreadRenamed ChatEventKind = "thread.renamed"
+	// ChatEventPlanUpdated is the agent's current plan for the turn.
+	ChatEventPlanUpdated ChatEventKind = "turn.plan"
 )
 
 // ChatControllerState is the health of the driver's connection to the provider.
@@ -289,6 +428,15 @@ type ChatEvent struct {
 
 	// ControllerState is set on controller.state.
 	ControllerState ChatControllerState
+
+	// Usage is set on usage events. Nil elsewhere.
+	Usage *ChatUsage
+	// RateLimits is set on account.rateLimits events. Nil elsewhere.
+	RateLimits *ChatRateLimits
+	// Diff is set on turn.diff.
+	Diff *ChatTurnDiff
+	// Title is set on thread.renamed.
+	Title string
 
 	// Err carries a structured failure. Its presence does not imply the
 	// conversation is over; check ControllerState for that.
