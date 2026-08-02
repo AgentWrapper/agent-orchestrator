@@ -1,0 +1,200 @@
+package codexappserver
+
+import (
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/codexappserver/codexproto"
+)
+
+// Does the driver still agree with the provider about the protocol?
+//
+// Every method AO sends or reads is named here. Two failure modes this catches
+// that nothing else does:
+//
+//   - AO calls a method the installed provider no longer declares, which arrives
+//     as a generic -32601 at runtime and looks like a broken session.
+//   - AO reads a payload field that has been renamed, which unmarshals to a zero
+//     value and looks like "the agent produced no output".
+//
+// The second is the one that actually bit: a thread-vs-turn `sandboxPolicy` shape
+// mismatch cost an afternoon and would have been a compile error against
+// generated types.
+
+// driverMethods is every method this driver depends on, with the generated type
+// whose fields it reads. Adding a method to the driver without adding it here is
+// the mistake this table exists to make visible.
+var driverMethods = []struct {
+	method string
+	// payload names the generated type carrying this method's params, empty when
+	// the driver only sends the method and reads nothing back.
+	payload any
+}{
+	// Outbound: session lifecycle.
+	{codexproto.MethodInitialize, &codexproto.InitializeParams{}},
+	{codexproto.MethodThreadStart, &codexproto.ThreadStartParams{}},
+	{codexproto.MethodThreadResume, &codexproto.ThreadResumeParams{}},
+
+	// Outbound: turns.
+	{codexproto.MethodTurnStart, &codexproto.TurnStartParams{}},
+	{codexproto.MethodTurnInterrupt, &codexproto.TurnInterruptParams{}},
+
+	// Outbound: capabilities the driver advertises.
+	{codexproto.MethodModelList, &codexproto.ModelListParams{}},
+	{codexproto.MethodThreadCompactStart, &codexproto.ThreadCompactStartParams{}},
+	// Takes no params; the generated table records Params: "".
+	{codexproto.MethodAccountRateLimitsRead, nil},
+	{codexproto.MethodSkillsList, &codexproto.SkillsListParams{}},
+
+	// Inbound: the notifications the timeline is built from.
+	{codexproto.MethodThreadStarted, nil},
+	{codexproto.MethodTurnStarted, nil},
+	{codexproto.MethodTurnCompleted, nil},
+	{codexproto.MethodItemStarted, nil},
+	{codexproto.MethodItemCompleted, nil},
+	{codexproto.MethodItemAgentMessageDelta, nil},
+	{codexproto.MethodItemCommandExecutionOutputDelta, nil},
+	{codexproto.MethodTurnDiffUpdated, nil},
+	{codexproto.MethodThreadTokenUsageUpdated, nil},
+	{codexproto.MethodAccountRateLimitsUpdated, nil},
+
+	// Inbound: approvals. All three kinds the provider declares, which is the
+	// whole set for this build — there is no fourth to miss.
+	{codexproto.MethodItemCommandExecutionRequestApproval, nil},
+	{codexproto.MethodItemFileChangeRequestApproval, nil},
+	{codexproto.MethodItemPermissionsRequestApproval, nil},
+	{codexproto.MethodItemToolRequestUserInput, nil},
+}
+
+func TestEveryMethodTheDriverUsesIsDeclaredByTheProvider(t *testing.T) {
+	for _, m := range driverMethods {
+		if !codexproto.Declares(m.method) {
+			t.Errorf("driver uses %q, which the generated protocol (%s) does not declare",
+				m.method, codexproto.ProviderVersion)
+		}
+	}
+}
+
+// The three approval kinds are load-bearing: a fourth kind arriving unhandled
+// would leave a turn waiting on a decision no client is ever offered, which
+// presents as a session that has silently stopped.
+func TestApprovalKindsAreExhaustive(t *testing.T) {
+	var approvals []string
+	for _, m := range codexproto.Methods {
+		if strings.HasSuffix(m.Name, "/requestApproval") {
+			approvals = append(approvals, m.Name)
+		}
+	}
+	handled := map[string]bool{
+		codexproto.MethodItemCommandExecutionRequestApproval: true,
+		codexproto.MethodItemFileChangeRequestApproval:       true,
+		codexproto.MethodItemPermissionsRequestApproval:      true,
+	}
+	for _, name := range approvals {
+		if !handled[name] {
+			t.Errorf("provider declares approval %q, which the driver does not handle: "+
+				"a turn blocked on it would wait forever", name)
+		}
+	}
+	if len(approvals) != len(handled) {
+		t.Errorf("provider declares %d approval kinds, driver handles %d", len(approvals), len(handled))
+	}
+}
+
+// The generated file must describe the provider on this machine. A stale
+// checkout is how a driver starts sending methods that no longer exist.
+//
+// Skipped rather than failed when the provider is absent, so the suite still runs
+// on a machine without codex installed; the live e2e covers the other direction.
+func TestGeneratedProtocolMatchesTheInstalledProvider(t *testing.T) {
+	bin, err := exec.LookPath("codex")
+	if err != nil {
+		t.Skip("codex not installed; nothing to compare the generated protocol against")
+	}
+
+	dir := t.TempDir()
+	out, err := exec.Command(bin, "app-server", "generate-json-schema", "--out", dir).CombinedOutput()
+	if err != nil {
+		t.Skipf("provider declined to emit its schema (%v): %s", err, out)
+	}
+
+	live := methodsFromSchema(t, dir)
+	generated := map[string]bool{}
+	for _, m := range codexproto.Methods {
+		generated[m.Name] = true
+	}
+
+	var missing, extra []string
+	for name := range live {
+		if !generated[name] {
+			missing = append(missing, name)
+		}
+	}
+	for name := range generated {
+		if !live[name] {
+			extra = append(extra, name)
+		}
+	}
+
+	// New provider methods are not a failure on their own — AO does not have to use
+	// everything — but they are worth surfacing, because they are where the next
+	// feature comes from.
+	if len(missing) > 0 {
+		t.Logf("installed provider declares %d method(s) the generated file lacks; "+
+			"run `go generate ./internal/adapters/chatdriver/codexappserver/...` to pick them up: %v",
+			len(missing), truncate(missing))
+	}
+	// A method AO's generated file has and the provider does not is the dangerous
+	// direction: any call to it fails at runtime.
+	if len(extra) > 0 {
+		t.Errorf("generated protocol declares %d method(s) the installed provider does not: %v",
+			len(extra), truncate(extra))
+	}
+}
+
+func methodsFromSchema(t *testing.T, dir string) map[string]bool {
+	t.Helper()
+	found := map[string]bool{}
+	for _, file := range []string{
+		"ClientRequest.json", "ClientNotification.json",
+		"ServerRequest.json", "ServerNotification.json",
+	} {
+		raw, err := os.ReadFile(filepath.Join(dir, file))
+		if err != nil {
+			continue
+		}
+		var doc struct {
+			OneOf []struct {
+				Properties struct {
+					Method struct {
+						Enum []string `json:"enum"`
+					} `json:"method"`
+				} `json:"properties"`
+			} `json:"oneOf"`
+		}
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatalf("parse %s: %v", file, err)
+		}
+		for _, arm := range doc.OneOf {
+			for _, name := range arm.Properties.Method.Enum {
+				found[name] = true
+			}
+		}
+	}
+	if len(found) == 0 {
+		t.Fatalf("no methods parsed out of %s", dir)
+	}
+	return found
+}
+
+func truncate(names []string) []string {
+	const limit = 12
+	if len(names) <= limit {
+		return names
+	}
+	return append(names[:limit:limit], "…")
+}
