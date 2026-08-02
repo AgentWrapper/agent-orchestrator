@@ -870,7 +870,7 @@ function SessionCard({
 					</span>
 					<span
 						className="shrink-0 whitespace-nowrap font-mono text-2xs text-passive"
-						title={`Updated ${session.updatedAt}`}
+						title={t("shell.updatedAt", { time: session.updatedAt })}
 					>
 						{formatTimeCompact(session.updatedAt)}
 					</span>
@@ -885,7 +885,7 @@ function SessionCard({
 				{issueId && (
 					<span
 						className="inline-flex max-w-branch-chip items-center self-start truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
-						title={`Intake issue: ${issueId}`}
+						title={t("shell.intakeIssue", { id: issueId })}
 					>
 						{issueId}
 					</span>

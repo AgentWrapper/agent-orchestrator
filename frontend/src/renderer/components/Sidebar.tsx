@@ -676,16 +676,13 @@ function ProjectItem({
 			<ConfirmDialog
 				open={confirmOpen}
 				onOpenChange={setConfirmOpen}
-				title={`Remove project`}
+				title={t("shell.removeProjectTitle")}
 				description={
 					<>
 						<p className="text-sm font-medium text-foreground">
-							This will remove <strong>{workspace.name}</strong> from AO
+							{t("shell.removeProjectLead", { name: workspace.name })}
 						</p>
-						<p className="mt-1 text-xs text-muted-foreground">
-							This stops its live sessions and removes it from the sidebar, but keeps the repository folder and stored
-							history on disk.
-						</p>
+						<p className="mt-1 text-xs text-muted-foreground">{t("shell.removeProjectBody")}</p>
 					</>
 				}
 				confirmLabel={t("shell.remove")}
