@@ -65,13 +65,13 @@ export function TrustedBySection() {
   return (
     <section className="py-16 sm:py-24 bg-background overflow-hidden">
       <div className="max-w-7xl mx-auto text-center">
-        <h2 className="mx-auto mb-12 max-w-3xl select-none px-4 text-3xl font-semibold text-foreground sm:px-8 sm:text-4xl lg:px-[30px] lg:text-5xl">
+        <h2 className="mx-auto mb-12 max-w-3xl select-none px-4 text-3xl font-semibold text-foreground sm:px-8 sm:text-4xl lg:max-w-none lg:px-[30px] lg:text-5xl">
           Use the agents you already trust.
         </h2>
 
         {/* Animated marquee: ~10 logos visible as they flow. Pauses on hover;
             reduced-motion users get the full static list below. */}
-        <div className="agent-marquee group relative mx-auto w-full max-w-2xl overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_8%,black_92%,transparent)]">
+        <div className="agent-marquee group relative mx-auto w-full max-w-2xl overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_8%,black_92%,transparent)] lg:max-w-5xl">
           <div className="agent-marquee__track flex w-max">
             <AgentGroup />
             <AgentGroup duplicate />
