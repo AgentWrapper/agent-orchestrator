@@ -169,6 +169,10 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 		(chunk.atEOF || !progressed) {
 		if finalizationSettled && chunk.atEOF && (!progressed || stableFinalTail) {
 			parsed.Cursor.State = domain.UsageSourceComplete
+			if parsed.pendingCodexSpawnCalls > 0 {
+				parsed.Cursor.AnomalyCount++
+				parsed.Cursor.LastErrorCode = domain.UsageErrorUnresolvedSpawnCall
+			}
 		} else {
 			settleAt := now.Add(i.finalizationWait)
 			parsed.Cursor.NextRetryAt = &settleAt
@@ -194,6 +198,7 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 		}
 		return result, fmt.Errorf("apply usage source %d: %w", source.Source.ID, err)
 	}
+	result.Reconcile = parsed.newCodexChild
 	if parsed.Cursor.State == domain.UsageSourceComplete {
 		return result, i.completeBinding(ctx, source.Source.BindingID, now)
 	}

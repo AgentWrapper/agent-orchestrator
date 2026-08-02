@@ -102,6 +102,26 @@ WHERE (s.is_terminated = 0 OR ub.state = 'finalizing')
             AND us.state = 'error'
             AND us.last_error_code IN ('artifact_missing', 'source_read_failed')
       )
+	  OR EXISTS (
+	      SELECT 1
+	      FROM usage_sources spawning
+	      JOIN json_each(
+	          CASE
+	              WHEN json_valid(spawning.parser_state_json) THEN spawning.parser_state_json
+	              ELSE '{}'
+	          END,
+	          '$.codex.discovered_child_ids'
+	      ) discovered
+	      WHERE spawning.binding_id = ub.id
+	        AND spawning.kind = 'codex_rollout'
+	        AND NOT EXISTS (
+	            SELECT 1
+	            FROM usage_sources registered
+	            WHERE registered.binding_id = ub.id
+	              AND registered.kind = 'codex_rollout'
+	              AND registered.native_session_id = CAST(discovered.value AS TEXT)
+	        )
+	  )
   )
 ORDER BY ub.updated_at, ub.id
 LIMIT ?;
@@ -217,6 +237,26 @@ WHERE id = sqlc.arg(usage_binding_id)
       FROM usage_sources
       WHERE usage_sources.binding_id = sqlc.arg(usage_binding_id)
         AND state <> 'complete'
+	)
+	AND NOT EXISTS (
+	    SELECT 1
+	    FROM usage_sources spawning
+	    JOIN json_each(
+	        CASE
+	            WHEN json_valid(spawning.parser_state_json) THEN spawning.parser_state_json
+	            ELSE '{}'
+	        END,
+	        '$.codex.discovered_child_ids'
+	    ) discovered
+	    WHERE spawning.binding_id = sqlc.arg(usage_binding_id)
+	      AND spawning.kind = 'codex_rollout'
+	      AND NOT EXISTS (
+	          SELECT 1
+	          FROM usage_sources registered
+	          WHERE registered.binding_id = sqlc.arg(usage_binding_id)
+	            AND registered.kind = 'codex_rollout'
+	            AND registered.native_session_id = CAST(discovered.value AS TEXT)
+	      )
   );
 
 -- name: GetModelUsageEventByKey :one

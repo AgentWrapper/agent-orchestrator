@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/google/uuid"
 )
 
 type jsonlRecord struct {
@@ -20,9 +21,11 @@ type jsonlRecord struct {
 }
 
 type parseResult struct {
-	Events []domain.ModelUsageEvent
-	Cursor domain.SourceCursorState
-	err    error
+	Events                 []domain.ModelUsageEvent
+	Cursor                 domain.SourceCursorState
+	newCodexChild          bool
+	pendingCodexSpawnCalls int
+	err                    error
 }
 
 func parseRecords(source domain.UsageSourceContext, records []jsonlRecord, nextOffset int64, now time.Time) parseResult {
@@ -36,6 +39,7 @@ func parseRecords(source domain.UsageSourceContext, records []jsonlRecord, nextO
 		parseClaude(source, records, now, state.Claude, &result)
 	case domain.UsageSourceCodexRollout:
 		parseCodex(source, records, now, state.Codex, &result)
+		result.pendingCodexSpawnCalls = len(state.Codex.PendingSpawnCallIDs)
 	default:
 		result.Cursor.AnomalyCount++
 		result.Cursor.LastErrorCode = domain.UsageErrorUnsupportedSourceFormat
@@ -61,6 +65,11 @@ func cursorFromSource(source domain.UsageSourceRecord, nextOffset int64, now tim
 }
 
 const parserStateVersion = 1
+
+const (
+	maxCodexAttributionIDBytes = 256
+	maxCodexAttributionIDs     = 4096
+)
 
 type codexTokenVector struct {
 	InputTokens           int64 `json:"input_tokens"`
@@ -127,6 +136,9 @@ func decodeParserState(source domain.UsageSourceRecord) (*parserStateEnvelope, e
 		}
 		if state.Codex.DiscoveredChildIDs == nil {
 			state.Codex.DiscoveredChildIDs = []string{}
+		}
+		if err := normalizeCodexParserState(state.Codex); err != nil {
+			return nil, err
 		}
 	default:
 		return nil, fmt.Errorf("unsupported source kind %q", source.Kind)
@@ -268,8 +280,129 @@ func parseCodex(source domain.UsageSourceContext, records []jsonlRecord, now tim
 			}
 		case "event_msg":
 			parseCodexEvent(source, envelope, now, state, result)
+		case "response_item":
+			parseCodexResponseItem(envelope.Payload, state, result)
 		}
 	}
+}
+
+func parseCodexResponseItem(raw json.RawMessage, state *codexParserStateV1, result *parseResult) {
+	var payload struct {
+		Type   string `json:"type"`
+		Name   string `json:"name"`
+		CallID string `json:"call_id"`
+		Output string `json:"output"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return
+	}
+	switch payload.Type {
+	case "function_call":
+		if payload.Name != "spawn_agent" {
+			return
+		}
+		if !validCodexCallID(payload.CallID) ||
+			(!containsString(state.PendingSpawnCallIDs, payload.CallID) && len(state.PendingSpawnCallIDs) >= maxCodexAttributionIDs) {
+			recordMalformed(result)
+			return
+		}
+		state.PendingSpawnCallIDs = appendUniqueString(state.PendingSpawnCallIDs, payload.CallID)
+	case "function_call_output":
+		if !containsString(state.PendingSpawnCallIDs, payload.CallID) {
+			return
+		}
+		var output struct {
+			AgentID string `json:"agent_id"`
+		}
+		if err := json.Unmarshal([]byte(payload.Output), &output); err != nil || !validCodexAgentID(output.AgentID) {
+			recordMalformed(result)
+			return
+		}
+		alreadyDiscovered := containsString(state.DiscoveredChildIDs, output.AgentID)
+		if !alreadyDiscovered && len(state.DiscoveredChildIDs) >= maxCodexAttributionIDs {
+			recordMalformed(result)
+			return
+		}
+		state.PendingSpawnCallIDs = removeString(state.PendingSpawnCallIDs, payload.CallID)
+		if !alreadyDiscovered {
+			state.DiscoveredChildIDs = append(state.DiscoveredChildIDs, output.AgentID)
+			result.newCodexChild = true
+		}
+	}
+}
+
+func normalizeCodexParserState(state *codexParserStateV1) error {
+	pending, err := normalizeCodexIDs(state.PendingSpawnCallIDs, validCodexCallID)
+	if err != nil {
+		return fmt.Errorf("invalid pending spawn call ids: %w", err)
+	}
+	discovered, err := normalizeCodexIDs(state.DiscoveredChildIDs, validCodexAgentID)
+	if err != nil {
+		return fmt.Errorf("invalid discovered child ids: %w", err)
+	}
+	state.PendingSpawnCallIDs = pending
+	state.DiscoveredChildIDs = discovered
+	return nil
+}
+
+func normalizeCodexIDs(values []string, valid func(string) bool) ([]string, error) {
+	if len(values) > maxCodexAttributionIDs {
+		return nil, errors.New("too many ids")
+	}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if !valid(value) {
+			return nil, errors.New("invalid id")
+		}
+		result = appendUniqueString(result, value)
+	}
+	return result, nil
+}
+
+func validCodexCallID(value string) bool {
+	if value == "" || len(value) > maxCodexAttributionIDBytes {
+		return false
+	}
+	for _, char := range value {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') &&
+			(char < '0' || char > '9') && char != '_' && char != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+func validCodexAgentID(value string) bool {
+	if len(value) > maxCodexAttributionIDBytes {
+		return false
+	}
+	parsed, err := uuid.Parse(value)
+	return err == nil && parsed.String() == value
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func appendUniqueString(values []string, value string) []string {
+	if containsString(values, value) {
+		return values
+	}
+	return append(values, value)
+}
+
+func removeString(values []string, target string) []string {
+	for index, value := range values {
+		if value == target {
+			return append(values[:index], values[index+1:]...)
+		}
+	}
+	return values
 }
 
 func parseCodexEvent(source domain.UsageSourceContext, envelope codexEnvelope, now time.Time, state *codexParserStateV1, result *parseResult) {

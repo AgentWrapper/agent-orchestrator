@@ -334,7 +334,7 @@ func TestIngestorCollectsCodexSourceDiscoveredAfterStartup(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	content := `{"type":"session_meta","payload":{"model_provider":"openai"}}` + "\n" +
+	content := string(codexSessionMetaLine(t, "native-late", "")) + "\n" +
 		`{"type":"turn_context","payload":{"model":"gpt-5.6"}}` + "\n" +
 		string(codexTokenLine("2026-07-28T10:00:00Z", 100, 60, 0, 20, 5)) + "\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
@@ -387,7 +387,7 @@ func TestIngestorCompletesCodexExitWhoseSourceAppearsLate(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	content := `{"type":"session_meta","payload":{"model_provider":"openai"}}` + "\n" +
+	content := string(codexSessionMetaLine(t, "native-final", "")) + "\n" +
 		`{"type":"turn_context","payload":{"model":"gpt-5.6"}}` + "\n" +
 		string(codexTokenLine("2026-07-28T10:00:00Z", 100, 60, 0, 20, 5)) + "\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
@@ -436,7 +436,7 @@ func TestIngestorPreservesCursorWhenCodexRolloutMovesToArchive(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(activePath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	initial := `{"type":"session_meta","payload":{"model_provider":"openai"}}` + "\n" +
+	initial := string(codexSessionMetaLine(t, "native-move", "")) + "\n" +
 		`{"type":"turn_context","payload":{"model":"gpt-5.6"}}` + "\n" +
 		string(codexTokenLine("2026-07-28T10:00:00Z", 100, 60, 0, 20, 5)) + "\n"
 	if err := os.WriteFile(activePath, []byte(initial), 0o600); err != nil {
@@ -523,7 +523,7 @@ func TestCoordinatorCollectsCodexUsageFromFilesystemEvents(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(transcript), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	initial := `{"type":"session_meta","payload":{"model_provider":"openai"}}` + "\n" +
+	initial := string(codexSessionMetaLine(t, "native-watch", "")) + "\n" +
 		`{"type":"turn_context","payload":{"model":"gpt-5.6"}}` + "\n"
 	if err := os.WriteFile(transcript, []byte(initial), 0o600); err != nil {
 		t.Fatal(err)

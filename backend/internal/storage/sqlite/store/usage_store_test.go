@@ -411,6 +411,77 @@ func TestApplyUsageChunkRejectsConflictsAndPreservesCursor(t *testing.T) {
 	assertUsageSourceOffset(t, s, source.ID, 50)
 }
 
+func TestUsageBindingWaitsForPersistedCodexChildren(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	sess := seedUsageSession(t, s, domain.HarnessCodex)
+	now := time.Unix(1700000000, 0).UTC()
+	const childID = "22222222-2222-4222-8222-222222222222"
+	binding, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
+		SessionID:    sess.ID,
+		Harness:      sess.Harness,
+		NativeRootID: "11111111-1111-4111-8111-111111111111",
+		State:        domain.UsageBindingActive,
+		FirstSeenAt:  now,
+		LastSeenAt:   now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+		BindingID:       binding.ID,
+		Kind:            domain.UsageSourceCodexRollout,
+		NativeSessionID: binding.NativeRootID,
+		ArtifactPath:    "/tmp/codex/parent.jsonl",
+		FileIdentity:    "parent",
+		ParserStateJSON: `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":["` + childID + `"]}}`,
+		State:           domain.UsageSourceComplete,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	discovery, err := s.ListUsageDiscoveryBindings(ctx, 8)
+	if err != nil || len(discovery) != 1 || discovery[0].ID != binding.ID {
+		t.Fatalf("startup discovery bindings = %+v, err=%v", discovery, err)
+	}
+	if _, err := s.UpdateUsageBindingState(ctx, binding.ID, domain.UsageBindingFinalizing, "", now); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := s.CompleteUsageBindingIfSettled(ctx, binding.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed {
+		t.Fatal("binding completed before its persisted Codex child was registered")
+	}
+	got, ok, err := s.GetUsageBinding(ctx, sess.ID, sess.Harness, binding.NativeRootID)
+	if err != nil || !ok || got.State != domain.UsageBindingFinalizing {
+		t.Fatalf("binding while child missing = %+v, ok=%v err=%v", got, ok, err)
+	}
+
+	if _, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+		BindingID:       binding.ID,
+		Kind:            domain.UsageSourceCodexRollout,
+		NativeSessionID: childID,
+		SubagentID:      childID,
+		ArtifactPath:    "/tmp/codex/child.jsonl",
+		FileIdentity:    "child",
+		State:           domain.UsageSourceComplete,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	completed, err = s.CompleteUsageBindingIfSettled(ctx, binding.ID, now)
+	if err != nil || !completed {
+		t.Fatalf("complete after child registration = %v, err=%v", completed, err)
+	}
+}
+
 func TestUsageRowsCascadeWhenSeedSessionDeleted(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
