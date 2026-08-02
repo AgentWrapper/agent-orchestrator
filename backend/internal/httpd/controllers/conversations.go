@@ -35,6 +35,7 @@ type ConversationService interface {
 	Compact(ctx context.Context, session domain.SessionID) (ports.ChatCompactionResult, error)
 	Rollback(ctx context.Context, session domain.SessionID, turnID string) (int, error)
 	SetTitle(ctx context.Context, session domain.SessionID, title string) (string, error)
+	ReloadMCPServers(ctx context.Context, session domain.SessionID) ([]domain.ConversationMCPServer, error)
 }
 
 // ConversationsController owns the Chat routes for a session.
@@ -59,6 +60,38 @@ func (c *ConversationsController) Register(r chi.Router) {
 	r.Patch("/sessions/{sessionId}/conversation/settings", c.setSettings)
 	r.Post("/sessions/{sessionId}/conversation/turns/{turnId}/rollback", c.rollback)
 	r.Put("/sessions/{sessionId}/conversation/title", c.setTitle)
+	r.Post("/sessions/{sessionId}/conversation/mcp/reload", c.reloadMCPServers)
+}
+
+// reloadMCPServers restarts the provider's tool servers for a session.
+//
+// A write, not a read, and the only recovery there is for the failure it addresses:
+// a tool server that failed to start stays failed for the life of the provider
+// process, so without this a session loses a tool permanently and the alternative is
+// throwing the conversation away.
+func (c *ConversationsController) reloadMCPServers(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/conversation/mcp/reload")
+		return
+	}
+	session := domain.SessionID(chi.URLParam(r, "sessionId"))
+	servers, err := c.Svc.ReloadMCPServers(r.Context(), session)
+	if errors.Is(err, chatsvc.ErrTurnRunning) {
+		// Answered here rather than in writeConversationError, whose CHAT_TURN_RUNNING
+		// message names rolling back. Same code and same retryable meaning; a reader
+		// of this one is not undoing anything.
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_TURN_RUNNING",
+			"stop the agent before reloading its tool servers: it is in the middle of a turn", nil)
+		return
+	}
+	if err != nil {
+		writeConversationError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, ReloadConversationMCPServersResponse{
+		Servers: mcpServersPayload(servers),
+	})
 }
 
 // rollback discards a turn and everything after it, from the agent's memory as well
@@ -383,6 +416,10 @@ func writeConversationError(w http.ResponseWriter, r *http.Request, err error) {
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
 			"CHAT_RENAME_UNSUPPORTED", "this agent's conversation carries no title", nil)
 
+	case errors.Is(err, chatsvc.ErrMCPReloadUnsupported):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_MCP_RELOAD_UNSUPPORTED", "this agent cannot reload its tool servers", nil)
+
 	case errors.Is(err, chatsvc.ErrTitleRequired):
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation",
 			"CHAT_TITLE_REQUIRED", "title is required", nil)
@@ -446,6 +483,10 @@ func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotRespon
 		RateLimits:     rateLimitsPayload(s.RateLimits),
 		CompactedAt:    optionalTimestamp(s.Conversation.CompactedAt),
 		Title:          s.Conversation.ProviderTitle,
+		ModelReroute:   modelReroutePayload(s.Conversation.ModelReroute),
+		Account:        accountPayload(s.Conversation.Account),
+		ThreadState:    threadStatePayload(s.Conversation.ThreadState),
+		MCPServers:     mcpServersPayload(s.Conversation.MCPServers),
 	}
 
 	for _, turn := range s.Turns {
@@ -458,6 +499,7 @@ func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotRespon
 			StartedAt:      optionalTimestamp(turn.StartedAt),
 			CompletedAt:    optionalTimestamp(turn.CompletedAt),
 			Diff:           turnDiffPayload(turn.Diff),
+			Plan:           turnPlanPayload(turn.Plan),
 			RolledBack:     turn.RolledBackAt != nil,
 		})
 	}
@@ -548,6 +590,88 @@ func turnDiffPayload(diff *domain.ConversationTurnDiff) *ConversationTurnDiffRes
 	return out
 }
 
+// turnPlanPayload maps a turn's plan onto the wire shape. A nil plan stays nil: the
+// agent made none, which is not the same as making an empty one.
+func turnPlanPayload(plan *domain.ConversationPlan) *ConversationPlanResponse {
+	if plan == nil {
+		return nil
+	}
+	out := &ConversationPlanResponse{
+		Explanation: plan.Explanation,
+		Steps:       make([]ConversationPlanStepResponse, 0, len(plan.Steps)),
+	}
+	for _, step := range plan.Steps {
+		out.Steps = append(out.Steps, ConversationPlanStepResponse{
+			Text:   step.Text,
+			Status: string(step.Status),
+		})
+	}
+	return out
+}
+
+// modelReroutePayload maps a model substitution onto the wire shape.
+//
+// Absent means the provider never swapped the model, which is why it is not folded
+// into the settings payload: settings say what AO asked for, and this says what
+// answered. Collapsing them would leave a client unable to tell "I chose this" from
+// "this replied".
+func modelReroutePayload(reroute *domain.ConversationModelReroute) *ConversationModelReroutePayload {
+	if reroute == nil {
+		return nil
+	}
+	return &ConversationModelReroutePayload{
+		FromModel:      reroute.FromModel,
+		ToModel:        reroute.ToModel,
+		Reason:         reroute.Reason,
+		ProviderTurnID: reroute.ProviderTurnID,
+		At:             reroute.At.UTC().Format(time.RFC3339),
+	}
+}
+
+// accountPayload maps the provider account onto the wire shape.
+func accountPayload(account *domain.ConversationAccount) *ConversationAccountPayload {
+	if account == nil {
+		return nil
+	}
+	return &ConversationAccountPayload{
+		AuthMode:         account.AuthMode,
+		PlanLabel:        account.PlanLabel,
+		ReauthRequiredAt: optionalTimestamp(account.ReauthRequiredAt),
+		ReauthReason:     account.ReauthReason,
+	}
+}
+
+// threadStatePayload maps the provider's thread lifecycle onto the wire shape.
+func threadStatePayload(state *domain.ConversationThreadState) *ConversationThreadStatePayload {
+	if state == nil {
+		return nil
+	}
+	return &ConversationThreadStatePayload{
+		Status:     string(state.Status),
+		WaitingOn:  state.WaitingOn,
+		ArchivedAt: optionalTimestamp(state.ArchivedAt),
+		ClosedAt:   optionalTimestamp(state.ClosedAt),
+	}
+}
+
+// mcpServersPayload maps the tool servers onto the wire shape, preserving the order
+// the daemon holds them in so a client's list does not reshuffle between polls.
+func mcpServersPayload(servers []domain.ConversationMCPServer) []ConversationMCPServerPayload {
+	if len(servers) == 0 {
+		return nil
+	}
+	out := make([]ConversationMCPServerPayload, 0, len(servers))
+	for _, server := range servers {
+		out = append(out, ConversationMCPServerPayload{
+			Name:          server.Name,
+			Status:        server.Status,
+			Error:         server.Error,
+			FailureReason: server.FailureReason,
+		})
+	}
+	return out
+}
+
 // activityDetailPayload folds accumulated command output into the typed payload.
 //
 // The two output sources are not equivalent and the client is told which it has.
@@ -559,21 +683,55 @@ func turnDiffPayload(diff *domain.ConversationTurnDiff) *ConversationTurnDiffRes
 // explain WHY it is partial instead of hedging identically about both.
 func activityDetailPayload(activity domain.ConversationActivity) map[string]any {
 	detail := decodeDetail(activity.Detail)
-	if activity.CommandOutput == "" {
-		return detail
+	if activity.CommandOutput != "" {
+		if detail == nil {
+			detail = map[string]any{}
+		}
+		// The stream wins over the aggregate: it is the only one that exists
+		// mid-command, and once both exist they carry the same text.
+		detail["output"] = activity.CommandOutput
+		detail["outputSource"] = "stream"
+		detail["outputMayBePartial"] = true
+		if activity.CommandOutputTruncated {
+			detail["outputTruncated"] = true
+		}
 	}
-	if detail == nil {
-		detail = map[string]any{}
-	}
-	// The stream wins over the aggregate: it is the only one that exists mid-command,
-	// and once both exist they carry the same text.
-	detail["output"] = activity.CommandOutput
-	detail["outputSource"] = "stream"
-	detail["outputMayBePartial"] = true
-	if activity.CommandOutputTruncated {
-		detail["outputTruncated"] = true
+	if activity.StreamedText != "" {
+		if detail == nil {
+			detail = map[string]any{}
+		}
+		key, truncatedKey := streamedTextKeys(activity.Kind)
+		detail[key] = activity.StreamedText
+		if activity.StreamedTextTruncated {
+			detail[truncatedKey] = true
+		}
 	}
 	return detail
+}
+
+// streamedTextKeys names the accumulated provider prose for the kind of activity it
+// belongs to.
+//
+// One column, several meanings, because each activity kind has exactly one such
+// stream: a command's is the keystrokes the agent sent into its terminal, a
+// reasoning item's is the model's own summary. Naming them apart on the wire is what
+// keeps a client from having to guess which it is looking at -- and specifically
+// keeps terminalInput out of `output`, which the PTY already echoes.
+func streamedTextKeys(kind domain.ActivityKind) (key, truncatedKey string) {
+	switch kind {
+	case domain.ActivityKindReasoning:
+		// The same key the settled summary lands under, so a client reads one field
+		// whether the item is still streaming or already finished.
+		return "text", "textTruncated"
+	case domain.ActivityKindCommand:
+		return "terminalInput", "terminalInputTruncated"
+	case domain.ActivityKindMCPTool:
+		return "progress", "progressTruncated"
+	case domain.ActivityKindFileChange:
+		return "patchOutput", "patchOutputTruncated"
+	default:
+		return "streamedText", "streamedTextTruncated"
+	}
 }
 
 // decodeDetail turns the stored payload into a JSON object. A payload this build

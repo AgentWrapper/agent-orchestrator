@@ -69,8 +69,8 @@ type threadItem struct {
 	Message string `json:"message"`
 }
 
-// ID reports the provider's item id, which the generated schema makes optional.
-func (it threadItem) itemID() string { return deref(it.ThreadItem.ID) }
+// itemID reports the provider's item id, which the generated schema makes optional.
+func (it threadItem) itemID() string { return deref(it.ID) }
 
 // contextEnvelope reads the conversation's position in the model's context out of
 // a thread/tokenUsage/updated notification.
@@ -590,7 +590,10 @@ func normalizeNotification(n notification, now time.Time) []ports.ChatEvent {
 		limits := rateLimitsFrom(p, now)
 		return []ports.ChatEvent{{Kind: ports.ChatEventRateLimits, RateLimits: &limits}}
 
-	case codexproto.MethodThreadCompacted:
+	// The generated constant carries the provider's own deprecation note, and reading
+	// it anyway is the point: 0.146.0 does not send it, but a build old enough to do
+	// so would otherwise have its compactions silently dropped.
+	case codexproto.MethodThreadCompacted: //nolint:staticcheck // deliberately reading the deprecated spelling
 		// The deprecated spelling, kept for a provider build old enough to send it.
 		// A build that sends both this and the contextCompaction item would report
 		// one compaction twice, so the conversation dedupes on the turn id.
@@ -1116,7 +1119,7 @@ func mcpToolSummary(it threadItem) string {
 // fileChangeSummary labels a file-change activity with what it touched, so a
 // collapsed row says something. "Edited files" was the same label whether the
 // agent renamed one path or rewrote thirty.
-func fileChangeSummary(files []ports.ChatDiffFile) string {
+func fileChangeSummary(files []fileChangeDetail) string {
 	switch len(files) {
 	case 0:
 		return "Edited files"
@@ -1312,19 +1315,48 @@ func joinReasoning(summary []string) string {
 	return strings.Join(parts, "\n\n")
 }
 
+// fileChangeDetail is one changed file as AO puts it on the wire.
+//
+// Declared here with its own JSON tags rather than reusing ports.ChatDiffFile,
+// which has none: marshalling that type directly would put Go field names
+// ("Path", "Additions") into the payload a client reads. The port type describes an
+// event in memory; this describes the wire.
+type fileChangeDetail struct {
+	Path      string `json:"path"`
+	OldPath   string `json:"oldPath,omitempty"`
+	Status    string `json:"status"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	// Patch is this file's unified diff, so a client can render the change as soon as
+	// the patch lands instead of waiting for the turn's aggregate.
+	Patch string `json:"patch,omitempty"`
+	// PatchTruncated reports that the patch was cut at AO's cap, so a partial diff is
+	// never presented as a whole one.
+	PatchTruncated bool `json:"patchTruncated,omitempty"`
+}
+
+// maxPatchChars caps one file's stored patch.
+//
+// A new file's "patch" is its entire contents, and this payload is re-read by every
+// conversation snapshot poll, so an agent generating a 5000-line file would otherwise
+// put it in a row that is fetched once a second. 16K is well past what a diff card
+// shows; past it the worktree and the turn's aggregate diff are where the full change
+// lives.
+const maxPatchChars = 16 * 1024
+
 // fileChanges converts the provider's per-file patches into AO's diff shape.
 //
 // Counts are read out of the patch text here because the provider does not send
 // them. Two patch shapes arrive, both verified live: an update carries a unified
 // hunk (`@@ -2 +2,2 @@\n two\n+three\n`), and an add carries the new file's
 // contents with no hunk header at all.
-func fileChanges(changes []codexproto.FileUpdateChange) []ports.ChatDiffFile {
+func fileChanges(changes []codexproto.FileUpdateChange) []fileChangeDetail {
 	if len(changes) == 0 {
 		return nil
 	}
-	files := make([]ports.ChatDiffFile, 0, len(changes))
+	files := make([]fileChangeDetail, 0, len(changes))
 	for _, change := range changes {
-		file := ports.ChatDiffFile{
+		file := fileChangeDetail{
 			Path:   change.Path,
 			Status: patchStatus(change.Kind.Type),
 			Patch:  change.Diff,
@@ -1336,7 +1368,13 @@ func fileChanges(changes []codexproto.FileUpdateChange) []ports.ChatDiffFile {
 			file.OldPath = change.Path
 			file.Path = *change.Kind.MovePath
 		}
+		// Counted from the WHOLE patch, before any truncation: the figures describe
+		// the change, not how much of it AO chose to store.
 		file.Additions, file.Deletions = countPatchLines(change.Diff, file.Status)
+		if len(file.Patch) > maxPatchChars {
+			file.Patch = file.Patch[:maxPatchChars]
+			file.PatchTruncated = true
+		}
 		files = append(files, file)
 	}
 	return files

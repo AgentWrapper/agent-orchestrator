@@ -989,6 +989,28 @@ type ConversationTurnResponse struct {
 	// list is right here. It also keeps the changed-file view and the timeline from
 	// disagreeing, which two independently-timed fetches would eventually do.
 	Diff *ConversationTurnDiffResponse `json:"diff,omitempty"`
+	// Plan is the agent's plan for this turn, or absent when it made none. The
+	// provider re-sends the whole plan on every change, so this is the current answer
+	// rather than a history of one: the earlier versions are the same plan with fewer
+	// steps ticked off.
+	Plan *ConversationPlanResponse `json:"plan,omitempty"`
+}
+
+// ConversationPlanResponse is the agent's plan for one turn.
+type ConversationPlanResponse struct {
+	// Explanation is the agent's note about the plan as a whole, when it gives one.
+	Explanation string                         `json:"explanation,omitempty"`
+	Steps       []ConversationPlanStepResponse `json:"steps"`
+}
+
+// ConversationPlanStepResponse is one step of a plan.
+//
+// Structured, not prose. The per-step status is the whole point -- it is where the
+// agent is up to -- and a client that wants a sentence can join the steps, while one
+// that wants checkboxes cannot recover them from a sentence.
+type ConversationPlanStepResponse struct {
+	Text   string `json:"text"`
+	Status string `json:"status" enum:"pending,in_progress,completed"`
 }
 
 // ConversationTurnDiffResponse is a turn's changed-file summary.
@@ -1035,17 +1057,41 @@ type ConversationMessageResponse struct {
 
 // ConversationActivityResponse is one non-message timeline entry.
 type ConversationActivityResponse struct {
-	Kind         string `json:"kind" enum:"activity"`
-	ID           string `json:"id"`
-	TurnID       string `json:"turnId,omitempty"`
-	Sequence     int64  `json:"sequence"`
-	Revision     int64  `json:"revision"`
-	ActivityKind string `json:"activityKind" enum:"command,file_change,plan,reasoning,approval,usage,error,system"`
+	Kind     string `json:"kind" enum:"activity"`
+	ID       string `json:"id"`
+	TurnID   string `json:"turnId,omitempty"`
+	Sequence int64  `json:"sequence"`
+	Revision int64  `json:"revision"`
+	// ActivityKind discriminates the payload in Detail.
+	//
+	// mcp_tool is not command: an MCP call has a server, a tool name, structured
+	// arguments and a structured result, and rendering it as a shell command claimed
+	// the agent had run something in the worktree. auto_review is not approval: an
+	// approval is a question waiting on a person, while an auto-review is a decision
+	// the provider already made on their behalf, and those are opposites.
+	ActivityKind string `json:"activityKind" enum:"command,file_change,plan,reasoning,approval,usage,error,system,mcp_tool,auto_review"`
 	Status       string `json:"status" enum:"running,completed,failed,pending,resolved"`
 	Summary      string `json:"summary"`
 	// Detail is the provider-neutral typed payload for this kind. For an approval
 	// it carries the provider's own offered decisions, which is what the client
 	// renders buttons from.
+	//
+	// The keys that depend on the kind:
+	//
+	//   command      command, rawCommand, cwd, exitCode, durationMs, processId,
+	//                output (+ outputSource, outputMayBePartial, outputTruncated),
+	//                terminalInput -- the keystrokes the agent sent to the PTY, kept
+	//                out of output because the PTY echoes them
+	//   file_change  files[] with path, oldPath, status, additions, deletions, patch
+	//   reasoning    text -- streamed while the model works, replaced by the
+	//                provider's settled summary when the item completes
+	//   mcp_tool     server, toolName, namespace, arguments, result, error, success,
+	//                progress
+	//   plan         event "plan", explanation, steps[] with text and status
+	//   auto_review  reviewId, targetItemId, actionType, command, riskLevel,
+	//                rationale, decisionSource, status, durationMs
+	//   system       event -- "compaction", "model.rerouted" or
+	//                "auth.reauth_required" -- plus that event's own fields
 	Detail    map[string]any `json:"detail,omitempty"`
 	RequestID string         `json:"requestId,omitempty"`
 	CreatedAt string         `json:"createdAt"`
@@ -1080,6 +1126,84 @@ type ConversationSnapshotResponse struct {
 	// if never. On the snapshot rather than derived from the timeline so a client can
 	// label the control without scanning every activity.
 	CompactedAt *string `json:"compactedAt,omitempty"`
+	// ModelReroute is present when the provider answered with a model other than the
+	// one that was asked for. A client MUST prefer this over the selected model when
+	// naming what produced the answers: without it the composer keeps advertising a
+	// model that is not replying.
+	ModelReroute *ConversationModelReroutePayload `json:"modelReroute,omitempty"`
+	// Account is the provider account this conversation runs under. Omitted until the
+	// provider says anything about it.
+	Account *ConversationAccountPayload `json:"account,omitempty"`
+	// ThreadState is the provider's own lifecycle view of the thread. It is NOT the
+	// session's status, which stays derived from durable facts and is served on the
+	// session resource; this is one more such fact.
+	ThreadState *ConversationThreadStatePayload `json:"threadState,omitempty"`
+	// MCPServers is the startup state of the tool servers this conversation can
+	// reach. Empty means none are configured or none has reported. It answers a
+	// question the timeline cannot: a tool call that never happened because its
+	// server failed to start reads, from the timeline alone, as the agent choosing
+	// not to use it.
+	MCPServers []ConversationMCPServerPayload `json:"mcpServers,omitempty"`
+}
+
+// ConversationModelReroutePayload is the provider answering with a model other than
+// the one that was asked for.
+type ConversationModelReroutePayload struct {
+	FromModel string `json:"fromModel,omitempty"`
+	ToModel   string `json:"toModel"`
+	// Reason is the provider's own word for why, carried verbatim rather than
+	// translated: AO cannot improve on the provider's account of its own policy.
+	Reason string `json:"reason,omitempty"`
+	// ProviderTurnID is the turn it happened on, so a client can point at the
+	// exchange rather than only at the conversation.
+	ProviderTurnID string `json:"providerTurnId,omitempty"`
+	At             string `json:"at"`
+}
+
+// ConversationAccountPayload is what the provider says about the account behind a
+// conversation.
+type ConversationAccountPayload struct {
+	AuthMode  string `json:"authMode,omitempty"`
+	PlanLabel string `json:"planLabel,omitempty"`
+	// ReauthRequiredAt is when the provider last asked for credentials the daemon
+	// does not hold. Present means the session has stopped working for a reason no
+	// retry will fix and the user has to sign in again.
+	ReauthRequiredAt *string `json:"reauthRequiredAt,omitempty"`
+	ReauthReason     string  `json:"reauthReason,omitempty"`
+}
+
+// ConversationThreadStatePayload is the provider's lifecycle view of the thread.
+type ConversationThreadStatePayload struct {
+	Status string `json:"status,omitempty" enum:"active,idle,not_loaded,system_error,closed"`
+	// WaitingOn are the provider's active flags. A thread can be active AND blocked
+	// on a person, and those are different states.
+	WaitingOn []string `json:"waitingOn,omitempty"`
+	// ArchivedAt is present while the provider considers the thread archived.
+	// Archiving is reversible, so this returns to absent on unarchive.
+	ArchivedAt *string `json:"archivedAt,omitempty"`
+	// ClosedAt is when the provider dropped the thread. Recorded rather than acted
+	// on: the daemon has never observed this, so tearing a controller down on the
+	// strength of it would be a guess.
+	ClosedAt *string `json:"closedAt,omitempty"`
+}
+
+// ConversationMCPServerPayload is one tool server's startup state.
+type ConversationMCPServerPayload struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	// Error is the provider's failure text; FailureReason is its classification,
+	// which is actionable in a way a message is not.
+	Error         string `json:"error,omitempty"`
+	FailureReason string `json:"failureReason,omitempty"`
+}
+
+// ReloadConversationMCPServersResponse reports the tool servers after a reload.
+//
+// The list is what the provider reported when asked. Its own startup notifications
+// remain the authoritative account and land on the conversation regardless, so a
+// client that polls the snapshot will converge on the same answer.
+type ReloadConversationMCPServersResponse struct {
+	Servers []ConversationMCPServerPayload `json:"servers"`
 }
 
 // ConversationUsagePayload is the conversation's token position.

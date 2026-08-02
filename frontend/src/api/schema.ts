@@ -589,6 +589,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/conversation/mcp/reload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restart the tool servers a chat session can reach */
+        post: operations["reloadSessionConversationMcpServers"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/conversation/messages": {
         parameters: {
             query?: never;
@@ -1205,9 +1222,15 @@ export interface components {
             data: string;
             mimeType?: string;
         };
+        ConversationAccountPayload: {
+            authMode?: string;
+            planLabel?: string;
+            reauthReason?: string;
+            reauthRequiredAt?: null | string;
+        };
         ConversationActivityResponse: {
             /** @enum {string} */
-            activityKind: "command" | "file_change" | "plan" | "reasoning" | "approval" | "usage" | "error" | "system";
+            activityKind: "command" | "file_change" | "plan" | "reasoning" | "approval" | "usage" | "error" | "system" | "mcp_tool" | "auto_review";
             createdAt: string;
             detail?: {
                 [key: string]: unknown;
@@ -1234,6 +1257,12 @@ export interface components {
             /** @enum {string} */
             status: "added" | "modified" | "deleted" | "renamed";
         };
+        ConversationMCPServerPayload: {
+            error?: string;
+            failureReason?: string;
+            name: string;
+            status: string;
+        };
         ConversationMessageResponse: {
             createdAt: string;
             id: string;
@@ -1251,6 +1280,13 @@ export interface components {
             text: string;
             turnId?: string;
         };
+        ConversationModelReroutePayload: {
+            at: string;
+            fromModel?: string;
+            providerTurnId?: string;
+            reason?: string;
+            toModel: string;
+        };
         ConversationModelResponse: {
             default: boolean;
             defaultEffort?: string;
@@ -1262,6 +1298,15 @@ export interface components {
         ConversationModelsResponse: {
             models: components["schemas"]["ConversationModelResponse"][];
             selected: components["schemas"]["ConversationTurnSettingsPayload"];
+        };
+        ConversationPlanResponse: {
+            explanation?: string;
+            steps: components["schemas"]["ConversationPlanStepResponse"][];
+        };
+        ConversationPlanStepResponse: {
+            /** @enum {string} */
+            status: "pending" | "in_progress" | "completed";
+            text: string;
         };
         ConversationRateLimitsPayload: {
             planLabel?: string;
@@ -1285,6 +1330,7 @@ export interface components {
             skills: components["schemas"]["ConversationSkillResponse"][];
         };
         ConversationSnapshotResponse: {
+            account?: components["schemas"]["ConversationAccountPayload"];
             activities: components["schemas"]["ConversationActivityResponse"][];
             compactedAt?: null | string;
             /** @enum {string} */
@@ -1293,15 +1339,25 @@ export interface components {
             harness?: string;
             /** Format: int64 */
             latestSequence: number;
+            mcpServers?: components["schemas"]["ConversationMCPServerPayload"][];
             messages: components["schemas"]["ConversationMessageResponse"][];
             /** @enum {string} */
             mode: "chat" | "tui";
+            modelReroute?: components["schemas"]["ConversationModelReroutePayload"];
             rateLimits?: components["schemas"]["ConversationRateLimitsPayload"];
             sessionId: string;
             settings: components["schemas"]["ConversationTurnSettingsPayload"];
+            threadState?: components["schemas"]["ConversationThreadStatePayload"];
             title?: string;
             turns: components["schemas"]["ConversationTurnResponse"][];
             usage?: components["schemas"]["ConversationUsagePayload"];
+        };
+        ConversationThreadStatePayload: {
+            archivedAt?: null | string;
+            closedAt?: null | string;
+            /** @enum {string} */
+            status?: "active" | "idle" | "not_loaded" | "system_error" | "closed";
+            waitingOn?: string[];
         };
         ConversationTurnDiffResponse: {
             files: components["schemas"]["ConversationDiffFileResponse"][];
@@ -1312,6 +1368,7 @@ export interface components {
             diff?: components["schemas"]["ConversationTurnDiffResponse"];
             errorMessage?: string;
             id: string;
+            plan?: components["schemas"]["ConversationPlanResponse"];
             providerTurnId?: string;
             requestedAt: string;
             rolledBack?: boolean;
@@ -1604,6 +1661,9 @@ export interface components {
             platform?: "ios" | "android";
             /** @description Expo push token, e.g. ExponentPushToken[...]. */
             token: string;
+        };
+        ReloadConversationMCPServersResponse: {
+            servers: components["schemas"]["ConversationMCPServerPayload"][];
         };
         RemoveProjectResult: {
             projectId: string;
@@ -4021,6 +4081,65 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    reloadSessionConversationMcpServers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReloadConversationMCPServersResponse"];
+                };
             };
             /** @description Not Found */
             404: {

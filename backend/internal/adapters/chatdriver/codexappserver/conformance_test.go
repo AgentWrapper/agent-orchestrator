@@ -49,6 +49,10 @@ var driverMethods = []struct {
 	// Takes no params; the generated table records Params: "".
 	{codexproto.MethodAccountRateLimitsRead, nil},
 	{codexproto.MethodSkillsList, &codexproto.SkillsListParams{}},
+	// Also takes no params. The reload is the only recovery for a tool server that
+	// failed to start, and the inventory read after it is what reports the outcome.
+	{codexproto.MethodConfigMcpServerReload, nil},
+	{codexproto.MethodMcpServerStatusList, &codexproto.ListMcpServerStatusParams{}},
 
 	// Inbound: the notifications the timeline is built from.
 	{codexproto.MethodThreadStarted, nil},
@@ -61,6 +65,54 @@ var driverMethods = []struct {
 	{codexproto.MethodTurnDiffUpdated, nil},
 	{codexproto.MethodThreadTokenUsageUpdated, nil},
 	{codexproto.MethodAccountRateLimitsUpdated, nil},
+
+	// Inbound: streamed reasoning. VERIFIED live for the summary pair; the raw text
+	// delta was never observed and is read for a build that exposes it.
+	{codexproto.MethodItemReasoningSummaryTextDelta, &codexproto.ReasoningSummaryTextDeltaNotification{}},
+	{codexproto.MethodItemReasoningSummaryPartAdded, &codexproto.ReasoningSummaryPartAddedNotification{}},
+	{codexproto.MethodItemReasoningTextDelta, &codexproto.ReasoningTextDeltaNotification{}},
+
+	// Inbound: the plan. The turn-scoped notification is what 0.146.0 sends; the
+	// item delta was never observed.
+	{codexproto.MethodTurnPlanUpdated, &codexproto.TurnPlanUpdatedNotification{}},
+	{codexproto.MethodItemPlanDelta, &codexproto.PlanDeltaNotification{}},
+
+	// Inbound: per-item file changes. Neither was observed on 0.146.0, which sends
+	// the whole changes array on item/started; both are read so a build that streams
+	// a patch is not dropped.
+	{codexproto.MethodItemFileChangePatchUpdated, &codexproto.FileChangePatchUpdatedNotification{}},
+	{codexproto.MethodItemFileChangeOutputDelta, &codexproto.FileChangeOutputDeltaNotification{}},
+
+	// Inbound: MCP. Server startup state is VERIFIED live; tool-call progress was
+	// never observed even with an MCP server sending notifications/progress.
+	{codexproto.MethodMcpServerStartupStatusUpdated, &codexproto.McpServerStatusUpdatedNotification{}},
+	{codexproto.MethodItemMcpToolCallProgress, &codexproto.McpToolCallProgressNotification{}},
+
+	// Inbound: what the agent typed into a running command's terminal. VERIFIED live.
+	{codexproto.MethodItemCommandExecutionTerminalInteraction, &codexproto.TerminalInteractionNotification{}},
+
+	// Inbound: approval decisions the provider made on the user's behalf. VERIFIED
+	// live with approvalsReviewer=auto_review.
+	{codexproto.MethodItemAutoApprovalReviewStarted, &codexproto.ItemGuardianApprovalReviewStartedNotification{}},
+	{codexproto.MethodItemAutoApprovalReviewCompleted, &codexproto.ItemGuardianApprovalReviewCompletedNotification{}},
+
+	// Inbound: the model was swapped, the account changed. Neither is provokable
+	// from a test.
+	{codexproto.MethodModelRerouted, &codexproto.ModelReroutedNotification{}},
+	{codexproto.MethodAccountUpdated, &codexproto.AccountUpdatedNotification{}},
+
+	// Inbound: thread lifecycle. Status and archive/unarchive are VERIFIED live;
+	// thread/closed was never observed.
+	{codexproto.MethodThreadStatusChanged, &codexproto.ThreadStatusChangedNotification{}},
+	{codexproto.MethodThreadArchived, &codexproto.ThreadArchivedNotification{}},
+	{codexproto.MethodThreadUnarchived, &codexproto.ThreadUnarchivedNotification{}},
+	{codexproto.MethodThreadClosed, &codexproto.ThreadClosedNotification{}},
+
+	// Inbound request: the provider asking for ChatGPT credentials AO does not hold.
+	// Answered with a refusal and surfaced to the user, never fabricated.
+	{codexproto.MethodAccountChatgptAuthTokensRefresh, &codexproto.ChatgptAuthTokensRefreshParams{}},
+	// Inbound request: run a tool AO never declared. Refused explicitly.
+	{codexproto.MethodItemToolCall, &codexproto.DynamicToolCallParams{}},
 
 	// Inbound: approvals. All three kinds the provider declares, which is the
 	// whole set for this build — there is no fourth to miss.

@@ -663,12 +663,12 @@ func TestHandledMethodsAreDeclaredByTheProvider(t *testing.T) {
 
 func decodeDetailMap(t *testing.T, raw []byte) map[string]string {
 	t.Helper()
-	var any map[string]any
-	if err := json.Unmarshal(raw, &any); err != nil {
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
 		t.Fatalf("detail is not an object: %v (%s)", err, raw)
 	}
 	out := map[string]string{}
-	for key, value := range any {
+	for key, value := range decoded {
 		switch typed := value.(type) {
 		case string:
 			out[key] = typed
@@ -693,10 +693,12 @@ func decodeDetailAny(t *testing.T, raw []byte) map[string]any {
 	return out
 }
 
-func decodeFiles(t *testing.T, raw []byte) []ports.ChatDiffFile {
+// decodeFiles reads the files a client sees. Lowercase keys on purpose: the port
+// type has no JSON tags, so serializing it directly would emit Go field names.
+func decodeFiles(t *testing.T, raw []byte) []fileChangeDetail {
 	t.Helper()
 	var detail struct {
-		Files []ports.ChatDiffFile `json:"files"`
+		Files []fileChangeDetail `json:"files"`
 	}
 	if err := json.Unmarshal(raw, &detail); err != nil {
 		t.Fatalf("detail is not an object: %v (%s)", err, raw)

@@ -23,9 +23,11 @@ import (
 // JSON a client actually parses is what is checked.
 
 type fakeConversationService struct {
-	snapshot chatsvc.Snapshot
-	skills   []ports.ChatSkill
-	skillErr error
+	snapshot   chatsvc.Snapshot
+	skills     []ports.ChatSkill
+	skillErr   error
+	mcpServers []domain.ConversationMCPServer
+	reloadErr  error
 }
 
 func (f *fakeConversationService) Snapshot(context.Context, domain.SessionID) (chatsvc.Snapshot, error) {
@@ -62,6 +64,13 @@ func (f *fakeConversationService) Rollback(context.Context, domain.SessionID, st
 
 func (f *fakeConversationService) SetTitle(context.Context, domain.SessionID, string) (string, error) {
 	return "", nil
+}
+
+func (f *fakeConversationService) ReloadMCPServers(
+	context.Context,
+	domain.SessionID,
+) ([]domain.ConversationMCPServer, error) {
+	return f.mcpServers, f.reloadErr
 }
 
 func (f *fakeConversationService) Skills(context.Context, domain.SessionID) ([]ports.ChatSkill, error) {

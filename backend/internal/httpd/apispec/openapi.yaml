@@ -1592,6 +1592,51 @@ paths:
       summary: Cancel the in-flight turn in a chat session
       tags:
       - conversations
+  /api/v1/sessions/{sessionId}/conversation/mcp/reload:
+    post:
+      operationId: reloadSessionConversationMcpServers
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReloadConversationMCPServersResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Restart the tool servers a chat session can reach
+      tags:
+      - conversations
   /api/v1/sessions/{sessionId}/conversation/messages:
     post:
       operationId: sendSessionConversationMessage
@@ -3498,6 +3543,19 @@ components:
       required:
       - data
       type: object
+    ConversationAccountPayload:
+      properties:
+        authMode:
+          type: string
+        planLabel:
+          type: string
+        reauthReason:
+          type: string
+        reauthRequiredAt:
+          type:
+          - "null"
+          - string
+      type: object
     ConversationActivityResponse:
       properties:
         activityKind:
@@ -3510,6 +3568,8 @@ components:
           - usage
           - error
           - system
+          - mcp_tool
+          - auto_review
           type: string
         createdAt:
           type: string
@@ -3577,6 +3637,20 @@ components:
       - deletions
       - status
       type: object
+    ConversationMCPServerPayload:
+      properties:
+        error:
+          type: string
+        failureReason:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+      required:
+      - name
+      - status
+      type: object
     ConversationMessageResponse:
       properties:
         createdAt:
@@ -3622,6 +3696,22 @@ components:
       - streaming
       - createdAt
       type: object
+    ConversationModelReroutePayload:
+      properties:
+        at:
+          type: string
+        fromModel:
+          type: string
+        providerTurnId:
+          type: string
+        reason:
+          type: string
+        toModel:
+          type: string
+      required:
+      - toModel
+      - at
+      type: object
     ConversationModelResponse:
       properties:
         default:
@@ -3654,6 +3744,31 @@ components:
       required:
       - models
       - selected
+      type: object
+    ConversationPlanResponse:
+      properties:
+        explanation:
+          type: string
+        steps:
+          items:
+            $ref: '#/components/schemas/ConversationPlanStepResponse'
+          type: array
+      required:
+      - steps
+      type: object
+    ConversationPlanStepResponse:
+      properties:
+        status:
+          enum:
+          - pending
+          - in_progress
+          - completed
+          type: string
+        text:
+          type: string
+      required:
+      - text
+      - status
       type: object
     ConversationRateLimitsPayload:
       properties:
@@ -3702,6 +3817,8 @@ components:
       type: object
     ConversationSnapshotResponse:
       properties:
+        account:
+          $ref: '#/components/schemas/ConversationAccountPayload'
         activities:
           items:
             $ref: '#/components/schemas/ConversationActivityResponse'
@@ -3725,6 +3842,10 @@ components:
         latestSequence:
           format: int64
           type: integer
+        mcpServers:
+          items:
+            $ref: '#/components/schemas/ConversationMCPServerPayload'
+          type: array
         messages:
           items:
             $ref: '#/components/schemas/ConversationMessageResponse'
@@ -3734,12 +3855,16 @@ components:
           - chat
           - tui
           type: string
+        modelReroute:
+          $ref: '#/components/schemas/ConversationModelReroutePayload'
         rateLimits:
           $ref: '#/components/schemas/ConversationRateLimitsPayload'
         sessionId:
           type: string
         settings:
           $ref: '#/components/schemas/ConversationTurnSettingsPayload'
+        threadState:
+          $ref: '#/components/schemas/ConversationThreadStatePayload'
         title:
           type: string
         turns:
@@ -3758,6 +3883,29 @@ components:
       - messages
       - activities
       - settings
+      type: object
+    ConversationThreadStatePayload:
+      properties:
+        archivedAt:
+          type:
+          - "null"
+          - string
+        closedAt:
+          type:
+          - "null"
+          - string
+        status:
+          enum:
+          - active
+          - idle
+          - not_loaded
+          - system_error
+          - closed
+          type: string
+        waitingOn:
+          items:
+            type: string
+          type: array
       type: object
     ConversationTurnDiffResponse:
       properties:
@@ -3782,6 +3930,8 @@ components:
           type: string
         id:
           type: string
+        plan:
+          $ref: '#/components/schemas/ConversationPlanResponse'
         providerTurnId:
           type: string
         requestedAt:
@@ -4515,6 +4665,15 @@ components:
           type: string
       required:
       - token
+      type: object
+    ReloadConversationMCPServersResponse:
+      properties:
+        servers:
+          items:
+            $ref: '#/components/schemas/ConversationMCPServerPayload'
+          type: array
+      required:
+      - servers
       type: object
     RemoveProjectResult:
       properties:

@@ -68,6 +68,13 @@ func (f *fakeChatService) Compact(context.Context, domain.SessionID) (ports.Chat
 	return ports.ChatCompactionResult{}, nil
 }
 
+func (f *fakeChatService) ReloadMCPServers(
+	context.Context,
+	domain.SessionID,
+) ([]domain.ConversationMCPServer, error) {
+	return nil, nil
+}
+
 func (f *fakeChatService) SetTitle(_ context.Context, _ domain.SessionID, title string) (string, error) {
 	f.gotTitle = title
 	if f.setTitle != nil {

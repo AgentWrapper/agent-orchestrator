@@ -421,6 +421,21 @@ type turn struct {
 	// are different answers: the first means the provider never reported, the second
 	// means it reported that nothing changed.
 	Diff *turnDiff `json:"diff"`
+	// Plan is the agent's plan for the turn. Nil means it made none, which is not the
+	// same as an empty plan.
+	Plan *turnPlan `json:"plan"`
+}
+
+// turnPlan is the agent's plan, as structured steps rather than prose: the per-step
+// status is where the agent is up to, and that is not recoverable from a sentence.
+type turnPlan struct {
+	Explanation string     `json:"explanation"`
+	Steps       []planStep `json:"steps"`
+}
+
+type planStep struct {
+	Text   string `json:"text"`
+	Status string `json:"status"`
 }
 
 type turnDiff struct {
@@ -516,6 +531,45 @@ type snapshot struct {
 	// Nil until a compaction has run, which is the distinction the compaction
 	// scenarios assert on.
 	CompactedAt *string `json:"compactedAt"`
+	// Provider state that belongs to the conversation rather than to a turn. All nil
+	// until the provider reports, so absent stays distinguishable from empty.
+	ModelReroute *modelRerouteState `json:"modelReroute"`
+	Account      *accountState      `json:"account"`
+	ThreadState  *threadState       `json:"threadState"`
+	MCPServers   []mcpServerState   `json:"mcpServers"`
+}
+
+// modelRerouteState is the provider answering with a model other than the one asked
+// for. Present means the composer selected model is no longer what is replying.
+type modelRerouteState struct {
+	FromModel      string `json:"fromModel"`
+	ToModel        string `json:"toModel"`
+	Reason         string `json:"reason"`
+	ProviderTurnID string `json:"providerTurnId"`
+	At             string `json:"at"`
+}
+
+type accountState struct {
+	AuthMode         string  `json:"authMode"`
+	PlanLabel        string  `json:"planLabel"`
+	ReauthRequiredAt *string `json:"reauthRequiredAt"`
+	ReauthReason     string  `json:"reauthReason"`
+}
+
+// threadState is the PROVIDER lifecycle view of the thread, not the session status
+// AO derives. Both are readable from one snapshot, which is why they are separate.
+type threadState struct {
+	Status     string   `json:"status"`
+	WaitingOn  []string `json:"waitingOn"`
+	ArchivedAt *string  `json:"archivedAt"`
+	ClosedAt   *string  `json:"closedAt"`
+}
+
+type mcpServerState struct {
+	Name          string `json:"name"`
+	Status        string `json:"status"`
+	Error         string `json:"error"`
+	FailureReason string `json:"failureReason"`
 }
 
 // usageState is the conversation's token position, carried as current state on the

@@ -1295,11 +1295,7 @@ func (c *Controller) ReloadMCPServers(ctx context.Context) ([]domain.Conversatio
 		return current, nil
 	}
 
-	converted := make([]ports.ChatMCPServer, 0, len(servers))
-	for _, server := range servers {
-		converted = append(converted, server)
-	}
-	if err := c.applyMCPServers(ctx, converted); err != nil {
+	if err := c.applyMCPServers(ctx, servers); err != nil {
 		return nil, err
 	}
 
