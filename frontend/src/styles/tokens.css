@@ -374,7 +374,7 @@
 	--color-settings-accent: #4f8afa;
 	--color-settings-switch-on: #3b82f6;
 
-	/* PR card (session inspector) — maintainer palette, mockup "3a PR card".
+	/* PR card (session inspector): maintainer palette, mockup "3a PR card".
 	   Every state is a labelled row and hue is reserved for two things only:
 	   links (clickable) and blockers. Green and amber are retired in this card;
 	   everything non-blocking collapses onto the three neutral text tiers. */
@@ -614,7 +614,7 @@
 	--color-settings-accent: #4f8afa;
 	--color-settings-switch-on: #3b82f6;
 
-	/* PR card — light equivalents of the dark mockup palette. Same six roles,
+	/* PR card: light equivalents of the dark mockup palette. Same six roles,
 	   same "hue only for links and blockers" rule, re-anchored for a light card. */
 	--color-bg-pr-card: #ffffff;
 	--color-text-pr-title: #1a1a1a;

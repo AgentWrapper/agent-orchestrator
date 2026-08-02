@@ -114,7 +114,7 @@
 	--radius-settings-row: var(--radius-settings-row);
 	--radius-settings-panel: var(--radius-settings-panel);
 
-	/* PR card (session inspector) — see tokens.css for the palette contract */
+	/* PR card (session inspector): see tokens.css for the palette contract */
 	--color-pr-card: var(--color-bg-pr-card);
 	--color-pr-title: var(--color-text-pr-title);
 	--color-pr-value: var(--color-text-pr-value);
