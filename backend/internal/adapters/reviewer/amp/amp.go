@@ -14,10 +14,12 @@ import (
 )
 
 // Reviewer builds Amp's interactive reviewer command.
-type Reviewer struct{}
+type Reviewer struct {
+	resolveBinary func(context.Context) (string, error)
+}
 
 // New returns the production Amp reviewer adapter.
-func New() *Reviewer { return &Reviewer{} }
+func New() *Reviewer { return &Reviewer{resolveBinary: workeramp.ResolveAmpBinary} }
 
 // Harness returns Amp's reviewer identity.
 func (*Reviewer) Harness() domain.ReviewerHarness { return domain.ReviewerAmp }
@@ -27,8 +29,8 @@ var _ ports.ReviewerCanceller = (*Reviewer)(nil)
 
 // ReviewCommand launches Amp's permanent interactive TUI. AO never uses
 // --execute; the review task is injected after the pane starts.
-func (*Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
-	binary, err := workeramp.ResolveAmpBinary(ctx)
+func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
+	binary, err := r.resolveBinary(ctx)
 	if err != nil {
 		return ports.ReviewCommandSpec{}, err
 	}

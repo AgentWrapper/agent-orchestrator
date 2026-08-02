@@ -10,10 +10,12 @@ import (
 )
 
 // Reviewer builds Aider's interactive reviewer command.
-type Reviewer struct{}
+type Reviewer struct {
+	resolveBinary func(context.Context) (string, error)
+}
 
 // New returns the production Aider reviewer adapter.
-func New() *Reviewer { return &Reviewer{} }
+func New() *Reviewer { return &Reviewer{resolveBinary: workeraider.ResolveAiderBinary} }
 
 // Harness returns Aider's reviewer identity.
 func (*Reviewer) Harness() domain.ReviewerHarness { return domain.ReviewerAider }
@@ -25,8 +27,8 @@ var _ ports.ReviewerReusePolicy = (*Reviewer)(nil)
 // ReviewCommand launches Aider's interactive ask-mode TUI with normal manual
 // confirmations. System and task files are loaded as read-only context; no
 // --message, message-file, or unattended-approval flag is emitted.
-func (*Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
-	binary, err := workeraider.ResolveAiderBinary(ctx)
+func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
+	binary, err := r.resolveBinary(ctx)
 	if err != nil {
 		return ports.ReviewCommandSpec{}, err
 	}
