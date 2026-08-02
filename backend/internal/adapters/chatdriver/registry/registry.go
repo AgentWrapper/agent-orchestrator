@@ -10,7 +10,9 @@ package registry
 import (
 	"log/slog"
 
+	agentclaudecode "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/codexappserver"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -38,12 +40,18 @@ func New(drivers ...ports.ChatDriver) *Registry {
 
 // Build returns the drivers the daemon ships.
 //
-// Codex only, deliberately. Claude Code is next, and every other harness stays
-// TUI-only until its driver is written and its capabilities verified against a
-// real install — not assumed from the fact that a protocol exists.
+// Codex and Claude Code, deliberately. Each speaks a machine protocol AO has
+// exercised against a real install and each clears the production floor
+// (streaming, approvals, interrupt, resume) — the two are peers, not a primary and
+// a fallback, and neither is here because a protocol exists on paper.
+//
+// Every other harness stays TUI-only until the same is true of it. Both drivers
+// reuse their harness's existing agent plugin for binary resolution and auth, so
+// registration adds no second answer to "is this agent installed and logged in".
 func Build(log *slog.Logger) *Registry {
 	return New(
 		codexappserver.New(codex.New(), log),
+		claudecode.New(agentclaudecode.New(), log),
 	)
 }
 
