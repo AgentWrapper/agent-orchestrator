@@ -871,6 +871,56 @@ func (q *Queries) ListUsageSourcesForBinding(ctx context.Context, bindingID int6
 	return items, nil
 }
 
+const listUsageSourcesForSession = `-- name: ListUsageSourcesForSession :many
+SELECT us.id, us.binding_id, us.kind, us.native_session_id, us.subagent_id, us.artifact_path, us.file_identity, us.generation, us.byte_offset, us.parser_state_json, us.state, us.failure_count, us.anomaly_count, us.next_retry_at, us.last_error_code, us.last_observed_at, us.created_at, us.updated_at
+FROM usage_sources us
+JOIN usage_bindings ub ON ub.id = us.binding_id
+WHERE ub.session_id = ?
+ORDER BY ub.first_seen_at, ub.id, us.generation, us.id
+`
+
+func (q *Queries) ListUsageSourcesForSession(ctx context.Context, sessionID domain.SessionID) ([]UsageSource, error) {
+	rows, err := q.db.QueryContext(ctx, listUsageSourcesForSession, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UsageSource{}
+	for rows.Next() {
+		var i UsageSource
+		if err := rows.Scan(
+			&i.ID,
+			&i.BindingID,
+			&i.Kind,
+			&i.NativeSessionID,
+			&i.SubagentID,
+			&i.ArtifactPath,
+			&i.FileIdentity,
+			&i.Generation,
+			&i.ByteOffset,
+			&i.ParserStateJson,
+			&i.State,
+			&i.FailureCount,
+			&i.AnomalyCount,
+			&i.NextRetryAt,
+			&i.LastErrorCode,
+			&i.LastObservedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWatchableUsageSources = `-- name: ListWatchableUsageSources :many
 SELECT us.id, us.binding_id, us.kind, us.native_session_id, us.subagent_id, us.artifact_path, us.file_identity, us.generation, us.byte_offset, us.parser_state_json, us.state, us.failure_count, us.anomaly_count, us.next_retry_at, us.last_error_code, us.last_observed_at, us.created_at, us.updated_at
 FROM usage_sources us

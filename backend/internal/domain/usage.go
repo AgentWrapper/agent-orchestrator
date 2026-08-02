@@ -78,7 +78,6 @@ const (
 	UsageErrorNonMonotonicCumulativeUsage = "non_monotonic_cumulative_usage"
 	UsageErrorInvalidParserState          = "invalid_parser_state"
 	UsageErrorUnresolvedSpawnCall         = "unresolved_spawn_call"
-	UsageErrorUnknownModelPricing         = "unknown_model_pricing"
 	UsageErrorPartialReasoningCoverage    = "partial_reasoning_coverage"
 )
 
@@ -179,8 +178,8 @@ type UsageMetricCoverage struct {
 	Coverage UsageCoverage
 }
 
-// UsageCostCoverage summarizes estimated or provider-reported cost over an
-// aggregate scope. Value is nano-USD.
+// UsageCostCoverage summarizes cost over an aggregate scope. Value is
+// nano-USD.
 type UsageCostCoverage struct {
 	Value          *int64
 	Coverage       UsageCoverage

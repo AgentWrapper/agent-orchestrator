@@ -60,6 +60,13 @@ FROM usage_sources
 WHERE binding_id = ?
 ORDER BY generation, id;
 
+-- name: ListUsageSourcesForSession :many
+SELECT us.*
+FROM usage_sources us
+JOIN usage_bindings ub ON ub.id = us.binding_id
+WHERE ub.session_id = ?
+ORDER BY ub.first_seen_at, ub.id, us.generation, us.id;
+
 -- name: ListWatchableUsageSources :many
 SELECT us.*
 FROM usage_sources us

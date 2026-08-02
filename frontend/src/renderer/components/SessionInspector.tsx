@@ -443,9 +443,9 @@ function UsageProviderRow({ harness }: { harness: SessionUsage["harnesses"][numb
 					</span>
 					<span
 						className="text-right font-mono text-2xs text-settings-muted"
-						title={costNanos === null ? "Estimated cost coming soon" : undefined}
+						title={costNanos === null ? "Cost coming soon" : undefined}
 					>
-							{costNanos === null ? "—" : formatCost(costNanos)}
+						{costNanos === null ? "—" : formatCost(costNanos)}
 					</span>
 				</div>
 			</HoverCardTrigger>
@@ -525,7 +525,7 @@ function UsageModelRow({ model }: { model: SessionUsage["harnesses"][number]["mo
 					</span>
 					<span
 						className="text-right font-mono text-2xs text-settings-muted"
-						title={costNanos === null ? "Estimated cost coming soon" : undefined}
+						title={costNanos === null ? "Cost coming soon" : undefined}
 					>
 						{costNanos === null ? "—" : formatCost(costNanos)}
 					</span>

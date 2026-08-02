@@ -182,6 +182,20 @@ func (s *Store) ListUsageSourcesForBinding(ctx context.Context, bindingID int64)
 	return out, nil
 }
 
+// ListUsageSourcesForSession returns all source generations attached to every
+// native usage binding for one AO session.
+func (s *Store) ListUsageSourcesForSession(ctx context.Context, sessionID domain.SessionID) ([]domain.UsageSourceRecord, error) {
+	rows, err := s.qr.ListUsageSourcesForSession(ctx, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("list usage sources for session %s: %w", sessionID, err)
+	}
+	out := make([]domain.UsageSourceRecord, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, usageSourceFromGen(row))
+	}
+	return out, nil
+}
+
 // ListWatchableUsageSources returns the latest source generation for every
 // provider artifact attached to a resumable session. Watch registrations are
 // rebuilt from this durable inventory after daemon and watcher restarts.

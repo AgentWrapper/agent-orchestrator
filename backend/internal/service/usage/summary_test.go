@@ -9,19 +9,23 @@ import (
 )
 
 type compactUsageStoreStub struct {
-	projectID domain.ProjectID
-	rows      []domain.UsageSessionAggregate
-	calls     int
-	session   domain.SessionRecord
-	found     bool
-	bindings  []domain.UsageBindingRecord
-	sources   map[int64][]domain.UsageSourceRecord
-	models    []domain.UsageModelAggregate
+	projectID       domain.ProjectID
+	rows            []domain.UsageSessionAggregate
+	compactCalls    int
+	getSessionCalls int
+	bindingCalls    int
+	sourceCalls     int
+	modelCalls      int
+	session         domain.SessionRecord
+	found           bool
+	bindings        []domain.UsageBindingRecord
+	sources         []domain.UsageSourceRecord
+	models          []domain.UsageModelAggregate
 }
 
 func (s *compactUsageStoreStub) ListCompactSessionUsage(_ context.Context, projectID domain.ProjectID) ([]domain.UsageSessionAggregate, error) {
 	s.projectID = projectID
-	s.calls++
+	s.compactCalls++
 	return s.rows, nil
 }
 
@@ -29,6 +33,7 @@ func (s *compactUsageStoreStub) GetSession(
 	_ context.Context,
 	_ domain.SessionID,
 ) (domain.SessionRecord, bool, error) {
+	s.getSessionCalls++
 	return s.session, s.found, nil
 }
 
@@ -36,20 +41,23 @@ func (s *compactUsageStoreStub) ListUsageBindingsForSession(
 	_ context.Context,
 	_ domain.SessionID,
 ) ([]domain.UsageBindingRecord, error) {
+	s.bindingCalls++
 	return s.bindings, nil
 }
 
-func (s *compactUsageStoreStub) ListUsageSourcesForBinding(
+func (s *compactUsageStoreStub) ListUsageSourcesForSession(
 	_ context.Context,
-	bindingID int64,
+	_ domain.SessionID,
 ) ([]domain.UsageSourceRecord, error) {
-	return s.sources[bindingID], nil
+	s.sourceCalls++
+	return s.sources, nil
 }
 
 func (s *compactUsageStoreStub) ListUsageModelAggregates(
 	_ context.Context,
 	_ domain.SessionID,
 ) ([]domain.UsageModelAggregate, error) {
+	s.modelCalls++
 	return s.models, nil
 }
 
@@ -82,8 +90,8 @@ func TestSummaryReaderListCompactDerivesStatesAndCoverageInOneRead(t *testing.T)
 	if err != nil {
 		t.Fatalf("list compact: %v", err)
 	}
-	if store.calls != 1 || store.projectID != "reverb" {
-		t.Fatalf("store calls/project = %d/%q, want 1/reverb", store.calls, store.projectID)
+	if store.compactCalls != 1 || store.projectID != "reverb" {
+		t.Fatalf("store calls/project = %d/%q, want 1/reverb", store.compactCalls, store.projectID)
 	}
 	want := []struct {
 		state    domain.UsageCollectionState
@@ -115,11 +123,14 @@ func TestSummaryReaderGetReturnsDetailedTelemetryWithoutInventingCost(t *testing
 	store := &compactUsageStoreStub{
 		found:   true,
 		session: domain.SessionRecord{ID: "reverb-12", Harness: domain.HarnessCodex},
-		bindings: []domain.UsageBindingRecord{{
-			ID: 1, State: domain.UsageBindingActive,
-		}},
-		sources: map[int64][]domain.UsageSourceRecord{
-			1: {{ID: 2, State: domain.UsageSourceActive}},
+		bindings: []domain.UsageBindingRecord{
+			{ID: 1, State: domain.UsageBindingActive},
+			{ID: 2, State: domain.UsageBindingComplete},
+		},
+		sources: []domain.UsageSourceRecord{
+			{ID: 10, BindingID: 1, State: domain.UsageSourceActive},
+			{ID: 11, BindingID: 1, SubagentID: "child-1", State: domain.UsageSourceComplete},
+			{ID: 12, BindingID: 2, State: domain.UsageSourceComplete},
 		},
 		models: []domain.UsageModelAggregate{{
 			Harness:             domain.HarnessCodex,
@@ -155,6 +166,15 @@ func TestSummaryReaderGetReturnsDetailedTelemetryWithoutInventingCost(t *testing
 	if len(got.Harnesses) != 1 || len(got.Harnesses[0].Models) != 1 ||
 		got.Harnesses[0].Models[0].ModelID != "gpt-5.6" {
 		t.Fatalf("harnesses = %+v", got.Harnesses)
+	}
+	if store.getSessionCalls != 1 || store.bindingCalls != 1 || store.sourceCalls != 1 || store.modelCalls != 1 {
+		t.Fatalf(
+			"detailed read calls = session:%d bindings:%d sources:%d models:%d, want 1 each",
+			store.getSessionCalls,
+			store.bindingCalls,
+			store.sourceCalls,
+			store.modelCalls,
+		)
 	}
 }
 

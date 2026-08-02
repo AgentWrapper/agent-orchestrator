@@ -207,7 +207,7 @@ func TestApplyUsageChunkAtomicReplayAndAggregates(t *testing.T) {
 
 	reasoning := int64(3)
 	cost := int64(12345)
-	event := usageEvent("event-1", "hash-1", now, domain.UsageTokenMetrics{
+	event := usageEvent("event-1", now, domain.UsageTokenMetrics{
 		InputTokens:         100,
 		UncachedInputTokens: 40,
 		CacheReadTokens:     50,
@@ -288,7 +288,7 @@ func TestApplyUsageChunkRejectsChangedProviderTimestampForStableKey(t *testing.T
 		ByteOffset: 10,
 		State:      domain.UsageSourceActive,
 		UpdatedAt:  now,
-	}, []domain.ModelUsageEvent{usageEvent("event-1", "", now, tokens, nil)}); err != nil {
+	}, []domain.ModelUsageEvent{usageEvent("event-1", now, tokens, nil)}); err != nil {
 		t.Fatalf("seed event: %v", err)
 	}
 
@@ -296,7 +296,7 @@ func TestApplyUsageChunkRejectsChangedProviderTimestampForStableKey(t *testing.T
 		ByteOffset: 20,
 		State:      domain.UsageSourceActive,
 		UpdatedAt:  now.Add(time.Minute),
-	}, []domain.ModelUsageEvent{usageEvent("event-1", "", now.Add(time.Minute), tokens, nil)})
+	}, []domain.ModelUsageEvent{usageEvent("event-1", now.Add(time.Minute), tokens, nil)})
 	if !errors.Is(err, domain.ErrUsageSourceEventConflict) {
 		t.Fatalf("timestamp conflict error = %v, want ErrUsageSourceEventConflict", err)
 	}
@@ -327,7 +327,6 @@ func TestListUsageModelAggregatesPropagatesOnlyConsistentPricingVersion(t *testi
 				cost := int64(100 + index)
 				event := usageEvent(
 					fmt.Sprintf("event-%d", index),
-					"",
 					now.Add(time.Duration(index)*time.Second),
 					domain.UsageTokenMetrics{InputTokens: 10, UncachedInputTokens: 10, OutputTokens: 1},
 					&cost,
@@ -369,14 +368,14 @@ func TestApplyUsageChunkRejectsConflictsAndPreservesCursor(t *testing.T) {
 	source := seedUsageSource(t, s, sess, now)
 
 	if _, err := s.ApplyUsageChunk(ctx, source.ID, 0, domain.SourceCursorState{ByteOffset: 50, State: domain.UsageSourceActive, UpdatedAt: now}, []domain.ModelUsageEvent{
-		usageEvent("event-1", "hash-1", now, domain.UsageTokenMetrics{InputTokens: 10, UncachedInputTokens: 10, OutputTokens: 1}, nil),
+		usageEvent("event-1", now, domain.UsageTokenMetrics{InputTokens: 10, UncachedInputTokens: 10, OutputTokens: 1}, nil),
 	}); err != nil {
 		t.Fatalf("seed event: %v", err)
 	}
 
-	conflict := usageEvent("event-1", "different-hash", now, domain.UsageTokenMetrics{InputTokens: 11, UncachedInputTokens: 11, OutputTokens: 1}, nil)
+	conflict := usageEvent("event-1", now, domain.UsageTokenMetrics{InputTokens: 11, UncachedInputTokens: 11, OutputTokens: 1}, nil)
 	result, err := s.ApplyUsageChunk(ctx, source.ID, 50, domain.SourceCursorState{ByteOffset: 80, State: domain.UsageSourceActive, UpdatedAt: now}, []domain.ModelUsageEvent{
-		usageEvent("event-2", "hash-2", now, domain.UsageTokenMetrics{InputTokens: 4, UncachedInputTokens: 4, OutputTokens: 1}, nil),
+		usageEvent("event-2", now, domain.UsageTokenMetrics{InputTokens: 4, UncachedInputTokens: 4, OutputTokens: 1}, nil),
 		conflict,
 	})
 	if !errors.Is(err, domain.ErrUsageSourceEventConflict) {
@@ -394,7 +393,7 @@ func TestApplyUsageChunkRejectsConflictsAndPreservesCursor(t *testing.T) {
 		t.Fatalf("rolled-back chunk persisted events: %+v", aggregates)
 	}
 
-	bad := usageEvent("event-2", "hash-2", now, domain.UsageTokenMetrics{
+	bad := usageEvent("event-2", now, domain.UsageTokenMetrics{
 		InputTokens:         10,
 		UncachedInputTokens: 10,
 		CacheReadTokens:     11,
@@ -670,7 +669,7 @@ func TestUsageRowsCascadeWhenSeedSessionDeleted(t *testing.T) {
 	}
 	source := seedUsageSource(t, s, sess, now)
 	if _, err := s.ApplyUsageChunk(ctx, source.ID, 0, domain.SourceCursorState{ByteOffset: 10, State: domain.UsageSourceComplete, UpdatedAt: now}, []domain.ModelUsageEvent{
-		usageEvent("event-1", "hash-1", now, domain.UsageTokenMetrics{InputTokens: 1, UncachedInputTokens: 1, OutputTokens: 1}, nil),
+		usageEvent("event-1", now, domain.UsageTokenMetrics{InputTokens: 1, UncachedInputTokens: 1, OutputTokens: 1}, nil),
 	}); err != nil {
 		t.Fatalf("apply event: %v", err)
 	}
@@ -716,8 +715,8 @@ func TestListCompactSessionUsageAggregatesAndFiltersByProject(t *testing.T) {
 		LastObservedAt: &now,
 		UpdatedAt:      now,
 	}, []domain.ModelUsageEvent{
-		usageEvent("event-1", "hash-1", now, domain.UsageTokenMetrics{InputTokens: 100, UncachedInputTokens: 100, OutputTokens: 20}, nil),
-		usageEvent("event-2", "hash-2", now.Add(time.Second), domain.UsageTokenMetrics{InputTokens: 50, UncachedInputTokens: 50, OutputTokens: 10}, nil),
+		usageEvent("event-1", now, domain.UsageTokenMetrics{InputTokens: 100, UncachedInputTokens: 100, OutputTokens: 20}, nil),
+		usageEvent("event-2", now.Add(time.Second), domain.UsageTokenMetrics{InputTokens: 50, UncachedInputTokens: 50, OutputTokens: 10}, nil),
 	}); err != nil {
 		t.Fatalf("apply usage events: %v", err)
 	}
@@ -748,6 +747,110 @@ func TestListCompactSessionUsageAggregatesAndFiltersByProject(t *testing.T) {
 	}
 	if len(all) != 2 {
 		t.Fatalf("all rows = %d, want 2", len(all))
+	}
+}
+
+func TestUsageSessionAggregatesParentChildAndMultipleBindingsExactlyOnce(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	now := time.Unix(1700000000, 0).UTC()
+	sess := seedUsageSession(t, s, domain.HarnessCodex)
+
+	newBinding := func(nativeRootID string) domain.UsageBindingRecord {
+		t.Helper()
+		binding, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
+			SessionID:      sess.ID,
+			Harness:        sess.Harness,
+			NativeRootID:   nativeRootID,
+			InitialModelID: "gpt-5",
+			State:          domain.UsageBindingActive,
+			FirstSeenAt:    now,
+			LastSeenAt:     now,
+			UpdatedAt:      now,
+		})
+		if err != nil {
+			t.Fatalf("upsert binding %s: %v", nativeRootID, err)
+		}
+		return binding
+	}
+	newSource := func(binding domain.UsageBindingRecord, nativeID, subagentID, path string) domain.UsageSourceRecord {
+		t.Helper()
+		source, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+			BindingID:       binding.ID,
+			Kind:            domain.UsageSourceCodexRollout,
+			NativeSessionID: nativeID,
+			SubagentID:      subagentID,
+			ArtifactPath:    path,
+			FileIdentity:    nativeID,
+			State:           domain.UsageSourceActive,
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		})
+		if err != nil {
+			t.Fatalf("insert source %s: %v", nativeID, err)
+		}
+		return source
+	}
+	apply := func(source domain.UsageSourceRecord, key string, input, output int64, observedAt time.Time) {
+		t.Helper()
+		_, err := s.ApplyUsageChunk(ctx, source.ID, 0, domain.SourceCursorState{
+			ByteOffset:     10,
+			State:          domain.UsageSourceComplete,
+			LastObservedAt: &observedAt,
+			UpdatedAt:      observedAt,
+		}, []domain.ModelUsageEvent{usageEvent(key, observedAt, domain.UsageTokenMetrics{
+			InputTokens:         input,
+			UncachedInputTokens: input,
+			OutputTokens:        output,
+		}, nil)})
+		if err != nil {
+			t.Fatalf("apply source %d: %v", source.ID, err)
+		}
+	}
+
+	rootBinding := newBinding("root-thread")
+	parent := newSource(rootBinding, "root-thread", "", "/tmp/codex/root.jsonl")
+	child := newSource(rootBinding, "child-thread", "child-thread", "/tmp/codex/child.jsonl")
+	secondBinding := newBinding("resumed-thread")
+	resumed := newSource(secondBinding, "resumed-thread", "", "/tmp/codex/resumed.jsonl")
+	apply(parent, "parent-event", 100, 20, now)
+	apply(child, "child-event", 30, 5, now.Add(time.Second))
+	apply(resumed, "resumed-event", 50, 10, now.Add(2*time.Second))
+	for _, binding := range []domain.UsageBindingRecord{rootBinding, secondBinding} {
+		if _, err := s.UpdateUsageBindingState(ctx, binding.ID, domain.UsageBindingComplete, "", now); err != nil {
+			t.Fatalf("complete binding %d: %v", binding.ID, err)
+		}
+	}
+
+	sources, err := s.ListUsageSourcesForSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("list session sources: %v", err)
+	}
+	if len(sources) != 3 {
+		t.Fatalf("session sources = %d, want parent, child, and resumed", len(sources))
+	}
+
+	models, err := s.ListUsageModelAggregates(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("list model aggregates: %v", err)
+	}
+	if len(models) != 1 || models[0].EventCount != 3 ||
+		models[0].Tokens.InputTokens != 180 || models[0].Tokens.OutputTokens != 35 {
+		t.Fatalf("model aggregates = %+v, want input=180 output=35 events=3", models)
+	}
+
+	compact, err := s.ListCompactSessionUsage(ctx, sess.ProjectID)
+	if err != nil {
+		t.Fatalf("list compact usage: %v", err)
+	}
+	if len(compact) != 1 {
+		t.Fatalf("compact rows = %+v, want one", compact)
+	}
+	row := compact[0]
+	if row.TotalTokens != 215 || row.EventCount != 3 ||
+		row.BindingCount != 2 || row.CompleteBindingCount != 2 ||
+		row.SourceCount != 3 || row.CompleteSourceCount != 3 {
+		t.Fatalf("compact aggregate = %+v", row)
 	}
 }
 
@@ -796,7 +899,7 @@ func seedUsageSource(t *testing.T, s *sqlite.Store, sess domain.SessionRecord, n
 	return source
 }
 
-func usageEvent(key, _ string, at time.Time, tokens domain.UsageTokenMetrics, cost *int64) domain.ModelUsageEvent {
+func usageEvent(key string, at time.Time, tokens domain.UsageTokenMetrics, cost *int64) domain.ModelUsageEvent {
 	pricingVersion := "test-pricing"
 	return domain.ModelUsageEvent{
 		Provider:       "openai",

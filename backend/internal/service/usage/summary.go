@@ -13,7 +13,7 @@ type usageSummaryStore interface {
 	GetSession(context.Context, domain.SessionID) (domain.SessionRecord, bool, error)
 	ListCompactSessionUsage(context.Context, domain.ProjectID) ([]domain.UsageSessionAggregate, error)
 	ListUsageBindingsForSession(context.Context, domain.SessionID) ([]domain.UsageBindingRecord, error)
-	ListUsageSourcesForBinding(context.Context, int64) ([]domain.UsageSourceRecord, error)
+	ListUsageSourcesForSession(context.Context, domain.SessionID) ([]domain.UsageSourceRecord, error)
 	ListUsageModelAggregates(context.Context, domain.SessionID) ([]domain.UsageModelAggregate, error)
 }
 
@@ -78,23 +78,23 @@ func (r *SummaryReader) Get(ctx context.Context, sessionID domain.SessionID) (do
 			aggregate.PartialBindingCount++
 		}
 		addUsageWarning(warnings, binding.LastErrorCode)
-		sources, sourceErr := r.store.ListUsageSourcesForBinding(ctx, binding.ID)
-		if sourceErr != nil {
-			return domain.SessionUsageSummary{}, sourceErr
+	}
+	sources, err := r.store.ListUsageSourcesForSession(ctx, sessionID)
+	if err != nil {
+		return domain.SessionUsageSummary{}, err
+	}
+	for _, source := range sources {
+		aggregate.SourceCount++
+		if source.State == domain.UsageSourceComplete {
+			aggregate.CompleteSourceCount++
 		}
-		for _, source := range sources {
-			aggregate.SourceCount++
-			if source.State == domain.UsageSourceComplete {
-				aggregate.CompleteSourceCount++
-			}
-			if source.State == domain.UsageSourceError {
-				aggregate.ErrorSourceCount++
-			}
-			if source.AnomalyCount > 0 || source.LastErrorCode != "" {
-				aggregate.AnomalousSourceCount++
-			}
-			addUsageWarning(warnings, source.LastErrorCode)
+		if source.State == domain.UsageSourceError {
+			aggregate.ErrorSourceCount++
 		}
+		if source.AnomalyCount > 0 || source.LastErrorCode != "" {
+			aggregate.AnomalousSourceCount++
+		}
+		addUsageWarning(warnings, source.LastErrorCode)
 	}
 	models, err := r.store.ListUsageModelAggregates(ctx, sessionID)
 	if err != nil {

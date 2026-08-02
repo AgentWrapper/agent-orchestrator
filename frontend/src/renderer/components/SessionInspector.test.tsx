@@ -747,6 +747,8 @@ describe("SessionInspector Usage & cost section", () => {
 		expect(within(usageSection).getByText("OpenAI")).toBeInTheDocument();
 		expect(within(usageSection).getByText("Collecting", { exact: false })).toBeInTheDocument();
 		expect(within(usageSection).queryByText("gpt-5.6")).not.toBeInTheDocument();
+		expect(within(usageSection).getByTitle("Cost coming soon")).toBeInTheDocument();
+		expect(within(usageSection).queryByTitle("Estimated cost coming soon")).not.toBeInTheDocument();
 
 		await userEvent.hover(within(usageSection).getByLabelText("Codex usage details"));
 		const providerPeek = await screen.findByRole("region", { name: "Codex usage peek" });
@@ -754,6 +756,7 @@ describe("SessionInspector Usage & cost section", () => {
 		expect(within(providerPeek).getByText("gpt-5.6")).toBeInTheDocument();
 		expect(within(providerPeek).getByText("Input tokens")).toBeInTheDocument();
 		expect(within(providerPeek).getByText("Output tokens")).toBeInTheDocument();
+		expect(within(providerPeek).getByTitle("Cost coming soon")).toBeInTheDocument();
 
 		await userEvent.hover(within(providerPeek).getByLabelText("gpt-5.6 usage details"));
 		const modelPeek = await screen.findByRole("region", { name: "gpt-5.6 usage peek" });
