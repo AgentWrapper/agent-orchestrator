@@ -9,11 +9,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/pelletier/go-toml/v2"
 
 	yaml "gopkg.in/yaml.v3"
 )
@@ -21,60 +21,65 @@ import (
 const maxConfigFileSize = 4 << 20
 
 type configSpec struct {
-	paths  func(home, workingDir string) []string
+	paths  func(home, workingDir string) []configPath
 	parser func([]byte) ([]ports.AgentModelInfo, error)
+}
+
+type configPath struct {
+	root string
+	name string
 }
 
 var configSpecs = map[string]configSpec{
 	"crush": {
-		paths: func(home, _ string) []string {
+		paths: func(home, _ string) []configPath {
 			dataHome := strings.TrimSpace(os.Getenv("XDG_DATA_HOME"))
 			if dataHome == "" {
 				dataHome = filepath.Join(home, ".local", "share")
 			}
-			return []string{filepath.Join(dataHome, "crush", "providers.json")}
+			return []configPath{{root: dataHome, name: filepath.Join("crush", "providers.json")}}
 		},
 		parser: parseCrushConfig,
 	},
 	"continue": {
-		paths: func(home, workingDir string) []string {
+		paths: func(home, workingDir string) []configPath {
 			return compactPaths(
-				filepath.Join(home, ".continue", "config.yaml"),
-				filepath.Join(home, ".continue", "config.yml"),
-				joinIfSet(workingDir, ".continue", "config.yaml"),
-				joinIfSet(workingDir, ".continue", "config.yml"),
+				configPath{root: home, name: filepath.Join(".continue", "config.yaml")},
+				configPath{root: home, name: filepath.Join(".continue", "config.yml")},
+				configPath{root: workingDir, name: filepath.Join(".continue", "config.yaml")},
+				configPath{root: workingDir, name: filepath.Join(".continue", "config.yml")},
 			)
 		},
 		parser: parseContinueConfig,
 	},
 	"opencode": {
-		paths: func(home, workingDir string) []string {
+		paths: func(home, workingDir string) []configPath {
 			configHome := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME"))
 			if configHome == "" {
 				configHome = filepath.Join(home, ".config")
 			}
 			return compactPaths(
-				filepath.Join(configHome, "opencode", "opencode.json"),
-				filepath.Join(configHome, "opencode", "opencode.jsonc"),
-				joinIfSet(workingDir, "opencode.json"),
-				joinIfSet(workingDir, "opencode.jsonc"),
+				configPath{root: configHome, name: filepath.Join("opencode", "opencode.json")},
+				configPath{root: configHome, name: filepath.Join("opencode", "opencode.jsonc")},
+				configPath{root: workingDir, name: "opencode.json"},
+				configPath{root: workingDir, name: "opencode.jsonc"},
 			)
 		},
 		parser: parseOpenCodeConfig,
 	},
 	"qwen": {
-		paths: func(home, _ string) []string {
-			return []string{filepath.Join(home, ".qwen", "settings.json")}
+		paths: func(home, _ string) []configPath {
+			return []configPath{{root: home, name: filepath.Join(".qwen", "settings.json")}}
 		},
 		parser: parseQwenConfig,
 	},
 	"kimi": {
-		paths: func(home, _ string) []string {
+		paths: func(home, _ string) []configPath {
 			kimiHome := strings.TrimSpace(os.Getenv("KIMI_CODE_HOME"))
 			if kimiHome == "" {
 				kimiHome = filepath.Join(home, ".kimi-code")
 			}
-			return []string{filepath.Join(kimiHome, "config.toml")}
+			return []configPath{{root: kimiHome, name: "config.toml"}}
 		},
 		parser: parseKimiConfig,
 	},
@@ -108,9 +113,15 @@ func ConfigVersion(agentID, workingDir string) string {
 	}
 	hash := sha256.New()
 	for _, path := range spec.paths(home, workingDir) {
-		_, _ = io.WriteString(hash, path)
-		info, err := os.Lstat(path)
-		if err != nil || !info.Mode().IsRegular() {
+		_, _ = io.WriteString(hash, path.root+"\x00"+path.name)
+		file, found, err := openSecureConfig(path)
+		if err != nil || !found {
+			_, _ = io.WriteString(hash, "\x00missing\x00")
+			continue
+		}
+		info, statErr := file.Stat()
+		_ = file.Close()
+		if statErr != nil || !info.Mode().IsRegular() {
 			_, _ = io.WriteString(hash, "\x00missing\x00")
 			continue
 		}
@@ -120,7 +131,7 @@ func ConfigVersion(agentID, workingDir string) string {
 	return fmt.Sprintf("%x", hash.Sum(nil)[:8])
 }
 
-func configModelsFromPaths(spec configSpec, paths []string) ([]ports.AgentModelInfo, error) {
+func configModelsFromPaths(spec configSpec, paths []configPath) ([]ports.AgentModelInfo, error) {
 	var (
 		models []ports.AgentModelInfo
 		errs   []error
@@ -128,7 +139,7 @@ func configModelsFromPaths(spec configSpec, paths []string) ([]ports.AgentModelI
 	for _, path := range paths {
 		data, found, err := readBoundedConfig(path)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("read %s: %w", filepath.Base(path), err))
+			errs = append(errs, fmt.Errorf("read %s: %w", filepath.Base(path.name), err))
 			continue
 		}
 		if !found {
@@ -136,7 +147,7 @@ func configModelsFromPaths(spec configSpec, paths []string) ([]ports.AgentModelI
 		}
 		parsed, err := spec.parser(data)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("parse %s: %w", filepath.Base(path), err))
+			errs = append(errs, fmt.Errorf("parse %s: %w", filepath.Base(path.name), err))
 			continue
 		}
 		models = append(models, parsed...)
@@ -144,20 +155,13 @@ func configModelsFromPaths(spec configSpec, paths []string) ([]ports.AgentModelI
 	return normalize(models), errors.Join(errs...)
 }
 
-func readBoundedConfig(path string) ([]byte, bool, error) {
-	linkInfo, err := os.Lstat(path)
-	if os.IsNotExist(err) {
+func readBoundedConfig(path configPath) ([]byte, bool, error) {
+	file, found, err := openSecureConfig(path)
+	if err != nil {
+		return nil, false, err
+	}
+	if !found {
 		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, err
-	}
-	if linkInfo.Mode()&os.ModeSymlink != 0 {
-		return nil, false, errors.New("symbolic links are not read")
-	}
-	file, err := os.Open(path) //nolint:gosec // paths are fixed per adapter and never supplied by an API caller
-	if err != nil {
-		return nil, false, err
 	}
 	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
@@ -178,6 +182,83 @@ func readBoundedConfig(path string) ([]byte, bool, error) {
 		return nil, false, fmt.Errorf("file exceeds %d bytes", maxConfigFileSize)
 	}
 	return data, true, nil
+}
+
+// openSecureConfig walks from an already-open trusted root, rejects symlink
+// components, and verifies that the final opened file is the inode that was
+// inspected. os.Root prevents a raced component from escaping the trusted tree.
+func openSecureConfig(path configPath) (*os.File, bool, error) {
+	if strings.TrimSpace(path.root) == "" || strings.TrimSpace(path.name) == "" || filepath.IsAbs(path.name) {
+		return nil, false, errors.New("invalid config path")
+	}
+	clean := filepath.Clean(path.name)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return nil, false, errors.New("config path escapes trusted root")
+	}
+	root, err := os.OpenRoot(path.root)
+	if os.IsNotExist(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() { _ = root.Close() }()
+
+	parts := strings.FieldsFunc(clean, func(r rune) bool { return r == '/' || r == '\\' })
+	for _, part := range parts[:len(parts)-1] {
+		info, err := root.Lstat(part)
+		if os.IsNotExist(err) {
+			return nil, false, nil
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return nil, false, errors.New("config path contains a symbolic link or non-directory component")
+		}
+		next, err := root.OpenRoot(part)
+		if err != nil {
+			return nil, false, err
+		}
+		openedInfo, err := next.Lstat(".")
+		if err != nil || !os.SameFile(info, openedInfo) {
+			_ = next.Close()
+			if err != nil {
+				return nil, false, err
+			}
+			return nil, false, errors.New("config directory changed during secure open")
+		}
+		if err := root.Close(); err != nil {
+			_ = next.Close()
+			return nil, false, err
+		}
+		root = next
+	}
+
+	name := parts[len(parts)-1]
+	before, err := root.Lstat(name)
+	if os.IsNotExist(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if before.Mode()&os.ModeSymlink != 0 || !before.Mode().IsRegular() {
+		return nil, false, errors.New("config is not a regular non-symlink file")
+	}
+	file, err := root.Open(name)
+	if err != nil {
+		return nil, false, err
+	}
+	after, err := file.Stat()
+	if err != nil || !after.Mode().IsRegular() || !os.SameFile(before, after) {
+		_ = file.Close()
+		if err != nil {
+			return nil, false, err
+		}
+		return nil, false, errors.New("config changed during secure open")
+	}
+	return file, true, nil
 }
 
 func parseCrushConfig(data []byte) ([]ports.AgentModelInfo, error) {
@@ -314,95 +395,35 @@ func parseQwenConfig(data []byte) ([]ports.AgentModelInfo, error) {
 	return normalize(models), nil
 }
 
-var kimiModelSection = regexp.MustCompile(`^\s*\[models\.(?:"([^"]+)"|'([^']+)'|([^\]]+))\]\s*(?:#.*)?$`)
-
 func parseKimiConfig(data []byte) ([]ports.AgentModelInfo, error) {
-	var (
-		models      []ports.AgentModelInfo
-		current     *ports.AgentModelInfo
-		defaultID   string
-		sectionSeen bool
-	)
-	flush := func() {
-		if current != nil {
-			models = append(models, *current)
-			current = nil
-		}
+	var config struct {
+		DefaultModel string `toml:"default_model"`
+		Models       map[string]struct {
+			Provider    string `toml:"provider"`
+			DisplayName string `toml:"display_name"`
+			Name        string `toml:"name"`
+		} `toml:"models"`
 	}
-	for _, rawLine := range strings.Split(string(data), "\n") {
-		line := strings.TrimSpace(rawLine)
-		if matches := kimiModelSection.FindStringSubmatch(line); matches != nil {
-			flush()
-			sectionSeen = true
-			id := firstNonEmpty(matches[1:]...)
-			current = &ports.AgentModelInfo{ID: strings.TrimSpace(id), Label: strings.TrimSpace(id)}
-			continue
-		}
-		if strings.HasPrefix(line, "[") {
-			flush()
-			sectionSeen = false
-			continue
-		}
-		key, value, ok := parseTOMLStringAssignment(line)
-		if !ok {
-			continue
-		}
-		if !sectionSeen && key == "default_model" {
-			defaultID = value
-		}
-		if current == nil {
-			continue
-		}
-		switch key {
-		case "display_name", "name":
-			current.Label = value
-		case "provider":
-			current.Provider = value
-		}
+	if err := toml.Unmarshal(data, &config); err != nil {
+		return nil, err
 	}
-	flush()
-	if defaultID != "" {
-		models = append(models, ports.AgentModelInfo{ID: defaultID, Label: defaultID, IsDefault: true})
+	models := make([]ports.AgentModelInfo, 0, len(config.Models)+1)
+	for id, item := range config.Models {
+		label := item.DisplayName
+		if label == "" {
+			label = item.Name
+		}
+		models = append(models, ports.AgentModelInfo{
+			ID:        id,
+			Label:     label,
+			Provider:  item.Provider,
+			IsDefault: id == config.DefaultModel,
+		})
 	}
-	for i := range models {
-		models[i].IsDefault = models[i].IsDefault || models[i].ID == defaultID
+	if config.DefaultModel != "" {
+		models = append(models, ports.AgentModelInfo{ID: config.DefaultModel, Label: config.DefaultModel, IsDefault: true})
 	}
 	return normalize(models), nil
-}
-
-func parseTOMLStringAssignment(line string) (string, string, bool) {
-	if line == "" || strings.HasPrefix(line, "#") {
-		return "", "", false
-	}
-	key, raw, ok := strings.Cut(line, "=")
-	if !ok {
-		return "", "", false
-	}
-	key = strings.TrimSpace(key)
-	raw = strings.TrimSpace(raw)
-	if len(raw) < 2 || (raw[0] != '"' && raw[0] != '\'') {
-		return "", "", false
-	}
-	quote := raw[0]
-	var value strings.Builder
-	escaped := false
-	for i := 1; i < len(raw); i++ {
-		char := raw[i]
-		if escaped {
-			value.WriteByte(char)
-			escaped = false
-			continue
-		}
-		if quote == '"' && char == '\\' {
-			escaped = true
-			continue
-		}
-		if char == quote {
-			return key, value.String(), true
-		}
-		value.WriteByte(char)
-	}
-	return "", "", false
 }
 
 func parseJSONObject(data []byte) (map[string]any, error) {
@@ -466,6 +487,8 @@ func stripJSONC(data []byte) ([]byte, error) {
 			out.WriteByte(char)
 		}
 	}
+	// A line comment is valid through EOF; only strings and block comments
+	// require an explicit terminator.
 	if inString || blockComment {
 		return nil, errors.New("unterminated JSONC string or comment")
 	}
@@ -507,28 +530,12 @@ func removeJSONCTrailingCommas(data []byte) []byte {
 	return out
 }
 
-func joinIfSet(root string, parts ...string) string {
-	if strings.TrimSpace(root) == "" {
-		return ""
-	}
-	return filepath.Join(append([]string{root}, parts...)...)
-}
-
-func compactPaths(paths ...string) []string {
-	out := make([]string, 0, len(paths))
+func compactPaths(paths ...configPath) []configPath {
+	out := make([]configPath, 0, len(paths))
 	for _, path := range paths {
-		if strings.TrimSpace(path) != "" {
+		if strings.TrimSpace(path.root) != "" && strings.TrimSpace(path.name) != "" {
 			out = append(out, path)
 		}
 	}
 	return out
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }

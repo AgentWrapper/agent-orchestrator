@@ -55,9 +55,10 @@ type Inventory struct {
 // Service reports supported agent adapters and best-effort local readiness
 // probes. Catalog readiness is advisory UI metadata, not a spawn precheck.
 type Service struct {
-	agents   []agentregistry.HarnessAgent
-	cache    ports.AgentModelCatalogCache
-	projects ProjectLookup
+	agents     []agentregistry.HarnessAgent
+	cache      ports.AgentModelCatalogCache
+	projects   ProjectLookup
+	resolverMu map[string]*sync.Mutex
 
 	mu          sync.RWMutex
 	inventory   Inventory
@@ -95,7 +96,11 @@ func NewWithAgents(agents []agentregistry.HarnessAgent) *Service {
 }
 
 func newService(agents []agentregistry.HarnessAgent, cache ports.AgentModelCatalogCache, projects ProjectLookup) *Service {
-	return &Service{agents: agents, cache: cache, projects: projects, inventory: Inventory{
+	resolverMu := make(map[string]*sync.Mutex, len(agents))
+	for _, item := range agents {
+		resolverMu[string(item.Harness)] = &sync.Mutex{}
+	}
+	return &Service{agents: agents, cache: cache, projects: projects, resolverMu: resolverMu, inventory: Inventory{
 		Supported:  supportedInfos(agents),
 		Installed:  []Info{},
 		Authorized: []Info{},
@@ -142,7 +147,7 @@ func (s *Service) Refresh(ctx context.Context) (Inventory, error) {
 		wg.Add(1)
 		go func(item agentregistry.HarnessAgent) {
 			defer wg.Done()
-			results <- probeAgent(ctx, item)
+			results <- s.probeAgent(ctx, item)
 		}(item)
 	}
 	wg.Wait()
@@ -190,7 +195,7 @@ func (s *Service) Probe(ctx context.Context, agentID string) (ProbeResult, error
 		if info.ID != agentID {
 			continue
 		}
-		res := probeAgent(ctx, item)
+		res := s.probeAgent(ctx, item)
 		return ProbeResult{
 			Agent:     res.info,
 			Supported: true,
@@ -218,7 +223,10 @@ func (s *Service) Models(ctx context.Context, agentID, projectID string, refresh
 
 	var binary string
 	if resolver, ok := item.Agent.(ports.AgentBinaryResolver); ok {
+		lock := s.resolverMu[agentID]
+		lock.Lock()
 		resolved, err := resolver.ResolveBinary(ctx)
+		lock.Unlock()
 		if err == nil {
 			binary = resolved
 		}
@@ -243,7 +251,7 @@ func (s *Service) Models(ctx context.Context, agentID, projectID string, refresh
 			discovered.Stale = true
 			discovered.Warning = discoverErr.Error()
 			if err := s.saveCatalog(ctx, projectID, discovered); err != nil {
-				return ports.AgentModelCatalog{}, err
+				discovered.Warning = appendWarning(discovered.Warning, "Models loaded, but AO could not update the model cache.")
 			}
 			return discovered, nil
 		}
@@ -259,9 +267,16 @@ func (s *Service) Models(ctx context.Context, agentID, projectID string, refresh
 		return fallback, nil
 	}
 	if err := s.saveCatalog(ctx, projectID, discovered); err != nil {
-		return ports.AgentModelCatalog{}, err
+		discovered.Warning = appendWarning(discovered.Warning, "Models loaded, but AO could not update the model cache.")
 	}
 	return discovered, nil
+}
+
+func appendWarning(current, next string) string {
+	if current == "" {
+		return next
+	}
+	return current + " " + next
 }
 
 func (s *Service) projectWorkingDir(ctx context.Context, projectID string) (string, error) {
@@ -355,7 +370,7 @@ func cloneInfos(in []Info) []Info {
 	return out
 }
 
-func probeAgent(ctx context.Context, item agentregistry.HarnessAgent) probeResult {
+func (s *Service) probeAgent(ctx context.Context, item agentregistry.HarnessAgent) probeResult {
 	info := Info{ID: string(item.Harness), Label: item.Manifest.Name}
 	if info.Label == "" {
 		info.Label = info.ID
@@ -366,6 +381,9 @@ func probeAgent(ctx context.Context, item agentregistry.HarnessAgent) probeResul
 	if !ok {
 		return probeResult{info: info}
 	}
+	lock := s.resolverMu[info.ID]
+	lock.Lock()
+	defer lock.Unlock()
 	if _, err := resolver.ResolveBinary(probeCtx); err != nil {
 		return probeResult{info: info}
 	}

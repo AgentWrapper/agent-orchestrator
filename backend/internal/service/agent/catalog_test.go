@@ -5,6 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,9 +34,16 @@ type probeTrackingAgent struct {
 	onProbe func()
 }
 
+type concurrentResolverAgent struct {
+	fakeAgent
+	active  atomic.Int32
+	overlap atomic.Bool
+}
+
 type fakeModelCache struct {
 	records map[string]ports.CachedAgentModelCatalog
 	puts    int
+	putErr  error
 }
 
 type fakeProjectLookup struct {
@@ -57,12 +67,28 @@ func (f *fakeModelCache) GetAgentModelCatalog(_ context.Context, agentID, projec
 }
 
 func (f *fakeModelCache) UpsertAgentModelCatalog(_ context.Context, record ports.CachedAgentModelCatalog) error {
+	if f.putErr != nil {
+		return f.putErr
+	}
 	if f.records == nil {
 		f.records = map[string]ports.CachedAgentModelCatalog{}
 	}
 	f.records[record.AgentID+"\x00"+record.ProjectID] = record
 	f.puts++
 	return nil
+}
+
+func (f *concurrentResolverAgent) ResolveBinary(ctx context.Context) (string, error) {
+	if f.active.Add(1) != 1 {
+		f.overlap.Store(true)
+	}
+	defer f.active.Add(-1)
+	select {
+	case <-time.After(5 * time.Millisecond):
+		return "agent", nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }
 
 func (f fakeAgent) GetConfigSpec(context.Context) (ports.ConfigSpec, error) {
@@ -440,6 +466,64 @@ func TestModelsUsesTextFallbackWhenDiscoveryCannotRun(t *testing.T) {
 	}
 	if !got.Stale || got.Warning == "" {
 		t.Fatalf("catalog = %#v, want discovery warning on manual fallback", got)
+	}
+}
+
+func TestModelsAndRefreshSerializeBinaryResolutionPerAdapter(t *testing.T) {
+	agent := &concurrentResolverAgent{}
+	svc := newService([]agentregistry.HarnessAgent{{
+		Harness:  domain.AgentHarness("codex"),
+		Manifest: adapters.Manifest{ID: "codex", Name: "Codex"},
+		Agent:    agent,
+	}}, nil, nil)
+
+	start := make(chan struct{})
+	errs := make(chan error, 9)
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := svc.Models(context.Background(), "codex", "", true)
+			errs <- err
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		_, err := svc.Refresh(context.Background())
+		errs <- err
+	}()
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if agent.overlap.Load() {
+		t.Fatal("ResolveBinary calls overlapped for the same adapter")
+	}
+}
+
+func TestModelsReturnsDiscoveredCatalogWhenCacheWriteFails(t *testing.T) {
+	cache := &fakeModelCache{putErr: errors.New("database unavailable")}
+	svc := newService([]agentregistry.HarnessAgent{
+		harnessAgent("codex", "Codex", nil),
+	}, cache, nil)
+
+	got, err := svc.Models(context.Background(), "codex", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Models) == 0 || got.SelectionMode != ports.ModelSelectionCatalog {
+		t.Fatalf("catalog = %#v, want discovered models", got)
+	}
+	if !strings.Contains(got.Warning, "could not update the model cache") {
+		t.Fatalf("warning = %q, want cache warning", got.Warning)
 	}
 }
 

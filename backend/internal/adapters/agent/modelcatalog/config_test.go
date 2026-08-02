@@ -114,6 +114,22 @@ model = "kimi-k2"
 	}
 }
 
+func TestParseKimiConfigSupportsTOMLStringEscapes(t *testing.T) {
+	models, err := parseKimiConfig([]byte(`
+default_model = "zai/glm\u002d5"
+
+[models."zai/glm\u002d5"]
+provider = "zai\tcloud"
+display_name = "GLM\nFive \U0001F680"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 1 || models[0].ID != "zai/glm-5" || models[0].Provider != "zai\tcloud" || models[0].Label != "GLM\nFive 🚀" {
+		t.Fatalf("models = %#v", models)
+	}
+}
+
 func TestConfigModelsFromPathsMergesFilesAndIgnoresMissing(t *testing.T) {
 	dir := t.TempDir()
 	global := filepath.Join(dir, "global.yaml")
@@ -124,7 +140,11 @@ func TestConfigModelsFromPathsMergesFilesAndIgnoresMissing(t *testing.T) {
 	if err := os.WriteFile(project, []byte("models:\n  - name: Project\n    provider: local\n    model: project-only\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	models, err := configModelsFromPaths(configSpecs["continue"], []string{global, filepath.Join(dir, "missing.yaml"), project})
+	models, err := configModelsFromPaths(configSpecs["continue"], []configPath{
+		{root: dir, name: filepath.Base(global)},
+		{root: dir, name: "missing.yaml"},
+		{root: dir, name: filepath.Base(project)},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +165,7 @@ func TestReadBoundedConfigRejectsOversizedFile(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readBoundedConfig(path); err == nil {
+	if _, _, err := readBoundedConfig(configPath{root: filepath.Dir(path), name: filepath.Base(path)}); err == nil {
 		t.Fatal("readBoundedConfig: want size-limit error")
 	}
 }
@@ -160,8 +180,29 @@ func TestReadBoundedConfigRejectsSymlink(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if _, _, err := readBoundedConfig(link); err == nil {
+	if _, _, err := readBoundedConfig(configPath{root: dir, name: filepath.Base(link)}); err == nil {
 		t.Fatal("readBoundedConfig: want symlink error")
+	}
+}
+
+func TestReadBoundedConfigRejectsSymlinkDirectoryComponent(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "config.json"), []byte(`{"model":"must-not-read"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "linked")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, _, err := readBoundedConfig(configPath{root: root, name: filepath.Join("linked", "config.json")}); err == nil {
+		t.Fatal("readBoundedConfig: want symlink-component error")
+	}
+}
+
+func TestReadBoundedConfigRejectsParentTraversal(t *testing.T) {
+	root := t.TempDir()
+	if _, _, err := readBoundedConfig(configPath{root: root, name: filepath.Join("..", "config.json")}); err == nil {
+		t.Fatal("readBoundedConfig: want traversal error")
 	}
 }
 
@@ -194,6 +235,20 @@ func TestStripJSONCKeepsCommaBraceInsideString(t *testing.T) {
 	}
 	if got := firstString(root, "model"); got != "name,}" {
 		t.Fatalf("model = %q, want name,}", got)
+	}
+}
+
+func TestStripJSONCAcceptsLineCommentAtEOF(t *testing.T) {
+	cleaned, err := stripJSONC([]byte("{\"model\":\"glm-5\"} // valid through EOF"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := parseJSONObject(cleaned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := firstString(root, "model"); got != "glm-5" {
+		t.Fatalf("model = %q, want glm-5", got)
 	}
 }
 
