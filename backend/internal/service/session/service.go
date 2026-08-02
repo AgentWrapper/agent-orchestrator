@@ -26,6 +26,7 @@ type Store interface {
 	GetDisplayPRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, bool, error)
 	ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
+	ListSessionWorktrees(ctx context.Context, id domain.SessionID) ([]domain.SessionWorktreeRecord, error)
 	ListChecks(ctx context.Context, prURL string) ([]domain.PullRequestCheck, error)
 	ListPRReviews(ctx context.Context, prURL string) ([]domain.PullRequestReview, error)
 	ListPRReviewThreads(ctx context.Context, prURL string) ([]domain.PullRequestReviewThread, error)
@@ -105,10 +106,6 @@ type scmProvider interface {
 	FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (ports.SCMReviewObservation, error)
 }
 
-type orchestratorReengagement interface {
-	Complete(ctx context.Context, id domain.SessionID) error
-}
-
 // Service is the controller-facing session service. It delegates command-side
 // session operations to the internal sessionmanager.Manager and owns read-model
 // assembly, including user-facing display status derivation.
@@ -121,7 +118,6 @@ type Service struct {
 	clock               func() time.Time
 	dataDir             string
 	telemetry           ports.EventSink
-	reengagement        orchestratorReengagement
 	orchestratorLocksMu sync.Mutex
 	orchestratorLocks   map[domain.ProjectID]*sync.Mutex
 	// signalCapable reports whether a harness has a hook pipeline that can
@@ -140,15 +136,14 @@ func New(manager *sessionmanager.Manager, store Store) *Service {
 // path keeps existing tests and callers small; daemon wiring uses NewWithDeps
 // to supply SCM observation for PR claiming.
 type Deps struct {
-	Manager      commander
-	Store        Store
-	PRClaimer    ports.PRClaimer
-	SCM          scmProvider
-	Tracker      ports.Tracker
-	Clock        func() time.Time
-	DataDir      string
-	Telemetry    ports.EventSink
-	Reengagement orchestratorReengagement
+	Manager   commander
+	Store     Store
+	PRClaimer ports.PRClaimer
+	SCM       scmProvider
+	Tracker   ports.Tracker
+	Clock     func() time.Time
+	DataDir   string
+	Telemetry ports.EventSink
 	// SignalCapable gates the no_signal status downgrade per harness; daemon
 	// wiring passes activitydispatch.SupportsHarness. Left nil, no session is
 	// ever downgraded to no_signal.
@@ -157,7 +152,7 @@ type Deps struct {
 
 // NewWithDeps wires a session service with optional PR-claim dependencies.
 func NewWithDeps(d Deps) *Service {
-	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, dataDir: d.DataDir, signalCapable: d.SignalCapable, telemetry: d.Telemetry, reengagement: d.Reengagement}
+	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, dataDir: d.DataDir, signalCapable: d.SignalCapable, telemetry: d.Telemetry}
 	if s.prClaimer == nil {
 		if w, ok := d.Store.(ports.PRClaimer); ok {
 			s.prClaimer = w
@@ -169,28 +164,25 @@ func NewWithDeps(d Deps) *Service {
 	return s
 }
 
-// CompleteOrchestrator durably suppresses further automated re-engagement for
-// an orchestrator session.
-func (s *Service) CompleteOrchestrator(ctx context.Context, id domain.SessionID) error {
-	rec, ok, err := s.store.GetSession(ctx, id)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
-	}
-	if rec.Kind != domain.KindOrchestrator {
-		return apierr.Invalid("NOT_ORCHESTRATOR", "Session is not an orchestrator", nil)
-	}
-	if s.reengagement == nil {
-		return apierr.Internal("REENGAGEMENT_UNAVAILABLE", "Orchestrator re-engagement is unavailable")
-	}
-	return s.reengagement.Complete(ctx, id)
-}
-
 // Spawn creates a session and returns the API-facing read model plus
 // ephemeral prompt size measurements.
 func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error) {
+	if cfg.Kind == domain.KindOrchestrator {
+		unlock := s.lockOrchestratorProject(cfg.ProjectID)
+		defer unlock()
+
+		existing, err := s.activeOrchestrators(ctx, cfg.ProjectID)
+		if err != nil {
+			return domain.Session{}, 0, 0, err
+		}
+		if len(existing) > 0 {
+			return newestSession(existing), 0, 0, nil
+		}
+	}
+	return s.spawn(ctx, cfg)
+}
+
+func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error) {
 	project, err := s.requireProject(ctx, cfg.ProjectID)
 	if err != nil {
 		return domain.Session{}, 0, 0, err
@@ -335,9 +327,8 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 	if err != nil {
 		return domain.Session{}, err
 	}
-	active := true
 	if clean {
-		existing, err := s.List(ctx, ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
+		existing, err := s.activeOrchestrators(ctx, projectID)
 		if err != nil {
 			return domain.Session{}, err
 		}
@@ -348,8 +339,7 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 			}
 		}
 	} else {
-		// ponytail: check-then-spawn is not atomic; fine for the single-frontend ensure-on-load case. Upgrade path: a partial unique index on (project_id) where kind=orchestrator and not terminated.
-		existing, err := s.List(ctx, ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
+		existing, err := s.activeOrchestrators(ctx, projectID)
 		if err != nil {
 			return domain.Session{}, err
 		}
@@ -357,7 +347,7 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 			return newestSession(existing), nil
 		}
 	}
-	sess, _, _, err := s.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+	sess, _, _, err := s.spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
 	if err != nil {
 		return domain.Session{}, err
 	}
@@ -365,6 +355,11 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 		return domain.Session{}, err
 	}
 	return sess, nil
+}
+
+func (s *Service) activeOrchestrators(ctx context.Context, projectID domain.ProjectID) ([]domain.Session, error) {
+	active := true
+	return s.List(ctx, ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
 }
 
 const orchestratorRetireNotice = "AO is replacing this project orchestrator. Stop coordinating new work now; a fresh orchestrator will take over in a new workspace."
@@ -708,6 +703,7 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)
 	}
+	prs = deduplicatePRFacts(prs)
 	return domain.Session{
 		SessionRecord:    rec,
 		Status:           deriveStatus(rec, prs, s.now(), s.harnessSignals(rec.Harness)),

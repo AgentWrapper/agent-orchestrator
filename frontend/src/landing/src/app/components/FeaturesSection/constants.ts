@@ -22,7 +22,7 @@ export const FEATURES: Feature[] = [
   },
   {
     tag: "Feedback Loop",
-    title: "CI fails. The right agent hears about it.",
+    title: "CI fails. The right agent fixes it.",
     description:
       "AO watches every PR it opens. Failed checks and review comments route back to the session that owns the branch, with the context to fix them, until the PR is approved.",
     colors: ["#1e40af", "#1e3a8a", "#172554", "#1a1a2e"],
@@ -31,7 +31,7 @@ export const FEATURES: Feature[] = [
     tag: "Coverage",
     title: "Use the agent you already trust",
     description:
-      "23 harnesses supported, with per-project agent choice. Claude Code, Codex, Cursor, OpenCode, Aider, Goose, and more, AO keeps the workflow the same while the tools underneath evolve.",
+      "23 harnesses supported, with per-project agent choice. Claude Code, Codex, Cursor, OpenCode, Aider, Goose, and more, AO keeps it running the way you already run it while the tools underneath evolve.",
     colors: ["#7c3aed", "#6d28d9", "#4c1d95", "#1a1a2e"],
   },
   {

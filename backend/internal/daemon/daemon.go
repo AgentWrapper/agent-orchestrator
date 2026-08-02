@@ -166,7 +166,7 @@ func Run() error {
 	// selected runtime, routed git/scratch workspaces, the per-session agent
 	// resolver (AO_AGENT validated here for compatibility), and the agent
 	// messenger, then mount it on the API.
-	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, lcStack.reengagement, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, log)
+	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
