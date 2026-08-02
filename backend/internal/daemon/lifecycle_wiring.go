@@ -350,14 +350,15 @@ func (c chatLauncher) PreflightChat(ctx context.Context, harness domain.AgentHar
 
 func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStart) (sessionmanager.ChatStarted, error) {
 	out, err := c.svc.StartChat(ctx, chatsvc.ChatStartRequest{
-		SessionID:     cfg.SessionID,
-		ProjectID:     cfg.ProjectID,
-		Harness:       cfg.Harness,
-		WorkspacePath: cfg.WorkspacePath,
-		Env:           cfg.Env,
-		Model:         cfg.Model,
-		Permissions:   cfg.Permissions,
-		SystemPrompt:  cfg.SystemPrompt,
+		SessionID:              cfg.SessionID,
+		ProjectID:              cfg.ProjectID,
+		Harness:                cfg.Harness,
+		WorkspacePath:          cfg.WorkspacePath,
+		Env:                    cfg.Env,
+		Model:                  cfg.Model,
+		Permissions:            cfg.Permissions,
+		SystemPrompt:           cfg.SystemPrompt,
+		ProviderConversationID: cfg.ProviderConversationID,
 	})
 	if err != nil {
 		return sessionmanager.ChatStarted{}, err

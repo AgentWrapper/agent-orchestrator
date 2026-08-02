@@ -966,7 +966,13 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		workspaceProject = true
 	}
 
-	if handle.ID != "" {
+	// Exactly one controller exists, so exactly one gets torn down. A chat
+	// session has no runtime handle; its controller owns an app-server child
+	// process, and closing it also settles any turn left in flight so a later
+	// read does not show work that is no longer running.
+	if domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat {
+		m.stopChatBestEffort(ctx, id)
+	} else if handle.ID != "" {
 		if err := m.runtime.Destroy(ctx, handle); err != nil {
 			return false, fmt.Errorf("kill %s: runtime: %w", id, err)
 		}
@@ -1287,6 +1293,14 @@ func (m *Manager) endAgentResume(id domain.SessionID) {
 }
 
 func (m *Manager) relaunchSession(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle) (RestoreResult, error) {
+	// Restore dispatches from the persisted mode, never across it: a chat session
+	// resumes its provider conversation and a terminal session relaunches its
+	// runtime. Crossing here would give a session a controller it was not created
+	// with, which is the one thing the immutable mode exists to prevent.
+	if domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat {
+		return m.resumeChatController(ctx, operation, rec, project, ws)
+	}
+
 	agent, ok := m.agents.Agent(rec.Harness)
 	if !ok {
 		return RestoreResult{}, fmt.Errorf("%s %s: no agent adapter for harness %q", operation, rec.ID, rec.Harness)
@@ -1533,15 +1547,25 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 	if rec.Metadata.WorkspacePath == "" || (rec.Metadata.Branch == "" && projectKind != domain.ProjectKindScratch) {
 		return nil
 	}
-	handle := runtimeHandle(rec.Metadata)
-	if handle.ID != "" {
-		alive, err := m.runtime.IsAlive(ctx, handle)
-		if err != nil {
-			// A failed probe is not proof of death: leave the session as-is.
-			return fmt.Errorf("reconcile %s: probe: %w", rec.ID, err)
-		}
-		if alive {
-			return nil // adopt: the session survived the crash.
+	// A chat controller is an in-process child of the daemon, so unlike tmux it can
+	// never have survived the crash: there is nothing to adopt and nothing to
+	// probe. It falls through to the same save-and-teardown a dead runtime gets,
+	// which is what records the restore marker RestoreAll needs — skipping that
+	// would leave the session marked live with no controller behind it, and it
+	// would never be resumed.
+	isChat := domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat
+
+	if !isChat {
+		handle := runtimeHandle(rec.Metadata)
+		if handle.ID != "" {
+			alive, err := m.runtime.IsAlive(ctx, handle)
+			if err != nil {
+				// A failed probe is not proof of death: leave the session as-is.
+				return fmt.Errorf("reconcile %s: probe: %w", rec.ID, err)
+			}
+			if alive {
+				return nil // adopt: the session survived the crash.
+			}
 		}
 	}
 	if projectKind == domain.ProjectKindScratch {

@@ -201,8 +201,11 @@ func Run() error {
 			}, nil
 		}),
 		Drivers: chatDrivers,
-		Log:     log,
-		NewID:   uuid.NewString,
+		// The LCM satisfies ActivityRecorder directly: a chat turn is a pure
+		// lifecycle reduction, same as a hook signal from a terminal session.
+		Activity: lcStack.LCM,
+		Log:      log,
+		NewID:    uuid.NewString,
 	})
 
 	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, settingsSvc, log)

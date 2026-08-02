@@ -34,6 +34,7 @@ type Service struct {
 	reader   SnapshotReader
 	sessions SessionReader
 	drivers  ports.ChatDriverRegistry
+	activity ActivityRecorder
 	log      *slog.Logger
 	newID    IDFactory
 	now      Clock
@@ -49,6 +50,9 @@ type Options struct {
 	Reader   SnapshotReader
 	Sessions SessionReader
 	Drivers  ports.ChatDriverRegistry
+	// Activity feeds derived session status from turn events. Nil leaves a chat
+	// session reading as idle while it works, so production always wires it.
+	Activity ActivityRecorder
 	Log      *slog.Logger
 	NewID    IDFactory
 	Now      Clock
@@ -69,6 +73,7 @@ func New(opts Options) *Service {
 		reader:      opts.Reader,
 		sessions:    opts.Sessions,
 		drivers:     opts.Drivers,
+		activity:    opts.Activity,
 		log:         log,
 		newID:       opts.NewID,
 		now:         now,
@@ -148,7 +153,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// A fresh generation per launch, so events from the controller this one
 	// replaced can be told apart from the current one's.
 	controller := newController(
-		cfg.SessionID, conversation, s.newID(), conv, s.store, s.log, s.newID, s.now)
+		cfg.SessionID, conversation, s.newID(), conv, s.store, s.activity, s.log, s.newID, s.now)
 
 	s.mu.Lock()
 	s.controllers[cfg.SessionID] = controller
@@ -388,14 +393,15 @@ func (s *Service) PreflightChat(ctx context.Context, harness domain.AgentHarness
 // StartChat launches the controller for a freshly created session.
 func (s *Service) StartChat(ctx context.Context, cfg ChatStartRequest) (ChatStartResult, error) {
 	controller, err := s.Start(ctx, StartConfig{
-		SessionID:     cfg.SessionID,
-		ProjectID:     cfg.ProjectID,
-		Harness:       cfg.Harness,
-		WorkspacePath: cfg.WorkspacePath,
-		Env:           cfg.Env,
-		Model:         cfg.Model,
-		Permissions:   cfg.Permissions,
-		SystemPrompt:  cfg.SystemPrompt,
+		SessionID:              cfg.SessionID,
+		ProjectID:              cfg.ProjectID,
+		Harness:                cfg.Harness,
+		WorkspacePath:          cfg.WorkspacePath,
+		Env:                    cfg.Env,
+		Model:                  cfg.Model,
+		Permissions:            cfg.Permissions,
+		SystemPrompt:           cfg.SystemPrompt,
+		ProviderConversationID: cfg.ProviderConversationID,
 	})
 	if err != nil {
 		return ChatStartResult{}, err
@@ -417,6 +423,8 @@ type ChatStartRequest struct {
 	Model         string
 	Permissions   ports.PermissionMode
 	SystemPrompt  string
+	// ProviderConversationID resumes a stored conversation. Empty starts fresh.
+	ProviderConversationID string
 }
 
 // ChatStartResult is the durable outcome of a launch.

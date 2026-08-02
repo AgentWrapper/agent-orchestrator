@@ -51,6 +51,9 @@ type ChatStart struct {
 	Model        string
 	Permissions  ports.PermissionMode
 	SystemPrompt string
+	// ProviderConversationID resumes a stored conversation instead of opening a
+	// new one. Empty means start fresh.
+	ProviderConversationID string
 }
 
 // ChatStarted is the durable result of a launch.
@@ -176,4 +179,72 @@ func (m *Manager) resolveSessionMode(ctx context.Context, requested domain.Sessi
 		return domain.DefaultSessionMode
 	}
 	return domain.NormalizeSessionMode(m.defaults.DefaultSessionMode(ctx))
+}
+
+// resumeChatController reattaches a chat session to its provider conversation
+// after a daemon restart.
+//
+// It resumes the stored conversation rather than starting a new one. A resume
+// that fails is reported, not silently replaced with a fresh conversation:
+// presenting unrelated history as continuous is worse than an error the user can
+// act on, and it would strand the work the old conversation was holding.
+func (m *Manager) resumeChatController(
+	ctx context.Context,
+	operation string,
+	rec domain.SessionRecord,
+	project domain.ProjectRecord,
+	ws ports.WorkspaceInfo,
+) (RestoreResult, error) {
+	if m.chat == nil {
+		return RestoreResult{}, fmt.Errorf("%s %s: %w: chat mode is not available in this build",
+			operation, rec.ID, ports.ErrChatUnsupported)
+	}
+
+	// Recomputed rather than persisted, matching the terminal path: a restored
+	// session keeps its standing instructions across the relaunch.
+	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("%s %s: system prompt: %w", operation, rec.ID, err)
+	}
+
+	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
+	started, err := m.chat.StartChat(ctx, ChatStart{
+		SessionID:     rec.ID,
+		ProjectID:     rec.ProjectID,
+		Harness:       rec.Harness,
+		WorkspacePath: ws.Path,
+		Env:           m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env),
+		Model:         agentConfig.Model,
+		Permissions:   agentConfig.Permissions,
+		SystemPrompt:  systemPrompt,
+		// The handle that makes this a resume rather than a new conversation.
+		ProviderConversationID: rec.Metadata.ProviderConversationID,
+	})
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("%s %s: resume chat: %w", operation, rec.ID, err)
+	}
+
+	metadata := rec.Metadata
+	metadata.WorkspacePath = ws.Path
+	metadata.WorkspaceRepoPath = ws.RepoPath
+	if ws.Branch != "" {
+		metadata.Branch = ws.Branch
+	}
+	metadata.ProviderConversationID = started.ProviderConversationID
+	// A fresh generation per launch: events still arriving from the controller
+	// this one replaced carry the old one and are rejected.
+	metadata.ControllerGeneration = started.ControllerGeneration
+
+	if err := m.lcm.MarkSpawned(ctx, rec.ID, metadata); err != nil {
+		m.stopChatBestEffort(ctx, rec.ID)
+		return RestoreResult{}, fmt.Errorf("%s %s: completed: %w", operation, rec.ID, err)
+	}
+
+	restored, err := m.getRecord(ctx, rec.ID)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	// Native continuity: the provider still holds the conversation, so the agent
+	// resumes with its own history rather than a replayed prompt.
+	return RestoreResult{Session: restored, Mode: RestoreModeNative}, nil
 }

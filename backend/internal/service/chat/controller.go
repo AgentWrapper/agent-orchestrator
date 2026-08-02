@@ -48,6 +48,16 @@ type Store interface {
 	RecordProviderEvent(ctx context.Context, conversationID string, session domain.SessionID, providerEventID, method, payloadJSON string, now time.Time) error
 }
 
+// ActivityRecorder feeds derived session status.
+//
+// Chat reports activity through the SAME lifecycle reduction terminal sessions
+// use, rather than persisting a second display status. Without it a chat session
+// reads as idle while the agent is working, because the hook and terminal signals
+// that normally drive activity never fire for a chat controller.
+type ActivityRecorder interface {
+	ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ports.ActivitySignal) error
+}
+
 // IDFactory mints the identifiers AO assigns. Injected so tests get stable ids.
 type IDFactory func() string
 
@@ -60,11 +70,12 @@ type Controller struct {
 	conversation domain.ConversationRecord
 	generation   string
 
-	conv  ports.ChatConversation
-	store Store
-	log   *slog.Logger
-	newID IDFactory
-	now   Clock
+	conv     ports.ChatConversation
+	store    Store
+	activity ActivityRecorder
+	log      *slog.Logger
+	newID    IDFactory
+	now      Clock
 
 	// sendMu serializes command dispatch so only one operation mutates the
 	// provider conversation at a time.
@@ -89,6 +100,7 @@ func newController(
 	generation string,
 	conv ports.ChatConversation,
 	store Store,
+	activity ActivityRecorder,
 	log *slog.Logger,
 	newID IDFactory,
 	now Clock,
@@ -99,6 +111,7 @@ func newController(
 		generation:   generation,
 		conv:         conv,
 		store:        store,
+		activity:     activity,
 		log:          log,
 		newID:        newID,
 		now:          now,
@@ -304,6 +317,7 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 		c.pendingTurnID = event.ProviderTurnID
 		c.state = ports.ChatControllerBusy
 		c.mu.Unlock()
+		c.reportActivity(ctx, domain.ActivityActive, "chat.turn.started", now)
 		return nil
 
 	case ports.ChatEventTurnCompleted:
@@ -322,6 +336,8 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 			// A completion with no status is not evidence of success.
 			state = domain.TurnStateFailed
 		}
+		// The turn is over, so the session is waiting on the user again.
+		c.reportActivity(ctx, domain.ActivityIdle, "chat.turn.completed", now)
 		return c.store.SettleTurn(ctx, c.conversation.ID, event.ProviderTurnID, state, message, now)
 
 	case ports.ChatEventMessageDelta:
@@ -344,6 +360,9 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 			}, now)
 
 	case ports.ChatEventApprovalRequested:
+		// Blocked on a person, which is distinct from working and from idle: the
+		// board should surface it as needing attention.
+		c.reportActivity(ctx, domain.ActivityWaitingInput, "chat.approval.requested", now)
 		detail := mergeApprovalDetail(event)
 		return c.store.UpsertActivity(ctx, c.conversation.ID, event.ProviderTurnID,
 			domain.ConversationActivity{
@@ -367,6 +386,7 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 		c.state = event.ControllerState
 		c.mu.Unlock()
 		if event.ControllerState == ports.ChatControllerStopped {
+			c.reportActivity(ctx, domain.ActivityExited, "chat.controller.stopped", now)
 			if err := c.store.SettleOrphanedTurns(ctx, c.sessionID, now); err != nil {
 				return err
 			}
@@ -430,4 +450,33 @@ func nonEmptyJSON(raw []byte) []byte {
 		return []byte("null")
 	}
 	return raw
+}
+
+// reportActivity feeds the lifecycle reduction that derives user-facing status.
+//
+// Chat uses the same pipeline terminal sessions use rather than persisting a
+// second display status — AO derives status from durable facts at read time, and
+// a parallel chat-only status would be a second source of truth to keep in sync.
+//
+// Best-effort: a rejected signal must not stop the durable projection, which is
+// the record that actually matters. Lifecycle also rejects signals it considers
+// stale, which is a legitimate outcome rather than an error to surface.
+func (c *Controller) reportActivity(
+	ctx context.Context,
+	state domain.ActivityState,
+	event string,
+	now time.Time,
+) {
+	if c.activity == nil {
+		return
+	}
+	if err := c.activity.ApplyActivitySignal(ctx, c.sessionID, ports.ActivitySignal{
+		Valid:     true,
+		State:     state,
+		Timestamp: now,
+		Event:     event,
+	}); err != nil {
+		c.log.Debug("chat activity signal rejected",
+			"session", c.sessionID, "event", event, "error", err)
+	}
 }

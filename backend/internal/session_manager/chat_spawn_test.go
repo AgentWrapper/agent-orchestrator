@@ -67,7 +67,8 @@ func (l *recordingLauncher) StartChatTurn(_ context.Context, _ domain.SessionID,
 	return "turn-1", l.turnErr
 }
 
-func (l *recordingLauncher) StopChat(_ context.Context, id domain.SessionID) error {
+func (l *recordingLauncher) StopChat(_ context.Context, id domain.SessionID) error { //nolint:unparam
+
 	l.stopped = append(l.stopped, id)
 	return nil
 }
@@ -237,5 +238,90 @@ func TestChatSpawnRollsBackWhenControllerFailsToStart(t *testing.T) {
 		if !session.IsTerminated {
 			t.Errorf("session %s left live after a failed chat spawn", session.ID)
 		}
+	}
+}
+
+// Kill must close the controller, not tear down a runtime the session never had.
+// A chat controller owns an app-server child process, so skipping this leaks it.
+func TestKillClosesTheChatControllerAndTouchesNoRuntime(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, _, runtime := newChatManager(launcher)
+	ctx := context.Background()
+
+	rec, _, _, err := mgr.Spawn(ctx, ports.SpawnConfig{
+		ProjectID:     chatTestProject,
+		Kind:          domain.KindWorker,
+		Harness:       domain.HarnessCodex,
+		RequestedMode: domain.SessionModeChat,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+
+	if _, err := mgr.Kill(ctx, rec.ID); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if len(launcher.stopped) != 1 || launcher.stopped[0] != rec.ID {
+		t.Fatalf("controller not closed on kill: %v", launcher.stopped)
+	}
+	if runtime.destroyed != 0 {
+		t.Errorf("kill destroyed %d runtimes for a session that never had one", runtime.destroyed)
+	}
+}
+
+// Restore must not cross modes. A chat session resumes its provider conversation
+// with the handle it stored; giving it a terminal would hand it a controller it
+// was not created with.
+func TestRestoreResumesChatRatherThanRelaunchingATerminal(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, store, runtime := newChatManager(launcher)
+	ctx := context.Background()
+
+	rec, _, _, err := mgr.Spawn(ctx, ports.SpawnConfig{
+		ProjectID:     chatTestProject,
+		Kind:          domain.KindWorker,
+		Harness:       domain.HarnessCodex,
+		RequestedMode: domain.SessionModeChat,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	startsAfterSpawn := len(launcher.started)
+	runtimeAfterSpawn := runtime.created
+
+	// Simulate a daemon restart: the controller dies and the session is marked
+	// terminated with a restore marker, which is the state RestoreAll acts on.
+	if _, err := mgr.Kill(ctx, rec.ID); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+
+	stored, _, err := store.GetSession(ctx, rec.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if stored.Metadata.ProviderConversationID == "" {
+		t.Fatal("spawn stored no provider conversation id; a restart could not resume")
+	}
+
+	result, err := mgr.RestoreWithMode(ctx, rec.ID)
+	if err != nil {
+		t.Fatalf("RestoreWithMode: %v", err)
+	}
+
+	if runtime.created != runtimeAfterSpawn {
+		t.Errorf("restore created a terminal runtime for a chat session")
+	}
+	if len(launcher.started) != startsAfterSpawn+1 {
+		t.Fatalf("restore did not start a controller: %d starts", len(launcher.started))
+	}
+	resumed := launcher.started[len(launcher.started)-1]
+	if resumed.ProviderConversationID != stored.Metadata.ProviderConversationID {
+		t.Errorf("restore passed provider conversation %q, want the stored %q — without it this is a new conversation, not a resume",
+			resumed.ProviderConversationID, stored.Metadata.ProviderConversationID)
+	}
+	// The provider still holds the history, so continuity is native rather than a
+	// replayed prompt.
+	if result.Mode != RestoreModeNative {
+		t.Errorf("restore mode = %q, want native", result.Mode)
 	}
 }
