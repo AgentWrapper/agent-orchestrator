@@ -438,7 +438,12 @@ describe("ProjectSettingsForm", () => {
 		const amp = { id: "amp", label: "Amp", authStatus: "authorized" };
 		const experimental = [
 			{ id: "agy", label: "Agy", authStatus: "authorized" },
+			{ id: "auggie", label: "Auggie", authStatus: "authorized" },
+			{ id: "autohand", label: "Autohand", authStatus: "authorized" },
+			{ id: "cline", label: "Cline", authStatus: "authorized" },
 			{ id: "continue", label: "Continue", authStatus: "authorized" },
+			{ id: "crush", label: "Crush", authStatus: "authorized" },
+			{ id: "grok", label: "Grok", authStatus: "authorized" },
 			{ id: "vibe", label: "Vibe", authStatus: "authorized" },
 		];
 		getMock.mockImplementation(async (path: string) => {
@@ -472,6 +477,11 @@ describe("ProjectSettingsForm", () => {
 		expect(labels).toContain("Kimi");
 		expect(labels).toContain("Aider");
 		expect(labels).toContain("Amp");
+		expect(labels).toContain("Auggie");
+		expect(labels).toContain("Autohand");
+		expect(labels).toContain("Cline");
+		expect(labels).toContain("Crush");
+		expect(labels).toContain("Grok");
 	});
 
 	it("shows unknown-auth agents as selectable with a warning in project settings", async () => {

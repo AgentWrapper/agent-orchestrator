@@ -13,10 +13,13 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
+// Reviewer builds Amp's interactive reviewer command.
 type Reviewer struct{}
 
+// New returns the production Amp reviewer adapter.
 func New() *Reviewer { return &Reviewer{} }
 
+// Harness returns Amp's reviewer identity.
 func (*Reviewer) Harness() domain.ReviewerHarness { return domain.ReviewerAmp }
 
 var _ ports.Reviewer = (*Reviewer)(nil)
@@ -76,10 +79,12 @@ func writeReviewerSettings(root string) (string, error) {
 	return path, nil
 }
 
+// ReviewMessage returns the next AO-owned task reference.
 func (*Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
 	return inv.Prompt, nil
 }
 
+// ReviewCancel interrupts Amp's current operation while preserving the pane.
 func (*Reviewer) ReviewCancel(context.Context) (ports.ReviewCancelSpec, error) {
 	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelInterrupt, Interrupts: 2}, nil
 }

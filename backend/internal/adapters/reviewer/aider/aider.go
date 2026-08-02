@@ -9,10 +9,13 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
+// Reviewer builds Aider's interactive reviewer command.
 type Reviewer struct{}
 
+// New returns the production Aider reviewer adapter.
 func New() *Reviewer { return &Reviewer{} }
 
+// Harness returns Aider's reviewer identity.
 func (*Reviewer) Harness() domain.ReviewerHarness { return domain.ReviewerAider }
 
 var _ ports.Reviewer = (*Reviewer)(nil)
@@ -51,14 +54,17 @@ func (*Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) 
 	return ports.ReviewCommandSpec{Argv: argv, InitialMessage: message}, nil
 }
 
+// ReviewMessage returns the next AO-owned task reference.
 func (*Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
 	return inv.Prompt, nil
 }
 
+// ReviewCancel interrupts Aider's current operation while preserving the pane.
 func (*Reviewer) ReviewCancel(context.Context) (ports.ReviewCancelSpec, error) {
 	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelInterrupt, Interrupts: 2}, nil
 }
 
-// Aider cannot add future AO-owned task files to an existing --read context,
+// ReviewProcessReusable reports false because Aider cannot add future AO-owned
+// task files to an existing --read context,
 // so each pass opens a fresh interactive TUI rather than a one-shot process.
 func (*Reviewer) ReviewProcessReusable() bool { return false }
