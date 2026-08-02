@@ -277,7 +277,8 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 	finalizeSessionUsage(ctx, id, terminationLaunch, terminationRevision, finalizer)
 
 	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
-		if cur.IsTerminated || cur.Metadata.RuntimeLaunchID != terminationLaunch || !matchesLaunch(cur) ||
+		if cur.IsTerminated || !cur.UpdatedAt.Equal(terminationRevision) ||
+			cur.Metadata.RuntimeLaunchID != terminationLaunch || !matchesLaunch(cur) ||
 			!runtimeClearlyDead(f, cur.Activity, now, m.window) {
 			return cur, false
 		}

@@ -376,6 +376,68 @@ func TestRuntimeObservation_DoesNotTerminateAfterActivityDuringFinalization(t *t
 	}
 }
 
+func TestRuntimeObservation_RetriesAfterRevisionChangesDuringFinalization(t *testing.T) {
+	now := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
+	m, st, _ := newManager()
+	m.clock = func() time.Time { return now }
+	rec := domain.SessionRecord{
+		ID:        "mer-1",
+		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-2 * time.Minute)},
+		UpdatedAt: now.Add(-2 * time.Minute),
+		Metadata:  domain.SessionMetadata{RuntimeLaunchID: "launch-1"},
+	}
+	st.sessions[rec.ID] = rec
+	finalized := 0
+	var revisions []time.Time
+	finalizer := &fakeUsageFinalizer{store: st}
+	finalizer.onFinalize = func(id domain.SessionID, launchID string, sessionRevision time.Time) error {
+		revisions = append(revisions, sessionRevision)
+		if finalizer.calls == 1 {
+			if err := m.ApplyActivitySignal(ctx, id, ports.ActivitySignal{
+				Valid:     true,
+				State:     domain.ActivityExited,
+				Timestamp: now,
+				Event:     "process-exited",
+				LaunchID:  launchID,
+			}); err != nil {
+				return err
+			}
+		}
+		current := st.sessions[id]
+		if !current.IsTerminated &&
+			current.Metadata.RuntimeLaunchID == launchID &&
+			current.UpdatedAt.Equal(sessionRevision) {
+			finalized++
+		}
+		return nil
+	}
+	m.SetUsageFinalizer(finalizer)
+	facts := ports.RuntimeFacts{
+		Runtime:    ports.ProbeDead,
+		LaunchID:   "launch-1",
+		ObservedAt: now,
+	}
+
+	if err := m.ApplyRuntimeObservation(ctx, rec.ID, facts); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions[rec.ID]
+	if finalized != 0 || got.IsTerminated || got.Activity.State != domain.ActivityExited || !got.UpdatedAt.Equal(now) {
+		t.Fatalf("first pass finalized=%d session=%+v, want no finalization and live exited revision", finalized, got)
+	}
+
+	if err := m.ApplyRuntimeObservation(ctx, rec.ID, facts); err != nil {
+		t.Fatal(err)
+	}
+	got = st.sessions[rec.ID]
+	if finalizer.calls != 2 || finalized != 1 || !got.IsTerminated {
+		t.Fatalf("second pass finalizer calls=%d finalized=%d session=%+v", finalizer.calls, finalized, got)
+	}
+	if len(revisions) != 2 || !revisions[0].Equal(rec.UpdatedAt) || !revisions[1].Equal(now) {
+		t.Fatalf("finalizer revisions=%v, want [%s %s]", revisions, rec.UpdatedAt, now)
+	}
+}
+
 func TestRuntimeObservation_FailedProbeDoesNotMutate(t *testing.T) {
 	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")
