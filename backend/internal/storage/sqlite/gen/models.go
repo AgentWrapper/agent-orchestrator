@@ -52,6 +52,10 @@ type Conversation struct {
 	RateLimitPlan              sql.NullString
 	ProviderTitle              string
 	AppliedTitle               string
+	ModelRerouteJson           sql.NullString
+	AccountJson                sql.NullString
+	ThreadStateJson            sql.NullString
+	McpServersJson             sql.NullString
 }
 
 type ConversationActivity struct {
@@ -70,6 +74,8 @@ type ConversationActivity struct {
 	UpdatedAt              time.Time
 	CommandOutput          string
 	CommandOutputTruncated int64
+	StreamedText           string
+	StreamedTextTruncated  int64
 }
 
 type ConversationMessage struct {
@@ -111,6 +117,7 @@ type ConversationTurn struct {
 	CompletedAt          sql.NullTime
 	DiffJson             string
 	RolledBackAt         sql.NullTime
+	PlanJson             string
 }
 
 type Notification struct {

@@ -1033,6 +1033,15 @@ func normalizeItem(params json.RawMessage, completed bool) []ports.ChatEvent {
 		Summary:        summary,
 		Detail:         activityDetail(it),
 	}
+	if kind == domain.ActivityKindReasoning {
+		// The settled form of what the summary deltas streamed. Carried on the event so
+		// the projection can replace its accumulation without decoding the detail
+		// payload, and left empty when the provider settled nothing — a reasoning item
+		// with an empty summary array is the DEFAULT on a build with
+		// model_reasoning_summary unset, and replacing streamed text with that would
+		// erase reasoning the user watched arrive.
+		ev.Text = joinReasoning(it.Summary)
+	}
 	if completed {
 		ev.Kind = ports.ChatEventActivityCompleted
 		ev.ActivityStatus = domain.ActivityStatusCompleted

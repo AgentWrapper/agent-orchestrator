@@ -386,6 +386,226 @@ func nullablePercent(value float64) sql.NullFloat64 {
 	return sql.NullFloat64{Float64: value, Valid: true}
 }
 
+// RecordModelReroute stores the provider answering with a model other than the one
+// asked for, overwriting the previous report.
+//
+// Latest wins because there is one current answer to "which model is actually
+// replying". The earlier reroutes of a long conversation are not lost information a
+// reader wants: the turn each one happened on is recorded with it, and what a client
+// needs to say is what is answering now.
+func (s *Store) RecordModelReroute(
+	ctx context.Context,
+	conversationID string,
+	reroute domain.ConversationModelReroute,
+) error {
+	encoded, err := json.Marshal(reroute)
+	if err != nil {
+		return fmt.Errorf("encode model reroute for %s: %w", conversationID, err)
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if err := s.qw.UpdateConversationModelReroute(ctx,
+		gen.UpdateConversationModelRerouteParams{
+			ModelRerouteJson: sql.NullString{String: string(encoded), Valid: true},
+			UpdatedAt:        reroute.At,
+			ID:               conversationID,
+		}); err != nil {
+		return fmt.Errorf("record model reroute for %s: %w", conversationID, err)
+	}
+	return nil
+}
+
+// RecordAccount stores what the provider says about the account this conversation
+// runs under.
+//
+// The caller passes the whole account, not a patch: the provider reports auth mode
+// and plan together on account/updated and neither on a credential demand, so
+// merging is the caller's job and it needs the previous value to do it. Doing it
+// here would need a read inside the write lock for a field nothing queries.
+func (s *Store) RecordAccount(
+	ctx context.Context,
+	conversationID string,
+	account domain.ConversationAccount,
+	now time.Time,
+) error {
+	encoded, err := json.Marshal(account)
+	if err != nil {
+		return fmt.Errorf("encode account for %s: %w", conversationID, err)
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if err := s.qw.UpdateConversationAccount(ctx, gen.UpdateConversationAccountParams{
+		AccountJson: sql.NullString{String: string(encoded), Valid: true},
+		UpdatedAt:   now,
+		ID:          conversationID,
+	}); err != nil {
+		return fmt.Errorf("record account for %s: %w", conversationID, err)
+	}
+	return nil
+}
+
+// RecordThreadState stores the provider's lifecycle view of the thread.
+//
+// updated_at is deliberately not bumped by the statement this runs: thread status
+// flips active/idle on every turn, and marking the conversation modified twice per
+// message would make every chat session look freshly active forever.
+func (s *Store) RecordThreadState(
+	ctx context.Context,
+	conversationID string,
+	state domain.ConversationThreadState,
+) error {
+	encoded, err := json.Marshal(state)
+	if err != nil {
+		return fmt.Errorf("encode thread state for %s: %w", conversationID, err)
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if err := s.qw.UpdateConversationThreadState(ctx,
+		gen.UpdateConversationThreadStateParams{
+			ThreadStateJson: sql.NullString{String: string(encoded), Valid: true},
+			ID:              conversationID,
+		}); err != nil {
+		return fmt.Errorf("record thread state for %s: %w", conversationID, err)
+	}
+	return nil
+}
+
+// RecordMCPServers stores the tool servers' startup state.
+//
+// The whole list is written, not one server: the provider reports servers one at a
+// time and re-reports all of them on every turn, so the caller merges by name and
+// this stores the result. An empty list is stored as an empty array rather than
+// NULL, because "AO asked and there are none" is a different answer from "AO never
+// asked".
+func (s *Store) RecordMCPServers(
+	ctx context.Context,
+	conversationID string,
+	servers []domain.ConversationMCPServer,
+) error {
+	if servers == nil {
+		servers = []domain.ConversationMCPServer{}
+	}
+	encoded, err := json.Marshal(servers)
+	if err != nil {
+		return fmt.Errorf("encode mcp servers for %s: %w", conversationID, err)
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if err := s.qw.UpdateConversationMcpServers(ctx,
+		gen.UpdateConversationMcpServersParams{
+			McpServersJson: sql.NullString{String: string(encoded), Valid: true},
+			ID:             conversationID,
+		}); err != nil {
+		return fmt.Errorf("record mcp servers for %s: %w", conversationID, err)
+	}
+	return nil
+}
+
+// SetTurnPlan overwrites a turn's plan and reports whether the turn was found.
+//
+// A plan for a turn AO never recorded happens after a restart, when a controller
+// reattaches to a provider turn that predates it. There is nothing to update, and
+// that is not a failure.
+func (s *Store) SetTurnPlan(
+	ctx context.Context,
+	conversationID, providerTurnID string,
+	plan domain.ConversationPlan,
+) (bool, error) {
+	if providerTurnID == "" {
+		// Without a turn id there is no row to attribute this to, and guessing the
+		// most recent turn would file one turn's plan under another.
+		return false, nil
+	}
+	encoded, err := json.Marshal(plan)
+	if err != nil {
+		return false, fmt.Errorf("encode plan for %s: %w", providerTurnID, err)
+	}
+
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.UpdateConversationTurnPlan(ctx, gen.UpdateConversationTurnPlanParams{
+		PlanJson:       string(encoded),
+		ConversationID: conversationID,
+		ProviderTurnID: providerTurnID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("set turn plan for %s: %w", providerTurnID, err)
+	}
+	return rows > 0, nil
+}
+
+// MaxStreamedTextChars caps the provider prose stored for one activity.
+//
+// Reasoning on a long turn is the case this bounds: a model reasoning at high
+// effort can emit tens of kilobytes of summary for one item, and this row is
+// re-read by every conversation snapshot poll. 32K is well past what a collapsed
+// card shows and past what anyone reads; half the command-output cap because
+// reasoning has a settled restatement to fall back on and a program's output does
+// not.
+const MaxStreamedTextChars = 32 * 1024
+
+// AppendActivityStreamedText folds a streamed provider-prose delta into its
+// activity.
+//
+// Reports whether a row was found. A delta for an activity AO has not recorded is
+// an ordinary race, not a failure: the provider can emit a reasoning delta before
+// the item/started that creates the row, and the settled summary on item/completed
+// still lands.
+func (s *Store) AppendActivityStreamedText(
+	ctx context.Context,
+	conversationID, providerItemID, delta string,
+	now time.Time,
+) (bool, error) {
+	if delta == "" {
+		return false, nil
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	rows, err := s.qw.AppendConversationActivityStreamedText(ctx,
+		gen.AppendConversationActivityStreamedTextParams{
+			Delta:          delta,
+			MaxTextChars:   MaxStreamedTextChars,
+			UpdatedAt:      now,
+			ConversationID: conversationID,
+			ProviderItemID: providerItemID,
+		})
+	if err != nil {
+		return false, fmt.Errorf("append streamed text to %s: %w", providerItemID, err)
+	}
+	return rows > 0, nil
+}
+
+// SettleActivityStreamedText replaces streamed prose with the provider's settled
+// version, and reports whether the activity was there to update.
+//
+// Replacing rather than appending is what makes a dropped delta cosmetic: the
+// accumulated text is a preview of the settled text, so once the settled form
+// arrives it is the only account worth keeping.
+func (s *Store) SettleActivityStreamedText(
+	ctx context.Context,
+	conversationID, providerItemID, text string,
+	now time.Time,
+) (bool, error) {
+	if providerItemID == "" {
+		return false, nil
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	rows, err := s.qw.SettleConversationActivityStreamedText(ctx,
+		gen.SettleConversationActivityStreamedTextParams{
+			StreamedText:   text,
+			UpdatedAt:      now,
+			ConversationID: conversationID,
+			ProviderItemID: providerItemID,
+		})
+	if err != nil {
+		return false, fmt.Errorf("settle streamed text on %s: %w", providerItemID, err)
+	}
+	return rows > 0, nil
+}
+
 // NextQueuedTurn returns the oldest message recorded while the agent was busy,
 // or ErrNoQueuedTurn when the queue is empty.
 //
@@ -1045,7 +1265,30 @@ func conversationToDomain(row gen.Conversation) domain.ConversationRecord {
 		compacted := row.CompactedAt.Time
 		rec.CompactedAt = &compacted
 	}
+	rec.ModelReroute = decodeJSONColumn[domain.ConversationModelReroute](row.ModelRerouteJson)
+	rec.Account = decodeJSONColumn[domain.ConversationAccount](row.AccountJson)
+	rec.ThreadState = decodeJSONColumn[domain.ConversationThreadState](row.ThreadStateJson)
+	if servers := decodeJSONColumn[[]domain.ConversationMCPServer](row.McpServersJson); servers != nil {
+		rec.MCPServers = *servers
+	}
 	return rec
+}
+
+// decodeJSONColumn reads one of the conversation's latest-wins JSON columns.
+//
+// A payload this build cannot parse yields nil rather than a zero value, which
+// matters because nil is how a reader learns the provider never reported. A
+// half-decoded account or thread state would be worse than none: only the first
+// looks authoritative.
+func decodeJSONColumn[T any](column sql.NullString) *T {
+	if !column.Valid || column.String == "" {
+		return nil
+	}
+	var value T
+	if err := json.Unmarshal([]byte(column.String), &value); err != nil {
+		return nil
+	}
+	return &value
 }
 
 // usageFromRow returns nil when the provider never reported, so a client can tell
@@ -1119,6 +1362,15 @@ func turnToDomain(row gen.ConversationTurn) domain.ConversationTurn {
 		rolledBack := row.RolledBackAt.Time
 		turn.RolledBackAt = &rolledBack
 	}
+	if row.PlanJson != "" {
+		var plan domain.ConversationPlan
+		// Dropped rather than surfaced half decoded, the same rule the diff follows: a
+		// plan showing some of its steps is worse than one that admits it has nothing,
+		// because only the first looks like the agent's actual plan.
+		if err := json.Unmarshal([]byte(row.PlanJson), &plan); err == nil {
+			turn.Plan = &plan
+		}
+	}
 	return turn
 }
 
@@ -1158,6 +1410,8 @@ func activityToDomain(row gen.ConversationActivity) domain.ConversationActivity 
 		UpdatedAt:              row.UpdatedAt,
 		CommandOutput:          row.CommandOutput,
 		CommandOutputTruncated: row.CommandOutputTruncated != 0,
+		StreamedText:           row.StreamedText,
+		StreamedTextTruncated:  row.StreamedTextTruncated != 0,
 	}
 	if row.TurnID.Valid {
 		activity.TurnID = row.TurnID.String

@@ -488,9 +488,14 @@ type ChatEvent struct {
 	// TurnState is set on turn.completed.
 	TurnState domain.TurnState
 
-	// Delta is the text appended by a message.delta.
+	// Delta is the text appended by a message.delta, a reasoning.delta, a
+	// command.output.delta, a command.input or an activity.text.
 	Delta string
-	// Text is the settled text on message.completed.
+	// Text is the settled text on message.completed, and the settled prose on an
+	// activity that streamed text — a reasoning item's summary, once the provider
+	// reports it. Empty means the provider settled nothing, which must not be read
+	// as "the streamed text was wrong": a projection that replaced an accumulation
+	// with an empty settle would erase reasoning the user watched arrive.
 	Text string
 
 	// ActivityKind and ActivityStatus are set on activity events.

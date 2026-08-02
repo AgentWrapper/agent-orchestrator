@@ -544,6 +544,31 @@ func (s *Service) Compact(ctx context.Context, id domain.SessionID) (ports.ChatC
 	return controller.Compact(ctx)
 }
 
+// ReloadMCPServers restarts the provider's tool servers for this session.
+//
+// The failure it addresses is not the agent's. An MCP server that fails to start
+// stays failed for the life of the provider process, so a session loses a tool for
+// good and the only other way back is to throw the conversation away. Same for a
+// server whose config changed on disk, or one whose auth expired: the agent has no
+// way to notice and nothing it can do about it.
+//
+// It returns the servers' state so a caller sees the outcome without polling,
+// though the provider's own startup notifications remain the authoritative report
+// and land on the conversation regardless of who asked.
+func (s *Service) ReloadMCPServers(
+	ctx context.Context,
+	id domain.SessionID,
+) ([]domain.ConversationMCPServer, error) {
+	if _, err := s.requireChatSession(ctx, id); err != nil {
+		return nil, err
+	}
+	controller, err := s.Controller(id)
+	if err != nil {
+		return nil, err
+	}
+	return controller.ReloadMCPServers(ctx)
+}
+
 // SetTurnSettings records the provider choices for this session's next turn.
 //
 // Applied per turn, so nothing restarts: the running turn keeps whatever it was

@@ -83,6 +83,44 @@ UPDATE conversations
 SET applied_title = ?, updated_at = ?
 WHERE id = ?;
 
+-- The provider answering with a model other than the one that was asked for.
+-- Latest wins: there is one current answer to "which model is actually replying".
+-- updated_at is bumped because unlike a usage report this IS a change to the
+-- conversation, and a client that caches on updated_at has to see it.
+-- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+-- offset, so a multi-byte character here silently corrupts later queries.
+-- name: UpdateConversationModelReroute :exec
+UPDATE conversations
+SET model_reroute_json = ?, updated_at = ?
+WHERE id = ?;
+
+-- The provider account this conversation runs under, including the moment it last
+-- asked for credentials AO does not hold. Latest wins.
+-- name: UpdateConversationAccount :exec
+UPDATE conversations
+SET account_json = ?, updated_at = ?
+WHERE id = ?;
+
+-- The provider's own lifecycle view of the thread. Latest wins.
+--
+-- updated_at is deliberately NOT touched here. Thread status flips to active and
+-- back to idle on every turn, and bumping updated_at on each would make every chat
+-- conversation look freshly modified twice per message. The same reasoning
+-- UpdateConversationUsage documents.
+-- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+-- offset, so a multi-byte character here silently corrupts later queries.
+-- name: UpdateConversationThreadState :exec
+UPDATE conversations
+SET thread_state_json = ?
+WHERE id = ?;
+
+-- Tool server startup state. Latest wins, and updated_at is left alone for the
+-- same reason as thread state: every server re-reports on every turn.
+-- name: UpdateConversationMcpServers :exec
+UPDATE conversations
+SET mcp_servers_json = ?
+WHERE id = ?;
+
 -- name: NextConversationSequence :one
 UPDATE conversations
 SET latest_sequence = latest_sequence + 1, updated_at = ?
@@ -147,6 +185,18 @@ WHERE handled_by_session_id = ? AND state IN ('queued', 'running');
 -- name: UpdateConversationTurnDiff :execrows
 UPDATE conversation_turns
 SET diff_json = ?
+WHERE conversation_id = ? AND provider_turn_id = ?;
+
+-- Overwrite the turn's plan. The provider re-sends the whole plan on every change,
+-- so the latest payload is the complete answer and there is nothing to merge.
+--
+-- execrows so the caller can tell "recorded" from "no such turn", which is a real
+-- case after a restart: a plan can arrive for a provider turn AO never recorded.
+-- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+-- offset, so a multi-byte character here silently corrupts later queries.
+-- name: UpdateConversationTurnPlan :execrows
+UPDATE conversation_turns
+SET plan_json = ?
 WHERE conversation_id = ? AND provider_turn_id = ?;
 
 -- name: SelectConversationTurnByID :one
@@ -333,6 +383,45 @@ SET command_output = substr(command_output || sqlc.arg(delta), 1, sqlc.arg(max_o
     updated_at = sqlc.arg(updated_at)
 WHERE conversation_id = sqlc.arg(conversation_id)
   AND provider_item_id = sqlc.arg(provider_item_id);
+
+-- Append provider prose streamed for one activity, capped in one statement.
+--
+-- Same shape and same reasoning as AppendConversationActivityOutput, against a
+-- different column: this is the provider's own text for the item (reasoning
+-- summary, terminal keystrokes, tool progress), not a program's output. The two are
+-- kept apart because a reader must be able to tell them apart, and because a PTY
+-- echoes what is typed, so merging them would show every keystroke twice.
+--
+-- execrows so the caller can tell "appended" from "no such activity yet", which is
+-- a real case: a reasoning delta can arrive before the item/started that creates
+-- the row.
+-- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+-- offset, so a multi-byte character here silently corrupts later queries.
+-- name: AppendConversationActivityStreamedText :execrows
+UPDATE conversation_activities
+SET streamed_text = substr(streamed_text || sqlc.arg(delta), 1, sqlc.arg(max_text_chars)),
+    streamed_text_truncated = CASE
+        WHEN length(streamed_text) + length(sqlc.arg(delta)) > sqlc.arg(max_text_chars) THEN 1
+        ELSE streamed_text_truncated
+    END,
+    revision = revision + 1,
+    updated_at = sqlc.arg(updated_at)
+WHERE conversation_id = sqlc.arg(conversation_id)
+  AND provider_item_id = sqlc.arg(provider_item_id);
+
+-- Replace the streamed text with the provider's settled version.
+--
+-- Reasoning arrives twice: as deltas while the model works, and as the item's own
+-- summary array when it completes. The settled form is authoritative, so it
+-- replaces rather than appends -- the same relationship SettleConversationMessage
+-- has with AppendConversationMessageDelta, and for the same reason: a client that
+-- accumulated a dropped delta would otherwise keep a gap forever.
+-- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+-- offset, so a multi-byte character here silently corrupts later queries.
+-- name: SettleConversationActivityStreamedText :execrows
+UPDATE conversation_activities
+SET streamed_text = ?, streamed_text_truncated = 0, revision = revision + 1, updated_at = ?
+WHERE conversation_id = ? AND provider_item_id = ?;
 
 -- name: SelectConversationActivityByProviderItem :one
 SELECT * FROM conversation_activities

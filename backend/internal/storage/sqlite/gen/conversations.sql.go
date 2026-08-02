@@ -101,6 +101,54 @@ func (q *Queries) AppendConversationActivityOutput(ctx context.Context, arg Appe
 	return result.RowsAffected()
 }
 
+const appendConversationActivityStreamedText = `-- name: AppendConversationActivityStreamedText :execrows
+UPDATE conversation_activities
+SET streamed_text = substr(streamed_text || ?1, 1, ?2),
+    streamed_text_truncated = CASE
+        WHEN length(streamed_text) + length(?1) > ?2 THEN 1
+        ELSE streamed_text_truncated
+    END,
+    revision = revision + 1,
+    updated_at = ?3
+WHERE conversation_id = ?4
+  AND provider_item_id = ?5
+`
+
+type AppendConversationActivityStreamedTextParams struct {
+	Delta          string
+	MaxTextChars   int64
+	UpdatedAt      time.Time
+	ConversationID string
+	ProviderItemID string
+}
+
+// Append provider prose streamed for one activity, capped in one statement.
+//
+// Same shape and same reasoning as AppendConversationActivityOutput, against a
+// different column: this is the provider's own text for the item (reasoning
+// summary, terminal keystrokes, tool progress), not a program's output. The two are
+// kept apart because a reader must be able to tell them apart, and because a PTY
+// echoes what is typed, so merging them would show every keystroke twice.
+//
+// execrows so the caller can tell "appended" from "no such activity yet", which is
+// a real case: a reasoning delta can arrive before the item/started that creates
+// the row.
+// NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+// offset, so a multi-byte character here silently corrupts later queries.
+func (q *Queries) AppendConversationActivityStreamedText(ctx context.Context, arg AppendConversationActivityStreamedTextParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, appendConversationActivityStreamedText,
+		arg.Delta,
+		arg.MaxTextChars,
+		arg.UpdatedAt,
+		arg.ConversationID,
+		arg.ProviderItemID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const appendConversationMessageDelta = `-- name: AppendConversationMessageDelta :exec
 UPDATE conversation_messages
 SET text = text || ?, revision = revision + 1, streaming = 1, updated_at = ?
@@ -561,7 +609,7 @@ func (q *Queries) ResolveConversationApproval(ctx context.Context, arg ResolveCo
 }
 
 const selectConversationActivities = `-- name: SelectConversationActivities :many
-SELECT id, conversation_id, turn_id, sequence, revision, kind, status, summary, detail_json, request_id, provider_item_id, created_at, updated_at, command_output, command_output_truncated FROM conversation_activities
+SELECT id, conversation_id, turn_id, sequence, revision, kind, status, summary, detail_json, request_id, provider_item_id, created_at, updated_at, command_output, command_output_truncated, streamed_text, streamed_text_truncated FROM conversation_activities
 WHERE conversation_activities.conversation_id = ?
   AND (conversation_activities.turn_id IS NULL OR conversation_activities.turn_id NOT IN (
       SELECT discarded.id FROM conversation_turns AS discarded
@@ -602,6 +650,8 @@ func (q *Queries) SelectConversationActivities(ctx context.Context, arg SelectCo
 			&i.UpdatedAt,
 			&i.CommandOutput,
 			&i.CommandOutputTruncated,
+			&i.StreamedText,
+			&i.StreamedTextTruncated,
 		); err != nil {
 			return nil, err
 		}
@@ -617,7 +667,7 @@ func (q *Queries) SelectConversationActivities(ctx context.Context, arg SelectCo
 }
 
 const selectConversationActivityByProviderItem = `-- name: SelectConversationActivityByProviderItem :one
-SELECT id, conversation_id, turn_id, sequence, revision, kind, status, summary, detail_json, request_id, provider_item_id, created_at, updated_at, command_output, command_output_truncated FROM conversation_activities
+SELECT id, conversation_id, turn_id, sequence, revision, kind, status, summary, detail_json, request_id, provider_item_id, created_at, updated_at, command_output, command_output_truncated, streamed_text, streamed_text_truncated FROM conversation_activities
 WHERE conversation_id = ? AND provider_item_id = ?
 LIMIT 1
 `
@@ -646,12 +696,14 @@ func (q *Queries) SelectConversationActivityByProviderItem(ctx context.Context, 
 		&i.UpdatedAt,
 		&i.CommandOutput,
 		&i.CommandOutputTruncated,
+		&i.StreamedText,
+		&i.StreamedTextTruncated,
 	)
 	return i, err
 }
 
 const selectConversationByID = `-- name: SelectConversationByID :one
-SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title FROM conversations WHERE id = ? LIMIT 1
+SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title, model_reroute_json, account_json, thread_state_json, mcp_servers_json FROM conversations WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) SelectConversationByID(ctx context.Context, id string) (Conversation, error) {
@@ -682,12 +734,16 @@ func (q *Queries) SelectConversationByID(ctx context.Context, id string) (Conver
 		&i.RateLimitPlan,
 		&i.ProviderTitle,
 		&i.AppliedTitle,
+		&i.ModelRerouteJson,
+		&i.AccountJson,
+		&i.ThreadStateJson,
+		&i.McpServersJson,
 	)
 	return i, err
 }
 
 const selectConversationBySession = `-- name: SelectConversationBySession :one
-SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title FROM conversations WHERE session_id = ? LIMIT 1
+SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title, model_reroute_json, account_json, thread_state_json, mcp_servers_json FROM conversations WHERE session_id = ? LIMIT 1
 `
 
 func (q *Queries) SelectConversationBySession(ctx context.Context, sessionID *domain.SessionID) (Conversation, error) {
@@ -718,6 +774,10 @@ func (q *Queries) SelectConversationBySession(ctx context.Context, sessionID *do
 		&i.RateLimitPlan,
 		&i.ProviderTitle,
 		&i.AppliedTitle,
+		&i.ModelRerouteJson,
+		&i.AccountJson,
+		&i.ThreadStateJson,
+		&i.McpServersJson,
 	)
 	return i, err
 }
@@ -892,7 +952,7 @@ func (q *Queries) SelectConversationProviderEvents(ctx context.Context, arg Sele
 }
 
 const selectConversationTurnByID = `-- name: SelectConversationTurnByID :one
-SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at FROM conversation_turns WHERE id = ? LIMIT 1
+SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at, plan_json FROM conversation_turns WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) SelectConversationTurnByID(ctx context.Context, id string) (ConversationTurn, error) {
@@ -911,12 +971,13 @@ func (q *Queries) SelectConversationTurnByID(ctx context.Context, id string) (Co
 		&i.CompletedAt,
 		&i.DiffJson,
 		&i.RolledBackAt,
+		&i.PlanJson,
 	)
 	return i, err
 }
 
 const selectConversationTurnByProviderID = `-- name: SelectConversationTurnByProviderID :one
-SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at FROM conversation_turns
+SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at, plan_json FROM conversation_turns
 WHERE conversation_id = ? AND provider_turn_id = ?
 LIMIT 1
 `
@@ -944,12 +1005,13 @@ func (q *Queries) SelectConversationTurnByProviderID(ctx context.Context, arg Se
 		&i.CompletedAt,
 		&i.DiffJson,
 		&i.RolledBackAt,
+		&i.PlanJson,
 	)
 	return i, err
 }
 
 const selectConversationTurns = `-- name: SelectConversationTurns :many
-SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at FROM conversation_turns
+SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at, plan_json FROM conversation_turns
 WHERE conversation_id = ?
 ORDER BY requested_at, rowid
 `
@@ -981,6 +1043,7 @@ func (q *Queries) SelectConversationTurns(ctx context.Context, conversationID st
 			&i.CompletedAt,
 			&i.DiffJson,
 			&i.RolledBackAt,
+			&i.PlanJson,
 		); err != nil {
 			return nil, err
 		}
@@ -1061,6 +1124,41 @@ func (q *Queries) SettleConversationActivity(ctx context.Context, arg SettleConv
 	return err
 }
 
+const settleConversationActivityStreamedText = `-- name: SettleConversationActivityStreamedText :execrows
+UPDATE conversation_activities
+SET streamed_text = ?, streamed_text_truncated = 0, revision = revision + 1, updated_at = ?
+WHERE conversation_id = ? AND provider_item_id = ?
+`
+
+type SettleConversationActivityStreamedTextParams struct {
+	StreamedText   string
+	UpdatedAt      time.Time
+	ConversationID string
+	ProviderItemID string
+}
+
+// Replace the streamed text with the provider's settled version.
+//
+// Reasoning arrives twice: as deltas while the model works, and as the item's own
+// summary array when it completes. The settled form is authoritative, so it
+// replaces rather than appends -- the same relationship SettleConversationMessage
+// has with AppendConversationMessageDelta, and for the same reason: a client that
+// accumulated a dropped delta would otherwise keep a gap forever.
+// NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+// offset, so a multi-byte character here silently corrupts later queries.
+func (q *Queries) SettleConversationActivityStreamedText(ctx context.Context, arg SettleConversationActivityStreamedTextParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, settleConversationActivityStreamedText,
+		arg.StreamedText,
+		arg.UpdatedAt,
+		arg.ConversationID,
+		arg.ProviderItemID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const settleConversationMessage = `-- name: SettleConversationMessage :exec
 UPDATE conversation_messages
 SET text = ?, revision = revision + 1, streaming = 0, updated_at = ?
@@ -1128,6 +1226,25 @@ func (q *Queries) SettleOrphanedConversationTurns(ctx context.Context, arg Settl
 	return err
 }
 
+const updateConversationAccount = `-- name: UpdateConversationAccount :exec
+UPDATE conversations
+SET account_json = ?, updated_at = ?
+WHERE id = ?
+`
+
+type UpdateConversationAccountParams struct {
+	AccountJson sql.NullString
+	UpdatedAt   time.Time
+	ID          string
+}
+
+// The provider account this conversation runs under, including the moment it last
+// asked for credentials AO does not hold. Latest wins.
+func (q *Queries) UpdateConversationAccount(ctx context.Context, arg UpdateConversationAccountParams) error {
+	_, err := q.db.ExecContext(ctx, updateConversationAccount, arg.AccountJson, arg.UpdatedAt, arg.ID)
+	return err
+}
+
 const updateConversationAppliedTitle = `-- name: UpdateConversationAppliedTitle :exec
 UPDATE conversations
 SET applied_title = ?, updated_at = ?
@@ -1145,6 +1262,47 @@ type UpdateConversationAppliedTitleParams struct {
 // replacing one a person chose.
 func (q *Queries) UpdateConversationAppliedTitle(ctx context.Context, arg UpdateConversationAppliedTitleParams) error {
 	_, err := q.db.ExecContext(ctx, updateConversationAppliedTitle, arg.AppliedTitle, arg.UpdatedAt, arg.ID)
+	return err
+}
+
+const updateConversationMcpServers = `-- name: UpdateConversationMcpServers :exec
+UPDATE conversations
+SET mcp_servers_json = ?
+WHERE id = ?
+`
+
+type UpdateConversationMcpServersParams struct {
+	McpServersJson sql.NullString
+	ID             string
+}
+
+// Tool server startup state. Latest wins, and updated_at is left alone for the
+// same reason as thread state: every server re-reports on every turn.
+func (q *Queries) UpdateConversationMcpServers(ctx context.Context, arg UpdateConversationMcpServersParams) error {
+	_, err := q.db.ExecContext(ctx, updateConversationMcpServers, arg.McpServersJson, arg.ID)
+	return err
+}
+
+const updateConversationModelReroute = `-- name: UpdateConversationModelReroute :exec
+UPDATE conversations
+SET model_reroute_json = ?, updated_at = ?
+WHERE id = ?
+`
+
+type UpdateConversationModelRerouteParams struct {
+	ModelRerouteJson sql.NullString
+	UpdatedAt        time.Time
+	ID               string
+}
+
+// The provider answering with a model other than the one that was asked for.
+// Latest wins: there is one current answer to "which model is actually replying".
+// updated_at is bumped because unlike a usage report this IS a change to the
+// conversation, and a client that caches on updated_at has to see it.
+// NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+// offset, so a multi-byte character here silently corrupts later queries.
+func (q *Queries) UpdateConversationModelReroute(ctx context.Context, arg UpdateConversationModelRerouteParams) error {
+	_, err := q.db.ExecContext(ctx, updateConversationModelReroute, arg.ModelRerouteJson, arg.UpdatedAt, arg.ID)
 	return err
 }
 
@@ -1203,6 +1361,30 @@ func (q *Queries) UpdateConversationRateLimits(ctx context.Context, arg UpdateCo
 	return err
 }
 
+const updateConversationThreadState = `-- name: UpdateConversationThreadState :exec
+UPDATE conversations
+SET thread_state_json = ?
+WHERE id = ?
+`
+
+type UpdateConversationThreadStateParams struct {
+	ThreadStateJson sql.NullString
+	ID              string
+}
+
+// The provider's own lifecycle view of the thread. Latest wins.
+//
+// updated_at is deliberately NOT touched here. Thread status flips to active and
+// back to idle on every turn, and bumping updated_at on each would make every chat
+// conversation look freshly modified twice per message. The same reasoning
+// UpdateConversationUsage documents.
+// NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+// offset, so a multi-byte character here silently corrupts later queries.
+func (q *Queries) UpdateConversationThreadState(ctx context.Context, arg UpdateConversationThreadStateParams) error {
+	_, err := q.db.ExecContext(ctx, updateConversationThreadState, arg.ThreadStateJson, arg.ID)
+	return err
+}
+
 const updateConversationTurnDiff = `-- name: UpdateConversationTurnDiff :execrows
 UPDATE conversation_turns
 SET diff_json = ?
@@ -1222,6 +1404,33 @@ type UpdateConversationTurnDiffParams struct {
 // offset, so a multi-byte character here silently corrupts later queries.
 func (q *Queries) UpdateConversationTurnDiff(ctx context.Context, arg UpdateConversationTurnDiffParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, updateConversationTurnDiff, arg.DiffJson, arg.ConversationID, arg.ProviderTurnID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const updateConversationTurnPlan = `-- name: UpdateConversationTurnPlan :execrows
+UPDATE conversation_turns
+SET plan_json = ?
+WHERE conversation_id = ? AND provider_turn_id = ?
+`
+
+type UpdateConversationTurnPlanParams struct {
+	PlanJson       string
+	ConversationID string
+	ProviderTurnID string
+}
+
+// Overwrite the turn's plan. The provider re-sends the whole plan on every change,
+// so the latest payload is the complete answer and there is nothing to merge.
+//
+// execrows so the caller can tell "recorded" from "no such turn", which is a real
+// case after a restart: a plan can arrive for a provider turn AO never recorded.
+// NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+// offset, so a multi-byte character here silently corrupts later queries.
+func (q *Queries) UpdateConversationTurnPlan(ctx context.Context, arg UpdateConversationTurnPlanParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateConversationTurnPlan, arg.PlanJson, arg.ConversationID, arg.ProviderTurnID)
 	if err != nil {
 		return 0, err
 	}

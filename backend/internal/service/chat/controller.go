@@ -64,6 +64,21 @@ type Store interface {
 	AppendCommandOutput(ctx context.Context, conversationID, providerItemID, delta string, now time.Time) (bool, error)
 	SetTurnDiff(ctx context.Context, conversationID, providerTurnID string, diff domain.ConversationTurnDiff, now time.Time) (bool, error)
 
+	// Streamed provider prose for an activity: reasoning summaries, terminal
+	// keystrokes, tool progress. Appended many times and then replaced by the
+	// settled form, which is why it is two calls rather than one upsert.
+	AppendActivityStreamedText(ctx context.Context, conversationID, providerItemID, delta string, now time.Time) (bool, error)
+	SettleActivityStreamedText(ctx context.Context, conversationID, providerItemID, text string, now time.Time) (bool, error)
+
+	SetTurnPlan(ctx context.Context, conversationID, providerTurnID string, plan domain.ConversationPlan) (bool, error)
+
+	// Latest-wins provider state that belongs to the conversation rather than to a
+	// turn. Each write replaces the last.
+	RecordModelReroute(ctx context.Context, conversationID string, reroute domain.ConversationModelReroute) error
+	RecordAccount(ctx context.Context, conversationID string, account domain.ConversationAccount, now time.Time) error
+	RecordThreadState(ctx context.Context, conversationID string, state domain.ConversationThreadState) error
+	RecordMCPServers(ctx context.Context, conversationID string, servers []domain.ConversationMCPServer) error
+
 	UpsertActivity(ctx context.Context, conversationID, providerTurnID string, activity domain.ConversationActivity, now time.Time) error
 	MarkCompacted(ctx context.Context, conversationID string, at time.Time) error
 	ResolveApproval(ctx context.Context, conversationID, requestID, detailJSON string, now time.Time) error
@@ -123,6 +138,18 @@ type Controller struct {
 	// queue that interrupt cancels. Zero means nothing is being cancelled.
 	cancelQueuedAt time.Time
 
+	// account, threadState and mcpServers are merged here before being written,
+	// because the provider reports each of them in pieces: account/updated carries
+	// auth mode and plan but never a credential demand, a thread-status report says
+	// nothing about archiving, and MCP servers are announced one at a time. Writing
+	// each report straight through would make every field blank the one before it.
+	account     domain.ConversationAccount
+	threadState domain.ConversationThreadState
+	// mcpServers is keyed by name; mcpServerOrder preserves first-seen order so the
+	// list a client renders does not reshuffle on every turn.
+	mcpServers     map[string]domain.ConversationMCPServer
+	mcpServerOrder []string
+
 	stopped chan struct{}
 	once    sync.Once
 }
@@ -153,7 +180,23 @@ func newController(
 		now:          now,
 		state:        ports.ChatControllerReady,
 		settings:     conversation.Settings,
+		mcpServers:   map[string]domain.ConversationMCPServer{},
 		stopped:      make(chan struct{}),
+	}
+	// Seeded from the durable row so a reconnect merges onto what is already known
+	// rather than starting from blank and reporting a conversation as having no
+	// account until the provider next mentions one.
+	if conversation.Account != nil {
+		c.account = *conversation.Account
+	}
+	if conversation.ThreadState != nil {
+		c.threadState = *conversation.ThreadState
+	}
+	for _, server := range conversation.MCPServers {
+		if _, seen := c.mcpServers[server.Name]; !seen {
+			c.mcpServerOrder = append(c.mcpServerOrder, server.Name)
+		}
+		c.mcpServers[server.Name] = server
 	}
 	go c.project()
 	go c.readRateLimits()
@@ -802,8 +845,29 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 		}
 		return nil
 
+	case ports.ChatEventReasoningDelta, ports.ChatEventCommandInput, ports.ChatEventActivityText:
+		// Provider prose for one activity, appended to that activity's own stream.
+		// Deliberately not a timeline row per delta, and deliberately not the same
+		// column as command output: a PTY echoes the keystrokes the agent sends, so
+		// merging the two streams would show every typed line twice.
+		//
+		// A delta whose activity does not exist yet is dropped for the same reason a
+		// command output delta is: the provider can stream before the item/started
+		// that creates the row, and minting an activity from a delta would put a
+		// timeline entry there with nothing on it.
+		found, err := c.store.AppendActivityStreamedText(ctx, c.conversation.ID,
+			event.ProviderItemID, event.Delta, now)
+		if err != nil {
+			return err
+		}
+		if !found {
+			c.log.Debug("streamed activity text had no activity to append to",
+				"session", c.sessionID, "kind", event.Kind, "item", event.ProviderItemID)
+		}
+		return nil
+
 	case ports.ChatEventActivityStarted, ports.ChatEventActivityCompleted:
-		return c.store.UpsertActivity(ctx, c.conversation.ID, event.ProviderTurnID,
+		if err := c.store.UpsertActivity(ctx, c.conversation.ID, event.ProviderTurnID,
 			domain.ConversationActivity{
 				ID:             c.newID(),
 				Kind:           event.ActivityKind,
@@ -811,7 +875,104 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 				Summary:        event.Summary,
 				Detail:         event.Detail,
 				ProviderItemID: event.ProviderItemID,
+			}, now); err != nil {
+			return err
+		}
+		// After the upsert, so the row exists to settle. Only when the provider
+		// actually settled something: an empty settle would erase an accumulation the
+		// user watched arrive, and a reasoning item with an empty summary array is the
+		// normal shape on a build that streams no summaries at all.
+		if event.Text != "" {
+			if _, err := c.store.SettleActivityStreamedText(ctx, c.conversation.ID,
+				event.ProviderItemID, event.Text, now); err != nil {
+				return err
+			}
+		}
+		return nil
+
+	case ports.ChatEventPlanUpdated:
+		// Per-turn state, overwritten. The provider re-sends the whole plan on every
+		// change, so a row per update would read as though the agent had planned three
+		// separate times in one turn.
+		if event.Plan == nil {
+			return nil
+		}
+		found, err := c.store.SetTurnPlan(ctx, c.conversation.ID, event.ProviderTurnID, *event.Plan)
+		if err != nil {
+			return err
+		}
+		if !found {
+			// A turn from before this controller existed, seen after a restart.
+			c.log.Debug("plan had no turn to attach to",
+				"session", c.sessionID, "providerTurn", event.ProviderTurnID)
+		}
+		// Also a timeline row, upserted so the plan mutates in place rather than
+		// stacking. The turn column answers "what is the plan now" without walking the
+		// timeline; this row answers "where in the conversation did the agent plan",
+		// which the column cannot. The compaction projection already sets this
+		// precedent, and the two cannot disagree because both are written from one
+		// event.
+		return c.store.UpsertActivity(ctx, c.conversation.ID, event.ProviderTurnID,
+			domain.ConversationActivity{
+				ID:      c.newID(),
+				Kind:    domain.ActivityKindPlan,
+				Status:  planActivityStatus(*event.Plan),
+				Summary: event.Summary,
+				Detail:  planDetail(*event.Plan),
+				// Synthetic, because turn/plan/updated carries no item id: the plan is
+				// not an item. Keyed on the turn so a turn's plan is one row that
+				// updates, and prefixed so it can never collide with a provider id.
+				ProviderItemID: planItemID(event.ProviderTurnID),
 			}, now)
+
+	case ports.ChatEventModelRerouted:
+		// A correction to a claim AO has already made. The composer names the model it
+		// is sending to, so a substitution nobody recorded leaves every later reading
+		// of the turn attributing the answer to a model that did not produce it.
+		if event.Reroute == nil || event.Reroute.ToModel == "" {
+			return nil
+		}
+		if err := c.store.RecordModelReroute(ctx, c.conversation.ID,
+			domain.ConversationModelReroute{
+				FromModel:      event.Reroute.FromModel,
+				ToModel:        event.Reroute.ToModel,
+				Reason:         event.Reroute.Reason,
+				ProviderTurnID: event.ProviderTurnID,
+				At:             now,
+			}); err != nil {
+			return err
+		}
+		// And a timeline row, because the substitution happened at a point in the
+		// conversation: everything above it was answered by one model and everything
+		// below by another, and conversation state alone cannot say where the line is.
+		return c.store.UpsertActivity(ctx, c.conversation.ID, event.ProviderTurnID,
+			domain.ConversationActivity{
+				ID:     c.newID(),
+				Kind:   domain.ActivityKindSystem,
+				Status: domain.ActivityStatusCompleted,
+				Summary: fmt.Sprintf("Provider answered with %s instead of %s",
+					event.Reroute.ToModel, firstNonEmpty(event.Reroute.FromModel, "the selected model")),
+				Detail:         rerouteDetail(*event.Reroute),
+				ProviderItemID: rerouteItemID(event.ProviderTurnID),
+			}, now)
+
+	case ports.ChatEventAccountChanged:
+		if event.Account == nil {
+			return nil
+		}
+		return c.applyAccount(ctx, *event.Account, now)
+
+	case ports.ChatEventThreadState:
+		if event.ThreadState == nil {
+			return nil
+		}
+		return c.applyThreadState(ctx, *event.ThreadState, now)
+
+	case ports.ChatEventMCPServers:
+		if len(event.MCPServers) == 0 {
+			return nil
+		}
+		return c.applyMCPServers(ctx, event.MCPServers)
 
 	case ports.ChatEventCompacted:
 		// A fact about the conversation, not about a turn: the provider ran it in a
@@ -960,6 +1121,269 @@ func (c *Controller) applyThreadTitle(ctx context.Context, title string, now tim
 			"session", c.sessionID)
 	}
 	return nil
+}
+
+// applyAccount folds an account report into what AO already knows and records the
+// result.
+//
+// A merge rather than a replace because the provider reports the account in pieces:
+// account/updated carries the auth mode and plan and says nothing about credentials,
+// while a credential demand carries only the demand. Writing either straight through
+// would blank the other, so a session whose tokens expired would lose the plan label
+// and one that changed plan would look like its credentials were fine again.
+//
+// A demand for credentials also gets a timeline row. It is the one account fact the
+// user has to act on, and a turn that failed because the provider wanted a login it
+// could not get is otherwise indistinguishable from any other failed turn.
+func (c *Controller) applyAccount(
+	ctx context.Context,
+	update ports.ChatAccount,
+	now time.Time,
+) error {
+	c.mu.Lock()
+	if update.AuthMode != "" {
+		c.account.AuthMode = update.AuthMode
+	}
+	if update.PlanLabel != "" {
+		c.account.PlanLabel = update.PlanLabel
+	}
+	if update.ReauthRequired {
+		at := now
+		c.account.ReauthRequiredAt = &at
+		c.account.ReauthReason = update.ReauthReason
+	}
+	account := c.account
+	c.mu.Unlock()
+
+	if err := c.store.RecordAccount(ctx, c.conversation.ID, account, now); err != nil {
+		return err
+	}
+	if !update.ReauthRequired {
+		return nil
+	}
+	// Waiting on a person, and on something they have to do outside AO. Reported
+	// through the same lifecycle reduction an approval uses, because from the board's
+	// point of view the session is equally stuck.
+	c.reportActivity(ctx, domain.ActivityWaitingInput, "chat.account.reauth", now)
+	detail, _ := json.Marshal(map[string]string{
+		"event":  "auth.reauth_required",
+		"reason": update.ReauthReason,
+	})
+	return c.store.UpsertActivity(ctx, c.conversation.ID, "",
+		domain.ConversationActivity{
+			ID:      c.newID(),
+			Kind:    domain.ActivityKindSystem,
+			Status:  domain.ActivityStatusFailed,
+			Summary: "The provider needs you to sign in again",
+			Detail:  detail,
+			// Keyed on the reason so a provider retrying its demand updates one row
+			// instead of filling the timeline with the same notice.
+			ProviderItemID: "ao-reauth-" + firstNonEmpty(update.ReauthReason, "unknown"),
+		}, now)
+}
+
+// applyThreadState folds a thread report into what AO already knows.
+//
+// Tri-state on purpose. A status report says nothing about archiving and an archive
+// report says nothing about status, so each report updates only what it actually
+// spoke about — otherwise an ordinary idle report would silently un-archive a
+// thread.
+func (c *Controller) applyThreadState(
+	ctx context.Context,
+	update ports.ChatThreadState,
+	now time.Time,
+) error {
+	c.mu.Lock()
+	if update.Status != "" {
+		c.threadState.Status = update.Status
+		// The flags belong to the status report that carried them: an active thread
+		// that is no longer waiting on an approval reports active with no flags, and
+		// keeping the old list would leave it looking blocked forever.
+		c.threadState.WaitingOn = update.WaitingOn
+	}
+	if update.Archived != nil {
+		if *update.Archived {
+			at := now
+			c.threadState.ArchivedAt = &at
+		} else {
+			c.threadState.ArchivedAt = nil
+		}
+	}
+	if update.Closed && c.threadState.ClosedAt == nil {
+		at := now
+		c.threadState.ClosedAt = &at
+	}
+	c.threadState.UpdatedAt = now
+	state := c.threadState
+	c.mu.Unlock()
+
+	return c.store.RecordThreadState(ctx, c.conversation.ID, state)
+}
+
+// applyMCPServers merges one server's report into the list and records it.
+//
+// The provider announces servers one at a time and re-announces all of them on
+// every turn, so this is a merge by name. First-seen order is preserved so the list
+// a client renders does not reshuffle between polls.
+func (c *Controller) applyMCPServers(ctx context.Context, updates []ports.ChatMCPServer) error {
+	c.mu.Lock()
+	for _, update := range updates {
+		if update.Name == "" {
+			continue
+		}
+		if _, seen := c.mcpServers[update.Name]; !seen {
+			c.mcpServerOrder = append(c.mcpServerOrder, update.Name)
+		}
+		c.mcpServers[update.Name] = domain.ConversationMCPServer{
+			Name:          update.Name,
+			Status:        update.Status,
+			Error:         update.Error,
+			FailureReason: update.FailureReason,
+		}
+	}
+	servers := make([]domain.ConversationMCPServer, 0, len(c.mcpServerOrder))
+	for _, name := range c.mcpServerOrder {
+		if server, ok := c.mcpServers[name]; ok {
+			servers = append(servers, server)
+		}
+	}
+	c.mu.Unlock()
+
+	return c.store.RecordMCPServers(ctx, c.conversation.ID, servers)
+}
+
+// ErrMCPReloadUnsupported reports a driver whose provider cannot restart its tool
+// servers. Permanent rather than transient, so a client should stop offering it.
+var ErrMCPReloadUnsupported = errors.New("chat driver cannot reload MCP servers")
+
+// ReloadMCPServers restarts the provider's tool servers.
+//
+// It takes sendMu for the reason a compaction does: the reload tears down and
+// re-establishes every tool the agent has, and doing that under a running turn would
+// pull tools out from under work in flight. Refusing while busy makes the user stop
+// the turn themselves rather than discovering afterwards from the timeline that
+// their request failed for a reason they caused.
+func (c *Controller) ReloadMCPServers(ctx context.Context) ([]domain.ConversationMCPServer, error) {
+	reloader, ok := c.conv.(ports.ChatMCPReloader)
+	if !ok {
+		return nil, ErrMCPReloadUnsupported
+	}
+
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+
+	if c.busy() {
+		return nil, ErrTurnRunning
+	}
+
+	servers, err := reloader.ReloadMCPServers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(servers) == 0 {
+		// The reload succeeded and the provider did not enumerate. Its own startup
+		// notifications are the authoritative report and are already on their way, so
+		// the current list is the honest answer rather than an empty one.
+		c.mu.Lock()
+		current := make([]domain.ConversationMCPServer, 0, len(c.mcpServerOrder))
+		for _, name := range c.mcpServerOrder {
+			if server, found := c.mcpServers[name]; found {
+				current = append(current, server)
+			}
+		}
+		c.mu.Unlock()
+		return current, nil
+	}
+
+	converted := make([]ports.ChatMCPServer, 0, len(servers))
+	for _, server := range servers {
+		converted = append(converted, server)
+	}
+	if err := c.applyMCPServers(ctx, converted); err != nil {
+		return nil, err
+	}
+
+	c.mu.Lock()
+	merged := make([]domain.ConversationMCPServer, 0, len(c.mcpServerOrder))
+	for _, name := range c.mcpServerOrder {
+		if server, found := c.mcpServers[name]; found {
+			merged = append(merged, server)
+		}
+	}
+	c.mu.Unlock()
+	return merged, nil
+}
+
+// planItemID keys a turn's plan activity. The provider sends no item id with a plan
+// update — a plan is not an item — so the key is synthesized from the turn, which
+// is what makes repeated updates rewrite one row. The prefix keeps it from ever
+// colliding with a provider item id.
+func planItemID(providerTurnID string) string {
+	if providerTurnID == "" {
+		return ""
+	}
+	return "ao-plan-" + providerTurnID
+}
+
+// rerouteItemID keys a reroute notice the same way, for the same reason.
+func rerouteItemID(providerTurnID string) string {
+	if providerTurnID == "" {
+		return "ao-reroute"
+	}
+	return "ao-reroute-" + providerTurnID
+}
+
+// planActivityStatus reports a plan as still running until every step is done.
+// Status here is about the plan, not about the turn: a plan with work left is not a
+// completed thing, and showing it as one would tick off steps the agent is still on.
+func planActivityStatus(plan domain.ConversationPlan) domain.ActivityStatus {
+	if len(plan.Steps) == 0 {
+		return domain.ActivityStatusCompleted
+	}
+	for _, step := range plan.Steps {
+		if step.Status != domain.PlanStepCompleted {
+			return domain.ActivityStatusRunning
+		}
+	}
+	return domain.ActivityStatusCompleted
+}
+
+// planDetail is the plan's typed payload. The steps go in as structure rather than
+// as rendered text: a client that wants checkboxes needs the per-step status, and a
+// client that wants prose can join them, but the reverse is not recoverable.
+func planDetail(plan domain.ConversationPlan) []byte {
+	steps := make([]map[string]any, 0, len(plan.Steps))
+	for _, step := range plan.Steps {
+		steps = append(steps, map[string]any{"text": step.Text, "status": string(step.Status)})
+	}
+	detail := map[string]any{"event": "plan", "steps": steps}
+	if plan.Explanation != "" {
+		detail["explanation"] = plan.Explanation
+	}
+	encoded, err := json.Marshal(detail)
+	if err != nil {
+		return nil
+	}
+	return encoded
+}
+
+// rerouteDetail is the reroute notice's typed payload.
+func rerouteDetail(reroute ports.ChatModelReroute) []byte {
+	detail := map[string]any{
+		"event":   "model.rerouted",
+		"toModel": reroute.ToModel,
+	}
+	if reroute.FromModel != "" {
+		detail["fromModel"] = reroute.FromModel
+	}
+	if reroute.Reason != "" {
+		detail["reason"] = reroute.Reason
+	}
+	encoded, err := json.Marshal(detail)
+	if err != nil {
+		return nil
+	}
+	return encoded
 }
 
 // mergeApprovalDetail folds the provider's offered decisions into the activity
