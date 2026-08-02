@@ -492,3 +492,27 @@ func errorsIs(err, target error) bool {
 	}
 	return false
 }
+
+// The initial prompt is the user's task brief, so it must render as their message
+// rather than as a system notice. Origin records who authored a message, not who
+// delivered it to the provider.
+func TestInitialPromptIsAttributedToTheUser(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	if _, err := h.svc.StartChatTurn(ctx, testSession, "Explain the whole design system"); err != nil {
+		t.Fatalf("StartChatTurn: %v", err)
+	}
+
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Messages) >= 1
+	})
+	first := snapshot.Messages[0]
+	if first.Origin != domain.MessageOriginHuman {
+		t.Fatalf("initial prompt origin = %q, want %q — the daemon delivers it but the user wrote it",
+			first.Origin, domain.MessageOriginHuman)
+	}
+	if first.Role != domain.MessageRoleUser {
+		t.Errorf("initial prompt role = %q, want user", first.Role)
+	}
+}
