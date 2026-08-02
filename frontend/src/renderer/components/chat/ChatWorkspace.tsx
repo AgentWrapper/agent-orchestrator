@@ -656,6 +656,18 @@ function groupByTurn(snapshot: ConversationSnapshot): TimelineGroup[] {
 
 	for (const item of snapshot.items) {
 		if (item.turnId === undefined) {
+			// Consecutive turn-less items share one group rather than getting one each.
+			// A provider can run a turn AO never dispatched — a compaction, or a turn
+			// resumed inside the provider's own history — and every item it emits then
+			// correlates to no AO turn. One group per item made `runsOf` see no two
+			// adjacent activities, so a wall of tool calls stopped collapsing and the
+			// conversation turned back into a log. Grouping must not depend on
+			// correlation succeeding.
+			const last = groups.at(-1);
+			if (last && last.turnId === undefined) {
+				last.items.push(item);
+				continue;
+			}
 			groups.push({ key: `loose-${item.sequence}`, anchor: item.sequence, items: [item] });
 			continue;
 		}

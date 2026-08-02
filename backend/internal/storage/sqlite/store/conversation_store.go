@@ -160,6 +160,36 @@ func (s *Store) AppendUserMessage(
 	return true, nil
 }
 
+// AdoptProviderTurn records a turn the provider started that AO never dispatched.
+//
+// A compaction runs as its own provider turn, and so does work the provider
+// resumes inside its own history. Without a row, every item those turns emit
+// correlates to no turn: the activities lose their turn id and the timeline stops
+// grouping them, which reads to a user as the conversation falling apart. Idempotent
+// because the provider re-announces a turn on resume.
+func (s *Store) AdoptProviderTurn(
+	ctx context.Context,
+	conversationID string,
+	session domain.SessionID,
+	generation, turnID, providerTurnID string,
+	now time.Time,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if err := s.qw.AdoptProviderConversationTurn(ctx, gen.AdoptProviderConversationTurnParams{
+		ID:                   turnID,
+		ConversationID:       conversationID,
+		HandledBySessionID:   session,
+		ProviderTurnID:       providerTurnID,
+		ControllerGeneration: generation,
+		RequestedAt:          now,
+		StartedAt:            sql.NullTime{Time: now, Valid: true},
+	}); err != nil {
+		return fmt.Errorf("adopt provider turn %s: %w", providerTurnID, err)
+	}
+	return nil
+}
+
 // BindTurnToProvider records the provider's turn id once a send is accepted and
 // marks the turn running.
 func (s *Store) BindTurnToProvider(ctx context.Context, turnID, providerTurnID string, now time.Time) error {

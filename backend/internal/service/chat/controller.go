@@ -33,6 +33,8 @@ type Store interface {
 	CreateConversation(ctx context.Context, id string, project domain.ProjectID, session domain.SessionID, now time.Time) (domain.ConversationRecord, error)
 	ConversationForSession(ctx context.Context, session domain.SessionID) (domain.ConversationRecord, error)
 
+	AdoptProviderTurn(ctx context.Context, conversationID string, session domain.SessionID, generation, turnID, providerTurnID string, now time.Time) error
+
 	AppendUserMessage(ctx context.Context, conversationID string, session domain.SessionID, generation string, msg domain.ConversationMessage, turnID string, now time.Time) (bool, error)
 	BindTurnToProvider(ctx context.Context, turnID, providerTurnID string, now time.Time) error
 	SettleTurn(ctx context.Context, conversationID, providerTurnID string, state domain.TurnState, errMessage string, now time.Time) error
@@ -698,6 +700,18 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 		c.state = ports.ChatControllerBusy
 		c.mu.Unlock()
 		c.reportActivity(ctx, domain.ActivityActive, "chat.turn.started", now)
+		// A turn AO dispatched already has a row, bound in dispatch. This covers the
+		// turn AO did NOT dispatch: a compaction, or work the provider resumed from its
+		// own history. Adopting it is what keeps every item it emits correlated, and
+		// without that the activities arrive with no turn and the timeline quietly
+		// stops grouping them.
+		if event.ProviderTurnID != "" {
+			if err := c.store.AdoptProviderTurn(ctx, c.conversation.ID, c.sessionID,
+				c.generation, c.newID(), event.ProviderTurnID, now); err != nil {
+				c.log.Error("failed to adopt provider-started turn",
+					"session", c.sessionID, "providerTurn", event.ProviderTurnID, "error", err)
+			}
+		}
 		return nil
 
 	case ports.ChatEventTurnCompleted:

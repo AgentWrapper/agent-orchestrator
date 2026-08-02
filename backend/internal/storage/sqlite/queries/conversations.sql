@@ -95,6 +95,18 @@ INSERT INTO conversation_turns (
     controller_generation, state, requested_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?);
 
+-- A turn the PROVIDER started that AO never dispatched: a compaction runs as its
+-- own turn, and so does work resumed inside the provider's own history. Without a
+-- row every item it emits correlates to no turn, which silently unpicks the
+-- timeline. INSERT OR IGNORE because the provider re-announces a turn on resume.
+-- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+-- offset, so a multi-byte character here silently corrupts later queries.
+-- name: AdoptProviderConversationTurn :exec
+INSERT OR IGNORE INTO conversation_turns (
+    id, conversation_id, handled_by_session_id, provider_turn_id,
+    controller_generation, state, requested_at, started_at
+) VALUES (?, ?, ?, ?, ?, 'running', ?, ?);
+
 -- Correlating a provider notification back to its turn happens on every streamed
 -- event, so it is a keyed lookup rather than a scan.
 -- name: SelectConversationTurnByProviderID :one

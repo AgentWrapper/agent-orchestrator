@@ -1216,3 +1216,43 @@ func TestCompactRefusesWhileATurnIsInFlight(t *testing.T) {
 		t.Fatalf("Compact after the turn settled: %v", err)
 	}
 }
+
+// A provider can start a turn AO never dispatched: a compaction runs as its own
+// turn, and so does work the provider resumes from its own history. Without a row
+// for it, every item that turn emits correlates to no turn — the activities arrive
+// with an empty turn id and the timeline silently stops grouping them, which reads
+// to a user as the conversation falling apart.
+func TestProviderStartedTurnIsAdoptedSoItsItemsCorrelate(t *testing.T) {
+	h := newHarness(t)
+
+	// No Send: this turn is entirely the provider's doing.
+	h.conv.emit(
+		ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-owned-1"},
+		ports.ChatEvent{
+			Kind: ports.ChatEventActivityCompleted, ProviderTurnID: "provider-owned-1",
+			ProviderItemID: "exec-1", ActivityKind: domain.ActivityKindCommand,
+			ActivityStatus: domain.ActivityStatusCompleted, Summary: "rg --files",
+		},
+		ports.ChatEvent{
+			Kind: ports.ChatEventActivityCompleted, ProviderTurnID: "provider-owned-1",
+			ProviderItemID: "exec-2", ActivityKind: domain.ActivityKindCommand,
+			ActivityStatus: domain.ActivityStatusCompleted, Summary: "sed -n 1,40p x",
+		},
+	)
+
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Activities) == 2
+	})
+
+	if len(snapshot.Turns) != 1 {
+		t.Fatalf("turns = %d, want the provider's turn adopted", len(snapshot.Turns))
+	}
+	if got := snapshot.Turns[0].ProviderTurnID; got != "provider-owned-1" {
+		t.Errorf("adopted turn provider id = %q", got)
+	}
+	for _, activity := range snapshot.Activities {
+		if activity.TurnID == "" {
+			t.Errorf("activity %q has no turn id; the timeline cannot group it", activity.Summary)
+		}
+	}
+}

@@ -13,6 +13,42 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+const adoptProviderConversationTurn = `-- name: AdoptProviderConversationTurn :exec
+INSERT OR IGNORE INTO conversation_turns (
+    id, conversation_id, handled_by_session_id, provider_turn_id,
+    controller_generation, state, requested_at, started_at
+) VALUES (?, ?, ?, ?, ?, 'running', ?, ?)
+`
+
+type AdoptProviderConversationTurnParams struct {
+	ID                   string
+	ConversationID       string
+	HandledBySessionID   domain.SessionID
+	ProviderTurnID       string
+	ControllerGeneration string
+	RequestedAt          time.Time
+	StartedAt            sql.NullTime
+}
+
+// A turn the PROVIDER started that AO never dispatched: a compaction runs as its
+// own turn, and so does work resumed inside the provider's own history. Without a
+// row every item it emits correlates to no turn, which silently unpicks the
+// timeline. INSERT OR IGNORE because the provider re-announces a turn on resume.
+// NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+// offset, so a multi-byte character here silently corrupts later queries.
+func (q *Queries) AdoptProviderConversationTurn(ctx context.Context, arg AdoptProviderConversationTurnParams) error {
+	_, err := q.db.ExecContext(ctx, adoptProviderConversationTurn,
+		arg.ID,
+		arg.ConversationID,
+		arg.HandledBySessionID,
+		arg.ProviderTurnID,
+		arg.ControllerGeneration,
+		arg.RequestedAt,
+		arg.StartedAt,
+	)
+	return err
+}
+
 const appendConversationActivityOutput = `-- name: AppendConversationActivityOutput :execrows
 UPDATE conversation_activities
 SET command_output = substr(command_output || ?1, 1, ?2),
