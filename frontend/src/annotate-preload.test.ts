@@ -360,25 +360,38 @@ describe("annotate preload", () => {
 		expect(boxes.every((box) => box.style.width === "30px")).toBe(true);
 	});
 
-	it("excludes already-selected elements from the cap so new elements are not wasted on duplicates", () => {
-		const alreadySelected = elementWithBounds("already-selected", { left: 50, top: 50, width: 40, height: 40 });
-		const newElement = elementWithBounds("new-element", { left: 150, top: 150, width: 40, height: 40 });
-		stubElementFromPoint([alreadySelected, newElement]);
+	it("does not let an already-selected element consume a cap slot from newly-swept elements", () => {
+		const gridX = [25, 75, 125, 175, 225, 275, 325, 375];
+		const points = [...gridX.map((x) => ({ x, y: 25 })), ...gridX.map((x) => ({ x, y: 75 }))];
+		// Sized largest so it would always survive the area-based cap if it were
+		// still competing for a slot pre-fix (i.e. this is a hard test of the fix).
+		const alreadySelected = elementWithBounds("already-selected", {
+			left: points[0].x - 20,
+			top: points[0].y - 20,
+			width: 40,
+			height: 40,
+		});
+		const fresh = points
+			.slice(1, 16)
+			.map((point, index) =>
+				elementWithBounds(`fresh-${index}`, { left: point.x - 15, top: point.y - 15, width: 30, height: 30 }),
+			);
+		stubElementFromPoint([alreadySelected, ...fresh]);
 
-		// First click to select one element
 		shiftKeyDown();
 		dispatchPageEvent(alreadySelected, "click");
 		expect(selectionBoxes()).toHaveLength(1);
 
-		// Now drag a lasso that sweeps over the already-selected element and a new one
 		dragLasso([
 			{ x: 0, y: 0 },
-			{ x: 200, y: 0 },
-			{ x: 200, y: 200 },
-			{ x: 0, y: 200 },
+			{ x: 400, y: 0 },
+			{ x: 400, y: 400 },
+			{ x: 0, y: 400 },
 		]);
 
-		// Both should be selected, and the already-selected one should not waste a cap slot
-		expect(selectionBoxes()).toHaveLength(2);
+		// All 15 fresh elements should be added on top of the 1 already selected —
+		// none of the cap's 15 slots should be spent re-confirming the element
+		// that was already selected before this lasso pass.
+		expect(selectionBoxes()).toHaveLength(16);
 	});
 });
