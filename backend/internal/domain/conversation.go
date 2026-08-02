@@ -146,6 +146,21 @@ type ConversationTurn struct {
 	CompletedAt  *time.Time `json:"completedAt,omitempty"`
 }
 
+// QueuedTurn is a turn that was recorded but never dispatched, paired with the
+// text that still has to be sent.
+//
+// A message the user typed while the agent was busy is durable before it is
+// delivered, so the queue survives a daemon restart as data rather than living
+// only in a controller's memory.
+type QueuedTurn struct {
+	TurnID string
+	Text   string
+	// ClientMessageID is carried through to the provider so a dispatch retried
+	// after a crash cannot produce a second provider turn.
+	ClientMessageID string
+	Origin          MessageOrigin
+}
+
 // ConversationMessage is one readable block of text.
 type ConversationMessage struct {
 	ID             string `json:"id"`
@@ -197,3 +212,7 @@ type ConversationActivity struct {
 // a failure: a Chat session has no conversation until its controller first
 // starts, and a reader should show an empty conversation rather than an error.
 var ErrNoConversation = errors.New("session has no conversation")
+
+// ErrNoQueuedTurn reports that nothing is waiting to be sent. Draining an empty
+// queue is the normal case, not an error.
+var ErrNoQueuedTurn = errors.New("no queued turn")

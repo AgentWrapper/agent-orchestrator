@@ -3,9 +3,11 @@
  *
  * Submitting is a typed send, not a keystroke: there is no notion of "press
  * Enter at the agent" here, and an empty message is never a way to nudge it.
- * When the agent is mid-turn and the driver cannot steer, the message is queued
- * rather than injected — the placeholder says so instead of leaving the user to
- * guess where their text went.
+ *
+ * A message typed mid-turn is held by the daemon and sent when the turn ends,
+ * because the agent is one conversation and cannot run a second turn alongside
+ * the first. The placeholder says so rather than leaving the user to guess where
+ * their text went, and the queued message stays visible in the timeline.
  */
 
 import { useRef, useState, type FormEvent, type KeyboardEvent } from "react";
@@ -43,7 +45,7 @@ export function ChatComposer({
 	onPermissionChange: (mode: PermissionMode) => void;
 	/** A send is in flight. */
 	busy?: boolean;
-	/** The agent is mid-turn and cannot be steered, so this message will queue. */
+	/** The agent is mid-turn, so this message is held until the turn ends. */
 	willQueue?: boolean;
 	disabled?: boolean;
 }) {
@@ -85,7 +87,7 @@ export function ChatComposer({
 					disabled
 						? "The controller is not connected"
 						: willQueue
-							? "Agent is working — your message will be queued until it finishes"
+							? "Agent is working — this sends when it finishes"
 							: "Ask the agent…"
 				}
 				className="max-h-48 min-h-[3.25rem] w-full resize-none bg-transparent px-1.5 py-1 text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
@@ -131,7 +133,7 @@ export function ChatComposer({
 				</DropdownMenu>
 
 				<span className="ml-auto text-[11px] text-muted-foreground">
-					{willQueue ? "Queues until idle" : "Enter to send"}
+					{willQueue ? "Enter to queue" : "Enter to send"}
 				</span>
 				<Button type="submit" size="icon-sm" disabled={!canSend} aria-label="Send message">
 					<ArrowUp aria-hidden="true" className="size-3.5" />

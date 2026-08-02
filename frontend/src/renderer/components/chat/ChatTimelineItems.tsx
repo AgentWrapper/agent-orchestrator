@@ -68,12 +68,31 @@ function formatTime(iso: string): string {
 /* -------------------------------------------------------------------------- */
 
 /** What the user typed. Right-aligned and enclosed so it reads as theirs. */
-export function HumanMessage({ message }: { message: ConversationMessage }) {
+export function HumanMessage({
+	message,
+	queued,
+}: {
+	message: ConversationMessage;
+	/** Typed while the agent was busy, and not sent yet. */
+	queued?: boolean;
+}) {
 	return (
 		<div className="flex flex-col items-end gap-1">
-			<div className="w-fit max-w-[min(78%,560px)] whitespace-pre-wrap rounded-[10px] border border-border bg-raised px-3 py-2.5 text-sm leading-[1.55] text-foreground">
+			{/* A queued message reads as not-yet-sent rather than as sent-and-ignored:
+			    the agent has not seen it, and the timeline should not imply it has. */}
+			<div
+				className={cn(
+					"w-fit max-w-[min(78%,560px)] whitespace-pre-wrap rounded-[10px] border px-3 py-2.5 text-sm leading-[1.55]",
+					queued
+						? "border-dashed border-border-strong bg-transparent text-muted-foreground"
+						: "border-border bg-raised text-foreground",
+				)}
+			>
 				{message.text}
 			</div>
+			{queued ? (
+				<span className="text-[11px] text-muted-foreground">Queued · sends when the agent finishes</span>
+			) : null}
 			{message.delivery && message.delivery !== "accepted" ? (
 				<DeliveryNote state={message.delivery} />
 			) : null}

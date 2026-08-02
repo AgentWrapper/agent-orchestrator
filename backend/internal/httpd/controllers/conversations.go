@@ -93,6 +93,7 @@ func (c *ConversationsController) send(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusAccepted, SendConversationMessageResponse{
 		TurnID:         turn.ID,
 		ProviderTurnID: turn.ProviderTurnID,
+		State:          turn.State,
 		Duplicate:      turn.ID == "",
 	})
 }

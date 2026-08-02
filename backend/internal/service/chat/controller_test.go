@@ -80,14 +80,27 @@ func (f *fakeConversation) ProviderConversationID() string       { return "threa
 func (f *fakeConversation) Capabilities() ports.ChatCapabilities { return productionCaps() }
 func (f *fakeConversation) Events() <-chan ports.ChatEvent       { return f.events }
 
-func (f *fakeConversation) SendTurn(context.Context, ports.ChatUserMessage) (ports.ChatTurnRef, error) {
+func (f *fakeConversation) SendTurn(_ context.Context, msg ports.ChatUserMessage) (ports.ChatTurnRef, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.sendErr != nil {
 		return ports.ChatTurnRef{}, f.sendErr
 	}
+	f.sent = append(f.sent, msg)
 	f.turnSeq++
 	return ports.ChatTurnRef{ProviderTurnID: fmt.Sprintf("provider-turn-%d", f.turnSeq)}, nil
+}
+
+// sentTexts is what actually reached the provider, in order. Queuing is only real
+// if a message the user typed mid-turn is absent from this until the turn ends.
+func (f *fakeConversation) sentTexts() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	texts := make([]string, 0, len(f.sent))
+	for _, msg := range f.sent {
+		texts = append(texts, msg.Text)
+	}
+	return texts
 }
 
 func (f *fakeConversation) Interrupt(context.Context, string) error { return nil }
@@ -151,12 +164,30 @@ type harness struct {
 	st   *sqlite.Store
 	conv *fakeConversation
 	ctrl *chatsvc.Controller
+
+	clockMu sync.Mutex
+	clock   time.Time
+}
+
+// advance moves the injected clock. Needed where an ordering rule is expressed in
+// timestamps — the queue cancellation cutoff — rather than in call order.
+func (h *harness) advance(d time.Duration) {
+	h.clockMu.Lock()
+	defer h.clockMu.Unlock()
+	h.clock = h.clock.Add(d)
+}
+
+func (h *harness) now() time.Time {
+	h.clockMu.Lock()
+	defer h.clockMu.Unlock()
+	return h.clock
 }
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	st := openStore(t)
 	conv := newFakeConversation()
+	h := &harness{st: st, conv: conv, clock: time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)}
 
 	var counter int
 	svc := chatsvc.New(chatsvc.Options{
@@ -168,7 +199,7 @@ func newHarness(t *testing.T) *harness {
 			counter++
 			return fmt.Sprintf("id-%03d", counter)
 		},
-		Now: func() time.Time { return time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC) },
+		Now: h.now,
 	})
 
 	ctrl, err := svc.Start(context.Background(), chatsvc.StartConfig{
@@ -182,7 +213,8 @@ func newHarness(t *testing.T) *harness {
 	}
 	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
 
-	return &harness{svc: svc, st: st, conv: conv, ctrl: ctrl}
+	h.svc, h.ctrl = svc, ctrl
+	return h
 }
 
 // awaitSnapshot polls until pred holds, so a test does not race the projector.
@@ -476,6 +508,171 @@ func TestProviderEventsAreArchived(t *testing.T) {
 	}
 	if len(events) < 3 {
 		t.Fatalf("archived %d events, want at least the 3 emitted", len(events))
+	}
+}
+
+/* ---- the send queue ---------------------------------------------------- */
+
+// turnStateByText is how the queue tests read the timeline: a turn matters here
+// only as the fate of one message the user typed.
+func turnStateByText(t *testing.T, s store.ConversationSnapshot) map[string]domain.TurnState {
+	t.Helper()
+	turns := map[string]domain.ConversationTurn{}
+	for _, turn := range s.Turns {
+		turns[turn.ID] = turn
+	}
+	states := map[string]domain.TurnState{}
+	for _, msg := range s.Messages {
+		if msg.Role != domain.MessageRoleUser {
+			continue
+		}
+		if turn, ok := turns[msg.TurnID]; ok {
+			states[msg.Text] = turn.State
+		}
+	}
+	return states
+}
+
+// The composer tells the user a mid-turn message is queued until the agent
+// finishes. That has to be true of the daemon, not just of the placeholder: a
+// second turn/start against a busy provider is not a thing the agent can run.
+func TestSendWhileBusyQueuesUntilTheTurnEnds(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "first", ClientMessageID: "c1", Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("first Send: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
+	})
+
+	queued, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "second", ClientMessageID: "c2", Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("mid-turn Send: %v", err)
+	}
+	if queued.State != domain.TurnStateQueued {
+		t.Errorf("mid-turn send reported state %q, want queued", queued.State)
+	}
+	if queued.ProviderTurnID != "" {
+		t.Errorf("mid-turn send claimed provider turn %q; it was never dispatched", queued.ProviderTurnID)
+	}
+	if got := h.conv.sentTexts(); len(got) != 1 {
+		t.Fatalf("provider received %v; the second message must wait", got)
+	}
+
+	// The running turn ends, so the queued message goes out on its own.
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-1",
+		TurnState: domain.TurnStateCompleted,
+	})
+
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return turnStateByText(t, s)["second"] == domain.TurnStateRunning
+	})
+	states := turnStateByText(t, snapshot)
+	if states["first"] != domain.TurnStateCompleted {
+		t.Errorf("first turn = %q, want completed", states["first"])
+	}
+	if got := h.conv.sentTexts(); len(got) != 2 || got[1] != "second" {
+		t.Fatalf("provider received %v, want the queued message dispatched second", got)
+	}
+}
+
+// Stop is a brake. Releasing the queue when the user presses it would be the
+// opposite of what the button says, so anything waiting is cancelled with the turn.
+func TestInterruptCancelsWhatIsQueuedBehindTheTurn(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "running", ClientMessageID: "c1",
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
+	})
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "queued", ClientMessageID: "c2",
+	}); err != nil {
+		t.Fatalf("mid-turn Send: %v", err)
+	}
+
+	if err := h.svc.Interrupt(ctx, testSession); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-1",
+		TurnState: domain.TurnStateInterrupted,
+	})
+
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		states := turnStateByText(t, s)
+		return states["queued"].Terminal() && states["running"].Terminal()
+	})
+	states := turnStateByText(t, snapshot)
+	if states["queued"] != domain.TurnStateInterrupted {
+		t.Errorf("queued turn = %q; a message never dispatched did not fail, it was cancelled",
+			states["queued"])
+	}
+	if got := h.conv.sentTexts(); len(got) != 1 {
+		t.Fatalf("provider received %v; stop must not release the queue", got)
+	}
+}
+
+// The cancellation belongs to the moment stop was pressed. A message typed after
+// that is the user asking for new work, and must not be swept up by it.
+func TestMessageTypedAfterStopIsStillDelivered(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "running", ClientMessageID: "c1",
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
+	})
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "before stop", ClientMessageID: "c2",
+	}); err != nil {
+		t.Fatalf("Send before stop: %v", err)
+	}
+
+	if err := h.svc.Interrupt(ctx, testSession); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+
+	// The user changes their mind and types again while the interrupt lands.
+	h.advance(time.Second)
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "after stop", ClientMessageID: "c3",
+	}); err != nil {
+		t.Fatalf("Send after stop: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-1",
+		TurnState: domain.TurnStateInterrupted,
+	})
+
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return turnStateByText(t, s)["after stop"] == domain.TurnStateRunning
+	})
+	states := turnStateByText(t, snapshot)
+	if states["before stop"] != domain.TurnStateInterrupted {
+		t.Errorf("pre-stop message = %q, want interrupted", states["before stop"])
+	}
+	if got := h.conv.sentTexts(); len(got) != 2 || got[1] != "after stop" {
+		t.Fatalf("provider received %v, want the post-stop message delivered", got)
 	}
 }
 

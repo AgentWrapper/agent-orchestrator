@@ -4109,6 +4109,14 @@ components:
           type: boolean
         providerTurnId:
           type: string
+        state:
+          enum:
+          - queued
+          - running
+          - completed
+          - interrupted
+          - failed
+          type: string
         turnId:
           type: string
       required:

@@ -36,7 +36,11 @@ type Store interface {
 	AppendUserMessage(ctx context.Context, conversationID string, session domain.SessionID, generation string, msg domain.ConversationMessage, turnID string, now time.Time) (bool, error)
 	BindTurnToProvider(ctx context.Context, turnID, providerTurnID string, now time.Time) error
 	SettleTurn(ctx context.Context, conversationID, providerTurnID string, state domain.TurnState, errMessage string, now time.Time) error
+	SettleTurnByID(ctx context.Context, turnID string, state domain.TurnState, errMessage string, now time.Time) error
 	SettleOrphanedTurns(ctx context.Context, session domain.SessionID, now time.Time) error
+
+	NextQueuedTurn(ctx context.Context, conversationID string) (domain.QueuedTurn, error)
+	CancelQueuedTurns(ctx context.Context, conversationID string, cutoff, now time.Time) error
 
 	AppendAssistantDelta(ctx context.Context, conversationID, providerItemID, providerTurnID, delta, messageID string, now time.Time) error
 	SettleAssistantMessage(ctx context.Context, conversationID, providerItemID, providerTurnID, text, messageID string, now time.Time) error
@@ -86,6 +90,9 @@ type Controller struct {
 	// in flight, so a completion can be attributed without a round trip.
 	pendingTurnID string
 	state         ports.ChatControllerState
+	// cancelQueuedAt is set when the user interrupts, and is the cutoff for the
+	// queue that interrupt cancels. Zero means nothing is being cancelled.
+	cancelQueuedAt time.Time
 
 	stopped chan struct{}
 	once    sync.Once
@@ -138,12 +145,17 @@ func (c *Controller) State() ports.ChatControllerState {
 	return c.state
 }
 
-// Send records a message and dispatches it to the provider.
+// Send records a message and dispatches it, or queues it if the agent is busy.
 //
 // The durable record is written first: if the provider call then fails, the user
 // can see their message and its delivery state rather than having it vanish. A
 // retry carrying the same client message id is a no-op, so a flaky client cannot
 // produce two provider turns.
+//
+// A message that arrives mid-turn stays queued rather than being pushed at the
+// provider. Two reasons: the agent is a single conversation and a second
+// concurrent turn is not a thing it can run, and a queued row is a promise AO can
+// keep across a restart, which a message dropped into a busy provider is not.
 func (c *Controller) Send(ctx context.Context, msg ports.ChatUserMessage) (domain.ConversationTurn, error) {
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
@@ -170,12 +182,44 @@ func (c *Controller) Send(ctx context.Context, msg ports.ChatUserMessage) (domai
 		return domain.ConversationTurn{}, nil
 	}
 
+	if c.busy() {
+		// AppendUserMessage wrote it as queued, which is exactly where it belongs
+		// until the running turn ends. drain picks it up from there.
+		return domain.ConversationTurn{
+			ID:                 turnID,
+			ConversationID:     c.conversation.ID,
+			HandledBySessionID: c.sessionID,
+			State:              domain.TurnStateQueued,
+			RequestedAt:        now,
+		}, nil
+	}
+
+	return c.dispatch(ctx, turnID, msg, now)
+}
+
+// busy reports whether a provider turn is in flight.
+func (c *Controller) busy() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.pendingTurnID != ""
+}
+
+// dispatch hands a recorded turn to the provider. Callers must hold sendMu.
+func (c *Controller) dispatch(
+	ctx context.Context,
+	turnID string,
+	msg ports.ChatUserMessage,
+	requestedAt time.Time,
+) (domain.ConversationTurn, error) {
 	ref, err := c.conv.SendTurn(ctx, msg)
 	if err != nil {
 		// The provider may or may not have accepted it. Settle the turn as failed
-		// rather than retrying: a duplicate turn would run the work twice.
-		if settleErr := c.store.SettleTurn(
-			ctx, c.conversation.ID, "", domain.TurnStateFailed, err.Error(), c.now()); settleErr != nil {
+		// rather than retrying: a duplicate turn would run the work twice. Settling
+		// by AO's own turn id is required here — an undispatched turn has no
+		// provider id, so looking one up by the empty string would hit whichever
+		// undispatched turn the database returned first.
+		if settleErr := c.store.SettleTurnByID(
+			ctx, turnID, domain.TurnStateFailed, err.Error(), c.now()); settleErr != nil {
 			c.log.Error("failed to settle turn after send error", "error", settleErr)
 		}
 		return domain.ConversationTurn{}, fmt.Errorf("send turn: %w", err)
@@ -195,8 +239,61 @@ func (c *Controller) Send(ctx context.Context, msg ports.ChatUserMessage) (domai
 		HandledBySessionID: c.sessionID,
 		ProviderTurnID:     ref.ProviderTurnID,
 		State:              domain.TurnStateRunning,
-		RequestedAt:        now,
+		RequestedAt:        requestedAt,
 	}, nil
+}
+
+// drain sends the next queued message now that the agent is free.
+//
+// Runs on the projection goroutine, so it observes turn completion in order with
+// everything else the provider said. One message per call: the turn it starts
+// makes the controller busy again, and the next completion drains the next.
+func (c *Controller) drain(ctx context.Context) {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+
+	c.mu.Lock()
+	cutoff := c.cancelQueuedAt
+	c.cancelQueuedAt = time.Time{}
+	busy := c.pendingTurnID != ""
+	c.mu.Unlock()
+
+	if busy {
+		// Something already claimed the agent, so this drain has nothing to do.
+		return
+	}
+
+	if !cutoff.IsZero() {
+		// The user stopped the agent. Everything queued at that moment is
+		// cancelled; anything typed afterwards is still theirs to send, and falls
+		// through to the dispatch below.
+		if err := c.store.CancelQueuedTurns(ctx, c.conversation.ID, cutoff, c.now()); err != nil {
+			c.log.Error("failed to cancel queued turns", "session", c.sessionID, "error", err)
+			return
+		}
+	}
+
+	queued, err := c.store.NextQueuedTurn(ctx, c.conversation.ID)
+	if errors.Is(err, domain.ErrNoQueuedTurn) {
+		return
+	}
+	if err != nil {
+		c.log.Error("failed to read queued turn", "session", c.sessionID, "error", err)
+		return
+	}
+
+	if _, err := c.dispatch(ctx, queued.TurnID, ports.ChatUserMessage{
+		Text:            queued.Text,
+		Origin:          queued.Origin,
+		ClientMessageID: queued.ClientMessageID,
+	}, c.now()); err != nil {
+		// dispatch already settled this turn as failed. Stopping here rather than
+		// walking the rest of the queue: whatever broke the send is likely to break
+		// the next one too, and failing them all on one bad provider state would
+		// discard messages the user can otherwise still see waiting.
+		c.log.Error("failed to dispatch queued turn",
+			"session", c.sessionID, "turn", queued.TurnID, "error", err)
+	}
 }
 
 // Resolve answers a pending approval. The provider is told first: if it rejects
@@ -213,15 +310,26 @@ func (c *Controller) Resolve(ctx context.Context, requestID string, decision por
 	return nil
 }
 
-// Interrupt cancels the in-flight turn.
+// Interrupt cancels the in-flight turn, and with it anything queued behind it.
+//
+// The queue is cancelled because stop is the user's brake: a brake that releases
+// the next message instead of stopping would be the opposite of what the button
+// says. The cutoff is recorded before the provider call, so a completion that
+// races back cannot drain the queue the interrupt was about to cancel.
 func (c *Controller) Interrupt(ctx context.Context) error {
 	c.mu.Lock()
 	turn := c.pendingTurnID
+	if turn != "" {
+		c.cancelQueuedAt = c.now()
+	}
 	c.mu.Unlock()
 	if turn == "" {
 		return ErrNoActiveTurn
 	}
 	if err := c.conv.Interrupt(ctx, turn); err != nil {
+		c.mu.Lock()
+		c.cancelQueuedAt = time.Time{}
+		c.mu.Unlock()
 		return fmt.Errorf("interrupt turn %s: %w", turn, err)
 	}
 	return nil
@@ -338,7 +446,15 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 		}
 		// The turn is over, so the session is waiting on the user again.
 		c.reportActivity(ctx, domain.ActivityIdle, "chat.turn.completed", now)
-		return c.store.SettleTurn(ctx, c.conversation.ID, event.ProviderTurnID, state, message, now)
+		if err := c.store.SettleTurn(
+			ctx, c.conversation.ID, event.ProviderTurnID, state, message, now); err != nil {
+			return err
+		}
+		// The agent is free: send whatever the user typed while it was busy. After
+		// the settle, so a drain can never dispatch on top of a turn that still
+		// looks live.
+		c.drain(ctx)
+		return nil
 
 	case ports.ChatEventMessageDelta:
 		return c.store.AppendAssistantDelta(ctx, c.conversation.ID,

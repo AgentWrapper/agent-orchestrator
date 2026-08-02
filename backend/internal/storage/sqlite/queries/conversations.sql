@@ -64,6 +64,34 @@ SELECT * FROM conversation_turns
 WHERE conversation_id = ?
 ORDER BY requested_at, rowid;
 
+-- The head of the send queue: the oldest message recorded while the agent was
+-- busy. Joined to its own user message because dispatching needs the text, and
+-- the queue is durable rows rather than controller memory, so a restart can see
+-- what was never sent.
+-- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+-- offset, so a multi-byte character here silently corrupts later queries.
+-- name: SelectNextQueuedConversationTurn :one
+SELECT conversation_turns.id,
+       conversation_messages.text,
+       conversation_messages.client_message_id,
+       conversation_messages.origin
+FROM conversation_turns
+JOIN conversation_messages
+    ON conversation_messages.turn_id = conversation_turns.id
+    AND conversation_messages.role = 'user'
+WHERE conversation_turns.conversation_id = ? AND conversation_turns.state = 'queued'
+ORDER BY conversation_turns.requested_at, conversation_turns.rowid
+LIMIT 1;
+
+-- Stopping the agent stops the queue with it: a brake that starts new work
+-- instead of ending it would be the wrong shape for the button the user pressed.
+-- The cutoff is the moment the user pressed stop, so a message typed after that
+-- is still delivered rather than swept up by a cancellation it predates.
+-- name: CancelQueuedConversationTurns :exec
+UPDATE conversation_turns
+SET state = 'interrupted', completed_at = ?
+WHERE conversation_id = ? AND state = 'queued' AND requested_at <= ?;
+
 -- name: InsertConversationMessage :exec
 INSERT INTO conversation_messages (
     id, conversation_id, turn_id, sequence, revision, role, origin,

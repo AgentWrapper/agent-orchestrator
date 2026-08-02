@@ -56,6 +56,27 @@ func (q *Queries) BindConversationTurnProviderID(ctx context.Context, arg BindCo
 	return err
 }
 
+const cancelQueuedConversationTurns = `-- name: CancelQueuedConversationTurns :exec
+UPDATE conversation_turns
+SET state = 'interrupted', completed_at = ?
+WHERE conversation_id = ? AND state = 'queued' AND requested_at <= ?
+`
+
+type CancelQueuedConversationTurnsParams struct {
+	CompletedAt    sql.NullTime
+	ConversationID string
+	RequestedAt    time.Time
+}
+
+// Stopping the agent stops the queue with it: a brake that starts new work
+// instead of ending it would be the wrong shape for the button the user pressed.
+// The cutoff is the moment the user pressed stop, so a message typed after that
+// is still delivered rather than swept up by a cancellation it predates.
+func (q *Queries) CancelQueuedConversationTurns(ctx context.Context, arg CancelQueuedConversationTurnsParams) error {
+	_, err := q.db.ExecContext(ctx, cancelQueuedConversationTurns, arg.CompletedAt, arg.ConversationID, arg.RequestedAt)
+	return err
+}
+
 const failPendingConversationApprovals = `-- name: FailPendingConversationApprovals :exec
 UPDATE conversation_activities
 SET status = 'failed', revision = revision + 1, updated_at = ?
@@ -643,6 +664,45 @@ func (q *Queries) SelectConversationTurns(ctx context.Context, conversationID st
 		return nil, err
 	}
 	return items, nil
+}
+
+const selectNextQueuedConversationTurn = `-- name: SelectNextQueuedConversationTurn :one
+SELECT conversation_turns.id,
+       conversation_messages.text,
+       conversation_messages.client_message_id,
+       conversation_messages.origin
+FROM conversation_turns
+JOIN conversation_messages
+    ON conversation_messages.turn_id = conversation_turns.id
+    AND conversation_messages.role = 'user'
+WHERE conversation_turns.conversation_id = ? AND conversation_turns.state = 'queued'
+ORDER BY conversation_turns.requested_at, conversation_turns.rowid
+LIMIT 1
+`
+
+type SelectNextQueuedConversationTurnRow struct {
+	ID              string
+	Text            string
+	ClientMessageID string
+	Origin          domain.MessageOrigin
+}
+
+// The head of the send queue: the oldest message recorded while the agent was
+// busy. Joined to its own user message because dispatching needs the text, and
+// the queue is durable rows rather than controller memory, so a restart can see
+// what was never sent.
+// NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+// offset, so a multi-byte character here silently corrupts later queries.
+func (q *Queries) SelectNextQueuedConversationTurn(ctx context.Context, conversationID string) (SelectNextQueuedConversationTurnRow, error) {
+	row := q.db.QueryRowContext(ctx, selectNextQueuedConversationTurn, conversationID)
+	var i SelectNextQueuedConversationTurnRow
+	err := row.Scan(
+		&i.ID,
+		&i.Text,
+		&i.ClientMessageID,
+		&i.Origin,
+	)
+	return i, err
 }
 
 const settleConversationActivity = `-- name: SettleConversationActivity :exec

@@ -1462,6 +1462,8 @@ export interface components {
         SendConversationMessageResponse: {
             duplicate: boolean;
             providerTurnId?: string;
+            /** @enum {string} */
+            state?: "queued" | "running" | "completed" | "interrupted" | "failed";
             turnId?: string;
         };
         SendSessionMessageRequest: {

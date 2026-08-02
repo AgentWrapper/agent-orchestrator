@@ -29,6 +29,7 @@ import { ActivityRun } from "./ActivityRun";
 import {
 	activeTurn,
 	pendingApproval,
+	queuedTurnIds,
 	type ConversationSnapshot,
 	type ControllerState,
 	type ConversationActivity,
@@ -57,6 +58,7 @@ export function ChatWorkspace({
 }: ChatWorkspaceProps) {
 	const turn = activeTurn(snapshot);
 	const approval = pendingApproval(snapshot);
+	const queuedCount = queuedTurnIds(snapshot).size;
 	const [mode, setMode] = useState<PermissionMode>(permission);
 	// Reasoning is hidden by default. The provider emits a reasoning item per tool
 	// call, usually with no readable body, so showing them turns the timeline into
@@ -89,6 +91,7 @@ export function ChatWorkspace({
 					<LiveTurnBar
 						startedAt={turn.startedAt ?? turn.requestedAt}
 						blocked={Boolean(approval)}
+						queuedCount={queuedCount}
 						onInterrupt={onInterrupt}
 					/>
 				) : null}
@@ -301,6 +304,7 @@ function Timeline({
 }) {
 	const scroller = useRef<HTMLDivElement>(null);
 	const [pinned, setPinned] = useState(true);
+	const queued = useMemo(() => queuedTurnIds(snapshot), [snapshot]);
 
 	const groups = useMemo(
 		() => groupByTurn({ ...snapshot, items: readableItems(snapshot, showReasoning) }),
@@ -346,7 +350,13 @@ function Timeline({
 										)}
 									/>
 								) : (
-									<TimelineItem key={run.key} item={run.items[0]!} onDecide={onDecide} busy={busy} />
+									<TimelineItem
+										key={run.key}
+										item={run.items[0]!}
+										onDecide={onDecide}
+										busy={busy}
+										queuedTurns={queued}
+									/>
 								),
 							)}
 							{group.outcome ? (
@@ -381,16 +391,20 @@ function TimelineItem({
 	item,
 	onDecide,
 	busy,
+	queuedTurns,
 }: {
 	item: ConversationItem;
 	onDecide?: (requestId: string, decisionId: string) => void;
 	busy?: boolean;
+	/** Turns recorded but not yet sent, so a waiting message can say so. */
+	queuedTurns?: Set<string>;
 }) {
 	if (item.kind === "message") {
 		if (item.role === "assistant") return <AssistantMessage message={item} />;
+		const queued = Boolean(item.turnId && queuedTurns?.has(item.turnId));
 		// A user-role message that did not come from this human is an automation or
 		// worker relay, and is attributed differently.
-		if (item.origin === "human") return <HumanMessage message={item} />;
+		if (item.origin === "human") return <HumanMessage message={item} queued={queued} />;
 		return <OriginMessage message={item} />;
 	}
 	if (item.activityKind === "approval") {
@@ -399,46 +413,61 @@ function TimelineItem({
 	return <ActivityRow activity={item} />;
 }
 
+type TimelineGroup = {
+	key: string;
+	turnId?: string;
+	/** Where this group sits in the timeline: the lowest sequence it contains. */
+	anchor: number;
+	items: ConversationItem[];
+	outcome?: { state: "completed" | "interrupted" | "failed"; durationMs?: number; error?: string };
+};
+
 /**
  * Group items by the turn that produced them, so a completed turn can be closed
- * off with its outcome. Items with no turn (an automation relay that arrived
- * between turns) form their own group and keep their sequence position.
+ * off with its outcome.
+ *
+ * A turn is one block, even when its items are not contiguous in sequence. That
+ * matters because of the send queue: a message typed mid-turn is recorded
+ * immediately, so its sequence lands before the answers to everything ahead of
+ * it. Reading strictly by sequence would stack every queued question at the top
+ * and every answer below, separating each question from its own reply.
+ *
+ * Sequence still decides order — a turn takes the position of its first item, and
+ * items inside a turn stay in sequence order. Nothing is re-derived: this is the
+ * daemon's ordering, grouped.
+ *
+ * Items with no turn (an automation relay that arrived between turns) form their
+ * own group and keep their sequence position.
  */
-function groupByTurn(snapshot: ConversationSnapshot) {
+function groupByTurn(snapshot: ConversationSnapshot): TimelineGroup[] {
 	const byTurn = new Map(snapshot.turns.map((turn) => [turn.id, turn]));
-	const groups: {
-		/** Unique per group. A turn can legitimately appear in several groups when
-		 *  an automation relay arrives between its items, so the key carries the
-		 *  starting sequence rather than the turn id alone. */
-		key: string;
-		turnId?: string;
-		items: ConversationItem[];
-		outcome?: { state: "completed" | "interrupted" | "failed"; durationMs?: number; error?: string };
-	}[] = [];
+	const groups: TimelineGroup[] = [];
+	const groupForTurn = new Map<string, TimelineGroup>();
 
 	for (const item of snapshot.items) {
-		const last = groups.at(-1);
-		if (last && last.turnId === item.turnId && item.turnId !== undefined) {
-			last.items.push(item);
+		if (item.turnId === undefined) {
+			groups.push({ key: `loose-${item.sequence}`, anchor: item.sequence, items: [item] });
 			continue;
 		}
-		groups.push({
-			key: `${item.turnId ?? "loose"}-${item.sequence}`,
+		const existing = groupForTurn.get(item.turnId);
+		if (existing) {
+			existing.items.push(item);
+			continue;
+		}
+		const group: TimelineGroup = {
+			key: `${item.turnId}-${item.sequence}`,
 			turnId: item.turnId,
+			anchor: item.sequence,
 			items: [item],
-		});
+		};
+		groupForTurn.set(item.turnId, group);
+		groups.push(group);
 	}
 
-	// Only the group that carries a turn's last item closes it off, so a turn split
-	// by a relay does not print its outcome twice.
-	const lastGroupForTurn = new Map<string, string>();
-	for (const group of groups) {
-		if (group.turnId) lastGroupForTurn.set(group.turnId, group.key);
-	}
+	groups.sort((a, b) => a.anchor - b.anchor);
 
 	for (const group of groups) {
 		if (!group.turnId) continue;
-		if (lastGroupForTurn.get(group.turnId) !== group.key) continue;
 		const turn = byTurn.get(group.turnId);
 		if (!turn) continue;
 		if (turn.state === "running" || turn.state === "queued") continue;
@@ -481,10 +510,13 @@ function EmptyState({ harness }: { harness: string }) {
 function LiveTurnBar({
 	startedAt,
 	blocked,
+	queuedCount = 0,
 	onInterrupt,
 }: {
 	startedAt: string;
 	blocked?: boolean;
+	/** Messages typed during this turn, waiting to be sent after it. */
+	queuedCount?: number;
 	onInterrupt?: () => void;
 }) {
 	const [elapsed, setElapsed] = useState(() => since(startedAt));
@@ -505,6 +537,11 @@ function LiveTurnBar({
 				{blocked ? "Waiting for your decision" : "Working"}
 			</strong>
 			<span className="text-[11px] tabular-nums text-muted-foreground">{elapsed}</span>
+			{queuedCount > 0 ? (
+				<span className="text-[11px] text-muted-foreground">
+					{queuedCount} {queuedCount === 1 ? "message" : "messages"} queued
+				</span>
+			) : null}
 			<Button
 				type="button"
 				size="sm"
@@ -513,7 +550,7 @@ function LiveTurnBar({
 				className="ml-auto gap-1.5"
 			>
 				<Square aria-hidden="true" className="size-3" />
-				Stop turn
+				{queuedCount > 0 ? "Stop and clear queue" : "Stop turn"}
 			</Button>
 		</div>
 	);

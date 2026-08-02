@@ -863,6 +863,11 @@ type SendConversationMessageRequest struct {
 type SendConversationMessageResponse struct {
 	TurnID         string `json:"turnId,omitempty"`
 	ProviderTurnID string `json:"providerTurnId,omitempty"`
+	// State is `running` when the agent picked the message up immediately and
+	// `queued` when it arrived mid-turn and will be sent once the turn ends. A
+	// client that only reads turnId cannot tell those apart, and "accepted" is not
+	// the same claim as "delivered".
+	State domain.TurnState `json:"state,omitempty" enum:"queued,running,completed,interrupted,failed"`
 	// Duplicate is true when this client message id was already delivered, so a
 	// retrying client can stop instead of assuming a new turn began.
 	Duplicate bool `json:"duplicate"`

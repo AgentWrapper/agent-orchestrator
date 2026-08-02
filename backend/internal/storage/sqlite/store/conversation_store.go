@@ -30,6 +30,10 @@ import (
 // storage layer.
 var ErrConversationNotFound = domain.ErrNoConversation
 
+// ErrNoQueuedTurn reports an empty send queue. It is an ordinary outcome of
+// draining, not a failure.
+var ErrNoQueuedTurn = domain.ErrNoQueuedTurn
+
 // CreateConversation opens a session-scoped conversation. Returns the existing
 // one if it is already there, so a controller restart is idempotent.
 func (s *Store) CreateConversation(
@@ -226,6 +230,75 @@ func (s *Store) SettleOrphanedTurns(ctx context.Context, session domain.SessionI
 			HandledBySessionID: session,
 		}); err != nil {
 		return fmt.Errorf("settle orphaned turns for %s: %w", session, err)
+	}
+	return nil
+}
+
+// NextQueuedTurn returns the oldest message recorded while the agent was busy,
+// or ErrNoQueuedTurn when the queue is empty.
+//
+// The queue is these rows, not a slice in a controller: a message the user typed
+// is durable before it is delivered, so a daemon that dies with one queued can
+// still account for it.
+func (s *Store) NextQueuedTurn(ctx context.Context, conversationID string) (domain.QueuedTurn, error) {
+	row, err := s.qr.SelectNextQueuedConversationTurn(ctx, conversationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.QueuedTurn{}, ErrNoQueuedTurn
+	}
+	if err != nil {
+		return domain.QueuedTurn{}, fmt.Errorf("select next queued turn for %s: %w", conversationID, err)
+	}
+	return domain.QueuedTurn{
+		TurnID:          row.ID,
+		Text:            row.Text,
+		ClientMessageID: row.ClientMessageID,
+		Origin:          row.Origin,
+	}, nil
+}
+
+// CancelQueuedTurns closes out everything queued at or before cutoff.
+//
+// They settle as interrupted rather than failed: nothing went wrong, the user
+// stopped the agent, and a message that was never dispatched did not fail. The
+// cutoff keeps a message typed after the stop out of a cancellation it predates.
+func (s *Store) CancelQueuedTurns(
+	ctx context.Context,
+	conversationID string,
+	cutoff, now time.Time,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if err := s.qw.CancelQueuedConversationTurns(ctx, gen.CancelQueuedConversationTurnsParams{
+		CompletedAt:    sql.NullTime{Time: now, Valid: true},
+		ConversationID: conversationID,
+		RequestedAt:    cutoff,
+	}); err != nil {
+		return fmt.Errorf("cancel queued turns for %s: %w", conversationID, err)
+	}
+	return nil
+}
+
+// SettleTurnByID records a terminal state for a turn AO can name directly.
+//
+// Needed for a turn that never reached the provider: it has no provider turn id,
+// so it cannot be found the way a running turn is. Settling those by the empty
+// provider id would match an arbitrary undispatched turn instead of this one.
+func (s *Store) SettleTurnByID(
+	ctx context.Context,
+	turnID string,
+	state domain.TurnState,
+	errMessage string,
+	now time.Time,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if err := s.qw.SettleConversationTurn(ctx, gen.SettleConversationTurnParams{
+		State:        state,
+		ErrorMessage: errMessage,
+		CompletedAt:  sql.NullTime{Time: now, Valid: true},
+		ID:           turnID,
+	}); err != nil {
+		return fmt.Errorf("settle turn %s: %w", turnID, err)
 	}
 	return nil
 }

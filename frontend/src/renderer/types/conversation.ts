@@ -156,9 +156,29 @@ export interface ConversationSnapshot {
 	latestSequence: number;
 }
 
-/** The turn currently in flight, if any. */
+/**
+ * The turn currently in flight, if any.
+ *
+ * A running turn wins over a queued one: with a send queue both exist at once,
+ * and the one the agent is actually working on is what the user is waiting on.
+ */
 export function activeTurn(snapshot: ConversationSnapshot): ConversationTurn | undefined {
-	return snapshot.turns.find((turn) => turn.state === "running" || turn.state === "queued");
+	return (
+		snapshot.turns.find((turn) => turn.state === "running") ??
+		snapshot.turns.find((turn) => turn.state === "queued")
+	);
+}
+
+/**
+ * Turn ids for messages recorded but not yet sent.
+ *
+ * The daemon holds a mid-turn message instead of pushing it at a busy agent, so
+ * the timeline has to distinguish "waiting to be sent" from "sent".
+ */
+export function queuedTurnIds(snapshot: ConversationSnapshot): Set<string> {
+	return new Set(
+		snapshot.turns.filter((turn) => turn.state === "queued").map((turn) => turn.id),
+	);
 }
 
 /** The pending approval a user must answer, if any. */
