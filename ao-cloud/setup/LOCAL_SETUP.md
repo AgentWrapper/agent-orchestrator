@@ -25,6 +25,11 @@ so it can create the dynamic session containers.
   will open
 - A coding-agent credential to add through the Cloud settings UI
 
+On macOS, Docker Desktop is enough for the Docker pieces. On Windows, use Docker
+Desktop with the WSL 2 backend enabled and run the local Cloud commands from a
+WSL shell, not PowerShell, Command Prompt, or Git Bash. Docker Desktop must have
+integration enabled for that WSL distro so `docker` works inside WSL.
+
 Local mode stores email/password credentials and sessions in the local
 PostgreSQL database. Passwords are stored only as bcrypt hashes. It makes no
 external authentication request.

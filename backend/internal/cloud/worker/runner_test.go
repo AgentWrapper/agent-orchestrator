@@ -551,6 +551,29 @@ func TestPrepareAgentCredentialCodexLoginFailure(t *testing.T) {
 	}
 }
 
+func TestPrepareWorkerHomeCreatesConfiguredDirectories(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	codexHome := filepath.Join(home, ".codex")
+	claudeConfig := filepath.Join(home, ".claude")
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeConfig)
+
+	if err := prepareWorkerHome(); err != nil {
+		t.Fatalf("prepareWorkerHome() error = %v", err)
+	}
+	for _, path := range []string{home, codexHome, claudeConfig} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("Stat(%q) error = %v", path, err)
+		}
+		if !info.IsDir() {
+			t.Fatalf("%q is not a directory", path)
+		}
+	}
+}
+
 func runnerWithCredential(harness string, credential *AgentCredential) *Runner {
 	return &Runner{
 		bootstrap: BootstrapResponse{
