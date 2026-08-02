@@ -114,7 +114,7 @@ export function formatBrowserAnnotationMessage(payload: BrowserAnnotationSubmitP
 	const lines = [
 		selection.kind === "element"
 			? "The user selected an element in the AO browser preview and asked for a change."
-			: `The user selected ${selection.contexts.length} elements in the AO browser preview and asked for a change.`,
+			: `The user selected ${selection.contexts.length} element${selection.contexts.length === 1 ? "" : "s"} in the AO browser preview and asked for a change.`,
 		"",
 		"Change request:",
 		compactText(payload.instruction, MAX_INSTRUCTION_LENGTH) || "(empty)",
@@ -161,7 +161,7 @@ function elementsSelectionLines(contexts: BrowserAnnotationContext[]): string[] 
 		const text = context.visibleText ? ` — ${compactText(context.visibleText, 160)}` : "";
 		return `${index + 1}. ${elementSummary(context)} (selector: ${context.selector}, bounds: ${bounds})${text}`;
 	});
-	return [`Selected elements (${contexts.length}) at ${url}:`, ...items];
+	return [`Selected element${contexts.length === 1 ? "" : "s"} (${contexts.length}) at ${url}:`, ...items];
 }
 
 function elementSummary(context: BrowserAnnotationContext): string {

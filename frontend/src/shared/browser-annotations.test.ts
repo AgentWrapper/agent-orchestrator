@@ -135,6 +135,23 @@ describe("formatBrowserAnnotationMessage", () => {
 		expect(message).toContain("2. button#cancel (selector: button#cancel, bounds: x=10, y=20, width=80, height=30)");
 	});
 
+	it("pluralizes correctly for a single-element multi-selection", () => {
+		const payload: BrowserAnnotationSubmitPayload = {
+			viewId: "1:sess-1",
+			instruction: "Fix this element.",
+			selection: {
+				kind: "elements",
+				contexts: [context({ id: "fix-me", selector: "button#fix-me" })],
+			},
+		};
+
+		const message = formatBrowserAnnotationMessage(payload);
+
+		expect(message).toContain("The user selected 1 element in the AO browser preview and asked for a change.");
+		expect(message).toContain("Selected element (1) at http://localhost:5173/:");
+		expect(message).not.toContain("1 elements");
+	});
+
 	it("truncates an oversized multi-element message to the shared cap", () => {
 		const contexts = Array.from({ length: 200 }, (_, index) =>
 			context({ id: `el-${index}`, selector: `button#el-${index}` }),
