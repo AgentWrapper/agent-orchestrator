@@ -5,11 +5,14 @@ import {
 	type BrowserAnnotationContext,
 	type BrowserAnnotationPageSubmitPayload,
 } from "./shared/browser-annotations";
-import { promptPositionForRect } from "./shared/browser-annotation-overlay";
+import { promptPositionForRect, type AnnotationRectLike } from "./shared/browser-annotation-overlay";
 
 let enabled = false;
 let selectedElement: Element | null = null;
 let selectedContext: BrowserAnnotationContext | null = null;
+let multiSelectActive = false;
+let multiSelectElements: Element[] = [];
+let multiSelectContexts: BrowserAnnotationContext[] | null = null;
 let host: HTMLDivElement | null = null;
 let shadow: ShadowRoot | null = null;
 
@@ -28,6 +31,9 @@ function setEnabled(next: boolean, cancelReason: BrowserAnnotationCancelReason):
 	enabled = next;
 	selectedElement = null;
 	selectedContext = null;
+	multiSelectActive = false;
+	multiSelectElements = [];
+	multiSelectContexts = null;
 	if (enabled) {
 		ensureOverlay();
 		installListeners();
@@ -58,7 +64,7 @@ function removeListeners(): void {
 }
 
 function handlePointerMove(event: PointerEvent): void {
-	if (!enabled || selectedContext || isOverlayEvent(event)) return;
+	if (!enabled || selectedContext || multiSelectContexts || isOverlayEvent(event)) return;
 	const target = annotationTarget(event.target);
 	if (!target || target === selectedElement) return;
 	selectedElement = target;
@@ -68,7 +74,7 @@ function handlePointerMove(event: PointerEvent): void {
 
 function handleClick(event: MouseEvent): void {
 	if (!enabled || isOverlayEvent(event)) return;
-	if (selectedContext) {
+	if (selectedContext || multiSelectContexts) {
 		event.preventDefault();
 		event.stopPropagation();
 		event.stopImmediatePropagation();
@@ -79,22 +85,75 @@ function handleClick(event: MouseEvent): void {
 	event.preventDefault();
 	event.stopPropagation();
 	event.stopImmediatePropagation();
+	if (multiSelectActive) {
+		toggleMultiSelectElement(target);
+		return;
+	}
 	selectedElement = target;
 	selectedContext = createBrowserAnnotationContext(target);
 	renderPrompt(target, selectedContext);
 }
 
 function handleKeyDown(event: KeyboardEvent): void {
-	if (!enabled || event.key !== "Escape") return;
+	if (!enabled) return;
+	if (event.key === "Escape") {
+		event.preventDefault();
+		event.stopPropagation();
+		event.stopImmediatePropagation();
+		setEnabled(false, "escape");
+		return;
+	}
+	if (event.key !== "Shift" || event.repeat || selectedContext || multiSelectContexts) return;
 	event.preventDefault();
 	event.stopPropagation();
 	event.stopImmediatePropagation();
-	setEnabled(false, "escape");
+	if (multiSelectActive) {
+		finishMultiSelect();
+	} else {
+		startMultiSelect();
+	}
+}
+
+function startMultiSelect(): void {
+	multiSelectActive = true;
+	multiSelectElements = [];
+	hideHoverHighlight();
+	renderMultiSelections();
+	renderHint();
+}
+
+function finishMultiSelect(): void {
+	multiSelectActive = false;
+	hideHoverHighlight();
+	if (multiSelectElements.length === 0) {
+		renderHint();
+		return;
+	}
+	multiSelectContexts = multiSelectElements.map(createBrowserAnnotationContext);
+	renderMultiPrompt(multiSelectElements, multiSelectContexts);
+}
+
+function toggleMultiSelectElement(target: Element): void {
+	const index = multiSelectElements.indexOf(target);
+	if (index === -1) {
+		multiSelectElements.push(target);
+	} else {
+		multiSelectElements.splice(index, 1);
+	}
+	renderMultiSelections();
+	renderHint();
+}
+
+function hideHoverHighlight(): void {
+	selectedElement = null;
+	const highlight = ensureOverlay().querySelector<HTMLDivElement>(".highlight");
+	if (highlight) highlight.hidden = true;
 }
 
 function refreshHighlight(): void {
-	if (!enabled || !selectedElement) return;
-	renderHighlight(selectedElement, Boolean(selectedContext));
+	if (!enabled) return;
+	if (selectedElement) renderHighlight(selectedElement, Boolean(selectedContext));
+	if (multiSelectElements.length > 0) renderMultiSelections();
 }
 
 function annotationTarget(target: EventTarget | null): Element | null {
@@ -138,6 +197,13 @@ function ensureOverlay(): ShadowRoot {
 					height 120ms ease,
 					border-color 120ms ease,
 					background 120ms ease;
+			}
+			.highlight--selected {
+				border-color: #74b98a;
+				background: rgba(116, 185, 138, 0.14);
+				box-shadow:
+					0 0 0 1px rgba(255, 255, 255, 0.20),
+					0 12px 36px rgba(0, 0, 0, 0.24);
 			}
 			.prompt {
 				position: fixed;
@@ -258,6 +324,7 @@ function ensureOverlay(): ShadowRoot {
 			}
 		</style>
 		<div class="highlight" hidden></div>
+		<div class="selections"></div>
 		<div class="mount"></div>
 	`;
 	return shadow;
@@ -267,7 +334,18 @@ function renderHint(): void {
 	const root = ensureOverlay();
 	const mount = root.querySelector<HTMLDivElement>(".mount");
 	if (!mount) return;
-	mount.innerHTML = `<div class="hint">Click an element to annotate. Press Esc to cancel.</div>`;
+	mount.innerHTML = `<div class="hint">${hintText()}</div>`;
+}
+
+function hintText(): string {
+	if (!multiSelectActive) {
+		return "Click an element to annotate, or press Shift to select multiple. Press Esc to cancel.";
+	}
+	if (multiSelectElements.length === 0) {
+		return "Click elements to select them. Press Shift again to finish.";
+	}
+	const count = multiSelectElements.length;
+	return `${count} element${count === 1 ? "" : "s"} selected. Click more, or press Shift to finish.`;
 }
 
 function renderHighlight(element: Element, locked: boolean): void {
@@ -283,18 +361,53 @@ function renderHighlight(element: Element, locked: boolean): void {
 	highlight.style.borderColor = locked ? "#74b98a" : "#4d8dff";
 }
 
+function renderMultiSelections(): void {
+	const root = ensureOverlay();
+	const container = root.querySelector<HTMLDivElement>(".selections");
+	if (!container) return;
+	container.innerHTML = "";
+	for (const element of multiSelectElements) {
+		const rect = element.getBoundingClientRect();
+		const box = document.createElement("div");
+		box.className = "highlight highlight--selected";
+		box.style.left = `${Math.max(0, rect.left)}px`;
+		box.style.top = `${Math.max(0, rect.top)}px`;
+		box.style.width = `${Math.max(0, rect.width)}px`;
+		box.style.height = `${Math.max(0, rect.height)}px`;
+		container.appendChild(box);
+	}
+}
+
 function renderPrompt(element: Element, context: BrowserAnnotationContext): void {
 	renderHighlight(element, true);
+	openPrompt(element.getBoundingClientRect(), promptTargetLabel(context), (instruction) => ({
+		instruction,
+		selection: { kind: "element", context },
+	}));
+}
+
+function renderMultiPrompt(elements: Element[], contexts: BrowserAnnotationContext[]): void {
+	renderMultiSelections();
+	openPrompt(unionRect(elements), multiPromptTargetLabel(contexts.length), (instruction) => ({
+		instruction,
+		selection: { kind: "elements", contexts },
+	}));
+}
+
+function openPrompt(
+	rect: AnnotationRectLike,
+	targetLabel: string,
+	buildPayload: (instruction: string) => BrowserAnnotationPageSubmitPayload,
+): void {
 	const root = ensureOverlay();
 	const mount = root.querySelector<HTMLDivElement>(".mount");
 	if (!mount) return;
-	const rect = element.getBoundingClientRect();
 	const { left, top } = promptPosition(rect);
 	mount.innerHTML = `
 		<form class="prompt" style="left: ${left}px; top: ${top}px;">
 			<div class="prompt__header">
 				<span>Annotate selection</span>
-				<span class="prompt__target">${escapeHTML(promptTargetLabel(context))}</span>
+				<span class="prompt__target">${escapeHTML(targetLabel)}</span>
 			</div>
 			<textarea aria-label="Annotation request" placeholder="Describe what to change"></textarea>
 			<div class="actions">
@@ -312,8 +425,7 @@ function renderPrompt(element: Element, context: BrowserAnnotationContext): void
 			textarea.focus();
 			return;
 		}
-		const payload: BrowserAnnotationPageSubmitPayload = { instruction, context };
-		ipcRenderer.send("browser:annotation:submit", payload);
+		ipcRenderer.send("browser:annotation:submit", buildPayload(instruction));
 		setEnabled(false, "disabled");
 	});
 	form.querySelector<HTMLButtonElement>('[data-action="cancel"]')?.addEventListener("click", () => {
@@ -322,7 +434,7 @@ function renderPrompt(element: Element, context: BrowserAnnotationContext): void
 	setTimeout(() => textarea.focus(), 0);
 }
 
-function promptPosition(rect: DOMRect): { left: number; top: number } {
+function promptPosition(rect: AnnotationRectLike): { left: number; top: number } {
 	return promptPositionForRect(rect, {
 		width: window.innerWidth,
 		height: window.innerHeight,
@@ -331,6 +443,15 @@ function promptPosition(rect: DOMRect): { left: number; top: number } {
 		gutter: 12,
 		gap: 8,
 	});
+}
+
+function unionRect(elements: Element[]): AnnotationRectLike {
+	const rects = elements.map((element) => element.getBoundingClientRect());
+	return {
+		left: Math.min(...rects.map((rect) => rect.left)),
+		top: Math.min(...rects.map((rect) => rect.top)),
+		bottom: Math.max(...rects.map((rect) => rect.bottom)),
+	};
 }
 
 function cleanupOverlay(): void {
@@ -353,6 +474,10 @@ function promptTargetLabel(context: BrowserAnnotationContext): string {
 	if (context.id) return `${context.tag}#${context.id}`;
 	if (context.classes.length > 0) return `${context.tag}.${context.classes[0]}`;
 	return context.tag;
+}
+
+function multiPromptTargetLabel(count: number): string {
+	return `${count} element${count === 1 ? "" : "s"} selected`;
 }
 
 function escapeHTML(value: string): string {
