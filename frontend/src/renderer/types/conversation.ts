@@ -52,6 +52,13 @@ export type DeliveryState = "queued" | "sending" | "accepted" | "uncertain" | "f
 export interface ConversationTurn {
 	id: string;
 	state: TurnState;
+	/**
+	 * An undo discarded this turn. Its messages and activities are absent from the
+	 * snapshot, because the agent no longer remembers them; the turn is still
+	 * reported so the timeline can say what was taken back rather than just
+	 * appearing to have lost some history.
+	 */
+	rolledBack?: boolean;
 	providerTurnId?: string;
 	errorMessage?: string;
 	requestedAt: string;
@@ -303,6 +310,12 @@ export interface ConversationSnapshot {
 	 * is unbounded and this is consulted on every render.
 	 */
 	compactedAt?: string;
+	/**
+	 * The name the provider gives this thread. Empty until something names it.
+	 * The session's own label is set from this by the daemon, so this is here for
+	 * the header rather than for the sidebar.
+	 */
+	title?: string;
 }
 
 /**

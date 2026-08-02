@@ -73,6 +73,14 @@ export function SessionChatSurface({ session }: { session: WorkspaceSession }) {
 			onCompact={commands.compact}
 			compacting={commands.compacting}
 			compactUnavailable={commands.compactUnavailable}
+			// The rejection is swallowed here because the mutation already holds it:
+			// rollbackError is what the confirmation shows, and an unhandled rejection
+			// would only add a console error the user cannot act on.
+			onRollback={(turnId) => {
+				void commands.rollback(turnId).catch(() => {});
+			}}
+			rollbackPending={commands.rollbackPending}
+			rollbackError={commands.rollbackError}
 		/>
 	);
 }

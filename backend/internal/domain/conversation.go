@@ -136,8 +136,16 @@ type ConversationRecord struct {
 	// entry so a client can tell whether compaction has run without walking an
 	// unbounded timeline on every render.
 	CompactedAt *time.Time `json:"compactedAt,omitempty"`
-	CreatedAt   time.Time  `json:"createdAt"`
-	UpdatedAt   time.Time  `json:"updatedAt"`
+	// ProviderTitle is what the provider currently calls this thread. Kept even
+	// when the user has overridden the AO label, because it is the name the
+	// conversation carries in the provider's own history.
+	ProviderTitle string `json:"providerTitle,omitempty"`
+	// AppliedTitle is the last provider title AO wrote into the session's display
+	// name. It is what makes "replace a label AO chose" distinguishable from
+	// "overwrite a label a person chose". Empty means AO has never named it.
+	AppliedTitle string    `json:"-"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
 // ConversationUsage is the conversation's token position.
@@ -233,6 +241,12 @@ type ConversationTurn struct {
 	RequestedAt  time.Time  `json:"requestedAt"`
 	StartedAt    *time.Time `json:"startedAt,omitempty"`
 	CompletedAt  *time.Time `json:"completedAt,omitempty"`
+	// RolledBackAt is set when a rollback discarded this turn provider-side. The
+	// row survives because AO does not destroy durable facts, but the agent no
+	// longer remembers the exchange, so its messages and activities are left out
+	// of the timeline. The turn itself stays readable so a client can say how much
+	// an undo took back rather than letting the history silently shrink.
+	RolledBackAt *time.Time `json:"rolledBackAt,omitempty"`
 	// Diff is what the turn has changed on disk so far. Nil when the provider has
 	// reported nothing, which is not the same as "changed nothing": a provider
 	// without diff support never reports at all.
@@ -270,6 +284,12 @@ type ConversationDiffFile struct {
 	Status string `json:"status"`
 	// OldPath is set only for a rename.
 	OldPath string `json:"oldPath,omitempty"`
+	// RolledBackAt is set when a rollback discarded this turn provider-side. The
+	// row survives because AO does not destroy durable facts, but the agent no
+	// longer remembers the exchange, so its messages and activities are left out
+	// of the timeline. The turn itself stays readable so a client can say how much
+	// an undo took back rather than letting the history silently shrink.
+	RolledBackAt *time.Time `json:"rolledBackAt,omitempty"`
 }
 
 // QueuedTurn is a turn that was recorded but never dispatched, paired with the
@@ -353,3 +373,8 @@ var ErrNoConversation = errors.New("session has no conversation")
 // ErrNoQueuedTurn reports that nothing is waiting to be sent. Draining an empty
 // queue is the normal case, not an error.
 var ErrNoQueuedTurn = errors.New("no queued turn")
+
+// ErrNoConversationTurn reports a turn id that is not in the conversation it was
+// named against. It lives here rather than in the storage layer so a controller and
+// an HTTP handler can both recognize it without importing SQLite.
+var ErrNoConversationTurn = errors.New("conversation turn not found")

@@ -409,6 +409,9 @@ func spawn(t *testing.T, d *daemon, req map[string]any) spawned {
 /* ---- conversation reads ------------------------------------------------ */
 
 type turn struct {
+	// Set when an undo discarded the turn: the row survives so a client can say
+	// what was taken back, which is the distinction the rollback scenarios assert.
+	RolledBack     bool   `json:"rolledBack"`
 	ID             string `json:"id"`
 	State          string `json:"state"`
 	ProviderTurnID string `json:"providerTurnId"`
@@ -501,6 +504,7 @@ type snapshot struct {
 	Settings       turnSettings `json:"settings"`
 	Mode           string       `json:"mode"`
 	Controller     string       `json:"controller"`
+	Title          string       `json:"title"`
 	LatestSequence int64        `json:"latestSequence"`
 	Turns          []turn       `json:"turns"`
 	Messages       []message    `json:"messages"`

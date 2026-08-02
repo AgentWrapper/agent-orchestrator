@@ -50,6 +50,16 @@ func (f *fakeConversationService) Compact(context.Context, domain.SessionID) (po
 	return ports.ChatCompactionResult{}, nil
 }
 
+// History operations belong to a sibling slice; stubbed so this fake satisfies the
+// controller's interface without pretending to implement them.
+func (f *fakeConversationService) Rollback(context.Context, domain.SessionID, string) (int, error) {
+	return 0, nil
+}
+
+func (f *fakeConversationService) SetTitle(context.Context, domain.SessionID, string) (string, error) {
+	return "", nil
+}
+
 // conversationSnapshotBody fetches the snapshot route and decodes it loosely, the
 // way a client sees it.
 func conversationSnapshotBody(t *testing.T, snapshot chatsvc.Snapshot) map[string]any {

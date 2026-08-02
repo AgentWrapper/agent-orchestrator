@@ -148,6 +148,9 @@ var schemaNames = map[string]string{
 	"ControllersConversationUsagePayload":           "ConversationUsagePayload",
 	"ControllersConversationRateLimitsPayload":      "ConversationRateLimitsPayload",
 	"ControllersCompactConversationResponse":        "CompactConversationResponse",
+	"ControllersRollbackConversationResponse":       "RollbackConversationResponse",
+	"ControllersSetConversationTitleRequest":        "SetConversationTitleRequest",
+	"ControllersSetConversationTitleResponse":       "SetConversationTitleResponse",
 	// httpd/envelope
 	"EnvelopeAPIError": "APIError",
 	// domain
@@ -508,6 +511,32 @@ func shellTerminalOperations() []operation {
 			pathParams: []any{controllers.SessionIDParam{}},
 			resps: []respUnit{
 				{http.StatusNoContent, nil},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/rollback", id: "rollbackSessionConversation", tag: "conversations",
+			summary:    "Discard a turn and everything after it from the agent's memory",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.ConversationTurnIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.RollbackConversationResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPut, path: "/api/v1/sessions/{sessionId}/conversation/title", id: "setSessionConversationTitle", tag: "conversations",
+			summary:    "Name the provider's conversation thread",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.SetConversationTitleRequest{},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.SetConversationTitleResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},

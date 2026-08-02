@@ -91,6 +91,44 @@ func (q *Queries) AppendConversationMessageDelta(ctx context.Context, arg Append
 	return err
 }
 
+const applyConversationTitleToSession = `-- name: ApplyConversationTitleToSession :execrows
+UPDATE sessions
+SET display_name = ?, updated_at = ?
+WHERE id = ?
+  AND (display_name = '' OR display_name = ?)
+`
+
+type ApplyConversationTitleToSessionParams struct {
+	DisplayName   string
+	UpdatedAt     time.Time
+	ID            domain.SessionID
+	DisplayName_2 string
+}
+
+// Push a provider thread title into the session label, without ever overwriting a
+// name a person chose.
+//
+// One statement, not a read followed by a write: a manual rename landing between the
+// two would be silently discarded. The guard admits exactly two cases - the session
+// has no label yet, or it still carries the title AO last wrote - so anything a user
+// typed wins by simply not matching.
+//
+// It lives with the conversation queries rather than the session ones because it is
+// part of the conversation title lifecycle; sessions is only the table the value
+// lands in.
+func (q *Queries) ApplyConversationTitleToSession(ctx context.Context, arg ApplyConversationTitleToSessionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, applyConversationTitleToSession,
+		arg.DisplayName,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.DisplayName_2,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const bindConversationTurnProviderID = `-- name: BindConversationTurnProviderID :exec
 UPDATE conversation_turns
 SET provider_turn_id = ?, started_at = COALESCE(started_at, ?)
@@ -144,6 +182,33 @@ type FailPendingConversationApprovalsParams struct {
 // provider call it was blocking is gone.
 func (q *Queries) FailPendingConversationApprovals(ctx context.Context, arg FailPendingConversationApprovalsParams) error {
 	_, err := q.db.ExecContext(ctx, failPendingConversationApprovals, arg.UpdatedAt, arg.ConversationID)
+	return err
+}
+
+const failRolledBackConversationApprovals = `-- name: FailRolledBackConversationApprovals :exec
+UPDATE conversation_activities
+SET status = 'failed', revision = revision + 1, updated_at = ?
+WHERE conversation_activities.conversation_id = ?
+  AND conversation_activities.kind = 'approval'
+  AND conversation_activities.status = 'pending'
+  AND conversation_activities.turn_id IN (
+      SELECT discarded.id FROM conversation_turns AS discarded
+      WHERE discarded.conversation_id = ? AND discarded.rolled_back_at IS NOT NULL
+  )
+`
+
+type FailRolledBackConversationApprovalsParams struct {
+	UpdatedAt        time.Time
+	ConversationID   string
+	ConversationID_2 string
+}
+
+// An approval inside a discarded turn can never be answered: the provider call it
+// was blocking belongs to history the provider has dropped. A rollback is refused
+// while a turn runs, so in practice there is nothing here to close; the statement
+// exists so the invariant is enforced rather than argued.
+func (q *Queries) FailRolledBackConversationApprovals(ctx context.Context, arg FailRolledBackConversationApprovalsParams) error {
+	_, err := q.db.ExecContext(ctx, failRolledBackConversationApprovals, arg.UpdatedAt, arg.ConversationID, arg.ConversationID_2)
 	return err
 }
 
@@ -323,6 +388,28 @@ func (q *Queries) InsertConversationTurn(ctx context.Context, arg InsertConversa
 	return err
 }
 
+const interruptRolledBackQueuedTurns = `-- name: InterruptRolledBackQueuedTurns :exec
+UPDATE conversation_turns
+SET state = 'interrupted', completed_at = ?
+WHERE conversation_id = ?
+  AND state IN ('queued', 'running')
+  AND rolled_back_at IS NOT NULL
+`
+
+type InterruptRolledBackQueuedTurnsParams struct {
+	CompletedAt    sql.NullTime
+	ConversationID string
+}
+
+// A discarded turn that never reached the provider settles as interrupted rather
+// than staying queued forever. Nothing went wrong and nothing failed: the user
+// undid the conversation out from under a message that was still waiting, and
+// dispatching it later would send it against a history it was never written for.
+func (q *Queries) InterruptRolledBackQueuedTurns(ctx context.Context, arg InterruptRolledBackQueuedTurnsParams) error {
+	_, err := q.db.ExecContext(ctx, interruptRolledBackQueuedTurns, arg.CompletedAt, arg.ConversationID)
+	return err
+}
+
 const markConversationCompacted = `-- name: MarkConversationCompacted :exec
 UPDATE conversations
 SET compacted_at = ?, updated_at = ?
@@ -359,6 +446,38 @@ type MarkConversationTurnStartedParams struct {
 func (q *Queries) MarkConversationTurnStarted(ctx context.Context, arg MarkConversationTurnStartedParams) error {
 	_, err := q.db.ExecContext(ctx, markConversationTurnStarted, arg.StartedAt, arg.ID)
 	return err
+}
+
+const markConversationTurnsRolledBack = `-- name: MarkConversationTurnsRolledBack :execrows
+UPDATE conversation_turns
+SET rolled_back_at = ?
+WHERE conversation_turns.conversation_id = ?
+  AND conversation_turns.rolled_back_at IS NULL
+  AND conversation_turns.rowid >= (
+      SELECT anchor.rowid FROM conversation_turns AS anchor WHERE anchor.id = ?
+  )
+`
+
+type MarkConversationTurnsRolledBackParams struct {
+	RolledBackAt   sql.NullTime
+	ConversationID string
+	ID             string
+}
+
+// Everything from the named turn to the end of the conversation, which is the range
+// an undo discards. Inclusive of the named turn: the state a person wants back is
+// the one from before they sent the message they pointed at.
+//
+// The cut is on rowid rather than requested_at because rowid is assigned by the
+// insert and strictly increasing, so it orders turns recorded in the same clock tick
+// the same way SelectConversationTurns does. Two turns sharing a timestamp is
+// ordinary; two turns sharing a rowid is impossible.
+func (q *Queries) MarkConversationTurnsRolledBack(ctx context.Context, arg MarkConversationTurnsRolledBackParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markConversationTurnsRolledBack, arg.RolledBackAt, arg.ConversationID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const nextConversationSequence = `-- name: NextConversationSequence :one
@@ -407,12 +526,23 @@ func (q *Queries) ResolveConversationApproval(ctx context.Context, arg ResolveCo
 
 const selectConversationActivities = `-- name: SelectConversationActivities :many
 SELECT id, conversation_id, turn_id, sequence, revision, kind, status, summary, detail_json, request_id, provider_item_id, created_at, updated_at, command_output, command_output_truncated FROM conversation_activities
-WHERE conversation_id = ?
-ORDER BY sequence
+WHERE conversation_activities.conversation_id = ?
+  AND (conversation_activities.turn_id IS NULL OR conversation_activities.turn_id NOT IN (
+      SELECT discarded.id FROM conversation_turns AS discarded
+      WHERE discarded.conversation_id = ? AND discarded.rolled_back_at IS NOT NULL
+  ))
+ORDER BY conversation_activities.sequence
 `
 
-func (q *Queries) SelectConversationActivities(ctx context.Context, conversationID string) ([]ConversationActivity, error) {
-	rows, err := q.db.QueryContext(ctx, selectConversationActivities, conversationID)
+type SelectConversationActivitiesParams struct {
+	ConversationID   string
+	ConversationID_2 string
+}
+
+// Activities the agent still remembers, filtered the same way messages are and for
+// the same reason. See SelectConversationMessages.
+func (q *Queries) SelectConversationActivities(ctx context.Context, arg SelectConversationActivitiesParams) ([]ConversationActivity, error) {
+	rows, err := q.db.QueryContext(ctx, selectConversationActivities, arg.ConversationID, arg.ConversationID_2)
 	if err != nil {
 		return nil, err
 	}
@@ -485,7 +615,7 @@ func (q *Queries) SelectConversationActivityByProviderItem(ctx context.Context, 
 }
 
 const selectConversationByID = `-- name: SelectConversationByID :one
-SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan FROM conversations WHERE id = ? LIMIT 1
+SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title FROM conversations WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) SelectConversationByID(ctx context.Context, id string) (Conversation, error) {
@@ -514,12 +644,14 @@ func (q *Queries) SelectConversationByID(ctx context.Context, id string) (Conver
 		&i.RateLimitPrimaryResetsIn,
 		&i.RateLimitSecondaryResetsIn,
 		&i.RateLimitPlan,
+		&i.ProviderTitle,
+		&i.AppliedTitle,
 	)
 	return i, err
 }
 
 const selectConversationBySession = `-- name: SelectConversationBySession :one
-SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan FROM conversations WHERE session_id = ? LIMIT 1
+SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title FROM conversations WHERE session_id = ? LIMIT 1
 `
 
 func (q *Queries) SelectConversationBySession(ctx context.Context, sessionID *domain.SessionID) (Conversation, error) {
@@ -548,6 +680,8 @@ func (q *Queries) SelectConversationBySession(ctx context.Context, sessionID *do
 		&i.RateLimitPrimaryResetsIn,
 		&i.RateLimitSecondaryResetsIn,
 		&i.RateLimitPlan,
+		&i.ProviderTitle,
+		&i.AppliedTitle,
 	)
 	return i, err
 }
@@ -618,12 +752,30 @@ func (q *Queries) SelectConversationMessageByProviderItem(ctx context.Context, a
 
 const selectConversationMessages = `-- name: SelectConversationMessages :many
 SELECT id, conversation_id, turn_id, sequence, revision, role, origin, text, streaming, provider_item_id, client_message_id, created_at, updated_at FROM conversation_messages
-WHERE conversation_id = ?
-ORDER BY sequence
+WHERE conversation_messages.conversation_id = ?
+  AND (conversation_messages.turn_id IS NULL OR conversation_messages.turn_id NOT IN (
+      SELECT discarded.id FROM conversation_turns AS discarded
+      WHERE discarded.conversation_id = ? AND discarded.rolled_back_at IS NOT NULL
+  ))
+ORDER BY conversation_messages.sequence
 `
 
-func (q *Queries) SelectConversationMessages(ctx context.Context, conversationID string) ([]ConversationMessage, error) {
-	rows, err := q.db.QueryContext(ctx, selectConversationMessages, conversationID)
+type SelectConversationMessagesParams struct {
+	ConversationID   string
+	ConversationID_2 string
+}
+
+// Prose the agent still remembers. Rows belonging to a rolled-back turn are left
+// out: rollback discarded them provider-side, and showing a person a message the
+// agent has no memory of is the one way this feature can lie.
+//
+// Rows with turn_id IS NULL survive the filter on purpose. Those are items the
+// provider never attributed to a turn, and hiding what AO cannot prove belonged to
+// the discarded range would be a guess dressed up as a fact.
+// NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+// offset, so a multi-byte character here silently corrupts later queries.
+func (q *Queries) SelectConversationMessages(ctx context.Context, arg SelectConversationMessagesParams) ([]ConversationMessage, error) {
+	rows, err := q.db.QueryContext(ctx, selectConversationMessages, arg.ConversationID, arg.ConversationID_2)
 	if err != nil {
 		return nil, err
 	}
@@ -703,8 +855,32 @@ func (q *Queries) SelectConversationProviderEvents(ctx context.Context, arg Sele
 	return items, nil
 }
 
+const selectConversationTurnByID = `-- name: SelectConversationTurnByID :one
+SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at FROM conversation_turns WHERE id = ? LIMIT 1
+`
+
+func (q *Queries) SelectConversationTurnByID(ctx context.Context, id string) (ConversationTurn, error) {
+	row := q.db.QueryRowContext(ctx, selectConversationTurnByID, id)
+	var i ConversationTurn
+	err := row.Scan(
+		&i.ID,
+		&i.ConversationID,
+		&i.HandledBySessionID,
+		&i.ProviderTurnID,
+		&i.ControllerGeneration,
+		&i.State,
+		&i.ErrorMessage,
+		&i.RequestedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.DiffJson,
+		&i.RolledBackAt,
+	)
+	return i, err
+}
+
 const selectConversationTurnByProviderID = `-- name: SelectConversationTurnByProviderID :one
-SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json FROM conversation_turns
+SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at FROM conversation_turns
 WHERE conversation_id = ? AND provider_turn_id = ?
 LIMIT 1
 `
@@ -731,16 +907,22 @@ func (q *Queries) SelectConversationTurnByProviderID(ctx context.Context, arg Se
 		&i.StartedAt,
 		&i.CompletedAt,
 		&i.DiffJson,
+		&i.RolledBackAt,
 	)
 	return i, err
 }
 
 const selectConversationTurns = `-- name: SelectConversationTurns :many
-SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json FROM conversation_turns
+SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at FROM conversation_turns
 WHERE conversation_id = ?
 ORDER BY requested_at, rowid
 `
 
+// Turns are read in full, rolled-back ones included. They carry rolled_back_at, so
+// a client can report how much an undo discarded instead of watching the timeline
+// silently shrink.
+// NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+// offset, so a multi-byte character here silently corrupts later queries.
 func (q *Queries) SelectConversationTurns(ctx context.Context, conversationID string) ([]ConversationTurn, error) {
 	rows, err := q.db.QueryContext(ctx, selectConversationTurns, conversationID)
 	if err != nil {
@@ -762,6 +944,7 @@ func (q *Queries) SelectConversationTurns(ctx context.Context, conversationID st
 			&i.StartedAt,
 			&i.CompletedAt,
 			&i.DiffJson,
+			&i.RolledBackAt,
 		); err != nil {
 			return nil, err
 		}
@@ -906,6 +1089,48 @@ type SettleOrphanedConversationTurnsParams struct {
 // completed.
 func (q *Queries) SettleOrphanedConversationTurns(ctx context.Context, arg SettleOrphanedConversationTurnsParams) error {
 	_, err := q.db.ExecContext(ctx, settleOrphanedConversationTurns, arg.CompletedAt, arg.HandledBySessionID)
+	return err
+}
+
+const updateConversationAppliedTitle = `-- name: UpdateConversationAppliedTitle :exec
+UPDATE conversations
+SET applied_title = ?, updated_at = ?
+WHERE id = ?
+`
+
+type UpdateConversationAppliedTitleParams struct {
+	AppliedTitle string
+	UpdatedAt    time.Time
+	ID           string
+}
+
+// The last title AO pushed into sessions.display_name. It is the compare-and-set
+// witness that lets a later provider title replace a label AO wrote while never
+// replacing one a person chose.
+func (q *Queries) UpdateConversationAppliedTitle(ctx context.Context, arg UpdateConversationAppliedTitleParams) error {
+	_, err := q.db.ExecContext(ctx, updateConversationAppliedTitle, arg.AppliedTitle, arg.UpdatedAt, arg.ID)
+	return err
+}
+
+const updateConversationProviderTitle = `-- name: UpdateConversationProviderTitle :exec
+UPDATE conversations
+SET provider_title = ?, updated_at = ?
+WHERE id = ?
+`
+
+type UpdateConversationProviderTitleParams struct {
+	ProviderTitle string
+	UpdatedAt     time.Time
+	ID            string
+}
+
+// The thread title the provider reports for this conversation. Kept even when the
+// user has overridden the AO label, because it is the name the conversation has in
+// the provider's own history.
+// NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+// offset, so a multi-byte character here silently corrupts later queries.
+func (q *Queries) UpdateConversationProviderTitle(ctx context.Context, arg UpdateConversationProviderTitleParams) error {
+	_, err := q.db.ExecContext(ctx, updateConversationProviderTitle, arg.ProviderTitle, arg.UpdatedAt, arg.ID)
 	return err
 }
 

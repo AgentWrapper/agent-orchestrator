@@ -276,6 +276,23 @@ export const chatFixtureRecovering: ConversationSnapshot = {
 	turns: [{ ...chatFixture.turns[0]! }, { ...chatFixture.turns[1]!, state: "running" }],
 };
 
+/**
+ * A settled conversation: nothing in flight, and the thread has a name.
+ *
+ * This is the state the history operations live in. Undo is only offered while the
+ * agent is idle, so the live fixture (which is mid-turn on purpose) cannot show it.
+ */
+export const chatFixtureSettled: ConversationSnapshot = {
+	...chatFixture,
+	controller: { state: "ready" },
+	title: "Restore Canvas Renderer Fallback",
+	turns: chatFixture.turns.map((turn) =>
+		turn.state === "running"
+			? { ...turn, state: "completed" as const, completedAt: t(39, 40) }
+			: turn,
+	),
+};
+
 /** A third: an empty conversation, the first thing a new session shows. */
 export const chatFixtureEmpty: ConversationSnapshot = {
 	conversationId: "conv-ao-15",

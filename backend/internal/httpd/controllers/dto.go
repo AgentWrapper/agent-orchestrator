@@ -936,6 +936,11 @@ type ConversationTurnResponse struct {
 	RequestedAt    string  `json:"requestedAt"`
 	StartedAt      *string `json:"startedAt,omitempty"`
 	CompletedAt    *string `json:"completedAt,omitempty"`
+	// RolledBack marks a turn an undo discarded. Its messages and activities are
+	// absent from this snapshot because the agent no longer remembers them; the turn
+	// is still reported so a client can say what was taken back rather than letting
+	// the timeline quietly shrink.
+	RolledBack bool `json:"rolledBack,omitempty"`
 	// Diff is what this turn has changed on disk. Absent when the provider has
 	// reported nothing, which is not a claim that nothing changed: an agent
 	// without diff support never reports at all.
@@ -968,6 +973,11 @@ type ConversationDiffFileResponse struct {
 	Status    string `json:"status" enum:"added,modified,deleted,renamed"`
 	// OldPath is set only for a rename.
 	OldPath string `json:"oldPath,omitempty"`
+	// RolledBack marks a turn an undo discarded. Its messages and activities are
+	// absent from this snapshot because the agent no longer remembers them; the turn
+	// is still reported so a client can say what was taken back rather than letting
+	// the timeline quietly shrink.
+	RolledBack bool `json:"rolledBack,omitempty"`
 }
 
 // ConversationMessageResponse is one readable block of text.
@@ -1020,6 +1030,9 @@ type ConversationSnapshotResponse struct {
 	// the client already polls so the composer can label itself without a second
 	// request, and so a choice made on another client shows up here.
 	Settings ConversationTurnSettingsPayload `json:"settings"`
+	// Title is the name the provider currently gives this thread. Empty means it has
+	// not named one, which is not the same as an empty name.
+	Title string `json:"title,omitempty"`
 	// Usage is how full this conversation is. Omitted until the provider reports,
 	// so a client can tell "not known yet" from a conversation using nothing.
 	Usage *ConversationUsagePayload `json:"usage,omitempty"`
@@ -1062,12 +1075,42 @@ type ConversationRateLimitsPayload struct {
 	PrimaryResetsInSeconds   int64  `json:"primaryResetsInSeconds,omitempty"`
 	SecondaryResetsInSeconds int64  `json:"secondaryResetsInSeconds,omitempty"`
 	PlanLabel                string `json:"planLabel,omitempty"`
+	// Title is the name the provider currently gives this thread. Empty means it has
+	// none, which is the normal state until something names it.
+	Title string `json:"title,omitempty"`
 }
 
 // ConversationRequestIDParam is the provider's approval request id. Resolving
 // matches on it, so a card left on screen cannot answer a newer request.
 type ConversationRequestIDParam struct {
 	RequestID string `path:"requestId" description:"Provider approval request identifier. Zero is a legitimate value."`
+}
+
+// ConversationTurnIDParam names one turn in a session's conversation.
+type ConversationTurnIDParam struct {
+	TurnID string `path:"turnId" description:"AO conversation turn identifier, from the snapshot's turns array."`
+}
+
+// RollbackConversationResponse reports what an undo discarded.
+type RollbackConversationResponse struct {
+	// TurnsDiscarded counts the turns the agent no longer remembers, including the
+	// one the caller named. A client can say how much was taken back instead of
+	// leaving the user to notice the timeline is shorter.
+	TurnsDiscarded int `json:"turnsDiscarded"`
+}
+
+// SetConversationTitleRequest names the provider's thread.
+type SetConversationTitleRequest struct {
+	Title string `json:"title"`
+}
+
+// SetConversationTitleResponse echoes the normalized title.
+//
+// Accepted rather than applied: the provider confirms the name and then reports it
+// back on its own event, and that report is what updates AO's rows. So this is the
+// title AO asked for, which is not yet proof the session label has moved.
+type SetConversationTitleResponse struct {
+	Title string `json:"title"`
 }
 
 /* ---- settings ---------------------------------------------------------- */

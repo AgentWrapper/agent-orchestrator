@@ -204,6 +204,24 @@ export function useConversationCommands(sessionId: string | undefined) {
 		onSuccess: invalidate,
 	});
 
+	/**
+	 * Undo back to a turn. This asks the agent to forget, not the timeline to hide:
+	 * the daemon discards the history provider-side and marks its own rows to match,
+	 * so a success has to be followed by a refetch rather than an optimistic edit —
+	 * how much was discarded is the daemon's answer, not the client's guess.
+	 */
+	const rollback = useMutation({
+		mutationFn: async (turnId: string) => {
+			const { data, error } = await apiClient.POST(
+				"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/rollback",
+				{ params: { path: { sessionId: sessionId as string, turnId } } },
+			);
+			if (error) throw error;
+			return data;
+		},
+		onSuccess: invalidate,
+	});
+
 	return {
 		send: (text: string) => send.mutate(text),
 		resolve: (requestId: string, decisionId: string) => resolve.mutate({ requestId, decisionId }),
@@ -225,6 +243,9 @@ export function useConversationCommands(sessionId: string | undefined) {
 				: apiErrorCode(compact.error) === "CHAT_COMPACTION_BUSY"
 					? "Stop the current turn before compacting"
 					: undefined,
+		rollback: (turnId: string) => rollback.mutateAsync(turnId),
+		rollbackPending: rollback.isPending,
+		rollbackError: rollback.error ? apiErrorMessage(rollback.error) : undefined,
 		busy: send.isPending || resolve.isPending || interrupt.isPending,
 		error:
 			send.error || resolve.error || interrupt.error || chooseSettings.error
@@ -298,6 +319,7 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 		usage: wire.usage ? { ...wire.usage } : undefined,
 		rateLimits: wire.rateLimits ? { ...wire.rateLimits } : undefined,
 		compactedAt: wire.compactedAt ?? undefined,
+		title: wire.title || undefined,
 		turns: (wire.turns ?? []).map((turn) => ({
 			id: turn.id,
 			state: turn.state as TurnState,
@@ -320,6 +342,7 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 						truncated: turn.diff.truncated,
 					}
 				: undefined,
+			rolledBack: turn.rolledBack ?? undefined,
 		})),
 		items,
 	};

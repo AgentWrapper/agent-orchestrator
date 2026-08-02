@@ -667,10 +667,17 @@ export function TurnOutcome({
 	state,
 	durationMs,
 	error,
+	onRollback,
 }: {
 	state: "completed" | "interrupted" | "failed";
 	durationMs?: number;
 	error?: string;
+	/**
+	 * Discard this turn and everything after it. Absent means the operation is not
+	 * available right now — the agent cannot undo, or it is mid-turn — and the
+	 * control is not drawn rather than drawn and then refused.
+	 */
+	onRollback?: () => void;
 }) {
 	const copy = {
 		completed: { label: "Done", tone: "text-muted-foreground/70" },
@@ -679,8 +686,20 @@ export function TurnOutcome({
 	}[state];
 
 	return (
-		<div className="flex items-center gap-2 pt-1">
+		<div className="group/turn flex items-center gap-2 pt-1">
 			<span aria-hidden="true" className="h-px flex-1 bg-border" />
+			{onRollback ? (
+				// Revealed on hover or keyboard focus. Undo belongs on the turn it undoes,
+				// but a permanent button on every turn would compete with the conversation
+				// for attention.
+				<button
+					type="button"
+					onClick={onRollback}
+					className="shrink-0 rounded px-1 text-[10px] uppercase tracking-[0.08em] text-muted-foreground/70 opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/turn:opacity-100"
+				>
+					Roll back to here
+				</button>
+			) : null}
 			<span className={cn("shrink-0 text-[10px] uppercase tracking-[0.08em]", copy.tone)}>
 				{copy.label}
 			</span>

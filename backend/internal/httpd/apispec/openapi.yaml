@@ -1700,6 +1700,116 @@ paths:
       summary: Choose the model, reasoning effort and approval mode for the next turn
       tags:
       - conversations
+  /api/v1/sessions/{sessionId}/conversation/title:
+    put:
+      operationId: setSessionConversationTitle
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetConversationTitleRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetConversationTitleResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Name the provider's conversation thread
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/rollback:
+    post:
+      operationId: rollbackSessionConversation
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: AO conversation turn identifier, from the snapshot's turns array.
+        in: path
+        name: turnId
+        required: true
+        schema:
+          description: AO conversation turn identifier, from the snapshot's turns
+            array.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RollbackConversationResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Discard a turn and everything after it from the agent's memory
+      tags:
+      - conversations
   /api/v1/sessions/{sessionId}/kill:
     post:
       operationId: killSession
@@ -3299,6 +3409,8 @@ components:
           type: string
         path:
           type: string
+        rolledBack:
+          type: boolean
         status:
           enum:
           - added
@@ -3406,6 +3518,8 @@ components:
         secondaryUsedPercent:
           format: double
           type: number
+        title:
+          type: string
       required:
       - primaryUsedPercent
       - secondaryUsedPercent
@@ -3450,6 +3564,8 @@ components:
           type: string
         settings:
           $ref: '#/components/schemas/ConversationTurnSettingsPayload'
+        title:
+          type: string
         turns:
           items:
             $ref: '#/components/schemas/ConversationTurnResponse'
@@ -3494,6 +3610,8 @@ components:
           type: string
         requestedAt:
           type: string
+        rolledBack:
+          type: boolean
         startedAt:
           type:
           - "null"
@@ -4378,6 +4496,13 @@ components:
         agentConfig:
           $ref: '#/components/schemas/AgentConfig'
       type: object
+    RollbackConversationResponse:
+      properties:
+        turnsDiscarded:
+          type: integer
+      required:
+      - turnsDiscarded
+      type: object
     RollbackSessionResponse:
       properties:
         deleted:
@@ -4780,6 +4905,20 @@ components:
       - ok
       - sessionId
       - state
+      type: object
+    SetConversationTitleRequest:
+      properties:
+        title:
+          type: string
+      required:
+      - title
+      type: object
+    SetConversationTitleResponse:
+      properties:
+        title:
+          type: string
+      required:
+      - title
       type: object
     SetProjectConfigInput:
       properties:

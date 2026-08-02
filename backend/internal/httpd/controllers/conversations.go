@@ -31,6 +31,8 @@ type ConversationService interface {
 	Models(ctx context.Context, session domain.SessionID) ([]ports.ChatModel, domain.ConversationSettings, error)
 	SetTurnSettings(ctx context.Context, session domain.SessionID, settings domain.ConversationSettings) (domain.ConversationSettings, error)
 	Compact(ctx context.Context, session domain.SessionID) (ports.ChatCompactionResult, error)
+	Rollback(ctx context.Context, session domain.SessionID, turnID string) (int, error)
+	SetTitle(ctx context.Context, session domain.SessionID, title string) (string, error)
 }
 
 // ConversationsController owns the Chat routes for a session.
@@ -51,6 +53,48 @@ func (c *ConversationsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/conversation/compact", c.compact)
 	r.Get("/sessions/{sessionId}/conversation/models", c.models)
 	r.Patch("/sessions/{sessionId}/conversation/settings", c.setSettings)
+	r.Post("/sessions/{sessionId}/conversation/turns/{turnId}/rollback", c.rollback)
+	r.Put("/sessions/{sessionId}/conversation/title", c.setTitle)
+}
+
+// rollback discards a turn and everything after it, from the agent's memory as well
+// as from the timeline.
+func (c *ConversationsController) rollback(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST",
+			"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/rollback")
+		return
+	}
+	discarded, err := c.Svc.Rollback(r.Context(),
+		domain.SessionID(chi.URLParam(r, "sessionId")), chi.URLParam(r, "turnId"))
+	if err != nil {
+		writeConversationError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, RollbackConversationResponse{TurnsDiscarded: discarded})
+}
+
+// setTitle names the provider's thread.
+//
+// 202 rather than 200: the provider accepts the name and then reports it back on its
+// own event, and that report is what moves AO's session label. Claiming 200 would
+// promise a change that has not happened yet.
+func (c *ConversationsController) setTitle(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "PUT", "/api/v1/sessions/{sessionId}/conversation/title")
+		return
+	}
+	var req SetConversationTitleRequest
+	if !decodeConversationBody(w, r, &req) {
+		return
+	}
+	title, err := c.Svc.SetTitle(r.Context(),
+		domain.SessionID(chi.URLParam(r, "sessionId")), req.Title)
+	if err != nil {
+		writeConversationError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusAccepted, SetConversationTitleResponse{Title: title})
 }
 
 // compact asks the provider to summarize earlier history and reclaim context.
@@ -305,6 +349,47 @@ func writeConversationError(w http.ResponseWriter, r *http.Request, err error) {
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
 			"CHAT_NO_ACTIVE_TURN", "there is no turn in flight to interrupt", nil)
 
+	case errors.Is(err, domain.ErrNoConversationTurn):
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found",
+			"CHAT_TURN_NOT_FOUND", "that turn is not in this session's conversation", nil)
+
+	case errors.Is(err, chatsvc.ErrTurnRunning):
+		// Retryable, unlike every other refusal here: the same request works once
+		// the agent finishes. Rolling back mid-turn is refused rather than raced,
+		// because discarding history the agent is still writing into would leave
+		// AO's timeline and the agent's memory describing different conversations.
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_TURN_RUNNING",
+			"stop the agent before rolling back: it is in the middle of a turn", nil)
+
+	case errors.Is(err, chatsvc.ErrTurnNotRollbackable):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_TURN_NOT_ROLLBACKABLE",
+			"that turn never reached the agent, so there is nothing to undo", nil)
+
+	case errors.Is(err, chatsvc.ErrRollbackUnsupported):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_ROLLBACK_UNSUPPORTED", "this agent cannot discard conversation history", nil)
+
+	case errors.Is(err, chatsvc.ErrForkUnsupported):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_FORK_UNSUPPORTED", "this agent cannot branch a conversation", nil)
+
+	case errors.Is(err, chatsvc.ErrRenameUnsupported):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_RENAME_UNSUPPORTED", "this agent's conversation carries no title", nil)
+
+	case errors.Is(err, chatsvc.ErrTitleRequired):
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation",
+			"CHAT_TITLE_REQUIRED", "title is required", nil)
+
+	case errors.Is(err, chatsvc.ErrProviderRefused):
+		// The provider declined and the conversation is fine. Its own explanation is
+		// carried through: it says something the user can act on, which a generic
+		// conflict message would throw away.
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_PROVIDER_REFUSED", err.Error(), nil)
+
 	case errors.Is(err, ports.ErrChatRequestNotPending):
 		// Two clients can watch the same approval, so arriving second is ordinary.
 		// The card is stale; the client should refresh rather than retry.
@@ -356,6 +441,7 @@ func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotRespon
 		Usage:          usagePayload(s.Usage),
 		RateLimits:     rateLimitsPayload(s.RateLimits),
 		CompactedAt:    optionalTimestamp(s.Conversation.CompactedAt),
+		Title:          s.Conversation.ProviderTitle,
 	}
 
 	for _, turn := range s.Turns {
@@ -368,6 +454,7 @@ func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotRespon
 			StartedAt:      optionalTimestamp(turn.StartedAt),
 			CompletedAt:    optionalTimestamp(turn.CompletedAt),
 			Diff:           turnDiffPayload(turn.Diff),
+			RolledBack:     turn.RolledBackAt != nil,
 		})
 	}
 

@@ -50,6 +50,8 @@ type Conversation struct {
 	RateLimitPrimaryResetsIn   sql.NullInt64
 	RateLimitSecondaryResetsIn sql.NullInt64
 	RateLimitPlan              sql.NullString
+	ProviderTitle              string
+	AppliedTitle               string
 }
 
 type ConversationActivity struct {
@@ -108,6 +110,7 @@ type ConversationTurn struct {
 	StartedAt            sql.NullTime
 	CompletedAt          sql.NullTime
 	DiffJson             string
+	RolledBackAt         sql.NullTime
 }
 
 type Notification struct {

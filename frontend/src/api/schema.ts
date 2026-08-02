@@ -623,6 +623,40 @@ export interface paths {
         patch: operations["setSessionConversationTurnSettings"];
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/conversation/title": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Name the provider's conversation thread */
+        put: operations["setSessionConversationTitle"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Discard a turn and everything after it from the agent's memory */
+        post: operations["rollbackSessionConversation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/kill": {
         parameters: {
             query?: never;
@@ -1145,6 +1179,7 @@ export interface components {
             deletions: number;
             oldPath?: string;
             path: string;
+            rolledBack?: boolean;
             /** @enum {string} */
             status: "added" | "modified" | "deleted" | "renamed";
         };
@@ -1187,6 +1222,7 @@ export interface components {
             secondaryResetsInSeconds?: number;
             /** Format: double */
             secondaryUsedPercent: number;
+            title?: string;
         };
         ConversationSnapshotResponse: {
             activities: components["schemas"]["ConversationActivityResponse"][];
@@ -1203,6 +1239,7 @@ export interface components {
             rateLimits?: components["schemas"]["ConversationRateLimitsPayload"];
             sessionId: string;
             settings: components["schemas"]["ConversationTurnSettingsPayload"];
+            title?: string;
             turns: components["schemas"]["ConversationTurnResponse"][];
             usage?: components["schemas"]["ConversationUsagePayload"];
         };
@@ -1217,6 +1254,7 @@ export interface components {
             id: string;
             providerTurnId?: string;
             requestedAt: string;
+            rolledBack?: boolean;
             startedAt?: null | string;
             /** @enum {string} */
             state: "queued" | "running" | "completed" | "interrupted" | "failed";
@@ -1566,6 +1604,9 @@ export interface components {
             agent?: string;
             agentConfig?: components["schemas"]["AgentConfig"];
         };
+        RollbackConversationResponse: {
+            turnsDiscarded: number;
+        };
         RollbackSessionResponse: {
             deleted?: boolean;
             killed?: boolean;
@@ -1720,6 +1761,12 @@ export interface components {
             ok: boolean;
             sessionId: string;
             state: string;
+        };
+        SetConversationTitleRequest: {
+            title: string;
+        };
+        SetConversationTitleResponse: {
+            title: string;
         };
         SetProjectConfigInput: {
             config: components["schemas"]["ProjectConfig"];
@@ -4038,6 +4085,139 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    setSessionConversationTitle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetConversationTitleRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetConversationTitleResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    rollbackSessionConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description AO conversation turn identifier, from the snapshot's turns array. */
+                turnId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RollbackConversationResponse"];
                 };
             };
             /** @description Not Found */
