@@ -242,6 +242,21 @@ describe("BrowserPanel", () => {
 		expect(hookState.closeTab).toHaveBeenCalledWith("t1");
 	});
 
+	it("keeps the tabs dropdown open after closing a tab", async () => {
+		hookState.tabs = [
+			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
+			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
+		];
+		hookState.activeTabId = "t2";
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "Browser tabs (2)" }));
+		await userEvent.click(screen.getByRole("menuitem", { name: "Close tab First app" }));
+
+		expect(hookState.closeTab).toHaveBeenCalledWith("t1");
+		expect(screen.getByRole("menuitem", { name: "Close tab First app" })).toBeInTheDocument();
+	});
+
 	it("opens a new tab from the tabs dropdown's + button", async () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 

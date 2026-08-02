@@ -542,7 +542,12 @@ export function BrowserPanelView({
 										aria-label={`Close tab ${label.title}`}
 										className="size-8 shrink-0 cursor-pointer justify-center px-0"
 										disabled={tabs.length === 1}
-										onSelect={() => void closeTab(tab.id)}
+										onSelect={(event) => {
+											// Closing one tab shouldn't dismiss the whole list — the user is
+											// likely managing multiple tabs and wants it to stay open.
+											event.preventDefault();
+											void closeTab(tab.id);
+										}}
 										title={tabs.length === 1 ? "The only tab cannot be closed" : `Close ${label.title}`}
 									>
 										<X aria-hidden="true" className="size-icon-sm" />
