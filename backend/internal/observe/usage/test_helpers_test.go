@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
@@ -21,5 +22,5 @@ func readJSONLChunkFromFile(file *os.File, offset, maxBytes int64, maxRecord int
 	if err != nil {
 		return jsonlChunk{}, err
 	}
-	return readJSONLChunkFromSnapshot(file, info.Size(), offset, maxBytes, maxRecord, previousError)
+	return readJSONLChunkFromSnapshot(context.Background(), file, info.Size(), offset, maxBytes, maxRecord, previousError)
 }

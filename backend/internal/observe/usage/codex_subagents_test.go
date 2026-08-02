@@ -321,7 +321,7 @@ func TestCoordinatorReconcilesLateCodexChildBeforeBindingCompletes(t *testing.T)
 	childPath := activeCodexRolloutPath(roots.CodexSessions, testCodexChildID)
 	writeCodexRollout(t, parentPath, codexRolloutFixture(t, testCodexParentID, "", 100, 20, testCodexChildID))
 
-	watcher, err := NewTranscriptWatcher([]string{roots.CodexSessions, roots.CodexArchived})
+	watcher, err := NewTranscriptWatcher(ctx, []string{roots.CodexSessions, roots.CodexArchived})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -431,7 +431,7 @@ func TestCoordinatorTargetsLateCodexChildBeyondDefaultDiscoveryBatch(t *testing.
 		t.Fatal(err)
 	}
 
-	watcher, err := NewTranscriptWatcher([]string{roots.CodexSessions, roots.CodexArchived})
+	watcher, err := NewTranscriptWatcher(ctx, []string{roots.CodexSessions, roots.CodexArchived})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -560,7 +560,7 @@ func TestCodexChildCheckpointMismatchRevalidatesIdentityAndParent(t *testing.T) 
 			}
 			assertTokenAggregate(t, store, session.ID, 170)
 
-			beforeIdentity, err := usagesvc.SourceIdentity(childPath)
+			beforeIdentity, err := usagesvc.SourceIdentity(context.Background(), childPath)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -572,7 +572,7 @@ func TestCodexChildCheckpointMismatchRevalidatesIdentityAndParent(t *testing.T) 
 				100,
 				"",
 			))
-			afterIdentity, err := usagesvc.SourceIdentity(childPath)
+			afterIdentity, err := usagesvc.SourceIdentity(context.Background(), childPath)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -789,12 +789,12 @@ func TestCodexRootReplacementRejectsMismatchedSessionMeta(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				beforeIdentity, err := usagesvc.SourceIdentity(rootPath)
+				beforeIdentity, err := usagesvc.SourceIdentity(context.Background(), rootPath)
 				if err != nil {
 					t.Fatal(err)
 				}
 				writeCodexRollout(t, rootPath, replacement)
-				afterIdentity, err := usagesvc.SourceIdentity(rootPath)
+				afterIdentity, err := usagesvc.SourceIdentity(context.Background(), rootPath)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -878,12 +878,12 @@ func TestCodexIngestorRejectsMetadataChangedAfterRegistration(t *testing.T) {
 	}
 	binding := onlyUsageBinding(t, store, session.ID)
 	root := latestUsageSource(t, store, binding.ID, testCodexParentID)
-	beforeIdentity, err := usagesvc.SourceIdentity(rootPath)
+	beforeIdentity, err := usagesvc.SourceIdentity(context.Background(), rootPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	writeCodexRollout(t, rootPath, codexRolloutFixture(t, testCodexChildID, "", 900, 100, ""))
-	afterIdentity, err := usagesvc.SourceIdentity(rootPath)
+	afterIdentity, err := usagesvc.SourceIdentity(context.Background(), rootPath)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -214,7 +214,7 @@ func TestIngestorReplaysClaudeReplacementAgainstLegacyProviderState(t *testing.T
 	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	identity, err := usagesvc.SourceIdentity(path)
+	identity, err := usagesvc.SourceIdentity(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,7 +424,7 @@ func TestIngestorReplacesSameInodeWhenPreCursorCheckpointChanges(t *testing.T) {
 			if err := os.WriteFile(path, []byte(beforeContent), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			identity, err := usagesvc.SourceIdentity(path)
+			identity, err := usagesvc.SourceIdentity(context.Background(), path)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -437,7 +437,7 @@ func TestIngestorReplacesSameInodeWhenPreCursorCheckpointChanges(t *testing.T) {
 			if err := rewriteUsageFixture(path, afterContent); err != nil {
 				t.Fatal(err)
 			}
-			rewrittenIdentity, err := usagesvc.SourceIdentity(path)
+			rewrittenIdentity, err := usagesvc.SourceIdentity(context.Background(), path)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -554,7 +554,7 @@ func seedCodexIngestionSource(t *testing.T, dataDir string) (*sqlite.Store, doma
 		t.Fatal(err)
 	}
 	path = canonicalTranscriptPath(path)
-	identity, err := usagesvc.SourceIdentity(path)
+	identity, err := usagesvc.SourceIdentity(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -920,7 +920,7 @@ func TestCoordinatorCollectsCodexUsageFromFilesystemEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	watcher, err := NewTranscriptWatcher([]string{sessionsRoot, archiveRoot})
+	watcher, err := NewTranscriptWatcher(context.Background(), []string{sessionsRoot, archiveRoot})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -996,7 +996,7 @@ func TestIngestorPersistsAppendOnlyUsageAcrossRestartAndFinalization(t *testing.
 		t.Fatal(err)
 	}
 	path = canonicalTranscriptPath(path)
-	identity, err := usagesvc.SourceIdentity(path)
+	identity, err := usagesvc.SourceIdentity(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1248,7 +1248,7 @@ func TestIngestorLateAppendReturnsCompletedBindingToFinalizing(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	identity, err := usagesvc.SourceIdentity(path)
+	identity, err := usagesvc.SourceIdentity(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1339,7 +1339,7 @@ func TestIngestorStopsRetryingConflictingNativeEvent(t *testing.T) {
 	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	identity, err := usagesvc.SourceIdentity(path)
+	identity, err := usagesvc.SourceIdentity(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}

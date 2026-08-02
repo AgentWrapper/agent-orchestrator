@@ -45,7 +45,10 @@ type TranscriptWatcher struct {
 // NewTranscriptWatcher creates a watcher and registers every currently
 // available directory. A missing root is represented by a watch on its nearest
 // existing ancestor until directory creation events make the root available.
-func NewTranscriptWatcher(roots []string) (*TranscriptWatcher, error) {
+func NewTranscriptWatcher(ctx context.Context, roots []string) (*TranscriptWatcher, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	normalized, err := normalizeTranscriptRoots(roots)
 	if err != nil {
 		return nil, err
@@ -62,7 +65,7 @@ func NewTranscriptWatcher(roots []string) (*TranscriptWatcher, error) {
 		errors:  make(chan error, watcherErrorBuffer),
 		done:    make(chan struct{}),
 	}
-	if err := result.Rebuild(); err != nil {
+	if err := result.Rebuild(ctx); err != nil {
 		_ = watcher.Close()
 		return nil, err
 	}
@@ -92,13 +95,19 @@ func (w *TranscriptWatcher) Start(ctx context.Context) <-chan struct{} {
 
 // Rebuild replaces the current watch set with watches derived from the desired
 // roots. It is safe to call while event handling is active.
-func (w *TranscriptWatcher) Rebuild() error {
+func (w *TranscriptWatcher) Rebuild(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if w.closed {
 		return errors.New("transcript watcher is closed")
 	}
-	return w.rebuildLocked()
+	return w.rebuildLocked(ctx)
 }
 
 func (w *TranscriptWatcher) run(ctx context.Context) {
@@ -116,7 +125,7 @@ func (w *TranscriptWatcher) run(ctx context.Context) {
 				w.close()
 				return
 			}
-			emit, discovery, rebuildErr := w.handleEvent(event)
+			emit, discovery, rebuildErr := w.handleEvent(ctx, event)
 			if rebuildErr != nil && !w.sendError(ctx, rebuildErr) {
 				w.close()
 				return
@@ -149,30 +158,36 @@ func (w *TranscriptWatcher) close() {
 	clear(w.watched)
 }
 
-func (w *TranscriptWatcher) handleEvent(event fsnotify.Event) (string, bool, error) {
+func (w *TranscriptWatcher) handleEvent(ctx context.Context, event fsnotify.Event) (string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
 	path := filepath.Clean(event.Name)
 	emit := ""
 	discovery := false
 	if event.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Rename|fsnotify.Remove) != 0 &&
 		filepath.Ext(path) == ".jsonl" &&
-		w.withinDesiredRoot(path) {
+		w.withinDesiredRoot(ctx, path) {
 		emit = path
 		discovery = event.Op&(fsnotify.Create|fsnotify.Rename) != 0
 	}
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.closed || !w.directoryEventRequiresRebuildLocked(path, event.Op) {
+	if w.closed || !w.directoryEventRequiresRebuildLocked(ctx, path, event.Op) {
 		return emit, discovery, nil
 	}
-	if err := w.rebuildLocked(); err != nil {
+	if err := w.rebuildLocked(ctx); err != nil {
 		return emit, discovery, fmt.Errorf("rebuild transcript watcher after %s: %w", event.Op, err)
 	}
 	return emit, discovery, nil
 }
 
-func (w *TranscriptWatcher) directoryEventRequiresRebuildLocked(path string, op fsnotify.Op) bool {
-	if op&fsnotify.Create != 0 && w.directoryRelevant(path) {
+func (w *TranscriptWatcher) directoryEventRequiresRebuildLocked(ctx context.Context, path string, op fsnotify.Op) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	if op&fsnotify.Create != 0 && w.directoryRelevant(ctx, path) {
 		info, err := os.Stat(path)
 		if err == nil && info.IsDir() {
 			return true
@@ -189,8 +204,8 @@ func (w *TranscriptWatcher) directoryEventRequiresRebuildLocked(path string, op 
 	return false
 }
 
-func (w *TranscriptWatcher) rebuildLocked() error {
-	desired, err := w.desiredWatchSetLocked()
+func (w *TranscriptWatcher) rebuildLocked(ctx context.Context) error {
+	desired, err := w.desiredWatchSetLocked(ctx)
 	if err != nil {
 		return err
 	}
@@ -201,8 +216,14 @@ func (w *TranscriptWatcher) rebuildLocked() error {
 	const maxTopologyPasses = 16
 	var addedPaths []string
 	for pass := 0; pass < maxTopologyPasses; pass++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		paths := unwatchedPaths(desired, w.watched)
 		for _, path := range paths {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if err := w.watcher.Add(path); err != nil {
 				return fmt.Errorf("watch transcript directory: %w", redactFilesystemError(err))
 			}
@@ -210,7 +231,7 @@ func (w *TranscriptWatcher) rebuildLocked() error {
 			addedPaths = append(addedPaths, path)
 		}
 
-		refreshed, err := w.desiredWatchSetLocked()
+		refreshed, err := w.desiredWatchSetLocked(ctx)
 		if err != nil {
 			return err
 		}
@@ -226,6 +247,9 @@ func (w *TranscriptWatcher) rebuildLocked() error {
 
 	removedStale := false
 	for path := range w.watched {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if _, keep := desired[path]; keep {
 			continue
 		}
@@ -244,6 +268,9 @@ func (w *TranscriptWatcher) rebuildLocked() error {
 	if removedStale {
 		sort.Strings(addedPaths)
 		for _, path := range addedPaths {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if _, keep := desired[path]; !keep {
 				continue
 			}
@@ -255,10 +282,13 @@ func (w *TranscriptWatcher) rebuildLocked() error {
 	return nil
 }
 
-func (w *TranscriptWatcher) desiredWatchSetLocked() (map[string]struct{}, error) {
+func (w *TranscriptWatcher) desiredWatchSetLocked(ctx context.Context) (map[string]struct{}, error) {
 	result := make(map[string]struct{})
 	for _, root := range w.roots {
-		walkRoot, err := resolveTranscriptRoot(root)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		walkRoot, err := resolveTranscriptRoot(ctx, root)
 		if err != nil {
 			return nil, fmt.Errorf("resolve transcript root: %w", redactFilesystemError(err))
 		}
@@ -268,6 +298,9 @@ func (w *TranscriptWatcher) desiredWatchSetLocked() (map[string]struct{}, error)
 			return nil, errors.New("transcript root is not a directory")
 		case err == nil:
 			if err := filepath.WalkDir(walkRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				if walkErr != nil {
 					return walkErr
 				}
@@ -279,7 +312,7 @@ func (w *TranscriptWatcher) desiredWatchSetLocked() (map[string]struct{}, error)
 				return nil, fmt.Errorf("walk transcript root: %w", redactFilesystemError(err))
 			}
 		case errors.Is(err, os.ErrNotExist):
-			ancestor, ancestorErr := nearestExistingDirectory(root)
+			ancestor, ancestorErr := nearestExistingDirectory(ctx, root)
 			if ancestorErr != nil {
 				return nil, fmt.Errorf("locate transcript root ancestor: %w", redactFilesystemError(ancestorErr))
 			}
@@ -291,12 +324,15 @@ func (w *TranscriptWatcher) desiredWatchSetLocked() (map[string]struct{}, error)
 	return result, nil
 }
 
-func (w *TranscriptWatcher) withinDesiredRoot(path string) bool {
+func (w *TranscriptWatcher) withinDesiredRoot(ctx context.Context, path string) bool {
 	for _, root := range w.roots {
+		if ctx.Err() != nil {
+			return false
+		}
 		if pathWithin(path, root) {
 			return true
 		}
-		resolved, err := resolveTranscriptRoot(root)
+		resolved, err := resolveTranscriptRoot(ctx, root)
 		if err == nil && pathWithin(path, resolved) {
 			return true
 		}
@@ -304,12 +340,15 @@ func (w *TranscriptWatcher) withinDesiredRoot(path string) bool {
 	return false
 }
 
-func (w *TranscriptWatcher) directoryRelevant(path string) bool {
+func (w *TranscriptWatcher) directoryRelevant(ctx context.Context, path string) bool {
 	for _, root := range w.roots {
+		if ctx.Err() != nil {
+			return false
+		}
 		if pathWithin(path, root) || pathWithin(root, path) {
 			return true
 		}
-		resolved, err := resolveTranscriptRoot(root)
+		resolved, err := resolveTranscriptRoot(ctx, root)
 		if err == nil && (pathWithin(path, resolved) || pathWithin(resolved, path)) {
 			return true
 		}
@@ -357,10 +396,16 @@ func normalizeTranscriptRoots(roots []string) ([]string, error) {
 	return result, nil
 }
 
-func resolveTranscriptRoot(path string) (string, error) {
+func resolveTranscriptRoot(ctx context.Context, path string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	info, err := os.Lstat(path)
 	switch {
 	case err == nil && info.Mode()&os.ModeSymlink != 0:
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		resolved, err := filepath.EvalSymlinks(path)
 		if errors.Is(err, os.ErrNotExist) {
 			return filepath.Clean(path), nil
@@ -378,9 +423,12 @@ func resolveTranscriptRoot(path string) (string, error) {
 	}
 }
 
-func nearestExistingDirectory(path string) (string, error) {
+func nearestExistingDirectory(ctx context.Context, path string) (string, error) {
 	current := filepath.Clean(path)
 	for {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		info, err := os.Stat(current)
 		if err == nil {
 			if !info.IsDir() {
@@ -403,6 +451,8 @@ func redactFilesystemError(err error) error {
 	switch {
 	case err == nil:
 		return nil
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return err
 	case errors.Is(err, os.ErrNotExist):
 		return os.ErrNotExist
 	case errors.Is(err, os.ErrPermission):

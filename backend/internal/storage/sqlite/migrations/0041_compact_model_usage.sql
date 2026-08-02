@@ -130,6 +130,75 @@ CREATE INDEX idx_model_usage_events_usage_source ON model_usage_events (usage_so
 CREATE INDEX idx_usage_sources_codex_native_latest
     ON usage_sources (kind, native_session_id, binding_id, generation DESC, id DESC);
 
+CREATE TRIGGER usage_bindings_cdc_insert
+AFTER INSERT ON usage_bindings
+BEGIN
+    INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
+    VALUES (
+        (SELECT project_id FROM sessions WHERE id = NEW.session_id),
+        NEW.session_id,
+        'session_updated',
+        json_object('id', NEW.session_id),
+        NEW.updated_at
+    );
+END;
+
+CREATE TRIGGER usage_bindings_cdc_update
+AFTER UPDATE ON usage_bindings
+BEGIN
+    INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
+    VALUES (
+        (SELECT project_id FROM sessions WHERE id = NEW.session_id),
+        NEW.session_id,
+        'session_updated',
+        json_object('id', NEW.session_id),
+        NEW.updated_at
+    );
+END;
+
+CREATE TRIGGER usage_sources_cdc_insert
+AFTER INSERT ON usage_sources
+BEGIN
+    INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
+    SELECT
+        sessions.project_id,
+        usage_bindings.session_id,
+        'session_updated',
+        json_object('id', usage_bindings.session_id),
+        NEW.updated_at
+    FROM usage_bindings
+    JOIN sessions ON sessions.id = usage_bindings.session_id
+    WHERE usage_bindings.id = NEW.binding_id;
+END;
+
+CREATE TRIGGER usage_sources_cdc_update
+AFTER UPDATE ON usage_sources
+BEGIN
+    INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
+    SELECT
+        sessions.project_id,
+        usage_bindings.session_id,
+        'session_updated',
+        json_object('id', usage_bindings.session_id),
+        NEW.updated_at
+    FROM usage_bindings
+    JOIN sessions ON sessions.id = usage_bindings.session_id
+    WHERE usage_bindings.id = NEW.binding_id;
+END;
+
+CREATE TRIGGER model_usage_events_cdc_insert
+AFTER INSERT ON model_usage_events
+BEGIN
+    INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
+    VALUES (
+        NEW.project_id,
+        NEW.session_id,
+        'session_updated',
+        json_object('id', NEW.session_id),
+        NEW.created_at
+    );
+END;
+
 PRAGMA foreign_keys=ON;
 PRAGMA foreign_key_check;
 -- +goose StatementEnd

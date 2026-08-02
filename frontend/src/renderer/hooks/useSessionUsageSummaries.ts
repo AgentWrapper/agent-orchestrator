@@ -5,8 +5,9 @@ import { apiClient } from "../lib/api-client";
 export type SessionUsageSummary = components["schemas"]["CompactSessionUsageResponse"];
 
 export const sessionUsageRefreshIntervalMs = 30_000;
+export const sessionUsageQueryRoot = ["session-usage"] as const;
 export const sessionUsageQueryKey = (projectId?: string) =>
-	["session-usage", projectId ?? "all"] as const;
+	[...sessionUsageQueryRoot, projectId ?? "all"] as const;
 
 export async function fetchSessionUsageSummaries(projectId?: string): Promise<SessionUsageSummary[]> {
 	const { data, error } = await apiClient.GET("/api/v1/usage/sessions", {

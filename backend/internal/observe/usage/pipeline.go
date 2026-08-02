@@ -8,7 +8,7 @@ import (
 
 const defaultWatcherRestartDelay = 30 * time.Second
 
-type watcherFactory func([]string) (transcriptWatcher, error)
+type watcherFactory func(context.Context, []string) (transcriptWatcher, error)
 
 // Pipeline supervises the event-driven transcript watcher and coordinator.
 // Durable cursors remain in SQLite, so recreating either component is safe.
@@ -36,12 +36,14 @@ func NewPipeline(
 		logger = slog.Default()
 	}
 	return &Pipeline{
-		store:       store,
-		ingestor:    ingestor,
-		roots:       append([]string(nil), roots...),
-		cfg:         cfg,
-		logger:      logger,
-		newWatcher:  func(roots []string) (transcriptWatcher, error) { return NewTranscriptWatcher(roots) },
+		store:    store,
+		ingestor: ingestor,
+		roots:    append([]string(nil), roots...),
+		cfg:      cfg,
+		logger:   logger,
+		newWatcher: func(ctx context.Context, roots []string) (transcriptWatcher, error) {
+			return NewTranscriptWatcher(ctx, roots)
+		},
 		restartWait: defaultWatcherRestartDelay,
 		reconcile:   make(chan struct{}, 1),
 		inventory:   make(chan struct{}, 1),
@@ -78,7 +80,7 @@ func (p *Pipeline) Start(ctx context.Context) <-chan struct{} {
 
 func (p *Pipeline) run(ctx context.Context) {
 	for {
-		watcher, err := p.newWatcher(p.roots)
+		watcher, err := p.newWatcher(ctx, p.roots)
 		if err != nil {
 			if ctx.Err() != nil {
 				return

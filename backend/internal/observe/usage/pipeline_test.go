@@ -20,7 +20,7 @@ func TestPipelineRetriesWatcherCreation(t *testing.T) {
 	pipeline.restartWait = time.Millisecond
 	created := make(chan struct{})
 	var calls atomic.Int64
-	pipeline.newWatcher = func([]string) (transcriptWatcher, error) {
+	pipeline.newWatcher = func(context.Context, []string) (transcriptWatcher, error) {
 		if calls.Add(1) == 1 {
 			return nil, errors.New("temporary watcher failure")
 		}

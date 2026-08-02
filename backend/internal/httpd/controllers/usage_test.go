@@ -17,8 +17,8 @@ import (
 
 type fakeUsageSummaryService struct {
 	projectID domain.ProjectID
-	items     []domain.CompactSessionUsage
 	sessionID domain.SessionID
+	items     []domain.CompactSessionUsage
 	detail    domain.SessionUsageSummary
 	err       error
 }
@@ -28,10 +28,7 @@ func (f *fakeUsageSummaryService) ListCompact(_ context.Context, projectID domai
 	return f.items, f.err
 }
 
-func (f *fakeUsageSummaryService) Get(
-	_ context.Context,
-	sessionID domain.SessionID,
-) (domain.SessionUsageSummary, error) {
+func (f *fakeUsageSummaryService) Get(_ context.Context, sessionID domain.SessionID) (domain.SessionUsageSummary, error) {
 	f.sessionID = sessionID
 	return f.detail, f.err
 }

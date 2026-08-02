@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -20,6 +21,18 @@ const (
 	crushSystemPromptName   = "ao-system-prompt.md"
 	crushSystemPromptPath   = crushConfigDirName + "/" + crushSystemPromptName
 	crushSystemPromptMarker = "agent-orchestrator: managed crush system prompt"
+
+	// crushModelSeparator splits AO's "<provider>/<model-id>" convention.
+	// Crush's config schema (models.large / models.small) requires both a
+	// provider id and a model id per selection; AO's AgentConfig.Model is a
+	// single string, so Crush is the one adapter that needs a delimiter to
+	// recover both parts (see mergeCrushModel).
+	crushModelSeparator = "/"
+
+	// crushModelType is the model type AO writes overrides into. Crush's
+	// "large" model backs its main coder agent; AO has no equivalent of
+	// Crush's separate "small"/task-agent model, so only large is managed.
+	crushModelType = "large"
 )
 
 // GetAgentHooks installs AO's standing instructions as a Crush context file.
@@ -35,6 +48,9 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 	}
 	prompt, err := crushSystemPromptText(cfg.SystemPrompt, cfg.SystemPromptFile)
 	if err != nil {
+		return fmt.Errorf("crush.GetAgentHooks: %w", err)
+	}
+	if err := applyCrushModelOverride(cfg.WorkspacePath, cfg.Config.Model); err != nil {
 		return fmt.Errorf("crush.GetAgentHooks: %w", err)
 	}
 	if strings.TrimSpace(prompt) == "" {
@@ -94,6 +110,39 @@ func (p *Plugin) UninstallHooks(ctx context.Context, workspacePath string) error
 		return fmt.Errorf("crush.UninstallHooks: merge config: %w", err)
 	}
 	return nil
+}
+
+// applyCrushModelOverride writes the role's configured model into
+// .crush.json as the large-model selection, if one is set. It runs on every
+// Spawn/Restore (prepareWorkspace calls GetAgentHooks before each launch), so
+// a role's model config always reflects the project's current value and a
+// later change takes effect on the session's next restore. An empty override
+// leaves any model the user picked through Crush's own model picker alone.
+func applyCrushModelOverride(workspacePath, modelOverride string) error {
+	model := strings.TrimSpace(modelOverride)
+	if model == "" {
+		return nil
+	}
+	provider, modelID, ok := strings.Cut(model, crushModelSeparator)
+	provider, modelID = strings.TrimSpace(provider), strings.TrimSpace(modelID)
+	if ok && provider != "" && modelID != "" {
+		return mergeCrushModel(crushConfigFile(workspacePath), provider, modelID)
+	}
+	if ok {
+		slog.Default().Warn("crush: skipping model override because provider or model id is empty",
+			"model", model)
+		return nil
+	}
+	existingProvider, err := existingCrushModelProvider(crushConfigFile(workspacePath))
+	if err != nil {
+		return err
+	}
+	if existingProvider == "" {
+		slog.Default().Warn("crush: skipping bare model override because .crush.json has no existing provider to reuse",
+			"model", model)
+		return nil
+	}
+	return mergeCrushModel(crushConfigFile(workspacePath), existingProvider, model)
 }
 
 // AreHooksInstalled reports whether AO's Crush system-prompt context file is
@@ -156,6 +205,45 @@ func mergeCrushContextPath(configPath, contextPath string) error {
 	options["context_paths"] = paths
 	cfg["options"] = options
 	return writeCrushConfig(configPath, cfg)
+}
+
+// mergeCrushModel sets models.large.{model,provider} in the project's
+// .crush.json, preserving any other keys already set on that selection (e.g.
+// a user's max_tokens or temperature override) and any other top-level config
+// (providers, options, other model type). AO owns only the model/provider
+// identity fields it writes here.
+func mergeCrushModel(configPath, provider, modelID string) error {
+	cfg, err := readCrushConfig(configPath)
+	if err != nil {
+		return err
+	}
+	models := crushConfigObject(cfg, "models")
+	selection := crushConfigObject(models, crushModelType)
+	selection["model"] = modelID
+	selection["provider"] = provider
+	models[crushModelType] = selection
+	cfg["models"] = models
+	return writeCrushConfig(configPath, cfg)
+}
+
+func existingCrushModelProvider(configPath string) (string, error) {
+	cfg, err := readCrushConfig(configPath)
+	if err != nil {
+		return "", err
+	}
+	models, ok := cfg["models"].(map[string]any)
+	if !ok {
+		return "", nil
+	}
+	selection, ok := models[crushModelType].(map[string]any)
+	if !ok {
+		return "", nil
+	}
+	provider, ok := selection["provider"].(string)
+	if !ok {
+		return "", nil
+	}
+	return strings.TrimSpace(provider), nil
 }
 
 func removeCrushContextPath(configPath, contextPath string) error {

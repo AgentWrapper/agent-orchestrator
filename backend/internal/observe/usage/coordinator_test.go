@@ -296,7 +296,7 @@ func (w *coordinatorTestWatcher) Start(ctx context.Context) <-chan struct{} {
 	return w.done
 }
 
-func (w *coordinatorTestWatcher) Rebuild() error {
+func (w *coordinatorTestWatcher) Rebuild(context.Context) error {
 	w.rebuilds.Add(1)
 	return nil
 }

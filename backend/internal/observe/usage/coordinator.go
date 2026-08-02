@@ -30,7 +30,7 @@ type transcriptWatcher interface {
 	Events() <-chan TranscriptEvent
 	Errors() <-chan error
 	Start(context.Context) <-chan struct{}
-	Rebuild() error
+	Rebuild(context.Context) error
 }
 
 // CoordinatorConfig configures the event-driven usage pipeline.
@@ -45,7 +45,7 @@ type CoordinatorConfig struct {
 }
 
 // Coordinator turns filesystem, hook, startup, and retry signals into bounded
-// source ingestion work. It intentionally has no polling ticker.
+// source ingestion work.
 type Coordinator struct {
 	store         coordinatorStore
 	ingestor      sourceIngestor
@@ -250,7 +250,7 @@ func (c *Coordinator) run(ctx context.Context) {
 		if err != nil {
 			c.logger.Warn("usage transcript watcher failed; rebuilding", "err", err)
 		}
-		if rebuildErr := c.watcher.Rebuild(); rebuildErr != nil {
+		if rebuildErr := c.watcher.Rebuild(ctx); rebuildErr != nil {
 			c.logger.Warn("usage transcript watcher rebuild failed", "err", rebuildErr)
 			scheduleRetry(refreshRetryID, c.now().UTC().Add(defaultCoordinatorRetry))
 			return

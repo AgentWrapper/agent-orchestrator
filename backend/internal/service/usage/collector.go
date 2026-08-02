@@ -54,7 +54,10 @@ type SourceRoots struct {
 
 // DefaultSourceRoots resolves the native Claude Code and Codex transcript
 // directories for the current user.
-func DefaultSourceRoots() (SourceRoots, error) {
+func DefaultSourceRoots(ctx context.Context) (SourceRoots, error) {
+	if err := ctx.Err(); err != nil {
+		return SourceRoots{}, err
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return SourceRoots{}, fmt.Errorf("resolve home directory: %w", err)
@@ -84,8 +87,8 @@ type collectorStore interface {
 	UpdateUsageBindingErrorCode(context.Context, int64, string, time.Time) (bool, error)
 	CompleteUsageBindingIfSettled(context.Context, int64, time.Time) (bool, error)
 	InsertUsageSource(context.Context, domain.UsageSourceRecord) (domain.UsageSourceRecord, error)
+	ReplaceUsageSource(context.Context, int64, string, domain.UsageSourceRecord, time.Time) (domain.UsageSourceRecord, error)
 	ListUsageSourcesForBinding(context.Context, int64) ([]domain.UsageSourceRecord, error)
-	MarkUsageSourceState(context.Context, int64, domain.UsageSourceState, string, *time.Time, time.Time) (bool, error)
 	ReactivateUsageSource(context.Context, int64, time.Time) (bool, error)
 }
 
@@ -214,7 +217,10 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 	}
 	mainPath := strings.TrimSpace(signal.TranscriptPath)
 	if mainPath == "" && (session.Harness == domain.HarnessCodex || finalizing && !exists) {
-		mainPath = c.discoverPath(session.Harness, signal.NativeSessionID)
+		mainPath, err = c.discoverPath(ctx, session.Harness, signal.NativeSessionID)
+		if err != nil {
+			return err
+		}
 	}
 	subagentPath := strings.TrimSpace(signal.SubagentTranscriptPath)
 	if finalizing && !exists {
@@ -225,7 +231,7 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		if recoveryPath == "" {
 			return nil
 		}
-		if _, _, _, err := c.validateSourcePath(session.Harness, recoveryPath); err != nil {
+		if _, _, _, err := c.validateSourcePath(ctx, session.Harness, recoveryPath); err != nil {
 			return err
 		}
 	}
@@ -286,7 +292,7 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		}
 		inventoryChanged = inventoryChanged || changed
 		sourceErrorCode := ""
-		if c.codexDiscoveryStillPending(signal.Event, signal.TranscriptPath, mainPath) {
+		if c.codexDiscoveryStillPending(ctx, signal.Event, signal.TranscriptPath, mainPath) {
 			sourceErrorCode = domain.UsageErrorSourceDiscoveryPending
 		}
 		if _, err := c.store.UpdateUsageBindingErrorCode(ctx, binding.ID, sourceErrorCode, now); err != nil {
@@ -321,7 +327,7 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		if session.Harness == domain.HarnessCodex {
 			needsReconcile = true
 		}
-		if c.codexDiscoveryStillPending(signal.Event, signal.TranscriptPath, mainPath) {
+		if c.codexDiscoveryStillPending(ctx, signal.Event, signal.TranscriptPath, mainPath) {
 			if _, err := c.store.UpdateUsageBindingState(
 				ctx,
 				binding.ID,
@@ -382,7 +388,10 @@ func (c *Collector) backfillSession(ctx context.Context, session domain.SessionR
 	if err != nil {
 		return err
 	}
-	path := c.discoverPath(session.Harness, nativeID)
+	path, err := c.discoverPath(ctx, session.Harness, nativeID)
+	if err != nil {
+		return err
+	}
 	if exists && (existing.State == domain.UsageBindingComplete || existing.State == domain.UsageBindingPartial) {
 		return nil
 	}
@@ -475,7 +484,7 @@ func (c *Collector) ReconcilePath(ctx context.Context, path string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	resolved, _, _, err := c.validateSourcePath(domain.HarnessCodex, path)
+	resolved, _, _, err := c.validateSourcePath(ctx, domain.HarnessCodex, path)
 	if err != nil {
 		return nil
 	}
@@ -647,7 +656,10 @@ func (c *Collector) reconcileBinding(ctx context.Context, binding domain.UsageBi
 		targetState = domain.UsageBindingFinalizing
 	}
 
-	path := c.discoverPath(binding.Harness, binding.NativeRootID)
+	path, err := c.discoverPath(ctx, binding.Harness, binding.NativeRootID)
+	if err != nil {
+		return err
+	}
 	if path == "" {
 		if binding.Harness == domain.HarnessCodex {
 			if childErr := c.registerDiscoveredCodexChildren(ctx, binding, now); childErr != nil {
@@ -688,7 +700,7 @@ func (c *Collector) reconcileBinding(ctx context.Context, binding domain.UsageBi
 	if binding.Harness == domain.HarnessCodex &&
 		binding.LastErrorCode == domain.UsageErrorSourceDiscoveryPending &&
 		targetState == domain.UsageBindingActive &&
-		!pathWithinRoot(path, c.roots.CodexSessions) {
+		!pathWithinRoot(ctx, path, c.roots.CodexSessions) {
 		lastErrorCode = domain.UsageErrorSourceDiscoveryPending
 	}
 	targetState, lastErrorCode, err = c.preserveCodexBudgetState(
@@ -903,7 +915,7 @@ func (c *Collector) registerSourceWithExpectedParent(
 	reactivateExisting bool,
 	expectedParentID string,
 ) (bool, error) {
-	resolved, identity, size, err := c.validateSourcePath(binding.Harness, path)
+	resolved, identity, size, err := c.validateSourcePath(ctx, binding.Harness, path)
 	if err != nil {
 		return false, err
 	}
@@ -949,7 +961,7 @@ func (c *Collector) registerSourceWithInventory(
 	inventory *bindingSourceInventory,
 	expectedParentID string,
 ) (bool, error) {
-	resolved, identity, size, err := c.validateSourcePath(binding.Harness, path)
+	resolved, identity, size, err := c.validateSourcePath(ctx, binding.Harness, path)
 	if err != nil {
 		return false, err
 	}
@@ -1022,34 +1034,19 @@ func (c *Collector) registerValidatedSource(
 		}
 		return false, nil
 	}
-	if latest != nil {
-		changed, markErr := c.store.MarkUsageSourceState(
-			ctx,
-			latest.ID,
-			domain.UsageSourceComplete,
-			domain.UsageErrorArtifactReplaced,
-			nil,
-			now,
-		)
-		if markErr == nil && changed {
-			inventory.markState(latest.ID, domain.UsageSourceComplete, domain.UsageErrorArtifactReplaced, now)
-		}
-		generation = latest.Generation + 1
-	} else if len(inventory.sources) > 0 {
+	if len(inventory.sources) > 0 {
 		generation++
 	}
-	if kind == domain.UsageSourceCodexRollout && latest == nil && latestNative != nil {
-		changed, markErr := c.store.MarkUsageSourceState(
-			ctx,
-			latestNative.ID,
-			domain.UsageSourceComplete,
-			"",
-			nil,
-			now,
-		)
-		if markErr == nil && changed {
-			inventory.markState(latestNative.ID, domain.UsageSourceComplete, "", now)
-		}
+	var replaced *domain.UsageSourceRecord
+	replacementCode := ""
+	switch {
+	case latest != nil:
+		replaced = latest
+		replacementCode = domain.UsageErrorArtifactReplaced
+	case kind == domain.UsageSourceCodexRollout && latestNative != nil:
+		replaced = latestNative
+	case identityMatch != nil:
+		replaced = identityMatch
 	}
 	record := domain.UsageSourceRecord{
 		BindingID:       binding.ID,
@@ -1071,17 +1068,6 @@ func (c *Collector) registerValidatedSource(
 		record.ParserStateJSON = state
 	}
 	if latest == nil && identityMatch != nil {
-		changed, markErr := c.store.MarkUsageSourceState(
-			ctx,
-			identityMatch.ID,
-			domain.UsageSourceComplete,
-			"",
-			nil,
-			now,
-		)
-		if markErr == nil && changed {
-			inventory.markState(identityMatch.ID, domain.UsageSourceComplete, "", now)
-		}
 		resumeState := true
 		if kind == domain.UsageSourceCodexRollout {
 			storedNativeID, storedParentID, ok := codexParserAttribution(identityMatch.ParserStateJSON)
@@ -1092,9 +1078,18 @@ func (c *Collector) registerValidatedSource(
 			record.ParserStateJSON = identityMatch.ParserStateJSON
 		}
 	}
-	inserted, err := c.store.InsertUsageSource(ctx, record)
+	var inserted domain.UsageSourceRecord
+	var err error
+	if replaced != nil {
+		inserted, err = c.store.ReplaceUsageSource(ctx, replaced.ID, replacementCode, record, now)
+	} else {
+		inserted, err = c.store.InsertUsageSource(ctx, record)
+	}
 	if err != nil {
 		return false, err
+	}
+	if replaced != nil {
+		inventory.markState(replaced.ID, domain.UsageSourceComplete, replacementCode, now)
 	}
 	inventory.add(inserted)
 	return true, nil
@@ -1150,7 +1145,11 @@ func (c *Collector) registerDiscoveredClaudeSubagents(
 	reactivateExisting bool,
 ) error {
 	var errs []error
-	for _, path := range discoverClaudeSubagentPaths(mainPath) {
+	paths, err := discoverClaudeSubagentPaths(ctx, mainPath)
+	if err != nil {
+		return err
+	}
+	for _, path := range paths {
 		name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 		subagentID := strings.TrimPrefix(name, "agent-")
 		if _, err := c.registerSource(
@@ -1169,22 +1168,35 @@ func (c *Collector) registerDiscoveredClaudeSubagents(
 	return errors.Join(errs...)
 }
 
-func discoverClaudeSubagentPaths(mainPath string) []string {
+func discoverClaudeSubagentPaths(ctx context.Context, mainPath string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	base := strings.TrimSuffix(mainPath, filepath.Ext(mainPath))
 	pattern := filepath.Join(base, "subagents", "agent-*.jsonl")
-	paths, _ := filepath.Glob(pattern)
-	sort.Slice(paths, func(i, j int) bool {
-		left, leftErr := os.Stat(paths[i])
-		right, rightErr := os.Stat(paths[j])
-		if leftErr != nil {
-			return false
+	paths, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil, err
+	}
+	type candidate struct {
+		path string
+		mod  time.Time
+	}
+	candidates := make([]candidate, 0, len(paths))
+	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		if rightErr != nil {
-			return true
+		if info, statErr := os.Stat(path); statErr == nil && info.Mode().IsRegular() {
+			candidates = append(candidates, candidate{path: path, mod: info.ModTime()})
 		}
-		return left.ModTime().Before(right.ModTime())
-	})
-	return paths
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].mod.Before(candidates[j].mod) })
+	result := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		result = append(result, candidate.path)
+	}
+	return result, nil
 }
 
 func (c *Collector) registerDiscoveredCodexChildren(
@@ -1223,7 +1235,11 @@ func (c *Collector) registerDiscoveredCodexChildrenWithInventory(
 				continue
 			}
 			seen[key] = struct{}{}
-			path := c.discoverCodexPath(childID, source.NativeSessionID)
+			path, err := c.discoverCodexPath(ctx, childID, source.NativeSessionID)
+			if err != nil {
+				errs = append(errs, err)
+				continue
+			}
 			if path == "" {
 				continue
 			}
@@ -1386,7 +1402,10 @@ func (c *Collector) finalizeSession(ctx context.Context, sessionID domain.Sessio
 	return nil
 }
 
-func (c *Collector) validateSourcePath(harness domain.AgentHarness, path string) (string, string, int64, error) {
+func (c *Collector) validateSourcePath(ctx context.Context, harness domain.AgentHarness, path string) (string, string, int64, error) {
+	if err := ctx.Err(); err != nil {
+		return "", "", 0, err
+	}
 	if len(path) > maxUsagePathBytes {
 		return "", "", 0, errors.New(domain.UsageErrorArtifactPathRejected)
 	}
@@ -1396,6 +1415,9 @@ func (c *Collector) validateSourcePath(harness domain.AgentHarness, path string)
 	resolved, err := filepath.EvalSymlinks(filepath.Clean(path))
 	if err != nil {
 		return "", "", 0, errors.New(domain.UsageErrorArtifactMissing)
+	}
+	if err := ctx.Err(); err != nil {
+		return "", "", 0, err
 	}
 	info, err := os.Stat(resolved)
 	if err != nil || !info.Mode().IsRegular() {
@@ -1420,7 +1442,7 @@ func (c *Collector) validateSourcePath(harness domain.AgentHarness, path string)
 	if !allowed {
 		return "", "", 0, errors.New(domain.UsageErrorArtifactPathRejected)
 	}
-	identity, err := SourceIdentity(resolved)
+	identity, err := SourceIdentity(ctx, resolved)
 	if err != nil {
 		return "", "", 0, err
 	}
@@ -1483,22 +1505,28 @@ func (c *Collector) allowedRoots(harness domain.AgentHarness) []string {
 	}
 }
 
-func (c *Collector) codexDiscoveryStillPending(event, hookPath, discoveredPath string) bool {
+func (c *Collector) codexDiscoveryStillPending(ctx context.Context, event, hookPath, discoveredPath string) bool {
 	if strings.TrimSpace(hookPath) != "" {
 		return false
 	}
 	if strings.TrimSpace(discoveredPath) == "" {
 		return true
 	}
-	return event == "session-start" && !pathWithinRoot(discoveredPath, c.roots.CodexSessions)
+	return event == "session-start" && !pathWithinRoot(ctx, discoveredPath, c.roots.CodexSessions)
 }
 
-func pathWithinRoot(path, root string) bool {
+func pathWithinRoot(ctx context.Context, path, root string) bool {
+	if ctx.Err() != nil {
+		return false
+	}
 	if strings.TrimSpace(path) == "" || strings.TrimSpace(root) == "" {
 		return false
 	}
 	resolvedPath, err := filepath.EvalSymlinks(filepath.Clean(path))
 	if err != nil {
+		return false
+	}
+	if ctx.Err() != nil {
 		return false
 	}
 	resolvedRoot, err := filepath.EvalSymlinks(filepath.Clean(root))
@@ -1509,13 +1537,13 @@ func pathWithinRoot(path, root string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-func (c *Collector) discoverPath(harness domain.AgentHarness, nativeID string) string {
+func (c *Collector) discoverPath(ctx context.Context, harness domain.AgentHarness, nativeID string) (string, error) {
 	var patterns []string
 	switch harness {
 	case domain.HarnessClaudeCode:
 		patterns = []string{filepath.Join(c.roots.ClaudeProjects, "*", nativeID+".jsonl")}
 	case domain.HarnessCodex:
-		return c.discoverCodexPath(nativeID, "")
+		return c.discoverCodexPath(ctx, nativeID, "")
 	}
 	type candidate struct {
 		path string
@@ -1523,11 +1551,20 @@ func (c *Collector) discoverPath(harness domain.AgentHarness, nativeID string) s
 	}
 	var matches []candidate
 	for _, pattern := range patterns {
-		paths, _ := filepath.Glob(pattern)
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		paths, err := filepath.Glob(pattern)
+		if err != nil {
+			return "", err
+		}
 		if len(paths) > 128 {
 			paths = paths[:128]
 		}
 		for _, path := range paths {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
 			if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
 				matches = append(matches, candidate{path: path, mod: info.ModTime()})
 			}
@@ -1535,14 +1572,14 @@ func (c *Collector) discoverPath(harness domain.AgentHarness, nativeID string) s
 	}
 	sort.Slice(matches, func(i, j int) bool { return matches[i].mod.After(matches[j].mod) })
 	if len(matches) == 0 {
-		return ""
+		return "", nil
 	}
-	return matches[0].path
+	return matches[0].path, nil
 }
 
-func (c *Collector) discoverCodexPath(nativeID, parentID string) string {
+func (c *Collector) discoverCodexPath(ctx context.Context, nativeID, parentID string) (string, error) {
 	if !nativeUsageIDPattern.MatchString(nativeID) {
-		return ""
+		return "", nil
 	}
 	patterns := []string{
 		filepath.Join(c.roots.CodexSessions, "*", "*", "*", "*"+nativeID+"*.jsonl"),
@@ -1554,12 +1591,18 @@ func (c *Collector) discoverCodexPath(nativeID, parentID string) string {
 	}
 	var matches []candidate
 	for _, pattern := range patterns {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		paths, _ := filepath.Glob(pattern)
 		if len(paths) > 128 {
 			paths = paths[:128]
 		}
 		for _, path := range paths {
-			resolved, _, _, err := c.validateSourcePath(domain.HarnessCodex, path)
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+			resolved, _, _, err := c.validateSourcePath(ctx, domain.HarnessCodex, path)
 			if err != nil || !codexSessionMetaMatches(resolved, nativeID, parentID) {
 				continue
 			}
@@ -1570,9 +1613,9 @@ func (c *Collector) discoverCodexPath(nativeID, parentID string) string {
 	}
 	sort.Slice(matches, func(i, j int) bool { return matches[i].mod.After(matches[j].mod) })
 	if len(matches) == 0 {
-		return ""
+		return "", nil
 	}
-	return matches[0].path
+	return matches[0].path, nil
 }
 
 func codexSessionMetaMatches(path, nativeID, parentID string) bool {
@@ -1678,12 +1721,18 @@ func boundedUsageMetadata(value string) string {
 // SourceIdentity returns the filesystem's stable file id. Transcript contents
 // are append-only and therefore cannot participate in identity without making a
 // newly created or partially written first record look like file replacement.
-func SourceIdentity(path string) (string, error) {
+func SourceIdentity(ctx context.Context, path string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	file, err := os.Open(path) //nolint:gosec // validated provider-owned path.
 	if err != nil {
 		return "", errors.New(domain.UsageErrorSourceReadFailed)
 	}
 	defer func() { _ = file.Close() }()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	return SourceIdentityFromFile(file)
 }
 

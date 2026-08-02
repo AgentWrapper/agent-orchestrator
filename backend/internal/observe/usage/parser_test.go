@@ -1,7 +1,10 @@
 package usage
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -538,6 +541,31 @@ func TestReadJSONLChunkFromFileSurvivesAtomicPathReplacement(t *testing.T) {
 	if len(chunk.records) != 1 || string(chunk.records[0].Data) != `{"generation":"opened"}` {
 		t.Fatalf("chunk records = %+v, want the opened generation", chunk.records)
 	}
+}
+
+func TestContextReaderStopsBetweenTranscriptReadChunks(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	reader := &cancelAfterChunkReader{cancel: cancel}
+
+	_, err := io.ReadAll(contextReader{ctx: ctx, reader: reader})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("ReadAll() error = %v, want context canceled", err)
+	}
+}
+
+type cancelAfterChunkReader struct {
+	cancel context.CancelFunc
+	read   bool
+}
+
+func (r *cancelAfterChunkReader) Read(buffer []byte) (int, error) {
+	if r.read {
+		return 0, io.EOF
+	}
+	r.read = true
+	buffer[0] = 'x'
+	r.cancel()
+	return 1, nil
 }
 
 func usageSource(kind domain.UsageSourceKind) domain.UsageSourceContext {
