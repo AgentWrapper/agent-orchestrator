@@ -407,6 +407,40 @@ func TestCollectorBackfillDiscoversClaudeSubagentSources(t *testing.T) {
 	}
 }
 
+func TestCollectorRegisteringClaudeSiblingDoesNotRetireExistingSubagent(t *testing.T) {
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessClaudeCode, "claude-siblings", false)
+	root := filepath.Join(t.TempDir(), "projects")
+	mainPath := filepath.Join(root, "workspace", "claude-siblings.jsonl")
+	firstPath := filepath.Join(root, "workspace", "claude-siblings", "subagents", "agent-first.jsonl")
+	secondPath := filepath.Join(root, "workspace", "claude-siblings", "subagents", "agent-second.jsonl")
+	writeUsageFixture(t, mainPath, `{"type":"assistant"}`+"\n")
+	writeUsageFixture(t, firstPath, `{"type":"assistant","agent":"first"}`+"\n")
+	writeUsageFixture(t, secondPath, `{"type":"assistant","agent":"second"}`+"\n")
+
+	collector := NewCollector(store, SourceRoots{ClaudeProjects: root}, nil)
+	if err := collector.BackfillActive(context.Background()); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	if err != nil || len(bindings) != 1 {
+		t.Fatalf("bindings=%+v err=%v", bindings, err)
+	}
+	sources, err := store.ListUsageSourcesForBinding(context.Background(), bindings[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	states := make(map[string]domain.UsageSourceState)
+	for _, source := range sources {
+		if source.Kind == domain.UsageSourceClaudeSubagent {
+			states[source.SubagentID] = source.State
+		}
+	}
+	if states["first"] != domain.UsageSourcePending || states["second"] != domain.UsageSourcePending {
+		t.Fatalf("Claude sibling states = %+v, sources=%+v", states, sources)
+	}
+}
+
 func TestCollectorSubagentStopReactivatesCompletedSource(t *testing.T) {
 	store := collectorTestStore(t)
 	session := collectorTestSession(t, store, domain.HarnessClaudeCode, "claude-late", false)
@@ -699,6 +733,63 @@ func TestCollectorReconcilesPersistedCodexChildrenRecursively(t *testing.T) {
 	}
 	if !foundGrandchild {
 		t.Fatalf("archived grandchild missing from sources=%+v", sources)
+	}
+}
+
+func TestCollectorIgnoresChildrenFromSupersededCodexGeneration(t *testing.T) {
+	store := collectorTestStore(t)
+	const (
+		rootID  = "11111111-1111-4111-8111-111111111111"
+		childID = "22222222-2222-4222-8222-222222222222"
+	)
+	session := collectorTestSession(t, store, domain.HarnessCodex, rootID, false)
+	now := time.Now().UTC()
+	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
+		SessionID:    session.ID,
+		Harness:      domain.HarnessCodex,
+		NativeRootID: rootID,
+		State:        domain.UsageBindingActive,
+		FirstSeenAt:  now,
+		LastSeenAt:   now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), "sessions")
+	childPath := filepath.Join(root, "2026", "07", "28", "rollout-"+childID+".jsonl")
+	writeUsageFixture(t, childPath, codexSessionMetaFixture(t, childID, rootID))
+	oldState := `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":["` + childID + `"]}}`
+	emptyState := `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":[]}}`
+	for generation, state := range []string{oldState, emptyState} {
+		if _, err := store.InsertUsageSource(context.Background(), domain.UsageSourceRecord{
+			BindingID:       binding.ID,
+			Kind:            domain.UsageSourceCodexRollout,
+			NativeSessionID: rootID,
+			ArtifactPath:    filepath.Join(root, "rollout-root.jsonl"),
+			FileIdentity:    fmt.Sprintf("root-%d", generation),
+			Generation:      int64(generation),
+			ParserStateJSON: state,
+			State:           domain.UsageSourceComplete,
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	collector := NewCollector(store, SourceRoots{CodexSessions: root}, nil)
+	if err := collector.registerDiscoveredCodexChildren(context.Background(), binding, now); err != nil {
+		t.Fatalf("register children: %v", err)
+	}
+	sources, err := store.ListUsageSourcesForBinding(context.Background(), binding.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range sources {
+		if source.NativeSessionID == childID {
+			t.Fatalf("registered stale child from superseded generation: %+v", source)
+		}
 	}
 }
 

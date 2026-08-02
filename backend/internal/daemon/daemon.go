@@ -225,6 +225,7 @@ func Run() error {
 			Reconcile: func(reconcileCtx context.Context) error {
 				return usageCollector.ReconcileSources(reconcileCtx, 0)
 			},
+			ReconcilePath: usageCollector.ReconcilePath,
 		})
 		lcStack.LCM.SetUsageFinalizer(usageCollector)
 	}

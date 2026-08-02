@@ -35,28 +35,30 @@ type transcriptWatcher interface {
 
 // CoordinatorConfig configures the event-driven usage pipeline.
 type CoordinatorConfig struct {
-	Workers    int
-	QueueSize  int
-	Clock      func() time.Time
-	Logger     *slog.Logger
-	Initialize func(context.Context) error
-	Reconcile  func(context.Context) error
+	Workers       int
+	QueueSize     int
+	Clock         func() time.Time
+	Logger        *slog.Logger
+	Initialize    func(context.Context) error
+	Reconcile     func(context.Context) error
+	ReconcilePath func(context.Context, string) error
 }
 
 // Coordinator turns filesystem, hook, startup, and retry signals into bounded
 // source ingestion work. It intentionally has no polling ticker.
 type Coordinator struct {
-	store      coordinatorStore
-	ingestor   sourceIngestor
-	watcher    transcriptWatcher
-	workers    int
-	queueSize  int
-	now        func() time.Time
-	logger     *slog.Logger
-	initialize func(context.Context) error
-	reconcile  func(context.Context) error
-	refresh    chan struct{}
-	inventory  chan struct{}
+	store         coordinatorStore
+	ingestor      sourceIngestor
+	watcher       transcriptWatcher
+	workers       int
+	queueSize     int
+	now           func() time.Time
+	logger        *slog.Logger
+	initialize    func(context.Context) error
+	reconcile     func(context.Context) error
+	reconcilePath func(context.Context, string) error
+	refresh       chan struct{}
+	inventory     chan struct{}
 }
 
 // NewCoordinator constructs an event-driven usage coordinator.
@@ -79,17 +81,18 @@ func NewCoordinator(
 		cfg.Logger = slog.Default()
 	}
 	return &Coordinator{
-		store:      store,
-		ingestor:   ingestor,
-		watcher:    watcher,
-		workers:    cfg.Workers,
-		queueSize:  cfg.QueueSize,
-		now:        cfg.Clock,
-		logger:     cfg.Logger,
-		initialize: cfg.Initialize,
-		reconcile:  cfg.Reconcile,
-		refresh:    make(chan struct{}, 1),
-		inventory:  make(chan struct{}, 1),
+		store:         store,
+		ingestor:      ingestor,
+		watcher:       watcher,
+		workers:       cfg.Workers,
+		queueSize:     cfg.QueueSize,
+		now:           cfg.Clock,
+		logger:        cfg.Logger,
+		initialize:    cfg.Initialize,
+		reconcile:     cfg.Reconcile,
+		reconcilePath: cfg.ReconcilePath,
+		refresh:       make(chan struct{}, 1),
+		inventory:     make(chan struct{}, 1),
 	}
 }
 
@@ -296,6 +299,13 @@ func (c *Coordinator) run(ctx context.Context) {
 			} else if completed.err != nil && ctx.Err() == nil {
 				scheduleRetry(completed.sourceID, c.now().UTC().Add(defaultCoordinatorRetry))
 			}
+			if completed.result.ReconcilePath != "" && c.reconcilePath != nil {
+				if err := c.reconcilePath(ctx, completed.result.ReconcilePath); err != nil && ctx.Err() == nil {
+					c.logger.Warn("usage source path reconciliation failed", "err", err)
+				} else {
+					refreshInventory(false)
+				}
+			}
 			if completed.result.Reconcile {
 				refreshInventory(true)
 			} else if completed.result.Refresh {
@@ -318,6 +328,16 @@ func (c *Coordinator) run(ctx context.Context) {
 			}
 			path := canonicalTranscriptPath(event.Path)
 			sourceIDs := paths[path]
+			if len(sourceIDs) == 0 && event.Discovery {
+				if c.reconcilePath != nil {
+					if err := c.reconcilePath(ctx, path); err != nil && ctx.Err() == nil {
+						c.logger.Warn("usage source path reconciliation failed", "err", err)
+					} else {
+						refreshInventory(false)
+						sourceIDs = paths[path]
+					}
+				}
+			}
 			if len(sourceIDs) == 0 && event.Discovery {
 				refreshInventory(true)
 				sourceIDs = paths[path]

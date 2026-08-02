@@ -131,13 +131,41 @@ WHERE id = ?1
 	    FROM usage_sources spawning
 	    JOIN json_each(
 	        CASE
-	            WHEN json_valid(spawning.parser_state_json) THEN spawning.parser_state_json
-	            ELSE '{}'
-	        END,
-	        '$.codex.discovered_child_ids'
+	            WHEN json_valid(spawning.parser_state_json) THEN
+	                CASE
+	                    WHEN json_type(spawning.parser_state_json, '$') = 'object'
+	                     AND json_type(spawning.parser_state_json, '$.version') = 'integer'
+	                     AND json_extract(spawning.parser_state_json, '$.version') = 1
+	                     AND json_type(spawning.parser_state_json, '$.source_kind') = 'text'
+	                     AND json_extract(spawning.parser_state_json, '$.source_kind') = 'codex_rollout'
+	                     AND json_type(spawning.parser_state_json, '$.codex') = 'object'
+	                     AND json_type(spawning.parser_state_json, '$.codex.discovered_child_ids') = 'array'
+	                    THEN json_extract(spawning.parser_state_json, '$.codex.discovered_child_ids')
+	                    ELSE '[]'
+	                END
+	            ELSE '[]'
+	        END
 	    ) discovered
 	    WHERE spawning.binding_id = ?1
 	      AND spawning.kind = 'codex_rollout'
+	      AND discovered.type = 'text'
+	      AND length(discovered.value) = 36
+	      AND substr(discovered.value, 9, 1) = '-'
+	      AND substr(discovered.value, 14, 1) = '-'
+	      AND substr(discovered.value, 19, 1) = '-'
+	      AND substr(discovered.value, 24, 1) = '-'
+	      AND lower(discovered.value) = discovered.value
+	      AND length(replace(discovered.value, '-', '')) = 32
+	      AND replace(discovered.value, '-', '') NOT GLOB '*[^0-9a-f]*'
+	      AND spawning.id = (
+	          SELECT latest.id
+	          FROM usage_sources latest
+	          WHERE latest.binding_id = spawning.binding_id
+	            AND latest.kind = 'codex_rollout'
+	            AND latest.native_session_id = spawning.native_session_id
+	          ORDER BY latest.generation DESC, latest.id DESC
+	          LIMIT 1
+	      )
 	      AND NOT EXISTS (
 	          SELECT 1
 	          FROM usage_sources registered
@@ -543,6 +571,62 @@ func (q *Queries) ListCompactSessionUsage(ctx context.Context, projectID interfa
 	return items, nil
 }
 
+const listUsageBindingsForCodexParent = `-- name: ListUsageBindingsForCodexParent :many
+SELECT DISTINCT ub.id, ub.session_id, ub.harness, ub.native_root_id, ub.initial_model_id, ub.state, ub.last_error_code, ub.first_seen_at, ub.last_seen_at, ub.updated_at
+FROM usage_bindings ub
+JOIN sessions s ON s.id = ub.session_id
+JOIN usage_sources parent ON parent.binding_id = ub.id
+WHERE (s.is_terminated = 0 OR ub.state = 'finalizing')
+  AND ub.harness = 'codex'
+  AND ub.state IN ('discovering', 'active', 'finalizing')
+  AND parent.kind = 'codex_rollout'
+  AND parent.native_session_id = ?1
+  AND parent.id = (
+      SELECT latest.id
+      FROM usage_sources latest
+      WHERE latest.binding_id = parent.binding_id
+        AND latest.kind = 'codex_rollout'
+        AND latest.native_session_id = parent.native_session_id
+      ORDER BY latest.generation DESC, latest.id DESC
+      LIMIT 1
+  )
+ORDER BY ub.updated_at, ub.id
+`
+
+func (q *Queries) ListUsageBindingsForCodexParent(ctx context.Context, parentNativeSessionID string) ([]UsageBinding, error) {
+	rows, err := q.db.QueryContext(ctx, listUsageBindingsForCodexParent, parentNativeSessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UsageBinding{}
+	for rows.Next() {
+		var i UsageBinding
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.Harness,
+			&i.NativeRootID,
+			&i.InitialModelID,
+			&i.State,
+			&i.LastErrorCode,
+			&i.FirstSeenAt,
+			&i.LastSeenAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUsageBindingsForSession = `-- name: ListUsageBindingsForSession :many
 SELECT id, session_id, harness, native_root_id, initial_model_id, state, last_error_code, first_seen_at, last_seen_at, updated_at
 FROM usage_bindings
@@ -615,13 +699,41 @@ WHERE (s.is_terminated = 0 OR ub.state = 'finalizing')
 	      FROM usage_sources spawning
 	      JOIN json_each(
 	          CASE
-	              WHEN json_valid(spawning.parser_state_json) THEN spawning.parser_state_json
-	              ELSE '{}'
-	          END,
-	          '$.codex.discovered_child_ids'
+	              WHEN json_valid(spawning.parser_state_json) THEN
+	                  CASE
+	                      WHEN json_type(spawning.parser_state_json, '$') = 'object'
+	                       AND json_type(spawning.parser_state_json, '$.version') = 'integer'
+	                       AND json_extract(spawning.parser_state_json, '$.version') = 1
+	                       AND json_type(spawning.parser_state_json, '$.source_kind') = 'text'
+	                       AND json_extract(spawning.parser_state_json, '$.source_kind') = 'codex_rollout'
+	                       AND json_type(spawning.parser_state_json, '$.codex') = 'object'
+	                       AND json_type(spawning.parser_state_json, '$.codex.discovered_child_ids') = 'array'
+	                      THEN json_extract(spawning.parser_state_json, '$.codex.discovered_child_ids')
+	                      ELSE '[]'
+	                  END
+	              ELSE '[]'
+	          END
 	      ) discovered
 	      WHERE spawning.binding_id = ub.id
 	        AND spawning.kind = 'codex_rollout'
+	        AND discovered.type = 'text'
+	        AND length(discovered.value) = 36
+	        AND substr(discovered.value, 9, 1) = '-'
+	        AND substr(discovered.value, 14, 1) = '-'
+	        AND substr(discovered.value, 19, 1) = '-'
+	        AND substr(discovered.value, 24, 1) = '-'
+	        AND lower(discovered.value) = discovered.value
+	        AND length(replace(discovered.value, '-', '')) = 32
+	        AND replace(discovered.value, '-', '') NOT GLOB '*[^0-9a-f]*'
+	        AND spawning.id = (
+	            SELECT latest.id
+	            FROM usage_sources latest
+	            WHERE latest.binding_id = spawning.binding_id
+	              AND latest.kind = 'codex_rollout'
+	              AND latest.native_session_id = spawning.native_session_id
+	            ORDER BY latest.generation DESC, latest.id DESC
+	            LIMIT 1
+	        )
 	        AND NOT EXISTS (
 	            SELECT 1
 	            FROM usage_sources registered

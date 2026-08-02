@@ -482,6 +482,118 @@ func TestUsageBindingWaitsForPersistedCodexChildren(t *testing.T) {
 	}
 }
 
+func TestUsageBindingIgnoresChildrenFromSupersededCodexGeneration(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	sess := seedUsageSession(t, s, domain.HarnessCodex)
+	now := time.Unix(1700000000, 0).UTC()
+	const (
+		rootID  = "11111111-1111-4111-8111-111111111111"
+		childID = "22222222-2222-4222-8222-222222222222"
+	)
+	binding, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
+		SessionID:    sess.ID,
+		Harness:      sess.Harness,
+		NativeRootID: rootID,
+		State:        domain.UsageBindingFinalizing,
+		FirstSeenAt:  now,
+		LastSeenAt:   now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldState := `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":["` + childID + `"]}}`
+	emptyState := `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":[]}}`
+	for generation, state := range []string{oldState, emptyState} {
+		if _, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+			BindingID:       binding.ID,
+			Kind:            domain.UsageSourceCodexRollout,
+			NativeSessionID: rootID,
+			ArtifactPath:    "/tmp/codex/root.jsonl",
+			FileIdentity:    fmt.Sprintf("root-%d", generation),
+			Generation:      int64(generation),
+			ParserStateJSON: state,
+			State:           domain.UsageSourceComplete,
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	completed, err := s.CompleteUsageBindingIfSettled(ctx, binding.ID, now)
+	if err != nil || !completed {
+		sources, _ := s.ListUsageSourcesForBinding(ctx, binding.ID)
+		got, _, _ := s.GetUsageBinding(ctx, sess.ID, sess.Harness, rootID)
+		t.Fatalf("completion with superseded child edge = %v, err=%v, binding=%+v, sources=%+v", completed, err, got, sources)
+	}
+}
+
+func TestUsageBindingIgnoresInvalidCodexDiscoveryStateShapes(t *testing.T) {
+	const childID = "22222222-2222-4222-8222-222222222222"
+	tests := []struct {
+		name  string
+		state string
+	}{
+		{name: "scalar discovered ids", state: `{"version":1,"source_kind":"codex_rollout","codex":{"discovered_child_ids":"` + childID + `"}}`},
+		{name: "object discovered ids", state: `{"version":1,"source_kind":"codex_rollout","codex":{"discovered_child_ids":{"child":"` + childID + `"}}}`},
+		{name: "future version", state: `{"version":2,"source_kind":"codex_rollout","codex":{"discovered_child_ids":["` + childID + `"]}}`},
+		{name: "wrong source kind", state: `{"version":1,"source_kind":"claude_main","codex":{"discovered_child_ids":["` + childID + `"]}}`},
+		{name: "non object codex payload", state: `{"version":1,"source_kind":"codex_rollout","codex":"not-an-object"}`},
+		{name: "numeric child", state: `{"version":1,"source_kind":"codex_rollout","codex":{"discovered_child_ids":[222]}}`},
+		{name: "noncanonical child", state: `{"version":1,"source_kind":"codex_rollout","codex":{"discovered_child_ids":["22222222-2222-4222-8222-22222222222A"]}}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			sess := seedUsageSession(t, s, domain.HarnessCodex)
+			now := time.Unix(1700000000, 0).UTC()
+			binding, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
+				SessionID:    sess.ID,
+				Harness:      sess.Harness,
+				NativeRootID: "11111111-1111-4111-8111-111111111111",
+				State:        domain.UsageBindingActive,
+				FirstSeenAt:  now,
+				LastSeenAt:   now,
+				UpdatedAt:    now,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+				BindingID:       binding.ID,
+				Kind:            domain.UsageSourceCodexRollout,
+				NativeSessionID: binding.NativeRootID,
+				ArtifactPath:    "/tmp/codex/root.jsonl",
+				FileIdentity:    "root",
+				ParserStateJSON: tt.state,
+				State:           domain.UsageSourceComplete,
+				CreatedAt:       now,
+				UpdatedAt:       now,
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			discovery, err := s.ListUsageDiscoveryBindings(ctx, 8)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(discovery) != 0 {
+				t.Fatalf("invalid state invented discovery bindings: %+v", discovery)
+			}
+			if _, err := s.UpdateUsageBindingState(ctx, binding.ID, domain.UsageBindingFinalizing, "", now); err != nil {
+				t.Fatal(err)
+			}
+			completed, err := s.CompleteUsageBindingIfSettled(ctx, binding.ID, now)
+			if err != nil || !completed {
+				t.Fatalf("invalid state blocked completion = %v, err=%v", completed, err)
+			}
+		})
+	}
+}
+
 func TestUsageRowsCascadeWhenSeedSessionDeleted(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

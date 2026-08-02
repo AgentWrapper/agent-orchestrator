@@ -211,6 +211,21 @@ func (s *Store) ListUsageDiscoveryBindings(ctx context.Context, limit int64) ([]
 	return out, nil
 }
 
+// ListUsageBindingsForCodexParent returns live bindings whose latest source
+// matches one exact Codex parent native session. The collector validates the
+// child edge from that source's parser state before registration.
+func (s *Store) ListUsageBindingsForCodexParent(ctx context.Context, parentNativeSessionID string) ([]domain.UsageBindingRecord, error) {
+	rows, err := s.qr.ListUsageBindingsForCodexParent(ctx, parentNativeSessionID)
+	if err != nil {
+		return nil, fmt.Errorf("list usage bindings for Codex parent: %w", err)
+	}
+	out := make([]domain.UsageBindingRecord, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, usageBindingFromGen(row))
+	}
+	return out, nil
+}
+
 // GetUsageSourceForIngestion returns a source plus immutable binding/session
 // facts needed by the ingestor.
 func (s *Store) GetUsageSourceForIngestion(ctx context.Context, id int64) (domain.UsageSourceContext, bool, error) {

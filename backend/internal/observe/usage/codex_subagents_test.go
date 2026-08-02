@@ -356,6 +356,98 @@ func TestCoordinatorReconcilesLateCodexChildBeforeBindingCompletes(t *testing.T)
 	waitForUsageBindingState(t, store, session.ID, domain.UsageBindingComplete)
 }
 
+func TestCoordinatorTargetsLateCodexChildBeyondDefaultDiscoveryBatch(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store, session, roots := seedCodexRolloutSession(t, domain.ActivityExited)
+	parentPath := activeCodexRolloutPath(roots.CodexSessions, testCodexParentID)
+	childPath := activeCodexRolloutPath(roots.CodexSessions, testCodexChildID)
+	parentContent := codexRolloutFixture(t, testCodexParentID, "", 100, 20, testCodexChildID)
+	writeCodexRollout(t, parentPath, parentContent)
+
+	collector := usagesvc.NewCollector(store, roots, nil)
+	if err := collector.BackfillActive(ctx); err != nil {
+		t.Fatalf("backfill parent: %v", err)
+	}
+	binding := onlyUsageBinding(t, store, session.ID)
+	parent := latestUsageSource(t, store, binding.ID, testCodexParentID)
+	parentState := `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":["` + testCodexChildID + `"]}}`
+	if _, err := store.ApplyUsageChunk(ctx, parent.ID, 0, domain.SourceCursorState{
+		ByteOffset:      int64(len(parentContent)),
+		ParserStateJSON: parentState,
+		State:           domain.UsageSourceComplete,
+		UpdatedAt:       time.Now().UTC(),
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	oldest := time.Now().UTC().Add(-time.Hour)
+	for index := 0; index < 129; index++ {
+		rootID := fmt.Sprintf("%08x-0000-4000-8000-%012x", index+10, index+10)
+		distractor, err := store.CreateSession(ctx, domain.SessionRecord{
+			ProjectID: "codex-subagents",
+			Kind:      domain.KindWorker,
+			Harness:   domain.HarnessCodex,
+			Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: oldest},
+			Metadata:  domain.SessionMetadata{AgentSessionID: rootID},
+			CreatedAt: oldest,
+			UpdatedAt: oldest,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
+			SessionID:    distractor.ID,
+			Harness:      domain.HarnessCodex,
+			NativeRootID: rootID,
+			State:        domain.UsageBindingDiscovering,
+			FirstSeenAt:  oldest,
+			LastSeenAt:   oldest,
+			UpdatedAt:    oldest,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.UpdateUsageBindingState(ctx, binding.ID, domain.UsageBindingFinalizing, "", time.Now().UTC().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	watcher, err := NewTranscriptWatcher([]string{roots.CodexSessions, roots.CodexArchived})
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialReconcile := make(chan struct{}, 1)
+	coordinator := NewCoordinator(store, NewIngestor(store, IngestorConfig{FinalizationWait: time.Hour}), watcher, CoordinatorConfig{
+		Workers: 1,
+		Reconcile: func(reconcileCtx context.Context) error {
+			err := collector.ReconcileSources(reconcileCtx, 0)
+			select {
+			case initialReconcile <- struct{}{}:
+			default:
+			}
+			return err
+		},
+		ReconcilePath: collector.ReconcilePath,
+	})
+	done := coordinator.Start(ctx)
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("usage coordinator did not stop")
+		}
+	})
+	select {
+	case <-initialReconcile:
+	case <-time.After(5 * time.Second):
+		t.Fatal("initial bounded reconciliation did not run")
+	}
+
+	writeCodexRollout(t, childPath, codexRolloutFixture(t, testCodexChildID, testCodexParentID, 40, 10, ""))
+	waitForWatchableSource(ctx, t, store, childPath)
+}
+
 func TestCodexChildArchiveRelocationPreservesCursorWithoutRecount(t *testing.T) {
 	ctx := context.Background()
 	store, session, roots := seedCodexRolloutSession(t, domain.ActivityIdle)
@@ -410,6 +502,83 @@ func TestCodexChildArchiveRelocationPreservesCursorWithoutRecount(t *testing.T) 
 		t.Fatalf("ingest relocated child: %v", err)
 	}
 	assertTokenAggregate(t, store, session.ID, 170)
+}
+
+func TestCodexChildReplacementRevalidatesIdentityAndParent(t *testing.T) {
+	tests := []struct {
+		name              string
+		replacementID     string
+		replacementParent string
+	}{
+		{name: "wrong child id", replacementID: testCodexGrandchildID, replacementParent: testCodexParentID},
+		{name: "wrong parent", replacementID: testCodexChildID, replacementParent: testCodexGrandchildID},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			store, session, roots := seedCodexRolloutSession(t, domain.ActivityIdle)
+			parentPath := activeCodexRolloutPath(roots.CodexSessions, testCodexParentID)
+			childPath := activeCodexRolloutPath(roots.CodexSessions, testCodexChildID)
+			writeCodexRollout(t, parentPath, codexRolloutFixture(t, testCodexParentID, "", 100, 20, testCodexChildID))
+			writeCodexRollout(t, childPath, codexRolloutFixture(t, testCodexChildID, testCodexParentID, 40, 10, ""))
+
+			collector := usagesvc.NewCollector(store, roots, nil)
+			if err := collector.BackfillActive(ctx); err != nil {
+				t.Fatalf("backfill parent: %v", err)
+			}
+			binding := onlyUsageBinding(t, store, session.ID)
+			ingestor := NewIngestor(store, IngestorConfig{})
+			parent := latestUsageSource(t, store, binding.ID, testCodexParentID)
+			if result, err := ingestor.Ingest(ctx, parent.ID); err != nil || !result.Reconcile {
+				t.Fatalf("ingest parent = %+v, err=%v", result, err)
+			}
+			if err := collector.ReconcileSources(ctx, -1); err != nil {
+				t.Fatalf("reconcile child: %v", err)
+			}
+			child := latestUsageSource(t, store, binding.ID, testCodexChildID)
+			if _, err := ingestor.Ingest(ctx, child.ID); err != nil {
+				t.Fatalf("ingest child: %v", err)
+			}
+			assertTokenAggregate(t, store, session.ID, 170)
+
+			replacementPath := childPath + ".replacement"
+			writeCodexRollout(t, replacementPath, codexRolloutFixture(
+				t,
+				tt.replacementID,
+				tt.replacementParent,
+				900,
+				100,
+				"",
+			))
+			if err := os.Rename(replacementPath, childPath); err != nil {
+				t.Fatal(err)
+			}
+			result, err := ingestor.Ingest(ctx, child.ID)
+			if err != nil {
+				t.Fatalf("detect child replacement: %v", err)
+			}
+			if result.ReplacementSourceID != 0 || !result.Reconcile {
+				t.Fatalf("unvalidated replacement result = %+v", result)
+			}
+			if err := collector.ReconcilePath(ctx, childPath); err != nil {
+				t.Fatalf("reconcile invalid replacement: %v", err)
+			}
+			sources, err := store.ListUsageSourcesForBinding(ctx, binding.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			childGenerations := 0
+			for _, source := range sources {
+				if source.NativeSessionID == testCodexChildID {
+					childGenerations++
+				}
+			}
+			if childGenerations != 1 {
+				t.Fatalf("invalid child replacement registered %d generations: %+v", childGenerations, sources)
+			}
+			assertTokenAggregate(t, store, session.ID, 170)
+		})
+	}
 }
 
 func codexResponseItem(t *testing.T, payload map[string]any) []byte {

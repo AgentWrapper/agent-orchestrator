@@ -43,6 +43,7 @@ type IngestResult struct {
 	More                bool
 	Refresh             bool
 	Reconcile           bool
+	ReconcilePath       string
 	RetryAt             *time.Time
 	BindingID           int64
 	ReplacementSourceID int64
@@ -109,6 +110,9 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 		return i.retrySource(ctx, source.Source, domain.UsageErrorSourceReadFailed, now, nil)
 	}
 	if source.Source.FileIdentity != identity || info.Size() < source.Source.ByteOffset {
+		if source.Source.Kind == domain.UsageSourceCodexRollout && source.Source.SubagentID != "" {
+			return i.retireCodexChildForReconciliation(ctx, source, now)
+		}
 		return i.replaceSource(ctx, source, identity, now)
 	}
 	if source.Source.State == domain.UsageSourceComplete &&
@@ -203,6 +207,41 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 		return result, i.completeBinding(ctx, source.Source.BindingID, now)
 	}
 	result.More = progressed && !chunk.atEOF
+	return result, nil
+}
+
+func (i *Ingestor) retireCodexChildForReconciliation(
+	ctx context.Context,
+	source domain.UsageSourceContext,
+	now time.Time,
+) (IngestResult, error) {
+	result := IngestResult{
+		BindingID:     source.Source.BindingID,
+		Refresh:       true,
+		Reconcile:     true,
+		ReconcilePath: source.Source.ArtifactPath,
+	}
+	if _, err := i.store.MarkUsageSourceState(
+		ctx,
+		source.Source.ID,
+		domain.UsageSourceComplete,
+		domain.UsageErrorArtifactReplaced,
+		nil,
+		now,
+	); err != nil {
+		return result, err
+	}
+	if source.BindingState == domain.UsageBindingComplete || source.BindingState == domain.UsageBindingPartial {
+		if _, err := i.store.UpdateUsageBindingState(
+			ctx,
+			source.Source.BindingID,
+			domain.UsageBindingFinalizing,
+			"",
+			now,
+		); err != nil {
+			return result, err
+		}
+	}
 	return result, nil
 }
 
