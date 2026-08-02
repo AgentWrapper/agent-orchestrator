@@ -14,15 +14,18 @@ import (
 
 func TestDelegateTaskSendsStructuredMessageToNewestActiveOrchestrator(t *testing.T) {
 	tests := []struct {
-		name        string
-		agent       domain.AgentHarness
-		model       string
-		wantIntent  string
-		wantHarness domain.AgentHarness
-		wantModel   string
+		name           string
+		brief          string
+		agent          domain.AgentHarness
+		model          string
+		wantIntent     string
+		wantHarness    domain.AgentHarness
+		wantModel      string
+		wantAutonomous bool
 	}{
-		{name: "project default", wantIntent: "project_default"},
-		{name: "requested agent and model", agent: domain.HarnessCursor, model: "  sonnet-custom  ", wantIntent: "requested", wantHarness: domain.HarnessCursor, wantModel: "sonnet-custom"},
+		{name: "project default", brief: "  Fix the renderer\nwithout changing the API.  ", wantIntent: "project_default"},
+		{name: "requested agent and model", brief: "  Fix the renderer\nwithout changing the API.  ", agent: domain.HarnessCursor, model: "  sonnet-custom  ", wantIntent: "requested", wantHarness: domain.HarnessCursor, wantModel: "sonnet-custom"},
+		{name: "orchestrator chooses task", wantIntent: "project_default", wantAutonomous: true},
 	}
 
 	for _, tt := range tests {
@@ -37,9 +40,8 @@ func TestDelegateTaskSendsStructuredMessageToNewestActiveOrchestrator(t *testing
 			cmd := &fakeCommander{}
 			svc := &Service{store: st, manager: cmd}
 
-			brief := "  Fix the renderer\nwithout changing the API.  "
 			out, err := svc.DelegateTask(context.Background(), DelegateTaskInput{
-				ProjectID: "ao", Brief: brief, RequestedAgent: tt.agent, Model: tt.model,
+				ProjectID: "ao", Brief: tt.brief, RequestedAgent: tt.agent, Model: tt.model,
 			})
 			if err != nil {
 				t.Fatalf("DelegateTask: %v", err)
@@ -47,16 +49,23 @@ func TestDelegateTaskSendsStructuredMessageToNewestActiveOrchestrator(t *testing
 			if out.OrchestratorID != "orch-new" || len(cmd.sent) != 1 || cmd.sent[0] != "orch-new" {
 				t.Fatalf("out = %#v, sent = %#v; want orch-new", out, cmd.sent)
 			}
-			if !strings.Contains(cmd.sentMessages[0], "Choose the worker name and final prompt") {
+			if !strings.Contains(strings.ToLower(cmd.sentMessages[0]), "choose the worker name and final prompt") {
 				t.Fatalf("delegation instructions missing: %q", cmd.sentMessages[0])
 			}
+			if tt.wantAutonomous && !strings.Contains(cmd.sentMessages[0], "choose the next useful implementation task") {
+				t.Fatalf("autonomous task instruction missing: %q", cmd.sentMessages[0])
+			}
 			payloadStart := strings.LastIndex(cmd.sentMessages[0], "\n") + 1
+			payload := cmd.sentMessages[0][payloadStart:]
 			var got taskDelegationMessage
-			if err := json.Unmarshal([]byte(cmd.sentMessages[0][payloadStart:]), &got); err != nil {
+			if err := json.Unmarshal([]byte(payload), &got); err != nil {
 				t.Fatalf("decode delegation payload: %v; message=%q", err, cmd.sentMessages[0])
 			}
-			if got.Type != "task_delegation" || got.Brief != brief || got.Agent.Intent != tt.wantIntent || got.Agent.Harness != tt.wantHarness || got.Model != tt.wantModel {
+			if got.Type != "task_delegation" || got.Brief != tt.brief || got.Agent.Intent != tt.wantIntent || got.Agent.Harness != tt.wantHarness || got.Model != tt.wantModel {
 				t.Fatalf("payload = %#v", got)
+			}
+			if tt.wantAutonomous && strings.Contains(payload, `"brief"`) {
+				t.Fatalf("blank brief should be omitted: %s", payload)
 			}
 		})
 	}

@@ -86,6 +86,7 @@ describe("NewTaskDialog", () => {
 		expect(agentLabel).toHaveAttribute("data-slot", "label");
 		expect(modelLabel).toHaveAttribute("data-slot", "label");
 		expect(screen.getByRole("combobox", { name: "Agent" })).toHaveAttribute("data-size", "sm");
+		expect(screen.getByLabelText("Task (optional)")).toHaveValue("");
 		expect(screen.getByLabelText("Model")).toHaveValue("");
 		expect(screen.queryByLabelText("Title")).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Branch")).not.toBeInTheDocument();
@@ -99,7 +100,7 @@ describe("NewTaskDialog", () => {
 
 		await waitForAgentCatalog();
 
-		await user.type(screen.getByLabelText("Task"), brief);
+		await user.type(screen.getByLabelText("Task (optional)"), brief);
 		await user.type(screen.getByLabelText("Model"), "placeholder-model");
 		await user.click(screen.getByRole("button", { name: "Start task" }));
 
@@ -124,7 +125,7 @@ describe("NewTaskDialog", () => {
 		const user = userEvent.setup();
 		await waitForAgentCatalog();
 
-		await user.type(screen.getByLabelText("Task"), "B");
+		await user.type(screen.getByLabelText("Task (optional)"), "B");
 
 		await user.click(screen.getByRole("combobox", { name: "Agent" }));
 		await user.click(await screen.findByRole("option", { name: "Cursor" }));
@@ -146,21 +147,28 @@ describe("NewTaskDialog", () => {
 		expect(options[2]).not.toHaveAttribute("aria-disabled", "true");
 		await user.click(options[2]);
 
-		await user.type(screen.getByLabelText("Task"), "B");
+		await user.type(screen.getByLabelText("Task (optional)"), "B");
 		await user.click(screen.getByRole("button", { name: "Start task" }));
 
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
 		expect(requestBody().agent).toBe("kiro");
 	});
 
-	it("requires task text", async () => {
+	it("delegates without a starter prompt so the orchestrator chooses the task", async () => {
 		renderDialog();
 		const user = userEvent.setup();
 
 		await user.click(screen.getByRole("button", { name: "Start task" }));
 
-		expect(await screen.findByText("Task is required.")).toBeInTheDocument();
-		expect(postMock).not.toHaveBeenCalled();
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		expect(postMock).toHaveBeenCalledWith("/api/v1/orchestrators/delegate", {
+			body: {
+				projectId: "proj-1",
+				brief: undefined,
+				agent: undefined,
+				model: undefined,
+			},
+		});
 	});
 
 	it("shows an empty Model field for scratch projects and omits it from delegation", async () => {
@@ -191,7 +199,7 @@ describe("NewTaskDialog", () => {
 		expect(screen.queryByLabelText("Branch")).not.toBeInTheDocument();
 		expect(screen.getByLabelText("Model")).toHaveValue("");
 
-		await user.type(screen.getByLabelText("Task"), "Build a quick prototype in scratch.");
+		await user.type(screen.getByLabelText("Task (optional)"), "Build a quick prototype in scratch.");
 		await user.click(screen.getByRole("button", { name: "Start task" }));
 
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
@@ -204,7 +212,7 @@ describe("NewTaskDialog", () => {
 		const user = userEvent.setup();
 		await waitForAgentCatalog();
 
-		const task = screen.getByLabelText("Task");
+		const task = screen.getByLabelText("Task (optional)");
 		await user.type(task, "First line");
 		// Shift+Enter must NOT submit — it adds a newline.
 		await user.keyboard("{Shift>}{Enter}{/Shift}");
@@ -222,7 +230,7 @@ describe("NewTaskDialog", () => {
 		const user = userEvent.setup();
 		await waitForAgentCatalog();
 
-		const task = screen.getByLabelText("Task");
+		const task = screen.getByLabelText("Task (optional)");
 		await user.type(task, "Line");
 
 		// Alt+Enter must NOT submit — Alt is excluded so it can't submit by accident.
@@ -260,7 +268,7 @@ describe("NewTaskDialog", () => {
 		const user = userEvent.setup();
 		await waitForAgentCatalog();
 
-		await user.type(screen.getByLabelText("Task"), "Restore fallback renderer.");
+		await user.type(screen.getByLabelText("Task (optional)"), "Restore fallback renderer.");
 		await user.click(screen.getByRole("button", { name: "Start task" }));
 
 		expect(await screen.findByText(`${message} (${code})`)).toBeInTheDocument();

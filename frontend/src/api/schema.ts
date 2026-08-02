@@ -987,7 +987,7 @@ export interface components {
         DelegateTaskRequest: {
             /** @enum {string} */
             agent?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "kiro" | "kilocode" | "vibe" | "pi" | "autohand" | "fake";
-            brief: string;
+            brief?: string;
             model?: string;
             projectId: string;
         };
