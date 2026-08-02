@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -920,6 +920,30 @@ describe("SessionInspector Usage & cost section", () => {
 		expect(within(usageSection).getByText("Partial reasoning coverage")).toBeInTheDocument();
 		expect(within(usageSection).getByLabelText(/Warnings: Partial reasoning coverage/)).toBeInTheDocument();
 		expect(within(usageSection).queryByText("Complete")).not.toBeInTheDocument();
+	});
+
+	it("preserves moved focus when pointer-opened provider detail closes", async () => {
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		const providerTrigger = await screen.findByRole("button", {
+			name: /Codex usage details, Partial coverage/,
+		});
+		vi.useFakeTimers();
+		fireEvent.pointerEnter(providerTrigger);
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(220);
+		});
+		expect(screen.getByRole("region", { name: "Codex usage peek" })).toBeInTheDocument();
+
+		fireEvent.pointerLeave(providerTrigger);
+		act(() => vi.advanceTimersByTime(120));
+		expect(screen.queryByRole("region", { name: "Codex usage peek" })).not.toBeInTheDocument();
+		const summaryTab = screen.getByRole("tab", { name: "Summary" });
+		summaryTab.focus();
+		expect(summaryTab).toHaveFocus();
+
+		act(() => vi.advanceTimersByTime(0));
+		expect(summaryTab).toHaveFocus();
 	});
 
 	it("opens provider and model detail with the keyboard and returns focus on escape", async () => {

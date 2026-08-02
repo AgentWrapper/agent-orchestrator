@@ -528,6 +528,9 @@ function UsageProviderRow({ harness }: { harness: SessionUsage["harnesses"][numb
 				align="end"
 				aria-label={`${harnessName} usage peek`}
 				className="w-80 max-w-[calc(100vw-1rem)] p-3"
+				onCloseAutoFocus={(event) => {
+					if (peek.openedByPointer.current) event.preventDefault();
+				}}
 				onOpenAutoFocus={(event) => {
 					if (peek.openedByPointer.current) event.preventDefault();
 				}}
