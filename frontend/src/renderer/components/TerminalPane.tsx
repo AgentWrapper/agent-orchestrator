@@ -248,8 +248,9 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 			const sessionId = session?.id;
 			if (!sessionId) return;
 			if (!urlWatcherRef.current) {
-				urlWatcherRef.current = createUrlWatcher(() => {
+				urlWatcherRef.current = createUrlWatcher((url) => {
 					const store = useUiStore.getState();
+					store.addDetectedUrl(sessionId, url);
 					const current = store.inspectorSessions[sessionId];
 					const viewingBrowser = (current?.isOpen ?? true) && (current?.view ?? "summary") === "browser";
 					if (!viewingBrowser) store.setBrowserUnseen(sessionId, true);

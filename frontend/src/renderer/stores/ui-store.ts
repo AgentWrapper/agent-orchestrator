@@ -67,6 +67,10 @@ type UiState = {
 	// session. Surfaces outside the session subtree (the notification runtime)
 	// need that distinction, and SessionView's own target is local state.
 	visibleTerminalKindBySession: Record<string, TerminalTarget["kind"]>;
+	// URLs passively detected in a worker's terminal output (e.g. a dev-server
+	// address a command printed), most recent first. Purely a convenience list
+	// for the Browser tab's "detected URLs" menu — detection never navigates.
+	detectedUrlsBySession: Record<string, string[]>;
 	setWorkbenchTab: (tab: WorkbenchTab) => void;
 	setThemePreference: (theme: ThemePreference) => void;
 	setDeveloperMode: (enabled: boolean) => void;
@@ -88,10 +92,14 @@ type UiState = {
 	setActiveShellTerminal: (handleId: string | null) => void;
 	setVisibleTerminalKind: (sessionId: string, kind: TerminalTarget["kind"]) => void;
 	clearVisibleTerminalKind: (sessionId: string) => void;
+	addDetectedUrl: (sessionId: string, url: string) => void;
 };
 
 const sidebarStorageKey = "ao.sidebar.open";
 const developerModeStorageKey = "ao.developerMode";
+// Much lower than detect-urls.ts's internal SEEN_MAX (512) — that cap bounds an
+// internal dedupe set, this one bounds a user-facing list in a toolbar menu.
+const DETECTED_URLS_MAX = 20;
 
 function getLocalStorage() {
 	if (typeof window === "undefined" || !window.localStorage) return null;
@@ -128,6 +136,7 @@ export const useUiStore = create<UiState>((set) => ({
 	newShellTerminalNonce: 0,
 	activeShellTerminalHandleId: null,
 	visibleTerminalKindBySession: {},
+	detectedUrlsBySession: {},
 	setWorkbenchTab: (workbenchTab) => set({ workbenchTab }),
 	setThemePreference: (themePreference) => {
 		getLocalStorage()?.setItem(themeStorageKey, themePreference);
@@ -250,6 +259,12 @@ export const useUiStore = create<UiState>((set) => ({
 			const visibleTerminalKindBySession = { ...state.visibleTerminalKindBySession };
 			delete visibleTerminalKindBySession[sessionId];
 			return { visibleTerminalKindBySession };
+		}),
+	addDetectedUrl: (sessionId, url) =>
+		set((state) => {
+			const current = state.detectedUrlsBySession[sessionId] ?? [];
+			const next = [url, ...current.filter((existing) => existing !== url)].slice(0, DETECTED_URLS_MAX);
+			return { detectedUrlsBySession: { ...state.detectedUrlsBySession, [sessionId]: next } };
 		}),
 }));
 

@@ -3,6 +3,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession } from "../types/workspace";
+import { useUiStore } from "../stores/ui-store";
 import { TerminalPane, providerScrollsByKeyboard } from "./TerminalPane";
 
 const { postMock, terminalError, terminalState, replaySettled } = vi.hoisted(() => ({
@@ -12,6 +13,7 @@ const { postMock, terminalError, terminalState, replaySettled } = vi.hoisted(() 
 	replaySettled: { value: true },
 }));
 let terminalLinkHandler: ((uri: string) => void) | undefined;
+let terminalOutputHandler: ((text: string) => void) | undefined;
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: { POST: (...args: unknown[]) => postMock(...args) },
@@ -26,12 +28,15 @@ vi.mock("./XtermTerminal", () => ({
 }));
 
 vi.mock("../hooks/useTerminalSession", () => ({
-	useTerminalSession: () => ({
-		attach: vi.fn(),
-		state: terminalState.value,
-		error: terminalError.value,
-		replaySettled: replaySettled.value,
-	}),
+	useTerminalSession: (_session: unknown, options: { onOutput?: (text: string) => void }) => {
+		terminalOutputHandler = options?.onOutput;
+		return {
+			attach: vi.fn(),
+			state: terminalState.value,
+			error: terminalError.value,
+			replaySettled: replaySettled.value,
+		};
+	},
 }));
 
 const worker = {
@@ -61,6 +66,8 @@ beforeEach(() => {
 	terminalState.value = "idle";
 	replaySettled.value = true;
 	terminalLinkHandler = undefined;
+	terminalOutputHandler = undefined;
+	useUiStore.setState({ detectedUrlsBySession: {} });
 });
 
 function renderPane(session?: WorkspaceSession) {
@@ -366,6 +373,39 @@ describe("terminal link preview", () => {
 			expect(invalidate).not.toHaveBeenCalled();
 		} finally {
 			warning.mockRestore();
+			view.restore();
+		}
+	});
+});
+
+describe("passive URL detection", () => {
+	it("retains a URL printed in a worker's terminal output", () => {
+		const view = renderPane(worker);
+		try {
+			expect(terminalOutputHandler).toBeTypeOf("function");
+			act(() => terminalOutputHandler?.("Local: http://localhost:5173/\n"));
+
+			expect(useUiStore.getState().detectedUrlsBySession["sess-1"]).toEqual(["http://localhost:5173/"]);
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("does not retain URLs without a selected session", () => {
+		const view = renderPane();
+		try {
+			expect(terminalOutputHandler).toBeUndefined();
+			expect(useUiStore.getState().detectedUrlsBySession).toEqual({});
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("does not watch output for orchestrator terminals", () => {
+		const view = renderPane(orchestrator);
+		try {
+			expect(terminalOutputHandler).toBeUndefined();
+		} finally {
 			view.restore();
 		}
 	});

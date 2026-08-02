@@ -15,6 +15,7 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useBrowserView, type BrowserViewModel } from "../hooks/useBrowserView";
 import { formatBrowserAnnotationMessage, type BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
 import type { WorkspaceSession } from "../types/workspace";
+import { DetectedUrlsMenu } from "./DetectedUrlsMenu";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import {
@@ -218,6 +219,7 @@ export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: Bro
 }
 
 export function BrowserPanelView({
+	session,
 	poppedOut,
 	onTogglePopOut,
 	browserView,
@@ -442,6 +444,7 @@ export function BrowserPanelView({
 						{agentStatusLabel}
 					</span>
 				) : null}
+				<DetectedUrlsMenu onNavigate={(url) => void navigate(url)} sessionId={session.id} />
 					<div className="browser-panel__url-wrap relative min-w-0 flex-1">
 						<Globe2
 							aria-hidden="true"
