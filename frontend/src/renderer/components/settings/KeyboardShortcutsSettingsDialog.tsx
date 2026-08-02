@@ -27,6 +27,12 @@ import {
 } from "../ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { ConfirmDialog } from "../ConfirmDialog";
+import { useT } from "../../stores/locale-store";
+
+function shortcutLabel(id: string, t: ReturnType<typeof useT>): string {
+	const key = `shortcut.${id}` as Parameters<typeof t>[0];
+	return t(key);
+}
 
 type RecordingState = { id: AppShortcutId; mode: "replace" | "add" };
 type ConflictState = {
@@ -80,6 +86,7 @@ export function KeyboardShortcutsSettingsDialog({
 	onOpenChange: (open: boolean) => void;
 	isMac?: boolean;
 }) {
+	const t = useT();
 	const overrides = useKeybindingsStore((state) => state.overrides);
 	const setOverrides = useKeybindingsStore((state) => state.setOverrides);
 	const resetBinding = useKeybindingsStore((state) => state.resetBinding);
@@ -157,9 +164,9 @@ export function KeyboardShortcutsSettingsDialog({
 			const labels = effectiveShortcutBindings(shortcut.id, isMac, overrides)
 				.map((candidate) => shortcutBindingLabel(candidate, isMac))
 				.join(" ");
-			return `${shortcut.label} ${shortcut.category} ${labels}`.toLowerCase().includes(needle);
+			return `${shortcutLabel(shortcut.id, t)} ${shortcut.category} ${labels}`.toLowerCase().includes(needle);
 		});
-	}, [isMac, overrides, query]);
+	}, [isMac, overrides, query, t]);
 
 	const applyBinding = async (
 		targetId: AppShortcutId,
@@ -339,7 +346,7 @@ export function KeyboardShortcutsSettingsDialog({
 										<div className="flex items-center gap-3">
 											<div className="min-w-0 flex-1">
 												<div className="flex items-center gap-2">
-													<span className="text-sm font-medium text-settings-label">{shortcut.label}</span>
+													<span className="text-sm font-medium text-settings-label">{shortcutLabel(shortcut.id, t)}</span>
 													{modified ? (
 														<span className="rounded-full bg-settings-menu-selected px-2 py-0.5 text-micro text-settings-muted">
 															Modified
@@ -374,7 +381,7 @@ export function KeyboardShortcutsSettingsDialog({
 																		<button
 																			type="button"
 																			className="mr-1 inline-flex size-5 items-center justify-center rounded text-settings-muted hover:bg-settings-menu-selected hover:text-settings-label"
-																			aria-label={`Remove ${shortcutBindingLabel(candidate, isMac)} from ${shortcut.label}`}
+																			aria-label={`Remove ${shortcutBindingLabel(candidate, isMac)} from ${shortcutLabel(shortcut.id, t)}`}
 																			onClick={() => void handleRemoveBinding(shortcut.id, index)}
 																		>
 																			<X className="size-3" aria-hidden="true" />
@@ -390,7 +397,7 @@ export function KeyboardShortcutsSettingsDialog({
 															<button
 																type="button"
 																className="inline-flex size-8 items-center justify-center rounded-md text-settings-muted hover:bg-settings-menu-selected hover:text-settings-label"
-																aria-label={`Change ${shortcut.label}`}
+																aria-label={`Change ${shortcutLabel(shortcut.id, t)}`}
 																onClick={() => void beginRecording({ id: shortcut.id, mode: "replace" })}
 															>
 																<Pencil className="size-icon-base" aria-hidden="true" />
@@ -404,7 +411,7 @@ export function KeyboardShortcutsSettingsDialog({
 																<button
 																	type="button"
 																	className="inline-flex size-8 items-center justify-center rounded-md text-settings-muted hover:bg-settings-menu-selected hover:text-settings-label"
-																	aria-label={`Add alternative for ${shortcut.label}`}
+																	aria-label={`Add alternative for ${shortcutLabel(shortcut.id, t)}`}
 																	onClick={() => void beginRecording({ id: shortcut.id, mode: "add" })}
 																>
 																	<Plus className="size-icon-base" aria-hidden="true" />
@@ -419,7 +426,7 @@ export function KeyboardShortcutsSettingsDialog({
 																<button
 																	type="button"
 																	className="inline-flex size-8 items-center justify-center rounded-md text-settings-muted hover:bg-settings-menu-selected hover:text-settings-label"
-																	aria-label={`Reset ${shortcut.label}`}
+																	aria-label={`Reset ${shortcutLabel(shortcut.id, t)}`}
 																	onClick={() => void handleResetBinding(shortcut.id)}
 																>
 																	<RotateCcw className="size-icon-base" aria-hidden="true" />

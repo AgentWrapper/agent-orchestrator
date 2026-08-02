@@ -58,7 +58,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { OrchestratorIcon } from "./icons";
 import aoLogo from "../../../assets/ao-logo.svg";
 import { cn } from "../lib/utils";
-import { useUiStore } from "../stores/ui-store";
+import { useUiStore } from "../stores/ui-store"
+import { useT } from "../stores/locale-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
@@ -151,6 +152,7 @@ export function Sidebar({
 	onInitializeProject,
 	onRemoveProject,
 }: SidebarProps) {
+	const t = useT();
 	const selection = useSelection();
 	const { state, setOpen } = useSidebar();
 	const isCollapsed = state === "collapsed";
@@ -256,7 +258,7 @@ export function Sidebar({
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
-								aria-label="Orchestrator board"
+								aria-label={t("shell.orchestratorBoard")}
 								className={cn(
 									"grid h-5.5 w-5.5 shrink-0 place-items-center",
 									"group-data-[collapsible=icon]:size-control-board group-data-[collapsible=icon]:rounded-lg",
@@ -301,7 +303,7 @@ export function Sidebar({
 				<div className="sidebar-expanded-chrome flex shrink-0 flex-col group-data-[collapsible=icon]:hidden">
 					<SectionDisclosure
 						icon={<Pin strokeWidth={1.75} aria-hidden="true" />}
-						label="Pinned"
+						label={t("shell.pinned")}
 						open={pinnedOpen}
 						onToggle={() => setPinnedOpen((v) => !v)}
 						className="mb-1"
@@ -319,7 +321,7 @@ export function Sidebar({
 								<Folder strokeWidth={1.75} aria-hidden="true" />
 							)
 						}
-						label="Projects"
+						label={t("shell.projects")}
 						open={projectsOpen}
 						onToggle={() => setProjectsOpen((v) => !v)}
 						trailing={
@@ -342,7 +344,7 @@ export function Sidebar({
 						<SidebarGroupContent>
 							{workspaceError ? (
 								<div className="sidebar-expanded-chrome px-2.5 py-3 group-data-[collapsible=icon]:hidden">
-									<p className="text-sm text-foreground">Could not load projects.</p>
+									<p className="text-sm text-foreground">{t("shell.couldNotLoadProjects")}</p>
 									<p className="mt-1 text-caption text-passive">{workspaceError}</p>
 								</div>
 							) : workspaces.length === 0 ? null : (
@@ -391,7 +393,7 @@ export function Sidebar({
 				>
 					<RestartToUpdateRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
 					<button
-						aria-label="Settings"
+						aria-label={t("shell.settings")}
 						className={cn(
 							NAV_ROW_CLASS,
 							"flex h-row-md w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
@@ -401,7 +403,7 @@ export function Sidebar({
 						type="button"
 					>
 						<Settings aria-hidden="true" />
-						<span className="tracking-tight">Settings</span>
+						<span className="tracking-tight">{t("shell.settings")}</span>
 					</button>
 				</div>
 				<div
@@ -412,7 +414,7 @@ export function Sidebar({
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
-								aria-label="Settings"
+								aria-label={t("shell.settings")}
 								className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
 								onClick={() => selection.goGlobalSettings()}
 								tabIndex={isCollapsed ? 0 : -1}
@@ -421,7 +423,7 @@ export function Sidebar({
 								<Settings aria-hidden="true" />
 							</button>
 						</TooltipTrigger>
-						<TooltipContent side="right">Settings</TooltipContent>
+						<TooltipContent side="right">{t("shell.settings")}</TooltipContent>
 					</Tooltip>
 				</div>
 			</SidebarFooter>
@@ -434,7 +436,7 @@ export function Sidebar({
 				style={noDragStyle}
 			/>
 			<SidebarRail
-				aria-label="Expand sidebar"
+				aria-label={t("shell.expandSidebar")}
 				className="group-data-[state=expanded]:hidden hover:after:bg-transparent"
 				onClick={() => setOpen(true)}
 				onPointerDown={onCollapsedResizePointerDown}
@@ -458,6 +460,7 @@ function ProjectItem({
 	onToggle: () => void;
 	onRemoveProject: (projectId: string) => Promise<void>;
 }) {
+	const t = useT();
 	const projectActive = selection.activeProjectId === workspace.id && !selection.activeSessionId;
 	const queryClient = useQueryClient();
 	const [removeError, setRemoveError] = useState<string | null>(null);
@@ -533,7 +536,7 @@ function ProjectItem({
 		try {
 			await onRemoveProject(workspace.id);
 		} catch (err) {
-			const message = err instanceof Error ? err.message : "Could not remove project";
+			const message = err instanceof Error ? err.message : t("shell.couldNotRemoveProject");
 			setRemoveError(message);
 		} finally {
 			setIsRemoving(false);
@@ -595,7 +598,7 @@ function ProjectItem({
 							<LayoutDashboard aria-hidden="true" />
 						</button>
 					</TooltipTrigger>
-					<TooltipContent>Dashboard</TooltipContent>
+					<TooltipContent>{t("shell.dashboard")}</TooltipContent>
 				</Tooltip>
 				<Tooltip>
 					<TooltipTrigger asChild>
@@ -611,12 +614,12 @@ function ProjectItem({
 					</TooltipTrigger>
 					<TooltipContent>
 						{isProjectRestarting
-							? "Restarting…"
+							? t("shell.restarting")
 							: isSpawning
-								? "Spawning…"
+								? t("shell.spawning")
 								: orchestrator
-									? "Orchestrator"
-									: "Spawn orchestrator"}
+									? t("shell.orchestrator")
+									: t("shell.spawnOrchestratorLower")}
 					</TooltipContent>
 				</Tooltip>
 				<DropdownMenu>
@@ -685,7 +688,7 @@ function ProjectItem({
 						</p>
 					</>
 				}
-				confirmLabel="Remove"
+				confirmLabel={t("shell.remove")}
 				destructive
 				onConfirm={handleConfirmRemove}
 			/>
@@ -800,6 +803,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 // the row itself is the prompt, so no confirmation dialog. Renders nothing in
 // every other update state.
 function RestartToUpdateRow({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
+	const t = useT();
 	if (status.state !== "downloaded") return null;
 	const escalated = status.escalated === true;
 	return (
@@ -817,7 +821,7 @@ function RestartToUpdateRow({ status, tabIndex }: { status: UpdateStatus; tabInd
 		>
 			<RefreshCw aria-hidden="true" className="size-icon-lg shrink-0" />
 			<span className="min-w-0 flex-1">
-				<span className="block truncate tracking-tight">Restart to update</span>
+				<span className="block truncate tracking-tight">{t("shell.restartToUpdate")}</span>
 				{status.version && (
 					<span className={cn("block truncate text-caption font-normal", escalated ? "text-working" : "text-passive")}>
 						v{status.version} ready
@@ -835,6 +839,7 @@ function RestartToUpdateRow({ status, tabIndex }: { status: UpdateStatus; tabInd
 // Icon-rail variant of RestartToUpdateRow for the collapsed sidebar: icon-only
 // with the two-line copy in the tooltip.
 function RestartToUpdateRailButton({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
+	const t = useT();
 	if (status.state !== "downloaded") return null;
 	const escalated = status.escalated === true;
 	return (
@@ -856,7 +861,7 @@ function RestartToUpdateRailButton({ status, tabIndex }: { status: UpdateStatus;
 				</button>
 			</TooltipTrigger>
 			<TooltipContent side="right">
-				Restart to update{status.version ? ` · v${status.version} ready` : ""}
+				{t("shell.restartToUpdate")}{status.version ? ` · v${status.version} ready` : ""}
 			</TooltipContent>
 		</Tooltip>
 	);
@@ -921,12 +926,13 @@ function SectionDisclosure({
 }
 
 function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
+	const t = useT();
 	const { state } = useSidebar();
 	const isCollapsed = state === "collapsed";
 	return (
 		<SidebarMenuItem className="group-data-[collapsible=icon]:mb-0">
 			<SidebarMenuButton
-				aria-label="Search"
+				aria-label={t("shell.search")}
 				onClick={() => {
 					// Open on the microtask after this click rather than inside it: mounting
 					// the palette dialog while this button's tooltip layer is still tearing
@@ -934,7 +940,7 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 					// "defers opening" test pins the deferral so it is not dropped as noise.
 					queueMicrotask(onOpen);
 				}}
-				tooltip={isCollapsed ? "Search" : undefined}
+				tooltip={isCollapsed ? t("shell.search") : undefined}
 				className={cn(
 					// Filled search trigger (Cursor-style): icon + label.
 					"h-8 gap-2 rounded-lg bg-muted px-2.5 text-sm font-normal text-muted-foreground",
@@ -956,6 +962,7 @@ function CreateProjectButton({
 	onCreateProject,
 	onInitializeProject,
 }: Pick<SidebarProps, "onCreateProject" | "onInitializeProject"> & { hideTrigger?: boolean }) {
+	const t = useT();
 	// Single CreateProjectFlow owner for the sidebar: the header "+" stays mounted
 	// (CSS-hidden when collapsed or on the empty start page) so it can own
 	// openSignal for ⌘N on every shell route. The collapsed rail button below
@@ -972,7 +979,7 @@ function CreateProjectButton({
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<button
-							aria-label="New project"
+							aria-label={t("shell.newProject")}
 							className={cn(
 								// No own hover fill — lives inside the Projects section hover pill.
 								"grid size-icon-xl shrink-0 place-items-center rounded-sm text-passive transition-colors hover:text-foreground",
@@ -993,13 +1000,14 @@ function CreateProjectButton({
 }
 
 function CreateProjectListItem() {
+	const t = useT();
 	const requestCreateProject = useUiStore((state) => state.requestCreateProject);
 	return (
 		<SidebarMenuItem className="mb-px group-data-[collapsible=icon]:mb-0">
 			<Tooltip>
 				<TooltipTrigger asChild>
 					<button
-						aria-label="New project"
+						aria-label={t("shell.newProject")}
 						className="grid h-control-board w-full place-items-center rounded-lg text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
 						onClick={() => requestCreateProject()}
 						type="button"
@@ -1007,7 +1015,7 @@ function CreateProjectListItem() {
 						<Plus className="size-icon-sm" aria-hidden="true" />
 					</button>
 				</TooltipTrigger>
-				<TooltipContent side="right">New project</TooltipContent>
+				<TooltipContent side="right">{t("shell.newProject")}</TooltipContent>
 			</Tooltip>
 		</SidebarMenuItem>
 	);

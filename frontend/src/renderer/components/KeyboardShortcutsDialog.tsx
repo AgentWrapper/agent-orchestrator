@@ -7,6 +7,22 @@ import {
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { useKeybindingsStore } from "../stores/keybindings-store";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
+import { useT } from "../stores/locale-store";
+
+function shortcutLabel(id: string, t: ReturnType<typeof useT>): string {
+	const key = `shortcut.${id}` as Parameters<typeof t>[0];
+	return t(key);
+}
+
+function shortcutCategoryLabel(category: string, t: ReturnType<typeof useT>): string {
+	const map: Record<string, Parameters<typeof t>[0]> = {
+		General: "shortcut.category.general",
+		Navigation: "shortcut.category.navigation",
+		Session: "shortcut.category.session",
+	};
+	return t(map[category] ?? "shortcut.category.general");
+}
+
 
 type KeyboardShortcutsDialogProps = {
 	open: boolean;
@@ -28,6 +44,7 @@ export function KeyboardShortcutsDialog({
 	onCustomize,
 	isMac = isMacPlatform(),
 }: KeyboardShortcutsDialogProps) {
+	const t = useT();
 	const isCommandPaletteEnabled = useCommandPaletteEnabled();
 	const overrides = useKeybindingsStore((state) => state.overrides);
 	const availableShortcuts = APP_SHORTCUTS.filter(
@@ -49,14 +66,14 @@ export function KeyboardShortcutsDialog({
 						const shortcuts = availableShortcuts.filter((shortcut) => shortcut.category === category);
 						if (shortcuts.length === 0) return null;
 						return (
-							<section className="border-b border-border py-4 last:border-b-0" key={category}>
+							<section className="border-b border-border py-4 last:border-b-0" key={shortcutCategoryLabel(category, t)}>
 								<h2 className="mb-2 font-mono text-micro font-semibold uppercase tracking-wide-lg text-passive">
-									{category}
+									{shortcutCategoryLabel(category, t)}
 								</h2>
 								<div className="flex flex-col">
 									{shortcuts.map((shortcut) => (
 										<div className="flex min-h-11 items-center justify-between gap-5 py-1.5" key={shortcut.id}>
-											<p className="min-w-0 text-control font-medium text-foreground">{shortcut.label}</p>
+											<p className="min-w-0 text-control font-medium text-foreground">{shortcutLabel(shortcut.id, t)}</p>
 											<div className="flex shrink-0 flex-col items-end gap-1">
 												{effectiveShortcutBindings(shortcut.id, isMac, overrides).map((binding, bindingIndex) => {
 													const keys = shortcutBindingKeys(binding, isMac);

@@ -1,5 +1,7 @@
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { sortedPRs, type PRState, type PullRequestFacts, type WorkspaceSession } from "../types/workspace";
+import { t, type MessageKey } from "../i18n";
+import { activeLocale } from "../stores/locale-store";
 
 const prStateRank: Record<PRState, number> = { open: 0, draft: 1, merged: 2, closed: 3 };
 const ciStates = new Set<SessionPRSummary["ci"]["state"]>(["unknown", "pending", "passing", "failing"]);
@@ -249,10 +251,11 @@ export function prStatusRows(pr: SessionPRSummary): PRStatusRow[] {
 }
 
 export function prSummaryParts(pr: SessionPRSummary): PRSummaryPart[] {
+	const locale = activeLocale();
 	return [
 		{
 			key: "ci",
-			label: "CI",
+			label: t(locale, "pr.section.ci"),
 			status: ciLabel(pr.ci.state),
 			summary: ciSummary(pr),
 			links: ciLinks(pr),
@@ -263,7 +266,7 @@ export function prSummaryParts(pr: SessionPRSummary): PRSummaryPart[] {
 		},
 		{
 			key: "merge",
-			label: "Merge",
+			label: t(locale, "pr.section.merge"),
 			status: mergeabilityLabel(pr.mergeability.state),
 			summary: mergeSummary(pr),
 			links: mergeLinks(pr),
@@ -274,7 +277,7 @@ export function prSummaryParts(pr: SessionPRSummary): PRSummaryPart[] {
 		},
 		{
 			key: "review",
-			label: "Review",
+			label: t(locale, "pr.section.review"),
 			status: reviewLabel(pr.review.decision),
 			summary: reviewSummary(pr),
 			links: reviewLinks(pr),
@@ -303,7 +306,7 @@ export function prDiffSummary(pr: SessionPRSummary): string | undefined {
 
 function ciSummary(pr: SessionPRSummary): string | undefined {
 	if (pr.ci.state === "failing") {
-		return pr.ci.failingChecks.length === 0 ? "No failing check link observed" : undefined;
+		return pr.ci.failingChecks.length === 0 ? t(activeLocale(), "pr.ci.noFailingLink") : undefined;
 	}
 	return undefined;
 }
@@ -320,17 +323,18 @@ function ciLinks(pr: SessionPRSummary): PRSummaryLink[] {
 }
 
 function reviewSummary(pr: SessionPRSummary): string | undefined {
+	const locale = activeLocale();
 	if (pr.state === "merged" || pr.state === "closed") {
 		return undefined;
 	}
 	if (pr.state === "draft") {
-		return "Draft PR · Not ready for review";
+		return t(locale, "pr.review.draftNotReady");
 	}
 	if (pr.review.decision === "changes_requested" || pr.review.hasUnresolvedHumanComments) {
-		return reviewLinks(pr).length === 0 ? "Requested changes still active" : undefined;
+		return reviewLinks(pr).length === 0 ? t(locale, "pr.review.changesActive") : undefined;
 	}
 	if (pr.review.decision === "review_required") {
-		return "Required review not submitted";
+		return t(locale, "pr.review.requiredNotSubmitted");
 	}
 	return undefined;
 }
@@ -344,20 +348,26 @@ function reviewLinks(pr: SessionPRSummary): PRSummaryLink[] {
 	}
 	const links = pr.review.unresolvedBy.slice(0, 3).map((reviewer) => reviewAttentionLink(pr, reviewer));
 	if (links.length === 0 && pr.review.decision === "changes_requested") {
-		links.push({ label: "PR", href: prBrowserUrl(pr), title: "Open pull request" });
+		const locale = activeLocale();
+		links.push({
+			label: t(locale, "pr.short"),
+			href: prBrowserUrl(pr),
+			title: t(locale, "pr.review.openPR"),
+		});
 	}
 	return links;
 }
 
 function mergeSummary(pr: SessionPRSummary): string | undefined {
+	const locale = activeLocale();
 	if (pr.state === "merged" || pr.state === "closed") {
 		return formatDiffSummary(pr);
 	}
 	if (pr.mergeability.state === "conflicting") {
-		return mergeLinks(pr).length === 0 ? "Conflicts with the base branch" : undefined;
+		return mergeLinks(pr).length === 0 ? t(locale, "pr.merge.conflictsWithBase") : undefined;
 	}
 	if (pr.mergeability.state === "blocked" || pr.mergeability.state === "unstable") {
-		return mergeLinks(pr).length === 0 ? "Provider reports merge is blocked" : undefined;
+		return mergeLinks(pr).length === 0 ? t(locale, "pr.merge.providerBlocked") : undefined;
 	}
 	return formatDiffSummary(pr);
 }
@@ -436,15 +446,16 @@ function toMergeabilityState(value: string): SessionPRSummary["mergeability"]["s
 }
 
 function ciLabel(state: SessionPRSummary["ci"]["state"]): string {
+	const locale = activeLocale();
 	switch (state) {
 		case "passing":
-			return "Passing";
+			return t(locale, "pr.ci.passing");
 		case "failing":
-			return "Failing";
+			return t(locale, "pr.ci.failing");
 		case "pending":
-			return "Pending";
+			return t(locale, "pr.ci.pending");
 		case "unknown":
-			return "Checking";
+			return t(locale, "pr.ci.checking");
 	}
 }
 
@@ -462,15 +473,16 @@ function ciTone(state: SessionPRSummary["ci"]["state"]): PRDisplayTone {
 }
 
 function reviewLabel(decision: SessionPRSummary["review"]["decision"]): string {
+	const locale = activeLocale();
 	switch (decision) {
 		case "approved":
-			return "Approved";
+			return t(locale, "pr.review.approved");
 		case "changes_requested":
-			return "Changes requested";
+			return t(locale, "pr.review.changesRequested");
 		case "review_required":
-			return "Pending";
+			return t(locale, "pr.review.pending");
 		case "none":
-			return "None";
+			return t(locale, "pr.review.none");
 	}
 }
 
@@ -491,17 +503,18 @@ function reviewTone(
 }
 
 function mergeabilityLabel(state: SessionPRSummary["mergeability"]["state"]): string {
+	const locale = activeLocale();
 	switch (state) {
 		case "mergeable":
-			return "Mergeable";
+			return t(locale, "pr.merge.mergeable");
 		case "conflicting":
-			return "Conflict";
+			return t(locale, "pr.merge.conflict");
 		case "blocked":
-			return "Blocked";
+			return t(locale, "pr.merge.blocked");
 		case "unstable":
-			return "Unstable";
+			return t(locale, "pr.merge.unstable");
 		case "unknown":
-			return "Checking";
+			return t(locale, "pr.merge.checking");
 	}
 }
 
@@ -542,12 +555,14 @@ function formatLineDelta(additions: number, deletions: number): string | undefin
 }
 
 function mergeAttentionLinks(pr: SessionPRSummary, kind: "merge_conflict" | "merge_blocked"): PRSummaryLink[] {
+	const locale = activeLocale();
 	const href =
 		kind === "merge_conflict" ? mergeConflictUrl(pr) : pr.mergeability.prUrl || pr.htmlUrl || pr.url || undefined;
+	const openConflicts = t(locale, "pr.merge.openConflicts");
 	const fileLinks = (pr.mergeability.conflictFiles ?? []).slice(0, 3).map((file) => ({
 		label: file.path,
 		href: file.url || href,
-		title: kind === "merge_conflict" ? "Open merge conflicts" : undefined,
+		title: kind === "merge_conflict" ? openConflicts : undefined,
 	}));
 	const reasonLinks =
 		fileLinks.length > 0 || kind === "merge_conflict"
@@ -557,7 +572,9 @@ function mergeAttentionLinks(pr: SessionPRSummary, kind: "merge_conflict" | "mer
 					href,
 				}));
 	const fallbackLink =
-		kind === "merge_conflict" && href ? [{ label: "conflicts", href, title: "Open merge conflicts" }] : [];
+		kind === "merge_conflict" && href
+			? [{ label: t(locale, "pr.merge.conflicts"), href, title: openConflicts }]
+			: [];
 	return fileLinks.length > 0 ? fileLinks : reasonLinks.length > 0 ? reasonLinks : fallbackLink;
 }
 
@@ -603,19 +620,22 @@ function reviewerLabel(reviewer: SessionPRSummary["review"]["unresolvedBy"][numb
 }
 
 function reviewerDisplayName(reviewer: SessionPRSummary["review"]["unresolvedBy"][number]): string {
-	return reviewer.isBot ? `${reviewer.reviewerId} bot` : reviewer.reviewerId;
+	if (!reviewer.isBot) return reviewer.reviewerId;
+	return t(activeLocale(), "pr.botSuffix", { name: reviewer.reviewerId });
 }
 
 function reviewAttentionLink(
 	pr: SessionPRSummary,
 	reviewer: SessionPRSummary["review"]["unresolvedBy"][number],
 ): PRSummaryLink {
+	const locale = activeLocale();
+	const name = reviewerDisplayName(reviewer);
 	const inlineURL = reviewer.links.find((link) => link.url)?.url;
 	if (reviewer.reviewUrl) {
 		return {
 			label: reviewerLabel(reviewer),
 			href: reviewer.reviewUrl,
-			title: `Open requested-changes review from ${reviewerDisplayName(reviewer)}`,
+			title: t(locale, "pr.openReviewFrom", { name }),
 		};
 	}
 	if (inlineURL) {
@@ -624,29 +644,34 @@ function reviewAttentionLink(
 			href: inlineURL,
 			title:
 				reviewer.count > 0
-					? `${reviewer.count} unresolved ${pluralize("comment", reviewer.count)} from ${reviewerDisplayName(reviewer)}`
-					: `Open review comments from ${reviewerDisplayName(reviewer)}`,
+					? t(locale, "pr.unresolvedComments", {
+							count: reviewer.count,
+							noun: pluralize("comment", reviewer.count),
+							name,
+						})
+					: t(locale, "pr.openCommentsFrom", { name }),
 		};
 	}
 	return {
 		label: reviewerLabel(reviewer),
 		href: prBrowserUrl(pr),
-		title: `Open pull request for ${reviewerDisplayName(reviewer)}`,
+		title: t(locale, "pr.openPRFor", { name }),
 	};
 }
 
 function mergeReasonLabel(reason: string): string {
+	const locale = activeLocale();
 	switch (reason) {
 		case "behind_base":
-			return "branch behind base";
+			return t(locale, "pr.reason.behindBase");
 		case "ci_failing":
-			return "CI failing";
+			return t(locale, "pr.reason.ciFailing");
 		case "changes_requested":
-			return "changes requested";
+			return t(locale, "pr.reason.changesRequested");
 		case "review_required":
-			return "review required";
+			return t(locale, "pr.reason.reviewRequired");
 		case "blocked_by_provider":
-			return "provider blocked";
+			return t(locale, "pr.reason.providerBlocked");
 		default:
 			return reason.replaceAll("_", " ");
 	}
@@ -657,9 +682,11 @@ function overflowLabel(total: number, shown: number, noun: string): string | und
 	if (extra <= 0) {
 		return undefined;
 	}
-	return `+${extra} ${pluralize(noun, extra)}`;
+	return t(activeLocale(), "pr.overflow", { n: extra, noun: pluralize(noun, extra) });
 }
 
 function pluralize(noun: string, count: number): string {
-	return count === 1 ? noun : `${noun}s`;
+	const locale = activeLocale();
+	const key = (count === 1 ? `pr.noun.${noun}` : `pr.noun.${noun}s`) as MessageKey;
+	return t(locale, key);
 }

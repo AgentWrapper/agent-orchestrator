@@ -1,46 +1,52 @@
 import type { DaemonStatus } from "../../shared/daemon-status";
+import { t } from "../i18n";
+import { activeLocale } from "../stores/locale-store";
 
 export function daemonFailureMessage(status: DaemonStatus): string {
+	// Prefer the daemon-provided English diagnostic when present.
 	if (status.message) return status.message;
-	if (status.state === "starting") return "AO daemon is starting.";
-	return "AO daemon is not ready.";
+	const locale = activeLocale();
+	if (status.state === "starting") return t(locale, "daemon.message.starting");
+	return t(locale, "daemon.message.notReady");
 }
 
 export function daemonFailureTitle(status: DaemonStatus): string {
+	const locale = activeLocale();
 	switch (status.code) {
 		case "not_ready":
 		case "port_unconfirmed":
-			return "AO daemon is not ready yet";
+			return t(locale, "daemon.title.notReady");
 		case "not_configured":
-			return "AO daemon is not configured";
+			return t(locale, "daemon.title.notConfigured");
 		case "daemon_unreachable":
-			return "AO daemon is unreachable";
+			return t(locale, "daemon.title.unreachable");
 		case "identity_mismatch":
-			return "AO daemon identity check failed";
+			return t(locale, "daemon.title.identityMismatch");
 		case "binary_missing":
-			return "AO daemon binary is missing";
+			return t(locale, "daemon.title.binaryMissing");
 		case "spawn_failed":
 		case "exited":
 		default:
-			return "AO daemon failed to start";
+			return t(locale, "daemon.title.failed");
 	}
 }
 
 export function daemonFailureHint(status: DaemonStatus): string {
+	const locale = activeLocale();
 	switch (status.code) {
 		case "binary_missing":
-			return "Run npm run build:daemon to rebuild the daemon.";
+			return t(locale, "daemon.hint.binaryMissing");
 		case "spawn_failed":
 		case "exited":
 			return "";
 		case "not_ready":
-			return "The daemon has not passed its readiness check yet. Open details below for more information.";
+			return t(locale, "daemon.hint.notReady");
 		case "not_configured":
-			return "Set AO_DAEMON_COMMAND or run the desktop app from a source checkout.";
+			return t(locale, "daemon.hint.notConfigured");
 		case "daemon_unreachable":
 		case "identity_mismatch":
-			return "Stop the conflicting daemon, then restart the desktop app.";
+			return t(locale, "daemon.hint.conflict");
 		default:
-			return "Check the terminal where you ran npm run dev for details.";
+			return t(locale, "daemon.hint.default");
 	}
 }

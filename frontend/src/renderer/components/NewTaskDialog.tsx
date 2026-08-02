@@ -13,6 +13,7 @@ import type { AgentProvider } from "../types/workspace";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useImageAttachments } from "../hooks/useImageAttachments";
 import { cn } from "../lib/utils";
+import { useT } from "../stores/locale-store";
 
 type Project = components["schemas"]["Project"];
 
@@ -24,6 +25,7 @@ type NewTaskDialogProps = {
 };
 
 export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewTaskDialogProps) {
+	const t = useT();
 	const queryClient = useQueryClient();
 	const titleId = useId();
 	const promptId = useId();
@@ -55,7 +57,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 				params: { path: { id: projectId as string } },
 			});
 			if (apiError) throw new Error(apiErrorMessage(apiError));
-			if (data?.status !== "ok") throw new Error("Project config is unavailable.");
+			if (data?.status !== "ok") throw new Error(t("newTask.configUnavailable"));
 			return data.project as Project;
 		},
 	});
@@ -99,7 +101,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 		const cleanPrompt = prompt.trim();
 		const cleanBranch = branch.trim();
 		if (!cleanTitle || !cleanPrompt) {
-			setError("Title and brief are required.");
+			setError(t("newTask.titleRequired"));
 			return;
 		}
 
@@ -123,15 +125,15 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 			const { data, error: apiError } = await apiClient.POST("/api/v1/sessions", {
 				body,
 			});
-			if (apiError) throw new Error(apiErrorMessage(apiError, "Unable to start task"));
-			if (!data?.session?.id) throw new Error("Task creation returned no session");
+			if (apiError) throw new Error(apiErrorMessage(apiError, t("newTask.unableToStart")));
+			if (!data?.session?.id) throw new Error(t("newTask.noSession"));
 			void captureRendererEvent("ao.renderer.task_create_succeeded", { project_id: projectId });
 			onCreated(data.session.id);
 			onOpenChange(false);
 		} catch (err) {
 			void captureRendererEvent("ao.renderer.task_create_failed", { project_id: projectId });
 			void queryClient.invalidateQueries({ queryKey: agentsQueryKey });
-			setError(err instanceof Error ? err.message : "Unable to start task");
+			setError(err instanceof Error ? err.message : t("newTask.unableToStart"));
 		} finally {
 			setIsSubmitting(false);
 		}
@@ -167,7 +169,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-xl -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
 					<div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
 						<div className="min-w-0">
-							<Dialog.Title className="text-subtitle font-semibold text-foreground">New task</Dialog.Title>
+							<Dialog.Title className="text-subtitle font-semibold text-foreground">{t("newTask.title")}</Dialog.Title>
 							<Dialog.Description className="mt-1 text-xs text-muted-foreground">
 								Start a worker directly from this project.
 							</Dialog.Description>
@@ -176,7 +178,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 							<button
 								type="button"
 								className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition hover:bg-surface hover:text-foreground"
-								aria-label="Close new task dialog"
+								aria-label={t("newTask.close")}
 							>
 								<X className="size-icon-base" aria-hidden="true" />
 							</button>
@@ -191,7 +193,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 							<Input
 								id={titleId}
 								autoFocus
-								placeholder="Fix WebGL fallback renderer"
+								placeholder={t("newTask.titlePlaceholder")}
 								value={title}
 								onChange={(event) => setTitle(event.target.value)}
 							/>
@@ -278,15 +280,15 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 								}}
 							/>
 							{attachmentError && <p className="text-caption text-destructive">{attachmentError}</p>}
-							<p className="text-caption text-muted-foreground">Enter to start · Shift+Enter for a new line</p>
+							<p className="text-caption text-muted-foreground">{t("newTask.enterHint")}</p>
 						</div>
 
 						<div className={isScratchProject ? "grid gap-3" : "grid gap-3 sm:grid-cols-[1fr_1fr]"}>
 							<div className="space-y-1.5">
 								<RequiredAgentField
 									id={agentId}
-									label="Agent"
-									placeholder="Project default"
+									label={t("newTask.agent")}
+									placeholder={t("newTask.projectDefault")}
 									value={agent}
 									authorized={agentCatalog?.authorized}
 									installed={agentCatalog?.installed}
@@ -303,7 +305,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 									disabled={refreshAgentsMutation.isPending}
 									onClick={() => refreshAgentsMutation.mutate()}
 								>
-									{refreshAgentsMutation.isPending ? "Refreshing agents..." : "Refresh agents"}
+									{refreshAgentsMutation.isPending ? t("newTask.refreshingAgents") : t("newTask.refreshAgents")}
 								</button>
 							</div>
 							{!isScratchProject && (
@@ -331,7 +333,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 							<div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
 								{refreshAgentsMutation.error instanceof Error
 									? refreshAgentsMutation.error.message
-									: "Could not refresh agent catalog."}
+									: t("newTask.refreshFailed")}
 							</div>
 						)}
 
@@ -343,7 +345,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 							</Dialog.Close>
 							<Button type="submit" disabled={isSubmitting || !projectId}>
 								{isSubmitting ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
-								{isSubmitting ? "Starting..." : "Start task"}
+								{isSubmitting ? t("newTask.starting") : t("newTask.start")}
 							</Button>
 						</div>
 					</form>

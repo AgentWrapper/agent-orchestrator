@@ -8,6 +8,8 @@ import {
 	type WorkspaceSession,
 	type WorkspaceSummary,
 } from "../types/workspace";
+import { t, type MessageKey } from "../i18n";
+import { activeLocale } from "../stores/locale-store";
 
 export type CommandGroupId = "current" | "attention" | "projects" | "sessions" | "prs" | "global";
 
@@ -46,13 +48,35 @@ export type CommandPaletteContext = {
 
 export const commandGroupOrder: CommandGroupId[] = ["current", "attention", "projects", "sessions", "prs", "global"];
 
+const commandGroupLabelKeys: Record<CommandGroupId, MessageKey> = {
+	current: "command.group.current",
+	attention: "command.group.attention",
+	projects: "command.group.projects",
+	sessions: "command.group.sessions",
+	prs: "command.group.prs",
+	global: "command.group.global",
+};
+
+/** Live labels for the current locale. */
 export const commandGroupLabel: Record<CommandGroupId, string> = {
-	current: "Current",
-	attention: "Needs attention",
-	projects: "Projects",
-	sessions: "Sessions",
-	prs: "Pull requests",
-	global: "Global",
+	get current() {
+		return t(activeLocale(), commandGroupLabelKeys.current);
+	},
+	get attention() {
+		return t(activeLocale(), commandGroupLabelKeys.attention);
+	},
+	get projects() {
+		return t(activeLocale(), commandGroupLabelKeys.projects);
+	},
+	get sessions() {
+		return t(activeLocale(), commandGroupLabelKeys.sessions);
+	},
+	get prs() {
+		return t(activeLocale(), commandGroupLabelKeys.prs);
+	},
+	get global() {
+		return t(activeLocale(), commandGroupLabelKeys.global);
+	},
 };
 
 function isSyntheticBranch(session: WorkspaceSession): boolean {

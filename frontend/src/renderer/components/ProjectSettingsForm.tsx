@@ -36,6 +36,7 @@ import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { SettingsPageShell } from "./settings/SettingsPageShell";
 import { SettingsPanel } from "./settings/SettingsPanel";
 import { SettingsRow } from "./settings/SettingsRow";
+import { useT } from "../stores/locale-store";
 import { SettingsSection } from "./settings/SettingsSection";
 
 type Project = components["schemas"]["Project"];
@@ -93,6 +94,7 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 }
 
 function SettingsBody({ project, projectId, onSaved }: { project: Project; projectId: string; onSaved: () => void }) {
+	const t = useT();
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
 	const config = project.config ?? {};
@@ -224,10 +226,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				mutation.mutate();
 			}}
 		>
-			<SettingsSection title="Identity">
+			<SettingsSection title={t("settings.project.identity")}>
 				<SettingsInputRow
 					icon={Tag}
-					label="Project name"
+					label={t("settings.project.name")}
 					id="projectName"
 					value={form.displayName}
 					onChange={(value) => setForm((f) => ({ ...f, displayName: value }))}
@@ -239,7 +241,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			</SettingsSection>
 
 			{project.kind === "workspace" && (
-				<SettingsSection title="Workspace repos">
+				<SettingsSection title={t("settings.project.workspaceRepos")}>
 					{project.workspaceRepos?.length ? (
 						project.workspaceRepos.map((repo) => (
 							<SettingsRow key={repo.name} icon={FolderGit2} label={repo.name}>
@@ -256,10 +258,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			)}
 
 			{!isScratchProject && (
-				<SettingsSection title="Worktrees">
+				<SettingsSection title={t("settings.project.worktrees")}>
 					<SettingsInputRow
 						icon={GitBranch}
-						label="Default branch"
+						label={t("settings.project.defaultBranch")}
 						id="defaultBranch"
 						value={form.defaultBranch}
 						placeholder="main"
@@ -267,7 +269,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					/>
 					<SettingsInputRow
 						icon={Hash}
-						label="Session prefix"
+						label={t("settings.project.sessionPrefix")}
 						id="sessionPrefix"
 						value={form.sessionPrefix}
 						placeholder="ao"
@@ -276,14 +278,14 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				</SettingsSection>
 			)}
 
-			<SettingsSection title="Agents">
+			<SettingsSection title={t("settings.project.agents")}>
 				<RequiredAgentField
 					id="workerAgent"
 					variant="settings-row"
 					icon={Bot}
 					value={form.workerAgent}
 					placeholder="Select worker agent"
-					label="Default worker agent"
+					label={t("settings.project.defaultWorker")}
 					authorized={agentCatalog?.authorized}
 					installed={agentCatalog?.installed}
 					supported={agentCatalog?.supported}
@@ -297,7 +299,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					icon={Network}
 					value={form.orchestratorAgent}
 					placeholder="Select orchestrator agent"
-					label="Default orchestrator agent"
+					label={t("settings.project.defaultOrchestrator")}
 					authorized={agentCatalog?.authorized}
 					installed={agentCatalog?.installed}
 					supported={agentCatalog?.supported}
@@ -305,10 +307,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					invalid={validationError !== null && form.orchestratorAgent === ""}
 					onChange={(v) => setForm((f) => ({ ...f, orchestratorAgent: v }))}
 				/>
-				<SettingsRow icon={RefreshCw} label="Refresh agents">
+				<SettingsRow icon={RefreshCw} label={t("settings.project.refreshAgents")}>
 					<button
 						type="button"
-						aria-label="Refresh agents"
+						aria-label={t("settings.project.refreshAgents")}
 						className="settings-option-trigger inline-flex items-center gap-1.5 disabled:pointer-events-none disabled:opacity-50"
 						disabled={refreshAgentsMutation.isPending}
 						onClick={() => refreshAgentsMutation.mutate()}
@@ -329,7 +331,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				)}
 				<SettingsInputRow
 					icon={Sparkles}
-					label="Model override"
+					label={t("settings.project.modelOverride")}
 					id="model"
 					value={form.model}
 					placeholder="(agent default)"
@@ -477,8 +479,9 @@ function SettingsValueRow({
 }
 
 function PermissionModeSelect({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+	const t = useT();
 	const options = [
-		{ value: "__default__", label: "Project default" },
+		{ value: "__default__", label: t("settings.project.default") },
 		...PERMISSION_MODE_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label })),
 	];
 
@@ -512,6 +515,7 @@ function ReviewerSelect({
 	installed?: components["schemas"]["AgentInfo"][];
 	supported?: components["schemas"]["AgentInfo"][];
 }) {
+	const t = useT();
 	const fallbackAgents: components["schemas"]["AgentInfo"][] = [...KNOWN_REVIEWER_HARNESS_IDS].map((id) => ({
 		id,
 		label: id,
@@ -527,7 +531,7 @@ function ReviewerSelect({
 	});
 
 	const menuOptions = [
-		{ value: "__default__", label: "Project default" },
+		{ value: "__default__", label: t("settings.project.default") },
 		...options.map((agent) => ({ value: agent.id, label: agent.label, disabled: agent.disabled })),
 	];
 	const selectedValue = value || "__default__";
@@ -546,7 +550,7 @@ function ReviewerSelect({
 					{selected && selected.value !== "__default__" ? (
 						<AgentAvatar provider={selected.value} className="size-icon-lg" />
 					) : null}
-					<span className="min-w-0 truncate">{selected?.label ?? "Project default"}</span>
+					<span className="min-w-0 truncate">{selected?.label ?? t("settings.project.default")}</span>
 				</>
 			)}
 			renderMenuItem={(option, selected) => {

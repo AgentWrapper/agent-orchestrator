@@ -53,6 +53,7 @@ import { aoBridge } from "../lib/bridge";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { cn } from "../lib/utils";
 import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
+import { useLocale, useT } from "../stores/locale-store";
 import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
@@ -68,7 +69,6 @@ type SessionsBoardProps = {
 // Live merged sessions remain in-flow. A terminated runtime is archived even
 // when its SCM outcome remains `merged`.
 type Column = AttentionZoneView;
-const COLUMNS: Column[] = boardAttentionZoneOrder.map((zone) => getAttentionZoneViewForZone(zone));
 
 function isArchivedSession(session: WorkspaceSession): boolean {
 	return session.isTerminated === true || session.status === "terminated";
@@ -79,8 +79,12 @@ const dragStyle = isMac ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) :
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
 export function SessionsBoard({ projectId }: SessionsBoardProps) {
+	const t = useT();
+	const locale = useLocale();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
+	const COLUMNS: Column[] = boardAttentionZoneOrder.map((zone) => getAttentionZoneViewForZone(zone));
+	void locale; // re-resolve column labels when locale changes
 	const restoreSessionById = useRestoreSession();
 	const workspaceQuery = useWorkspaceQuery();
 	const shell = useShellMaybe();
@@ -92,7 +96,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
 	const workspace = projectId ? workspaces[0] : undefined;
 	// Same crumb as ShellTopbar: project name in scope, else root-board "Board".
-	const boardLabel = workspace?.name ?? (projectId ? "" : "Board");
+	const boardLabel = workspace?.name ?? (projectId ? "" : t("shell.board"));
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
 	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity).label : undefined;
@@ -231,7 +235,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			// Never fail silently: the daemon's message (e.g. a worktree/branch
 			// conflict) is the only actionable signal the user gets.
 			console.error("Failed to spawn orchestrator:", err);
-			setSpawnError(err instanceof Error ? err.message : "Could not spawn orchestrator");
+			setSpawnError(err instanceof Error ? err.message : t("shell.couldNotSpawn"));
 		} finally {
 			setIsSpawning(false);
 		}
@@ -256,16 +260,20 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				</TopbarKillError>
 			)}
 			<TopbarButton
-				aria-label="New task"
+				aria-label={t("shell.newTask")}
 				disabled={isProjectRestarting}
 				onClick={() => projectId && requestNewTask(projectId)}
 				variant="accent"
 			>
 				<Plus className="size-icon-md" aria-hidden="true" />
-				New task
+				{t("shell.newTask")}
 			</TopbarButton>
 			<TopbarButton
-				aria-label={orchestratorActivityLabel ? `Orchestrator, ${orchestratorActivityLabel}` : "Spawn Orchestrator"}
+				aria-label={
+					orchestratorActivityLabel
+						? t("shell.orchestratorWithActivity", { activity: orchestratorActivityLabel })
+						: t("shell.spawnOrchestrator")
+				}
 				disabled={isSpawning || isProjectRestarting}
 				onClick={() => void openOrchestrator()}
 				variant="primary"
@@ -273,12 +281,12 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 				{orchestrator ? <OrchestratorActivityIndicator session={orchestrator} /> : null}
 				{isProjectRestarting
-					? "Restarting..."
+					? t("shell.restartingDots")
 					: isSpawning
-						? "Spawning..."
+						? t("shell.spawningDots")
 						: orchestrator
-							? "Orchestrator"
-							: "Spawn Orchestrator"}
+							? t("shell.orchestrator")
+							: t("shell.spawnOrchestrator")}
 			</TopbarButton>
 			{boardOwnsNotificationCenter ? <NotificationCenter /> : null}
 		</>
@@ -324,7 +332,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				{showStartup ? (
 					<DaemonStartupLoader />
 				) : workspaceStartupState === "error" || workspaceQuery.isError ? (
-					<p className="py-10 text-center text-xs text-passive">Could not load sessions.</p>
+					<p className="py-10 text-center text-xs text-passive">{t("shell.couldNotLoadSessions")}</p>
 				) : showWelcome ? (
 					<BoardWelcome />
 				) : showProjectEmpty ? (
@@ -388,13 +396,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 							>
 								<path d="m9 18 6-6-6-6" />
 							</svg>
-							<span className="font-mono text-2xs font-medium uppercase tracking-wide-sm">Archive</span>
+							<span className="font-mono text-2xs font-medium uppercase tracking-wide-sm">{t("shell.archive")}</span>
 							<span className="ml-1.5 font-mono text-micro text-passive">{archived.length}</span>
 						</button>
 					</div>
 					{archiveExpanded && (
 						<div
-							aria-label="Archived sessions"
+							aria-label={t("shell.archivedSessions")}
 							className="board-scrollbar grid max-h-[45vh] grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-2 overflow-y-auto pb-3"
 							role="list"
 						>
@@ -455,9 +463,10 @@ function ZoneColumn({
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
 }) {
+	const t = useT();
 	return (
 		<section
-			aria-label={`${col.label} sessions`}
+			aria-label={t("shell.sessionsAria", { label: col.label })}
 			className="flex min-w-0 flex-col overflow-hidden"
 			data-testid="board-column"
 			data-column={col.zone}
@@ -501,45 +510,51 @@ type SplitLaneTone = {
 	dotGlow: boolean;
 };
 
-const idleLaneTone: SplitLaneTone = {
-	label: "Idle",
-	countLabel: "idle",
-	regionLabel: "Idle sessions",
-	dotClassName: "bg-status-idle",
-	titleClassName: "text-status-idle",
-	color: "var(--color-status-idle)",
-	dotGlow: false,
-};
-
-const workingLaneTone: SplitLaneTone = {
-	label: "Working",
-	countLabel: "working",
-	regionLabel: "Working sessions",
-	dotClassName: "bg-status-working",
-	titleClassName: "text-status-working",
-	color: "var(--color-status-working)",
-	dotGlow: true,
-};
-
-const readyLaneTone: SplitLaneTone = {
-	label: "Ready to merge",
-	countLabel: "ready to merge",
-	regionLabel: "Ready to merge sessions",
-	dotClassName: "bg-status-ready",
-	titleClassName: "text-status-ready",
-	color: "var(--color-status-ready)",
-	dotGlow: true,
-};
-
-const mergedLaneTone: SplitLaneTone = {
-	label: "Merged",
-	countLabel: "merged",
-	regionLabel: "Merged sessions",
-	dotClassName: "bg-status-merged",
-	titleClassName: "text-status-merged",
-	color: "var(--color-status-merged)",
-	dotGlow: false,
-};
+function splitLaneTones(t: ReturnType<typeof useT>): {
+	idle: SplitLaneTone;
+	working: SplitLaneTone;
+	ready: SplitLaneTone;
+	merged: SplitLaneTone;
+} {
+	return {
+		idle: {
+			label: t("status.idle"),
+			countLabel: "idle",
+			regionLabel: t("shell.idleSessions"),
+			dotClassName: "bg-status-idle",
+			titleClassName: "text-status-idle",
+			color: "var(--color-status-idle)",
+			dotGlow: false,
+		},
+		working: {
+			label: t("status.working"),
+			countLabel: "working",
+			regionLabel: t("shell.workingSessions"),
+			dotClassName: "bg-status-working",
+			titleClassName: "text-status-working",
+			color: "var(--color-status-working)",
+			dotGlow: true,
+		},
+		ready: {
+			label: t("zone.merge"),
+			countLabel: "ready to merge",
+			regionLabel: t("shell.readyToMergeSessions"),
+			dotClassName: "bg-status-ready",
+			titleClassName: "text-status-ready",
+			color: "var(--color-status-ready)",
+			dotGlow: true,
+		},
+		merged: {
+			label: t("status.merged"),
+			countLabel: "merged",
+			regionLabel: t("shell.mergedSessions"),
+			dotClassName: "bg-status-merged",
+			titleClassName: "text-status-merged",
+			color: "var(--color-status-merged)",
+			dotGlow: false,
+		},
+	};
+}
 
 function WorkLaneColumn({
 	sessions,
@@ -550,17 +565,19 @@ function WorkLaneColumn({
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
 }) {
+	const t = useT();
+	const tones = splitLaneTones(t);
 	const idleSessions = sessions.filter(isSessionIdle);
 	const workingSessions = sessions.filter((session) => !isSessionIdle(session));
 
 	return (
 		<SplitLaneColumn
-			ariaLabel="Idle / Working sessions"
+			ariaLabel={t("shell.idleWorkingSessions")}
 			zone="working"
 			primarySessions={idleSessions}
-			primaryTone={idleLaneTone}
+			primaryTone={tones.idle}
 			secondarySessions={workingSessions}
-			secondaryTone={workingLaneTone}
+			secondaryTone={tones.working}
 			onOpen={onOpen}
 			onTerminate={onTerminate}
 		/>
@@ -576,6 +593,8 @@ function MergeLaneColumn({
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
 }) {
+	const t = useT();
+	const tones = splitLaneTones(t);
 	const mergedSessions = sessions
 		.filter((session) => session.status === "merged")
 		.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
@@ -585,12 +604,12 @@ function MergeLaneColumn({
 
 	return (
 		<SplitLaneColumn
-			ariaLabel="Ready to merge / Merged sessions"
+			ariaLabel={t("shell.readyMergedSessions")}
 			zone="merge"
 			primarySessions={readySessions}
-			primaryTone={readyLaneTone}
+			primaryTone={tones.ready}
 			secondarySessions={mergedSessions}
-			secondaryTone={mergedLaneTone}
+			secondaryTone={tones.merged}
 			onOpen={onOpen}
 			onTerminate={onTerminate}
 		/>
@@ -616,6 +635,7 @@ function SplitLaneColumn({
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
 }) {
+	const t = useT();
 	const showPrimary = primarySessions.length > 0;
 	const showSecondary = secondarySessions.length > 0;
 
@@ -628,7 +648,7 @@ function SplitLaneColumn({
 		>
 			<div className="flex h-12 shrink-0 items-center gap-2.5 px-4">
 				<div
-					aria-label={`${primaryTone.label} / ${secondaryTone.label} lane summary`}
+					aria-label={t("shell.laneSummaryAria", { primary: primaryTone.label, secondary: secondaryTone.label })}
 					className="flex min-w-0 items-center gap-2 font-mono text-2xs font-medium uppercase tracking-wide-sm"
 					role="group"
 				>
@@ -749,6 +769,7 @@ function SessionCard({
 	onTerminate?: () => void;
 	interactive?: boolean;
 }) {
+	const t = useT();
 	const queryClient = useQueryClient();
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const badge = getSessionStatusView(session.status);
@@ -808,7 +829,7 @@ function SessionCard({
 								clearTerminateSessionState(queryClient, session.id);
 							}}
 							disabled={termination.isPending}
-							title={termination.isPending ? "Killing session" : "Terminate session"}
+							title={termination.isPending ? t("shell.killingSession") : t("shell.terminateSession")}
 							type="button"
 						>
 							{termination.isPending ? (
@@ -892,6 +913,7 @@ function ArchiveSessionItem({
 	isRestoring: boolean;
 	isRestoreDisabled: boolean;
 }) {
+	const t = useT();
 	const badge = getSessionStatusView(session.status);
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
@@ -904,7 +926,7 @@ function ArchiveSessionItem({
 				))}
 			</div>
 		) : (
-			<span>no PR yet</span>
+			<span>{t("pr.noPRYet")}</span>
 		);
 	const restoreButton = (
 		<ArchiveRestoreButton
@@ -968,6 +990,7 @@ function ArchiveRestoreButton({
 	isRestoring: boolean;
 	isDisabled: boolean;
 }) {
+	const t = useT();
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
@@ -981,7 +1004,7 @@ function ArchiveRestoreButton({
 					<RotateCcw className={cn("size-icon-md", isRestoring && "animate-spin")} aria-hidden="true" />
 				</button>
 			</TooltipTrigger>
-			<TooltipContent side="top">{isRestoring ? "Restoring session" : "Restore session"}</TooltipContent>
+			<TooltipContent side="top">{isRestoring ? t("shell.restoringSession") : t("shell.restoreSession")}</TooltipContent>
 		</Tooltip>
 	);
 }
@@ -998,12 +1021,13 @@ type BoardPRLifecycleStatus = { label: "closed" | "open" | "draft" | "merged"; c
 type BoardPRGroup = { status: BoardPRLifecycleStatus; prs: SessionPRSummary[] };
 
 function BoardPRGroup({ group, linksInteractive = true }: { group: BoardPRGroup; linksInteractive?: boolean }) {
+	const t = useT();
 	return (
 		<span
 			aria-label={`${group.prs.map((pr) => `#${pr.number}`).join(", ")} ${group.status.label}`}
 			className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1"
 		>
-			<span>PR</span>
+			<span>{t("pr.short")}</span>
 			{group.prs.map((pr, index) => (
 				<span className="inline-flex items-center" key={pr.url || pr.htmlUrl || pr.number}>
 					{linksInteractive ? (

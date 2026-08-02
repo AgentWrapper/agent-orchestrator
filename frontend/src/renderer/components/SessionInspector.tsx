@@ -35,6 +35,7 @@ import { StatusPill } from "./StatusPill";
 import { CodexIcon } from "./icons";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { Switch } from "./ui/switch";
+import { useT } from "../stores/locale-store";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -43,10 +44,10 @@ type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => v
 
 export type InspectorView = "summary" | "reviews" | "browser" | "files";
 
-const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
+const VIEW_DEFS: { id: InspectorView; labelKey: "inspector.summary" | "inspector.reviews" | "inspector.browser" | "inspector.files"; icon: ReactNode }[] = [
 	{
 		id: "summary",
-		label: "Summary",
+		labelKey: "inspector.summary",
 		icon: (
 			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
 				<line x1="8" y1="7" x2="20" y2="7" />
@@ -60,7 +61,7 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 	},
 	{
 		id: "reviews",
-		label: "Reviews",
+		labelKey: "inspector.reviews",
 		icon: (
 			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
 				<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
@@ -69,7 +70,7 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 	},
 	{
 		id: "browser",
-		label: "Browser",
+		labelKey: "inspector.browser",
 		icon: (
 			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
 				<circle cx="12" cy="12" r="9" />
@@ -80,7 +81,7 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 	},
 	{
 		id: "files",
-		label: "Files",
+		labelKey: "inspector.files",
 		icon: <FilesIcon aria-hidden="true" />,
 	},
 ];
@@ -168,6 +169,7 @@ export function SessionInspector({
 	view?: InspectorView;
 	onViewChange?: (view: InspectorView) => void;
 }) {
+	const t = useT();
 	const [internalView, setInternalView] = useState<InspectorView>("summary");
 	const view = viewProp ?? internalView;
 	// Badge the Browser tab when a preview target arrived without us opening it.
@@ -179,10 +181,11 @@ export function SessionInspector({
 		onViewChange?.(next);
 		if (next === "files") onOpenFiles?.();
 	};
+	const views = VIEW_DEFS.map((entry) => ({ ...entry, label: t(entry.labelKey) }));
 
 	if (!session) {
 		return (
-			<aside className={inspectorShellClass} aria-label="Session inspector">
+			<aside className={inspectorShellClass} aria-label={t("inspector.aria")}>
 				<div className={inspectorBodyClass}>
 					<p className={inspectorEmptyClass}>Loading session…</p>
 				</div>
@@ -191,9 +194,9 @@ export function SessionInspector({
 	}
 
 	return (
-		<aside className={inspectorShellClass} aria-label="Session inspector">
+		<aside className={inspectorShellClass} aria-label={t("inspector.aria")}>
 			<div className="flex h-inspector-tabs shrink-0 items-center gap-1 border-b border-border px-2.5" role="tablist">
-				{VIEWS.map((entry) => (
+				{views.map((entry) => (
 					<button
 						aria-label={entry.label}
 						key={entry.id}
@@ -282,6 +285,7 @@ function Section({
 }
 
 function SummaryView({ session }: { session: WorkspaceSession }) {
+	const t = useT();
 	const query = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? `Pull requests (${prSummaries.length})` : "Pull request";
@@ -315,7 +319,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 					<Row k="Agent" v={session.provider} mono />
 					{issueId && <Row k="Issue" v={issueId} mono />}
 					{session.branch && <Row k="Branch" v={session.branch} mono />}
-					<Row k="Started" v={formatTimeCompact(session.createdAt ?? session.updatedAt)} mono />
+					<Row k={t("inspector.started")} v={formatTimeCompact(session.createdAt ?? session.updatedAt)} mono />
 					<Row k="Session" v={session.id} mono />
 				</dl>
 			</Section>
@@ -324,6 +328,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 }
 
 function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
+	const t = useT();
 	const queryClient = useQueryClient();
 	const resume = useMutation({
 		mutationFn: async () => {
@@ -340,7 +345,7 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 				void aoBridge.notifications
 					.show({
 						id: `resume-agent-fallback:${session.id}:${Date.now()}`,
-						title: "Started from saved prompt",
+						title: t("inspector.startedFromPrompt"),
 						body: "AO could not resume the native agent session, so it started a new conversation from the saved prompt.",
 					})
 					.catch((err) => {
@@ -376,6 +381,7 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 }
 
 function CompletionControls({ session }: { session: WorkspaceSession }) {
+	const t = useT();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const [confirmOpen, setConfirmOpen] = useState(false);
@@ -436,7 +442,7 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 						session={session}
 						trigger={
 							<button
-								aria-label="Terminate session"
+								aria-label={t("inspector.terminate")}
 								className="inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
 								onClick={() => clearTerminateSessionState(queryClient, session.id)}
 								type="button"
@@ -453,7 +459,7 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 							Terminate on merge
 						</label>
 						<Switch
-							aria-label="Terminate session when pull requests merge"
+							aria-label={t("inspector.terminateOnMerge")}
 							checked={Boolean(session.terminateOnPrMerge)}
 							disabled={policy.isPending}
 							id={`merge-policy-${session.id}`}

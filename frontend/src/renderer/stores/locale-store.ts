@@ -57,3 +57,8 @@ export function useT(): LocaleState["t"] {
 export function useLocale(): AppLocale {
 	return useLocaleStore((state) => state.locale);
 }
+
+/** Non-React access for pure presentation helpers; defaults to en before hydrate. */
+export function activeLocale(): AppLocale {
+	return useLocaleStore.getState().locale;
+}
