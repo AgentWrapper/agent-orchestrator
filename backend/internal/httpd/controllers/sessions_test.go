@@ -34,6 +34,8 @@ type fakeSessionService struct {
 	cleanupSkipped  []sessionsvc.CleanupSkipped
 	workspaceFiles  sessionsvc.WorkspaceFiles
 	workspaceFile   sessionsvc.WorkspaceFileDetail
+	textEditInput   sessionsvc.WorkspaceTextEditInput
+	textEditResult  sessionsvc.WorkspaceTextEditResult
 	spawnErr        error
 	claimErr        error
 	listPRErr       error
@@ -325,6 +327,20 @@ func (f *fakeSessionService) GetWorkspaceFile(_ context.Context, id domain.Sessi
 		return f.workspaceFile, nil
 	}
 	return sessionsvc.WorkspaceFileDetail{SessionID: id, Path: path}, nil
+}
+
+func (f *fakeSessionService) ApplyWorkspaceTextEdit(_ context.Context, id domain.SessionID, in sessionsvc.WorkspaceTextEditInput) (sessionsvc.WorkspaceTextEditResult, error) {
+	if f.workspaceErr != nil {
+		return sessionsvc.WorkspaceTextEditResult{}, f.workspaceErr
+	}
+	if _, ok := f.sessions[id]; !ok {
+		return sessionsvc.WorkspaceTextEditResult{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	f.textEditInput = in
+	if f.textEditResult.SessionID != "" {
+		return f.textEditResult, nil
+	}
+	return sessionsvc.WorkspaceTextEditResult{SessionID: id, Status: sessionsvc.WorkspaceTextEditApplied, Path: "src/App.tsx", Occurrence: 0, Line: 2}, nil
 }
 
 func newSessionTestServer(t *testing.T, svc *fakeSessionService) *httptest.Server {
@@ -1391,6 +1407,45 @@ func TestSessionsAPI_GetWorkspaceFileRequiresPath(t *testing.T) {
 	body, status, headers := doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/workspace/file", "")
 	assertJSON(t, headers)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "WORKSPACE_PATH_REQUIRED")
+}
+
+func TestSessionsAPI_ApplyWorkspaceTextEdit(t *testing.T) {
+	svc := newFakeSessionService()
+	svc.textEditResult = sessionsvc.WorkspaceTextEditResult{
+		SessionID:  "ao-1",
+		Status:     sessionsvc.WorkspaceTextEditAmbiguous,
+		Candidates: []sessionsvc.WorkspaceTextEditCandidate{{Path: "src/App.tsx", Occurrence: 0, Line: 4, Snippet: "<h1>Draft</h1>", Reason: "text_match"}},
+		Message:    "Multiple matching source locations were found",
+	}
+	srv := newSessionTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/workspace/text-edit", `{"oldText":"Draft","newText":"Published","url":"http://localhost:5173/","selector":"h1","tag":"h1","sourcePath":"src/App.tsx","target":{"path":"src/App.tsx","occurrence":0}}`)
+	assertJSON(t, headers)
+	if status != http.StatusOK {
+		t.Fatalf("POST workspace text edit = %d, want 200; body=%s", status, body)
+	}
+	if svc.textEditInput.OldText != "Draft" || svc.textEditInput.NewText != "Published" || svc.textEditInput.SourcePath != "src/App.tsx" {
+		t.Fatalf("service input = %+v", svc.textEditInput)
+	}
+	if svc.textEditInput.Target == nil || svc.textEditInput.Target.Path != "src/App.tsx" || svc.textEditInput.Target.Occurrence != 0 {
+		t.Fatalf("service target = %+v", svc.textEditInput.Target)
+	}
+	var got struct {
+		SessionID  string `json:"sessionId"`
+		Status     string `json:"status"`
+		Candidates []struct {
+			Path       string `json:"path"`
+			Occurrence int    `json:"occurrence"`
+			Line       int    `json:"line"`
+			Snippet    string `json:"snippet"`
+			Reason     string `json:"reason"`
+		} `json:"candidates"`
+		Message string `json:"message"`
+	}
+	mustJSON(t, body, &got)
+	if got.SessionID != "ao-1" || got.Status != "ambiguous" || len(got.Candidates) != 1 || got.Candidates[0].Path != "src/App.tsx" || got.Message == "" {
+		t.Fatalf("response = %#v", got)
+	}
 }
 
 func TestSessionsAPI_SetPreviewEmptyURLNoEntry(t *testing.T) {

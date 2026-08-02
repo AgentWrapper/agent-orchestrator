@@ -80,6 +80,7 @@ type SessionService interface {
 	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
 	ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (sessionsvc.WorkspaceFiles, error)
 	GetWorkspaceFile(ctx context.Context, id domain.SessionID, path string) (sessionsvc.WorkspaceFileDetail, error)
+	ApplyWorkspaceTextEdit(ctx context.Context, id domain.SessionID, in sessionsvc.WorkspaceTextEditInput) (sessionsvc.WorkspaceTextEditResult, error)
 }
 
 // ActivityRecorder applies an agent activity-state signal to a session. It is
@@ -129,6 +130,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Get("/sessions/{sessionId}/preview/files/*", c.previewFile)
 	r.Get("/sessions/{sessionId}/workspace/files", c.listWorkspaceFiles)
 	r.Get("/sessions/{sessionId}/workspace/file", c.getWorkspaceFile)
+	r.Post("/sessions/{sessionId}/workspace/text-edit", c.applyWorkspaceTextEdit)
 	r.Get("/sessions/{sessionId}/pr", c.listPRs)
 	r.Post("/sessions/{sessionId}/pr/claim", c.claimPR)
 	r.Patch("/sessions/{sessionId}", c.rename)
@@ -425,6 +427,41 @@ func (c *SessionsController) getWorkspaceFile(w http.ResponseWriter, r *http.Req
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, workspaceFileResponse(file))
+}
+
+func (c *SessionsController) applyWorkspaceTextEdit(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/workspace/text-edit")
+		return
+	}
+	var in WorkspaceTextEditRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	edit := sessionsvc.WorkspaceTextEditInput{
+		OldText:    in.OldText,
+		NewText:    in.NewText,
+		URL:        in.URL,
+		Selector:   in.Selector,
+		Tag:        in.Tag,
+		SourcePath: in.SourcePath,
+	}
+	if in.Target != nil {
+		edit.Target = &sessionsvc.WorkspaceTextEditTarget{
+			Path:       in.Target.Path,
+			Occurrence: in.Target.Occurrence,
+			Line:       in.Target.Line,
+			Snippet:    in.Target.Snippet,
+			MatchCount: in.Target.MatchCount,
+		}
+	}
+	result, err := c.Svc.ApplyWorkspaceTextEdit(r.Context(), sessionID(r), edit)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, workspaceTextEditResponse(result))
 }
 
 // setPreview persists the browser preview URL the desktop app opens for a
@@ -1200,6 +1237,29 @@ func workspaceFileResponse(file sessionsvc.WorkspaceFileDetail) WorkspaceFileRes
 		CompareBaseSHA:   file.CompareBaseSHA,
 		CompareBaseRef:   file.CompareBaseRef,
 		CompareMode:      file.CompareMode,
+	}
+}
+
+func workspaceTextEditResponse(result sessionsvc.WorkspaceTextEditResult) WorkspaceTextEditResponse {
+	candidates := make([]WorkspaceTextEditCandidate, 0, len(result.Candidates))
+	for _, candidate := range result.Candidates {
+		candidates = append(candidates, WorkspaceTextEditCandidate{
+			Path:       candidate.Path,
+			Occurrence: candidate.Occurrence,
+			Line:       candidate.Line,
+			Snippet:    candidate.Snippet,
+			Reason:     candidate.Reason,
+			MatchCount: candidate.MatchCount,
+		})
+	}
+	return WorkspaceTextEditResponse{
+		SessionID:  result.SessionID,
+		Status:     result.Status,
+		Path:       result.Path,
+		Occurrence: result.Occurrence,
+		Line:       result.Line,
+		Candidates: candidates,
+		Message:    result.Message,
 	}
 }
 

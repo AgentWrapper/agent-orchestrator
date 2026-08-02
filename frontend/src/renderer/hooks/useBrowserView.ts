@@ -6,7 +6,12 @@ import type {
 	BrowserTabState,
 	BrowserTabsState,
 } from "../../main/browser-view-host";
-import type { BrowserAnnotationCancelPayload, BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
+import type {
+	BrowserAnnotationCancelPayload,
+	BrowserAnnotationSubmitPayload,
+	BrowserTextEditCancelPayload,
+	BrowserTextEditSubmitPayload,
+} from "../../shared/browser-annotations";
 import { OPEN_DIALOG_OR_MENU_SELECTOR } from "../lib/dom-selectors";
 
 export type { BrowserNavState };
@@ -63,6 +68,8 @@ export type BrowserViewModel = {
 	destroy: () => void;
 	annotationMode: boolean;
 	setAnnotationMode: (enabled: boolean) => Promise<void>;
+	textEditMode: boolean;
+	setTextEditMode: (enabled: boolean) => Promise<void>;
 };
 
 const EMPTY_NAV_STATE: BrowserNavState = {
@@ -101,7 +108,12 @@ function visibleSlotRect(node: HTMLElement): BrowserRect {
 		right = Math.min(right, bounds.right);
 		bottom = Math.min(bottom, bounds.bottom);
 	}
-	return { x: left, y: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
+	return {
+		x: left,
+		y: top,
+		width: Math.max(0, right - left),
+		height: Math.max(0, bottom - top),
+	};
 }
 
 // `requestFullscreen` (the terminal pane's fullscreen button) promotes an element
@@ -135,17 +147,22 @@ export function useBrowserView({
 	const [tabsState, setTabsState] = useState<BrowserTabsState>(EMPTY_TABS_STATE);
 	const [tabNotice, setTabNotice] = useState("");
 	const [agentBrowserActive, setAgentBrowserActive] = useState(false);
+	const [textEditMode, setTextEditModeState] = useState(false);
 	const [agentBrowserActivity, setAgentBrowserActivity] = useState<BrowserAgentActivityState | null>(null);
 	const [visualTransition, setVisualTransition] = useState<BrowserVisualTransition | null>(null);
 	const slotNodeRef = useRef<HTMLDivElement | null>(null);
 	const viewIdRef = useRef("");
 	const annotationModeRef = useRef(false);
+	const textEditModeRef = useRef(false);
 	const activeRef = useRef(active);
 	const poppedOutRef = useRef(poppedOut);
 	const frameRef = useRef<number | null>(null);
 	const settleTimerRef = useRef<number | null>(null);
 	const observerRef = useRef<ResizeObserver | null>(null);
-	const previewTriggerRef = useRef<{ revision: number | null; target: string } | null>(null);
+	const previewTriggerRef = useRef<{
+		revision: number | null;
+		target: string;
+	} | null>(null);
 	const hasUrlRef = useRef(false);
 	const modalOpenRef = useRef(false);
 	const mirrorTokenRef = useRef(0);
@@ -167,9 +184,17 @@ export function useBrowserView({
 		annotationModeRef.current = annotationMode;
 	}, [annotationMode]);
 
+	useEffect(() => {
+		textEditModeRef.current = textEditMode;
+	}, [textEditMode]);
+
 	const sendHiddenBounds = useCallback((id = viewIdRef.current) => {
 		if (!id) return;
-		window.ao?.browser.setBounds({ viewId: id, rect: HIDDEN_RECT, visible: false });
+		window.ao?.browser.setBounds({
+			viewId: id,
+			rect: HIDDEN_RECT,
+			visible: false,
+		});
 	}, []);
 
 	const clearVisualTransitionTimer = useCallback(() => {
@@ -233,7 +258,12 @@ export function useBrowserView({
 		const rect = visibleSlotRect(node);
 		if (modalOpenRef.current) {
 			if (rect.width > 0 && rect.height > 0) {
-				window.ao?.browser.setBounds({ viewId: id, rect, visible: true, parked: true });
+				window.ao?.browser.setBounds({
+					viewId: id,
+					rect,
+					visible: true,
+					parked: true,
+				});
 			} else {
 				sendHiddenBounds(id);
 			}
@@ -352,8 +382,18 @@ export function useBrowserView({
 			const id = viewIdRef.current;
 			if (id) {
 				if (annotationModeRef.current) {
-					void window.ao?.browser.setAnnotationMode({ viewId: id, enabled: false });
+					void window.ao?.browser.setAnnotationMode({
+						viewId: id,
+						enabled: false,
+					});
 					setAnnotationModeState(false);
+				}
+				if (textEditModeRef.current) {
+					void window.ao?.browser.setTextEditMode({
+						viewId: id,
+						enabled: false,
+					});
+					setTextEditModeState(false);
 				}
 				sendHiddenBounds(id);
 			}
@@ -442,7 +482,10 @@ export function useBrowserView({
 				if (!navigator.mediaDevices?.getDisplayMedia) return false;
 				const granted = await window.ao?.browser.requestMirror?.(id).catch(() => false);
 				if (!granted || !live()) return false;
-				const stream = await navigator.mediaDevices.getDisplayMedia({ audio: false, video: true });
+				const stream = await navigator.mediaDevices.getDisplayMedia({
+					audio: false,
+					video: true,
+				});
 				if (!live()) {
 					stream.getTracks().forEach((track) => track.stop());
 					return true;
@@ -569,6 +612,33 @@ export function useBrowserView({
 			}
 			await window.ao!.browser.setAnnotationMode({ viewId: id, enabled });
 			setAnnotationModeState(enabled);
+			if (enabled && textEditModeRef.current) {
+				await window.ao!.browser.setTextEditMode({
+					viewId: id,
+					enabled: false,
+				});
+				setTextEditModeState(false);
+			}
+		},
+		[hasNativeBrowser],
+	);
+
+	const setTextEditMode = useCallback(
+		async (enabled: boolean) => {
+			const id = viewIdRef.current;
+			if (!id || !hasNativeBrowser) {
+				setTextEditModeState(false);
+				return;
+			}
+			await window.ao!.browser.setTextEditMode({ viewId: id, enabled });
+			setTextEditModeState(enabled);
+			if (enabled && annotationModeRef.current) {
+				await window.ao!.browser.setAnnotationMode({
+					viewId: id,
+					enabled: false,
+				});
+				setAnnotationModeState(false);
+			}
 		},
 		[hasNativeBrowser],
 	);
@@ -608,9 +678,27 @@ export function useBrowserView({
 	}, []);
 
 	useEffect(() => {
+		const handleDone = (payload: BrowserTextEditSubmitPayload | BrowserTextEditCancelPayload) => {
+			if (payload.viewId !== viewIdRef.current) return;
+			setTextEditModeState(false);
+		};
+		const offSubmit = window.ao?.browser.onTextEditSubmit(handleDone);
+		const offCancel = window.ao?.browser.onTextEditCancel(handleDone);
+		return () => {
+			offSubmit?.();
+			offCancel?.();
+		};
+	}, []);
+
+	useEffect(() => {
 		if (navState.url || !annotationModeRef.current) return;
 		void setAnnotationMode(false);
 	}, [navState.url, setAnnotationMode]);
+
+	useEffect(() => {
+		if (navState.url || !textEditModeRef.current) return;
+		void setTextEditMode(false);
+	}, [navState.url, setTextEditMode]);
 
 	const navigate = useCallback(
 		(url: string) => {
@@ -631,7 +719,12 @@ export function useBrowserView({
 
 	const clear = useCallback(() => {
 		if (!hasNativeBrowser) {
-			setNavState((current) => ({ ...current, url: "", title: "", isLoading: false }));
+			setNavState((current) => ({
+				...current,
+				url: "",
+				title: "",
+				isLoading: false,
+			}));
 			return Promise.resolve();
 		}
 		return withView((id) => window.ao!.browser.clear(id));
@@ -664,6 +757,10 @@ export function useBrowserView({
 		if (annotationModeRef.current) {
 			void window.ao?.browser.setAnnotationMode({ viewId: id, enabled: false });
 			setAnnotationModeState(false);
+		}
+		if (textEditModeRef.current) {
+			void window.ao?.browser.setTextEditMode({ viewId: id, enabled: false });
+			setTextEditModeState(false);
 		}
 		mirrorTokenRef.current += 1;
 		clearMirrorTimer();
@@ -710,5 +807,7 @@ export function useBrowserView({
 		destroy,
 		annotationMode,
 		setAnnotationMode,
+		textEditMode,
+		setTextEditMode,
 	};
 }

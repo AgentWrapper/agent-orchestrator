@@ -3,15 +3,20 @@ package session
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"net/netip"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -23,6 +28,11 @@ const (
 	maxWorkspaceFiles     = 5000
 	maxWorkspaceFileBytes = 256 * 1024
 	maxWorkspaceDiffBytes = 512 * 1024
+)
+
+const (
+	minWorkspaceTextEditRunes      = 3
+	maxWorkspaceTextEditCandidates = 25
 )
 
 // WorkspaceFileStatus describes a session-worktree file relative to its compare base.
@@ -88,6 +98,59 @@ type WorkspaceFileDetail struct {
 	CompareBaseSHA     string
 	CompareBaseRef     string
 	CompareMode        WorkspaceCompareMode
+}
+
+// WorkspaceTextEditStatus describes the outcome of an inline text edit request.
+type WorkspaceTextEditStatus string
+
+// Workspace text edit status values returned to browser edit mode.
+const (
+	WorkspaceTextEditApplied     WorkspaceTextEditStatus = "applied"
+	WorkspaceTextEditAmbiguous   WorkspaceTextEditStatus = "ambiguous"
+	WorkspaceTextEditNotFound    WorkspaceTextEditStatus = "not_found"
+	WorkspaceTextEditConflict    WorkspaceTextEditStatus = "conflict"
+	WorkspaceTextEditUnsupported WorkspaceTextEditStatus = "unsupported"
+)
+
+// WorkspaceTextEditTarget identifies one candidate occurrence selected by the user.
+type WorkspaceTextEditTarget struct {
+	Path       string
+	Occurrence int
+	Line       int
+	Snippet    string
+	MatchCount int
+}
+
+// WorkspaceTextEditInput carries text captured from the browser and the desired replacement.
+type WorkspaceTextEditInput struct {
+	OldText    string
+	NewText    string
+	URL        string
+	Selector   string
+	Tag        string
+	SourcePath string
+	Target     *WorkspaceTextEditTarget
+}
+
+// WorkspaceTextEditCandidate is a source location that could satisfy an edit.
+type WorkspaceTextEditCandidate struct {
+	Path       string
+	Occurrence int
+	Line       int
+	Snippet    string
+	Reason     string
+	MatchCount int
+}
+
+// WorkspaceTextEditResult is returned after applying or resolving an inline edit.
+type WorkspaceTextEditResult struct {
+	SessionID  domain.SessionID
+	Status     WorkspaceTextEditStatus
+	Path       string
+	Occurrence int
+	Line       int
+	Candidates []WorkspaceTextEditCandidate
+	Message    string
 }
 
 // ListWorkspaceFiles returns all tracked and untracked, non-ignored files in a
@@ -167,6 +230,75 @@ func (s *Service) GetWorkspaceFile(ctx context.Context, id domain.SessionID, raw
 	}
 	compare := resolveWorkspaceCompare(ctx, rec.Metadata.WorkspacePath, rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, defaultBranchForProject(project, projectOK), prs)
 	return workspaceFileDetail(ctx, id, rec.Metadata.WorkspacePath, "", rel, compare)
+}
+
+// ApplyWorkspaceTextEdit persists one browser inline text edit back to the
+// session workspace when the source occurrence can be identified safely.
+func (s *Service) ApplyWorkspaceTextEdit(ctx context.Context, id domain.SessionID, in WorkspaceTextEditInput) (WorkspaceTextEditResult, error) {
+	rec, err := s.sessionWorkspaceRecord(ctx, id)
+	if err != nil {
+		return WorkspaceTextEditResult{}, err
+	}
+	result := WorkspaceTextEditResult{SessionID: id}
+	if in.OldText == "" {
+		result.Status = WorkspaceTextEditUnsupported
+		result.Message = "oldText is required"
+		return result, nil
+	}
+	if in.OldText == in.NewText {
+		result.Status = WorkspaceTextEditUnsupported
+		result.Message = "oldText and newText are identical"
+		return result, nil
+	}
+	if utf8.RuneCountInString(strings.TrimSpace(in.OldText)) < minWorkspaceTextEditRunes {
+		result.Status = WorkspaceTextEditUnsupported
+		result.Message = "Selected text is too short for a safe inline edit"
+		return result, nil
+	}
+	if !workspaceTextEditURLSupported(rec.Metadata.WorkspacePath, rec.Metadata.PreviewURL, in.URL) {
+		result.Status = WorkspaceTextEditUnsupported
+		result.Message = "Inline text edits are only available for this session's local preview"
+		return result, nil
+	}
+	if in.Target != nil {
+		return applyWorkspaceTextEditCandidate(rec.Metadata.WorkspacePath, id, in.OldText, in.NewText, WorkspaceTextEditCandidate{
+			Path:       in.Target.Path,
+			Occurrence: in.Target.Occurrence,
+			Line:       in.Target.Line,
+			Snippet:    in.Target.Snippet,
+			MatchCount: in.Target.MatchCount,
+			Reason:     "selected",
+		})
+	}
+
+	project, projectOK, err := s.sessionProject(ctx, rec)
+	if err != nil {
+		return WorkspaceTextEditResult{}, err
+	}
+	scratch := projectOK && project.Kind.WithDefault() == domain.ProjectKindScratch
+	candidates, truncated, err := workspaceTextEditCandidates(ctx, rec.Metadata.WorkspacePath, scratch, in)
+	if err != nil {
+		return WorkspaceTextEditResult{}, err
+	}
+	if truncated {
+		result.Status = WorkspaceTextEditAmbiguous
+		result.Candidates = candidates
+		result.Message = "Too many matching source locations were found"
+		return result, nil
+	}
+	switch len(candidates) {
+	case 0:
+		result.Status = WorkspaceTextEditNotFound
+		result.Message = "No matching source text was found"
+		return result, nil
+	case 1:
+		return applyWorkspaceTextEditCandidate(rec.Metadata.WorkspacePath, id, in.OldText, in.NewText, candidates[0])
+	default:
+		result.Status = WorkspaceTextEditAmbiguous
+		result.Candidates = candidates
+		result.Message = "Multiple matching source locations were found"
+		return result, nil
+	}
 }
 
 func (s *Service) sessionWorkspaceRecord(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error) {
@@ -761,6 +893,413 @@ func scratchWorkspaceFile(root string, id domain.SessionID, rel string) (Workspa
 		detail.Content = content
 	}
 	return detail, nil
+}
+
+func workspaceTextEditCandidates(ctx context.Context, root string, scratch bool, in WorkspaceTextEditInput) ([]WorkspaceTextEditCandidate, bool, error) {
+	paths, err := workspaceTextEditPaths(ctx, root, scratch)
+	if err != nil {
+		return nil, false, err
+	}
+	if sourcePath, ok := cleanWorkspaceTextEditSourcePath(in.SourcePath); ok {
+		paths = prioritizeWorkspaceTextEditPath(paths, sourcePath)
+	}
+	var candidates []WorkspaceTextEditCandidate
+	for _, rel := range paths {
+		if skipWorkspaceTextEditPath(rel) {
+			continue
+		}
+		file, _, err := confinedWorkspaceFile(root, rel)
+		if err != nil {
+			continue
+		}
+		content, binary, truncated, err := readWorkspaceTextFile(file, maxWorkspaceFileBytes)
+		if err != nil || binary || truncated {
+			continue
+		}
+		candidates = append(candidates, findWorkspaceTextEditCandidates(rel, content, in.OldText, maxWorkspaceTextEditCandidates-len(candidates))...)
+		if len(candidates) >= maxWorkspaceTextEditCandidates {
+			sortWorkspaceTextEditCandidates(candidates)
+			return candidates[:maxWorkspaceTextEditCandidates], true, nil
+		}
+	}
+	sortWorkspaceTextEditCandidates(candidates)
+	return candidates, false, nil
+}
+
+func sortWorkspaceTextEditCandidates(candidates []WorkspaceTextEditCandidate) {
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Path != candidates[j].Path {
+			return candidates[i].Path < candidates[j].Path
+		}
+		return candidates[i].Occurrence < candidates[j].Occurrence
+	})
+}
+
+func workspaceTextEditPaths(ctx context.Context, root string, scratch bool) ([]string, error) {
+	if scratch {
+		files, _, err := scratchWorkspaceFiles(root)
+		if err != nil {
+			return nil, err
+		}
+		paths := make([]string, 0, len(files))
+		for _, file := range files {
+			if !file.Binary {
+				paths = append(paths, file.Path)
+			}
+		}
+		return paths, nil
+	}
+	paths, _, err := workspaceGitFiles(ctx, root, nil)
+	return paths, err
+}
+
+func cleanWorkspaceTextEditSourcePath(raw string) (string, bool) {
+	if strings.TrimSpace(raw) == "" {
+		return "", false
+	}
+	rel, err := cleanWorkspaceRelativePath(raw)
+	return rel, err == nil
+}
+
+func prioritizeWorkspaceTextEditPath(paths []string, sourcePath string) []string {
+	out := make([]string, 0, len(paths)+1)
+	seen := map[string]struct{}{sourcePath: {}}
+	out = append(out, sourcePath)
+	for _, rel := range paths {
+		if _, ok := seen[rel]; ok {
+			continue
+		}
+		seen[rel] = struct{}{}
+		out = append(out, rel)
+	}
+	return out
+}
+
+func skipWorkspaceTextEditPath(rel string) bool {
+	parts := strings.Split(rel, "/")
+	for _, part := range parts[:len(parts)-1] {
+		switch part {
+		case ".git", ".next", ".nuxt", ".svelte-kit", ".turbo", ".vite", "__generated__", "build", "coverage", "dist", "generated", "node_modules", "out", "target", "vendor":
+			return true
+		}
+	}
+	if strings.HasPrefix(rel, "backend/internal/storage/sqlite/gen/") {
+		return true
+	}
+	base := path.Base(rel)
+	switch base {
+	case "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb":
+		return true
+	}
+	switch rel {
+	case "backend/internal/httpd/apispec/openapi.yaml", "frontend/src/api/schema.ts":
+		return true
+	}
+	return false
+}
+
+func findWorkspaceTextEditCandidates(rel, content, oldText string, limit int) []WorkspaceTextEditCandidate {
+	var candidates []WorkspaceTextEditCandidate
+	indexes := workspaceTextOccurrenceIndexes(content, oldText)
+	for occurrence, index := range indexes {
+		if len(candidates) >= limit {
+			return candidates
+		}
+		candidates = append(candidates, WorkspaceTextEditCandidate{
+			Path:       rel,
+			Occurrence: occurrence,
+			Line:       workspaceTextLine(content, index),
+			Snippet:    workspaceTextSnippet(content, index, len(oldText)),
+			Reason:     "text_match",
+			MatchCount: len(indexes),
+		})
+	}
+	return candidates
+}
+
+func applyWorkspaceTextEditCandidate(root string, id domain.SessionID, oldText, newText string, candidate WorkspaceTextEditCandidate) (WorkspaceTextEditResult, error) {
+	rel, err := cleanWorkspaceRelativePath(candidate.Path)
+	if err != nil {
+		return WorkspaceTextEditResult{}, err
+	}
+	result := WorkspaceTextEditResult{SessionID: id, Path: rel, Occurrence: candidate.Occurrence}
+	if skipWorkspaceTextEditPath(rel) {
+		result.Status = WorkspaceTextEditUnsupported
+		result.Message = "Workspace path is not supported for inline text edits"
+		return result, nil
+	}
+	file, _, err := confinedWorkspaceFile(root, rel)
+	if err != nil {
+		if workspaceTextEditFileNotFound(err) {
+			result.Status = WorkspaceTextEditConflict
+			result.Message = "Selected source file no longer exists"
+			return result, nil
+		}
+		return WorkspaceTextEditResult{}, err
+	}
+	content, binary, truncated, err := readWorkspaceTextFile(file, maxWorkspaceFileBytes)
+	if err != nil {
+		if workspaceTextEditFileNotFound(err) {
+			result.Status = WorkspaceTextEditConflict
+			result.Message = "Selected source file no longer exists"
+			return result, nil
+		}
+		return WorkspaceTextEditResult{}, err
+	}
+	if binary || truncated {
+		result.Status = WorkspaceTextEditUnsupported
+		result.Message = "Workspace file is not editable text"
+		return result, nil
+	}
+	indexes := workspaceTextOccurrenceIndexes(content, oldText)
+	if candidate.MatchCount > 0 && candidate.MatchCount != len(indexes) {
+		result.Status = WorkspaceTextEditConflict
+		result.Message = "Selected source text no longer matches"
+		return result, nil
+	}
+	if candidate.Occurrence < 0 || candidate.Occurrence >= len(indexes) {
+		result.Status = WorkspaceTextEditConflict
+		result.Message = "Selected source text no longer matches"
+		return result, nil
+	}
+	index := indexes[candidate.Occurrence]
+	line := workspaceTextLine(content, index)
+	snippet := workspaceTextSnippet(content, index, len(oldText))
+	if (candidate.Line > 0 && candidate.Line != line) || (candidate.Snippet != "" && candidate.Snippet != snippet) {
+		result.Status = WorkspaceTextEditConflict
+		result.Message = "Selected source text no longer matches"
+		return result, nil
+	}
+	result.Line = line
+	updated := content[:index] + newText + content[index+len(oldText):]
+	applied, err := writeWorkspaceTextFileIfUnchanged(file, content, updated)
+	if err != nil {
+		if workspaceTextEditFileNotFound(err) {
+			result.Status = WorkspaceTextEditConflict
+			result.Message = "Selected source file no longer exists"
+			return result, nil
+		}
+		return WorkspaceTextEditResult{}, err
+	}
+	if !applied {
+		result.Status = WorkspaceTextEditConflict
+		result.Message = "Selected source text no longer matches"
+		return result, nil
+	}
+	result.Status = WorkspaceTextEditApplied
+	return result, nil
+}
+
+func workspaceTextOccurrenceIndexes(content, oldText string) []int {
+	if oldText == "" {
+		return nil
+	}
+	var indexes []int
+	searchFrom := 0
+	for {
+		match := strings.Index(content[searchFrom:], oldText)
+		if match < 0 {
+			return indexes
+		}
+		index := searchFrom + match
+		indexes = append(indexes, index)
+		searchFrom = index + len(oldText)
+	}
+}
+
+func workspaceTextLine(content string, index int) int {
+	if index <= 0 {
+		return 1
+	}
+	if index > len(content) {
+		index = len(content)
+	}
+	return strings.Count(content[:index], "\n") + 1
+}
+
+func workspaceTextSnippet(content string, index, matchLen int) string {
+	start := index - 48
+	if start < 0 {
+		start = 0
+	}
+	end := index + matchLen + 48
+	if end > len(content) {
+		end = len(content)
+	}
+	snippet := strings.TrimSpace(strings.ReplaceAll(content[start:end], "\n", " "))
+	for strings.Contains(snippet, "  ") {
+		snippet = strings.ReplaceAll(snippet, "  ", " ")
+	}
+	return snippet
+}
+
+var (
+	workspaceTextEditLocksMu sync.Mutex
+	workspaceTextEditLocks   = map[string]*sync.Mutex{}
+)
+
+// lockWorkspaceTextEditFile serializes writeWorkspaceTextFileIfUnchanged calls
+// for the same workspace file. Without it, two overlapping calls can both read
+// a matching snapshot before either renames, so the second rename silently
+// clobbers the first even though it also reported success. Holding this lock
+// across the read-compare-rename sequence guarantees whichever call runs
+// second observes the first's write and correctly reports a conflict instead.
+func lockWorkspaceTextEditFile(file string) func() {
+	workspaceTextEditLocksMu.Lock()
+	mu := workspaceTextEditLocks[file]
+	if mu == nil {
+		mu = &sync.Mutex{}
+		workspaceTextEditLocks[file] = mu
+	}
+	workspaceTextEditLocksMu.Unlock()
+
+	mu.Lock()
+	return mu.Unlock
+}
+
+func writeWorkspaceTextFileIfUnchanged(file, snapshot, content string) (bool, error) {
+	dir := filepath.Dir(file)
+	temp, err := os.CreateTemp(dir, ".ao-text-edit-*")
+	if err != nil {
+		return false, err
+	}
+	tempName := temp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tempName)
+		}
+	}()
+	if _, err := temp.WriteString(content); err != nil {
+		_ = temp.Close()
+		return false, err
+	}
+	if err := temp.Close(); err != nil {
+		return false, err
+	}
+	info, err := os.Stat(file)
+	if err != nil {
+		return false, err
+	}
+	if err := os.Chmod(tempName, info.Mode().Perm()); err != nil {
+		return false, err
+	}
+
+	unlock := lockWorkspaceTextEditFile(file)
+	defer unlock()
+
+	current, binary, truncated, err := readWorkspaceTextFile(file, maxWorkspaceFileBytes)
+	if err != nil {
+		return false, err
+	}
+	if binary || truncated || current != snapshot {
+		return false, nil
+	}
+	if err := os.Rename(tempName, file); err != nil {
+		return false, err
+	}
+	cleanup = false
+	return true, nil
+}
+
+func workspaceTextEditFileNotFound(err error) bool {
+	var apiErr *apierr.Error
+	return errors.As(err, &apiErr) && apiErr.Code == "WORKSPACE_FILE_NOT_FOUND"
+}
+
+func workspaceTextEditURLSupported(root, previewURL, pageURL string) bool {
+	page, ok := parseWorkspaceTextEditURL(pageURL)
+	if !ok {
+		return false
+	}
+	switch page.Scheme {
+	case "file":
+		preview, ok := parseWorkspaceTextEditURL(previewURL)
+		if !ok || preview.Scheme != "file" {
+			return false
+		}
+		pageFile, ok := workspaceTextEditFileURLPath(root, page)
+		if !ok {
+			return false
+		}
+		previewFile, ok := workspaceTextEditFileURLPath(root, preview)
+		if !ok {
+			return false
+		}
+		return sameFilesystemPath(pageFile, previewFile)
+	case "http", "https":
+		preview, ok := parseWorkspaceTextEditURL(previewURL)
+		if !ok || preview.Scheme != page.Scheme || !strings.EqualFold(preview.Host, page.Host) {
+			return false
+		}
+		return workspaceTextEditLocalHost(page.Hostname())
+	default:
+		return false
+	}
+}
+
+func parseWorkspaceTextEditURL(raw string) (*url.URL, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, false
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" {
+		return nil, false
+	}
+	return parsed, true
+}
+
+func workspaceTextEditLocalHost(host string) bool {
+	normalized := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	if normalized == "localhost" || strings.HasSuffix(normalized, ".localhost") {
+		return true
+	}
+	addr, err := netip.ParseAddr(strings.Trim(normalized, "[]"))
+	return err == nil && addr.IsLoopback()
+}
+
+func workspaceTextEditFileURLPath(root string, parsed *url.URL) (string, bool) {
+	if parsed.Host != "" && !strings.EqualFold(parsed.Host, "localhost") {
+		return "", false
+	}
+	rawPath, err := url.PathUnescape(parsed.EscapedPath())
+	if err != nil || rawPath == "" {
+		return "", false
+	}
+	if len(rawPath) >= 4 && rawPath[0] == '/' && isWindowsAbsoluteWorkspacePath(rawPath[1:]) {
+		rawPath = rawPath[1:]
+	}
+	file := filepath.FromSlash(rawPath)
+	rootResolved, err := resolvedWorkspaceRoot(root)
+	if err != nil {
+		return "", false
+	}
+	targetAbs, err := filepath.Abs(file)
+	if err != nil {
+		return "", false
+	}
+	targetResolved, err := resolvedFilesystemPath(targetAbs)
+	if err != nil {
+		return "", false
+	}
+	if !pathWithin(rootResolved, targetResolved) {
+		return "", false
+	}
+	return targetResolved, true
+}
+
+func sameFilesystemPath(a, b string) bool {
+	a = filepath.Clean(a)
+	b = filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+func isWindowsAbsoluteWorkspacePath(raw string) bool {
+	return len(raw) >= 3 && ((raw[0] >= 'a' && raw[0] <= 'z') || (raw[0] >= 'A' && raw[0] <= 'Z')) && raw[1] == ':' && (raw[2] == '\\' || raw[2] == '/')
 }
 
 func resolvedWorkspaceRoot(root string) (string, error) {

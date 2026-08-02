@@ -2340,6 +2340,57 @@ paths:
       summary: List files in a session workspace with git change status
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/workspace/text-edit:
+    post:
+      operationId: applySessionWorkspaceTextEdit
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceTextEditRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceTextEditResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Apply a browser inline text edit to a session workspace file
+      tags:
+      - sessions
   /api/v1/sessions/cleanup:
     post:
       operationId: cleanupSessions
@@ -4353,6 +4404,98 @@ components:
       - name
       - relativePath
       - repo
+      type: object
+    WorkspaceTextEditCandidate:
+      properties:
+        line:
+          type: integer
+        matchCount:
+          type: integer
+        occurrence:
+          type: integer
+        path:
+          type: string
+        reason:
+          type: string
+        snippet:
+          type: string
+      required:
+      - path
+      - occurrence
+      - line
+      - snippet
+      - reason
+      - matchCount
+      type: object
+    WorkspaceTextEditRequest:
+      properties:
+        newText:
+          type: string
+        oldText:
+          minLength: 1
+          type: string
+        selector:
+          type: string
+        sourcePath:
+          type: string
+        tag:
+          type: string
+        target:
+          $ref: '#/components/schemas/WorkspaceTextEditTarget'
+        url:
+          type: string
+      required:
+      - oldText
+      - newText
+      type: object
+    WorkspaceTextEditResponse:
+      properties:
+        candidates:
+          items:
+            $ref: '#/components/schemas/WorkspaceTextEditCandidate'
+          type: array
+        line:
+          type: integer
+        message:
+          type: string
+        occurrence:
+          type: integer
+        path:
+          type: string
+        sessionId:
+          type: string
+        status:
+          enum:
+          - applied
+          - ambiguous
+          - not_found
+          - conflict
+          - unsupported
+          type: string
+      required:
+      - sessionId
+      - status
+      - candidates
+      type: object
+    WorkspaceTextEditTarget:
+      properties:
+        line:
+          minimum: 1
+          type: integer
+        matchCount:
+          minimum: 1
+          type: integer
+        occurrence:
+          minimum: 0
+          type: integer
+        path:
+          minLength: 1
+          type: string
+        snippet:
+          type: string
+      required:
+      - path
+      - occurrence
       type: object
 tags:
 - description: Supported and locally runnable agent adapters

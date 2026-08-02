@@ -1,5 +1,14 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL, type KeybindingOverrides } from "./shared/shortcuts";
+import {
+	FOCUS_TERMINAL_SHORTCUT_CHANNEL,
+	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
+	NEXT_SESSION_SHORTCUT_CHANNEL,
+	NEW_SESSION_SHORTCUT_CHANNEL,
+	NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL,
+	OPEN_SETTINGS_SHORTCUT_CHANNEL,
+	PREVIOUS_SESSION_SHORTCUT_CHANNEL,
+	type KeybindingOverrides,
+} from "./shared/shortcuts";
 import type {
 	BrowserAgentActivityState,
 	BrowserNavState,
@@ -16,6 +25,9 @@ import type {
 	BrowserAnnotationCancelPayload,
 	BrowserAnnotationModeInput,
 	BrowserAnnotationSubmitPayload,
+	BrowserTextEditCancelPayload,
+	BrowserTextEditModeInput,
+	BrowserTextEditSubmitPayload,
 } from "./shared/browser-annotations";
 
 export type BrowserBoundsInput = {
@@ -178,6 +190,8 @@ const api = {
 		destroy: (viewId: string) => ipcRenderer.send("browser:destroy", viewId),
 		setAnnotationMode: (input: BrowserAnnotationModeInput) =>
 			ipcRenderer.invoke("browser:annotation:setMode", input) as Promise<void>,
+		setTextEditMode: (input: BrowserTextEditModeInput) =>
+			ipcRenderer.invoke("browser:textEdit:setMode", input) as Promise<void>,
 		onNavState: (listener: (state: BrowserNavState) => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, state: BrowserNavState) => listener(state);
 			ipcRenderer.on("browser:navState", wrapped);
@@ -211,6 +225,20 @@ const api = {
 			ipcRenderer.on("browser:annotation:canceled", wrapped);
 			return () => {
 				ipcRenderer.off("browser:annotation:canceled", wrapped);
+			};
+		},
+		onTextEditSubmit: (listener: (payload: BrowserTextEditSubmitPayload) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, payload: BrowserTextEditSubmitPayload) => listener(payload);
+			ipcRenderer.on("browser:textEdit:submitted", wrapped);
+			return () => {
+				ipcRenderer.off("browser:textEdit:submitted", wrapped);
+			};
+		},
+		onTextEditCancel: (listener: (payload: BrowserTextEditCancelPayload) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, payload: BrowserTextEditCancelPayload) => listener(payload);
+			ipcRenderer.on("browser:textEdit:canceled", wrapped);
+			return () => {
+				ipcRenderer.off("browser:textEdit:canceled", wrapped);
 			};
 		},
 	},
@@ -256,7 +284,10 @@ const api = {
 	},
 	featureBuilds: {
 		list: () => ipcRenderer.invoke("featureBuilds:list") as Promise<FeatureBuild[]>,
-		getActive: () => ipcRenderer.invoke("featureBuilds:getActive") as Promise<{ pr: number } | null>,
+		getActive: () =>
+			ipcRenderer.invoke("featureBuilds:getActive") as Promise<{
+				pr: number;
+			} | null>,
 	},
 };
 

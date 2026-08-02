@@ -797,6 +797,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/workspace/text-edit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply a browser inline text edit to a session workspace file */
+        post: operations["applySessionWorkspaceTextEdit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/cleanup": {
         parameters: {
             query?: never;
@@ -1564,6 +1581,40 @@ export interface components {
             name: string;
             relativePath: string;
             repo: string;
+        };
+        WorkspaceTextEditCandidate: {
+            line: number;
+            matchCount: number;
+            occurrence: number;
+            path: string;
+            reason: string;
+            snippet: string;
+        };
+        WorkspaceTextEditRequest: {
+            newText: string;
+            oldText: string;
+            selector?: string;
+            sourcePath?: string;
+            tag?: string;
+            target?: components["schemas"]["WorkspaceTextEditTarget"];
+            url?: string;
+        };
+        WorkspaceTextEditResponse: {
+            candidates: components["schemas"]["WorkspaceTextEditCandidate"][];
+            line?: number;
+            message?: string;
+            occurrence?: number;
+            path?: string;
+            sessionId: string;
+            /** @enum {string} */
+            status: "applied" | "ambiguous" | "not_found" | "conflict" | "unsupported";
+        };
+        WorkspaceTextEditTarget: {
+            line?: number;
+            matchCount?: number;
+            occurrence: number;
+            path: string;
+            snippet?: string;
         };
     };
     responses: never;
@@ -4547,6 +4598,69 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ListWorkspaceFilesResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    applySessionWorkspaceTextEdit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceTextEditRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceTextEditResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Not Found */

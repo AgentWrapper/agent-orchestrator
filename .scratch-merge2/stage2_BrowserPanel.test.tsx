@@ -34,7 +34,6 @@ const hookState = vi.hoisted(() => ({
 	stop: vi.fn(),
 	selectTab: vi.fn(),
 	closeTab: vi.fn(),
-	prepareForOverlay: vi.fn(async () => undefined),
 	setAnnotationMode: vi.fn(),
 	setTextEditMode: vi.fn(),
 	tabs: [{ id: "t1", url: "", title: "", active: true }],
@@ -43,8 +42,6 @@ const hookState = vi.hoisted(() => ({
 	agentBrowserActive: false,
 	annotationMode: false,
 	textEditMode: false,
-	agentBrowserActivity: null as { active: boolean; action?: string; phase?: "started" | "finished" } | null,
-	visualTransition: null as { kind: "tab-switch" | "popout"; snapshotUrl: string } | null,
 	previewUrl: undefined as string | undefined,
 	navState: {
 		viewId: "42:sess-1",
@@ -72,11 +69,8 @@ vi.mock("../hooks/useBrowserView", () => ({
 			activeTabId: hookState.activeTabId,
 			tabNotice: hookState.tabNotice,
 			agentBrowserActive: hookState.agentBrowserActive,
-			agentBrowserActivity: hookState.agentBrowserActivity,
-			visualTransition: hookState.visualTransition,
 			selectTab: hookState.selectTab,
 			closeTab: hookState.closeTab,
-			prepareForOverlay: hookState.prepareForOverlay,
 			annotationMode: hookState.annotationMode,
 			setAnnotationMode: hookState.setAnnotationMode,
 			textEditMode: hookState.textEditMode,
@@ -181,7 +175,6 @@ describe("BrowserPanel", () => {
 		hookState.stop.mockReset();
 		hookState.selectTab.mockReset();
 		hookState.closeTab.mockReset();
-		hookState.prepareForOverlay.mockReset();
 		hookState.setAnnotationMode.mockReset();
 		hookState.setAnnotationMode.mockResolvedValue(undefined);
 		hookState.setTextEditMode.mockReset();
@@ -225,8 +218,6 @@ describe("BrowserPanel", () => {
 		hookState.activeTabId = "t1";
 		hookState.tabNotice = "";
 		hookState.agentBrowserActive = false;
-		hookState.agentBrowserActivity = null;
-		hookState.visualTransition = null;
 		hookState.navState = {
 			viewId: "42:sess-1",
 			url: "",
@@ -316,23 +307,11 @@ describe("BrowserPanel", () => {
 
 	it("toggles pop-out mode", async () => {
 		const onTogglePopOut = vi.fn();
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
 		render(<BrowserPanel active onTogglePopOut={onTogglePopOut} poppedOut={false} session={session} />);
 
 		await userEvent.click(screen.getByRole("button", { name: /pop out/i }));
 
 		expect(onTogglePopOut).toHaveBeenCalledWith(true);
-	});
-
-	it("does not pop out an empty browser", async () => {
-		const onTogglePopOut = vi.fn();
-		render(<BrowserPanel active onTogglePopOut={onTogglePopOut} poppedOut={false} session={session} />);
-
-		const popOut = screen.getByRole("button", { name: /pop out/i });
-		expect(popOut).toBeDisabled();
-		await userEvent.click(popOut);
-
-		expect(onTogglePopOut).not.toHaveBeenCalled();
 	});
 
 	it("enables annotation mode from the toolbar when a page is loaded", async () => {
@@ -382,59 +361,6 @@ describe("BrowserPanel", () => {
 
 		expect(screen.getByRole("button", { name: /annotate/i })).toBeEnabled();
 		expect(screen.getByText("Agent using browser")).toBeInTheDocument();
-	});
-
-	it("shows the concrete browser action while the agent controls the page", () => {
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		hookState.agentBrowserActive = true;
-		hookState.agentBrowserActivity = { active: true, action: "click", phase: "started" };
-
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-
-		expect(screen.getByText("Agent clicking")).toBeInTheDocument();
-		expect(screen.queryByText("Agent using browser")).not.toBeInTheDocument();
-	});
-
-	it("renders a captured transition frame over the native browser slot", () => {
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		hookState.visualTransition = { kind: "tab-switch", snapshotUrl: "data:image/jpeg;base64,snapshot" };
-
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-
-		const frame = screen.getByTestId("browser-transition-frame");
-		expect(frame).toHaveAttribute("src", "data:image/jpeg;base64,snapshot");
-	});
-
-	it("renders the premium browser shell hooks in the default view", () => {
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-
-		expect(screen.getByTestId("browser-toolbar")).toHaveClass("browser-panel__toolbar");
-		expect(screen.getByTestId("browser-viewport")).toHaveClass("browser-panel__viewport");
-	});
-
-	it("keeps URL icon placement controlled by the browser shell CSS", () => {
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-
-		const icon = screen.getByTestId("browser-url-icon");
-		expect(icon).toHaveClass("browser-panel__url-icon");
-		expect(icon).not.toHaveClass("top-1/2");
-		expect(icon).not.toHaveClass("-translate-y-1/2");
-	});
-
-	it("warms the browser tabs menu before opening it above the native browser", async () => {
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		hookState.tabs = [
-			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: true },
-			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: false },
-		];
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-
-		await userEvent.click(screen.getByRole("button", { name: /browser tabs/i }));
-
-		expect(hookState.prepareForOverlay).toHaveBeenCalled();
-		expect(await screen.findByRole("menu")).not.toHaveAttribute("data-ao-browser-native-overlay");
-		expect(screen.getByText("First app").closest('[role="menuitem"]')).toHaveClass("cursor-pointer");
-		expect(screen.getByRole("menuitem", { name: "Close tab First app" })).toHaveClass("cursor-pointer");
 	});
 
 	it("disables annotation mode when no page is loaded", () => {

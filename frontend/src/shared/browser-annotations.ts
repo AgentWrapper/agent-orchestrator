@@ -63,6 +63,27 @@ export type BrowserAnnotationCancelPayload = BrowserAnnotationPageCancelPayload 
 	viewId: string;
 };
 
+export type BrowserTextEditModeInput = {
+	viewId: string;
+	enabled: boolean;
+};
+
+export type BrowserTextEditPageSubmitPayload = {
+	oldText: string;
+	newText: string;
+	context: BrowserAnnotationContext;
+};
+
+export type BrowserTextEditSubmitPayload = BrowserTextEditPageSubmitPayload & {
+	viewId: string;
+};
+
+export type BrowserTextEditPageCancelPayload = BrowserAnnotationPageCancelPayload;
+
+export type BrowserTextEditCancelPayload = BrowserTextEditPageCancelPayload & {
+	viewId: string;
+};
+
 export function createBrowserAnnotationContext(element: Element): BrowserAnnotationContext {
 	const doc = element.ownerDocument;
 	const view = doc.defaultView;

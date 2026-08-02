@@ -233,6 +233,47 @@ type WorkspaceFileResponse struct {
 	CompareMode      sessionsvc.WorkspaceCompareMode `json:"compareMode,omitempty" enum:"base,head_fallback"`
 }
 
+// WorkspaceTextEditTarget identifies one candidate occurrence selected by the user.
+type WorkspaceTextEditTarget struct {
+	Path       string `json:"path" minLength:"1"`
+	Occurrence int    `json:"occurrence" minimum:"0"`
+	Line       int    `json:"line,omitempty" minimum:"1"`
+	Snippet    string `json:"snippet,omitempty"`
+	MatchCount int    `json:"matchCount,omitempty" minimum:"1"`
+}
+
+// WorkspaceTextEditRequest is the body of POST /api/v1/sessions/{sessionId}/workspace/text-edit.
+type WorkspaceTextEditRequest struct {
+	OldText    string                   `json:"oldText" minLength:"1"`
+	NewText    string                   `json:"newText"`
+	URL        string                   `json:"url,omitempty"`
+	Selector   string                   `json:"selector,omitempty"`
+	Tag        string                   `json:"tag,omitempty"`
+	SourcePath string                   `json:"sourcePath,omitempty"`
+	Target     *WorkspaceTextEditTarget `json:"target,omitempty"`
+}
+
+// WorkspaceTextEditCandidate is one source location that could satisfy an edit.
+type WorkspaceTextEditCandidate struct {
+	Path       string `json:"path"`
+	Occurrence int    `json:"occurrence"`
+	Line       int    `json:"line"`
+	Snippet    string `json:"snippet"`
+	Reason     string `json:"reason"`
+	MatchCount int    `json:"matchCount"`
+}
+
+// WorkspaceTextEditResponse is the body of POST /api/v1/sessions/{sessionId}/workspace/text-edit.
+type WorkspaceTextEditResponse struct {
+	SessionID  domain.SessionID                   `json:"sessionId"`
+	Status     sessionsvc.WorkspaceTextEditStatus `json:"status" enum:"applied,ambiguous,not_found,conflict,unsupported"`
+	Path       string                             `json:"path,omitempty"`
+	Occurrence int                                `json:"occurrence,omitempty"`
+	Line       int                                `json:"line,omitempty"`
+	Candidates []WorkspaceTextEditCandidate       `json:"candidates"`
+	Message    string                             `json:"message,omitempty"`
+}
+
 // SessionPreviewResponse is the body of GET /api/v1/sessions/{sessionId}/preview.
 type SessionPreviewResponse struct {
 	SessionID  domain.SessionID `json:"sessionId"`

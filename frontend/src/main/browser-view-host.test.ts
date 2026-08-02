@@ -85,7 +85,10 @@ function setupHost() {
 	const shellSend = vi.fn((channel: string, payload?: unknown) => sent.push({ channel, payload }));
 	const host = createBrowserViewHost({
 		mainWindow: {
-			contentView: { addChildView: () => undefined, removeChildView: () => undefined },
+			contentView: {
+				addChildView: () => undefined,
+				removeChildView: () => undefined,
+			},
 			getContentBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
 			webContents: {
 				id: 1,
@@ -165,6 +168,7 @@ function setupHost() {
 function setupTabHost() {
 	const constructorOptions: Array<{ webPreferences: { partition?: string } }> = [];
 	const handlers = new Map<string, InvokeHandler>();
+	const eventHandlers = new Map<string, EventHandler>();
 	const sent: Array<{ channel: string; payload: unknown }> = [];
 	const views: Array<{
 		webContents: {
@@ -172,6 +176,7 @@ function setupTabHost() {
 			getURL: () => string;
 			loadURL: ReturnType<typeof vi.fn>;
 			openWindow: (url: string) => void;
+			send: ReturnType<typeof vi.fn>;
 			close: ReturnType<typeof vi.fn>;
 			};
 			setBounds: ReturnType<typeof vi.fn>;
@@ -238,7 +243,7 @@ function setupTabHost() {
 			}),
 			on: (event: string, listener: (...args: never[]) => void) => listeners.set(event, listener),
 			reload: () => undefined,
-			send: () => undefined,
+			send: vi.fn(),
 			setWindowOpenHandler: (
 				handler: (details: { url: string }) => {
 					action: string;
@@ -272,7 +277,7 @@ function setupTabHost() {
 		} as never,
 		ipcMain: {
 			handle: (channel: string, fn: InvokeHandler) => handlers.set(channel, fn),
-			on: () => undefined,
+			on: (channel: string, fn: EventHandler) => eventHandlers.set(channel, fn),
 			removeHandler: () => undefined,
 			off: () => undefined,
 		} as never,
@@ -286,7 +291,9 @@ function setupTabHost() {
 	});
 	const invoke = (channel: string, ...args: unknown[]) =>
 		handlers.get(channel)!({ sender: { id: 1 } }, ...args) as Promise<unknown>;
-	return { constructorOptions, host, invoke, sent, views };
+	const send = (channel: string, senderId: number, ...args: unknown[]) =>
+		eventHandlers.get(channel)!({ sender: { id: senderId } }, ...args);
+	return { constructorOptions, host, invoke, send, sent, views };
 }
 
 describe("new-session shortcut forwarding", () => {
@@ -310,7 +317,12 @@ describe("new-session shortcut forwarding", () => {
 		shellFocus.mockClear();
 		shellSend.mockClear();
 
-		emitBeforeInput({ key: "N", control: true, shift: true, isAutoRepeat: true });
+		emitBeforeInput({
+			key: "N",
+			control: true,
+			shift: true,
+			isAutoRepeat: true,
+		});
 		emitBeforeInput({ key: "N", control: true });
 
 		expect(shellFocus).not.toHaveBeenCalled();
@@ -374,7 +386,10 @@ describe("browser:clear", () => {
 	it("loads about:blank and reports it as an empty url (cleared state)", async () => {
 		const { invoke, webContents } = setupHost();
 		await invoke("browser:ensure", "sess-1");
-		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:3000/" });
+		await invoke("browser:navigate", {
+			viewId: "1:sess-1",
+			url: "http://localhost:3000/",
+		});
 
 		const state = await invoke("browser:clear", "1:sess-1");
 
@@ -944,6 +959,44 @@ describe("agent browser runtime", () => {
 		expect(closed.tabs.map((tab) => tab.id)).toEqual(["t1"]);
 		expect(views[1].webContents.close).toHaveBeenCalled();
 	});
+
+	it("clears text edit mode on the previous tab when selecting another tab", async () => {
+		const { host, invoke, send, sent, views } = setupTabHost();
+		const ensured = (await invoke("browser:ensure", "sess-1")) as BrowserNavState;
+		await host.execute("sess-1", "tab-new");
+		await invoke("browser:selectTab", {
+			viewId: ensured.viewId,
+			tabId: "t1",
+		});
+		await invoke("browser:textEdit:setMode", {
+			viewId: ensured.viewId,
+			enabled: true,
+		});
+		views[0].webContents.send.mockClear();
+
+		await invoke("browser:selectTab", {
+			viewId: ensured.viewId,
+			tabId: "t2",
+		});
+
+		expect(views[0].webContents.send).toHaveBeenCalledWith("browser:textEdit:setMode", {
+			enabled: false,
+		});
+		send("browser:textEdit:submit", views[0].webContents.id, {
+			oldText: "Draft copy",
+			newText: "Published copy",
+			context: {
+				url: "http://localhost:5173/",
+				tag: "h1",
+				classes: [],
+				selector: "h1",
+				rect: { x: 0, y: 0, width: 80, height: 30 },
+				nearbyText: [],
+				computedStyle: {},
+			},
+		});
+		expect(sent.some((entry) => entry.channel === "browser:textEdit:submitted")).toBe(false);
+	});
 });
 
 describe("agent browser network capture", () => {
@@ -1253,7 +1306,10 @@ describe("browser annotation IPC", () => {
 		const { invoke, webContents } = setupHost();
 		await invoke("browser:ensure", "sess-1");
 
-		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+		await invoke("browser:annotation:setMode", {
+			viewId: "1:sess-1",
+			enabled: true,
+		});
 
 		expect(webContents.send).toHaveBeenCalledWith("browser:annotation:setMode", { enabled: true });
 	});
@@ -1262,7 +1318,10 @@ describe("browser annotation IPC", () => {
 		const { invoke, webContents } = setupHost();
 		await invoke("browser:ensure", "sess-1");
 
-		await invoke("browser:annotation:setMode", { viewId: "2:sess-1", enabled: true });
+		await invoke("browser:annotation:setMode", {
+			viewId: "2:sess-1",
+			enabled: true,
+		});
 
 		expect(webContents.send).not.toHaveBeenCalledWith("browser:annotation:setMode", { enabled: true });
 	});
@@ -1301,6 +1360,88 @@ describe("browser annotation IPC", () => {
 		send("browser:annotation:cancel", 99, { reason: "escape" });
 
 		expect(sent.some((entry) => entry.channel === "browser:annotation:canceled")).toBe(false);
+	});
+});
+
+describe("browser text edit IPC", () => {
+	it("routes renderer mode changes to the matching preview webContents", async () => {
+		const { invoke, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		await invoke("browser:textEdit:setMode", {
+			viewId: "1:sess-1",
+			enabled: true,
+		});
+
+		expect(webContents.send).toHaveBeenCalledWith("browser:textEdit:setMode", {
+			enabled: true,
+		});
+	});
+
+	it("ignores text edit mode changes for views owned by a different renderer", async () => {
+		const { invoke, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		await invoke("browser:textEdit:setMode", {
+			viewId: "2:sess-1",
+			enabled: true,
+		});
+
+		expect(webContents.send).not.toHaveBeenCalledWith("browser:textEdit:setMode", { enabled: true });
+	});
+
+	it("forwards preview text edits to the renderer-owned view", async () => {
+		const { invoke, send, sent } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:textEdit:setMode", {
+			viewId: "1:sess-1",
+			enabled: true,
+		});
+
+		send("browser:textEdit:submit", 99, {
+			oldText: "Draft copy",
+			newText: "Published copy",
+			context: {
+				url: "http://localhost:5173/",
+				tag: "h1",
+				classes: [],
+				selector: "h1",
+				rect: { x: 0, y: 0, width: 80, height: 30 },
+				nearbyText: [],
+				computedStyle: {},
+			},
+		});
+
+		expect(sent).toContainEqual({
+			channel: "browser:textEdit:submitted",
+			payload: expect.objectContaining({
+				viewId: "1:sess-1",
+				oldText: "Draft copy",
+				newText: "Published copy",
+				context: expect.objectContaining({ selector: "h1" }),
+			}),
+		});
+	});
+
+	it("ignores preview text edits when text edit mode is not active", async () => {
+		const { invoke, send, sent } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		send("browser:textEdit:submit", 99, {
+			oldText: "Draft copy",
+			newText: "Published copy",
+			context: {
+				url: "http://localhost:5173/",
+				tag: "h1",
+				classes: [],
+				selector: "h1",
+				rect: { x: 0, y: 0, width: 80, height: 30 },
+				nearbyText: [],
+				computedStyle: {},
+			},
+		});
+
+		expect(sent.some((entry) => entry.channel === "browser:textEdit:submitted")).toBe(false);
 	});
 });
 
@@ -1389,16 +1530,28 @@ describe("getLastFocusedPanelContents", () => {
 				if (event === "focus") focusListener = listener;
 			},
 		};
-		const view = { webContents, setBounds: () => undefined, setVisible: () => undefined };
+		const view = {
+			webContents,
+			setBounds: () => undefined,
+			setVisible: () => undefined,
+		};
 		const handlers = new Map<string, InvokeHandler>();
 		const record = (channel: string, fn: InvokeHandler) => handlers.set(channel, fn);
 		const host = createBrowserViewHost({
 			mainWindow: {
-				contentView: { addChildView: () => undefined, removeChildView: () => undefined },
+				contentView: {
+					addChildView: () => undefined,
+					removeChildView: () => undefined,
+				},
 				getContentBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
 				webContents: { id: 1, send: () => undefined },
 			} as never,
-			ipcMain: { handle: record, on: record, removeHandler: () => undefined, off: () => undefined } as never,
+			ipcMain: {
+				handle: record,
+				on: record,
+				removeHandler: () => undefined,
+				off: () => undefined,
+			} as never,
 			shell: { openExternal: async () => undefined },
 			WebContentsView: function () {
 				return view;
@@ -1424,7 +1577,11 @@ describe("getLastFocusedPanelContents", () => {
 		focus();
 		expect(host.getLastFocusedPanelContents()).toBe(webContents);
 
-		call("browser:setBounds", { viewId: "1:s", rect: { x: 0, y: 0, width: 10, height: 10 }, visible: false });
+		call("browser:setBounds", {
+			viewId: "1:s",
+			rect: { x: 0, y: 0, width: 10, height: 10 },
+			visible: false,
+		});
 		expect(host.getLastFocusedPanelContents()).toBeNull();
 
 		focus();

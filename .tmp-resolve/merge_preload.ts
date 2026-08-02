@@ -4,46 +4,38 @@ import {
 	type BrowserAnnotationCancelReason,
 	type BrowserAnnotationContext,
 	type BrowserAnnotationPageSubmitPayload,
-	type BrowserTextEditPageSubmitPayload,
 } from "./shared/browser-annotations";
 import { promptPositionForRect } from "./shared/browser-annotation-overlay";
 
-type BrowserOverlayMode = "annotation" | "textEdit";
-
-let mode: BrowserOverlayMode | null = null;
+let enabled = false;
 let selectedElement: Element | null = null;
 let selectedContext: BrowserAnnotationContext | null = null;
 let host: HTMLDivElement | null = null;
 let shadow: ShadowRoot | null = null;
 
 ipcRenderer.on("browser:annotation:setMode", (_event, input: { enabled?: boolean }) => {
-	setMode(Boolean(input?.enabled) ? "annotation" : null, "disabled");
-});
-
-ipcRenderer.on("browser:textEdit:setMode", (_event, input: { enabled?: boolean }) => {
-	setMode(Boolean(input?.enabled) ? "textEdit" : null, "disabled");
+	setEnabled(Boolean(input?.enabled), "disabled");
 });
 
 window.addEventListener("beforeunload", () => {
-	if (mode) sendCancel(mode, "navigation");
+	if (enabled) sendCancel("navigation");
 	cleanupOverlay();
-	mode = null;
+	enabled = false;
 });
 
-function setMode(next: BrowserOverlayMode | null, cancelReason: BrowserAnnotationCancelReason): void {
-	if (mode === next) return;
-	const previous = mode;
-	mode = next;
+function setEnabled(next: boolean, cancelReason: BrowserAnnotationCancelReason): void {
+	if (enabled === next) return;
+	enabled = next;
 	selectedElement = null;
 	selectedContext = null;
-	if (mode) {
+	if (enabled) {
 		ensureOverlay();
 		installListeners();
-		renderHint(mode);
+		renderHint();
 	} else {
 		removeListeners();
 		cleanupOverlay();
-		if (previous && cancelReason !== "disabled") sendCancel(previous, cancelReason);
+		if (cancelReason !== "disabled") sendCancel(cancelReason);
 	}
 }
 
@@ -66,8 +58,8 @@ function removeListeners(): void {
 }
 
 function handlePointerMove(event: PointerEvent): void {
-	if (!mode || !event.isTrusted || selectedContext || isOverlayEvent(event)) return;
-	const target = mode === "textEdit" ? textEditTarget(event.target) : annotationTarget(event.target);
+	if (!enabled || selectedContext || isOverlayEvent(event)) return;
+	const target = annotationTarget(event.target);
 	if (!target || target === selectedElement) return;
 	selectedElement = target;
 	selectedContext = null;
@@ -75,37 +67,33 @@ function handlePointerMove(event: PointerEvent): void {
 }
 
 function handleClick(event: MouseEvent): void {
-	if (!mode || !event.isTrusted || isOverlayEvent(event)) return;
+	if (!enabled || isOverlayEvent(event)) return;
 	if (selectedContext) {
 		event.preventDefault();
 		event.stopPropagation();
 		event.stopImmediatePropagation();
 		return;
 	}
-	const target = mode === "textEdit" ? textEditTarget(event.target) : annotationTarget(event.target);
+	const target = annotationTarget(event.target);
 	if (!target) return;
 	event.preventDefault();
 	event.stopPropagation();
 	event.stopImmediatePropagation();
 	selectedElement = target;
 	selectedContext = createBrowserAnnotationContext(target);
-	if (mode === "textEdit") {
-		renderTextEditPrompt(target, selectedContext);
-	} else {
-		renderAnnotationPrompt(target, selectedContext);
-	}
+	renderPrompt(target, selectedContext);
 }
 
 function handleKeyDown(event: KeyboardEvent): void {
-	if (!mode || !event.isTrusted || event.key !== "Escape") return;
+	if (!enabled || event.key !== "Escape") return;
 	event.preventDefault();
 	event.stopPropagation();
 	event.stopImmediatePropagation();
-	setMode(null, "escape");
+	setEnabled(false, "escape");
 }
 
 function refreshHighlight(): void {
-	if (!mode || !selectedElement) return;
+	if (!enabled || !selectedElement) return;
 	renderHighlight(selectedElement, Boolean(selectedContext));
 }
 
@@ -119,16 +107,6 @@ function annotationTarget(target: EventTarget | null): Element | null {
 	return element;
 }
 
-function textEditTarget(target: EventTarget | null): Element | null {
-	if (!(target instanceof Element)) return null;
-	const element =
-		target.closest(
-			"h1, h2, h3, h4, h5, h6, p, span, a, button, label, li, td, th, figcaption, blockquote, summary, legend, input, textarea",
-		) ?? target;
-	if (element === document.documentElement || element === document.body) return null;
-	return editableText(element) ? element : null;
-}
-
 function ensureOverlay(): ShadowRoot {
 	if (shadow && host?.isConnected) return shadow;
 	host = document.createElement("div");
@@ -138,7 +116,7 @@ function ensureOverlay(): ShadowRoot {
 	host.style.zIndex = "2147483647";
 	host.style.pointerEvents = "none";
 	(document.documentElement ?? document.body).appendChild(host);
-	shadow = host.attachShadow({ mode: "closed" });
+	shadow = host.attachShadow({ mode: "open" });
 	shadow.innerHTML = `
 		<style>
 			:host { all: initial; }
@@ -285,15 +263,11 @@ function ensureOverlay(): ShadowRoot {
 	return shadow;
 }
 
-function renderHint(activeMode: BrowserOverlayMode): void {
+function renderHint(): void {
 	const root = ensureOverlay();
 	const mount = root.querySelector<HTMLDivElement>(".mount");
 	if (!mount) return;
-	const message =
-		activeMode === "textEdit"
-			? "Click text to edit it. Press Esc to cancel."
-			: "Click an element to annotate. Press Esc to cancel.";
-	mount.innerHTML = `<div class="hint">${message}</div>`;
+	mount.innerHTML = `<div class="hint">Click an element to annotate. Press Esc to cancel.</div>`;
 }
 
 function renderHighlight(element: Element, locked: boolean): void {
@@ -309,7 +283,7 @@ function renderHighlight(element: Element, locked: boolean): void {
 	highlight.style.borderColor = locked ? "#74b98a" : "#4d8dff";
 }
 
-function renderAnnotationPrompt(element: Element, context: BrowserAnnotationContext): void {
+function renderPrompt(element: Element, context: BrowserAnnotationContext): void {
 	renderHighlight(element, true);
 	const root = ensureOverlay();
 	const mount = root.querySelector<HTMLDivElement>(".mount");
@@ -333,80 +307,19 @@ function renderAnnotationPrompt(element: Element, context: BrowserAnnotationCont
 	const textarea = form.querySelector<HTMLTextAreaElement>("textarea")!;
 	form.addEventListener("submit", (event) => {
 		event.preventDefault();
-		if (!event.isTrusted) return;
 		const instruction = textarea.value.trim();
 		if (!instruction) {
 			textarea.focus();
 			return;
 		}
-		const payload: BrowserAnnotationPageSubmitPayload = {
-			instruction,
-			context,
-		};
+		const payload: BrowserAnnotationPageSubmitPayload = { instruction, context };
 		ipcRenderer.send("browser:annotation:submit", payload);
-		setMode(null, "disabled");
+		setEnabled(false, "disabled");
 	});
-	form.querySelector<HTMLButtonElement>('[data-action="cancel"]')?.addEventListener("click", (event) => {
-		event.preventDefault();
-		if (!event.isTrusted) return;
-		setMode(null, "cancel");
+	form.querySelector<HTMLButtonElement>('[data-action="cancel"]')?.addEventListener("click", () => {
+		setEnabled(false, "cancel");
 	});
 	setTimeout(() => textarea.focus(), 0);
-}
-
-function renderTextEditPrompt(element: Element, context: BrowserAnnotationContext): void {
-	renderHighlight(element, true);
-	const oldText = editableText(element);
-	const root = ensureOverlay();
-	const mount = root.querySelector<HTMLDivElement>(".mount");
-	if (!mount) return;
-	const rect = element.getBoundingClientRect();
-	const { left, top } = promptPosition(rect);
-	mount.innerHTML = `
-		<form class="prompt" style="left: ${left}px; top: ${top}px;">
-			<textarea aria-label="Text replacement"></textarea>
-			<div class="actions">
-				<button type="button" data-action="cancel">Cancel</button>
-				<button type="submit">Save</button>
-			</div>
-		</form>
-	`;
-	const form = mount.querySelector<HTMLFormElement>("form")!;
-	const textarea = form.querySelector<HTMLTextAreaElement>("textarea")!;
-	textarea.value = oldText;
-	form.addEventListener("submit", (event) => {
-		event.preventDefault();
-		if (!event.isTrusted) return;
-		const newText = textarea.value;
-		if (newText === oldText) {
-			textarea.focus();
-			return;
-		}
-		const payload: BrowserTextEditPageSubmitPayload = {
-			oldText,
-			newText,
-			context,
-		};
-		ipcRenderer.send("browser:textEdit:submit", payload);
-		setMode(null, "disabled");
-	});
-	form.querySelector<HTMLButtonElement>('[data-action="cancel"]')?.addEventListener("click", (event) => {
-		event.preventDefault();
-		if (!event.isTrusted) return;
-		setMode(null, "cancel");
-	});
-	setTimeout(() => {
-		textarea.focus();
-		textarea.select();
-	}, 0);
-}
-
-function editableText(element: Element): string {
-	if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-		return element.value.trim();
-	}
-	const htmlElement = element as HTMLElement;
-	return (htmlElement.innerText ?? element.textContent ?? "").trim();
 }
 
 function promptPosition(rect: DOMRect): { left: number; top: number } {
@@ -426,9 +339,8 @@ function cleanupOverlay(): void {
 	shadow = null;
 }
 
-function sendCancel(activeMode: BrowserOverlayMode, reason: BrowserAnnotationCancelReason): void {
-	const channel = activeMode === "textEdit" ? "browser:textEdit:cancel" : "browser:annotation:cancel";
-	ipcRenderer.send(channel, { reason });
+function sendCancel(reason: BrowserAnnotationCancelReason): void {
+	ipcRenderer.send("browser:annotation:cancel", { reason });
 }
 
 function isOverlayEvent(event: Event): boolean {
