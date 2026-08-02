@@ -587,19 +587,7 @@ export async function pingServer(cfg: ServerConfig): Promise<number> {
 
 // Derived status helpers live in sessionStatus.ts so pure modules can import
 // them; re-exported here because call sites reach for them via api.
-export { attentionOf, isTerminalStatus } from "./sessionStatus";
-
-// Matches desktop's `session.displayName ?? session.issueId ?? session.id`
-// (useWorkspaceQuery.ts). `issueId` is the rung mobile was missing: the daemon
-// stores the task name there — it is what desktop's New task dialog sends as its
-// Title — so without it a named session still rendered as its own id, and the
-// same session read differently in the two apps.
-//
-// issueTitle/userPrompt/summary are hardcoded null by mapSession today; they
-// stay for forward compatibility, between the two rungs that actually fire.
-export function sessionTitle(s: DashboardSession): string {
-	return s.displayName || s.issueId || s.issueTitle || s.userPrompt || s.summary || s.id;
-}
+export { attentionOf, isTerminalStatus, sessionTitle } from "./sessionStatus";
 
 // Project ids carry a generated hash suffix (`my-app_98d163a851`), which is
 // wider than a phone card. Middle-truncate: a plain tail-cut would drop the hash

@@ -29,3 +29,27 @@ export function attentionOf(s: DashboardSession): AttentionLevel {
 	if (s.status === "pr_open" || s.status === "review_pending") return "pending";
 	return "working";
 }
+
+// Matches desktop's `session.displayName ?? session.issueId ?? session.id`
+// (useWorkspaceQuery.ts). `issueId` is the rung mobile was missing: the daemon
+// stores the task name there — it is what desktop's New task dialog sends as its
+// Title — so without it a named session still rendered as its own id, and the
+// same session read differently in the two apps.
+//
+// issueTitle/userPrompt/summary are hardcoded null by mapSession today; they
+// stay for forward compatibility, between the two rungs that actually fire.
+//
+// The candidates are filtered on trimmed content rather than truthiness. A
+// displayName of " " is truthy, so a `||` chain stopped there and rendered a
+// card with no title at all — and the id fallback, the one value that is always
+// present, was never reached. Whitespace is not a name.
+export function sessionTitle(s: DashboardSession): string {
+	const candidates = [s.displayName, s.issueId, s.issueTitle, s.userPrompt, s.summary];
+	for (const c of candidates) {
+		const trimmed = c?.trim();
+		if (trimmed) return trimmed;
+	}
+	// `id` is server-assigned and never blank, so this terminates. Trimmed anyway
+	// so the return type's promise ("a non-empty string") holds unconditionally.
+	return s.id.trim() || s.id;
+}
