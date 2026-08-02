@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
@@ -174,9 +174,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const previewRevision = session?.previewRevision;
 	const agentWorking =
 		session?.activity && session.activity.state !== "unknown" ? session.activity.state === "active" : undefined;
+	const browserSlotVisible = Boolean(
+		session && hasInspector && (browserPoppedOut || (isInspectorOpen && inspectorView === "browser")),
+	);
 	const browserView = useBrowserView({
 		sessionId,
-		active: Boolean(session && hasInspector && (browserPoppedOut || isInspectorOpen)),
+		active: browserSlotVisible,
 		agentWorking,
 		poppedOut: browserPoppedOut,
 		terminated: session ? !sessionIsActive(session) : false,
@@ -188,7 +191,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		navUrl: browserView.navState.url,
 	});
 
-	useEffect(() => {
+	useLayoutEffect(() => {
 		setTerminalTarget({ kind: "worker" });
 		setBrowserPoppedOut(false);
 		setFilesPoppedOut(false);

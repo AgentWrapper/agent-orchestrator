@@ -312,23 +312,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/orchestrators/{id}/done": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Declare an orchestrator complete and stop automatic re-engagement */
-        post: operations["completeOrchestrator"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/projects": {
         parameters: {
             query?: never;
@@ -944,9 +927,8 @@ export interface components {
             reason: string;
             sessionId: string;
         };
-        CompleteOrchestratorResponse: {
-            ok: boolean;
-            sessionId: string;
+        ContainerReapConfig: {
+            disabled?: boolean;
         };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
@@ -1071,6 +1053,10 @@ export interface components {
             shellTerminals: components["schemas"]["ShellTerminalResponse"][];
         };
         ListWorkspaceFilesResponse: {
+            compareBaseRef?: string;
+            compareBaseSha?: string;
+            /** @enum {string} */
+            compareMode?: "base" | "head_fallback";
             files: components["schemas"]["WorkspaceFileSummary"][];
             sessionId: string;
             truncated: boolean;
@@ -1183,6 +1169,7 @@ export interface components {
             agentConfig?: components["schemas"]["AgentConfig"];
             agentRules?: string;
             agentRulesFile?: string;
+            containerReap?: components["schemas"]["ContainerReapConfig"];
             defaultBranch?: string;
             env?: {
                 [key: string]: string;
@@ -1544,6 +1531,10 @@ export interface components {
         WorkspaceFileResponse: {
             additions: number;
             binary: boolean;
+            compareBaseRef?: string;
+            compareBaseSha?: string;
+            /** @enum {string} */
+            compareMode?: "base" | "head_fallback";
             content: string;
             contentTruncated: boolean;
             deleted: boolean;
@@ -1551,6 +1542,7 @@ export interface components {
             diff: string;
             diffTruncated: boolean;
             path: string;
+            previousPath?: string;
             sessionId: string;
             /** Format: int64 */
             size: number;
@@ -1562,6 +1554,7 @@ export interface components {
             binary: boolean;
             deletions: number;
             path: string;
+            previousPath?: string;
             /** Format: int64 */
             size: number;
             /** @enum {string} */
@@ -2501,65 +2494,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionResponse"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Internal Server Error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Not Implemented */
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-        };
-    };
-    completeOrchestrator: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Orchestrator session identifier, e.g. project-orchestrator. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CompleteOrchestratorResponse"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Not Found */

@@ -1,7 +1,7 @@
 import type { ForgeConfig } from "@electron-forge/shared-types";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import MakerNSIS from "./makers/maker-nsis";
-import MakerDMG, { sealDmg } from "./makers/maker-dmg";
+import MakerDMG, { sealDmg, verifyDmg } from "./makers/maker-dmg";
 import MakerAppImage from "./makers/maker-appimage";
 import { writeFileSync } from "node:fs";
 
@@ -88,11 +88,20 @@ const config: ForgeConfig = {
 		// same credentials packagerConfig already consumes (#3267 decision 3).
 		// The .app inside was already signed + notarized + stapled by
 		// packagerConfig above, before any maker ran; nothing here touches it.
+		//
+		// Then PROVE the seal. sealDmg exiting 0 only says three commands ran on
+		// this machine; it does not say Gatekeeper accepts the published bytes with
+		// a stapled ticket. verify-mac-artifact.sh is the canonical gate for that
+		// (#3288 workstreams 1 and 2), and #3267 decision 3 step 4 asks for exactly
+		// this check on the dmg. Run only when sealDmg actually sealed: an unsigned
+		// local or desktop-testing build has nothing to verify and must keep
+		// producing its dmg.
 		postMake: async (_forgeConfig, makeResults) => {
 			for (const result of makeResults) {
 				if (result.platform !== "darwin") continue;
 				for (const artifact of result.artifacts) {
-					if (artifact.endsWith(".dmg")) await sealDmg(artifact);
+					if (!artifact.endsWith(".dmg")) continue;
+					if (await sealDmg(artifact)) await verifyDmg(artifact);
 				}
 			}
 			return makeResults;

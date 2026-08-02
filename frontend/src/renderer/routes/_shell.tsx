@@ -646,7 +646,7 @@ function ShellLayout() {
 						isOverlay={isSidebarPeekOpen && !isSidebarOpen}
 						onPreviewLeave={scheduleSidebarPeekClose}
 						underTopbar={isMac || isWindows || isLinux}
-						topbarOffset={isWindows ? "titlebar" : "toolbar"}
+						topbarOffset={isWindows ? "titlebar" : hideShellTopbar ? "trafficLights" : "toolbar"}
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}

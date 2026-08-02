@@ -157,9 +157,9 @@ exit 1
 	}
 }
 
-func TestKilocodeAuthListStatusUnauthorizedWhenEmpty(t *testing.T) {
+func TestKilocodeAuthListStatusUnknownWhenEmpty(t *testing.T) {
 	status, ok := kilocodeAuthListStatus("0 credentials\n0 environment variables")
-	if !ok || status != ports.AgentAuthStatusUnauthorized {
-		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnauthorized)
+	if !ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnknown)
 	}
 }

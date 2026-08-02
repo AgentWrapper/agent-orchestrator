@@ -1,34 +1,43 @@
 import { COMPANY } from "@ao/shared/constants";
-import { getBlogPosts } from "@/lib/blog";
 import { getComparisonPages } from "@/lib/compare";
-import { stripMdxSyntax } from "@/lib/llms";
+import {
+	buildDeveloperResourcesSection,
+	buildLlmsHeader,
+	buildWhenToUseSection,
+	stripMdxSyntax,
+} from "@/lib/llms";
 import { FAQ_ITEMS } from "../components/FAQSection/constants";
 
 
 export const dynamic = "force-static";
 
 export async function GET() {
-	const posts = getBlogPosts();
 	const comparisons = getComparisonPages();
 	const baseUrl = COMPANY.MARKETING_URL;
 	const docsUrl = COMPANY.DOCS_URL;
 
 	const sections: string[] = [];
 
-	// Header section (same as llms.txt)
+	// Header and guidance sections (same as llms.txt)
 	sections.push(
 		[
-			`# ${COMPANY.NAME}`,
+			...buildLlmsHeader(),
 			"",
-			"> Run 10+ parallel coding agents on your machine",
+			...buildWhenToUseSection(),
 			"",
-			`${COMPANY.NAME} is an open-source desktop application that lets developers run multiple AI coding agents in parallel, each in its own isolated Git worktree. It works with any CLI-based agent including Claude Code, OpenCode, and OpenAI Codex. Agents can work on different branches or features simultaneously without conflicts. ${COMPANY.NAME} is free, does not proxy API calls, and supports macOS with Windows and Linux coming soon.`,
+			...buildDeveloperResourcesSection(),
+		].join("\n"),
+	);
+
+	sections.push(
+		[
+			"---",
 			"",
-			"## Docs",
+			"# Documentation",
 			"",
-			`- [Documentation](${docsUrl}/)`,
-			`- [Quickstart](${docsUrl}/quickstart/)`,
-			`- [GitHub](${COMPANY.GITHUB_URL})`,
+			`- **[Documentation overview](${docsUrl}/index.html.md)**`,
+			`- **[Quickstart guide](${docsUrl}/quickstart/index.html.md)**`,
+			`- **[Command-line interface (CLI) reference](${docsUrl}/cli/index.html.md)**`,
 		].join("\n"),
 	);
 
@@ -46,28 +55,6 @@ export async function GET() {
 					`URL: ${baseUrl}/compare/${page.slug}/`,
 					"",
 					stripMdxSyntax(page.content),
-					"",
-				]),
-			].join("\n"),
-		);
-	}
-
-	// Blog posts - full content
-	if (posts.length > 0) {
-		sections.push(
-			[
-				"---",
-				"",
-				"# Blog Posts",
-				"",
-				...posts.flatMap((post) => [
-					`## ${post.title}`,
-					"",
-					`URL: ${baseUrl}/blog/${post.slug}/`,
-					`Date: ${post.date}`,
-					`Author: ${post.author.name}`,
-					"",
-					stripMdxSyntax(post.content),
 					"",
 				]),
 			].join("\n"),

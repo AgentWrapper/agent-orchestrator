@@ -33,7 +33,9 @@ describe("telemetry sanitizers", () => {
 
 		expect(config.persistence).toBe("memory");
 		expect(config.person_profiles).toBe("never");
+		expect(config.autocapture).toBe(false);
 		expect(config.capture_performance).toBe(false);
+		expect(config.disable_session_recording).toBe(true);
 		expect(config.bootstrap).toEqual({
 			distinctID: "ins_stable-install-id",
 			isIdentifiedID: false,
