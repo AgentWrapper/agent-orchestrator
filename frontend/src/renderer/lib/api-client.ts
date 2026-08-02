@@ -91,7 +91,6 @@ const ROUTE_TEMPLATES = [
 	"/api/v1/sessions/{sessionId}/workspace/file",
 	"/api/v1/sessions/{sessionId}/workspace/files",
 	"/api/v1/sessions/cleanup",
-	"/api/v1/usage/sessions",
 ] as const;
 
 // Resource collections whose next path segment is an identifier. Only used as a

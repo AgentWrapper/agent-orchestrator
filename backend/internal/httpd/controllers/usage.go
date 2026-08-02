@@ -45,7 +45,6 @@ func (c *UsageController) listSessions(w http.ResponseWriter, r *http.Request) {
 			TotalTokens:     item.TotalTokens,
 			CollectionState: string(item.CollectionState),
 			Coverage:        string(item.Coverage),
-			LastObservedAt:  item.LastObservedAt,
 		})
 	}
 	envelope.WriteJSON(w, http.StatusOK, ListCompactSessionUsageResponse{Sessions: out})

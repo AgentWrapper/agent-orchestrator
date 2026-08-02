@@ -92,6 +92,7 @@ SET state = CASE
             SELECT 1
             FROM usage_sources
             WHERE usage_sources.binding_id = ?1
+              AND last_error_code <> 'artifact_replaced'
               AND (anomaly_count > 0 OR last_error_code <> '')
         ) THEN 'partial'
         ELSE 'complete'
@@ -454,8 +455,8 @@ INSERT INTO model_usage_events (
     binding_id, usage_source_id, project_id, session_id, harness, provider,
     model_id, observed_at, input_tokens, uncached_input_tokens,
     cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens,
-    cost_nanos, pricing_version, source_event_key, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+    source_event_key, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertModelUsageEventParams struct {
@@ -588,19 +589,26 @@ SELECT
     s.id AS session_id,
     s.harness,
     COUNT(DISTINCT ub.id) AS binding_count,
-    COUNT(DISTINCT CASE WHEN ub.state = 'complete' THEN ub.id END) AS complete_binding_count,
     COUNT(DISTINCT CASE
-        WHEN ub.state = 'partial' OR ub.last_error_code = 'codex_source_budget_exceeded' THEN ub.id
+        WHEN ub.state = 'complete' OR (ub.state = 'partial' AND ub.last_error_code = '') THEN ub.id
+    END) AS complete_binding_count,
+    COUNT(DISTINCT CASE
+        WHEN (ub.state = 'partial' AND ub.last_error_code <> '')
+          OR ub.last_error_code = 'codex_source_budget_exceeded' THEN ub.id
     END) AS partial_binding_count,
-    COUNT(DISTINCT us.id) AS source_count,
-    COUNT(DISTINCT CASE WHEN us.state = 'complete' THEN us.id END) AS complete_source_count,
-    COUNT(DISTINCT CASE WHEN us.state = 'error' THEN us.id END) AS error_source_count,
+    COUNT(DISTINCT CASE WHEN us.last_error_code <> 'artifact_replaced' THEN us.id END) AS source_count,
     COUNT(DISTINCT CASE
-        WHEN us.anomaly_count > 0 OR us.last_error_code <> '' THEN us.id
+        WHEN us.last_error_code <> 'artifact_replaced' AND us.state = 'complete' THEN us.id
+    END) AS complete_source_count,
+    COUNT(DISTINCT CASE
+        WHEN us.last_error_code <> 'artifact_replaced' AND us.state = 'error' THEN us.id
+    END) AS error_source_count,
+    COUNT(DISTINCT CASE
+        WHEN us.last_error_code <> 'artifact_replaced'
+          AND (us.anomaly_count > 0 OR us.last_error_code <> '') THEN us.id
     END) AS anomalous_source_count,
     COUNT(DISTINCT mue.id) AS event_count,
-    CAST(COALESCE(SUM(mue.input_tokens + mue.output_tokens), 0) AS INTEGER) AS total_tokens,
-    COALESCE(CAST(MAX(mue.observed_at) AS TEXT), '') AS last_observed_at
+    CAST(COALESCE(SUM(mue.input_tokens + mue.output_tokens), 0) AS INTEGER) AS total_tokens
 FROM sessions s
 LEFT JOIN usage_bindings ub ON ub.session_id = s.id
 LEFT JOIN usage_sources us ON us.binding_id = ub.id
@@ -622,7 +630,6 @@ type ListCompactSessionUsageRow struct {
 	AnomalousSourceCount int64
 	EventCount           int64
 	TotalTokens          int64
-	LastObservedAt       interface{}
 }
 
 func (q *Queries) ListCompactSessionUsage(ctx context.Context, projectID interface{}) ([]ListCompactSessionUsageRow, error) {
@@ -646,7 +653,6 @@ func (q *Queries) ListCompactSessionUsage(ctx context.Context, projectID interfa
 			&i.AnomalousSourceCount,
 			&i.EventCount,
 			&i.TotalTokens,
-			&i.LastObservedAt,
 		); err != nil {
 			return nil, err
 		}

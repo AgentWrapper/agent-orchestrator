@@ -210,6 +210,54 @@ func TestDecodeParserStateKeepsV1BackwardCompatibleAndIntegrityStrict(t *testing
 	}
 }
 
+func TestDecodeParserStateMigratesLegacySchemaForSafeReplay(t *testing.T) {
+	tests := []struct {
+		name string
+		kind domain.UsageSourceKind
+		raw  string
+	}{
+		{
+			name: "Claude",
+			kind: domain.UsageSourceClaudeMain,
+			raw:  `{"schemaVersion":1,"provider":"claude-code","modelId":"claude-sonnet"}`,
+		},
+		{
+			name: "Codex",
+			kind: domain.UsageSourceCodexRollout,
+			raw:  `{"schemaVersion":1,"provider":"openai","modelId":"gpt-5.4","cumulative":{"input_tokens":649340,"cached_input_tokens":530304,"cache_write_input_tokens":0,"output_tokens":11600,"reasoning_output_tokens":2723}}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			state, err := decodeParserState(domain.UsageSourceRecord{
+				Kind:            test.kind,
+				ByteOffset:      128,
+				ParserStateJSON: test.raw,
+			})
+			if err != nil {
+				t.Fatalf("decode legacy parser state: %v", err)
+			}
+			if state.Version != parserStateVersion || state.SourceKind != test.kind ||
+				state.Integrity == nil || state.Integrity.Checkpoint != nil {
+				t.Fatalf("migrated state = %+v, want replay-safe %s state", state, test.kind)
+			}
+		})
+	}
+}
+
+func TestCodexSessionMetaFromRecordAcceptsScalarRootSource(t *testing.T) {
+	nativeID, parentID, ok := codexSessionMetaFromRecord([]byte(
+		`{"type":"session_meta","payload":{"id":"019fa543-3135-7890-a3a6-1ec1df43a4ee","source":"cli"}}`,
+	))
+	if !ok {
+		t.Fatal("scalar root source was rejected")
+	}
+	if nativeID != "019fa543-3135-7890-a3a6-1ec1df43a4ee" || parentID != "" {
+		t.Fatalf("metadata = (%q, %q), want root session metadata", nativeID, parentID)
+	}
+}
+
 func TestDecodeParserStateValidatesCodexDirectParent(t *testing.T) {
 	validChild := `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"native_session_id":"22222222-2222-4222-8222-222222222222","direct_parent_id":"11111111-1111-4111-8111-111111111111","pending_spawn_call_ids":[],"discovered_child_ids":[]}}`
 	child := domain.UsageSourceRecord{

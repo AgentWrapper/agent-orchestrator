@@ -1,7 +1,12 @@
+-- +goose NO TRANSACTION
 -- +goose Up
 -- +goose StatementBegin
+-- Earlier builds of this unmerged usage feature created wider tables. Rebuild
+-- them from the durable columns shared by both layouts so existing development
+-- databases can upgrade without losing collected token events.
+PRAGMA foreign_keys=OFF;
 
-CREATE TABLE usage_bindings (
+CREATE TABLE usage_bindings_compact (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id         TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
     harness            TEXT NOT NULL
@@ -17,11 +22,10 @@ CREATE TABLE usage_bindings (
 
     UNIQUE (session_id, harness, native_root_id)
 );
-CREATE INDEX idx_usage_bindings_session_state ON usage_bindings (session_id, state);
 
-CREATE TABLE usage_sources (
+CREATE TABLE usage_sources_compact (
     id                            INTEGER PRIMARY KEY AUTOINCREMENT,
-    binding_id                    INTEGER NOT NULL REFERENCES usage_bindings (id) ON DELETE CASCADE,
+    binding_id                    INTEGER NOT NULL REFERENCES usage_bindings_compact (id) ON DELETE CASCADE,
     kind                          TEXT NOT NULL
         CHECK (kind IN ('claude_main', 'claude_subagent', 'codex_rollout')),
     native_session_id             TEXT NOT NULL DEFAULT '',
@@ -43,13 +47,11 @@ CREATE TABLE usage_sources (
 
     UNIQUE (binding_id, artifact_path, generation)
 );
-CREATE INDEX idx_usage_sources_state_retry ON usage_sources (state, next_retry_at);
-CREATE INDEX idx_usage_sources_binding_kind ON usage_sources (binding_id, kind);
 
-CREATE TABLE model_usage_events (
+CREATE TABLE model_usage_events_compact (
     id                      INTEGER PRIMARY KEY AUTOINCREMENT,
-    binding_id              INTEGER NOT NULL REFERENCES usage_bindings (id) ON DELETE CASCADE,
-    usage_source_id         INTEGER NOT NULL REFERENCES usage_sources (id) ON DELETE CASCADE,
+    binding_id              INTEGER NOT NULL REFERENCES usage_bindings_compact (id) ON DELETE CASCADE,
+    usage_source_id         INTEGER NOT NULL REFERENCES usage_sources_compact (id) ON DELETE CASCADE,
     project_id              TEXT NOT NULL REFERENCES projects (id),
     session_id              TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
     harness                 TEXT NOT NULL
@@ -68,15 +70,71 @@ CREATE TABLE model_usage_events (
 
     UNIQUE (binding_id, source_event_key)
 );
-CREATE INDEX idx_model_usage_events_session_observed ON model_usage_events (session_id, observed_at);
-CREATE INDEX idx_model_usage_events_project_observed ON model_usage_events (project_id, observed_at);
-CREATE INDEX idx_model_usage_events_session_model ON model_usage_events (session_id, harness, provider, model_id);
 
--- +goose StatementEnd
+INSERT INTO usage_bindings_compact (
+    id, session_id, harness, native_root_id, initial_model_id, state,
+    last_error_code, first_seen_at, last_seen_at, updated_at
+)
+SELECT
+    id, session_id, harness, native_root_id, initial_model_id, state,
+    last_error_code, first_seen_at, last_seen_at, updated_at
+FROM usage_bindings;
 
--- +goose Down
--- +goose StatementBegin
+INSERT INTO usage_sources_compact (
+    id, binding_id, kind, native_session_id, subagent_id, artifact_path,
+    file_identity, generation, byte_offset, parser_state_json, state,
+    failure_count, anomaly_count, next_retry_at, last_error_code,
+    last_observed_at, created_at, updated_at
+)
+SELECT
+    id, binding_id, kind, native_session_id, subagent_id, artifact_path,
+    file_identity, generation, byte_offset, parser_state_json, state,
+    failure_count, anomaly_count, next_retry_at, last_error_code,
+    last_observed_at, created_at, updated_at
+FROM usage_sources
+WHERE last_error_code <> 'artifact_replaced'
+   OR EXISTS (
+       SELECT 1
+       FROM model_usage_events
+       WHERE usage_source_id = usage_sources.id
+   );
+
+INSERT INTO model_usage_events_compact (
+    id, binding_id, usage_source_id, project_id, session_id, harness,
+    provider, model_id, observed_at, input_tokens, uncached_input_tokens,
+    cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens,
+    source_event_key, created_at
+)
+SELECT
+    id, binding_id, usage_source_id, project_id, session_id, harness,
+    provider, model_id, observed_at, input_tokens, uncached_input_tokens,
+    cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens,
+    source_event_key, created_at
+FROM model_usage_events;
+
 DROP TABLE model_usage_events;
 DROP TABLE usage_sources;
 DROP TABLE usage_bindings;
+
+ALTER TABLE usage_bindings_compact RENAME TO usage_bindings;
+ALTER TABLE usage_sources_compact RENAME TO usage_sources;
+ALTER TABLE model_usage_events_compact RENAME TO model_usage_events;
+
+CREATE INDEX idx_usage_bindings_session_state ON usage_bindings (session_id, state);
+CREATE INDEX idx_usage_sources_state_retry ON usage_sources (state, next_retry_at);
+CREATE INDEX idx_usage_sources_binding_kind ON usage_sources (binding_id, kind);
+CREATE INDEX idx_model_usage_events_session_observed ON model_usage_events (session_id, observed_at);
+CREATE INDEX idx_model_usage_events_project_observed ON model_usage_events (project_id, observed_at);
+CREATE INDEX idx_model_usage_events_session_model ON model_usage_events (session_id, harness, provider, model_id);
+CREATE INDEX idx_model_usage_events_usage_source ON model_usage_events (usage_source_id);
+CREATE INDEX idx_usage_sources_codex_native_latest
+    ON usage_sources (kind, native_session_id, binding_id, generation DESC, id DESC);
+
+PRAGMA foreign_keys=ON;
+PRAGMA foreign_key_check;
 -- +goose StatementEnd
+
+-- +goose Down
+-- This migration removes redundant columns whose values are intentionally not
+-- preserved, so restoring the wider development-only schema is not meaningful.
+SELECT 1;

@@ -893,8 +893,6 @@ export interface components {
             collectionState: "waiting" | "collecting" | "complete" | "partial" | "unavailable";
             /** @enum {string} */
             coverage: "complete" | "partial" | "unavailable";
-            /** Format: date-time */
-            lastObservedAt?: null | string;
             sessionId: string;
             /** Format: int64 */
             totalTokens: number;
@@ -927,14 +925,6 @@ export interface components {
         ControllersSpawnAttachmentInput: {
             data: string;
             mimeType?: string;
-        };
-        ControllersUsageHookMetadata: {
-            /** @enum {string} */
-            harness: "claude-code" | "codex";
-            modelId?: string;
-            subagentId?: string;
-            subagentTranscriptPath?: string;
-            transcriptPath?: string;
         };
         DegradedProject: {
             id: string;
@@ -1391,7 +1381,7 @@ export interface components {
             /** @description Native tool-use id, for tool-use hook events. */
             toolUseId?: string;
             /** @description Provider transcript metadata used by the local usage pipeline. */
-            usage?: components["schemas"]["ControllersUsageHookMetadata"];
+            usage?: components["schemas"]["UsageHookMetadata"];
         };
         SetActivityResponse: {
             ok: boolean;
@@ -1502,6 +1492,14 @@ export interface components {
             models: components["schemas"]["UsageModelResponse"][];
             provider: string;
             totals: components["schemas"]["UsageTotalsResponse"];
+        };
+        UsageHookMetadata: {
+            /** @enum {string} */
+            harness: "claude-code" | "codex";
+            modelId?: string;
+            subagentId?: string;
+            subagentTranscriptPath?: string;
+            transcriptPath?: string;
         };
         UsageMetricResponse: {
             /** @enum {string} */

@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionInspector } from "./SessionInspector";
+import { TooltipProvider } from "./ui/tooltip";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { sessionUsageDetailQueryKey, type SessionUsage } from "../hooks/useSessionUsage";
 import { useUiStore } from "../stores/ui-store";
@@ -144,7 +145,11 @@ function renderWithQuery(children: ReactNode) {
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	});
 	return {
-		...render(<QueryClientProvider client={client}>{children}</QueryClientProvider>),
+		...render(
+			<QueryClientProvider client={client}>
+				<TooltipProvider>{children}</TooltipProvider>
+			</QueryClientProvider>,
+		),
 		queryClient: client,
 	};
 }
@@ -857,6 +862,8 @@ describe("SessionInspector Usage & cost section", () => {
 
 		await userEvent.hover(within(providerPeek).getByLabelText(/gpt-5.6 usage details/));
 		const modelPeek = await screen.findByRole("region", { name: "gpt-5.6 usage peek" });
+		expect(providerPeek).not.toContainElement(modelPeek);
+		expect(modelPeek.parentElement).toHaveAttribute("data-side", "left");
 		expect(within(modelPeek).getByText("Input tokens")).toBeInTheDocument();
 		expect(within(modelPeek).getByText("Output tokens")).toBeInTheDocument();
 		expect(within(modelPeek).getByText("Cache read tokens")).toBeInTheDocument();

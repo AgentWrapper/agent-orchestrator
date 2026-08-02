@@ -37,8 +37,6 @@ type ModelUsageEvent struct {
 	CacheWriteTokens    int64
 	OutputTokens        int64
 	ReasoningTokens     sql.NullInt64
-	CostNanos           sql.NullInt64
-	PricingVersion      sql.NullString
 	SourceEventKey      string
 	CreatedAt           time.Time
 }

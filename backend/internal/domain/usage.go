@@ -130,8 +130,6 @@ type UsageSourceRecord struct {
 type UsageSourceContext struct {
 	Source         UsageSourceRecord
 	SessionID      SessionID
-	ProjectID      ProjectID
-	Harness        AgentHarness
 	NativeRootID   string
 	InitialModelID string
 	BindingState   UsageBindingState
@@ -150,12 +148,6 @@ type UsageTokenMetrics struct {
 
 // ModelUsageEvent is one append-only normalized usage fact.
 type ModelUsageEvent struct {
-	ID             int64
-	BindingID      int64
-	UsageSourceID  int64
-	ProjectID      ProjectID
-	SessionID      SessionID
-	Harness        AgentHarness
 	Provider       string
 	ModelID        string
 	ObservedAt     time.Time
@@ -197,7 +189,6 @@ type UsageSessionAggregate struct {
 	AnomalousSourceCount int64
 	EventCount           int64
 	TotalTokens          int64
-	LastObservedAt       *time.Time
 }
 
 // CompactSessionUsage is the token-only dashboard read model.
@@ -206,7 +197,6 @@ type CompactSessionUsage struct {
 	TotalTokens     int64
 	CollectionState UsageCollectionState
 	Coverage        UsageCoverage
-	LastObservedAt  *time.Time
 }
 
 // UsageMetricTotals is the aggregate metric block used by session, harness,
@@ -262,10 +252,4 @@ type SourceCursorState struct {
 	LastErrorCode   string
 	LastObservedAt  *time.Time
 	UpdatedAt       time.Time
-}
-
-// ApplyUsageChunkResult reports what a transactional source apply did.
-type ApplyUsageChunkResult struct {
-	InsertedEvents  int
-	DuplicateEvents int
 }

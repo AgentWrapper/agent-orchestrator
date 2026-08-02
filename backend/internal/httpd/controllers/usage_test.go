@@ -45,13 +45,11 @@ func newUsageTestServer(t *testing.T, svc *fakeUsageSummaryService) *httptest.Se
 }
 
 func TestUsageAPIListsCompactProjectUsage(t *testing.T) {
-	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
 	svc := &fakeUsageSummaryService{items: []domain.CompactSessionUsage{{
 		SessionID:       "reverb-12",
 		TotalTokens:     12400,
 		CollectionState: domain.UsageCollectionCollecting,
 		Coverage:        domain.UsageCoveragePartial,
-		LastObservedAt:  &now,
 	}}}
 	srv := newUsageTestServer(t, svc)
 
@@ -64,18 +62,16 @@ func TestUsageAPIListsCompactProjectUsage(t *testing.T) {
 	}
 	var got struct {
 		Sessions []struct {
-			SessionID       string     `json:"sessionId"`
-			TotalTokens     int64      `json:"totalTokens"`
-			CollectionState string     `json:"collectionState"`
-			Coverage        string     `json:"coverage"`
-			LastObservedAt  *time.Time `json:"lastObservedAt"`
+			SessionID       string `json:"sessionId"`
+			TotalTokens     int64  `json:"totalTokens"`
+			CollectionState string `json:"collectionState"`
+			Coverage        string `json:"coverage"`
 		} `json:"sessions"`
 	}
 	mustJSON(t, body, &got)
 	if len(got.Sessions) != 1 || got.Sessions[0].SessionID != "reverb-12" ||
 		got.Sessions[0].TotalTokens != 12400 || got.Sessions[0].CollectionState != "collecting" ||
-		got.Sessions[0].Coverage != "partial" || got.Sessions[0].LastObservedAt == nil ||
-		!got.Sessions[0].LastObservedAt.Equal(now) {
+		got.Sessions[0].Coverage != "partial" {
 		t.Fatalf("response = %+v", got)
 	}
 }

@@ -1606,23 +1606,46 @@ func readCodexSessionMeta(path string) (codexSessionMeta, bool) {
 	var envelope struct {
 		Type    string `json:"type"`
 		Payload struct {
-			ID     string `json:"id"`
-			Source struct {
-				Subagent struct {
-					ThreadSpawn struct {
-						ParentThreadID string `json:"parent_thread_id"`
-					} `json:"thread_spawn"`
-				} `json:"subagent"`
-			} `json:"source"`
+			ID     string          `json:"id"`
+			Source json.RawMessage `json:"source"`
 		} `json:"payload"`
 	}
 	if json.Unmarshal(data, &envelope) != nil || envelope.Type != "session_meta" || envelope.Payload.ID == "" {
 		return codexSessionMeta{}, false
 	}
+	parentThreadID, ok := codexParentThreadID(envelope.Payload.Source)
+	if !ok {
+		return codexSessionMeta{}, false
+	}
 	return codexSessionMeta{
 		NativeSessionID: envelope.Payload.ID,
-		ParentThreadID:  envelope.Payload.Source.Subagent.ThreadSpawn.ParentThreadID,
+		ParentThreadID:  parentThreadID,
 	}, true
+}
+
+func codexParentThreadID(raw json.RawMessage) (string, bool) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return "", true
+	}
+	if raw[0] == '"' {
+		var source string
+		return "", json.Unmarshal(raw, &source) == nil
+	}
+	if raw[0] != '{' {
+		return "", false
+	}
+	var source struct {
+		Subagent struct {
+			ThreadSpawn struct {
+				ParentThreadID string `json:"parent_thread_id"`
+			} `json:"thread_spawn"`
+		} `json:"subagent"`
+	}
+	if json.Unmarshal(raw, &source) != nil {
+		return "", false
+	}
+	return source.Subagent.ThreadSpawn.ParentThreadID, true
 }
 
 func validCanonicalUUID(value string) bool {

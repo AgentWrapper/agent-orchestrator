@@ -62,13 +62,11 @@ func (s *compactUsageStoreStub) ListUsageModelAggregates(
 }
 
 func TestSummaryReaderListCompactDerivesStatesAndCoverageInOneRead(t *testing.T) {
-	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
 	store := &compactUsageStoreStub{rows: []domain.UsageSessionAggregate{
 		{SessionID: "waiting", Harness: domain.HarnessCodex},
 		{
 			SessionID: "collecting", Harness: domain.HarnessClaudeCode,
 			BindingCount: 1, SourceCount: 1, EventCount: 2, TotalTokens: 120,
-			LastObservedAt: &now,
 		},
 		{
 			SessionID: "complete", Harness: domain.HarnessCodex,
@@ -111,9 +109,6 @@ func TestSummaryReaderListCompactDerivesStatesAndCoverageInOneRead(t *testing.T)
 		if got[i].CollectionState != want[i].state || got[i].Coverage != want[i].coverage || got[i].TotalTokens != want[i].tokens {
 			t.Errorf("item %d = %+v, want state=%s coverage=%s tokens=%d", i, got[i], want[i].state, want[i].coverage, want[i].tokens)
 		}
-	}
-	if got[1].LastObservedAt == nil || !got[1].LastObservedAt.Equal(now) {
-		t.Fatalf("last observed = %v, want %v", got[1].LastObservedAt, now)
 	}
 }
 
@@ -174,5 +169,39 @@ func TestSummaryReaderGetReturnsDetailedTokenTelemetry(t *testing.T) {
 			store.sourceCalls,
 			store.modelCalls,
 		)
+	}
+}
+
+func TestSummaryReaderIgnoresRetiredGenerationHealth(t *testing.T) {
+	now := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
+	store := &compactUsageStoreStub{
+		found:   true,
+		session: domain.SessionRecord{ID: "reverb-12", Harness: domain.HarnessCodex},
+		bindings: []domain.UsageBindingRecord{{
+			ID: 1, State: domain.UsageBindingPartial,
+		}},
+		sources: []domain.UsageSourceRecord{
+			{ID: 10, BindingID: 1, Generation: 0, State: domain.UsageSourceComplete, LastErrorCode: domain.UsageErrorArtifactReplaced},
+			{ID: 11, BindingID: 1, Generation: 1, State: domain.UsageSourceComplete},
+		},
+		models: []domain.UsageModelAggregate{{
+			Harness:        domain.HarnessCodex,
+			Provider:       "openai",
+			ModelID:        "gpt-5.4",
+			Tokens:         domain.UsageTokenMetrics{InputTokens: 100, UncachedInputTokens: 100, OutputTokens: 20},
+			EventCount:     1,
+			LastObservedAt: &now,
+		}},
+	}
+
+	got, err := NewSummaryReader(store).Get(context.Background(), "reverb-12")
+	if err != nil {
+		t.Fatalf("get detailed usage: %v", err)
+	}
+	if got.Collection.State != domain.UsageCollectionComplete || len(got.Collection.Warnings) != 0 {
+		t.Fatalf("collection = %+v, want complete without retired-generation warnings", got.Collection)
+	}
+	if got.Totals.InputTokens.Value == nil || *got.Totals.InputTokens.Value != 100 {
+		t.Fatalf("totals = %+v, want retired generation events retained", got.Totals)
 	}
 }

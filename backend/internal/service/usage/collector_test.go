@@ -1688,7 +1688,7 @@ func TestCollectorReconcilesPersistedCodexChildrenRecursively(t *testing.T) {
 		t.Fatalf("root sources=%+v err=%v", sources, err)
 	}
 	parentState := `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":["` + childID + `","` + childID + `","` + wrongID + `"]}}`
-	if _, err := store.ApplyUsageChunk(context.Background(), sources[0].ID, 0, domain.SourceCursorState{
+	if err := store.ApplyUsageChunk(context.Background(), sources[0].ID, 0, domain.SourceCursorState{
 		State:           domain.UsageSourceActive,
 		ParserStateJSON: parentState,
 		UpdatedAt:       time.Now().UTC(),
@@ -1719,7 +1719,7 @@ func TestCollectorReconcilesPersistedCodexChildrenRecursively(t *testing.T) {
 	}
 
 	childState := `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":["` + grandchildID + `"]}}`
-	if _, err := store.ApplyUsageChunk(context.Background(), childSource.ID, 0, domain.SourceCursorState{
+	if err := store.ApplyUsageChunk(context.Background(), childSource.ID, 0, domain.SourceCursorState{
 		State:           domain.UsageSourceActive,
 		ParserStateJSON: childState,
 		UpdatedAt:       time.Now().UTC(),
@@ -1921,7 +1921,7 @@ func TestCollectorDoesNotTransferCursorAcrossNativeSessions(t *testing.T) {
 	if err != nil || len(sources) != 1 {
 		t.Fatalf("sources=%+v err=%v", sources, err)
 	}
-	if _, err := store.ApplyUsageChunk(context.Background(), sources[0].ID, 0, domain.SourceCursorState{
+	if err := store.ApplyUsageChunk(context.Background(), sources[0].ID, 0, domain.SourceCursorState{
 		ByteOffset: 100,
 		State:      domain.UsageSourceActive,
 		UpdatedAt:  now,
@@ -2032,6 +2032,46 @@ func TestDiscoverCodexPathRequiresConfiguredRoots(t *testing.T) {
 	collector := NewCollector(collectorTestStore(t), SourceRoots{}, nil)
 	if got := collector.discoverCodexPath(nativeID, ""); got != "" {
 		t.Fatalf("unconfigured Codex roots discovered %q", got)
+	}
+}
+
+func TestReconcileCodexRootAcceptsScalarSourceMetadata(t *testing.T) {
+	const nativeID = "11111111-1111-4111-8111-111111111111"
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessCodex, nativeID, false)
+	root := filepath.Join(t.TempDir(), "sessions")
+	path := filepath.Join(root, "2026", "08", "02", "rollout-"+nativeID+".jsonl")
+	writeUsageFixture(t, path, `{"type":"session_meta","payload":{"id":"`+nativeID+`","source":"cli"}}`+"\n")
+	now := time.Now().UTC()
+	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
+		SessionID:     session.ID,
+		Harness:       session.Harness,
+		NativeRootID:  nativeID,
+		State:         domain.UsageBindingActive,
+		LastErrorCode: domain.UsageErrorSourceDiscoveryPending,
+		FirstSeenAt:   now,
+		LastSeenAt:    now,
+		UpdatedAt:     now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	collector := NewCollector(store, SourceRoots{CodexSessions: root}, nil)
+	if err := collector.ReconcileSources(context.Background(), 8); err != nil {
+		t.Fatalf("reconcile scalar-source rollout: %v", err)
+	}
+
+	got, ok, err := store.GetUsageBinding(context.Background(), session.ID, session.Harness, nativeID)
+	if err != nil || !ok {
+		t.Fatalf("get reconciled binding: ok=%v err=%v", ok, err)
+	}
+	if got.LastErrorCode != "" {
+		t.Fatalf("binding error = %q, want cleared", got.LastErrorCode)
+	}
+	sources, err := store.ListUsageSourcesForBinding(context.Background(), binding.ID)
+	if err != nil || len(sources) != 1 {
+		t.Fatalf("sources = %+v, err=%v; want one registered rollout", sources, err)
 	}
 }
 

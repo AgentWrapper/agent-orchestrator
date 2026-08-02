@@ -607,7 +607,6 @@ type CompactSessionUsageResponse struct {
 	TotalTokens     int64            `json:"totalTokens" minimum:"0"`
 	CollectionState string           `json:"collectionState" enum:"waiting,collecting,complete,partial,unavailable"`
 	Coverage        string           `json:"coverage" enum:"complete,partial,unavailable"`
-	LastObservedAt  *time.Time       `json:"lastObservedAt,omitempty"`
 }
 
 // ListCompactSessionUsageResponse is the batch dashboard usage response.

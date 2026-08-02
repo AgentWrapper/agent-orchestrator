@@ -350,16 +350,15 @@ func (s *Store) MarkUsageSourceFailure(ctx context.Context, id, failureCount int
 
 // ApplyUsageChunk atomically writes parsed usage events and advances the source
 // cursor/baselines. The cursor never moves unless all event writes commit.
-func (s *Store) ApplyUsageChunk(ctx context.Context, sourceID, expectedOffset int64, nextState domain.SourceCursorState, events []domain.ModelUsageEvent) (domain.ApplyUsageChunkResult, error) {
+func (s *Store) ApplyUsageChunk(ctx context.Context, sourceID, expectedOffset int64, nextState domain.SourceCursorState, events []domain.ModelUsageEvent) error {
 	if nextState.ParserStateJSON != "" {
 		if err := validateParserStateObject(nextState.ParserStateJSON); err != nil {
-			return domain.ApplyUsageChunkResult{}, err
+			return err
 		}
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
-	var result domain.ApplyUsageChunkResult
 	err := s.inTx(ctx, "apply usage chunk", func(q *gen.Queries) error {
 		source, err := q.GetUsageSourceWithBindingAndSession(ctx, sourceID)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -383,13 +382,11 @@ func (s *Store) ApplyUsageChunk(ctx context.Context, sourceID, expectedOffset in
 				if !usageEventMatches(source.Kind, existing, ev) {
 					return fmt.Errorf("%w: binding %d event %q", domain.ErrUsageSourceEventConflict, source.BindingID, ev.SourceEventKey)
 				}
-				result.DuplicateEvents++
 				continue
 			}
 			if err := q.InsertModelUsageEvent(ctx, usageEventInsertParams(source, ev)); err != nil {
 				return err
 			}
-			result.InsertedEvents++
 		}
 		return q.UpdateUsageSourceCursor(ctx, gen.UpdateUsageSourceCursorParams{
 			ID:              sourceID,
@@ -405,9 +402,9 @@ func (s *Store) ApplyUsageChunk(ctx context.Context, sourceID, expectedOffset in
 		})
 	})
 	if err != nil {
-		return domain.ApplyUsageChunkResult{}, err
+		return err
 	}
-	return result, nil
+	return nil
 }
 
 // ListUsageModelAggregates returns model-level aggregate rows for a session.
@@ -432,10 +429,6 @@ func (s *Store) ListCompactSessionUsage(ctx context.Context, projectID domain.Pr
 	}
 	out := make([]domain.UsageSessionAggregate, 0, len(rows))
 	for _, row := range rows {
-		var lastObservedAt *time.Time
-		if parsed, ok := timeFromSQLiteValue(row.LastObservedAt); ok {
-			lastObservedAt = &parsed
-		}
 		out = append(out, domain.UsageSessionAggregate{
 			SessionID:            row.SessionID,
 			Harness:              row.Harness,
@@ -448,7 +441,6 @@ func (s *Store) ListCompactSessionUsage(ctx context.Context, projectID domain.Pr
 			AnomalousSourceCount: row.AnomalousSourceCount,
 			EventCount:           row.EventCount,
 			TotalTokens:          row.TotalTokens,
-			LastObservedAt:       lastObservedAt,
 		})
 	}
 	return out, nil
@@ -515,8 +507,6 @@ func usageSourceContextFromGen(row gen.GetUsageSourceWithBindingAndSessionRow) d
 			UpdatedAt:       row.SourceUpdatedAt,
 		},
 		SessionID:      row.SessionID,
-		ProjectID:      row.ProjectID,
-		Harness:        row.Harness,
 		NativeRootID:   row.NativeRootID,
 		InitialModelID: row.InitialModelID,
 		BindingState:   row.BindingState,

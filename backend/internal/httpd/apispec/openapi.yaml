@@ -2433,11 +2433,6 @@ components:
           - partial
           - unavailable
           type: string
-        lastObservedAt:
-          format: date-time
-          type:
-          - "null"
-          - string
         sessionId:
           type: string
         totalTokens:
@@ -2537,24 +2532,6 @@ components:
           type: string
       required:
       - data
-      type: object
-    ControllersUsageHookMetadata:
-      properties:
-        harness:
-          enum:
-          - claude-code
-          - codex
-          type: string
-        modelId:
-          type: string
-        subagentId:
-          type: string
-        subagentTranscriptPath:
-          type: string
-        transcriptPath:
-          type: string
-      required:
-      - harness
       type: object
     DegradedProject:
       properties:
@@ -3731,7 +3708,7 @@ components:
           description: Native tool-use id, for tool-use hook events.
           type: string
         usage:
-          $ref: '#/components/schemas/ControllersUsageHookMetadata'
+          $ref: '#/components/schemas/UsageHookMetadata'
           description: Provider transcript metadata used by the local usage pipeline.
       type: object
     SetActivityResponse:
@@ -4009,6 +3986,24 @@ components:
       - provider
       - totals
       - models
+      type: object
+    UsageHookMetadata:
+      properties:
+        harness:
+          enum:
+          - claude-code
+          - codex
+          type: string
+        modelId:
+          type: string
+        subagentId:
+          type: string
+        subagentTranscriptPath:
+          type: string
+        transcriptPath:
+          type: string
+      required:
+      - harness
       type: object
     UsageMetricResponse:
       properties:

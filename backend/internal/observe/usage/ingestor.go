@@ -23,7 +23,7 @@ const (
 
 type ingestorStore interface {
 	GetUsageSourceForIngestion(context.Context, int64) (domain.UsageSourceContext, bool, error)
-	ApplyUsageChunk(context.Context, int64, int64, domain.SourceCursorState, []domain.ModelUsageEvent) (domain.ApplyUsageChunkResult, error)
+	ApplyUsageChunk(context.Context, int64, int64, domain.SourceCursorState, []domain.ModelUsageEvent) error
 	MarkUsageSourceState(context.Context, int64, domain.UsageSourceState, string, *time.Time, time.Time) (bool, error)
 	MarkUsageSourceFailure(context.Context, int64, int64, string, time.Time, time.Time) (bool, error)
 	ReplaceUsageSource(context.Context, int64, string, domain.UsageSourceRecord, time.Time) (domain.UsageSourceRecord, error)
@@ -269,7 +269,7 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 			errors.New("transcript changed during ingestion"),
 		)
 	}
-	if _, err := i.store.ApplyUsageChunk(ctx, source.Source.ID, source.Source.ByteOffset, parsed.Cursor, parsed.Events); err != nil {
+	if err := i.store.ApplyUsageChunk(ctx, source.Source.ID, source.Source.ByteOffset, parsed.Cursor, parsed.Events); err != nil {
 		if errors.Is(err, domain.ErrUsageSourceEventConflict) {
 			if _, markErr := i.store.MarkUsageSourceState(
 				ctx,
@@ -581,14 +581,6 @@ type jsonlChunk struct {
 	trailingOffset int64
 	anomalies      int
 	errorCode      string
-}
-
-func readJSONLChunkFromFile(file *os.File, offset, maxBytes int64, maxRecord int, previousError string) (jsonlChunk, error) {
-	info, err := file.Stat()
-	if err != nil {
-		return jsonlChunk{}, err
-	}
-	return readJSONLChunkFromSnapshot(file, info.Size(), offset, maxBytes, maxRecord, previousError)
 }
 
 func readJSONLChunkFromSnapshot(

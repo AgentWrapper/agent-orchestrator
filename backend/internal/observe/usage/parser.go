@@ -30,14 +30,6 @@ type parseResult struct {
 	err                    error
 }
 
-func parseRecords(source domain.UsageSourceContext, records []jsonlRecord, nextOffset int64, now time.Time) parseResult {
-	state, err := decodeParserState(source.Source)
-	if err != nil {
-		return parseResult{err: fmt.Errorf("decode parser state: %w", err)}
-	}
-	return parseRecordsWithState(source, records, nextOffset, now, state)
-}
-
 func parseRecordsWithState(
 	source domain.UsageSourceContext,
 	records []jsonlRecord,
@@ -133,6 +125,13 @@ type codexParserStateV1 struct {
 	DiscoveredChildIDs  []string         `json:"discovered_child_ids"`
 }
 
+type legacyParserStateV1 struct {
+	SchemaVersion int               `json:"schemaVersion"`
+	Provider      string            `json:"provider"`
+	ModelID       string            `json:"modelId"`
+	Cumulative    *codexTokenVector `json:"cumulative,omitempty"`
+}
+
 func decodeParserState(source domain.UsageSourceRecord) (*parserStateEnvelope, error) {
 	raw := strings.TrimSpace(source.ParserStateJSON)
 	if raw == "" || raw[0] != '{' {
@@ -153,6 +152,9 @@ func decodeParserState(source domain.UsageSourceRecord) (*parserStateEnvelope, e
 			}
 		}
 		return state, nil
+	}
+	if _, legacy := object["schemaVersion"]; legacy {
+		return decodeLegacyParserState(source, raw)
 	}
 	var state parserStateEnvelope
 	decoder := json.NewDecoder(bytes.NewReader([]byte(raw)))
@@ -200,6 +202,37 @@ func decodeParserState(source domain.UsageSourceRecord) (*parserStateEnvelope, e
 		return nil, fmt.Errorf("unsupported source kind %q", source.Kind)
 	}
 	return &state, nil
+}
+
+func decodeLegacyParserState(source domain.UsageSourceRecord, raw string) (*parserStateEnvelope, error) {
+	var legacy legacyParserStateV1
+	decoder := json.NewDecoder(bytes.NewReader([]byte(raw)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&legacy); err != nil {
+		return nil, err
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return nil, err
+	}
+	if legacy.SchemaVersion != parserStateVersion {
+		return nil, fmt.Errorf("unsupported legacy version %d", legacy.SchemaVersion)
+	}
+	state, err := newParserState(source.Kind)
+	if err != nil {
+		return nil, err
+	}
+	switch source.Kind {
+	case domain.UsageSourceClaudeMain, domain.UsageSourceClaudeSubagent:
+		if legacy.Cumulative != nil {
+			return nil, errors.New("claude legacy state has Codex cumulative usage")
+		}
+		state.Claude.ModelID = strings.TrimSpace(legacy.ModelID)
+		state.Claude.Provider = strings.TrimSpace(legacy.Provider)
+	case domain.UsageSourceCodexRollout:
+		state.Codex.ModelID = strings.TrimSpace(legacy.ModelID)
+		state.Codex.Provider = strings.TrimSpace(legacy.Provider)
+	}
+	return state, nil
 }
 
 func newParserState(kind domain.UsageSourceKind) (*parserStateEnvelope, error) {
@@ -454,20 +487,43 @@ func codexSessionMetaFromRecord(data []byte) (nativeSessionID, directParentID st
 	var envelope struct {
 		Type    string `json:"type"`
 		Payload struct {
-			ID     string `json:"id"`
-			Source struct {
-				Subagent struct {
-					ThreadSpawn struct {
-						ParentThreadID string `json:"parent_thread_id"`
-					} `json:"thread_spawn"`
-				} `json:"subagent"`
-			} `json:"source"`
+			ID     string          `json:"id"`
+			Source json.RawMessage `json:"source"`
 		} `json:"payload"`
 	}
 	if json.Unmarshal(data, &envelope) != nil || envelope.Type != "session_meta" || envelope.Payload.ID == "" {
 		return "", "", false
 	}
-	return envelope.Payload.ID, envelope.Payload.Source.Subagent.ThreadSpawn.ParentThreadID, true
+	directParentID, ok = codexParentThreadIDFromSource(envelope.Payload.Source)
+	if !ok {
+		return "", "", false
+	}
+	return envelope.Payload.ID, directParentID, true
+}
+
+func codexParentThreadIDFromSource(raw json.RawMessage) (string, bool) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return "", true
+	}
+	if raw[0] == '"' {
+		var source string
+		return "", json.Unmarshal(raw, &source) == nil
+	}
+	if raw[0] != '{' {
+		return "", false
+	}
+	var source struct {
+		Subagent struct {
+			ThreadSpawn struct {
+				ParentThreadID string `json:"parent_thread_id"`
+			} `json:"thread_spawn"`
+		} `json:"subagent"`
+	}
+	if json.Unmarshal(raw, &source) != nil {
+		return "", false
+	}
+	return source.Subagent.ThreadSpawn.ParentThreadID, true
 }
 
 func normalizeCodexIDs(values []string, valid func(string) bool) ([]string, error) {

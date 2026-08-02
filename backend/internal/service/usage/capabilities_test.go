@@ -6,32 +6,28 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-func TestCapabilityForSupportedHarnesses(t *testing.T) {
+func TestSupportedHarness(t *testing.T) {
 	tests := []struct {
-		harness domain.AgentHarness
+		harness   domain.AgentHarness
+		supported bool
 	}{
-		{harness: domain.HarnessClaudeCode},
-		{harness: domain.HarnessCodex},
+		{harness: domain.HarnessClaudeCode, supported: true},
+		{harness: domain.HarnessCodex, supported: true},
+	}
+	for _, harness := range domain.AllHarnesses {
+		if harness != domain.HarnessClaudeCode && harness != domain.HarnessCodex {
+			tests = append(tests, struct {
+				harness   domain.AgentHarness
+				supported bool
+			}{harness: harness})
+		}
 	}
 
 	for _, tt := range tests {
 		t.Run(string(tt.harness), func(t *testing.T) {
-			c := CapabilityFor(tt.harness)
-			if !c.Supported {
-				t.Fatalf("capability = %+v", c)
+			if got := SupportedHarness(tt.harness); got != tt.supported {
+				t.Fatalf("SupportedHarness(%q) = %t, want %t", tt.harness, got, tt.supported)
 			}
 		})
-	}
-}
-
-func TestCapabilityForUnsupportedHarnesses(t *testing.T) {
-	for _, h := range domain.AllHarnesses {
-		if h == domain.HarnessClaudeCode || h == domain.HarnessCodex {
-			continue
-		}
-		c := CapabilityFor(h)
-		if c.Supported {
-			t.Fatalf("%s unexpectedly supported", h)
-		}
 	}
 }

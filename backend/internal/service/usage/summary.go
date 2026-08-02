@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
@@ -45,7 +46,6 @@ func (r *SummaryReader) ListCompact(ctx context.Context, projectID domain.Projec
 			TotalTokens:     row.TotalTokens,
 			CollectionState: state,
 			Coverage:        tokenCoverage(row.EventCount, state),
-			LastObservedAt:  row.LastObservedAt,
 		})
 	}
 	return out, nil
@@ -71,10 +71,11 @@ func (r *SummaryReader) Get(ctx context.Context, sessionID domain.SessionID) (do
 	warnings := make(map[string]struct{})
 	for _, binding := range bindings {
 		aggregate.BindingCount++
-		if binding.State == domain.UsageBindingComplete {
+		if binding.State == domain.UsageBindingComplete ||
+			(binding.State == domain.UsageBindingPartial && binding.LastErrorCode == "") {
 			aggregate.CompleteBindingCount++
 		}
-		if binding.State == domain.UsageBindingPartial ||
+		if (binding.State == domain.UsageBindingPartial && binding.LastErrorCode != "") ||
 			binding.LastErrorCode == domain.UsageErrorCodexSourceBudgetExceeded {
 			aggregate.PartialBindingCount++
 		}
@@ -85,6 +86,9 @@ func (r *SummaryReader) Get(ctx context.Context, sessionID domain.SessionID) (do
 		return domain.SessionUsageSummary{}, err
 	}
 	for _, source := range sources {
+		if source.LastErrorCode == domain.UsageErrorArtifactReplaced {
+			continue
+		}
 		aggregate.SourceCount++
 		if source.State == domain.UsageSourceComplete {
 			aggregate.CompleteSourceCount++
@@ -101,12 +105,13 @@ func (r *SummaryReader) Get(ctx context.Context, sessionID domain.SessionID) (do
 	if err != nil {
 		return domain.SessionUsageSummary{}, err
 	}
+	var lastObservedAt *time.Time
 	for _, model := range models {
 		aggregate.EventCount += model.EventCount
 		if model.LastObservedAt != nil &&
-			(aggregate.LastObservedAt == nil || model.LastObservedAt.After(*aggregate.LastObservedAt)) {
+			(lastObservedAt == nil || model.LastObservedAt.After(*lastObservedAt)) {
 			observedAt := *model.LastObservedAt
-			aggregate.LastObservedAt = &observedAt
+			lastObservedAt = &observedAt
 		}
 	}
 	state := collectionState(aggregate)
@@ -117,7 +122,7 @@ func (r *SummaryReader) Get(ctx context.Context, sessionID domain.SessionID) (do
 		SessionID: sessionID,
 		Collection: domain.UsageCollectionSummary{
 			State:          state,
-			LastObservedAt: aggregate.LastObservedAt,
+			LastObservedAt: lastObservedAt,
 			Warnings:       sortedUsageWarnings(warnings),
 		},
 		Totals:    usageTotals(models, state),
@@ -238,7 +243,7 @@ func partialReasoningCoverage(models []domain.UsageModelAggregate) bool {
 }
 
 func addUsageWarning(warnings map[string]struct{}, warning string) {
-	if warning != "" {
+	if warning != "" && warning != domain.UsageErrorArtifactReplaced {
 		warnings[warning] = struct{}{}
 	}
 }

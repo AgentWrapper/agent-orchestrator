@@ -38,7 +38,7 @@ func TestUsageTablesKeepOnlyDurableCollectionState(t *testing.T) {
 			"id", "binding_id", "usage_source_id", "project_id", "session_id", "harness",
 			"provider", "model_id", "observed_at", "input_tokens", "uncached_input_tokens",
 			"cache_read_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens",
-			"cost_nanos", "pricing_version", "source_event_key", "created_at",
+			"source_event_key", "created_at",
 		},
 	}
 	for table, wantColumns := range want {

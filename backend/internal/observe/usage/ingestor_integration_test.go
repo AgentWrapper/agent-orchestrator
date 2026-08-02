@@ -989,7 +989,7 @@ func TestIngestorPersistsAppendOnlyUsageAcrossRestartAndFinalization(t *testing.
 		t.Fatal(err)
 	}
 	path := t.TempDir() + "/rollout.jsonl"
-	initial := `{"type":"session_meta","payload":{"id":"native-1","model_provider":"openai"}}` + "\n" +
+	initial := `{"type":"session_meta","payload":{"id":"native-1","model_provider":"openai","source":"cli"}}` + "\n" +
 		`{"type":"turn_context","payload":{"model":"gpt-5.6"}}` + "\n" +
 		string(codexTokenLine("2026-07-01T10:00:00Z", 100, 60, 0, 20, 5)) + "\n"
 	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
@@ -1034,7 +1034,7 @@ func TestIngestorPersistsAppendOnlyUsageAcrossRestartAndFinalization(t *testing.
 	ingestSourceFully(ctx, t, restarted, source.ID)
 	assertTokenAggregate(t, store, session.ID, 180)
 
-	replacement := `{"type":"session_meta","payload":{"id":"native-1","model_provider":"openai-replacement"}}` + "\n" +
+	replacement := `{"type":"session_meta","payload":{"id":"native-1","model_provider":"openai-replacement","source":"cli"}}` + "\n" +
 		`{"type":"turn_context","payload":{"model":"gpt-5.6-mini"}}` + "\n" +
 		string(codexTokenLine("2026-07-01T11:00:00Z", 10, 5, 0, 2, 1)) + "\n"
 	if err := os.WriteFile(path, []byte(replacement), 0o600); err != nil {
@@ -1071,7 +1071,7 @@ func TestIngestorPersistsAppendOnlyUsageAcrossRestartAndFinalization(t *testing.
 		t.Fatalf("source state = %s", got.Source.State)
 	}
 	bindings, err := store.ListUsageBindingsForSession(ctx, session.ID)
-	if err != nil || len(bindings) != 1 || bindings[0].State != domain.UsageBindingPartial {
+	if err != nil || len(bindings) != 1 || bindings[0].State != domain.UsageBindingComplete {
 		t.Fatalf("bindings=%+v err=%v", bindings, err)
 	}
 }
@@ -1366,7 +1366,7 @@ func TestIngestorStopsRetryingConflictingNativeEvent(t *testing.T) {
 	}
 	conflict := parsed.Events[0]
 	conflict.Tokens.OutputTokens++
-	if _, err := store.ApplyUsageChunk(ctx, source.ID, 0, domain.SourceCursorState{
+	if err := store.ApplyUsageChunk(ctx, source.ID, 0, domain.SourceCursorState{
 		ByteOffset: 0,
 		State:      domain.UsageSourcePending,
 		UpdatedAt:  now,
@@ -1453,7 +1453,7 @@ func (s *applyInterleavingStore) ApplyUsageChunk(
 	expectedOffset int64,
 	nextState domain.SourceCursorState,
 	events []domain.ModelUsageEvent,
-) (domain.ApplyUsageChunkResult, error) {
+) error {
 	if beforeApply := s.beforeApply; beforeApply != nil {
 		s.beforeApply = nil
 		beforeApply()

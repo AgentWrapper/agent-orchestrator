@@ -39,6 +39,7 @@ import { CodexIcon } from "./icons";
 import { SessionTerminationDialog } from "./SessionTerminationDialog";
 import { Switch } from "./ui/switch";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -537,13 +538,19 @@ function UsageProviderRow({ harness }: { harness: SessionUsage["harnesses"][numb
 				role="region"
 				side="left"
 			>
-				<ProviderUsagePeek harness={harness} />
+				<ProviderUsagePeek harness={harness} onRequestClose={() => peek.onOpenChange(false)} />
 			</PopoverContent>
 		</Popover>
 	);
 }
 
-function ProviderUsagePeek({ harness }: { harness: SessionUsage["harnesses"][number] }) {
+function ProviderUsagePeek({
+	harness,
+	onRequestClose,
+}: {
+	harness: SessionUsage["harnesses"][number];
+	onRequestClose: () => void;
+}) {
 	const harnessName = formatHarnessName(harness.harness);
 	const totalTokens = usageTokenTotal(harness.totals);
 	const coverageLabel = formatUsageCoverage(usageTotalsCoverage(harness.totals));
@@ -584,6 +591,7 @@ function ProviderUsagePeek({ harness }: { harness: SessionUsage["harnesses"][num
 								key={modelKey}
 								model={model}
 								onActiveChange={(active) => setActiveModelKey(active ? modelKey : null)}
+								onRequestClose={onRequestClose}
 							/>
 						);
 					})
@@ -599,10 +607,12 @@ function UsageModelRow({
 	active,
 	model,
 	onActiveChange,
+	onRequestClose,
 }: {
 	active: boolean;
 	model: SessionUsage["harnesses"][number]["models"][number];
 	onActiveChange: (active: boolean) => void;
+	onRequestClose: () => void;
 }) {
 	const modelName = model.modelId || formatProviderName(model.provider);
 	const totalTokens = usageTokenTotal(model.totals);
@@ -610,45 +620,45 @@ function UsageModelRow({
 	const detailID = useId();
 
 	return (
-		<div
-			onBlur={(event) => {
-				if (!event.currentTarget.contains(event.relatedTarget)) onActiveChange(false);
-			}}
-			onPointerLeave={() => onActiveChange(false)}
-		>
-			<button
-				aria-controls={detailID}
-				aria-expanded={active}
-				aria-label={`${modelName} usage details, ${coverageLabel}`}
-				className="grid w-full cursor-default grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 rounded-md px-1 py-2 text-left outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
-				onClick={() => onActiveChange(true)}
-				onFocus={() => onActiveChange(true)}
-				onPointerEnter={() => onActiveChange(true)}
-				type="button"
+		<Tooltip delayDuration={0} onOpenChange={onActiveChange} open={active}>
+			<TooltipTrigger asChild>
+				<button
+					aria-controls={detailID}
+					aria-expanded={active}
+					aria-label={`${modelName} usage details, ${coverageLabel}`}
+					className="grid w-full cursor-default grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 rounded-md px-1 py-2 text-left outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
+					type="button"
+				>
+					<span className="min-w-0 truncate font-mono text-2xs text-settings-label">{modelName}</span>
+					<span
+						className="text-right font-mono text-2xs text-settings-label"
+						title={
+							totalTokens === null
+								? undefined
+								: `${totalTokens.toLocaleString("en-US")} tokens · ${coverageLabel}`
+						}
+					>
+						{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
+					</span>
+					<span
+						aria-label="Cost: Coming soon"
+						className="text-right text-2xs text-settings-muted"
+						title="Cost coming soon"
+					>
+						Coming soon
+					</span>
+				</button>
+			</TooltipTrigger>
+			<TooltipContent
+				align="start"
+				aria-label={`${modelName} detailed token usage`}
+				className="w-80 max-w-[calc(100vw-1rem)] p-3 text-left text-popover-foreground"
+				onEscapeKeyDown={onRequestClose}
+				side="left"
+				sideOffset={8}
 			>
-				<span className="min-w-0 truncate font-mono text-2xs text-settings-label">{modelName}</span>
-				<span
-					className="text-right font-mono text-2xs text-settings-label"
-					title={
-						totalTokens === null
-							? undefined
-							: `${totalTokens.toLocaleString("en-US")} tokens · ${coverageLabel}`
-					}
-				>
-					{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
-				</span>
-				<span
-					aria-label="Cost: Coming soon"
-					className="text-right text-2xs text-settings-muted"
-					title="Cost coming soon"
-				>
-					Coming soon
-				</span>
-			</button>
-			{active ? (
 				<div
 					aria-label={`${modelName} usage peek`}
-					className="mx-1 mb-2 border-t border-border pt-3"
 					id={detailID}
 					role="region"
 				>
@@ -669,8 +679,8 @@ function UsageModelRow({
 						<UsageMetrics totals={model.totals} />
 					</div>
 				</div>
-			) : null}
-		</div>
+			</TooltipContent>
+		</Tooltip>
 	);
 }
 

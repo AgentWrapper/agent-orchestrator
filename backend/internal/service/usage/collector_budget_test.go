@@ -468,7 +468,7 @@ func testCollectorCodexBudgetFinalizationWaitsThenPersistsPartialAcrossRestart(t
 	); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ApplyUsageChunk(ctx, rootSource.ID, rootSource.ByteOffset, domain.SourceCursorState{
+	if err := store.ApplyUsageChunk(ctx, rootSource.ID, rootSource.ByteOffset, domain.SourceCursorState{
 		ByteOffset:      rootSource.ByteOffset,
 		ParserStateJSON: codexParserStateWithChildren(t, testCodexChildID, testCodexOverflowID),
 		State:           domain.UsageSourceActive,
@@ -605,7 +605,7 @@ func setCodexDiscoveredChildren(
 	childIDs ...string,
 ) {
 	t.Helper()
-	_, err := store.ApplyUsageChunk(context.Background(), source.ID, source.ByteOffset, domain.SourceCursorState{
+	err := store.ApplyUsageChunk(context.Background(), source.ID, source.ByteOffset, domain.SourceCursorState{
 		ByteOffset:      source.ByteOffset,
 		ParserStateJSON: codexParserStateWithChildren(t, childIDs...),
 		State:           source.State,

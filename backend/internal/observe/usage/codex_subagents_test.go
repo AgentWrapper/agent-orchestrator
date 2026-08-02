@@ -391,7 +391,7 @@ func TestCoordinatorTargetsLateCodexChildBeyondDefaultDiscoveryBatch(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ApplyUsageChunk(ctx, parent.ID, 0, domain.SourceCursorState{
+	if err := store.ApplyUsageChunk(ctx, parent.ID, 0, domain.SourceCursorState{
 		ByteOffset:      int64(len(parentContent)),
 		ParserStateJSON: string(encodedParentState),
 		State:           domain.UsageSourceComplete,
