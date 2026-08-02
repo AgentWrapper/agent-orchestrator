@@ -300,7 +300,7 @@ describe("sessionPRDisplaySummaries", () => {
 				},
 			]),
 			[
-				summary({ number: 7, title: "enriched PR #7", ci: { state: "passing", failingChecks: [] } }),
+				summary({ number: 7, title: "enriched PR #7", ci: { state: "passing", checkCount: 0, failingChecks: [] } }),
 				summary({ number: 7, title: "duplicate enriched PR #7" }),
 			],
 		);
