@@ -208,13 +208,21 @@ func newHarnessWithConversation(t *testing.T, conv ports.ChatConversation) *harn
 	}
 	h := &harness{st: st, conv: base, clock: time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)}
 
-	var counter int
+	// Guarded because the id factory is called from both the projection goroutine and
+	// whichever goroutine a test drives commands from, and an unsynchronized counter
+	// is a data race the -race build fails on rather than a harmless test detail.
+	var (
+		counterMu sync.Mutex
+		counter   int
+	)
 	svc := chatsvc.New(chatsvc.Options{
 		Store:    st,
 		Sessions: st,
 		Drivers:  fakeRegistry{driver: fakeDriver{conv: conv}},
 		Log:      slog.New(slog.DiscardHandler),
 		NewID: func() string {
+			counterMu.Lock()
+			defer counterMu.Unlock()
 			counter++
 			return fmt.Sprintf("id-%03d", counter)
 		},
@@ -1072,8 +1080,10 @@ func TestCompactionIsProjectedAsATimelineFact(t *testing.T) {
 		Detail:         []byte(`{"tokensBefore":15650,"tokensAfter":4632,"tokensReclaimed":11018}`),
 	})
 
+	// Both writes, because the row and the conversation flag are two statements and
+	// this test asserts on both: waiting only on the row races the flag.
 	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
-		return len(s.Activities) == 1
+		return len(s.Activities) == 1 && s.Conversation.CompactedAt != nil
 	})
 	activity := snapshot.Activities[0]
 	if activity.Kind != domain.ActivityKindSystem {

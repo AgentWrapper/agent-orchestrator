@@ -241,8 +241,11 @@ func TestModelRerouteIsRecordedAndPlacedInTheTimeline(t *testing.T) {
 		},
 	)
 
+	// Both halves, because the state and the timeline row are two writes: waiting only
+	// on the state would race the row this test then reads.
 	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
-		return s.Conversation.ModelReroute != nil
+		return s.Conversation.ModelReroute != nil &&
+			countActivities(s, domain.ActivityKindSystem) == 1
 	})
 	reroute := snapshot.Conversation.ModelReroute
 	if reroute.FromModel != "gpt-5.6-sol" || reroute.ToModel != "gpt-5.6-safety" {
@@ -286,7 +289,8 @@ func TestAccountReportsMergeRatherThanReplace(t *testing.T) {
 	})
 
 	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
-		return s.Conversation.Account != nil && s.Conversation.Account.ReauthRequiredAt != nil
+		return s.Conversation.Account != nil && s.Conversation.Account.ReauthRequiredAt != nil &&
+			countActivities(s, domain.ActivityKindSystem) == 1
 	})
 	account := snapshot.Conversation.Account
 	if account.AuthMode != "chatgpt" || account.PlanLabel != "pro" {
