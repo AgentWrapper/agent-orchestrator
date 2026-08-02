@@ -233,14 +233,20 @@ func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domai
 // existing recent-activity guard; supervised workload death is independently
 // fenced by the launch generation and never terminates the runtime.
 func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.SessionID, f ports.RuntimeFacts) error {
-	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
-		if cur.IsTerminated {
+	matchesLaunch := func(cur domain.SessionRecord) bool {
+		currentLaunch := cur.Metadata.RuntimeLaunchID
+		return currentLaunch == "" || f.LaunchID == currentLaunch
+	}
+	var (
+		finalizer         sessionUsageFinalizer
+		terminationLaunch string
+		shouldTerminate   bool
+	)
+	if err := m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
+		if cur.IsTerminated || !matchesLaunch(cur) {
 			return cur, false
 		}
 		currentLaunch := cur.Metadata.RuntimeLaunchID
-		if currentLaunch != "" && f.LaunchID != currentLaunch {
-			return cur, false
-		}
 		if currentLaunch != "" && f.Runtime == ports.ProbeAlive && f.Workload == ports.ProbeDead {
 			if cur.Activity.State == domain.ActivityExited {
 				return cur, false
@@ -251,6 +257,21 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 			return next, true
 		}
 		if !runtimeClearlyDead(f, cur.Activity, now, m.window) {
+			return cur, false
+		}
+		finalizer = m.usageFinalizer
+		terminationLaunch = currentLaunch
+		shouldTerminate = true
+		return cur, false
+	}); err != nil || !shouldTerminate {
+		return err
+	}
+
+	finalizeSessionUsage(ctx, id, finalizer)
+
+	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
+		if cur.IsTerminated || cur.Metadata.RuntimeLaunchID != terminationLaunch || !matchesLaunch(cur) ||
+			!runtimeClearlyDead(f, cur.Activity, now, m.window) {
 			return cur, false
 		}
 		next := cur
@@ -842,11 +863,7 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 	m.mu.Lock()
 	finalizer := m.usageFinalizer
 	m.mu.Unlock()
-	if finalizer != nil {
-		if err := finalizer.FinalizeSession(ctx, id); err != nil {
-			slog.Default().Warn("lifecycle: finalize session usage before termination", "session", id, "err", err)
-		}
-	}
+	finalizeSessionUsage(ctx, id, finalizer)
 	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
 		if cur.IsTerminated || cur.Metadata.RuntimeLaunchID != launchID {
 			return cur, false
@@ -856,6 +873,15 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 		delete(m.flights, id) // runs under m.mu (mutate holds it)
 		return cur, true
 	})
+}
+
+func finalizeSessionUsage(ctx context.Context, id domain.SessionID, finalizer sessionUsageFinalizer) {
+	if finalizer == nil {
+		return
+	}
+	if err := finalizer.FinalizeSession(ctx, id); err != nil {
+		slog.Default().Warn("lifecycle: finalize session usage before termination", "session", id, "err", err)
+	}
 }
 
 // sameActivity reports whether two activity signals describe the same state.
