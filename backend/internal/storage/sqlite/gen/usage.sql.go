@@ -140,6 +140,11 @@ WHERE id = ?1
 	                     AND json_extract(spawning.parser_state_json, '$.source_kind') = 'codex_rollout'
 	                     AND json_type(spawning.parser_state_json, '$.codex') = 'object'
 	                     AND json_type(spawning.parser_state_json, '$.codex.discovered_child_ids') = 'array'
+	                     AND NOT EXISTS (
+	                         SELECT 1
+	                         FROM json_each(spawning.parser_state_json, '$.codex.discovered_child_ids') element
+	                         WHERE element.type <> 'text'
+	                     )
 	                    THEN json_extract(spawning.parser_state_json, '$.codex.discovered_child_ids')
 	                    ELSE '[]'
 	                END
@@ -173,6 +178,37 @@ WHERE id = ?1
 	            AND registered.kind = 'codex_rollout'
 	            AND registered.native_session_id = CAST(discovered.value AS TEXT)
 	      )
+	)
+	AND NOT EXISTS (
+	    SELECT 1
+	    FROM usage_sources malformed
+	    WHERE malformed.binding_id = ?1
+	      AND malformed.kind = 'codex_rollout'
+	      AND malformed.id = (
+	          SELECT latest.id
+	          FROM usage_sources latest
+	          WHERE latest.binding_id = malformed.binding_id
+	            AND latest.kind = 'codex_rollout'
+	            AND latest.native_session_id = malformed.native_session_id
+	          ORDER BY latest.generation DESC, latest.id DESC
+	          LIMIT 1
+	      )
+	      AND CASE
+	          WHEN json_valid(malformed.parser_state_json) THEN
+	              json_type(malformed.parser_state_json, '$') = 'object'
+	              AND json_type(malformed.parser_state_json, '$.version') = 'integer'
+	              AND json_extract(malformed.parser_state_json, '$.version') = 1
+	              AND json_type(malformed.parser_state_json, '$.source_kind') = 'text'
+	              AND json_extract(malformed.parser_state_json, '$.source_kind') = 'codex_rollout'
+	              AND json_type(malformed.parser_state_json, '$.codex') = 'object'
+	              AND json_type(malformed.parser_state_json, '$.codex.discovered_child_ids') = 'array'
+	              AND EXISTS (
+	                  SELECT 1
+	                  FROM json_each(malformed.parser_state_json, '$.codex.discovered_child_ids') element
+	                  WHERE element.type <> 'text'
+	              )
+	          ELSE 0
+	      END
   )
 `
 
@@ -708,6 +744,11 @@ WHERE (s.is_terminated = 0 OR ub.state = 'finalizing')
 	                       AND json_extract(spawning.parser_state_json, '$.source_kind') = 'codex_rollout'
 	                       AND json_type(spawning.parser_state_json, '$.codex') = 'object'
 	                       AND json_type(spawning.parser_state_json, '$.codex.discovered_child_ids') = 'array'
+	                       AND NOT EXISTS (
+	                           SELECT 1
+	                           FROM json_each(spawning.parser_state_json, '$.codex.discovered_child_ids') element
+	                           WHERE element.type <> 'text'
+	                       )
 	                      THEN json_extract(spawning.parser_state_json, '$.codex.discovered_child_ids')
 	                      ELSE '[]'
 	                  END

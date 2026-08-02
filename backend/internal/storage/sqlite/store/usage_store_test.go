@@ -541,7 +541,6 @@ func TestUsageBindingIgnoresInvalidCodexDiscoveryStateShapes(t *testing.T) {
 		{name: "future version", state: `{"version":2,"source_kind":"codex_rollout","codex":{"discovered_child_ids":["` + childID + `"]}}`},
 		{name: "wrong source kind", state: `{"version":1,"source_kind":"claude_main","codex":{"discovered_child_ids":["` + childID + `"]}}`},
 		{name: "non object codex payload", state: `{"version":1,"source_kind":"codex_rollout","codex":"not-an-object"}`},
-		{name: "numeric child", state: `{"version":1,"source_kind":"codex_rollout","codex":{"discovered_child_ids":[222]}}`},
 		{name: "noncanonical child", state: `{"version":1,"source_kind":"codex_rollout","codex":{"discovered_child_ids":["22222222-2222-4222-8222-22222222222A"]}}`},
 	}
 	for _, tt := range tests {
@@ -591,6 +590,65 @@ func TestUsageBindingIgnoresInvalidCodexDiscoveryStateShapes(t *testing.T) {
 				t.Fatalf("invalid state blocked completion = %v, err=%v", completed, err)
 			}
 		})
+	}
+}
+
+func TestUsageBindingRejectsMixedTypeCodexDiscoveryArray(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	sess := seedUsageSession(t, s, domain.HarnessCodex)
+	now := time.Unix(1700000000, 0).UTC()
+	const (
+		rootID  = "11111111-1111-4111-8111-111111111111"
+		childID = "22222222-2222-4222-8222-222222222222"
+	)
+	binding, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
+		SessionID:    sess.ID,
+		Harness:      sess.Harness,
+		NativeRootID: rootID,
+		State:        domain.UsageBindingActive,
+		FirstSeenAt:  now,
+		LastSeenAt:   now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := `{"version":1,"source_kind":"codex_rollout","codex":{"discovered_child_ids":["` + childID + `",7]}}`
+	if _, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+		BindingID:       binding.ID,
+		Kind:            domain.UsageSourceCodexRollout,
+		NativeSessionID: rootID,
+		ArtifactPath:    "/tmp/codex/root.jsonl",
+		FileIdentity:    "root",
+		ParserStateJSON: state,
+		State:           domain.UsageSourceComplete,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	discovery, err := s.ListUsageDiscoveryBindings(ctx, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(discovery) != 0 {
+		t.Fatalf("mixed-type array invented discovery bindings: %+v", discovery)
+	}
+	if _, err := s.UpdateUsageBindingState(ctx, binding.ID, domain.UsageBindingFinalizing, "", now); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := s.CompleteUsageBindingIfSettled(ctx, binding.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed {
+		t.Fatal("mixed-type parser state allowed binding completion")
+	}
+	got, ok, err := s.GetUsageBinding(ctx, sess.ID, sess.Harness, rootID)
+	if err != nil || !ok || got.State != domain.UsageBindingFinalizing {
+		t.Fatalf("binding after rejected completion = %+v, ok=%v err=%v", got, ok, err)
 	}
 }
 
