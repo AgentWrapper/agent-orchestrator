@@ -8,6 +8,7 @@ const apiMocks = vi.hoisted(() => ({
   me: vi.fn(),
   projects: vi.fn(),
   sessions: vi.fn(),
+  sessionSCM: vi.fn(),
   repositories: vi.fn(),
   providerConnections: vi.fn(),
   invitations: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock("@/lib/cloud-api", () => ({
     me = apiMocks.me;
     projects = apiMocks.projects;
     sessions = apiMocks.sessions;
+    sessionSCM = apiMocks.sessionSCM;
     repositories = apiMocks.repositories;
     providerConnections = apiMocks.providerConnections;
     invitations = apiMocks.invitations;
@@ -119,6 +121,7 @@ beforeEach(() => {
   });
   apiMocks.projects.mockResolvedValue({ projects: [project] });
   apiMocks.sessions.mockResolvedValue({ sessions: [] });
+  apiMocks.sessionSCM.mockResolvedValue({ scm: null });
   apiMocks.providerConnections.mockResolvedValue({
     providerConnections: [
       {
@@ -147,11 +150,16 @@ beforeEach(() => {
   apiMocks.repositories.mockRejectedValue(new Error("GitHub unavailable"));
 });
 
-function renderBoard(activeOrchestrator?: CloudSession) {
+function renderBoard(
+  activeOrchestrator?: CloudSession,
+  boardSessions: CloudSession[] = [],
+  scmBySessionId = {},
+) {
   render(
     <SessionBoard
-      sessions={[]}
+      sessions={boardSessions}
       projects={[project]}
+      scmBySessionId={scmBySessionId}
       activeSessionIds={new Set()}
       orchestrator={activeOrchestrator}
       onSelect={vi.fn()}
@@ -186,6 +194,54 @@ it("offers to start the orchestrator only when the project has none", () => {
   expect(
     screen.queryByRole("region", { name: "Working sessions" }),
   ).not.toBeInTheDocument();
+});
+
+it("shows local-style branch, status, and PR details on board cards", () => {
+  const worker: CloudSession = {
+    ...orchestrator,
+    id: "worker-one",
+    kind: "worker",
+    displayName: "Readme worker",
+    branch: "ao/readme-worker",
+    status: "review_pending",
+    runtimeConnected: true,
+  };
+
+  renderBoard(orchestrator, [worker], {
+    [worker.id]: {
+      pullRequest: {
+        repository: "aoagents/agent-orchestrator",
+        number: 42,
+        url: "https://github.com/aoagents/agent-orchestrator/pull/42",
+        title: "Update README",
+        state: "open",
+        draft: false,
+        sourceBranch: "ao/readme-worker",
+        targetBranch: "main",
+        ciState: "success",
+        reviewState: "pending",
+        mergeability: "mergeable",
+        observedAt: "2026-07-30T00:00:00Z",
+      },
+      reviewThreads: [
+        {
+          id: "thread-one",
+          isResolved: false,
+          isOutdated: false,
+          path: "README.md",
+          line: 12,
+          body: "Please clarify this.",
+          authorLogin: "reviewer",
+          observedAt: "2026-07-30T00:00:00Z",
+        },
+      ],
+    },
+  });
+
+  expect(screen.getByText("Readme worker")).toBeVisible();
+  expect(screen.getByText("ao/readme-worker")).toBeVisible();
+  expect(screen.getByText(/#42 Update README/)).toBeVisible();
+  expect(screen.getByText("1 unresolved review thread")).toBeVisible();
 });
 
 it("loads GitHub repositories only when the project form opens", async () => {

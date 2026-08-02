@@ -192,3 +192,24 @@ it("lists org members and updates member roles", async () => {
     }),
   );
 });
+
+it("loads session SCM through org-scoped routes", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ scm: null }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  const api = Object.assign(Object.create(CloudAPI.prototype) as CloudAPI, {
+    baseURL: "https://cloud.example.com",
+    accessToken: "access-token",
+  });
+
+  await api.sessionSCM("org one", "session one");
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "https://cloud.example.com/api/cloud/v1/orgs/org%20one/sessions/session%20one/scm",
+    expect.any(Object),
+  );
+});

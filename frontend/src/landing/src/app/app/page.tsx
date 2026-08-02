@@ -8,6 +8,8 @@ import {
   ChevronsUpDown,
   Cloud,
   FolderGit2,
+  GitBranch,
+  GitPullRequest,
   KeyRound,
   LayoutDashboard,
   LoaderCircle,
@@ -42,6 +44,7 @@ import {
   type CloudProject,
   type CloudRepository,
   type CloudSession,
+  type CloudSessionSCM,
   type CloudUser,
   type CloudUserOrganization,
   type ProviderConnection,
@@ -167,6 +170,7 @@ export default function CloudAppPage() {
   );
   const [projects, setProjects] = useState<CloudProject[]>([]);
   const [sessions, setSessions] = useState<CloudSession[]>([]);
+  const [sessionSCM, setSessionSCM] = useState<Record<string, CloudSessionSCM | null>>({});
   const [organizations, setOrganizations] = useState<CloudUserOrganization[]>(
     [],
   );
@@ -622,6 +626,37 @@ export default function CloudAppPage() {
   const visibleSessions = selectedProjectId
     ? workerSessions.filter(({ projectId }) => projectId === selectedProjectId)
     : workerSessions;
+  const visibleSessionSCMKey = visibleSessions
+    .map(({ id, status }) => `${id}:${status}`)
+    .sort()
+    .join(",");
+
+  useEffect(() => {
+    if (!api || !selectedOrgId || visibleSessions.length === 0) {
+      setSessionSCM({});
+      return;
+    }
+    let cancelled = false;
+    void Promise.all(
+      visibleSessions.map(async (cloudSession) => {
+        try {
+          const result = await api.sessionSCM(selectedOrgId, cloudSession.id);
+          return [cloudSession.id, result.scm] as const;
+        } catch {
+          return [cloudSession.id, null] as const;
+        }
+      }),
+    ).then((entries) => {
+      if (cancelled) return;
+      setSessionSCM(Object.fromEntries(entries));
+    });
+    return () => {
+      cancelled = true;
+    };
+    // visibleSessionSCMKey keeps this from depending on the array identity that
+    // changes on every refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, selectedOrgId, visibleSessionSCMKey]);
 
   useEffect(() => {
     if (initialLoading || !selectedSessionId) return;
@@ -1435,6 +1470,7 @@ export default function CloudAppPage() {
               <SessionBoard
                 sessions={visibleSessions}
                 projects={projects}
+                scmBySessionId={sessionSCM}
                 activeSessionIds={activeChatSessionIds}
                 orchestrator={selectedProjectOrchestrator}
                 onSelect={(cloudSession) => {
@@ -1593,6 +1629,7 @@ function RepositorySetupIndicator() {
 export function SessionBoard({
   sessions,
   projects,
+  scmBySessionId = {},
   activeSessionIds,
   orchestrator,
   onSelect,
@@ -1603,6 +1640,7 @@ export function SessionBoard({
 }: {
   sessions: CloudSession[];
   projects: CloudProject[];
+  scmBySessionId?: Record<string, CloudSessionSCM | null>;
   activeSessionIds: Set<string>;
   orchestrator?: CloudSession;
   onSelect: (session: CloudSession) => void;
@@ -1710,54 +1748,223 @@ export function SessionBoard({
           </div>
           <div className="space-y-2 p-3">
             {items.map((cloudSession) => (
-              <button
+              <CloudBoardSessionCard
                 key={cloudSession.id}
-                className="group w-full rounded-lg border border-white/[0.06] bg-[#15171b] p-3 text-left transition-[border-color,box-shadow] hover:border-white/10 hover:shadow-sm"
-                onClick={() => onSelect(cloudSession)}
-              >
-                <div className="flex items-center gap-2">
-                  {cloudSession.kind === "orchestrator" ? (
-                    <OrchestratorIcon className="size-[18px] shrink-0 text-[#9ba1aa]" />
-                  ) : (
-                    <AgentAvatar agent={cloudSession.harness} />
-                  )}
-                  <span className="truncate text-sm font-medium">
-                    {cloudSession.displayName}
-                  </span>
-                  {sessionDisplayStatus(cloudSession, activeSessionIds) ===
-                  "working" ? (
-                    <LoaderCircle
-                      className="ml-auto size-3.5 shrink-0 animate-spin text-[#4d8dff] motion-reduce:animate-none"
-                      aria-label="Working"
-                    />
-                  ) : (
-                    <span
-                      className={`ml-auto size-[7px] shrink-0 rounded-full ${statusColor(cloudSession)}`}
-                      aria-hidden="true"
-                    />
-                  )}
-                </div>
-                <div className="mt-3 flex items-center gap-2 font-mono text-[10px] text-[#646a73]">
-                  <span className="min-w-0 flex-1 truncate">
-                    {
-                      projects.find(({ id }) => id === cloudSession.projectId)
-                        ?.displayName
-                    }
-                  </span>
-                  <span className="shrink-0 uppercase tracking-[0.04em]">
-                    {sessionDisplayStatus(
-                      cloudSession,
-                      activeSessionIds,
-                    ).replaceAll("_", " ")}
-                  </span>
-                </div>
-              </button>
+                session={cloudSession}
+                project={projects.find(({ id }) => id === cloudSession.projectId)}
+                scm={scmBySessionId[cloudSession.id]}
+                displayStatus={sessionDisplayStatus(
+                  cloudSession,
+                  activeSessionIds,
+                )}
+                onOpen={() => onSelect(cloudSession)}
+              />
             ))}
           </div>
         </section>
       ))}
     </div>
   );
+}
+
+function CloudBoardSessionCard({
+  session,
+  project,
+  scm,
+  displayStatus,
+  onOpen,
+}: {
+  session: CloudSession;
+  project?: CloudProject;
+  scm?: CloudSessionSCM | null;
+  displayStatus: CloudSession["status"];
+  onOpen: () => void;
+}) {
+  const status = cloudStatusView(displayStatus);
+  const pullRequest = scm?.pullRequest;
+  const unresolvedThreads =
+    scm?.reviewThreads?.filter((thread) => !thread.isResolved && !thread.isOutdated)
+      .length ?? 0;
+  const showBranch =
+    session.branch &&
+    session.branch !== session.displayName &&
+    session.branch !== session.id;
+  return (
+    <button
+      className={`group w-full rounded-lg border bg-[#15171b] text-left transition-[border-color,box-shadow] hover:border-white/10 hover:shadow-sm ${status.cardClassName}`}
+      onClick={onOpen}
+      data-testid="cloud-board-session-card"
+    >
+      <div className="flex items-start gap-2.5 px-3.5 pb-2.5 pt-3">
+        {session.kind === "orchestrator" ? (
+          <OrchestratorIcon className="mt-0.5 size-[18px] shrink-0 text-[#9ba1aa]" />
+        ) : (
+          <AgentAvatar agent={session.harness} className="mt-0.5 size-[18px]" />
+        )}
+        <div className="min-w-0 flex-1">
+          <div
+            className="line-clamp-2 overflow-hidden text-sm font-semibold leading-tight tracking-[-0.01em] text-[#f4f5f7]"
+            title={session.displayName}
+          >
+            {session.displayName}
+          </div>
+          {showBranch ? (
+            <div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-[10px] text-[#646a73]">
+              <GitBranch className="size-3 shrink-0" aria-hidden="true" />
+              <span className="truncate">{session.branch}</span>
+            </div>
+          ) : null}
+        </div>
+      </div>
+      <div aria-hidden="true" className="mx-3.5 my-px h-px bg-white/[0.08]" />
+      <div className="flex flex-col gap-1.5 px-3.5 py-2">
+        <div className="flex items-center justify-between gap-2">
+          <span
+            className={`inline-flex min-w-0 items-center gap-1.5 truncate text-[11px] font-medium ${status.className}`}
+          >
+            {displayStatus === "working" ? (
+              <LoaderCircle
+                className="size-3 animate-spin motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+            ) : (
+              <span className="size-1.5 shrink-0 rounded-full bg-current" />
+            )}
+            {status.label}
+          </span>
+          <span
+            className="shrink-0 whitespace-nowrap font-mono text-[10px] text-[#646a73]"
+            title={session.createdAt}
+          >
+            {formatCloudTime(session.createdAt)}
+          </span>
+        </div>
+        {pullRequest ? (
+          <div className="flex min-w-0 items-center gap-1.5 font-mono text-[10px] text-[#9ba1aa]">
+            <GitPullRequest className="size-3 shrink-0 text-[#5b8def]" />
+            <span className="min-w-0 flex-1 truncate">
+              #{pullRequest.number} {pullRequest.title || pullRequest.repository}
+            </span>
+            <span className="shrink-0 uppercase text-[#646a73]">
+              {pullRequestLabel(pullRequest)}
+            </span>
+          </div>
+        ) : (
+          <div className="font-mono text-[10px] text-[#646a73]">no PR yet</div>
+        )}
+        <div className="flex min-w-0 items-center gap-2 font-mono text-[10px] text-[#646a73]">
+          <span className="min-w-0 flex-1 truncate">
+            {project?.displayName ?? "Unknown project"}
+          </span>
+          <span className="shrink-0 uppercase tracking-[0.04em]">
+            {session.runtimeConnected ? "runtime live" : "runtime starting"}
+          </span>
+        </div>
+        {unresolvedThreads > 0 ? (
+          <span className="inline-flex max-w-full items-center self-start truncate rounded-sm bg-[#e8c14a]/12 px-1.5 py-0.5 font-mono text-[9px] uppercase text-[#e8c14a]">
+            {unresolvedThreads} unresolved review{" "}
+            {unresolvedThreads === 1 ? "thread" : "threads"}
+          </span>
+        ) : null}
+      </div>
+    </button>
+  );
+}
+
+function cloudStatusView(status: CloudSession["status"]) {
+  switch (status) {
+    case "needs_input":
+      return {
+        label: "Needs input",
+        className: "text-[#e8c14a]",
+        cardClassName: "border-[#e8c14a]/20",
+      };
+    case "ci_failed":
+      return {
+        label: "CI failed",
+        className: "text-[#ef6b6b]",
+        cardClassName: "border-[#ef6b6b]/20",
+      };
+    case "changes_requested":
+      return {
+        label: "Changes requested",
+        className: "text-[#e8c14a]",
+        cardClassName: "border-[#e8c14a]/20",
+      };
+    case "pr_open":
+      return {
+        label: "PR open",
+        className: "text-[#5b8def]",
+        cardClassName: "border-[#5b8def]/20",
+      };
+    case "review_pending":
+      return {
+        label: "Review pending",
+        className: "text-[#5b8def]",
+        cardClassName: "border-[#5b8def]/20",
+      };
+    case "approved":
+      return {
+        label: "Approved",
+        className: "text-[#74b98a]",
+        cardClassName: "border-[#74b98a]/20",
+      };
+    case "mergeable":
+      return {
+        label: "Ready to merge",
+        className: "text-[#74b98a]",
+        cardClassName: "border-[#74b98a]/20",
+      };
+    case "merged":
+      return {
+        label: "Merged",
+        className: "text-[#74b98a]",
+        cardClassName: "border-[#74b98a]/20",
+      };
+    case "working":
+      return {
+        label: "Working",
+        className: "text-[#f59f4c]",
+        cardClassName: "border-[#f59f4c]/20",
+      };
+    case "terminated":
+    case "exited":
+      return {
+        label: "Exited",
+        className: "text-[#646a73]",
+        cardClassName: "border-white/[0.06]",
+      };
+    case "idle":
+    default:
+      return {
+        label: "Idle",
+        className: "text-[#9ba1aa]",
+        cardClassName: "border-white/[0.06]",
+      };
+  }
+}
+
+function pullRequestLabel(pullRequest: CloudSessionSCM["pullRequest"]) {
+  if (!pullRequest) return "";
+  if (pullRequest.state === "merged") return "merged";
+  if (pullRequest.ciState === "failure") return "ci failed";
+  if (pullRequest.reviewState === "changes_requested") return "changes";
+  if (pullRequest.mergeability === "mergeable") return "mergeable";
+  if (pullRequest.reviewState === "approved") return "approved";
+  if (pullRequest.draft) return "draft";
+  return pullRequest.state || "open";
+}
+
+function formatCloudTime(value: string) {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return "";
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
 }
 
 function CloudSettings({

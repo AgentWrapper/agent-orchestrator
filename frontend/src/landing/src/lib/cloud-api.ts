@@ -139,6 +139,44 @@ export interface CloudPreviewResponse {
   url: string;
 }
 
+export interface CloudPullRequestObservation {
+  repository: string;
+  number: number;
+  url: string;
+  title: string;
+  state: string;
+  draft: boolean;
+  sourceBranch: string;
+  targetBranch: string;
+  ciState: string;
+  reviewState: string;
+  mergeability: string;
+  checks?: Array<{
+    name: string;
+    status: string;
+    conclusion: string;
+    url: string;
+  }>;
+  reviewThreads?: CloudReviewThreadObservation[];
+  observedAt: string;
+}
+
+export interface CloudReviewThreadObservation {
+  id: string;
+  isResolved: boolean;
+  isOutdated: boolean;
+  path: string;
+  line: number;
+  body: string;
+  authorLogin: string;
+  observedAt: string;
+}
+
+export interface CloudSessionSCM {
+  pullRequest?: CloudPullRequestObservation;
+  reviewThreads?: CloudReviewThreadObservation[];
+}
+
 export interface ProviderConnection {
   id: string;
   provider: "daytona" | "claude-code" | "codex" | "cursor";
@@ -350,6 +388,12 @@ export class CloudAPI {
   async activeTurn(orgId: string, sessionId: string) {
     return this.request<{ turn: CloudTurn | null }>(
       this.orgPath(orgId, `/sessions/${encodeURIComponent(sessionId)}/active-turn`),
+    );
+  }
+
+  async sessionSCM(orgId: string, sessionId: string) {
+    return this.request<{ scm: CloudSessionSCM | null }>(
+      this.orgPath(orgId, `/sessions/${encodeURIComponent(sessionId)}/scm`),
     );
   }
 
