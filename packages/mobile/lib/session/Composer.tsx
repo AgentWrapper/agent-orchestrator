@@ -49,7 +49,7 @@ export function Composer({
 				/>
 				<Pressable
 					accessibilityRole="button"
-					accessibilityLabel={target === "terminal" ? "Send to agent" : "Send to terminal"}
+					accessibilityLabel={target === "terminal" ? "Switch to chat" : "Switch to terminal"}
 					accessibilityState={{ selected: target === "terminal" }}
 					onPress={() => onTargetChange(target === "terminal" ? "agent" : "terminal")}
 					hitSlop={6}
@@ -60,9 +60,9 @@ export function Composer({
 					]}
 				>
 					<Feather
-						name={target === "terminal" ? "terminal" : "message-square"}
+						name={target === "terminal" ? "message-square" : "terminal"}
 						size={15}
-						color={target === "terminal" ? t.blue : t.textTertiary}
+						color={target === "terminal" ? t.textTertiary : t.blue}
 					/>
 				</Pressable>
 				{/* Only offered while there is a keyboard to dismiss, instead of a
