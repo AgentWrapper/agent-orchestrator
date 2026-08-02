@@ -477,6 +477,31 @@ type snapshot struct {
 	Turns          []turn       `json:"turns"`
 	Messages       []message    `json:"messages"`
 	Activities     []activity   `json:"activities"`
+	// Pointers because absent and zero are different claims: the provider not
+	// having reported yet is not the same as a conversation using no tokens.
+	Usage      *usageState      `json:"usage"`
+	RateLimits *rateLimitsState `json:"rateLimits"`
+}
+
+// usageState is the conversation's token position, carried as current state on the
+// snapshot rather than as timeline rows.
+type usageState struct {
+	ContextUsed   int64 `json:"contextUsed"`
+	ContextWindow int64 `json:"contextWindow"`
+	InputTokens   int64 `json:"inputTokens"`
+	OutputTokens  int64 `json:"outputTokens"`
+	CachedTokens  int64 `json:"cachedTokens"`
+	TotalTokens   int64 `json:"totalTokens"`
+}
+
+// rateLimitsState is the account's quota position. Percentages in 0..100, with
+// negative meaning the provider did not report that window.
+type rateLimitsState struct {
+	PrimaryUsedPercent       float64 `json:"primaryUsedPercent"`
+	SecondaryUsedPercent     float64 `json:"secondaryUsedPercent"`
+	PrimaryResetsInSeconds   int64   `json:"primaryResetsInSeconds"`
+	SecondaryResetsInSeconds int64   `json:"secondaryResetsInSeconds"`
+	PlanLabel                string  `json:"planLabel"`
 }
 
 func (s snapshot) turnByID(id string) (turn, bool) {

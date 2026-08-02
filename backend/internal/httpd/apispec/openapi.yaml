@@ -3313,6 +3313,26 @@ components:
       - models
       - selected
       type: object
+    ConversationRateLimitsPayload:
+      properties:
+        planLabel:
+          type: string
+        primaryResetsInSeconds:
+          format: int64
+          type: integer
+        primaryUsedPercent:
+          format: double
+          type: number
+        secondaryResetsInSeconds:
+          format: int64
+          type: integer
+        secondaryUsedPercent:
+          format: double
+          type: number
+      required:
+      - primaryUsedPercent
+      - secondaryUsedPercent
+      type: object
     ConversationSnapshotResponse:
       properties:
         activities:
@@ -3343,6 +3363,8 @@ components:
           - chat
           - tui
           type: string
+        rateLimits:
+          $ref: '#/components/schemas/ConversationRateLimitsPayload'
         sessionId:
           type: string
         settings:
@@ -3351,6 +3373,8 @@ components:
           items:
             $ref: '#/components/schemas/ConversationTurnResponse'
           type: array
+        usage:
+          $ref: '#/components/schemas/ConversationUsagePayload'
       required:
       - conversationId
       - sessionId
@@ -3406,6 +3430,34 @@ components:
           type: string
         reasoningEffort:
           type: string
+      type: object
+    ConversationUsagePayload:
+      properties:
+        cachedTokens:
+          format: int64
+          type: integer
+        contextUsed:
+          format: int64
+          type: integer
+        contextWindow:
+          format: int64
+          type: integer
+        inputTokens:
+          format: int64
+          type: integer
+        outputTokens:
+          format: int64
+          type: integer
+        totalTokens:
+          format: int64
+          type: integer
+      required:
+      - contextUsed
+      - contextWindow
+      - inputTokens
+      - outputTokens
+      - cachedTokens
+      - totalTokens
       type: object
     DegradedProject:
       properties:

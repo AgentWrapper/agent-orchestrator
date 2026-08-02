@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -91,11 +92,58 @@ type turnEnvelope struct {
 	TurnID string `json:"turnId"`
 }
 
+// tokenBreakdown is one Codex TokenUsageBreakdown.
+type tokenBreakdown struct {
+	InputTokens           int64 `json:"inputTokens"`
+	CachedInputTokens     int64 `json:"cachedInputTokens"`
+	CacheWriteInputTokens int64 `json:"cacheWriteInputTokens"`
+	OutputTokens          int64 `json:"outputTokens"`
+	ReasoningOutputTokens int64 `json:"reasoningOutputTokens"`
+	TotalTokens           int64 `json:"totalTokens"`
+}
+
 // usageEnvelope is the params shape of thread/tokenUsage/updated.
+//
+// The payload field is `tokenUsage`, not `usage`. An earlier build read `usage`
+// and so recorded an empty payload on every update: the readout it fed could only
+// ever have been blank. Verified against a captured frame from codex-cli 0.146.0.
 type usageEnvelope struct {
-	ThreadID string          `json:"threadId"`
-	Usage    json.RawMessage `json:"usage"`
-	Info     json.RawMessage `json:"info"`
+	ThreadID   string `json:"threadId"`
+	TurnID     string `json:"turnId"`
+	TokenUsage struct {
+		// Last is the most recent request's accounting. It is the conversation's
+		// position in the context window, because a turn resends the whole
+		// conversation: the last request's input IS the context currently in use.
+		Last tokenBreakdown `json:"last"`
+		// Total is the cumulative spend across the thread. It grows without bound
+		// and says nothing about how full the conversation is.
+		Total tokenBreakdown `json:"total"`
+		// ModelContextWindow is absent for models the provider will not state a
+		// window for, which is why the meter has to tolerate a missing scale.
+		ModelContextWindow int64 `json:"modelContextWindow"`
+	} `json:"tokenUsage"`
+}
+
+// rateLimitWindow is one Codex RateLimitWindow.
+//
+// UsedPercent is a percentage in 0..100, not a token count, and ResetsAt is an
+// absolute unix timestamp in seconds rather than a duration. Both were confirmed
+// against a live account: `{"usedPercent":71,"windowDurationMins":10080,
+// "resetsAt":1786159947}`.
+type rateLimitWindow struct {
+	UsedPercent        *float64 `json:"usedPercent"`
+	WindowDurationMins *int64   `json:"windowDurationMins"`
+	ResetsAt           *int64   `json:"resetsAt"`
+}
+
+// rateLimitsEnvelope is the params shape of account/rateLimits/updated and the
+// result shape of account/rateLimits/read.
+type rateLimitsEnvelope struct {
+	RateLimits struct {
+		Primary   *rateLimitWindow `json:"primary"`
+		Secondary *rateLimitWindow `json:"secondary"`
+		PlanType  string           `json:"planType"`
+	} `json:"rateLimits"`
 }
 
 // resolvedEnvelope is the params shape of serverRequest/resolved, which the
@@ -114,7 +162,12 @@ type resolvedEnvelope struct {
 
 // normalizeNotification converts one provider notification into zero or more
 // neutral events. Returning nil means "not conversation-relevant".
-func normalizeNotification(n notification) []ports.ChatEvent {
+//
+// now is passed rather than read from the clock so the rate-limit reset instant
+// can be expressed as a duration deterministically. The provider reports an
+// absolute timestamp; a duration is what a reader can act on without knowing
+// whether AO's clock agrees with the provider's.
+func normalizeNotification(n notification, now time.Time) []ports.ChatEvent {
 	switch n.Method {
 	case "turn/started":
 		var p turnEnvelope
@@ -164,17 +217,34 @@ func normalizeNotification(n notification) []ports.ChatEvent {
 		if err := json.Unmarshal(n.Params, &p); err != nil {
 			return nil
 		}
-		detail := p.Usage
-		if len(detail) == 0 {
-			detail = p.Info
-		}
+		// A typed usage event rather than an activity. The provider emits one of
+		// these after every tool call, so a timeline row per report is what buried
+		// the conversation; this is current state, and the projection overwrites.
 		return []ports.ChatEvent{{
-			Kind:           ports.ChatEventActivityCompleted,
-			ActivityKind:   domain.ActivityKindUsage,
-			ActivityStatus: domain.ActivityStatusCompleted,
-			Summary:        "Token usage updated",
-			Detail:         detail,
+			Kind:           ports.ChatEventUsage,
+			ProviderTurnID: p.TurnID,
+			Usage: &ports.ChatUsage{
+				InputTokens:  p.TokenUsage.Total.InputTokens,
+				OutputTokens: p.TokenUsage.Total.OutputTokens,
+				CachedTokens: p.TokenUsage.Total.CachedInputTokens,
+				TotalTokens:  p.TokenUsage.Total.TotalTokens,
+				// Context fullness comes from the LAST request, not the cumulative
+				// total: a turn resends the whole conversation, so the last
+				// request's size is what is actually occupying the window. Using
+				// the running total here would report a conversation as over
+				// capacity long before it was.
+				ContextUsed:   p.TokenUsage.Last.TotalTokens,
+				ContextWindow: p.TokenUsage.ModelContextWindow,
+			},
 		}}
+
+	case "account/rateLimits/updated":
+		var p rateLimitsEnvelope
+		if err := json.Unmarshal(n.Params, &p); err != nil {
+			return nil
+		}
+		limits := rateLimitsFrom(p, now)
+		return []ports.ChatEvent{{Kind: ports.ChatEventRateLimits, RateLimits: &limits}}
 
 	case "serverRequest/resolved":
 		var p resolvedEnvelope
@@ -201,11 +271,51 @@ func normalizeNotification(n notification) []ports.ChatEvent {
 
 	default:
 		// Provider bookkeeping: mcpServer/startupStatus/updated, hook/started,
-		// hook/completed, account/rateLimits/updated, thread/status/changed,
-		// remoteControl/status/changed, thread/goal/*, and anything added by a
+		// hook/completed, thread/status/changed, remoteControl/status/changed,
+		// thread/goal/*, model/safetyBuffering/updated, and anything added by a
 		// newer provider build. Deliberately not conversation events.
 		return nil
 	}
+}
+
+// rateLimitsFrom converts a provider rate-limit snapshot into AO's neutral shape.
+//
+// Two conversions matter. A window the account does not have comes back as null,
+// and is reported as a negative percent because the port's contract is that
+// negative means "not reported" — zero would claim the quota is untouched, which
+// is a different and much more reassuring statement than "no such window".
+// Second, the absolute reset timestamp becomes a remaining duration: a client
+// showing "resets in 4h" does not have to trust that AO's clock and the
+// provider's agree, and a stale snapshot decays into 0 rather than into a time in
+// the past that reads as if it already refilled.
+func rateLimitsFrom(p rateLimitsEnvelope, now time.Time) ports.ChatRateLimits {
+	limits := ports.ChatRateLimits{
+		PrimaryUsedPercent:   -1,
+		SecondaryUsedPercent: -1,
+		PlanLabel:            p.RateLimits.PlanType,
+	}
+	if w := p.RateLimits.Primary; w != nil && w.UsedPercent != nil {
+		limits.PrimaryUsedPercent = *w.UsedPercent
+		limits.PrimaryResetsInSeconds = resetsIn(w.ResetsAt, now)
+	}
+	if w := p.RateLimits.Secondary; w != nil && w.UsedPercent != nil {
+		limits.SecondaryUsedPercent = *w.UsedPercent
+		limits.SecondaryResetsInSeconds = resetsIn(w.ResetsAt, now)
+	}
+	return limits
+}
+
+// resetsIn turns an absolute unix reset instant into seconds from now, floored at
+// zero: a window whose reset has already passed has nothing left to wait for.
+func resetsIn(resetsAt *int64, now time.Time) int64 {
+	if resetsAt == nil || *resetsAt <= 0 {
+		return 0
+	}
+	remaining := *resetsAt - now.Unix()
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
 }
 
 // normalizeItem maps an item lifecycle notification. Assistant text is a message;

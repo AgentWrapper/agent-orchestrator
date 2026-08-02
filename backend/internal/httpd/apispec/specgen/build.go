@@ -143,6 +143,8 @@ var schemaNames = map[string]string{
 	"ControllersConversationModelsResponse":         "ConversationModelsResponse",
 	"ControllersConversationModelResponse":          "ConversationModelResponse",
 	"ControllersConversationTurnSettingsPayload":    "ConversationTurnSettingsPayload",
+	"ControllersConversationUsagePayload":           "ConversationUsagePayload",
+	"ControllersConversationRateLimitsPayload":      "ConversationRateLimitsPayload",
 	// httpd/envelope
 	"EnvelopeAPIError": "APIError",
 	// domain

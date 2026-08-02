@@ -266,6 +266,75 @@ func nullableString(value string) sql.NullString {
 	return sql.NullString{String: value, Valid: true}
 }
 
+// RecordUsage stores the conversation's current token position, overwriting the
+// previous one.
+//
+// Latest-wins on purpose. The provider reports usage after every tool call, and
+// the history of those reports is not information anyone wants: the question is
+// "how full is this conversation now", which has exactly one answer.
+func (s *Store) RecordUsage(
+	ctx context.Context,
+	conversationID string,
+	usage domain.ConversationUsage,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if err := s.qw.UpdateConversationUsage(ctx, gen.UpdateConversationUsageParams{
+		ContextUsed:       nullablePositive(usage.ContextUsed),
+		ContextWindow:     nullablePositive(usage.ContextWindow),
+		UsageInputTokens:  nullablePositive(usage.InputTokens),
+		UsageOutputTokens: nullablePositive(usage.OutputTokens),
+		UsageCachedTokens: nullablePositive(usage.CachedTokens),
+		UsageTotalTokens:  nullablePositive(usage.TotalTokens),
+		ID:                conversationID,
+	}); err != nil {
+		return fmt.Errorf("record usage for %s: %w", conversationID, err)
+	}
+	return nil
+}
+
+// RecordRateLimits stores the account's current quota position, overwriting the
+// previous one.
+func (s *Store) RecordRateLimits(
+	ctx context.Context,
+	conversationID string,
+	limits domain.ConversationRateLimits,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if err := s.qw.UpdateConversationRateLimits(ctx, gen.UpdateConversationRateLimitsParams{
+		RateLimitPrimaryPercent:    nullablePercent(limits.PrimaryUsedPercent),
+		RateLimitSecondaryPercent:  nullablePercent(limits.SecondaryUsedPercent),
+		RateLimitPrimaryResetsIn:   nullablePositive(limits.PrimaryResetsInSeconds),
+		RateLimitSecondaryResetsIn: nullablePositive(limits.SecondaryResetsInSeconds),
+		RateLimitPlan:              nullableString(limits.PlanLabel),
+		ID:                         conversationID,
+	}); err != nil {
+		return fmt.Errorf("record rate limits for %s: %w", conversationID, err)
+	}
+	return nil
+}
+
+// nullablePositive stores zero as NULL. For every column that uses it, zero and
+// unreported are the same thing to a reader, and NULL is the honest encoding of
+// "the provider never said".
+func nullablePositive(value int64) sql.NullInt64 {
+	if value <= 0 {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: value, Valid: true}
+}
+
+// nullablePercent stores an unreported window as NULL. Negative is the port's
+// "not reported" signal, and it must not be written as a real percentage: a
+// reader seeing -1 as data would draw a meter running backwards.
+func nullablePercent(value float64) sql.NullFloat64 {
+	if value < 0 {
+		return sql.NullFloat64{}
+	}
+	return sql.NullFloat64{Float64: value, Valid: true}
+}
+
 // NextQueuedTurn returns the oldest message recorded while the agent was busy,
 // or ErrNoQueuedTurn when the queue is empty.
 //
@@ -662,7 +731,49 @@ func conversationToDomain(row gen.Conversation) domain.ConversationRecord {
 	if row.SessionID != nil {
 		rec.SessionID = *row.SessionID
 	}
+	rec.Usage = usageFromRow(row)
+	rec.RateLimits = rateLimitsFromRow(row)
 	return rec
+}
+
+// usageFromRow returns nil when the provider never reported, so a client can tell
+// "no usage yet" from "a conversation using zero tokens" -- the second cannot
+// happen, and showing an empty meter for the first would be a claim AO has not
+// earned.
+func usageFromRow(row gen.Conversation) *domain.ConversationUsage {
+	if !row.ContextUsed.Valid && !row.UsageTotalTokens.Valid {
+		return nil
+	}
+	return &domain.ConversationUsage{
+		ContextUsed:   row.ContextUsed.Int64,
+		ContextWindow: row.ContextWindow.Int64,
+		InputTokens:   row.UsageInputTokens.Int64,
+		OutputTokens:  row.UsageOutputTokens.Int64,
+		CachedTokens:  row.UsageCachedTokens.Int64,
+		TotalTokens:   row.UsageTotalTokens.Int64,
+	}
+}
+
+// rateLimitsFromRow reconstitutes the quota position, restoring the port's
+// negative "not reported" convention for a window the provider omitted.
+func rateLimitsFromRow(row gen.Conversation) *domain.ConversationRateLimits {
+	if !row.RateLimitPrimaryPercent.Valid && !row.RateLimitSecondaryPercent.Valid {
+		return nil
+	}
+	limits := &domain.ConversationRateLimits{
+		PrimaryUsedPercent:       -1,
+		SecondaryUsedPercent:     -1,
+		PrimaryResetsInSeconds:   row.RateLimitPrimaryResetsIn.Int64,
+		SecondaryResetsInSeconds: row.RateLimitSecondaryResetsIn.Int64,
+		PlanLabel:                row.RateLimitPlan.String,
+	}
+	if row.RateLimitPrimaryPercent.Valid {
+		limits.PrimaryUsedPercent = row.RateLimitPrimaryPercent.Float64
+	}
+	if row.RateLimitSecondaryPercent.Valid {
+		limits.SecondaryUsedPercent = row.RateLimitSecondaryPercent.Float64
+	}
+	return limits
 }
 
 func turnToDomain(row gen.ConversationTurn) domain.ConversationTurn {

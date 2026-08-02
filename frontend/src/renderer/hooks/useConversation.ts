@@ -250,6 +250,10 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 			reasoningEffort: wire.settings?.reasoningEffort || undefined,
 			approvalMode: (wire.settings?.approvalMode as ApprovalMode | undefined) || undefined,
 		},
+		// Absent means the provider has not reported, which the meter renders as
+		// nothing rather than as an empty bar.
+		usage: wire.usage ? { ...wire.usage } : undefined,
+		rateLimits: wire.rateLimits ? { ...wire.rateLimits } : undefined,
 		turns: (wire.turns ?? []).map((turn) => ({
 			id: turn.id,
 			state: turn.state as TurnState,

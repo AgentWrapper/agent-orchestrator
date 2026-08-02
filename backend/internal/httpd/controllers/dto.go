@@ -875,7 +875,7 @@ type SendConversationMessageResponse struct {
 
 // ConversationModelsResponse is the provider's model catalog plus what is selected.
 type ConversationModelsResponse struct {
-	Models   []ConversationModelResponse    `json:"models"`
+	Models   []ConversationModelResponse     `json:"models"`
 	Selected ConversationTurnSettingsPayload `json:"selected"`
 }
 
@@ -971,6 +971,44 @@ type ConversationSnapshotResponse struct {
 	// the client already polls so the composer can label itself without a second
 	// request, and so a choice made on another client shows up here.
 	Settings ConversationTurnSettingsPayload `json:"settings"`
+	// Usage is how full this conversation is. Omitted until the provider reports,
+	// so a client can tell "not known yet" from a conversation using nothing.
+	Usage *ConversationUsagePayload `json:"usage,omitempty"`
+	// RateLimits is where the account stands. Omitted until the provider reports.
+	RateLimits *ConversationRateLimitsPayload `json:"rateLimits,omitempty"`
+}
+
+// ConversationUsagePayload is the conversation's token position.
+//
+// Current state on the snapshot rather than timeline entries: the provider reports
+// this after every tool call, and one row per report is what buried the
+// conversation before.
+type ConversationUsagePayload struct {
+	// ContextUsed and ContextWindow are what let a client draw a meter instead of
+	// printing a bare number. ContextWindow is 0 when the provider would not state
+	// one, and a client must then show the tokens without a fullness claim.
+	ContextUsed   int64 `json:"contextUsed"`
+	ContextWindow int64 `json:"contextWindow"`
+	// The conversation's cumulative spend, which is a different question from
+	// fullness: it grows without bound while context rises and falls.
+	InputTokens  int64 `json:"inputTokens"`
+	OutputTokens int64 `json:"outputTokens"`
+	CachedTokens int64 `json:"cachedTokens"`
+	TotalTokens  int64 `json:"totalTokens"`
+}
+
+// ConversationRateLimitsPayload is the account's quota position, which is why a
+// turn can fail for reasons that have nothing to do with the request.
+type ConversationRateLimitsPayload struct {
+	// Percentages in 0..100. Negative means the provider did not report that
+	// window, which is not the same as reporting it empty.
+	PrimaryUsedPercent   float64 `json:"primaryUsedPercent"`
+	SecondaryUsedPercent float64 `json:"secondaryUsedPercent"`
+	// Seconds remaining, not the absolute reset instant: a duration cannot read as
+	// already-refilled once the snapshot is a few minutes old.
+	PrimaryResetsInSeconds   int64  `json:"primaryResetsInSeconds,omitempty"`
+	SecondaryResetsInSeconds int64  `json:"secondaryResetsInSeconds,omitempty"`
+	PlanLabel                string `json:"planLabel,omitempty"`
 }
 
 // ConversationRequestIDParam is the provider's approval request id. Resolving

@@ -41,6 +41,12 @@ type Store interface {
 
 	SetConversationSettings(ctx context.Context, conversationID string, settings domain.ConversationSettings, now time.Time) error
 
+	// Usage and rate limits are current state, not timeline entries: each write
+	// replaces the last. The provider reports usage after every tool call, so an
+	// append-per-report is what buried the conversation the first time round.
+	RecordUsage(ctx context.Context, conversationID string, usage domain.ConversationUsage) error
+	RecordRateLimits(ctx context.Context, conversationID string, limits domain.ConversationRateLimits) error
+
 	NextQueuedTurn(ctx context.Context, conversationID string) (domain.QueuedTurn, error)
 	CancelQueuedTurns(ctx context.Context, conversationID string, cutoff, now time.Time) error
 
@@ -138,7 +144,50 @@ func newController(
 		stopped:      make(chan struct{}),
 	}
 	go c.project()
+	go c.readRateLimits()
 	return c
+}
+
+// rateLimitReadTimeout bounds the startup quota read. It is a local IPC call, and
+// a provider that cannot answer it quickly must not hold up a conversation.
+const rateLimitReadTimeout = 10 * time.Second
+
+// readRateLimits seeds the account's quota position when the controller opens.
+//
+// The provider only pushes account/rateLimits/updated alongside a turn, which is
+// too late for the thing this signal is for: a user wants to know they are near a
+// wall BEFORE spending a turn discovering it. Reading once at startup closes that
+// gap without giving clients a provider RPC to poll.
+//
+// Off the critical path on purpose, and failure is logged rather than surfaced: a
+// conversation whose quota AO could not read is entirely usable, and refusing to
+// start one over a missing readout would be a worse outcome than showing no meter.
+func (c *Controller) readRateLimits() {
+	reporter, ok := c.conv.(ports.ChatUsageReporter)
+	if !ok {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), rateLimitReadTimeout)
+	defer cancel()
+
+	limits, err := reporter.ReadRateLimits(ctx)
+	if err != nil {
+		c.log.Debug("chat rate limit read failed", "session", c.sessionID, "error", err)
+		return
+	}
+	// Racing a pushed update is benign: both come from the same provider, and these
+	// are percentages of a multi-day window that barely move between two reads
+	// seconds apart.
+	if err := c.store.RecordRateLimits(ctx, c.conversation.ID, domain.ConversationRateLimits{
+		PrimaryUsedPercent:       limits.PrimaryUsedPercent,
+		SecondaryUsedPercent:     limits.SecondaryUsedPercent,
+		PrimaryResetsInSeconds:   limits.PrimaryResetsInSeconds,
+		SecondaryResetsInSeconds: limits.SecondaryResetsInSeconds,
+		PlanLabel:                limits.PlanLabel,
+	}); err != nil {
+		c.log.Debug("failed to record chat rate limits", "session", c.sessionID, "error", err)
+	}
 }
 
 // ProviderConversationID is the handle to persist for resume.
@@ -601,6 +650,34 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 		// card still on screen elsewhere stops being actionable.
 		detail, _ := json.Marshal(map[string]string{"resolvedBy": "provider"})
 		return c.store.ResolveApproval(ctx, c.conversation.ID, event.RequestID, string(detail), now)
+
+	case ports.ChatEventUsage:
+		if event.Usage == nil {
+			return nil
+		}
+		// Overwrites rather than appends. Deliberately not reported as activity
+		// either: token accounting arriving is not the agent doing work, and
+		// treating it as such would keep a finished session looking busy.
+		return c.store.RecordUsage(ctx, c.conversation.ID, domain.ConversationUsage{
+			ContextUsed:   event.Usage.ContextUsed,
+			ContextWindow: event.Usage.ContextWindow,
+			InputTokens:   event.Usage.InputTokens,
+			OutputTokens:  event.Usage.OutputTokens,
+			CachedTokens:  event.Usage.CachedTokens,
+			TotalTokens:   event.Usage.TotalTokens,
+		})
+
+	case ports.ChatEventRateLimits:
+		if event.RateLimits == nil {
+			return nil
+		}
+		return c.store.RecordRateLimits(ctx, c.conversation.ID, domain.ConversationRateLimits{
+			PrimaryUsedPercent:       event.RateLimits.PrimaryUsedPercent,
+			SecondaryUsedPercent:     event.RateLimits.SecondaryUsedPercent,
+			PrimaryResetsInSeconds:   event.RateLimits.PrimaryResetsInSeconds,
+			SecondaryResetsInSeconds: event.RateLimits.SecondaryResetsInSeconds,
+			PlanLabel:                event.RateLimits.PlanLabel,
+		})
 
 	case ports.ChatEventControllerState:
 		c.mu.Lock()

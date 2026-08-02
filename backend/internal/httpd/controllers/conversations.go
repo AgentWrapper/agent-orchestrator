@@ -315,6 +315,8 @@ func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotRespon
 		Messages:       make([]ConversationMessageResponse, 0, len(s.Messages)),
 		Activities:     make([]ConversationActivityResponse, 0, len(s.Activities)),
 		Settings:       turnSettingsPayload(s.Conversation.Settings),
+		Usage:          usagePayload(s.Usage),
+		RateLimits:     rateLimitsPayload(s.RateLimits),
 	}
 
 	for _, turn := range s.Turns {
@@ -360,6 +362,38 @@ func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotRespon
 		})
 	}
 	return out
+}
+
+// usagePayload maps the conversation's token position onto the wire shape. A nil
+// snapshot value stays nil: the field being absent is how a client learns the
+// provider has not reported yet, which is not the same as a conversation that has
+// used nothing.
+func usagePayload(usage *domain.ConversationUsage) *ConversationUsagePayload {
+	if usage == nil {
+		return nil
+	}
+	return &ConversationUsagePayload{
+		ContextUsed:   usage.ContextUsed,
+		ContextWindow: usage.ContextWindow,
+		InputTokens:   usage.InputTokens,
+		OutputTokens:  usage.OutputTokens,
+		CachedTokens:  usage.CachedTokens,
+		TotalTokens:   usage.TotalTokens,
+	}
+}
+
+// rateLimitsPayload maps the account's quota position onto the wire shape.
+func rateLimitsPayload(limits *domain.ConversationRateLimits) *ConversationRateLimitsPayload {
+	if limits == nil {
+		return nil
+	}
+	return &ConversationRateLimitsPayload{
+		PrimaryUsedPercent:       limits.PrimaryUsedPercent,
+		SecondaryUsedPercent:     limits.SecondaryUsedPercent,
+		PrimaryResetsInSeconds:   limits.PrimaryResetsInSeconds,
+		SecondaryResetsInSeconds: limits.SecondaryResetsInSeconds,
+		PlanLabel:                limits.PlanLabel,
+	}
 }
 
 // decodeDetail turns the stored payload into a JSON object. A payload this build

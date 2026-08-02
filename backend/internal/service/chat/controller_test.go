@@ -909,3 +909,117 @@ func TestStartSettlesWorkLeftByAKilledController(t *testing.T) {
 		t.Error("approval left pending by a dead controller; the user can never answer it")
 	}
 }
+
+// Usage is current state, not history. The provider reports it after every tool
+// call, so the projection must overwrite: a row per report is what buried the
+// conversation, and the conversation is only ever one amount full.
+func TestUsageProjectionKeepsOnlyTheLatest(t *testing.T) {
+	h := newHarness(t)
+
+	h.conv.emit(
+		ports.ChatEvent{Kind: ports.ChatEventUsage, Usage: &ports.ChatUsage{
+			ContextUsed: 18055, ContextWindow: 258400,
+			InputTokens: 18050, OutputTokens: 5, CachedTokens: 11008, TotalTokens: 18055,
+		}},
+		ports.ChatEvent{Kind: ports.ChatEventUsage, Usage: &ports.ChatUsage{
+			ContextUsed: 42100, ContextWindow: 258400,
+			InputTokens: 41000, OutputTokens: 1100, CachedTokens: 20000, TotalTokens: 60155,
+		}},
+	)
+
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return s.Conversation.Usage != nil && s.Conversation.Usage.ContextUsed == 42100
+	})
+
+	usage := snapshot.Conversation.Usage
+	if usage.ContextWindow != 258400 {
+		t.Errorf("context window = %d, want 258400", usage.ContextWindow)
+	}
+	if usage.TotalTokens != 60155 {
+		t.Errorf("cumulative total = %d, want the later 60155", usage.TotalTokens)
+	}
+	// The readout is only meaningful as a fraction; without the window it is a
+	// number with no scale, which is what the header used to show.
+	if got := usage.ContextFraction(); got < 0.16 || got > 0.17 {
+		t.Errorf("context fraction = %v, want roughly 0.163", got)
+	}
+
+	// Usage must not become a timeline entry, under any kind.
+	for _, activity := range snapshot.Activities {
+		if activity.Kind == domain.ActivityKindUsage {
+			t.Fatalf("usage was projected as an activity: %+v", activity)
+		}
+	}
+}
+
+// A model the provider states no window for still reports its tokens. The meter
+// has to say "unknown" rather than draw an empty bar for a conversation that may
+// be nearly full.
+func TestUsageProjectionWithoutContextWindow(t *testing.T) {
+	h := newHarness(t)
+
+	h.conv.emit(ports.ChatEvent{Kind: ports.ChatEventUsage, Usage: &ports.ChatUsage{
+		ContextUsed: 900, TotalTokens: 900, InputTokens: 800, OutputTokens: 100,
+	}})
+
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return s.Conversation.Usage != nil
+	})
+	if got := snapshot.Conversation.Usage.ContextFraction(); got != -1 {
+		t.Errorf("context fraction = %v, want -1 for an unknown window", got)
+	}
+}
+
+// Rate limits are current state too, and an unreported window must survive a round
+// trip through the database as unreported rather than as a reassuring zero.
+func TestRateLimitProjectionKeepsOnlyTheLatest(t *testing.T) {
+	h := newHarness(t)
+
+	h.conv.emit(
+		ports.ChatEvent{Kind: ports.ChatEventRateLimits, RateLimits: &ports.ChatRateLimits{
+			PrimaryUsedPercent: 12, SecondaryUsedPercent: -1,
+			PrimaryResetsInSeconds: 600, PlanLabel: "pro",
+		}},
+		ports.ChatEvent{Kind: ports.ChatEventRateLimits, RateLimits: &ports.ChatRateLimits{
+			PrimaryUsedPercent: 71, SecondaryUsedPercent: -1,
+			PrimaryResetsInSeconds: 490444, PlanLabel: "pro",
+		}},
+	)
+
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return s.Conversation.RateLimits != nil && s.Conversation.RateLimits.PrimaryUsedPercent == 71
+	})
+
+	limits := snapshot.Conversation.RateLimits
+	if limits.SecondaryUsedPercent >= 0 {
+		t.Errorf("secondary = %v; an unreported window must not read as untouched quota",
+			limits.SecondaryUsedPercent)
+	}
+	if limits.PrimaryResetsInSeconds != 490444 {
+		t.Errorf("primary resets in %d, want 490444", limits.PrimaryResetsInSeconds)
+	}
+	if limits.PlanLabel != "pro" {
+		t.Errorf("plan = %q, want pro", limits.PlanLabel)
+	}
+	if got := limits.WorstUsedPercent(); got != 71 {
+		t.Errorf("worst window = %v, want 71", got)
+	}
+}
+
+// Nothing reported yet is distinct from a conversation using nothing: the snapshot
+// leaves both nil so a client can withhold the meter rather than draw an empty one.
+func TestSnapshotOmitsUsageUntilTheProviderReports(t *testing.T) {
+	h := newHarness(t)
+
+	snapshot, err := h.st.LoadConversationSnapshot(context.Background(), h.ctrl.ConversationID())
+	if err != nil {
+		t.Fatalf("load snapshot: %v", err)
+	}
+	if snapshot.Conversation.Usage != nil {
+		t.Errorf("usage = %+v, want nil before the provider reports", snapshot.Conversation.Usage)
+	}
+	if snapshot.Conversation.RateLimits != nil {
+		t.Errorf("rate limits = %+v, want nil before the provider reports",
+			snapshot.Conversation.RateLimits)
+	}
+}

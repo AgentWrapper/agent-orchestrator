@@ -711,3 +711,58 @@ func TestListModelsDropsHiddenAndKeepsProviderOrder(t *testing.T) {
 		t.Errorf("default effort = %q, want medium", models[0].DefaultEffort)
 	}
 }
+
+// The on-demand quota read. The reply below is the verbatim account/rateLimits/read
+// result from a live pro account, on ONE line: readFrame is line-delimited, so a
+// pretty-printed reply hangs the test forever rather than failing it.
+func TestReadRateLimitsFromProviderResult(t *testing.T) {
+	d, srv := newTestDriver(t)
+	srv.reply("account/rateLimits/read", `{"rateLimits":{"limitId":"codex","limitName":null,"primary":{"usedPercent":71,"windowDurationMins":10080,"resetsAt":4102444800},"secondary":null,"credits":{"hasCredits":false,"unlimited":false,"balance":"0"},"individualLimit":null,"spendControlReached":false,"planType":"pro","rateLimitReachedType":null},"rateLimitsByLimitId":{"codex_bengalfox":{"limitId":"codex_bengalfox","limitName":"GPT-5.3-Codex-Spark","primary":{"usedPercent":0,"windowDurationMins":10080,"resetsAt":4102444800},"secondary":null,"credits":null,"individualLimit":null,"spendControlReached":null,"planType":"pro","rateLimitReachedType":null}},"rateLimitResetCredits":{"availableCount":0,"credits":[]}}`)
+
+	conv, err := d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = conv.Close() }()
+
+	reporter, ok := conv.(ports.ChatUsageReporter)
+	if !ok {
+		t.Fatal("conversation does not implement ChatUsageReporter")
+	}
+
+	limits, err := reporter.ReadRateLimits(context.Background())
+	if err != nil {
+		t.Fatalf("ReadRateLimits: %v", err)
+	}
+	if limits.PrimaryUsedPercent != 71 {
+		t.Errorf("primary = %v, want 71", limits.PrimaryUsedPercent)
+	}
+	// The per-model rateLimitsByLimitId breakdown is deliberately not read: the
+	// account-level window is what stops the next turn, and reading the finer table
+	// would answer a question nobody asked with a much lower number.
+	if limits.SecondaryUsedPercent >= 0 {
+		t.Errorf("secondary = %v, want negative for a window this account lacks",
+			limits.SecondaryUsedPercent)
+	}
+	if limits.PlanLabel != "pro" {
+		t.Errorf("plan = %q, want pro", limits.PlanLabel)
+	}
+	// resetsAt is an absolute instant far in the future, so a positive remainder is
+	// the only correct answer regardless of when the suite runs.
+	if limits.PrimaryResetsInSeconds <= 0 {
+		t.Errorf("primary resets in %d, want a positive remaining duration",
+			limits.PrimaryResetsInSeconds)
+	}
+}
+
+// The capability gates the readout, so it must be advertised or the UI hides a
+// meter the driver can actually feed.
+func TestCapabilitiesAdvertiseUsageAndRateLimits(t *testing.T) {
+	caps := capabilities()
+	if !caps.Has(ports.ChatCapabilityUsage) {
+		t.Error("usage capability not advertised")
+	}
+	if !caps.Has(ports.ChatCapabilityRateLimits) {
+		t.Error("rate limit capability not advertised")
+	}
+}

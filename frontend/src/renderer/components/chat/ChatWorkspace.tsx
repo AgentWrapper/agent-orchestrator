@@ -27,6 +27,7 @@ import {
 import { ChatComposer } from "./ChatComposer";
 import { ActivityRun } from "./ActivityRun";
 import { TurnSettingsBar } from "./TurnSettingsBar";
+import { ContextMeter } from "./ContextMeter";
 import {
 	activeTurn,
 	pendingApproval,
@@ -160,9 +161,11 @@ function runsOf(items: ConversationItem[]): TimelineRun[] {
  *
  * Two kinds are dropped:
  *
- *   - usage. It is a running total, and the provider reports it after every tool
- *     call. Rendering one row per report is what buried the actual conversation;
- *     the total lives in the header instead.
+ *   - usage. The daemon now projects it as current state on the snapshot rather
+ *     than as a timeline entry, so this filter is a guard for conversations
+ *     recorded by an older build whose usage rows are still on disk. Rendering one
+ *     row per report is what buried the actual conversation; it lives in the
+ *     header meter instead.
  *   - reasoning, unless asked for. The provider emits one per tool call and they
  *     usually carry no readable body, so by default they are pure chrome.
  *
@@ -181,18 +184,6 @@ function readableItems(snapshot: ConversationSnapshot, showReasoning: boolean): 
 	});
 }
 
-/** The most recent token total the provider reported, for the header readout. */
-function latestUsage(snapshot: ConversationSnapshot): number | undefined {
-	for (let i = snapshot.items.length - 1; i >= 0; i -= 1) {
-		const item = snapshot.items[i];
-		if (item?.kind === "activity" && item.activityKind === "usage") {
-			const total = item.detail?.totalTokens;
-			if (typeof total === "number" && total > 0) return total;
-		}
-	}
-	return undefined;
-}
-
 /* -------------------------------------------------------------------------- */
 
 function ChatHeader({
@@ -204,7 +195,6 @@ function ChatHeader({
 	showReasoning: boolean;
 	onToggleReasoning: () => void;
 }) {
-	const usage = latestUsage(snapshot);
 	const hasReasoning = snapshot.items.some(
 		(item) => item.kind === "activity" && item.activityKind === "reasoning",
 	);
@@ -218,13 +208,12 @@ function ChatHeader({
 				<span className="shrink-0 text-xs text-muted-foreground">{snapshot.harness}</span>
 			</div>
 			<div className="ml-auto flex shrink-0 items-center gap-2">
-				{/* A running total, not a timeline event. Emitting one row per tool call
-				    is what buried the conversation. */}
-				{usage ? (
-					<span className="tabular-nums text-[11px] text-muted-foreground">
-						{usage.toLocaleString()} tokens
-					</span>
-				) : null}
+				{/* Current state from the snapshot, not a timeline event: the provider
+				    reports usage after every tool call, and a row per report is what
+				    buried the conversation. A bare total used to live here, which could
+				    not answer the question the user actually has -- how full is this,
+				    and am I about to hit a quota wall. */}
+				<ContextMeter usage={snapshot.usage} rateLimits={snapshot.rateLimits} />
 				{hasReasoning ? (
 					<Button
 						type="button"

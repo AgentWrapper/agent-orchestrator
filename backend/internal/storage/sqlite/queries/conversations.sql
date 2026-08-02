@@ -24,6 +24,37 @@ UPDATE conversations
 SET model = ?, reasoning_effort = ?, approval_mode = ?, updated_at = ?
 WHERE id = ?;
 
+-- Token position for the conversation, latest wins.
+--
+-- The provider reports this after every tool call, so this UPDATE runs often and
+-- deliberately overwrites: there is one current answer to "how full is this
+-- conversation", and keeping the history of that answer is what buried the
+-- timeline before. updated_at is deliberately NOT touched -- usage arriving is the
+-- provider talking about the conversation, not the conversation changing, and
+-- bumping it on every tool call would make every chat session look freshly active.
+-- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+-- offset, so a multi-byte character here silently corrupts later queries.
+-- name: UpdateConversationUsage :exec
+UPDATE conversations
+SET context_used = ?,
+    context_window = ?,
+    usage_input_tokens = ?,
+    usage_output_tokens = ?,
+    usage_cached_tokens = ?,
+    usage_total_tokens = ?
+WHERE id = ?;
+
+-- Account quota position, latest wins. Percentages in 0..100; the resets columns
+-- are remaining seconds, not the absolute instant the provider sends.
+-- name: UpdateConversationRateLimits :exec
+UPDATE conversations
+SET rate_limit_primary_percent = ?,
+    rate_limit_secondary_percent = ?,
+    rate_limit_primary_resets_in = ?,
+    rate_limit_secondary_resets_in = ?,
+    rate_limit_plan = ?
+WHERE id = ?;
+
 -- name: NextConversationSequence :one
 UPDATE conversations
 SET latest_sequence = latest_sequence + 1, updated_at = ?

@@ -312,6 +312,12 @@ type Snapshot struct {
 	Turns        []domain.ConversationTurn
 	Messages     []domain.ConversationMessage
 	Activities   []domain.ConversationActivity
+	// Usage and RateLimits are current state carried on the snapshot the client
+	// already polls, rather than timeline entries or a second request. Both are nil
+	// until the provider has reported, so a client can tell "not known yet" from a
+	// real zero.
+	Usage      *domain.ConversationUsage
+	RateLimits *domain.ConversationRateLimits
 }
 
 // SnapshotReader is the durable read the service serves snapshots from. Kept
@@ -376,6 +382,8 @@ func (s *Service) Snapshot(ctx context.Context, id domain.SessionID) (Snapshot, 
 		Turns:        rows.Turns,
 		Messages:     rows.Messages,
 		Activities:   rows.Activities,
+		Usage:        rows.Conversation.Usage,
+		RateLimits:   rows.Conversation.RateLimits,
 	}, nil
 }
 

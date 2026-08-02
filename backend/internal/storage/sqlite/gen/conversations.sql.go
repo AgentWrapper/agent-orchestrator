@@ -407,7 +407,7 @@ func (q *Queries) SelectConversationActivityByProviderItem(ctx context.Context, 
 }
 
 const selectConversationByID = `-- name: SelectConversationByID :one
-SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode FROM conversations WHERE id = ? LIMIT 1
+SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan FROM conversations WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) SelectConversationByID(ctx context.Context, id string) (Conversation, error) {
@@ -424,12 +424,23 @@ func (q *Queries) SelectConversationByID(ctx context.Context, id string) (Conver
 		&i.Model,
 		&i.ReasoningEffort,
 		&i.ApprovalMode,
+		&i.ContextUsed,
+		&i.ContextWindow,
+		&i.UsageInputTokens,
+		&i.UsageOutputTokens,
+		&i.UsageCachedTokens,
+		&i.UsageTotalTokens,
+		&i.RateLimitPrimaryPercent,
+		&i.RateLimitSecondaryPercent,
+		&i.RateLimitPrimaryResetsIn,
+		&i.RateLimitSecondaryResetsIn,
+		&i.RateLimitPlan,
 	)
 	return i, err
 }
 
 const selectConversationBySession = `-- name: SelectConversationBySession :one
-SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode FROM conversations WHERE session_id = ? LIMIT 1
+SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan FROM conversations WHERE session_id = ? LIMIT 1
 `
 
 func (q *Queries) SelectConversationBySession(ctx context.Context, sessionID *domain.SessionID) (Conversation, error) {
@@ -446,6 +457,17 @@ func (q *Queries) SelectConversationBySession(ctx context.Context, sessionID *do
 		&i.Model,
 		&i.ReasoningEffort,
 		&i.ApprovalMode,
+		&i.ContextUsed,
+		&i.ContextWindow,
+		&i.UsageInputTokens,
+		&i.UsageOutputTokens,
+		&i.UsageCachedTokens,
+		&i.UsageTotalTokens,
+		&i.RateLimitPrimaryPercent,
+		&i.RateLimitSecondaryPercent,
+		&i.RateLimitPrimaryResetsIn,
+		&i.RateLimitSecondaryResetsIn,
+		&i.RateLimitPlan,
 	)
 	return i, err
 }
@@ -805,6 +827,39 @@ func (q *Queries) SettleOrphanedConversationTurns(ctx context.Context, arg Settl
 	return err
 }
 
+const updateConversationRateLimits = `-- name: UpdateConversationRateLimits :exec
+UPDATE conversations
+SET rate_limit_primary_percent = ?,
+    rate_limit_secondary_percent = ?,
+    rate_limit_primary_resets_in = ?,
+    rate_limit_secondary_resets_in = ?,
+    rate_limit_plan = ?
+WHERE id = ?
+`
+
+type UpdateConversationRateLimitsParams struct {
+	RateLimitPrimaryPercent    sql.NullFloat64
+	RateLimitSecondaryPercent  sql.NullFloat64
+	RateLimitPrimaryResetsIn   sql.NullInt64
+	RateLimitSecondaryResetsIn sql.NullInt64
+	RateLimitPlan              sql.NullString
+	ID                         string
+}
+
+// Account quota position, latest wins. Percentages in 0..100; the resets columns
+// are remaining seconds, not the absolute instant the provider sends.
+func (q *Queries) UpdateConversationRateLimits(ctx context.Context, arg UpdateConversationRateLimitsParams) error {
+	_, err := q.db.ExecContext(ctx, updateConversationRateLimits,
+		arg.RateLimitPrimaryPercent,
+		arg.RateLimitSecondaryPercent,
+		arg.RateLimitPrimaryResetsIn,
+		arg.RateLimitSecondaryResetsIn,
+		arg.RateLimitPlan,
+		arg.ID,
+	)
+	return err
+}
+
 const updateConversationTurnSettings = `-- name: UpdateConversationTurnSettings :exec
 UPDATE conversations
 SET model = ?, reasoning_effort = ?, approval_mode = ?, updated_at = ?
@@ -829,6 +884,50 @@ func (q *Queries) UpdateConversationTurnSettings(ctx context.Context, arg Update
 		arg.ReasoningEffort,
 		arg.ApprovalMode,
 		arg.UpdatedAt,
+		arg.ID,
+	)
+	return err
+}
+
+const updateConversationUsage = `-- name: UpdateConversationUsage :exec
+UPDATE conversations
+SET context_used = ?,
+    context_window = ?,
+    usage_input_tokens = ?,
+    usage_output_tokens = ?,
+    usage_cached_tokens = ?,
+    usage_total_tokens = ?
+WHERE id = ?
+`
+
+type UpdateConversationUsageParams struct {
+	ContextUsed       sql.NullInt64
+	ContextWindow     sql.NullInt64
+	UsageInputTokens  sql.NullInt64
+	UsageOutputTokens sql.NullInt64
+	UsageCachedTokens sql.NullInt64
+	UsageTotalTokens  sql.NullInt64
+	ID                string
+}
+
+// Token position for the conversation, latest wins.
+//
+// The provider reports this after every tool call, so this UPDATE runs often and
+// deliberately overwrites: there is one current answer to "how full is this
+// conversation", and keeping the history of that answer is what buried the
+// timeline before. updated_at is deliberately NOT touched -- usage arriving is the
+// provider talking about the conversation, not the conversation changing, and
+// bumping it on every tool call would make every chat session look freshly active.
+// NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+// offset, so a multi-byte character here silently corrupts later queries.
+func (q *Queries) UpdateConversationUsage(ctx context.Context, arg UpdateConversationUsageParams) error {
+	_, err := q.db.ExecContext(ctx, updateConversationUsage,
+		arg.ContextUsed,
+		arg.ContextWindow,
+		arg.UsageInputTokens,
+		arg.UsageOutputTokens,
+		arg.UsageCachedTokens,
+		arg.UsageTotalTokens,
 		arg.ID,
 	)
 	return err

@@ -126,9 +126,74 @@ type ConversationRecord struct {
 	// Settings are the provider choices for the conversation's NEXT turn. Empty
 	// fields mean the provider's own default, which is why a conversation nobody
 	// configures behaves exactly as it did before these existed.
-	Settings  ConversationSettings `json:"settings"`
-	CreatedAt time.Time            `json:"createdAt"`
-	UpdatedAt time.Time            `json:"updatedAt"`
+	Settings ConversationSettings `json:"settings"`
+	// Usage is how full this conversation is. Nil until the provider reports.
+	Usage *ConversationUsage `json:"usage,omitempty"`
+	// RateLimits is where the account stands. Nil until the provider reports.
+	RateLimits *ConversationRateLimits `json:"rateLimits,omitempty"`
+	CreatedAt  time.Time               `json:"createdAt"`
+	UpdatedAt  time.Time               `json:"updatedAt"`
+}
+
+// ConversationUsage is the conversation's token position.
+//
+// Latest-wins state on the conversation, not timeline entries. The provider
+// reports this after every tool call, so a row per report is what buried the
+// conversation the first time round; there is only ever one current answer to
+// "how full is this".
+type ConversationUsage struct {
+	// ContextUsed and ContextWindow are what make the readout mean anything: a
+	// used figure without the window is a number with no scale, which is exactly
+	// what the header used to show.
+	ContextUsed   int64 `json:"contextUsed"`
+	ContextWindow int64 `json:"contextWindow"`
+	// The cumulative spend for the conversation, which grows without bound and is
+	// deliberately kept apart from the context figures above.
+	InputTokens  int64 `json:"inputTokens"`
+	OutputTokens int64 `json:"outputTokens"`
+	CachedTokens int64 `json:"cachedTokens"`
+	TotalTokens  int64 `json:"totalTokens"`
+}
+
+// ContextFraction is how full the context is, in 0..1, or -1 when the provider
+// did not state a window.
+//
+// A caller must handle the negative case rather than dividing: without a window
+// there is no honest fullness to report, and defaulting to 0 would draw an empty
+// meter for a conversation that might be nearly full.
+func (u ConversationUsage) ContextFraction() float64 {
+	if u.ContextWindow <= 0 || u.ContextUsed < 0 {
+		return -1
+	}
+	return float64(u.ContextUsed) / float64(u.ContextWindow)
+}
+
+// ConversationRateLimits is the account's quota position.
+//
+// Stored because it explains a class of failure the user cannot otherwise
+// diagnose: a turn that fails for a reason unrelated to what they asked.
+type ConversationRateLimits struct {
+	// Percentages in 0..100. Negative means the provider did not report that
+	// window, which is not the same as reporting it empty.
+	PrimaryUsedPercent       float64 `json:"primaryUsedPercent"`
+	SecondaryUsedPercent     float64 `json:"secondaryUsedPercent"`
+	PrimaryResetsInSeconds   int64   `json:"primaryResetsInSeconds,omitempty"`
+	SecondaryResetsInSeconds int64   `json:"secondaryResetsInSeconds,omitempty"`
+	// PlanLabel is the provider's name for the account tier, when it says.
+	PlanLabel string `json:"planLabel,omitempty"`
+}
+
+// WorstUsedPercent is the tighter of the two windows, or -1 when neither was
+// reported. The tighter one is what will actually stop the next turn.
+func (l ConversationRateLimits) WorstUsedPercent() float64 {
+	worst := l.PrimaryUsedPercent
+	if l.SecondaryUsedPercent > worst {
+		worst = l.SecondaryUsedPercent
+	}
+	if worst < 0 {
+		return -1
+	}
+	return worst
 }
 
 // ConversationSettings are the per-turn provider choices AO remembers.

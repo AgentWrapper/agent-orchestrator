@@ -70,6 +70,11 @@ var _ ports.ChatConversation = (*conversation)(nil)
 // with nothing to notice.
 var _ ports.ChatModelLister = (*conversation)(nil)
 
+// Same reasoning for the quota read: a dropped method would silently become "this
+// account has no limits to report", which is the wrong answer to show a user
+// whose turns are about to start failing.
+var _ ports.ChatUsageReporter = (*conversation)(nil)
+
 func newConversation(proc *process, log *slog.Logger) *conversation {
 	c := &conversation{
 		proc:     proc,
@@ -106,7 +111,7 @@ func (c *conversation) pump() {
 	defer close(c.events)
 
 	for n := range c.conn.notifs() {
-		for _, ev := range normalizeNotification(n) {
+		for _, ev := range normalizeNotification(n, time.Now()) {
 			if ev.Kind == ports.ChatEventTurnStarted && ev.ProviderTurnID != "" {
 				c.mu.Lock()
 				c.activeTurn = ev.ProviderTurnID
@@ -288,6 +293,24 @@ func (c *conversation) ListModels(ctx context.Context) ([]ports.ChatModel, error
 		})
 	}
 	return models, nil
+}
+
+// ReadRateLimits asks the provider where the account stands right now.
+//
+// The provider also pushes account/rateLimits/updated, but only alongside a turn.
+// That is too late for the question this answers: a user opening a conversation
+// wants to know whether they have quota BEFORE spending a turn finding out. The
+// controller reads once at startup for exactly that reason.
+func (c *conversation) ReadRateLimits(ctx context.Context) (ports.ChatRateLimits, error) {
+	var resp rateLimitsEnvelope
+	if err := c.conn.request(ctx, "account/rateLimits/read", map[string]any{}, &resp); err != nil {
+		return ports.ChatRateLimits{}, fmt.Errorf("account/rateLimits/read: %w", err)
+	}
+	// The read result also carries rateLimitsByLimitId, a per-model breakdown, and
+	// rateLimitResetCredits. Neither is read: the meter's job is to say whether the
+	// account is near a wall, and a per-model table would be a second, finer answer
+	// to a question the user has not asked yet.
+	return rateLimitsFrom(resp, time.Now()), nil
 }
 
 // Interrupt cancels a turn. An empty turn id targets the active one.

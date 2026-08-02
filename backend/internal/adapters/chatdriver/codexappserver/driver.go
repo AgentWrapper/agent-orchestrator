@@ -82,6 +82,10 @@ func capabilities() ports.ChatCapabilities {
 		ports.ChatCapabilityPlans:       true,
 		ports.ChatCapabilityInteractive: true,
 		ports.ChatCapabilityModels:      true,
+		// The account's quota position is both pushed (account/rateLimits/updated)
+		// and readable on demand (account/rateLimits/read), verified against a live
+		// account.
+		ports.ChatCapabilityRateLimits: true,
 		// turn/steer exists in the protocol but AO does not use it yet, so it is
 		// not advertised: a capability AO cannot drive must not gate UI on.
 		ports.ChatCapabilitySteer: false,

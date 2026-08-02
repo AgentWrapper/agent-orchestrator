@@ -171,6 +171,41 @@ export interface ChatModel {
 /** Health of the daemon's connection to the provider. */
 export type ControllerState = "connecting" | "ready" | "busy" | "recovering" | "stopped";
 
+/**
+ * How full this conversation is.
+ *
+ * Current state, not a timeline entry: the provider reports it after every tool
+ * call, and one row per report is what buried the conversation. What a reader
+ * needs is the fraction, not the raw figure -- a token count with no window is a
+ * number with no scale.
+ */
+export interface ConversationUsage {
+	contextUsed: number;
+	/** 0 when the provider would not state a window for this model. */
+	contextWindow: number;
+	/** The conversation's cumulative spend, which is a different question from
+	 *  fullness: it grows without bound while context rises and falls. */
+	inputTokens: number;
+	outputTokens: number;
+	cachedTokens: number;
+	totalTokens: number;
+}
+
+/**
+ * The account's quota position, which is why a turn can fail for reasons that
+ * have nothing to do with what the user asked.
+ */
+export interface ConversationRateLimits {
+	/** Percentages in 0..100. Negative means the provider did not report that
+	 *  window, which is not the same as reporting it empty. */
+	primaryUsedPercent: number;
+	secondaryUsedPercent: number;
+	/** Seconds remaining, not an absolute instant. */
+	primaryResetsInSeconds?: number;
+	secondaryResetsInSeconds?: number;
+	planLabel?: string;
+}
+
 export interface ConversationSnapshot {
 	conversationId: string;
 	sessionId: string;
@@ -184,6 +219,10 @@ export interface ConversationSnapshot {
 	/** What the next turn will be sent with. Daemon-owned, so it survives a
 	 *  restart and applies to turns AO dispatches on the user's behalf. */
 	settings: TurnSettings;
+	/** Undefined until the provider reports. Distinct from a conversation using
+	 *  nothing, so the meter is withheld rather than drawn empty. */
+	usage?: ConversationUsage;
+	rateLimits?: ConversationRateLimits;
 }
 
 /**

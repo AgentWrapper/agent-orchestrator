@@ -1146,6 +1146,17 @@ export interface components {
             models: components["schemas"]["ConversationModelResponse"][];
             selected: components["schemas"]["ConversationTurnSettingsPayload"];
         };
+        ConversationRateLimitsPayload: {
+            planLabel?: string;
+            /** Format: int64 */
+            primaryResetsInSeconds?: number;
+            /** Format: double */
+            primaryUsedPercent: number;
+            /** Format: int64 */
+            secondaryResetsInSeconds?: number;
+            /** Format: double */
+            secondaryUsedPercent: number;
+        };
         ConversationSnapshotResponse: {
             activities: components["schemas"]["ConversationActivityResponse"][];
             /** @enum {string} */
@@ -1157,9 +1168,11 @@ export interface components {
             messages: components["schemas"]["ConversationMessageResponse"][];
             /** @enum {string} */
             mode: "chat" | "tui";
+            rateLimits?: components["schemas"]["ConversationRateLimitsPayload"];
             sessionId: string;
             settings: components["schemas"]["ConversationTurnSettingsPayload"];
             turns: components["schemas"]["ConversationTurnResponse"][];
+            usage?: components["schemas"]["ConversationUsagePayload"];
         };
         ConversationTurnResponse: {
             completedAt?: null | string;
@@ -1176,6 +1189,20 @@ export interface components {
             approvalMode?: "default" | "accept-edits" | "auto" | "bypass-permissions";
             model?: string;
             reasoningEffort?: string;
+        };
+        ConversationUsagePayload: {
+            /** Format: int64 */
+            cachedTokens: number;
+            /** Format: int64 */
+            contextUsed: number;
+            /** Format: int64 */
+            contextWindow: number;
+            /** Format: int64 */
+            inputTokens: number;
+            /** Format: int64 */
+            outputTokens: number;
+            /** Format: int64 */
+            totalTokens: number;
         };
         DegradedProject: {
             id: string;
