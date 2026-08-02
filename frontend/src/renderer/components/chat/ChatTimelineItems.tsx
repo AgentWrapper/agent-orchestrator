@@ -7,7 +7,7 @@
  * re-sorting. Those belong to the daemon.
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
 	AlertTriangle,
 	Archive,
@@ -42,6 +42,8 @@ import type {
 	ConversationMessage,
 	DecisionOption,
 	DeliveryState,
+	DiffStatus,
+	TurnDiff,
 } from "../../types/conversation";
 
 const timeFormatter = new Intl.DateTimeFormat(undefined, {
@@ -172,17 +174,26 @@ function DeliveryNote({ state }: { state: DeliveryState }) {
  * spinner that hangs forever — a provider can start a command and supersede it.
  */
 export function ActivityRow({ activity }: { activity: ConversationActivity }) {
-	const [open, setOpen] = useState(false);
+	// null means "nobody has decided", which is what lets a running command open
+	// itself and then close again once it settles. Once the user clicks, their
+	// choice sticks: auto-collapsing a log someone is reading is worse than leaving
+	// a finished row open.
+	const [override, setOverride] = useState<boolean | null>(null);
 	const Icon = activityIcon[activity.activityKind] ?? SquareTerminal;
 	const detail = activity.detail;
 	const hasBody = Boolean(detail?.output || detail?.reason || detail?.text || detail?.files?.length);
 	const { label, path } = splitSummary(activity);
 
+	// Live output is only live if it is on screen, so a command that is still
+	// running and already printing opens itself.
+	const streamingOutput = activity.status === "running" && Boolean(detail?.output);
+	const open = override ?? streamingOutput;
+
 	return (
 		<div className="group/activity border-t border-border first:border-t-0">
 			<button
 				type="button"
-				onClick={() => setOpen((prev) => !prev)}
+				onClick={() => setOverride(!open)}
 				disabled={!hasBody}
 				aria-expanded={hasBody ? open : undefined}
 				className={cn(
@@ -228,22 +239,64 @@ export function ActivityRow({ activity }: { activity: ConversationActivity }) {
 							{detail.reason ?? detail.text}
 						</p>
 					) : null}
-					{detail?.output ? (
-						<>
-							<pre className="max-h-64 overflow-auto rounded-md border border-border bg-background px-2.5 py-2 font-mono text-[10.5px] leading-relaxed text-muted-foreground">
-								{detail.output}
-							</pre>
-							{detail.outputMayBePartial ? (
-								<p className="text-[10px] leading-relaxed text-muted-foreground/70">
-									Output is streamed best-effort and may be missing its beginning. Open a shell in the
-									worktree for the full run.
-								</p>
-							) : null}
-						</>
-					) : null}
+					{detail?.output ? <CommandOutput activity={activity} /> : null}
 				</div>
 			) : null}
 		</div>
+	);
+}
+
+/**
+ * A command's output, with an honest account of what it is.
+ *
+ * The pre scrolls to its own end while the command runs, because output that
+ * arrives below the fold is output nobody sees. It only auto-scrolls while the
+ * activity is `running` and only when the reader has not scrolled up: hijacking
+ * the viewport of someone reading back through a build log is worse than making
+ * them scroll down once.
+ *
+ * The caveat below it is not boilerplate. The provider drops output, and it does
+ * so differently per source, so the note says which source this is and why it may
+ * be incomplete rather than hedging the same way about both.
+ */
+function CommandOutput({ activity }: { activity: ConversationActivity }) {
+	const pre = useRef<HTMLPreElement>(null);
+	const detail = activity.detail;
+	const output = detail?.output ?? "";
+	const streaming = activity.status === "running";
+
+	useEffect(() => {
+		const node = pre.current;
+		if (!node || !streaming) return;
+		// Within a line of the bottom counts as "following along". Anything further
+		// up is a deliberate scroll and is left alone.
+		const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 24;
+		if (atBottom) node.scrollTop = node.scrollHeight;
+	}, [output, streaming]);
+
+	return (
+		<>
+			<pre
+				ref={pre}
+				aria-live={streaming ? "polite" : undefined}
+				className="max-h-64 overflow-auto rounded-md border border-border bg-background px-2.5 py-2 font-mono text-[10.5px] leading-relaxed text-muted-foreground"
+			>
+				{output}
+			</pre>
+			{detail?.outputTruncated ? (
+				<p className="text-[10px] leading-relaxed text-warning">
+					This command printed more than AO stores, so the output above stops early. Open a shell in
+					the worktree to see the rest.
+				</p>
+			) : detail?.outputMayBePartial ? (
+				<p className="text-[10px] leading-relaxed text-muted-foreground/70">
+					{detail.outputSource === "stream"
+						? "Streamed live as the command runs. The provider drops the first chunk, so the beginning may be missing."
+						: "Rolled up by the provider after the command finished, and observed to drop the beginning."}{" "}
+					Open a shell in the worktree for the full run.
+				</p>
+			) : null}
+		</>
 	);
 }
 
@@ -475,6 +528,122 @@ export function CompactionMarker({ activity }: { activity: ConversationActivity 
 				</span>
 			) : null}
 			<span aria-hidden="true" className="h-px flex-1 bg-border" />
+		</div>
+	);
+}
+
+/* -------------------------------------------------------------------------- */
+/* turn diff                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/** Single letter per change kind, which is how a diff list is normally read. */
+const diffStatusMark: Record<DiffStatus, { mark: string; tone: string; label: string }> = {
+	added: { mark: "A", tone: "text-success", label: "added" },
+	modified: { mark: "M", tone: "text-accent", label: "modified" },
+	deleted: { mark: "D", tone: "text-destructive", label: "deleted" },
+	renamed: { mark: "R", tone: "text-muted-foreground", label: "renamed" },
+};
+
+/**
+ * What a turn changed on disk.
+ *
+ * One panel per turn rather than a row per update: the provider re-sends the whole
+ * diff as the turn progresses, and the daemon overwrites it, so this is current
+ * state and not history. It grows while the turn runs, which is the point — seeing
+ * a file appear as the agent touches it is the difference between watching work and
+ * waiting for it.
+ *
+ * Rendered only when the daemon reported a diff. An agent that cannot report one
+ * gets no empty panel implying it changed nothing.
+ */
+export function TurnChangedFiles({ diff, live }: { diff: TurnDiff; live?: boolean }) {
+	const [open, setOpen] = useState(false);
+	if (diff.files.length === 0) return null;
+
+	const additions = diff.files.reduce((sum, file) => sum + file.additions, 0);
+	const deletions = diff.files.reduce((sum, file) => sum + file.deletions, 0);
+
+	return (
+		<div className="rounded-lg border border-border bg-surface">
+			<button
+				type="button"
+				onClick={() => setOpen((prev) => !prev)}
+				aria-expanded={open}
+				className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left transition-colors hover:bg-interactive-hover"
+			>
+				<FileDiff aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+				<strong className="shrink-0 text-xs font-semibold text-foreground">
+					{diff.files.length === 1 ? "1 file changed" : `${diff.files.length} files changed`}
+				</strong>
+				{live ? (
+					<Loader2
+						aria-label="still changing"
+						className="size-3 shrink-0 animate-spin text-muted-foreground/60"
+					/>
+				) : null}
+				<span className="flex-1" />
+				<span className="shrink-0 font-mono text-[10.5px] tabular-nums">
+					<span className="text-success">+{additions}</span>{" "}
+					<span className="text-destructive">&minus;{deletions}</span>
+				</span>
+				<ChevronRight
+					aria-hidden="true"
+					className={cn(
+						"size-3.5 shrink-0 text-muted-foreground/50 transition-transform",
+						open && "rotate-90",
+					)}
+				/>
+			</button>
+
+			{open ? (
+				<ul className="flex flex-col border-t border-border">
+					{diff.files.map((file) => {
+						const status = diffStatusMark[file.status] ?? diffStatusMark.modified;
+						return (
+							<li
+								key={`${file.status}-${file.oldPath ?? ""}-${file.path}`}
+								className="flex items-center gap-2.5 px-3.5 py-1.5 text-[11px]"
+							>
+								<span
+									aria-label={status.label}
+									className={cn("w-3 shrink-0 text-center font-mono font-semibold", status.tone)}
+									title={status.label}
+								>
+									{status.mark}
+								</span>
+								<span className="min-w-0 flex-1 truncate font-mono text-muted-foreground" title={file.path}>
+									{/* A rename shows both ends. Only the new path would read as an addition
+									    and lose the fact that something moved. */}
+									{file.oldPath ? (
+										<>
+											<span className="text-muted-foreground/60">
+												{shortenPaths(file.oldPath)}
+											</span>
+											<span aria-hidden="true" className="px-1 text-muted-foreground/40">
+												&rarr;
+											</span>
+											{shortenPaths(file.path)}
+										</>
+									) : (
+										shortenPaths(file.path)
+									)}
+								</span>
+								<span className="shrink-0 font-mono tabular-nums text-success">
+									+{file.additions}
+								</span>
+								<span className="shrink-0 font-mono tabular-nums text-destructive">
+									&minus;{file.deletions}
+								</span>
+							</li>
+						);
+					})}
+					{diff.truncated ? (
+						<li className="px-3.5 py-2 text-[10px] leading-relaxed text-warning">
+							This turn changed more files than AO lists here. Use the Diff tab for the whole change.
+						</li>
+					) : null}
+				</ul>
+			) : null}
 		</div>
 	);
 }

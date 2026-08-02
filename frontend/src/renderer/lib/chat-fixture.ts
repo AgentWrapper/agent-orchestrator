@@ -42,6 +42,16 @@ export const chatFixture: ConversationSnapshot = {
 			requestedAt: t(31),
 			startedAt: t(31, 1),
 			completedAt: t(33, 12),
+			// A settled turn diff, parsed by the daemon out of the one aggregated
+			// unified diff string `turn/diff/updated` carries.
+			diff: {
+				files: [
+					{ path: "backend/internal/ports/chat.go", additions: 34, deletions: 2, status: "modified" },
+					{ path: "backend/internal/adapters/chatdriver/codexappserver/diff.go", additions: 128, deletions: 0, status: "added" },
+					{ path: "backend/internal/chat/legacy_shim.go", additions: 0, deletions: 61, status: "deleted" },
+					{ path: "backend/internal/chat/normalize.go", oldPath: "backend/internal/chat/translate.go", additions: 4, deletions: 4, status: "renamed" },
+				],
+			},
 		},
 		{
 			id: "turn-2",
@@ -49,6 +59,14 @@ export const chatFixture: ConversationSnapshot = {
 			providerTurnId: "019fbdd1-fdac-76f2",
 			requestedAt: t(38),
 			startedAt: t(38, 1),
+			// Still running, so the list can still grow. The panel says so rather than
+			// looking like a final answer.
+			diff: {
+				files: [
+					{ path: "backend/internal/storage/sqlite/queries/conversations.sql", additions: 27, deletions: 0, status: "modified" },
+				],
+				truncated: true,
+			},
 		},
 	],
 	items: [
@@ -91,6 +109,7 @@ export const chatFixture: ConversationSnapshot = {
 				cwd: "/Users/dhruv/.ao/data/worktrees/agent-orchestrator-1/ao-14",
 				output: " M backend/internal/session_manager/manager.go\n M backend/internal/ports/chat.go\n",
 				outputMayBePartial: true,
+				outputSource: "aggregate",
 				exitCode: 0,
 				durationMs: 31,
 			},
@@ -179,6 +198,15 @@ export const chatFixture: ConversationSnapshot = {
 				command: "go test ./internal/...",
 				rawCommand: "/bin/sh -c 'go test ./internal/...'",
 				cwd: "/Users/dhruv/.ao/data/worktrees/agent-orchestrator-1/ao-14",
+				// A command still running, already printing. Before output deltas were
+				// accumulated there was nothing to show here until it finished, because
+				// the provider's aggregate does not exist until completion.
+				output:
+					"ok  \tgithub.com/aoagents/agent-orchestrator/backend/internal/domain\t0.412s\n" +
+					"ok  \tgithub.com/aoagents/agent-orchestrator/backend/internal/ports\t0.286s\n" +
+					"ok  \tgithub.com/aoagents/agent-orchestrator/backend/internal/service/chat\t11.554s\n",
+				outputSource: "stream",
+				outputMayBePartial: true,
 			},
 			createdAt: t(38, 41),
 		},

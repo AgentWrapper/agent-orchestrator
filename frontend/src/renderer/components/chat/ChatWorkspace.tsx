@@ -31,6 +31,7 @@ import {
 	CompactionMarker,
 	HumanMessage,
 	OriginMessage,
+	TurnChangedFiles,
 	TurnOutcome,
 } from "./ChatTimelineItems";
 import { ChatComposer } from "./ChatComposer";
@@ -47,6 +48,7 @@ import {
 	type ChatModel,
 	type ConversationActivity,
 	type ConversationItem,
+	type TurnDiff,
 	type TurnSettings,
 } from "../../types/conversation";
 
@@ -465,6 +467,9 @@ function Timeline({
 									/>
 								),
 							)}
+							{/* Above the outcome divider: the changed files are part of what the
+							    turn did, and belong inside it rather than after it closes. */}
+							{group.diff ? <TurnChangedFiles diff={group.diff} live={group.live} /> : null}
 							{group.outcome ? (
 								<TurnOutcome
 									state={group.outcome.state}
@@ -529,6 +534,10 @@ type TimelineGroup = {
 	anchor: number;
 	items: ConversationItem[];
 	outcome?: { state: "completed" | "interrupted" | "failed"; durationMs?: number; error?: string };
+	/** What the turn changed on disk, when the daemon reported anything. */
+	diff?: TurnDiff;
+	/** The turn is still running, so its diff can still grow. */
+	live?: boolean;
 };
 
 /**
@@ -579,6 +588,10 @@ function groupByTurn(snapshot: ConversationSnapshot): TimelineGroup[] {
 		if (!group.turnId) continue;
 		const turn = byTurn.get(group.turnId);
 		if (!turn) continue;
+		// The diff is attached whether or not the turn has finished: a running turn's
+		// changed-file list growing is the useful part.
+		group.diff = turn.diff;
+		group.live = turn.state === "running";
 		if (turn.state === "running" || turn.state === "queued") continue;
 		group.outcome = {
 			state: turn.state,

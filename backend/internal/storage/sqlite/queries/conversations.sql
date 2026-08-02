@@ -109,6 +109,16 @@ SET state = 'failed',
     completed_at = ?
 WHERE handled_by_session_id = ? AND state IN ('queued', 'running');
 
+-- Overwrite the turn's changed-file summary. The provider re-sends the whole diff
+-- on every update, so the latest payload is the complete answer and there is
+-- nothing to merge with what was there before.
+-- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+-- offset, so a multi-byte character here silently corrupts later queries.
+-- name: UpdateConversationTurnDiff :execrows
+UPDATE conversation_turns
+SET diff_json = ?
+WHERE conversation_id = ? AND provider_turn_id = ?;
+
 -- name: SelectConversationTurns :many
 SELECT * FROM conversation_turns
 WHERE conversation_id = ?
@@ -200,6 +210,35 @@ WHERE conversation_id = ? AND request_id = ? AND status = 'pending';
 UPDATE conversation_activities
 SET status = 'failed', revision = revision + 1, updated_at = ?
 WHERE conversation_id = ? AND kind = 'approval' AND status = 'pending';
+
+-- Append streamed command output, capped in one statement.
+--
+-- The cap is applied here rather than in Go so the read, the concatenation, and
+-- the truncation flag commit atomically: a runaway command must not be able to
+-- interleave a second delta between a length check and the write that acts on it.
+-- substr() does the capping and the CASE records that it happened, so output is
+-- never silently cut.
+--
+-- SQLite length() on TEXT counts characters, not bytes, so the byte ceiling is up
+-- to 4x max_output_chars in pathological UTF-8. That is still bounded and far
+-- below the megabytes-per-row this exists to prevent; command output is
+-- overwhelmingly ASCII.
+--
+-- execrows so the caller can tell "appended" from "no such activity yet", which
+-- is a real case: a delta can arrive before the item/started that creates the row.
+-- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+-- offset, so a multi-byte character here silently corrupts later queries.
+-- name: AppendConversationActivityOutput :execrows
+UPDATE conversation_activities
+SET command_output = substr(command_output || sqlc.arg(delta), 1, sqlc.arg(max_output_chars)),
+    command_output_truncated = CASE
+        WHEN length(command_output) + length(sqlc.arg(delta)) > sqlc.arg(max_output_chars) THEN 1
+        ELSE command_output_truncated
+    END,
+    revision = revision + 1,
+    updated_at = sqlc.arg(updated_at)
+WHERE conversation_id = sqlc.arg(conversation_id)
+  AND provider_item_id = sqlc.arg(provider_item_id);
 
 -- name: SelectConversationActivityByProviderItem :one
 SELECT * FROM conversation_activities

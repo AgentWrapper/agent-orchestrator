@@ -414,6 +414,34 @@ type turn struct {
 	ProviderTurnID string `json:"providerTurnId"`
 	ErrorMessage   string `json:"errorMessage"`
 	RequestedAt    string `json:"requestedAt"`
+	// Diff is what the turn changed on disk. A nil pointer and an empty file list
+	// are different answers: the first means the provider never reported, the second
+	// means it reported that nothing changed.
+	Diff *turnDiff `json:"diff"`
+}
+
+type turnDiff struct {
+	Files     []diffFile `json:"files"`
+	Truncated bool       `json:"truncated"`
+}
+
+type diffFile struct {
+	Path      string `json:"path"`
+	OldPath   string `json:"oldPath"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	Status    string `json:"status"`
+}
+
+// fileByPath finds a changed file, so an assertion does not depend on the order the
+// provider happened to list them in.
+func (d turnDiff) fileByPath(path string) (diffFile, bool) {
+	for _, file := range d.Files {
+		if file.Path == path {
+			return file, true
+		}
+	}
+	return diffFile{}, false
 }
 
 type message struct {

@@ -135,6 +135,8 @@ var schemaNames = map[string]string{
 	"ControllersUpdateSessionInterfaceRequest":      "UpdateSessionInterfaceRequest",
 	"ControllersConversationSnapshotResponse":       "ConversationSnapshotResponse",
 	"ControllersConversationTurnResponse":           "ConversationTurnResponse",
+	"ControllersConversationTurnDiffResponse":       "ConversationTurnDiffResponse",
+	"ControllersConversationDiffFileResponse":       "ConversationDiffFileResponse",
 	"ControllersConversationMessageResponse":        "ConversationMessageResponse",
 	"ControllersConversationActivityResponse":       "ConversationActivityResponse",
 	"ControllersSendConversationMessageRequest":     "SendConversationMessageRequest",

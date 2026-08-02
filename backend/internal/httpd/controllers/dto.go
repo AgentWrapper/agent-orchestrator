@@ -936,6 +936,38 @@ type ConversationTurnResponse struct {
 	RequestedAt    string  `json:"requestedAt"`
 	StartedAt      *string `json:"startedAt,omitempty"`
 	CompletedAt    *string `json:"completedAt,omitempty"`
+	// Diff is what this turn has changed on disk. Absent when the provider has
+	// reported nothing, which is not a claim that nothing changed: an agent
+	// without diff support never reports at all.
+	//
+	// Carried on the snapshot the client already polls rather than behind its own
+	// route. A dedicated route would be a second request, on the same cadence, for
+	// data this read has already loaded -- the diff belongs to a turn, and the turn
+	// list is right here. It also keeps the changed-file view and the timeline from
+	// disagreeing, which two independently-timed fetches would eventually do.
+	Diff *ConversationTurnDiffResponse `json:"diff,omitempty"`
+}
+
+// ConversationTurnDiffResponse is a turn's changed-file summary.
+type ConversationTurnDiffResponse struct {
+	Files []ConversationDiffFileResponse `json:"files"`
+	// Truncated reports that the file list was cut at the daemon's cap, so a client
+	// does not present a partial list as the whole change.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// ConversationDiffFileResponse is one changed path.
+//
+// No patch text. The turn view answers "what did this touch, and by how much";
+// carrying every hunk would put the full diff into a body polled once a second,
+// and AO already has a diff surface for reading the change itself.
+type ConversationDiffFileResponse struct {
+	Path      string `json:"path"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	Status    string `json:"status" enum:"added,modified,deleted,renamed"`
+	// OldPath is set only for a rename.
+	OldPath string `json:"oldPath,omitempty"`
 }
 
 // ConversationMessageResponse is one readable block of text.

@@ -89,6 +89,7 @@ var _ ports.ChatModelLister = (*conversation)(nil)
 // account has no limits to report", which is the wrong answer to show a user
 // whose turns are about to start failing.
 var _ ports.ChatUsageReporter = (*conversation)(nil)
+
 // Same reason, for compaction. Losing this method does not break a build; it just
 // makes the control disappear and long conversations start failing again.
 var _ ports.ChatCompactor = (*conversation)(nil)

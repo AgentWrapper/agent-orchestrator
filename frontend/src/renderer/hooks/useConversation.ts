@@ -24,6 +24,7 @@ import type {
 	ConversationSnapshot,
 	ControllerState,
 	DecisionOption,
+	DiffStatus,
 	MessageOrigin,
 	MessageRole,
 	ChatModel,
@@ -305,6 +306,20 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 			requestedAt: turn.requestedAt,
 			startedAt: turn.startedAt ?? undefined,
 			completedAt: turn.completedAt ?? undefined,
+			// Left undefined when the daemon reported none, so the surface can tell
+			// "this turn changed nothing" from "this agent does not report diffs".
+			diff: turn.diff
+				? {
+						files: (turn.diff.files ?? []).map((file) => ({
+							path: file.path,
+							additions: file.additions,
+							deletions: file.deletions,
+							status: file.status as DiffStatus,
+							oldPath: file.oldPath || undefined,
+						})),
+						truncated: turn.diff.truncated,
+					}
+				: undefined,
 		})),
 		items,
 	};

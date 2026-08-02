@@ -3289,6 +3289,29 @@ components:
       - summary
       - createdAt
       type: object
+    ConversationDiffFileResponse:
+      properties:
+        additions:
+          type: integer
+        deletions:
+          type: integer
+        oldPath:
+          type: string
+        path:
+          type: string
+        status:
+          enum:
+          - added
+          - modified
+          - deleted
+          - renamed
+          type: string
+      required:
+      - path
+      - additions
+      - deletions
+      - status
+      type: object
     ConversationMessageResponse:
       properties:
         createdAt:
@@ -3444,12 +3467,25 @@ components:
       - activities
       - settings
       type: object
+    ConversationTurnDiffResponse:
+      properties:
+        files:
+          items:
+            $ref: '#/components/schemas/ConversationDiffFileResponse'
+          type: array
+        truncated:
+          type: boolean
+      required:
+      - files
+      type: object
     ConversationTurnResponse:
       properties:
         completedAt:
           type:
           - "null"
           - string
+        diff:
+          $ref: '#/components/schemas/ConversationTurnDiffResponse'
         errorMessage:
           type: string
         id:

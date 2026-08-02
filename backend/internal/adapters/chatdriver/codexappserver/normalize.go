@@ -77,12 +77,21 @@ type itemEnvelope struct {
 	Item     threadItem `json:"item"`
 }
 
-// deltaEnvelope is the params shape of item/agentMessage/delta.
+// deltaEnvelope is the params shape of item/agentMessage/delta, and of
+// item/commandExecution/outputDelta, which is byte-for-byte the same shape.
 type deltaEnvelope struct {
 	ThreadID string `json:"threadId"`
 	TurnID   string `json:"turnId"`
 	ItemID   string `json:"itemId"`
 	Delta    string `json:"delta"`
+}
+
+// turnDiffEnvelope is the params shape of turn/diff/updated. The diff is one
+// aggregated git unified diff string for the whole turn, not a per-file list.
+type turnDiffEnvelope struct {
+	ThreadID string `json:"threadId"`
+	TurnID   string `json:"turnId"`
+	Diff     string `json:"diff"`
 }
 
 // turnEnvelope is the params shape of turn/started and turn/completed.
@@ -254,6 +263,60 @@ func normalizeNotification(n notification, now time.Time) []ports.ChatEvent {
 			Delta:          p.Delta,
 		}}
 
+	case "item/commandExecution/outputDelta":
+		// Streamed stdout/stderr from a running command. Two things make this worth
+		// accumulating rather than waiting for aggregatedOutput on item/completed:
+		// the aggregate does not exist until the command ends, so a long command
+		// shows nothing while it runs; and a commandExecution that never completes
+		// (three starts producing one completion has been observed) has no
+		// aggregate at all, only these.
+		//
+		// It does NOT make the record complete. Measured on codex-cli 0.146.0: a
+		// command printing tick-1..tick-8 one per second produced 7 deltas starting
+		// at tick-2, and an aggregate of exactly those same 7 lines. The first
+		// chunk is lost upstream of both channels, so a reader still has to say the
+		// output may be partial.
+		var p deltaEnvelope
+		if err := json.Unmarshal(n.Params, &p); err != nil || p.Delta == "" {
+			return nil
+		}
+		return []ports.ChatEvent{{
+			Kind:           ports.ChatEventCommandOutputDelta,
+			ProviderTurnID: p.TurnID,
+			ProviderItemID: p.ItemID,
+			Delta:          p.Delta,
+		}}
+
+	case "turn/diff/updated":
+		// The turn's running diff. Re-sent whole on every update (observed three
+		// times with byte-identical payloads in one turn), so a projector must
+		// overwrite per-turn state and must not append a timeline entry per update.
+		var p turnDiffEnvelope
+		if err := json.Unmarshal(n.Params, &p); err != nil {
+			return nil
+		}
+		files, truncated := parseTurnDiff(p.Diff)
+		if len(files) == 0 {
+			// An empty diff is a real state: the turn has changed nothing on disk
+			// yet. Reporting it keeps a stale file list from surviving an undo.
+			return []ports.ChatEvent{{
+				Kind:           ports.ChatEventTurnDiff,
+				ProviderTurnID: p.TurnID,
+				Diff:           &ports.ChatTurnDiff{},
+			}}
+		}
+		ev := ports.ChatEvent{
+			Kind:           ports.ChatEventTurnDiff,
+			ProviderTurnID: p.TurnID,
+			Diff:           &ports.ChatTurnDiff{Files: files},
+		}
+		if truncated {
+			// Carried in Summary because ChatTurnDiff has nowhere to say it, and a
+			// cut list presented as a whole one would understate the change.
+			ev.Summary = domain.ChatDiffTruncatedSummary
+		}
+		return []ports.ChatEvent{ev}
+
 	case "item/started":
 		return normalizeItem(n.Params, false)
 
@@ -334,6 +397,21 @@ func normalizeNotification(n notification, now time.Time) []ports.ChatEvent {
 		// hook/completed, thread/status/changed, remoteControl/status/changed,
 		// thread/goal/*, model/safetyBuffering/updated, and anything added by a
 		// newer provider build. Deliberately not conversation events.
+		//
+		// Two neighbours of the streaming methods above are also deliberately here:
+		//
+		//   - item/fileChange/outputDelta is documented in the generated schema as
+		//     "Deprecated legacy notification for apply_patch textual output. The
+		//     server no longer emits this notification." Handling it would be dead
+		//     code that looks load-bearing.
+		//   - item/fileChange/patchUpdated carries one item's structured changes.
+		//     turn/diff/updated already reports the turn's aggregate, and taking
+		//     both would mean AO reconciling two accounts of the same edits.
+		//
+		//   - command/exec/outputDelta and process/outputDelta belong to the
+		//     client-driven exec API, where the CLIENT asked the server to run
+		//     something. AO does not use it, and an agent tool call never arrives
+		//     on those methods.
 		return nil
 	}
 }
@@ -528,6 +606,11 @@ func activityDetail(it threadItem) []byte {
 		// drop leading output. A reader must not present it as the full record.
 		detail["output"] = it.AggregatedOutput
 		detail["outputMayBePartial"] = true
+		// Named so a reader can tell this from the accumulated delta stream. Only
+		// the aggregate exists for a fast command, where the provider finishes
+		// before it flushes a single delta; only the stream exists for a command
+		// that never completes. Both are partial, for different reasons.
+		detail["outputSource"] = "aggregate"
 	}
 	if it.ExitCode != nil {
 		detail["exitCode"] = *it.ExitCode

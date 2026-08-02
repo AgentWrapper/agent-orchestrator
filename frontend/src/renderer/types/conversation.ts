@@ -57,6 +57,30 @@ export interface ConversationTurn {
 	requestedAt: string;
 	startedAt?: string;
 	completedAt?: string;
+	/**
+	 * What this turn changed on disk. Absent is not "changed nothing": an agent
+	 * that cannot report diffs never reports at all, and the UI must not draw an
+	 * empty changed-files panel as if the turn had been inspected.
+	 */
+	diff?: TurnDiff;
+}
+
+/** How a file changed. The daemon's neutral names, not a provider's. */
+export type DiffStatus = "added" | "modified" | "deleted" | "renamed";
+
+export interface DiffFile {
+	path: string;
+	additions: number;
+	deletions: number;
+	status: DiffStatus;
+	/** Set only for a rename. */
+	oldPath?: string;
+}
+
+export interface TurnDiff {
+	files: DiffFile[];
+	/** The daemon cut the list at its cap; the change is larger than what is shown. */
+	truncated?: boolean;
 }
 
 export interface ConversationMessage {
@@ -96,8 +120,24 @@ export interface CommandDetail {
 	 * Provider output aggregation was observed to drop leading bytes even on tiny
 	 * commands, so this is display data and the UI says so rather than presenting
 	 * it as the record of what ran.
+	 *
+	 * Set for BOTH output sources. Measured on codex-cli 0.146.0: a command
+	 * printing tick-1..tick-8 lost tick-1 from the delta stream and from the
+	 * aggregate alike, so accumulating deltas buys liveness, not completeness.
 	 */
 	outputMayBePartial?: boolean;
+	/**
+	 * Which channel the text came from.
+	 *
+	 * `stream` is accumulated output deltas: it exists while the command is still
+	 * running, and it is the only source for a command that never completes.
+	 * `aggregate` is the provider's own roll-up, which only appears on completion
+	 * and is all a fast command produces. Both are partial, for different reasons,
+	 * which is why the UI names the reason instead of hedging identically.
+	 */
+	outputSource?: "stream" | "aggregate";
+	/** Accumulation stopped at the daemon's cap; the command printed more. */
+	outputTruncated?: boolean;
 	exitCode?: number;
 	durationMs?: number;
 	reason?: string;

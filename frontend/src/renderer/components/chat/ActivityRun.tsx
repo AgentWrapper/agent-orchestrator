@@ -25,7 +25,10 @@ const SEARCHERS = new Set(["rg", "grep", "find", "fd", "ls", "tree", "glob", "ag
 const VCS = new Set(["git", "gh"]);
 
 export function ActivityRun({ activities }: { activities: ConversationActivity[] }) {
-	const [open, setOpen] = useState(false);
+	// null until someone decides, so a run holding a command that is printing right
+	// now can open itself and close again once everything settles. A click pins the
+	// choice either way.
+	const [override, setOverride] = useState<boolean | null>(null);
 	const running = activities.some((a) => a.status === "running");
 	const failed = activities.filter((a) => a.status === "failed").length;
 
@@ -35,11 +38,16 @@ export function ActivityRun({ activities }: { activities: ConversationActivity[]
 		return <ActivityRow activity={activities[0]!} />;
 	}
 
+	// Otherwise a command streaming output inside a run stays hidden behind this
+	// summary line, and the live output is live to nobody.
+	const streamingOutput = activities.some((a) => a.status === "running" && Boolean(a.detail?.output));
+	const open = override ?? streamingOutput;
+
 	return (
 		<div className="flex flex-col">
 			<button
 				type="button"
-				onClick={() => setOpen((prev) => !prev)}
+				onClick={() => setOverride(!open)}
 				aria-expanded={open}
 				className="group/run flex w-full items-center gap-1.5 rounded-sm py-0.5 pr-1 text-left transition-colors hover:bg-interactive-hover"
 			>
