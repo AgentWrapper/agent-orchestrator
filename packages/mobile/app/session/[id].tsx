@@ -610,15 +610,20 @@ export default function TerminalScreen() {
 				})
 			: null;
 		// Backup: guarantee the reserved space collapses even if willHide is missed.
-		const didHide = Keyboard.addListener("keyboardDidHide", () => {
-			setKbVisible(false);
-			setKbHeight(0);
-		});
+		// iOS-only, like didShow above — Android's hide listener is already bound to
+		// keyboardDidHide, so registering this there subscribed the same handler to
+		// the same event twice and collapsed the dock on both.
+		const didHide = isIOS
+			? Keyboard.addListener("keyboardDidHide", () => {
+					setKbVisible(false);
+					setKbHeight(0);
+				})
+			: null;
 		return () => {
 			show.remove();
 			hide.remove();
 			didShow?.remove();
-			didHide.remove();
+			didHide?.remove();
 		};
 	}, []);
 
