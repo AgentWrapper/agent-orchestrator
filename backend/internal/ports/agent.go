@@ -98,7 +98,7 @@ type AgentModelCatalog struct {
 	Models        []AgentModelInfo   `json:"models"`
 	AllowCustom   bool               `json:"allowCustom"`
 	Source        string             `json:"source"`
-	BinaryVersion string             `json:"binaryVersion,omitempty"`
+	BinaryVersion string             `json:"binaryVersion,omitempty"` // Also includes a non-sensitive config metadata fingerprint when applicable.
 	FetchedAt     time.Time          `json:"fetchedAt"`
 	Stale         bool               `json:"stale"`
 	Warning       string             `json:"warning,omitempty"`
@@ -109,7 +109,7 @@ type AgentModelCatalog struct {
 type CachedAgentModelCatalog struct {
 	AgentID       string
 	ProjectID     string
-	BinaryVersion string
+	BinaryVersion string // Discovery-input version: binary version plus config metadata fingerprint when applicable.
 	CatalogJSON   string
 	Source        string
 	FetchedAt     time.Time

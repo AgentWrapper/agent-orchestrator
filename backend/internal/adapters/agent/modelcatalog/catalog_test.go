@@ -32,7 +32,9 @@ func TestBaseClassifiesStaticTextAndModeAgents(t *testing.T) {
 		{agent: "amp", mode: ports.ModelSelectionModeList, count: 4},
 		{agent: "aider", mode: ports.ModelSelectionText},
 		{agent: "autohand", mode: ports.ModelSelectionText},
-		{agent: "qwen", mode: ports.ModelSelectionText},
+		{agent: "qwen", mode: ports.ModelSelectionCatalog},
+		{agent: "continue", mode: ports.ModelSelectionCatalog},
+		{agent: "crush", mode: ports.ModelSelectionCatalog},
 	}
 	for _, tc := range tests {
 		t.Run(tc.agent, func(t *testing.T) {
