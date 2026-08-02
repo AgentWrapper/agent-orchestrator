@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
@@ -155,6 +157,27 @@ func (s *delayedFinalizeStore) FinalizeUsageBindingsForSessionLaunch(
 	return s.collectorStore.FinalizeUsageBindingsForSessionLaunch(ctx, sessionID, expectedLaunchID, at)
 }
 
+type blockedAfterFinalizeStore struct {
+	collectorStore
+	finalized chan<- struct{}
+	release   <-chan struct{}
+}
+
+func (s *blockedAfterFinalizeStore) FinalizeUsageBindingsForSessionLaunch(
+	ctx context.Context,
+	sessionID domain.SessionID,
+	expectedLaunchID string,
+	at time.Time,
+) ([]domain.UsageBindingRecord, error) {
+	bindings, err := s.collectorStore.FinalizeUsageBindingsForSessionLaunch(ctx, sessionID, expectedLaunchID, at)
+	if err != nil {
+		return nil, err
+	}
+	close(s.finalized)
+	<-s.release
+	return bindings, nil
+}
+
 func TestCollectorFinalizationSkipsRelaunchCommittedBeforeStorageFence(t *testing.T) {
 	store := collectorTestStore(t)
 	session := collectorTestSession(t, store, domain.HarnessCodex, "native-relaunched", false)
@@ -250,6 +273,277 @@ func TestCollectorSessionStartReactivatesAfterOldGenerationFinalization(t *testi
 	bindings, err = store.ListUsageBindingsForSession(context.Background(), session.ID)
 	if err != nil || len(bindings) != 1 || bindings[0].State != domain.UsageBindingActive {
 		t.Fatalf("reactivated bindings=%+v err=%v", bindings, err)
+	}
+}
+
+func TestCollectorCurrentLaunchActivityReactivatesFinalizingBindingAndSources(t *testing.T) {
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessClaudeCode, "native-current", false)
+	session.Metadata.RuntimeLaunchID = "launch-current"
+	if err := store.UpdateSession(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
+		SessionID:    session.ID,
+		Harness:      session.Harness,
+		NativeRootID: "native-current",
+		State:        domain.UsageBindingFinalizing,
+		FirstSeenAt:  now,
+		LastSeenAt:   now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := store.InsertUsageSource(context.Background(), domain.UsageSourceRecord{
+		BindingID:       binding.ID,
+		Kind:            domain.UsageSourceClaudeMain,
+		NativeSessionID: "native-current",
+		ArtifactPath:    "/tmp/native-current.jsonl",
+		FileIdentity:    "native-current",
+		State:           domain.UsageSourceComplete,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	collector := NewCollector(store, SourceRoots{}, nil)
+	if err := collector.RecordHook(context.Background(), session.ID, HookSignal{
+		Event:           "post-tool-use",
+		LaunchID:        "launch-current",
+		NativeSessionID: "native-current",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok, err := store.GetUsageBinding(context.Background(), session.ID, session.Harness, binding.NativeRootID)
+	if err != nil || !ok {
+		t.Fatalf("binding ok=%v err=%v", ok, err)
+	}
+	sourceContext, _, err := store.GetUsageSourceForIngestion(context.Background(), source.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != domain.UsageBindingActive || sourceContext.Source.State != domain.UsageSourceActive {
+		t.Fatalf("binding/source states=%s/%s, want active/active", got.State, sourceContext.Source.State)
+	}
+}
+
+func TestCollectorCurrentLaunchTerminalEventRemainsFinalizing(t *testing.T) {
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessClaudeCode, "native-terminal", false)
+	session.Metadata.RuntimeLaunchID = "launch-current"
+	if err := store.UpdateSession(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
+		SessionID:    session.ID,
+		Harness:      session.Harness,
+		NativeRootID: "native-terminal",
+		State:        domain.UsageBindingActive,
+		FirstSeenAt:  now,
+		LastSeenAt:   now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.InsertUsageSource(context.Background(), domain.UsageSourceRecord{
+		BindingID:       binding.ID,
+		Kind:            domain.UsageSourceClaudeMain,
+		NativeSessionID: "native-terminal",
+		ArtifactPath:    "/tmp/native-terminal.jsonl",
+		FileIdentity:    "native-terminal",
+		State:           domain.UsageSourceComplete,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	collector := NewCollector(store, SourceRoots{}, nil)
+	if err := collector.RecordHook(context.Background(), session.ID, HookSignal{
+		Event:           "process-exited",
+		LaunchID:        "launch-current",
+		NativeSessionID: "native-terminal",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok, err := store.GetUsageBinding(context.Background(), session.ID, session.Harness, binding.NativeRootID)
+	if err != nil || !ok {
+		t.Fatalf("binding ok=%v err=%v", ok, err)
+	}
+	if got.State != domain.UsageBindingFinalizing {
+		t.Fatalf("terminal event binding state=%s, want finalizing", got.State)
+	}
+}
+
+func TestCollectorStaleLaunchActivityDoesNotReactivateFinalizingBinding(t *testing.T) {
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessClaudeCode, "native-stale", false)
+	session.Metadata.RuntimeLaunchID = "launch-current"
+	if err := store.UpdateSession(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
+		SessionID:    session.ID,
+		Harness:      session.Harness,
+		NativeRootID: "native-stale",
+		State:        domain.UsageBindingFinalizing,
+		FirstSeenAt:  now,
+		LastSeenAt:   now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	collector := NewCollector(store, SourceRoots{}, nil)
+	if err := collector.RecordHook(context.Background(), session.ID, HookSignal{
+		Event:           "post-tool-use",
+		LaunchID:        "launch-stale",
+		NativeSessionID: "native-stale",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok, err := store.GetUsageBinding(context.Background(), session.ID, session.Harness, binding.NativeRootID)
+	if err != nil || !ok {
+		t.Fatalf("binding ok=%v err=%v", ok, err)
+	}
+	if got.State != domain.UsageBindingFinalizing {
+		t.Fatalf("stale activity binding state=%s, want finalizing", got.State)
+	}
+}
+
+func TestCollectorOrdinaryEventDoesNotCreateUnsupportedHarnessBinding(t *testing.T) {
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessAider, "native-unsupported", false)
+	session.Metadata.RuntimeLaunchID = "launch-current"
+	if err := store.UpdateSession(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
+
+	collector := NewCollector(store, SourceRoots{}, nil)
+	if err := collector.RecordHook(context.Background(), session.ID, HookSignal{
+		Event:           "post-tool-use",
+		LaunchID:        "launch-current",
+		NativeSessionID: "native-unsupported",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bindings) != 0 {
+		t.Fatalf("unsupported harness bindings=%+v, want none", bindings)
+	}
+}
+
+func TestCollectorCurrentActivityReactivatesBindingDuringReaperFinalization(t *testing.T) {
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessClaudeCode, "native-race", false)
+	now := time.Now().UTC()
+	session.Activity.LastActivityAt = now.Add(-2 * time.Minute)
+	session.Metadata.RuntimeLaunchID = "launch-current"
+	if err := store.UpdateSession(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
+	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
+		SessionID:    session.ID,
+		Harness:      session.Harness,
+		NativeRootID: "native-race",
+		State:        domain.UsageBindingActive,
+		FirstSeenAt:  now,
+		LastSeenAt:   now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	finalized := make(chan struct{})
+	release := make(chan struct{})
+	collector := NewCollector(&blockedAfterFinalizeStore{
+		collectorStore: store,
+		finalized:      finalized,
+		release:        release,
+	}, SourceRoots{}, nil)
+	manager := lifecycle.New(store, nil)
+	manager.SetUsageFinalizer(collector)
+
+	reaperDone := make(chan error, 1)
+	go func() {
+		reaperDone <- manager.ApplyRuntimeObservation(context.Background(), session.ID, ports.RuntimeFacts{
+			ObservedAt: now,
+			Runtime:    ports.ProbeDead,
+			LaunchID:   "launch-current",
+		})
+	}()
+	select {
+	case <-finalized:
+	case <-time.After(2 * time.Second):
+		t.Fatal("finalizer did not commit")
+	}
+	during, ok, err := store.GetUsageBinding(context.Background(), session.ID, session.Harness, binding.NativeRootID)
+	if err != nil || !ok {
+		t.Fatalf("binding during finalization ok=%v err=%v", ok, err)
+	}
+	if during.State != domain.UsageBindingFinalizing {
+		t.Fatalf("binding during finalization=%s, want finalizing", during.State)
+	}
+
+	activityApplied := make(chan struct{})
+	hookDone := make(chan error, 1)
+	go func() {
+		err := manager.ApplyActivitySignal(context.Background(), session.ID, ports.ActivitySignal{
+			Valid:          true,
+			State:          domain.ActivityActive,
+			Timestamp:      now.Add(time.Second),
+			Event:          "post-tool-use",
+			AgentSessionID: "native-race",
+			LaunchID:       "launch-current",
+		})
+		close(activityApplied)
+		if err == nil {
+			err = collector.RecordHook(context.Background(), session.ID, HookSignal{
+				Event:           "post-tool-use",
+				LaunchID:        "launch-current",
+				NativeSessionID: "native-race",
+			})
+		}
+		hookDone <- err
+	}()
+	select {
+	case <-activityApplied:
+	case <-time.After(2 * time.Second):
+		t.Fatal("current activity did not persist while finalizer was blocked")
+	}
+	close(release)
+	if err := <-reaperDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-hookDone; err != nil {
+		t.Fatal(err)
+	}
+
+	gotSession, ok, err := store.GetSession(context.Background(), session.ID)
+	if err != nil || !ok {
+		t.Fatalf("session ok=%v err=%v", ok, err)
+	}
+	gotBinding, ok, err := store.GetUsageBinding(context.Background(), session.ID, session.Harness, binding.NativeRootID)
+	if err != nil || !ok {
+		t.Fatalf("binding after activity ok=%v err=%v", ok, err)
+	}
+	if gotSession.IsTerminated || gotBinding.State != domain.UsageBindingActive {
+		t.Fatalf("session terminated=%v binding=%s, want false/active", gotSession.IsTerminated, gotBinding.State)
 	}
 }
 

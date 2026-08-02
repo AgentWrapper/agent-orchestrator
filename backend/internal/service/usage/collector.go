@@ -172,6 +172,9 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		signal.LaunchID != session.Metadata.RuntimeLaunchID {
 		return nil
 	}
+	if session.IsTerminated && !finalizingEvent(signal.Event) {
+		return nil
+	}
 	if signal.Harness != "" && signal.Harness != session.Harness {
 		return fmt.Errorf("usage hook harness %s does not match session harness %s", signal.Harness, session.Harness)
 	}
@@ -200,6 +203,8 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 	if err != nil {
 		return err
 	}
+	reactivating := !finalizing && (signal.Event == "session-start" ||
+		exists && existing.State == domain.UsageBindingFinalizing)
 	state := domain.UsageBindingActive
 	if exists {
 		state = existing.State
@@ -207,7 +212,7 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 	switch {
 	case finalizing:
 		state = domain.UsageBindingFinalizing
-	case signal.Event == "session-start":
+	case reactivating:
 		state = domain.UsageBindingActive
 	case exists && (state == domain.UsageBindingComplete || state == domain.UsageBindingPartial) &&
 		signal.Event == "subagent-stop":
@@ -285,7 +290,7 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		}
 		inventoryChanged = inventoryChanged || changed
 	}
-	if signal.Event == "session-start" {
+	if reactivating {
 		changed, err := c.reactivateBinding(ctx, binding, now)
 		if err != nil {
 			return err

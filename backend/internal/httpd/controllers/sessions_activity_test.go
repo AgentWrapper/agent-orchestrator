@@ -138,25 +138,32 @@ func TestSessionsAPI_ActivityUsageFailureDoesNotRejectAgentSignal(t *testing.T) 
 	}
 }
 
-func TestSessionsAPI_ActivityDoesNotForwardUnrelatedMetadataOnlyEventToUsage(t *testing.T) {
+func TestSessionsAPI_ActivityForwardsOrdinaryEventWithoutUsageMetadata(t *testing.T) {
+	activity := &fakeActivityRecorder{}
 	usage := &fakeUsageHookRecorder{}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := httptest.NewServer(httpd.NewRouterWithControl(
 		config.Config{},
 		log,
 		nil,
-		httpd.APIDeps{UsageHooks: usage},
+		httpd.APIDeps{Activity: activity, UsageHooks: usage},
 		httpd.ControlDeps{},
 	))
 	t.Cleanup(srv.Close)
 
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity",
-		`{"event":"stop","agentSessionId":"codex-native-1"}`)
+		`{"state":"active","event":"post-tool-use","agentSessionId":"codex-native-1","launchId":"launch-1"}`)
 	if status != http.StatusOK {
 		t.Fatalf("activity = %d, want 200; body=%s", status, body)
 	}
-	if usage.calls != 0 {
-		t.Fatalf("usage calls=%d, want 0", usage.calls)
+	if activity.calls != 1 || usage.calls != 1 {
+		t.Fatalf("activity calls=%d usage calls=%d, want 1/1", activity.calls, usage.calls)
+	}
+	if usage.gotSignal.Event != "post-tool-use" ||
+		usage.gotSignal.LaunchID != "launch-1" ||
+		usage.gotSignal.NativeSessionID != "codex-native-1" ||
+		usage.gotSignal.Harness != "" {
+		t.Fatalf("usage signal = %+v", usage.gotSignal)
 	}
 }
 

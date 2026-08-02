@@ -741,10 +741,9 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if c.Usage != nil &&
-		(in.Usage != nil || in.Event == "session-start" || in.Event == "session-end" || in.Event == "process-exited") {
+	if c.Usage != nil {
 		usageSignal := usagesvc.HookSignal{
-			Event:           in.Event,
+			Event:           sig.Event,
 			LaunchID:        sig.LaunchID,
 			NativeSessionID: agentSessionID,
 		}
@@ -759,7 +758,7 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 			slog.Default().Warn(
 				"usage hook processing failed",
 				"session", sessionID(r),
-				"event", in.Event,
+				"event", sig.Event,
 				"err", err,
 			)
 		}
