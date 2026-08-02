@@ -153,6 +153,8 @@ var schemaNames = map[string]string{
 	"ControllersRollbackConversationResponse":       "RollbackConversationResponse",
 	"ControllersSetConversationTitleRequest":        "SetConversationTitleRequest",
 	"ControllersSetConversationTitleResponse":       "SetConversationTitleResponse",
+	"ControllersSteerConversationRequest":           "SteerConversationRequest",
+	"ControllersSteerConversationResponse":          "SteerConversationResponse",
 	// httpd/envelope
 	"EnvelopeAPIError": "APIError",
 	// domain
@@ -527,6 +529,20 @@ func shellTerminalOperations() []operation {
 			pathParams: []any{controllers.SessionIDParam{}},
 			resps: []respUnit{
 				{http.StatusNoContent, nil},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/conversation/steer", id: "steerSessionConversationTurn", tag: "conversations",
+			summary:    "Send guidance into the in-flight turn of a chat session",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.SteerConversationRequest{},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.SteerConversationResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},

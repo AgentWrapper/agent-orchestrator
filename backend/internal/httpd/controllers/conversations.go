@@ -28,6 +28,7 @@ type ConversationService interface {
 	Send(ctx context.Context, session domain.SessionID, msg ports.ChatUserMessage) (domain.ConversationTurn, error)
 	Resolve(ctx context.Context, session domain.SessionID, requestID string, decision ports.ChatDecision) error
 	Interrupt(ctx context.Context, session domain.SessionID) error
+	Steer(ctx context.Context, session domain.SessionID, msg ports.ChatUserMessage) (chatsvc.SteerResult, error)
 	Models(ctx context.Context, session domain.SessionID) ([]ports.ChatModel, domain.ConversationSettings, error)
 	Skills(ctx context.Context, session domain.SessionID) ([]ports.ChatSkill, error)
 	SetTurnSettings(ctx context.Context, session domain.SessionID, settings domain.ConversationSettings) (domain.ConversationSettings, error)
@@ -51,6 +52,7 @@ func (c *ConversationsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/conversation/messages", c.send)
 	r.Post("/sessions/{sessionId}/conversation/approvals/{requestId}/resolve", c.resolve)
 	r.Post("/sessions/{sessionId}/conversation/interrupt", c.interrupt)
+	r.Post("/sessions/{sessionId}/conversation/steer", c.steer)
 	r.Post("/sessions/{sessionId}/conversation/compact", c.compact)
 	r.Get("/sessions/{sessionId}/conversation/models", c.models)
 	r.Get("/sessions/{sessionId}/conversation/skills", c.skills)
