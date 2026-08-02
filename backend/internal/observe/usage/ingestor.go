@@ -211,6 +211,9 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 	} else {
 		parserState.Integrity.StableTail = nil
 	}
+	if !codexChunkAttributionMatches(source.Source, parserState.Codex, chunk.records) {
+		return i.resetSourceGeneration(ctx, source, identity, now)
+	}
 	checkpoint, err := parserCheckpointAfterRead(
 		snapshot.cursorSample,
 		source.Source.ByteOffset,
@@ -291,6 +294,28 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 	}
 	result.More = progressed && !chunk.atEOF && !chunk.readToEOF
 	return result, nil
+}
+
+func codexChunkAttributionMatches(
+	source domain.UsageSourceRecord,
+	state *codexParserStateV1,
+	records []jsonlRecord,
+) bool {
+	if source.Kind != domain.UsageSourceCodexRollout || source.ByteOffset != 0 || state == nil {
+		return true
+	}
+	requireAttribution := source.SubagentID != "" || state.NativeSessionID != ""
+	if !requireAttribution || len(records) == 0 {
+		return true
+	}
+	nativeSessionID, directParentID, ok := codexSessionMetaFromRecord(records[0].Data)
+	if !ok || nativeSessionID != source.NativeSessionID {
+		return false
+	}
+	if source.SubagentID == "" {
+		return directParentID == ""
+	}
+	return source.SubagentID == source.NativeSessionID && directParentID == state.DirectParentID
 }
 
 func stableTailObservation(offset int64, tail []byte) *stableTailStateV1 {
@@ -421,13 +446,13 @@ func (i *Ingestor) resetSourceGeneration(
 	identity string,
 	now time.Time,
 ) (IngestResult, error) {
-	if source.Source.Kind == domain.UsageSourceCodexRollout && source.Source.SubagentID != "" {
-		return i.retireCodexChildForReconciliation(ctx, source, now)
+	if source.Source.Kind == domain.UsageSourceCodexRollout {
+		return i.retireCodexSourceForReconciliation(ctx, source, now)
 	}
 	return i.replaceSource(ctx, source, identity, now)
 }
 
-func (i *Ingestor) retireCodexChildForReconciliation(
+func (i *Ingestor) retireCodexSourceForReconciliation(
 	ctx context.Context,
 	source domain.UsageSourceContext,
 	now time.Time,

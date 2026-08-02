@@ -328,7 +328,7 @@ func (c *Coordinator) run(ctx context.Context) {
 			}
 			path := canonicalTranscriptPath(event.Path)
 			sourceIDs := paths[path]
-			if len(sourceIDs) == 0 && event.Discovery {
+			if len(sourceIDs) == 0 {
 				if c.reconcilePath != nil {
 					if err := c.reconcilePath(ctx, path); err != nil && ctx.Err() == nil {
 						c.logger.Warn("usage source path reconciliation failed", "err", err)

@@ -239,6 +239,23 @@ func (s *Store) ListWatchableUsageSources(ctx context.Context) ([]domain.UsageSo
 	return out, nil
 }
 
+// ListLatestRetiredCodexReplacementClaimsByPath returns durable replacement
+// claims for one exact provider artifact path on resumable bindings.
+func (s *Store) ListLatestRetiredCodexReplacementClaimsByPath(
+	ctx context.Context,
+	artifactPath string,
+) ([]domain.UsageSourceRecord, error) {
+	rows, err := s.qr.ListLatestRetiredCodexReplacementClaimsByPath(ctx, artifactPath)
+	if err != nil {
+		return nil, fmt.Errorf("list retired Codex replacement claims: %w", err)
+	}
+	out := make([]domain.UsageSourceRecord, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, usageSourceFromGen(row))
+	}
+	return out, nil
+}
+
 // ListUsageDiscoveryBindings returns live-session bindings that may need a
 // main source, a relocated source, or newly-created subagent sources.
 func (s *Store) ListUsageDiscoveryBindings(ctx context.Context, limit int64) ([]domain.UsageBindingRecord, error) {

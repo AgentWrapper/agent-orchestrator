@@ -79,6 +79,7 @@ type collectorStore interface {
 	FinalizeUsageBindingsForSessionLaunch(context.Context, domain.SessionID, string, time.Time, time.Time) ([]domain.UsageBindingRecord, error)
 	ListUsageDiscoveryBindings(context.Context, int64) ([]domain.UsageBindingRecord, error)
 	ListUsageBindingsForCodexParent(context.Context, string) ([]domain.UsageBindingRecord, error)
+	ListLatestRetiredCodexReplacementClaimsByPath(context.Context, string) ([]domain.UsageSourceRecord, error)
 	UpdateUsageBindingState(context.Context, int64, domain.UsageBindingState, string, time.Time) (bool, error)
 	UpdateUsageBindingErrorCode(context.Context, int64, string, time.Time) (bool, error)
 	CompleteUsageBindingIfSettled(context.Context, int64, time.Time) (bool, error)
@@ -468,8 +469,8 @@ func (c *Collector) ReconcileSources(ctx context.Context, limit int64) error {
 	return errors.Join(errs...)
 }
 
-// ReconcilePath uses a newly created Codex child rollout's validated metadata
-// to reach its binding directly, independently of the bounded discovery queue.
+// ReconcilePath uses Codex rollout metadata to validate replacements and reach
+// newly-created child bindings independently of the bounded discovery queue.
 func (c *Collector) ReconcilePath(ctx context.Context, path string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -479,8 +480,19 @@ func (c *Collector) ReconcilePath(ctx context.Context, path string) error {
 		return nil
 	}
 	meta, ok := readCodexSessionMeta(resolved)
-	if !ok || meta.ParentThreadID == "" ||
-		!validCanonicalUUID(meta.NativeSessionID) ||
+	if !ok || len(meta.NativeSessionID) > maxUsageMetadataBytes ||
+		!nativeUsageIDPattern.MatchString(meta.NativeSessionID) {
+		return nil
+	}
+	claims, err := c.store.ListLatestRetiredCodexReplacementClaimsByPath(ctx, resolved)
+	if err != nil {
+		return err
+	}
+	now := c.now().UTC()
+	if len(claims) > 0 {
+		return c.reconcileRetiredCodexClaims(ctx, resolved, meta, claims, now)
+	}
+	if meta.ParentThreadID == "" || !validCanonicalUUID(meta.NativeSessionID) ||
 		len(meta.ParentThreadID) > maxUsageMetadataBytes ||
 		!nativeUsageIDPattern.MatchString(meta.ParentThreadID) {
 		return nil
@@ -489,7 +501,6 @@ func (c *Collector) ReconcilePath(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	now := c.now().UTC()
 	var errs []error
 	for _, binding := range bindings {
 		sources, listErr := c.store.ListUsageSourcesForBinding(ctx, binding.ID)
@@ -515,6 +526,107 @@ func (c *Collector) ReconcilePath(ctx context.Context, path string) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func (c *Collector) reconcileRetiredCodexClaims(
+	ctx context.Context,
+	path string,
+	meta codexSessionMeta,
+	claims []domain.UsageSourceRecord,
+	now time.Time,
+) error {
+	var errs []error
+	for _, claim := range claims {
+		if claim.SubagentID == "" {
+			if meta.NativeSessionID != claim.NativeSessionID || meta.ParentThreadID != "" {
+				continue
+			}
+			bindings, err := c.store.ListUsageBindingsForCodexParent(ctx, claim.NativeSessionID)
+			if err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			for _, binding := range bindings {
+				if binding.ID != claim.BindingID || binding.NativeRootID != claim.NativeSessionID {
+					continue
+				}
+				if _, err := c.registerSourceWithExpectedParent(
+					ctx,
+					binding,
+					domain.UsageSourceCodexRollout,
+					claim.NativeSessionID,
+					"",
+					path,
+					now,
+					false,
+					"",
+				); err != nil {
+					errs = append(errs, err)
+				}
+			}
+			continue
+		}
+
+		storedNativeID, directParentID, ok := codexParserAttribution(claim.ParserStateJSON)
+		if !ok || storedNativeID != claim.NativeSessionID || meta.NativeSessionID != claim.NativeSessionID ||
+			claim.SubagentID != claim.NativeSessionID ||
+			meta.ParentThreadID != directParentID ||
+			!validCanonicalUUID(meta.NativeSessionID) ||
+			len(directParentID) > maxUsageMetadataBytes ||
+			!nativeUsageIDPattern.MatchString(directParentID) {
+			continue
+		}
+		bindings, err := c.store.ListUsageBindingsForCodexParent(ctx, directParentID)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		for _, binding := range bindings {
+			if binding.ID != claim.BindingID {
+				continue
+			}
+			sources, err := c.store.ListUsageSourcesForBinding(ctx, binding.ID)
+			if err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			if !latestCodexSourceDiscovers(sources, directParentID, meta.NativeSessionID) {
+				continue
+			}
+			if _, err := c.registerSourceWithExpectedParent(
+				ctx,
+				binding,
+				domain.UsageSourceCodexRollout,
+				claim.NativeSessionID,
+				claim.SubagentID,
+				path,
+				now,
+				false,
+				directParentID,
+			); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func codexParserAttribution(raw string) (string, string, bool) {
+	var state struct {
+		Version    int                    `json:"version"`
+		SourceKind domain.UsageSourceKind `json:"source_kind"`
+		Codex      *struct {
+			NativeSessionID string `json:"native_session_id"`
+			DirectParentID  string `json:"direct_parent_id"`
+		} `json:"codex"`
+	}
+	if json.Unmarshal([]byte(raw), &state) != nil || state.Version != 1 ||
+		state.SourceKind != domain.UsageSourceCodexRollout || state.Codex == nil ||
+		!nativeUsageIDPattern.MatchString(state.Codex.NativeSessionID) ||
+		(state.Codex.DirectParentID != "" && !validCanonicalUUID(state.Codex.DirectParentID)) {
+		return "", "", false
+	}
+	return state.Codex.NativeSessionID, state.Codex.DirectParentID, true
 }
 
 func (c *Collector) reconcileBinding(ctx context.Context, binding domain.UsageBindingRecord, now time.Time) error {
@@ -815,6 +927,7 @@ func (c *Collector) registerSourceWithExpectedParent(
 		kind,
 		nativeSessionID,
 		subagentID,
+		expectedParentID,
 		resolved,
 		identity,
 		size,
@@ -856,6 +969,7 @@ func (c *Collector) registerSourceWithInventory(
 		kind,
 		nativeSessionID,
 		subagentID,
+		expectedParentID,
 		resolved,
 		identity,
 		size,
@@ -871,6 +985,7 @@ func (c *Collector) registerValidatedSource(
 	kind domain.UsageSourceKind,
 	nativeSessionID string,
 	subagentID string,
+	directParentID string,
 	resolved string,
 	identity string,
 	size int64,
@@ -948,6 +1063,13 @@ func (c *Collector) registerValidatedSource(
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
+	if kind == domain.UsageSourceCodexRollout {
+		state, err := initialCodexParserState(nativeSessionID, directParentID)
+		if err != nil {
+			return false, err
+		}
+		record.ParserStateJSON = state
+	}
 	if latest == nil && identityMatch != nil {
 		changed, markErr := c.store.MarkUsageSourceState(
 			ctx,
@@ -960,8 +1082,15 @@ func (c *Collector) registerValidatedSource(
 		if markErr == nil && changed {
 			inventory.markState(identityMatch.ID, domain.UsageSourceComplete, "", now)
 		}
-		record.ByteOffset = identityMatch.ByteOffset
-		record.ParserStateJSON = identityMatch.ParserStateJSON
+		resumeState := true
+		if kind == domain.UsageSourceCodexRollout {
+			storedNativeID, storedParentID, ok := codexParserAttribution(identityMatch.ParserStateJSON)
+			resumeState = ok && storedNativeID == nativeSessionID && storedParentID == directParentID
+		}
+		if resumeState {
+			record.ByteOffset = identityMatch.ByteOffset
+			record.ParserStateJSON = identityMatch.ParserStateJSON
+		}
 	}
 	inserted, err := c.store.InsertUsageSource(ctx, record)
 	if err != nil {
@@ -969,6 +1098,33 @@ func (c *Collector) registerValidatedSource(
 	}
 	inventory.add(inserted)
 	return true, nil
+}
+
+func initialCodexParserState(nativeSessionID, directParentID string) (string, error) {
+	state := struct {
+		Version    int                    `json:"version"`
+		SourceKind domain.UsageSourceKind `json:"source_kind"`
+		Integrity  struct{}               `json:"integrity"`
+		Codex      struct {
+			Baseline            struct{} `json:"baseline"`
+			NativeSessionID     string   `json:"native_session_id"`
+			DirectParentID      string   `json:"direct_parent_id,omitempty"`
+			PendingSpawnCallIDs []string `json:"pending_spawn_call_ids"`
+			DiscoveredChildIDs  []string `json:"discovered_child_ids"`
+		} `json:"codex"`
+	}{
+		Version:    1,
+		SourceKind: domain.UsageSourceCodexRollout,
+	}
+	state.Codex.NativeSessionID = nativeSessionID
+	state.Codex.DirectParentID = directParentID
+	state.Codex.PendingSpawnCallIDs = []string{}
+	state.Codex.DiscoveredChildIDs = []string{}
+	encoded, err := json.Marshal(state)
+	if err != nil {
+		return "", fmt.Errorf("encode Codex parser state: %w", err)
+	}
+	return string(encoded), nil
 }
 
 func (c *Collector) codexSourceBudgetExceeded(

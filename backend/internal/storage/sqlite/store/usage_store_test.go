@@ -109,6 +109,94 @@ func TestUsageBindingAndSourceIdempotency(t *testing.T) {
 	}
 }
 
+func TestListLatestRetiredCodexReplacementClaimsByPath(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	sess := seedUsageSession(t, s, domain.HarnessCodex)
+	now := time.Unix(1700000000, 0).UTC()
+	target := seedUsageSource(t, s, sess, now)
+	if _, err := s.MarkUsageSourceState(
+		ctx,
+		target.ID,
+		domain.UsageSourceComplete,
+		domain.UsageErrorArtifactReplaced,
+		nil,
+		now,
+	); err != nil {
+		t.Fatalf("retire target source: %v", err)
+	}
+	watchable, err := s.ListWatchableUsageSources(ctx)
+	if err != nil {
+		t.Fatalf("list watchable sources: %v", err)
+	}
+	for _, source := range watchable {
+		if source.ID == target.ID {
+			t.Fatalf("retired replacement claim remained watchable: %+v", source)
+		}
+	}
+	if _, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+		BindingID:       target.BindingID,
+		Kind:            domain.UsageSourceCodexRollout,
+		NativeSessionID: "unrelated-thread",
+		ArtifactPath:    "/tmp/codex/unrelated.jsonl",
+		FileIdentity:    "dev:unrelated",
+		State:           domain.UsageSourceComplete,
+		LastErrorCode:   domain.UsageErrorArtifactReplaced,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}); err != nil {
+		t.Fatalf("insert unrelated claim: %v", err)
+	}
+
+	assertClaims := func(wantIDs ...int64) {
+		t.Helper()
+		got, err := s.ListLatestRetiredCodexReplacementClaimsByPath(ctx, target.ArtifactPath)
+		if err != nil {
+			t.Fatalf("list replacement claims: %v", err)
+		}
+		if len(got) != len(wantIDs) {
+			t.Fatalf("replacement claims = %+v, want ids %v", got, wantIDs)
+		}
+		for i, wantID := range wantIDs {
+			if got[i].ID != wantID || got[i].State != domain.UsageSourceComplete ||
+				got[i].LastErrorCode != domain.UsageErrorArtifactReplaced {
+				t.Fatalf("replacement claim[%d] = %+v, want retired source %d", i, got[i], wantID)
+			}
+		}
+	}
+
+	assertClaims(target.ID)
+	sess.IsTerminated = true
+	if err := s.UpdateSession(ctx, sess); err != nil {
+		t.Fatalf("terminate session: %v", err)
+	}
+	assertClaims()
+	if _, err := s.UpdateUsageBindingState(
+		ctx,
+		target.BindingID,
+		domain.UsageBindingFinalizing,
+		"",
+		now.Add(time.Second),
+	); err != nil {
+		t.Fatalf("finalize binding: %v", err)
+	}
+	assertClaims(target.ID)
+	if _, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+		BindingID:       target.BindingID,
+		Kind:            domain.UsageSourceCodexRollout,
+		NativeSessionID: target.NativeSessionID,
+		ArtifactPath:    target.ArtifactPath,
+		FileIdentity:    "dev:new",
+		Generation:      target.Generation + 1,
+		State:           domain.UsageSourcePending,
+		CreatedAt:       now.Add(2 * time.Second),
+		UpdatedAt:       now.Add(2 * time.Second),
+	}); err != nil {
+		t.Fatalf("insert newer generation: %v", err)
+	}
+	assertClaims()
+}
+
 func TestUsageBindingUpsertDoesNotRegressSettledLifecycle(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

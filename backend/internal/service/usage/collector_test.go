@@ -1077,6 +1077,66 @@ func TestCollectorRejectsCodexChildPathWithWrongParent(t *testing.T) {
 	assertNoUsageSourcesForSession(t, store, session.ID)
 }
 
+func TestCollectorPersistsCodexChildDirectParent(t *testing.T) {
+	const (
+		parentID = "11111111-1111-4111-8111-111111111111"
+		childID  = "22222222-2222-4222-8222-222222222222"
+	)
+	ctx := context.Background()
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessCodex, parentID, false)
+	now := time.Unix(1700000000, 0).UTC()
+	binding, err := store.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
+		SessionID:    session.ID,
+		Harness:      session.Harness,
+		NativeRootID: parentID,
+		State:        domain.UsageBindingActive,
+		FirstSeenAt:  now,
+		LastSeenAt:   now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), "sessions")
+	path := filepath.Join(root, "2026", "08", "02", "child.jsonl")
+	writeUsageFixture(t, path, codexSessionMetaFixture(t, childID, parentID))
+	collector := NewCollector(store, SourceRoots{CodexSessions: root}, nil)
+
+	if _, err := collector.registerSourceWithExpectedParent(
+		ctx,
+		binding,
+		domain.UsageSourceCodexRollout,
+		childID,
+		childID,
+		path,
+		now,
+		false,
+		parentID,
+	); err != nil {
+		t.Fatalf("register child: %v", err)
+	}
+	sources, err := store.ListUsageSourcesForBinding(ctx, binding.ID)
+	if err != nil || len(sources) != 1 {
+		t.Fatalf("child sources = %+v, err=%v", sources, err)
+	}
+	var state struct {
+		Version    int                    `json:"version"`
+		SourceKind domain.UsageSourceKind `json:"source_kind"`
+		Codex      *struct {
+			NativeSessionID string `json:"native_session_id"`
+			DirectParentID  string `json:"direct_parent_id"`
+		} `json:"codex"`
+	}
+	if err := json.Unmarshal([]byte(sources[0].ParserStateJSON), &state); err != nil {
+		t.Fatalf("decode child parser state: %v", err)
+	}
+	if state.Version != 1 || state.SourceKind != domain.UsageSourceCodexRollout ||
+		state.Codex == nil || state.Codex.NativeSessionID != childID || state.Codex.DirectParentID != parentID {
+		t.Fatalf("child parser state = %s", sources[0].ParserStateJSON)
+	}
+}
+
 func TestCollectorDoesNotDoubleAttributeCodexChildAsRoot(t *testing.T) {
 	ctx := context.Background()
 	store := collectorTestStore(t)

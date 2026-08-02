@@ -127,6 +127,8 @@ type codexParserStateV1 struct {
 	Baseline            codexTokenVector `json:"baseline"`
 	ModelID             string           `json:"model_id,omitempty"`
 	Provider            string           `json:"provider,omitempty"`
+	NativeSessionID     string           `json:"native_session_id,omitempty"`
+	DirectParentID      string           `json:"direct_parent_id,omitempty"`
 	PendingSpawnCallIDs []string         `json:"pending_spawn_call_ids"`
 	DiscoveredChildIDs  []string         `json:"discovered_child_ids"`
 }
@@ -141,7 +143,16 @@ func decodeParserState(source domain.UsageSourceRecord) (*parserStateEnvelope, e
 		return nil, err
 	}
 	if len(object) == 0 {
-		return newParserState(source.Kind)
+		state, err := newParserState(source.Kind)
+		if err != nil {
+			return nil, err
+		}
+		if source.Kind == domain.UsageSourceCodexRollout {
+			if err := validateCodexDirectParent(source, state.Codex); err != nil {
+				return nil, err
+			}
+		}
+		return state, nil
 	}
 	var state parserStateEnvelope
 	decoder := json.NewDecoder(bytes.NewReader([]byte(raw)))
@@ -180,6 +191,9 @@ func decodeParserState(source domain.UsageSourceRecord) (*parserStateEnvelope, e
 			state.Codex.DiscoveredChildIDs = []string{}
 		}
 		if err := normalizeCodexParserState(state.Codex); err != nil {
+			return nil, err
+		}
+		if err := validateCodexDirectParent(source, state.Codex); err != nil {
 			return nil, err
 		}
 	default:
@@ -416,6 +430,44 @@ func normalizeCodexParserState(state *codexParserStateV1) error {
 	state.PendingSpawnCallIDs = pending
 	state.DiscoveredChildIDs = discovered
 	return nil
+}
+
+func validateCodexDirectParent(source domain.UsageSourceRecord, state *codexParserStateV1) error {
+	if state.NativeSessionID != "" && state.NativeSessionID != source.NativeSessionID {
+		return errors.New("codex parser state has a mismatched native session")
+	}
+	if source.SubagentID == "" {
+		if state.DirectParentID != "" {
+			return errors.New("root source has a direct parent")
+		}
+		return nil
+	}
+	if source.SubagentID != source.NativeSessionID ||
+		!validCodexAgentID(state.DirectParentID) ||
+		state.DirectParentID == source.NativeSessionID {
+		return errors.New("invalid child direct parent")
+	}
+	return nil
+}
+
+func codexSessionMetaFromRecord(data []byte) (nativeSessionID, directParentID string, ok bool) {
+	var envelope struct {
+		Type    string `json:"type"`
+		Payload struct {
+			ID     string `json:"id"`
+			Source struct {
+				Subagent struct {
+					ThreadSpawn struct {
+						ParentThreadID string `json:"parent_thread_id"`
+					} `json:"thread_spawn"`
+				} `json:"subagent"`
+			} `json:"source"`
+		} `json:"payload"`
+	}
+	if json.Unmarshal(data, &envelope) != nil || envelope.Type != "session_meta" || envelope.Payload.ID == "" {
+		return "", "", false
+	}
+	return envelope.Payload.ID, envelope.Payload.Source.Subagent.ThreadSpawn.ParentThreadID, true
 }
 
 func normalizeCodexIDs(values []string, valid func(string) bool) ([]string, error) {

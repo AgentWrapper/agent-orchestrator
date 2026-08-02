@@ -134,7 +134,7 @@ func TestIngestorReplaysReplacementWithUnknownProviderTimestampAcrossClocks(t *t
 		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()
 			store, source, path, now := seedCodexIngestionSource(t, t.TempDir())
-			content := test.line + "\n"
+			content := string(codexSessionMetaLine(t, "codex-root", "")) + "\n" + test.line + "\n"
 			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -151,18 +151,12 @@ func TestIngestorReplaysReplacementWithUnknownProviderTimestampAcrossClocks(t *t
 				t.Fatal(err)
 			}
 			now = now.Add(time.Hour)
-			replaced, err := ingestor.Ingest(ctx, source.ID)
-			if err != nil {
-				t.Fatalf("replace source: %v", err)
-			}
-			if replaced.ReplacementSourceID == 0 {
-				t.Fatalf("replacement result = %+v", replaced)
-			}
-			if _, err := ingestor.Ingest(ctx, replaced.ReplacementSourceID); err != nil {
+			replacement := reconcileCodexRootReplacement(ctx, t, store, ingestor, source, path)
+			if _, err := ingestor.Ingest(ctx, replacement.ID); err != nil {
 				t.Fatalf("replay replacement: %v", err)
 			}
 
-			got, ok, err := store.GetUsageSourceForIngestion(ctx, replaced.ReplacementSourceID)
+			got, ok, err := store.GetUsageSourceForIngestion(ctx, replacement.ID)
 			if err != nil || !ok {
 				t.Fatalf("get replacement: ok=%v err=%v", ok, err)
 			}
@@ -283,9 +277,11 @@ func TestIngestorReplaysClaudeReplacementAgainstLegacyProviderState(t *testing.T
 func TestIngestorReadsIdentityAndContentFromSingleDescriptorAcrossAtomicReplacement(t *testing.T) {
 	ctx := context.Background()
 	store, source, path, now := seedCodexIngestionSource(t, t.TempDir())
-	openedContent := `{"type":"turn_context","payload":{"model":"gpt-opened"}}` + "\n" +
+	openedContent := string(codexSessionMetaLine(t, "codex-root", "")) + "\n" +
+		`{"type":"turn_context","payload":{"model":"gpt-opened"}}` + "\n" +
 		string(codexTokenLine("2026-07-28T10:00:00Z", 100, 60, 0, 20, 5)) + "\n"
-	replacementContent := `{"type":"turn_context","payload":{"model":"gpt-replacement"}}` + "\n" +
+	replacementContent := string(codexSessionMetaLine(t, "codex-root", "")) + "\n" +
+		`{"type":"turn_context","payload":{"model":"gpt-replacement"}}` + "\n" +
 		string(codexTokenLine("2026-07-28T11:00:00Z", 200, 120, 0, 20, 5)) + "\n"
 	if err := os.WriteFile(path, []byte(openedContent), 0o600); err != nil {
 		t.Fatal(err)
@@ -318,14 +314,8 @@ func TestIngestorReadsIdentityAndContentFromSingleDescriptorAcrossAtomicReplacem
 	}
 	assertTokenAggregate(t, store, sourceSessionID(t, store, source.ID), 120)
 
-	second, err := ingestor.Ingest(ctx, source.ID)
-	if err != nil {
-		t.Fatalf("detect pathname replacement: %v", err)
-	}
-	if second.ReplacementSourceID == 0 {
-		t.Fatalf("replacement result = %+v", second)
-	}
-	if _, err := ingestor.Ingest(ctx, second.ReplacementSourceID); err != nil {
+	replacement := reconcileCodexRootReplacement(ctx, t, store, ingestor, source, path)
+	if _, err := ingestor.Ingest(ctx, replacement.ID); err != nil {
 		t.Fatalf("ingest replacement generation: %v", err)
 	}
 	assertTokenAggregate(t, store, sourceSessionID(t, store, source.ID), 340)
@@ -385,8 +375,9 @@ func TestIngestorDoesNotApplyChunkWhenDescriptorMutatesAfterRead(t *testing.T) {
 func TestIngestorPersistsParsedCheckpointWhenRewriteFollowsFinalVerification(t *testing.T) {
 	ctx := context.Background()
 	store, source, path, now := seedCodexIngestionSource(t, t.TempDir())
-	beforeContent := string(codexTokenLine("2026-07-28T10:00:00Z", 100, 60, 0, 20, 5)) + "\n"
-	afterContent := string(codexTokenLine("2026-07-28T11:00:00Z", 200, 70, 0, 30, 5)) + "\n"
+	meta := string(codexSessionMetaLine(t, "codex-root", "")) + "\n"
+	beforeContent := meta + string(codexTokenLine("2026-07-28T10:00:00Z", 100, 60, 0, 20, 5)) + "\n"
+	afterContent := meta + string(codexTokenLine("2026-07-28T11:00:00Z", 200, 70, 0, 30, 5)) + "\n"
 	if len(beforeContent) != len(afterContent) {
 		t.Fatalf("fixture lengths = %d/%d, want equal", len(beforeContent), len(afterContent))
 	}
@@ -405,14 +396,8 @@ func TestIngestorPersistsParsedCheckpointWhenRewriteFollowsFinalVerification(t *
 	}
 	assertTokenAggregate(t, store, sourceSessionID(t, store, source.ID), 120)
 
-	result, err := ingestor.Ingest(ctx, source.ID)
-	if err != nil {
-		t.Fatalf("detect post-verification rewrite: %v", err)
-	}
-	if result.ReplacementSourceID == 0 {
-		t.Fatalf("rewrite result = %+v, want replacement generation", result)
-	}
-	if _, err := ingestor.Ingest(ctx, result.ReplacementSourceID); err != nil {
+	replacement := reconcileCodexRootReplacement(ctx, t, store, ingestor, source, path)
+	if _, err := ingestor.Ingest(ctx, replacement.ID); err != nil {
 		t.Fatalf("ingest replacement generation: %v", err)
 	}
 	assertTokenAggregate(t, store, sourceSessionID(t, store, source.ID), 350)
@@ -430,8 +415,9 @@ func TestIngestorReplacesSameInodeWhenPreCursorCheckpointChanges(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()
 			store, source, path, now := seedCodexIngestionSource(t, t.TempDir())
-			beforeContent := string(codexTokenLine("2026-07-28T10:00:00Z", 100, 60, 0, 20, 5)) + "\n"
-			afterContent := string(codexTokenLine("2026-07-28T11:00:00Z", 200, 70, 0, 30, 5)) + "\n" + test.suffix
+			meta := string(codexSessionMetaLine(t, "codex-root", "")) + "\n"
+			beforeContent := meta + string(codexTokenLine("2026-07-28T10:00:00Z", 100, 60, 0, 20, 5)) + "\n"
+			afterContent := meta + string(codexTokenLine("2026-07-28T11:00:00Z", 200, 70, 0, 30, 5)) + "\n" + test.suffix
 			if test.suffix == "" && len(afterContent) != len(beforeContent) {
 				t.Fatalf("equal-size fixture lengths = %d/%d", len(beforeContent), len(afterContent))
 			}
@@ -459,24 +445,14 @@ func TestIngestorReplacesSameInodeWhenPreCursorCheckpointChanges(t *testing.T) {
 				t.Fatalf("rewrite changed identity: %q != %q", rewrittenIdentity, identity)
 			}
 
-			result, err := ingestor.Ingest(ctx, source.ID)
-			if err != nil {
-				t.Fatalf("detect same-inode rewrite: %v", err)
+			replacement := reconcileCodexRootReplacement(ctx, t, store, ingestor, source, path)
+			if replacement.Generation != source.Generation+1 || replacement.ByteOffset != 0 {
+				t.Fatalf("replacement source = %+v", replacement)
 			}
-			if result.ReplacementSourceID == 0 {
-				t.Fatalf("rewrite result = %+v, want a replacement generation", result)
-			}
-			replacement, ok, err := store.GetUsageSourceForIngestion(ctx, result.ReplacementSourceID)
-			if err != nil || !ok {
-				t.Fatalf("replacement source: ok=%v err=%v", ok, err)
-			}
-			if replacement.Source.Generation != source.Generation+1 || replacement.Source.ByteOffset != 0 {
-				t.Fatalf("replacement source = %+v", replacement.Source)
-			}
-			if _, err := ingestor.Ingest(ctx, replacement.Source.ID); err != nil {
+			if _, err := ingestor.Ingest(ctx, replacement.ID); err != nil {
 				t.Fatalf("ingest replacement generation: %v", err)
 			}
-			assertTokenAggregate(t, store, replacement.SessionID, 350)
+			assertTokenAggregate(t, store, sourceSessionID(t, store, replacement.ID), 350)
 		})
 	}
 }
@@ -499,7 +475,8 @@ func TestIngestorReplaysCompletedLegacyCursorWithoutCheckpoint(t *testing.T) {
 			ctx := context.Background()
 			dataDir := t.TempDir()
 			store, source, path, now := seedCodexIngestionSource(t, dataDir)
-			initial := string(codexTokenLine("2026-07-28T10:00:00Z", 100, 60, 0, 20, 5)) + "\n"
+			initial := string(codexSessionMetaLine(t, "codex-root", "")) + "\n" +
+				string(codexTokenLine("2026-07-28T10:00:00Z", 100, 60, 0, 20, 5)) + "\n"
 			if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -524,24 +501,14 @@ func TestIngestorReplaysCompletedLegacyCursorWithoutCheckpoint(t *testing.T) {
 				}
 			}
 
-			result, err := ingestor.Ingest(ctx, source.ID)
-			if err != nil {
-				t.Fatalf("reset legacy cursor: %v", err)
+			replacement := reconcileCodexRootReplacement(ctx, t, store, ingestor, source, path)
+			if replacement.ByteOffset != 0 || replacement.Generation != source.Generation+1 {
+				t.Fatalf("replacement source = %+v", replacement)
 			}
-			if result.ReplacementSourceID == 0 {
-				t.Fatalf("legacy result = %+v, want replacement generation", result)
-			}
-			replacement, ok, err := store.GetUsageSourceForIngestion(ctx, result.ReplacementSourceID)
-			if err != nil || !ok {
-				t.Fatalf("get replacement: ok=%v err=%v", ok, err)
-			}
-			if replacement.Source.ByteOffset != 0 || replacement.Source.Generation != source.Generation+1 {
-				t.Fatalf("replacement source = %+v", replacement.Source)
-			}
-			if _, err := ingestor.Ingest(ctx, replacement.Source.ID); err != nil {
+			if _, err := ingestor.Ingest(ctx, replacement.ID); err != nil {
 				t.Fatalf("replay replacement: %v", err)
 			}
-			assertTokenAggregate(t, store, replacement.SessionID, test.wantTokens)
+			assertTokenAggregate(t, store, sourceSessionID(t, store, replacement.ID), test.wantTokens)
 		})
 	}
 }
@@ -586,6 +553,7 @@ func seedCodexIngestionSource(t *testing.T, dataDir string) (*sqlite.Store, doma
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	path = canonicalTranscriptPath(path)
 	identity, err := usagesvc.SourceIdentity(path)
 	if err != nil {
 		t.Fatal(err)
@@ -679,6 +647,49 @@ func sourceSessionID(t *testing.T, store *sqlite.Store, sourceID int64) domain.S
 		t.Fatalf("get source context: ok=%v err=%v", ok, err)
 	}
 	return got.SessionID
+}
+
+func reconcileCodexRootReplacement(
+	ctx context.Context,
+	t *testing.T,
+	store *sqlite.Store,
+	ingestor *Ingestor,
+	previous domain.UsageSourceRecord,
+	path string,
+) domain.UsageSourceRecord {
+	t.Helper()
+	result, err := ingestor.Ingest(ctx, previous.ID)
+	if err != nil {
+		t.Fatalf("detect Codex root replacement: %v", err)
+	}
+	if result.ReplacementSourceID != 0 || !result.Reconcile ||
+		canonicalTranscriptPath(result.ReconcilePath) != canonicalTranscriptPath(path) {
+		t.Fatalf("replacement result = %+v, want root reconciliation", result)
+	}
+	collector := usagesvc.NewCollector(
+		store,
+		usagesvc.SourceRoots{CodexSessions: filepath.Dir(path)},
+		nil,
+	)
+	if err := collector.ReconcilePath(ctx, path); err != nil {
+		t.Fatalf("reconcile Codex root replacement: %v", err)
+	}
+	sources, err := store.ListUsageSourcesForBinding(ctx, previous.BindingID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var replacement domain.UsageSourceRecord
+	for _, source := range sources {
+		if source.ArtifactPath == canonicalTranscriptPath(path) &&
+			(source.Generation > replacement.Generation || replacement.ID == 0) {
+			replacement = source
+		}
+	}
+	if replacement.ID == 0 || replacement.ID == previous.ID ||
+		replacement.NativeSessionID != previous.NativeSessionID || replacement.SubagentID != "" {
+		t.Fatalf("validated replacement = %+v, previous=%+v", replacement, previous)
+	}
+	return replacement
 }
 
 func TestIngestorCollectsCodexSourceDiscoveredAfterStartup(t *testing.T) {
@@ -978,24 +989,26 @@ func TestIngestorPersistsAppendOnlyUsageAcrossRestartAndFinalization(t *testing.
 		t.Fatal(err)
 	}
 	path := t.TempDir() + "/rollout.jsonl"
-	initial := `{"type":"session_meta","payload":{"model_provider":"openai"}}` + "\n" +
+	initial := `{"type":"session_meta","payload":{"id":"native-1","model_provider":"openai"}}` + "\n" +
 		`{"type":"turn_context","payload":{"model":"gpt-5.6"}}` + "\n" +
 		string(codexTokenLine("2026-07-01T10:00:00Z", 100, 60, 0, 20, 5)) + "\n"
 	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	path = canonicalTranscriptPath(path)
 	identity, err := usagesvc.SourceIdentity(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	source, err := store.InsertUsageSource(ctx, domain.UsageSourceRecord{
-		BindingID:    binding.ID,
-		Kind:         domain.UsageSourceCodexRollout,
-		ArtifactPath: path,
-		FileIdentity: identity,
-		State:        domain.UsageSourcePending,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		BindingID:       binding.ID,
+		Kind:            domain.UsageSourceCodexRollout,
+		NativeSessionID: "native-1",
+		ArtifactPath:    path,
+		FileIdentity:    identity,
+		State:           domain.UsageSourcePending,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1021,13 +1034,13 @@ func TestIngestorPersistsAppendOnlyUsageAcrossRestartAndFinalization(t *testing.
 	ingestSourceFully(ctx, t, restarted, source.ID)
 	assertTokenAggregate(t, store, session.ID, 180)
 
-	replacement := `{"type":"session_meta","payload":{"model_provider":"openai-replacement"}}` + "\n" +
+	replacement := `{"type":"session_meta","payload":{"id":"native-1","model_provider":"openai-replacement"}}` + "\n" +
 		`{"type":"turn_context","payload":{"model":"gpt-5.6-mini"}}` + "\n" +
 		string(codexTokenLine("2026-07-01T11:00:00Z", 10, 5, 0, 2, 1)) + "\n"
 	if err := os.WriteFile(path, []byte(replacement), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ingestSourceFully(ctx, t, restarted, source.ID)
+	_ = reconcileCodexRootReplacement(ctx, t, store, restarted, source, path)
 	ingestAllWatchable(ctx, t, store, restarted)
 	assertTokenAggregate(t, store, session.ID, 192)
 	sources, err := store.ListUsageSourcesForBinding(ctx, binding.ID)

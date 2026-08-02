@@ -607,6 +607,98 @@ func TestCodexChildCheckpointMismatchRevalidatesIdentityAndParent(t *testing.T) 
 	}
 }
 
+func TestCodexChildReplacementDoesNotChangeDurableDirectParent(t *testing.T) {
+	ctx := context.Background()
+	store, session, roots := seedCodexRolloutSession(t, domain.ActivityIdle)
+	rootPath := activeCodexRolloutPath(roots.CodexSessions, testCodexParentID)
+	childPath := activeCodexRolloutPath(roots.CodexSessions, testCodexChildID)
+	alternateParentPath := activeCodexRolloutPath(roots.CodexSessions, testCodexGrandchildID)
+	rootContent := strings.TrimSuffix(
+		codexRolloutFixture(t, testCodexParentID, "", 100, 20, testCodexChildID),
+		"\n",
+	)
+	alternateCallID := "call_spawn_alternate_parent"
+	rootContent += "\n" + string(codexResponseItem(t, map[string]any{
+		"type":    "function_call",
+		"name":    "spawn_agent",
+		"call_id": alternateCallID,
+	})) + "\n" + string(codexResponseItem(t, map[string]any{
+		"type":    "function_call_output",
+		"call_id": alternateCallID,
+		"output":  `{"agent_id":"` + testCodexGrandchildID + `"}`,
+	})) + "\n"
+	writeCodexRollout(t, rootPath, rootContent)
+	writeCodexRollout(t, childPath, codexRolloutFixture(t, testCodexChildID, testCodexParentID, 40, 10, ""))
+	writeCodexRollout(t, alternateParentPath, codexRolloutFixture(
+		t,
+		testCodexGrandchildID,
+		testCodexParentID,
+		5,
+		2,
+		testCodexChildID,
+	))
+
+	collector := usagesvc.NewCollector(store, roots, nil)
+	if err := collector.BackfillActive(ctx); err != nil {
+		t.Fatalf("backfill root: %v", err)
+	}
+	binding := onlyUsageBinding(t, store, session.ID)
+	ingestor := NewIngestor(store, IngestorConfig{})
+	root := latestUsageSource(t, store, binding.ID, testCodexParentID)
+	if _, err := ingestor.Ingest(ctx, root.ID); err != nil {
+		t.Fatalf("ingest root: %v", err)
+	}
+	if err := collector.ReconcileSources(ctx, -1); err != nil {
+		t.Fatalf("register children: %v", err)
+	}
+	child := latestUsageSource(t, store, binding.ID, testCodexChildID)
+	alternateParent := latestUsageSource(t, store, binding.ID, testCodexGrandchildID)
+	if _, err := ingestor.Ingest(ctx, child.ID); err != nil {
+		t.Fatalf("ingest child: %v", err)
+	}
+	if _, err := ingestor.Ingest(ctx, alternateParent.ID); err != nil {
+		t.Fatalf("ingest alternate parent: %v", err)
+	}
+	assertTokenAggregate(t, store, session.ID, 177)
+
+	writeCodexRollout(t, childPath, codexRolloutFixture(
+		t,
+		testCodexChildID,
+		testCodexGrandchildID,
+		90,
+		20,
+		"",
+	))
+	result, err := ingestor.Ingest(ctx, child.ID)
+	if err != nil {
+		t.Fatalf("detect child rewrite: %v", err)
+	}
+	if !result.Reconcile || result.ReconcilePath != canonicalTranscriptPath(childPath) {
+		t.Fatalf("rewrite result = %+v", result)
+	}
+	if err := collector.ReconcilePath(ctx, childPath); err != nil {
+		t.Fatalf("reconcile changed parent: %v", err)
+	}
+	sources, err := store.ListUsageSourcesForBinding(ctx, binding.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childGenerations := 0
+	for _, source := range sources {
+		if source.NativeSessionID == testCodexChildID {
+			childGenerations++
+			if source.ID != child.ID || source.State != domain.UsageSourceComplete ||
+				source.LastErrorCode != domain.UsageErrorArtifactReplaced {
+				t.Fatalf("changed-parent child source = %+v", source)
+			}
+		}
+	}
+	if childGenerations != 1 {
+		t.Fatalf("child generations = %d, want one rejected generation", childGenerations)
+	}
+	assertTokenAggregate(t, store, session.ID, 177)
+}
+
 func TestCodexChildCheckpointMismatchReconcilesValidatedGeneration(t *testing.T) {
 	ctx := context.Background()
 	store, session, roots := seedCodexRolloutSession(t, domain.ActivityIdle)
@@ -652,6 +744,168 @@ func TestCodexChildCheckpointMismatchReconcilesValidatedGeneration(t *testing.T)
 		t.Fatalf("ingest validated replacement: %v", err)
 	}
 	assertTokenAggregate(t, store, session.ID, 280)
+}
+
+func TestCodexRootReplacementRejectsMismatchedSessionMeta(t *testing.T) {
+	tests := []struct {
+		name          string
+		replacementID string
+		parentID      string
+		atomic        bool
+	}{
+		{
+			name:          "mismatched root id",
+			replacementID: testCodexChildID,
+			atomic:        true,
+		},
+		{
+			name:          "root rewritten as child",
+			replacementID: testCodexParentID,
+			parentID:      testCodexChildID,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			store, session, roots := seedCodexRolloutSession(t, domain.ActivityIdle)
+			rootPath := activeCodexRolloutPath(roots.CodexSessions, testCodexParentID)
+			writeCodexRollout(t, rootPath, codexRolloutFixture(t, testCodexParentID, "", 100, 20, ""))
+			collector := usagesvc.NewCollector(store, roots, nil)
+			if err := collector.BackfillActive(ctx); err != nil {
+				t.Fatalf("backfill root: %v", err)
+			}
+			binding := onlyUsageBinding(t, store, session.ID)
+			root := latestUsageSource(t, store, binding.ID, testCodexParentID)
+			ingestor := NewIngestor(store, IngestorConfig{})
+			if _, err := ingestor.Ingest(ctx, root.ID); err != nil {
+				t.Fatalf("ingest root: %v", err)
+			}
+
+			replacement := codexRolloutFixture(t, test.replacementID, test.parentID, 900, 100, "")
+			if test.atomic {
+				replacementPath := rootPath + ".replacement"
+				writeCodexRollout(t, replacementPath, replacement)
+				if err := os.Rename(replacementPath, rootPath); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				beforeIdentity, err := usagesvc.SourceIdentity(rootPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				writeCodexRollout(t, rootPath, replacement)
+				afterIdentity, err := usagesvc.SourceIdentity(rootPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if afterIdentity != beforeIdentity {
+					t.Fatalf("same-inode fixture changed identity: %q != %q", beforeIdentity, afterIdentity)
+				}
+			}
+
+			result, err := ingestor.Ingest(ctx, root.ID)
+			if err != nil {
+				t.Fatalf("detect root replacement: %v", err)
+			}
+			if result.ReplacementSourceID != 0 || !result.Reconcile || result.ReconcilePath != canonicalTranscriptPath(rootPath) {
+				t.Fatalf("replacement result = %+v, want root reconciliation", result)
+			}
+			if err := collector.ReconcilePath(ctx, rootPath); err != nil {
+				t.Fatalf("reconcile invalid root: %v", err)
+			}
+			sources, err := store.ListUsageSourcesForBinding(ctx, binding.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(sources) != 1 || sources[0].State != domain.UsageSourceComplete ||
+				sources[0].LastErrorCode != domain.UsageErrorArtifactReplaced {
+				t.Fatalf("invalid replacement sources = %+v", sources)
+			}
+			assertTokenAggregate(t, store, session.ID, 120)
+		})
+	}
+}
+
+func TestCodexRootReplacementReconcilesValidatedGeneration(t *testing.T) {
+	ctx := context.Background()
+	store, session, roots := seedCodexRolloutSession(t, domain.ActivityIdle)
+	rootPath := activeCodexRolloutPath(roots.CodexSessions, testCodexParentID)
+	writeCodexRollout(t, rootPath, codexRolloutFixture(t, testCodexParentID, "", 100, 20, ""))
+	collector := usagesvc.NewCollector(store, roots, nil)
+	if err := collector.BackfillActive(ctx); err != nil {
+		t.Fatalf("backfill root: %v", err)
+	}
+	binding := onlyUsageBinding(t, store, session.ID)
+	root := latestUsageSource(t, store, binding.ID, testCodexParentID)
+	ingestor := NewIngestor(store, IngestorConfig{})
+	if _, err := ingestor.Ingest(ctx, root.ID); err != nil {
+		t.Fatalf("ingest root: %v", err)
+	}
+
+	replacementPath := rootPath + ".replacement"
+	writeCodexRollout(t, replacementPath, codexRolloutFixture(t, testCodexParentID, "", 200, 30, ""))
+	if err := os.Rename(replacementPath, rootPath); err != nil {
+		t.Fatal(err)
+	}
+	result, err := ingestor.Ingest(ctx, root.ID)
+	if err != nil {
+		t.Fatalf("detect root replacement: %v", err)
+	}
+	if result.ReplacementSourceID != 0 || !result.Reconcile || result.ReconcilePath != canonicalTranscriptPath(rootPath) {
+		t.Fatalf("replacement result = %+v, want root reconciliation", result)
+	}
+	if err := collector.ReconcilePath(ctx, rootPath); err != nil {
+		t.Fatalf("reconcile valid root: %v", err)
+	}
+	replacement := latestUsageSource(t, store, binding.ID, testCodexParentID)
+	if replacement.ID == root.ID || replacement.Generation != root.Generation+1 || replacement.ByteOffset != 0 {
+		t.Fatalf("validated replacement = %+v, previous=%+v", replacement, root)
+	}
+	if _, err := ingestor.Ingest(ctx, replacement.ID); err != nil {
+		t.Fatalf("ingest replacement: %v", err)
+	}
+	assertTokenAggregate(t, store, session.ID, 350)
+}
+
+func TestCodexIngestorRejectsMetadataChangedAfterRegistration(t *testing.T) {
+	ctx := context.Background()
+	store, session, roots := seedCodexRolloutSession(t, domain.ActivityIdle)
+	rootPath := activeCodexRolloutPath(roots.CodexSessions, testCodexParentID)
+	writeCodexRollout(t, rootPath, codexRolloutFixture(t, testCodexParentID, "", 100, 20, ""))
+	collector := usagesvc.NewCollector(store, roots, nil)
+	if err := collector.BackfillActive(ctx); err != nil {
+		t.Fatalf("register root: %v", err)
+	}
+	binding := onlyUsageBinding(t, store, session.ID)
+	root := latestUsageSource(t, store, binding.ID, testCodexParentID)
+	beforeIdentity, err := usagesvc.SourceIdentity(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeCodexRollout(t, rootPath, codexRolloutFixture(t, testCodexChildID, "", 900, 100, ""))
+	afterIdentity, err := usagesvc.SourceIdentity(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterIdentity != beforeIdentity {
+		t.Fatalf("same-inode fixture changed identity: %q != %q", beforeIdentity, afterIdentity)
+	}
+
+	result, err := NewIngestor(store, IngestorConfig{}).Ingest(ctx, root.ID)
+	if err != nil {
+		t.Fatalf("ingest changed metadata: %v", err)
+	}
+	if !result.Reconcile || result.ReconcilePath != canonicalTranscriptPath(rootPath) {
+		t.Fatalf("ingest result = %+v, want metadata reconciliation", result)
+	}
+	got, ok, err := store.GetUsageSourceForIngestion(ctx, root.ID)
+	if err != nil || !ok {
+		t.Fatalf("load retired source: ok=%v err=%v", ok, err)
+	}
+	if got.Source.State != domain.UsageSourceComplete || got.Source.LastErrorCode != domain.UsageErrorArtifactReplaced {
+		t.Fatalf("changed metadata source = %+v", got.Source)
+	}
+	assertTokenAggregate(t, store, session.ID, 0)
 }
 
 func codexResponseItem(t *testing.T, payload map[string]any) []byte {

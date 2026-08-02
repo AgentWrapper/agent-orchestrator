@@ -661,6 +661,67 @@ func (q *Queries) ListCompactSessionUsage(ctx context.Context, projectID interfa
 	return items, nil
 }
 
+const listLatestRetiredCodexReplacementClaimsByPath = `-- name: ListLatestRetiredCodexReplacementClaimsByPath :many
+SELECT us.id, us.binding_id, us.kind, us.native_session_id, us.subagent_id, us.artifact_path, us.file_identity, us.generation, us.byte_offset, us.parser_state_json, us.state, us.failure_count, us.anomaly_count, us.next_retry_at, us.last_error_code, us.last_observed_at, us.created_at, us.updated_at
+FROM usage_bindings ub
+JOIN sessions s ON s.id = ub.session_id
+JOIN usage_sources us ON us.id = (
+    SELECT latest.id
+    FROM usage_sources latest
+    WHERE latest.binding_id = ub.id
+      AND latest.artifact_path = ?1
+    ORDER BY latest.generation DESC, latest.id DESC
+    LIMIT 1
+)
+WHERE us.kind = 'codex_rollout'
+  AND us.state = 'complete'
+  AND us.last_error_code = 'artifact_replaced'
+  AND (s.is_terminated = 0 OR ub.state = 'finalizing')
+ORDER BY us.binding_id, us.generation, us.id
+`
+
+func (q *Queries) ListLatestRetiredCodexReplacementClaimsByPath(ctx context.Context, artifactPath string) ([]UsageSource, error) {
+	rows, err := q.db.QueryContext(ctx, listLatestRetiredCodexReplacementClaimsByPath, artifactPath)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UsageSource{}
+	for rows.Next() {
+		var i UsageSource
+		if err := rows.Scan(
+			&i.ID,
+			&i.BindingID,
+			&i.Kind,
+			&i.NativeSessionID,
+			&i.SubagentID,
+			&i.ArtifactPath,
+			&i.FileIdentity,
+			&i.Generation,
+			&i.ByteOffset,
+			&i.ParserStateJson,
+			&i.State,
+			&i.FailureCount,
+			&i.AnomalyCount,
+			&i.NextRetryAt,
+			&i.LastErrorCode,
+			&i.LastObservedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUsageBindingsForCodexParent = `-- name: ListUsageBindingsForCodexParent :many
 SELECT DISTINCT ub.id, ub.session_id, ub.harness, ub.native_root_id, ub.initial_model_id, ub.state, ub.last_error_code, ub.first_seen_at, ub.last_seen_at, ub.updated_at
 FROM usage_bindings ub
@@ -988,6 +1049,10 @@ FROM usage_sources us
 JOIN usage_bindings ub ON ub.id = us.binding_id
 JOIN sessions s ON s.id = ub.session_id
 WHERE (s.is_terminated = 0 OR ub.state = 'finalizing')
+  AND NOT (
+      us.state = 'complete'
+      AND us.last_error_code = 'artifact_replaced'
+  )
   AND us.id = (
       SELECT latest.id
       FROM usage_sources latest

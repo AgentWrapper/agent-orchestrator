@@ -210,6 +210,84 @@ func TestDecodeParserStateKeepsV1BackwardCompatibleAndIntegrityStrict(t *testing
 	}
 }
 
+func TestDecodeParserStateValidatesCodexDirectParent(t *testing.T) {
+	validChild := `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"native_session_id":"22222222-2222-4222-8222-222222222222","direct_parent_id":"11111111-1111-4111-8111-111111111111","pending_spawn_call_ids":[],"discovered_child_ids":[]}}`
+	child := domain.UsageSourceRecord{
+		Kind:            domain.UsageSourceCodexRollout,
+		NativeSessionID: "22222222-2222-4222-8222-222222222222",
+		SubagentID:      "22222222-2222-4222-8222-222222222222",
+		ParserStateJSON: validChild,
+	}
+	state, err := decodeParserState(child)
+	if err != nil {
+		t.Fatalf("decode child direct parent: %v", err)
+	}
+	parsed := parseRecordsWithState(
+		domain.UsageSourceContext{Source: child},
+		nil,
+		0,
+		time.Unix(1700000000, 0).UTC(),
+		state,
+	)
+	if parsed.err != nil || !strings.Contains(
+		parsed.Cursor.ParserStateJSON,
+		`"native_session_id":"22222222-2222-4222-8222-222222222222"`,
+	) || !strings.Contains(
+		parsed.Cursor.ParserStateJSON,
+		`"direct_parent_id":"11111111-1111-4111-8111-111111111111"`,
+	) {
+		t.Fatalf("persisted child state = %q, err=%v", parsed.Cursor.ParserStateJSON, parsed.err)
+	}
+
+	invalid := []struct {
+		name   string
+		source domain.UsageSourceRecord
+	}{
+		{
+			name: "child mismatched native session",
+			source: domain.UsageSourceRecord{
+				Kind:            domain.UsageSourceCodexRollout,
+				NativeSessionID: "33333333-3333-4333-8333-333333333333",
+				SubagentID:      "33333333-3333-4333-8333-333333333333",
+				ParserStateJSON: validChild,
+			},
+		},
+		{
+			name: "child missing direct parent",
+			source: domain.UsageSourceRecord{
+				Kind:            domain.UsageSourceCodexRollout,
+				NativeSessionID: child.NativeSessionID,
+				SubagentID:      child.SubagentID,
+				ParserStateJSON: `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":[]}}`,
+			},
+		},
+		{
+			name: "child invalid direct parent",
+			source: domain.UsageSourceRecord{
+				Kind:            domain.UsageSourceCodexRollout,
+				NativeSessionID: child.NativeSessionID,
+				SubagentID:      child.SubagentID,
+				ParserStateJSON: `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"direct_parent_id":"not-a-thread","pending_spawn_call_ids":[],"discovered_child_ids":[]}}`,
+			},
+		},
+		{
+			name: "root has direct parent",
+			source: domain.UsageSourceRecord{
+				Kind:            domain.UsageSourceCodexRollout,
+				NativeSessionID: "11111111-1111-4111-8111-111111111111",
+				ParserStateJSON: validChild,
+			},
+		},
+	}
+	for _, test := range invalid {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := decodeParserState(test.source); err == nil {
+				t.Fatal("invalid Codex direct-parent state was accepted")
+			}
+		})
+	}
+}
+
 func TestParsersRejectInvalidTokenVectorsAndAdvanceCursor(t *testing.T) {
 	now := time.Unix(1700000000, 0).UTC()
 	tests := []struct {

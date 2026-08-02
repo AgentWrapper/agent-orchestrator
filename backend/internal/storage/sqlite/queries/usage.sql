@@ -96,6 +96,10 @@ FROM usage_sources us
 JOIN usage_bindings ub ON ub.id = us.binding_id
 JOIN sessions s ON s.id = ub.session_id
 WHERE (s.is_terminated = 0 OR ub.state = 'finalizing')
+  AND NOT (
+      us.state = 'complete'
+      AND us.last_error_code = 'artifact_replaced'
+  )
   AND us.id = (
       SELECT latest.id
       FROM usage_sources latest
@@ -105,6 +109,24 @@ WHERE (s.is_terminated = 0 OR ub.state = 'finalizing')
       LIMIT 1
   )
 ORDER BY us.artifact_path, us.generation, us.id;
+
+-- name: ListLatestRetiredCodexReplacementClaimsByPath :many
+SELECT us.*
+FROM usage_bindings ub
+JOIN sessions s ON s.id = ub.session_id
+JOIN usage_sources us ON us.id = (
+    SELECT latest.id
+    FROM usage_sources latest
+    WHERE latest.binding_id = ub.id
+      AND latest.artifact_path = sqlc.arg(artifact_path)
+    ORDER BY latest.generation DESC, latest.id DESC
+    LIMIT 1
+)
+WHERE us.kind = 'codex_rollout'
+  AND us.state = 'complete'
+  AND us.last_error_code = 'artifact_replaced'
+  AND (s.is_terminated = 0 OR ub.state = 'finalizing')
+ORDER BY us.binding_id, us.generation, us.id;
 
 -- name: ListUsageDiscoveryBindings :many
 SELECT ub.*

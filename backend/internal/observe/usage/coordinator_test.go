@@ -168,6 +168,7 @@ func TestCoordinatorRunsDiscoveryOnlyForDiscoveryEvents(t *testing.T) {
 	var initializations atomic.Int64
 	var reconciles atomic.Int64
 	reconciled := make(chan struct{}, 2)
+	pathReconciled := make(chan string, 1)
 	cfg := CoordinatorConfig{
 		Workers: 1,
 		Initialize: func(context.Context) error {
@@ -177,6 +178,10 @@ func TestCoordinatorRunsDiscoveryOnlyForDiscoveryEvents(t *testing.T) {
 		Reconcile: func(context.Context) error {
 			reconciles.Add(1)
 			reconciled <- struct{}{}
+			return nil
+		},
+		ReconcilePath: func(_ context.Context, path string) error {
+			pathReconciled <- path
 			return nil
 		},
 	}
@@ -193,7 +198,16 @@ func TestCoordinatorRunsDiscoveryOnlyForDiscoveryEvents(t *testing.T) {
 	done := coordinator.Start(ctx)
 	waitForCoordinatorCalls(t, reconciled, 1)
 
-	watcher.events <- TranscriptEvent{Path: filepath.Join(t.TempDir(), "unknown.jsonl")}
+	unknownPath := filepath.Join(t.TempDir(), "unknown.jsonl")
+	watcher.events <- TranscriptEvent{Path: unknownPath}
+	select {
+	case got := <-pathReconciled:
+		if got != canonicalTranscriptPath(unknownPath) {
+			t.Fatalf("reconciled path = %q, want %q", got, canonicalTranscriptPath(unknownPath))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ordinary write for dormant source did not trigger exact-path reconciliation")
+	}
 	coordinator.NotifyInventoryChanged()
 	time.Sleep(100 * time.Millisecond)
 	if got := reconciles.Load(); got != 1 {
