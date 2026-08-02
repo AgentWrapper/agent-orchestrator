@@ -92,8 +92,12 @@ export function AgentPickerSheet({
 						disabled={!a.selectable}
 						onPress={() => {
 							haptics.select();
-							onSelect(a.id);
+							// Dismiss before reporting the choice, matching the other
+							// sheets. onClose is router.back(), so a callback that
+							// navigated first would have back() pop the destination
+							// instead of this sheet.
 							onClose();
+							onSelect(a.id);
 						}}
 						style={({ pressed }) => [
 							s.option,

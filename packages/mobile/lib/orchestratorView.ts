@@ -1,7 +1,7 @@
 // Presentation rules for the orchestrator tab. Pure — no React Native or Expo
 // imports — so the lifecycle mapping is unit-testable, the same split as
 // prView.ts / pushStatus.ts.
-import type { DashboardPR, DashboardSession, OrchestratorLink } from "./api";
+import type { DashboardSession, OrchestratorLink } from "./api";
 import { attentionOf } from "./sessionStatus";
 import { statusVisual, type Theme } from "./theme";
 
@@ -81,14 +81,4 @@ export function workersOf(
 	link: OrchestratorLink | null | undefined,
 ): DashboardSession[] {
 	return sessions.filter((s) => s.projectId === projectId && s.id !== link?.id);
-}
-
-/** PRs opened across a project's workers, for the card's summary line. */
-export function workerPRCount(sessions: DashboardSession[]): number {
-	const seen = new Set<number>();
-	for (const s of sessions) {
-		const list: DashboardPR[] = s.prs?.length ? s.prs : s.pr ? [s.pr] : [];
-		for (const pr of list) if (pr?.number > 0) seen.add(pr.number);
-	}
-	return seen.size;
 }

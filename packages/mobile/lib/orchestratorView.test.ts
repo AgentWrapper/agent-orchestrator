@@ -4,7 +4,6 @@ import {
 	launchIntent,
 	orchestratorState,
 	orchestratorStatus,
-	workerPRCount,
 	workersOf,
 	zoneCounts,
 } from "./orchestratorView";
@@ -124,26 +123,3 @@ describe("zoneCounts", () => {
 	});
 });
 
-describe("workerPRCount", () => {
-	it("counts distinct PRs across the project's workers", () => {
-		const all = [
-			session({ prs: [{ number: 1, url: "" }] }),
-			session({ prs: [{ number: 2, url: "" }] }),
-		] as DashboardSession[];
-		expect(workerPRCount(all)).toBe(2);
-	});
-
-	// Several sessions can point at the same PR.
-	it("does not double-count one PR seen from two sessions", () => {
-		const all = [
-			session({ prs: [{ number: 7, url: "" }] }),
-			session({ prs: [{ number: 7, url: "" }] }),
-		] as DashboardSession[];
-		expect(workerPRCount(all)).toBe(1);
-	});
-
-	it("ignores placeholder PRs with no real number", () => {
-		expect(workerPRCount([session({ prs: [{ number: 0, url: "" }] })] as DashboardSession[])).toBe(0);
-		expect(workerPRCount([session()])).toBe(0);
-	});
-});

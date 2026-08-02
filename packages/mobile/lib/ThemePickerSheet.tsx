@@ -39,8 +39,15 @@ export function ThemePickerSheet({
 							accessibilityState={{ selected }}
 							onPress={() => {
 								haptics.select();
-								// Applied immediately, sheet left open for a beat so the change
-								// is visible where it was made rather than after a dismissal.
+								// Deliberately select-then-close, unlike the project and agent
+								// sheets which dismiss first. Applying the theme before the
+								// dismissal is what makes the repaint visible where the choice
+								// was made, instead of only after the sheet is gone.
+								//
+								// Safe here specifically because onSelect is setPreference,
+								// which never navigates. The other sheets hand their choice to
+								// a caller that might, and onClose is router.back() — so there,
+								// selecting first risks back() popping the destination.
 								onSelect(o.value);
 								onClose();
 							}}

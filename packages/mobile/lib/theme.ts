@@ -61,10 +61,8 @@ export type Theme = {
 
 	// Back-compat aliases (older screens referenced these names).
 	accent: string;
-	accentHover: string;
 	accentTint: string;
 	attention: string;
-	cyan: string;
 
 	fontMono: string;
 };
@@ -109,10 +107,8 @@ export const darkTheme: Theme = {
 	scrim: "rgba(0,0,0,0.6)",
 
 	accent: "#4d8dff",
-	accentHover: "#6ba0ff",
 	accentTint: "rgba(77,141,255,0.14)",
 	attention: "#e8c14a",
-	cyan: "#f59f4c",
 
 	fontMono: FONT_MONO,
 };
@@ -157,10 +153,8 @@ export const lightTheme: Theme = {
 	scrim: "rgba(0,0,0,0.45)",
 
 	accent: "#2563eb",
-	accentHover: "#1d4ed8",
 	accentTint: "rgba(37,99,235,0.12)",
 	attention: "#946200",
-	cyan: "#b45309",
 
 	fontMono: FONT_MONO,
 };
