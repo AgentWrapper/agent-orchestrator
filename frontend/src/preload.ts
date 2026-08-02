@@ -10,6 +10,7 @@ import type { DaemonStatus } from "./shared/daemon-status";
 import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
+import type { UiSettings } from "./main/ui-settings";
 import type { UpdateCheckOptions } from "./main/auto-updater";
 import type { FeatureBuild } from "./main/feature-builds";
 import type {
@@ -233,6 +234,10 @@ const api = {
 	updateSettings: {
 		get: () => ipcRenderer.invoke("updateSettings:get") as Promise<UpdateSettings>,
 		set: (settings: UpdateSettings) => ipcRenderer.invoke("updateSettings:set", settings) as Promise<void>,
+	},
+	uiSettings: {
+		get: () => ipcRenderer.invoke("uiSettings:get") as Promise<UiSettings>,
+		set: (settings: UiSettings) => ipcRenderer.invoke("uiSettings:set", settings) as Promise<UiSettings>,
 	},
 	keybindings: {
 		get: () => ipcRenderer.invoke("keybindings:get") as Promise<KeybindingOverrides>,

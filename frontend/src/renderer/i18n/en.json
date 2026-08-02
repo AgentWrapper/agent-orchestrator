@@ -1,0 +1,11 @@
+{
+	"settings.general": "General",
+	"settings.theme": "Theme",
+	"settings.theme.light": "Light",
+	"settings.theme.dark": "Dark",
+	"settings.theme.system": "System",
+	"settings.language": "Language",
+	"settings.language.en": "English",
+	"settings.language.zhCN": "Simplified Chinese",
+	"settings.connectMobile": "Connect Mobile"
+}

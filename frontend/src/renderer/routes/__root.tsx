@@ -4,6 +4,7 @@ import { TooltipProvider } from "../components/ui/tooltip";
 import type { QueryClient } from "@tanstack/react-query";
 import { captureRendererEvent, routeSurface } from "../lib/telemetry";
 import { useKeybindingsStore } from "../stores/keybindings-store";
+import { useLocaleStore } from "../stores/locale-store";
 
 export const Route = createRootRouteWithContext<{
 	queryClient: QueryClient;
@@ -14,6 +15,7 @@ export const Route = createRootRouteWithContext<{
 function RootComponent() {
 	const location = useRouterState({ select: (state) => state.location });
 	const loadKeybindings = useKeybindingsStore((state) => state.load);
+	const loadLocale = useLocaleStore((state) => state.load);
 
 	useEffect(() => {
 		void captureRendererEvent("ao.renderer.route_viewed", {
@@ -24,6 +26,10 @@ function RootComponent() {
 	useEffect(() => {
 		void loadKeybindings();
 	}, [loadKeybindings]);
+
+	useEffect(() => {
+		void loadLocale();
+	}, [loadLocale]);
 
 	return (
 		<TooltipProvider>

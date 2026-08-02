@@ -181,6 +181,12 @@ if (typeof window !== "undefined") {
 			get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
 			set: async () => undefined,
 		},
+		uiSettings: {
+			get: async () => ({ locale: "en" as const }),
+			set: async (settings: { locale: "en" | "zh-CN" }) => ({
+				locale: settings.locale === "zh-CN" ? ("zh-CN" as const) : ("en" as const),
+			}),
+		},
 		keybindings: {
 			get: async () => ({}),
 			set: async (overrides) => overrides,
