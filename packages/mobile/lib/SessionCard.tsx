@@ -9,7 +9,7 @@ import { relativeTime } from "./notificationView";
 import { toneColor } from "./prView";
 import { statusVisual, type Theme } from "./theme";
 import { useTheme, useThemedStyles } from "./ThemeProvider";
-import { Dot } from "./ui";
+import { cardShell, cardShellPressed, Dot } from "./ui";
 
 // One session on the board, following the desktop board card's anatomy: agent
 // mark and title, a branch line, a hairline, then a footer of status + relative
@@ -112,18 +112,8 @@ export function SessionCard({
 
 const makeStyles = (t: Theme) =>
 	StyleSheet.create({
-		// The shell PRCard and the orchestrator card share.
-		card: {
-			backgroundColor: t.bgElevated,
-			borderRadius: 12,
-			borderWidth: 1,
-			borderColor: t.borderSubtle,
-			paddingHorizontal: 14,
-			paddingVertical: 13,
-			marginHorizontal: 12,
-			marginVertical: 5,
-		},
-		cardPressed: { backgroundColor: t.bgElevatedHover, borderColor: t.borderDefault },
+		card: cardShell(t),
+		cardPressed: cardShellPressed(t),
 		head: { flexDirection: "row", alignItems: "flex-start", gap: 9 },
 		title: { flex: 1, color: t.textPrimary, fontSize: 15, fontWeight: "600", lineHeight: 20 },
 		// Nudged down to sit on the title's first baseline rather than its box top,

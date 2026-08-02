@@ -11,7 +11,7 @@ import { useApp } from "../../lib/store";
 import { attentionMetaFor, type AttentionLevel, type Theme } from "../../lib/theme";
 import { useTheme, useThemedStyles } from "../../lib/ThemeProvider";
 import { useTabScrollToTop } from "../../lib/useTabScrollToTop";
-import { Dot, EmptyState, IconButton, ScreenHeader } from "../../lib/ui";
+import { cardShell, Dot, EmptyState, IconButton, ScreenHeader } from "../../lib/ui";
 
 const ZONE_ORDER: AttentionLevel[] = ["merge", "respond", "review", "pending", "working", "done"];
 
@@ -214,17 +214,7 @@ function OrchestratorCard({
 const makeStyles = (t: Theme) =>
 	StyleSheet.create({
 		screen: { flex: 1, backgroundColor: t.bgBase },
-		// The shell SessionCard and PRCard already share.
-		card: {
-			backgroundColor: t.bgElevated,
-			borderRadius: 12,
-			borderWidth: 1,
-			borderColor: t.borderSubtle,
-			paddingHorizontal: 14,
-			paddingVertical: 13,
-			marginHorizontal: 12,
-			marginVertical: 5,
-		},
+		card: cardShell(t),
 		head: { flexDirection: "row", alignItems: "center", gap: 10 },
 		projName: { color: t.textPrimary, fontSize: 15, fontWeight: "600" },
 		statusRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 3 },

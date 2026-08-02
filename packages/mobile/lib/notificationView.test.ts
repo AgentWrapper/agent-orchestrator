@@ -32,6 +32,15 @@ describe("notificationTarget", () => {
 		expect(notificationTarget({ type: "ready_to_merge", sessionId: "abc" })).toBe("/prs");
 		expect(notificationTarget({ type: "pr_merged", sessionId: "abc" })).toBe("/prs");
 	});
+
+	// A tray payload carries no guarantee of a type field, and PushManager passes
+	// "" when it is missing. An unknown or absent type must still land somewhere
+	// rather than routing to "/session/undefined".
+	it("sends an unknown or missing type to the PRs tab", () => {
+		expect(notificationTarget({ type: "" })).toBe("/prs");
+		expect(notificationTarget({ type: "", sessionId: "abc" })).toBe("/prs");
+		expect(notificationTarget({ type: "something_new", sessionId: "abc" })).toBe("/prs");
+	});
 });
 
 describe("relativeTime", () => {

@@ -932,3 +932,35 @@ const makeStyles = (t: Theme) =>
 			maxWidth: 300,
 		},
 	});
+
+/**
+ * The shell every card in the app shares: session cards, PR cards, and the
+ * orchestrator's project card.
+ *
+ * These three had byte-identical style blocks, each with a comment
+ * acknowledging the duplication ("Matches SessionCard's shell so a PR card and
+ * a session card read as siblings"). Comments cannot keep them in step — a
+ * radius changed in one place would quietly make one card a different shape
+ * from its neighbours in the same scroll view. This is what those comments were
+ * describing, made real.
+ *
+ * Spread it and add whatever a specific card needs on top:
+ *   card: { ...cardShell(t), marginBottom: 0 }
+ */
+export function cardShell(t: Theme): ViewStyle {
+	return {
+		backgroundColor: t.bgElevated,
+		borderRadius: 12,
+		borderWidth: 1,
+		borderColor: t.borderSubtle,
+		paddingHorizontal: 14,
+		paddingVertical: 13,
+		marginHorizontal: 12,
+		marginVertical: 5,
+	};
+}
+
+/** The pressed state for a tappable cardShell. */
+export function cardShellPressed(t: Theme): ViewStyle {
+	return { backgroundColor: t.bgElevatedHover, borderColor: t.borderDefault };
+}

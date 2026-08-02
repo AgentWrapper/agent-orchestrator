@@ -15,7 +15,7 @@ import {
 	type PRLifecycle,
 } from "./prView";
 import { useTheme, useThemedStyles } from "./ThemeProvider";
-import { IconButton } from "./ui";
+import { cardShell, IconButton } from "./ui";
 
 // One PR, complete. Everything the daemon knows is on the card — there is no
 // detail screen behind it, because for most PRs the detail was four rows and two
@@ -125,17 +125,7 @@ export function PRCard({
 
 const makeStyles = (t: Theme) =>
 	StyleSheet.create({
-	// Matches SessionCard's shell so a PR card and a session card read as siblings.
-	card: {
-		backgroundColor: t.bgElevated,
-		borderRadius: 12,
-		borderWidth: 1,
-		borderColor: t.borderSubtle,
-		paddingHorizontal: 14,
-		paddingVertical: 13,
-		marginHorizontal: 12,
-		marginVertical: 5,
-	},
+	card: cardShell(t),
 	top: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 8 },
 	number: { color: t.textSecondary, fontSize: 12, fontWeight: "700", fontFamily: t.fontMono },
 	state: { fontSize: 12, fontWeight: "600" },

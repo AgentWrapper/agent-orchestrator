@@ -7,6 +7,7 @@ import { useRootNavigationState, useRouter } from "expo-router";
 import { useEffect, useRef } from "react";
 import { AppState } from "react-native";
 import { markNotificationRead } from "./api";
+import { notificationTarget } from "./notificationView";
 import { configurePushHandler, ensureAndroidChannel, registerForPush, unregisterFromPush } from "./push";
 import { useApp } from "./store";
 
@@ -90,14 +91,12 @@ export function PushManager(): null {
 		if (config && data.notificationId) {
 			markNotificationRead(config, data.notificationId).catch(() => {});
 		}
-		if (data.type === "needs_input" && data.sessionId) {
-			// The session screen handles a terminated/missing session itself
-			// (offers Restore), so navigate straight in.
-			router.navigate(`/session/${data.sessionId}`);
-			return;
-		}
-		// PR notifications (ready_to_merge / pr_merged / pr_closed_unmerged) → PRs tab.
-		router.navigate("/prs");
+		// Shared with the history screen via notificationTarget: needs_input lands
+		// on the session (which handles a terminated one itself by offering
+		// Restore), and every PR type lands on the PRs tab. Opening an alert from
+		// the tray and opening the same alert from history have to agree, and they
+		// only do if one rule decides both.
+		router.navigate(notificationTarget({ type: data.type ?? "", sessionId: data.sessionId }));
 	}
 
 	return null;
