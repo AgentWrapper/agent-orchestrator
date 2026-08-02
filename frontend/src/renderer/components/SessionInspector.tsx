@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
+	AlertTriangle,
 	ArrowUpRight,
 	ChevronDown,
 	ChevronRight,
@@ -37,7 +38,7 @@ import { StatusPill } from "./StatusPill";
 import { CodexIcon } from "./icons";
 import { SessionTerminationDialog } from "./SessionTerminationDialog";
 import { Switch } from "./ui/switch";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -288,6 +289,11 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 	const query = useSessionScmSummary(session.id);
 	const developerMode = useUiStore((state) => state.developerMode);
 	const usageQuery = useSessionUsage(session.id, developerMode);
+	const showUsage =
+		developerMode &&
+		!usageQuery.isLoading &&
+		!usageQuery.isError &&
+		hasMeaningfulSessionUsage(usageQuery.data);
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? `Pull requests (${prSummaries.length})` : "Pull request";
 	const issueId = canonicalTrackerIssueId(session.issueId);
@@ -313,13 +319,9 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				<ResumeAgentControl session={session} />
 			</Section>
 
-			{developerMode ? (
+			{showUsage && usageQuery.data ? (
 				<Section title="Usage & cost">
-					<UsageCostTelemetry
-						error={usageQuery.isError}
-						loading={usageQuery.isLoading}
-						usage={usageQuery.data}
-					/>
+					<UsageCostTelemetry usage={usageQuery.data} />
 				</Section>
 			) : null}
 
@@ -336,24 +338,18 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 	);
 }
 
-function UsageCostTelemetry({
-	error,
-	loading,
-	usage,
-}: {
-	error: boolean;
-	loading: boolean;
-	usage?: SessionUsage;
-}) {
-	if (loading) {
-		return <p className={inspectorEmptyClass}>Loading telemetry…</p>;
-	}
-	if (error || !usage) {
-		return <p className={inspectorEmptyClass}>Usage telemetry is unavailable.</p>;
-	}
-
+function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
 	const totalTokens = usageTokenTotal(usage.totals);
-	const costNanos = usage.totals.cost.valueNanos;
+	const coverageLabel = formatUsageCoverage(sessionUsageCoverage(usage));
+	const collectionLabel = usageCollectionLabel(usage.collectionState);
+	const warnings = usage.warnings.map(formatUsageWarning);
+	const statusText = `${coverageLabel} · ${collectionLabel}`;
+	const statusLabel = [
+		`Usage coverage: ${coverageLabel}. Collection status: ${collectionLabel}.`,
+		warnings.length > 0 ? `Warnings: ${warnings.join("; ")}.` : "",
+	]
+		.filter(Boolean)
+		.join(" ");
 
 	return (
 		<div>
@@ -361,27 +357,30 @@ function UsageCostTelemetry({
 				<div className="min-w-0">
 					<p className="text-2xs text-settings-muted">Total tokens</p>
 					<p
+						aria-label={
+							totalTokens === null
+								? "Total tokens unavailable"
+								: `${totalTokens.toLocaleString("en-US")} total tokens. ${coverageLabel}`
+						}
 						className="mt-0.5 truncate font-mono text-md-sm font-medium text-settings-label"
-						title={totalTokens === null ? undefined : `${totalTokens.toLocaleString("en-US")} tokens`}
+						title={
+							totalTokens === null
+								? undefined
+								: `${totalTokens.toLocaleString("en-US")} tokens · ${coverageLabel}`
+						}
 					>
 						{totalTokens === null ? "No usage yet" : formatTelemetryTokenValue(totalTokens)}
 					</p>
 				</div>
 				<div className="min-w-0 text-right">
 					<p className="text-2xs text-settings-muted">Total cost</p>
-					{costNanos === null ? (
-						<Badge
-							className="mt-0.5 bg-success/10 px-1.5 py-0.5 text-[9px] leading-none"
-							title="Dollar cost support is coming soon."
-							variant="success"
-						>
-							Coming soon
-						</Badge>
-					) : (
-						<span className="font-mono text-sm-md font-medium text-settings-label">
-								{formatCost(costNanos)}
-						</span>
-					)}
+					<Badge
+						className="mt-0.5 bg-success/10 px-1.5 py-0.5 text-[9px] leading-none"
+						title="Dollar cost support is coming soon."
+						variant="success"
+					>
+						Coming soon
+					</Badge>
 				</div>
 			</div>
 
@@ -396,7 +395,7 @@ function UsageCostTelemetry({
 
 			{usage.harnesses.length > 0 ? (
 				<div className="mt-3 border-t border-(--color-border-settings-input) pt-2">
-					<div className="grid grid-cols-[minmax(0,1fr)_4.5rem_3rem] items-center gap-2 px-1 pb-1 text-2xs text-settings-muted">
+					<div className="grid grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 px-1 pb-1 text-2xs text-settings-muted">
 						<span>Agent</span>
 						<span className="text-right">Tokens</span>
 						<span className="text-right">Cost</span>
@@ -410,26 +409,97 @@ function UsageCostTelemetry({
 				</div>
 			) : null}
 
-			<p className="mt-2 border-t border-(--color-border-settings-input) pt-2 text-right text-2xs text-settings-muted">
-				{usageCollectionLabel(usage.collectionState)}
-				{usage.lastObservedAt ? ` · Updated ${formatTimeCompact(usage.lastObservedAt)}` : ""}
+			{warnings.length > 0 ? (
+				<div
+					aria-label={`Usage warnings: ${warnings.join("; ")}`}
+					className="mt-2 flex items-start gap-1.5 border-t border-(--color-border-settings-input) pt-2 text-2xs text-settings-muted"
+					role="status"
+				>
+					<AlertTriangle aria-hidden="true" className="mt-px size-3 shrink-0 text-warning" />
+					<span>{warnings.join("; ")}</span>
+				</div>
+			) : null}
+
+			<p
+				aria-label={statusLabel}
+				className="mt-2 border-t border-(--color-border-settings-input) pt-2 text-right text-2xs text-settings-muted"
+			>
+				<span>{statusText}</span>
+				{usage.lastObservedAt ? <span>{` · Updated ${formatTimeCompact(usage.lastObservedAt)}`}</span> : null}
 			</p>
 		</div>
 	);
 }
 
+function useHoverableUsagePopover() {
+	const [open, setOpen] = useState(false);
+	const openedByPointer = useRef(false);
+	const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	const cancelOpen = () => {
+		if (openTimer.current !== null) clearTimeout(openTimer.current);
+		openTimer.current = null;
+	};
+	const cancelClose = () => {
+		if (closeTimer.current !== null) clearTimeout(closeTimer.current);
+		closeTimer.current = null;
+	};
+
+	useEffect(
+		() => () => {
+			if (openTimer.current !== null) clearTimeout(openTimer.current);
+			if (closeTimer.current !== null) clearTimeout(closeTimer.current);
+		},
+		[],
+	);
+
+	return {
+		open,
+		openedByPointer,
+		cancelClose,
+		markKeyboardOpen: () => {
+			openedByPointer.current = false;
+		},
+		markPointerOpen: () => {
+			openedByPointer.current = true;
+		},
+		onOpenChange: (nextOpen: boolean) => {
+			cancelOpen();
+			cancelClose();
+			setOpen(nextOpen);
+		},
+		scheduleClose: () => {
+			cancelOpen();
+			cancelClose();
+			closeTimer.current = setTimeout(() => setOpen(false), 120);
+		},
+		scheduleOpen: () => {
+			openedByPointer.current = true;
+			cancelOpen();
+			cancelClose();
+			openTimer.current = setTimeout(() => setOpen(true), 220);
+		},
+	};
+}
+
 function UsageProviderRow({ harness }: { harness: SessionUsage["harnesses"][number] }) {
 	const harnessName = formatHarnessName(harness.harness);
 	const totalTokens = usageTokenTotal(harness.totals);
-	const costNanos = harness.totals.cost.valueNanos;
+	const coverageLabel = formatUsageCoverage(usageTotalsCoverage(harness.totals));
+	const peek = useHoverableUsagePopover();
 
 	return (
-		<HoverCard closeDelay={120} openDelay={220}>
-			<HoverCardTrigger asChild>
-				<div
-					aria-label={`${harnessName} usage details`}
-					className="grid cursor-default grid-cols-[minmax(0,1fr)_4.5rem_3rem] items-center gap-2 rounded-md px-1 py-2 outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
-					tabIndex={0}
+		<Popover onOpenChange={peek.onOpenChange} open={peek.open}>
+			<PopoverTrigger asChild>
+				<button
+					aria-label={`${harnessName} usage details, ${coverageLabel}`}
+					className="grid w-full cursor-default grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 rounded-md px-1 py-2 text-left outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
+					onKeyDown={peek.markKeyboardOpen}
+					onPointerDown={peek.markPointerOpen}
+					onPointerEnter={peek.scheduleOpen}
+					onPointerLeave={peek.scheduleClose}
+					type="button"
 				>
 					<span className="min-w-0">
 						<span className="block truncate text-sm-md text-settings-label">{harnessName}</span>
@@ -437,34 +507,46 @@ function UsageProviderRow({ harness }: { harness: SessionUsage["harnesses"][numb
 					</span>
 					<span
 						className="text-right font-mono text-2xs text-settings-label"
-						title={totalTokens === null ? undefined : `${totalTokens.toLocaleString("en-US")} tokens`}
+						title={
+							totalTokens === null
+								? undefined
+								: `${totalTokens.toLocaleString("en-US")} tokens · ${coverageLabel}`
+						}
 					>
 						{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
 					</span>
 					<span
-						className="text-right font-mono text-2xs text-settings-muted"
-						title={costNanos === null ? "Cost coming soon" : undefined}
+						aria-label="Cost: Coming soon"
+						className="text-right text-2xs text-settings-muted"
+						title="Cost coming soon"
 					>
-						{costNanos === null ? "—" : formatCost(costNanos)}
+						Coming soon
 					</span>
-				</div>
-			</HoverCardTrigger>
-			<HoverCardContent
+				</button>
+			</PopoverTrigger>
+			<PopoverContent
 				align="end"
 				aria-label={`${harnessName} usage peek`}
+				className="w-80 max-w-[calc(100vw-1rem)] p-3"
+				onOpenAutoFocus={(event) => {
+					if (peek.openedByPointer.current) event.preventDefault();
+				}}
+				onPointerEnter={peek.cancelClose}
+				onPointerLeave={peek.scheduleClose}
 				role="region"
 				side="left"
 			>
 				<ProviderUsagePeek harness={harness} />
-			</HoverCardContent>
-		</HoverCard>
+			</PopoverContent>
+		</Popover>
 	);
 }
 
 function ProviderUsagePeek({ harness }: { harness: SessionUsage["harnesses"][number] }) {
 	const harnessName = formatHarnessName(harness.harness);
 	const totalTokens = usageTokenTotal(harness.totals);
-	const costNanos = harness.totals.cost.valueNanos;
+	const coverageLabel = formatUsageCoverage(usageTotalsCoverage(harness.totals));
+	const [activeModelKey, setActiveModelKey] = useState<string | null>(null);
 
 	return (
 		<div>
@@ -473,11 +555,12 @@ function ProviderUsagePeek({ harness }: { harness: SessionUsage["harnesses"][num
 					<p className="truncate text-sm-md font-semibold text-settings-label">{harnessName}</p>
 					<p className="truncate text-2xs text-settings-muted">{formatProviderName(harness.provider)}</p>
 				</div>
-				<div className="shrink-0 text-right font-mono text-2xs">
-					<p className="text-settings-label">
+				<div className="shrink-0 text-right text-2xs">
+					<p className="font-mono text-settings-label">
 						{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
 					</p>
-					<p className="text-settings-muted">{costNanos === null ? "—" : formatCost(costNanos)}</p>
+					<p className="text-settings-muted">Coming soon</p>
+					<p className="text-settings-muted">{coverageLabel}</p>
 				</div>
 			</div>
 
@@ -486,15 +569,23 @@ function ProviderUsagePeek({ harness }: { harness: SessionUsage["harnesses"][num
 			</div>
 
 			<div className="mt-3 border-t border-border pt-2">
-				<div className="grid grid-cols-[minmax(0,1fr)_4.5rem_3rem] items-center gap-2 px-1 pb-1 text-2xs text-settings-muted">
+				<div className="grid grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 px-1 pb-1 text-2xs text-settings-muted">
 					<span>{formatCount(harness.models.length, "model")}</span>
 					<span className="text-right">Tokens</span>
 					<span className="text-right">Cost</span>
 				</div>
 				{harness.models.length > 0 ? (
-					harness.models.map((model, index) => (
-						<UsageModelRow key={`${model.provider}:${model.modelId}:${index}`} model={model} />
-					))
+					harness.models.map((model, index) => {
+						const modelKey = `${model.provider}:${model.modelId}:${index}`;
+						return (
+							<UsageModelRow
+								active={activeModelKey === modelKey}
+								key={modelKey}
+								model={model}
+								onActiveChange={(active) => setActiveModelKey(active ? modelKey : null)}
+							/>
+						);
+					})
 				) : (
 					<p className="px-1 py-2 text-2xs text-settings-muted">No model telemetry available.</p>
 				)}
@@ -503,58 +594,82 @@ function ProviderUsagePeek({ harness }: { harness: SessionUsage["harnesses"][num
 	);
 }
 
-function UsageModelRow({ model }: { model: SessionUsage["harnesses"][number]["models"][number] }) {
+function UsageModelRow({
+	active,
+	model,
+	onActiveChange,
+}: {
+	active: boolean;
+	model: SessionUsage["harnesses"][number]["models"][number];
+	onActiveChange: (active: boolean) => void;
+}) {
 	const modelName = model.modelId || formatProviderName(model.provider);
 	const totalTokens = usageTokenTotal(model.totals);
-	const costNanos = model.totals.cost.valueNanos;
+	const coverageLabel = formatUsageCoverage(usageTotalsCoverage(model.totals));
+	const detailID = useId();
 
 	return (
-		<HoverCard closeDelay={120} openDelay={180}>
-			<HoverCardTrigger asChild>
-				<div
-					aria-label={`${modelName} usage details`}
-					className="grid cursor-default grid-cols-[minmax(0,1fr)_4.5rem_3rem] items-center gap-2 rounded-md px-1 py-2 outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
-					tabIndex={0}
-				>
-					<span className="min-w-0 truncate font-mono text-2xs text-settings-label">{modelName}</span>
-					<span
-						className="text-right font-mono text-2xs text-settings-label"
-						title={totalTokens === null ? undefined : `${totalTokens.toLocaleString("en-US")} tokens`}
-					>
-						{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
-					</span>
-					<span
-						className="text-right font-mono text-2xs text-settings-muted"
-						title={costNanos === null ? "Cost coming soon" : undefined}
-					>
-						{costNanos === null ? "—" : formatCost(costNanos)}
-					</span>
-				</div>
-			</HoverCardTrigger>
-			<HoverCardContent
-				align="start"
-				aria-label={`${modelName} usage peek`}
-				className="w-72"
-				role="region"
-				side="left"
+		<div
+			onBlur={(event) => {
+				if (!event.currentTarget.contains(event.relatedTarget)) onActiveChange(false);
+			}}
+			onPointerLeave={() => onActiveChange(false)}
+		>
+			<button
+				aria-controls={detailID}
+				aria-expanded={active}
+				aria-label={`${modelName} usage details, ${coverageLabel}`}
+				className="grid w-full cursor-default grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 rounded-md px-1 py-2 text-left outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
+				onClick={() => onActiveChange(true)}
+				onFocus={() => onActiveChange(true)}
+				onPointerEnter={() => onActiveChange(true)}
+				type="button"
 			>
-				<div className="mb-3 flex items-start justify-between gap-4">
-					<div className="min-w-0">
-						<p className="truncate font-mono text-sm-md font-semibold text-settings-label">{modelName}</p>
-						<p className="truncate text-2xs text-settings-muted">{formatProviderName(model.provider)}</p>
+				<span className="min-w-0 truncate font-mono text-2xs text-settings-label">{modelName}</span>
+				<span
+					className="text-right font-mono text-2xs text-settings-label"
+					title={
+						totalTokens === null
+							? undefined
+							: `${totalTokens.toLocaleString("en-US")} tokens · ${coverageLabel}`
+					}
+				>
+					{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
+				</span>
+				<span
+					aria-label="Cost: Coming soon"
+					className="text-right text-2xs text-settings-muted"
+					title="Cost coming soon"
+				>
+					Coming soon
+				</span>
+			</button>
+			{active ? (
+				<div
+					aria-label={`${modelName} usage peek`}
+					className="mx-1 mb-2 border-t border-border pt-3"
+					id={detailID}
+					role="region"
+				>
+					<div className="mb-3 flex items-start justify-between gap-4">
+						<div className="min-w-0">
+							<p className="truncate font-mono text-sm-md font-semibold text-settings-label">{modelName}</p>
+							<p className="truncate text-2xs text-settings-muted">{formatProviderName(model.provider)}</p>
+						</div>
+						<div className="shrink-0 text-right text-2xs">
+							<p className="font-mono text-settings-label">
+								{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
+							</p>
+							<p className="text-settings-muted">Coming soon</p>
+							<p className="text-settings-muted">{coverageLabel}</p>
+						</div>
 					</div>
-					<div className="shrink-0 text-right font-mono text-2xs">
-						<p className="text-settings-label">
-							{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
-						</p>
-						<p className="text-settings-muted">{costNanos === null ? "—" : formatCost(costNanos)}</p>
+					<div className="border-t border-border pt-3">
+						<UsageMetrics totals={model.totals} />
 					</div>
 				</div>
-				<div className="border-t border-border pt-3">
-					<UsageMetrics totals={model.totals} />
-				</div>
-			</HoverCardContent>
-		</HoverCard>
+			) : null}
+		</div>
 	);
 }
 
@@ -578,21 +693,94 @@ function UsageMetric({
 	label: string;
 	metric: SessionUsage["totals"]["inputTokens"];
 }) {
+	const coverageLabel = formatUsageCoverage(metric.coverage);
+	const accessibleLabel =
+		metric.value === null
+			? `${label}: telemetry unavailable`
+			: `${label}: ${metric.value.toLocaleString("en-US")} tokens. ${coverageLabel}`;
 	return (
 		<div className="min-w-0">
 			<dt className="truncate text-2xs text-settings-muted">{label}</dt>
 			<dd
+				aria-label={accessibleLabel}
 				className="mt-0.5 truncate font-mono text-sm-md text-settings-label"
 				title={
 					metric.value === null
 						? `${label} telemetry unavailable`
-						: `${metric.value.toLocaleString("en-US")} tokens · ${metric.coverage} coverage`
+						: `${metric.value.toLocaleString("en-US")} tokens · ${coverageLabel}`
 				}
 			>
 				{metric.value === null ? "—" : formatTelemetryTokenValue(metric.value)}
 			</dd>
 		</div>
 	);
+}
+
+const usageMetricKeys = [
+	"inputTokens",
+	"uncachedInputTokens",
+	"cacheReadTokens",
+	"cacheWriteTokens",
+	"outputTokens",
+	"reasoningTokens",
+] as const;
+
+type UsageCoverage = SessionUsage["totals"]["inputTokens"]["coverage"];
+
+function usageScopes(usage: SessionUsage): SessionUsage["totals"][] {
+	return [
+		usage.totals,
+		...usage.harnesses.flatMap((harness) => [
+			harness.totals,
+			...harness.models.map((model) => model.totals),
+		]),
+	];
+}
+
+function hasMeaningfulSessionUsage(usage?: SessionUsage): usage is SessionUsage {
+	if (!usage) return false;
+	return usageScopes(usage).some((totals) =>
+		usageMetricKeys.some((key) => (totals[key].value ?? 0) > 0),
+	);
+}
+
+function usageTotalsCoverage(totals: SessionUsage["totals"]): UsageCoverage {
+	const metrics = usageMetricKeys.map((key) => totals[key]);
+	if (metrics.some((metric) => metric.coverage === "partial")) return "partial";
+	const available = metrics.filter((metric) => metric.value !== null);
+	if (available.length === 0) return "unavailable";
+	return available.every((metric) => metric.coverage === "complete") ? "complete" : "partial";
+}
+
+function sessionUsageCoverage(usage: SessionUsage): UsageCoverage {
+	const scopeCoverage = usageScopes(usage).map(usageTotalsCoverage);
+	if (
+		usage.warnings.length > 0 ||
+		usage.collectionState === "collecting" ||
+		usage.collectionState === "partial" ||
+		scopeCoverage.includes("partial")
+	) {
+		return "partial";
+	}
+	if (scopeCoverage.includes("complete")) return "complete";
+	return "unavailable";
+}
+
+function formatUsageCoverage(coverage: UsageCoverage): string {
+	switch (coverage) {
+		case "complete":
+			return "Complete coverage";
+		case "partial":
+			return "Partial coverage";
+		default:
+			return "Coverage unavailable";
+	}
+}
+
+function formatUsageWarning(warning: string): string {
+	const text = warning.replaceAll("_", " ").trim();
+	if (!text) return "Usage warning";
+	return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 function formatTelemetryTokenValue(totalTokens: number): string {
@@ -641,24 +829,12 @@ function usageCollectionLabel(state: SessionUsage["collectionState"]): string {
 		case "collecting":
 			return "Collecting";
 		case "complete":
-			return "Complete";
+			return "Collection complete";
 		case "partial":
-			return "Partial";
+			return "Collection partial";
 		default:
 			return "Unavailable";
 	}
-}
-
-function formatCost(valueNanos: number | null): string {
-	if (valueNanos === null) return "Coming soon";
-	const dollars = valueNanos / 1_000_000_000;
-	if (dollars > 0 && dollars < 0.01) return "<$0.01";
-	return dollars.toLocaleString("en-US", {
-		style: "currency",
-		currency: "USD",
-		minimumFractionDigits: 2,
-		maximumFractionDigits: dollars < 1 ? 4 : 2,
-	});
 }
 
 function ResumeAgentControl({ session }: { session: WorkspaceSession }) {

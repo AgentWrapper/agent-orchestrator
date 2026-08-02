@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionInspector } from "./SessionInspector";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
-import type { SessionUsage } from "../hooks/useSessionUsage";
+import { sessionUsageDetailQueryKey, type SessionUsage } from "../hooks/useSessionUsage";
 import { useUiStore } from "../stores/ui-store";
 import type { PRState, PullRequestFacts, WorkspaceSession } from "../types/workspace";
 
@@ -107,11 +107,6 @@ const usageTelemetry = (overrides: Partial<SessionUsage> = {}): SessionUsage => 
 		cacheWriteTokens: { value: 0, coverage: "partial" },
 		outputTokens: { value: 200, coverage: "partial" },
 		reasoningTokens: { value: 40, coverage: "partial" },
-		cost: {
-			valueNanos: null,
-			currency: "USD",
-			coverage: "unavailable",
-		},
 	},
 	harnesses: [
 		{
@@ -124,11 +119,6 @@ const usageTelemetry = (overrides: Partial<SessionUsage> = {}): SessionUsage => 
 				cacheWriteTokens: { value: 0, coverage: "partial" },
 				outputTokens: { value: 200, coverage: "partial" },
 				reasoningTokens: { value: 40, coverage: "partial" },
-				cost: {
-					valueNanos: null,
-					currency: "USD",
-					coverage: "unavailable",
-				},
 			},
 			models: [
 				{
@@ -141,11 +131,6 @@ const usageTelemetry = (overrides: Partial<SessionUsage> = {}): SessionUsage => 
 						cacheWriteTokens: { value: 0, coverage: "partial" },
 						outputTokens: { value: 200, coverage: "partial" },
 						reasoningTokens: { value: 40, coverage: "partial" },
-						cost: {
-							valueNanos: null,
-							currency: "USD",
-							coverage: "unavailable",
-						},
 					},
 				},
 			],
@@ -158,7 +143,10 @@ function renderWithQuery(children: ReactNode) {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	});
-	return render(<QueryClientProvider client={client}>{children}</QueryClientProvider>);
+	return {
+		...render(<QueryClientProvider client={client}>{children}</QueryClientProvider>),
+		queryClient: client,
+	};
 }
 
 function mockCommonGets(_unusedRuns: unknown[] = [], reviewerHandleId = "", reviews: unknown[] = []) {
@@ -719,17 +707,125 @@ describe("SessionInspector Usage & cost section", () => {
 		expect(getMock.mock.calls.some(([path]) => path === "/api/v1/usage/sessions/{sessionId}")).toBe(false);
 	});
 
-	it("shows session telemetry immediately and peeks provider and model details on hover", async () => {
+	it("hides the section while detailed usage is loading", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/usage/sessions/{sessionId}") {
+				return await new Promise(() => undefined);
+			}
+			return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
+		});
+
 		renderWithQuery(<SessionInspector session={session([])} />);
 
-		const usageSection = screen
-			.getByText("Usage & cost")
-			.closest("[data-testid='inspector-section']") as HTMLElement;
-		await waitFor(() => expect(within(usageSection).getByText("Coming soon")).toBeInTheDocument());
+		await waitFor(() =>
+			expect(getMock).toHaveBeenCalledWith("/api/v1/usage/sessions/{sessionId}", {
+				params: { path: { sessionId: "sess-1" } },
+			}),
+		);
+		expect(screen.queryByText("Usage & cost")).not.toBeInTheDocument();
+	});
+
+	it("hides the section when no usage event or token value exists", async () => {
+		const unavailable = { value: null, coverage: "unavailable" as const };
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/usage/sessions/{sessionId}") {
+				return {
+					data: usageTelemetry({
+						collectionState: "waiting",
+						lastObservedAt: undefined,
+						totals: {
+							inputTokens: unavailable,
+							uncachedInputTokens: unavailable,
+							cacheReadTokens: unavailable,
+							cacheWriteTokens: unavailable,
+							outputTokens: unavailable,
+							reasoningTokens: unavailable,
+						},
+						harnesses: [],
+					}),
+					error: undefined,
+				};
+			}
+			return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
+		});
+
+		const { queryClient } = renderWithQuery(<SessionInspector session={session([])} />);
+
+		await waitFor(() =>
+			expect(queryClient.getQueryData(sessionUsageDetailQueryKey("sess-1"))).toEqual(
+				expect.objectContaining({ collectionState: "waiting", harnesses: [] }),
+			),
+		);
+		expect(screen.queryByText("Usage & cost")).not.toBeInTheDocument();
+	});
+
+	it("hides the section when an observed usage record has only zero token values", async () => {
+		const zero = { value: 0, coverage: "partial" as const };
+		const zeroUsage = usageTelemetry({
+			totals: {
+				inputTokens: zero,
+				uncachedInputTokens: zero,
+				cacheReadTokens: zero,
+				cacheWriteTokens: zero,
+				outputTokens: zero,
+				reasoningTokens: zero,
+			},
+			harnesses: [],
+		});
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/usage/sessions/{sessionId}") {
+				return { data: zeroUsage, error: undefined };
+			}
+			return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
+		});
+
+		const { queryClient } = renderWithQuery(<SessionInspector session={session([])} />);
+		await waitFor(() =>
+			expect(queryClient.getQueryData(sessionUsageDetailQueryKey("sess-1"))).toEqual(zeroUsage),
+		);
+
+		expect(screen.queryByText("Usage & cost")).not.toBeInTheDocument();
+	});
+
+	it("always presents cost as coming soon even if a legacy payload contains numeric cost", async () => {
+		const usage = usageTelemetry();
+		const legacyCost = { valueNanos: 2_500_000_000, currency: "USD", coverage: "complete" };
+		const legacyUsage = {
+			...usage,
+			totals: { ...usage.totals, cost: legacyCost },
+			harnesses: usage.harnesses.map((harness) => ({
+				...harness,
+				totals: { ...harness.totals, cost: legacyCost },
+				models: harness.models.map((model) => ({
+					...model,
+					totals: { ...model.totals, cost: legacyCost },
+				})),
+			})),
+		} as unknown as SessionUsage;
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/usage/sessions/{sessionId}") {
+				return { data: legacyUsage, error: undefined };
+			}
+			return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={session([])} />);
+		const usageTitle = await screen.findByText("Usage & cost");
+		const usageSection = usageTitle.closest("[data-testid='inspector-section']") as HTMLElement;
+
+		expect(within(usageSection).getAllByText("Coming soon").length).toBeGreaterThan(0);
+		expect(usageSection).not.toHaveTextContent("$2.50");
+	});
+
+	it("shows token telemetry and peeks provider and model details on hover", async () => {
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		const usageTitle = await screen.findByText("Usage & cost");
+		const usageSection = usageTitle.closest("[data-testid='inspector-section']") as HTMLElement;
 
 		expect(within(usageSection).getByText("Total tokens")).toBeInTheDocument();
 		expect(within(usageSection).getByText("Total cost")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Coming soon")).toHaveClass("text-success");
+		expect(within(usageSection).getAllByText("Coming soon")[0]).toHaveClass("text-success");
 		expect(within(usageSection).getAllByText("1.2K").length).toBeGreaterThan(0);
 		expect(within(usageSection).queryByText("1.2K tok")).not.toBeInTheDocument();
 		expect(within(usageSection).getByText("Input tokens")).toBeInTheDocument();
@@ -745,12 +841,13 @@ describe("SessionInspector Usage & cost section", () => {
 		);
 		expect(within(usageSection).getByText("Codex")).toBeInTheDocument();
 		expect(within(usageSection).getByText("OpenAI")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Collecting", { exact: false })).toBeInTheDocument();
+		expect(within(usageSection).getByText("Partial coverage · Collecting")).toBeInTheDocument();
+		expect(within(usageSection).getByLabelText(/Usage coverage: Partial coverage/)).toBeInTheDocument();
+		expect(within(usageSection).getByLabelText("Input tokens: 1,000 tokens. Partial coverage")).toBeInTheDocument();
 		expect(within(usageSection).queryByText("gpt-5.6")).not.toBeInTheDocument();
 		expect(within(usageSection).getByTitle("Cost coming soon")).toBeInTheDocument();
-		expect(within(usageSection).queryByTitle("Estimated cost coming soon")).not.toBeInTheDocument();
 
-		await userEvent.hover(within(usageSection).getByLabelText("Codex usage details"));
+		await userEvent.hover(within(usageSection).getByLabelText(/Codex usage details/));
 		const providerPeek = await screen.findByRole("region", { name: "Codex usage peek" });
 		expect(within(providerPeek).getByText("1 model")).toBeInTheDocument();
 		expect(within(providerPeek).getByText("gpt-5.6")).toBeInTheDocument();
@@ -758,7 +855,7 @@ describe("SessionInspector Usage & cost section", () => {
 		expect(within(providerPeek).getByText("Output tokens")).toBeInTheDocument();
 		expect(within(providerPeek).getByTitle("Cost coming soon")).toBeInTheDocument();
 
-		await userEvent.hover(within(providerPeek).getByLabelText("gpt-5.6 usage details"));
+		await userEvent.hover(within(providerPeek).getByLabelText(/gpt-5.6 usage details/));
 		const modelPeek = await screen.findByRole("region", { name: "gpt-5.6 usage peek" });
 		expect(within(modelPeek).getByText("Input tokens")).toBeInTheDocument();
 		expect(within(modelPeek).getByText("Output tokens")).toBeInTheDocument();
@@ -775,6 +872,77 @@ describe("SessionInspector Usage & cost section", () => {
 		expect(getMock).toHaveBeenCalledWith("/api/v1/usage/sessions/{sessionId}", {
 			params: { path: { sessionId: "sess-1" } },
 		});
+	});
+
+	it("qualifies complete collection when any shown metric is partial and surfaces warnings", async () => {
+		const usage = usageTelemetry();
+		const completeTotals: SessionUsage["totals"] = {
+			inputTokens: { value: 1000, coverage: "complete" },
+			uncachedInputTokens: { value: 600, coverage: "complete" },
+			cacheReadTokens: { value: 400, coverage: "complete" },
+			cacheWriteTokens: { value: 0, coverage: "complete" },
+			outputTokens: { value: 200, coverage: "complete" },
+			reasoningTokens: { value: 40, coverage: "complete" },
+		};
+		const harness = usage.harnesses[0];
+		const model = harness?.models[0];
+		if (!harness || !model) throw new Error("missing usage detail fixture");
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/usage/sessions/{sessionId}") {
+				return {
+					data: usageTelemetry({
+						collectionState: "complete",
+						warnings: ["partial_reasoning_coverage"],
+						totals: completeTotals,
+						harnesses: [{
+							...harness,
+							totals: completeTotals,
+							models: [{
+								...model,
+								totals: {
+									...completeTotals,
+									reasoningTokens: { value: 40, coverage: "partial" },
+								},
+							}],
+						}],
+					}),
+					error: undefined,
+				};
+			}
+			return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={session([])} />);
+		const usageTitle = await screen.findByText("Usage & cost");
+		const usageSection = usageTitle.closest("[data-testid='inspector-section']") as HTMLElement;
+
+		expect(within(usageSection).getByText("Partial coverage · Collection complete")).toBeInTheDocument();
+		expect(within(usageSection).getByText("Partial reasoning coverage")).toBeInTheDocument();
+		expect(within(usageSection).getByLabelText(/Warnings: Partial reasoning coverage/)).toBeInTheDocument();
+		expect(within(usageSection).queryByText("Complete")).not.toBeInTheDocument();
+	});
+
+	it("opens provider and model detail with the keyboard and returns focus on escape", async () => {
+		const user = userEvent.setup();
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		const providerTrigger = await screen.findByRole("button", {
+			name: /Codex usage details, Partial coverage/,
+		});
+		providerTrigger.focus();
+		await user.keyboard("{Enter}");
+
+		const providerPeek = await screen.findByRole("region", { name: "Codex usage peek" });
+		const modelTrigger = within(providerPeek).getByRole("button", {
+			name: /gpt-5.6 usage details, Partial coverage/,
+		});
+		await waitFor(() => expect(modelTrigger).toHaveFocus());
+		expect(await screen.findByRole("region", { name: "gpt-5.6 usage peek" })).toBeInTheDocument();
+
+		await user.keyboard("{Escape}");
+		await waitFor(() => expect(providerTrigger).toHaveFocus());
+		await user.tab();
+		expect(providerTrigger).not.toHaveFocus();
 	});
 
 	it("shows multiple agents as compact rows with independent hover peeks", async () => {
@@ -798,13 +966,12 @@ describe("SessionInspector Usage & cost section", () => {
 		});
 
 		renderWithQuery(<SessionInspector session={session([])} />);
-		const usageSection = screen
-			.getByText("Usage & cost")
-			.closest("[data-testid='inspector-section']") as HTMLElement;
+		const usageTitle = await screen.findByText("Usage & cost");
+		const usageSection = usageTitle.closest("[data-testid='inspector-section']") as HTMLElement;
 
-		await waitFor(() => expect(within(usageSection).getByLabelText("Codex usage details")).toBeInTheDocument());
-		const codexRow = within(usageSection).getByLabelText("Codex usage details");
-		const claudeRow = within(usageSection).getByLabelText("Claude usage details");
+		await waitFor(() => expect(within(usageSection).getByLabelText(/Codex usage details/)).toBeInTheDocument());
+		const codexRow = within(usageSection).getByLabelText(/Codex usage details/);
+		const claudeRow = within(usageSection).getByLabelText(/Claude usage details/);
 		expect(within(usageSection).getByText("Codex")).toBeInTheDocument();
 		expect(within(usageSection).getByText("Claude")).toBeInTheDocument();
 		expect(within(usageSection).getByText("OpenAI")).toBeInTheDocument();

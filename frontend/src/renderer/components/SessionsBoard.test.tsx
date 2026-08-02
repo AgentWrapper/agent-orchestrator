@@ -276,11 +276,16 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		const activeUsage = screen.getByText("12.4K tok");
-		expect(activeUsage).toHaveAttribute("aria-label", "12,400 tokens · collecting");
+		expect(activeUsage).toHaveAttribute(
+			"aria-label",
+			"12,400 tokens · Partial coverage · Collecting",
+		);
 		expect(screen.queryByText("0 tok")).not.toBeInTheDocument();
 		expect(usageQueryMock).toHaveBeenCalledWith("p1");
 		await userEvent.hover(activeUsage);
-		expect((await screen.findAllByText("12,400 tokens · collecting")).length).toBeGreaterThan(0);
+		expect(
+			(await screen.findAllByText("12,400 tokens · Partial coverage · Collecting")).length,
+		).toBeGreaterThan(0);
 
 		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
 		const archive = screen.getByRole("list", { name: "Archived sessions" });

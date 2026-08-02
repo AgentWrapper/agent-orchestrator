@@ -26,15 +26,6 @@ SELECT
     CAST(COALESCE(SUM(reasoning_tokens), 0) AS INTEGER) AS reasoning_tokens,
     COUNT(*) AS event_count,
     COUNT(reasoning_tokens) AS reasoning_event_count,
-    COUNT(cost_nanos) AS cost_event_count,
-    CAST(COALESCE(SUM(cost_nanos), 0) AS INTEGER) AS cost_nanos,
-    CASE
-        WHEN COUNT(cost_nanos) > 0
-          AND COUNT(CASE WHEN cost_nanos IS NOT NULL THEN pricing_version END) = COUNT(cost_nanos)
-          AND COUNT(DISTINCT CASE WHEN cost_nanos IS NOT NULL THEN pricing_version END) = 1
-        THEN MAX(CASE WHEN cost_nanos IS NOT NULL THEN pricing_version END)
-        ELSE NULL
-    END AS pricing_version,
     CAST(MAX(observed_at) AS TEXT) AS last_observed_at
 FROM model_usage_events
 WHERE session_id = ?
@@ -54,9 +45,6 @@ type AggregateUsageBySessionHarnessModelRow struct {
 	ReasoningTokens     int64
 	EventCount          int64
 	ReasoningEventCount int64
-	CostEventCount      int64
-	CostNanos           int64
-	PricingVersion      interface{}
 	LastObservedAt      string
 }
 
@@ -81,9 +69,6 @@ func (q *Queries) AggregateUsageBySessionHarnessModel(ctx context.Context, sessi
 			&i.ReasoningTokens,
 			&i.EventCount,
 			&i.ReasoningEventCount,
-			&i.CostEventCount,
-			&i.CostNanos,
-			&i.PricingVersion,
 			&i.LastObservedAt,
 		); err != nil {
 			return nil, err

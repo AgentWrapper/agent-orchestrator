@@ -621,23 +621,14 @@ type UsageMetricResponse struct {
 	Coverage string `json:"coverage" enum:"complete,partial,unavailable"`
 }
 
-// UsageCostMetricResponse is an optional USD cost expressed in nano-dollars.
-type UsageCostMetricResponse struct {
-	ValueNanos     *int64  `json:"valueNanos"`
-	Currency       string  `json:"currency" enum:"USD"`
-	Coverage       string  `json:"coverage" enum:"complete,partial,unavailable"`
-	PricingVersion *string `json:"pricingVersion,omitempty"`
-}
-
 // UsageTotalsResponse is the normalized telemetry aggregate for one scope.
 type UsageTotalsResponse struct {
-	InputTokens         UsageMetricResponse     `json:"inputTokens"`
-	UncachedInputTokens UsageMetricResponse     `json:"uncachedInputTokens"`
-	CacheReadTokens     UsageMetricResponse     `json:"cacheReadTokens"`
-	CacheWriteTokens    UsageMetricResponse     `json:"cacheWriteTokens"`
-	OutputTokens        UsageMetricResponse     `json:"outputTokens"`
-	ReasoningTokens     UsageMetricResponse     `json:"reasoningTokens"`
-	Cost                UsageCostMetricResponse `json:"cost"`
+	InputTokens         UsageMetricResponse `json:"inputTokens"`
+	UncachedInputTokens UsageMetricResponse `json:"uncachedInputTokens"`
+	CacheReadTokens     UsageMetricResponse `json:"cacheReadTokens"`
+	CacheWriteTokens    UsageMetricResponse `json:"cacheWriteTokens"`
+	OutputTokens        UsageMetricResponse `json:"outputTokens"`
+	ReasoningTokens     UsageMetricResponse `json:"reasoningTokens"`
 }
 
 // UsageModelResponse is telemetry grouped by exact provider model id.

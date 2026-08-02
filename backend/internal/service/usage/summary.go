@@ -51,7 +51,7 @@ func (r *SummaryReader) ListCompact(ctx context.Context, projectID domain.Projec
 	return out, nil
 }
 
-// Get returns the detailed token and optional cost telemetry for one session.
+// Get returns detailed token telemetry for one session.
 func (r *SummaryReader) Get(ctx context.Context, sessionID domain.SessionID) (domain.SessionUsageSummary, error) {
 	if r == nil || r.store == nil {
 		return domain.SessionUsageSummary{}, fmt.Errorf("usage summary store is unavailable")
@@ -152,10 +152,8 @@ func tokenCoverage(eventCount int64, state domain.UsageCollectionState) domain.U
 }
 
 func usageTotals(models []domain.UsageModelAggregate, state domain.UsageCollectionState) domain.UsageMetricTotals {
-	var input, uncached, cacheRead, cacheWrite, output, reasoning, cost int64
-	var events, reasoningEvents, costEvents int64
-	var pricingVersion *string
-	pricingVersionConsistent := true
+	var input, uncached, cacheRead, cacheWrite, output, reasoning int64
+	var events, reasoningEvents int64
 	for _, model := range models {
 		input += model.Tokens.InputTokens
 		uncached += model.Tokens.UncachedInputTokens
@@ -165,21 +163,8 @@ func usageTotals(models []domain.UsageModelAggregate, state domain.UsageCollecti
 		if model.Tokens.ReasoningTokens != nil {
 			reasoning += *model.Tokens.ReasoningTokens
 		}
-		cost += model.CostNanos
-		if model.CostEventCount > 0 {
-			switch {
-			case model.PricingVersion == nil:
-				pricingVersionConsistent = false
-			case pricingVersion == nil:
-				version := *model.PricingVersion
-				pricingVersion = &version
-			case *pricingVersion != *model.PricingVersion:
-				pricingVersionConsistent = false
-			}
-		}
 		events += model.EventCount
 		reasoningEvents += model.ReasoningEventCount
-		costEvents += model.CostEventCount
 	}
 	tokenMetric := func(value int64) domain.UsageMetricCoverage {
 		if events == 0 {
@@ -195,17 +180,6 @@ func usageTotals(models []domain.UsageModelAggregate, state domain.UsageCollecti
 		}
 		reasoningMetric = domain.UsageMetricCoverage{Value: int64Pointer(reasoning), Coverage: coverage}
 	}
-	costMetric := domain.UsageCostCoverage{Coverage: domain.UsageCoverageUnavailable}
-	if costEvents > 0 {
-		coverage := tokenCoverage(events, state)
-		if costEvents < events {
-			coverage = domain.UsageCoveragePartial
-		}
-		costMetric = domain.UsageCostCoverage{Value: int64Pointer(cost), Coverage: coverage}
-		if pricingVersionConsistent {
-			costMetric.PricingVersion = pricingVersion
-		}
-	}
 	return domain.UsageMetricTotals{
 		InputTokens:         tokenMetric(input),
 		UncachedInputTokens: tokenMetric(uncached),
@@ -213,7 +187,6 @@ func usageTotals(models []domain.UsageModelAggregate, state domain.UsageCollecti
 		CacheWriteTokens:    tokenMetric(cacheWrite),
 		OutputTokens:        tokenMetric(output),
 		ReasoningTokens:     reasoningMetric,
-		CostNanos:           costMetric,
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -198,7 +199,7 @@ func TestInsertUsageSourceRejectsNonObjectParserState(t *testing.T) {
 	}
 }
 
-func TestApplyUsageChunkAtomicReplayAndAggregates(t *testing.T) {
+func TestApplyUsageChunkAtomicReplayAndTokenAggregates(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	sess := seedUsageSession(t, s, domain.HarnessCodex)
@@ -252,18 +253,20 @@ func TestApplyUsageChunkAtomicReplayAndAggregates(t *testing.T) {
 		t.Fatalf("aggregates = %+v, want one row", aggs)
 	}
 	got := aggs[0]
+	for _, field := range []string{"CostEventCount", "CostNanos", "PricingVersion"} {
+		if _, ok := reflect.TypeOf(got).FieldByName(field); ok {
+			t.Errorf("token summary still exposes %s", field)
+		}
+	}
 	if got.Tokens.InputTokens != 100 || got.Tokens.OutputTokens != 20 || got.Tokens.ReasoningTokens == nil || *got.Tokens.ReasoningTokens != 3 {
 		t.Fatalf("aggregate tokens = %+v", got.Tokens)
-	}
-	if got.CostNanos != cost || got.CostEventCount != 1 {
-		t.Fatalf("aggregate cost = %+v", got)
 	}
 	if got.LastObservedAt == nil || !got.LastObservedAt.Equal(now) {
 		t.Fatalf("aggregate last observed = %v, want %v", got.LastObservedAt, now)
 	}
 
-	if got.EventCount != 1 || got.ReasoningEventCount != 1 || got.CostEventCount != 1 {
-		t.Fatalf("aggregate coverage counts = %+v, want 1/1/1", got)
+	if got.EventCount != 1 || got.ReasoningEventCount != 1 {
+		t.Fatalf("aggregate coverage counts = %+v, want 1/1", got)
 	}
 
 	ctxRow, ok, err := s.GetUsageSourceForIngestion(ctx, source.ID)
@@ -301,63 +304,6 @@ func TestApplyUsageChunkRejectsChangedProviderTimestampForStableKey(t *testing.T
 		t.Fatalf("timestamp conflict error = %v, want ErrUsageSourceEventConflict", err)
 	}
 	assertUsageSourceOffset(t, s, source.ID, 10)
-}
-
-func TestListUsageModelAggregatesPropagatesOnlyConsistentPricingVersion(t *testing.T) {
-	version1 := "pricing-v1"
-	version2 := "pricing-v2"
-	tests := []struct {
-		name     string
-		versions []*string
-		want     *string
-	}{
-		{name: "single version", versions: []*string{&version1, &version1}, want: &version1},
-		{name: "mixed versions", versions: []*string{&version1, &version2}},
-		{name: "missing version", versions: []*string{&version1, nil}},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			s := newTestStore(t)
-			ctx := context.Background()
-			sess := seedUsageSession(t, s, domain.HarnessCodex)
-			now := time.Unix(1700000000, 0).UTC()
-			source := seedUsageSource(t, s, sess, now)
-			events := make([]domain.ModelUsageEvent, 0, len(test.versions))
-			for index, version := range test.versions {
-				cost := int64(100 + index)
-				event := usageEvent(
-					fmt.Sprintf("event-%d", index),
-					now.Add(time.Duration(index)*time.Second),
-					domain.UsageTokenMetrics{InputTokens: 10, UncachedInputTokens: 10, OutputTokens: 1},
-					&cost,
-				)
-				event.Cost.PricingVersion = version
-				events = append(events, event)
-			}
-			if _, err := s.ApplyUsageChunk(ctx, source.ID, 0, domain.SourceCursorState{
-				ByteOffset: 100,
-				State:      domain.UsageSourceActive,
-				UpdatedAt:  now,
-			}, events); err != nil {
-				t.Fatalf("apply events: %v", err)
-			}
-			aggregates, err := s.ListUsageModelAggregates(ctx, sess.ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(aggregates) != 1 {
-				t.Fatalf("aggregates = %+v, want one row", aggregates)
-			}
-			got := aggregates[0].PricingVersion
-			if test.want == nil {
-				if got != nil {
-					t.Fatalf("pricing version = %q, want omitted", *got)
-				}
-			} else if got == nil || *got != *test.want {
-				t.Fatalf("pricing version = %v, want %q", got, *test.want)
-			}
-		})
-	}
 }
 
 func TestApplyUsageChunkRejectsConflictsAndPreservesCursor(t *testing.T) {

@@ -80,7 +80,7 @@ func TestUsageAPIListsCompactProjectUsage(t *testing.T) {
 	}
 }
 
-func TestUsageAPIShowsDetailedSessionTelemetry(t *testing.T) {
+func TestUsageAPIShowsDetailedSessionTokenTelemetryWithoutCost(t *testing.T) {
 	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
 	input := int64(1000)
 	output := int64(200)
@@ -95,7 +95,6 @@ func TestUsageAPIShowsDetailedSessionTelemetry(t *testing.T) {
 			InputTokens:     domain.UsageMetricCoverage{Value: &input, Coverage: domain.UsageCoveragePartial},
 			CacheReadTokens: domain.UsageMetricCoverage{Value: &cacheRead, Coverage: domain.UsageCoveragePartial},
 			OutputTokens:    domain.UsageMetricCoverage{Value: &output, Coverage: domain.UsageCoveragePartial},
-			CostNanos:       domain.UsageCostCoverage{Coverage: domain.UsageCoverageUnavailable},
 		},
 		Harnesses: []domain.HarnessUsageSummary{{
 			Harness:  domain.HarnessCodex,
@@ -112,6 +111,11 @@ func TestUsageAPIShowsDetailedSessionTelemetry(t *testing.T) {
 	if svc.sessionID != "reverb-12" {
 		t.Fatalf("session id = %q", svc.sessionID)
 	}
+	for _, forbidden := range []string{`"cost"`, `"valueNanos"`, `"pricingVersion"`} {
+		if strings.Contains(string(body), forbidden) {
+			t.Fatalf("detailed usage exposed %s: %s", forbidden, body)
+		}
+	}
 	var got struct {
 		SessionID       string `json:"sessionId"`
 		CollectionState string `json:"collectionState"`
@@ -119,10 +123,6 @@ func TestUsageAPIShowsDetailedSessionTelemetry(t *testing.T) {
 			InputTokens struct {
 				Value int64 `json:"value"`
 			} `json:"inputTokens"`
-			Cost struct {
-				ValueNanos *int64 `json:"valueNanos"`
-				Coverage   string `json:"coverage"`
-			} `json:"cost"`
 		} `json:"totals"`
 		Harnesses []struct {
 			Models []struct {
@@ -133,55 +133,8 @@ func TestUsageAPIShowsDetailedSessionTelemetry(t *testing.T) {
 	mustJSON(t, body, &got)
 	if got.SessionID != "reverb-12" || got.CollectionState != "collecting" ||
 		got.Totals.InputTokens.Value != 1000 ||
-		got.Totals.Cost.ValueNanos != nil ||
-		got.Totals.Cost.Coverage != "unavailable" ||
 		len(got.Harnesses) != 1 || len(got.Harnesses[0].Models) != 1 ||
 		got.Harnesses[0].Models[0].ModelID != "gpt-5.6" {
 		t.Fatalf("response = %+v", got)
-	}
-}
-
-func TestUsageAPICostPricingVersion(t *testing.T) {
-	cost := int64(123456)
-	version := "pricing-v1"
-	tests := []struct {
-		name    string
-		version *string
-		want    string
-	}{
-		{name: "single version", version: &version, want: version},
-		{name: "mixed versions omitted"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			svc := &fakeUsageSummaryService{detail: domain.SessionUsageSummary{
-				SessionID: "reverb-12",
-				Totals: domain.UsageMetricTotals{CostNanos: domain.UsageCostCoverage{
-					Value:          &cost,
-					Coverage:       domain.UsageCoverageComplete,
-					PricingVersion: test.version,
-				}},
-			}}
-			srv := newUsageTestServer(t, svc)
-			body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/usage/sessions/reverb-12", "")
-			if status != http.StatusOK {
-				t.Fatalf("status = %d, want 200; body=%s", status, body)
-			}
-			var got struct {
-				Totals struct {
-					Cost struct {
-						PricingVersion *string `json:"pricingVersion"`
-					} `json:"cost"`
-				} `json:"totals"`
-			}
-			mustJSON(t, body, &got)
-			if test.want == "" {
-				if got.Totals.Cost.PricingVersion != nil || strings.Contains(string(body), `"pricingVersion"`) {
-					t.Fatalf("mixed pricing version was not omitted: %s", body)
-				}
-			} else if got.Totals.Cost.PricingVersion == nil || *got.Totals.Cost.PricingVersion != test.want {
-				t.Fatalf("pricing version response = %s, want %q", body, test.want)
-			}
-		})
 	}
 }

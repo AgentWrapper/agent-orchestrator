@@ -68,7 +68,7 @@ func Build() ([]byte, error) {
 		*(&openapi31.Tag{Name: "notifications"}).WithDescription(
 			"Durable dashboard notifications"),
 		*(&openapi31.Tag{Name: "usage"}).WithDescription(
-			"Token usage and optional cost telemetry for AO sessions"),
+			"Token usage telemetry for AO sessions"),
 		*(&openapi31.Tag{Name: "push"}).WithDescription(
 			"Mobile push-device registration for OS push notifications"),
 		*(&openapi31.Tag{Name: "events"}).WithDescription(
@@ -206,7 +206,6 @@ var schemaNames = map[string]string{
 	"ControllersCompactSessionUsageResponse":      "CompactSessionUsageResponse",
 	"ControllersListCompactSessionUsageResponse":  "ListCompactSessionUsageResponse",
 	"ControllersUsageMetricResponse":              "UsageMetricResponse",
-	"ControllersUsageCostMetricResponse":          "UsageCostMetricResponse",
 	"ControllersUsageTotalsResponse":              "UsageTotalsResponse",
 	"ControllersUsageModelResponse":               "UsageModelResponse",
 	"ControllersUsageHarnessResponse":             "UsageHarnessResponse",
@@ -365,7 +364,7 @@ func usageOperations() []operation {
 		},
 		{
 			method: http.MethodGet, path: "/api/v1/usage/sessions/{sessionId}", id: "getSessionUsage", tag: "usage",
-			summary:    "Get detailed usage and optional cost telemetry for one session",
+			summary:    "Get detailed token usage for one session",
 			pathParams: []any{controllers.SessionIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.SessionUsageResponse{}},

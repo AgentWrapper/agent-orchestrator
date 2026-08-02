@@ -148,7 +148,7 @@ type UsageTokenMetrics struct {
 	ReasoningTokens     *int64
 }
 
-// UsageCostMetrics is the normalized money vector for one event or aggregate.
+// UsageCostMetrics is the reserved money vector for one persisted usage event.
 // Values are nano-USD. Nil means unavailable, not zero.
 type UsageCostMetrics struct {
 	CostNanos      *int64
@@ -179,14 +179,6 @@ type UsageMetricCoverage struct {
 	Coverage UsageCoverage
 }
 
-// UsageCostCoverage summarizes cost over an aggregate scope. Value is
-// nano-USD.
-type UsageCostCoverage struct {
-	Value          *int64
-	Coverage       UsageCoverage
-	PricingVersion *string
-}
-
 // UsageModelAggregate is the raw model-level aggregate read from storage before
 // the service applies user-facing coverage rules.
 type UsageModelAggregate struct {
@@ -196,9 +188,6 @@ type UsageModelAggregate struct {
 	Tokens              UsageTokenMetrics
 	EventCount          int64
 	ReasoningEventCount int64
-	CostEventCount      int64
-	CostNanos           int64
-	PricingVersion      *string
 	LastObservedAt      *time.Time
 }
 
@@ -237,7 +226,6 @@ type UsageMetricTotals struct {
 	CacheWriteTokens    UsageMetricCoverage
 	OutputTokens        UsageMetricCoverage
 	ReasoningTokens     UsageMetricCoverage
-	CostNanos           UsageCostCoverage
 }
 
 // UsageCollectionSummary is the collection-state header for session usage.

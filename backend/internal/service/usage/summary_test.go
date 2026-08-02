@@ -117,7 +117,7 @@ func TestSummaryReaderListCompactDerivesStatesAndCoverageInOneRead(t *testing.T)
 	}
 }
 
-func TestSummaryReaderGetReturnsDetailedTelemetryWithoutInventingCost(t *testing.T) {
+func TestSummaryReaderGetReturnsDetailedTokenTelemetry(t *testing.T) {
 	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
 	reasoning := int64(40)
 	store := &compactUsageStoreStub{
@@ -159,9 +159,8 @@ func TestSummaryReaderGetReturnsDetailedTelemetryWithoutInventingCost(t *testing
 		t.Fatalf("totals = %+v", got.Totals)
 	}
 	if got.Totals.InputTokens.Coverage != domain.UsageCoveragePartial ||
-		got.Totals.CostNanos.Value != nil ||
-		got.Totals.CostNanos.Coverage != domain.UsageCoverageUnavailable {
-		t.Fatalf("coverage/cost = %+v", got.Totals)
+		got.Totals.OutputTokens.Coverage != domain.UsageCoveragePartial {
+		t.Fatalf("coverage = %+v", got.Totals)
 	}
 	if len(got.Harnesses) != 1 || len(got.Harnesses[0].Models) != 1 ||
 		got.Harnesses[0].Models[0].ModelID != "gpt-5.6" {
@@ -175,50 +174,5 @@ func TestSummaryReaderGetReturnsDetailedTelemetryWithoutInventingCost(t *testing
 			store.sourceCalls,
 			store.modelCalls,
 		)
-	}
-}
-
-func TestUsageTotalsPropagatesOnlyConsistentPricingVersion(t *testing.T) {
-	version1 := "pricing-v1"
-	version2 := "pricing-v2"
-	tests := []struct {
-		name   string
-		models []domain.UsageModelAggregate
-		want   *string
-	}{
-		{
-			name: "single version",
-			models: []domain.UsageModelAggregate{
-				{EventCount: 1, CostEventCount: 1, CostNanos: 100, PricingVersion: &version1},
-				{EventCount: 1, CostEventCount: 1, CostNanos: 200, PricingVersion: &version1},
-			},
-			want: &version1,
-		},
-		{
-			name: "mixed versions",
-			models: []domain.UsageModelAggregate{
-				{EventCount: 1, CostEventCount: 1, CostNanos: 100, PricingVersion: &version1},
-				{EventCount: 1, CostEventCount: 1, CostNanos: 200, PricingVersion: &version2},
-			},
-		},
-		{
-			name: "missing version",
-			models: []domain.UsageModelAggregate{
-				{EventCount: 1, CostEventCount: 1, CostNanos: 100, PricingVersion: &version1},
-				{EventCount: 1, CostEventCount: 1, CostNanos: 200},
-			},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			got := usageTotals(test.models, domain.UsageCollectionComplete).CostNanos.PricingVersion
-			if test.want == nil {
-				if got != nil {
-					t.Fatalf("pricing version = %q, want omitted", *got)
-				}
-			} else if got == nil || *got != *test.want {
-				t.Fatalf("pricing version = %v, want %q", got, *test.want)
-			}
-		})
 	}
 }

@@ -821,7 +821,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get detailed usage and optional cost telemetry for one session */
+        /** Get detailed token usage for one session */
         get: operations["getSessionUsage"];
         put?: never;
         post?: never;
@@ -1497,14 +1497,6 @@ export interface components {
             /** @description New tab title for the shell terminal. Trimmed; must be non-empty. */
             title: string;
         };
-        UsageCostMetricResponse: {
-            /** @enum {string} */
-            coverage: "complete" | "partial" | "unavailable";
-            /** @enum {string} */
-            currency: "USD";
-            pricingVersion?: null | string;
-            valueNanos: null | number;
-        };
         UsageHarnessResponse: {
             harness: string;
             models: components["schemas"]["UsageModelResponse"][];
@@ -1524,7 +1516,6 @@ export interface components {
         UsageTotalsResponse: {
             cacheReadTokens: components["schemas"]["UsageMetricResponse"];
             cacheWriteTokens: components["schemas"]["UsageMetricResponse"];
-            cost: components["schemas"]["UsageCostMetricResponse"];
             inputTokens: components["schemas"]["UsageMetricResponse"];
             outputTokens: components["schemas"]["UsageMetricResponse"];
             reasoningTokens: components["schemas"]["UsageMetricResponse"];

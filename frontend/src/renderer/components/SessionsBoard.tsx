@@ -981,8 +981,17 @@ function ArchiveSessionItem({
 
 function SessionUsageMetric({ usage }: { usage?: SessionUsageSummary }) {
 	if (!usage || usage.totalTokens <= 0) return null;
-	const collectionState = usage.collectionState.replaceAll("_", " ");
-	const tooltip = `${usage.totalTokens.toLocaleString("en-US")} tokens · ${collectionState}`;
+	const coverage =
+		usage.coverage === "partial"
+			? "Partial coverage"
+			: usage.coverage === "complete"
+				? "Complete coverage"
+				: "Coverage unavailable";
+	const collectionState =
+		usage.collectionState === "complete"
+			? "Collection complete"
+			: usage.collectionState.charAt(0).toUpperCase() + usage.collectionState.slice(1).replaceAll("_", " ");
+	const tooltip = `${usage.totalTokens.toLocaleString("en-US")} tokens · ${coverage} · ${collectionState}`;
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
@@ -993,7 +1002,7 @@ function SessionUsageMetric({ usage }: { usage?: SessionUsageSummary }) {
 					{formatTokenCount(usage.totalTokens)}
 				</span>
 			</TooltipTrigger>
-			<TooltipContent side="top" className="capitalize">
+			<TooltipContent side="top">
 				{tooltip}
 			</TooltipContent>
 		</Tooltip>
