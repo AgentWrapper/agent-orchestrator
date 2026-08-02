@@ -124,6 +124,10 @@ func (f *fakeSessionService) GetWorkspaceFile(context.Context, domain.SessionID,
 	return sessionsvc.WorkspaceFileDetail{}, nil
 }
 
+func (f *fakeSessionService) StageAttachments(context.Context, domain.SessionID, []ports.SpawnAttachment) ([]string, error) {
+	return nil, nil
+}
+
 type fakeAgentCatalog struct{}
 
 var _ controllers.AgentCatalog = (*fakeAgentCatalog)(nil)
