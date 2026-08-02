@@ -123,6 +123,13 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 						activeTabId: "t1",
 						tabs: [{ id: "t1", url: "", title: "", active: true }],
 					}),
+					openTab: async (viewId: string) => ({
+						viewId,
+						activeTabId: "t1",
+						tabs: [{ id: "t1", url: "", title: "", active: true }],
+					}),
+					notifyPanelFocus: () => undefined,
+					notifyPanelBlur: () => undefined,
 					destroy: () => undefined,
 					// Annotation contract (mirrors src/preload.ts): useBrowserView subscribes
 					// to these whenever SessionView mounts with window.ao.browser present, so
@@ -502,6 +509,13 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 						activeTabId: "t1",
 						tabs: [{ id: "t1", url: "", title: "", active: true }],
 					}),
+					openTab: async (viewId: string) => ({
+						viewId,
+						activeTabId: "t1",
+						tabs: [{ id: "t1", url: "", title: "", active: true }],
+					}),
+					notifyPanelFocus: () => undefined,
+					notifyPanelBlur: () => undefined,
 					destroy: () => undefined,
 					// Annotation contract (mirrors src/preload.ts): useBrowserView subscribes
 					// to these whenever SessionView mounts with window.ao.browser present, so

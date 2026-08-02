@@ -1263,7 +1263,7 @@ describe("browser:setBounds", () => {
 	});
 
 	it("does not let a hidden page navigation grant native visibility", async () => {
-		const { emit, invoke, view, webContentsListeners } = setupHost();
+		const { emit, invoke, view, soleListener } = setupHost();
 		await invoke("browser:ensure", "sess-1");
 
 		emit("browser:setBounds", 1, {
@@ -1280,14 +1280,14 @@ describe("browser:setBounds", () => {
 
 		view.setBounds.mockClear();
 		view.setVisible.mockClear();
-		webContentsListeners.get("did-navigate")?.();
+		soleListener("did-navigate")?.();
 
 		expect(view.setVisible).not.toHaveBeenCalledWith(true);
 		expect(view.setVisible).toHaveBeenLastCalledWith(false);
 	});
 
 	it("restores renderer-owned bounds when reloading after a failed load", async () => {
-		const { emit, invoke, view, webContents, webContentsListeners } = setupHost();
+		const { emit, invoke, view, webContents, soleListener } = setupHost();
 		await invoke("browser:ensure", "sess-1");
 		emit("browser:setBounds", 1, {
 			viewId: "1:sess-1",
@@ -1295,7 +1295,7 @@ describe("browser:setBounds", () => {
 			visible: true,
 		});
 
-		webContentsListeners.get("did-fail-load")?.({} as never, -105 as never, "Name not resolved" as never);
+		soleListener("did-fail-load")?.({} as never, -105 as never, "Name not resolved" as never);
 		expect(view.setVisible).toHaveBeenLastCalledWith(false);
 
 		view.setBounds.mockClear();
