@@ -711,6 +711,7 @@ function ReviewsView({
 	session: WorkspaceSession;
 	onOpenReviewerTerminal?: OpenReviewerTerminal;
 }) {
+	const t = useT();
 	const hasPr = sortedPRs(session).length > 0;
 	const queryClient = useQueryClient();
 	const [reviewNotice, setReviewNotice] = useState<string | null>(null);
@@ -748,7 +749,7 @@ function ReviewsView({
 			const { data, error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/trigger", {
 				params: { path: { sessionId: session.id } },
 			});
-			if (error) throw new Error(apiErrorMessage(error, "Unable to start review"));
+			if (error) throw new Error(apiErrorMessage(error, t("inspector.unableStartReview")));
 			return { data, reused: response?.status === 200 };
 		},
 		onMutate: () => {
@@ -759,7 +760,7 @@ function ReviewsView({
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			const started = data?.reviews?.find((review) => review.status === "running" && review.latestRun);
 			if (reused || !started?.latestRun) {
-				setReviewNotice("No needed reviews were started.");
+				setReviewNotice(t("inspector.noReviewsStarted"));
 				return;
 			}
 			if (data?.reviewerHandleId) {
@@ -773,7 +774,7 @@ function ReviewsView({
 			const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/cancel", {
 				params: { path: { sessionId: session.id } },
 			});
-			if (error) throw new Error(apiErrorMessage(error, "Unable to cancel review"));
+			if (error) throw new Error(apiErrorMessage(error, t("inspector.unableCancelReview")));
 		},
 		onSuccess: () => {
 			setReviewNotice(null);
@@ -786,7 +787,7 @@ function ReviewsView({
 	return (
 		<div role="tabpanel">
 			{/* AO code reviews lead: the flow is run AO review first, then raise the PR for others. */}
-			<Section surface title="AO code reviews">
+			<Section surface title={t("inspector.aoCodeReviews")}>
 				<ReviewPanel
 					config={projectConfigQuery.data}
 					error={reviewsQuery.error ?? triggerReview.error ?? cancelReview.error}
@@ -1039,18 +1040,21 @@ function aoReviewMeta(reviewState: PRReviewState): string {
 	if (displayRun?.createdAt) {
 		return `#${reviewState.prNumber} · ${formatTimeCompact(displayRun.createdAt)}`;
 	}
-	if (!displayRun && reviewVerdict(reviewState).label === "Not run") {
-		return `#${reviewState.prNumber} · Not run`;
+	if (!displayRun && (reviewState.status === "needs_review" || reviewState.status === "ineligible")) {
+		return translate(activeLocale(), "inspector.notRunMeta", { number: reviewState.prNumber });
 	}
 	return `#${reviewState.prNumber}`;
 }
 
 function AoReviewRow({ reviewState }: { reviewState: PRReviewState }) {
+	const locale = activeLocale();
 	const displayRun = reviewState.latestRun ?? reviewState.previousRun;
 	const verdict = displayRun ? runReviewVerdict(displayRun) : reviewVerdict(reviewState);
 	const summary = displayRun?.body?.trim();
 	const reviewUrl = aoReviewCommentUrl(displayRun);
-	const reviewLinkLabel = reviewState.latestRun ? "View review" : "View previous review";
+	const reviewLinkLabel = reviewState.latestRun
+		? translate(locale, "inspector.viewReview")
+		: translate(locale, "inspector.viewPreviousReview");
 	return (
 		<div className={cn("flex min-w-0 flex-col gap-2", reviewState.status === "ineligible" && "opacity-70")}>
 			<VerdictBadge label={verdict.label} tone={verdict.tone} />
@@ -1154,13 +1158,14 @@ function BrowserView({
 	// so the inspector's Browser tab has nothing to show (and must not mount a
 	// second BrowserPanelView — it would fight the overlay over the shared native
 	// view slot). Exit is via the overlay's own minimize button.
+	const t = useT();
 	if (browserPoppedOut) {
 		return (
 			<div role="tabpanel">
 				<div className={cn(inspectorEmptyClass, "flex flex-col items-center gap-2 py-10 px-5 text-center")}>
-					<p className="text-md-sm text-muted-foreground">Browser preview is in the center pane.</p>
+					<p className="text-md-sm text-muted-foreground">{t("inspector.browserInCenter")}</p>
 					<Button onClick={() => onTogglePopOut?.(false)} size="sm" type="button" variant="outline">
-						Return to panel
+						{t("inspector.returnToPanel")}
 					</Button>
 				</div>
 			</div>
@@ -1184,6 +1189,7 @@ function BrowserView({
 }
 
 function FilesView({ filesView, onOpenFiles }: { filesView?: ReactNode; onOpenFiles?: () => void }) {
+	const t = useT();
 	if (filesView) {
 		return (
 			<div className="h-full min-h-0" role="tabpanel">
@@ -1194,9 +1200,9 @@ function FilesView({ filesView, onOpenFiles }: { filesView?: ReactNode; onOpenFi
 	return (
 		<div role="tabpanel">
 			<div className={cn(inspectorEmptyClass, "flex flex-col items-center gap-2 px-5 py-10 text-center")}>
-				<p className="text-md-sm text-muted-foreground">Files are not available for this session.</p>
+				<p className="text-md-sm text-muted-foreground">{t("inspector.filesUnavailable")}</p>
 				<Button disabled={!onOpenFiles} onClick={() => onOpenFiles?.()} size="sm" type="button" variant="outline">
-					Open files
+					{t("inspector.openFiles")}
 				</Button>
 			</div>
 		</div>

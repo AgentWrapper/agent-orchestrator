@@ -16,7 +16,8 @@ import type { ProjectKind } from "../types/workspace";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { useT } from "../stores/locale-store";
+import { t as translate } from "../i18n";
+import { activeLocale, useT } from "../stores/locale-store";
 
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
@@ -54,6 +55,7 @@ type SheetError = {
 };
 
 function projectSheetError(error: string): SheetError {
+	const locale = activeLocale();
 	const setupMessage = error.replace(/^Setup failed:\s*/i, "").trim();
 	const codeMatch = setupMessage.match(/\(([A-Z0-9_]+)\)\s*$/);
 	const code = codeMatch?.[1];
@@ -62,26 +64,28 @@ function projectSheetError(error: string): SheetError {
 	switch (code) {
 		case "PROJECT_PATH_NOT_REPO_ROOT":
 			return {
-				title: "Select the repository root",
-				message: "This folder is inside another Git repository. Choose the top-level folder and try again.",
+				title: translate(locale, "createProject.error.notRepoRootTitle"),
+				message: translate(locale, "createProject.error.notRepoRootBody"),
 				tone: "warning",
 			};
 		case "PROJECT_BARE_REPOSITORY":
 			return {
-				title: "Choose a normal checkout",
-				message: "AO needs a regular working folder, not a bare Git repository.",
+				title: translate(locale, "createProject.error.bareTitle"),
+				message: translate(locale, "createProject.error.bareBody"),
 				tone: "warning",
 			};
 		case "UNSUPPORTED_GIT_REPO":
 			return {
-				title: "Choose a valid Git folder",
-				message: "AO could not read the Git metadata here. Repair the repository or choose a plain folder.",
+				title: translate(locale, "createProject.error.unsupportedTitle"),
+				message: translate(locale, "createProject.error.unsupportedBody"),
 				tone: "warning",
 			};
 		default:
 			return {
-				title: error.toLowerCase().startsWith("setup failed:") ? "Repository setup failed" : "Could not create project",
-				message: message || "Try again, or choose a different folder.",
+				title: error.toLowerCase().startsWith("setup failed:")
+					? translate(locale, "createProject.error.setupFailedTitle")
+					: translate(locale, "createProject.error.createFailedTitle"),
+				message: message || translate(locale, "createProject.error.tryAgain"),
 				tone: "error",
 			};
 	}
@@ -117,12 +121,12 @@ export function CreateProjectAgentSheet({
 	const agentsError = agentsQuery.isError
 		? agentsQuery.error instanceof Error
 			? agentsQuery.error.message
-			: "Could not load agent catalog."
+			: t("createProject.couldNotLoadAgents")
 		: null;
 	const displayError = refreshAgentsMutation.isError
 		? refreshAgentsMutation.error instanceof Error
 			? refreshAgentsMutation.error.message
-			: "Could not refresh agent catalog."
+			: t("createProject.couldNotRefreshAgents")
 		: agentsError;
 	const [workerAgent, setWorkerAgent] = useState("");
 	const [orchestratorAgent, setOrchestratorAgent] = useState("");
@@ -312,16 +316,16 @@ export function CreateProjectAgentSheet({
 								className="rounded-lg border-[var(--color-border-agents-sheet)] bg-transparent text-[var(--color-text-agents-sheet-title)] hover:bg-interactive-hover"
 								onClick={() => onOpenChange(false)}
 							>
-								Cancel
+								{t("createProject.cancel")}
 							</Button>
 							<Button type="submit" variant="primary" className="rounded-lg" disabled={!canSubmit}>
 								{isInitializing
-									? "Setting up..."
+									? t("createProject.settingUp")
 									: isCreating
-										? "Creating..."
+										? t("createProject.creating")
 										: kind === "workspace"
-											? "Create workspace and start"
-											: "Create and start"}
+											? t("createProject.createWorkspaceAndStart")
+											: t("createProject.createAndStart")}
 							</Button>
 						</div>
 					</form>

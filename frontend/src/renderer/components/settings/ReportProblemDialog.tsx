@@ -231,7 +231,7 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 						</p>
 					)}
 					{copiedLabel && !copyError && (
-						<p className="text-caption leading-4 text-success">{copiedLabel} draft copied.</p>
+						<p className="text-caption leading-4 text-success">{t("report.draftCopied", { label: copiedLabel })}</p>
 					)}
 				</div>
 

@@ -126,17 +126,18 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 	const currentSession = currentSessionId ? findSession(workspaces, currentSessionId) : undefined;
 	const isProjectRestarting = Boolean(currentProject && restartingProjectIds?.has(currentProject.id));
 
+	const locale = activeLocale();
 	items.push({
 		id: "current-new-task",
 		group: "current",
-		title: "New task",
+		title: t(locale, "command.newTask"),
 		subtitle: currentProject?.name,
 		keywords: ["worker", "chat", "start"],
 		disabled: !currentProject || isProjectRestarting,
 		disabledReason: !currentProject
-			? "No current project"
+			? t(locale, "command.noCurrentProject")
 			: isProjectRestarting
-				? "Orchestrator restarting"
+				? t(locale, "command.orchestratorRestarting")
 				: undefined,
 		...(currentProject ? { action: { kind: "open-new-task" as const, projectId: currentProject.id } } : {}),
 	});
@@ -145,17 +146,17 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 		items.push({
 			id: "current-open-orchestrator",
 			group: "current",
-			title: "Open orchestrator",
+			title: t(locale, "command.openOrchestrator"),
 			subtitle: currentProject.name,
 			keywords: ["orchestrator", "spawn", currentProject.name],
 			disabled: isProjectRestarting,
-			disabledReason: isProjectRestarting ? "Orchestrator restarting" : undefined,
+			disabledReason: isProjectRestarting ? t(locale, "command.orchestratorRestarting") : undefined,
 			action: { kind: "open-orchestrator", projectId: currentProject.id },
 		});
 		items.push({
 			id: "current-project-settings",
 			group: "current",
-			title: "Project settings",
+			title: t(locale, "command.projectSettings"),
 			subtitle: currentProject.name,
 			keywords: ["settings", "config", currentProject.name],
 			action: {
@@ -170,7 +171,7 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 		items.push({
 			id: "current-copy-branch",
 			group: "current",
-			title: "Copy branch name",
+			title: t(locale, "command.copyBranch"),
 			subtitle: currentBranch,
 			keywords: ["branch", "git", currentBranch, currentSession.title],
 			action: { kind: "copy-branch", branch: currentBranch },
@@ -244,21 +245,21 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 	items.push({
 		id: "global-new-project",
 		group: "global",
-		title: "New project",
+		title: t(locale, "command.newProject"),
 		keywords: ["add", "import", "repo", "workspace"],
 		action: { kind: "open-new-project" },
 	});
 	items.push({
 		id: "global-settings",
 		group: "global",
-		title: "Global settings",
+		title: t(locale, "command.globalSettings"),
 		keywords: ["settings", "preferences", "config"],
 		action: { kind: "navigate", target: { to: "/settings" } },
 	});
 	items.push({
 		id: "global-theme",
 		group: "global",
-		title: "Toggle theme",
+		title: t(locale, "command.toggleTheme"),
 		keywords: ["dark", "light", "appearance"],
 		action: { kind: "toggle-theme" },
 	});

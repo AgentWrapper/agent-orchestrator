@@ -481,15 +481,19 @@ function CreateProjectFolderDialog({
 	open: boolean;
 	scan: ImportFolderScan | null;
 }) {
+	const t = useT();
 	const isWorkspace = kind === "workspace";
 	const failedRepos = scan?.repos.filter((repo) => repo.status === "error" || !repo.hasRemote) ?? [];
 	const hasScan = scan !== null;
 	const footerMessage =
 		failedRepos.length > 0
-			? `Resolve ${failedRepos.length} failed ${failedRepos.length === 1 ? "repository" : "repositories"} to continue`
+			? t("createProject.footerResolve", {
+					count: failedRepos.length,
+					noun: t(failedRepos.length === 1 ? "createProject.noun.repository" : "createProject.noun.repositories"),
+				})
 			: hasScan
-				? "Review the error above or choose a different folder"
-				: "Choose a different folder to try again";
+				? t("createProject.footerReview")
+				: t("createProject.footerChoose");
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
@@ -499,7 +503,7 @@ function CreateProjectFolderDialog({
 						<button
 							type="button"
 							className="grid size-8 shrink-0 place-items-center rounded-lg border border-[var(--color-border-import-modal)] text-[var(--color-text-import-muted)] transition hover:bg-[var(--color-bg-import-card-hover)] hover:text-[var(--color-text-import-title)] disabled:pointer-events-none disabled:opacity-50"
-							aria-label="Back to import type"
+							aria-label={t("createProject.backToType")}
 							disabled={disabled}
 							onClick={onBack}
 						>
@@ -507,19 +511,17 @@ function CreateProjectFolderDialog({
 						</button>
 						<div className="min-w-0 flex-1">
 							<Dialog.Title className="text-[18px] font-semibold text-[var(--color-text-import-title)]">
-								{isWorkspace ? "Import workspace" : "Import project"}
+								{isWorkspace ? t("createProject.importWorkspace") : t("createProject.importProject")}
 							</Dialog.Title>
 							<Dialog.Description className="mt-1 max-w-[520px] text-[13px] font-medium leading-5 text-[var(--color-text-import-muted)]">
-								{isWorkspace
-									? "Pick a folder that contains your Git repositories. Each repo inside it joins the workspace."
-									: "Import a single Git repository as one project."}
+								{isWorkspace ? t("createProject.importWorkspaceDesc") : t("createProject.importProjectDesc")}
 							</Dialog.Description>
 						</div>
 						<Dialog.Close asChild>
 							<button
 								type="button"
 								className="grid size-7 shrink-0 place-items-center rounded-md text-[var(--color-text-import-muted)] transition hover:bg-[var(--color-bg-import-card-hover)] hover:text-[var(--color-text-import-title)] disabled:pointer-events-none disabled:opacity-50"
-								aria-label="Close import dialog"
+								aria-label={t("createProject.closeImport")}
 								disabled={disabled}
 							>
 								<X className="size-4" aria-hidden="true" />
@@ -536,11 +538,11 @@ function CreateProjectFolderDialog({
 											{displayImportPath(scan.path)}
 										</div>
 										<div className="mt-0.5 text-[12px] text-[var(--color-text-import-muted)]">
-											{isWorkspace ? "Workspace root" : "Project folder"}
+											{isWorkspace ? t("createProject.workspaceRoot") : t("createProject.projectFolder")}
 										</div>
 									</div>
 									<Button type="button" variant="outline" disabled={disabled} onClick={onChooseFolder}>
-										Change
+										{t("createProject.change")}
 									</Button>
 								</div>
 
@@ -548,7 +550,7 @@ function CreateProjectFolderDialog({
 									<div className="rounded-lg border border-destructive/40 bg-destructive/10">
 										<div className="border-b border-destructive/30 px-4 py-3 font-mono text-[12px] font-semibold uppercase tracking-[0.12em] text-destructive">
 											<span className="mr-2 inline-block size-2 rounded-full bg-destructive" aria-hidden="true" />
-											Import failed · {isWorkspace ? "workspace" : "project"} not registered
+											{isWorkspace ? t("createProject.importFailedWorkspace") : t("createProject.importFailedProject")}
 										</div>
 										<div className="px-4 py-3 text-[12px] leading-5 text-destructive">{error}</div>
 										{failedRepos.length > 0 && (
@@ -574,7 +576,7 @@ function CreateProjectFolderDialog({
 
 								{scan.repos.length === 0 && (
 									<div className="rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-4 text-[12px] text-[var(--color-text-import-muted)]">
-										No repositories detected in this folder.
+										{t("createProject.noRepos")}
 									</div>
 								)}
 							</div>
@@ -589,12 +591,10 @@ function CreateProjectFolderDialog({
 									<FolderPlus className="size-5" aria-hidden="true" />
 								</span>
 								<span className="text-[15px] font-semibold text-[var(--color-text-import-title)]">
-									{isWorkspace ? "Choose a folder" : "Choose a project folder"}
+									{isWorkspace ? t("createProject.chooseFolder") : t("createProject.chooseProjectFolder")}
 								</span>
 								<span className="mt-2 max-w-full text-pretty text-[12px] text-[var(--color-text-import-muted)] sm:text-[13px]">
-									{isWorkspace
-										? "Opens your system file picker — pick the folder that holds your repos"
-										: "Opens your system file picker — select one repo folder"}
+									{isWorkspace ? t("createProject.pickerWorkspaceHint") : t("createProject.pickerProjectHint")}
 								</span>
 							</button>
 						)}
@@ -612,7 +612,7 @@ function CreateProjectFolderDialog({
 						<p className="text-[12px] font-medium text-[var(--color-text-import-muted)]">{footerMessage}</p>
 						<div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
 							<Button type="button" variant="outline" disabled={disabled} onClick={() => onOpenChange(false)}>
-								Cancel
+								{t("createProject.cancel")}
 							</Button>
 						</div>
 					</div>
@@ -623,6 +623,7 @@ function CreateProjectFolderDialog({
 }
 
 function ImportRepoRow({ failed = false, repo }: { failed?: boolean; repo: ImportFolderScan["repos"][number] }) {
+	const t = useT();
 	return (
 		<div className="flex items-center gap-3 px-4 py-3">
 			{failed ? (
@@ -637,7 +638,7 @@ function ImportRepoRow({ failed = false, repo }: { failed?: boolean; repo: Impor
 				</div>
 			</div>
 			<div className="hidden max-w-[260px] shrink-0 truncate text-right font-mono text-[12px] text-[var(--color-text-import-muted)] sm:block">
-				{failed ? (repo.reason ?? "Repository cannot be imported") : `${repo.branch} ${remoteDisplay(repo.remote)}`}
+				{failed ? (repo.reason ?? t("createProject.repoCannotImport")) : `${repo.branch} ${remoteDisplay(repo.remote)}`}
 			</div>
 		</div>
 	);

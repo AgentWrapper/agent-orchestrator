@@ -478,12 +478,12 @@ type TerminalEndedStripProps = {
 function TerminalEndedStrip({ canRestore, error, isRestoring, onRestore, variant }: TerminalEndedStripProps) {
 	const locale = activeLocale();
 	const message = canRestore
-		? "Restore the session to attach a live terminal and continue writing."
+		? t(locale, "terminal.restoreToContinue")
 		: variant === "reviewer"
-			? "This reviewer terminal has ended. Re-run review from the summary panel, or switch back to the agent terminal."
+			? t(locale, "terminal.reviewerEnded")
 			: variant === "shell"
 				? t(locale, "terminal.shellExited")
-				: "This terminal process ended, but the session is not marked terminated yet.";
+				: t(locale, "terminal.sessionEndedNotTerminated");
 
 	return (
 		<div className="shrink-0 border-b border-border bg-surface/80 px-4 py-2">
@@ -498,8 +498,8 @@ function TerminalEndedStrip({ canRestore, error, isRestoring, onRestore, variant
 				{canRestore && (
 					<button
 						type="button"
-						aria-label="Restore session"
-						title="Restore session"
+						aria-label={t(locale, "terminal.restoreSession")}
+						title={t(locale, "terminal.restoreSession")}
 						className="inline-flex size-control-form shrink-0 items-center justify-center rounded-md border border-border bg-raised text-foreground transition hover:bg-interactive-hover disabled:cursor-not-allowed disabled:opacity-50"
 						disabled={isRestoring}
 						onClick={onRestore}
