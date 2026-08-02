@@ -81,6 +81,14 @@ frontend/daemon/
 .agents/
 skills-lock.json
 
+# Cloud planning and operator notes remain local-only. The architecture design
+# is the single tracked Cloud design document.
+/ao-cloud/README.md
+/ao-cloud/cloud-todo.md
+/ao-cloud/architecture/CLOUD_AUTH.md
+/ao-cloud/architecture/CLOUD_ROADMAP.md
+/ao-cloud/setup/
+
 # e2e pod gate: downloaded pod logs/traces (uploaded as CI artifacts, not committed)
 e2e-artifacts/
 
