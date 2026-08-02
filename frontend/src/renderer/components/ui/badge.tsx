@@ -1,3 +1,4 @@
+// Mono pill badges. Color is rare and meaningful (DESIGN.md → Color).
 import * as React from "react";
 import { cn } from "../../lib/utils";
 

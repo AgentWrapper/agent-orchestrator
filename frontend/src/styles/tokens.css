@@ -348,6 +348,7 @@
 	--radius-command-palette: 12px;
 	--radius-command-item: 6px;
 	--shadow-command-palette: var(--elevation-xl);
+	--shadow-popover: var(--elevation-xl);
 	--size-command-palette: 720px;
 	--size-command-palette-top: 14vh;
 	--size-command-palette-list-max: 420px;
@@ -709,6 +710,7 @@
 	--color-text-command-placeholder: var(--muted-foreground);
 	--color-text-command-muted: var(--muted-foreground);
 	--shadow-command-palette: var(--elevation-xl);
+	--shadow-popover: var(--elevation-xl);
 
 	/* Welcome / import radius alias */
 	--color-border-welcome-panel: var(--border);
