@@ -100,6 +100,9 @@ func capabilities() ports.ChatCapabilities {
 		ports.ChatCapabilityFork:     true,
 		ports.ChatCapabilityRename:   true,
 		ports.ChatCapabilitySkills:   true,
+		// config/mcpServer/reload plus the status inventory read after it, both
+		// exercised against a live app-server.
+		ports.ChatCapabilityMCPReload: true,
 		// Guidance into a turn already in flight, over turn/steer. Advertised only
 		// after being driven against a live app-server (TestLiveSteerKeepsTheTurnAndItsWork
 		// on codex-cli 0.146.0): the steered turn kept its id, emitted one

@@ -609,6 +609,26 @@ export interface ConversationSnapshot {
 	 * choosing not to use it.
 	 */
 	mcpServers?: McpServer[];
+	/**
+	 * What this session's provider can do, so a control is gated before it is drawn.
+	 *
+	 * Absent until a controller is live — which means "not known yet", NOT "cannot".
+	 * Read it through `can()`, which encodes that distinction once.
+	 */
+	capabilities?: string[];
+}
+
+/**
+ * Whether this session's provider can do something.
+ *
+ * Absent capabilities mean the controller has not started, so nothing is known
+ * yet; a control gated on this stays hidden until the daemon says otherwise. That
+ * is deliberately not the same as offering the control and withdrawing it on the
+ * refusal, which is what a client has to do without this and which reads as a bug
+ * rather than as a difference between harnesses.
+ */
+export function can(snapshot: ConversationSnapshot, capability: string): boolean {
+	return (snapshot.capabilities ?? []).includes(capability);
 }
 
 /**

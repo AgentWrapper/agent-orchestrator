@@ -37,7 +37,7 @@ import {
 	chatFixtureSettled,
 	chatFixtureThreadError,
 } from "../lib/chat-fixture";
-import type { ConversationSnapshot } from "../types/conversation";
+import { can, type ConversationSnapshot } from "../types/conversation";
 
 export const Route = createFileRoute("/chat-preview")({
 	validateSearch: (search: Record<string, unknown>): { session?: string } => ({
@@ -182,11 +182,13 @@ function LiveChat({ sessionId }: { sessionId: string }) {
 						filePaths={paths}
 						filePathsTruncated={truncated}
 						onStageAttachments={stageAttachments}
-						onSteer={commands.steerUnsupported ? undefined : commands.steer}
+						onSteer={
+							can(snapshot, "steer") && !commands.steerUnsupported ? commands.steer : undefined
+						}
 						steerPending={commands.steerPending}
 						steerRefusal={commands.steerRefusal}
 						onReloadMcpServers={
-							commands.mcpReloadUnsupported
+							!can(snapshot, "mcp_reload") || commands.mcpReloadUnsupported
 								? undefined
 								: () => {
 										void commands.reloadMcpServers().catch(() => {});

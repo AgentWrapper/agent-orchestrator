@@ -88,6 +88,10 @@ const (
 	// ChatCapabilityRateLimits means the account's quota position is readable.
 	ChatCapabilityRateLimits  ChatCapability = "rate_limits"
 	ChatCapabilityInteractive ChatCapability = "user_input"
+	// ChatCapabilityMCPReload means the provider's tool servers can be restarted
+	// without restarting the conversation. Named so a client can gate the control
+	// rather than offering it and reading the refusal.
+	ChatCapabilityMCPReload ChatCapability = "mcp_reload"
 )
 
 // ChatCapabilities is the set a driver reports from Probe.

@@ -3,11 +3,13 @@ package controllers
 import (
 	"encoding/json"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/devimport"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/legacyimport"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
@@ -1144,6 +1146,16 @@ type ConversationSnapshotResponse struct {
 	// server failed to start reads, from the timeline alone, as the agent choosing
 	// not to use it.
 	MCPServers []ConversationMCPServerPayload `json:"mcpServers,omitempty"`
+	// Capabilities names what this session's provider can do, so a client gates a
+	// control before drawing it. Sorted, and only the abilities the provider
+	// actually has are listed.
+	//
+	// An open list rather than a fixed set of booleans: drivers gain abilities, and
+	// a client that checks for membership keeps working against a daemon that knows
+	// about more of them than it does. Absent until a controller is live, because an
+	// unstarted session's abilities are not yet known — and a client must treat
+	// absent as "do not offer yet" rather than as "cannot".
+	Capabilities []string `json:"capabilities,omitempty"`
 }
 
 // ConversationModelReroutePayload is the provider answering with a model other than
@@ -1290,4 +1302,26 @@ type SettingsResponse struct {
 // UpdateSessionInterfaceRequest changes the default interface for new sessions.
 type UpdateSessionInterfaceRequest struct {
 	DefaultSessionMode string `json:"defaultSessionMode" enum:"chat,tui"`
+}
+
+// capabilityNames lists the abilities a provider has, sorted so a client sees a
+// stable list rather than Go's map order. Only true entries are named: a
+// capability the driver reports as false is one it cannot do, which is the same
+// answer as not naming it, and listing both states would invite a client to read
+// presence rather than value.
+func capabilityNames(caps ports.ChatCapabilities) []string {
+	if len(caps) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(caps))
+	for name, has := range caps {
+		if has {
+			names = append(names, string(name))
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	sort.Strings(names)
+	return names
 }

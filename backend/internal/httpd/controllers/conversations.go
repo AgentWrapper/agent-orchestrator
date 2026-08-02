@@ -487,6 +487,7 @@ func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotRespon
 		Account:        accountPayload(s.Conversation.Account),
 		ThreadState:    threadStatePayload(s.Conversation.ThreadState),
 		MCPServers:     mcpServersPayload(s.Conversation.MCPServers),
+		Capabilities:   capabilityNames(s.Capabilities),
 	}
 
 	for _, turn := range s.Turns {

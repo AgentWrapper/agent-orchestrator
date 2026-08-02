@@ -46,6 +46,30 @@ export const chatFixture: ConversationSnapshot = {
 	],
 	account: { authMode: "chatgpt", planLabel: "Pro" },
 	threadState: { status: "active" },
+	// What a live codex controller advertises. Controls gate on this rather than on
+	// the harness name, so a fixture without it draws no steer or reload control —
+	// which is exactly what a session whose controller has not reported yet does.
+	capabilities: [
+		"approvals",
+		"compaction",
+		"diffs",
+		"fork",
+		"history",
+		"interrupt",
+		"mcp_reload",
+		"models",
+		"plans",
+		"rate_limits",
+		"rename",
+		"resume",
+		"rollback",
+		"skills",
+		"steer",
+		"streaming",
+		"tools",
+		"usage",
+		"user_input",
+	],
 	turns: [
 		{
 			id: "turn-1",

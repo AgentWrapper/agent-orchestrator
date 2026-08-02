@@ -11,6 +11,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	chatsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/chat"
 
 	"net/http/httptest"
@@ -340,4 +341,54 @@ func TestReloadMCPServersRefusedWhileBusySaysWhy(t *testing.T) {
 func errorCode(body map[string]any) string {
 	code, _ := body["code"].(string)
 	return code
+}
+
+// A client has to be able to gate a control BEFORE drawing it. Without this the
+// only way to learn that a harness cannot steer is to offer the control, take the
+// press, and withdraw it on the refusal — which reads as a bug rather than as a
+// difference between harnesses.
+func TestSnapshotAdvertisesWhatTheProviderCanDo(t *testing.T) {
+	body := conversationSnapshotBody(t, chatsvc.Snapshot{
+		SessionID: domain.SessionID("p1-1"),
+		Mode:      domain.SessionModeChat,
+		Capabilities: ports.ChatCapabilities{
+			ports.ChatCapabilitySteer:      true,
+			ports.ChatCapabilityCompaction: true,
+			// A capability the driver reports as false must not be advertised: a
+			// client checking for presence would otherwise offer it.
+			ports.ChatCapabilityFork: false,
+		},
+	})
+
+	raw, ok := body["capabilities"].([]any)
+	if !ok {
+		t.Fatalf("capabilities = %#v, want a list", body["capabilities"])
+	}
+	got := make([]string, 0, len(raw))
+	for _, v := range raw {
+		got = append(got, v.(string))
+	}
+	// Sorted, so a client sees a stable list rather than Go's map order.
+	want := []string{"compaction", "steer"}
+	if len(got) != len(want) {
+		t.Fatalf("capabilities = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("capabilities = %v, want %v", got, want)
+		}
+	}
+}
+
+// An unstarted session's abilities are not known yet. Advertising an empty list
+// would read as "this provider can do nothing", so the field is absent instead and
+// a client treats absent as "do not offer yet".
+func TestSnapshotOmitsCapabilitiesWithoutAController(t *testing.T) {
+	body := conversationSnapshotBody(t, chatsvc.Snapshot{
+		SessionID: domain.SessionID("p1-1"),
+		Mode:      domain.SessionModeChat,
+	})
+	if _, present := body["capabilities"]; present {
+		t.Errorf("capabilities present with no controller: %#v", body["capabilities"])
+	}
 }

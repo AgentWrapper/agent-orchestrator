@@ -17,6 +17,7 @@ import {
 	useStageAttachments,
 	useWorkspaceFilePaths,
 } from "../../hooks/useConversation";
+import { can } from "../../types/conversation";
 import type { WorkspaceSession } from "../../types/workspace";
 
 export function SessionChatSurface({ session }: { session: WorkspaceSession }) {
@@ -91,14 +92,15 @@ export function SessionChatSurface({ session }: { session: WorkspaceSession }) {
 			filePaths={paths}
 			filePathsTruncated={truncated}
 			onStageAttachments={stageAttachments}
-			// Withdrawn for good once the daemon says this harness cannot steer. The
-			// capability is a property of the driver, so the first refusal is the last
-			// word — and a control that only ever fails is worse than no control.
-			onSteer={commands.steerUnsupported ? undefined : commands.steer}
+			// Gated on what the daemon advertises, so the control is never drawn for a
+			// harness that cannot steer. The refusal check stays as a backstop: it
+			// covers the window before the controller reports, and it is the last word
+			// afterwards, since the capability is a property of the driver.
+			onSteer={can(snapshot, "steer") && !commands.steerUnsupported ? commands.steer : undefined}
 			steerPending={commands.steerPending}
 			steerRefusal={commands.steerRefusal}
 			onReloadMcpServers={
-				commands.mcpReloadUnsupported
+				!can(snapshot, "mcp_reload") || commands.mcpReloadUnsupported
 					? undefined
 					: () => {
 							// The rejection is already held by the mutation and rendered from

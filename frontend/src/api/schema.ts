@@ -1332,6 +1332,7 @@ export interface components {
         ConversationSnapshotResponse: {
             account?: components["schemas"]["ConversationAccountPayload"];
             activities: components["schemas"]["ConversationActivityResponse"][];
+            capabilities?: string[];
             compactedAt?: null | string;
             /** @enum {string} */
             controller: "connecting" | "ready" | "busy" | "recovering" | "stopped";

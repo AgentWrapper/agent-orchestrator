@@ -261,6 +261,12 @@ func (c *Controller) State() ports.ChatControllerState {
 	return c.state
 }
 
+// Capabilities reports what this session's provider can do, so a client can gate
+// a control before drawing it rather than discovering the answer from a refusal.
+func (c *Controller) Capabilities() ports.ChatCapabilities {
+	return c.conv.Capabilities()
+}
+
 // Send records a message and dispatches it, or queues it if the agent is busy.
 //
 // The durable record is written first: if the provider call then fails, the user

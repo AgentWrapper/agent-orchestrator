@@ -318,6 +318,14 @@ type Snapshot struct {
 	// real zero.
 	Usage      *domain.ConversationUsage
 	RateLimits *domain.ConversationRateLimits
+	// Capabilities is what this session's provider can actually do, so a client can
+	// decide what to offer BEFORE offering it. Without this the only way to find out
+	// is to try: a Claude session would draw "Steer this turn", take the press, and
+	// withdraw the control on the refusal — which reads as a bug rather than as a
+	// harness difference. Nil when no controller is live, because an unstarted
+	// session's abilities are not yet known and guessing them is how a control
+	// appears and then vanishes.
+	Capabilities ports.ChatCapabilities
 }
 
 // SnapshotReader is the durable read the service serves snapshots from. Kept
@@ -369,8 +377,10 @@ func (s *Service) Snapshot(ctx context.Context, id domain.SessionID) (Snapshot, 
 	}
 
 	state := ports.ChatControllerStopped
+	var caps ports.ChatCapabilities
 	if controller, err := s.Controller(id); err == nil {
 		state = controller.State()
+		caps = controller.Capabilities()
 	}
 
 	return Snapshot{
@@ -382,6 +392,7 @@ func (s *Service) Snapshot(ctx context.Context, id domain.SessionID) (Snapshot, 
 		Turns:        rows.Turns,
 		Messages:     rows.Messages,
 		Activities:   rows.Activities,
+		Capabilities: caps,
 		Usage:        rows.Conversation.Usage,
 		RateLimits:   rows.Conversation.RateLimits,
 	}, nil
