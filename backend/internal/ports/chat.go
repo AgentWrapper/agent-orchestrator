@@ -37,6 +37,22 @@ var (
 	// resumed. Callers must surface a recovery choice, never silently start a
 	// new provider conversation.
 	ErrChatResumeFailed = errors.New("chat conversation resume failed")
+	// ErrChatNoActiveTurn means an interrupt found nothing to cancel — either AO
+	// has no turn in flight, or the provider no longer considers the named turn
+	// active. A driver must translate its provider's refusal into this rather than
+	// letting a protocol error escape: pressing stop a moment too late is an
+	// ordinary thing for a person to do, not an internal failure.
+	ErrChatNoActiveTurn = errors.New("no active turn to interrupt")
+	// ErrChatRequestNotPending means the request a decision names is not waiting
+	// for one: already answered, superseded, or from a controller that has been
+	// replaced. Two clients looking at the same approval is normal, so one of them
+	// arriving second is an ordinary outcome and not a failure.
+	ErrChatRequestNotPending = errors.New("chat request is not pending")
+	// ErrChatDecisionNotOffered means the decision is not one the provider offered
+	// for that request. It must be refused and the request left pending: consent
+	// AO invented is not consent, and consuming the request on a bad decision
+	// would leave the real answer with nothing to answer.
+	ErrChatDecisionNotOffered = errors.New("chat decision was not offered for this request")
 )
 
 // ChatCapability names something a driver may or may not be able to do. AO gates

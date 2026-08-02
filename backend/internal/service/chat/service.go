@@ -95,6 +95,23 @@ type StartConfig struct {
 	ProviderConversationID string
 }
 
+// settleOrphanedWork closes out anything a previous controller left behind.
+//
+// Best-effort by design: a failure here must not stop a session from coming back,
+// because a session the user cannot reopen is worse than a stale row. Both
+// failures are logged rather than swallowed.
+func (s *Service) settleOrphanedWork(ctx context.Context, session domain.SessionID, conversationID string) {
+	now := s.now()
+	if err := s.store.SettleOrphanedTurns(ctx, session, now); err != nil {
+		s.log.Error("chat start: settle orphaned turns", "session", session, "error", err)
+	}
+	// An approval left pending can never be answered: the provider call it was
+	// blocking died with the process that was holding it.
+	if err := s.store.FailPendingApprovals(ctx, conversationID, now); err != nil {
+		s.log.Error("chat start: close pending approvals", "session", session, "error", err)
+	}
+}
+
 // Start launches or resumes the Chat controller for a session.
 //
 // A resume that fails is reported as a failure rather than quietly becoming a new
@@ -149,6 +166,17 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	if err != nil {
 		return nil, err
 	}
+
+	// Whatever the previous controller left in flight is not this controller's, and
+	// it is not evidence that any work finished.
+	//
+	// The graceful path settles this when the event stream ends, but a daemon that
+	// was killed never got there — so on a crash the timeline was left claiming a
+	// turn was still running and a queued message was still waiting to be sent,
+	// behind a controller that no longer existed. Nothing would ever have corrected
+	// it. Settling here covers every way a controller can come up, and is a no-op
+	// for a session that has none of it.
+	s.settleOrphanedWork(ctx, cfg.SessionID, conversation.ID)
 
 	// A fresh generation per launch, so events from the controller this one
 	// replaced can be told apart from the current one's.
@@ -451,6 +479,31 @@ func (s *Service) StartChatTurn(ctx context.Context, id domain.SessionID, text s
 		// network's. Attributing it to the daemon rendered the user's own request
 		// as a system notice.
 		Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		return "", err
+	}
+	return turn.ID, nil
+}
+
+// RelayChatTurn delivers a message AO is carrying for someone else.
+//
+// Origin is automation, not human: `ao send` and an orchestrator writing to a
+// worker are AO acting on the user's instructions, and the timeline attributes
+// them so rather than passing them off as something the user typed here. The
+// distinction is durable and structural — a reader must not have to infer it
+// from a text prefix.
+//
+// Delivery follows the same rules as any other send: a message arriving mid-turn
+// queues instead of racing the running turn.
+func (s *Service) RelayChatTurn(ctx context.Context, id domain.SessionID, text string) (string, error) {
+	controller, err := s.Controller(id)
+	if err != nil {
+		return "", err
+	}
+	turn, err := controller.Send(ctx, ports.ChatUserMessage{
+		Text:   text,
+		Origin: domain.MessageOriginAutomation,
 	})
 	if err != nil {
 		return "", err

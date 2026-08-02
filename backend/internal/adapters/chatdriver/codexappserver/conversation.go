@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -47,7 +48,7 @@ type conversation struct {
 	events   chan ports.ChatEvent
 
 	mu      sync.Mutex
-	pending map[string]chan ports.ChatDecision
+	pending map[string]*parkedRequest
 	closed  bool
 
 	// sendMu serializes turn dispatch so only one operation mutates the provider
@@ -69,7 +70,7 @@ func newConversation(proc *process, log *slog.Logger) *conversation {
 		proc:     proc,
 		log:      log,
 		events:   make(chan ports.ChatEvent, eventBuffer),
-		pending:  make(map[string]chan ports.ChatDecision),
+		pending:  make(map[string]*parkedRequest),
 		pumpDone: make(chan struct{}),
 	}
 	c.conn = newConn(proc.stdin, proc.stdout, log, c.handleServerRequest)
@@ -193,42 +194,114 @@ func (c *conversation) Interrupt(ctx context.Context, providerTurnID string) err
 		c.mu.Unlock()
 	}
 	if providerTurnID == "" {
-		return errors.New("no active turn to interrupt")
+		return ports.ErrChatNoActiveTurn
 	}
 	if err := c.conn.request(ctx, "turn/interrupt", map[string]any{
 		"threadId": c.threadID,
 		"turnId":   providerTurnID,
 	}, nil); err != nil {
+		// The provider refuses an interrupt for a turn it does not consider
+		// active — which happens either side of the turn: pressed before it has
+		// acknowledged the start, or after it already finished. Neither is an
+		// internal failure, so it is translated here, where the provider's
+		// vocabulary is known, instead of escaping as a protocol error and
+		// reaching the user as "Internal server error".
+		if isNoActiveTurn(err) {
+			return ports.ErrChatNoActiveTurn
+		}
 		return fmt.Errorf("turn/interrupt: %w", err)
 	}
 	return nil
 }
 
+// isNoActiveTurn recognizes the provider's "nothing to interrupt" refusal.
+//
+// Matched on the message because that is all app-server gives: the code is the
+// generic -32600 it uses for any invalid request, so the code alone cannot
+// distinguish this from a malformed call.
+func isNoActiveTurn(err error) bool {
+	var rpcErr *rpcError
+	if !errors.As(err, &rpcErr) {
+		return false
+	}
+	return strings.Contains(strings.ToLower(rpcErr.Message), "no active turn")
+}
+
 // ResolveRequest answers a parked approval or user-input request.
+//
+// The decision is checked against the set the provider offered for THIS request,
+// and the request stays parked unless a valid answer is actually going through.
+// Both halves matter: forwarding an invented decision is consent AO made up, and
+// consuming the request on a bad one would leave the user's real answer with
+// nothing left to answer while the provider waits out its timeout.
 func (c *conversation) ResolveRequest(ctx context.Context, requestID string, decision ports.ChatDecision) error {
 	c.mu.Lock()
-	ch, ok := c.pending[requestID]
-	if ok {
-		delete(c.pending, requestID)
-	}
+	parked, ok := c.pending[requestID]
 	closed := c.closed
-	c.mu.Unlock()
-
 	if closed {
+		c.mu.Unlock()
 		return errConversationClosed
 	}
 	if !ok {
-		// Already resolved, superseded, or from a previous controller. Refusing
-		// is required: a stale card must never resolve a newer request.
-		return fmt.Errorf("no pending request %q", requestID)
+		c.mu.Unlock()
+		// Already resolved, superseded, or from a previous controller. Refusing is
+		// required: a stale card must never resolve a newer request.
+		return fmt.Errorf("%w: %q", ports.ErrChatRequestNotPending, requestID)
 	}
+	reply, err := parked.reply(decision)
+	if err != nil {
+		c.mu.Unlock()
+		return err
+	}
+	delete(c.pending, requestID)
+	c.mu.Unlock()
 
 	select {
-	case ch <- decision:
+	case parked.ch <- reply:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// parkedRequest is one server-to-client request waiting on a person, together
+// with the decisions the provider said were valid for it.
+//
+// Keeping the provider's own payload for each decision is what makes structured
+// decisions answerable at all: some arrive as objects carrying parameters
+// (acceptWithExecpolicyAmendment), and a client that only knows the id cannot
+// reconstruct them. AO echoes what the provider sent rather than rebuilding it.
+type parkedRequest struct {
+	ch      chan ports.ChatDecision
+	method  string
+	offered map[string]json.RawMessage
+}
+
+// reply resolves a client decision into the payload to send back.
+func (p *parkedRequest) reply(decision ports.ChatDecision) (ports.ChatDecision, error) {
+	if p.method == "item/tool/requestUserInput" {
+		// Not a decision but an answer: the provider offers questions, not options,
+		// so there is no set to check it against.
+		return decision, nil
+	}
+	raw, ok := p.offered[decision.ID]
+	if !ok {
+		return ports.ChatDecision{}, fmt.Errorf("%w: %q (offered: %s)",
+			ports.ErrChatDecisionNotOffered, decision.ID, strings.Join(p.offeredIDs(), ", "))
+	}
+	// The provider's own encoding of the decision wins over whatever the client
+	// sent, so an object-shaped decision round-trips exactly.
+	decision.Raw = raw
+	return decision, nil
+}
+
+func (p *parkedRequest) offeredIDs() []string {
+	ids := make([]string, 0, len(p.offered))
+	for id := range p.offered {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // handleServerRequest parks a provider request until a decision arrives.
@@ -250,13 +323,18 @@ func (c *conversation) handleServerRequest(ctx context.Context, req serverReques
 
 	decisions, summary, detail := parseApproval(req.Method, req.Params)
 
+	offered := make(map[string]json.RawMessage, len(decisions))
+	for _, option := range decisions {
+		offered[option.ID] = option.Raw
+	}
+
 	ch := make(chan ports.ChatDecision, 1)
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return nil, errConversationClosed
 	}
-	c.pending[requestID] = ch
+	c.pending[requestID] = &parkedRequest{ch: ch, method: req.Method, offered: offered}
 	c.mu.Unlock()
 
 	c.emit(ports.ChatEvent{
@@ -294,11 +372,11 @@ func (c *conversation) discardPending(requestID string) {
 func (c *conversation) failPendingApprovals() {
 	c.mu.Lock()
 	pending := c.pending
-	c.pending = map[string]chan ports.ChatDecision{}
+	c.pending = map[string]*parkedRequest{}
 	c.closed = true
 	c.mu.Unlock()
-	for _, ch := range pending {
-		close(ch)
+	for _, parked := range pending {
+		close(parked.ch)
 	}
 }
 

@@ -2078,6 +2078,15 @@ func (m *Manager) applyWorkspaceProjectPreserved(ctx context.Context, rows []por
 // the session is active or the budget is exhausted. Confirmation never fails
 // the send: it only decides whether to nudge again.
 func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string) error {
+	// Chat mode has no pane to type into, so it does not go through the messenger
+	// at all. Without this branch the send reached the runtime guard and was
+	// refused as "missing runtime handles" — true of the handles, wrong about the
+	// session, and it left `ao send` and orchestrator-to-worker relay unable to
+	// reach a chat worker.
+	if handled, err := m.sendChat(ctx, id, message); handled {
+		return err
+	}
+
 	message, err := m.prepareOutboundMessage(ctx, id, message)
 	if err != nil {
 		return err

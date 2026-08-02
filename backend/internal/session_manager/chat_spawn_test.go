@@ -43,7 +43,10 @@ type recordingLauncher struct {
 	preflighted []domain.AgentHarness
 	started     []ChatStart
 	turns       []string
-	stopped     []domain.SessionID
+	// relayed is what arrived through Manager.Send rather than as an initial
+	// prompt, kept separate so a test can tell the two apart.
+	relayed []string
+	stopped []domain.SessionID
 }
 
 func (l *recordingLauncher) PreflightChat(_ context.Context, harness domain.AgentHarness) error {
@@ -65,6 +68,11 @@ func (l *recordingLauncher) StartChat(_ context.Context, cfg ChatStart) (ChatSta
 func (l *recordingLauncher) StartChatTurn(_ context.Context, _ domain.SessionID, text string) (string, error) {
 	l.turns = append(l.turns, text)
 	return "turn-1", l.turnErr
+}
+
+func (l *recordingLauncher) RelayChatTurn(_ context.Context, _ domain.SessionID, text string) (string, error) {
+	l.relayed = append(l.relayed, text)
+	return "turn-relay", l.turnErr
 }
 
 func (l *recordingLauncher) StopChat(_ context.Context, id domain.SessionID) error { //nolint:unparam
@@ -323,5 +331,74 @@ func TestRestoreResumesChatRatherThanRelaunchingATerminal(t *testing.T) {
 	// replayed prompt.
 	if result.Mode != RestoreModeNative {
 		t.Errorf("restore mode = %q, want native", result.Mode)
+	}
+}
+
+// `ao send` and orchestrator-to-worker relay both go through Manager.Send. A chat
+// session has no pane to type into, so without a mode branch the send reached the
+// runtime guard and was refused as "missing runtime handles" — which is true of
+// the handles and wrong about the session, and left chat workers unreachable by
+// AO's own automation.
+func TestSendRoutesIntoTheChatConversation(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, _, runtime := newChatManager(launcher)
+	ctx := context.Background()
+
+	rec, _, _, err := mgr.Spawn(ctx, ports.SpawnConfig{
+		ProjectID:     chatTestProject,
+		Kind:          domain.KindWorker,
+		Harness:       domain.HarnessCodex,
+		Prompt:        "initial brief",
+		RequestedMode: domain.SessionModeChat,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+
+	if err := mgr.Send(ctx, rec.ID, "relayed from an orchestrator"); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if len(launcher.relayed) != 1 || launcher.relayed[0] != "relayed from an orchestrator" {
+		t.Fatalf("relayed = %v, want the message routed to the conversation", launcher.relayed)
+	}
+	// The initial prompt is a different thing and must not be conflated with it.
+	if len(launcher.turns) != 1 || launcher.turns[0] != "initial brief" {
+		t.Errorf("initial prompt turns = %v", launcher.turns)
+	}
+	// The terminal path is not merely unused, it is unreachable here: no runtime
+	// was ever created for this session, so a send that fell through would have
+	// been refused by the runtime guard instead of returning nil above.
+	if runtime.created != 0 {
+		t.Errorf("chat spawn created %d runtimes", runtime.created)
+	}
+}
+
+// A terminated chat session cannot receive a message, matching the terminal path.
+// The controller is gone; accepting the send would record a message nothing will
+// ever deliver.
+func TestSendRefusedForTerminatedChatSession(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, _, _ := newChatManager(launcher)
+	ctx := context.Background()
+
+	rec, _, _, err := mgr.Spawn(ctx, ports.SpawnConfig{
+		ProjectID:     chatTestProject,
+		Kind:          domain.KindWorker,
+		Harness:       domain.HarnessCodex,
+		RequestedMode: domain.SessionModeChat,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if _, err := mgr.Kill(ctx, rec.ID); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+
+	err = mgr.Send(ctx, rec.ID, "too late")
+	if !errors.Is(err, ErrTerminated) {
+		t.Fatalf("err = %v, want ErrTerminated", err)
+	}
+	if len(launcher.relayed) != 0 {
+		t.Errorf("a terminated session still received %v", launcher.relayed)
 	}
 }

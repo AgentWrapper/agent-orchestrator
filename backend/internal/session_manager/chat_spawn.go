@@ -33,6 +33,10 @@ type ChatLauncher interface {
 	// paste-and-Enter equivalent in chat mode: the provider either accepts the
 	// turn or reports why.
 	StartChatTurn(ctx context.Context, id domain.SessionID, text string) (string, error)
+	// RelayChatTurn delivers a message AO is carrying on someone else's behalf —
+	// `ao send`, an orchestrator writing to a worker, an automation — as a turn
+	// attributed to automation rather than to the human at the keyboard.
+	RelayChatTurn(ctx context.Context, id domain.SessionID, text string) (string, error)
 	// StopChat releases a session's controller.
 	StopChat(ctx context.Context, id domain.SessionID) error
 }
@@ -155,6 +159,37 @@ func (m *Manager) stopChatBestEffort(ctx context.Context, id domain.SessionID) {
 	if err := m.chat.StopChat(ctx, id); err != nil {
 		m.logger.Warn("spawn rollback: close chat controller", "sessionID", id, "error", err)
 	}
+}
+
+// sendChat routes an outbound message into a chat session's conversation.
+//
+// It reports handled=false for anything that is not a live chat session, so the
+// terminal path below it is reached unchanged — including for a session this
+// build cannot serve, where the runtime guard's refusal is still the right answer.
+//
+// The refusals here mirror the terminal path's: a terminated session cannot
+// receive a message, and one whose controller is gone cannot either. Busy is not
+// a refusal — the controller queues a mid-turn message, which is strictly better
+// than the terminal path's habit of dropping a nudge it cannot safely deliver.
+func (m *Manager) sendChat(ctx context.Context, id domain.SessionID, message string) (bool, error) {
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return false, fmt.Errorf("send %s: session: %w", id, err)
+	}
+	if !ok || domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeChat {
+		return false, nil
+	}
+	if m.chat == nil {
+		return true, fmt.Errorf("send %s: %w: chat mode is not available in this build",
+			id, ports.ErrChatUnsupported)
+	}
+	if rec.IsTerminated {
+		return true, fmt.Errorf("send %s: %w", id, ErrTerminated)
+	}
+	if _, err := m.chat.RelayChatTurn(ctx, id, message); err != nil {
+		return true, fmt.Errorf("send %s: %w", id, err)
+	}
+	return true, nil
 }
 
 // SessionModeDefaults supplies the daemon-owned default session interface.

@@ -339,7 +339,11 @@ func TestApprovalIsParkedUntilResolved(t *testing.T) {
 }
 
 // A structured decision must round-trip exactly, or the provider rejects it.
-func TestStructuredDecisionIsEchoedVerbatim(t *testing.T) {
+// A structured decision must round-trip with the parameters the provider attached
+// to it. The client sends an id and nothing else — it has no way to reconstruct
+// an execpolicy amendment — so AO answers with the provider's own payload for the
+// option that was offered.
+func TestStructuredDecisionIsAnsweredWithTheProvidersOwnPayload(t *testing.T) {
 	d, srv := newTestDriver(t)
 	conv, err := d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws"})
 	if err != nil {
@@ -347,20 +351,65 @@ func TestStructuredDecisionIsEchoedVerbatim(t *testing.T) {
 	}
 	defer func() { _ = conv.Close() }()
 
-	srv.push(`{"id":3,"method":"item/commandExecution/requestApproval","params":{"command":"ls","availableDecisions":["accept"]}}`)
+	// The real captured shape: a mix of plain and object-shaped decisions.
+	srv.push(`{"id":3,"method":"item/commandExecution/requestApproval","params":{"command":"ls","availableDecisions":["accept",{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["ls"]}},"cancel"]}}`)
 	ev := nextEvent(t, conv.Events(), ports.ChatEventApprovalRequested)
 
-	raw := json.RawMessage(`{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["ls"]}}`)
 	if err := conv.ResolveRequest(context.Background(), ev.RequestID, ports.ChatDecision{
-		ID:  "acceptWithExecpolicyAmendment",
-		Raw: raw,
+		ID: "acceptWithExecpolicyAmendment",
 	}); err != nil {
 		t.Fatalf("ResolveRequest: %v", err)
 	}
 
 	reply := srv.awaitFrame(func(f frame) bool { return f.ID != nil && string(*f.ID) == "3" && f.Method == "" })
 	if !strings.Contains(string(reply.Result), "execpolicy_amendment") {
-		t.Fatalf("structured decision was not echoed: %s", reply.Result)
+		t.Fatalf("the provider's own decision payload was not echoed: %s", reply.Result)
+	}
+}
+
+// A decision the provider never offered is consent AO would be inventing. It must
+// be refused, and — just as important — the request must stay pending so the
+// user's real answer still has something to answer.
+func TestDecisionNotOfferedIsRefusedAndLeavesTheRequestPending(t *testing.T) {
+	d, srv := newTestDriver(t)
+	conv, err := d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = conv.Close() }()
+
+	// Note there is no decline on offer, which is a real captured case.
+	srv.push(`{"id":4,"method":"item/commandExecution/requestApproval","params":{"command":"rm -rf /","availableDecisions":["accept","cancel"]}}`)
+	ev := nextEvent(t, conv.Events(), ports.ChatEventApprovalRequested)
+
+	err = conv.ResolveRequest(context.Background(), ev.RequestID, ports.ChatDecision{ID: "decline"})
+	if !errors.Is(err, ports.ErrChatDecisionNotOffered) {
+		t.Fatalf("err = %v, want ErrChatDecisionNotOffered", err)
+	}
+
+	// The request survived the bad answer, so the offered decision still works.
+	if err := conv.ResolveRequest(context.Background(), ev.RequestID, ports.ChatDecision{ID: "cancel"}); err != nil {
+		t.Fatalf("a refused decision consumed the request: %v", err)
+	}
+	reply := srv.awaitFrame(func(f frame) bool { return f.ID != nil && string(*f.ID) == "4" && f.Method == "" })
+	if !strings.Contains(string(reply.Result), "cancel") {
+		t.Fatalf("reply did not carry the offered decision: %s", reply.Result)
+	}
+}
+
+// Answering a request that is no longer waiting is ordinary — two clients can
+// watch the same approval — so it comes back typed rather than as a raw failure.
+func TestResolvingAnUnknownRequestIsTyped(t *testing.T) {
+	d, _ := newTestDriver(t)
+	conv, err := d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = conv.Close() }()
+
+	err = conv.ResolveRequest(context.Background(), "no-such-request", ports.ChatDecision{ID: "accept"})
+	if !errors.Is(err, ports.ErrChatRequestNotPending) {
+		t.Fatalf("err = %v, want ErrChatRequestNotPending", err)
 	}
 }
 

@@ -89,7 +89,12 @@ type Controller struct {
 	// activeTurn maps a provider turn id to AO's turn id for the turn currently
 	// in flight, so a completion can be attributed without a round trip.
 	pendingTurnID string
-	state         ports.ChatControllerState
+	// ackedTurnID is the turn the PROVIDER has confirmed it started, which lags
+	// pendingTurnID by the round trip between turn/start returning and the
+	// turn-started notification arriving. Interrupt needs the distinction: a
+	// provider refuses to cancel a turn it has not acknowledged yet.
+	ackedTurnID string
+	state       ports.ChatControllerState
 	// cancelQueuedAt is set when the user interrupts, and is the cutoff for the
 	// queue that interrupt cancels. Zero means nothing is being cancelled.
 	cancelQueuedAt time.Time
@@ -231,6 +236,9 @@ func (c *Controller) dispatch(
 
 	c.mu.Lock()
 	c.pendingTurnID = ref.ProviderTurnID
+	// Dispatched, not yet acknowledged: turn/start returning is AO's fact, and the
+	// provider's own turn-started notification is the one an interrupt needs.
+	c.ackedTurnID = ""
 	c.mu.Unlock()
 
 	return domain.ConversationTurn{
@@ -310,6 +318,16 @@ func (c *Controller) Resolve(ctx context.Context, requestID string, decision por
 	return nil
 }
 
+// turnAckWait bounds how long Interrupt waits for the provider to acknowledge a
+// turn it has only just been handed.
+//
+// Stop appears the instant a message is sent, so a user can press it before the
+// provider has started the turn — and a provider refuses to cancel a turn it does
+// not yet consider active. Waiting out that gap is what makes the button reliable
+// in the moment someone is most likely to use it: right after realizing they sent
+// the wrong thing.
+const turnAckWait = 3 * time.Second
+
 // Interrupt cancels the in-flight turn, and with it anything queued behind it.
 //
 // The queue is cancelled because stop is the user's brake: a brake that releases
@@ -317,22 +335,59 @@ func (c *Controller) Resolve(ctx context.Context, requestID string, decision por
 // says. The cutoff is recorded before the provider call, so a completion that
 // races back cannot drain the queue the interrupt was about to cancel.
 func (c *Controller) Interrupt(ctx context.Context) error {
-	c.mu.Lock()
-	turn := c.pendingTurnID
-	if turn != "" {
-		c.cancelQueuedAt = c.now()
-	}
-	c.mu.Unlock()
-	if turn == "" {
+	turn, ok := c.awaitAcknowledgedTurn(ctx)
+	if !ok {
 		return ErrNoActiveTurn
 	}
+
+	c.mu.Lock()
+	c.cancelQueuedAt = c.now()
+	c.mu.Unlock()
+
 	if err := c.conv.Interrupt(ctx, turn); err != nil {
+		// The interrupt did not happen, so the queue it was going to cancel is
+		// still the user's to send.
 		c.mu.Lock()
 		c.cancelQueuedAt = time.Time{}
 		c.mu.Unlock()
+		if errors.Is(err, ports.ErrChatNoActiveTurn) {
+			return ErrNoActiveTurn
+		}
 		return fmt.Errorf("interrupt turn %s: %w", turn, err)
 	}
 	return nil
+}
+
+// awaitAcknowledgedTurn returns the turn to interrupt once the provider has
+// confirmed it started, or reports that there is nothing to cancel.
+//
+// It gives up immediately when no turn is in flight — that is a plain "nothing to
+// stop" and must stay fast. It only waits in the narrow window where AO has
+// dispatched a turn and the provider has not yet said so. On expiry it returns the
+// turn anyway: the provider is the authority on whether it can be cancelled, and
+// its refusal is already translated into a typed answer.
+func (c *Controller) awaitAcknowledgedTurn(ctx context.Context) (string, bool) {
+	deadline := time.Now().Add(turnAckWait)
+	for {
+		c.mu.Lock()
+		pending, acked := c.pendingTurnID, c.ackedTurnID
+		c.mu.Unlock()
+
+		if pending == "" {
+			return "", false
+		}
+		if acked == pending || time.Now().After(deadline) {
+			return pending, true
+		}
+
+		select {
+		case <-ctx.Done():
+			return pending, true
+		case <-c.stopped:
+			return pending, true
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
 }
 
 // Close releases the controller. Settling in-flight work is not done here: it
@@ -423,6 +478,9 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 	case ports.ChatEventTurnStarted:
 		c.mu.Lock()
 		c.pendingTurnID = event.ProviderTurnID
+		// The provider has confirmed this turn, so it will accept an interrupt for
+		// it. Until this arrives, it will not.
+		c.ackedTurnID = event.ProviderTurnID
 		c.state = ports.ChatControllerBusy
 		c.mu.Unlock()
 		c.reportActivity(ctx, domain.ActivityActive, "chat.turn.started", now)
@@ -432,6 +490,9 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 		c.mu.Lock()
 		if c.pendingTurnID == event.ProviderTurnID {
 			c.pendingTurnID = ""
+		}
+		if c.ackedTurnID == event.ProviderTurnID {
+			c.ackedTurnID = ""
 		}
 		c.state = ports.ChatControllerReady
 		c.mu.Unlock()

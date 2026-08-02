@@ -174,6 +174,20 @@ func writeConversationError(w http.ResponseWriter, r *http.Request, err error) {
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
 			"CHAT_NO_ACTIVE_TURN", "there is no turn in flight to interrupt", nil)
 
+	case errors.Is(err, ports.ErrChatRequestNotPending):
+		// Two clients can watch the same approval, so arriving second is ordinary.
+		// The card is stale; the client should refresh rather than retry.
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_REQUEST_NOT_PENDING",
+			"this request has already been answered or is no longer waiting", nil)
+
+	case errors.Is(err, ports.ErrChatDecisionNotOffered):
+		// A client asking for an option the provider never offered is a bug in the
+		// client, not a server failure — and the request is still pending, so the
+		// user can still answer it.
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation",
+			"CHAT_DECISION_NOT_OFFERED", err.Error(), nil)
+
 	case errors.Is(err, ports.ErrChatUnsupported):
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
 			"SESSION_MODE_UNSUPPORTED", err.Error(), nil)

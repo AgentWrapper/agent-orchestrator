@@ -373,6 +373,10 @@ func (c chatLauncher) StartChatTurn(ctx context.Context, id domain.SessionID, te
 	return c.svc.StartChatTurn(ctx, id, text)
 }
 
+func (c chatLauncher) RelayChatTurn(ctx context.Context, id domain.SessionID, text string) (string, error) {
+	return c.svc.RelayChatTurn(ctx, id, text)
+}
+
 func (c chatLauncher) StopChat(ctx context.Context, id domain.SessionID) error {
 	return c.svc.StopChat(ctx, id)
 }

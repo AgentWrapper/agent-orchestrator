@@ -130,7 +130,10 @@ func (f *fakeConversation) decisionFor(id string) (ports.ChatDecision, bool) {
 	return d, ok
 }
 
-type fakeDriver struct{ conv *fakeConversation }
+// fakeDriver hands back whatever conversation double the test supplied, so a
+// scenario can replace how the provider ANSWERS without reimplementing how it
+// streams.
+type fakeDriver struct{ conv ports.ChatConversation }
 
 func (d fakeDriver) Harness() domain.AgentHarness { return domain.HarnessCodex }
 func (d fakeDriver) Probe(context.Context) (ports.ChatCapabilities, error) {
@@ -185,9 +188,22 @@ func (h *harness) now() time.Time {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
+	return newHarnessWithConversation(t, nil)
+}
+
+// newHarnessWithConversation lets a test supply its own provider double, for the
+// cases where the interesting behavior is how the provider answers rather than
+// what it streams. A nil conv gets the plain fake.
+func newHarnessWithConversation(t *testing.T, conv ports.ChatConversation) *harness {
+	t.Helper()
 	st := openStore(t)
-	conv := newFakeConversation()
-	h := &harness{st: st, conv: conv, clock: time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)}
+	base := newFakeConversation()
+	if conv == nil {
+		conv = base
+	} else if recorder, ok := conv.(*interruptRecorder); ok {
+		base = recorder.fakeConversation
+	}
+	h := &harness{st: st, conv: base, clock: time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)}
 
 	var counter int
 	svc := chatsvc.New(chatsvc.Options{
@@ -711,5 +727,185 @@ func TestInitialPromptIsAttributedToTheUser(t *testing.T) {
 	}
 	if first.Role != domain.MessageRoleUser {
 		t.Errorf("initial prompt role = %q, want user", first.Role)
+	}
+}
+
+// A relayed message is AO carrying someone else's words: `ao send`, or an
+// orchestrator writing to a worker. It must be attributed to automation, not
+// passed off as something the user typed here — the timeline distinguishes the
+// two structurally, and a reader should never have to infer it from a prefix.
+func TestRelayedMessageIsAttributedToAutomation(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	if _, err := h.svc.RelayChatTurn(ctx, testSession, "orchestrator: rebase onto main"); err != nil {
+		t.Fatalf("RelayChatTurn: %v", err)
+	}
+
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Messages) >= 1
+	})
+	msg := snapshot.Messages[0]
+	if msg.Origin != domain.MessageOriginAutomation {
+		t.Fatalf("relay origin = %q, want %q", msg.Origin, domain.MessageOriginAutomation)
+	}
+	if msg.Role != domain.MessageRoleUser {
+		t.Errorf("relay role = %q; a relay is still an inbound request", msg.Role)
+	}
+	if got := h.conv.sentTexts(); len(got) != 1 || got[0] != "orchestrator: rebase onto main" {
+		t.Fatalf("provider received %v, want the relayed text dispatched", got)
+	}
+}
+
+// interruptRecorder answers turn/interrupt the way the provider does: it refuses
+// any turn it has not been told to consider active.
+type interruptRecorder struct {
+	*fakeConversation
+	activeMu sync.Mutex
+	active   map[string]bool
+	attempts []string
+}
+
+func newInterruptRecorder() *interruptRecorder {
+	return &interruptRecorder{fakeConversation: newFakeConversation(), active: map[string]bool{}}
+}
+
+func (r *interruptRecorder) markActive(turn string) {
+	r.activeMu.Lock()
+	defer r.activeMu.Unlock()
+	r.active[turn] = true
+}
+
+func (r *interruptRecorder) Interrupt(_ context.Context, turn string) error {
+	r.activeMu.Lock()
+	defer r.activeMu.Unlock()
+	r.attempts = append(r.attempts, turn)
+	if !r.active[turn] {
+		return ports.ErrChatNoActiveTurn
+	}
+	return nil
+}
+
+func (r *interruptRecorder) attemptCount() int {
+	r.activeMu.Lock()
+	defer r.activeMu.Unlock()
+	return len(r.attempts)
+}
+
+// Stop appears the moment a message is sent, so a user can press it before the
+// provider has acknowledged the turn — and a provider refuses to cancel a turn it
+// does not yet consider active. Interrupt waits out that gap rather than handing
+// back a failure in the exact moment someone realizes they sent the wrong thing.
+func TestInterruptWaitsForTheProviderToAcknowledgeTheTurn(t *testing.T) {
+	conv := newInterruptRecorder()
+	h := newHarnessWithConversation(t, conv)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{Text: "go", ClientMessageID: "c1"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	// The acknowledgement lands while Interrupt is already waiting.
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		conv.markActive("provider-turn-1")
+		conv.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"})
+	}()
+
+	if err := h.svc.Interrupt(ctx, testSession); err != nil {
+		t.Fatalf("Interrupt raced the provider's acknowledgement: %v", err)
+	}
+	if got := conv.attemptCount(); got != 1 {
+		t.Errorf("interrupt attempts = %d, want 1", got)
+	}
+}
+
+// A provider that refuses because the turn is genuinely gone must reach the client
+// as the same typed "nothing to interrupt" answer AO produces itself — not as a
+// protocol error that renders as an internal failure.
+func TestProviderRefusalBecomesTheTypedNoActiveTurnError(t *testing.T) {
+	conv := newInterruptRecorder() // never marks anything active
+	h := newHarnessWithConversation(t, conv)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{Text: "go", ClientMessageID: "c1"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	err := h.svc.Interrupt(ctx, testSession)
+	if !errorsIs(err, chatsvc.ErrNoActiveTurn) {
+		t.Fatalf("err = %v, want ErrNoActiveTurn", err)
+	}
+}
+
+// A daemon that is killed never runs its own cleanup, so whatever the dead
+// controller left in flight is still marked live on disk. The next controller to
+// come up has to close it out: nothing else ever will, and until then the timeline
+// claims a turn is running and a queued message is waiting to be sent behind a
+// controller that no longer exists.
+func TestStartSettlesWorkLeftByAKilledController(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	// A turn in flight and a message queued behind it, exactly as a crash leaves them.
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{Text: "running", ClientMessageID: "c1"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
+	})
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{Text: "queued", ClientMessageID: "c2"}); err != nil {
+		t.Fatalf("mid-turn Send: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventApprovalRequested, ProviderTurnID: "provider-turn-1",
+		ProviderItemID: "9", RequestID: "9", ActivityKind: domain.ActivityKindCommand,
+		ActivityStatus: domain.ActivityStatusPending, Summary: "Run something",
+	})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Activities) == 1 })
+
+	// A killed daemon leaves the rows mid-flight and takes its service with it, so
+	// the next controller comes up in a NEW service over the SAME store. Building
+	// it that way rather than reusing this one is the point: nothing in the old
+	// process gets a chance to clean up.
+	next := chatsvc.New(chatsvc.Options{
+		Store:    h.st,
+		Sessions: h.st,
+		Drivers:  fakeRegistry{driver: fakeDriver{conv: newFakeConversation()}},
+		Log:      slog.New(slog.DiscardHandler),
+		NewID:    func() string { return "next-" + fmt.Sprint(time.Now().UnixNano()) },
+		Now:      h.now,
+	})
+	t.Cleanup(func() { _ = next.Stop(context.Background(), testSession) })
+
+	if _, err := next.Start(ctx, chatsvc.StartConfig{
+		SessionID:              testSession,
+		ProjectID:              testProject,
+		Harness:                domain.HarnessCodex,
+		WorkspacePath:          t.TempDir(),
+		ProviderConversationID: "thread-1",
+	}); err != nil {
+		t.Fatalf("Start after crash: %v", err)
+	}
+
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		for _, turn := range s.Turns {
+			if !turn.State.Terminal() {
+				return false
+			}
+		}
+		return len(s.Turns) == 2
+	})
+	states := turnStateByText(t, snapshot)
+	if states["running"] != domain.TurnStateFailed {
+		t.Errorf("turn abandoned mid-flight = %q, want failed", states["running"])
+	}
+	if states["queued"] != domain.TurnStateFailed {
+		t.Errorf("message left queued by a dead controller = %q; nothing would ever send it",
+			states["queued"])
+	}
+	if got := snapshot.Activities[0].Status; got == domain.ActivityStatusPending {
+		t.Error("approval left pending by a dead controller; the user can never answer it")
 	}
 }
