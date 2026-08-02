@@ -9,8 +9,8 @@ import {
 } from "../FeaturePreviewShell";
 
 const columns = [
-	{ id: "working", label: "Working", color: "#60a5fa" },
-	{ id: "staging", label: "Staging", color: "#a78bfa" },
+	{ id: "working", label: "Pending Work", color: "#60a5fa" },
+	{ id: "staging", label: "Iterating", color: "#a78bfa" },
 	{ id: "in_review", label: "In Review", color: "#facc15" },
 	{ id: "merge", label: "Ready to merge", color: "#4ade80" },
 ] as const;

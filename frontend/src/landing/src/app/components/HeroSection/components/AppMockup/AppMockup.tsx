@@ -209,8 +209,8 @@ const COLUMN_CONFIG: Record<
 	BoardColumnId,
 	{ title: string; color: string; weight: number }
 > = {
-	working: { title: "Working", color: "#60a5fa", weight: 4 },
-	staging: { title: "Staging", color: "#a78bfa", weight: 3 },
+	working: { title: "Pending Work", color: "#60a5fa", weight: 4 },
+	staging: { title: "Iterating", color: "#a78bfa", weight: 3 },
 	in_review: { title: "In Review", color: "#facc15", weight: 2 },
 	merge: { title: "Ready to merge", color: "#4ade80", weight: 1 },
 };
@@ -1489,9 +1489,15 @@ function BoardCard({
 	// Attention treatment: waiting cards get amber border. Only the topmost
 	// waiting card in each column pulses (see BoardColumn) so the animation
 	// keeps its scarcity value.
+	// In review: flagged issues are errors (red). Other columns: needs
+	// input is a warning (amber).
+	const isReviewFlag = isWaiting && card.column === "in_review";
 	const attentionBorder = isWaiting
-		? "border-[#fb923c]/60"
+		? isReviewFlag
+			? "border-[#f87171]/70"
+			: "border-[#fb923c]/60"
 		: "border-[var(--preview-border)]";
+	const badgeColor = isReviewFlag ? "bg-[#f87171]" : "bg-[#fb923c]";
 	// Pulse (box-shadow only) is safe on the outer motion.div — no
 	// transform, so framer's layout FLIP measurements are undisturbed.
 	const attentionAnim = isWaiting && isPulsing ? "ao-attention-pulse" : "";
@@ -1545,7 +1551,7 @@ function BoardCard({
 					{isWaiting ? (
 						<span
 							aria-hidden="true"
-							className="pointer-events-none absolute -right-1 -top-1 flex h-3 w-3 items-center justify-center rounded-full bg-[#fb923c] text-[8px] font-black leading-none text-white shadow-[0_0_0_1.5px_var(--preview-card)]"
+							className={`pointer-events-none absolute -right-1 -top-1 flex h-3 w-3 items-center justify-center rounded-full ${badgeColor} text-[8px] font-black leading-none text-white shadow-[0_0_0_1.5px_var(--preview-card)]`}
 						>
 							!
 						</span>
