@@ -197,6 +197,7 @@ func TestRuntimeObservation_CrashFinalizesUsageBeforeTermination(t *testing.T) {
 	rec := working("mer-1")
 	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute)
 	rec.Metadata.RuntimeLaunchID = "launch-1"
+	rec.UpdatedAt = time.Date(2026, 8, 2, 11, 0, 0, 0, time.UTC)
 	st.sessions[rec.ID] = rec
 	finalizer := &fakeUsageFinalizer{store: st}
 	m.SetUsageFinalizer(finalizer)
@@ -213,6 +214,9 @@ func TestRuntimeObservation_CrashFinalizesUsageBeforeTermination(t *testing.T) {
 	}
 	if finalizer.launchID != "launch-1" {
 		t.Fatalf("finalizer launch id=%q, want launch-1", finalizer.launchID)
+	}
+	if !finalizer.sessionRevision.Equal(rec.UpdatedAt) {
+		t.Fatalf("finalizer session revision=%s, want %s", finalizer.sessionRevision, rec.UpdatedAt)
 	}
 	if !st.sessions[rec.ID].IsTerminated {
 		t.Fatal("crashed session was not terminated")
@@ -311,7 +315,7 @@ func TestRuntimeObservation_DoesNotTerminateNewRuntimeGenerationAfterFinalizatio
 	rec.Metadata.RuntimeLaunchID = "launch-old"
 	st.sessions[rec.ID] = rec
 	finalizer := &fakeUsageFinalizer{store: st}
-	finalizer.onFinalize = func(id domain.SessionID, _ string) error {
+	finalizer.onFinalize = func(id domain.SessionID, _ string, _ time.Time) error {
 		return m.MarkSpawned(ctx, id, domain.SessionMetadata{RuntimeLaunchID: "launch-new"})
 	}
 	m.SetUsageFinalizer(finalizer)
@@ -349,7 +353,7 @@ func TestRuntimeObservation_DoesNotTerminateAfterActivityDuringFinalization(t *t
 	}
 	st.sessions[rec.ID] = rec
 	finalizer := &fakeUsageFinalizer{store: st}
-	finalizer.onFinalize = func(id domain.SessionID, _ string) error {
+	finalizer.onFinalize = func(id domain.SessionID, _ string, _ time.Time) error {
 		return m.ApplyActivitySignal(ctx, id, ports.ActivitySignal{
 			Valid:     true,
 			State:     domain.ActivityIdle,
@@ -776,27 +780,36 @@ func TestMarkTerminated(t *testing.T) {
 }
 
 type fakeUsageFinalizer struct {
-	store         *fakeStore
-	calls         int
-	sawTerminated bool
-	launchID      string
-	err           error
-	onFinalize    func(domain.SessionID, string) error
+	store           *fakeStore
+	calls           int
+	sawTerminated   bool
+	launchID        string
+	sessionRevision time.Time
+	err             error
+	onFinalize      func(domain.SessionID, string, time.Time) error
 }
 
-func (f *fakeUsageFinalizer) FinalizeSession(_ context.Context, id domain.SessionID, launchID string) error {
+func (f *fakeUsageFinalizer) FinalizeSession(
+	_ context.Context,
+	id domain.SessionID,
+	launchID string,
+	sessionRevision time.Time,
+) error {
 	f.calls++
 	f.sawTerminated = f.store.sessions[id].IsTerminated
 	f.launchID = launchID
+	f.sessionRevision = sessionRevision
 	if f.onFinalize != nil {
-		return f.onFinalize(id, launchID)
+		return f.onFinalize(id, launchID, sessionRevision)
 	}
 	return f.err
 }
 
 func TestMarkTerminatedFinalizesUsageBeforeLifecycleTransition(t *testing.T) {
 	m, st, _ := newManager()
-	st.sessions["mer-1"] = working("mer-1")
+	rec := working("mer-1")
+	rec.UpdatedAt = time.Date(2026, 8, 2, 11, 30, 0, 0, time.UTC)
+	st.sessions[rec.ID] = rec
 	finalizer := &fakeUsageFinalizer{store: st, err: errors.New("best effort failure")}
 	m.SetUsageFinalizer(finalizer)
 
@@ -805,6 +818,9 @@ func TestMarkTerminatedFinalizesUsageBeforeLifecycleTransition(t *testing.T) {
 	}
 	if finalizer.calls != 1 || finalizer.sawTerminated {
 		t.Fatalf("finalizer calls=%d sawTerminated=%v, want 1/false", finalizer.calls, finalizer.sawTerminated)
+	}
+	if !finalizer.sessionRevision.Equal(rec.UpdatedAt) {
+		t.Fatalf("finalizer session revision=%s, want %s", finalizer.sessionRevision, rec.UpdatedAt)
 	}
 	if !st.sessions["mer-1"].IsTerminated {
 		t.Fatal("finalizer failure prevented session termination")
@@ -823,7 +839,7 @@ func TestMarkTerminatedDoesNotTerminateNewRuntimeGeneration(t *testing.T) {
 	rec.Metadata.RuntimeLaunchID = "launch-old"
 	st.sessions[rec.ID] = rec
 	finalizer := &fakeUsageFinalizer{store: st}
-	finalizer.onFinalize = func(id domain.SessionID, _ string) error {
+	finalizer.onFinalize = func(id domain.SessionID, _ string, _ time.Time) error {
 		return m.MarkSpawned(ctx, id, domain.SessionMetadata{RuntimeLaunchID: "launch-new"})
 	}
 	m.SetUsageFinalizer(finalizer)

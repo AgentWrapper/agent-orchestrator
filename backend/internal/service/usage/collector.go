@@ -76,7 +76,7 @@ type collectorStore interface {
 	UpsertUsageBinding(context.Context, domain.UsageBindingRecord) (domain.UsageBindingRecord, error)
 	GetUsageBinding(context.Context, domain.SessionID, domain.AgentHarness, string) (domain.UsageBindingRecord, bool, error)
 	ListUsageBindingsForSession(context.Context, domain.SessionID) ([]domain.UsageBindingRecord, error)
-	FinalizeUsageBindingsForSessionLaunch(context.Context, domain.SessionID, string, time.Time) ([]domain.UsageBindingRecord, error)
+	FinalizeUsageBindingsForSessionLaunch(context.Context, domain.SessionID, string, time.Time, time.Time) ([]domain.UsageBindingRecord, error)
 	ListUsageDiscoveryBindings(context.Context, int64) ([]domain.UsageBindingRecord, error)
 	ListUsageBindingsForCodexParent(context.Context, string) ([]domain.UsageBindingRecord, error)
 	UpdateUsageBindingState(context.Context, int64, domain.UsageBindingState, string, time.Time) (bool, error)
@@ -122,10 +122,16 @@ func newCollectorWithCodexSourceLimit(
 	}
 }
 
-// FinalizeSession moves every known native binding for one runtime generation
-// into finalization and asks the ingestion pipeline to collect a stable final
-// cursor. It is idempotent and safe to call before the session is terminated.
-func (c *Collector) FinalizeSession(ctx context.Context, sessionID domain.SessionID, expectedRuntimeLaunchID string) error {
+// FinalizeSession moves every known native binding for one observed runtime
+// generation and session revision into finalization, then asks the ingestion
+// pipeline to collect a stable final cursor. It is idempotent and safe to call
+// before the session is terminated.
+func (c *Collector) FinalizeSession(
+	ctx context.Context,
+	sessionID domain.SessionID,
+	expectedRuntimeLaunchID string,
+	expectedSessionRevision time.Time,
+) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -134,6 +140,7 @@ func (c *Collector) FinalizeSession(ctx context.Context, sessionID domain.Sessio
 		ctx,
 		sessionID,
 		boundedUsageMetadata(expectedRuntimeLaunchID),
+		expectedSessionRevision,
 		now,
 	)
 	if err != nil {
@@ -172,7 +179,9 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		signal.LaunchID != session.Metadata.RuntimeLaunchID {
 		return nil
 	}
-	if session.IsTerminated && !finalizingEvent(signal.Event) {
+	finalizing := finalizingEvent(signal.Event)
+	sessionLive := !session.IsTerminated && session.Activity.State != domain.ActivityExited
+	if session.IsTerminated || (!finalizing && !sessionLive) {
 		return nil
 	}
 	if signal.Harness != "" && signal.Harness != session.Harness {
@@ -188,22 +197,38 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 	}
 
 	now := c.now().UTC()
-	if signal.Event == "session-end" || signal.Event == "process-exited" {
+	if finalizing {
 		if err := c.finalizeSession(ctx, sessionID, now); err != nil {
 			return err
 		}
 	}
 	if signal.NativeSessionID == "" {
-		c.notifySourceInventory(!finalizingEvent(signal.Event))
+		c.notifySourceInventory(!finalizing)
 		return nil
 	}
 
-	finalizing := finalizingEvent(signal.Event)
 	existing, exists, err := c.store.GetUsageBinding(ctx, sessionID, session.Harness, signal.NativeSessionID)
 	if err != nil {
 		return err
 	}
-	reactivating := !finalizing && (signal.Event == "session-start" ||
+	mainPath := strings.TrimSpace(signal.TranscriptPath)
+	if mainPath == "" && (session.Harness == domain.HarnessCodex || finalizing && !exists) {
+		mainPath = c.discoverPath(session.Harness, signal.NativeSessionID)
+	}
+	subagentPath := strings.TrimSpace(signal.SubagentTranscriptPath)
+	if finalizing && !exists {
+		recoveryPath := mainPath
+		if recoveryPath == "" && session.Harness == domain.HarnessClaudeCode {
+			recoveryPath = subagentPath
+		}
+		if recoveryPath == "" {
+			return nil
+		}
+		if _, _, _, err := c.validateSourcePath(session.Harness, recoveryPath); err != nil {
+			return err
+		}
+	}
+	reactivating := sessionLive && !finalizing && (signal.Event == "session-start" ||
 		exists && existing.State == domain.UsageBindingFinalizing)
 	state := domain.UsageBindingActive
 	if exists {
@@ -239,10 +264,6 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		return err
 	}
 
-	mainPath := strings.TrimSpace(signal.TranscriptPath)
-	if mainPath == "" && session.Harness == domain.HarnessCodex {
-		mainPath = c.discoverPath(session.Harness, signal.NativeSessionID)
-	}
 	if mainPath != "" {
 		kind := domain.UsageSourceClaudeMain
 		if session.Harness == domain.HarnessCodex {
@@ -273,7 +294,7 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 	} else {
 		needsReconcile = true
 	}
-	if path := strings.TrimSpace(signal.SubagentTranscriptPath); path != "" && session.Harness == domain.HarnessClaudeCode {
+	if path := subagentPath; path != "" && session.Harness == domain.HarnessClaudeCode {
 		changed, err := c.registerSource(
 			ctx,
 			binding,

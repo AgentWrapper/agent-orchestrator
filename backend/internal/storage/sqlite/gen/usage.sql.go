@@ -234,19 +234,26 @@ WHERE usage_bindings.session_id = ?2
       FROM sessions
       WHERE sessions.id = usage_bindings.session_id
         AND sessions.runtime_launch_id = ?3
+        AND sessions.updated_at = ?4
         AND sessions.is_terminated = 0
   )
 RETURNING id, session_id, harness, native_root_id, initial_model_id, state, last_error_code, first_seen_at, last_seen_at, updated_at
 `
 
 type FinalizeUsageBindingsForSessionLaunchParams struct {
-	FinalizedAt             time.Time
-	SessionID               domain.SessionID
-	ExpectedRuntimeLaunchID string
+	FinalizedAt              time.Time
+	SessionID                domain.SessionID
+	ExpectedRuntimeLaunchID  string
+	ExpectedSessionUpdatedAt time.Time
 }
 
 func (q *Queries) FinalizeUsageBindingsForSessionLaunch(ctx context.Context, arg FinalizeUsageBindingsForSessionLaunchParams) ([]UsageBinding, error) {
-	rows, err := q.db.QueryContext(ctx, finalizeUsageBindingsForSessionLaunch, arg.FinalizedAt, arg.SessionID, arg.ExpectedRuntimeLaunchID)
+	rows, err := q.db.QueryContext(ctx, finalizeUsageBindingsForSessionLaunch,
+		arg.FinalizedAt,
+		arg.SessionID,
+		arg.ExpectedRuntimeLaunchID,
+		arg.ExpectedSessionUpdatedAt,
+	)
 	if err != nil {
 		return nil, err
 	}

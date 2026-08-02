@@ -144,7 +144,7 @@ func TestUsageBindingUpsertDoesNotRegressSettledLifecycle(t *testing.T) {
 	}
 }
 
-func TestFinalizeUsageBindingsForSessionLaunchIsGenerationFenced(t *testing.T) {
+func TestFinalizeUsageBindingsForSessionLaunchIsGenerationAndRevisionFenced(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	sess := seedUsageSession(t, s, domain.HarnessCodex)
@@ -165,8 +165,15 @@ func TestFinalizeUsageBindingsForSessionLaunchIsGenerationFenced(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	expectedRevision := sess.UpdatedAt
 
-	finalized, err := s.FinalizeUsageBindingsForSessionLaunch(ctx, sess.ID, "launch-stale", now.Add(time.Second))
+	finalized, err := s.FinalizeUsageBindingsForSessionLaunch(
+		ctx,
+		sess.ID,
+		"launch-stale",
+		expectedRevision,
+		now.Add(time.Second),
+	)
 	if err != nil || len(finalized) != 0 {
 		t.Fatalf("stale finalization rows=%+v err=%v", finalized, err)
 	}
@@ -175,18 +182,45 @@ func TestFinalizeUsageBindingsForSessionLaunchIsGenerationFenced(t *testing.T) {
 		t.Fatalf("binding after stale finalization=%+v ok=%v err=%v", got, ok, err)
 	}
 
-	finalized, err = s.FinalizeUsageBindingsForSessionLaunch(ctx, sess.ID, "launch-current", now.Add(2*time.Second))
+	finalized, err = s.FinalizeUsageBindingsForSessionLaunch(
+		ctx,
+		sess.ID,
+		"launch-current",
+		expectedRevision.Add(-time.Second),
+		now.Add(2*time.Second),
+	)
+	if err != nil || len(finalized) != 0 {
+		t.Fatalf("stale-revision finalization rows=%+v err=%v", finalized, err)
+	}
+	got, ok, err = s.GetUsageBinding(ctx, sess.ID, sess.Harness, binding.NativeRootID)
+	if err != nil || !ok || got.State != domain.UsageBindingActive {
+		t.Fatalf("binding after stale-revision finalization=%+v ok=%v err=%v", got, ok, err)
+	}
+
+	finalized, err = s.FinalizeUsageBindingsForSessionLaunch(
+		ctx,
+		sess.ID,
+		"launch-current",
+		expectedRevision,
+		now.Add(3*time.Second),
+	)
 	if err != nil || len(finalized) != 1 || finalized[0].State != domain.UsageBindingFinalizing {
 		t.Fatalf("current finalization rows=%+v err=%v", finalized, err)
 	}
-	if _, err := s.UpdateUsageBindingState(ctx, binding.ID, domain.UsageBindingActive, "", now.Add(3*time.Second)); err != nil {
+	if _, err := s.UpdateUsageBindingState(ctx, binding.ID, domain.UsageBindingActive, "", now.Add(4*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	sess.IsTerminated = true
 	if err := s.UpdateSession(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
-	finalized, err = s.FinalizeUsageBindingsForSessionLaunch(ctx, sess.ID, "launch-current", now.Add(4*time.Second))
+	finalized, err = s.FinalizeUsageBindingsForSessionLaunch(
+		ctx,
+		sess.ID,
+		"launch-current",
+		expectedRevision,
+		now.Add(5*time.Second),
+	)
 	if err != nil || len(finalized) != 0 {
 		t.Fatalf("terminated finalization rows=%+v err=%v", finalized, err)
 	}
