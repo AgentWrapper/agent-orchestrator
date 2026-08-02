@@ -248,6 +248,20 @@ export interface ChatModel {
 	defaultEffort?: string;
 }
 
+/**
+ * One named skill the provider will let this session invoke.
+ *
+ * `name` is the invocable identifier and the only part the agent resolves;
+ * `displayName` is a label and must never be what gets sent.
+ */
+export interface ChatSkill {
+	name: string;
+	displayName: string;
+	description?: string;
+	/** The provider's scope: user, repo, system, admin. */
+	source?: string;
+}
+
 /** Health of the daemon's connection to the provider. */
 export type ControllerState = "connecting" | "ready" | "busy" | "recovering" | "stopped";
 

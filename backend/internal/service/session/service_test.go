@@ -1046,6 +1046,14 @@ func (f *fakeCommander) RollbackSpawn(context.Context, domain.SessionID) (bool, 
 	return false, false, nil
 }
 
+func (f *fakeCommander) StageAttachments(
+	context.Context,
+	domain.SessionID,
+	[]ports.SpawnAttachment,
+) ([]string, error) {
+	return nil, nil
+}
+
 // TestCleanupMapsManagerResult: the service forwards both reclaimed and
 // skipped sessions, with non-nil slices so the wire shape stays stable.
 func TestCleanupMapsManagerResult(t *testing.T) {

@@ -12,11 +12,65 @@
  * The model, reasoning effort and approval controls belong here rather than in
  * settings because the provider takes all three per turn: choosing one changes the
  * next message and never restarts the agent.
+ *
+ * Three completions live on top of a plain textarea — `/` for the agent's own
+ * skills, `@` for worktree files, and pasted or dropped images. It is a textarea and
+ * not a rich editor; the reasoning is in composerSuggest.ts, where the logic that
+ * would otherwise justify one lives. What matters here is that the original
+ * keyboard contract survives: Enter sends, Shift+Enter makes a newline, and no
+ * keystroke is ever swallowed, because the menu is derived from (text, caret)
+ * rather than intercepting input.
+ *
+ * Every affordance is conditional on being able to deliver. The `/` menu only opens
+ * when the provider actually reported skills, and the attach control only appears
+ * when a caller supplied somewhere to put the bytes — a control that cannot do what
+ * it says should not be drawn.
  */
 
-import { useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
-import { ArrowUp } from "lucide-react";
+import {
+	useCallback,
+	useId,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+	type ChangeEvent,
+	type ClipboardEvent,
+	type DragEvent,
+	type FormEvent,
+	type KeyboardEvent,
+	type ReactNode,
+} from "react";
+import { ArrowUp, Paperclip, X } from "lucide-react";
 import { Button } from "../ui/button";
+import { cn } from "../../lib/utils";
+import { ComposerSuggestMenu } from "./ComposerSuggestMenu";
+import {
+	applySuggestion,
+	findActiveTrigger,
+	moveHighlight,
+	rankFiles,
+	rankSkills,
+	type Suggestion,
+} from "./composerSuggest";
+import {
+	useImageAttachments,
+	type ImageAttachmentPayload,
+} from "../../hooks/useImageAttachments";
+import type { ChatSkill } from "../../types/conversation";
+
+/**
+ * Tell the agent to open the images. Mirrors the wording spawn uses for a task
+ * brief, so the same instruction reaches the agent whether an image was attached at
+ * spawn or mid-conversation.
+ */
+function withAttachmentReferences(text: string, paths: string[]): string {
+	if (paths.length === 0) return text;
+	const lead = text.trim() === "" ? "" : `${text}\n\n`;
+	return `${lead}Attached images (read these files in the workspace for visual context):\n${paths
+		.map((path) => `- ${path}`)
+		.join("\n")}`;
+}
 
 export function ChatComposer({
 	onSend,
@@ -24,6 +78,10 @@ export function ChatComposer({
 	willQueue,
 	disabled,
 	settings,
+	skills = [],
+	filePaths = [],
+	filePathsTruncated,
+	onStageAttachments,
 }: {
 	onSend: (text: string) => void;
 	/** The next-turn controls, rendered inline. Omitted in the fixture preview. */
@@ -33,54 +91,321 @@ export function ChatComposer({
 	/** The agent is mid-turn, so this message is held until the turn ends. */
 	willQueue?: boolean;
 	disabled?: boolean;
+	/** The provider's skills. Empty leaves `/` an ordinary character. */
+	skills?: ChatSkill[];
+	/** Worktree-relative paths offered for `@`. Empty leaves `@` ordinary. */
+	filePaths?: string[];
+	/** The path list was capped, so the menu says so rather than implying it is all. */
+	filePathsTruncated?: boolean;
+	/**
+	 * Writes staged images into the worktree and answers with the paths the agent
+	 * can open. Absent means images cannot be delivered, and no attach control is
+	 * offered at all.
+	 */
+	onStageAttachments?: (attachments: ImageAttachmentPayload[]) => Promise<string[]>;
 }) {
 	const [text, setText] = useState("");
-	const textarea = useRef<HTMLTextAreaElement>(null);
-	const canSend = text.trim().length > 0 && !busy && !disabled;
+	const [caret, setCaret] = useState(0);
+	/**
+	 * The trigger position the user dismissed with Escape. Held so the menu stays
+	 * shut for the completion they rejected, while a new `/` or `@` still opens one.
+	 */
+	const [dismissedAt, setDismissedAt] = useState<number | null>(null);
+	const [highlighted, setHighlighted] = useState(0);
+	const [dragging, setDragging] = useState(false);
+	const [sendError, setSendError] = useState<string | null>(null);
 
-	function submit(event?: FormEvent) {
+	const textarea = useRef<HTMLTextAreaElement>(null);
+	const filePicker = useRef<HTMLInputElement>(null);
+	/** Where the caret should land once React has committed the new text. */
+	const pendingCaret = useRef<number | null>(null);
+	const menuId = useId();
+
+	const images = useImageAttachments();
+	const canAttach = Boolean(onStageAttachments);
+
+	const trigger = useMemo(() => findActiveTrigger(text, caret), [text, caret]);
+
+	const suggestions: Suggestion[] = useMemo(() => {
+		if (!trigger || trigger.start === dismissedAt) return [];
+		// An empty candidate list is the whole reason the sigil stays ordinary: with
+		// no skills there is nothing to open, so `/` types a slash.
+		if (trigger.kind === "skill") return rankSkills(skills, trigger.query);
+		return rankFiles(filePaths, trigger.query);
+	}, [trigger, dismissedAt, skills, filePaths]);
+
+	const menuOpen = suggestions.length > 0;
+	// Clamped rather than trusted: the list re-ranks on every keystroke, so the
+	// index from the previous list can point past the end of this one.
+	const activeIndex = Math.min(highlighted, suggestions.length - 1);
+
+	const staged = images.attachments.length > 0;
+	const canSend = (text.trim().length > 0 || staged) && !busy && !disabled;
+
+	/**
+	 * Write text and caret back into the field.
+	 *
+	 * The caret is applied after the render rather than alongside it: setting it
+	 * before React has written the new value would place it against the old string,
+	 * and the controlled re-render would then drop it to the end of the new one.
+	 */
+	const applyText = useCallback((next: string, nextCaret: number) => {
+		pendingCaret.current = nextCaret;
+		setText(next);
+		setCaret(nextCaret);
+	}, []);
+
+	useLayoutEffect(() => {
+		const target = pendingCaret.current;
+		if (target === null) return;
+		pendingCaret.current = null;
+		const node = textarea.current;
+		if (!node) return;
+		node.setSelectionRange(target, target);
+		node.focus();
+	}, [text]);
+
+	const pick = useCallback(
+		(value: string) => {
+			if (!trigger) return;
+			const next = applySuggestion(text, trigger, value);
+			applyText(next.text, next.caret);
+			setHighlighted(0);
+			setDismissedAt(null);
+		},
+		[applyText, text, trigger],
+	);
+
+	async function submit(event?: FormEvent) {
 		event?.preventDefault();
 		if (!canSend) return;
-		onSend(text.trim());
-		setText("");
-		textarea.current?.focus();
+		setSendError(null);
+
+		const body = text.trim();
+		if (staged && onStageAttachments) {
+			// Staged before the send so a failed write is reported instead of a
+			// message that claims attachments the agent cannot open.
+			let paths: string[];
+			try {
+				paths = await onStageAttachments(images.toPayload());
+			} catch {
+				setSendError("The images could not be attached. Nothing was sent.");
+				return;
+			}
+			onSend(withAttachmentReferences(body, paths));
+			images.clear();
+		} else {
+			onSend(body);
+		}
+
+		applyText("", 0);
+		setDismissedAt(null);
+		setHighlighted(0);
 	}
 
 	function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+		if (menuOpen) {
+			// Only these keys are taken while the menu is open. Everything else falls
+			// through to the textarea, which is what keeps typing from being swallowed.
+			if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+				event.preventDefault();
+				setHighlighted((current) =>
+					moveHighlight(
+						Math.min(current, suggestions.length - 1),
+						event.key === "ArrowDown" ? 1 : -1,
+						suggestions.length,
+					),
+				);
+				return;
+			}
+			if (event.key === "Enter" || event.key === "Tab") {
+				event.preventDefault();
+				const chosen = suggestions[activeIndex];
+				if (chosen) pick(chosen.value);
+				return;
+			}
+			if (event.key === "Escape") {
+				event.preventDefault();
+				// Stopped here so Escape closes the menu rather than travelling on to
+				// whatever surface is hosting the composer.
+				event.stopPropagation();
+				setDismissedAt(trigger?.start ?? null);
+				return;
+			}
+		}
+
 		// Enter sends; Shift+Enter makes a newline.
 		if (event.key !== "Enter") return;
 		if (event.shiftKey) return;
 		event.preventDefault();
-		submit();
+		void submit();
 	}
+
+	function onChange(event: ChangeEvent<HTMLTextAreaElement>) {
+		const value = event.target.value;
+		const nextCaret = event.target.selectionStart ?? value.length;
+		setText(value);
+		setCaret(nextCaret);
+		setHighlighted(0);
+		// A dismissal covers one trigger. It is released as soon as that trigger is no
+		// longer the one under the caret, so a fresh `/` or `@` opens a menu again
+		// without the user having to guess why the last one stayed shut.
+		const next = findActiveTrigger(value, nextCaret);
+		setDismissedAt((current) =>
+			current !== null && next?.start === current ? current : null,
+		);
+	}
+
+	/** Caret moves that are not edits: arrow keys, clicks, selection changes. */
+	function onSelectionChange(event: { currentTarget: HTMLTextAreaElement }) {
+		setCaret(event.currentTarget.selectionStart ?? 0);
+	}
+
+	function onPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+		if (!canAttach) return;
+		const clipboard = event.clipboardData;
+		const files = Array.from(clipboard?.files ?? []);
+		if (files.length === 0) return;
+		// The paste is only claimed when there is no text alongside the image: a copy
+		// carrying both should still paste its text.
+		const hasText =
+			typeof clipboard?.getData === "function" && clipboard.getData("text/plain") !== "";
+		if (!hasText) event.preventDefault();
+		void images.addFiles(files);
+	}
+
+	function onDrop(event: DragEvent<HTMLFormElement>) {
+		setDragging(false);
+		if (!canAttach) return;
+		const files = Array.from(event.dataTransfer?.files ?? []);
+		if (files.length === 0) return;
+		event.preventDefault();
+		void images.addFiles(files);
+	}
+
+	const attachmentError = images.error ?? sendError;
 
 	return (
 		<form
-			onSubmit={submit}
-			className="flex flex-col gap-2 rounded-lg border border-border-strong bg-surface p-2 focus-within:border-accent-dim"
+			onSubmit={(event) => void submit(event)}
+			onDragOver={(event) => {
+				if (!canAttach) return;
+				event.preventDefault();
+				setDragging(true);
+			}}
+			onDragLeave={() => setDragging(false)}
+			onDrop={onDrop}
+			className={cn(
+				"relative flex flex-col gap-2 rounded-lg border bg-surface p-2 focus-within:border-accent-dim",
+				dragging ? "border-accent" : "border-border-strong",
+			)}
 		>
+			{menuOpen && trigger ? (
+				<ComposerSuggestMenu
+					id={menuId}
+					kind={trigger.kind}
+					items={suggestions}
+					highlighted={activeIndex}
+					onPick={pick}
+					onHighlight={setHighlighted}
+					truncated={trigger.kind === "file" && filePathsTruncated}
+				/>
+			) : null}
+
+			{staged ? (
+				<ul className="flex flex-wrap gap-1.5" aria-label="Attached images">
+					{images.attachments.map((image, index) => (
+						<li
+							key={image.id}
+							className="flex items-center gap-1.5 rounded border border-border bg-background py-0.5 pl-0.5 pr-1"
+						>
+							<img
+								src={image.dataUrl}
+								alt=""
+								className="size-6 rounded-sm object-cover"
+							/>
+							<span className="text-[11px] text-muted-foreground">
+								Image {index + 1}
+							</span>
+							<button
+								type="button"
+								onClick={() => images.remove(image.id)}
+								aria-label={`Remove image ${index + 1}`}
+								className="text-muted-foreground hover:text-foreground"
+							>
+								<X aria-hidden="true" className="size-3" />
+							</button>
+						</li>
+					))}
+				</ul>
+			) : null}
+
 			<textarea
 				ref={textarea}
 				value={text}
-				onChange={(event) => setText(event.target.value)}
+				onChange={onChange}
 				onKeyDown={onKeyDown}
+				onSelect={onSelectionChange}
+				onClick={onSelectionChange}
+				onPaste={onPaste}
 				rows={2}
 				disabled={disabled}
 				aria-label="Message the agent"
+				role="combobox"
+				aria-expanded={menuOpen}
+				aria-controls={menuOpen ? menuId : undefined}
+				aria-activedescendant={menuOpen ? `${menuId}-option-${activeIndex}` : undefined}
+				aria-autocomplete="list"
 				placeholder={
 					disabled
 						? "The controller is not connected"
 						: willQueue
 							? "Agent is working — this sends when it finishes"
-							: "Ask the agent…"
+							: skills.length > 0
+								? "Ask the agent…  /  for skills, @ for files"
+								: "Ask the agent…  @ for files"
 				}
 				className="max-h-48 min-h-[3.25rem] w-full resize-none bg-transparent px-1.5 py-1 text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
 			/>
 
+			{attachmentError ? (
+				<p role="alert" className="px-1.5 text-[11px] leading-snug text-destructive">
+					{attachmentError}
+				</p>
+			) : null}
+
 			<div className="flex items-center gap-2">
 				{settings}
+				{canAttach ? (
+					<>
+						<input
+							ref={filePicker}
+							type="file"
+							accept="image/png,image/jpeg,image/gif,image/webp,image/bmp"
+							multiple
+							hidden
+							onChange={(event) => {
+								void images.addFiles(Array.from(event.target.files ?? []));
+								// Cleared so picking the same file twice still fires a change.
+								event.target.value = "";
+							}}
+						/>
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							disabled={disabled}
+							onClick={() => filePicker.current?.click()}
+							aria-label="Attach an image"
+							title="Attach an image"
+							className="h-6 px-1.5"
+						>
+							<Paperclip aria-hidden="true" className="size-3.5 text-muted-foreground" />
+						</Button>
+					</>
+				) : null}
 				<span className="ml-auto text-[11px] text-muted-foreground">
-					{willQueue ? "Enter to queue" : "Enter to send"}
+					{menuOpen ? "Enter to insert" : willQueue ? "Enter to queue" : "Enter to send"}
 				</span>
 				<Button type="submit" size="icon-sm" disabled={!canSend} aria-label="Send message">
 					<ArrowUp aria-hidden="true" className="size-3.5" />

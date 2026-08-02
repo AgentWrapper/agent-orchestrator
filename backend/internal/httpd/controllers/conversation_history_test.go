@@ -76,6 +76,12 @@ func (f *fakeChatService) SetTitle(_ context.Context, _ domain.SessionID, title 
 	return f.title, nil
 }
 
+// Skills is not what these tests exercise; present so the fake satisfies the
+// controller's interface.
+func (f *fakeChatService) Skills(context.Context, domain.SessionID) ([]ports.ChatSkill, error) {
+	return nil, nil
+}
+
 func newChatTestServer(t *testing.T, svc *fakeChatService) *httptest.Server {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))

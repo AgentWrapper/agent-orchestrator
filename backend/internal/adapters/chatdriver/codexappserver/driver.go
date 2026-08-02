@@ -99,6 +99,7 @@ func capabilities() ports.ChatCapabilities {
 		ports.ChatCapabilityRollback: true,
 		ports.ChatCapabilityFork:     true,
 		ports.ChatCapabilityRename:   true,
+		ports.ChatCapabilitySkills:   true,
 		// turn/steer exists in the protocol but AO does not use it yet, so it is
 		// not advertised: a capability AO cannot drive must not gate UI on.
 		ports.ChatCapabilitySteer: false,

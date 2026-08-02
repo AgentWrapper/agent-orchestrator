@@ -21,6 +21,9 @@ import {
 	useConversation,
 	useConversationCommands,
 	useConversationModels,
+	useConversationSkills,
+	useStageAttachments,
+	useWorkspaceFilePaths,
 } from "../hooks/useConversation";
 import {
 	chatFixture,
@@ -51,6 +54,30 @@ const SCENARIOS = {
 
 type ScenarioKey = keyof typeof SCENARIOS;
 
+/**
+ * Enough of a catalog to exercise the composer's completions without a daemon.
+ *
+ * There is no attachment fixture: staging writes into a real worktree, and the
+ * fixture has none. So the fixture preview offers no attach control rather than one
+ * that would silently do nothing.
+ */
+const FIXTURE_SKILLS = [
+	{ name: "code-review", displayName: "code-review", description: "Review the diff against the base branch", source: "user" },
+	{ name: "explain-diff", displayName: "explain-diff", description: "Explain a change as an interactive report", source: "user" },
+	{ name: "ship", displayName: "ship", description: "Run tests, bump the version, open a PR", source: "repo" },
+	{ name: "investigate", displayName: "investigate", description: "Systematic debugging with root cause analysis", source: "user" },
+];
+
+const FIXTURE_FILES = [
+	"AGENTS.md",
+	"DESIGN.md",
+	"backend/internal/ports/chat.go",
+	"backend/internal/service/chat/service.go",
+	"frontend/src/renderer/components/chat/ChatComposer.tsx",
+	"frontend/src/renderer/components/chat/ChatWorkspace.tsx",
+	"frontend/src/renderer/hooks/useConversation.ts",
+];
+
 function ChatPreview() {
 	const { session } = useSearch({ from: "/chat-preview" });
 	return session ? <LiveChat sessionId={session} /> : <FixtureChat />;
@@ -62,6 +89,9 @@ function LiveChat({ sessionId }: { sessionId: string }) {
 	const { snapshot, isLoading, unavailable, error } = useConversation(sessionId);
 	const commands = useConversationCommands(sessionId);
 	const { models } = useConversationModels(sessionId, Boolean(snapshot));
+	const { skills } = useConversationSkills(sessionId, Boolean(snapshot));
+	const { paths, truncated } = useWorkspaceFilePaths(sessionId, Boolean(snapshot));
+	const stageAttachments = useStageAttachments(sessionId);
 
 	return (
 		<div className="flex h-screen flex-col bg-background">
@@ -107,6 +137,10 @@ function LiveChat({ sessionId }: { sessionId: string }) {
 						}}
 						rollbackPending={commands.rollbackPending}
 						rollbackError={commands.rollbackError}
+						skills={skills}
+						filePaths={paths}
+						filePathsTruncated={truncated}
+						onStageAttachments={stageAttachments}
 					/>
 				) : null}
 			</div>
@@ -214,6 +248,8 @@ function FixtureChat() {
 					onDecide={decide}
 					onInterrupt={() => note("interrupt active turn")}
 					onRollback={rollback}
+					skills={FIXTURE_SKILLS}
+					filePaths={FIXTURE_FILES}
 				/>
 			</div>
 		</div>

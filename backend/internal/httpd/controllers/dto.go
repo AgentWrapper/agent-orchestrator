@@ -199,6 +199,23 @@ type SpawnSessionResponse struct {
 	SystemPromptBytes int         `json:"systemPromptBytes"`
 }
 
+// StageSessionAttachmentsRequest attaches images to a session that is already
+// running, for a caller that will name the returned paths in its next message.
+type StageSessionAttachmentsRequest struct {
+	// Attachments each carry their bytes as standard base64 (no data: URL prefix).
+	// The same count, size, and raster-only rules as spawn apply.
+	Attachments []SpawnAttachmentInput `json:"attachments"`
+}
+
+// StageSessionAttachmentsResponse is where the images were written.
+type StageSessionAttachmentsResponse struct {
+	SessionID domain.SessionID `json:"sessionId"`
+	// Paths are worktree-relative and forward-slashed, in the order submitted. They
+	// are what the agent can actually open, so a client must send these verbatim
+	// rather than a display form of them.
+	Paths []string `json:"paths"`
+}
+
 // ListWorkspaceFilesResponse is the body of GET /api/v1/sessions/{sessionId}/workspace/files.
 type ListWorkspaceFilesResponse struct {
 	SessionID      domain.SessionID                `json:"sessionId"`
@@ -891,6 +908,27 @@ type ConversationModelResponse struct {
 	// order. Empty means the model does not take one.
 	Efforts       []string `json:"efforts,omitempty"`
 	DefaultEffort string   `json:"defaultEffort,omitempty"`
+}
+
+// ConversationSkillsResponse is the named skills the provider will let this
+// session invoke.
+//
+// An empty list is a real answer, not a failure: it means this agent offers no
+// skills, and a client must render that as "no commands" rather than as an error.
+type ConversationSkillsResponse struct {
+	Skills []ConversationSkillResponse `json:"skills"`
+}
+
+// ConversationSkillResponse is one skill a user can invoke by name.
+type ConversationSkillResponse struct {
+	// Name is the invocable identifier. It is what a client puts in the message
+	// text; DisplayName is only a label.
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+	Description string `json:"description,omitempty"`
+	// Source is where the skill came from (the provider's scope: user, repo,
+	// system, admin), so a user can tell a repo skill from one of their own.
+	Source string `json:"source,omitempty"`
 }
 
 // ConversationTurnSettingsPayload is the provider choices for the next turn. It is

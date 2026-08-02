@@ -49,6 +49,7 @@ import {
 	type ConversationSnapshot,
 	type ControllerState,
 	type ChatModel,
+	type ChatSkill,
 	type ConversationActivity,
 	type ConversationItem,
 	type TurnDiff,
@@ -78,6 +79,18 @@ export interface ChatWorkspaceProps {
 	onRollback?: (turnId: string) => void;
 	rollbackPending?: boolean;
 	rollbackError?: string;
+	/** The provider's skills. Empty leaves `/` an ordinary character. */
+	skills?: ChatSkill[];
+	/** Worktree paths offered for `@`. */
+	filePaths?: string[];
+	/** The path list was capped by the daemon rather than being all of them. */
+	filePathsTruncated?: boolean;
+	/**
+	 * Writes staged images into the worktree and answers with the paths the agent
+	 * can open. Absent means no attach control is offered — the fixture preview has
+	 * no worktree to write into.
+	 */
+	onStageAttachments?: (attachments: { mimeType: string; data: string }[]) => Promise<string[]>;
 }
 
 export function ChatWorkspace({
@@ -94,6 +107,10 @@ export function ChatWorkspace({
 	onRollback,
 	rollbackPending,
 	rollbackError,
+	skills,
+	filePaths,
+	filePathsTruncated,
+	onStageAttachments,
 }: ChatWorkspaceProps) {
 	const turn = activeTurn(snapshot);
 	const approval = pendingApproval(snapshot);
@@ -165,6 +182,10 @@ export function ChatWorkspace({
 					busy={busy}
 					willQueue={Boolean(turn)}
 					disabled={snapshot.controller.state === "stopped"}
+					skills={skills}
+					filePaths={filePaths}
+					filePathsTruncated={filePathsTruncated}
+					onStageAttachments={onStageAttachments}
 				/>
 			</div>
 

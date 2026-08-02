@@ -22,7 +22,11 @@ import (
 // Asserted through the real route rather than against the mapping helpers, so the
 // JSON a client actually parses is what is checked.
 
-type fakeConversationService struct{ snapshot chatsvc.Snapshot }
+type fakeConversationService struct {
+	snapshot chatsvc.Snapshot
+	skills   []ports.ChatSkill
+	skillErr error
+}
 
 func (f *fakeConversationService) Snapshot(context.Context, domain.SessionID) (chatsvc.Snapshot, error) {
 	return f.snapshot, nil
@@ -58,6 +62,10 @@ func (f *fakeConversationService) Rollback(context.Context, domain.SessionID, st
 
 func (f *fakeConversationService) SetTitle(context.Context, domain.SessionID, string) (string, error) {
 	return "", nil
+}
+
+func (f *fakeConversationService) Skills(context.Context, domain.SessionID) ([]ports.ChatSkill, error) {
+	return f.skills, f.skillErr
 }
 
 // conversationSnapshotBody fetches the snapshot route and decodes it loosely, the

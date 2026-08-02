@@ -28,6 +28,7 @@ import type {
 	MessageOrigin,
 	MessageRole,
 	ChatModel,
+	ChatSkill,
 	SessionMode,
 	TurnSettings,
 	TurnState,
@@ -285,6 +286,101 @@ export function useConversationModels(sessionId: string | undefined, enabled: bo
 		models: query.data ?? [],
 		isLoading: query.isLoading,
 	};
+}
+
+/**
+ * The named skills this session's provider will accept.
+ *
+ * Read from the live conversation for the same reason the model catalog is: skills
+ * come from the user's own agent config and from the repo's own files, so a list AO
+ * held would offer commands that no longer exist and hide ones just written.
+ *
+ * An empty list is a real answer and the composer depends on being able to tell it
+ * from a failure — with no skills, `/` has to stay an ordinary character rather than
+ * opening an empty menu.
+ */
+export function useConversationSkills(sessionId: string | undefined, enabled: boolean) {
+	const query = useQuery({
+		queryKey: ["conversation-skills", sessionId ?? ""],
+		enabled: Boolean(sessionId) && enabled,
+		// Skills change when someone edits a file on disk, not per turn. The provider
+		// emits a `skills/changed` notification AO does not yet surface, so this is a
+		// modest staleness window rather than a live subscription.
+		staleTime: 60 * 1000,
+		retry: false,
+		queryFn: async () => {
+			const { data, error } = await apiClient.GET(
+				"/api/v1/sessions/{sessionId}/conversation/skills",
+				{ params: { path: { sessionId: sessionId as string } } },
+			);
+			if (error) throw error;
+			return (data?.skills ?? []) as ChatSkill[];
+		},
+	});
+	return { skills: query.data ?? [], isLoading: query.isLoading };
+}
+
+/**
+ * Every path in the session worktree, for @-mention completion.
+ *
+ * The daemon already serves this list — tracked and untracked, non-ignored — so the
+ * whole set is fetched once and filtered in the composer. That keeps a keystroke
+ * from costing a round trip, which is what makes the menu feel like part of typing.
+ * The endpoint caps itself, and `truncated` is respected rather than presented as a
+ * complete list.
+ */
+export function useWorkspaceFilePaths(sessionId: string | undefined, enabled: boolean) {
+	const query = useQuery({
+		queryKey: ["workspace-file-paths", sessionId ?? ""],
+		enabled: Boolean(sessionId) && enabled,
+		// The agent edits files as it works, so this goes stale; refetched on demand
+		// rather than polled, since a mention menu that is a minute out of date is
+		// still useful and polling every session would not be.
+		staleTime: 30 * 1000,
+		retry: false,
+		queryFn: async () => {
+			const { data, error } = await apiClient.GET(
+				"/api/v1/sessions/{sessionId}/workspace/files",
+				{ params: { path: { sessionId: sessionId as string } } },
+			);
+			if (error) throw error;
+			return {
+				// A deleted path cannot be read, so offering it would insert a
+				// reference the agent then fails to resolve.
+				paths: (data?.files ?? [])
+					.filter((file) => file.status !== "deleted")
+					.map((file) => file.path),
+				truncated: Boolean(data?.truncated),
+			};
+		},
+	});
+	return {
+		paths: query.data?.paths ?? [],
+		truncated: query.data?.truncated ?? false,
+		isLoading: query.isLoading,
+	};
+}
+
+/**
+ * Write staged images into the session worktree.
+ *
+ * Returns the worktree-relative paths the agent can open. The composer names those
+ * paths in the message it sends, which is how an image reaches an agent whose
+ * conversation carries text: the same thing spawn does for the opening brief.
+ */
+export function useStageAttachments(sessionId: string | undefined) {
+	return useCallback(
+		async (attachments: { mimeType: string; data: string }[]): Promise<string[]> => {
+			if (!sessionId || attachments.length === 0) return [];
+			const { data, error } = await apiClient.POST(
+				"/api/v1/sessions/{sessionId}/attachments",
+				{ params: { path: { sessionId } }, body: { attachments } },
+			);
+			if (error) throw error;
+			return data?.paths ?? [];
+		},
+		[sessionId],
+	);
 }
 
 /* -------------------------------------------------------------------------- */
