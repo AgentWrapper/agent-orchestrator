@@ -92,3 +92,24 @@ it("interrupts an active cloud session", async () => {
   );
   expect(init.method).toBe("POST");
 });
+
+it("loads session SCM through the Cloud session route", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ scm: null }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  const api = Object.assign(Object.create(CloudAPI.prototype) as CloudAPI, {
+    baseURL: "https://cloud.example.com",
+    accessToken: "access-token",
+  });
+
+  await api.sessionSCM("session one");
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "https://cloud.example.com/api/cloud/v1/sessions/session%20one/scm",
+    expect.any(Object),
+  );
+});
