@@ -24,6 +24,24 @@ UPDATE conversations
 SET model = ?, reasoning_effort = ?, approval_mode = ?, updated_at = ?
 WHERE id = ?;
 
+-- The thread title the provider reports for this conversation. Kept even when the
+-- user has overridden the AO label, because it is the name the conversation has in
+-- the provider's own history.
+-- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+-- offset, so a multi-byte character here silently corrupts later queries.
+-- name: UpdateConversationProviderTitle :exec
+UPDATE conversations
+SET provider_title = ?, updated_at = ?
+WHERE id = ?;
+
+-- The last title AO pushed into sessions.display_name. It is the compare-and-set
+-- witness that lets a later provider title replace a label AO wrote while never
+-- replacing one a person chose.
+-- name: UpdateConversationAppliedTitle :exec
+UPDATE conversations
+SET applied_title = ?, updated_at = ?
+WHERE id = ?;
+
 -- name: NextConversationSequence :one
 UPDATE conversations
 SET latest_sequence = latest_sequence + 1, updated_at = ?
@@ -68,10 +86,61 @@ SET state = 'failed',
     completed_at = ?
 WHERE handled_by_session_id = ? AND state IN ('queued', 'running');
 
+-- name: SelectConversationTurnByID :one
+SELECT * FROM conversation_turns WHERE id = ? LIMIT 1;
+
+-- Turns are read in full, rolled-back ones included. They carry rolled_back_at, so
+-- a client can report how much an undo discarded instead of watching the timeline
+-- silently shrink.
+-- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+-- offset, so a multi-byte character here silently corrupts later queries.
 -- name: SelectConversationTurns :many
 SELECT * FROM conversation_turns
 WHERE conversation_id = ?
 ORDER BY requested_at, rowid;
+
+-- Everything from the named turn to the end of the conversation, which is the range
+-- an undo discards. Inclusive of the named turn: the state a person wants back is
+-- the one from before they sent the message they pointed at.
+--
+-- The cut is on rowid rather than requested_at because rowid is assigned by the
+-- insert and strictly increasing, so it orders turns recorded in the same clock tick
+-- the same way SelectConversationTurns does. Two turns sharing a timestamp is
+-- ordinary; two turns sharing a rowid is impossible.
+-- name: MarkConversationTurnsRolledBack :execrows
+UPDATE conversation_turns
+SET rolled_back_at = ?
+WHERE conversation_turns.conversation_id = ?
+  AND conversation_turns.rolled_back_at IS NULL
+  AND conversation_turns.rowid >= (
+      SELECT anchor.rowid FROM conversation_turns AS anchor WHERE anchor.id = ?
+  );
+
+-- A discarded turn that never reached the provider settles as interrupted rather
+-- than staying queued forever. Nothing went wrong and nothing failed: the user
+-- undid the conversation out from under a message that was still waiting, and
+-- dispatching it later would send it against a history it was never written for.
+-- name: InterruptRolledBackQueuedTurns :exec
+UPDATE conversation_turns
+SET state = 'interrupted', completed_at = ?
+WHERE conversation_id = ?
+  AND state IN ('queued', 'running')
+  AND rolled_back_at IS NOT NULL;
+
+-- An approval inside a discarded turn can never be answered: the provider call it
+-- was blocking belongs to history the provider has dropped. A rollback is refused
+-- while a turn runs, so in practice there is nothing here to close; the statement
+-- exists so the invariant is enforced rather than argued.
+-- name: FailRolledBackConversationApprovals :exec
+UPDATE conversation_activities
+SET status = 'failed', revision = revision + 1, updated_at = ?
+WHERE conversation_activities.conversation_id = ?
+  AND conversation_activities.kind = 'approval'
+  AND conversation_activities.status = 'pending'
+  AND conversation_activities.turn_id IN (
+      SELECT discarded.id FROM conversation_turns AS discarded
+      WHERE discarded.conversation_id = ? AND discarded.rolled_back_at IS NOT NULL
+  );
 
 -- The head of the send queue: the oldest message recorded while the agent was
 -- busy. Joined to its own user message because dispatching needs the text, and
@@ -130,10 +199,23 @@ SELECT * FROM conversation_messages
 WHERE conversation_id = ? AND client_message_id = ?
 LIMIT 1;
 
+-- Prose the agent still remembers. Rows belonging to a rolled-back turn are left
+-- out: rollback discarded them provider-side, and showing a person a message the
+-- agent has no memory of is the one way this feature can lie.
+--
+-- Rows with turn_id IS NULL survive the filter on purpose. Those are items the
+-- provider never attributed to a turn, and hiding what AO cannot prove belonged to
+-- the discarded range would be a guess dressed up as a fact.
+-- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+-- offset, so a multi-byte character here silently corrupts later queries.
 -- name: SelectConversationMessages :many
 SELECT * FROM conversation_messages
-WHERE conversation_id = ?
-ORDER BY sequence;
+WHERE conversation_messages.conversation_id = ?
+  AND (conversation_messages.turn_id IS NULL OR conversation_messages.turn_id NOT IN (
+      SELECT discarded.id FROM conversation_turns AS discarded
+      WHERE discarded.conversation_id = ? AND discarded.rolled_back_at IS NOT NULL
+  ))
+ORDER BY conversation_messages.sequence;
 
 -- name: InsertConversationActivity :exec
 INSERT INTO conversation_activities (
@@ -165,10 +247,33 @@ SELECT * FROM conversation_activities
 WHERE conversation_id = ? AND provider_item_id = ?
 LIMIT 1;
 
+-- Activities the agent still remembers, filtered the same way messages are and for
+-- the same reason. See SelectConversationMessages.
 -- name: SelectConversationActivities :many
 SELECT * FROM conversation_activities
-WHERE conversation_id = ?
-ORDER BY sequence;
+WHERE conversation_activities.conversation_id = ?
+  AND (conversation_activities.turn_id IS NULL OR conversation_activities.turn_id NOT IN (
+      SELECT discarded.id FROM conversation_turns AS discarded
+      WHERE discarded.conversation_id = ? AND discarded.rolled_back_at IS NOT NULL
+  ))
+ORDER BY conversation_activities.sequence;
+
+-- Push a provider thread title into the session label, without ever overwriting a
+-- name a person chose.
+--
+-- One statement, not a read followed by a write: a manual rename landing between the
+-- two would be silently discarded. The guard admits exactly two cases - the session
+-- has no label yet, or it still carries the title AO last wrote - so anything a user
+-- typed wins by simply not matching.
+--
+-- It lives with the conversation queries rather than the session ones because it is
+-- part of the conversation title lifecycle; sessions is only the table the value
+-- lands in.
+-- name: ApplyConversationTitleToSession :execrows
+UPDATE sessions
+SET display_name = ?, updated_at = ?
+WHERE id = ?
+  AND (display_name = '' OR display_name = ?);
 
 -- The raw provider event archive. Append-only, and the only way to answer "what
 -- did the provider actually say" once a projection turns out to be wrong.

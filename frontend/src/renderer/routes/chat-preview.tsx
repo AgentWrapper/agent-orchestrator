@@ -22,7 +22,12 @@ import {
 	useConversationCommands,
 	useConversationModels,
 } from "../hooks/useConversation";
-import { chatFixture, chatFixtureEmpty, chatFixtureRecovering } from "../lib/chat-fixture";
+import {
+	chatFixture,
+	chatFixtureEmpty,
+	chatFixtureRecovering,
+	chatFixtureSettled,
+} from "../lib/chat-fixture";
 import type { ConversationSnapshot } from "../types/conversation";
 
 export const Route = createFileRoute("/chat-preview")({
@@ -34,6 +39,7 @@ export const Route = createFileRoute("/chat-preview")({
 
 const SCENARIOS = {
 	live: { label: "Live turn", snapshot: chatFixture },
+	settled: { label: "Settled", snapshot: chatFixtureSettled },
 	recovering: { label: "Controller lost", snapshot: chatFixtureRecovering },
 	empty: { label: "New session", snapshot: chatFixtureEmpty },
 } satisfies Record<string, { label: string; snapshot: ConversationSnapshot }>;
@@ -91,6 +97,11 @@ function LiveChat({ sessionId }: { sessionId: string }) {
 						onInterrupt={commands.interrupt}
 						models={models}
 						onChooseSettings={commands.chooseSettings}
+						onRollback={(turnId) => {
+							void commands.rollback(turnId).catch(() => {});
+						}}
+						rollbackPending={commands.rollbackPending}
+						rollbackError={commands.rollbackError}
 					/>
 				) : null}
 			</div>
@@ -134,6 +145,29 @@ function FixtureChat() {
 		[note, scenario],
 	);
 
+	// Mimics the daemon's rollback: the named turn and everything after it are marked
+	// discarded and their items leave the timeline, because the agent has forgotten
+	// them. Local so the confirmation and the aftermath can be seen without a daemon.
+	const rollback = useCallback(
+		(turnId: string) => {
+			note(`rollback to ${turnId}`);
+			setOverrides((prev) => {
+				const base = { ...SCENARIOS[scenario].snapshot, ...prev };
+				const from = base.turns.findIndex((turn) => turn.id === turnId);
+				if (from < 0) return prev;
+				const discardedIds = new Set(base.turns.slice(from).map((turn) => turn.id));
+				return {
+					...prev,
+					turns: base.turns.map((turn) =>
+						discardedIds.has(turn.id) ? { ...turn, rolledBack: true } : turn,
+					),
+					items: base.items.filter((item) => !item.turnId || !discardedIds.has(item.turnId)),
+				};
+			});
+		},
+		[note, scenario],
+	);
+
 	return (
 		<div className="flex h-screen flex-col bg-background">
 			<PreviewBar label="fixtures" note={log[0]}>
@@ -160,6 +194,7 @@ function FixtureChat() {
 					onSend={(text) => note(`send: ${text.slice(0, 48)}`)}
 					onDecide={decide}
 					onInterrupt={() => note("interrupt active turn")}
+					onRollback={rollback}
 				/>
 			</div>
 		</div>

@@ -202,6 +202,8 @@ func newHarnessWithConversation(t *testing.T, conv ports.ChatConversation) *harn
 		conv = base
 	} else if recorder, ok := conv.(*interruptRecorder); ok {
 		base = recorder.fakeConversation
+	} else if recorder, ok := conv.(*historyRecorder); ok {
+		base = recorder.fakeConversation
 	}
 	h := &harness{st: st, conv: base, clock: time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)}
 

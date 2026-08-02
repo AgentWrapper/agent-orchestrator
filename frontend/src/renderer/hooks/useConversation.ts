@@ -177,11 +177,32 @@ export function useConversationCommands(sessionId: string | undefined) {
 		onSuccess: invalidate,
 	});
 
+	/**
+	 * Undo back to a turn. This asks the agent to forget, not the timeline to hide:
+	 * the daemon discards the history provider-side and marks its own rows to match,
+	 * so a success has to be followed by a refetch rather than an optimistic edit —
+	 * how much was discarded is the daemon's answer, not the client's guess.
+	 */
+	const rollback = useMutation({
+		mutationFn: async (turnId: string) => {
+			const { data, error } = await apiClient.POST(
+				"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/rollback",
+				{ params: { path: { sessionId: sessionId as string, turnId } } },
+			);
+			if (error) throw error;
+			return data;
+		},
+		onSuccess: invalidate,
+	});
+
 	return {
 		send: (text: string) => send.mutate(text),
 		resolve: (requestId: string, decisionId: string) => resolve.mutate({ requestId, decisionId }),
 		interrupt: () => interrupt.mutate(),
 		chooseSettings: (settings: TurnSettings) => chooseSettings.mutate(settings),
+		rollback: (turnId: string) => rollback.mutateAsync(turnId),
+		rollbackPending: rollback.isPending,
+		rollbackError: rollback.error ? apiErrorMessage(rollback.error) : undefined,
 		busy: send.isPending || resolve.isPending || interrupt.isPending,
 		error:
 			send.error || resolve.error || interrupt.error || chooseSettings.error
@@ -250,6 +271,7 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 			reasoningEffort: wire.settings?.reasoningEffort || undefined,
 			approvalMode: (wire.settings?.approvalMode as ApprovalMode | undefined) || undefined,
 		},
+		title: wire.title || undefined,
 		turns: (wire.turns ?? []).map((turn) => ({
 			id: turn.id,
 			state: turn.state as TurnState,
@@ -258,6 +280,7 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 			requestedAt: turn.requestedAt,
 			startedAt: turn.startedAt ?? undefined,
 			completedAt: turn.completedAt ?? undefined,
+			rolledBack: turn.rolledBack ?? undefined,
 		})),
 		items,
 	};

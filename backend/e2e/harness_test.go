@@ -414,6 +414,7 @@ type turn struct {
 	ProviderTurnID string `json:"providerTurnId"`
 	ErrorMessage   string `json:"errorMessage"`
 	RequestedAt    string `json:"requestedAt"`
+	RolledBack     bool   `json:"rolledBack"`
 }
 
 type message struct {
@@ -473,6 +474,7 @@ type snapshot struct {
 	Settings       turnSettings `json:"settings"`
 	Mode           string       `json:"mode"`
 	Controller     string       `json:"controller"`
+	Title          string       `json:"title"`
 	LatestSequence int64        `json:"latestSequence"`
 	Turns          []turn       `json:"turns"`
 	Messages       []message    `json:"messages"`

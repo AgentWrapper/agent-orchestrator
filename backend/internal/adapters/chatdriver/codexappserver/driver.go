@@ -82,6 +82,13 @@ func capabilities() ports.ChatCapabilities {
 		ports.ChatCapabilityPlans:       true,
 		ports.ChatCapabilityInteractive: true,
 		ports.ChatCapabilityModels:      true,
+		// History operations, all three exercised against a live app-server. Rollback
+		// is advertised despite thread/rollback carrying a DEPRECATED annotation:
+		// what the installed provider does is the only honest answer, and gating the
+		// feature off while the call still works would take undo away for no reason.
+		ports.ChatCapabilityRollback: true,
+		ports.ChatCapabilityFork:     true,
+		ports.ChatCapabilityRename:   true,
 		// turn/steer exists in the protocol but AO does not use it yet, so it is
 		// not advertised: a capability AO cannot drive must not gate UI on.
 		ports.ChatCapabilitySteer: false,

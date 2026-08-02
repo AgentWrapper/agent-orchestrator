@@ -577,6 +577,174 @@ func (s *Store) RecordProviderEvent(
 	return nil
 }
 
+// ErrConversationTurnNotFound reports a turn id that is not in the conversation it
+// was named against. Distinct from a rollback the provider refused: the caller
+// pointed at nothing. It aliases the domain sentinel so a service can recognize it
+// without importing the storage layer.
+var ErrConversationTurnNotFound = domain.ErrNoConversationTurn
+
+// TurnByID reads one turn. It returns ErrConversationTurnNotFound rather than a
+// zero value, so a caller cannot mistake "no such turn" for "a turn with no
+// provider id".
+func (s *Store) TurnByID(ctx context.Context, turnID string) (domain.ConversationTurn, error) {
+	row, err := s.qr.SelectConversationTurnByID(ctx, turnID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.ConversationTurn{}, fmt.Errorf("%w: %s", ErrConversationTurnNotFound, turnID)
+	}
+	if err != nil {
+		return domain.ConversationTurn{}, fmt.Errorf("select turn %s: %w", turnID, err)
+	}
+	return turnToDomain(row), nil
+}
+
+// RollbackTurns records that a rollback discarded the named turn and everything
+// after it, and returns how many turns that was.
+//
+// This is the AO half of an operation the provider has already performed: the agent
+// has forgotten those turns, and these rows are what stop the user being shown
+// prose the agent cannot recall. The three statements commit together because a
+// partial result is the one state that reintroduces the disagreement the whole
+// operation exists to prevent.
+//
+// Nothing is deleted. The turns keep their rows and their immutable sequence
+// positions, marked with when they were taken back.
+func (s *Store) RollbackTurns(
+	ctx context.Context,
+	conversationID, turnID string,
+	now time.Time,
+) (int, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	turn, err := s.qr.SelectConversationTurnByID(ctx, turnID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("%w: %s", ErrConversationTurnNotFound, turnID)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("select turn %s: %w", turnID, err)
+	}
+	if turn.ConversationID != conversationID {
+		// A turn from another conversation would otherwise anchor a rollback by
+		// rowid alone and discard an arbitrary range of this one.
+		return 0, fmt.Errorf("%w: %s is not in conversation %s",
+			ErrConversationTurnNotFound, turnID, conversationID)
+	}
+
+	var discarded int64
+	err = s.inTx(ctx, "roll back turns", func(q *gen.Queries) error {
+		rows, markErr := q.MarkConversationTurnsRolledBack(ctx,
+			gen.MarkConversationTurnsRolledBackParams{
+				RolledBackAt:   sql.NullTime{Time: now, Valid: true},
+				ConversationID: conversationID,
+				ID:             turnID,
+			})
+		if markErr != nil {
+			return fmt.Errorf("mark turns rolled back: %w", markErr)
+		}
+		discarded = rows
+
+		if err := q.InterruptRolledBackQueuedTurns(ctx,
+			gen.InterruptRolledBackQueuedTurnsParams{
+				CompletedAt:    sql.NullTime{Time: now, Valid: true},
+				ConversationID: conversationID,
+			}); err != nil {
+			return fmt.Errorf("interrupt rolled back queued turns: %w", err)
+		}
+
+		if err := q.FailRolledBackConversationApprovals(ctx,
+			gen.FailRolledBackConversationApprovalsParams{
+				UpdatedAt:        now,
+				ConversationID:   conversationID,
+				ConversationID_2: conversationID,
+			}); err != nil {
+			return fmt.Errorf("fail rolled back approvals: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(discarded), nil
+}
+
+// SetProviderTitle records the title the provider reports for this conversation.
+func (s *Store) SetProviderTitle(
+	ctx context.Context,
+	conversationID, title string,
+	now time.Time,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if err := s.qw.UpdateConversationProviderTitle(ctx,
+		gen.UpdateConversationProviderTitleParams{
+			ProviderTitle: title,
+			UpdatedAt:     now,
+			ID:            conversationID,
+		}); err != nil {
+		return fmt.Errorf("set provider title for %s: %w", conversationID, err)
+	}
+	return nil
+}
+
+// ApplyProviderTitle pushes a provider thread title into the session's display
+// name, and reports whether it landed.
+//
+// applied=false is the ordinary outcome, not a failure: it means the session
+// already carries a name a person chose, and that name wins. The check is the
+// UPDATE's own guard rather than a read followed by a write, because a manual
+// rename arriving between those two would be silently overwritten by whatever the
+// provider said a moment earlier.
+//
+// Writing display_name is what fans the new label out to every live surface: the
+// sessions_cdc_update trigger includes display_name in its guard, so the existing
+// session_updated event carries it without a second notification path.
+func (s *Store) ApplyProviderTitle(
+	ctx context.Context,
+	conversationID string,
+	session domain.SessionID,
+	title string,
+	now time.Time,
+) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	conversation, err := s.qr.SelectConversationByID(ctx, conversationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrConversationNotFound
+	}
+	if err != nil {
+		return false, fmt.Errorf("select conversation %s: %w", conversationID, err)
+	}
+
+	var applied bool
+	err = s.inTx(ctx, "apply provider title", func(q *gen.Queries) error {
+		rows, updateErr := q.ApplyConversationTitleToSession(ctx,
+			gen.ApplyConversationTitleToSessionParams{
+				DisplayName: title,
+				UpdatedAt:   now,
+				ID:          session,
+				// The witness: only a label AO itself last wrote may be replaced.
+				DisplayName_2: conversation.AppliedTitle,
+			})
+		if updateErr != nil {
+			return fmt.Errorf("apply title to session %s: %w", session, updateErr)
+		}
+		if rows == 0 {
+			return nil
+		}
+		applied = true
+		return q.UpdateConversationAppliedTitle(ctx, gen.UpdateConversationAppliedTitleParams{
+			AppliedTitle: title,
+			UpdatedAt:    now,
+			ID:           conversationID,
+		})
+	})
+	if err != nil {
+		return false, err
+	}
+	return applied, nil
+}
+
 // ConversationSnapshot is the durable read model for one conversation.
 type ConversationSnapshot struct {
 	Conversation domain.ConversationRecord
@@ -603,11 +771,22 @@ func (s *Store) LoadConversationSnapshot(
 	if err != nil {
 		return ConversationSnapshot{}, fmt.Errorf("select turns: %w", err)
 	}
-	messageRows, err := s.qr.SelectConversationMessages(ctx, conversationID)
+	// Messages and activities exclude anything attached to a rolled-back turn: the
+	// agent has forgotten those, and a timeline that still showed them would be
+	// describing a conversation the agent is not in.
+	messageRows, err := s.qr.SelectConversationMessages(ctx,
+		gen.SelectConversationMessagesParams{
+			ConversationID:   conversationID,
+			ConversationID_2: conversationID,
+		})
 	if err != nil {
 		return ConversationSnapshot{}, fmt.Errorf("select messages: %w", err)
 	}
-	activityRows, err := s.qr.SelectConversationActivities(ctx, conversationID)
+	activityRows, err := s.qr.SelectConversationActivities(ctx,
+		gen.SelectConversationActivitiesParams{
+			ConversationID:   conversationID,
+			ConversationID_2: conversationID,
+		})
 	if err != nil {
 		return ConversationSnapshot{}, fmt.Errorf("select activities: %w", err)
 	}
@@ -656,8 +835,10 @@ func conversationToDomain(row gen.Conversation) domain.ConversationRecord {
 			ReasoningEffort: row.ReasoningEffort.String,
 			ApprovalMode:    domain.PermissionMode(row.ApprovalMode.String),
 		},
-		CreatedAt: row.CreatedAt,
-		UpdatedAt: row.UpdatedAt,
+		ProviderTitle: row.ProviderTitle,
+		AppliedTitle:  row.AppliedTitle,
+		CreatedAt:     row.CreatedAt,
+		UpdatedAt:     row.UpdatedAt,
 	}
 	if row.SessionID != nil {
 		rec.SessionID = *row.SessionID
@@ -682,6 +863,10 @@ func turnToDomain(row gen.ConversationTurn) domain.ConversationTurn {
 	if row.CompletedAt.Valid {
 		completed := row.CompletedAt.Time
 		turn.CompletedAt = &completed
+	}
+	if row.RolledBackAt.Valid {
+		rolledBack := row.RolledBackAt.Time
+		turn.RolledBackAt = &rolledBack
 	}
 	return turn
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -36,8 +37,17 @@ type scriptedServer struct {
 
 	mu        sync.Mutex
 	responses map[string]string
+	failures  map[string]string
 	seen      []frame
 	seenCh    chan frame
+}
+
+// replyError scripts a JSON-RPC error for a method, which is how a test exercises a
+// provider refusal. app-server answers -32600 for everything it declines.
+func (s *scriptedServer) replyError(method string, code int, message string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failures[method] = `{"code":` + strconv.Itoa(code) + `,"message":` + strconv.Quote(message) + `}`
 }
 
 func (s *scriptedServer) respondTo(method, resultJSON string) {
@@ -59,6 +69,19 @@ func (s *scriptedServer) reply(method, result string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.responses[method] = result
+}
+
+// sentMethod reports whether the client ever sent a request for the method. Guarded
+// because the server goroutine appends to the same slice.
+func (s *scriptedServer) sentMethod(method string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, f := range s.seen {
+		if f.Method == method {
+			return true
+		}
+	}
+	return false
 }
 
 // awaitFrame waits for a frame matching pred among everything the client sent.
@@ -101,7 +124,8 @@ func newTestDriver(t *testing.T) (*Driver, *scriptedServer) {
 			"turn/interrupt": `{}`,
 			"thread/resume":  `{"thread":{"id":"thread-1"}}`,
 		},
-		seenCh: make(chan frame, 64),
+		failures: map[string]string{},
+		seenCh:   make(chan frame, 64),
 	}
 
 	go func() {
@@ -122,6 +146,7 @@ func newTestDriver(t *testing.T) (*Driver, *scriptedServer) {
 			srv.mu.Lock()
 			srv.seen = append(srv.seen, f)
 			reply, known := srv.responses[f.Method]
+			failure, refused := srv.failures[f.Method]
 			srv.mu.Unlock()
 
 			select {
@@ -129,7 +154,11 @@ func newTestDriver(t *testing.T) (*Driver, *scriptedServer) {
 			default:
 			}
 
-			if f.ID != nil && f.Method != "" && known {
+			switch {
+			case f.ID == nil || f.Method == "":
+			case refused:
+				srv.push(`{"id":` + string(*f.ID) + `,"error":` + failure + `}`)
+			case known:
 				srv.push(`{"id":` + string(*f.ID) + `,"result":` + reply + `}`)
 			}
 		}

@@ -44,6 +44,12 @@ type Store interface {
 	NextQueuedTurn(ctx context.Context, conversationID string) (domain.QueuedTurn, error)
 	CancelQueuedTurns(ctx context.Context, conversationID string, cutoff, now time.Time) error
 
+	TurnByID(ctx context.Context, turnID string) (domain.ConversationTurn, error)
+	RollbackTurns(ctx context.Context, conversationID, turnID string, now time.Time) (int, error)
+
+	SetProviderTitle(ctx context.Context, conversationID, title string, now time.Time) error
+	ApplyProviderTitle(ctx context.Context, conversationID string, session domain.SessionID, title string, now time.Time) (bool, error)
+
 	AppendAssistantDelta(ctx context.Context, conversationID, providerItemID, providerTurnID, delta, messageID string, now time.Time) error
 	SettleAssistantMessage(ctx context.Context, conversationID, providerItemID, providerTurnID, text, messageID string, now time.Time) error
 
@@ -434,6 +440,61 @@ func (c *Controller) awaitAcknowledgedTurn(ctx context.Context) (string, bool) {
 	}
 }
 
+// Rollback discards a turn and everything after it, and reports how many turns went.
+//
+// Order is deliberate: the provider first, AO's rows second. If the provider
+// refuses, AO must not already have hidden anything — a timeline missing turns the
+// agent still remembers is the same lie in the other direction. If AO's write then
+// fails, the error is returned and logged loudly: the provider call cannot be undone,
+// and the raw provider-event archive plus the surviving turn rows are what make the
+// disagreement repairable rather than invisible.
+//
+// The busy check is inside sendMu, which is also what dispatch holds, so a turn
+// cannot start between the check and the provider call. That is the difference
+// between refusing a rollback and racing one.
+func (c *Controller) Rollback(ctx context.Context, turnID string) (int, error) {
+	rollbacker, ok := c.conv.(ports.ChatRollbacker)
+	if !ok {
+		return 0, ErrRollbackUnsupported
+	}
+
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+
+	if c.busy() {
+		// Not a failure and not permanent: the agent is mid-thought, and the same
+		// request works the moment it finishes.
+		return 0, ErrTurnRunning
+	}
+
+	turn, err := c.store.TurnByID(ctx, turnID)
+	if err != nil {
+		return 0, err
+	}
+	if turn.ConversationID != c.conversation.ID {
+		return 0, fmt.Errorf("%w: turn %s is not in this session's conversation",
+			ErrTurnNotRollbackable, turnID)
+	}
+	if turn.ProviderTurnID == "" {
+		// The provider never accepted this turn, so it holds no history to discard.
+		// Hiding AO's rows anyway would leave the agent remembering more than the
+		// timeline shows, which is the failure this whole operation exists to avoid.
+		return 0, fmt.Errorf("%w: %s", ErrTurnNotRollbackable, turnID)
+	}
+
+	if err := rollbacker.Rollback(ctx, turn.ProviderTurnID); err != nil {
+		return 0, classify(fmt.Errorf("roll back turn %s: %w", turnID, err))
+	}
+
+	discarded, err := c.store.RollbackTurns(ctx, c.conversation.ID, turnID, c.now())
+	if err != nil {
+		c.log.Error("chat rollback: provider discarded history but AO rows did not follow",
+			"session", c.sessionID, "turn", turnID, "error", err)
+		return 0, fmt.Errorf("record rollback of %s: %w", turnID, err)
+	}
+	return discarded, nil
+}
+
 // Close releases the controller. Settling in-flight work is not done here: it
 // happens when the event stream ends, which covers a provider that died on its
 // own as well as a shutdown AO initiated. Close only has to make the stream end
@@ -596,6 +657,9 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 				ProviderItemID: event.ProviderItemID,
 			}, now)
 
+	case ports.ChatEventThreadRenamed:
+		return c.applyThreadTitle(ctx, event.Title, now)
+
 	case ports.ChatEventApprovalResolved:
 		// The provider resolved it, possibly through another client. Mark it so a
 		// card still on screen elsewhere stops being actionable.
@@ -634,6 +698,40 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 		// An event kind this build does not model is archived but not projected.
 		return nil
 	}
+}
+
+// applyThreadTitle records a title the provider reports for the thread and, when
+// it may, adopts it as the session's label.
+//
+// The session's display name is the field that already exists for this, so a
+// provider title lands there rather than in a parallel one — every surface that
+// shows a session name picks it up with no change, and the sessions CDC trigger
+// fans it out on the event clients already listen to.
+//
+// It never overwrites a name a person chose. The store's compare-and-set is what
+// enforces that in one statement; a false result here means the user's label won,
+// which is the correct outcome and not an error.
+//
+// A cleared title is recorded but never applied: the provider having no name for
+// the thread is not a reason to strip the label off AO's session.
+func (c *Controller) applyThreadTitle(ctx context.Context, title string, now time.Time) error {
+	normalized := NormalizeTitle(title)
+	if err := c.store.SetProviderTitle(ctx, c.conversation.ID, normalized, now); err != nil {
+		return err
+	}
+	if normalized == "" {
+		return nil
+	}
+	applied, err := c.store.ApplyProviderTitle(
+		ctx, c.conversation.ID, c.sessionID, normalized, now)
+	if err != nil {
+		return err
+	}
+	if !applied {
+		c.log.Debug("chat title not applied: session carries a name the user chose",
+			"session", c.sessionID)
+	}
+	return nil
 }
 
 // mergeApprovalDetail folds the provider's offered decisions into the activity

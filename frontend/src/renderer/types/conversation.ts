@@ -57,6 +57,13 @@ export interface ConversationTurn {
 	requestedAt: string;
 	startedAt?: string;
 	completedAt?: string;
+	/**
+	 * An undo discarded this turn. Its messages and activities are absent from the
+	 * snapshot, because the agent no longer remembers them; the turn is still
+	 * reported so the timeline can say what was taken back rather than just
+	 * appearing to have lost some history.
+	 */
+	rolledBack?: boolean;
 }
 
 export interface ConversationMessage {
@@ -184,6 +191,12 @@ export interface ConversationSnapshot {
 	/** What the next turn will be sent with. Daemon-owned, so it survives a
 	 *  restart and applies to turns AO dispatches on the user's behalf. */
 	settings: TurnSettings;
+	/**
+	 * The name the provider gives this thread. Empty until something names it.
+	 * The session's own label is set from this by the daemon, so this is here for
+	 * the header rather than for the sidebar.
+	 */
+	title?: string;
 }
 
 /**

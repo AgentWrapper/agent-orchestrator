@@ -98,6 +98,14 @@ type usageEnvelope struct {
 	Info     json.RawMessage `json:"info"`
 }
 
+// nameEnvelope is the params shape of thread/name/updated. threadName is
+// nullable: the provider uses the absent form to say the thread no longer has a
+// name, which is a different fact from "it was renamed to something blank".
+type nameEnvelope struct {
+	ThreadID   string  `json:"threadId"`
+	ThreadName *string `json:"threadName"`
+}
+
 // resolvedEnvelope is the params shape of serverRequest/resolved, which the
 // provider broadcasts once a request has been answered. It is how a second
 // client learns an approval is no longer actionable.
@@ -176,6 +184,23 @@ func normalizeNotification(n notification) []ports.ChatEvent {
 			Detail:         detail,
 		}}
 
+	case "thread/name/updated":
+		var p nameEnvelope
+		if err := json.Unmarshal(n.Params, &p); err != nil {
+			return nil
+		}
+		// A cleared name is reported too, as an empty title. It is a real change to
+		// the conversation and the projection needs to see it; what the projection
+		// must not do is blank out a label on the strength of it.
+		title := ""
+		if p.ThreadName != nil {
+			title = strings.TrimSpace(*p.ThreadName)
+		}
+		return []ports.ChatEvent{{
+			Kind:  ports.ChatEventThreadRenamed,
+			Title: title,
+		}}
+
 	case "serverRequest/resolved":
 		var p resolvedEnvelope
 		if err := json.Unmarshal(n.Params, &p); err != nil {
@@ -202,8 +227,9 @@ func normalizeNotification(n notification) []ports.ChatEvent {
 	default:
 		// Provider bookkeeping: mcpServer/startupStatus/updated, hook/started,
 		// hook/completed, account/rateLimits/updated, thread/status/changed,
-		// remoteControl/status/changed, thread/goal/*, and anything added by a
-		// newer provider build. Deliberately not conversation events.
+		// remoteControl/status/changed, deprecationNotice, thread/goal/*, and
+		// anything added by a newer provider build. Deliberately not conversation
+		// events.
 		return nil
 	}
 }

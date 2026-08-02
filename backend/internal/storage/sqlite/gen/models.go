@@ -38,6 +38,8 @@ type Conversation struct {
 	Model           sql.NullString
 	ReasoningEffort sql.NullString
 	ApprovalMode    sql.NullString
+	ProviderTitle   string
+	AppliedTitle    string
 }
 
 type ConversationActivity struct {
@@ -93,6 +95,7 @@ type ConversationTurn struct {
 	RequestedAt          time.Time
 	StartedAt            sql.NullTime
 	CompletedAt          sql.NullTime
+	RolledBackAt         sql.NullTime
 }
 
 type Notification struct {

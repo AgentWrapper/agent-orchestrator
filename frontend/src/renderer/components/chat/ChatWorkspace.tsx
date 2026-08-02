@@ -13,9 +13,10 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, Brain, Loader2, MessageSquare, Square, TriangleAlert } from "lucide-react";
+import { ArrowDown, Brain, Loader2, MessageSquare, Square, TriangleAlert, Undo2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
+import { ConfirmDialog } from "../ConfirmDialog";
 import {
 	ActivityRow,
 	ApprovalCard,
@@ -49,6 +50,13 @@ export interface ChatWorkspaceProps {
 	/** The provider's model catalog. Empty hides the model control. */
 	models?: ChatModel[];
 	onChooseSettings?: (settings: TurnSettings) => void;
+	/**
+	 * Discard a turn and everything after it. Absent means the agent cannot undo,
+	 * and the affordance is not drawn at all rather than shown and then refused.
+	 */
+	onRollback?: (turnId: string) => void;
+	rollbackPending?: boolean;
+	rollbackError?: string;
 }
 
 export function ChatWorkspace({
@@ -59,6 +67,9 @@ export function ChatWorkspace({
 	busy,
 	models,
 	onChooseSettings,
+	onRollback,
+	rollbackPending,
+	rollbackError,
 }: ChatWorkspaceProps) {
 	const turn = activeTurn(snapshot);
 	const approval = pendingApproval(snapshot);
@@ -68,6 +79,14 @@ export function ChatWorkspace({
 	// a log. Kept behind a toggle rather than dropped, since they are occasionally
 	// the only explanation of why the agent did something.
 	const [showReasoning, setShowReasoning] = useState(false);
+	// The turn a confirmation is open for. Undo is not reversible and it changes what
+	// the agent knows, so it is never one click.
+	const [confirming, setConfirming] = useState<string | undefined>(undefined);
+
+	// Offered only while the agent is idle. The daemon refuses a rollback mid-turn,
+	// and a control that exists to be refused is worse than one that waits.
+	const rollbackTarget = onRollback && !turn ? (id: string) => setConfirming(id) : undefined;
+	const discarded = snapshot.turns.filter((t) => t.rolledBack).length;
 
 	return (
 		<section
@@ -87,9 +106,11 @@ export function ChatWorkspace({
 				onDecide={onDecide}
 				busy={busy}
 				showReasoning={showReasoning}
+				onRollback={rollbackTarget}
 			/>
 
 			<div className="flex shrink-0 flex-col gap-2 border-t border-border px-4 py-3">
+				{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
 				{turn ? (
 					<LiveTurnBar
 						startedAt={turn.startedAt ?? turn.requestedAt}
@@ -115,7 +136,62 @@ export function ChatWorkspace({
 					disabled={snapshot.controller.state === "stopped"}
 				/>
 			</div>
+
+			{/* The copy has to be honest about the cost: this is not "hide these
+			    messages", it is "the agent forgets them". Nothing in the worktree is
+			    reverted either, and a user who assumed otherwise would be badly
+			    surprised, so it is said out loud. */}
+			<ConfirmDialog
+				open={Boolean(confirming)}
+				onOpenChange={(open) => {
+					if (!open) setConfirming(undefined);
+				}}
+				title="Roll back to this point?"
+				description={
+					<>
+						<p className="text-sm font-medium text-foreground">
+							The agent will forget this exchange and everything after it.
+						</p>
+						<p className="mt-1 text-xs text-muted-foreground">
+							Its memory of the conversation is discarded up to this point, so it will not know
+							about anything you or it said later. Files it already changed in the worktree are
+							left exactly as they are; only the conversation is rolled back. This cannot be
+							undone.
+						</p>
+					</>
+				}
+				confirmLabel="Roll back"
+				destructive
+				busy={rollbackPending}
+				error={rollbackError ?? null}
+				onConfirm={() => {
+					const turnId = confirming;
+					if (!turnId) return;
+					setConfirming(undefined);
+					onRollback?.(turnId);
+				}}
+			/>
 		</section>
+	);
+}
+
+/**
+ * What an undo took away.
+ *
+ * Stated above the composer rather than as a timeline entry, because the discarded
+ * turns keep their original sequence positions and this notice has none of its own —
+ * placing it in the timeline would be claiming an order it cannot know. It sits where
+ * the user is looking after an undo, and it says the part that matters: the agent
+ * does not remember.
+ */
+function RolledBackNotice({ count }: { count: number }) {
+	return (
+		<p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+			<Undo2 aria-hidden="true" className="size-3 shrink-0" />
+			{count === 1
+				? "1 turn was rolled back. The agent no longer remembers it."
+				: `${count} turns were rolled back. The agent no longer remembers them.`}
+		</p>
 	);
 }
 
@@ -212,8 +288,11 @@ function ChatHeader({
 		<header className="flex h-toolbar shrink-0 items-center gap-3 border-b border-border px-4">
 			<MessageSquare aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
 			<div className="flex min-w-0 items-baseline gap-2">
-				<strong className="truncate text-sm font-medium text-foreground">
-					{snapshot.sessionId}
+				{/* The thread's own name when it has one. The daemon also pushes it into
+				    the session's display name, so the sidebar and this header agree
+				    without either deriving a label of its own. */}
+				<strong className="truncate text-sm font-medium text-foreground" title={snapshot.title}>
+					{snapshot.title || snapshot.sessionId}
 				</strong>
 				<span className="shrink-0 text-xs text-muted-foreground">{snapshot.harness}</span>
 			</div>
@@ -304,11 +383,13 @@ function Timeline({
 	onDecide,
 	busy,
 	showReasoning,
+	onRollback,
 }: {
 	snapshot: ConversationSnapshot;
 	onDecide?: (requestId: string, decisionId: string) => void;
 	busy?: boolean;
 	showReasoning: boolean;
+	onRollback?: (turnId: string) => void;
 }) {
 	const scroller = useRef<HTMLDivElement>(null);
 	const [pinned, setPinned] = useState(true);
@@ -372,6 +453,14 @@ function Timeline({
 									state={group.outcome.state}
 									durationMs={group.outcome.durationMs}
 									error={group.outcome.error}
+									// Only a turn the provider actually accepted can be undone: a turn
+									// it never saw holds no history to discard, and the daemon refuses
+									// it rather than hiding rows the agent still remembers.
+									onRollback={
+										onRollback && group.turnId && group.rollbackable
+											? () => onRollback(group.turnId as string)
+											: undefined
+									}
 								/>
 							) : null}
 						</div>
@@ -428,6 +517,8 @@ type TimelineGroup = {
 	anchor: number;
 	items: ConversationItem[];
 	outcome?: { state: "completed" | "interrupted" | "failed"; durationMs?: number; error?: string };
+	/** The provider accepted this turn, so there is history it can be asked to drop. */
+	rollbackable?: boolean;
 };
 
 /**
@@ -479,6 +570,7 @@ function groupByTurn(snapshot: ConversationSnapshot): TimelineGroup[] {
 		const turn = byTurn.get(group.turnId);
 		if (!turn) continue;
 		if (turn.state === "running" || turn.state === "queued") continue;
+		group.rollbackable = Boolean(turn.providerTurnId);
 		group.outcome = {
 			state: turn.state,
 			durationMs:
