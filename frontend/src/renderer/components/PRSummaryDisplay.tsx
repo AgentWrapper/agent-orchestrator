@@ -5,11 +5,9 @@ import { prSummaryParts, type PRDisplayTone, type PRSummaryLink } from "../lib/p
 import { cn } from "../lib/utils";
 
 const toneClass: Record<PRDisplayTone, string> = {
-	neutral: "text-muted-foreground",
-	passive: "text-passive",
-	success: "text-success",
-	warning: "text-warning",
-	error: "text-error",
+	value: "text-pr-value",
+	muted: "text-pr-label",
+	blocked: "text-pr-blocked",
 };
 
 export function PRSummaryMeta({
@@ -29,41 +27,34 @@ export function PRSummaryMeta({
 	}
 	return (
 		<div className={cn("min-w-0 font-mono text-2xs leading-4", className)}>
-			{primary.length > 0 ? <div className="truncate text-passive">{primary.join(" · ")}</div> : null}
+			{primary.length > 0 ? <div className="truncate text-pr-label">{primary.join(" · ")}</div> : null}
 			{hasDiff ? <PRDiffMeta pr={pr} /> : null}
 		</div>
 	);
 }
 
 function PRDiffMeta({ pr }: { pr: SessionPRSummary }) {
+	// Counts are values, not verdicts: the diff line carries no hue of its own.
 	const parts: ReactNode[] = [];
 	if (pr.changedFiles > 0) {
 		parts.push(
-			<span className="inline-flex items-center gap-0.5 text-warning" key="files">
+			<span className="inline-flex items-center gap-0.5" key="files">
 				<ArrowUpDown aria-hidden="true" className="h-2.5 w-2.5 shrink-0" strokeWidth={2.2} />
 				{pr.changedFiles} {pluralize("file", pr.changedFiles)}
 			</span>,
 		);
 	}
 	if (pr.additions > 0) {
-		parts.push(
-			<span className="text-success" key="additions">
-				+{pr.additions}
-			</span>,
-		);
+		parts.push(<span key="additions">+{pr.additions}</span>);
 	}
 	if (pr.deletions > 0) {
-		parts.push(
-			<span className="text-error" key="deletions">
-				-{pr.deletions}
-			</span>,
-		);
+		parts.push(<span key="deletions">-{pr.deletions}</span>);
 	}
 	return (
-		<div className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-muted-foreground">
+		<div className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-pr-value">
 			{parts.map((part, index) => (
 				<Fragment key={index}>
-					{index > 0 ? <span className="text-passive">·</span> : null}
+					{index > 0 ? <span className="text-pr-label">·</span> : null}
 					{part}
 				</Fragment>
 			))}
@@ -104,16 +95,16 @@ export function PRSummaryParts({
 				return (
 					<div key={part.key} className={cn("min-w-0", stacked ? "flex flex-col" : "inline-flex flex-wrap gap-x-1")}>
 						<div className="min-w-0 truncate">
-							<span className="text-passive">{part.label}</span>{" "}
+							<span className="text-pr-label">{part.label}</span>{" "}
 							<span className={cn("font-medium", toneClass[part.tone])}>{part.status}</span>
-							{part.summary ? <span className="text-passive"> · {part.summary}</span> : null}
+							{part.summary ? <span className="text-pr-label"> · {part.summary}</span> : null}
 						</div>
 						{links.length > 0 || overflowLabel ? (
 							<div className={cn("flex min-w-0 flex-wrap gap-x-1.5 gap-y-1", stacked ? "mt-0.5" : "")}>
 								{links.map((link, index) => (
 									<SummaryLink interactive={interactiveLinks} key={`${part.key}-${index}-${link.label}`} link={link} />
 								))}
-								{overflowLabel ? <span className="text-passive">{overflowLabel}</span> : null}
+								{overflowLabel ? <span className="text-pr-label">{overflowLabel}</span> : null}
 							</div>
 						) : null}
 					</div>
@@ -134,7 +125,7 @@ function SummaryLink({ interactive, link }: { interactive: boolean; link: PRSumm
 	if (interactive && link.href) {
 		return (
 			<a
-				className="inline-flex max-w-full min-w-0 items-center gap-0.5 text-accent hover:underline"
+				className="inline-flex max-w-full min-w-0 items-center gap-0.5 text-pr-link hover:underline"
 				href={link.href}
 				onClick={(event) => event.stopPropagation()}
 				rel="noopener noreferrer"
@@ -147,7 +138,7 @@ function SummaryLink({ interactive, link }: { interactive: boolean; link: PRSumm
 		);
 	}
 	return (
-		<span className="max-w-full truncate text-muted-foreground" title={link.title}>
+		<span className="max-w-full truncate text-pr-value" title={link.title}>
 			{link.label}
 		</span>
 	);

@@ -27,7 +27,6 @@ import { aoBridge } from "../lib/bridge";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
 import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { useUiStore } from "../stores/ui-store";
-import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 import { PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
@@ -86,13 +85,6 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 ];
 
 const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
-
-const prStateTone: Record<SessionPRSummary["state"], string> = {
-	open: "border-success/40 bg-success/10 text-success",
-	draft: "border-border bg-raised text-muted-foreground",
-	merged: "border-accent/40 bg-accent-weak text-accent",
-	closed: "border-error/40 bg-error/10 text-error",
-};
 
 const inspectorShellClass = "@container/inspector flex h-full min-h-0 flex-col overflow-hidden";
 
@@ -486,27 +478,21 @@ function updateSessionMergePolicy(
 
 function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 	return (
-		<div className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2.5 py-1.5">
+		<div className="rounded-lg border border-(--color-border-settings-input) bg-pr-card px-2.5 py-1.5">
 			<div className="flex items-center gap-2">
-				<GitPullRequest className="size-icon-md shrink-0 text-settings-muted" aria-hidden="true" />
-				<span className="text-md-sm font-medium text-settings-label">PR #{pr.number}</span>
-				<Badge
-					variant="outline"
-					className={cn("h-5 px-1.5 text-[9px] leading-none font-medium", prStateTone[pr.state])}
-				>
-					{pr.state}
-				</Badge>
+				<GitPullRequest className="size-icon-md shrink-0 text-pr-label" aria-hidden="true" />
+				<span className="text-md-sm font-medium text-pr-title">PR #{pr.number}</span>
 				<a
 					href={prBrowserUrl(pr)}
 					target="_blank"
 					rel="noopener noreferrer"
-					className="ml-auto inline-flex items-center gap-0.5 text-caption font-medium text-accent hover:underline"
+					className="ml-auto inline-flex items-center gap-0.5 text-caption font-medium text-pr-link hover:underline"
 				>
 					<span>Open</span>
 					<ArrowUpRight aria-hidden="true" className="size-icon-2xs" strokeWidth={2} />
 				</a>
 			</div>
-			{pr.title ? <div className="mt-1.5 text-xs font-medium leading-snug text-settings-label">{pr.title}</div> : null}
+			{pr.title ? <div className="mt-1.5 text-xs font-medium leading-snug text-pr-title">{pr.title}</div> : null}
 			<PRSummaryMeta className="mt-1" pr={pr} />
 			<PRSummaryParts className="mt-1.5" pr={pr} variant="stacked" />
 		</div>

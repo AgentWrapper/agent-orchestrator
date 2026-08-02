@@ -17,17 +17,25 @@ const mergeabilityStates = new Set<SessionPRSummary["mergeability"]["state"]>([
 	"unstable",
 ]);
 
-export type PRDisplayTone = "neutral" | "passive" | "success" | "warning" | "error";
+/**
+ * Tones map onto the PR card palette (see `--color-text-pr-*` in tokens.css):
+ *   value   → the neutral value tier, for any state the provider has reported
+ *   muted   → the label/empty tier, for "nothing here yet" and unknown states
+ *   blocked → the single blocker hue, for a negative verdict that stops the merge
+ * There is deliberately no success or warning tone: green and amber are retired
+ * in this card, and hue is reserved for links and blockers only.
+ */
+export type PRDisplayTone = "value" | "muted" | "blocked";
 
 export type PRStatusRow = {
-	key: "ci" | "review" | "merge";
+	key: PRSummaryPartKey;
 	label: string;
 	value: string;
 	detail?: string;
 	tone: PRDisplayTone;
 };
 
-export type PRSummaryPartKey = "ci" | "review" | "merge";
+export type PRSummaryPartKey = "status" | "ci" | "review" | "merge";
 
 export type PRSummaryLink = {
 	label: string;
@@ -251,6 +259,13 @@ export function prStatusRows(pr: SessionPRSummary): PRStatusRow[] {
 export function prSummaryParts(pr: SessionPRSummary): PRSummaryPart[] {
 	return [
 		{
+			key: "status",
+			label: "Status",
+			status: prStateLabel(pr.state),
+			links: [],
+			tone: "value",
+		},
+		{
 			key: "ci",
 			label: "CI",
 			status: ciLabel(pr.ci.state),
@@ -284,7 +299,7 @@ export function prSummaryParts(pr: SessionPRSummary): PRSummaryPart[] {
 					? undefined
 					: overflowLabel(pr.review.unresolvedBy.length, 3, "reviewer"),
 			overflowNoun: "reviewer",
-			tone: reviewTone(pr.review.decision, pr.review.hasUnresolvedHumanComments),
+			tone: reviewTone(pr.review.decision),
 		},
 	];
 }
@@ -450,14 +465,28 @@ function ciLabel(state: SessionPRSummary["ci"]["state"]): string {
 
 function ciTone(state: SessionPRSummary["ci"]["state"]): PRDisplayTone {
 	switch (state) {
-		case "passing":
-			return "success";
+		// Failing CI is one of the provider's own merge-blocking reasons, so it
+		// earns the blocker hue. Passing and pending are just reported values.
 		case "failing":
-			return "error";
+			return "blocked";
+		case "passing":
 		case "pending":
-			return "neutral";
+			return "value";
 		case "unknown":
-			return "passive";
+			return "muted";
+	}
+}
+
+function prStateLabel(state: SessionPRSummary["state"]): string {
+	switch (state) {
+		case "open":
+			return "Open";
+		case "draft":
+			return "Draft";
+		case "merged":
+			return "Merged";
+		case "closed":
+			return "Closed";
 	}
 }
 
@@ -474,19 +503,18 @@ function reviewLabel(decision: SessionPRSummary["review"]["decision"]): string {
 	}
 }
 
-function reviewTone(
-	decision: SessionPRSummary["review"]["decision"],
-	hasUnresolvedHumanComments: boolean,
-): PRDisplayTone {
+function reviewTone(decision: SessionPRSummary["review"]["decision"]): PRDisplayTone {
 	switch (decision) {
-		case "approved":
-			return "success";
+		// Requested changes is a merge-blocking reason; approved and pending are
+		// values. "None" is the empty state, and unresolved comments surface as
+		// links rather than by tinting the value.
 		case "changes_requested":
-			return "warning";
+			return "blocked";
+		case "approved":
 		case "review_required":
-			return "neutral";
+			return "value";
 		case "none":
-			return hasUnresolvedHumanComments ? "warning" : "passive";
+			return "muted";
 	}
 }
 
@@ -507,15 +535,14 @@ function mergeabilityLabel(state: SessionPRSummary["mergeability"]["state"]): st
 
 function mergeabilityTone(state: SessionPRSummary["mergeability"]["state"]): PRDisplayTone {
 	switch (state) {
-		case "mergeable":
-			return "success";
 		case "conflicting":
-			return "error";
 		case "blocked":
 		case "unstable":
-			return "warning";
+			return "blocked";
+		case "mergeable":
+			return "value";
 		case "unknown":
-			return "passive";
+			return "muted";
 	}
 }
 

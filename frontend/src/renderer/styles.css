@@ -114,6 +114,14 @@
 	--radius-settings-row: var(--radius-settings-row);
 	--radius-settings-panel: var(--radius-settings-panel);
 
+	/* PR card (session inspector) — see tokens.css for the palette contract */
+	--color-pr-card: var(--color-bg-pr-card);
+	--color-pr-title: var(--color-text-pr-title);
+	--color-pr-value: var(--color-text-pr-value);
+	--color-pr-label: var(--color-text-pr-label);
+	--color-pr-link: var(--color-text-pr-link);
+	--color-pr-blocked: var(--color-text-pr-blocked);
+
 	/* Browser static preview (light mock inside dark app) */
 	--color-preview: var(--color-preview-bg);
 	--color-preview-foreground: var(--color-preview-fg);

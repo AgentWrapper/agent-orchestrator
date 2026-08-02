@@ -374,6 +374,17 @@
 	--color-settings-accent: #4f8afa;
 	--color-settings-switch-on: #3b82f6;
 
+	/* PR card (session inspector) — maintainer palette, mockup "3a PR card".
+	   Every state is a labelled row and hue is reserved for two things only:
+	   links (clickable) and blockers. Green and amber are retired in this card;
+	   everything non-blocking collapses onto the three neutral text tiers. */
+	--color-bg-pr-card: #171717;
+	--color-text-pr-title: #f2f2f2;
+	--color-text-pr-value: #b0b0b0;
+	--color-text-pr-label: #5e5e5e;
+	--color-text-pr-link: #a5c9ff;
+	--color-text-pr-blocked: #e05252;
+
 	/* Project / workspace agents sheet — aliases shared chrome where themes match */
 	--color-bg-agents-sheet: var(--color-bg-settings-dialog);
 	--color-border-agents-sheet: #424242;
@@ -602,6 +613,15 @@
 	/* Settings accents stay brand-blue in light mode (same Figma values). */
 	--color-settings-accent: #4f8afa;
 	--color-settings-switch-on: #3b82f6;
+
+	/* PR card — light equivalents of the dark mockup palette. Same six roles,
+	   same "hue only for links and blockers" rule, re-anchored for a light card. */
+	--color-bg-pr-card: #ffffff;
+	--color-text-pr-title: #1a1a1a;
+	--color-text-pr-value: #4b4b4b;
+	--color-text-pr-label: #8a8a8a;
+	--color-text-pr-link: #2c5fbf;
+	--color-text-pr-blocked: #c03a3a;
 
 	--color-term-black: #24292f;
 	--color-term-red: #a13c37;
