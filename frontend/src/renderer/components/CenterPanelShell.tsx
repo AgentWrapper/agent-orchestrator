@@ -4,8 +4,6 @@ import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { isMacPlatform } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
 
-const isMac = isMacPlatform();
-
 /**
  * Shared inset center panel: sidebar-colored outer frame with a bordered inner
  * surface. Used by the shell's app routes (kanban / session), the welcome board,
@@ -28,7 +26,7 @@ export function CenterPanelShell({
 }) {
 	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
 	const isFullScreen = useWindowFullScreen();
-	const align = titlebarAlign && isMac;
+	const align = titlebarAlign && isMacPlatform();
 	const titlebarClearance = align && !isSidebarOpen;
 
 	return (

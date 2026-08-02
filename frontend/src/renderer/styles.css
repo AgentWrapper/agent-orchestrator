@@ -466,11 +466,6 @@
 	padding-left: calc(var(--size-titlebar-content-offset) - var(--size-center-panel-inset-mac));
 }
 
-/* Linux clears the cluster from its own left edge (no traffic-light row). */
-.center-panel-shell--linux.center-panel-shell--titlebar-clearance .center-panel-titlebar {
-	padding-left: calc(var(--size-titlebar-content-offset-linux) - var(--size-center-panel-inset-mac));
-}
-
 /* Fullscreen: the shell is flush, so measure from the cluster's own left edge. */
 .center-panel-shell--titlebar-clearance-fullscreen .center-panel-titlebar {
 	padding-left: calc(
@@ -1162,7 +1157,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
  * stops at the header instead of crossing the traffic-light strip. */
 .dashboard-app-header {
 	display: flex;
-	height: 56px;
+	height: var(--size-shell-topbar);
 	flex-shrink: 0;
 	align-items: center;
 	gap: 13px;
@@ -2313,7 +2308,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 }
 
 .platform-linux .browser-popout-overlay {
-	top: var(--size-toolbar);
+	top: var(--size-shell-topbar);
 }
 
 .browser-popout-overlay .browser-panel {
