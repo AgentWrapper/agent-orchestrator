@@ -116,6 +116,70 @@ func TestIngestorRejectsInvalidPersistedParserStateWithoutAdvancing(t *testing.T
 	}
 }
 
+func TestIngestorReplaysReplacementWithUnknownProviderTimestampAcrossClocks(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+	}{
+		{
+			name: "missing timestamp",
+			line: `{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":60,"cache_write_input_tokens":0,"output_tokens":20,"reasoning_output_tokens":5}}}}`,
+		},
+		{
+			name: "invalid timestamp",
+			line: `{"timestamp":"not-a-time","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":60,"cache_write_input_tokens":0,"output_tokens":20,"reasoning_output_tokens":5}}}}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			store, source, path, now := seedCodexIngestionSource(t, t.TempDir())
+			content := test.line + "\n"
+			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			ingestor := NewIngestor(store, IngestorConfig{Clock: func() time.Time { return now }})
+			if _, err := ingestor.Ingest(ctx, source.ID); err != nil {
+				t.Fatalf("initial ingest: %v", err)
+			}
+
+			replacementPath := path + ".replacement"
+			if err := os.WriteFile(replacementPath, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(replacementPath, path); err != nil {
+				t.Fatal(err)
+			}
+			now = now.Add(time.Hour)
+			replaced, err := ingestor.Ingest(ctx, source.ID)
+			if err != nil {
+				t.Fatalf("replace source: %v", err)
+			}
+			if replaced.ReplacementSourceID == 0 {
+				t.Fatalf("replacement result = %+v", replaced)
+			}
+			if _, err := ingestor.Ingest(ctx, replaced.ReplacementSourceID); err != nil {
+				t.Fatalf("replay replacement: %v", err)
+			}
+
+			got, ok, err := store.GetUsageSourceForIngestion(ctx, replaced.ReplacementSourceID)
+			if err != nil || !ok {
+				t.Fatalf("get replacement: ok=%v err=%v", ok, err)
+			}
+			if got.Source.ByteOffset != int64(len(content)) || got.Source.LastErrorCode != "" {
+				t.Fatalf("replacement source = %+v, want consumed duplicate without conflict", got.Source)
+			}
+			aggregates, err := store.ListUsageModelAggregates(ctx, got.SessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(aggregates) != 1 || aggregates[0].EventCount != 1 {
+				t.Fatalf("aggregates = %+v, want one replay-deduplicated event", aggregates)
+			}
+		})
+	}
+}
+
 func seedCodexIngestionSource(t *testing.T, dataDir string) (*sqlite.Store, domain.UsageSourceRecord, string, time.Time) {
 	t.Helper()
 	ctx := context.Background()

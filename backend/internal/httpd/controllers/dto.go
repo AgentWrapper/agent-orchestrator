@@ -551,7 +551,6 @@ type UsageHookMetadata struct {
 	ModelID                string              `json:"modelId,omitempty"`
 	SubagentID             string              `json:"subagentId,omitempty"`
 	SubagentTranscriptPath string              `json:"subagentTranscriptPath,omitempty"`
-	SourceCLIVersion       string              `json:"sourceCliVersion,omitempty"`
 }
 
 // SetActivityResponse is the body of POST /api/v1/sessions/{sessionId}/activity.

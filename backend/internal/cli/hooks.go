@@ -56,7 +56,6 @@ type usageHookMetadata struct {
 	ModelID                string `json:"modelId,omitempty"`
 	SubagentID             string `json:"subagentId,omitempty"`
 	SubagentTranscriptPath string `json:"subagentTranscriptPath,omitempty"`
-	SourceCLIVersion       string `json:"sourceCliVersion,omitempty"`
 }
 
 // maxActivityMetaLen caps the correlation fields lifted from a native hook
@@ -123,7 +122,6 @@ func hookUsageMetadata(agent string, payload []byte) *usageHookMetadata {
 		Model                  string `json:"model"`
 		SubagentID             string `json:"agent_id"`
 		SubagentTranscriptPath string `json:"agent_transcript_path"`
-		CLIVersion             string `json:"cli_version"`
 	}
 	if json.Unmarshal(payload, &native) != nil {
 		return nil
@@ -134,9 +132,8 @@ func hookUsageMetadata(agent string, payload []byte) *usageHookMetadata {
 		ModelID:                strings.TrimSpace(native.Model),
 		SubagentID:             strings.TrimSpace(native.SubagentID),
 		SubagentTranscriptPath: strings.TrimSpace(native.SubagentTranscriptPath),
-		SourceCLIVersion:       strings.TrimSpace(native.CLIVersion),
 	}
-	if meta.TranscriptPath == "" && meta.SubagentTranscriptPath == "" && meta.ModelID == "" && meta.SourceCLIVersion == "" {
+	if meta.TranscriptPath == "" && meta.SubagentTranscriptPath == "" && meta.ModelID == "" {
 		return nil
 	}
 	return meta

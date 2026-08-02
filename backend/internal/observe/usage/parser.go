@@ -217,7 +217,7 @@ func parseClaude(source domain.UsageSourceContext, records []jsonlRecord, now ti
 		model := firstNonEmpty(native.Message.Model, state.ModelID, source.InitialModelID, "unknown")
 		state.ModelID = model
 		state.Provider = firstNonEmpty(state.Provider, "claude-code")
-		observedAt := parseTimestamp(native.Timestamp, now)
+		observedAt := parseTimestamp(native.Timestamp)
 		keyID := firstNonEmpty(native.Message.ID, native.UUID, strconv.FormatInt(record.Offset, 10))
 		event := domain.ModelUsageEvent{
 			Provider:   state.Provider,
@@ -316,7 +316,7 @@ func parseCodexEvent(source domain.UsageSourceContext, envelope codexEnvelope, n
 	provider := firstNonEmpty(state.Provider, "openai")
 	state.ModelID = model
 	state.Provider = provider
-	observedAt := parseTimestamp(envelope.Timestamp, now)
+	observedAt := parseTimestamp(envelope.Timestamp)
 	tokens := domain.UsageTokenMetrics{
 		InputTokens:         input,
 		UncachedInputTokens: uncached,
@@ -408,11 +408,11 @@ func stableSourceEventKey(prefix string, parts ...string) string {
 	return fmt.Sprintf("%s:sha256:%x", prefix, hash.Sum(nil))
 }
 
-func parseTimestamp(value string, fallback time.Time) time.Time {
+func parseTimestamp(value string) time.Time {
 	if parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(value)); err == nil {
 		return parsed.UTC()
 	}
-	return fallback
+	return time.Unix(0, 0).UTC()
 }
 
 func firstNonEmpty(values ...string) string {

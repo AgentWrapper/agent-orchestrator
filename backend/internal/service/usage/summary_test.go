@@ -157,3 +157,48 @@ func TestSummaryReaderGetReturnsDetailedTelemetryWithoutInventingCost(t *testing
 		t.Fatalf("harnesses = %+v", got.Harnesses)
 	}
 }
+
+func TestUsageTotalsPropagatesOnlyConsistentPricingVersion(t *testing.T) {
+	version1 := "pricing-v1"
+	version2 := "pricing-v2"
+	tests := []struct {
+		name   string
+		models []domain.UsageModelAggregate
+		want   *string
+	}{
+		{
+			name: "single version",
+			models: []domain.UsageModelAggregate{
+				{EventCount: 1, CostEventCount: 1, CostNanos: 100, PricingVersion: &version1},
+				{EventCount: 1, CostEventCount: 1, CostNanos: 200, PricingVersion: &version1},
+			},
+			want: &version1,
+		},
+		{
+			name: "mixed versions",
+			models: []domain.UsageModelAggregate{
+				{EventCount: 1, CostEventCount: 1, CostNanos: 100, PricingVersion: &version1},
+				{EventCount: 1, CostEventCount: 1, CostNanos: 200, PricingVersion: &version2},
+			},
+		},
+		{
+			name: "missing version",
+			models: []domain.UsageModelAggregate{
+				{EventCount: 1, CostEventCount: 1, CostNanos: 100, PricingVersion: &version1},
+				{EventCount: 1, CostEventCount: 1, CostNanos: 200},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := usageTotals(test.models, domain.UsageCollectionComplete).CostNanos.PricingVersion
+			if test.want == nil {
+				if got != nil {
+					t.Fatalf("pricing version = %q, want omitted", *got)
+				}
+			} else if got == nil || *got != *test.want {
+				t.Fatalf("pricing version = %v, want %q", got, *test.want)
+			}
+		})
+	}
+}

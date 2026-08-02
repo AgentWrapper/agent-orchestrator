@@ -532,6 +532,7 @@ func usageAggregateFromGen(row gen.AggregateUsageBySessionHarnessModelRow) domai
 		ReasoningEventCount: row.ReasoningEventCount,
 		CostEventCount:      row.CostEventCount,
 		CostNanos:           row.CostNanos,
+		PricingVersion:      stringPtrFromSQLiteValue(row.PricingVersion),
 		LastObservedAt:      last,
 	}
 }
@@ -602,6 +603,24 @@ func ptrStringToNull(v *string) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: *v, Valid: true}
+}
+
+func stringPtrFromSQLiteValue(v any) *string {
+	var value string
+	switch x := v.(type) {
+	case string:
+		value = x
+	case []byte:
+		value = string(x)
+	case sql.NullString:
+		if x.Valid {
+			value = x.String
+		}
+	}
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 func int64PtrWhen(v int64, ok bool) *int64 {

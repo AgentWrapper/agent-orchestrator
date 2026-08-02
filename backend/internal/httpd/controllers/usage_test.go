@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -137,5 +138,50 @@ func TestUsageAPIShowsDetailedSessionTelemetry(t *testing.T) {
 		len(got.Harnesses) != 1 || len(got.Harnesses[0].Models) != 1 ||
 		got.Harnesses[0].Models[0].ModelID != "gpt-5.6" {
 		t.Fatalf("response = %+v", got)
+	}
+}
+
+func TestUsageAPICostPricingVersion(t *testing.T) {
+	cost := int64(123456)
+	version := "pricing-v1"
+	tests := []struct {
+		name    string
+		version *string
+		want    string
+	}{
+		{name: "single version", version: &version, want: version},
+		{name: "mixed versions omitted"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			svc := &fakeUsageSummaryService{detail: domain.SessionUsageSummary{
+				SessionID: "reverb-12",
+				Totals: domain.UsageMetricTotals{CostNanos: domain.UsageCostCoverage{
+					Value:          &cost,
+					Coverage:       domain.UsageCoverageComplete,
+					PricingVersion: test.version,
+				}},
+			}}
+			srv := newUsageTestServer(t, svc)
+			body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/usage/sessions/reverb-12", "")
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body=%s", status, body)
+			}
+			var got struct {
+				Totals struct {
+					Cost struct {
+						PricingVersion *string `json:"pricingVersion"`
+					} `json:"cost"`
+				} `json:"totals"`
+			}
+			mustJSON(t, body, &got)
+			if test.want == "" {
+				if got.Totals.Cost.PricingVersion != nil || strings.Contains(string(body), `"pricingVersion"`) {
+					t.Fatalf("mixed pricing version was not omitted: %s", body)
+				}
+			} else if got.Totals.Cost.PricingVersion == nil || *got.Totals.Cost.PricingVersion != test.want {
+				t.Fatalf("pricing version response = %s, want %q", body, test.want)
+			}
+		})
 	}
 }

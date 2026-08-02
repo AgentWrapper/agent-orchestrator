@@ -932,7 +932,6 @@ export interface components {
             /** @enum {string} */
             harness: "claude-code" | "codex";
             modelId?: string;
-            sourceCliVersion?: string;
             subagentId?: string;
             subagentTranscriptPath?: string;
             transcriptPath?: string;

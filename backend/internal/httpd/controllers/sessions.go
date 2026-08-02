@@ -754,7 +754,6 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 			usageSignal.ModelID = in.Usage.ModelID
 			usageSignal.SubagentID = in.Usage.SubagentID
 			usageSignal.SubagentTranscriptPath = in.Usage.SubagentTranscriptPath
-			usageSignal.SourceCLIVersion = in.Usage.SourceCLIVersion
 		}
 		if err := c.Usage.RecordHook(r.Context(), sessionID(r), usageSignal); err != nil {
 			slog.Default().Warn(

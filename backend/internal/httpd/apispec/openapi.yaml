@@ -2547,8 +2547,6 @@ components:
           type: string
         modelId:
           type: string
-        sourceCliVersion:
-          type: string
         subagentId:
           type: string
         subagentTranscriptPath:

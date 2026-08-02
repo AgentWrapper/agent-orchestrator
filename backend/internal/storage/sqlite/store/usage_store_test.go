@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -273,6 +274,90 @@ func TestApplyUsageChunkAtomicReplayAndAggregates(t *testing.T) {
 		!strings.Contains(ctxRow.Source.ParserStateJSON, `"model_id":"gpt-5.6"`) ||
 		ctxRow.InitialModelID != "gpt-5" || ctxRow.BindingState != domain.UsageBindingActive {
 		t.Fatalf("source context = %+v", ctxRow)
+	}
+}
+
+func TestApplyUsageChunkRejectsChangedProviderTimestampForStableKey(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	sess := seedUsageSession(t, s, domain.HarnessCodex)
+	now := time.Unix(1700000000, 0).UTC()
+	source := seedUsageSource(t, s, sess, now)
+	tokens := domain.UsageTokenMetrics{InputTokens: 10, UncachedInputTokens: 10, OutputTokens: 1}
+	if _, err := s.ApplyUsageChunk(ctx, source.ID, 0, domain.SourceCursorState{
+		ByteOffset: 10,
+		State:      domain.UsageSourceActive,
+		UpdatedAt:  now,
+	}, []domain.ModelUsageEvent{usageEvent("event-1", "", now, tokens, nil)}); err != nil {
+		t.Fatalf("seed event: %v", err)
+	}
+
+	_, err := s.ApplyUsageChunk(ctx, source.ID, 10, domain.SourceCursorState{
+		ByteOffset: 20,
+		State:      domain.UsageSourceActive,
+		UpdatedAt:  now.Add(time.Minute),
+	}, []domain.ModelUsageEvent{usageEvent("event-1", "", now.Add(time.Minute), tokens, nil)})
+	if !errors.Is(err, domain.ErrUsageSourceEventConflict) {
+		t.Fatalf("timestamp conflict error = %v, want ErrUsageSourceEventConflict", err)
+	}
+	assertUsageSourceOffset(t, s, source.ID, 10)
+}
+
+func TestListUsageModelAggregatesPropagatesOnlyConsistentPricingVersion(t *testing.T) {
+	version1 := "pricing-v1"
+	version2 := "pricing-v2"
+	tests := []struct {
+		name     string
+		versions []*string
+		want     *string
+	}{
+		{name: "single version", versions: []*string{&version1, &version1}, want: &version1},
+		{name: "mixed versions", versions: []*string{&version1, &version2}},
+		{name: "missing version", versions: []*string{&version1, nil}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			sess := seedUsageSession(t, s, domain.HarnessCodex)
+			now := time.Unix(1700000000, 0).UTC()
+			source := seedUsageSource(t, s, sess, now)
+			events := make([]domain.ModelUsageEvent, 0, len(test.versions))
+			for index, version := range test.versions {
+				cost := int64(100 + index)
+				event := usageEvent(
+					fmt.Sprintf("event-%d", index),
+					"",
+					now.Add(time.Duration(index)*time.Second),
+					domain.UsageTokenMetrics{InputTokens: 10, UncachedInputTokens: 10, OutputTokens: 1},
+					&cost,
+				)
+				event.Cost.PricingVersion = version
+				events = append(events, event)
+			}
+			if _, err := s.ApplyUsageChunk(ctx, source.ID, 0, domain.SourceCursorState{
+				ByteOffset: 100,
+				State:      domain.UsageSourceActive,
+				UpdatedAt:  now,
+			}, events); err != nil {
+				t.Fatalf("apply events: %v", err)
+			}
+			aggregates, err := s.ListUsageModelAggregates(ctx, sess.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(aggregates) != 1 {
+				t.Fatalf("aggregates = %+v, want one row", aggregates)
+			}
+			got := aggregates[0].PricingVersion
+			if test.want == nil {
+				if got != nil {
+					t.Fatalf("pricing version = %q, want omitted", *got)
+				}
+			} else if got == nil || *got != *test.want {
+				t.Fatalf("pricing version = %v, want %q", got, *test.want)
+			}
+		})
 	}
 }
 

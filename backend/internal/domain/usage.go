@@ -197,6 +197,7 @@ type UsageModelAggregate struct {
 	ReasoningEventCount int64
 	CostEventCount      int64
 	CostNanos           int64
+	PricingVersion      *string
 	LastObservedAt      *time.Time
 }
 

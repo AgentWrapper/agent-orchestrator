@@ -67,7 +67,8 @@ func TestHooks_ReportsUsageTranscriptMetadata(t *testing.T) {
 			"transcript_path":"/home/user/.claude/projects/p/native-7.jsonl",
 			"model":"claude-sonnet",
 			"agent_id":"sub-2",
-			"agent_transcript_path":"/home/user/.claude/projects/p/agent-sub-2.jsonl"
+			"agent_transcript_path":"/home/user/.claude/projects/p/agent-sub-2.jsonl",
+			"cli_version":"9.4.1"
 		}`),
 		ProcessAlive: func(int) bool { return true },
 	}, "hooks", "claude-code", "subagent-stop")
@@ -86,6 +87,9 @@ func TestHooks_ReportsUsageTranscriptMetadata(t *testing.T) {
 		req.Usage.SubagentID != "sub-2" ||
 		req.Usage.SubagentTranscriptPath != "/home/user/.claude/projects/p/agent-sub-2.jsonl" {
 		t.Fatalf("usage metadata = %+v", req.Usage)
+	}
+	if strings.Contains(capture.body, "sourceCliVersion") {
+		t.Fatalf("usage request retained obsolete CLI version metadata: %s", capture.body)
 	}
 }
 

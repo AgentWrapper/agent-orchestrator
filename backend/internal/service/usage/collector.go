@@ -33,7 +33,6 @@ type HookSignal struct {
 	TranscriptPath         string
 	SubagentID             string
 	SubagentTranscriptPath string
-	SourceCLIVersion       string
 }
 
 // SourceRoots are the provider-owned directories from which AO may read usage
