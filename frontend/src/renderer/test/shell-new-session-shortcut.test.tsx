@@ -381,34 +381,12 @@ describe("shell workspace startup", () => {
 	});
 });
 
-describe("shell sidebar hover preview", () => {
-	it("temporarily overlays a collapsed sidebar from the titlebar toggle and closes after pointer leave", async () => {
-		useUiStore.setState({ isSidebarOpen: false });
-		await renderShell();
-
-		const provider = screen.getByTestId("sidebar-provider");
-		const sidebar = screen.getByTestId("sidebar");
-		const previewTrigger = screen.getByRole("button", { name: "Expand sidebar" });
-		expect(screen.queryByRole("button", { name: "Preview sidebar" })).not.toBeInTheDocument();
-
-		expect(provider).toHaveAttribute("data-open", "false");
-		fireEvent.pointerEnter(previewTrigger);
-
-		expect(provider).toHaveAttribute("data-open", "true");
-		expect(sidebar).toHaveAttribute("data-overlay", "true");
-		expect(useUiStore.getState().isSidebarOpen).toBe(false);
-
-		fireEvent.pointerMove(window, { clientX: 500, clientY: 300 });
-		await waitFor(() => expect(provider).toHaveAttribute("data-open", "false"));
-		expect(useUiStore.getState().isSidebarOpen).toBe(false);
-	});
-
+describe("shell sidebar toggle", () => {
 	it("pins the sidebar open when the titlebar toggle is clicked", async () => {
 		useUiStore.setState({ isSidebarOpen: false });
 		await renderShell();
 
 		const previewTrigger = screen.getByRole("button", { name: "Expand sidebar" });
-		fireEvent.pointerEnter(previewTrigger);
 		fireEvent.click(previewTrigger);
 
 		expect(useUiStore.getState().isSidebarOpen).toBe(true);
