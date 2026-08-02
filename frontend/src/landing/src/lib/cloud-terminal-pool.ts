@@ -36,6 +36,7 @@ class CloudTerminalConnection {
   private closed = false;
   private pendingInput: string[] = [];
   private size = { rows: 24, cols: 80 };
+  private canOperate = true;
 
   constructor(
     private readonly api: CloudAPI,
@@ -56,6 +57,10 @@ class CloudTerminalConnection {
   }
 
   sendInput(data: string) {
+    if (!this.canOperate) {
+      this.emit({ type: "notice", message: "Terminal is read-only for viewers." });
+      return;
+    }
     if (this.socket?.readyState !== WebSocket.OPEN) {
       if (this.pendingInput.length < 256) this.pendingInput.push(data);
       this.reconnectNow();
@@ -104,11 +109,12 @@ class CloudTerminalConnection {
     this.connectInFlight = true;
     this.setState("connecting");
     try {
-      const { ticket } = await this.api.terminalTicket(
+      const { ticket, scopes } = await this.api.terminalTicket(
         this.orgId,
         this.sessionId,
         this.kind,
       );
+      this.canOperate = scopes?.includes("terminal:operate") ?? true;
       if (this.closed) return;
       const socket = new WebSocket(
         this.api.terminalURL(ticket, this.lastSequence, this.kind),
@@ -117,10 +123,15 @@ class CloudTerminalConnection {
       socket.addEventListener("open", () => {
         if (this.socket !== socket || this.closed) return;
         this.setState("connected");
-        this.sendResize();
-        while (this.pendingInput.length > 0) {
-          const input = this.pendingInput.shift();
-          if (input) this.sendInput(input);
+        if (this.canOperate) {
+          this.sendResize();
+          while (this.pendingInput.length > 0) {
+            const input = this.pendingInput.shift();
+            if (input) this.sendInput(input);
+          }
+        } else {
+          this.pendingInput = [];
+          this.emit({ type: "notice", message: "Terminal is read-only for viewers." });
         }
       });
       socket.addEventListener("message", (event) => {
@@ -192,7 +203,7 @@ class CloudTerminalConnection {
   };
 
   private sendResize() {
-    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    if (!this.canOperate || this.socket?.readyState !== WebSocket.OPEN) return;
     this.socket.send(JSON.stringify({ type: "resize", ...this.size }));
   }
 }

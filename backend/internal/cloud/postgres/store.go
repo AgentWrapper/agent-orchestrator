@@ -1516,6 +1516,10 @@ var (
 	ErrLocalUserNotFound = errors.New("cloud local user not found")
 	// ErrLocalSessionNotFound indicates the local login token is invalid or expired.
 	ErrLocalSessionNotFound = errors.New("cloud local session not found")
+	// ErrInvalidUserProfile indicates the profile update is invalid.
+	ErrInvalidUserProfile = errors.New("cloud user profile is invalid")
+	// ErrCloudUserNotFound indicates the cloud user row does not exist.
+	ErrCloudUserNotFound = errors.New("cloud user not found")
 	// ErrOrgMembershipNotFound indicates the user does not belong to the org.
 	ErrOrgMembershipNotFound = errors.New("cloud organization membership not found")
 )

@@ -1,7 +1,11 @@
 "use client";
 
 import {
+  Bell,
+  Building2,
   ChevronRight,
+  Check,
+  ChevronsUpDown,
   Cloud,
   FolderGit2,
   KeyRound,
@@ -16,6 +20,7 @@ import {
   Settings,
   Square,
   Trash2,
+  User,
 } from "lucide-react";
 import {
   useCallback,
@@ -31,10 +36,13 @@ import {
   CloudAPI,
   type AgentCredentialType,
   type CloudAgent,
+  type CloudOrgMember,
+  type CloudOrgMembership,
   type CloudOrgInvitation,
   type CloudProject,
   type CloudRepository,
   type CloudSession,
+  type CloudUser,
   type CloudUserOrganization,
   type ProviderConnection,
 } from "@/lib/cloud-api";
@@ -162,10 +170,12 @@ export default function CloudAppPage() {
   const [organizations, setOrganizations] = useState<CloudUserOrganization[]>(
     [],
   );
+  const [currentUser, setCurrentUser] = useState<CloudUser | null>(null);
   const [incomingInvitations, setIncomingInvitations] = useState<
     CloudOrgInvitation[]
   >([]);
   const [orgInvitations, setOrgInvitations] = useState<CloudOrgInvitation[]>([]);
+  const [orgMembers, setOrgMembers] = useState<CloudOrgMember[]>([]);
   const [repositories, setRepositories] = useState<CloudRepository[]>([]);
   const [repositoriesLoading, setRepositoriesLoading] = useState(false);
   const [repositoriesError, setRepositoriesError] = useState<string | null>(
@@ -199,6 +209,7 @@ export default function CloudAppPage() {
   const [error, setError] = useState<string | null>(null);
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [showSessionForm, setShowSessionForm] = useState(false);
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [activeChatSessionIds, setActiveChatSessionIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -473,6 +484,7 @@ export default function CloudAppPage() {
     const request = (async () => {
       try {
         const runtimeData = await api.me();
+        setCurrentUser(runtimeData.user ?? session?.user ?? null);
         const nextOrganizations = runtimeData.organizations ?? [];
         setOrganizations(nextOrganizations);
         const nextOrgId =
@@ -492,6 +504,7 @@ export default function CloudAppPage() {
           setConnections([]);
           setIncomingInvitations([]);
           setOrgInvitations([]);
+          setOrgMembers([]);
           setError(null);
           return;
         }
@@ -506,12 +519,14 @@ export default function CloudAppPage() {
           sessionData,
           connectionData,
           incomingInvitationData,
+          orgMemberData,
           orgInvitationData,
         ] = await Promise.all([
           api.projects(nextOrgId),
           api.sessions(nextOrgId),
           api.providerConnections(nextOrgId),
           api.invitations(),
+          api.orgMembers(nextOrgId),
           canLoadOrgInvitations
             ? api.orgInvitations(nextOrgId)
             : Promise.resolve({ invitations: [] }),
@@ -530,6 +545,7 @@ export default function CloudAppPage() {
         setActiveChatSessionIds(authoritativeActive);
         setConnections(connectionData.providerConnections);
         setIncomingInvitations(incomingInvitationData.invitations);
+        setOrgMembers(orgMemberData.members);
         setOrgInvitations(orgInvitationData.invitations);
         setSandboxProvider(runtimeData.sandboxProvider);
         setError(null);
@@ -546,7 +562,7 @@ export default function CloudAppPage() {
     })();
     refreshInFlight.current = request;
     return request;
-  }, [api]);
+  }, [api, session?.user]);
 
   useEffect(() => {
     if (!api) return;
@@ -572,6 +588,19 @@ export default function CloudAppPage() {
   const selectedOrg = organizations.find(
     ({ organization }) => organization.id === selectedOrgId,
   );
+  const pendingInvitationCount =
+    incomingInvitations.filter((invitation) => invitation.status === "pending")
+      .length +
+    orgInvitations.filter((invitation) => invitation.status === "pending")
+      .length;
+  const switchOrg = (nextOrgId: string | null) => {
+    selectedOrgIdRef.current = nextOrgId;
+    setSelectedOrgId(nextOrgId);
+    setSelectedProjectId(null);
+    setSelectedSessionId(null);
+    setView("board");
+    setWorkspaceMenuOpen(false);
+  };
   const selectedOrgRole = selectedOrg?.membership.role ?? "viewer";
   const canEditOrg =
     selectedOrgRole === "owner" ||
@@ -878,31 +907,84 @@ export default function CloudAppPage() {
             </button>
           </div>
           {!sidebarCollapsed ? (
-            <div className="mx-1.5 mb-2 rounded-lg border border-white/[0.06] bg-[#111317] p-2">
-              <label className="block font-mono text-[9px] uppercase tracking-[0.12em] text-white/30">
-                Workspace
-              </label>
-              <select
-                className="mt-1 h-8 w-full rounded-md border border-white/[0.08] bg-[#171a1f] px-2 text-sm text-white outline-none focus:border-[#4d8dff]"
-                value={selectedOrgId ?? ""}
-                onChange={(event) => {
-                  const nextOrgId = event.target.value || null;
-                  selectedOrgIdRef.current = nextOrgId;
-                  setSelectedOrgId(nextOrgId);
-                  setSelectedProjectId(null);
-                  setSelectedSessionId(null);
-                  setView("board");
-                }}
+            <div className="relative mx-1.5 mb-2">
+              <button
+                type="button"
+                className="flex h-12 w-full items-center gap-2 rounded-lg border border-white/[0.06] bg-[#111317] px-2 text-left transition-colors hover:bg-[#191b20] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4d8dff]/70"
+                onClick={() => setWorkspaceMenuOpen((open) => !open)}
+                aria-haspopup="menu"
+                aria-expanded={workspaceMenuOpen}
               >
-                {organizations.map(({ organization, membership }) => (
-                  <option key={organization.id} value={organization.id}>
-                    {organization.displayName} · {membership.role}
-                  </option>
-                ))}
-              </select>
-              <div className="mt-1 truncate text-[11px] text-white/35">
-                {session?.user.email ?? "Signed in"}
-              </div>
+                <span className="grid size-6 shrink-0 place-items-center rounded-md border border-white/[0.08] bg-[#1a1c22] text-[11px] uppercase leading-none text-white/60">
+                  {(selectedOrg?.organization.displayName ?? "A").charAt(0)}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] leading-4 text-white">
+                    {selectedOrg?.organization.displayName ?? "Select workspace"}
+                  </span>
+                  <span className="block truncate text-[11px] leading-4 text-white/35">
+                    {currentUser?.email ?? session?.user.email ?? "Signed in"} ·{" "}
+                    {selectedOrg?.membership.role ?? "viewer"}
+                  </span>
+                </span>
+                {incomingInvitations.length > 0 ? (
+                  <span
+                    className="grid size-4 place-items-center rounded-full bg-[#4d8dff] font-mono text-[9px] text-white"
+                    aria-label={`${incomingInvitations.length} pending invitations`}
+                  >
+                    {incomingInvitations.length}
+                  </span>
+                ) : null}
+                <ChevronsUpDown className="size-3.5 shrink-0 text-white/35" />
+              </button>
+              {workspaceMenuOpen ? (
+                <div
+                  role="menu"
+                  className="absolute left-0 right-0 top-[calc(100%+6px)] z-40 overflow-hidden rounded-xl border border-white/10 bg-[#202126] p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.45)]"
+                >
+                  <div className="truncate px-2 py-1.5 text-[11px] leading-4 text-white/40">
+                    {currentUser?.email ?? session?.user.email ?? "Account"}
+                  </div>
+                  {organizations.map(({ organization, membership }) => (
+                    <button
+                      key={organization.id}
+                      role="menuitemradio"
+                      aria-checked={organization.id === selectedOrgId}
+                      type="button"
+                      className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] ${
+                        organization.id === selectedOrgId
+                          ? "bg-white/[0.08] text-white"
+                          : "text-white/70 hover:bg-white/[0.05] hover:text-white"
+                      }`}
+                      onClick={() => switchOrg(organization.id)}
+                    >
+                      <Building2 className="size-3.5 shrink-0 text-white/45" />
+                      <span className="min-w-0 flex-1 truncate">
+                        {organization.displayName}
+                      </span>
+                      <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.04em] text-white/35">
+                        {membership.role}
+                      </span>
+                      {organization.id === selectedOrgId ? (
+                        <Check className="size-3.5 shrink-0 text-white/70" />
+                      ) : null}
+                    </button>
+                  ))}
+                  <div className="my-1 h-px bg-white/[0.08]" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-white/70 hover:bg-white/[0.05] hover:text-white"
+                    onClick={() => {
+                      setWorkspaceMenuOpen(false);
+                      setView("settings");
+                    }}
+                  >
+                    <Plus className="size-3.5 shrink-0 text-white/45" />
+                    <span className="truncate">Create workspace</span>
+                  </button>
+                </div>
+              ) : null}
             </div>
           ) : null}
           <button
@@ -1085,7 +1167,7 @@ export default function CloudAppPage() {
           </div>
           <div className="min-h-[105px] shrink-0 border-t border-white/[0.06] p-1.5">
             <button
-              className={`flex h-8 w-full items-center rounded-lg text-sm text-[#9ba1aa] hover:bg-white/[0.04] hover:text-white ${
+              className={`relative flex h-8 w-full items-center rounded-lg text-sm text-[#9ba1aa] hover:bg-white/[0.04] hover:text-white ${
                 sidebarCollapsed ? "justify-center px-0" : "gap-2 px-2"
               }`}
               onClick={() => setView("settings")}
@@ -1093,7 +1175,21 @@ export default function CloudAppPage() {
               title={sidebarCollapsed ? "Settings" : undefined}
             >
               <Settings className="size-[15px] shrink-0" />
-              {!sidebarCollapsed ? "Settings" : null}
+              {!sidebarCollapsed ? (
+                <>
+                  <span>Settings</span>
+                  {pendingInvitationCount > 0 ? (
+                    <span
+                      className="ml-auto grid size-4 place-items-center rounded-full bg-[#4d8dff] font-mono text-[9px] text-white"
+                      aria-label={`${pendingInvitationCount} settings notifications`}
+                    >
+                      {pendingInvitationCount}
+                    </span>
+                  ) : null}
+                </>
+              ) : pendingInvitationCount > 0 ? (
+                <span className="absolute mt-[-16px] ml-4 size-1.5 rounded-full bg-[#4d8dff]" />
+              ) : null}
             </button>
             <button
               className={`flex h-8 w-full items-center rounded-lg text-[12px] text-[#646a73] hover:bg-white/[0.04] hover:text-white ${
@@ -1288,9 +1384,18 @@ export default function CloudAppPage() {
             ) : view === "settings" ? (
               <CloudSettings
                 api={api}
+                currentUser={currentUser ?? session?.user ?? null}
+                organizations={organizations}
                 selectedOrg={selectedOrg}
+                selectedOrgId={selectedOrgId}
+                onBack={() => setView("board")}
+                onSelectOrg={(orgId) => {
+                  switchOrg(orgId);
+                  setView("settings");
+                }}
                 incomingInvitations={incomingInvitations}
                 orgInvitations={orgInvitations}
+                orgMembers={orgMembers}
                 connections={connections}
                 sandboxProvider={sandboxProvider}
                 run={run}
@@ -1657,18 +1762,30 @@ export function SessionBoard({
 
 function CloudSettings({
   api,
+  currentUser,
+  organizations,
   selectedOrg,
+  selectedOrgId,
+  onBack,
+  onSelectOrg,
   incomingInvitations,
   orgInvitations,
+  orgMembers,
   connections,
   sandboxProvider,
   run,
   loading,
 }: {
   api: CloudAPI;
+  currentUser: CloudUser | null;
+  organizations: CloudUserOrganization[];
   selectedOrg?: CloudUserOrganization;
+  selectedOrgId: string | null;
+  onBack: () => void;
+  onSelectOrg: (orgId: string) => void;
   incomingInvitations: CloudOrgInvitation[];
   orgInvitations: CloudOrgInvitation[];
+  orgMembers: CloudOrgMember[];
   connections: ProviderConnection[];
   sandboxProvider: "daytona" | "fly";
   run: (operation: () => Promise<unknown>) => Promise<unknown>;
@@ -1679,11 +1796,33 @@ function CloudSettings({
   const [inviteRole, setInviteRole] = useState<"admin" | "member" | "viewer">(
     "member",
   );
+  const [profileName, setProfileName] = useState(
+    currentUser?.displayName ?? "",
+  );
+  const [settingsPanel, setSettingsPanel] = useState<
+    "profile" | "notifications" | "createOrg" | "org" | "agents" | "sandbox"
+  >("org");
+  const [orgName, setOrgName] = useState(
+    selectedOrg?.organization.displayName ?? "",
+  );
+  const [newOrgName, setNewOrgName] = useState("");
   const [target, setTarget] = useState<"us" | "eu">("us");
-  const selectedOrgId = selectedOrg?.organization.id;
+  useEffect(() => {
+    setOrgName(selectedOrg?.organization.displayName ?? "");
+  }, [selectedOrg?.organization.displayName]);
+  useEffect(() => {
+    setProfileName(currentUser?.displayName ?? "");
+  }, [currentUser?.displayName]);
   const canAdminOrg =
     selectedOrg?.membership.role === "owner" ||
     selectedOrg?.membership.role === "admin";
+  const canEditOrgName = canAdminOrg;
+  const pendingOrgInvitations = orgInvitations.filter(
+    (invitation) => invitation.status === "pending",
+  );
+  const pendingIncomingInvitations = incomingInvitations.filter(
+    (invitation) => invitation.status === "pending",
+  );
   const connectedAgents = new Map(
     connections
       .filter(
@@ -1696,274 +1835,656 @@ function CloudSettings({
     ({ provider }) => provider === "daytona",
   );
   return (
-    <div className="h-full overflow-auto p-6">
-      <div className="max-w-2xl space-y-10">
-        <section>
-          <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-white/35">
-            Organization
-          </p>
-          <h2 className="mt-2 text-base">
-            {selectedOrg?.organization.displayName ?? "No organization selected"}
-          </h2>
-          <p className="mt-2 max-w-xl text-sm leading-6 text-white/45">
-            AO Cloud scopes projects, provider connections, workers, and
-            invitations to the selected organization. Your current role is{" "}
-            <span className="font-medium text-white/70">
-              {selectedOrg?.membership.role ?? "viewer"}
-            </span>
-            .
-          </p>
-          <div className="mt-4 rounded-lg border border-white/10 bg-[#15171b] p-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm">Pending invitations</p>
-                <p className="text-xs text-white/35">
-                  Invites persist in Postgres until accepted, declined, revoked,
-                  or expired.
-                </p>
-              </div>
-              <span className="font-mono text-[10px] uppercase text-white/35">
-                {orgInvitations.length} pending
+    <div className="grid h-full min-h-0 grid-cols-[240px_minmax(0,1fr)] bg-[#0a0b0d]">
+      <nav className="min-h-0 overflow-auto border-r border-white/[0.08] bg-[#111216] p-3">
+        <button
+          type="button"
+          className="mb-4 flex h-8 items-center gap-2 rounded-md px-2 text-sm text-white/45 hover:bg-white/[0.04] hover:text-white"
+          onClick={onBack}
+        >
+          {"<"} Back to app
+        </button>
+        <div className="mb-4 flex h-8 items-center gap-2 rounded-md border border-white/[0.08] bg-[#0c0d10] px-2 text-sm text-white/45">
+          <span className="size-1.5 rounded-full bg-white/25" />
+          Search settings
+        </div>
+        <div className="space-y-5">
+          <div>
+            <p className="px-2 font-mono text-[10px] uppercase tracking-[0.08em] text-white/35">
+              Personal
+            </p>
+            <div className="mt-1 space-y-0.5">
+              <SettingsNavItem
+                active={settingsPanel === "profile"}
+                icon={User}
+                label="Profile"
+                onClick={() => setSettingsPanel("profile")}
+              />
+              <SettingsNavItem
+                icon={Bell}
+                label="Notifications"
+                active={settingsPanel === "notifications"}
+                badge={pendingIncomingInvitations.length}
+                onClick={() => setSettingsPanel("notifications")}
+              />
+            </div>
+          </div>
+          <div>
+            <div className="flex items-center px-2">
+              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-white/35">
+                Organizations
+              </p>
+              <span className="ml-auto font-mono text-[10px] text-white/25">
+                {organizations.length}
               </span>
             </div>
-            {orgInvitations.length > 0 && (
-              <div className="mt-3 space-y-2">
-                {orgInvitations.map((invitation) => (
-                  <div
-                    key={invitation.id}
-                    className="flex items-center gap-3 rounded-md border border-white/[0.06] bg-[#101216] px-3 py-2 text-sm"
-                  >
-                    <span className="min-w-0 flex-1 truncate">
-                      {invitation.email}
-                    </span>
-                    <span className="font-mono text-[10px] uppercase text-white/35">
-                      {invitation.role}
-                    </span>
-                    {selectedOrgId && (
-                      <button
-                        type="button"
-                        className={button}
-                        onClick={() =>
-                          void run(() =>
-                            api.revokeInvitation(selectedOrgId, invitation.id),
-                          )
-                        }
-                      >
-                        Revoke
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-            {incomingInvitations.length > 0 && (
-              <div className="mt-4 rounded-md border border-[#4d8dff]/20 bg-[#4d8dff]/10 p-3">
-                <p className="text-sm text-white/80">Invitations for you</p>
-                <div className="mt-2 space-y-2">
-                  {incomingInvitations.map((invitation) => (
-                    <div
-                      key={invitation.id}
-                      className="flex items-center gap-2 text-sm"
-                    >
-                      <span className="min-w-0 flex-1 truncate">
-                        {invitation.email} as {invitation.role}
-                      </span>
-                      <button
-                        type="button"
-                        className={button}
-                        onClick={() =>
-                          void run(() => api.acceptInvitation(invitation.id))
-                        }
-                      >
-                        Accept
-                      </button>
-                      <button
-                        type="button"
-                        className={button}
-                        onClick={() =>
-                          void run(() => api.declineInvitation(invitation.id))
-                        }
-                      >
-                        Decline
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {canAdminOrg && selectedOrgId && (
-              <form
-                className="mt-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_130px_auto]"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void run(() =>
-                    api.inviteToOrg(selectedOrgId, {
-                      email: inviteEmail,
-                      role: inviteRole,
-                    }),
-                  ).then(() => setInviteEmail(""));
-                }}
+            <div className="mt-1 space-y-0.5">
+              <button
+                type="button"
+                className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm ${
+                  settingsPanel === "createOrg"
+                    ? "bg-white/[0.08] text-white"
+                    : "text-white/55 hover:bg-white/[0.04] hover:text-white"
+                }`}
+                onClick={() => setSettingsPanel("createOrg")}
               >
-                <input
-                  className={field}
-                  type="email"
-                  value={inviteEmail}
-                  onChange={(event) => setInviteEmail(event.target.value)}
-                  placeholder="teammate@example.com"
-                  required
-                />
-                <select
-                  className={field}
-                  value={inviteRole}
-                  onChange={(event) =>
-                    setInviteRole(event.target.value as typeof inviteRole)
-                  }
+                <Plus className="size-3.5 shrink-0" />
+                <span className="min-w-0 flex-1 truncate">Add organization</span>
+              </button>
+              {organizations.map(({ organization, membership }) => (
+                <button
+                  key={organization.id}
+                  type="button"
+                  className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm ${
+                    settingsPanel === "org" && organization.id === selectedOrgId
+                      ? "bg-white/[0.08] text-white"
+                      : "text-white/55 hover:bg-white/[0.04] hover:text-white"
+                  }`}
+                  onClick={() => {
+                    onSelectOrg(organization.id);
+                    setSettingsPanel("org");
+                  }}
                 >
-                  <option value="admin">Admin</option>
-                  <option value="member">Member</option>
-                  <option value="viewer">Viewer</option>
-                </select>
-                <button className={primaryButton} type="submit">
-                  Invite
+                  <Building2 className="size-3.5 shrink-0" />
+                  <span className="min-w-0 flex-1 truncate">
+                    {organization.displayName}
+                  </span>
+                  <span className="font-mono text-[9px] uppercase text-white/30">
+                    {membership.role}
+                  </span>
                 </button>
-              </form>
-            )}
-          </div>
-        </section>
-        <section>
-          <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-white/35">
-            Coding agents
-          </p>
-          <h2 className="mt-2 text-base">Provider connections</h2>
-          <p className="mt-2 max-w-xl text-sm leading-6 text-white/45">
-            Credentials are encrypted in AO Cloud and delivered only to an
-            authenticated worker during bootstrap. Disconnected agents remain
-            unavailable when creating sessions.
-          </p>
-          <p className="mt-2 max-w-xl text-xs leading-5 text-white/35">
-            API keys and setup tokens are reused until you revoke or replace
-            them. If a provider expires a credential, choose Re-authenticate to
-            securely replace it; AO never returns the saved secret to this
-            browser.
-          </p>
-          {canAdminOrg && selectedOrgId ? (
-            <div className="mt-5 divide-y divide-white/10 border-y border-white/10">
-              {CLOUD_AGENTS.map((agent) => (
-                <AgentConnectionRow
-                  key={agent.id}
-                  agent={agent}
-                  connection={connectedAgents.get(agent.id)}
-                  run={run}
-                  validating={loading}
-                  connect={(credentialType, secret) =>
-                    api.connectAgent(selectedOrgId, agent.id, {
-                      credentialType,
-                      secret,
-                    })
-                  }
-                  disconnect={() =>
-                    api.disconnectAgent(selectedOrgId, agent.id)
-                  }
-                />
               ))}
             </div>
-          ) : (
-            <div className="mt-5 rounded-lg border border-white/10 bg-[#15171b] px-3 py-2 text-sm text-white/45">
-              Ask an organization admin to manage coding-agent connections.
-            </div>
-          )}
-        </section>
-
-        {!canAdminOrg || !selectedOrgId ? (
-          <section>
-            <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-white/35">
-              Sandbox provider
+          </div>
+          <div>
+            <p className="px-2 font-mono text-[10px] uppercase tracking-[0.08em] text-white/35">
+              Admin
             </p>
-            <h2 className="mt-2 text-base">Provider settings</h2>
-            <p className="mt-2 text-sm leading-6 text-white/45">
-              Only organization admins can change sandbox provider settings.
+            <div className="mt-1 space-y-0.5">
+              <SettingsNavItem
+                active={settingsPanel === "agents"}
+                icon={KeyRound}
+                label="Provider connections"
+                onClick={() => setSettingsPanel("agents")}
+              />
+              <SettingsNavItem
+                active={settingsPanel === "sandbox"}
+                icon={Cloud}
+                label="Sandbox provider"
+                onClick={() => setSettingsPanel("sandbox")}
+              />
+            </div>
+          </div>
+        </div>
+      </nav>
+      <div className="min-h-0 overflow-auto p-8">
+        <div className="mx-auto max-w-3xl space-y-10">
+          <section>
+            <h2 className="text-base font-medium">{settingsTitle(settingsPanel)}</h2>
+            <p className="mt-1 text-sm leading-6 text-white/45">
+              {settingsDescription(settingsPanel)}
             </p>
           </section>
-        ) : sandboxProvider === "fly" ? (
-          <section>
-            <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-white/35">
-              Sandbox provider
-            </p>
-            <h2 className="mt-2 text-base">Fly Machines</h2>
-            <p className="mt-2 text-sm leading-6 text-white/45">
-              AO Cloud provisions one isolated Fly Machine and persistent volume
-              per session. Infrastructure credentials stay in the hosted control
-              plane and are never returned to this browser.
-            </p>
-            <div className="mt-4 flex items-center rounded-lg border border-white/10 bg-[#15171b] px-3 py-2 text-sm">
-              <span>Deployment-managed connection</span>
-              <span className="ml-auto font-mono text-[10px] uppercase text-[#9ad97a]">
-                Active
-              </span>
-            </div>
-          </section>
-        ) : (
-          <section>
-            <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-white/35">
-              Sandbox provider
-            </p>
-            <h2 className="mt-2 text-base">Daytona</h2>
-            <p className="mt-2 text-sm leading-6 text-white/45">
-              Credentials are validated by AO Cloud, encrypted outside session
-              environments, and never returned to this browser.
-            </p>
-            {daytonaConnections.map((connection) => (
-              <div
-                key={connection.id}
-                className="mt-4 flex items-center border border-white/10 bg-[#15171b] px-3 py-2 text-sm"
-              >
-                <span>{connection.label}</span>
-                <span className="ml-auto font-mono text-[10px] uppercase text-[#74b98a]">
-                  {connection.validationState}
-                </span>
-              </div>
-            ))}
+          {settingsPanel === "profile" ? (
+          <SettingsPanel
+            title="Profile"
+            description="This name is shown in local AO Cloud workspace switchers, invitations, and future team activity."
+          >
             <form
-              className="mt-5 space-y-3"
+              className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]"
               onSubmit={(event) => {
                 event.preventDefault();
                 void run(() =>
-                  api.connectDaytona(selectedOrgId, {
-                    label: "personal",
-                    apiKey,
-                    apiUrl: "https://app.daytona.io/api",
-                    target,
-                  }),
-                ).then(() => setAPIKey(""));
+                  api.updateProfile({ displayName: profileName }),
+                );
+              }}
+            >
+              <label className="text-xs text-white/45">
+                Name
+                <input
+                  className={`${field} mt-1.5`}
+                  value={profileName}
+                  onChange={(event) => setProfileName(event.target.value)}
+                  placeholder="Your name"
+                  maxLength={120}
+                  required
+                />
+              </label>
+              <button
+                type="submit"
+                className={`${button} self-end`}
+                disabled={
+                  loading ||
+                  profileName.trim() === "" ||
+                  profileName.trim() === (currentUser?.displayName ?? "")
+                }
+              >
+                Save profile
+              </button>
+              <p className="sm:col-span-2 text-xs leading-5 text-white/35">
+                Email is used for login and invitations:{" "}
+                <span className="text-white/55">
+                  {currentUser?.email ?? "Unknown email"}
+                </span>
+              </p>
+            </form>
+          </SettingsPanel>
+          ) : null}
+          {settingsPanel === "createOrg" ? (
+          <SettingsPanel title="Create organization" description="Create a new AO Cloud workspace with you as owner.">
+            <form
+              className="flex gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void run(async () => {
+                  const created = await api.createOrganization({
+                    displayName: newOrgName,
+                  });
+                  onSelectOrg(created.organization.organization.id);
+                }).then(() => setNewOrgName(""));
               }}
             >
               <input
                 className={field}
-                type="password"
-                value={apiKey}
-                onChange={(event) => setAPIKey(event.target.value)}
-                placeholder="Daytona API key"
-                autoComplete="off"
+                value={newOrgName}
+                onChange={(event) => setNewOrgName(event.target.value)}
+                placeholder="New workspace name"
                 required
               />
-              <select
-                className={field}
-                value={target}
-                onChange={(event) =>
-                  setTarget(event.target.value as "us" | "eu")
-                }
-              >
-                <option value="us">United States</option>
-                <option value="eu">Europe</option>
-              </select>
-              <button className={primaryButton} type="submit">
-                Save and validate
+              <button type="submit" className={primaryButton} disabled={loading}>
+                Create
               </button>
             </form>
-          </section>
-        )}
+          </SettingsPanel>
+          ) : null}
+          {settingsPanel === "notifications" ? (
+            <SettingsPanel
+              title="Invitations for you"
+              description="Accepting an invitation adds this account to that organization."
+            >
+              {pendingIncomingInvitations.length > 0 ? (
+              <div className="space-y-2">
+                {pendingIncomingInvitations.map((invitation) => (
+                  <div
+                    key={invitation.id}
+                    className="flex items-center gap-3 rounded-lg border border-[#4d8dff]/25 bg-[#4d8dff]/10 px-3 py-2 text-sm"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-white/85">
+                        {invitation.email} as {invitation.role}
+                      </p>
+                      <p className="truncate text-xs text-white/40">
+                        Invited by{" "}
+                        {invitation.invitedByName ||
+                          invitation.invitedByEmail ||
+                          "another member"}
+                      </p>
+                    </div>
+                    <InviteStatus status={invitation.status} />
+                    <button
+                      type="button"
+                      className={button}
+                      onClick={() =>
+                        void run(() => api.acceptInvitation(invitation.id))
+                      }
+                    >
+                      Accept
+                    </button>
+                    <button
+                      type="button"
+                      className={button}
+                      onClick={() =>
+                        void run(() => api.declineInvitation(invitation.id))
+                      }
+                    >
+                      Decline
+                    </button>
+                  </div>
+                ))}
+              </div>
+              ) : (
+                <p className="text-sm text-white/35">No pending invitations.</p>
+              )}
+            </SettingsPanel>
+          ) : null}
+          {settingsPanel === "org" ? (
+          <SettingsPanel
+            title={selectedOrg?.organization.displayName ?? "No organization selected"}
+            description={`AO Cloud scopes projects, provider connections, workers, and invitations to this organization. Your role is ${selectedOrg?.membership.role ?? "viewer"}.`}
+          >
+            {selectedOrg && selectedOrgId ? (
+              <div className="space-y-6">
+                <form
+                  className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void run(() =>
+                      api.updateOrganization(selectedOrgId, {
+                        displayName: orgName,
+                      }),
+                    );
+                  }}
+                >
+                  <label className="text-xs text-white/45">
+                    Organization name
+                    <input
+                      className={`${field} mt-1.5`}
+                      value={orgName}
+                      onChange={(event) => setOrgName(event.target.value)}
+                      disabled={!canEditOrgName}
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    className={`${button} self-end`}
+                    disabled={!canEditOrgName || loading || orgName.trim() === selectedOrg.organization.displayName}
+                  >
+                    Save
+                  </button>
+                </form>
+                {!canEditOrgName ? (
+                  <p className="text-xs leading-5 text-white/35">
+                    Organization names can be edited by owners and admins.
+                  </p>
+                ) : null}
+                <div>
+                  <div className="mb-2 flex items-center gap-2">
+                    <p className="text-sm text-white/85">Members</p>
+                    <span className="ml-auto font-mono text-[10px] uppercase text-white/35">
+                      {orgMembers.length} active
+                    </span>
+                  </div>
+                  <div className="divide-y divide-white/[0.06] rounded-lg border border-white/[0.08] bg-[#111317]">
+                    {orgMembers.length > 0 ? (
+                      orgMembers.map((member) => (
+                        <div
+                          key={member.membership.id}
+                          className="flex items-center gap-3 px-3 py-2 text-sm"
+                        >
+                          <div className="grid size-7 shrink-0 place-items-center rounded-md border border-white/[0.08] bg-[#1a1c22] text-[11px] uppercase text-white/55">
+                            {(member.user.displayName || member.user.email).charAt(0)}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-white/80">
+                              {member.user.displayName || member.user.email}
+                            </p>
+                            <p className="truncate text-xs text-white/35">
+                              {member.user.email}
+                            </p>
+                          </div>
+                          <select
+                            className="h-8 rounded-md border border-white/[0.08] bg-[#0c0d10] px-2 text-xs text-white outline-none focus:border-[#4d8dff] disabled:opacity-45"
+                            value={member.membership.role}
+                            disabled={
+                              !canAdminOrg ||
+                              loading ||
+                              member.user.id === currentUser?.id
+                            }
+                            aria-label={`Role for ${member.user.email}`}
+                            onChange={(event) => {
+                              if (!selectedOrgId) return;
+                              const role = event.target
+                                .value as CloudOrgMembership["role"];
+                              void run(() =>
+                                api.updateOrgMemberRole(
+                                  selectedOrgId,
+                                  member.user.id,
+                                  { role },
+                                ),
+                              );
+                            }}
+                          >
+                            <option value="owner">Owner</option>
+                            <option value="admin">Admin</option>
+                            <option value="member">Member</option>
+                            <option value="viewer">Viewer</option>
+                          </select>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="px-3 py-3 text-sm text-white/35">
+                        No active members were found for this organization.
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <div className="mb-2 flex items-center gap-2">
+                    <p className="text-sm text-white/85">Invitations</p>
+                    <span className="ml-auto font-mono text-[10px] uppercase text-white/35">
+                      {pendingOrgInvitations.length} pending
+                    </span>
+                  </div>
+                  <div className="divide-y divide-white/[0.06] rounded-lg border border-white/[0.08] bg-[#111317]">
+                    {orgInvitations.length > 0 ? (
+                      orgInvitations.map((invitation) => (
+                        <div
+                          key={invitation.id}
+                          className="flex items-center gap-3 px-3 py-2 text-sm"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-white/80">
+                              {invitation.email}
+                            </p>
+                            <p className="truncate text-xs text-white/35">
+                              Invited by{" "}
+                              {invitation.invitedByName ||
+                                invitation.invitedByEmail ||
+                                "unknown"}{" "}
+                              · {invitation.role}
+                            </p>
+                          </div>
+                          <InviteStatus status={invitation.status} />
+                          {canAdminOrg && invitation.status === "pending" ? (
+                            <button
+                              type="button"
+                              className={button}
+                              onClick={() =>
+                                void run(() =>
+                                  api.revokeInvitation(
+                                    selectedOrgId,
+                                    invitation.id,
+                                  ),
+                                )
+                              }
+                            >
+                              Revoke
+                            </button>
+                          ) : null}
+                        </div>
+                      ))
+                    ) : (
+                      <p className="px-3 py-3 text-sm text-white/35">
+                        No invitations have been sent for this organization.
+                      </p>
+                    )}
+                  </div>
+                  {canAdminOrg ? (
+                    <form
+                      className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_130px_auto]"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void run(() =>
+                          api.inviteToOrg(selectedOrgId, {
+                            email: inviteEmail,
+                            role: inviteRole,
+                          }),
+                        ).then(() => setInviteEmail(""));
+                      }}
+                    >
+                      <input
+                        className={field}
+                        type="email"
+                        value={inviteEmail}
+                        onChange={(event) => setInviteEmail(event.target.value)}
+                        placeholder="teammate@example.com"
+                        required
+                      />
+                      <select
+                        className={field}
+                        value={inviteRole}
+                        onChange={(event) =>
+                          setInviteRole(event.target.value as typeof inviteRole)
+                        }
+                      >
+                        <option value="admin">Admin</option>
+                        <option value="member">Member</option>
+                        <option value="viewer">Viewer</option>
+                      </select>
+                      <button className={primaryButton} type="submit">
+                        Invite
+                      </button>
+                    </form>
+                  ) : (
+                    <p className="mt-3 text-sm text-white/35">
+                      Only owners and admins can invite teammates.
+                    </p>
+                  )}
+                </div>
+              </div>
+            ) : null}
+          </SettingsPanel>
+          ) : null}
+          {settingsPanel === "agents" ? (
+          <SettingsPanel
+            title="Provider connections"
+            description="Credentials are encrypted in AO Cloud and delivered only to authenticated workers during bootstrap."
+          >
+            {canAdminOrg && selectedOrgId ? (
+              <div className="divide-y divide-white/10 border-y border-white/10">
+                {CLOUD_AGENTS.map((agent) => (
+                  <AgentConnectionRow
+                    key={agent.id}
+                    agent={agent}
+                    connection={connectedAgents.get(agent.id)}
+                    run={run}
+                    validating={loading}
+                    connect={(credentialType, secret) =>
+                      api.connectAgent(selectedOrgId, agent.id, {
+                        credentialType,
+                        secret,
+                      })
+                    }
+                    disconnect={() =>
+                      api.disconnectAgent(selectedOrgId, agent.id)
+                    }
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-lg border border-white/10 bg-[#15171b] px-3 py-2 text-sm text-white/45">
+                Ask an organization admin to manage coding-agent connections.
+              </div>
+            )}
+          </SettingsPanel>
+          ) : null}
+          {settingsPanel === "sandbox" ? (
+          <SettingsPanel
+            title={sandboxProvider === "fly" ? "Fly Machines" : "Daytona"}
+            description={
+              sandboxProvider === "fly"
+                ? "AO Cloud provisions one isolated Fly Machine and persistent volume per session."
+                : "Credentials are validated by AO Cloud, encrypted outside session environments, and never returned to this browser."
+            }
+          >
+            {!canAdminOrg || !selectedOrgId ? (
+              <p className="text-sm leading-6 text-white/45">
+                Only organization admins can change sandbox provider settings.
+              </p>
+            ) : sandboxProvider === "fly" ? (
+              <div className="flex items-center rounded-lg border border-white/10 bg-[#15171b] px-3 py-2 text-sm">
+                <span>Deployment-managed connection</span>
+                <span className="ml-auto font-mono text-[10px] uppercase text-[#9ad97a]">
+                  Active
+                </span>
+              </div>
+            ) : (
+              <>
+                {daytonaConnections.map((connection) => (
+                  <div
+                    key={connection.id}
+                    className="mb-3 flex items-center border border-white/10 bg-[#15171b] px-3 py-2 text-sm"
+                  >
+                    <span>{connection.label}</span>
+                    <span className="ml-auto font-mono text-[10px] uppercase text-[#74b98a]">
+                      {connection.validationState}
+                    </span>
+                  </div>
+                ))}
+                <form
+                  className="space-y-3"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void run(() =>
+                      api.connectDaytona(selectedOrgId, {
+                        label: "personal",
+                        apiKey,
+                        apiUrl: "https://app.daytona.io/api",
+                        target,
+                      }),
+                    ).then(() => setAPIKey(""));
+                  }}
+                >
+                  <input
+                    className={field}
+                    type="password"
+                    value={apiKey}
+                    onChange={(event) => setAPIKey(event.target.value)}
+                    placeholder="Daytona API key"
+                    autoComplete="off"
+                    required
+                  />
+                  <select
+                    className={field}
+                    value={target}
+                    onChange={(event) =>
+                      setTarget(event.target.value as "us" | "eu")
+                    }
+                  >
+                    <option value="us">United States</option>
+                    <option value="eu">Europe</option>
+                  </select>
+                  <button className={primaryButton} type="submit">
+                    Save and validate
+                  </button>
+                </form>
+              </>
+            )}
+          </SettingsPanel>
+          ) : null}
+        </div>
       </div>
     </div>
+  );
+}
+
+function SettingsNavItem({
+  active,
+  icon: Icon,
+  label,
+  badge,
+  onClick,
+}: {
+  active?: boolean;
+  icon: typeof Settings;
+  label: string;
+  badge?: number;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm ${
+        active
+          ? "bg-white/[0.08] text-white"
+          : "text-white/55 hover:bg-white/[0.04] hover:text-white"
+      }`}
+      onClick={onClick}
+    >
+      <Icon className="size-3.5 shrink-0" />
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {badge ? (
+        <span className="rounded-full bg-[#4d8dff] px-1.5 font-mono text-[9px] text-white">
+          {badge}
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
+function settingsTitle(
+  panel: "profile" | "notifications" | "createOrg" | "org" | "agents" | "sandbox",
+) {
+  switch (panel) {
+    case "profile":
+      return "Profile";
+    case "notifications":
+      return "Notifications";
+    case "createOrg":
+      return "Add organization";
+    case "agents":
+      return "Provider connections";
+    case "sandbox":
+      return "Sandbox provider";
+    case "org":
+    default:
+      return "Organization settings";
+  }
+}
+
+function settingsDescription(
+  panel: "profile" | "notifications" | "createOrg" | "org" | "agents" | "sandbox",
+) {
+  switch (panel) {
+    case "profile":
+      return "Manage how your account appears in local AO Cloud.";
+    case "notifications":
+      return "Review invitations and account-level notices.";
+    case "createOrg":
+      return "Create a team workspace that can own projects, workers, and credentials.";
+    case "agents":
+      return "Manage coding-agent credentials for the selected organization.";
+    case "sandbox":
+      return "Manage sandbox provider credentials for the selected organization.";
+    case "org":
+    default:
+      return "Manage the selected organization, invitations, and role-aware permissions.";
+  }
+}
+
+function SettingsPanel({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section>
+      <div className="mb-3">
+        <h3 className="text-sm font-medium text-white">{title}</h3>
+        <p className="mt-1 text-sm leading-5 text-white/40">{description}</p>
+      </div>
+      <div className="rounded-xl border border-white/[0.08] bg-[#15171b] p-4">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+function InviteStatus({ status }: { status: CloudOrgInvitation["status"] }) {
+  const color =
+    status === "accepted"
+      ? "text-[#74b98a]"
+      : status === "declined" || status === "revoked"
+        ? "text-[#ef6b6b]"
+        : "text-[#e8c14a]";
+  return (
+    <span className={`font-mono text-[10px] uppercase ${color}`}>
+      {status}
+    </span>
   );
 }
 

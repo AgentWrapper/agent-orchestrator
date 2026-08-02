@@ -42,7 +42,7 @@ func (s *Store) CreateOrgInvitation(
 			$5
 		)
 		RETURNING id, org_id, email, COALESCE(invited_user_id::text, ''),
-			invited_by_user_id, role, status, expires_at, accepted_at, declined_at,
+			invited_by_user_id, '', '', role, status, expires_at, accepted_at, declined_at,
 			revoked_at, created_at, updated_at
 	`, orgID, input.Email, input.InvitedByUserID, input.Role, input.ExpiresAt).Scan(
 		&invite.ID,
@@ -50,6 +50,8 @@ func (s *Store) CreateOrgInvitation(
 		&invite.Email,
 		&invite.InvitedUserID,
 		&invite.InvitedByUserID,
+		&invite.InvitedByEmail,
+		&invite.InvitedByName,
 		&invite.Role,
 		&invite.Status,
 		&invite.ExpiresAt,
@@ -74,12 +76,14 @@ func (s *Store) ListOrgInvitations(
 	orgID clouddomain.OrgID,
 ) ([]clouddomain.OrgInvitation, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, org_id, email, COALESCE(invited_user_id::text, ''),
-			invited_by_user_id, role, status, expires_at, accepted_at, declined_at,
-			revoked_at, created_at, updated_at
-		FROM ao_org_invitations
-		WHERE org_id = $1
-		ORDER BY created_at DESC
+		SELECT invite.id, invite.org_id, invite.email, COALESCE(invite.invited_user_id::text, ''),
+			invite.invited_by_user_id, COALESCE(inviter.email, ''), COALESCE(inviter.display_name, ''),
+			invite.role, invite.status, invite.expires_at, invite.accepted_at, invite.declined_at,
+			invite.revoked_at, invite.created_at, invite.updated_at
+		FROM ao_org_invitations invite
+		LEFT JOIN ao_users inviter ON inviter.id = invite.invited_by_user_id
+		WHERE invite.org_id = $1
+		ORDER BY invite.created_at DESC
 	`, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("list org invitations: %w", err)
@@ -94,17 +98,19 @@ func (s *Store) ListUserInvitations(
 	email string,
 ) ([]clouddomain.OrgInvitation, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, org_id, email, COALESCE(invited_user_id::text, ''),
-			invited_by_user_id, role, status, expires_at, accepted_at, declined_at,
-			revoked_at, created_at, updated_at
-		FROM ao_org_invitations
-		WHERE status = 'pending'
-			AND expires_at > now()
+		SELECT invite.id, invite.org_id, invite.email, COALESCE(invite.invited_user_id::text, ''),
+			invite.invited_by_user_id, COALESCE(inviter.email, ''), COALESCE(inviter.display_name, ''),
+			invite.role, invite.status, invite.expires_at, invite.accepted_at, invite.declined_at,
+			invite.revoked_at, invite.created_at, invite.updated_at
+		FROM ao_org_invitations invite
+		LEFT JOIN ao_users inviter ON inviter.id = invite.invited_by_user_id
+		WHERE invite.status = 'pending'
+			AND invite.expires_at > now()
 			AND (
-				invited_user_id = $1
-				OR lower(email) = lower($2)
+				invite.invited_user_id = $1
+				OR lower(invite.email) = lower($2)
 			)
-		ORDER BY created_at DESC
+		ORDER BY invite.created_at DESC
 	`, userID, email)
 	if err != nil {
 		return nil, fmt.Errorf("list user invitations: %w", err)
@@ -136,7 +142,7 @@ func (s *Store) AcceptOrgInvitation(
 			AND expires_at > now()
 			AND (invited_user_id = $2 OR lower(email) = lower($3))
 		RETURNING id, org_id, email, COALESCE(invited_user_id::text, ''),
-			invited_by_user_id, role, status, expires_at, accepted_at, declined_at,
+			invited_by_user_id, '', '', role, status, expires_at, accepted_at, declined_at,
 			revoked_at, created_at, updated_at
 	`, invitationID, userID, email).Scan(
 		&invite.ID,
@@ -144,6 +150,8 @@ func (s *Store) AcceptOrgInvitation(
 		&invite.Email,
 		&invite.InvitedUserID,
 		&invite.InvitedByUserID,
+		&invite.InvitedByEmail,
+		&invite.InvitedByName,
 		&invite.Role,
 		&invite.Status,
 		&invite.ExpiresAt,
@@ -230,6 +238,8 @@ func scanInvitations(rows pgx.Rows) ([]clouddomain.OrgInvitation, error) {
 			&invite.Email,
 			&invite.InvitedUserID,
 			&invite.InvitedByUserID,
+			&invite.InvitedByEmail,
+			&invite.InvitedByName,
 			&invite.Role,
 			&invite.Status,
 			&invite.ExpiresAt,

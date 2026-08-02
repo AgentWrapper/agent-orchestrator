@@ -80,6 +80,11 @@ type UserOrganization struct {
 	Membership   OrgMembership `json:"membership"`
 }
 
+type OrgMember struct {
+	User       User          `json:"user"`
+	Membership OrgMembership `json:"membership"`
+}
+
 // OrgInvitation records an invitation to join an organization.
 type OrgInvitation struct {
 	ID              string     `json:"id"`
@@ -87,6 +92,8 @@ type OrgInvitation struct {
 	Email           string     `json:"email"`
 	InvitedUserID   UserID     `json:"invitedUserId,omitempty"`
 	InvitedByUserID UserID     `json:"invitedByUserId"`
+	InvitedByEmail  string     `json:"invitedByEmail,omitempty"`
+	InvitedByName   string     `json:"invitedByName,omitempty"`
 	Role            string     `json:"role"`
 	Status          string     `json:"status"`
 	ExpiresAt       time.Time  `json:"expiresAt"`

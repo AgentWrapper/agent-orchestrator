@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, expect, it, vi } from "vitest";
 
 import type { CloudProject, CloudSession } from "@/lib/cloud-api";
 import CloudAppPage, { SessionBoard } from "./page";
@@ -12,6 +12,15 @@ const apiMocks = vi.hoisted(() => ({
   providerConnections: vi.fn(),
   invitations: vi.fn(),
   orgInvitations: vi.fn(),
+  orgMembers: vi.fn(),
+  createOrganization: vi.fn(),
+  updateOrganization: vi.fn(),
+  updateOrgMemberRole: vi.fn(),
+  updateProfile: vi.fn(),
+  inviteToOrg: vi.fn(),
+  revokeInvitation: vi.fn(),
+  acceptInvitation: vi.fn(),
+  declineInvitation: vi.fn(),
 }));
 
 vi.mock("@/lib/cloud-api", () => ({
@@ -23,6 +32,15 @@ vi.mock("@/lib/cloud-api", () => ({
     providerConnections = apiMocks.providerConnections;
     invitations = apiMocks.invitations;
     orgInvitations = apiMocks.orgInvitations;
+    orgMembers = apiMocks.orgMembers;
+    createOrganization = apiMocks.createOrganization;
+    updateOrganization = apiMocks.updateOrganization;
+    updateOrgMemberRole = apiMocks.updateOrgMemberRole;
+    updateProfile = apiMocks.updateProfile;
+    inviteToOrg = apiMocks.inviteToOrg;
+    revokeInvitation = apiMocks.revokeInvitation;
+    acceptInvitation = apiMocks.acceptInvitation;
+    declineInvitation = apiMocks.declineInvitation;
   },
 }));
 
@@ -69,6 +87,66 @@ const orchestrator: CloudSession = {
   createdAt: "2026-07-30T00:00:00Z",
 };
 
+const ownerOrg = {
+  organization: {
+    id: "org-one",
+    slug: "personal",
+    displayName: "Personal",
+    kind: "personal",
+    plan: "free",
+    status: "active",
+  },
+  membership: {
+    id: "membership-one",
+    orgId: "org-one",
+    userId: "user-one",
+    role: "owner",
+    status: "active",
+  },
+} as const;
+
+beforeEach(() => {
+  window.localStorage.clear();
+  vi.clearAllMocks();
+  apiMocks.me.mockResolvedValue({
+    user: {
+      id: "user-one",
+      email: "user@example.com",
+      displayName: "User",
+    },
+    sandboxProvider: "daytona",
+    organizations: [ownerOrg],
+  });
+  apiMocks.projects.mockResolvedValue({ projects: [project] });
+  apiMocks.sessions.mockResolvedValue({ sessions: [] });
+  apiMocks.providerConnections.mockResolvedValue({
+    providerConnections: [
+      {
+        id: "agent-one",
+        provider: "claude-code",
+        label: "Claude Code",
+        config: { credentialType: "oauth_token" },
+        validationState: "valid",
+      },
+    ],
+  });
+  apiMocks.invitations.mockResolvedValue({ invitations: [] });
+  apiMocks.orgInvitations.mockResolvedValue({ invitations: [] });
+  apiMocks.orgMembers.mockResolvedValue({
+    members: [
+      {
+        user: {
+          id: "user-one",
+          email: "user@example.com",
+          displayName: "User",
+        },
+        membership: ownerOrg.membership,
+      },
+    ],
+  });
+  apiMocks.repositories.mockRejectedValue(new Error("GitHub unavailable"));
+});
+
 function renderBoard(activeOrchestrator?: CloudSession) {
   render(
     <SessionBoard
@@ -111,46 +189,6 @@ it("offers to start the orchestrator only when the project has none", () => {
 });
 
 it("loads GitHub repositories only when the project form opens", async () => {
-  window.localStorage.clear();
-  apiMocks.me.mockResolvedValue({
-    sandboxProvider: "daytona",
-    organizations: [
-      {
-        organization: {
-          id: "org-one",
-          slug: "personal",
-          displayName: "Personal",
-          kind: "personal",
-          plan: "free",
-          status: "active",
-        },
-        membership: {
-          id: "membership-one",
-          orgId: "org-one",
-          userId: "user-one",
-          role: "owner",
-          status: "active",
-        },
-      },
-    ],
-  });
-  apiMocks.projects.mockResolvedValue({ projects: [project] });
-  apiMocks.sessions.mockResolvedValue({ sessions: [] });
-  apiMocks.providerConnections.mockResolvedValue({
-    providerConnections: [
-      {
-        id: "agent-one",
-        provider: "claude-code",
-        label: "Claude Code",
-        config: { credentialType: "oauth_token" },
-        validationState: "valid",
-      },
-    ],
-  });
-  apiMocks.invitations.mockResolvedValue({ invitations: [] });
-  apiMocks.orgInvitations.mockResolvedValue({ invitations: [] });
-  apiMocks.repositories.mockRejectedValue(new Error("GitHub unavailable"));
-
   render(<CloudAppPage />);
 
   const addProject = await screen.findByRole("button", {
@@ -163,4 +201,201 @@ it("loads GitHub repositories only when the project form opens", async () => {
   expect(await screen.findByText("GitHub unavailable")).toBeVisible();
   expect(apiMocks.repositories).toHaveBeenCalledTimes(1);
   expect(screen.getByText(project.displayName)).toBeVisible();
+});
+
+it("shows invitation status, inviter, and settings notification badge", async () => {
+  apiMocks.invitations.mockResolvedValue({
+    invitations: [
+      {
+        id: "invite-in",
+        orgId: "org-two",
+        email: "user@example.com",
+        invitedByEmail: "owner@example.com",
+        role: "member",
+        status: "pending",
+      },
+    ],
+  });
+  apiMocks.orgInvitations.mockResolvedValue({
+    invitations: [
+      {
+        id: "invite-out",
+        orgId: "org-one",
+        email: "teammate@example.com",
+        invitedByEmail: "user@example.com",
+        role: "viewer",
+        status: "pending",
+      },
+    ],
+  });
+
+  render(<CloudAppPage />);
+
+  const settings = await screen.findByRole("button", { name: /Settings/ });
+  expect(
+    await screen.findByLabelText("2 settings notifications"),
+  ).toBeVisible();
+  fireEvent.click(settings);
+
+  expect(await screen.findByText("Organization settings")).toBeVisible();
+  expect(screen.getByText("teammate@example.com")).toBeVisible();
+  expect(screen.getByText("pending")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
+  expect(await screen.findByText("Invited by owner@example.com")).toBeVisible();
+});
+
+it("creates a new organization from settings", async () => {
+  const teamOrg = {
+    organization: {
+      id: "org-two",
+      slug: "team-alpha",
+      displayName: "Team Alpha",
+      kind: "team",
+      plan: "free",
+      status: "active",
+    },
+    membership: {
+      id: "membership-two",
+      orgId: "org-two",
+      userId: "user-one",
+      role: "owner",
+      status: "active",
+    },
+  };
+  apiMocks.createOrganization.mockResolvedValue({ organization: teamOrg });
+
+  render(<CloudAppPage />);
+
+  fireEvent.click(await screen.findByRole("button", { name: /Settings/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "Add organization" }));
+  fireEvent.change(await screen.findByPlaceholderText("New workspace name"), {
+    target: { value: "Team Alpha" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+  await waitFor(() =>
+    expect(apiMocks.createOrganization).toHaveBeenCalledWith({
+      displayName: "Team Alpha",
+    }),
+  );
+});
+
+it("updates editable team organization names", async () => {
+  apiMocks.me.mockResolvedValue({
+    sandboxProvider: "daytona",
+    organizations: [
+      {
+        ...ownerOrg,
+        organization: {
+          ...ownerOrg.organization,
+          kind: "team",
+          displayName: "Team One",
+        },
+      },
+    ],
+  });
+  apiMocks.updateOrganization.mockResolvedValue({
+    organization: {
+      ...ownerOrg.organization,
+      kind: "team",
+      displayName: "Team Renamed",
+    },
+  });
+
+  render(<CloudAppPage />);
+
+  fireEvent.click(await screen.findByRole("button", { name: /Settings/ }));
+  const nameInput = await screen.findByDisplayValue("Team One");
+  fireEvent.change(nameInput, { target: { value: "Team Renamed" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+  await waitFor(() =>
+    expect(apiMocks.updateOrganization).toHaveBeenCalledWith("org-one", {
+      displayName: "Team Renamed",
+    }),
+  );
+});
+
+it("lets org admins change another member's role", async () => {
+  apiMocks.orgMembers.mockResolvedValue({
+    members: [
+      {
+        user: {
+          id: "user-one",
+          email: "user@example.com",
+          displayName: "User",
+        },
+        membership: ownerOrg.membership,
+      },
+      {
+        user: {
+          id: "user-two",
+          email: "viewer@example.com",
+          displayName: "Viewer",
+        },
+        membership: {
+          id: "membership-two",
+          orgId: "org-one",
+          userId: "user-two",
+          role: "viewer",
+          status: "active",
+        },
+      },
+    ],
+  });
+  apiMocks.updateOrgMemberRole.mockResolvedValue({
+    member: {
+      user: {
+        id: "user-two",
+        email: "viewer@example.com",
+        displayName: "Viewer",
+      },
+      membership: {
+        id: "membership-two",
+        orgId: "org-one",
+        userId: "user-two",
+        role: "member",
+        status: "active",
+      },
+    },
+  });
+
+  render(<CloudAppPage />);
+
+  fireEvent.click(await screen.findByRole("button", { name: /Settings/ }));
+  fireEvent.change(await screen.findByLabelText("Role for viewer@example.com"), {
+    target: { value: "member" },
+  });
+
+  await waitFor(() =>
+    expect(apiMocks.updateOrgMemberRole).toHaveBeenCalledWith(
+      "org-one",
+      "user-two",
+      { role: "member" },
+    ),
+  );
+});
+
+it("updates the current user's profile name from settings", async () => {
+  apiMocks.updateProfile.mockResolvedValue({
+    user: {
+      id: "user-one",
+      email: "user@example.com",
+      displayName: "Nihal",
+    },
+  });
+
+  render(<CloudAppPage />);
+
+  fireEvent.click(await screen.findByRole("button", { name: /Settings/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "Profile" }));
+  const nameInput = await screen.findByDisplayValue("User");
+  fireEvent.change(nameInput, { target: { value: "Nihal" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save profile" }));
+
+  await waitFor(() =>
+    expect(apiMocks.updateProfile).toHaveBeenCalledWith({
+      displayName: "Nihal",
+    }),
+  );
 });

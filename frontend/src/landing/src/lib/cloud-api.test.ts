@@ -93,3 +93,102 @@ it("interrupts an active cloud session", async () => {
   );
   expect(init.method).toBe("POST");
 });
+
+it("creates and updates organizations with authenticated requests", async () => {
+  const fetchMock = vi.fn().mockResolvedValueOnce(
+    new Response(JSON.stringify({ organization: {} }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }),
+  ).mockResolvedValueOnce(
+    new Response(JSON.stringify({ organization: {} }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  const api = Object.assign(Object.create(CloudAPI.prototype) as CloudAPI, {
+    baseURL: "https://cloud.example.com",
+    accessToken: "access-token",
+  });
+
+  await api.createOrganization({ displayName: "Team Alpha" });
+  await api.updateOrganization("org one", { displayName: "Team Renamed" });
+
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    1,
+    "https://cloud.example.com/api/cloud/v1/orgs",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ displayName: "Team Alpha" }),
+    }),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "https://cloud.example.com/api/cloud/v1/orgs/org%20one/",
+    expect.objectContaining({
+      method: "PATCH",
+      body: JSON.stringify({ displayName: "Team Renamed" }),
+    }),
+  );
+});
+
+it("updates the current user profile", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ user: { displayName: "Nihal" } }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  const api = Object.assign(Object.create(CloudAPI.prototype) as CloudAPI, {
+    baseURL: "https://cloud.example.com",
+    accessToken: "access-token",
+  });
+
+  await api.updateProfile({ displayName: "Nihal" });
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "https://cloud.example.com/api/cloud/v1/me",
+    expect.objectContaining({
+      method: "PATCH",
+      body: JSON.stringify({ displayName: "Nihal" }),
+    }),
+  );
+});
+
+it("lists org members and updates member roles", async () => {
+  const fetchMock = vi.fn().mockResolvedValueOnce(
+    new Response(JSON.stringify({ members: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }),
+  ).mockResolvedValueOnce(
+    new Response(JSON.stringify({ member: {} }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  const api = Object.assign(Object.create(CloudAPI.prototype) as CloudAPI, {
+    baseURL: "https://cloud.example.com",
+    accessToken: "access-token",
+  });
+
+  await api.orgMembers("org one");
+  await api.updateOrgMemberRole("org one", "user two", { role: "member" });
+
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    1,
+    "https://cloud.example.com/api/cloud/v1/orgs/org%20one/members",
+    expect.any(Object),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "https://cloud.example.com/api/cloud/v1/orgs/org%20one/members/user%20two",
+    expect.objectContaining({
+      method: "PATCH",
+      body: JSON.stringify({ role: "member" }),
+    }),
+  );
+});

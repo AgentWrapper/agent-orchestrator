@@ -38,10 +38,23 @@ export interface CloudUserOrganization {
   membership: CloudOrgMembership;
 }
 
+export interface CloudUser {
+  id: string;
+  email: string;
+  displayName: string;
+}
+
+export interface CloudOrgMember {
+  user: CloudUser;
+  membership: CloudOrgMembership;
+}
+
 export interface CloudOrgInvitation {
   id: string;
   orgId: string;
   email: string;
+  invitedByEmail?: string;
+  invitedByName?: string;
   role: "owner" | "admin" | "member" | "viewer";
   status: "pending" | "accepted" | "declined" | "revoked" | "expired";
   expiresAt: string;
@@ -209,6 +222,7 @@ export class CloudAPI {
 
   async me() {
     return this.request<{
+      user: CloudUser;
       sandboxProvider: "daytona" | "fly";
       organizations: CloudUserOrganization[];
     }>(
@@ -216,9 +230,30 @@ export class CloudAPI {
     );
   }
 
+  async updateProfile(input: { displayName: string }) {
+    return this.request<{ user: CloudUser }>("/api/cloud/v1/me", {
+      method: "PATCH",
+      body: input,
+    });
+  }
+
   async organizations() {
     return this.request<{ organizations: CloudUserOrganization[] }>(
       "/api/cloud/v1/orgs",
+    );
+  }
+
+  async createOrganization(input: { displayName: string }) {
+    return this.request<{ organization: CloudUserOrganization }>(
+      "/api/cloud/v1/orgs",
+      { method: "POST", body: input },
+    );
+  }
+
+  async updateOrganization(orgId: string, input: { displayName: string }) {
+    return this.request<{ organization: CloudOrganization }>(
+      this.orgPath(orgId, "/"),
+      { method: "PATCH", body: input },
     );
   }
 
@@ -245,6 +280,23 @@ export class CloudAPI {
   async orgInvitations(orgId: string) {
     return this.request<{ invitations: CloudOrgInvitation[] }>(
       this.orgPath(orgId, "/invitations"),
+    );
+  }
+
+  async orgMembers(orgId: string) {
+    return this.request<{ members: CloudOrgMember[] }>(
+      this.orgPath(orgId, "/members"),
+    );
+  }
+
+  async updateOrgMemberRole(
+    orgId: string,
+    userId: string,
+    input: { role: CloudOrgMembership["role"] },
+  ) {
+    return this.request<{ member: CloudOrgMember }>(
+      this.orgPath(orgId, `/members/${encodeURIComponent(userId)}`),
+      { method: "PATCH", body: input },
     );
   }
 
@@ -459,7 +511,7 @@ export class CloudAPI {
     sessionId: string,
     kind: "agent" | "workspace" = "agent",
   ) {
-    return this.request<{ ticket: string; expiresIn: number }>(
+    return this.request<{ ticket: string; expiresIn: number; scopes?: string[] }>(
       this.orgPath(orgId, `/sessions/${encodeURIComponent(sessionId)}/terminal-ticket`),
       { method: "POST", body: { kind } },
     );

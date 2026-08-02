@@ -35,8 +35,13 @@ import (
 type store interface {
 	Ping(context.Context) error
 	EnsureAccount(context.Context, string, string) (clouddomain.Account, error)
+	UpdateUserProfile(context.Context, string, cloudpostgres.UpdateUserProfileInput) (clouddomain.User, error)
+	CreateOrganization(context.Context, cloudpostgres.CreateOrganizationInput) (clouddomain.UserOrganization, error)
+	UpdateOrganization(context.Context, clouddomain.OrgID, cloudpostgres.UpdateOrganizationInput) (clouddomain.Organization, error)
 	ListUserOrganizations(context.Context, string) ([]clouddomain.UserOrganization, error)
 	GetOrgMembership(context.Context, string, clouddomain.OrgID) (clouddomain.UserOrganization, error)
+	ListOrgMembers(context.Context, clouddomain.OrgID) ([]clouddomain.OrgMember, error)
+	UpdateOrgMemberRole(context.Context, clouddomain.OrgID, string, string) (clouddomain.OrgMember, error)
 	CreateOrgInvitation(context.Context, clouddomain.OrgID, cloudpostgres.CreateOrgInvitationInput) (clouddomain.OrgInvitation, error)
 	ListOrgInvitations(context.Context, clouddomain.OrgID) ([]clouddomain.OrgInvitation, error)
 	ListUserInvitations(context.Context, string, string) ([]clouddomain.OrgInvitation, error)
@@ -165,6 +170,14 @@ func orgFromContext(ctx context.Context) (clouddomain.UserOrganization, bool) {
 	return org, ok
 }
 
+func tenantAccountIDFromContext(ctx context.Context) clouddomain.AccountID {
+	if org, ok := orgFromContext(ctx); ok {
+		return clouddomain.AccountID(org.Organization.ID)
+	}
+	account, _ := accountFromContext(ctx)
+	return account.ID
+}
+
 func (s *Server) routes() http.Handler {
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
@@ -209,7 +222,9 @@ func (s *Server) routes() http.Handler {
 			protected.Use(s.auth.Middleware)
 			protected.Use(s.ensureAccount)
 			protected.Get("/me", s.me)
+			protected.Patch("/me", s.updateMe)
 			protected.Get("/orgs", s.listOrgs)
+			protected.Post("/orgs", s.createOrg)
 			protected.Get("/invitations", s.listMyInvitations)
 			protected.Post("/invitations/{invitationId}/accept", s.acceptInvitation)
 			protected.Post("/invitations/{invitationId}/decline", s.declineInvitation)
@@ -241,6 +256,9 @@ func (s *Server) routes() http.Handler {
 			protected.Get("/repositories", s.listRepositories)
 			protected.Route("/orgs/{orgId}", func(org chi.Router) {
 				org.Use(s.requireOrg)
+				org.Patch("/", s.updateOrg)
+				org.Get("/members", s.listOrgMembers)
+				org.With(s.requireOrgRole("admin")).Patch("/members/{userId}", s.updateOrgMemberRole)
 				org.Get("/invitations", s.listOrgInvitations)
 				org.Post("/invitations", s.createOrgInvitation)
 				org.Post("/invitations/{invitationId}/revoke", s.revokeInvitation)
@@ -259,10 +277,10 @@ func (s *Server) routes() http.Handler {
 				org.Get("/sessions/{sessionId}/workspace/files", s.workspaceFiles)
 				org.Get("/sessions/{sessionId}/workspace/file", s.workspaceFile)
 				org.Get("/sessions/{sessionId}/workspace/diff", s.workspaceDiff)
-				org.With(s.requireOrgRole("member")).Post("/sessions/{sessionId}/workspace/preview", s.workspacePreview)
-				org.With(s.requireOrgRole("member")).Post("/sessions/{sessionId}/workspace/preview-ticket", s.issueWorkspacePreview)
-				org.With(s.requireOrgRole("member")).Post("/sessions/{sessionId}/workspace/file-preview-ticket", s.issueWorkspaceFilePreview)
-				org.With(s.requireOrgRole("member")).Post("/sessions/{sessionId}/terminal-ticket", s.issueTerminalTicket)
+				org.Post("/sessions/{sessionId}/workspace/preview", s.workspacePreview)
+				org.Post("/sessions/{sessionId}/workspace/preview-ticket", s.issueWorkspacePreview)
+				org.Post("/sessions/{sessionId}/workspace/file-preview-ticket", s.issueWorkspaceFilePreview)
+				org.Post("/sessions/{sessionId}/terminal-ticket", s.issueTerminalTicket)
 				org.Get("/provider-connections", s.listProviderConnections)
 				org.With(s.requireOrgRole("admin")).Put("/provider-connections/daytona", s.putDaytonaConnection)
 				org.With(s.requireOrgRole("admin")).Put("/provider-connections/agents/{agent}", s.putAgentConnection)
@@ -364,6 +382,41 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
+	principal, _ := cloudauth.PrincipalFromContext(r.Context())
+	var input struct {
+		DisplayName string `json:"displayName"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	input.DisplayName = strings.TrimSpace(input.DisplayName)
+	if input.DisplayName == "" {
+		writeError(w, r, http.StatusBadRequest, "INVALID_PROFILE", "Display name is required.")
+		return
+	}
+	if len(input.DisplayName) > 120 {
+		writeError(w, r, http.StatusBadRequest, "INVALID_PROFILE", "Display name must be at most 120 characters.")
+		return
+	}
+	user, err := s.store.UpdateUserProfile(r.Context(), principal.UserID, cloudpostgres.UpdateUserProfileInput{
+		DisplayName: input.DisplayName,
+	})
+	if errors.Is(err, cloudpostgres.ErrInvalidUserProfile) {
+		writeError(w, r, http.StatusBadRequest, "INVALID_PROFILE", "Display name is required.")
+		return
+	}
+	if errors.Is(err, cloudpostgres.ErrCloudUserNotFound) {
+		writeError(w, r, http.StatusNotFound, "USER_NOT_FOUND", "The current user does not exist.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "update user profile", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"user": user})
+}
+
 func (s *Server) listOrgs(w http.ResponseWriter, r *http.Request) {
 	principal, _ := cloudauth.PrincipalFromContext(r.Context())
 	organizations, err := s.store.ListUserOrganizations(r.Context(), principal.UserID)
@@ -372,6 +425,105 @@ func (s *Server) listOrgs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"organizations": organizations})
+}
+
+func (s *Server) createOrg(w http.ResponseWriter, r *http.Request) {
+	principal, _ := cloudauth.PrincipalFromContext(r.Context())
+	var input struct {
+		DisplayName string `json:"displayName"`
+		Kind        string `json:"kind"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	org, err := s.store.CreateOrganization(r.Context(), cloudpostgres.CreateOrganizationInput{
+		UserID:      principal.UserID,
+		DisplayName: input.DisplayName,
+		Kind:        input.Kind,
+	})
+	if errors.Is(err, cloudpostgres.ErrInvalidOrganization) {
+		writeError(w, r, http.StatusBadRequest, "INVALID_ORG", "Organization name is required.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "create organization", err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"organization": org})
+}
+
+func (s *Server) updateOrg(w http.ResponseWriter, r *http.Request) {
+	org, _ := orgFromContext(r.Context())
+	if !orgRoleAtLeast(org.Membership.Role, "admin") {
+		writeError(w, r, http.StatusForbidden, "ORG_ROLE_REQUIRED", "Only organization admins can update organization settings.")
+		return
+	}
+	var input struct {
+		DisplayName string `json:"displayName"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	updated, err := s.store.UpdateOrganization(r.Context(), org.Organization.ID, cloudpostgres.UpdateOrganizationInput{
+		DisplayName: input.DisplayName,
+	})
+	if errors.Is(err, cloudpostgres.ErrInvalidOrganization) {
+		writeError(w, r, http.StatusBadRequest, "INVALID_ORG", "Organization name is required.")
+		return
+	}
+	if errors.Is(err, cloudpostgres.ErrOrganizationNotFound) {
+		writeError(w, r, http.StatusNotFound, "ORG_NOT_FOUND", "The organization does not exist.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "update organization", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"organization": updated})
+}
+
+func (s *Server) listOrgMembers(w http.ResponseWriter, r *http.Request) {
+	org, _ := orgFromContext(r.Context())
+	members, err := s.store.ListOrgMembers(r.Context(), org.Organization.ID)
+	if err != nil {
+		s.internalError(w, r, "list org members", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"members": members})
+}
+
+func (s *Server) updateOrgMemberRole(w http.ResponseWriter, r *http.Request) {
+	org, _ := orgFromContext(r.Context())
+	targetUserID := strings.TrimSpace(chi.URLParam(r, "userId"))
+	if targetUserID == "" {
+		writeError(w, r, http.StatusBadRequest, "INVALID_MEMBER", "Member user id is required.")
+		return
+	}
+	var input struct {
+		Role string `json:"role"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	input.Role = strings.TrimSpace(input.Role)
+	if !validOrgRole(input.Role) {
+		writeError(w, r, http.StatusBadRequest, "INVALID_ROLE", "Role must be owner, admin, member, or viewer.")
+		return
+	}
+	if input.Role == "owner" && org.Membership.Role != "owner" {
+		writeError(w, r, http.StatusForbidden, "ORG_ROLE_REQUIRED", "Only organization owners can grant owner role.")
+		return
+	}
+	member, err := s.store.UpdateOrgMemberRole(r.Context(), org.Organization.ID, targetUserID, input.Role)
+	if errors.Is(err, cloudpostgres.ErrOrgMembershipNotFound) {
+		writeError(w, r, http.StatusNotFound, "MEMBER_NOT_FOUND", "The organization member does not exist.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "update org member role", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"member": member})
 }
 
 func (s *Server) listMyInvitations(w http.ResponseWriter, r *http.Request) {
@@ -866,6 +1018,7 @@ func (s *Server) activeTurn(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) chatEvents(w http.ResponseWriter, r *http.Request) {
 	account, _ := accountFromContext(r.Context())
+	account.ID = tenantAccountIDFromContext(r.Context())
 	sessionID := clouddomain.SessionID(chi.URLParam(r, "sessionId"))
 	if _, err := s.store.GetSession(r.Context(), account.ID, sessionID); err != nil {
 		if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
@@ -895,6 +1048,7 @@ func (s *Server) chatEvents(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 	account, _ := accountFromContext(r.Context())
+	account.ID = tenantAccountIDFromContext(r.Context())
 	sessionID := clouddomain.SessionID(chi.URLParam(r, "sessionId"))
 	if _, err := s.store.GetSession(r.Context(), account.ID, sessionID); err != nil {
 		if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
@@ -994,6 +1148,7 @@ func (s *Server) wakeSessionForMessage(
 
 func (s *Server) interruptSession(w http.ResponseWriter, r *http.Request) {
 	account, _ := accountFromContext(r.Context())
+	account.ID = tenantAccountIDFromContext(r.Context())
 	sessionID := clouddomain.SessionID(chi.URLParam(r, "sessionId"))
 	session, err := s.store.GetSession(r.Context(), account.ID, sessionID)
 	if err != nil {
@@ -1075,6 +1230,7 @@ func (s *Server) authorizedSession(
 	action string,
 ) (clouddomain.Account, clouddomain.Session, bool) {
 	account, _ := accountFromContext(r.Context())
+	account.ID = tenantAccountIDFromContext(r.Context())
 	session, err := s.store.GetSession(
 		r.Context(),
 		account.ID,
@@ -1147,6 +1303,7 @@ func (s *Server) setDesiredState(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 	account, _ := accountFromContext(r.Context())
+	account.ID = tenantAccountIDFromContext(r.Context())
 	sessionID := clouddomain.SessionID(chi.URLParam(r, "sessionId"))
 	if _, err := s.store.GetSession(r.Context(), account.ID, sessionID); err != nil {
 		if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
@@ -2560,6 +2717,7 @@ func (s *Server) writeWorkerSocket(
 
 func (s *Server) issueTerminalTicket(w http.ResponseWriter, r *http.Request) {
 	account, _ := accountFromContext(r.Context())
+	account.ID = tenantAccountIDFromContext(r.Context())
 	sessionID := clouddomain.SessionID(chi.URLParam(r, "sessionId"))
 	if _, err := s.store.GetSession(r.Context(), account.ID, sessionID); err != nil {
 		if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
@@ -2580,12 +2738,16 @@ func (s *Server) issueTerminalTicket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "INVALID_TERMINAL_KIND", "terminal kind must be agent or workspace.")
 		return
 	}
+	scopes := []string{"terminal:read"}
+	if org, ok := orgFromContext(r.Context()); !ok || orgRoleAtLeast(org.Membership.Role, "member") {
+		scopes = append(scopes, "terminal:operate")
+	}
 	ticket, err := s.store.IssueAccessTicket(
 		r.Context(),
 		account.ID,
 		sessionID,
 		terminalTicketPurpose(kind),
-		[]string{"terminal:read", "terminal:operate"},
+		scopes,
 		60*time.Second,
 	)
 	if err != nil {
@@ -2595,6 +2757,7 @@ func (s *Server) issueTerminalTicket(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"ticket":    ticket,
 		"expiresIn": 60,
+		"scopes":    scopes,
 	})
 }
 
@@ -2637,6 +2800,15 @@ func terminalOutputEvent(kind string) string {
 	return "terminal.output"
 }
 
+func ticketHasScope(scopes []string, expected string) bool {
+	for _, scope := range scopes {
+		if scope == expected {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 	kind := terminalKind(r.URL.Query().Get("kind"))
 	if kind == "" {
@@ -2656,6 +2828,7 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "consume terminal ticket", err)
 		return
 	}
+	canOperateTerminal := ticketHasScope(ticket.Scopes, "terminal:operate")
 	after, err := parseAfter(r)
 	if err != nil {
 		writeError(w, r, http.StatusBadRequest, "INVALID_AFTER", "after must be a non-negative integer.")
@@ -2768,6 +2941,13 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		case command := <-clientCommands:
+			if !canOperateTerminal {
+				_ = writeTerminalMessage(ctx, socket, terminalServerMessage{
+					Type:    "error",
+					Message: "Terminal is read-only for viewers.",
+				})
+				continue
+			}
 			workerCommand, err := validateTerminalCommand(command)
 			if err != nil {
 				_ = writeTerminalMessage(ctx, socket, terminalServerMessage{
