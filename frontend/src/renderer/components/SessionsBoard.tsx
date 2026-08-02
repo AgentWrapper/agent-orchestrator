@@ -250,7 +250,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	const actions = projectId ? (
 		<>
-			{boardOwnsNotificationCenter ? <NotificationCenter /> : null}
 			{visibleSpawnError && !showProjectEmpty && (
 				<TopbarKillError className="max-w-content-max truncate" title={visibleSpawnError}>
 					{visibleSpawnError}
@@ -281,6 +280,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 							? "Orchestrator"
 							: "Spawn Orchestrator"}
 			</TopbarButton>
+			{/* The bell trails the actions row here too, matching ShellTopbar, so it
+			    stays put when navigating between board and session views. */}
+			{boardOwnsNotificationCenter ? <NotificationCenter /> : null}
 		</>
 	) : boardOwnsNotificationCenter ? (
 		<NotificationCenter />
@@ -295,7 +297,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			    chooser was review feedback on #2432. */}
 			{!showWelcome && !showStartup && boardActionsInPanel && (boardLabel || actions) ? (
 				<div
-					className="center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 border-b border-border-strong pr-4.5"
+					className="center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 border-b border-border-strong pr-4"
 					style={dragStyle}
 				>
 					{boardLabel ? <span className={topbarProjectLabelClass}>{boardLabel}</span> : null}
