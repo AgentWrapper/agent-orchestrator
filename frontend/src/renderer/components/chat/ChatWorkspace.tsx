@@ -34,18 +34,30 @@ import {
 	CompactionMarker,
 	HumanMessage,
 	OriginMessage,
+	SteerMessage,
 	TurnChangedFiles,
 	TurnOutcome,
 } from "./ChatTimelineItems";
 import { ChatComposer } from "./ChatComposer";
 import { ActivityRun } from "./ActivityRun";
+import { TurnPlan } from "./TurnPlan";
 import { TurnSettingsBar } from "./TurnSettingsBar";
 import { ContextMeter } from "./ContextMeter";
 import {
+	McpServerBanner,
+	ReasoningUnavailableNote,
+	ReauthBanner,
+	ThreadStateBanner,
+} from "./ChatStatusBanners";
+import {
 	activeTurn,
+	activityPlan,
+	brokenMcpServers,
 	isCompaction,
+	isSteer,
 	pendingApproval,
 	queuedTurnIds,
+	type ConversationPlan,
 	type ConversationSnapshot,
 	type ControllerState,
 	type ChatModel,
@@ -91,6 +103,20 @@ export interface ChatWorkspaceProps {
 	 * no worktree to write into.
 	 */
 	onStageAttachments?: (attachments: { mimeType: string; data: string }[]) => Promise<string[]>;
+	/**
+	 * Deliver guidance into the turn already running, instead of queueing a message
+	 * behind it. Absent means this harness cannot steer and no control is drawn —
+	 * Claude answers `CHAT_STEER_UNSUPPORTED`, and an affordance that only ever fails
+	 * is worse than none.
+	 */
+	onSteer?: (text: string) => Promise<unknown>;
+	steerPending?: boolean;
+	/** Why the last steer was refused, from the daemon's typed answer. */
+	steerRefusal?: string;
+	/** Start the tool servers again. Absent when the harness cannot. */
+	onReloadMcpServers?: () => void;
+	reloadingMcpServers?: boolean;
+	mcpReloadError?: string;
 }
 
 export function ChatWorkspace({
@@ -111,6 +137,12 @@ export function ChatWorkspace({
 	filePaths,
 	filePathsTruncated,
 	onStageAttachments,
+	onSteer,
+	steerPending,
+	steerRefusal,
+	onReloadMcpServers,
+	reloadingMcpServers,
+	mcpReloadError,
 }: ChatWorkspaceProps) {
 	const turn = activeTurn(snapshot);
 	const approval = pendingApproval(snapshot);
@@ -129,6 +161,9 @@ export function ChatWorkspace({
 	const rollbackTarget = onRollback && !turn ? (id: string) => setConfirming(id) : undefined;
 	const discarded = snapshot.turns.filter((t) => t.rolledBack).length;
 
+	const reasoning = useMemo(() => reasoningState(snapshot), [snapshot]);
+	const brokenServers = useMemo(() => brokenMcpServers(snapshot), [snapshot]);
+
 	return (
 		<section
 			aria-label="Chat"
@@ -139,6 +174,7 @@ export function ChatWorkspace({
 				snapshot={snapshot}
 				showReasoning={showReasoning}
 				onToggleReasoning={() => setShowReasoning((prev) => !prev)}
+				hasReasoning={reasoning.any}
 				onCompact={onCompact}
 				compacting={compacting}
 				compactUnavailable={compactUnavailable}
@@ -147,7 +183,26 @@ export function ChatWorkspace({
 				// control explains itself before it is pressed.
 				turnInFlight={Boolean(turn)}
 			/>
+			{/* Ordered by what blocks what. A session that needs credentials cannot make
+			    progress at all, so it is stated first; the controller's own health next;
+			    then the two that degrade a session rather than stopping it. */}
+			{snapshot.account ? (
+				<ReauthBanner account={snapshot.account} harness={snapshot.harness} />
+			) : null}
 			<ControllerBanner controller={snapshot.controller} />
+			{snapshot.threadState ? <ThreadStateBanner threadState={snapshot.threadState} /> : null}
+			<McpServerBanner
+				servers={brokenServers}
+				onReload={onReloadMcpServers}
+				reloading={reloadingMcpServers}
+				turnInFlight={Boolean(turn)}
+				error={mcpReloadError}
+			/>
+			{/* Only while the toggle is on and the provider is sending nothing: this
+			    exists so an empty toggle explains itself instead of looking broken. */}
+			{showReasoning && reasoning.any && !reasoning.anyText ? (
+				<ReasoningUnavailableNote harness={snapshot.harness} />
+			) : null}
 
 			<Timeline
 				snapshot={snapshot}
@@ -174,6 +229,7 @@ export function ChatWorkspace({
 							<TurnSettingsBar
 								models={models ?? []}
 								settings={snapshot.settings}
+								reroute={snapshot.modelReroute}
 								onChange={onChooseSettings}
 								disabled={snapshot.controller.state === "stopped"}
 							/>
@@ -186,6 +242,12 @@ export function ChatWorkspace({
 					filePaths={filePaths}
 					filePathsTruncated={filePathsTruncated}
 					onStageAttachments={onStageAttachments}
+					// Steering is only meaningful into a turn that is running. A queued turn
+					// has not reached the provider, so there is nothing to steer.
+					onSteer={onSteer}
+					canSteer={Boolean(onSteer) && turn?.state === "running"}
+					steerPending={steerPending}
+					steerRefusal={steerRefusal}
 				/>
 			</div>
 
@@ -269,10 +331,16 @@ function runsOf(items: ConversationItem[]): TimelineRun[] {
 			// An edit is a result, not a mechanic. Burying it in a summary would hide
 			// the one kind of activity that changed the user's worktree.
 			item.activityKind !== "file_change" &&
+			// Reasoning only reaches the timeline when the reader asked for it, so
+			// folding it into "Explored 4 files" would answer that request with the
+			// summary they were trying to get past.
+			item.activityKind !== "reasoning" &&
 			// A compaction is a boundary in the conversation, not a step in one. Folding
 			// it into a run of tool calls would hide that everything above it is no
-			// longer what the agent sees verbatim.
-			!isCompaction(item);
+			// longer what the agent sees verbatim. The same holds for every other
+			// stamped system event: a reroute, a credential demand and the user's own
+			// steer are all things a run summary would swallow.
+			item.detail?.event === undefined;
 		const last = runs.at(-1);
 		if (runnable && last?.kind === "activities") {
 			last.items.push(item);
@@ -300,19 +368,54 @@ function runsOf(items: ConversationItem[]): TimelineRun[] {
  *   - reasoning, unless asked for. The provider emits one per tool call and they
  *     usually carry no readable body, so by default they are pure chrome.
  *
+ *   - a plan row whose turn already carries the plan. The daemon writes both, from
+ *     one event, so they cannot disagree; the turn's copy renders as a checklist at
+ *     the end of the turn and a second rendering of the same plan in the middle of
+ *     it would just be the same list twice.
+ *
  * Everything else is kept, including an activity this build does not fully
  * understand — dropping an unrecognized item would hide work the agent really did.
  */
 function readableItems(snapshot: ConversationSnapshot, showReasoning: boolean): ConversationItem[] {
+	const plannedTurns = new Set(
+		snapshot.turns.filter((turn) => turn.plan?.steps.length).map((turn) => turn.id),
+	);
 	return snapshot.items.filter((item) => {
 		if (item.kind !== "activity") return true;
 		if (item.activityKind === "usage") return false;
+		if (item.activityKind === "plan" && item.turnId && plannedTurns.has(item.turnId)) return false;
 		if (item.activityKind === "reasoning") {
 			// Even when shown, a reasoning item with nothing to read is just a label.
+			// Filtered rather than drawn empty, because six blank rows do not tell a
+			// reader why they are blank — the note above the timeline does that once.
 			return showReasoning && Boolean(item.detail?.reason || item.detail?.text);
 		}
 		return true;
 	});
+}
+
+/**
+ * Whether this conversation has reasoning at all, and whether any of it is readable.
+ *
+ * The two are different questions and the difference is the whole problem. On a
+ * default Codex install the provider emits a reasoning item per tool call and leaves
+ * every one of them empty, because summaries are off unless the user's own config
+ * turns them on. So `any` decides whether the toggle is worth offering and `anyText`
+ * decides whether turning it on will show anything — without the second, the control
+ * silently does nothing and reads as broken.
+ */
+function reasoningState(snapshot: ConversationSnapshot): { any: boolean; anyText: boolean } {
+	let any = false;
+	let anyText = false;
+	for (const item of snapshot.items) {
+		if (item.kind !== "activity" || item.activityKind !== "reasoning") continue;
+		any = true;
+		if (item.detail?.text || item.detail?.reason) {
+			anyText = true;
+			break;
+		}
+	}
+	return { any, anyText };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -321,6 +424,7 @@ function ChatHeader({
 	snapshot,
 	showReasoning,
 	onToggleReasoning,
+	hasReasoning,
 	onCompact,
 	compacting,
 	compactUnavailable,
@@ -329,14 +433,13 @@ function ChatHeader({
 	snapshot: ConversationSnapshot;
 	showReasoning: boolean;
 	onToggleReasoning: () => void;
+	/** The provider emits reasoning at all, so the toggle has something to govern. */
+	hasReasoning: boolean;
 	onCompact?: () => void;
 	compacting?: boolean;
 	compactUnavailable?: string;
 	turnInFlight?: boolean;
 }) {
-	const hasReasoning = snapshot.items.some(
-		(item) => item.kind === "activity" && item.activityKind === "reasoning",
-	);
 	return (
 		<header className="flex h-toolbar shrink-0 items-center gap-3 border-b border-border px-4">
 			<MessageSquare aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
@@ -637,6 +740,11 @@ const TurnGroup = memo(function TurnGroup({
 					/>
 				),
 			)}
+			{/* Both of these are current state of the turn rather than steps in it, which
+			    is why they sit at its end: a checklist that ticks itself off and a file
+			    list that grows both change while the reader watches, and at the end of a
+			    turn neither pushes anything the reader is already looking at. */}
+			{group.plan ? <TurnPlan plan={group.plan} live={group.live} /> : null}
 			{/* Above the outcome divider: the changed files are part of what the turn
 			    did, and belong inside it rather than after it closes. */}
 			{group.diff ? <TurnChangedFiles diff={group.diff} live={group.live} /> : null}
@@ -680,6 +788,18 @@ function TimelineItem({
 	if (isCompaction(item)) {
 		return <CompactionMarker activity={item} />;
 	}
+	// Read by the event, not the kind: a steer is stored as a `system` activity
+	// because that is AO's only durable write that can attach to a turn in flight,
+	// but it is the user speaking and the timeline shows it that way.
+	if (isSteer(item)) {
+		return <SteerMessage activity={item} />;
+	}
+	// A plan whose turn AO never correlated — one from before this controller
+	// started. The turn-level checklist cannot show it, so the row carries it.
+	if (item.activityKind === "plan") {
+		const plan = activityPlan(item);
+		return plan ? <TurnPlan plan={plan} /> : <ActivityRow activity={item} />;
+	}
 	return <ActivityRow activity={item} />;
 }
 
@@ -690,11 +810,24 @@ function TimelineItem({
 const itemKey = (item: ConversationItem): string => item.id;
 const groupKey = (group: TimelineGroup): string => group.key;
 
+/**
+ * Whether two groups say the same thing.
+ *
+ * A group carries more than its items: a turn's plan and its changed files are
+ * current state that the daemon overwrites, and both move while the turn's items
+ * stay exactly as they were. Comparing only the items would keep the previous
+ * group object — and with it the previous plan — so a checklist would stop ticking
+ * until something else in the turn happened to change.
+ */
 function sameGroup(a: TimelineGroup, b: TimelineGroup): boolean {
 	return (
 		a.anchor === b.anchor &&
 		a.turnId === b.turnId &&
+		a.live === b.live &&
+		a.rollbackable === b.rollbackable &&
 		sameContent(a.outcome, b.outcome) &&
+		sameContent(a.diff, b.diff) &&
+		sameContent(a.plan, b.plan) &&
 		a.items.length === b.items.length &&
 		// The items are already identity-stable by the time a group is compared, so a
 		// reference check here is exact and avoids walking their contents twice.
@@ -730,7 +863,9 @@ type TimelineGroup = {
 	outcome?: { state: "completed" | "interrupted" | "failed"; durationMs?: number; error?: string };
 	/** What the turn changed on disk, when the daemon reported anything. */
 	diff?: TurnDiff;
-	/** The turn is still running, so its diff can still grow. */
+	/** The agent's plan for this turn, when it made one. */
+	plan?: ConversationPlan;
+	/** The turn is still running, so its diff and plan can still change. */
 	live?: boolean;
 	/** The provider accepted this turn, so there is history it can be asked to drop. */
 	rollbackable?: boolean;
@@ -796,9 +931,11 @@ function groupByTurn(snapshot: ConversationSnapshot): TimelineGroup[] {
 		if (!group.turnId) continue;
 		const turn = byTurn.get(group.turnId);
 		if (!turn) continue;
-		// The diff is attached whether or not the turn has finished: a running turn's
-		// changed-file list growing is the useful part.
+		// The diff and the plan are attached whether or not the turn has finished: a
+		// running turn's changed-file list growing, and its checklist ticking itself
+		// off, are the useful parts.
 		group.diff = turn.diff;
+		group.plan = turn.plan?.steps.length ? turn.plan : undefined;
 		group.live = turn.state === "running";
 		if (turn.state === "running" || turn.state === "queued") continue;
 		group.rollbackable = Boolean(turn.providerTurnId);

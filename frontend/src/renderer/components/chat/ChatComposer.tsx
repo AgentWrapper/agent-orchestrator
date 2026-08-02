@@ -41,7 +41,7 @@ import {
 	type KeyboardEvent,
 	type ReactNode,
 } from "react";
-import { ArrowUp, Paperclip, X } from "lucide-react";
+import { ArrowUp, CornerDownRight, Loader2, Paperclip, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { cn } from "../../lib/utils";
 import { ComposerSuggestMenu } from "./ComposerSuggestMenu";
@@ -82,6 +82,10 @@ export function ChatComposer({
 	filePaths = [],
 	filePathsTruncated,
 	onStageAttachments,
+	onSteer,
+	canSteer,
+	steerPending,
+	steerRefusal,
 }: {
 	onSend: (text: string) => void;
 	/** The next-turn controls, rendered inline. Omitted in the fixture preview. */
@@ -103,6 +107,16 @@ export function ChatComposer({
 	 * offered at all.
 	 */
 	onStageAttachments?: (attachments: ImageAttachmentPayload[]) => Promise<string[]>;
+	/**
+	 * Deliver this text into the turn already running. Absent means the harness
+	 * cannot steer and the choice is never offered.
+	 */
+	onSteer?: (text: string) => Promise<unknown>;
+	/** A turn is actually running, so there is something to steer into. */
+	canSteer?: boolean;
+	steerPending?: boolean;
+	/** Why the last steer was refused. */
+	steerRefusal?: string;
 }) {
 	const [text, setText] = useState("");
 	const [caret, setCaret] = useState(0);
@@ -114,6 +128,16 @@ export function ChatComposer({
 	const [highlighted, setHighlighted] = useState(0);
 	const [dragging, setDragging] = useState(false);
 	const [sendError, setSendError] = useState<string | null>(null);
+	/**
+	 * What Enter does while the agent is working.
+	 *
+	 * Steering is the better answer when a turn is live — the correction reaches the
+	 * work in flight instead of waiting behind it — so it is the default. But it is a
+	 * different thing to do with the user's words, and quietly changing what Enter
+	 * means would be worse than the queueing it replaces. So the choice is drawn, and
+	 * the send hint names whichever one is armed.
+	 */
+	const [delivery, setDelivery] = useState<"steer" | "queue">("steer");
 
 	const textarea = useRef<HTMLTextAreaElement>(null);
 	const filePicker = useRef<HTMLInputElement>(null);
@@ -140,7 +164,11 @@ export function ChatComposer({
 	const activeIndex = Math.min(highlighted, suggestions.length - 1);
 
 	const staged = images.attachments.length > 0;
-	const canSend = (text.trim().length > 0 || staged) && !busy && !disabled;
+	// The control disappears the moment the turn ends, and the armed mode degrades
+	// with it: a steer with nothing in flight is refused, so it must never be what
+	// Enter is still pointing at.
+	const steering = Boolean(canSteer && onSteer) && delivery === "steer";
+	const canSend = (text.trim().length > 0 || staged) && !busy && !disabled && !steerPending;
 
 	/**
 	 * Write text and caret back into the field.
@@ -182,6 +210,25 @@ export function ChatComposer({
 		setSendError(null);
 
 		const body = text.trim();
+
+		// Steering keeps the text in the box until the provider has taken it. The turn
+		// is already running, so a refusal is a real possibility — and a refusal that
+		// had already cleared the composer would lose what the user typed.
+		if (steering && onSteer) {
+			if (body === "") return;
+			try {
+				await onSteer(body);
+			} catch {
+				// The refusal is the daemon's typed answer and the surface renders it from
+				// `steerRefusal`; saying it twice here would be two messages for one event.
+				return;
+			}
+			applyText("", 0);
+			setDismissedAt(null);
+			setHighlighted(0);
+			return;
+		}
+
 		if (staged && onStageAttachments) {
 			// Staged before the send so a failed write is reported instead of a
 			// message that claims attachments the agent cannot open.
@@ -359,11 +406,13 @@ export function ChatComposer({
 				placeholder={
 					disabled
 						? "The controller is not connected"
-						: willQueue
-							? "Agent is working — this sends when it finishes"
-							: skills.length > 0
-								? "Ask the agent…  /  for skills, @ for files"
-								: "Ask the agent…  @ for files"
+						: steering
+							? "Agent is working — this goes into the turn it is running"
+							: willQueue
+								? "Agent is working — this sends when it finishes"
+								: skills.length > 0
+									? "Ask the agent…  /  for skills, @ for files"
+									: "Ask the agent…  @ for files"
 				}
 				className="max-h-48 min-h-[3.25rem] w-full resize-none bg-transparent px-1.5 py-1 text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
 			/>
@@ -372,6 +421,19 @@ export function ChatComposer({
 				<p role="alert" className="px-1.5 text-[11px] leading-snug text-destructive">
 					{attachmentError}
 				</p>
+			) : null}
+
+			{/* A refused steer is an ordinary outcome, not a failure: the text is still
+			    in the box and the message says which of "send it instead" and "try again
+			    in a moment" applies. */}
+			{steerRefusal ? (
+				<p role="status" className="px-1.5 text-[11px] leading-snug text-warning">
+					{steerRefusal}
+				</p>
+			) : null}
+
+			{canSteer && onSteer ? (
+				<DeliveryChoice value={delivery} onChange={setDelivery} disabled={steerPending} />
 			) : null}
 
 			<div className="flex items-center gap-2">
@@ -405,12 +467,81 @@ export function ChatComposer({
 					</>
 				) : null}
 				<span className="ml-auto text-[11px] text-muted-foreground">
-					{menuOpen ? "Enter to insert" : willQueue ? "Enter to queue" : "Enter to send"}
+					{menuOpen
+						? "Enter to insert"
+						: steering
+							? "Enter to steer"
+							: willQueue
+								? "Enter to queue"
+								: "Enter to send"}
 				</span>
-				<Button type="submit" size="icon-sm" disabled={!canSend} aria-label="Send message">
-					<ArrowUp aria-hidden="true" className="size-3.5" />
+				<Button
+					type="submit"
+					size="icon-sm"
+					disabled={!canSend}
+					aria-label={steering ? "Steer the running turn" : "Send message"}
+				>
+					{steerPending ? (
+						<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
+					) : steering ? (
+						<CornerDownRight aria-hidden="true" className="size-3.5" />
+					) : (
+						<ArrowUp aria-hidden="true" className="size-3.5" />
+					)}
 				</Button>
 			</div>
 		</form>
+	);
+}
+
+/**
+ * Where the next message goes while the agent is working.
+ *
+ * Two words rather than a switch, because the difference is not a preference — it is
+ * two different things happening to what the user typed. Steering joins the turn in
+ * flight: the agent keeps its context, its reasoning and the command it has running,
+ * and decides for itself what to abandon. Queueing waits for the turn to end and
+ * then starts a new one from a cold start. For someone who has just realized they
+ * asked for the wrong thing, that is the whole difference, so both are named and the
+ * hint below says which one Enter is armed with.
+ */
+function DeliveryChoice({
+	value,
+	onChange,
+	disabled,
+}: {
+	value: "steer" | "queue";
+	onChange: (next: "steer" | "queue") => void;
+	disabled?: boolean;
+}) {
+	return (
+		<div
+			role="group"
+			aria-label="Where this message goes while the agent is working"
+			className="flex items-center gap-1 px-1.5"
+		>
+			{(["steer", "queue"] as const).map((option) => (
+				<button
+					key={option}
+					type="button"
+					onClick={() => onChange(option)}
+					disabled={disabled}
+					aria-pressed={value === option}
+					title={
+						option === "steer"
+							? "Send this into the running turn. The agent keeps its context and its work in flight."
+							: "Hold this until the turn ends, then send it as a new message."
+					}
+					className={cn(
+						"rounded px-1.5 py-0.5 text-[11px] transition-colors disabled:opacity-50",
+						value === option
+							? "bg-raised text-foreground"
+							: "text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
+					)}
+				>
+					{option === "steer" ? "Steer this turn" : "Queue for next"}
+				</button>
+			))}
+		</div>
 	);
 }

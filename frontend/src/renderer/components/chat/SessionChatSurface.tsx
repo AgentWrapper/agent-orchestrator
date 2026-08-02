@@ -91,6 +91,23 @@ export function SessionChatSurface({ session }: { session: WorkspaceSession }) {
 			filePaths={paths}
 			filePathsTruncated={truncated}
 			onStageAttachments={stageAttachments}
+			// Withdrawn for good once the daemon says this harness cannot steer. The
+			// capability is a property of the driver, so the first refusal is the last
+			// word — and a control that only ever fails is worse than no control.
+			onSteer={commands.steerUnsupported ? undefined : commands.steer}
+			steerPending={commands.steerPending}
+			steerRefusal={commands.steerRefusal}
+			onReloadMcpServers={
+				commands.mcpReloadUnsupported
+					? undefined
+					: () => {
+							// The rejection is already held by the mutation and rendered from
+							// `mcpReloadError`; rethrowing it would only add a console error.
+							void commands.reloadMcpServers().catch(() => {});
+						}
+			}
+			reloadingMcpServers={commands.reloadingMcpServers}
+			mcpReloadError={commands.mcpReloadError}
 		/>
 	);
 }

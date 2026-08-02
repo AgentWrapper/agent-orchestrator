@@ -29,8 +29,13 @@ import {
 	chatFixture,
 	chatFixtureEmpty,
 	chatFixtureLongHistory,
+	chatFixtureMcpFailed,
+	chatFixtureReasoningEmpty,
+	chatFixtureReauth,
 	chatFixtureRecovering,
+	chatFixtureRerouted,
 	chatFixtureSettled,
+	chatFixtureThreadError,
 } from "../lib/chat-fixture";
 import type { ConversationSnapshot } from "../types/conversation";
 
@@ -44,10 +49,21 @@ export const Route = createFileRoute("/chat-preview")({
 /** Turns, not items: the generator emits six or seven items per turn. */
 const LONG_HISTORY_TURNS = 60;
 
+/**
+ * Every state worth looking at, including the ones a provider will not produce on
+ * request. A failed tool server, an expired credential, a rerouted model and a
+ * faulted thread are all real and all effectively unreachable in a dev loop, so the
+ * fixture harness is where they get reviewed.
+ */
 const SCENARIOS = {
 	live: { label: "Live turn", snapshot: chatFixture },
 	settled: { label: "Settled", snapshot: chatFixtureSettled },
 	recovering: { label: "Controller lost", snapshot: chatFixtureRecovering },
+	reasoningEmpty: { label: "Reasoning off at provider", snapshot: chatFixtureReasoningEmpty },
+	mcpFailed: { label: "Tool server failed", snapshot: chatFixtureMcpFailed },
+	rerouted: { label: "Model rerouted", snapshot: chatFixtureRerouted },
+	reauth: { label: "Re-auth required", snapshot: chatFixtureReauth },
+	threadError: { label: "Thread system_error", snapshot: chatFixtureThreadError },
 	empty: { label: "New session", snapshot: chatFixtureEmpty },
 	long: { label: "Long history", snapshot: chatFixtureLongHistory(LONG_HISTORY_TURNS) },
 } satisfies Record<string, { label: string; snapshot: ConversationSnapshot }>;
@@ -66,6 +82,31 @@ const FIXTURE_SKILLS = [
 	{ name: "explain-diff", displayName: "explain-diff", description: "Explain a change as an interactive report", source: "user" },
 	{ name: "ship", displayName: "ship", description: "Run tests, bump the version, open a PR", source: "repo" },
 	{ name: "investigate", displayName: "investigate", description: "Systematic debugging with root cause analysis", source: "user" },
+];
+
+/**
+ * A model catalog, so the composer's settings row renders in the harness.
+ *
+ * Without it the model control hides itself — and with it hidden there is nowhere
+ * for the reroute fixture to show the substitution, which is half of what that
+ * scenario exists to review.
+ */
+const FIXTURE_MODELS = [
+	{
+		id: "gpt-5.6-terra",
+		displayName: "gpt-5.6-terra",
+		description: "Frontier reasoning",
+		default: true,
+		efforts: ["low", "medium", "high"],
+		defaultEffort: "medium",
+	},
+	{
+		id: "gpt-5.6-terra-mini",
+		displayName: "gpt-5.6-terra-mini",
+		description: "Faster, cheaper, shorter context",
+		default: false,
+		efforts: ["low", "medium"],
+	},
 ];
 
 const FIXTURE_FILES = [
@@ -141,6 +182,18 @@ function LiveChat({ sessionId }: { sessionId: string }) {
 						filePaths={paths}
 						filePathsTruncated={truncated}
 						onStageAttachments={stageAttachments}
+						onSteer={commands.steerUnsupported ? undefined : commands.steer}
+						steerPending={commands.steerPending}
+						steerRefusal={commands.steerRefusal}
+						onReloadMcpServers={
+							commands.mcpReloadUnsupported
+								? undefined
+								: () => {
+										void commands.reloadMcpServers().catch(() => {});
+									}
+						}
+						reloadingMcpServers={commands.reloadingMcpServers}
+						mcpReloadError={commands.mcpReloadError}
 					/>
 				) : null}
 			</div>
@@ -212,6 +265,39 @@ function FixtureChat() {
 		[note, scenario],
 	);
 
+	// Mimics a steer landing: the guidance joins the turn that is already running, as
+	// an activity tagged with the `steer` event, rather than opening a new turn.
+	const steer = useCallback(
+		async (text: string) => {
+			note(`steer: ${text.slice(0, 48)}`);
+			setOverrides((prev) => {
+				const base = { ...SCENARIOS[scenario].snapshot, ...prev };
+				const running = base.turns.find((turn) => turn.state === "running");
+				const sequence = base.latestSequence + 1;
+				return {
+					...prev,
+					latestSequence: sequence,
+					items: [
+						...base.items,
+						{
+							kind: "activity" as const,
+							id: `steer-${sequence}`,
+							turnId: running?.id,
+							sequence,
+							revision: 0,
+							activityKind: "system" as const,
+							status: "completed" as const,
+							summary: text,
+							detail: { event: "steer" as const, text, origin: "human" },
+							createdAt: new Date().toISOString(),
+						},
+					],
+				};
+			});
+		},
+		[note, scenario],
+	);
+
 	return (
 		<div className="flex h-screen flex-col bg-background">
 			<PreviewBar label="fixtures" note={log[0]}>
@@ -248,8 +334,17 @@ function FixtureChat() {
 					onDecide={decide}
 					onInterrupt={() => note("interrupt active turn")}
 					onRollback={rollback}
+					models={FIXTURE_MODELS}
+					onChooseSettings={(next) => {
+						note(`settings: ${JSON.stringify(next)}`);
+						setOverrides((prev) => ({ ...prev, settings: next }));
+					}}
 					skills={FIXTURE_SKILLS}
 					filePaths={FIXTURE_FILES}
+					// Steering only appears while a turn is running, which the live and
+					// controller-lost fixtures both are.
+					onSteer={steer}
+					onReloadMcpServers={() => note("reload MCP servers")}
 				/>
 			</div>
 		</div>

@@ -11,7 +11,7 @@
  * enumerate models reports none and the model control hides itself.
  */
 
-import { Brain, ChevronUp, Cpu, Shield } from "lucide-react";
+import { Brain, ChevronUp, Cpu, Shield, Shuffle } from "lucide-react";
 import { Button } from "../ui/button";
 import {
 	DropdownMenu,
@@ -21,7 +21,12 @@ import {
 	DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { cn } from "../../lib/utils";
-import type { ApprovalMode, ChatModel, TurnSettings } from "../../types/conversation";
+import type {
+	ApprovalMode,
+	ChatModel,
+	ModelReroute,
+	TurnSettings,
+} from "../../types/conversation";
 
 /**
  * AO's four approval modes, in increasing order of what the agent may do without
@@ -44,11 +49,19 @@ const APPROVAL_ORDER: ApprovalMode[] = [
 export function TurnSettingsBar({
 	models,
 	settings,
+	reroute,
 	onChange,
 	disabled,
 }: {
 	models: ChatModel[];
 	settings: TurnSettings;
+	/**
+	 * The provider answered with a different model than the one chosen. Separate from
+	 * `settings` all the way down: settings are what the user asked for, this is what
+	 * replied, and folding them together is how the control ends up advertising a
+	 * model that is not the one producing the answers.
+	 */
+	reroute?: ModelReroute;
 	onChange: (next: TurnSettings) => void;
 	disabled?: boolean;
 }) {
@@ -56,7 +69,10 @@ export function TurnSettingsBar({
 	const fallback = models.find((model) => model.default);
 	// The label says what will actually be used: the provider's default is a real
 	// answer, not an absence, so it is named rather than shown as "none".
-	const modelLabel = selected?.displayName ?? fallback?.displayName ?? "Provider default";
+	const chosenLabel = selected?.displayName ?? fallback?.displayName ?? "Provider default";
+	const rerouted = reroute
+		? models.find((model) => model.id === reroute.toModel)?.displayName ?? reroute.toModel
+		: undefined;
 	const efforts = (selected ?? fallback)?.efforts ?? [];
 	const effortLabel =
 		settings.reasoningEffort ?? (selected ?? fallback)?.defaultEffort ?? undefined;
@@ -67,10 +83,30 @@ export function TurnSettingsBar({
 			{models.length > 0 ? (
 				<Picker
 					icon={Cpu}
-					label={modelLabel}
-					title="Model for the next turn"
+					// What is answering, not what was asked for. The substitution stays
+					// visible beside it rather than replacing the choice, because the choice
+					// is still the user's and still applies to the next turn.
+					label={rerouted ?? chosenLabel}
+					title={
+						reroute
+							? `The provider answered with ${rerouted} instead of ${reroute.fromModel ?? chosenLabel}${
+									reroute.reason ? `: ${reroute.reason}` : ""
+								}`
+							: "Model for the next turn"
+					}
 					disabled={disabled}
 					width="w-80"
+					badge={
+						reroute ? (
+							// A mark, not a second name. Two truncated model names side by side is
+							// less legible than one readable name plus a flag that says it is not
+							// the one that was asked for; the tooltip and the menu spell out which.
+							<Shuffle
+								className="size-3 shrink-0 text-warning"
+								aria-label={`Substituted for ${reroute.fromModel ?? chosenLabel}`}
+							/>
+						) : null
+					}
 				>
 					<DropdownMenuLabel className="flex items-baseline justify-between gap-2">
 						<span>Model</span>
@@ -78,6 +114,16 @@ export function TurnSettingsBar({
 							Applies to the next turn
 						</span>
 					</DropdownMenuLabel>
+					{/* Said inside the menu as well as on the trigger: this is where a user
+					    goes to change the model, and it is where the fact that their last
+					    choice was overridden matters most. */}
+					{reroute ? (
+						<p className="px-2 pb-1.5 text-[11px] leading-snug text-warning">
+							The provider answered with {rerouted} instead of{" "}
+							{reroute.fromModel ?? chosenLabel}
+							{reroute.reason ? ` — ${reroute.reason}` : "."}
+						</p>
+					) : null}
 					{models.map((model) => (
 						<DropdownMenuItem
 							key={model.id}
@@ -191,6 +237,7 @@ function Picker({
 	title,
 	disabled,
 	width,
+	badge,
 	children,
 }: {
 	icon: typeof Cpu;
@@ -198,6 +245,8 @@ function Picker({
 	title: string;
 	disabled?: boolean;
 	width: string;
+	/** A note that belongs on the trigger, e.g. the model that was overridden. */
+	badge?: React.ReactNode;
 	children: React.ReactNode;
 }) {
 	return (
@@ -214,6 +263,7 @@ function Picker({
 				>
 					<Icon aria-hidden="true" className="size-3.5 text-muted-foreground" />
 					<span className="max-w-[13ch] truncate text-[11px]">{label}</span>
+					{badge}
 					<ChevronUp aria-hidden="true" className="size-3 text-muted-foreground" />
 				</Button>
 			</DropdownMenuTrigger>
