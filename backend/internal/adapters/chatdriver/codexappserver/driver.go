@@ -82,6 +82,10 @@ func capabilities() ports.ChatCapabilities {
 		ports.ChatCapabilityPlans:       true,
 		ports.ChatCapabilityInteractive: true,
 		ports.ChatCapabilityModels:      true,
+		// Without this a long conversation eventually cannot accept another turn at
+		// all: every turn re-sends the history, so context fills on its own and the
+		// only way back is to summarize what is already there.
+		ports.ChatCapabilityCompaction: true,
 		// turn/steer exists in the protocol but AO does not use it yet, so it is
 		// not advertised: a capability AO cannot drive must not gate UI on.
 		ports.ChatCapabilitySteer: false,

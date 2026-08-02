@@ -910,6 +910,23 @@ type ResolveConversationApprovalRequest struct {
 	DecisionID string `json:"decisionId"`
 }
 
+// CompactConversationResponse reports a compaction the provider accepted.
+//
+// Accepted, not finished. The provider takes the request and does the work as its
+// own turn over the following seconds, so this says what is about to be reclaimed
+// and the settled figures arrive on the timeline as a compaction entry. A client
+// that wants the outcome reads the timeline, which is where it belongs anyway:
+// the reclaim is durable history, not the answer to one request.
+type CompactConversationResponse struct {
+	// TokensBefore is the conversation's context position when compaction was
+	// requested. Zero means the provider has not reported one yet, in which case
+	// AO deliberately claims no figure rather than guessing at one.
+	TokensBefore int64 `json:"tokensBefore,omitempty"`
+	// TokensAfter is only set by a provider that compacts synchronously. Zero means
+	// the reclaim is still in flight.
+	TokensAfter int64 `json:"tokensAfter,omitempty"`
+}
+
 // ConversationTurnResponse is one request and the work that followed it.
 type ConversationTurnResponse struct {
 	ID             string  `json:"id"`
@@ -971,6 +988,10 @@ type ConversationSnapshotResponse struct {
 	// the client already polls so the composer can label itself without a second
 	// request, and so a choice made on another client shows up here.
 	Settings ConversationTurnSettingsPayload `json:"settings"`
+	// CompactedAt is when history was last summarized to reclaim context, or absent
+	// if never. On the snapshot rather than derived from the timeline so the
+	// composer can label the control without scanning every activity.
+	CompactedAt *string `json:"compactedAt,omitempty"`
 }
 
 // ConversationRequestIDParam is the provider's approval request id. Resolving

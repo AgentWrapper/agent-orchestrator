@@ -259,6 +259,27 @@ func (s *Store) SetConversationSettings(
 	return nil
 }
 
+// MarkCompacted records that the conversation's history was summarized to reclaim
+// context.
+//
+// Separate from the timeline row the caller writes alongside it, and deliberately
+// not folded into UpsertActivity: this is conversation state ("has compaction ever
+// run"), the activity is the narrative ("here is where it happened"), and a
+// generic activity writer has no business knowing which kinds move a column on the
+// conversation.
+func (s *Store) MarkCompacted(ctx context.Context, conversationID string, at time.Time) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if err := s.qw.MarkConversationCompacted(ctx, gen.MarkConversationCompactedParams{
+		CompactedAt: sql.NullTime{Time: at, Valid: true},
+		UpdatedAt:   at,
+		ID:          conversationID,
+	}); err != nil {
+		return fmt.Errorf("mark conversation %s compacted: %w", conversationID, err)
+	}
+	return nil
+}
+
 func nullableString(value string) sql.NullString {
 	if value == "" {
 		return sql.NullString{}
@@ -661,6 +682,10 @@ func conversationToDomain(row gen.Conversation) domain.ConversationRecord {
 	}
 	if row.SessionID != nil {
 		rec.SessionID = *row.SessionID
+	}
+	if row.CompactedAt.Valid {
+		compacted := row.CompactedAt.Time
+		rec.CompactedAt = &compacted
 	}
 	return rec
 }

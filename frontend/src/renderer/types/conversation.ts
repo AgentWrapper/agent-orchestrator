@@ -113,6 +113,39 @@ export interface UsageDetail {
 	totalTokens?: number;
 }
 
+/**
+ * What a compaction reclaimed.
+ *
+ * Every field is optional because the provider reports none of them on its own
+ * compaction event — the driver brackets them from the token-usage reports either
+ * side of it, and omits what it could not observe. A compaction right after a
+ * restart genuinely does not know what it saved, so the UI says nothing rather
+ * than showing a zero.
+ */
+export interface CompactionDetail {
+	/**
+	 * Which kind of system event this row is. `system` is a general bucket, so the
+	 * daemon stamps the discriminator rather than leaving the renderer to guess a
+	 * compaction from the presence of token fields, which are all optional.
+	 */
+	event?: "compaction";
+	tokensBefore?: number;
+	tokensAfter?: number;
+	tokensReclaimed?: number;
+	contextWindow?: number;
+}
+
+/**
+ * Whether a timeline item is the marker for a history compaction.
+ *
+ * Deliberately not a type predicate: it is used inside a boolean expression that
+ * has already narrowed the item to an activity, and a predicate there would narrow
+ * the negation to `never`.
+ */
+export function isCompaction(item: ConversationItem): boolean {
+	return item.kind === "activity" && item.detail?.event === "compaction";
+}
+
 export interface ConversationActivity {
 	kind: "activity";
 	id: string;
@@ -123,7 +156,7 @@ export interface ConversationActivity {
 	status: ActivityStatus;
 	/** The one-line label shown when collapsed. */
 	summary: string;
-	detail?: CommandDetail & FileChangeDetail & UsageDetail;
+	detail?: CommandDetail & FileChangeDetail & UsageDetail & CompactionDetail;
 	/**
 	 * The provider's identifier for an approval. Resolving matches on this, so a
 	 * card left on screen cannot answer a request that replaced it.
@@ -184,6 +217,13 @@ export interface ConversationSnapshot {
 	/** What the next turn will be sent with. Daemon-owned, so it survives a
 	 *  restart and applies to turns AO dispatches on the user's behalf. */
 	settings: TurnSettings;
+	/**
+	 * When history was last summarized to reclaim context, or absent if never.
+	 *
+	 * Read from the snapshot rather than scanned out of the timeline: the timeline
+	 * is unbounded and this is consulted on every render.
+	 */
+	compactedAt?: string;
 }
 
 /**

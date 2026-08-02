@@ -471,12 +471,16 @@ type turnSettings struct {
 type snapshot struct {
 	ConversationID string       `json:"conversationId"`
 	Settings       turnSettings `json:"settings"`
-	Mode           string       `json:"mode"`
-	Controller     string       `json:"controller"`
-	LatestSequence int64        `json:"latestSequence"`
-	Turns          []turn       `json:"turns"`
-	Messages       []message    `json:"messages"`
-	Activities     []activity   `json:"activities"`
+	// CompactedAt is when history was last summarized to reclaim context, empty if
+	// never. On the snapshot because a client consults it on every render and must
+	// not have to scan an unbounded timeline for it.
+	CompactedAt    string     `json:"compactedAt"`
+	Mode           string     `json:"mode"`
+	Controller     string     `json:"controller"`
+	LatestSequence int64      `json:"latestSequence"`
+	Turns          []turn     `json:"turns"`
+	Messages       []message  `json:"messages"`
+	Activities     []activity `json:"activities"`
 }
 
 func (s snapshot) turnByID(id string) (turn, bool) {

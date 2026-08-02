@@ -70,6 +70,9 @@ export function SessionChatSurface({ session }: { session: WorkspaceSession }) {
 			onInterrupt={commands.interrupt}
 			models={models}
 			onChooseSettings={commands.chooseSettings}
+			onCompact={commands.compact}
+			compacting={commands.compacting}
+			compactUnavailable={commands.compactUnavailable}
 		/>
 	);
 }

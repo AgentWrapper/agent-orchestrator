@@ -10,6 +10,7 @@
 import { useState } from "react";
 import {
 	AlertTriangle,
+	Archive,
 	Brain,
 	ChevronRight,
 	CircleAlert,
@@ -430,6 +431,58 @@ export function ApprovalCard({
 			</div>
 		</div>
 	);
+}
+
+/* -------------------------------------------------------------------------- */
+/* compaction                                                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Where the conversation's earlier history was summarized to reclaim context.
+ *
+ * It renders as a divider rather than an activity row because that is what it is:
+ * everything above it is no longer what the agent sees verbatim. Without the
+ * marker, a conversation that quietly lost half its history reads as if the agent
+ * simply forgot — the user would have no way to tell a compaction from a bug.
+ *
+ * Figures are shown only when the provider's reports allowed them to be computed.
+ * A compaction right after a daemon restart genuinely does not know what it saved,
+ * and a "0 tokens freed" label would be a lie rather than a gap.
+ */
+export function CompactionMarker({ activity }: { activity: ConversationActivity }) {
+	const reclaimed = activity.detail?.tokensReclaimed;
+	const after = activity.detail?.tokensAfter;
+	const window = activity.detail?.contextWindow;
+
+	return (
+		<div className="flex items-center gap-2 py-1" data-compaction="true">
+			<span aria-hidden="true" className="h-px flex-1 bg-border" />
+			<Archive aria-hidden="true" className="size-3 shrink-0 text-muted-foreground/70" />
+			<span className="shrink-0 text-[10px] uppercase tracking-[0.08em] text-muted-foreground/70">
+				History compacted
+			</span>
+			{reclaimed ? (
+				<span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/70">
+					&minus;{formatTokens(reclaimed)}
+				</span>
+			) : null}
+			{after && window ? (
+				<span
+					className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/70"
+					title={`${after.toLocaleString()} of ${window.toLocaleString()} context tokens in use`}
+				>
+					{Math.round((after / window) * 100)}% full
+				</span>
+			) : null}
+			<span aria-hidden="true" className="h-px flex-1 bg-border" />
+		</div>
+	);
+}
+
+/** Exact below a thousand, because that is where the digits still mean something. */
+function formatTokens(tokens: number): string {
+	if (tokens < 1000) return `${tokens}`;
+	return `${(tokens / 1000).toFixed(1)}k`;
 }
 
 /* -------------------------------------------------------------------------- */

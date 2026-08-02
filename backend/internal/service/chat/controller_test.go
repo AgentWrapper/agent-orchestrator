@@ -3,6 +3,7 @@ package chat_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -907,5 +908,195 @@ func TestStartSettlesWorkLeftByAKilledController(t *testing.T) {
 	}
 	if got := snapshot.Activities[0].Status; got == domain.ActivityStatusPending {
 		t.Error("approval left pending by a dead controller; the user can never answer it")
+	}
+}
+
+/* ---- compaction --------------------------------------------------------- */
+
+// compactingConversation is a provider that can reclaim context. The plain fake
+// deliberately cannot, so the unsupported path stays exercised by every other test.
+type compactingConversation struct {
+	*fakeConversation
+
+	compactMu sync.Mutex
+	calls     int
+}
+
+func newCompactingConversation() *compactingConversation {
+	return &compactingConversation{fakeConversation: newFakeConversation()}
+}
+
+func (c *compactingConversation) Compact(context.Context) (ports.ChatCompactionResult, error) {
+	c.compactMu.Lock()
+	defer c.compactMu.Unlock()
+	c.calls++
+	// What is about to be reclaimed, not what was: the real provider accepts the
+	// request and does the work as its own turn afterwards.
+	return ports.ChatCompactionResult{TokensBefore: 15650}, nil
+}
+
+func (c *compactingConversation) compactCalls() int {
+	c.compactMu.Lock()
+	defer c.compactMu.Unlock()
+	return c.calls
+}
+
+// A compaction has to survive a restart, which means it has to be a row. Without
+// one, a conversation that quietly lost half its history has nothing in the
+// timeline to explain the gap, and reads as if the agent simply forgot.
+func TestCompactionIsProjectedAsATimelineFact(t *testing.T) {
+	conv := newCompactingConversation()
+	h := newHarnessWithConversation(t, conv)
+
+	conv.emit(ports.ChatEvent{
+		Kind:           ports.ChatEventCompacted,
+		ProviderTurnID: "compact-turn",
+		ProviderItemID: "cc-1",
+		Summary:        "Compacted history, freeing 11.0k tokens",
+		Detail:         []byte(`{"tokensBefore":15650,"tokensAfter":4632,"tokensReclaimed":11018}`),
+	})
+
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Activities) == 1
+	})
+	activity := snapshot.Activities[0]
+	if activity.Kind != domain.ActivityKindSystem {
+		t.Errorf("kind = %q, want system", activity.Kind)
+	}
+	if activity.Status != domain.ActivityStatusCompleted {
+		t.Errorf("status = %q, want completed", activity.Status)
+	}
+	if activity.Summary != "Compacted history, freeing 11.0k tokens" {
+		t.Errorf("summary = %q", activity.Summary)
+	}
+	if activity.ProviderItemID != "cc-1" {
+		t.Errorf("provider item id = %q, want cc-1 so a replay updates this row", activity.ProviderItemID)
+	}
+	// Not attached to a turn: the provider ran the compaction in a turn AO never
+	// dispatched, so filing the row under it would attribute the entry to work the
+	// user never asked for.
+	if activity.TurnID != "" {
+		t.Errorf("turn id = %q, want none", activity.TurnID)
+	}
+	var detail struct{ TokensReclaimed int64 }
+	if err := json.Unmarshal(activity.Detail, &detail); err != nil {
+		t.Fatalf("detail: %v", err)
+	}
+	if detail.TokensReclaimed != 11018 {
+		t.Errorf("reclaimed = %d, want 11018", detail.TokensReclaimed)
+	}
+
+	// The conversation itself records that compaction has run, so a client does not
+	// have to scan an unbounded timeline to find out.
+	if snapshot.Conversation.CompactedAt == nil {
+		t.Error("conversation was not marked compacted")
+	}
+}
+
+// A compaction replayed across a reconnect updates the row it already has. Two
+// entries for one compaction would read as two, and the reclaim would look twice
+// as large as it was.
+func TestCompactionReplayDoesNotDuplicateTheRow(t *testing.T) {
+	conv := newCompactingConversation()
+	h := newHarnessWithConversation(t, conv)
+
+	for range 2 {
+		conv.emit(ports.ChatEvent{
+			Kind:           ports.ChatEventCompacted,
+			ProviderItemID: "cc-1",
+			Summary:        "Compacted the conversation history",
+		})
+	}
+	// A marker after both, so this waits on an event rather than on a timeout.
+	conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventActivityCompleted, ProviderItemID: "exec-1",
+		ActivityKind: domain.ActivityKindCommand, ActivityStatus: domain.ActivityStatusCompleted,
+		Summary: "date -u",
+	})
+
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		for _, activity := range s.Activities {
+			if activity.ProviderItemID == "exec-1" {
+				return true
+			}
+		}
+		return false
+	})
+	compactions := 0
+	for _, activity := range snapshot.Activities {
+		if activity.Kind == domain.ActivityKindSystem {
+			compactions++
+		}
+	}
+	if compactions != 1 {
+		t.Fatalf("got %d compaction rows for one compaction", compactions)
+	}
+}
+
+func TestCompactReportsWhatIsAboutToBeReclaimed(t *testing.T) {
+	conv := newCompactingConversation()
+	h := newHarnessWithConversation(t, conv)
+
+	result, err := h.svc.Compact(context.Background(), testSession)
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	if result.TokensBefore != 15650 {
+		t.Errorf("tokensBefore = %d, want 15650", result.TokensBefore)
+	}
+	// Zero means "not yet known", not "reclaimed everything". The settled figures
+	// reach the client on the timeline.
+	if result.TokensAfter != 0 {
+		t.Errorf("tokensAfter = %d, want 0 while the reclaim is in flight", result.TokensAfter)
+	}
+	if conv.compactCalls() != 1 {
+		t.Errorf("provider called %d times, want 1", conv.compactCalls())
+	}
+}
+
+// A provider with no way to reclaim context gets a typed answer, so the client can
+// stop offering the control instead of surfacing an internal failure the user
+// cannot act on. The plain fake conversation does not implement ChatCompactor.
+func TestCompactOnAProviderThatCannotIsTyped(t *testing.T) {
+	h := newHarness(t)
+
+	_, err := h.svc.Compact(context.Background(), testSession)
+	if !errors.Is(err, chatsvc.ErrCompactionUnsupported) {
+		t.Fatalf("err = %v, want ErrCompactionUnsupported", err)
+	}
+}
+
+// Measured twice against a live app-server: thread/compact/start mid-turn silently
+// interrupts the running turn and reports it as interrupted, then compacts. Losing
+// work the user is waiting on as a side effect of housekeeping is not something to
+// discover afterwards from the timeline, so AO refuses and makes them stop it.
+func TestCompactRefusesWhileATurnIsInFlight(t *testing.T) {
+	conv := newCompactingConversation()
+	h := newHarnessWithConversation(t, conv)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "start something long", Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	if _, err := h.svc.Compact(ctx, testSession); !errors.Is(err, chatsvc.ErrCompactionWhileBusy) {
+		t.Fatalf("err = %v, want ErrCompactionWhileBusy", err)
+	}
+	if conv.compactCalls() != 0 {
+		t.Error("the provider was asked to compact anyway; the running turn would have been discarded")
+	}
+
+	// Once the turn settles it is allowed again.
+	conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-1",
+		TurnState: domain.TurnStateCompleted,
+	})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateCompleted
+	})
+	if _, err := h.svc.Compact(ctx, testSession); err != nil {
+		t.Fatalf("Compact after the turn settled: %v", err)
 	}
 }

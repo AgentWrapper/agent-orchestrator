@@ -24,6 +24,16 @@ UPDATE conversations
 SET model = ?, reasoning_effort = ?, approval_mode = ?, updated_at = ?
 WHERE id = ?;
 
+-- When the conversation's history was last summarized to reclaim context. Set
+-- alongside the timeline row so the two cannot disagree about whether a
+-- compaction happened.
+-- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+-- offset, so a multi-byte character here silently corrupts later queries.
+-- name: MarkConversationCompacted :exec
+UPDATE conversations
+SET compacted_at = ?, updated_at = ?
+WHERE id = ?;
+
 -- name: NextConversationSequence :one
 UPDATE conversations
 SET latest_sequence = latest_sequence + 1, updated_at = ?

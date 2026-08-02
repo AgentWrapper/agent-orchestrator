@@ -30,6 +30,7 @@ type ConversationService interface {
 	Interrupt(ctx context.Context, session domain.SessionID) error
 	Models(ctx context.Context, session domain.SessionID) ([]ports.ChatModel, domain.ConversationSettings, error)
 	SetTurnSettings(ctx context.Context, session domain.SessionID, settings domain.ConversationSettings) (domain.ConversationSettings, error)
+	Compact(ctx context.Context, session domain.SessionID) (ports.ChatCompactionResult, error)
 }
 
 // ConversationsController owns the Chat routes for a session.
@@ -47,8 +48,30 @@ func (c *ConversationsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/conversation/messages", c.send)
 	r.Post("/sessions/{sessionId}/conversation/approvals/{requestId}/resolve", c.resolve)
 	r.Post("/sessions/{sessionId}/conversation/interrupt", c.interrupt)
+	r.Post("/sessions/{sessionId}/conversation/compact", c.compact)
 	r.Get("/sessions/{sessionId}/conversation/models", c.models)
 	r.Patch("/sessions/{sessionId}/conversation/settings", c.setSettings)
+}
+
+// compact asks the provider to summarize earlier history and reclaim context.
+//
+// 202 rather than 200: the provider accepts the request and does the work as its
+// own turn afterwards, so this reports acceptance and the reclaim lands on the
+// timeline. Claiming 200 would say the compaction is done.
+func (c *ConversationsController) compact(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/conversation/compact")
+		return
+	}
+	result, err := c.Svc.Compact(r.Context(), domain.SessionID(chi.URLParam(r, "sessionId")))
+	if err != nil {
+		writeConversationError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusAccepted, CompactConversationResponse{
+		TokensBefore: result.TokensBefore,
+		TokensAfter:  result.TokensAfter,
+	})
 }
 
 // models serves the provider's catalog for this session plus the current choice.
@@ -263,6 +286,21 @@ func writeConversationError(w http.ResponseWriter, r *http.Request, err error) {
 			"CHAT_CONTROLLER_NOT_READY",
 			"the agent controller for this session is not running", nil)
 
+	case errors.Is(err, chatsvc.ErrCompactionUnsupported):
+		// Permanent for this harness, and a 409 rather than a 500 because nothing
+		// failed: the provider simply has no way to reclaim context. A client should
+		// stop offering the control instead of retrying.
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_COMPACTION_UNSUPPORTED",
+			"this agent cannot compact its conversation history", nil)
+
+	case errors.Is(err, chatsvc.ErrCompactionWhileBusy):
+		// Retryable once the turn ends, and refused rather than forwarded: the
+		// provider would silently interrupt the running turn to make room.
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_COMPACTION_BUSY",
+			"finish or stop the current turn before compacting", nil)
+
 	case errors.Is(err, chatsvc.ErrNoActiveTurn):
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
 			"CHAT_NO_ACTIVE_TURN", "there is no turn in flight to interrupt", nil)
@@ -315,6 +353,7 @@ func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotRespon
 		Messages:       make([]ConversationMessageResponse, 0, len(s.Messages)),
 		Activities:     make([]ConversationActivityResponse, 0, len(s.Activities)),
 		Settings:       turnSettingsPayload(s.Conversation.Settings),
+		CompactedAt:    optionalTimestamp(s.Conversation.CompactedAt),
 	}
 
 	for _, turn := range s.Turns {

@@ -143,6 +143,7 @@ var schemaNames = map[string]string{
 	"ControllersConversationModelsResponse":         "ConversationModelsResponse",
 	"ControllersConversationModelResponse":          "ConversationModelResponse",
 	"ControllersConversationTurnSettingsPayload":    "ConversationTurnSettingsPayload",
+	"ControllersCompactConversationResponse":        "CompactConversationResponse",
 	// httpd/envelope
 	"EnvelopeAPIError": "APIError",
 	// domain
@@ -453,6 +454,18 @@ func shellTerminalOperations() []operation {
 			resps: []respUnit{
 				{http.StatusNoContent, nil},
 				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/conversation/compact", id: "compactSessionConversation", tag: "conversations",
+			summary:    "Summarize earlier history to reclaim context in a chat session",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.CompactConversationResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},

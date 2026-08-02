@@ -538,6 +538,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/conversation/compact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Summarize earlier history to reclaim context in a chat session */
+        post: operations["compactSessionConversation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/conversation/interrupt": {
         parameters: {
             query?: never;
@@ -1063,6 +1080,12 @@ export interface components {
             reason: string;
             sessionId: string;
         };
+        CompactConversationResponse: {
+            /** Format: int64 */
+            tokensAfter?: number;
+            /** Format: int64 */
+            tokensBefore?: number;
+        };
         ContainerReapConfig: {
             disabled?: boolean;
         };
@@ -1148,6 +1171,7 @@ export interface components {
         };
         ConversationSnapshotResponse: {
             activities: components["schemas"]["ConversationActivityResponse"][];
+            compactedAt?: null | string;
             /** @enum {string} */
             controller: "connecting" | "ready" | "busy" | "recovering" | "stopped";
             conversationId: string;
@@ -3655,6 +3679,65 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    compactSessionConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompactConversationResponse"];
                 };
             };
             /** @description Not Found */

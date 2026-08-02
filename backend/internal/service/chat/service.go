@@ -514,6 +514,28 @@ func (s *Service) Models(ctx context.Context, id domain.SessionID) ([]ports.Chat
 	return models, controller.Settings(), nil
 }
 
+// Compact asks the provider to summarize earlier history and reclaim context.
+//
+// Why this exists at all: every turn re-sends the whole conversation, so context
+// fills on its own and a long conversation eventually cannot accept another turn.
+// Compaction is the difference between a session that works for an hour and one
+// that works for a day.
+//
+// The result reports what is about to be reclaimed, not what was. The provider
+// accepts the request immediately and does the work as its own turn over the next
+// ten seconds or so; the settled figures arrive on the timeline as a compaction
+// entry.
+func (s *Service) Compact(ctx context.Context, id domain.SessionID) (ports.ChatCompactionResult, error) {
+	if _, err := s.requireChatSession(ctx, id); err != nil {
+		return ports.ChatCompactionResult{}, err
+	}
+	controller, err := s.Controller(id)
+	if err != nil {
+		return ports.ChatCompactionResult{}, err
+	}
+	return controller.Compact(ctx)
+}
+
 // SetTurnSettings records the provider choices for this session's next turn.
 //
 // Applied per turn, so nothing restarts: the running turn keeps whatever it was

@@ -271,6 +271,28 @@ func (q *Queries) InsertConversationTurn(ctx context.Context, arg InsertConversa
 	return err
 }
 
+const markConversationCompacted = `-- name: MarkConversationCompacted :exec
+UPDATE conversations
+SET compacted_at = ?, updated_at = ?
+WHERE id = ?
+`
+
+type MarkConversationCompactedParams struct {
+	CompactedAt sql.NullTime
+	UpdatedAt   time.Time
+	ID          string
+}
+
+// When the conversation's history was last summarized to reclaim context. Set
+// alongside the timeline row so the two cannot disagree about whether a
+// compaction happened.
+// NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
+// offset, so a multi-byte character here silently corrupts later queries.
+func (q *Queries) MarkConversationCompacted(ctx context.Context, arg MarkConversationCompactedParams) error {
+	_, err := q.db.ExecContext(ctx, markConversationCompacted, arg.CompactedAt, arg.UpdatedAt, arg.ID)
+	return err
+}
+
 const markConversationTurnStarted = `-- name: MarkConversationTurnStarted :exec
 UPDATE conversation_turns
 SET state = 'running', started_at = COALESCE(started_at, ?)
@@ -407,7 +429,7 @@ func (q *Queries) SelectConversationActivityByProviderItem(ctx context.Context, 
 }
 
 const selectConversationByID = `-- name: SelectConversationByID :one
-SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode FROM conversations WHERE id = ? LIMIT 1
+SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at FROM conversations WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) SelectConversationByID(ctx context.Context, id string) (Conversation, error) {
@@ -424,12 +446,13 @@ func (q *Queries) SelectConversationByID(ctx context.Context, id string) (Conver
 		&i.Model,
 		&i.ReasoningEffort,
 		&i.ApprovalMode,
+		&i.CompactedAt,
 	)
 	return i, err
 }
 
 const selectConversationBySession = `-- name: SelectConversationBySession :one
-SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode FROM conversations WHERE session_id = ? LIMIT 1
+SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at FROM conversations WHERE session_id = ? LIMIT 1
 `
 
 func (q *Queries) SelectConversationBySession(ctx context.Context, sessionID *domain.SessionID) (Conversation, error) {
@@ -446,6 +469,7 @@ func (q *Queries) SelectConversationBySession(ctx context.Context, sessionID *do
 		&i.Model,
 		&i.ReasoningEffort,
 		&i.ApprovalMode,
+		&i.CompactedAt,
 	)
 	return i, err
 }

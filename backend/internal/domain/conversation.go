@@ -126,9 +126,14 @@ type ConversationRecord struct {
 	// Settings are the provider choices for the conversation's NEXT turn. Empty
 	// fields mean the provider's own default, which is why a conversation nobody
 	// configures behaves exactly as it did before these existed.
-	Settings  ConversationSettings `json:"settings"`
-	CreatedAt time.Time            `json:"createdAt"`
-	UpdatedAt time.Time            `json:"updatedAt"`
+	Settings ConversationSettings `json:"settings"`
+	// CompactedAt is when the provider last summarized earlier history to reclaim
+	// context. Nil means never. Held as conversation state as well as a timeline
+	// entry so a client can tell whether compaction has run without walking an
+	// unbounded timeline on every render.
+	CompactedAt *time.Time `json:"compactedAt,omitempty"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	UpdatedAt   time.Time  `json:"updatedAt"`
 }
 
 // ConversationSettings are the per-turn provider choices AO remembers.
