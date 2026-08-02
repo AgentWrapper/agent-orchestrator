@@ -11,8 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/google/uuid"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 type jsonlRecord struct {
