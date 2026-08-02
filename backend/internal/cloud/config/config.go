@@ -62,7 +62,7 @@ func Load() (Config, error) {
 		ReconcileInterval:     2 * time.Second,
 		ShutdownTimeout:       15 * time.Second,
 		AllowLocalGitHub:      os.Getenv("AO_GITHUB_AUTH_MODE") == "local-gh",
-		GitHubToken:           strings.TrimSpace(os.Getenv("AO_GITHUB_TOKEN")),
+		GitHubToken:           strings.TrimSpace(os.Getenv("AO_LOCAL_GITHUB_TOKEN")),
 		WorkerBinaryPath:      strings.TrimSpace(os.Getenv("AO_WORKER_BINARY_PATH")),
 	}
 	if err := cfg.Validate(); err != nil {

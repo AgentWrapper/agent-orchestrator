@@ -22,7 +22,7 @@ so it can create the dynamic session containers.
 - Docker Desktop running
 - Go and Node.js/npm installed
 - An authenticated `gh` CLI (`gh auth login`) with access to repositories you
-  will open, or a fine-grained GitHub token
+  will open
 - A coding-agent credential to add through the Cloud settings UI
 
 Local mode stores email/password credentials and sessions in the local
@@ -79,15 +79,9 @@ worker stores that token in its persistent AO data directory with mode `0600`
 and configures the repository's Git credential helper to read it for clone,
 fetch, pull, and push. This temporary local-only path is not enabled by the
 hosted Daytona configuration; hosted deployments still require the planned
-account-scoped GitHub App. If `gh` is unavailable, add a fine-grained token to
-the gitignored `.env.cloud.local`:
-
-```dotenv
-AO_SANDBOX_PROVIDER=docker
-AO_DOCKER_WORKER_IMAGE=ao-cloud-worker:local
-
-AO_GITHUB_TOKEN=YOUR_FINE_GRAINED_GITHUB_TOKEN
-```
+account-scoped GitHub App/provisioning path. If `gh` is unavailable or not
+authenticated, repository cloning and PR/SCM actions are disabled until the
+contributor runs `gh auth login`.
 
 Open `http://127.0.0.1:5174`, create a local email/password account, connect a
 coding-agent credential in Cloud settings, create a project, and start an

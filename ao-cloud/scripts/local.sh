@@ -54,25 +54,24 @@ load_local_env() {
 }
 
 configure_local_github() {
-  if [[ -n "${AO_GITHUB_TOKEN:-}" ]]; then
-    echo "Using AO_GITHUB_TOKEN from .env.cloud.local for local GitHub access."
-    return
-  fi
-
   if ! command -v gh >/dev/null 2>&1; then
     unset AO_GITHUB_AUTH_MODE
-    echo "GitHub repository access is disabled: install and authenticate the gh CLI, or set AO_GITHUB_TOKEN in .env.cloud.local."
+    unset AO_LOCAL_GITHUB_TOKEN
+    echo "GitHub repository access is disabled: install and authenticate the gh CLI."
     return
   fi
 
   local token
   if ! token="$(gh auth token 2>/dev/null)" || [[ -z "$token" ]]; then
     unset AO_GITHUB_AUTH_MODE
-    echo "GitHub repository access is disabled: run 'gh auth login', or set AO_GITHUB_TOKEN in .env.cloud.local."
+    unset AO_LOCAL_GITHUB_TOKEN
+    echo "GitHub repository access is disabled: run 'gh auth login'."
     return
   fi
-  AO_GITHUB_TOKEN="$token"
-  export AO_GITHUB_TOKEN
+  AO_LOCAL_GITHUB_TOKEN="$token"
+  AO_GITHUB_AUTH_MODE="local-gh"
+  export AO_LOCAL_GITHUB_TOKEN
+  export AO_GITHUB_AUTH_MODE
   echo "Using the host gh authentication token for local GitHub access."
 }
 
