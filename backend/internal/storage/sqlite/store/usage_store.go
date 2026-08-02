@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -17,16 +18,15 @@ func (s *Store) UpsertUsageBinding(ctx context.Context, rec domain.UsageBindingR
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	row, err := s.qw.UpsertUsageBinding(ctx, gen.UpsertUsageBindingParams{
-		SessionID:        rec.SessionID,
-		Harness:          rec.Harness,
-		NativeRootID:     rec.NativeRootID,
-		InitialModelID:   rec.InitialModelID,
-		SourceCliVersion: rec.SourceCLIVersion,
-		State:            usageBindingStateOrDefault(rec.State),
-		LastErrorCode:    rec.LastErrorCode,
-		FirstSeenAt:      timeOrNow(rec.FirstSeenAt),
-		LastSeenAt:       timeOrNow(rec.LastSeenAt),
-		UpdatedAt:        timeOrNow(rec.UpdatedAt),
+		SessionID:      rec.SessionID,
+		Harness:        rec.Harness,
+		NativeRootID:   rec.NativeRootID,
+		InitialModelID: rec.InitialModelID,
+		State:          usageBindingStateOrDefault(rec.State),
+		LastErrorCode:  rec.LastErrorCode,
+		FirstSeenAt:    timeOrNow(rec.FirstSeenAt),
+		LastSeenAt:     timeOrNow(rec.LastSeenAt),
+		UpdatedAt:      timeOrNow(rec.UpdatedAt),
 	})
 	if err != nil {
 		return domain.UsageBindingRecord{}, fmt.Errorf("upsert usage binding for session %s root %q: %w", rec.SessionID, rec.NativeRootID, err)
@@ -115,6 +115,9 @@ func (s *Store) CompleteUsageBindingIfSettled(ctx context.Context, bindingID int
 // InsertUsageSource records a physical JSONL source generation. Repeated calls
 // for the same binding/path/generation return the existing row.
 func (s *Store) InsertUsageSource(ctx context.Context, rec domain.UsageSourceRecord) (domain.UsageSourceRecord, error) {
+	if err := validateParserStateObject(rec.ParserStateJSON); err != nil {
+		return domain.UsageSourceRecord{}, err
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	row, err := s.qw.InsertUsageSource(ctx, usageSourceInsertParams(rec))
@@ -133,6 +136,9 @@ func (s *Store) ReplaceUsageSource(
 	rec domain.UsageSourceRecord,
 	at time.Time,
 ) (domain.UsageSourceRecord, error) {
+	if err := validateParserStateObject(rec.ParserStateJSON); err != nil {
+		return domain.UsageSourceRecord{}, err
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	var replaced domain.UsageSourceRecord
@@ -271,6 +277,11 @@ func (s *Store) MarkUsageSourceFailure(ctx context.Context, id, failureCount int
 // ApplyUsageChunk atomically writes parsed usage events and advances the source
 // cursor/baselines. The cursor never moves unless all event writes commit.
 func (s *Store) ApplyUsageChunk(ctx context.Context, sourceID, expectedOffset int64, nextState domain.SourceCursorState, events []domain.ModelUsageEvent) (domain.ApplyUsageChunkResult, error) {
+	if nextState.ParserStateJSON != "" {
+		if err := validateParserStateObject(nextState.ParserStateJSON); err != nil {
+			return domain.ApplyUsageChunkResult{}, err
+		}
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
@@ -295,7 +306,7 @@ func (s *Store) ApplyUsageChunk(ctx context.Context, sourceID, expectedOffset in
 				return err
 			}
 			if err == nil {
-				if existing.SourceUsageHash != ev.SourceUsageHash {
+				if !usageEventMatches(existing, ev) {
 					return fmt.Errorf("%w: binding %d event %q", domain.ErrUsageSourceEventConflict, source.BindingID, ev.SourceEventKey)
 				}
 				result.DuplicateEvents++
@@ -307,22 +318,16 @@ func (s *Store) ApplyUsageChunk(ctx context.Context, sourceID, expectedOffset in
 			result.InsertedEvents++
 		}
 		return q.UpdateUsageSourceCursor(ctx, gen.UpdateUsageSourceCursorParams{
-			ID:                        sourceID,
-			ByteOffset:                nextState.ByteOffset,
-			BaselineInputTokens:       nextState.BaselineInputTokens,
-			BaselineCachedInputTokens: nextState.BaselineCachedInputTokens,
-			BaselineCacheWriteTokens:  nextState.BaselineCacheWriteTokens,
-			BaselineOutputTokens:      nextState.BaselineOutputTokens,
-			BaselineReasoningTokens:   nextState.BaselineReasoningTokens,
-			CurrentModelID:            nextState.CurrentModelID,
-			CurrentProvider:           nextState.CurrentProvider,
-			State:                     usageSourceStateOrDefault(nextState.State),
-			FailureCount:              nextState.FailureCount,
-			AnomalyCount:              nextState.AnomalyCount,
-			NextRetryAt:               ptrTimeToNullTime(nextState.NextRetryAt),
-			LastErrorCode:             nextState.LastErrorCode,
-			LastObservedAt:            ptrTimeToNullTime(nextState.LastObservedAt),
-			UpdatedAt:                 timeOrNow(nextState.UpdatedAt),
+			ID:              sourceID,
+			ByteOffset:      nextState.ByteOffset,
+			ParserStateJson: stringOrDefault(nextState.ParserStateJSON, source.ParserStateJson),
+			State:           usageSourceStateOrDefault(nextState.State),
+			FailureCount:    nextState.FailureCount,
+			AnomalyCount:    nextState.AnomalyCount,
+			NextRetryAt:     ptrTimeToNullTime(nextState.NextRetryAt),
+			LastErrorCode:   nextState.LastErrorCode,
+			LastObservedAt:  ptrTimeToNullTime(nextState.LastObservedAt),
+			UpdatedAt:       timeOrNow(nextState.UpdatedAt),
 		})
 	})
 	if err != nil {
@@ -377,115 +382,92 @@ func (s *Store) ListCompactSessionUsage(ctx context.Context, projectID domain.Pr
 
 func usageBindingFromGen(row gen.UsageBinding) domain.UsageBindingRecord {
 	return domain.UsageBindingRecord{
-		ID:               row.ID,
-		SessionID:        row.SessionID,
-		Harness:          row.Harness,
-		NativeRootID:     row.NativeRootID,
-		InitialModelID:   row.InitialModelID,
-		SourceCLIVersion: row.SourceCliVersion,
-		State:            row.State,
-		LastErrorCode:    row.LastErrorCode,
-		FirstSeenAt:      row.FirstSeenAt,
-		LastSeenAt:       row.LastSeenAt,
-		UpdatedAt:        row.UpdatedAt,
+		ID:             row.ID,
+		SessionID:      row.SessionID,
+		Harness:        row.Harness,
+		NativeRootID:   row.NativeRootID,
+		InitialModelID: row.InitialModelID,
+		State:          row.State,
+		LastErrorCode:  row.LastErrorCode,
+		FirstSeenAt:    row.FirstSeenAt,
+		LastSeenAt:     row.LastSeenAt,
+		UpdatedAt:      row.UpdatedAt,
 	}
 }
 
 func usageSourceFromGen(row gen.UsageSource) domain.UsageSourceRecord {
 	return domain.UsageSourceRecord{
-		ID:                        row.ID,
-		BindingID:                 row.BindingID,
-		Kind:                      row.Kind,
-		NativeSessionID:           row.NativeSessionID,
-		SubagentID:                row.SubagentID,
-		ArtifactPath:              row.ArtifactPath,
-		FileIdentity:              row.FileIdentity,
-		Generation:                row.Generation,
-		ByteOffset:                row.ByteOffset,
-		BaselineInputTokens:       row.BaselineInputTokens,
-		BaselineCachedInputTokens: row.BaselineCachedInputTokens,
-		BaselineCacheWriteTokens:  row.BaselineCacheWriteTokens,
-		BaselineOutputTokens:      row.BaselineOutputTokens,
-		BaselineReasoningTokens:   row.BaselineReasoningTokens,
-		CurrentModelID:            row.CurrentModelID,
-		CurrentProvider:           row.CurrentProvider,
-		ParserVersion:             row.ParserVersion,
-		State:                     row.State,
-		FailureCount:              row.FailureCount,
-		AnomalyCount:              row.AnomalyCount,
-		NextRetryAt:               nullTimePtr(row.NextRetryAt),
-		LastErrorCode:             row.LastErrorCode,
-		LastObservedAt:            nullTimePtr(row.LastObservedAt),
-		CreatedAt:                 row.CreatedAt,
-		UpdatedAt:                 row.UpdatedAt,
+		ID:              row.ID,
+		BindingID:       row.BindingID,
+		Kind:            row.Kind,
+		NativeSessionID: row.NativeSessionID,
+		SubagentID:      row.SubagentID,
+		ArtifactPath:    row.ArtifactPath,
+		FileIdentity:    row.FileIdentity,
+		Generation:      row.Generation,
+		ByteOffset:      row.ByteOffset,
+		ParserStateJSON: row.ParserStateJson,
+		State:           row.State,
+		FailureCount:    row.FailureCount,
+		AnomalyCount:    row.AnomalyCount,
+		NextRetryAt:     nullTimePtr(row.NextRetryAt),
+		LastErrorCode:   row.LastErrorCode,
+		LastObservedAt:  nullTimePtr(row.LastObservedAt),
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
 	}
 }
 
 func usageSourceContextFromGen(row gen.GetUsageSourceWithBindingAndSessionRow) domain.UsageSourceContext {
 	return domain.UsageSourceContext{
 		Source: domain.UsageSourceRecord{
-			ID:                        row.SourceID,
-			BindingID:                 row.BindingID,
-			Kind:                      row.Kind,
-			NativeSessionID:           row.NativeSessionID,
-			SubagentID:                row.SubagentID,
-			ArtifactPath:              row.ArtifactPath,
-			FileIdentity:              row.FileIdentity,
-			Generation:                row.Generation,
-			ByteOffset:                row.ByteOffset,
-			BaselineInputTokens:       row.BaselineInputTokens,
-			BaselineCachedInputTokens: row.BaselineCachedInputTokens,
-			BaselineCacheWriteTokens:  row.BaselineCacheWriteTokens,
-			BaselineOutputTokens:      row.BaselineOutputTokens,
-			BaselineReasoningTokens:   row.BaselineReasoningTokens,
-			CurrentModelID:            row.CurrentModelID,
-			CurrentProvider:           row.CurrentProvider,
-			ParserVersion:             row.ParserVersion,
-			State:                     row.SourceState,
-			FailureCount:              row.FailureCount,
-			AnomalyCount:              row.AnomalyCount,
-			NextRetryAt:               nullTimePtr(row.NextRetryAt),
-			LastErrorCode:             row.SourceLastErrorCode,
-			LastObservedAt:            nullTimePtr(row.LastObservedAt),
-			CreatedAt:                 row.SourceCreatedAt,
-			UpdatedAt:                 row.SourceUpdatedAt,
+			ID:              row.SourceID,
+			BindingID:       row.BindingID,
+			Kind:            row.Kind,
+			NativeSessionID: row.NativeSessionID,
+			SubagentID:      row.SubagentID,
+			ArtifactPath:    row.ArtifactPath,
+			FileIdentity:    row.FileIdentity,
+			Generation:      row.Generation,
+			ByteOffset:      row.ByteOffset,
+			ParserStateJSON: row.ParserStateJson,
+			State:           row.SourceState,
+			FailureCount:    row.FailureCount,
+			AnomalyCount:    row.AnomalyCount,
+			NextRetryAt:     nullTimePtr(row.NextRetryAt),
+			LastErrorCode:   row.SourceLastErrorCode,
+			LastObservedAt:  nullTimePtr(row.LastObservedAt),
+			CreatedAt:       row.SourceCreatedAt,
+			UpdatedAt:       row.SourceUpdatedAt,
 		},
-		SessionID:        row.SessionID,
-		ProjectID:        row.ProjectID,
-		Harness:          row.Harness,
-		NativeRootID:     row.NativeRootID,
-		InitialModelID:   row.InitialModelID,
-		SourceCLIVersion: row.SourceCliVersion,
-		BindingState:     row.BindingState,
+		SessionID:      row.SessionID,
+		ProjectID:      row.ProjectID,
+		Harness:        row.Harness,
+		NativeRootID:   row.NativeRootID,
+		InitialModelID: row.InitialModelID,
+		BindingState:   row.BindingState,
 	}
 }
 
 func usageSourceInsertParams(rec domain.UsageSourceRecord) gen.InsertUsageSourceParams {
 	return gen.InsertUsageSourceParams{
-		BindingID:                 rec.BindingID,
-		Kind:                      rec.Kind,
-		NativeSessionID:           rec.NativeSessionID,
-		SubagentID:                rec.SubagentID,
-		ArtifactPath:              rec.ArtifactPath,
-		FileIdentity:              rec.FileIdentity,
-		Generation:                rec.Generation,
-		ByteOffset:                rec.ByteOffset,
-		BaselineInputTokens:       rec.BaselineInputTokens,
-		BaselineCachedInputTokens: rec.BaselineCachedInputTokens,
-		BaselineCacheWriteTokens:  rec.BaselineCacheWriteTokens,
-		BaselineOutputTokens:      rec.BaselineOutputTokens,
-		BaselineReasoningTokens:   rec.BaselineReasoningTokens,
-		CurrentModelID:            rec.CurrentModelID,
-		CurrentProvider:           rec.CurrentProvider,
-		ParserVersion:             rec.ParserVersion,
-		State:                     usageSourceStateOrDefault(rec.State),
-		FailureCount:              rec.FailureCount,
-		AnomalyCount:              rec.AnomalyCount,
-		NextRetryAt:               ptrTimeToNullTime(rec.NextRetryAt),
-		LastErrorCode:             rec.LastErrorCode,
-		LastObservedAt:            ptrTimeToNullTime(rec.LastObservedAt),
-		CreatedAt:                 timeOrNow(rec.CreatedAt),
-		UpdatedAt:                 timeOrNow(rec.UpdatedAt),
+		BindingID:       rec.BindingID,
+		Kind:            rec.Kind,
+		NativeSessionID: rec.NativeSessionID,
+		SubagentID:      rec.SubagentID,
+		ArtifactPath:    rec.ArtifactPath,
+		FileIdentity:    rec.FileIdentity,
+		Generation:      rec.Generation,
+		ByteOffset:      rec.ByteOffset,
+		ParserStateJson: stringOrDefault(rec.ParserStateJSON, "{}"),
+		State:           usageSourceStateOrDefault(rec.State),
+		FailureCount:    rec.FailureCount,
+		AnomalyCount:    rec.AnomalyCount,
+		NextRetryAt:     ptrTimeToNullTime(rec.NextRetryAt),
+		LastErrorCode:   rec.LastErrorCode,
+		LastObservedAt:  ptrTimeToNullTime(rec.LastObservedAt),
+		CreatedAt:       timeOrNow(rec.CreatedAt),
+		UpdatedAt:       timeOrNow(rec.UpdatedAt),
 	}
 }
 
@@ -503,22 +485,30 @@ func usageEventInsertParams(source gen.GetUsageSourceWithBindingAndSessionRow, e
 		UncachedInputTokens: ev.Tokens.UncachedInputTokens,
 		CacheReadTokens:     ev.Tokens.CacheReadTokens,
 		CacheWriteTokens:    ev.Tokens.CacheWriteTokens,
-		CacheWrite5mTokens:  ptrInt64ToNull(ev.Tokens.CacheWrite5mTokens),
-		CacheWrite1hTokens:  ptrInt64ToNull(ev.Tokens.CacheWrite1hTokens),
 		OutputTokens:        ev.Tokens.OutputTokens,
 		ReasoningTokens:     ptrInt64ToNull(ev.Tokens.ReasoningTokens),
-		ReportedCostNanos:   ptrInt64ToNull(ev.Cost.ReportedCostNanos),
-		EstimatedCostNanos:  ptrInt64ToNull(ev.Cost.EstimatedCostNanos),
-		PricingVersion:      ev.Cost.PricingVersion,
-		CostBasis:           costBasisOrDefault(ev.Cost.CostBasis),
-		TokenConfidence:     tokenConfidenceOrDefault(ev.TokenConfidence),
-		CostConfidence:      costConfidenceOrDefault(ev.Cost.Confidence),
+		CostNanos:           ptrInt64ToNull(ev.Cost.CostNanos),
+		PricingVersion:      ptrStringToNull(ev.Cost.PricingVersion),
 		SourceEventKey:      ev.SourceEventKey,
-		SourceUsageHash:     ev.SourceUsageHash,
-		ParserVersion:       stringOrDefault(ev.ParserVersion, source.ParserVersion),
-		SourceCliVersion:    stringOrDefault(ev.SourceCLIVersion, source.SourceCliVersion),
 		CreatedAt:           timeOrNow(ev.CreatedAt),
 	}
+}
+
+func usageEventMatches(existing gen.GetModelUsageEventByKeyRow, event domain.ModelUsageEvent) bool {
+	reasoning := ptrInt64ToNull(event.Tokens.ReasoningTokens)
+	cost := ptrInt64ToNull(event.Cost.CostNanos)
+	pricingVersion := ptrStringToNull(event.Cost.PricingVersion)
+	return existing.Provider == event.Provider &&
+		existing.ModelID == event.ModelID &&
+		existing.ObservedAt.Equal(event.ObservedAt) &&
+		existing.InputTokens == event.Tokens.InputTokens &&
+		existing.UncachedInputTokens == event.Tokens.UncachedInputTokens &&
+		existing.CacheReadTokens == event.Tokens.CacheReadTokens &&
+		existing.CacheWriteTokens == event.Tokens.CacheWriteTokens &&
+		existing.OutputTokens == event.Tokens.OutputTokens &&
+		existing.ReasoningTokens == reasoning &&
+		existing.CostNanos == cost &&
+		existing.PricingVersion == pricingVersion
 }
 
 func usageAggregateFromGen(row gen.AggregateUsageBySessionHarnessModelRow) domain.UsageModelAggregate {
@@ -538,11 +528,11 @@ func usageAggregateFromGen(row gen.AggregateUsageBySessionHarnessModelRow) domai
 			OutputTokens:        row.OutputTokens,
 			ReasoningTokens:     int64PtrWhen(row.ReasoningTokens, row.ReasoningEventCount > 0),
 		},
-		EventCount:              row.EventCount,
-		ReasoningEventCount:     row.ReasoningEventCount,
-		EstimatedCostEventCount: row.EstimatedCostEventCount,
-		EstimatedCostNanos:      row.EstimatedCostNanos,
-		LastObservedAt:          last,
+		EventCount:          row.EventCount,
+		ReasoningEventCount: row.ReasoningEventCount,
+		CostEventCount:      row.CostEventCount,
+		CostNanos:           row.CostNanos,
+		LastObservedAt:      last,
 	}
 }
 
@@ -560,32 +550,22 @@ func usageSourceStateOrDefault(state domain.UsageSourceState) domain.UsageSource
 	return state
 }
 
-func tokenConfidenceOrDefault(v domain.TokenConfidence) domain.TokenConfidence {
-	if v == "" {
-		return domain.TokenConfidenceNone
-	}
-	return v
-}
-
-func costConfidenceOrDefault(v domain.CostConfidence) domain.CostConfidence {
-	if v == "" {
-		return domain.CostConfidenceNone
-	}
-	return v
-}
-
-func costBasisOrDefault(v domain.CostBasis) domain.CostBasis {
-	if v == "" {
-		return domain.CostBasisUnavailable
-	}
-	return v
-}
-
 func stringOrDefault(v, fallback string) string {
 	if v != "" {
 		return v
 	}
 	return fallback
+}
+
+func validateParserStateObject(raw string) error {
+	if raw == "" {
+		raw = "{}"
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &object); err != nil || object == nil {
+		return errors.New("usage parser state must be a JSON object")
+	}
+	return nil
 }
 
 func timeOrNow(t time.Time) time.Time {
@@ -615,6 +595,13 @@ func ptrInt64ToNull(v *int64) sql.NullInt64 {
 		return sql.NullInt64{}
 	}
 	return sql.NullInt64{Int64: *v, Valid: true}
+}
+
+func ptrStringToNull(v *string) sql.NullString {
+	if v == nil || *v == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: *v, Valid: true}
 }
 
 func int64PtrWhen(v int64, ok bool) *int64 {

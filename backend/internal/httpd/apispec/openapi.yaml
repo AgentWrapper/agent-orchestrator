@@ -3996,12 +3996,6 @@ components:
       type: object
     UsageCostMetricResponse:
       properties:
-        confidence:
-          enum:
-          - provider_reported
-          - api_pricing_estimate
-          - unavailable
-          type: string
         coverage:
           enum:
           - complete
@@ -4013,7 +4007,9 @@ components:
           - USD
           type: string
         pricingVersion:
-          type: string
+          type:
+          - "null"
+          - string
         valueNanos:
           type:
           - "null"
@@ -4022,7 +4018,6 @@ components:
       - valueNanos
       - currency
       - coverage
-      - confidence
       type: object
     UsageHarnessResponse:
       properties:
@@ -4077,7 +4072,7 @@ components:
           $ref: '#/components/schemas/UsageMetricResponse'
         cacheWriteTokens:
           $ref: '#/components/schemas/UsageMetricResponse'
-        estimatedCost:
+        cost:
           $ref: '#/components/schemas/UsageCostMetricResponse'
         inputTokens:
           $ref: '#/components/schemas/UsageMetricResponse'
@@ -4094,7 +4089,7 @@ components:
       - cacheWriteTokens
       - outputTokens
       - reasoningTokens
-      - estimatedCost
+      - cost
       type: object
     WorkspaceFileResponse:
       properties:

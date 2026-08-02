@@ -18,29 +18,27 @@ func TestUsageBindingAndSourceIdempotency(t *testing.T) {
 	now := time.Unix(1700000000, 0).UTC()
 
 	binding, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID:        sess.ID,
-		Harness:          sess.Harness,
-		NativeRootID:     "root-thread",
-		InitialModelID:   "gpt-5",
-		SourceCLIVersion: "0.145.0",
-		State:            domain.UsageBindingDiscovering,
-		FirstSeenAt:      now,
-		LastSeenAt:       now,
-		UpdatedAt:        now,
+		SessionID:      sess.ID,
+		Harness:        sess.Harness,
+		NativeRootID:   "root-thread",
+		InitialModelID: "gpt-5",
+		State:          domain.UsageBindingDiscovering,
+		FirstSeenAt:    now,
+		LastSeenAt:     now,
+		UpdatedAt:      now,
 	})
 	if err != nil {
 		t.Fatalf("upsert binding: %v", err)
 	}
 	again, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID:        sess.ID,
-		Harness:          sess.Harness,
-		NativeRootID:     "root-thread",
-		InitialModelID:   "gpt-5.1",
-		SourceCLIVersion: "0.146.0",
-		State:            domain.UsageBindingActive,
-		FirstSeenAt:      now.Add(time.Hour),
-		LastSeenAt:       now.Add(time.Hour),
-		UpdatedAt:        now.Add(time.Hour),
+		SessionID:      sess.ID,
+		Harness:        sess.Harness,
+		NativeRootID:   "root-thread",
+		InitialModelID: "gpt-5.1",
+		State:          domain.UsageBindingActive,
+		FirstSeenAt:    now.Add(time.Hour),
+		LastSeenAt:     now.Add(time.Hour),
+		UpdatedAt:      now.Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatalf("upsert binding again: %v", err)
@@ -48,7 +46,7 @@ func TestUsageBindingAndSourceIdempotency(t *testing.T) {
 	if again.ID != binding.ID || again.FirstSeenAt != binding.FirstSeenAt {
 		t.Fatalf("idempotent binding = %+v, want same id/first_seen as %+v", again, binding)
 	}
-	if again.InitialModelID != "gpt-5.1" || again.SourceCLIVersion != "0.146.0" || again.State != domain.UsageBindingActive {
+	if again.InitialModelID != "gpt-5.1" || again.State != domain.UsageBindingActive {
 		t.Fatalf("refreshed binding = %+v", again)
 	}
 
@@ -58,7 +56,6 @@ func TestUsageBindingAndSourceIdempotency(t *testing.T) {
 		NativeSessionID: "child-thread",
 		ArtifactPath:    "/tmp/codex/rollout.jsonl",
 		FileIdentity:    "dev:ino",
-		ParserVersion:   "codex-rollout/v1",
 		State:           domain.UsageSourcePending,
 		CreatedAt:       now,
 		UpdatedAt:       now,
@@ -72,7 +69,7 @@ func TestUsageBindingAndSourceIdempotency(t *testing.T) {
 		NativeSessionID: "child-thread-updated",
 		ArtifactPath:    "/tmp/codex/rollout.jsonl",
 		FileIdentity:    "dev:ino:updated",
-		ParserVersion:   "codex-rollout/v1",
+		ParserStateJSON: `{"version":1,"source_kind":"codex_rollout","codex":{}}`,
 		State:           domain.UsageSourcePending,
 		CreatedAt:       now.Add(time.Hour),
 		UpdatedAt:       now.Add(time.Hour),
@@ -81,7 +78,7 @@ func TestUsageBindingAndSourceIdempotency(t *testing.T) {
 		t.Fatalf("insert source again: %v", err)
 	}
 	if srcAgain.ID != src.ID || srcAgain.NativeSessionID != "child-thread-updated" ||
-		srcAgain.FileIdentity != "dev:ino" || srcAgain.ParserVersion != "codex-rollout/v1" {
+		srcAgain.FileIdentity != "dev:ino" || srcAgain.ParserStateJSON != "{}" {
 		t.Fatalf("idempotent source = %+v", srcAgain)
 	}
 
@@ -154,19 +151,49 @@ func TestInsertUsageSourceErrorRedactsArtifactPath(t *testing.T) {
 	secretPath := "/private/transcripts/customer-session.jsonl"
 
 	_, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
-		BindingID:     source.BindingID,
-		Kind:          domain.UsageSourceCodexRollout,
-		ArtifactPath:  secretPath,
-		ParserVersion: "",
-		State:         domain.UsageSourcePending,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		BindingID:    source.BindingID,
+		Kind:         domain.UsageSourceKind("invalid"),
+		ArtifactPath: secretPath,
+		State:        domain.UsageSourcePending,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	})
 	if err == nil {
 		t.Fatal("expected invalid source insert to fail")
 	}
 	if strings.Contains(err.Error(), secretPath) {
 		t.Fatalf("store error exposed artifact path: %v", err)
+	}
+}
+
+func TestInsertUsageSourceRejectsNonObjectParserState(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	sess := seedUsageSession(t, s, domain.HarnessCodex)
+	now := time.Unix(1700000000, 0).UTC()
+	binding, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
+		SessionID:    sess.ID,
+		Harness:      sess.Harness,
+		NativeRootID: "root-thread",
+		State:        domain.UsageBindingActive,
+		FirstSeenAt:  now,
+		LastSeenAt:   now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+		BindingID:       binding.ID,
+		Kind:            domain.UsageSourceCodexRollout,
+		ArtifactPath:    "/tmp/codex/rollout.jsonl",
+		ParserStateJSON: `[]`,
+		State:           domain.UsageSourcePending,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	})
+	if err == nil || !strings.Contains(err.Error(), "parser state") {
+		t.Fatalf("insert error = %v, want parser state object error", err)
 	}
 }
 
@@ -189,17 +216,11 @@ func TestApplyUsageChunkAtomicReplayAndAggregates(t *testing.T) {
 	}, &cost)
 
 	result, err := s.ApplyUsageChunk(ctx, source.ID, 0, domain.SourceCursorState{
-		ByteOffset:                100,
-		State:                     domain.UsageSourceActive,
-		BaselineInputTokens:       100,
-		BaselineCachedInputTokens: 50,
-		BaselineCacheWriteTokens:  10,
-		BaselineOutputTokens:      20,
-		BaselineReasoningTokens:   3,
-		CurrentModelID:            "gpt-5.6",
-		CurrentProvider:           "openai",
-		LastObservedAt:            &now,
-		UpdatedAt:                 now,
+		ByteOffset:      100,
+		State:           domain.UsageSourceActive,
+		ParserStateJSON: `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{"input_tokens":100}}}`,
+		LastObservedAt:  &now,
+		UpdatedAt:       now,
 	}, []domain.ModelUsageEvent{event})
 	if err != nil {
 		t.Fatalf("apply chunk: %v", err)
@@ -209,17 +230,11 @@ func TestApplyUsageChunkAtomicReplayAndAggregates(t *testing.T) {
 	}
 
 	result, err = s.ApplyUsageChunk(ctx, source.ID, 100, domain.SourceCursorState{
-		ByteOffset:                120,
-		State:                     domain.UsageSourceActive,
-		BaselineInputTokens:       100,
-		BaselineCachedInputTokens: 50,
-		BaselineCacheWriteTokens:  10,
-		BaselineOutputTokens:      20,
-		BaselineReasoningTokens:   3,
-		CurrentModelID:            "gpt-5.6",
-		CurrentProvider:           "openai",
-		LastObservedAt:            &now,
-		UpdatedAt:                 now.Add(time.Second),
+		ByteOffset:      120,
+		State:           domain.UsageSourceActive,
+		ParserStateJSON: `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{"input_tokens":100},"model_id":"gpt-5.6","provider":"openai"}}`,
+		LastObservedAt:  &now,
+		UpdatedAt:       now.Add(time.Second),
 	}, []domain.ModelUsageEvent{event})
 	if err != nil {
 		t.Fatalf("apply duplicate chunk: %v", err)
@@ -239,14 +254,14 @@ func TestApplyUsageChunkAtomicReplayAndAggregates(t *testing.T) {
 	if got.Tokens.InputTokens != 100 || got.Tokens.OutputTokens != 20 || got.Tokens.ReasoningTokens == nil || *got.Tokens.ReasoningTokens != 3 {
 		t.Fatalf("aggregate tokens = %+v", got.Tokens)
 	}
-	if got.EstimatedCostNanos != cost || got.EstimatedCostEventCount != 1 {
+	if got.CostNanos != cost || got.CostEventCount != 1 {
 		t.Fatalf("aggregate cost = %+v", got)
 	}
 	if got.LastObservedAt == nil || !got.LastObservedAt.Equal(now) {
 		t.Fatalf("aggregate last observed = %v, want %v", got.LastObservedAt, now)
 	}
 
-	if got.EventCount != 1 || got.ReasoningEventCount != 1 || got.EstimatedCostEventCount != 1 {
+	if got.EventCount != 1 || got.ReasoningEventCount != 1 || got.CostEventCount != 1 {
 		t.Fatalf("aggregate coverage counts = %+v, want 1/1/1", got)
 	}
 
@@ -255,7 +270,7 @@ func TestApplyUsageChunkAtomicReplayAndAggregates(t *testing.T) {
 		t.Fatalf("get source context: ok=%v err=%v", ok, err)
 	}
 	if ctxRow.Source.ByteOffset != 120 || ctxRow.ProjectID != sess.ProjectID || ctxRow.NativeRootID != "root-thread" ||
-		ctxRow.Source.CurrentModelID != "gpt-5.6" || ctxRow.Source.CurrentProvider != "openai" ||
+		!strings.Contains(ctxRow.Source.ParserStateJSON, `"model_id":"gpt-5.6"`) ||
 		ctxRow.InitialModelID != "gpt-5" || ctxRow.BindingState != domain.UsageBindingActive {
 		t.Fatalf("source context = %+v", ctxRow)
 	}
@@ -427,15 +442,14 @@ func seedUsageSource(t *testing.T, s *sqlite.Store, sess domain.SessionRecord, n
 	t.Helper()
 	ctx := context.Background()
 	binding, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID:        sess.ID,
-		Harness:          sess.Harness,
-		NativeRootID:     "root-thread",
-		InitialModelID:   "gpt-5",
-		SourceCLIVersion: "0.145.0",
-		State:            domain.UsageBindingActive,
-		FirstSeenAt:      now,
-		LastSeenAt:       now,
-		UpdatedAt:        now,
+		SessionID:      sess.ID,
+		Harness:        sess.Harness,
+		NativeRootID:   "root-thread",
+		InitialModelID: "gpt-5",
+		State:          domain.UsageBindingActive,
+		FirstSeenAt:    now,
+		LastSeenAt:     now,
+		UpdatedAt:      now,
 	})
 	if err != nil {
 		t.Fatalf("upsert usage binding: %v", err)
@@ -446,7 +460,6 @@ func seedUsageSource(t *testing.T, s *sqlite.Store, sess domain.SessionRecord, n
 		NativeSessionID: "child-thread",
 		ArtifactPath:    "/tmp/codex/rollout.jsonl",
 		FileIdentity:    "dev:ino",
-		ParserVersion:   "codex-rollout/v1",
 		State:           domain.UsageSourcePending,
 		CreatedAt:       now,
 		UpdatedAt:       now,
@@ -457,18 +470,16 @@ func seedUsageSource(t *testing.T, s *sqlite.Store, sess domain.SessionRecord, n
 	return source
 }
 
-func usageEvent(key, hash string, at time.Time, tokens domain.UsageTokenMetrics, estimatedCost *int64) domain.ModelUsageEvent {
+func usageEvent(key, _ string, at time.Time, tokens domain.UsageTokenMetrics, cost *int64) domain.ModelUsageEvent {
+	pricingVersion := "test-pricing"
 	return domain.ModelUsageEvent{
-		Provider:        "openai",
-		ModelID:         "gpt-5",
-		ObservedAt:      at,
-		Tokens:          tokens,
-		Cost:            domain.UsageCostMetrics{EstimatedCostNanos: estimatedCost, CostBasis: domain.CostBasisAPIEstimate, Confidence: domain.CostConfidenceEstimate, PricingVersion: "test-pricing"},
-		TokenConfidence: domain.TokenConfidenceParsed,
-		SourceEventKey:  key,
-		SourceUsageHash: hash,
-		ParserVersion:   "codex-rollout/v1",
-		CreatedAt:       at,
+		Provider:       "openai",
+		ModelID:        "gpt-5",
+		ObservedAt:     at,
+		Tokens:         tokens,
+		Cost:           domain.UsageCostMetrics{CostNanos: cost, PricingVersion: &pricingVersion},
+		SourceEventKey: key,
+		CreatedAt:      at,
 	}
 }
 

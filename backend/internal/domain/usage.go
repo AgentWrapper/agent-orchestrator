@@ -63,36 +63,6 @@ const (
 	UsageCoverageUnavailable UsageCoverage = "unavailable"
 )
 
-// TokenConfidence records how token facts were obtained.
-type TokenConfidence string
-
-// TokenConfidence values describe normalized token metric provenance.
-const (
-	TokenConfidenceProvider TokenConfidence = "provider_reported"
-	TokenConfidenceParsed   TokenConfidence = "parsed_jsonl" //nolint:gosec // provenance enum label, not a credential value.
-	TokenConfidenceNone     TokenConfidence = "unavailable"
-)
-
-// CostConfidence records how money facts were obtained.
-type CostConfidence string
-
-// CostConfidence values describe normalized cost metric provenance.
-const (
-	CostConfidenceProvider CostConfidence = "provider_reported"
-	CostConfidenceEstimate CostConfidence = "api_pricing_estimate"
-	CostConfidenceNone     CostConfidence = "unavailable"
-)
-
-// CostBasis records the event-level pricing basis.
-type CostBasis string
-
-// CostBasis values describe the pricing basis for one usage event.
-const (
-	CostBasisProviderReported CostBasis = "provider_reported"
-	CostBasisAPIEstimate      CostBasis = "api_pricing_estimate"
-	CostBasisUnavailable      CostBasis = "unavailable"
-)
-
 // Usage error code constants are safe storage/display identifiers for
 // transcript discovery and ingestion failures.
 const (
@@ -106,6 +76,7 @@ const (
 	UsageErrorUnsupportedSourceFormat     = "unsupported_source_format"
 	UsageErrorSourceEventConflict         = "source_event_conflict"
 	UsageErrorNonMonotonicCumulativeUsage = "non_monotonic_cumulative_usage"
+	UsageErrorInvalidParserState          = "invalid_parser_state"
 	UsageErrorUnknownModelPricing         = "unknown_model_pricing"
 	UsageErrorPartialReasoningCoverage    = "partial_reasoning_coverage"
 )
@@ -118,60 +89,51 @@ var (
 
 // UsageBindingRecord binds one AO session to one native root session/thread.
 type UsageBindingRecord struct {
-	ID               int64
-	SessionID        SessionID
-	Harness          AgentHarness
-	NativeRootID     string
-	InitialModelID   string
-	SourceCLIVersion string
-	State            UsageBindingState
-	LastErrorCode    string
-	FirstSeenAt      time.Time
-	LastSeenAt       time.Time
-	UpdatedAt        time.Time
+	ID             int64
+	SessionID      SessionID
+	Harness        AgentHarness
+	NativeRootID   string
+	InitialModelID string
+	State          UsageBindingState
+	LastErrorCode  string
+	FirstSeenAt    time.Time
+	LastSeenAt     time.Time
+	UpdatedAt      time.Time
 }
 
 // UsageSourceRecord tracks one physical JSONL artifact generation and its
 // durable read cursor.
 type UsageSourceRecord struct {
-	ID                        int64
-	BindingID                 int64
-	Kind                      UsageSourceKind
-	NativeSessionID           string
-	SubagentID                string
-	ArtifactPath              string
-	FileIdentity              string
-	Generation                int64
-	ByteOffset                int64
-	BaselineInputTokens       int64
-	BaselineCachedInputTokens int64
-	BaselineCacheWriteTokens  int64
-	BaselineOutputTokens      int64
-	BaselineReasoningTokens   int64
-	CurrentModelID            string
-	CurrentProvider           string
-	ParserVersion             string
-	State                     UsageSourceState
-	FailureCount              int64
-	AnomalyCount              int64
-	NextRetryAt               *time.Time
-	LastErrorCode             string
-	LastObservedAt            *time.Time
-	CreatedAt                 time.Time
-	UpdatedAt                 time.Time
+	ID              int64
+	BindingID       int64
+	Kind            UsageSourceKind
+	NativeSessionID string
+	SubagentID      string
+	ArtifactPath    string
+	FileIdentity    string
+	Generation      int64
+	ByteOffset      int64
+	ParserStateJSON string
+	State           UsageSourceState
+	FailureCount    int64
+	AnomalyCount    int64
+	NextRetryAt     *time.Time
+	LastErrorCode   string
+	LastObservedAt  *time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // UsageSourceContext is the source row plus immutable binding/session facts the
 // ingestor needs while normalizing parser output.
 type UsageSourceContext struct {
-	Source           UsageSourceRecord
-	SessionID        SessionID
-	ProjectID        ProjectID
-	Harness          AgentHarness
-	NativeRootID     string
-	InitialModelID   string
-	SourceCLIVersion string
-	BindingState     UsageBindingState
+	Source         UsageSourceRecord
+	SessionID      SessionID
+	ProjectID      ProjectID
+	Harness        AgentHarness
+	NativeRootID   string
+	InitialModelID string
+	BindingState   UsageBindingState
 }
 
 // UsageTokenMetrics is the normalized token vector stored on every usage event
@@ -181,8 +143,6 @@ type UsageTokenMetrics struct {
 	UncachedInputTokens int64
 	CacheReadTokens     int64
 	CacheWriteTokens    int64
-	CacheWrite5mTokens  *int64
-	CacheWrite1hTokens  *int64
 	OutputTokens        int64
 	ReasoningTokens     *int64
 }
@@ -190,32 +150,25 @@ type UsageTokenMetrics struct {
 // UsageCostMetrics is the normalized money vector for one event or aggregate.
 // Values are nano-USD. Nil means unavailable, not zero.
 type UsageCostMetrics struct {
-	ReportedCostNanos  *int64
-	EstimatedCostNanos *int64
-	PricingVersion     string
-	CostBasis          CostBasis
-	Confidence         CostConfidence
+	CostNanos      *int64
+	PricingVersion *string
 }
 
 // ModelUsageEvent is one append-only normalized usage fact.
 type ModelUsageEvent struct {
-	ID               int64
-	BindingID        int64
-	UsageSourceID    int64
-	ProjectID        ProjectID
-	SessionID        SessionID
-	Harness          AgentHarness
-	Provider         string
-	ModelID          string
-	ObservedAt       time.Time
-	Tokens           UsageTokenMetrics
-	Cost             UsageCostMetrics
-	TokenConfidence  TokenConfidence
-	SourceEventKey   string
-	SourceUsageHash  string
-	ParserVersion    string
-	SourceCLIVersion string
-	CreatedAt        time.Time
+	ID             int64
+	BindingID      int64
+	UsageSourceID  int64
+	ProjectID      ProjectID
+	SessionID      SessionID
+	Harness        AgentHarness
+	Provider       string
+	ModelID        string
+	ObservedAt     time.Time
+	Tokens         UsageTokenMetrics
+	Cost           UsageCostMetrics
+	SourceEventKey string
+	CreatedAt      time.Time
 }
 
 // UsageMetricCoverage summarizes whether a metric is available over an
@@ -230,22 +183,21 @@ type UsageMetricCoverage struct {
 type UsageCostCoverage struct {
 	Value          *int64
 	Coverage       UsageCoverage
-	Confidence     CostConfidence
-	PricingVersion string
+	PricingVersion *string
 }
 
 // UsageModelAggregate is the raw model-level aggregate read from storage before
 // the service applies user-facing coverage rules.
 type UsageModelAggregate struct {
-	Harness                 AgentHarness
-	Provider                string
-	ModelID                 string
-	Tokens                  UsageTokenMetrics
-	EventCount              int64
-	ReasoningEventCount     int64
-	EstimatedCostEventCount int64
-	EstimatedCostNanos      int64
-	LastObservedAt          *time.Time
+	Harness             AgentHarness
+	Provider            string
+	ModelID             string
+	Tokens              UsageTokenMetrics
+	EventCount          int64
+	ReasoningEventCount int64
+	CostEventCount      int64
+	CostNanos           int64
+	LastObservedAt      *time.Time
 }
 
 // UsageSessionAggregate is the storage-level batch row used to derive compact
@@ -283,7 +235,7 @@ type UsageMetricTotals struct {
 	CacheWriteTokens    UsageMetricCoverage
 	OutputTokens        UsageMetricCoverage
 	ReasoningTokens     UsageMetricCoverage
-	EstimatedCostNanos  UsageCostCoverage
+	CostNanos           UsageCostCoverage
 }
 
 // UsageCollectionSummary is the collection-state header for session usage.
@@ -319,21 +271,15 @@ type SessionUsageSummary struct {
 // SourceCursorState is the durable source state to commit after parsing a
 // chunk. ApplyUsageChunk writes it atomically with the emitted events.
 type SourceCursorState struct {
-	ByteOffset                int64
-	State                     UsageSourceState
-	BaselineInputTokens       int64
-	BaselineCachedInputTokens int64
-	BaselineCacheWriteTokens  int64
-	BaselineOutputTokens      int64
-	BaselineReasoningTokens   int64
-	CurrentModelID            string
-	CurrentProvider           string
-	FailureCount              int64
-	AnomalyCount              int64
-	NextRetryAt               *time.Time
-	LastErrorCode             string
-	LastObservedAt            *time.Time
-	UpdatedAt                 time.Time
+	ByteOffset      int64
+	State           UsageSourceState
+	ParserStateJSON string
+	FailureCount    int64
+	AnomalyCount    int64
+	NextRetryAt     *time.Time
+	LastErrorCode   string
+	LastObservedAt  *time.Time
+	UpdatedAt       time.Time
 }
 
 // ApplyUsageChunkResult reports what a transactional source apply did.

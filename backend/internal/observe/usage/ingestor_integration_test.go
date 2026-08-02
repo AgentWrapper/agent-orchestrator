@@ -2,8 +2,11 @@ package usage
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +14,228 @@ import (
 	usagesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/usage"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
+
+func TestIngestorPersistsVersionedCodexParserStateAcrossChunks(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	store, source, path, now := seedCodexIngestionSource(t, dataDir)
+
+	first := `{"type":"session_meta","payload":{"model_provider":"openai"}}` + "\n" +
+		`{"type":"turn_context","payload":{"model":"gpt-5.6"}}` + "\n" +
+		string(codexTokenLine("2026-07-28T10:00:00Z", 100, 60, 0, 20, 5)) + "\n"
+	if err := os.WriteFile(path, []byte(first), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ingestor := NewIngestor(store, IngestorConfig{Clock: func() time.Time { return now }})
+	if _, err := ingestor.Ingest(ctx, source.ID); err != nil {
+		t.Fatalf("ingest first chunk: %v", err)
+	}
+
+	state := readParserStateJSON(t, dataDir, source.ID)
+	assertCodexParserState(t, state, 100, "gpt-5.6", "openai")
+
+	second := string(codexTokenLine("2026-07-28T10:01:00Z", 160, 90, 0, 35, 8)) + "\n"
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString(second); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ingestor.Ingest(ctx, source.ID); err != nil {
+		t.Fatalf("ingest second chunk: %v", err)
+	}
+	assertTokenAggregate(t, store, sourceSessionID(t, store, source.ID), 195)
+	assertCodexParserState(t, readParserStateJSON(t, dataDir, source.ID), 160, "gpt-5.6", "openai")
+}
+
+func TestIngestorRejectsInvalidPersistedParserStateWithoutAdvancing(t *testing.T) {
+	tests := []struct {
+		name            string
+		state           string
+		replaceArtifact bool
+	}{
+		{name: "malformed", state: `{"version":`},
+		{name: "malformed after artifact replacement", state: `{"version":`, replaceArtifact: true},
+		{name: "non object", state: `[]`},
+		{name: "unknown field", state: `{"version":1,"source_kind":"codex_rollout","codex":{},"extra":true}`},
+		{name: "wrong source kind", state: `{"version":1,"source_kind":"claude_main","codex":{}}`},
+		{name: "unsupported version", state: `{"version":2,"source_kind":"codex_rollout","codex":{}}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			dataDir := t.TempDir()
+			store, source, path, now := seedCodexIngestionSource(t, dataDir)
+			line := string(codexTokenLine("2026-07-28T10:00:00Z", 100, 60, 0, 20, 5)) + "\n"
+			if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if test.replaceArtifact {
+				replacement := path + ".replacement"
+				if err := os.WriteFile(replacement, []byte(line), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Rename(replacement, path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeParserStateJSON(t, dataDir, source.ID, test.state)
+
+			ingestor := NewIngestor(store, IngestorConfig{Clock: func() time.Time { return now }})
+			result, err := ingestor.Ingest(ctx, source.ID)
+			if err == nil || !strings.Contains(err.Error(), "parser state") {
+				t.Fatalf("ingest error = %v, want parser state collection error", err)
+			}
+			if result.RetryAt == nil {
+				t.Fatalf("result = %+v, want retry schedule", result)
+			}
+			got, ok, getErr := store.GetUsageSourceForIngestion(ctx, source.ID)
+			if getErr != nil || !ok {
+				t.Fatalf("get source: ok=%v err=%v", ok, getErr)
+			}
+			if got.Source.ByteOffset != 0 || got.Source.FailureCount != 1 ||
+				got.Source.State != domain.UsageSourceError || got.Source.LastErrorCode != "invalid_parser_state" {
+				t.Fatalf("source after invalid state = %+v", got.Source)
+			}
+			aggregates, aggregateErr := store.ListUsageModelAggregates(ctx, got.SessionID)
+			if aggregateErr != nil {
+				t.Fatal(aggregateErr)
+			}
+			if len(aggregates) != 0 {
+				t.Fatalf("invalid state emitted usage: %+v", aggregates)
+			}
+			if persisted := readParserStateJSON(t, dataDir, source.ID); persisted != test.state {
+				t.Fatalf("parser state reset to %q, want original %q", persisted, test.state)
+			}
+		})
+	}
+}
+
+func seedCodexIngestionSource(t *testing.T, dataDir string) (*sqlite.Store, domain.UsageSourceRecord, string, time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	store, err := sqlite.Open(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Unix(1700000000, 0).UTC()
+	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "usage", Path: t.TempDir(), RegisteredAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	session, err := store.CreateSession(ctx, domain.SessionRecord{
+		ProjectID: "usage",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := store.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
+		SessionID:      session.ID,
+		Harness:        domain.HarnessCodex,
+		NativeRootID:   "codex-root",
+		InitialModelID: "fallback-model",
+		State:          domain.UsageBindingActive,
+		FirstSeenAt:    now,
+		LastSeenAt:     now,
+		UpdatedAt:      now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := usagesvc.SourceIdentity(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := store.InsertUsageSource(ctx, domain.UsageSourceRecord{
+		BindingID:       binding.ID,
+		Kind:            domain.UsageSourceCodexRollout,
+		NativeSessionID: "codex-root",
+		ArtifactPath:    path,
+		FileIdentity:    identity,
+		State:           domain.UsageSourcePending,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store, source, path, now
+}
+
+func readParserStateJSON(t *testing.T, dataDir string, sourceID int64) string {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dataDir, "ao.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	var state string
+	if err := db.QueryRow("SELECT parser_state_json FROM usage_sources WHERE id = ?", sourceID).Scan(&state); err != nil {
+		t.Fatalf("read parser state: %v", err)
+	}
+	return state
+}
+
+func writeParserStateJSON(t *testing.T, dataDir string, sourceID int64, state string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dataDir, "ao.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.Exec("UPDATE usage_sources SET parser_state_json = ? WHERE id = ?", state, sourceID); err != nil {
+		t.Fatalf("write parser state: %v", err)
+	}
+}
+
+func assertCodexParserState(t *testing.T, raw string, input int64, model, provider string) {
+	t.Helper()
+	var state struct {
+		Version    int    `json:"version"`
+		SourceKind string `json:"source_kind"`
+		Codex      struct {
+			Baseline struct {
+				InputTokens int64 `json:"input_tokens"`
+			} `json:"baseline"`
+			ModelID             string   `json:"model_id"`
+			Provider            string   `json:"provider"`
+			PendingSpawnCallIDs []string `json:"pending_spawn_call_ids"`
+			DiscoveredChildIDs  []string `json:"discovered_child_ids"`
+		} `json:"codex"`
+	}
+	if err := json.Unmarshal([]byte(raw), &state); err != nil {
+		t.Fatalf("decode parser state %q: %v", raw, err)
+	}
+	if state.Version != 1 || state.SourceKind != "codex_rollout" ||
+		state.Codex.Baseline.InputTokens != input || state.Codex.ModelID != model ||
+		state.Codex.Provider != provider || state.Codex.PendingSpawnCallIDs == nil ||
+		state.Codex.DiscoveredChildIDs == nil {
+		t.Fatalf("Codex parser state = %+v", state)
+	}
+}
+
+func sourceSessionID(t *testing.T, store *sqlite.Store, sourceID int64) domain.SessionID {
+	t.Helper()
+	got, ok, err := store.GetUsageSourceForIngestion(context.Background(), sourceID)
+	if err != nil || !ok {
+		t.Fatalf("get source context: ok=%v err=%v", ok, err)
+	}
+	return got.SessionID
+}
 
 func TestIngestorCollectsCodexSourceDiscoveredAfterStartup(t *testing.T) {
 	ctx := context.Background()
@@ -320,14 +545,13 @@ func TestIngestorPersistsAppendOnlyUsageAcrossRestartAndFinalization(t *testing.
 		t.Fatal(err)
 	}
 	source, err := store.InsertUsageSource(ctx, domain.UsageSourceRecord{
-		BindingID:     binding.ID,
-		Kind:          domain.UsageSourceCodexRollout,
-		ArtifactPath:  path,
-		FileIdentity:  identity,
-		ParserVersion: usagesvc.CodexRolloutParserVersion,
-		State:         domain.UsageSourcePending,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		BindingID:    binding.ID,
+		Kind:         domain.UsageSourceCodexRollout,
+		ArtifactPath: path,
+		FileIdentity: identity,
+		State:        domain.UsageSourcePending,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -440,14 +664,13 @@ func TestIngestorLateAppendReturnsCompletedBindingToFinalizing(t *testing.T) {
 		t.Fatal(err)
 	}
 	source, err := store.InsertUsageSource(ctx, domain.UsageSourceRecord{
-		BindingID:     binding.ID,
-		Kind:          domain.UsageSourceCodexRollout,
-		ArtifactPath:  path,
-		FileIdentity:  identity,
-		ParserVersion: usagesvc.CodexRolloutParserVersion,
-		State:         domain.UsageSourcePending,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		BindingID:    binding.ID,
+		Kind:         domain.UsageSourceCodexRollout,
+		ArtifactPath: path,
+		FileIdentity: identity,
+		State:        domain.UsageSourcePending,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -537,7 +760,6 @@ func TestIngestorStopsRetryingConflictingNativeEvent(t *testing.T) {
 		NativeSessionID: "claude-root",
 		ArtifactPath:    path,
 		FileIdentity:    identity,
-		ParserVersion:   usagesvc.ClaudeJSONLParserVersion,
 		State:           domain.UsageSourcePending,
 		CreatedAt:       now,
 		UpdatedAt:       now,
@@ -550,8 +772,11 @@ func TestIngestorStopsRetryingConflictingNativeEvent(t *testing.T) {
 		t.Fatalf("source ok=%v err=%v", ok, err)
 	}
 	parsed := parseRecords(contextSource, []jsonlRecord{{Data: []byte(line), Offset: 0}}, int64(len(line)), now)
+	if parsed.err != nil {
+		t.Fatal(parsed.err)
+	}
 	conflict := parsed.Events[0]
-	conflict.SourceUsageHash = "sha256:different"
+	conflict.Tokens.OutputTokens++
 	if _, err := store.ApplyUsageChunk(ctx, source.ID, 0, domain.SourceCursorState{
 		ByteOffset: 0,
 		State:      domain.UsageSourcePending,

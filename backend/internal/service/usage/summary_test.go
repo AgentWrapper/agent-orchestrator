@@ -148,8 +148,8 @@ func TestSummaryReaderGetReturnsDetailedTelemetryWithoutInventingCost(t *testing
 		t.Fatalf("totals = %+v", got.Totals)
 	}
 	if got.Totals.InputTokens.Coverage != domain.UsageCoveragePartial ||
-		got.Totals.EstimatedCostNanos.Value != nil ||
-		got.Totals.EstimatedCostNanos.Coverage != domain.UsageCoverageUnavailable {
+		got.Totals.CostNanos.Value != nil ||
+		got.Totals.CostNanos.Coverage != domain.UsageCoverageUnavailable {
 		t.Fatalf("coverage/cost = %+v", got.Totals)
 	}
 	if len(got.Harnesses) != 1 || len(got.Harnesses[0].Models) != 1 ||

@@ -94,10 +94,7 @@ func TestUsageAPIShowsDetailedSessionTelemetry(t *testing.T) {
 			InputTokens:     domain.UsageMetricCoverage{Value: &input, Coverage: domain.UsageCoveragePartial},
 			CacheReadTokens: domain.UsageMetricCoverage{Value: &cacheRead, Coverage: domain.UsageCoveragePartial},
 			OutputTokens:    domain.UsageMetricCoverage{Value: &output, Coverage: domain.UsageCoveragePartial},
-			EstimatedCostNanos: domain.UsageCostCoverage{
-				Coverage:   domain.UsageCoverageUnavailable,
-				Confidence: domain.CostConfidenceNone,
-			},
+			CostNanos:       domain.UsageCostCoverage{Coverage: domain.UsageCoverageUnavailable},
 		},
 		Harnesses: []domain.HarnessUsageSummary{{
 			Harness:  domain.HarnessCodex,
@@ -121,10 +118,10 @@ func TestUsageAPIShowsDetailedSessionTelemetry(t *testing.T) {
 			InputTokens struct {
 				Value int64 `json:"value"`
 			} `json:"inputTokens"`
-			EstimatedCost struct {
+			Cost struct {
 				ValueNanos *int64 `json:"valueNanos"`
 				Coverage   string `json:"coverage"`
-			} `json:"estimatedCost"`
+			} `json:"cost"`
 		} `json:"totals"`
 		Harnesses []struct {
 			Models []struct {
@@ -135,8 +132,8 @@ func TestUsageAPIShowsDetailedSessionTelemetry(t *testing.T) {
 	mustJSON(t, body, &got)
 	if got.SessionID != "reverb-12" || got.CollectionState != "collecting" ||
 		got.Totals.InputTokens.Value != 1000 ||
-		got.Totals.EstimatedCost.ValueNanos != nil ||
-		got.Totals.EstimatedCost.Coverage != "unavailable" ||
+		got.Totals.Cost.ValueNanos != nil ||
+		got.Totals.Cost.Coverage != "unavailable" ||
 		len(got.Harnesses) != 1 || len(got.Harnesses[0].Models) != 1 ||
 		got.Harnesses[0].Models[0].ModelID != "gpt-5.6" {
 		t.Fatalf("response = %+v", got)

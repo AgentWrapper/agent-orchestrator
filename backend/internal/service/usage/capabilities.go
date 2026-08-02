@@ -2,26 +2,17 @@ package usage
 
 import "github.com/aoagents/agent-orchestrator/backend/internal/domain"
 
-// Parser version constants identify the normalizer contract for each usage source.
-const (
-	ClaudeJSONLParserVersion  = "claude-jsonl/v1"
-	CodexRolloutParserVersion = "codex-rollout/v1"
-)
-
-// Capability is the parser contract used while registering a source.
+// Capability identifies whether a harness has a certified usage parser.
 type Capability struct {
-	Supported     bool
-	ParserVersion string
+	Supported bool
 }
 
 var capabilities = map[domain.AgentHarness]Capability{
 	domain.HarnessClaudeCode: {
-		Supported:     true,
-		ParserVersion: ClaudeJSONLParserVersion,
+		Supported: true,
 	},
 	domain.HarnessCodex: {
-		Supported:     true,
-		ParserVersion: CodexRolloutParserVersion,
+		Supported: true,
 	},
 }
 

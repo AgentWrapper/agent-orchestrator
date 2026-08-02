@@ -8,23 +8,16 @@ import (
 
 func TestCapabilityForSupportedHarnesses(t *testing.T) {
 	tests := []struct {
-		harness       domain.AgentHarness
-		parserVersion string
+		harness domain.AgentHarness
 	}{
-		{
-			harness:       domain.HarnessClaudeCode,
-			parserVersion: ClaudeJSONLParserVersion,
-		},
-		{
-			harness:       domain.HarnessCodex,
-			parserVersion: CodexRolloutParserVersion,
-		},
+		{harness: domain.HarnessClaudeCode},
+		{harness: domain.HarnessCodex},
 	}
 
 	for _, tt := range tests {
 		t.Run(string(tt.harness), func(t *testing.T) {
 			c := CapabilityFor(tt.harness)
-			if !c.Supported || c.ParserVersion != tt.parserVersion {
+			if !c.Supported {
 				t.Fatalf("capability = %+v", c)
 			}
 		})
@@ -39,9 +32,6 @@ func TestCapabilityForUnsupportedHarnesses(t *testing.T) {
 		c := CapabilityFor(h)
 		if c.Supported {
 			t.Fatalf("%s unexpectedly supported", h)
-		}
-		if c.ParserVersion != "" {
-			t.Fatalf("%s parser version = %q, want empty", h, c.ParserVersion)
 		}
 	}
 }

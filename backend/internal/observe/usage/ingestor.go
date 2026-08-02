@@ -91,6 +91,15 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 		return IngestResult{}, err
 	}
 	result := IngestResult{BindingID: source.Source.BindingID}
+	if _, err := decodeParserState(source.Source); err != nil {
+		return i.retrySource(
+			ctx,
+			source.Source,
+			domain.UsageErrorInvalidParserState,
+			now,
+			fmt.Errorf("decode parser state: %w", err),
+		)
+	}
 	info, err := os.Stat(source.Source.ArtifactPath)
 	if err != nil || !info.Mode().IsRegular() {
 		return i.retrySource(ctx, source.Source, domain.UsageErrorArtifactMissing, now, nil)
@@ -148,6 +157,9 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 		stableFinalTail = true
 	}
 	parsed := parseRecords(source, chunk.records, chunk.nextOffset, now)
+	if parsed.err != nil {
+		return i.retrySource(ctx, source.Source, domain.UsageErrorInvalidParserState, now, parsed.err)
+	}
 	if chunk.anomalies > 0 {
 		parsed.Cursor.AnomalyCount += int64(chunk.anomalies)
 		parsed.Cursor.LastErrorCode = chunk.errorCode
@@ -208,9 +220,6 @@ func (i *Ingestor) replaceSource(
 			ArtifactPath:    source.Source.ArtifactPath,
 			FileIdentity:    identity,
 			Generation:      source.Source.Generation + 1,
-			CurrentModelID:  source.Source.CurrentModelID,
-			CurrentProvider: source.Source.CurrentProvider,
-			ParserVersion:   source.Source.ParserVersion,
 			State:           domain.UsageSourcePending,
 			CreatedAt:       now,
 			UpdatedAt:       now,

@@ -100,12 +100,11 @@ func usageTotalsResponse(totals domain.UsageMetricTotals) UsageTotalsResponse {
 		CacheWriteTokens:    usageMetricResponse(totals.CacheWriteTokens),
 		OutputTokens:        usageMetricResponse(totals.OutputTokens),
 		ReasoningTokens:     usageMetricResponse(totals.ReasoningTokens),
-		EstimatedCost: UsageCostMetricResponse{
-			ValueNanos:     totals.EstimatedCostNanos.Value,
+		Cost: UsageCostMetricResponse{
+			ValueNanos:     totals.CostNanos.Value,
 			Currency:       "USD",
-			Coverage:       string(totals.EstimatedCostNanos.Coverage),
-			Confidence:     string(totals.EstimatedCostNanos.Confidence),
-			PricingVersion: totals.EstimatedCostNanos.PricingVersion,
+			Coverage:       string(totals.CostNanos.Coverage),
+			PricingVersion: totals.CostNanos.PricingVersion,
 		},
 	}
 }

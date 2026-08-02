@@ -48,8 +48,8 @@ func TestCollectorRegistersFinalizesAndReactivatesSource(t *testing.T) {
 	if err != nil || len(sources) != 1 {
 		t.Fatalf("sources=%+v err=%v", sources, err)
 	}
-	if bindings[0].State != domain.UsageBindingActive || sources[0].State != domain.UsageSourceActive ||
-		sources[0].CurrentModelID != "gpt-5.6" || wakes == 0 {
+	if bindings[0].State != domain.UsageBindingActive || bindings[0].InitialModelID != "gpt-5.6" ||
+		sources[0].State != domain.UsageSourceActive || wakes == 0 {
 		t.Fatalf("registered binding=%+v source=%+v wakes=%d", bindings[0], sources[0], wakes)
 	}
 
@@ -352,14 +352,13 @@ func TestCollectorBackfillPreservesCompletedExitedBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	source, err := store.InsertUsageSource(context.Background(), domain.UsageSourceRecord{
-		BindingID:     binding.ID,
-		Kind:          domain.UsageSourceCodexRollout,
-		ArtifactPath:  path,
-		FileIdentity:  identity,
-		ParserVersion: CodexRolloutParserVersion,
-		State:         domain.UsageSourceComplete,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		BindingID:    binding.ID,
+		Kind:         domain.UsageSourceCodexRollout,
+		ArtifactPath: path,
+		FileIdentity: identity,
+		State:        domain.UsageSourceComplete,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -443,7 +442,6 @@ func TestCollectorSubagentStopReactivatesCompletedSource(t *testing.T) {
 		ArtifactPath:    resolvedSubagentPath,
 		FileIdentity:    identity,
 		ByteOffset:      int64(len(initial)),
-		ParserVersion:   ClaudeJSONLParserVersion,
 		State:           domain.UsageSourceComplete,
 		CreatedAt:       now,
 		UpdatedAt:       now,
@@ -550,29 +548,27 @@ func TestCollectorResumeReactivatesOnlyLatestMainSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldSource, err := store.InsertUsageSource(context.Background(), domain.UsageSourceRecord{
-		BindingID:     binding.ID,
-		Kind:          domain.UsageSourceCodexRollout,
-		ArtifactPath:  "/tmp/usage-old.jsonl",
-		FileIdentity:  "old",
-		Generation:    0,
-		ParserVersion: CodexRolloutParserVersion,
-		State:         domain.UsageSourceComplete,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		BindingID:    binding.ID,
+		Kind:         domain.UsageSourceCodexRollout,
+		ArtifactPath: "/tmp/usage-old.jsonl",
+		FileIdentity: "old",
+		Generation:   0,
+		State:        domain.UsageSourceComplete,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	latestSource, err := store.InsertUsageSource(context.Background(), domain.UsageSourceRecord{
-		BindingID:     binding.ID,
-		Kind:          domain.UsageSourceCodexRollout,
-		ArtifactPath:  "/tmp/usage-latest.jsonl",
-		FileIdentity:  "latest",
-		Generation:    1,
-		ParserVersion: CodexRolloutParserVersion,
-		State:         domain.UsageSourceComplete,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		BindingID:    binding.ID,
+		Kind:         domain.UsageSourceCodexRollout,
+		ArtifactPath: "/tmp/usage-latest.jsonl",
+		FileIdentity: "latest",
+		Generation:   1,
+		State:        domain.UsageSourceComplete,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -622,14 +618,13 @@ func TestCollectorResumeKeepsDiscoveringAfterOnlyArchivedRolloutMatches(t *testi
 		t.Fatal(err)
 	}
 	archivedSource, err := store.InsertUsageSource(context.Background(), domain.UsageSourceRecord{
-		BindingID:     binding.ID,
-		Kind:          domain.UsageSourceCodexRollout,
-		ArtifactPath:  resolvedArchivedPath,
-		FileIdentity:  identity,
-		ParserVersion: CodexRolloutParserVersion,
-		State:         domain.UsageSourceComplete,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		BindingID:    binding.ID,
+		Kind:         domain.UsageSourceCodexRollout,
+		ArtifactPath: resolvedArchivedPath,
+		FileIdentity: identity,
+		State:        domain.UsageSourceComplete,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -699,7 +694,6 @@ func TestCollectorDoesNotTransferCursorAcrossNativeSessions(t *testing.T) {
 		"native-a",
 		"",
 		firstPath,
-		"",
 		now,
 		false,
 	); err != nil {
@@ -723,7 +717,6 @@ func TestCollectorDoesNotTransferCursorAcrossNativeSessions(t *testing.T) {
 		"native-b",
 		"",
 		secondPath,
-		"",
 		now.Add(time.Second),
 		false,
 	); err != nil {

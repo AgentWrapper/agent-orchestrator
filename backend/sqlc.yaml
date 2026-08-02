@@ -144,18 +144,6 @@ sql:
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
               type: "AgentHarness"
-          - column: "model_usage_events.cost_basis"
-            go_type:
-              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
-              type: "CostBasis"
-          - column: "model_usage_events.token_confidence"
-            go_type:
-              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
-              type: "TokenConfidence"
-          - column: "model_usage_events.cost_confidence"
-            go_type:
-              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
-              type: "CostConfidence"
           - column: "review.session_id"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"

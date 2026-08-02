@@ -353,7 +353,7 @@ function UsageCostTelemetry({
 	}
 
 	const totalTokens = usageTokenTotal(usage.totals);
-	const costNanos = usage.totals.estimatedCost.valueNanos;
+	const costNanos = usage.totals.cost.valueNanos;
 
 	return (
 		<div>
@@ -379,7 +379,7 @@ function UsageCostTelemetry({
 						</Badge>
 					) : (
 						<span className="font-mono text-sm-md font-medium text-settings-label">
-							{formatEstimatedCost(costNanos)}
+								{formatCost(costNanos)}
 						</span>
 					)}
 				</div>
@@ -421,7 +421,7 @@ function UsageCostTelemetry({
 function UsageProviderRow({ harness }: { harness: SessionUsage["harnesses"][number] }) {
 	const harnessName = formatHarnessName(harness.harness);
 	const totalTokens = usageTokenTotal(harness.totals);
-	const costNanos = harness.totals.estimatedCost.valueNanos;
+	const costNanos = harness.totals.cost.valueNanos;
 
 	return (
 		<HoverCard closeDelay={120} openDelay={220}>
@@ -445,7 +445,7 @@ function UsageProviderRow({ harness }: { harness: SessionUsage["harnesses"][numb
 						className="text-right font-mono text-2xs text-settings-muted"
 						title={costNanos === null ? "Estimated cost coming soon" : undefined}
 					>
-						{costNanos === null ? "—" : formatEstimatedCost(costNanos)}
+							{costNanos === null ? "—" : formatCost(costNanos)}
 					</span>
 				</div>
 			</HoverCardTrigger>
@@ -464,7 +464,7 @@ function UsageProviderRow({ harness }: { harness: SessionUsage["harnesses"][numb
 function ProviderUsagePeek({ harness }: { harness: SessionUsage["harnesses"][number] }) {
 	const harnessName = formatHarnessName(harness.harness);
 	const totalTokens = usageTokenTotal(harness.totals);
-	const costNanos = harness.totals.estimatedCost.valueNanos;
+	const costNanos = harness.totals.cost.valueNanos;
 
 	return (
 		<div>
@@ -477,7 +477,7 @@ function ProviderUsagePeek({ harness }: { harness: SessionUsage["harnesses"][num
 					<p className="text-settings-label">
 						{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
 					</p>
-					<p className="text-settings-muted">{costNanos === null ? "—" : formatEstimatedCost(costNanos)}</p>
+					<p className="text-settings-muted">{costNanos === null ? "—" : formatCost(costNanos)}</p>
 				</div>
 			</div>
 
@@ -506,7 +506,7 @@ function ProviderUsagePeek({ harness }: { harness: SessionUsage["harnesses"][num
 function UsageModelRow({ model }: { model: SessionUsage["harnesses"][number]["models"][number] }) {
 	const modelName = model.modelId || formatProviderName(model.provider);
 	const totalTokens = usageTokenTotal(model.totals);
-	const costNanos = model.totals.estimatedCost.valueNanos;
+	const costNanos = model.totals.cost.valueNanos;
 
 	return (
 		<HoverCard closeDelay={120} openDelay={180}>
@@ -527,7 +527,7 @@ function UsageModelRow({ model }: { model: SessionUsage["harnesses"][number]["mo
 						className="text-right font-mono text-2xs text-settings-muted"
 						title={costNanos === null ? "Estimated cost coming soon" : undefined}
 					>
-						{costNanos === null ? "—" : formatEstimatedCost(costNanos)}
+						{costNanos === null ? "—" : formatCost(costNanos)}
 					</span>
 				</div>
 			</HoverCardTrigger>
@@ -547,7 +547,7 @@ function UsageModelRow({ model }: { model: SessionUsage["harnesses"][number]["mo
 						<p className="text-settings-label">
 							{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
 						</p>
-						<p className="text-settings-muted">{costNanos === null ? "—" : formatEstimatedCost(costNanos)}</p>
+						<p className="text-settings-muted">{costNanos === null ? "—" : formatCost(costNanos)}</p>
 					</div>
 				</div>
 				<div className="border-t border-border pt-3">
@@ -649,7 +649,7 @@ function usageCollectionLabel(state: SessionUsage["collectionState"]): string {
 	}
 }
 
-function formatEstimatedCost(valueNanos: number | null): string {
+function formatCost(valueNanos: number | null): string {
 	if (valueNanos === null) return "Coming soon";
 	const dollars = valueNanos / 1_000_000_000;
 	if (dollars > 0 && dollars < 0.01) return "<$0.01";

@@ -1,16 +1,12 @@
 -- name: UpsertUsageBinding :one
 INSERT INTO usage_bindings (
-    session_id, harness, native_root_id, initial_model_id, source_cli_version,
-    state, last_error_code, first_seen_at, last_seen_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    session_id, harness, native_root_id, initial_model_id, state,
+    last_error_code, first_seen_at, last_seen_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (session_id, harness, native_root_id) DO UPDATE SET
     initial_model_id = CASE
         WHEN excluded.initial_model_id <> '' THEN excluded.initial_model_id
         ELSE usage_bindings.initial_model_id
-    END,
-    source_cli_version = CASE
-        WHEN excluded.source_cli_version <> '' THEN excluded.source_cli_version
-        ELSE usage_bindings.source_cli_version
     END,
     state = CASE
         WHEN usage_bindings.state IN ('finalizing', 'complete', 'partial')
@@ -42,13 +38,10 @@ ORDER BY first_seen_at, id;
 -- name: InsertUsageSource :one
 INSERT INTO usage_sources (
     binding_id, kind, native_session_id, subagent_id, artifact_path,
-    file_identity, generation, byte_offset, baseline_input_tokens,
-    baseline_cached_input_tokens, baseline_cache_write_tokens,
-    baseline_output_tokens, baseline_reasoning_tokens, current_model_id,
-    current_provider, parser_version,
+    file_identity, generation, byte_offset, parser_state_json,
     state, failure_count, anomaly_count, next_retry_at, last_error_code,
     last_observed_at, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (binding_id, artifact_path, generation) DO UPDATE SET
     native_session_id = CASE
         WHEN excluded.native_session_id <> '' THEN excluded.native_session_id
@@ -57,14 +50,6 @@ ON CONFLICT (binding_id, artifact_path, generation) DO UPDATE SET
     subagent_id = CASE
         WHEN excluded.subagent_id <> '' THEN excluded.subagent_id
         ELSE usage_sources.subagent_id
-    END,
-    current_model_id = CASE
-        WHEN excluded.current_model_id <> '' THEN excluded.current_model_id
-        ELSE usage_sources.current_model_id
-    END,
-    current_provider = CASE
-        WHEN excluded.current_provider <> '' THEN excluded.current_provider
-        ELSE usage_sources.current_provider
     END,
     updated_at = excluded.updated_at
 RETURNING *;
@@ -132,14 +117,7 @@ SELECT
     us.file_identity,
     us.generation,
     us.byte_offset,
-    us.baseline_input_tokens,
-    us.baseline_cached_input_tokens,
-    us.baseline_cache_write_tokens,
-    us.baseline_output_tokens,
-    us.baseline_reasoning_tokens,
-    us.current_model_id,
-    us.current_provider,
-    us.parser_version,
+    us.parser_state_json,
     us.state AS source_state,
     us.failure_count,
     us.anomaly_count,
@@ -152,7 +130,6 @@ SELECT
     ub.harness,
     ub.native_root_id,
     ub.initial_model_id,
-    ub.source_cli_version,
     ub.state AS binding_state,
     s.project_id
 FROM usage_sources us
@@ -163,13 +140,7 @@ WHERE us.id = ?;
 -- name: UpdateUsageSourceCursor :exec
 UPDATE usage_sources SET
     byte_offset = ?,
-    baseline_input_tokens = ?,
-    baseline_cached_input_tokens = ?,
-    baseline_cache_write_tokens = ?,
-    baseline_output_tokens = ?,
-    baseline_reasoning_tokens = ?,
-    current_model_id = ?,
-    current_provider = ?,
+    parser_state_json = ?,
     state = ?,
     failure_count = ?,
     anomaly_count = ?,
@@ -249,7 +220,10 @@ WHERE id = sqlc.arg(usage_binding_id)
   );
 
 -- name: GetModelUsageEventByKey :one
-SELECT id, source_usage_hash
+SELECT
+    provider, model_id, observed_at, input_tokens, uncached_input_tokens,
+    cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens,
+    cost_nanos, pricing_version
 FROM model_usage_events
 WHERE binding_id = ? AND source_event_key = ?;
 
@@ -257,12 +231,9 @@ WHERE binding_id = ? AND source_event_key = ?;
 INSERT INTO model_usage_events (
     binding_id, usage_source_id, project_id, session_id, harness, provider,
     model_id, observed_at, input_tokens, uncached_input_tokens,
-    cache_read_tokens, cache_write_tokens, cache_write_5m_tokens,
-    cache_write_1h_tokens, output_tokens, reasoning_tokens,
-    reported_cost_nanos, estimated_cost_nanos, pricing_version, cost_basis,
-    token_confidence, cost_confidence, source_event_key, source_usage_hash,
-    parser_version, source_cli_version, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens,
+    cost_nanos, pricing_version, source_event_key, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: AggregateUsageBySessionHarnessModel :many
 SELECT
@@ -277,8 +248,8 @@ SELECT
     CAST(COALESCE(SUM(reasoning_tokens), 0) AS INTEGER) AS reasoning_tokens,
     COUNT(*) AS event_count,
     COUNT(reasoning_tokens) AS reasoning_event_count,
-    COUNT(estimated_cost_nanos) AS estimated_cost_event_count,
-    CAST(COALESCE(SUM(estimated_cost_nanos), 0) AS INTEGER) AS estimated_cost_nanos,
+    COUNT(cost_nanos) AS cost_event_count,
+    CAST(COALESCE(SUM(cost_nanos), 0) AS INTEGER) AS cost_nanos,
     CAST(MAX(observed_at) AS TEXT) AS last_observed_at
 FROM model_usage_events
 WHERE session_id = ?

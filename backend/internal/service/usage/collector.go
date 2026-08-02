@@ -175,16 +175,15 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		lastErrorCode = domain.UsageErrorSourceDiscoveryPending
 	}
 	binding, err := c.store.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID:        sessionID,
-		Harness:          session.Harness,
-		NativeRootID:     signal.NativeSessionID,
-		InitialModelID:   boundedUsageMetadata(signal.ModelID),
-		SourceCLIVersion: boundedUsageMetadata(signal.SourceCLIVersion),
-		State:            state,
-		LastErrorCode:    lastErrorCode,
-		FirstSeenAt:      now,
-		LastSeenAt:       now,
-		UpdatedAt:        now,
+		SessionID:      sessionID,
+		Harness:        session.Harness,
+		NativeRootID:   signal.NativeSessionID,
+		InitialModelID: boundedUsageMetadata(signal.ModelID),
+		State:          state,
+		LastErrorCode:  lastErrorCode,
+		FirstSeenAt:    now,
+		LastSeenAt:     now,
+		UpdatedAt:      now,
 	})
 	if err != nil {
 		return err
@@ -206,7 +205,6 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 			signal.NativeSessionID,
 			"",
 			mainPath,
-			signal.ModelID,
 			now,
 			signal.Event == "session-start" || finalizing,
 		)
@@ -233,7 +231,6 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 			signal.NativeSessionID,
 			boundedUsageMetadata(signal.SubagentID),
 			path,
-			signal.ModelID,
 			now,
 			finalizing || signal.Event == "subagent-stop",
 		)
@@ -335,16 +332,15 @@ func (c *Collector) backfillSession(ctx context.Context, session domain.SessionR
 		lastErrorCode = domain.UsageErrorSourceDiscoveryPending
 	}
 	binding, err := c.store.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID:        session.ID,
-		Harness:          session.Harness,
-		NativeRootID:     nativeID,
-		InitialModelID:   existing.InitialModelID,
-		SourceCLIVersion: existing.SourceCLIVersion,
-		State:            state,
-		LastErrorCode:    lastErrorCode,
-		FirstSeenAt:      now,
-		LastSeenAt:       now,
-		UpdatedAt:        now,
+		SessionID:      session.ID,
+		Harness:        session.Harness,
+		NativeRootID:   nativeID,
+		InitialModelID: existing.InitialModelID,
+		State:          state,
+		LastErrorCode:  lastErrorCode,
+		FirstSeenAt:    now,
+		LastSeenAt:     now,
+		UpdatedAt:      now,
 	})
 	if err != nil {
 		return err
@@ -357,7 +353,7 @@ func (c *Collector) backfillSession(ctx context.Context, session domain.SessionR
 	if session.Harness == domain.HarnessCodex {
 		kind = domain.UsageSourceCodexRollout
 	}
-	if _, err := c.registerSource(ctx, binding, kind, nativeID, "", path, "", now, false); err != nil {
+	if _, err := c.registerSource(ctx, binding, kind, nativeID, "", path, now, false); err != nil {
 		return err
 	}
 	if session.Harness == domain.HarnessClaudeCode {
@@ -424,7 +420,7 @@ func (c *Collector) reconcileBinding(ctx context.Context, binding domain.UsageBi
 	if binding.Harness == domain.HarnessCodex {
 		kind = domain.UsageSourceCodexRollout
 	}
-	if _, err := c.registerSource(ctx, binding, kind, binding.NativeRootID, "", path, binding.InitialModelID, now, false); err != nil {
+	if _, err := c.registerSource(ctx, binding, kind, binding.NativeRootID, "", path, now, false); err != nil {
 		return err
 	}
 	if binding.Harness == domain.HarnessClaudeCode {
@@ -455,7 +451,6 @@ func (c *Collector) registerSource(
 	nativeSessionID string,
 	subagentID string,
 	path string,
-	modelID string,
 	now time.Time,
 	reactivateExisting bool,
 ) (bool, error) {
@@ -507,7 +502,6 @@ func (c *Collector) registerSource(
 	if latest == nil && kind == domain.UsageSourceCodexRollout && latestKind != nil {
 		_, _ = c.store.MarkUsageSourceState(ctx, latestKind.ID, domain.UsageSourceComplete, "", nil, now)
 	}
-	capability := CapabilityFor(binding.Harness)
 	record := domain.UsageSourceRecord{
 		BindingID:       binding.ID,
 		Kind:            kind,
@@ -516,8 +510,6 @@ func (c *Collector) registerSource(
 		ArtifactPath:    resolved,
 		FileIdentity:    identity,
 		Generation:      generation,
-		CurrentModelID:  boundedUsageMetadata(modelID),
-		ParserVersion:   capability.ParserVersion,
 		State:           domain.UsageSourcePending,
 		CreatedAt:       now,
 		UpdatedAt:       now,
@@ -525,13 +517,7 @@ func (c *Collector) registerSource(
 	if latest == nil && identityMatch != nil {
 		_, _ = c.store.MarkUsageSourceState(ctx, identityMatch.ID, domain.UsageSourceComplete, "", nil, now)
 		record.ByteOffset = identityMatch.ByteOffset
-		record.BaselineInputTokens = identityMatch.BaselineInputTokens
-		record.BaselineCachedInputTokens = identityMatch.BaselineCachedInputTokens
-		record.BaselineCacheWriteTokens = identityMatch.BaselineCacheWriteTokens
-		record.BaselineOutputTokens = identityMatch.BaselineOutputTokens
-		record.BaselineReasoningTokens = identityMatch.BaselineReasoningTokens
-		record.CurrentModelID = firstString(boundedUsageMetadata(modelID), identityMatch.CurrentModelID)
-		record.CurrentProvider = identityMatch.CurrentProvider
+		record.ParserStateJSON = identityMatch.ParserStateJSON
 	}
 	_, err = c.store.InsertUsageSource(ctx, record)
 	return err == nil, err
@@ -555,7 +541,6 @@ func (c *Collector) registerDiscoveredClaudeSubagents(
 			binding.NativeRootID,
 			boundedUsageMetadata(subagentID),
 			path,
-			binding.InitialModelID,
 			now,
 			reactivateExisting,
 		); err != nil {
@@ -772,15 +757,6 @@ func nativeIDFromTranscript(path string) string {
 	base := strings.TrimSuffix(filepath.Base(strings.TrimSpace(path)), filepath.Ext(path))
 	if nativeUsageIDPattern.MatchString(base) {
 		return base
-	}
-	return ""
-}
-
-func firstString(values ...string) string {
-	for _, value := range values {
-		if value = strings.TrimSpace(value); value != "" {
-			return value
-		}
 	}
 	return ""
 }

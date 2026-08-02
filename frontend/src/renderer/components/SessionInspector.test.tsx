@@ -107,11 +107,10 @@ const usageTelemetry = (overrides: Partial<SessionUsage> = {}): SessionUsage => 
 		cacheWriteTokens: { value: 0, coverage: "partial" },
 		outputTokens: { value: 200, coverage: "partial" },
 		reasoningTokens: { value: 40, coverage: "partial" },
-		estimatedCost: {
+		cost: {
 			valueNanos: null,
 			currency: "USD",
 			coverage: "unavailable",
-			confidence: "unavailable",
 		},
 	},
 	harnesses: [
@@ -125,11 +124,10 @@ const usageTelemetry = (overrides: Partial<SessionUsage> = {}): SessionUsage => 
 				cacheWriteTokens: { value: 0, coverage: "partial" },
 				outputTokens: { value: 200, coverage: "partial" },
 				reasoningTokens: { value: 40, coverage: "partial" },
-				estimatedCost: {
+				cost: {
 					valueNanos: null,
 					currency: "USD",
 					coverage: "unavailable",
-					confidence: "unavailable",
 				},
 			},
 			models: [
@@ -143,11 +141,10 @@ const usageTelemetry = (overrides: Partial<SessionUsage> = {}): SessionUsage => 
 						cacheWriteTokens: { value: 0, coverage: "partial" },
 						outputTokens: { value: 200, coverage: "partial" },
 						reasoningTokens: { value: 40, coverage: "partial" },
-						estimatedCost: {
+						cost: {
 							valueNanos: null,
 							currency: "USD",
 							coverage: "unavailable",
-							confidence: "unavailable",
 						},
 					},
 				},

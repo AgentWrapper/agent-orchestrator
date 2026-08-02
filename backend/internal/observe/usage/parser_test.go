@@ -29,11 +29,7 @@ func TestParseClaudeFinalUsageAndSkipMainSidechain(t *testing.T) {
 		got.Tokens.OutputTokens != 4 {
 		t.Fatalf("tokens = %+v", got.Tokens)
 	}
-	if got.Tokens.CacheWrite5mTokens == nil || *got.Tokens.CacheWrite5mTokens != 2 ||
-		got.Tokens.CacheWrite1hTokens == nil || *got.Tokens.CacheWrite1hTokens != 1 {
-		t.Fatalf("cache split = %+v", got.Tokens)
-	}
-	if got.ModelID != "claude-x" || got.Cost.CostBasis != domain.CostBasisUnavailable {
+	if got.ModelID != "claude-x" {
 		t.Fatalf("event = %+v", got)
 	}
 }
@@ -70,18 +66,17 @@ func TestParseCodexCumulativeDeltasAndRepeats(t *testing.T) {
 		got.ReasoningTokens == nil || *got.ReasoningTokens != 3 {
 		t.Fatalf("delta tokens = %+v", got)
 	}
-	if result.Cursor.BaselineInputTokens != 160 || result.Cursor.CurrentModelID != "gpt-5.6" ||
-		result.Cursor.CurrentProvider != "openai" {
-		t.Fatalf("cursor = %+v", result.Cursor)
+	state := parserStateFromResult(t, result, domain.UsageSourceCodexRollout)
+	if state.Codex.Baseline.InputTokens != 160 || state.Codex.ModelID != "gpt-5.6" ||
+		state.Codex.Provider != "openai" {
+		t.Fatalf("parser state = %+v", state.Codex)
 	}
 }
 
 func TestParseCodexCounterResetNeverEmitsNegativeUsage(t *testing.T) {
 	now := time.Unix(1700000000, 0).UTC()
 	source := usageSource(domain.UsageSourceCodexRollout)
-	source.Source.BaselineInputTokens = 500
-	source.Source.BaselineCachedInputTokens = 300
-	source.Source.BaselineOutputTokens = 50
+	source.Source.ParserStateJSON = `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{"input_tokens":500,"cached_input_tokens":300,"cache_write_input_tokens":0,"output_tokens":50,"reasoning_output_tokens":0},"pending_spawn_call_ids":[],"discovered_child_ids":[]}}`
 	result := parseRecords(source, []jsonlRecord{{
 		Offset: 20,
 		Data:   codexTokenLine("2026-07-01T10:00:00Z", 10, 5, 0, 2, 1),
@@ -89,9 +84,10 @@ func TestParseCodexCounterResetNeverEmitsNegativeUsage(t *testing.T) {
 	if len(result.Events) != 0 {
 		t.Fatalf("events = %+v, want no negative delta event", result.Events)
 	}
+	state := parserStateFromResult(t, result, domain.UsageSourceCodexRollout)
 	if result.Cursor.AnomalyCount != 1 ||
 		result.Cursor.LastErrorCode != domain.UsageErrorNonMonotonicCumulativeUsage ||
-		result.Cursor.BaselineInputTokens != 10 {
+		state.Codex.Baseline.InputTokens != 10 {
 		t.Fatalf("cursor = %+v", result.Cursor)
 	}
 }
@@ -107,11 +103,6 @@ func TestParsersRejectInvalidTokenVectorsAndAdvanceCursor(t *testing.T) {
 			name:   "claude negative cache input",
 			source: usageSource(domain.UsageSourceClaudeMain),
 			record: []byte(`{"type":"assistant","uuid":"bad","message":{"id":"bad","model":"claude-x","stop_reason":"end_turn","usage":{"input_tokens":8,"cache_creation_input_tokens":-1,"cache_read_input_tokens":0,"output_tokens":2}}}`),
-		},
-		{
-			name:   "claude cache subtype exceeds cache write",
-			source: usageSource(domain.UsageSourceClaudeMain),
-			record: []byte(`{"type":"assistant","uuid":"bad","message":{"id":"bad","model":"claude-x","stop_reason":"end_turn","usage":{"input_tokens":8,"cache_creation_input_tokens":2,"cache_read_input_tokens":0,"output_tokens":2,"cache_creation":{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":1}}}}`),
 		},
 		{
 			name:   "codex cached input exceeds input",
@@ -280,13 +271,25 @@ func TestReadJSONLChunkRetainsPartialTailAndSkipsOversizedRecord(t *testing.T) {
 func usageSource(kind domain.UsageSourceKind) domain.UsageSourceContext {
 	return domain.UsageSourceContext{
 		Source: domain.UsageSourceRecord{
-			ID:            7,
-			Kind:          kind,
-			ParserVersion: "test/v1",
-			State:         domain.UsageSourceActive,
+			ID:              7,
+			Kind:            kind,
+			ParserStateJSON: "{}",
+			State:           domain.UsageSourceActive,
 		},
 		InitialModelID: "fallback-model",
 	}
+}
+
+func parserStateFromResult(t *testing.T, result parseResult, kind domain.UsageSourceKind) *parserStateEnvelope {
+	t.Helper()
+	if result.err != nil {
+		t.Fatalf("parse records: %v", result.err)
+	}
+	state, err := decodeParserState(domain.UsageSourceRecord{Kind: kind, ParserStateJSON: result.Cursor.ParserStateJSON})
+	if err != nil {
+		t.Fatalf("decode result parser state: %v", err)
+	}
+	return state
 }
 
 func codexTokenLine(timestamp string, input, cached, cacheWrite, output, reasoning int64) []byte {

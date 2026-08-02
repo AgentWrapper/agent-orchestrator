@@ -162,10 +162,10 @@ func usageTotals(models []domain.UsageModelAggregate, state domain.UsageCollecti
 		if model.Tokens.ReasoningTokens != nil {
 			reasoning += *model.Tokens.ReasoningTokens
 		}
-		cost += model.EstimatedCostNanos
+		cost += model.CostNanos
 		events += model.EventCount
 		reasoningEvents += model.ReasoningEventCount
-		costEvents += model.EstimatedCostEventCount
+		costEvents += model.CostEventCount
 	}
 	tokenMetric := func(value int64) domain.UsageMetricCoverage {
 		if events == 0 {
@@ -181,20 +181,13 @@ func usageTotals(models []domain.UsageModelAggregate, state domain.UsageCollecti
 		}
 		reasoningMetric = domain.UsageMetricCoverage{Value: int64Pointer(reasoning), Coverage: coverage}
 	}
-	costMetric := domain.UsageCostCoverage{
-		Coverage:   domain.UsageCoverageUnavailable,
-		Confidence: domain.CostConfidenceNone,
-	}
+	costMetric := domain.UsageCostCoverage{Coverage: domain.UsageCoverageUnavailable}
 	if costEvents > 0 {
 		coverage := tokenCoverage(events, state)
 		if costEvents < events {
 			coverage = domain.UsageCoveragePartial
 		}
-		costMetric = domain.UsageCostCoverage{
-			Value:      int64Pointer(cost),
-			Coverage:   coverage,
-			Confidence: domain.CostConfidenceEstimate,
-		}
+		costMetric = domain.UsageCostCoverage{Value: int64Pointer(cost), Coverage: coverage}
 	}
 	return domain.UsageMetricTotals{
 		InputTokens:         tokenMetric(input),
@@ -203,7 +196,7 @@ func usageTotals(models []domain.UsageModelAggregate, state domain.UsageCollecti
 		CacheWriteTokens:    tokenMetric(cacheWrite),
 		OutputTokens:        tokenMetric(output),
 		ReasoningTokens:     reasoningMetric,
-		EstimatedCostNanos:  costMetric,
+		CostNanos:           costMetric,
 	}
 }
 

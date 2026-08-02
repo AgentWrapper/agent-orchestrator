@@ -26,8 +26,8 @@ SELECT
     CAST(COALESCE(SUM(reasoning_tokens), 0) AS INTEGER) AS reasoning_tokens,
     COUNT(*) AS event_count,
     COUNT(reasoning_tokens) AS reasoning_event_count,
-    COUNT(estimated_cost_nanos) AS estimated_cost_event_count,
-    CAST(COALESCE(SUM(estimated_cost_nanos), 0) AS INTEGER) AS estimated_cost_nanos,
+    COUNT(cost_nanos) AS cost_event_count,
+    CAST(COALESCE(SUM(cost_nanos), 0) AS INTEGER) AS cost_nanos,
     CAST(MAX(observed_at) AS TEXT) AS last_observed_at
 FROM model_usage_events
 WHERE session_id = ?
@@ -36,20 +36,20 @@ ORDER BY SUM(input_tokens + output_tokens) DESC, harness, provider, model_id
 `
 
 type AggregateUsageBySessionHarnessModelRow struct {
-	Harness                 domain.AgentHarness
-	Provider                string
-	ModelID                 string
-	InputTokens             int64
-	UncachedInputTokens     int64
-	CacheReadTokens         int64
-	CacheWriteTokens        int64
-	OutputTokens            int64
-	ReasoningTokens         int64
-	EventCount              int64
-	ReasoningEventCount     int64
-	EstimatedCostEventCount int64
-	EstimatedCostNanos      int64
-	LastObservedAt          string
+	Harness             domain.AgentHarness
+	Provider            string
+	ModelID             string
+	InputTokens         int64
+	UncachedInputTokens int64
+	CacheReadTokens     int64
+	CacheWriteTokens    int64
+	OutputTokens        int64
+	ReasoningTokens     int64
+	EventCount          int64
+	ReasoningEventCount int64
+	CostEventCount      int64
+	CostNanos           int64
+	LastObservedAt      string
 }
 
 func (q *Queries) AggregateUsageBySessionHarnessModel(ctx context.Context, sessionID domain.SessionID) ([]AggregateUsageBySessionHarnessModelRow, error) {
@@ -73,8 +73,8 @@ func (q *Queries) AggregateUsageBySessionHarnessModel(ctx context.Context, sessi
 			&i.ReasoningTokens,
 			&i.EventCount,
 			&i.ReasoningEventCount,
-			&i.EstimatedCostEventCount,
-			&i.EstimatedCostNanos,
+			&i.CostEventCount,
+			&i.CostNanos,
 			&i.LastObservedAt,
 		); err != nil {
 			return nil, err
@@ -133,7 +133,10 @@ func (q *Queries) CompleteUsageBindingIfSettled(ctx context.Context, arg Complet
 }
 
 const getModelUsageEventByKey = `-- name: GetModelUsageEventByKey :one
-SELECT id, source_usage_hash
+SELECT
+    provider, model_id, observed_at, input_tokens, uncached_input_tokens,
+    cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens,
+    cost_nanos, pricing_version
 FROM model_usage_events
 WHERE binding_id = ? AND source_event_key = ?
 `
@@ -144,19 +147,40 @@ type GetModelUsageEventByKeyParams struct {
 }
 
 type GetModelUsageEventByKeyRow struct {
-	ID              int64
-	SourceUsageHash string
+	Provider            string
+	ModelID             string
+	ObservedAt          time.Time
+	InputTokens         int64
+	UncachedInputTokens int64
+	CacheReadTokens     int64
+	CacheWriteTokens    int64
+	OutputTokens        int64
+	ReasoningTokens     sql.NullInt64
+	CostNanos           sql.NullInt64
+	PricingVersion      sql.NullString
 }
 
 func (q *Queries) GetModelUsageEventByKey(ctx context.Context, arg GetModelUsageEventByKeyParams) (GetModelUsageEventByKeyRow, error) {
 	row := q.db.QueryRowContext(ctx, getModelUsageEventByKey, arg.BindingID, arg.SourceEventKey)
 	var i GetModelUsageEventByKeyRow
-	err := row.Scan(&i.ID, &i.SourceUsageHash)
+	err := row.Scan(
+		&i.Provider,
+		&i.ModelID,
+		&i.ObservedAt,
+		&i.InputTokens,
+		&i.UncachedInputTokens,
+		&i.CacheReadTokens,
+		&i.CacheWriteTokens,
+		&i.OutputTokens,
+		&i.ReasoningTokens,
+		&i.CostNanos,
+		&i.PricingVersion,
+	)
 	return i, err
 }
 
 const getUsageBindingBySessionHarnessRoot = `-- name: GetUsageBindingBySessionHarnessRoot :one
-SELECT id, session_id, harness, native_root_id, initial_model_id, source_cli_version, state, last_error_code, first_seen_at, last_seen_at, updated_at
+SELECT id, session_id, harness, native_root_id, initial_model_id, state, last_error_code, first_seen_at, last_seen_at, updated_at
 FROM usage_bindings
 WHERE session_id = ? AND harness = ? AND native_root_id = ?
 `
@@ -176,7 +200,6 @@ func (q *Queries) GetUsageBindingBySessionHarnessRoot(ctx context.Context, arg G
 		&i.Harness,
 		&i.NativeRootID,
 		&i.InitialModelID,
-		&i.SourceCliVersion,
 		&i.State,
 		&i.LastErrorCode,
 		&i.FirstSeenAt,
@@ -197,14 +220,7 @@ SELECT
     us.file_identity,
     us.generation,
     us.byte_offset,
-    us.baseline_input_tokens,
-    us.baseline_cached_input_tokens,
-    us.baseline_cache_write_tokens,
-    us.baseline_output_tokens,
-    us.baseline_reasoning_tokens,
-    us.current_model_id,
-    us.current_provider,
-    us.parser_version,
+    us.parser_state_json,
     us.state AS source_state,
     us.failure_count,
     us.anomaly_count,
@@ -217,7 +233,6 @@ SELECT
     ub.harness,
     ub.native_root_id,
     ub.initial_model_id,
-    ub.source_cli_version,
     ub.state AS binding_state,
     s.project_id
 FROM usage_sources us
@@ -227,38 +242,30 @@ WHERE us.id = ?
 `
 
 type GetUsageSourceWithBindingAndSessionRow struct {
-	SourceID                  int64
-	BindingID                 int64
-	Kind                      domain.UsageSourceKind
-	NativeSessionID           string
-	SubagentID                string
-	ArtifactPath              string
-	FileIdentity              string
-	Generation                int64
-	ByteOffset                int64
-	BaselineInputTokens       int64
-	BaselineCachedInputTokens int64
-	BaselineCacheWriteTokens  int64
-	BaselineOutputTokens      int64
-	BaselineReasoningTokens   int64
-	CurrentModelID            string
-	CurrentProvider           string
-	ParserVersion             string
-	SourceState               domain.UsageSourceState
-	FailureCount              int64
-	AnomalyCount              int64
-	NextRetryAt               sql.NullTime
-	SourceLastErrorCode       string
-	LastObservedAt            sql.NullTime
-	SourceCreatedAt           time.Time
-	SourceUpdatedAt           time.Time
-	SessionID                 domain.SessionID
-	Harness                   domain.AgentHarness
-	NativeRootID              string
-	InitialModelID            string
-	SourceCliVersion          string
-	BindingState              domain.UsageBindingState
-	ProjectID                 domain.ProjectID
+	SourceID            int64
+	BindingID           int64
+	Kind                domain.UsageSourceKind
+	NativeSessionID     string
+	SubagentID          string
+	ArtifactPath        string
+	FileIdentity        string
+	Generation          int64
+	ByteOffset          int64
+	ParserStateJson     string
+	SourceState         domain.UsageSourceState
+	FailureCount        int64
+	AnomalyCount        int64
+	NextRetryAt         sql.NullTime
+	SourceLastErrorCode string
+	LastObservedAt      sql.NullTime
+	SourceCreatedAt     time.Time
+	SourceUpdatedAt     time.Time
+	SessionID           domain.SessionID
+	Harness             domain.AgentHarness
+	NativeRootID        string
+	InitialModelID      string
+	BindingState        domain.UsageBindingState
+	ProjectID           domain.ProjectID
 }
 
 func (q *Queries) GetUsageSourceWithBindingAndSession(ctx context.Context, id int64) (GetUsageSourceWithBindingAndSessionRow, error) {
@@ -274,14 +281,7 @@ func (q *Queries) GetUsageSourceWithBindingAndSession(ctx context.Context, id in
 		&i.FileIdentity,
 		&i.Generation,
 		&i.ByteOffset,
-		&i.BaselineInputTokens,
-		&i.BaselineCachedInputTokens,
-		&i.BaselineCacheWriteTokens,
-		&i.BaselineOutputTokens,
-		&i.BaselineReasoningTokens,
-		&i.CurrentModelID,
-		&i.CurrentProvider,
-		&i.ParserVersion,
+		&i.ParserStateJson,
 		&i.SourceState,
 		&i.FailureCount,
 		&i.AnomalyCount,
@@ -294,7 +294,6 @@ func (q *Queries) GetUsageSourceWithBindingAndSession(ctx context.Context, id in
 		&i.Harness,
 		&i.NativeRootID,
 		&i.InitialModelID,
-		&i.SourceCliVersion,
 		&i.BindingState,
 		&i.ProjectID,
 	)
@@ -305,12 +304,9 @@ const insertModelUsageEvent = `-- name: InsertModelUsageEvent :exec
 INSERT INTO model_usage_events (
     binding_id, usage_source_id, project_id, session_id, harness, provider,
     model_id, observed_at, input_tokens, uncached_input_tokens,
-    cache_read_tokens, cache_write_tokens, cache_write_5m_tokens,
-    cache_write_1h_tokens, output_tokens, reasoning_tokens,
-    reported_cost_nanos, estimated_cost_nanos, pricing_version, cost_basis,
-    token_confidence, cost_confidence, source_event_key, source_usage_hash,
-    parser_version, source_cli_version, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens,
+    cost_nanos, pricing_version, source_event_key, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertModelUsageEventParams struct {
@@ -326,20 +322,11 @@ type InsertModelUsageEventParams struct {
 	UncachedInputTokens int64
 	CacheReadTokens     int64
 	CacheWriteTokens    int64
-	CacheWrite5mTokens  sql.NullInt64
-	CacheWrite1hTokens  sql.NullInt64
 	OutputTokens        int64
 	ReasoningTokens     sql.NullInt64
-	ReportedCostNanos   sql.NullInt64
-	EstimatedCostNanos  sql.NullInt64
-	PricingVersion      string
-	CostBasis           domain.CostBasis
-	TokenConfidence     domain.TokenConfidence
-	CostConfidence      domain.CostConfidence
+	CostNanos           sql.NullInt64
+	PricingVersion      sql.NullString
 	SourceEventKey      string
-	SourceUsageHash     string
-	ParserVersion       string
-	SourceCliVersion    string
 	CreatedAt           time.Time
 }
 
@@ -357,20 +344,11 @@ func (q *Queries) InsertModelUsageEvent(ctx context.Context, arg InsertModelUsag
 		arg.UncachedInputTokens,
 		arg.CacheReadTokens,
 		arg.CacheWriteTokens,
-		arg.CacheWrite5mTokens,
-		arg.CacheWrite1hTokens,
 		arg.OutputTokens,
 		arg.ReasoningTokens,
-		arg.ReportedCostNanos,
-		arg.EstimatedCostNanos,
+		arg.CostNanos,
 		arg.PricingVersion,
-		arg.CostBasis,
-		arg.TokenConfidence,
-		arg.CostConfidence,
 		arg.SourceEventKey,
-		arg.SourceUsageHash,
-		arg.ParserVersion,
-		arg.SourceCliVersion,
 		arg.CreatedAt,
 	)
 	return err
@@ -379,13 +357,10 @@ func (q *Queries) InsertModelUsageEvent(ctx context.Context, arg InsertModelUsag
 const insertUsageSource = `-- name: InsertUsageSource :one
 INSERT INTO usage_sources (
     binding_id, kind, native_session_id, subagent_id, artifact_path,
-    file_identity, generation, byte_offset, baseline_input_tokens,
-    baseline_cached_input_tokens, baseline_cache_write_tokens,
-    baseline_output_tokens, baseline_reasoning_tokens, current_model_id,
-    current_provider, parser_version,
+    file_identity, generation, byte_offset, parser_state_json,
     state, failure_count, anomaly_count, next_retry_at, last_error_code,
     last_observed_at, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (binding_id, artifact_path, generation) DO UPDATE SET
     native_session_id = CASE
         WHEN excluded.native_session_id <> '' THEN excluded.native_session_id
@@ -395,43 +370,28 @@ ON CONFLICT (binding_id, artifact_path, generation) DO UPDATE SET
         WHEN excluded.subagent_id <> '' THEN excluded.subagent_id
         ELSE usage_sources.subagent_id
     END,
-    current_model_id = CASE
-        WHEN excluded.current_model_id <> '' THEN excluded.current_model_id
-        ELSE usage_sources.current_model_id
-    END,
-    current_provider = CASE
-        WHEN excluded.current_provider <> '' THEN excluded.current_provider
-        ELSE usage_sources.current_provider
-    END,
     updated_at = excluded.updated_at
-RETURNING id, binding_id, kind, native_session_id, subagent_id, artifact_path, file_identity, generation, byte_offset, baseline_input_tokens, baseline_cached_input_tokens, baseline_cache_write_tokens, baseline_output_tokens, baseline_reasoning_tokens, current_model_id, current_provider, parser_version, state, failure_count, anomaly_count, next_retry_at, last_error_code, last_observed_at, created_at, updated_at
+RETURNING id, binding_id, kind, native_session_id, subagent_id, artifact_path, file_identity, generation, byte_offset, parser_state_json, state, failure_count, anomaly_count, next_retry_at, last_error_code, last_observed_at, created_at, updated_at
 `
 
 type InsertUsageSourceParams struct {
-	BindingID                 int64
-	Kind                      domain.UsageSourceKind
-	NativeSessionID           string
-	SubagentID                string
-	ArtifactPath              string
-	FileIdentity              string
-	Generation                int64
-	ByteOffset                int64
-	BaselineInputTokens       int64
-	BaselineCachedInputTokens int64
-	BaselineCacheWriteTokens  int64
-	BaselineOutputTokens      int64
-	BaselineReasoningTokens   int64
-	CurrentModelID            string
-	CurrentProvider           string
-	ParserVersion             string
-	State                     domain.UsageSourceState
-	FailureCount              int64
-	AnomalyCount              int64
-	NextRetryAt               sql.NullTime
-	LastErrorCode             string
-	LastObservedAt            sql.NullTime
-	CreatedAt                 time.Time
-	UpdatedAt                 time.Time
+	BindingID       int64
+	Kind            domain.UsageSourceKind
+	NativeSessionID string
+	SubagentID      string
+	ArtifactPath    string
+	FileIdentity    string
+	Generation      int64
+	ByteOffset      int64
+	ParserStateJson string
+	State           domain.UsageSourceState
+	FailureCount    int64
+	AnomalyCount    int64
+	NextRetryAt     sql.NullTime
+	LastErrorCode   string
+	LastObservedAt  sql.NullTime
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 func (q *Queries) InsertUsageSource(ctx context.Context, arg InsertUsageSourceParams) (UsageSource, error) {
@@ -444,14 +404,7 @@ func (q *Queries) InsertUsageSource(ctx context.Context, arg InsertUsageSourcePa
 		arg.FileIdentity,
 		arg.Generation,
 		arg.ByteOffset,
-		arg.BaselineInputTokens,
-		arg.BaselineCachedInputTokens,
-		arg.BaselineCacheWriteTokens,
-		arg.BaselineOutputTokens,
-		arg.BaselineReasoningTokens,
-		arg.CurrentModelID,
-		arg.CurrentProvider,
-		arg.ParserVersion,
+		arg.ParserStateJson,
 		arg.State,
 		arg.FailureCount,
 		arg.AnomalyCount,
@@ -472,14 +425,7 @@ func (q *Queries) InsertUsageSource(ctx context.Context, arg InsertUsageSourcePa
 		&i.FileIdentity,
 		&i.Generation,
 		&i.ByteOffset,
-		&i.BaselineInputTokens,
-		&i.BaselineCachedInputTokens,
-		&i.BaselineCacheWriteTokens,
-		&i.BaselineOutputTokens,
-		&i.BaselineReasoningTokens,
-		&i.CurrentModelID,
-		&i.CurrentProvider,
-		&i.ParserVersion,
+		&i.ParserStateJson,
 		&i.State,
 		&i.FailureCount,
 		&i.AnomalyCount,
@@ -569,7 +515,7 @@ func (q *Queries) ListCompactSessionUsage(ctx context.Context, projectID interfa
 }
 
 const listUsageBindingsForSession = `-- name: ListUsageBindingsForSession :many
-SELECT id, session_id, harness, native_root_id, initial_model_id, source_cli_version, state, last_error_code, first_seen_at, last_seen_at, updated_at
+SELECT id, session_id, harness, native_root_id, initial_model_id, state, last_error_code, first_seen_at, last_seen_at, updated_at
 FROM usage_bindings
 WHERE session_id = ?
 ORDER BY first_seen_at, id
@@ -590,7 +536,6 @@ func (q *Queries) ListUsageBindingsForSession(ctx context.Context, sessionID dom
 			&i.Harness,
 			&i.NativeRootID,
 			&i.InitialModelID,
-			&i.SourceCliVersion,
 			&i.State,
 			&i.LastErrorCode,
 			&i.FirstSeenAt,
@@ -611,7 +556,7 @@ func (q *Queries) ListUsageBindingsForSession(ctx context.Context, sessionID dom
 }
 
 const listUsageDiscoveryBindings = `-- name: ListUsageDiscoveryBindings :many
-SELECT ub.id, ub.session_id, ub.harness, ub.native_root_id, ub.initial_model_id, ub.source_cli_version, ub.state, ub.last_error_code, ub.first_seen_at, ub.last_seen_at, ub.updated_at
+SELECT ub.id, ub.session_id, ub.harness, ub.native_root_id, ub.initial_model_id, ub.state, ub.last_error_code, ub.first_seen_at, ub.last_seen_at, ub.updated_at
 FROM usage_bindings ub
 JOIN sessions s ON s.id = ub.session_id
 WHERE (s.is_terminated = 0 OR ub.state = 'finalizing')
@@ -656,7 +601,6 @@ func (q *Queries) ListUsageDiscoveryBindings(ctx context.Context, limit int64) (
 			&i.Harness,
 			&i.NativeRootID,
 			&i.InitialModelID,
-			&i.SourceCliVersion,
 			&i.State,
 			&i.LastErrorCode,
 			&i.FirstSeenAt,
@@ -677,7 +621,7 @@ func (q *Queries) ListUsageDiscoveryBindings(ctx context.Context, limit int64) (
 }
 
 const listUsageSourcesForBinding = `-- name: ListUsageSourcesForBinding :many
-SELECT id, binding_id, kind, native_session_id, subagent_id, artifact_path, file_identity, generation, byte_offset, baseline_input_tokens, baseline_cached_input_tokens, baseline_cache_write_tokens, baseline_output_tokens, baseline_reasoning_tokens, current_model_id, current_provider, parser_version, state, failure_count, anomaly_count, next_retry_at, last_error_code, last_observed_at, created_at, updated_at
+SELECT id, binding_id, kind, native_session_id, subagent_id, artifact_path, file_identity, generation, byte_offset, parser_state_json, state, failure_count, anomaly_count, next_retry_at, last_error_code, last_observed_at, created_at, updated_at
 FROM usage_sources
 WHERE binding_id = ?
 ORDER BY generation, id
@@ -702,14 +646,7 @@ func (q *Queries) ListUsageSourcesForBinding(ctx context.Context, bindingID int6
 			&i.FileIdentity,
 			&i.Generation,
 			&i.ByteOffset,
-			&i.BaselineInputTokens,
-			&i.BaselineCachedInputTokens,
-			&i.BaselineCacheWriteTokens,
-			&i.BaselineOutputTokens,
-			&i.BaselineReasoningTokens,
-			&i.CurrentModelID,
-			&i.CurrentProvider,
-			&i.ParserVersion,
+			&i.ParserStateJson,
 			&i.State,
 			&i.FailureCount,
 			&i.AnomalyCount,
@@ -733,7 +670,7 @@ func (q *Queries) ListUsageSourcesForBinding(ctx context.Context, bindingID int6
 }
 
 const listWatchableUsageSources = `-- name: ListWatchableUsageSources :many
-SELECT us.id, us.binding_id, us.kind, us.native_session_id, us.subagent_id, us.artifact_path, us.file_identity, us.generation, us.byte_offset, us.baseline_input_tokens, us.baseline_cached_input_tokens, us.baseline_cache_write_tokens, us.baseline_output_tokens, us.baseline_reasoning_tokens, us.current_model_id, us.current_provider, us.parser_version, us.state, us.failure_count, us.anomaly_count, us.next_retry_at, us.last_error_code, us.last_observed_at, us.created_at, us.updated_at
+SELECT us.id, us.binding_id, us.kind, us.native_session_id, us.subagent_id, us.artifact_path, us.file_identity, us.generation, us.byte_offset, us.parser_state_json, us.state, us.failure_count, us.anomaly_count, us.next_retry_at, us.last_error_code, us.last_observed_at, us.created_at, us.updated_at
 FROM usage_sources us
 JOIN usage_bindings ub ON ub.id = us.binding_id
 JOIN sessions s ON s.id = ub.session_id
@@ -768,14 +705,7 @@ func (q *Queries) ListWatchableUsageSources(ctx context.Context) ([]UsageSource,
 			&i.FileIdentity,
 			&i.Generation,
 			&i.ByteOffset,
-			&i.BaselineInputTokens,
-			&i.BaselineCachedInputTokens,
-			&i.BaselineCacheWriteTokens,
-			&i.BaselineOutputTokens,
-			&i.BaselineReasoningTokens,
-			&i.CurrentModelID,
-			&i.CurrentProvider,
-			&i.ParserVersion,
+			&i.ParserStateJson,
 			&i.State,
 			&i.FailureCount,
 			&i.AnomalyCount,
@@ -946,13 +876,7 @@ func (q *Queries) UpdateUsageBindingState(ctx context.Context, arg UpdateUsageBi
 const updateUsageSourceCursor = `-- name: UpdateUsageSourceCursor :exec
 UPDATE usage_sources SET
     byte_offset = ?,
-    baseline_input_tokens = ?,
-    baseline_cached_input_tokens = ?,
-    baseline_cache_write_tokens = ?,
-    baseline_output_tokens = ?,
-    baseline_reasoning_tokens = ?,
-    current_model_id = ?,
-    current_provider = ?,
+    parser_state_json = ?,
     state = ?,
     failure_count = ?,
     anomaly_count = ?,
@@ -964,34 +888,22 @@ WHERE id = ?
 `
 
 type UpdateUsageSourceCursorParams struct {
-	ByteOffset                int64
-	BaselineInputTokens       int64
-	BaselineCachedInputTokens int64
-	BaselineCacheWriteTokens  int64
-	BaselineOutputTokens      int64
-	BaselineReasoningTokens   int64
-	CurrentModelID            string
-	CurrentProvider           string
-	State                     domain.UsageSourceState
-	FailureCount              int64
-	AnomalyCount              int64
-	NextRetryAt               sql.NullTime
-	LastErrorCode             string
-	LastObservedAt            sql.NullTime
-	UpdatedAt                 time.Time
-	ID                        int64
+	ByteOffset      int64
+	ParserStateJson string
+	State           domain.UsageSourceState
+	FailureCount    int64
+	AnomalyCount    int64
+	NextRetryAt     sql.NullTime
+	LastErrorCode   string
+	LastObservedAt  sql.NullTime
+	UpdatedAt       time.Time
+	ID              int64
 }
 
 func (q *Queries) UpdateUsageSourceCursor(ctx context.Context, arg UpdateUsageSourceCursorParams) error {
 	_, err := q.db.ExecContext(ctx, updateUsageSourceCursor,
 		arg.ByteOffset,
-		arg.BaselineInputTokens,
-		arg.BaselineCachedInputTokens,
-		arg.BaselineCacheWriteTokens,
-		arg.BaselineOutputTokens,
-		arg.BaselineReasoningTokens,
-		arg.CurrentModelID,
-		arg.CurrentProvider,
+		arg.ParserStateJson,
 		arg.State,
 		arg.FailureCount,
 		arg.AnomalyCount,
@@ -1006,17 +918,13 @@ func (q *Queries) UpdateUsageSourceCursor(ctx context.Context, arg UpdateUsageSo
 
 const upsertUsageBinding = `-- name: UpsertUsageBinding :one
 INSERT INTO usage_bindings (
-    session_id, harness, native_root_id, initial_model_id, source_cli_version,
-    state, last_error_code, first_seen_at, last_seen_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    session_id, harness, native_root_id, initial_model_id, state,
+    last_error_code, first_seen_at, last_seen_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (session_id, harness, native_root_id) DO UPDATE SET
     initial_model_id = CASE
         WHEN excluded.initial_model_id <> '' THEN excluded.initial_model_id
         ELSE usage_bindings.initial_model_id
-    END,
-    source_cli_version = CASE
-        WHEN excluded.source_cli_version <> '' THEN excluded.source_cli_version
-        ELSE usage_bindings.source_cli_version
     END,
     state = CASE
         WHEN usage_bindings.state IN ('finalizing', 'complete', 'partial')
@@ -1032,20 +940,19 @@ ON CONFLICT (session_id, harness, native_root_id) DO UPDATE SET
     END,
     last_seen_at = excluded.last_seen_at,
     updated_at = excluded.updated_at
-RETURNING id, session_id, harness, native_root_id, initial_model_id, source_cli_version, state, last_error_code, first_seen_at, last_seen_at, updated_at
+RETURNING id, session_id, harness, native_root_id, initial_model_id, state, last_error_code, first_seen_at, last_seen_at, updated_at
 `
 
 type UpsertUsageBindingParams struct {
-	SessionID        domain.SessionID
-	Harness          domain.AgentHarness
-	NativeRootID     string
-	InitialModelID   string
-	SourceCliVersion string
-	State            domain.UsageBindingState
-	LastErrorCode    string
-	FirstSeenAt      time.Time
-	LastSeenAt       time.Time
-	UpdatedAt        time.Time
+	SessionID      domain.SessionID
+	Harness        domain.AgentHarness
+	NativeRootID   string
+	InitialModelID string
+	State          domain.UsageBindingState
+	LastErrorCode  string
+	FirstSeenAt    time.Time
+	LastSeenAt     time.Time
+	UpdatedAt      time.Time
 }
 
 func (q *Queries) UpsertUsageBinding(ctx context.Context, arg UpsertUsageBindingParams) (UsageBinding, error) {
@@ -1054,7 +961,6 @@ func (q *Queries) UpsertUsageBinding(ctx context.Context, arg UpsertUsageBinding
 		arg.Harness,
 		arg.NativeRootID,
 		arg.InitialModelID,
-		arg.SourceCliVersion,
 		arg.State,
 		arg.LastErrorCode,
 		arg.FirstSeenAt,
@@ -1068,7 +974,6 @@ func (q *Queries) UpsertUsageBinding(ctx context.Context, arg UpsertUsageBinding
 		&i.Harness,
 		&i.NativeRootID,
 		&i.InitialModelID,
-		&i.SourceCliVersion,
 		&i.State,
 		&i.LastErrorCode,
 		&i.FirstSeenAt,

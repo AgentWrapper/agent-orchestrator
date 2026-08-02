@@ -1,9 +1,12 @@
 package usage
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -19,38 +22,144 @@ type jsonlRecord struct {
 type parseResult struct {
 	Events []domain.ModelUsageEvent
 	Cursor domain.SourceCursorState
+	err    error
 }
 
 func parseRecords(source domain.UsageSourceContext, records []jsonlRecord, nextOffset int64, now time.Time) parseResult {
+	state, err := decodeParserState(source.Source)
+	if err != nil {
+		return parseResult{err: fmt.Errorf("decode parser state: %w", err)}
+	}
 	result := parseResult{Cursor: cursorFromSource(source.Source, nextOffset, now)}
 	switch source.Source.Kind {
 	case domain.UsageSourceClaudeMain, domain.UsageSourceClaudeSubagent:
-		parseClaude(source, records, now, &result)
+		parseClaude(source, records, now, state.Claude, &result)
 	case domain.UsageSourceCodexRollout:
-		parseCodex(source, records, now, &result)
+		parseCodex(source, records, now, state.Codex, &result)
 	default:
 		result.Cursor.AnomalyCount++
 		result.Cursor.LastErrorCode = domain.UsageErrorUnsupportedSourceFormat
 	}
+	encoded, err := json.Marshal(state)
+	if err != nil {
+		result.err = fmt.Errorf("encode parser state: %w", err)
+		return result
+	}
+	result.Cursor.ParserStateJSON = string(encoded)
 	return result
 }
 
 func cursorFromSource(source domain.UsageSourceRecord, nextOffset int64, now time.Time) domain.SourceCursorState {
 	return domain.SourceCursorState{
-		ByteOffset:                nextOffset,
-		State:                     domain.UsageSourceActive,
-		BaselineInputTokens:       source.BaselineInputTokens,
-		BaselineCachedInputTokens: source.BaselineCachedInputTokens,
-		BaselineCacheWriteTokens:  source.BaselineCacheWriteTokens,
-		BaselineOutputTokens:      source.BaselineOutputTokens,
-		BaselineReasoningTokens:   source.BaselineReasoningTokens,
-		CurrentModelID:            source.CurrentModelID,
-		CurrentProvider:           source.CurrentProvider,
-		FailureCount:              0,
-		AnomalyCount:              source.AnomalyCount,
-		LastObservedAt:            &now,
-		UpdatedAt:                 now,
+		ByteOffset:     nextOffset,
+		State:          domain.UsageSourceActive,
+		FailureCount:   0,
+		AnomalyCount:   source.AnomalyCount,
+		LastObservedAt: &now,
+		UpdatedAt:      now,
 	}
+}
+
+const parserStateVersion = 1
+
+type codexTokenVector struct {
+	InputTokens           int64 `json:"input_tokens"`
+	CachedInputTokens     int64 `json:"cached_input_tokens"`
+	CacheWriteInputTokens int64 `json:"cache_write_input_tokens"`
+	OutputTokens          int64 `json:"output_tokens"`
+	ReasoningOutputTokens int64 `json:"reasoning_output_tokens"`
+}
+
+type parserStateEnvelope struct {
+	Version    int                    `json:"version"`
+	SourceKind domain.UsageSourceKind `json:"source_kind"`
+	Claude     *claudeParserStateV1   `json:"claude,omitempty"`
+	Codex      *codexParserStateV1    `json:"codex,omitempty"`
+}
+
+type claudeParserStateV1 struct {
+	ModelID  string `json:"model_id,omitempty"`
+	Provider string `json:"provider,omitempty"`
+}
+
+type codexParserStateV1 struct {
+	Baseline            codexTokenVector `json:"baseline"`
+	ModelID             string           `json:"model_id,omitempty"`
+	Provider            string           `json:"provider,omitempty"`
+	PendingSpawnCallIDs []string         `json:"pending_spawn_call_ids"`
+	DiscoveredChildIDs  []string         `json:"discovered_child_ids"`
+}
+
+func decodeParserState(source domain.UsageSourceRecord) (*parserStateEnvelope, error) {
+	raw := strings.TrimSpace(source.ParserStateJSON)
+	if raw == "{}" {
+		return newParserState(source.Kind)
+	}
+	if raw == "" || raw[0] != '{' {
+		return nil, errors.New("state must be a JSON object")
+	}
+	var state parserStateEnvelope
+	decoder := json.NewDecoder(bytes.NewReader([]byte(raw)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&state); err != nil {
+		return nil, err
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return nil, err
+	}
+	if state.Version != parserStateVersion {
+		return nil, fmt.Errorf("unsupported version %d", state.Version)
+	}
+	if state.SourceKind != source.Kind {
+		return nil, fmt.Errorf("source kind %q does not match %q", state.SourceKind, source.Kind)
+	}
+	switch source.Kind {
+	case domain.UsageSourceClaudeMain, domain.UsageSourceClaudeSubagent:
+		if state.Claude == nil || state.Codex != nil {
+			return nil, errors.New("claude state has invalid provider payload")
+		}
+	case domain.UsageSourceCodexRollout:
+		if state.Codex == nil || state.Claude != nil {
+			return nil, errors.New("codex state has invalid provider payload")
+		}
+		if state.Codex.PendingSpawnCallIDs == nil {
+			state.Codex.PendingSpawnCallIDs = []string{}
+		}
+		if state.Codex.DiscoveredChildIDs == nil {
+			state.Codex.DiscoveredChildIDs = []string{}
+		}
+	default:
+		return nil, fmt.Errorf("unsupported source kind %q", source.Kind)
+	}
+	return &state, nil
+}
+
+func newParserState(kind domain.UsageSourceKind) (*parserStateEnvelope, error) {
+	state := &parserStateEnvelope{Version: parserStateVersion, SourceKind: kind}
+	switch kind {
+	case domain.UsageSourceClaudeMain, domain.UsageSourceClaudeSubagent:
+		state.Claude = &claudeParserStateV1{}
+	case domain.UsageSourceCodexRollout:
+		state.Codex = &codexParserStateV1{
+			PendingSpawnCallIDs: []string{},
+			DiscoveredChildIDs:  []string{},
+		}
+	default:
+		return nil, fmt.Errorf("unsupported source kind %q", kind)
+	}
+	return state, nil
+}
+
+func ensureJSONEOF(decoder *json.Decoder) error {
+	var extra any
+	err := decoder.Decode(&extra)
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	if err == nil {
+		return errors.New("multiple JSON values")
+	}
+	return err
 }
 
 type claudeTranscriptRecord struct {
@@ -67,15 +176,11 @@ type claudeTranscriptRecord struct {
 			CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
 			CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
 			OutputTokens             int64 `json:"output_tokens"`
-			CacheCreation            *struct {
-				Ephemeral5mInputTokens int64 `json:"ephemeral_5m_input_tokens"`
-				Ephemeral1hInputTokens int64 `json:"ephemeral_1h_input_tokens"`
-			} `json:"cache_creation"`
 		} `json:"usage"`
 	} `json:"message"`
 }
 
-func parseClaude(source domain.UsageSourceContext, records []jsonlRecord, now time.Time, result *parseResult) {
+func parseClaude(source domain.UsageSourceContext, records []jsonlRecord, now time.Time, state *claudeParserStateV1, result *parseResult) {
 	for _, record := range records {
 		var native claudeTranscriptRecord
 		if err := json.Unmarshal(record.Data, &native); err != nil {
@@ -98,39 +203,27 @@ func parseClaude(source domain.UsageSourceContext, records []jsonlRecord, now ti
 			recordMalformed(result)
 			continue
 		}
-		var cache5m, cache1h *int64
-		if usage.CacheCreation != nil {
-			cache5m = int64Ptr(usage.CacheCreation.Ephemeral5mInputTokens)
-			cache1h = int64Ptr(usage.CacheCreation.Ephemeral1hInputTokens)
-		}
 		tokens := domain.UsageTokenMetrics{
 			InputTokens:         input,
 			UncachedInputTokens: usage.InputTokens,
 			CacheReadTokens:     usage.CacheReadInputTokens,
 			CacheWriteTokens:    usage.CacheCreationInputTokens,
-			CacheWrite5mTokens:  cache5m,
-			CacheWrite1hTokens:  cache1h,
 			OutputTokens:        usage.OutputTokens,
 		}
 		if !validTokenMetrics(tokens) {
 			recordMalformed(result)
 			continue
 		}
-		model := firstNonEmpty(native.Message.Model, result.Cursor.CurrentModelID, source.InitialModelID, "unknown")
-		result.Cursor.CurrentModelID = model
-		result.Cursor.CurrentProvider = firstNonEmpty(result.Cursor.CurrentProvider, "claude-code")
+		model := firstNonEmpty(native.Message.Model, state.ModelID, source.InitialModelID, "unknown")
+		state.ModelID = model
+		state.Provider = firstNonEmpty(state.Provider, "claude-code")
 		observedAt := parseTimestamp(native.Timestamp, now)
 		keyID := firstNonEmpty(native.Message.ID, native.UUID, strconv.FormatInt(record.Offset, 10))
 		event := domain.ModelUsageEvent{
-			Provider:   result.Cursor.CurrentProvider,
+			Provider:   state.Provider,
 			ModelID:    model,
 			ObservedAt: observedAt,
 			Tokens:     tokens,
-			Cost: domain.UsageCostMetrics{
-				CostBasis:  domain.CostBasisUnavailable,
-				Confidence: domain.CostConfidenceNone,
-			},
-			TokenConfidence: domain.TokenConfidenceParsed,
 			SourceEventKey: stableSourceEventKey(
 				"claude",
 				source.NativeRootID,
@@ -139,10 +232,8 @@ func parseClaude(source domain.UsageSourceContext, records []jsonlRecord, now ti
 				source.Source.SubagentID,
 				keyID,
 			),
-			ParserVersion: source.Source.ParserVersion,
-			CreatedAt:     now,
+			CreatedAt: now,
 		}
-		event.SourceUsageHash = usageHash(event)
 		result.Events = append(result.Events, event)
 	}
 }
@@ -153,15 +244,7 @@ type codexEnvelope struct {
 	Payload   json.RawMessage `json:"payload"`
 }
 
-type codexTokenVector struct {
-	InputTokens           int64 `json:"input_tokens"`
-	CachedInputTokens     int64 `json:"cached_input_tokens"`
-	CacheWriteInputTokens int64 `json:"cache_write_input_tokens"`
-	OutputTokens          int64 `json:"output_tokens"`
-	ReasoningOutputTokens int64 `json:"reasoning_output_tokens"`
-}
-
-func parseCodex(source domain.UsageSourceContext, records []jsonlRecord, now time.Time, result *parseResult) {
+func parseCodex(source domain.UsageSourceContext, records []jsonlRecord, now time.Time, state *codexParserStateV1, result *parseResult) {
 	for _, record := range records {
 		var envelope codexEnvelope
 		if err := json.Unmarshal(record.Data, &envelope); err != nil {
@@ -174,22 +257,22 @@ func parseCodex(source domain.UsageSourceContext, records []jsonlRecord, now tim
 				ModelProvider string `json:"model_provider"`
 			}
 			if json.Unmarshal(envelope.Payload, &payload) == nil {
-				result.Cursor.CurrentProvider = firstNonEmpty(payload.ModelProvider, result.Cursor.CurrentProvider)
+				state.Provider = firstNonEmpty(payload.ModelProvider, state.Provider)
 			}
 		case "turn_context":
 			var payload struct {
 				Model string `json:"model"`
 			}
 			if json.Unmarshal(envelope.Payload, &payload) == nil {
-				result.Cursor.CurrentModelID = firstNonEmpty(payload.Model, result.Cursor.CurrentModelID)
+				state.ModelID = firstNonEmpty(payload.Model, state.ModelID)
 			}
 		case "event_msg":
-			parseCodexEvent(source, envelope, now, result)
+			parseCodexEvent(source, envelope, now, state, result)
 		}
 	}
 }
 
-func parseCodexEvent(source domain.UsageSourceContext, envelope codexEnvelope, now time.Time, result *parseResult) {
+func parseCodexEvent(source domain.UsageSourceContext, envelope codexEnvelope, now time.Time, state *codexParserStateV1, result *parseResult) {
 	var payload struct {
 		Type string `json:"type"`
 		Info *struct {
@@ -204,22 +287,22 @@ func parseCodexEvent(source domain.UsageSourceContext, envelope codexEnvelope, n
 		recordMalformed(result)
 		return
 	}
-	if total.InputTokens < result.Cursor.BaselineInputTokens ||
-		total.CachedInputTokens < result.Cursor.BaselineCachedInputTokens ||
-		total.CacheWriteInputTokens < result.Cursor.BaselineCacheWriteTokens ||
-		total.OutputTokens < result.Cursor.BaselineOutputTokens ||
-		total.ReasoningOutputTokens < result.Cursor.BaselineReasoningTokens {
+	if total.InputTokens < state.Baseline.InputTokens ||
+		total.CachedInputTokens < state.Baseline.CachedInputTokens ||
+		total.CacheWriteInputTokens < state.Baseline.CacheWriteInputTokens ||
+		total.OutputTokens < state.Baseline.OutputTokens ||
+		total.ReasoningOutputTokens < state.Baseline.ReasoningOutputTokens {
 		result.Cursor.AnomalyCount++
 		result.Cursor.LastErrorCode = domain.UsageErrorNonMonotonicCumulativeUsage
-		setCodexBaseline(&result.Cursor, total)
+		state.Baseline = total
 		return
 	}
-	input := total.InputTokens - result.Cursor.BaselineInputTokens
-	cached := total.CachedInputTokens - result.Cursor.BaselineCachedInputTokens
-	cacheWrite := total.CacheWriteInputTokens - result.Cursor.BaselineCacheWriteTokens
-	output := total.OutputTokens - result.Cursor.BaselineOutputTokens
-	reasoning := total.ReasoningOutputTokens - result.Cursor.BaselineReasoningTokens
-	setCodexBaseline(&result.Cursor, total)
+	input := total.InputTokens - state.Baseline.InputTokens
+	cached := total.CachedInputTokens - state.Baseline.CachedInputTokens
+	cacheWrite := total.CacheWriteInputTokens - state.Baseline.CacheWriteInputTokens
+	output := total.OutputTokens - state.Baseline.OutputTokens
+	reasoning := total.ReasoningOutputTokens - state.Baseline.ReasoningOutputTokens
+	state.Baseline = total
 	if input == 0 && output == 0 && cacheWrite == 0 {
 		return
 	}
@@ -229,8 +312,10 @@ func parseCodexEvent(source domain.UsageSourceContext, envelope codexEnvelope, n
 		result.Cursor.AnomalyCount++
 		result.Cursor.LastErrorCode = domain.UsageErrorNonMonotonicCumulativeUsage
 	}
-	model := firstNonEmpty(result.Cursor.CurrentModelID, source.InitialModelID, "unknown")
-	provider := firstNonEmpty(result.Cursor.CurrentProvider, "openai")
+	model := firstNonEmpty(state.ModelID, source.InitialModelID, "unknown")
+	provider := firstNonEmpty(state.Provider, "openai")
+	state.ModelID = model
+	state.Provider = provider
 	observedAt := parseTimestamp(envelope.Timestamp, now)
 	tokens := domain.UsageTokenMetrics{
 		InputTokens:         input,
@@ -250,11 +335,6 @@ func parseCodexEvent(source domain.UsageSourceContext, envelope codexEnvelope, n
 		ModelID:    model,
 		ObservedAt: observedAt,
 		Tokens:     tokens,
-		Cost: domain.UsageCostMetrics{
-			CostBasis:  domain.CostBasisUnavailable,
-			Confidence: domain.CostConfidenceNone,
-		},
-		TokenConfidence: domain.TokenConfidenceParsed,
 		SourceEventKey: stableSourceEventKey(
 			"codex",
 			source.NativeRootID,
@@ -266,19 +346,9 @@ func parseCodexEvent(source domain.UsageSourceContext, envelope codexEnvelope, n
 			strconv.FormatInt(total.OutputTokens, 10),
 			strconv.FormatInt(total.ReasoningOutputTokens, 10),
 		),
-		ParserVersion: source.Source.ParserVersion,
-		CreatedAt:     now,
+		CreatedAt: now,
 	}
-	event.SourceUsageHash = usageHash(event)
 	result.Events = append(result.Events, event)
-}
-
-func setCodexBaseline(cursor *domain.SourceCursorState, total codexTokenVector) {
-	cursor.BaselineInputTokens = total.InputTokens
-	cursor.BaselineCachedInputTokens = total.CachedInputTokens
-	cursor.BaselineCacheWriteTokens = total.CacheWriteInputTokens
-	cursor.BaselineOutputTokens = total.OutputTokens
-	cursor.BaselineReasoningTokens = total.ReasoningOutputTokens
 }
 
 func recordMalformed(result *parseResult) {
@@ -313,18 +383,6 @@ func validTokenMetrics(tokens domain.UsageTokenMetrics) bool {
 		tokens.CacheWriteTokens > tokens.InputTokens-tokens.UncachedInputTokens-tokens.CacheReadTokens {
 		return false
 	}
-	if tokens.CacheWrite5mTokens != nil &&
-		(*tokens.CacheWrite5mTokens < 0 || *tokens.CacheWrite5mTokens > tokens.CacheWriteTokens) {
-		return false
-	}
-	if tokens.CacheWrite1hTokens != nil &&
-		(*tokens.CacheWrite1hTokens < 0 || *tokens.CacheWrite1hTokens > tokens.CacheWriteTokens) {
-		return false
-	}
-	if tokens.CacheWrite5mTokens != nil && tokens.CacheWrite1hTokens != nil &&
-		*tokens.CacheWrite5mTokens > tokens.CacheWriteTokens-*tokens.CacheWrite1hTokens {
-		return false
-	}
 	return tokens.ReasoningTokens == nil ||
 		(*tokens.ReasoningTokens >= 0 && *tokens.ReasoningTokens <= tokens.OutputTokens)
 }
@@ -339,29 +397,6 @@ func sumNonNegative(values ...int64) (int64, bool) {
 		total += value
 	}
 	return total, true
-}
-
-func usageHash(event domain.ModelUsageEvent) string {
-	data, _ := json.Marshal(struct {
-		Provider string
-		Model    string
-		Input    int64
-		Uncached int64
-		Read     int64
-		Write    int64
-		Output   int64
-		Reason   *int64
-	}{
-		event.Provider,
-		event.ModelID,
-		event.Tokens.InputTokens,
-		event.Tokens.UncachedInputTokens,
-		event.Tokens.CacheReadTokens,
-		event.Tokens.CacheWriteTokens,
-		event.Tokens.OutputTokens,
-		event.Tokens.ReasoningTokens,
-	})
-	return fmt.Sprintf("sha256:%x", sha256.Sum256(data))
 }
 
 func stableSourceEventKey(prefix string, parts ...string) string {

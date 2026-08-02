@@ -1500,12 +1500,10 @@ export interface components {
         };
         UsageCostMetricResponse: {
             /** @enum {string} */
-            confidence: "provider_reported" | "api_pricing_estimate" | "unavailable";
-            /** @enum {string} */
             coverage: "complete" | "partial" | "unavailable";
             /** @enum {string} */
             currency: "USD";
-            pricingVersion?: string;
+            pricingVersion?: null | string;
             valueNanos: null | number;
         };
         UsageHarnessResponse: {
@@ -1527,7 +1525,7 @@ export interface components {
         UsageTotalsResponse: {
             cacheReadTokens: components["schemas"]["UsageMetricResponse"];
             cacheWriteTokens: components["schemas"]["UsageMetricResponse"];
-            estimatedCost: components["schemas"]["UsageCostMetricResponse"];
+            cost: components["schemas"]["UsageCostMetricResponse"];
             inputTokens: components["schemas"]["UsageMetricResponse"];
             outputTokens: components["schemas"]["UsageMetricResponse"];
             reasoningTokens: components["schemas"]["UsageMetricResponse"];

@@ -8,7 +8,6 @@ CREATE TABLE usage_bindings (
         CHECK (harness IN ('claude-code', 'codex')),
     native_root_id     TEXT NOT NULL CHECK (trim(native_root_id) <> ''),
     initial_model_id   TEXT NOT NULL DEFAULT '',
-    source_cli_version TEXT NOT NULL DEFAULT '',
     state              TEXT NOT NULL
         CHECK (state IN ('discovering', 'active', 'finalizing', 'complete', 'partial')),
     last_error_code    TEXT NOT NULL DEFAULT '',
@@ -31,14 +30,7 @@ CREATE TABLE usage_sources (
     file_identity                 TEXT NOT NULL DEFAULT '',
     generation                    INTEGER NOT NULL DEFAULT 0 CHECK (generation >= 0),
     byte_offset                   INTEGER NOT NULL DEFAULT 0 CHECK (byte_offset >= 0),
-    baseline_input_tokens         INTEGER NOT NULL DEFAULT 0 CHECK (baseline_input_tokens >= 0),
-    baseline_cached_input_tokens  INTEGER NOT NULL DEFAULT 0 CHECK (baseline_cached_input_tokens >= 0),
-    baseline_cache_write_tokens   INTEGER NOT NULL DEFAULT 0 CHECK (baseline_cache_write_tokens >= 0),
-    baseline_output_tokens        INTEGER NOT NULL DEFAULT 0 CHECK (baseline_output_tokens >= 0),
-    baseline_reasoning_tokens     INTEGER NOT NULL DEFAULT 0 CHECK (baseline_reasoning_tokens >= 0),
-    current_model_id              TEXT NOT NULL DEFAULT '',
-    current_provider              TEXT NOT NULL DEFAULT '',
-    parser_version                TEXT NOT NULL CHECK (trim(parser_version) <> ''),
+    parser_state_json             TEXT NOT NULL DEFAULT '{}',
     state                         TEXT NOT NULL
         CHECK (state IN ('pending', 'active', 'complete', 'error')),
     failure_count                 INTEGER NOT NULL DEFAULT 0 CHECK (failure_count >= 0),
@@ -69,23 +61,11 @@ CREATE TABLE model_usage_events (
     uncached_input_tokens   INTEGER NOT NULL CHECK (uncached_input_tokens >= 0 AND uncached_input_tokens <= input_tokens),
     cache_read_tokens       INTEGER NOT NULL CHECK (cache_read_tokens >= 0 AND cache_read_tokens <= input_tokens),
     cache_write_tokens      INTEGER NOT NULL CHECK (cache_write_tokens >= 0 AND cache_write_tokens <= input_tokens),
-    cache_write_5m_tokens   INTEGER CHECK (cache_write_5m_tokens IS NULL OR (cache_write_5m_tokens >= 0 AND cache_write_5m_tokens <= cache_write_tokens)),
-    cache_write_1h_tokens   INTEGER CHECK (cache_write_1h_tokens IS NULL OR (cache_write_1h_tokens >= 0 AND cache_write_1h_tokens <= cache_write_tokens)),
     output_tokens           INTEGER NOT NULL CHECK (output_tokens >= 0),
     reasoning_tokens        INTEGER CHECK (reasoning_tokens IS NULL OR (reasoning_tokens >= 0 AND reasoning_tokens <= output_tokens)),
-    reported_cost_nanos     INTEGER CHECK (reported_cost_nanos IS NULL OR reported_cost_nanos >= 0),
-    estimated_cost_nanos    INTEGER CHECK (estimated_cost_nanos IS NULL OR estimated_cost_nanos >= 0),
-    pricing_version         TEXT NOT NULL DEFAULT '',
-    cost_basis              TEXT NOT NULL
-        CHECK (cost_basis IN ('provider_reported', 'api_pricing_estimate', 'unavailable')),
-    token_confidence        TEXT NOT NULL
-        CHECK (token_confidence IN ('provider_reported', 'parsed_jsonl', 'unavailable')),
-    cost_confidence         TEXT NOT NULL
-        CHECK (cost_confidence IN ('provider_reported', 'api_pricing_estimate', 'unavailable')),
+    cost_nanos              INTEGER CHECK (cost_nanos IS NULL OR cost_nanos >= 0),
+    pricing_version         TEXT CHECK (pricing_version IS NULL OR trim(pricing_version) <> ''),
     source_event_key        TEXT NOT NULL CHECK (trim(source_event_key) <> ''),
-    source_usage_hash       TEXT NOT NULL CHECK (trim(source_usage_hash) <> ''),
-    parser_version          TEXT NOT NULL CHECK (trim(parser_version) <> ''),
-    source_cli_version      TEXT NOT NULL DEFAULT '',
     created_at              TIMESTAMP NOT NULL,
 
     UNIQUE (binding_id, source_event_key)

@@ -35,20 +35,11 @@ type ModelUsageEvent struct {
 	UncachedInputTokens int64
 	CacheReadTokens     int64
 	CacheWriteTokens    int64
-	CacheWrite5mTokens  sql.NullInt64
-	CacheWrite1hTokens  sql.NullInt64
 	OutputTokens        int64
 	ReasoningTokens     sql.NullInt64
-	ReportedCostNanos   sql.NullInt64
-	EstimatedCostNanos  sql.NullInt64
-	PricingVersion      string
-	CostBasis           domain.CostBasis
-	TokenConfidence     domain.TokenConfidence
-	CostConfidence      domain.CostConfidence
+	CostNanos           sql.NullInt64
+	PricingVersion      sql.NullString
 	SourceEventKey      string
-	SourceUsageHash     string
-	ParserVersion       string
-	SourceCliVersion    string
 	CreatedAt           time.Time
 }
 
@@ -264,45 +255,37 @@ type TelemetryEvent struct {
 }
 
 type UsageBinding struct {
-	ID               int64
-	SessionID        domain.SessionID
-	Harness          domain.AgentHarness
-	NativeRootID     string
-	InitialModelID   string
-	SourceCliVersion string
-	State            domain.UsageBindingState
-	LastErrorCode    string
-	FirstSeenAt      time.Time
-	LastSeenAt       time.Time
-	UpdatedAt        time.Time
+	ID             int64
+	SessionID      domain.SessionID
+	Harness        domain.AgentHarness
+	NativeRootID   string
+	InitialModelID string
+	State          domain.UsageBindingState
+	LastErrorCode  string
+	FirstSeenAt    time.Time
+	LastSeenAt     time.Time
+	UpdatedAt      time.Time
 }
 
 type UsageSource struct {
-	ID                        int64
-	BindingID                 int64
-	Kind                      domain.UsageSourceKind
-	NativeSessionID           string
-	SubagentID                string
-	ArtifactPath              string
-	FileIdentity              string
-	Generation                int64
-	ByteOffset                int64
-	BaselineInputTokens       int64
-	BaselineCachedInputTokens int64
-	BaselineCacheWriteTokens  int64
-	BaselineOutputTokens      int64
-	BaselineReasoningTokens   int64
-	CurrentModelID            string
-	CurrentProvider           string
-	ParserVersion             string
-	State                     domain.UsageSourceState
-	FailureCount              int64
-	AnomalyCount              int64
-	NextRetryAt               sql.NullTime
-	LastErrorCode             string
-	LastObservedAt            sql.NullTime
-	CreatedAt                 time.Time
-	UpdatedAt                 time.Time
+	ID              int64
+	BindingID       int64
+	Kind            domain.UsageSourceKind
+	NativeSessionID string
+	SubagentID      string
+	ArtifactPath    string
+	FileIdentity    string
+	Generation      int64
+	ByteOffset      int64
+	ParserStateJson string
+	State           domain.UsageSourceState
+	FailureCount    int64
+	AnomalyCount    int64
+	NextRetryAt     sql.NullTime
+	LastErrorCode   string
+	LastObservedAt  sql.NullTime
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type WorkerIdleEvent struct {
