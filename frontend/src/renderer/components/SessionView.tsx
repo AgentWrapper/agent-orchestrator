@@ -127,7 +127,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				params: { path: { sessionId } },
 			});
 			if (error) throw new Error(apiErrorMessage(error, "Unable to load reviews"));
-			return data ?? ({ reviewerHandleId: "", reviews: [] } satisfies ReviewsResponse);
+			return data ?? ({ reviewerHandleId: "", reviews: [], runs: [] } satisfies ReviewsResponse);
 		},
 	});
 	const availableReviewerTerminal = reviewerTerminalFromReviews(reviewerQuery.data);
@@ -636,14 +636,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									}
 									isInspectorVisible={isInspectorOpen}
 									onOpenFiles={handleOpenFiles}
-								onOpenReviewerTerminal={({ handleId, harness }) =>
-									setTerminalTarget({
-										kind: "reviewer",
-											handleId,
-											harness,
-											sessionId,
-										})
-									}
 									onToggleBrowserPopOut={handleToggleBrowserPopOut}
 									onViewChange={(next: InspectorView) => setInspectorViewForSession(sessionId, next)}
 									view={inspectorView}

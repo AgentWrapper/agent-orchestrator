@@ -1179,7 +1179,7 @@ describe("SessionInspector summary reviews", () => {
 		}
 	};
 
-	it("triggers a review and opens the returned reviewer terminal", async () => {
+	it("triggers a review without opening the reviewer terminal directly", async () => {
 		mockCommonGets([], "", [reviewState(3, "needs_review")]);
 		const runningReview = { ...approvedReview, status: "running", verdict: "", body: "" };
 		postMock.mockResolvedValue({
@@ -1189,11 +1189,7 @@ describe("SessionInspector summary reviews", () => {
 				reviews: [{ ...reviewState(3, "running"), latestRun: runningReview }],
 			},
 		});
-		const onOpenReviewerTerminal = vi.fn();
-
-		renderWithQuery(
-			<SessionInspector onOpenReviewerTerminal={onOpenReviewerTerminal} session={session([pr(3, "open")])} />,
-		);
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
 		await userEvent.click(await screen.findByRole("button", { name: /run review/i }));
@@ -1203,7 +1199,7 @@ describe("SessionInspector summary reviews", () => {
 				params: { path: { sessionId: "sess-1" } },
 			}),
 		);
-		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-pane", harness: "codex" });
+		expect(screen.queryByRole("button", { name: "Open terminal" })).not.toBeInTheDocument();
 	});
 
 	it("shows claude-code as the default reviewer before a run exists", async () => {
@@ -1672,11 +1668,7 @@ describe("SessionInspector summary reviews", () => {
 				reviews: [{ ...reviewState(3, "running"), latestRun: runningReview }],
 			},
 		});
-		const onOpenReviewerTerminal = vi.fn();
-
-		renderWithQuery(
-			<SessionInspector onOpenReviewerTerminal={onOpenReviewerTerminal} session={session([pr(3, "open")])} />,
-		);
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
 		await userEvent.click(await screen.findByRole("button", { name: /re-run review/i }));
@@ -1684,7 +1676,7 @@ describe("SessionInspector summary reviews", () => {
 		expect(
 			await screen.findByText("This commit has already been reviewed. Push a new commit to run another review."),
 		).toBeInTheDocument();
-		expect(onOpenReviewerTerminal).not.toHaveBeenCalled();
+		expect(screen.queryByRole("button", { name: "Open terminal" })).not.toBeInTheDocument();
 	});
 
 	it("cancels the running review instead of allowing rerun", async () => {
@@ -1692,11 +1684,7 @@ describe("SessionInspector summary reviews", () => {
 			reviewState(3, "running", "abc123"),
 			reviewState(4, "up_to_date", "def456"),
 		]);
-		const onOpenReviewerTerminal = vi.fn();
-
-		renderWithQuery(
-			<SessionInspector onOpenReviewerTerminal={onOpenReviewerTerminal} session={session([pr(3, "open")])} />,
-		);
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
 		await waitFor(() => expect(screen.getByRole("button", { name: "Cancel review" })).toBeEnabled());
@@ -1708,7 +1696,7 @@ describe("SessionInspector summary reviews", () => {
 				params: { path: { sessionId: "sess-1" } },
 			});
 		});
-		expect(onOpenReviewerTerminal).not.toHaveBeenCalled();
+		expect(screen.queryByRole("button", { name: "Open terminal" })).not.toBeInTheDocument();
 	});
 
 	it("shows cancelled review runs without marking them failed", async () => {

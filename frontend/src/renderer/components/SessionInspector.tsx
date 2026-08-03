@@ -13,7 +13,6 @@ import {
 	GitPullRequest,
 	GitMerge,
 	Play,
-	Terminal,
 	Trash2,
 	Loader2,
 	X,
@@ -56,7 +55,6 @@ type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type ReviewRunFacts = components["schemas"]["ReviewRun"];
-type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
 
 export type InspectorView = "summary" | "browser" | "files";
 
@@ -141,7 +139,6 @@ function VerdictBadge({ label, tone }: { label: string; tone: "neutral" | "runni
  */
 export function SessionInspector({
 	session,
-	onOpenReviewerTerminal,
 	browserPoppedOut = false,
 	browserAnnotationQueue,
 	isInspectorVisible = true,
@@ -153,7 +150,6 @@ export function SessionInspector({
 	onViewChange,
 }: {
 	session?: WorkspaceSession;
-	onOpenReviewerTerminal?: OpenReviewerTerminal;
 	browserPoppedOut?: boolean;
 	browserAnnotationQueue?: BrowserAnnotationQueueModel;
 	isInspectorVisible?: boolean;
@@ -241,7 +237,7 @@ export function SessionInspector({
 					view === "files" && "p-0 overflow-hidden [&>[role=tabpanel]]:h-full",
 				)}
 			>
-				{view === "summary" ? <SummaryView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
+				{view === "summary" ? <SummaryView session={session} /> : null}
 				{view === "browser" ? (
 					<BrowserView
 						browserPoppedOut={browserPoppedOut}
@@ -295,10 +291,8 @@ function Section({
 
 function SummaryView({
 	session,
-	onOpenReviewerTerminal,
 }: {
 	session: WorkspaceSession;
-	onOpenReviewerTerminal?: OpenReviewerTerminal;
 }) {
 	const { t } = useTranslation();
 	const query = useSessionScmSummary(session.id);
@@ -329,7 +323,7 @@ function SummaryView({
 				</div>
 			</Section>
 
-			{hasPRs ? <ReviewsSection onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
+			{hasPRs ? <ReviewsSection session={session} /> : null}
 
 			{showCompletion ? <CompletionControls session={session} /> : null}
 
@@ -1116,10 +1110,8 @@ type AgentCatalog = { supported?: AgentInfo[]; installed?: AgentInfo[]; authoriz
 
 function ReviewsSection({
 	session,
-	onOpenReviewerTerminal,
 }: {
 	session: WorkspaceSession;
-	onOpenReviewerTerminal?: OpenReviewerTerminal;
 }) {
 	const { t } = useTranslation();
 	const hasPr = sortedPRs(session).length > 0;
@@ -1196,11 +1188,6 @@ function ReviewsSection({
 			const started = data?.reviews?.find((review) => review.status === "running" && review.latestRun);
 			if (reused || !started?.latestRun) {
 				setReviewNotice(t("inspector.reviewAlreadyRanForCommit"));
-				return;
-			}
-			if (data?.reviewerHandleId) {
-				const harness = started.latestRun.harness || "reviewer";
-				onOpenReviewerTerminal?.({ handleId: data.reviewerHandleId, harness });
 			}
 		},
 	});
@@ -1241,10 +1228,8 @@ function ReviewsSection({
 				isLoading={reviewsQuery.isLoading}
 				isCancelling={cancelReview.isPending}
 				isTriggering={triggerReview.isPending}
-				onOpenTerminal={onOpenReviewerTerminal}
 				onCancel={() => cancelReview.mutate()}
 				onTrigger={() => triggerReview.mutate()}
-				reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
 				reviewStates={reviewStates}
 				runs={reviewsQuery.data?.runs ?? []}
 					notice={reviewNotice}
@@ -1496,7 +1481,6 @@ function ReviewPanel({
 	config,
 	reviewStates,
 	runs,
-	reviewerHandleId,
 	isLoading,
 	isTriggering,
 	isCancelling,
@@ -1507,13 +1491,11 @@ function ReviewPanel({
 	onReviewerOverrideChange,
 	onTrigger,
 	onCancel,
-	onOpenTerminal,
 }: {
 	session: WorkspaceSession;
 	config?: ProjectConfig;
 	reviewStates: PRReviewState[];
 	runs: ReviewRunFacts[];
-	reviewerHandleId: string;
 	isLoading: boolean;
 	isTriggering: boolean;
 	isCancelling: boolean;
@@ -1524,7 +1506,6 @@ function ReviewPanel({
 	onReviewerOverrideChange: (next: ReviewerHarness | "") => void;
 	onTrigger: () => void;
 	onCancel: () => void;
-	onOpenTerminal?: OpenReviewerTerminal;
 }) {
 	const { t } = useTranslation();
 	if (sortedPRs(session).length === 0) {
@@ -1552,14 +1533,9 @@ function ReviewPanel({
 	const latest = runningRun ?? newestRun;
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
 	const projectDefaultLabel = t("newTask.projectDefault");
-	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
 	const reviewHasRun = reviewRunning || Boolean(latest);
 	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
-	const openReviewerTerminal = () => {
-		if (!terminalEnabled) return;
-		onOpenTerminal?.({ handleId: reviewerHandleId, harness });
-	};
 	// Every recorded pass per PR, so each reviewer keeps its own tab. Falls back
 	// to the state's own runs against a daemon that predates the runs field.
 	const runsByPR = new Map<string, ReviewRunFacts[]>();
@@ -1643,21 +1619,6 @@ function ReviewPanel({
 								{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
 								<span className="review-run-action-label">{primaryReviewActionLabel}</span>
 							</Button>
-							{reviewHasRun ? (
-								<Button
-									aria-label={t("inspector.openTerminal")}
-									className="shrink-0 gap-1.5 [&_svg]:size-icon-sm"
-									disabled={!terminalEnabled}
-									onClick={openReviewerTerminal}
-									size="sm"
-									title={t("inspector.openTerminal")}
-									type="button"
-									variant="ghost"
-								>
-									<Terminal aria-hidden="true" />
-									<span className="review-run-action-label">{t("inspector.openTerminal")}</span>
-								</Button>
-							) : null}
 						</div>
 					</div>
 					</div>
