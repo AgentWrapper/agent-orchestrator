@@ -1,4 +1,4 @@
-import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { isCancelledError, useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { CommandPalette } from "../components/CommandPalette";
@@ -133,11 +133,6 @@ function ShellLayout() {
 	const [isSidebarPeekOpen, setIsSidebarPeekOpen] = useState(false);
 	const sidebarPeekCloseTimerRef = useRef<number | undefined>(undefined);
 	const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
-	const routeSearch = useSearch({ strict: false }) as { tabOwner?: string };
-	const tabOwnerSession = routeSearch.tabOwner
-		? workspaces.flatMap((workspace) => workspace.sessions).find((session) => session.id === routeSearch.tabOwner)
-		: undefined;
-	const tabOwnerSessionId = tabOwnerSession?.id;
 	useEffect(() => {
 		document.addEventListener("click", handleModifierLinkClick);
 		return () => document.removeEventListener("click", handleModifierLinkClick);
@@ -463,6 +458,12 @@ function ShellLayout() {
 		const handlePointerMove = (event: PointerEvent) => {
 			const target = event.target instanceof Element ? event.target : null;
 			const isInSidebarPortal = Boolean(target?.closest('[role="dialog"], [role="listbox"], [role="menu"]'));
+			// TitlebarNav / WindowTitlebar sit above the peek in z-order; keep the
+			// preview open while the pointer is on those controls so hover→click
+			// to pin still works.
+			const isInTitlebarChrome = Boolean(
+				target?.closest("[data-slot='titlebar-nav'], .window-titlebar"),
+			);
 			const sidebar = document.querySelector<HTMLElement>('[data-slot="sidebar-container"]');
 			const bounds = sidebar?.getBoundingClientRect();
 			const isInSidebar = Boolean(
@@ -473,7 +474,7 @@ function ShellLayout() {
 				event.clientY <= bounds.bottom,
 			);
 
-			if (isInSidebar || isInSidebarPortal) {
+			if (isInSidebar || isInSidebarPortal || isInTitlebarChrome) {
 				cancelSidebarPeekClose();
 				return;
 			}
@@ -560,10 +561,7 @@ function ShellLayout() {
 		if (handledShellNonceRef.current === newShellTerminalNonce) return;
 		handledShellNonceRef.current = newShellTerminalNonce;
 		openShellTerminal.mutate(
-			{
-				projectId: tabOwnerSession?.workspaceId ?? scopedProjectId,
-				sessionId: tabOwnerSessionId ?? routeParams.sessionId,
-			},
+			{ projectId: scopedProjectId, sessionId: routeParams.sessionId },
 			{
 				onSuccess: (shell) => {
 					setActiveShellTerminal(shell.handleId);
@@ -578,8 +576,6 @@ function ShellLayout() {
 		openShellTerminal,
 		scopedProjectId,
 		routeParams.sessionId,
-		tabOwnerSession?.workspaceId,
-		tabOwnerSessionId,
 		navigate,
 		setActiveShellTerminal,
 	]);
@@ -622,7 +618,7 @@ function ShellLayout() {
 			{/* Shell chrome: Win/Linux hang the sidebar under a topbar. macOS uses a
           titlebar strip above the off-canvas sidebar. Session and board actions
           render inside the center panel when the shell topbar is hidden. */}
-			<div className={cn("flex h-screen min-h-0 flex-col bg-sidebar text-foreground", isWindows && "platform-windows")}>
+			<div className={cn("flex h-screen min-h-0 flex-col bg-sidebar text-foreground", isWindows && "platform-windows", isLinux && "platform-linux")}>
 				{/* Windows-only custom title bar (sidebar toggle + File/Edit/View/…
             menu); paints the chrome the frameless window drops. Renders null on
             macOS/Linux. */}
@@ -656,7 +652,7 @@ function ShellLayout() {
 						isOverlay={isSidebarPeekOpen && !isSidebarOpen}
 						onPreviewLeave={scheduleSidebarPeekClose}
 						underTopbar={isMac || isWindows || isLinux}
-						topbarOffset={isWindows ? "titlebar" : "toolbar"}
+						topbarOffset={isWindows ? "titlebar" : hideShellTopbar ? "trafficLights" : "toolbar"}
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}

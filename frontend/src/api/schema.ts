@@ -252,7 +252,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Mark all unread notifications read */
+        /** Mark notifications read */
         post: operations["markAllNotificationsRead"];
         delete?: never;
         options?: never;
@@ -306,23 +306,6 @@ export interface paths {
         get: operations["getOrchestrator"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/orchestrators/{id}/done": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Declare an orchestrator complete and stop automatic re-engagement */
-        post: operations["completeOrchestrator"];
         delete?: never;
         options?: never;
         head?: never;
@@ -780,6 +763,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/workspace/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream session workspace file changes */
+        get: operations["streamSessionWorkspaceChanges"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/workspace/file": {
         parameters: {
             query?: never;
@@ -944,9 +944,8 @@ export interface components {
             reason: string;
             sessionId: string;
         };
-        CompleteOrchestratorResponse: {
-            ok: boolean;
-            sessionId: string;
+        ContainerReapConfig: {
+            disabled?: boolean;
         };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
@@ -1052,6 +1051,7 @@ export interface components {
             nextCursor?: string;
             notifications: components["schemas"]["NotificationResponse"][];
             unreadCount: number;
+            unresolvedCount: number;
         };
         ListProjectsResponse: {
             projects: components["schemas"]["ProjectSummary"][];
@@ -1071,9 +1071,17 @@ export interface components {
             shellTerminals: components["schemas"]["ShellTerminalResponse"][];
         };
         ListWorkspaceFilesResponse: {
+            compareBaseRef?: string;
+            compareBaseSha?: string;
+            /** @enum {string} */
+            compareMode?: "base" | "head_fallback";
             files: components["schemas"]["WorkspaceFileSummary"][];
             sessionId: string;
             truncated: boolean;
+        };
+        MarkAllNotificationsReadRequest: {
+            /** @description Acknowledge exactly these notifications. Omit to acknowledge every unread notification; paginating clients should send the ids they actually rendered so later pages stay unread. */
+            ids?: string[];
         };
         MarkAllNotificationsReadResponse: {
             /** @description Deprecated compatibility field. Always empty so mark-all responses stay bounded. */
@@ -1113,8 +1121,13 @@ export interface components {
             id: string;
             prUrl: string;
             projectId: string;
+            /** Format: date-time */
+            resolvedAt?: null | string;
             sessionId: string;
-            /** @enum {string} */
+            /**
+             * @description Seen state. unread means the user has not opened the notification panel since it arrived.
+             * @enum {string}
+             */
             status: "unread" | "read";
             target: components["schemas"]["NotificationTarget"];
             title: string;
@@ -1183,6 +1196,7 @@ export interface components {
             agentConfig?: components["schemas"]["AgentConfig"];
             agentRules?: string;
             agentRulesFile?: string;
+            containerReap?: components["schemas"]["ContainerReapConfig"];
             defaultBranch?: string;
             env?: {
                 [key: string]: string;
@@ -1544,6 +1558,10 @@ export interface components {
         WorkspaceFileResponse: {
             additions: number;
             binary: boolean;
+            compareBaseRef?: string;
+            compareBaseSha?: string;
+            /** @enum {string} */
+            compareMode?: "base" | "head_fallback";
             content: string;
             contentTruncated: boolean;
             deleted: boolean;
@@ -1551,6 +1569,7 @@ export interface components {
             diff: string;
             diffTruncated: boolean;
             path: string;
+            previousPath?: string;
             sessionId: string;
             /** Format: int64 */
             size: number;
@@ -1562,6 +1581,7 @@ export interface components {
             binary: boolean;
             deletions: number;
             path: string;
+            previousPath?: string;
             /** Format: int64 */
             size: number;
             /** @enum {string} */
@@ -2191,8 +2211,8 @@ export interface operations {
     listNotifications: {
         parameters: {
             query?: {
-                /** @description Notification status filter. Defaults to unread; all includes read history. */
-                status?: "unread" | "all";
+                /** @description Notification filter. Defaults to unread (unseen); unresolved returns notifications whose underlying issue is still open; all includes read history. */
+                status?: "unread" | "all" | "unresolved";
                 /** @description Maximum notifications to return. Defaults to 100. */
                 limit?: number;
                 /** @description Opaque cursor returned by the previous page. */
@@ -2312,7 +2332,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MarkAllNotificationsReadRequest"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {
@@ -2321,6 +2345,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MarkAllNotificationsReadResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Internal Server Error */
@@ -2501,65 +2534,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionResponse"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Internal Server Error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Not Implemented */
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-        };
-    };
-    completeOrchestrator: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Orchestrator session identifier, e.g. project-orchestrator. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CompleteOrchestratorResponse"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Not Found */
@@ -4523,6 +4497,56 @@ export interface operations {
             };
             /** @description Internal Server Error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    streamSessionWorkspaceChanges: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
                 headers: {
                     [name: string]: unknown;
                 };

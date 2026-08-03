@@ -21,6 +21,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemonmeta"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
+	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
 )
 
 func TestRootHelpDoesNotShowDaemon(t *testing.T) {
@@ -104,7 +105,7 @@ func TestVersionEmitsCLIInvocationBestEffort(t *testing.T) {
 	}
 }
 
-func TestShouldEmitCLIInvocationSkipsOnlyNonUsageCommands(t *testing.T) {
+func TestShouldEmitCLIInvocationSkipsNonUsageAndRoutineInternalCommands(t *testing.T) {
 	byName := map[string]*cobra.Command{}
 	for _, cmd := range NewRootCommand(Deps{}).Commands() {
 		byName[cmd.Name()] = cmd
@@ -112,11 +113,12 @@ func TestShouldEmitCLIInvocationSkipsOnlyNonUsageCommands(t *testing.T) {
 	for name, want := range map[string]bool{
 		"daemon": false, // supervisor-driven bootstrapping, not human usage
 		"start":  false,
-		// hooks is agent activity; pty-host is only an internal Windows runtime
-		// process and should not count as CLI usage.
-		"hooks":    true,
+		// hooks/status are routine internal polling paths; pty-host is only an
+		// internal Windows runtime process. Successful executions should not
+		// count as CLI usage.
+		"hooks":    false,
 		"pty-host": false,
-		"status":   true,
+		"status":   false,
 		"spawn":    true,
 	} {
 		cmd, ok := byName[name]
@@ -146,6 +148,39 @@ func TestCLIInvocationActorType(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-session-1")
 	if got := cliInvocationActorType(byName["status"]); got != "agent" {
 		t.Fatalf("status actor with session env = %q, want agent", got)
+	}
+}
+
+func TestTelemetryMetaClassifiesRegisteredCommandPaths(t *testing.T) {
+	systemCommands := map[string]struct{}{
+		"ao agent-process":           {},
+		"ao agent-process supervise": {},
+		"ao completion":              {},
+		"ao daemon":                  {},
+		"ao help":                    {},
+		"ao pty-host":                {},
+		"ao start":                   {},
+	}
+
+	var failures []string
+	var walk func(*cobra.Command)
+	walk = func(cmd *cobra.Command) {
+		for _, child := range cmd.Commands() {
+			path := telemetrymeta.NormalizeCommandPath(child.CommandPath())
+			got := telemetrymeta.CLIActorType("", path)
+			if got == "system" {
+				_, explicitlySystem := systemCommands[path]
+				if !explicitlySystem && !telemetrymeta.IsRoutineInternalCLICommand(path) {
+					failures = append(failures, path)
+				}
+			}
+			walk(child)
+		}
+	}
+	walk(NewRootCommand(Deps{}))
+
+	if len(failures) > 0 {
+		t.Fatalf("actor-less command paths classified as system: %s", strings.Join(failures, ", "))
 	}
 }
 

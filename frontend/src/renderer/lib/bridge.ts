@@ -11,6 +11,7 @@ export const aoBridge: AoBridge =
 				window.open(url, "_blank", "noopener,noreferrer");
 			},
 			scanImportFolder: async ({ path }) => ({ path, repos: [] }),
+			checkAncestorRepo: async () => undefined,
 			onNewSessionShortcut: () => () => undefined,
 			onKeyboardShortcutsHelp: () => () => undefined,
 			onNewShellTerminalShortcut: () => () => undefined,
@@ -138,6 +139,10 @@ export const aoBridge: AoBridge =
 			get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
 			set: async () => undefined,
 		},
+		uiSettings: {
+			get: async () => ({ locale: "en" as const }),
+			set: async (settings) => ({ locale: settings.locale === "zh-CN" ? ("zh-CN" as const) : ("en" as const) }),
+		},
 		keybindings: {
 			get: async () => ({}),
 			set: async (overrides) => overrides,
@@ -150,6 +155,7 @@ export const aoBridge: AoBridge =
 			download: async () => undefined,
 			install: async () => undefined,
 			onStatus: () => () => undefined,
+			onTelemetry: () => () => undefined,
 		},
 		featureBuilds: {
 			list: async () => [],

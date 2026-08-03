@@ -14,10 +14,6 @@ interface UseResizableOptions {
 	 * handle) grows with leftward drag.
 	 */
 	edge: "left" | "right";
-	/** Optional raw drag width below which the owner should collapse. */
-	collapseBelow?: number;
-	/** Called once when a drag crosses collapseBelow. */
-	onCollapse?: () => void;
 	/** Called once when a collapsed rail drag should reopen the owner. */
 	onExpand?: () => void;
 	/** Pointer movement needed before a collapsed rail drag expands. */
@@ -37,8 +33,6 @@ export function useResizable({
 	min,
 	max,
 	edge,
-	collapseBelow,
-	onCollapse,
 	onExpand,
 	expandDragThreshold = 8,
 }: UseResizableOptions) {
@@ -79,14 +73,6 @@ export function useResizable({
 		if (pending !== null) apply(pending);
 	}, [apply]);
 
-	const discardPending = useCallback(() => {
-		if (frameRef.current !== null) {
-			window.cancelAnimationFrame(frameRef.current);
-			frameRef.current = null;
-		}
-		pendingWidthRef.current = null;
-	}, []);
-
 	// Restore persisted width on mount.
 	useEffect(() => {
 		const saved = Number(window.localStorage.getItem(storageKey));
@@ -103,7 +89,6 @@ export function useResizable({
 			const startX = event.clientX;
 			const startWidth = widthRef.current;
 			const sign = edge === "right" ? 1 : -1;
-			let collapsed = false;
 			document.body.classList.add("is-resizing-x");
 
 			const onUp = () => {
@@ -111,26 +96,17 @@ export function useResizable({
 				window.removeEventListener("pointerup", onUp);
 				flushPending();
 				document.body.classList.remove("is-resizing-x");
-				if (!collapsed) window.localStorage.setItem(storageKey, String(widthRef.current));
+				window.localStorage.setItem(storageKey, String(widthRef.current));
 			};
+			// Dragging never collapses the panel: `apply` clamps at `min`, so the
+			// drag simply stops at the floor. Collapse stays on explicit controls.
 			const onMove = (e: PointerEvent) => {
-				const nextWidth = startWidth + sign * (e.clientX - startX);
-				if (collapseBelow !== undefined && onCollapse && nextWidth <= collapseBelow) {
-					collapsed = true;
-					const preservedWidth = Math.min(max, Math.max(min, startWidth));
-					discardPending();
-					apply(preservedWidth);
-					window.localStorage.setItem(storageKey, String(preservedWidth));
-					onUp();
-					onCollapse();
-					return;
-				}
-				applyOnFrame(nextWidth);
+				applyOnFrame(startWidth + sign * (e.clientX - startX));
 			};
 			window.addEventListener("pointermove", onMove);
 			window.addEventListener("pointerup", onUp);
 		},
-		[apply, applyOnFrame, collapseBelow, discardPending, edge, flushPending, max, min, onCollapse, storageKey],
+		[applyOnFrame, edge, flushPending, storageKey],
 	);
 
 	const onCollapsedPointerDown = useCallback(

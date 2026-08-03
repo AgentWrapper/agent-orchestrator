@@ -3,6 +3,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
+import { appI18n } from "../i18n";
 
 const { navigateMock, notificationShowMock, postMock, workspaceQueryMock, boardActionsInPanelMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
@@ -75,6 +76,43 @@ beforeEach(() => {
 });
 
 describe("SessionsBoard", () => {
+	it("localizes dynamic card actions and pull request lifecycle labels", async () => {
+		await appI18n.changeLanguage("zh-CN");
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({
+						id: "s-localized",
+						title: "localized worker",
+						status: "pr_open",
+						prs: [
+							{
+								url: "https://github.com/acme/repo/pull/42",
+								number: 42,
+								state: "open",
+								ci: "passing",
+								review: "approved",
+								mergeability: "mergeable",
+								reviewComments: false,
+								updatedAt: "2026-01-01T00:00:00Z",
+							},
+						],
+					}),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		try {
+			renderBoard("p1");
+			expect(screen.getByRole("button", { name: "终止 localized worker" })).toBeInTheDocument();
+			expect(screen.getByLabelText("#42 已打开")).toHaveTextContent("已打开");
+		} finally {
+			await appI18n.changeLanguage("en");
+		}
+	});
+
 	it("does not show an agent setup warning on the board", () => {
 		renderBoard();
 
@@ -1001,17 +1039,51 @@ describe("SessionsBoard", () => {
 		await userEvent.click(terminateButton);
 		expect(navigateMock).not.toHaveBeenCalled();
 		const dialog = screen.getByRole("dialog", { name: "Terminate merged worker?" });
-		await userEvent.click(within(dialog).getByRole("button", { name: "Terminate session" }));
+		await userEvent.click(within(dialog).getByRole("button", { name: "Yes, terminate session" }));
 
 		await waitFor(() =>
 			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/kill", {
 				params: { path: { sessionId: "s-merged" } },
 			}),
 		);
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
-	it("keeps the merged-card confirmation open when termination fails", async () => {
+	it("keeps only the targeted card disabled while its termination is pending", async () => {
+		let finishKill!: (value: { data: { ok: boolean; sessionId: string }; error: undefined }) => void;
+		postMock.mockReturnValueOnce(
+			new Promise((resolve) => {
+				finishKill = resolve;
+			}),
+		);
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({ id: "s-one", title: "worker one", status: "working" }),
+					boardSession({ id: "s-two", title: "worker two", status: "merged" }),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: "Terminate worker one" }));
+		await userEvent.click(
+			within(screen.getByRole("dialog")).getByRole("button", { name: "Yes, terminate session" }),
+		);
+
+		expect(screen.getByRole("button", { name: "Killing worker one" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Killing worker one" })).toHaveClass("opacity-100");
+		expect(screen.getByRole("button", { name: "Terminate worker two" })).toBeEnabled();
+		expect(postMock).toHaveBeenCalledTimes(1);
+
+		finishKill({ data: { ok: true, sessionId: "s-one" }, error: undefined });
+		await waitFor(() => expect(screen.getByRole("button", { name: "Terminate worker one" })).toBeEnabled());
+	});
+
+	it("keeps the merged-card confirmation dismissed and surfaces termination failures", async () => {
 		postMock.mockResolvedValueOnce({ error: { message: "runtime failed" }, response: { status: 500 } });
 		workspaceQueryMock.mockReturnValue({
 			data: [workspaceWithSessions([boardSession({ id: "s-merged", title: "merged worker", status: "merged" })])],
@@ -1021,10 +1093,14 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		await userEvent.click(screen.getByRole("button", { name: "Terminate merged worker" }));
-		await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Terminate session" }));
+		await userEvent.click(
+			within(screen.getByRole("dialog")).getByRole("button", { name: "Yes, terminate session" }),
+		);
 
-		expect(await screen.findByText("Failed to terminate session (500)")).toBeInTheDocument();
-		expect(screen.getByRole("dialog")).toBeInTheDocument();
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		expect(await screen.findByRole("alert")).toHaveTextContent("Failed to terminate session (500)");
+		expect(screen.getByRole("button", { name: "Terminate merged worker" })).toBeEnabled();
 	});
 });
 

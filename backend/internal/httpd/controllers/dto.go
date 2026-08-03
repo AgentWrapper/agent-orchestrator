@@ -194,35 +194,43 @@ type SpawnSessionResponse struct {
 
 // ListWorkspaceFilesResponse is the body of GET /api/v1/sessions/{sessionId}/workspace/files.
 type ListWorkspaceFilesResponse struct {
-	SessionID domain.SessionID       `json:"sessionId"`
-	Files     []WorkspaceFileSummary `json:"files"`
-	Truncated bool                   `json:"truncated"`
+	SessionID      domain.SessionID                `json:"sessionId"`
+	CompareBaseSHA string                          `json:"compareBaseSha,omitempty"`
+	CompareBaseRef string                          `json:"compareBaseRef,omitempty"`
+	CompareMode    sessionsvc.WorkspaceCompareMode `json:"compareMode,omitempty" enum:"base,head_fallback"`
+	Files          []WorkspaceFileSummary          `json:"files"`
+	Truncated      bool                            `json:"truncated"`
 }
 
 // WorkspaceFileSummary is one file row in the session workspace browser.
 type WorkspaceFileSummary struct {
-	Path      string                         `json:"path"`
-	Status    sessionsvc.WorkspaceFileStatus `json:"status" enum:"unmodified,modified,added,deleted,renamed"`
-	Additions int                            `json:"additions"`
-	Deletions int                            `json:"deletions"`
-	Size      int64                          `json:"size"`
-	Binary    bool                           `json:"binary"`
+	Path         string                         `json:"path"`
+	PreviousPath string                         `json:"previousPath,omitempty"`
+	Status       sessionsvc.WorkspaceFileStatus `json:"status" enum:"unmodified,modified,added,deleted,renamed"`
+	Additions    int                            `json:"additions"`
+	Deletions    int                            `json:"deletions"`
+	Size         int64                          `json:"size"`
+	Binary       bool                           `json:"binary"`
 }
 
 // WorkspaceFileResponse is the body of GET /api/v1/sessions/{sessionId}/workspace/file.
 type WorkspaceFileResponse struct {
-	SessionID        domain.SessionID               `json:"sessionId"`
-	Path             string                         `json:"path"`
-	Status           sessionsvc.WorkspaceFileStatus `json:"status" enum:"unmodified,modified,added,deleted,renamed"`
-	Additions        int                            `json:"additions"`
-	Deletions        int                            `json:"deletions"`
-	Size             int64                          `json:"size"`
-	Binary           bool                           `json:"binary"`
-	Deleted          bool                           `json:"deleted"`
-	Content          string                         `json:"content"`
-	ContentTruncated bool                           `json:"contentTruncated"`
-	Diff             string                         `json:"diff"`
-	DiffTruncated    bool                           `json:"diffTruncated"`
+	SessionID        domain.SessionID                `json:"sessionId"`
+	Path             string                          `json:"path"`
+	PreviousPath     string                          `json:"previousPath,omitempty"`
+	Status           sessionsvc.WorkspaceFileStatus  `json:"status" enum:"unmodified,modified,added,deleted,renamed"`
+	Additions        int                             `json:"additions"`
+	Deletions        int                             `json:"deletions"`
+	Size             int64                           `json:"size"`
+	Binary           bool                            `json:"binary"`
+	Deleted          bool                            `json:"deleted"`
+	Content          string                          `json:"content"`
+	ContentTruncated bool                            `json:"contentTruncated"`
+	Diff             string                          `json:"diff"`
+	DiffTruncated    bool                            `json:"diffTruncated"`
+	CompareBaseSHA   string                          `json:"compareBaseSha,omitempty"`
+	CompareBaseRef   string                          `json:"compareBaseRef,omitempty"`
+	CompareMode      sessionsvc.WorkspaceCompareMode `json:"compareMode,omitempty" enum:"base,head_fallback"`
 }
 
 // SessionPreviewResponse is the body of GET /api/v1/sessions/{sessionId}/preview.
@@ -629,13 +637,6 @@ type OrchestratorResponse struct {
 	ProjectName string           `json:"projectName,omitempty"`
 }
 
-// CompleteOrchestratorResponse is returned after the orchestrator declares its
-// assigned work complete.
-type CompleteOrchestratorResponse struct {
-	OK        bool             `json:"ok"`
-	SessionID domain.SessionID `json:"sessionId"`
-}
-
 // ListAgentsResponse is the body of GET /api/v1/agents.
 type ListAgentsResponse = agentsvc.Inventory
 
@@ -650,7 +651,7 @@ type AgentInfo = agentsvc.Info
 
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.
 type ListNotificationsQuery struct {
-	Status string `query:"status,omitempty" enum:"unread,all" description:"Notification status filter. Defaults to unread; all includes read history."`
+	Status string `query:"status,omitempty" enum:"unread,all,unresolved" description:"Notification filter. Defaults to unread (unseen); unresolved returns notifications whose underlying issue is still open; all includes read history."`
 	Limit  int    `query:"limit,omitempty" minimum:"1" maximum:"100" description:"Maximum notifications to return. Defaults to 100."`
 	Cursor string `query:"cursor,omitempty" description:"Opaque cursor returned by the previous page."`
 }
@@ -674,23 +675,28 @@ type NotificationTarget struct {
 
 // NotificationResponse is one stored notification returned by the API.
 type NotificationResponse struct {
-	ID        string             `json:"id"`
-	SessionID string             `json:"sessionId"`
-	ProjectID string             `json:"projectId"`
-	PRURL     string             `json:"prUrl"`
-	Type      string             `json:"type" enum:"needs_input,ready_to_merge,pr_merged,pr_closed_unmerged"`
-	Title     string             `json:"title"`
-	Body      string             `json:"body"`
-	Status    string             `json:"status" enum:"unread,read"`
-	CreatedAt time.Time          `json:"createdAt"`
-	Target    NotificationTarget `json:"target"`
+	ID        string    `json:"id"`
+	SessionID string    `json:"sessionId"`
+	ProjectID string    `json:"projectId"`
+	PRURL     string    `json:"prUrl"`
+	Type      string    `json:"type" enum:"needs_input,ready_to_merge,pr_merged,pr_closed_unmerged"`
+	Title     string    `json:"title"`
+	Body      string    `json:"body"`
+	Status    string    `json:"status" enum:"unread,read" description:"Seen state. unread means the user has not opened the notification panel since it arrived."`
+	CreatedAt time.Time `json:"createdAt"`
+	// ResolvedAt is set by AO when the underlying issue goes away (the session
+	// received its input, the PR stopped waiting on a merge). Absent means the
+	// issue is still open. There is no user-facing action that sets it.
+	ResolvedAt *time.Time         `json:"resolvedAt,omitempty"`
+	Target     NotificationTarget `json:"target"`
 }
 
 // ListNotificationsResponse is one history page from GET /api/v1/notifications.
 type ListNotificationsResponse struct {
-	Notifications []NotificationResponse `json:"notifications"`
-	NextCursor    string                 `json:"nextCursor,omitempty"`
-	UnreadCount   int                    `json:"unreadCount"`
+	Notifications   []NotificationResponse `json:"notifications"`
+	NextCursor      string                 `json:"nextCursor,omitempty"`
+	UnreadCount     int                    `json:"unreadCount"`
+	UnresolvedCount int                    `json:"unresolvedCount"`
 }
 
 // MarkNotificationReadRequest is the body of PATCH /api/v1/notifications/{id}.
@@ -741,6 +747,12 @@ type ListShellTerminalsResponse struct {
 // terminal mutations.
 type ShellTerminalEnvelope struct {
 	ShellTerminal ShellTerminalResponse `json:"shellTerminal"`
+}
+
+// MarkAllNotificationsReadRequest is the optional body of
+// POST /api/v1/notifications/read-all.
+type MarkAllNotificationsReadRequest struct {
+	IDs []string `json:"ids,omitempty" description:"Acknowledge exactly these notifications. Omit to acknowledge every unread notification; paginating clients should send the ids they actually rendered so later pages stay unread."`
 }
 
 // MarkAllNotificationsReadResponse is the body of POST /api/v1/notifications/read-all.

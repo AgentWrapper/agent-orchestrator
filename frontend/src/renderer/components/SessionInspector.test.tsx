@@ -5,7 +5,9 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionInspector } from "./SessionInspector";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
-import type { PRState, PullRequestFacts, WorkspaceSession } from "../types/workspace";
+import { sessionWorkspaceFilesQueryKey } from "../hooks/useSessionWorkspaceFiles";
+import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import type { PRState, PullRequestFacts, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
 const { getMock, navigateMock, patchMock, postMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
@@ -93,10 +95,12 @@ const prSummary = (
 	};
 };
 
-function renderWithQuery(children: ReactNode) {
+function renderWithQuery(children: ReactNode, workspaces?: WorkspaceSummary[], seed?: (client: QueryClient) => void) {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	});
+	if (workspaces) client.setQueryData(workspaceQueryKey, workspaces);
+	seed?.(client);
 	return render(<QueryClientProvider client={client}>{children}</QueryClientProvider>);
 }
 
@@ -193,6 +197,45 @@ describe("SessionInspector tabs", () => {
 		expect(onOpenFiles).toHaveBeenCalledTimes(1);
 		expect(screen.getByText("workspace file review")).toBeInTheDocument();
 	});
+
+	it("keeps the plain Files label until the workspace files cache has something to show", () => {
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		const filesTab = screen.getByRole("tab", { name: "Files" });
+		expect(within(filesTab).getByText("Files")).toBeInTheDocument();
+		expect(getMock).not.toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/files", expect.anything());
+	});
+
+	it("shows a live changed-file count on the Files tab once the shared cache is populated", () => {
+		renderWithQuery(<SessionInspector session={session([])} />, undefined, (client) => {
+			client.setQueryData(sessionWorkspaceFilesQueryKey("sess-1"), {
+				sessionId: "sess-1",
+				truncated: false,
+				files: [
+					{ path: "src/App.tsx", status: "modified", additions: 2, deletions: 1, size: 120, binary: false },
+					{ path: "README.md", status: "unmodified", additions: 0, deletions: 0, size: 80, binary: false },
+				],
+			});
+		});
+
+		const filesTab = screen.getByRole("tab", { name: "Files" });
+		expect(within(filesTab).getByText("1 File")).toBeInTheDocument();
+		// The accessible name stays static so existing name-based tab queries keep resolving.
+		expect(filesTab).toHaveAttribute("title", "Files");
+	});
+
+	it("distinguishes a checked-but-clean workspace (0 Files) from an unopened tab (Files)", () => {
+		renderWithQuery(<SessionInspector session={session([])} />, undefined, (client) => {
+			client.setQueryData(sessionWorkspaceFilesQueryKey("sess-1"), {
+				sessionId: "sess-1",
+				truncated: false,
+				files: [{ path: "README.md", status: "unmodified", additions: 0, deletions: 0, size: 80, binary: false }],
+			});
+		});
+
+		const filesTab = screen.getByRole("tab", { name: "Files" });
+		expect(within(filesTab).getByText("0 Files")).toBeInTheDocument();
+	});
 });
 
 describe("SessionInspector PR section", () => {
@@ -222,9 +265,10 @@ describe("SessionInspector PR section", () => {
 		expect(prSection("Pull request").getByText("open")).toHaveClass("text-[9px]", "leading-none");
 	});
 
-	it("shows the empty state when there are no PRs", () => {
+	it("hides the pull request section when there are no PRs", () => {
 		renderWithQuery(<SessionInspector session={session([])} />);
-		expect(screen.getByText("No pull request opened yet.")).toBeInTheDocument();
+		expect(screen.queryByText("Pull request")).not.toBeInTheDocument();
+		expect(screen.queryByText("No pull request opened yet.")).not.toBeInTheDocument();
 	});
 
 	it("links each PR to its url", () => {
@@ -239,7 +283,7 @@ describe("SessionInspector PR section", () => {
 
 describe("SessionInspector completion controls", () => {
 	it("persists the terminate-on-merge preference", async () => {
-		renderWithQuery(<SessionInspector session={session([])} />);
+		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
 
 		await userEvent.click(screen.getByRole("switch", { name: "Terminate session when pull requests merge" }));
 
@@ -251,36 +295,53 @@ describe("SessionInspector completion controls", () => {
 		);
 	});
 
-	it("terminates a live merged session and returns to its project after success", async () => {
-		renderWithQuery(<SessionInspector session={session([pr(7, "merged")], { status: "merged" })} />);
+	it("terminates a live merged session and returns to its orchestrator immediately", async () => {
+		postMock.mockReturnValue(new Promise(() => {}));
+		const worker = session([pr(7, "merged")], { status: "merged" });
+		const orchestrator = session([], { id: "orch-1", kind: "orchestrator", title: "orchestrator" });
+		renderWithQuery(<SessionInspector session={worker} />, [
+			{
+				id: "ws-1",
+				name: "my-app",
+				path: "/repo",
+				sessions: [worker, orchestrator],
+			},
+		]);
 
 		expect(
 			screen.queryByRole("switch", { name: "Terminate session when pull requests merge" }),
 		).not.toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: "Terminate session" }));
 		expect(screen.getByRole("dialog", { name: "Terminate do the thing?" })).toBeInTheDocument();
-		await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Terminate session" }));
+		await userEvent.click(
+			within(screen.getByRole("dialog")).getByRole("button", { name: "Yes, terminate session" }),
+		);
 
-		await waitFor(() =>
-			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/kill", {
-				params: { path: { sessionId: "sess-1" } },
-			}),
-		);
-		await waitFor(() =>
-			expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "ws-1" } }),
-		);
+		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/kill", {
+			params: { path: { sessionId: "sess-1" } },
+		});
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "ws-1", sessionId: "orch-1" },
+		});
 	});
 
-	it("keeps the confirmation open and does not navigate when termination fails", async () => {
+	it("keeps the confirmation dismissed after a termination failure", async () => {
 		postMock.mockResolvedValueOnce({ error: new Error("runtime teardown failed"), response: { status: 500 } });
 		renderWithQuery(<SessionInspector session={session([pr(7, "merged")], { status: "merged" })} />);
 
 		await userEvent.click(screen.getByRole("button", { name: "Terminate session" }));
-		await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Terminate session" }));
+		await userEvent.click(
+			within(screen.getByRole("dialog")).getByRole("button", { name: "Yes, terminate session" }),
+		);
 
-		expect(await screen.findByText("runtime teardown failed")).toBeInTheDocument();
-		expect(screen.getByRole("dialog")).toBeInTheDocument();
-		expect(navigateMock).not.toHaveBeenCalled();
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId",
+			params: { projectId: "ws-1" },
+		});
 	});
 
 	it("hides completion controls after the session is terminated", () => {
@@ -297,6 +358,15 @@ describe("SessionInspector completion controls", () => {
 
 		expect(screen.queryByText("Completion")).not.toBeInTheDocument();
 		expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+	});
+
+	it("hides completion controls when there are no PRs and the session is not merged", () => {
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		expect(screen.queryByText("Completion")).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("switch", { name: "Terminate session when pull requests merge" }),
+		).not.toBeInTheDocument();
 	});
 });
 

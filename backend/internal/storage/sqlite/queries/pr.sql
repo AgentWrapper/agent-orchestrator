@@ -101,6 +101,7 @@ SELECT
     pr.review_decision,
     pr.ci_state,
     pr.mergeability,
+    pr.head_sha,
     pr.updated_at,
     EXISTS (
         SELECT 1
@@ -129,6 +130,7 @@ SELECT
     pr.mergeability,
     pr.source_branch,
     pr.target_branch,
+    pr.head_sha,
     pr.updated_at,
     EXISTS (
         SELECT 1

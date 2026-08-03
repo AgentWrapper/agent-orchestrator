@@ -1,5 +1,9 @@
 @import "tailwindcss";
 @import "../styles/tokens.css";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+@custom-variant dark (&:is(.dark *, :root:not([data-theme="light"]) *));
 
 @custom-media --layout-narrow (width <= 680px); /* --breakpoint-layout-narrow */
 
@@ -95,11 +99,13 @@
 	--color-popover-foreground: var(--color-text-primary);
 	--color-input: var(--bridge-border);
 	--color-sidebar: var(--color-bg-sidebar);
-	--color-sidebar-foreground: var(--color-text-muted);
-	--color-sidebar-accent: var(--color-bg-tertiary);
-	--color-sidebar-accent-foreground: var(--color-text-primary);
-	--color-sidebar-border: var(--bridge-border);
-	--color-sidebar-ring: var(--bridge-accent);
+	--color-sidebar-foreground: var(--sidebar-foreground);
+	--color-sidebar-primary: var(--sidebar-primary);
+	--color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+	--color-sidebar-accent: var(--sidebar-accent);
+	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+	--color-sidebar-border: var(--sidebar-border);
+	--color-sidebar-ring: var(--sidebar-ring);
 	--color-terminal: var(--color-bg-terminal);
 	--color-terminal-dim: var(--color-text-terminal-dim);
 	--color-scrim: var(--bridge-scrim);
@@ -163,10 +169,11 @@
 
 	/* Layout — toolbar offset for fixed sidebar below topbar */
 	--spacing-toolbar: var(--size-toolbar);
+	--spacing-window-titlebar: var(--size-window-titlebar);
 	--spacing-titlebar-content-offset: var(--size-titlebar-content-offset);
 	--spacing-titlebar-cluster-left: var(--size-titlebar-cluster-left);
 	/* Fullscreen has no traffic lights — park the cluster at the panel inset. */
-	--spacing-titlebar-cluster-left-fullscreen: var(--size-center-panel-inset);
+	--spacing-titlebar-cluster-left-fullscreen: var(--size-center-panel-inset-mac);
 	--spacing-traffic-light-clearance: var(--size-traffic-light-clearance);
 	--spacing-traffic-light-clearance-fullscreen: var(--size-traffic-light-clearance-fullscreen);
 	--spacing-control-xs: var(--size-control-xs);
@@ -206,22 +213,23 @@
 	--spacing-kv-label: var(--size-kv-label);
 	--spacing-branch-chip: var(--size-branch-chip);
 
-	--color-muted: var(--color-bg-tertiary);
-	--color-muted-foreground: var(--color-text-muted);
+	--color-muted: var(--muted);
+	--color-muted-foreground: var(--muted-foreground);
 	--color-passive: var(--color-text-passive);
-	--color-secondary: var(--color-bg-tertiary);
+	--color-secondary: var(--secondary);
+	--color-secondary-foreground: var(--secondary-foreground);
 
-	--color-primary: var(--bridge-accent);
-	--color-primary-foreground: var(--bridge-accent-fg);
-	--color-accent: var(--bridge-accent);
-	--color-accent-foreground: var(--bridge-accent-fg);
+	--color-primary: var(--primary);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-accent: var(--accent);
+	--color-accent-foreground: var(--primary-foreground);
 	--color-accent-weak: var(--bridge-accent-weak);
 	--color-accent-dim: var(--bridge-accent-dim);
 	--color-accent-strong: var(--bridge-accent-strong);
 	--color-danger-strong: var(--bridge-danger-strong);
-	--color-ring: var(--bridge-accent);
+	--color-ring: var(--ring);
 
-	--color-border: var(--bridge-border);
+	--color-border: var(--border);
 	--color-border-strong: var(--bridge-border-strong);
 
 	--color-working: var(--bridge-working);
@@ -328,7 +336,7 @@
 
 @utility session-card-terminated {
 	border-color: color-mix(in srgb, var(--color-status-terminated) 32%, var(--color-border));
-	background-color: color-mix(in srgb, var(--color-status-terminated) 7%, var(--color-bg-secondary));
+	background-color: color-mix(in srgb, var(--color-status-terminated) 7%, var(--color-bg-primary));
 }
 
 @utility bg-surface-faint {
@@ -383,6 +391,8 @@
 	padding-right: var(--size-center-panel-inline-inset);
 	padding-bottom: var(--size-center-panel-bottom-inset);
 	padding-left: 0;
+	/* Match the sidebar spring settle time (~280ms). */
+	transition: padding 280ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
 @utility center-panel-surface {
@@ -394,6 +404,9 @@
 	border-radius: var(--radius-center-panel);
 	border: 1px solid var(--color-border-strong);
 	background-color: var(--color-bg-primary);
+	transition:
+		border-color 280ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
+		border-radius 280ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
 /* A fully hidden sidebar no longer contributes a left layout gutter. Restore
@@ -402,15 +415,27 @@
 	padding-left: var(--size-center-panel-inline-inset);
 }
 
-/* macOS + Linux: one uniform inset on every side (matches the near-flush top
- * that keeps Board/Terminal titles level with the fixed TitlebarNav). Two
- * classes so it also wins over the `.sidebar-hidden` left gutter above. */
+/* macOS: inset on all sides except left (flush with sidebar). */
 .center-panel-shell.center-panel-shell--mac {
-	padding: var(--size-center-panel-inset-mac);
+	padding-top: var(--size-center-panel-inset-mac);
+	padding-right: var(--size-center-panel-inset-mac);
+	padding-bottom: var(--size-center-panel-inset-mac);
+	padding-left: 0;
 }
 
 .center-panel-shell.center-panel-shell--mac.center-panel-shell--fullscreen {
 	padding: 0;
+}
+
+/* Sidebar closed on mac: content panel expands to fill the full window.
+ * Remove all padding and strip the surface border + radius so it's flush. */
+.sidebar-hidden .center-panel-shell.center-panel-shell--mac {
+	padding: 0;
+}
+
+.sidebar-hidden .center-panel-shell--mac .center-panel-surface {
+	border-color: transparent;
+	border-radius: 0;
 }
 
 .center-panel-titlebar {
@@ -422,16 +447,23 @@
 	min-height: var(--size-traffic-light-clearance);
 }
 
+/* Sidebar chrome clearance: size tokens only — set by data-topbar-offset on the
+ * fixed sidebar container so top/height/overlay pad share one offset. */
+[data-topbar-offset="toolbar"] {
+	--sidebar-chrome-offset: var(--size-toolbar);
+}
+[data-topbar-offset="titlebar"] {
+	--sidebar-chrome-offset: var(--size-window-titlebar);
+}
+[data-topbar-offset="trafficLights"] {
+	--sidebar-chrome-offset: var(--size-traffic-light-clearance);
+}
+
 /* On macOS the titlebar controls stay fixed when the sidebar is off-canvas.
  * Pad the title past that cluster so it sits next to the buttons. Fullscreen
  * drops the traffic-light reserve so title sits next to the left-edge buttons. */
 .center-panel-shell--titlebar-clearance .center-panel-titlebar {
 	padding-left: calc(var(--size-titlebar-content-offset) - var(--size-center-panel-inset-mac));
-}
-
-/* Linux clears the cluster from its own left edge (no traffic-light row). */
-.center-panel-shell--linux.center-panel-shell--titlebar-clearance .center-panel-titlebar {
-	padding-left: calc(var(--size-titlebar-content-offset-linux) - var(--size-center-panel-inset-mac));
 }
 
 /* Fullscreen: the shell is flush, so measure from the cluster's own left edge. */
@@ -441,9 +473,11 @@
 	);
 }
 
-/* Windows: the frameless window's custom titlebar already supplies top chrome,
- * so drop the framed panel's top inset to give content more height. */
-.platform-windows .center-panel-shell {
+/* Windows / Linux: a ShellTopbar already supplies the top chrome, so the
+ * framed panel needs no additional top inset. Windows uses its custom
+ * frameless titlebar; Linux uses the standard ShellTopbar. */
+.platform-windows .center-panel-shell,
+.platform-linux .center-panel-shell {
 	padding-top: 0;
 }
 
@@ -808,6 +842,8 @@ body {
 	font-size: var(--font-size-md);
 	line-height: var(--line-height-normal);
 	-webkit-font-smoothing: antialiased;
+	-webkit-user-select: none;
+	user-select: none;
 }
 
 button,
@@ -815,6 +851,13 @@ input,
 textarea,
 select {
 	font: inherit;
+}
+
+input,
+textarea,
+[contenteditable="true"] {
+	-webkit-user-select: text;
+	user-select: text;
 }
 
 :is(
@@ -1123,7 +1166,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
  * stops at the header instead of crossing the traffic-light strip. */
 .dashboard-app-header {
 	display: flex;
-	height: 56px;
+	height: var(--size-shell-topbar);
 	flex-shrink: 0;
 	align-items: center;
 	gap: 13px;
@@ -1313,13 +1356,15 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 
 /* Windows custom title bar (WindowTitlebar): the app paints the sidebar toggle
  * + menu on one row while Electron overlays the native min/max/close buttons on
- * the right. Height must match TITLEBAR_HEIGHT + the Window Controls Overlay
- * height in main.ts so the native buttons line up. The whole strip is the
- * window-drag region; interactive children opt out with
+ * the right. Height uses --size-window-titlebar and must match TITLEBAR_HEIGHT
+ * + the Window Controls Overlay height in main.ts so the native buttons line up.
+ * The whole strip is the window-drag region; interactive children opt out with
  * -webkit-app-region: no-drag. */
 .window-titlebar {
+	position: relative;
+	z-index: var(--z-titlebar);
 	display: flex;
-	height: 36px;
+	height: var(--size-window-titlebar);
 	flex-shrink: 0;
 	align-items: center;
 	gap: 8px;
@@ -2237,25 +2282,70 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	overflow: hidden;
 	border: 1px solid var(--border);
 	border-radius: 8px;
-	background: var(--bg);
+	background:
+		linear-gradient(180deg, color-mix(in srgb, var(--color-bg-secondary) 92%, transparent), transparent 118px),
+		linear-gradient(135deg, color-mix(in srgb, var(--color-accent) 10%, transparent), transparent 42%),
+		var(--bg);
+	box-shadow:
+		0 0 0 1px color-mix(in srgb, var(--color-border) 42%, transparent),
+		0 20px 48px color-mix(in srgb, black 18%, transparent),
+		0 8px 18px color-mix(in srgb, black 10%, transparent);
+	transition:
+		border-color var(--duration-normal) ease,
+		box-shadow var(--duration-normal) ease,
+		background var(--duration-normal) ease;
 }
 
-/* Maximized browser overlay: a fixed layer over the app workspace (portaled to
-   <body>, so it covers the sidebar + topbar too, not just the session area).
+.browser-panel--agent-active {
+	border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border));
+	box-shadow:
+		0 0 0 1px color-mix(in srgb, var(--color-accent) 20%, transparent),
+		0 0 28px color-mix(in srgb, var(--color-accent) 10%, transparent),
+		var(--elevation-sm);
+}
+
+/* Maximized workspace overlays: fixed layers portaled to <body>, so they cover
+   the sidebar + topbar too, not just the session area.
    Electron's Window Controls Overlay owns the top-right titlebar region on
-   Windows, so start below its reported safe-area height. Platforms without a
-   titleBarOverlay resolve the env() fallback to 0px and keep the existing
-   edge-to-edge layout. */
-.browser-popout-overlay {
+   Windows, so start below its reported safe-area height. macOS hides the shell
+   topbar; windowed mode reserves the native traffic-light band below, while
+   native fullscreen keeps a 0px top inset. Linux now shows a ShellTopbar, so
+   the overlay must start below --size-toolbar; env(titlebar-area-height)
+   resolves to 0 on Linux (no titleBarOverlay), so we override the top with a
+   platform class. */
+.browser-popout-overlay,
+.files-popout-overlay {
 	position: fixed;
 	inset: env(titlebar-area-height, 0px) 0 0;
 	z-index: 40;
-	background: var(--bg);
+	background: color-mix(in srgb, var(--bg) 94%, black);
+	/* The macOS shell has a separate traffic-light drag strip. Keep the
+	   maximized browser surface interactive even if those regions overlap while
+	   the window is transitioning between layouts. */
+	-webkit-app-region: no-drag;
+}
+
+/* macOS keeps the native traffic lights visible while the window is not in
+   native fullscreen. Reserve that band instead of rendering beneath them. */
+.browser-popout-overlay--mac-windowed,
+.files-popout-overlay--mac-windowed {
+	top: var(--size-traffic-light-clearance);
+}
+
+.browser-popout-overlay .browser-panel__toolbar,
+.browser-popout-overlay .browser-panel__toolbar * {
+	-webkit-app-region: no-drag;
+}
+
+.platform-linux .browser-popout-overlay,
+.platform-linux .files-popout-overlay {
+	top: var(--size-shell-topbar);
 }
 
 .browser-popout-overlay .browser-panel {
 	border: 0;
 	border-radius: 0;
+	box-shadow: none;
 }
 
 .browser-panel__toolbar {
@@ -2264,15 +2354,44 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	gap: 5px;
 	flex-shrink: 0;
 	min-width: 0;
-	padding: 7px;
-	border-bottom: 1px solid var(--border);
-	background: var(--surface);
+	min-height: 44px;
+	padding: 7px 8px;
+	border-bottom: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
+	background:
+		linear-gradient(180deg, color-mix(in srgb, var(--surface) 98%, white 2%), var(--surface)),
+		var(--surface);
+	box-shadow:
+		inset 0 1px 0 color-mix(in srgb, white 7%, transparent),
+		0 1px 0 color-mix(in srgb, black 22%, transparent);
+	backdrop-filter: blur(10px);
 }
 
-.browser-panel__url {
+.browser-panel__url,
+.browser-panel__url-wrap {
+	display: flex;
+	align-items: center;
 	position: relative;
 	min-width: 0;
 	flex: 1;
+}
+
+.browser-panel__toolbar button {
+	border-radius: 7px;
+	transition:
+		background var(--duration-fast) ease,
+		color var(--duration-fast) ease,
+		transform var(--duration-fast) ease,
+		box-shadow var(--duration-fast) ease;
+}
+
+.browser-panel__toolbar button:not(:disabled):hover {
+	transform: translateY(-1px);
+	box-shadow: 0 5px 12px color-mix(in srgb, black 12%, transparent);
+}
+
+.browser-panel__toolbar button:not(:disabled):active {
+	transform: translateY(0);
+	box-shadow: none;
 }
 
 .browser-panel__annotate-btn[aria-pressed="true"] {
@@ -2289,6 +2408,9 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	line-height: 1;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+	transition:
+		color var(--duration-fast) ease,
+		opacity var(--duration-fast) ease;
 }
 
 .browser-panel__annotation-status--error {
@@ -2298,10 +2420,11 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 
 .browser-panel__url-icon {
 	position: absolute;
-	left: 9px;
+	left: 10px;
 	top: 50%;
-	width: 14px;
-	height: 14px;
+	z-index: 1;
+	width: 15px;
+	height: 15px;
 	transform: translateY(-50%);
 	color: var(--fg-passive);
 	pointer-events: none;
@@ -2310,8 +2433,27 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 .browser-panel__url-input {
 	height: 29px;
 	padding-left: 29px;
+	border-color: color-mix(in srgb, var(--color-border) 72%, transparent);
+	border-radius: 7px;
+	background:
+		linear-gradient(180deg, color-mix(in srgb, var(--bg) 90%, white 2%), var(--bg));
+	box-shadow:
+		inset 0 1px 0 color-mix(in srgb, white 6%, transparent),
+		0 1px 8px color-mix(in srgb, black 9%, transparent);
 	font-family: var(--font-mono);
 	font-size: 12px;
+}
+
+.browser-panel__url-input:focus {
+	box-shadow:
+		0 0 0 3px color-mix(in srgb, var(--color-accent) 18%, transparent),
+		inset 0 1px 0 color-mix(in srgb, white 6%, transparent);
+}
+
+.browser-panel__tabs-trigger {
+	min-width: 42px;
+	border: 1px solid color-mix(in srgb, var(--color-border) 56%, transparent);
+	background: color-mix(in srgb, var(--surface) 86%, var(--bg));
 }
 
 .browser-panel__content {
@@ -2320,6 +2462,42 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	min-height: 0;
 	overflow: hidden;
 	background: var(--bg);
+}
+
+.browser-panel__viewport {
+	position: relative;
+	flex: 1;
+	min-height: 0;
+	margin: 8px;
+	overflow: hidden;
+	border: 0;
+	border-radius: 8px;
+	background:
+		radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--color-accent) 8%, transparent), transparent 34%),
+		var(--bg);
+	box-shadow:
+		inset 0 0 0 1px color-mix(in srgb, var(--color-border) 28%, transparent),
+		inset 0 1px 0 color-mix(in srgb, white 3%, transparent),
+		0 12px 26px color-mix(in srgb, black 14%, transparent);
+}
+
+.browser-popout-overlay .browser-panel__viewport {
+	margin: 0;
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
+}
+
+.browser-panel__transition-frame {
+	position: absolute;
+	inset: 0;
+	z-index: 2;
+	width: 100%;
+	height: 100%;
+	object-fit: fill;
+	background: var(--bg);
+	pointer-events: none;
+	animation: browser-transition-frame 240ms ease-out forwards;
 }
 
 .browser-panel__slot {
@@ -2354,4 +2532,42 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	background: color-mix(in srgb, var(--red) 8%, var(--bg));
 	color: var(--red);
 	font-size: 12px;
+}
+
+@keyframes browser-transition-frame {
+	0% {
+		opacity: 1;
+	}
+	100% {
+		opacity: 0;
+	}
+}
+
+@keyframes browser-popout-in {
+	from {
+		opacity: 0.94;
+		transform: scale(0.992);
+	}
+	to {
+		opacity: 1;
+		transform: scale(1);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.browser-popout-overlay,
+	.browser-panel__transition-frame {
+		animation: none;
+	}
+
+	.browser-panel,
+	.browser-panel__annotation-status,
+	.browser-panel__toolbar button {
+		transition: none;
+	}
+
+	.browser-panel__toolbar button:not(:disabled):hover,
+	.browser-panel__toolbar button:not(:disabled):active {
+		transform: none;
+	}
 }

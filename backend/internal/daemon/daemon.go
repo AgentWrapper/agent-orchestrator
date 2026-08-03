@@ -141,6 +141,13 @@ func Run() error {
 	notificationHub := notify.NewHub()
 	notifier := notificationsvc.New(notificationsvc.Deps{Store: store})
 	notificationWriter := notify.New(notify.Deps{Store: store, Publisher: notificationHub})
+	// Resolution transitions that happened while the daemon was down never
+	// reached lifecycle, so re-check open notifications against the durable
+	// session/PR facts before serving. Best-effort: a failure here only leaves
+	// stale rows in the unresolved list, never blocks startup.
+	if err := notificationWriter.Reconcile(ctx); err != nil {
+		log.Warn("notification resolution reconcile failed", "err", err)
+	}
 
 	// Bring up the Lifecycle Manager and the reaper first: it makes the session
 	// lifecycle write path live (reducer write -> store -> DB trigger ->
@@ -166,7 +173,7 @@ func Run() error {
 	// selected runtime, routed git/scratch workspaces, the per-session agent
 	// resolver (AO_AGENT validated here for compatibility), and the agent
 	// messenger, then mount it on the API.
-	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, lcStack.reengagement, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, log)
+	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()

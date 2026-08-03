@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 import {
@@ -18,10 +19,11 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
-import { useTerminateSession } from "../hooks/useTerminateSession";
+import { useSessionWorkspaceFilesChangedCount } from "../hooks/useSessionWorkspaceFiles";
+import { clearTerminateSessionState, useTerminateSession } from "../hooks/useTerminateSession";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
-import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
+import { canonicalTrackerIssueId, findProjectOrchestrator, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
@@ -33,8 +35,10 @@ import { cn } from "../lib/utils";
 import { PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
 import { StatusPill } from "./StatusPill";
 import { CodexIcon } from "./icons";
-import { SessionTerminationDialog } from "./SessionTerminationDialog";
+import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { Switch } from "./ui/switch";
+import { appI18n } from "../i18n";
+import type { MessageKey } from "../i18n";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -43,10 +47,10 @@ type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => v
 
 export type InspectorView = "summary" | "reviews" | "browser" | "files";
 
-const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
+const VIEW_DEFS: { id: InspectorView; labelKey: "inspector.summary" | "inspector.reviews" | "inspector.browser" | "inspector.files"; icon: ReactNode }[] = [
 	{
 		id: "summary",
-		label: "Summary",
+		labelKey: "inspector.summary",
 		icon: (
 			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
 				<line x1="8" y1="7" x2="20" y2="7" />
@@ -60,7 +64,7 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 	},
 	{
 		id: "reviews",
-		label: "Reviews",
+		labelKey: "inspector.reviews",
 		icon: (
 			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
 				<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
@@ -69,7 +73,7 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 	},
 	{
 		id: "browser",
-		label: "Browser",
+		labelKey: "inspector.browser",
 		icon: (
 			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
 				<circle cx="12" cy="12" r="9" />
@@ -80,7 +84,7 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 	},
 	{
 		id: "files",
-		label: "Files",
+		labelKey: "inspector.files",
 		icon: <FilesIcon aria-hidden="true" />,
 	},
 ];
@@ -92,6 +96,13 @@ const prStateTone: Record<SessionPRSummary["state"], string> = {
 	draft: "border-border bg-raised text-muted-foreground",
 	merged: "border-accent/40 bg-accent-weak text-accent",
 	closed: "border-error/40 bg-error/10 text-error",
+};
+
+const prStateLabelKeys: Record<SessionPRSummary["state"], MessageKey> = {
+	open: "pr.state.open",
+	draft: "pr.state.draft",
+	merged: "pr.state.merged",
+	closed: "pr.state.closed",
 };
 
 const inspectorShellClass = "@container/inspector flex h-full min-h-0 flex-col overflow-hidden";
@@ -168,32 +179,35 @@ export function SessionInspector({
 	view?: InspectorView;
 	onViewChange?: (view: InspectorView) => void;
 }) {
+	const { t } = useTranslation();
 	const [internalView, setInternalView] = useState<InspectorView>("summary");
 	const view = viewProp ?? internalView;
 	// Badge the Browser tab when a preview target arrived without us opening it.
 	const browserUnseen = useUiStore((state) =>
 		session ? Boolean(state.inspectorSessions[session.id]?.browserUnseen) : false,
 	);
+	const filesChangedCount = useSessionWorkspaceFilesChangedCount(session?.id);
 	const setView = (next: InspectorView) => {
 		setInternalView(next);
 		onViewChange?.(next);
 		if (next === "files") onOpenFiles?.();
 	};
+	const views = VIEW_DEFS.map((entry) => ({ ...entry, label: t(entry.labelKey) }));
 
 	if (!session) {
 		return (
-			<aside className={inspectorShellClass} aria-label="Session inspector">
+			<aside className={inspectorShellClass} aria-label={t("inspector.aria")}>
 				<div className={inspectorBodyClass}>
-					<p className={inspectorEmptyClass}>Loading session…</p>
+					<p className={inspectorEmptyClass}>{t("inspector.loadingSession")}</p>
 				</div>
 			</aside>
 		);
 	}
 
 	return (
-		<aside className={inspectorShellClass} aria-label="Session inspector">
+		<aside className={inspectorShellClass} aria-label={t("inspector.aria")}>
 			<div className="flex h-inspector-tabs shrink-0 items-center gap-1 border-b border-border px-2.5" role="tablist">
-				{VIEWS.map((entry) => (
+				{views.map((entry) => (
 					<button
 						aria-label={entry.label}
 						key={entry.id}
@@ -218,7 +232,11 @@ export function SessionInspector({
 								</span>
 							) : null}
 						</span>
-						<span className="truncate @max-[350px]/inspector:hidden">{entry.label}</span>
+						<span className="truncate @max-[350px]/inspector:hidden">
+							{entry.id === "files" && filesChangedCount !== undefined
+								? t("files.tabCount", { count: filesChangedCount })
+								: entry.label}
+						</span>
 					</button>
 				))}
 			</div>
@@ -282,39 +300,42 @@ function Section({
 }
 
 function SummaryView({ session }: { session: WorkspaceSession }) {
+	const { t } = useTranslation();
 	const query = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
-	const prSectionTitle = prSummaries.length > 1 ? `Pull requests (${prSummaries.length})` : "Pull request";
+	const prSectionTitle = prSummaries.length > 1 ? t("inspector.pullRequests", { count: prSummaries.length }) : t("inspector.pullRequest");
 	const issueId = canonicalTrackerIssueId(session.issueId);
+
+	const hasPRs = prSummaries.length > 0;
+	const showCompletion =
+		session.kind !== "orchestrator" && (hasPRs || session.status === "merged");
 
 	return (
 		<div role="tabpanel">
-			<Section title={prSectionTitle}>
-				{prSummaries.length === 0 ? (
-					<p className={inspectorEmptyClass}>No pull request opened yet.</p>
-				) : (
+			{hasPRs ? (
+				<Section title={prSectionTitle}>
 					<div className="flex flex-col gap-1.5">
 						{prSummaries.map((pr) => (
-							<PRSummaryCard key={pr.number} pr={pr} />
+							<PRSummaryCard key={pr.url || pr.htmlUrl || pr.number} pr={pr} />
 						))}
 					</div>
-				)}
-			</Section>
+				</Section>
+			) : null}
 
-			{session.kind !== "orchestrator" ? <CompletionControls session={session} /> : null}
+			{showCompletion ? <CompletionControls session={session} /> : null}
 
-			<Section title="Activity">
+			<Section title={t("inspector.activity")}>
 				<ActivityTimeline prs={prSummaries} session={session} />
 				<ResumeAgentControl session={session} />
 			</Section>
 
-			<Section title="Overview">
+			<Section title={t("inspector.overview")}>
 				<dl className="flex flex-col gap-1">
-					<Row k="Agent" v={session.provider} mono />
-					{issueId && <Row k="Issue" v={issueId} mono />}
-					{session.branch && <Row k="Branch" v={session.branch} mono />}
-					<Row k="Started" v={formatTimeCompact(session.createdAt ?? session.updatedAt)} mono />
-					<Row k="Session" v={session.id} mono />
+					<Row k={t("inspector.agent")} v={session.provider} mono />
+					{issueId && <Row k={t("inspector.issue")} v={issueId} mono />}
+					{session.branch && <Row k={t("inspector.branch")} v={session.branch} mono />}
+					<Row k={t("inspector.started")} v={formatTimeCompact(session.createdAt ?? session.updatedAt)} mono />
+					<Row k={t("inspector.session")} v={session.id} mono />
 				</dl>
 			</Section>
 		</div>
@@ -322,6 +343,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 }
 
 function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const resume = useMutation({
 		mutationFn: async () => {
@@ -338,8 +360,8 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 				void aoBridge.notifications
 					.show({
 						id: `resume-agent-fallback:${session.id}:${Date.now()}`,
-						title: "Started from saved prompt",
-						body: "AO could not resume the native agent session, so it started a new conversation from the saved prompt.",
+						title: t("inspector.startedFromPrompt"),
+						body: t("inspector.resumeFallbackBody"),
 					})
 					.catch((err) => {
 						console.warn("Unable to show resume fallback notification", err);
@@ -362,7 +384,7 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 				variant="outline"
 			>
 				<Play className="size-icon-sm" aria-hidden="true" />
-				{resume.isPending ? "Resuming agent…" : "Resume agent"}
+				{resume.isPending ? t("inspector.resumingAgent") : t("inspector.resumeAgent")}
 			</Button>
 			{error ? (
 				<p className="mt-2 text-2xs leading-normal text-error" role="status">
@@ -374,15 +396,11 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 }
 
 function CompletionControls({ session }: { session: WorkspaceSession }) {
+	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const [confirmOpen, setConfirmOpen] = useState(false);
-	const terminate = useTerminateSession({
-		onSuccess: (terminated) => {
-			setConfirmOpen(false);
-			void navigate({ to: "/projects/$projectId", params: { projectId: terminated.workspaceId } });
-		},
-	});
+	const terminate = useTerminateSession();
 	const policy = useMutation({
 		mutationFn: async (terminateOnPrMerge: boolean) => {
 			if (usePreviewData) return;
@@ -408,36 +426,55 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 		},
 	});
 	const policyError = policy.error instanceof Error ? policy.error.message : null;
-	const terminateError = terminate.error instanceof Error ? terminate.error.message : null;
 	const canTerminateNow = session.status === "merged";
+
+	const confirmTermination = () => {
+		const workspaces = queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey) ?? [];
+		const orchestrator = findProjectOrchestrator(workspaces, session.workspaceId);
+		setConfirmOpen(false);
+		terminate.mutate(session);
+		if (orchestrator) {
+			void navigate({
+				to: "/projects/$projectId/sessions/$sessionId",
+				params: { projectId: session.workspaceId, sessionId: orchestrator.id },
+			});
+			return;
+		}
+		void navigate({ to: "/projects/$projectId", params: { projectId: session.workspaceId } });
+	};
 
 	if (session.isTerminated === true) return null;
 
 	return (
-		<Section title="Completion">
+		<Section title={t("inspector.completion")}>
 			{canTerminateNow ? (
-					<div className="flex items-center justify-between gap-3 py-1">
-					<span className="min-w-0 text-xs font-medium text-settings-label">Terminate</span>
-					<button
-						aria-label="Terminate session"
-						className="inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-						onClick={() => {
-							terminate.reset();
-							setConfirmOpen(true);
-						}}
-						type="button"
-					>
-						<Trash2 className="size-icon-sm" aria-hidden="true" />
-					</button>
+				<div className="flex items-center justify-between gap-3 py-1">
+					<span className="min-w-0 text-xs font-medium text-settings-label">{t("inspector.terminateShort")}</span>
+					<SessionTerminationPopover
+						onConfirm={confirmTermination}
+						onOpenChange={setConfirmOpen}
+						open={confirmOpen}
+						session={session}
+						trigger={
+							<button
+								aria-label={t("inspector.terminate")}
+								className="inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+								onClick={() => clearTerminateSessionState(queryClient, session.id)}
+								type="button"
+							>
+								<Trash2 className="size-icon-sm" aria-hidden="true" />
+							</button>
+						}
+					/>
 				</div>
 			) : (
 				<>
 					<div className="flex items-center justify-between gap-3 py-1">
 						<label className="min-w-0 text-xs font-medium text-settings-label" htmlFor={`merge-policy-${session.id}`}>
-							Terminate on merge
+							{t("inspector.terminateOnMergeShort")}
 						</label>
 						<Switch
-							aria-label="Terminate session when pull requests merge"
+							aria-label={t("inspector.terminateOnMerge")}
 							checked={Boolean(session.terminateOnPrMerge)}
 							disabled={policy.isPending}
 							id={`merge-policy-${session.id}`}
@@ -451,16 +488,6 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 					) : null}
 				</>
 			)}
-			<SessionTerminationDialog
-				busy={terminate.isPending}
-				error={terminateError}
-				onConfirm={() => terminate.mutate(session)}
-				onOpenChange={(open) => {
-					if (!terminate.isPending) setConfirmOpen(open);
-				}}
-				open={confirmOpen}
-				session={session}
-			/>
 		</Section>
 	);
 }
@@ -479,6 +506,7 @@ function updateSessionMergePolicy(
 }
 
 function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
+	const { t } = useTranslation();
 	return (
 		<div className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2.5 py-1.5">
 			<div className="flex items-center gap-2">
@@ -488,7 +516,7 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 					variant="outline"
 					className={cn("h-5 px-1.5 text-[9px] leading-none font-medium", prStateTone[pr.state])}
 				>
-					{pr.state}
+					{t(prStateLabelKeys[pr.state])}
 				</Badge>
 				<a
 					href={prBrowserUrl(pr)}
@@ -496,7 +524,7 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 					rel="noopener noreferrer"
 					className="ml-auto inline-flex items-center gap-0.5 text-caption font-medium text-accent hover:underline"
 				>
-					<span>Open</span>
+					<span>{t("inspector.open")}</span>
 					<ArrowUpRight aria-hidden="true" className="size-icon-2xs" strokeWidth={2} />
 				</a>
 			</div>
@@ -521,14 +549,14 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 
 	history.push({
 		tone: "neutral",
-		node: <>Created workspace</>,
+		node: <>{appI18n.t("inspector.timeline.createdWorkspace")}</>,
 		ts: formatTimeCompact(session.createdAt ?? session.updatedAt),
 	});
 
 	for (const pr of prs.filter((pr) => pr.state === "draft")) {
 		history.push({
 			tone: "neutral",
-			node: <PRTimelineLink pr={pr} verb="Draft" />,
+			node: <PRTimelineLink pr={pr} verb={appI18n.t("inspector.timeline.draft")} />,
 			ts: prStateTime(pr),
 		});
 	}
@@ -536,7 +564,7 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 	for (const pr of prs.filter((pr) => pr.state !== "draft")) {
 		history.push({
 			tone: "neutral",
-			node: <PRTimelineLink pr={pr} verb="Opened" />,
+			node: <PRTimelineLink pr={pr} verb={appI18n.t("inspector.timeline.opened")} />,
 			ts: prCreatedTime(pr),
 		});
 	}
@@ -544,7 +572,7 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 	for (const pr of prs.filter((pr) => pr.state === "merged")) {
 		history.push({
 			tone: "good",
-			node: <PRTimelineLink pr={pr} verb="Merged" />,
+			node: <PRTimelineLink pr={pr} verb={appI18n.t("inspector.timeline.merged")} />,
 			ts: prStateTime(pr),
 		});
 	}
@@ -552,7 +580,7 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 	if (session.status === "merged") {
 		history.push({
 			tone: "good",
-			node: <>Done</>,
+			node: <>{appI18n.t("inspector.timeline.done")}</>,
 			ts: latestMergedTime(prs),
 		});
 	}
@@ -615,7 +643,7 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 	);
 }
 
-function PRTimelineLink({ pr, verb }: { pr: SessionPRSummary; verb: "Draft" | "Opened" | "Merged" }) {
+function PRTimelineLink({ pr, verb }: { pr: SessionPRSummary; verb: string }) {
 	return (
 		<a
 			aria-label={`${verb} PR #${pr.number}`}
@@ -654,14 +682,16 @@ function latestMergedTime(prs: SessionPRSummary[]): string | null {
 
 type ScmTimelineState = "ci_failed" | "changes_requested" | "conflict";
 
-const CONFLICT_PILL = { label: "Conflict", tone: "var(--color-danger)", breathe: false };
+function conflictPill() {
+	return { label: appI18n.t("inspector.conflict"), tone: "var(--color-danger)", breathe: false };
+}
 
 function InspectorActivityPill({ activity }: { activity?: WorkspaceSession["activity"] }) {
 	return <TimelinePill {...getAgentActivityView(activity)} />;
 }
 
 function InspectorScmPill({ state }: { state: ScmTimelineState }) {
-	if (state === "conflict") return <TimelinePill {...CONFLICT_PILL} />;
+	if (state === "conflict") return <TimelinePill {...conflictPill()} />;
 	return <TimelinePill {...getSessionTimelinePillView(state)} />;
 }
 
@@ -696,6 +726,7 @@ function ReviewsView({
 	session: WorkspaceSession;
 	onOpenReviewerTerminal?: OpenReviewerTerminal;
 }) {
+	const { t } = useTranslation();
 	const hasPr = sortedPRs(session).length > 0;
 	const queryClient = useQueryClient();
 	const [reviewNotice, setReviewNotice] = useState<string | null>(null);
@@ -733,7 +764,7 @@ function ReviewsView({
 			const { data, error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/trigger", {
 				params: { path: { sessionId: session.id } },
 			});
-			if (error) throw new Error(apiErrorMessage(error, "Unable to start review"));
+			if (error) throw new Error(apiErrorMessage(error, t("inspector.unableStartReview")));
 			return { data, reused: response?.status === 200 };
 		},
 		onMutate: () => {
@@ -744,7 +775,7 @@ function ReviewsView({
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			const started = data?.reviews?.find((review) => review.status === "running" && review.latestRun);
 			if (reused || !started?.latestRun) {
-				setReviewNotice("No needed reviews were started.");
+				setReviewNotice(t("inspector.noReviewsStarted"));
 				return;
 			}
 			if (data?.reviewerHandleId) {
@@ -758,7 +789,7 @@ function ReviewsView({
 			const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/cancel", {
 				params: { path: { sessionId: session.id } },
 			});
-			if (error) throw new Error(apiErrorMessage(error, "Unable to cancel review"));
+			if (error) throw new Error(apiErrorMessage(error, t("inspector.unableCancelReview")));
 		},
 		onSuccess: () => {
 			setReviewNotice(null);
@@ -771,7 +802,7 @@ function ReviewsView({
 	return (
 		<div role="tabpanel">
 			{/* AO code reviews lead: the flow is run AO review first, then raise the PR for others. */}
-			<Section surface title="AO code reviews">
+			<Section surface title={t("inspector.aoCodeReviews")}>
 				<ReviewPanel
 					config={projectConfigQuery.data}
 					error={reviewsQuery.error ?? triggerReview.error ?? cancelReview.error}
@@ -928,11 +959,12 @@ function ReviewPanel({
 	onCancel: () => void;
 	onOpenTerminal?: OpenReviewerTerminal;
 }) {
+	const { t } = useTranslation();
 	if (sortedPRs(session).length === 0) {
-		return <p className={inspectorEmptyClass}>No pull request opened yet.</p>;
+		return <p className={inspectorEmptyClass}>{t("inspector.noPROpened")}</p>;
 	}
 	if (isLoading) {
-		return <p className={inspectorEmptyClass}>Loading reviews...</p>;
+		return <p className={inspectorEmptyClass}>{t("inspector.loadingReviews")}</p>;
 	}
 
 	const openPRURLs = new Set(
@@ -960,7 +992,7 @@ function ReviewPanel({
 		<div className="flex flex-col gap-3">
 			{error ? (
 				<p className="m-0 rounded-md border border-error/28 bg-error/8 px-2.5 py-2 text-sm-md leading-normal text-error">
-					{apiErrorMessage(error, "Review request failed")}
+					{apiErrorMessage(error, t("inspector.reviewRequestFailed"))}
 				</p>
 			) : null}
 			{notice ? (
@@ -974,7 +1006,7 @@ function ReviewPanel({
 			</p>
 			<div className="flex flex-col divide-y divide-border">
 				{openReviewStates.length === 0 ? (
-					<p className={cn(inspectorEmptyClass, "py-1")}>No open pull requests to review.</p>
+					<p className={cn(inspectorEmptyClass, "py-1")}>{t("inspector.noOpenPRsToReview")}</p>
 				) : (
 					openReviewStates.map((reviewState, index) => (
 						<ReviewDisclosure
@@ -998,7 +1030,7 @@ function ReviewPanel({
 					variant="ghost"
 				>
 					{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
-					{reviewRunning ? (isCancelling ? "Cancelling..." : "Cancel review") : runAction}
+					{reviewRunning ? (isCancelling ? t("inspector.review.cancelling") : t("inspector.review.cancel")) : runAction}
 				</Button>
 				{reviewHasRun ? (
 					<Button
@@ -1010,7 +1042,7 @@ function ReviewPanel({
 						variant="ghost"
 					>
 						<Terminal aria-hidden="true" />
-						Open terminal
+						{t("inspector.openTerminal")}
 					</Button>
 				) : null}
 			</div>
@@ -1023,8 +1055,8 @@ function aoReviewMeta(reviewState: PRReviewState): string {
 	if (displayRun?.createdAt) {
 		return `#${reviewState.prNumber} · ${formatTimeCompact(displayRun.createdAt)}`;
 	}
-	if (!displayRun && reviewVerdict(reviewState).label === "Not run") {
-		return `#${reviewState.prNumber} · Not run`;
+	if (!displayRun && (reviewState.status === "needs_review" || reviewState.status === "ineligible")) {
+		return appI18n.t("inspector.notRunMeta", { number: reviewState.prNumber });
 	}
 	return `#${reviewState.prNumber}`;
 }
@@ -1034,7 +1066,9 @@ function AoReviewRow({ reviewState }: { reviewState: PRReviewState }) {
 	const verdict = displayRun ? runReviewVerdict(displayRun) : reviewVerdict(reviewState);
 	const summary = displayRun?.body?.trim();
 	const reviewUrl = aoReviewCommentUrl(displayRun);
-	const reviewLinkLabel = reviewState.latestRun ? "View review" : "View previous review";
+	const reviewLinkLabel = reviewState.latestRun
+		? appI18n.t("inspector.viewReview")
+		: appI18n.t("inspector.viewPreviousReview");
 	return (
 		<div className={cn("flex min-w-0 flex-col gap-2", reviewState.status === "ineligible" && "opacity-70")}>
 			<VerdictBadge label={verdict.label} tone={verdict.tone} />
@@ -1059,21 +1093,21 @@ function runReviewVerdict(run: NonNullable<PRReviewState["latestRun"]>): {
 	tone: "neutral" | "running" | "success" | "danger";
 } {
 	if (run.status === "failed") {
-		return { label: "Failed", tone: "danger" };
+		return { label: appI18n.t("inspector.review.failed"), tone: "danger" };
 	}
 	if (run.status === "cancelled") {
-		return { label: "Cancelled", tone: "neutral" };
+		return { label: appI18n.t("inspector.review.cancelled"), tone: "neutral" };
 	}
 	if (run.status === "running") {
-		return { label: "Reviewing...", tone: "running" };
+		return { label: appI18n.t("inspector.review.reviewing"), tone: "running" };
 	}
 	switch (run.verdict) {
 		case "approved":
-			return { label: "Approved", tone: "success" };
+			return { label: appI18n.t("inspector.review.approved"), tone: "success" };
 		case "changes_requested":
-			return { label: "Changes requested", tone: "danger" };
+			return { label: appI18n.t("inspector.review.changesRequested"), tone: "danger" };
 		default:
-			return { label: "Not run", tone: "neutral" };
+			return { label: appI18n.t("inspector.review.notRun"), tone: "neutral" };
 	}
 }
 
@@ -1089,33 +1123,33 @@ function reviewVerdict(reviewState: PRReviewState): {
 	tone: "neutral" | "running" | "success" | "danger";
 } {
 	if (reviewState.latestRun?.status === "failed") {
-		return { label: "Failed", tone: "danger" };
+		return { label: appI18n.t("inspector.review.failed"), tone: "danger" };
 	}
 	if (reviewState.latestRun?.status === "cancelled") {
-		return { label: "Cancelled", tone: "neutral" };
+		return { label: appI18n.t("inspector.review.cancelled"), tone: "neutral" };
 	}
 	switch (reviewState.status) {
 		case "running":
-			return { label: "Reviewing...", tone: "running" };
+			return { label: appI18n.t("inspector.review.reviewing"), tone: "running" };
 		case "up_to_date":
-			return { label: "Approved", tone: "success" };
+			return { label: appI18n.t("inspector.review.approved"), tone: "success" };
 		case "changes_requested":
-			return { label: "Changes requested", tone: "danger" };
+			return { label: appI18n.t("inspector.review.changesRequested"), tone: "danger" };
 		case "needs_review":
 		case "ineligible":
-			return { label: "Not run", tone: "neutral" };
+			return { label: appI18n.t("inspector.review.notRun"), tone: "neutral" };
 	}
-	return { label: "Not run", tone: "neutral" };
+	return { label: appI18n.t("inspector.review.notRun"), tone: "neutral" };
 }
 
 function reviewSessionRunAction(reviewStates: PRReviewState[], isTriggering: boolean): string {
 	if (isTriggering || reviewStates.some((reviewState) => reviewState.status === "running")) {
-		return "Reviewing...";
+		return appI18n.t("inspector.review.reviewing");
 	}
 	if (reviewStates.some((reviewState) => reviewState.status === "changes_requested" || reviewState.latestRun)) {
-		return "Re-run review";
+		return appI18n.t("inspector.review.rerun");
 	}
-	return "Run review";
+	return appI18n.t("inspector.review.run");
 }
 
 function BrowserView({
@@ -1137,13 +1171,14 @@ function BrowserView({
 	// so the inspector's Browser tab has nothing to show (and must not mount a
 	// second BrowserPanelView — it would fight the overlay over the shared native
 	// view slot). Exit is via the overlay's own minimize button.
+	const { t } = useTranslation();
 	if (browserPoppedOut) {
 		return (
 			<div role="tabpanel">
 				<div className={cn(inspectorEmptyClass, "flex flex-col items-center gap-2 py-10 px-5 text-center")}>
-					<p className="text-md-sm text-muted-foreground">Browser preview is in the center pane.</p>
+					<p className="text-md-sm text-muted-foreground">{t("inspector.browserInCenter")}</p>
 					<Button onClick={() => onTogglePopOut?.(false)} size="sm" type="button" variant="outline">
-						Return to panel
+						{t("inspector.returnToPanel")}
 					</Button>
 				</div>
 			</div>
@@ -1167,6 +1202,7 @@ function BrowserView({
 }
 
 function FilesView({ filesView, onOpenFiles }: { filesView?: ReactNode; onOpenFiles?: () => void }) {
+	const { t } = useTranslation();
 	if (filesView) {
 		return (
 			<div className="h-full min-h-0" role="tabpanel">
@@ -1177,9 +1213,9 @@ function FilesView({ filesView, onOpenFiles }: { filesView?: ReactNode; onOpenFi
 	return (
 		<div role="tabpanel">
 			<div className={cn(inspectorEmptyClass, "flex flex-col items-center gap-2 px-5 py-10 text-center")}>
-				<p className="text-md-sm text-muted-foreground">Files are not available for this session.</p>
+				<p className="text-md-sm text-muted-foreground">{t("inspector.filesUnavailable")}</p>
 				<Button disabled={!onOpenFiles} onClick={() => onOpenFiles?.()} size="sm" type="button" variant="outline">
-					Open files
+					{t("inspector.openFiles")}
 				</Button>
 			</div>
 		</div>

@@ -33,7 +33,7 @@ export function VideoSection() {
 						See it in action
 					</h2>
 					<p className="mt-3 text-base text-muted-foreground">
-						Watch AO run a fleet of agents end to end, from task to merged PR.
+						Watch AO run a fleet of agents end to end on a single repo, from task to merged PR.
 					</p>
 				</div>
 

@@ -22,27 +22,16 @@ type ChangeLog struct {
 }
 
 type Notification struct {
-	ID        string
-	SessionID domain.SessionID
-	ProjectID domain.ProjectID
-	PRURL     string
-	Type      domain.NotificationType
-	Title     string
-	Body      string
-	Status    domain.NotificationStatus
-	CreatedAt time.Time
-}
-
-type OrchestratorReengagement struct {
-	SessionID            string
-	AttemptCount         int64
-	NextAttemptAt        time.Time
-	LastAttemptAt        sql.NullTime
-	ProgressSinceAttempt bool
-	AttentionNotified    bool
-	State                string
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	ID         string
+	SessionID  domain.SessionID
+	ProjectID  domain.ProjectID
+	PRURL      string
+	Type       domain.NotificationType
+	Title      string
+	Body       string
+	Status     domain.NotificationStatus
+	CreatedAt  time.Time
+	ResolvedAt sql.NullTime
 }
 
 type PR struct {
@@ -199,6 +188,8 @@ type Session struct {
 	RuntimeLaunchID    string
 	WorkspaceRepoPath  string
 	TerminateOnPRMerge bool
+	DiffBaseSha        string
+	DiffBaseRef        string
 }
 
 type SessionCleanupFact struct {

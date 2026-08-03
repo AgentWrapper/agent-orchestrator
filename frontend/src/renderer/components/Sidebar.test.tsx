@@ -1,14 +1,9 @@
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-	Sidebar,
-	SIDEBAR_COLLAPSE_THRESHOLD,
-	SIDEBAR_DEFAULT_WIDTH,
-	SIDEBAR_MIN_WIDTH,
-} from "./Sidebar";
+import { Sidebar, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MIN_WIDTH } from "./Sidebar";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { useUiStore } from "../stores/ui-store";
@@ -252,8 +247,8 @@ describe("Sidebar", () => {
 	it("keeps only the collapsed Settings control keyboard-accessible while collapsed", async () => {
 		renderSidebar();
 
-		fireEvent.pointerDown(screen.getByTestId("resize-handle"), { clientX: SIDEBAR_DEFAULT_WIDTH });
-		fireEvent.pointerMove(window, { clientX: SIDEBAR_COLLAPSE_THRESHOLD - 1 });
+		// Collapse via the explicit shortcut — dragging can no longer collapse.
+		fireEvent.keyDown(window, { key: "b", metaKey: true });
 
 		await waitFor(() => {
 			expect(document.querySelector('[data-slot="sidebar"][data-state="collapsed"]')).toBeInTheDocument();
@@ -306,6 +301,30 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByRole("button", { name: "Remove" }));
 		await waitFor(() => expect(onRemoveProject).toHaveBeenCalledTimes(1));
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/" });
+	});
+
+	it("dismisses project removal immediately and shows progress outside the modal", async () => {
+		let finishRemoval!: () => void;
+		const onRemoveProject = vi.fn(
+			() =>
+				new Promise<void>((resolve) => {
+					finishRemoval = resolve;
+				}),
+		) as RemoveProjectHandler;
+		const user = userEvent.setup();
+		renderSidebar({ onRemoveProject });
+
+		await user.click(screen.getByLabelText("Project actions for Project One"));
+		await user.click(await screen.findByRole("menuitem", { name: "Remove project" }));
+		await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove" }));
+
+		expect(screen.queryByRole("dialog", { name: "Remove project" })).not.toBeInTheDocument();
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/" });
+		expect(screen.getByRole("status")).toHaveTextContent("Removing Project One");
+
+		finishRemoval();
+		await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
 	});
 
 	it("does not remove the project when cancellation is clicked in the ConfirmDialog", async () => {
@@ -323,7 +342,7 @@ describe("Sidebar", () => {
 		expect(onRemoveProject).not.toHaveBeenCalled();
 	});
 
-	it("shows an error message inside the ConfirmDialog when removal fails", async () => {
+	it("keeps the removal dialog dismissed and surfaces failures in the sidebar", async () => {
 		const user = userEvent.setup();
 		const onRemoveProject = vi
 			.fn()
@@ -335,10 +354,9 @@ describe("Sidebar", () => {
 		await screen.findByRole("dialog", { name: "Remove project" });
 		await user.click(screen.getByRole("button", { name: "Remove" }));
 
-		// The error text renders inside the dialog — find it by its destructive color class
 		expect(await screen.findByText("Failed to remove project")).toBeInTheDocument();
-		// Dialog stays open on failure so the user can retry or cancel
-		expect(screen.getByRole("dialog", { name: "Remove project" })).toBeInTheDocument();
+		expect(screen.queryByRole("dialog", { name: "Remove project" })).not.toBeInTheDocument();
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/" });
 	});
 
 	it("requests a new task for the project from the kebab menu", async () => {
@@ -380,6 +398,31 @@ describe("Sidebar", () => {
 		expect(screen.getByLabelText("Open Project One dashboard")).toBeInTheDocument();
 		expect(screen.getByLabelText("Spawn Project One orchestrator")).toBeInTheDocument();
 		expect(screen.getByLabelText("Project actions for Project One")).toBeInTheDocument();
+	});
+
+	it("toggles project sessions from the folder icon without selecting the project first", async () => {
+		const user = userEvent.setup();
+		const other: WorkspaceSummary = {
+			id: "proj-2",
+			name: "Project Two",
+			path: "/repo/project-two",
+			orchestratorAgent: "claude-code",
+			sessions: [{ ...session, id: "proj-2-1", workspaceId: "proj-2", workspaceName: "Project Two", title: "other task" }],
+		};
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [session] }, other],
+		});
+
+		expect(screen.getByText("fix login")).toBeInTheDocument();
+		expect(screen.getByText("other task")).toBeInTheDocument();
+
+		const folder = screen.getByText("Project Two").closest("button")?.querySelector("[data-project-folder]");
+		expect(folder).toBeTruthy();
+		await user.click(folder!);
+
+		expect(screen.queryByText("other task")).not.toBeInTheDocument();
+		expect(screen.getByText("fix login")).toBeInTheDocument();
+		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
 	it("navigates to the project board when the dashboard button is clicked", async () => {
@@ -602,6 +645,7 @@ describe("Sidebar", () => {
 			) as unknown as CreateProjectHandler;
 		const onInitializeProject = vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler;
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/workspace");
+		window.ao!.app.checkAncestorRepo = vi.fn().mockResolvedValue(undefined);
 		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({ path: "/repo/workspace", repos: [] });
 		renderSidebar({ onCreateProject, onInitializeProject });
 
@@ -615,6 +659,7 @@ describe("Sidebar", () => {
 		expect(onInitializeProject).not.toHaveBeenCalled();
 		expect(await screen.findByText(/Import failed · workspace not registered/i)).toBeInTheDocument();
 		expect(screen.getByText("Review the error above or choose a different folder")).toBeInTheDocument();
+		expect(window.ao!.app.checkAncestorRepo).toHaveBeenCalledWith("/repo/workspace");
 		expect(window.ao!.app.scanImportFolder).toHaveBeenCalledWith({
 			path: "/repo/workspace",
 			mode: "workspace",
@@ -625,6 +670,7 @@ describe("Sidebar", () => {
 		const user = userEvent.setup();
 		const onCreateProject = vi.fn().mockRejectedValue(new Error("workspace not registered")) as CreateProjectHandler;
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/Users/test/dev/acme");
+		window.ao!.app.checkAncestorRepo = vi.fn().mockResolvedValue(undefined);
 		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
 			path: "/Users/test/dev/acme",
 			repos: [
@@ -664,6 +710,7 @@ describe("Sidebar", () => {
 		expect(screen.getByText("api")).toBeInTheDocument();
 		expect(screen.getByText("main github.com/acme/api")).toBeInTheDocument();
 		expect(screen.getByText("Resolve 1 failed repository to continue")).toBeInTheDocument();
+		expect(window.ao!.app.checkAncestorRepo).toHaveBeenCalledWith("/Users/test/dev/acme");
 		expect(window.ao!.app.scanImportFolder).toHaveBeenCalledWith({
 			path: "/Users/test/dev/acme",
 			mode: "workspace",
@@ -674,6 +721,7 @@ describe("Sidebar", () => {
 		const user = userEvent.setup();
 		const onCreateProject = vi.fn().mockRejectedValue(new Error("AO daemon is not ready.")) as CreateProjectHandler;
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/workspace");
+		window.ao!.app.checkAncestorRepo = vi.fn().mockResolvedValue(undefined);
 		window.ao!.app.scanImportFolder = vi.fn();
 		renderSidebar({ onCreateProject });
 
@@ -684,7 +732,49 @@ describe("Sidebar", () => {
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
 		expect(await screen.findByText("AO daemon is not ready.")).toBeInTheDocument();
+		// checkAncestorRepo is called once during the preflight (chooseDirectory),
+		// but scanImportFolder is never called (shouldScanCreateFailure returns false for this error)
+		expect(window.ao!.app.checkAncestorRepo).toHaveBeenCalledWith("/repo/workspace");
 		expect(window.ao!.app.scanImportFolder).not.toHaveBeenCalled();
+	});
+
+	it("shows ancestor repo warning in agent sheet for workspace inside existing repo", async () => {
+		const user = userEvent.setup();
+		const onCreateProject = vi.fn().mockResolvedValue({
+			data: { project: { id: "ws-1", name: "My Workspace", kind: "workspace", path: "/repo/inner" } },
+			error: null,
+		}) as unknown as CreateProjectHandler;
+		const onInitializeProject = vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler;
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/inner");
+		window.ao!.app.checkAncestorRepo = vi
+			.fn()
+			.mockResolvedValue(
+				"Selected folder is inside an existing Git repository at /repo. AO will initialize this folder as a separate repository.",
+			);
+		renderSidebar({ onCreateProject, onInitializeProject });
+
+		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Workspace/i }));
+		await screen.findByRole("dialog", { name: "Workspace agents" });
+		expect(
+			screen.getByText(
+				"Selected folder is inside an existing Git repository at /repo. AO will initialize this folder as a separate repository.",
+			),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText(
+				"If this folder needs Git setup, AO will initialize it and create the first commit before starting.",
+			),
+		).toBeInTheDocument();
+		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
+		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
+
+		await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(1));
+		expect(onCreateProject).toHaveBeenCalledWith(
+			expect.objectContaining({ path: "/repo/inner", asWorkspace: true }),
+		);
+		expect(onInitializeProject).not.toHaveBeenCalled();
+		expect(window.ao!.app.checkAncestorRepo).toHaveBeenCalledWith("/repo/inner");
 	});
 
 	it("opens global settings from the footer menu when no project is selected", async () => {
@@ -885,7 +975,7 @@ describe("Sidebar", () => {
 		expect(projectRow).toHaveClass("pr-sidebar-project-actions");
 	});
 
-	it("snaps to the real collapsed rail when dragged past the resize collapse threshold", async () => {
+	it("clamps a drag at the minimum width instead of collapsing", async () => {
 		renderSidebar();
 
 		const resizeHandle = screen.getByTestId("resize-handle");
@@ -893,16 +983,25 @@ describe("Sidebar", () => {
 
 		expect(document.querySelector('[data-slot="sidebar"][data-state="expanded"]')).toBeInTheDocument();
 
+		// Drag far past the minimum: the width stops at the floor and the sidebar
+		// stays expanded — only the explicit toggle collapses it.
 		fireEvent.pointerDown(resizeHandle, { clientX: SIDEBAR_DEFAULT_WIDTH });
-		fireEvent.pointerMove(window, { clientX: SIDEBAR_COLLAPSE_THRESHOLD - 1 });
+		fireEvent.pointerMove(window, { clientX: 0 });
+		fireEvent.pointerUp(window);
 
+		expect(document.querySelector('[data-slot="sidebar"][data-state="expanded"]')).toBeInTheDocument();
+		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_MIN_WIDTH}px`);
+		expect(window.localStorage.getItem("ao-sidebar-w")).toBe(String(SIDEBAR_MIN_WIDTH));
+		expect(document.body).not.toHaveClass("is-resizing-x");
+	});
+
+	it("expands from the collapsed rail by dragging and persists the width", async () => {
+		renderSidebar();
+
+		fireEvent.keyDown(window, { key: "b", metaKey: true });
 		await waitFor(() => {
 			expect(document.querySelector('[data-slot="sidebar"][data-state="collapsed"]')).toBeInTheDocument();
 		});
-		expect(document.cookie).toContain("sidebar_state=false");
-		expect(window.localStorage.getItem("ao-sidebar-w")).toBe(String(SIDEBAR_DEFAULT_WIDTH));
-		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_DEFAULT_WIDTH}px`);
-		expect(document.body).not.toHaveClass("is-resizing-x");
 
 		const expandRail = document.querySelector('[data-sidebar="rail"]');
 		if (!(expandRail instanceof HTMLElement)) throw new Error("Sidebar rail not found");
@@ -917,38 +1016,6 @@ describe("Sidebar", () => {
 		});
 		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${expandedWidth}px`);
 		expect(window.localStorage.getItem("ao-sidebar-w")).toBe(String(expandedWidth));
-	});
-
-	it("discards a queued narrow resize frame when collapsing", async () => {
-		let queuedFrame: FrameRequestCallback | undefined;
-		const requestAnimationFrameSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
-			queuedFrame = callback;
-			return 1;
-		});
-		const cancelAnimationFrameSpy = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
-
-		try {
-			renderSidebar();
-
-			const resizeHandle = screen.getByTestId("resize-handle");
-
-			fireEvent.pointerDown(resizeHandle, { clientX: SIDEBAR_DEFAULT_WIDTH });
-			fireEvent.pointerMove(window, { clientX: SIDEBAR_MIN_WIDTH + 5 });
-			fireEvent.pointerMove(window, { clientX: SIDEBAR_COLLAPSE_THRESHOLD - 1 });
-
-			await waitFor(() => {
-				expect(document.querySelector('[data-slot="sidebar"][data-state="collapsed"]')).toBeInTheDocument();
-			});
-			expect(cancelAnimationFrameSpy).toHaveBeenCalledWith(1);
-			expect(window.localStorage.getItem("ao-sidebar-w")).toBe(String(SIDEBAR_DEFAULT_WIDTH));
-			expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_DEFAULT_WIDTH}px`);
-
-			queuedFrame?.(performance.now());
-			expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_DEFAULT_WIDTH}px`);
-		} finally {
-			requestAnimationFrameSpy.mockRestore();
-			cancelAnimationFrameSpy.mockRestore();
-		}
 	});
 
 	it("animates active sidebar dots using their PR context color", () => {

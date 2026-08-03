@@ -7,12 +7,20 @@ import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "../../shared/
 const POSTHOG_KEY = import.meta.env.VITE_AO_POSTHOG_KEY?.trim() || DEFAULT_POSTHOG_PROJECT_KEY;
 const POSTHOG_HOST = import.meta.env.VITE_AO_POSTHOG_HOST?.trim() || DEFAULT_POSTHOG_HOST;
 const RELEASE_TAG = "2026-01-30";
+const TELEMETRY_SCHEMA_VERSION = 2;
 const REDACTED_LOCAL_URL = "[redacted-local-url]";
 const REDACTED_LOCAL_PATH = "[redacted-local-path]";
 const ACTIVE_STORAGE_KEY = "ao.telemetry.activeSlotsByDate";
 const ROUTE_VIEW_STORAGE_KEY = "ao.telemetry.routeViewsByDate";
 const EMBEDDED_LOCAL_URL_PATTERN =
 	/(?:\bfile:\/\/\/\S+|\bapp:\/\/renderer\/\S+|\bhttps?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\S*)/gi;
+const POSTHOG_EVENT_NAME_ALIASES: Record<string, string> = {
+	"ao.app.active": "ao.v2.app.active",
+	"ao.renderer.route_viewed": "ao.v2.renderer.route_viewed",
+	"ao.renderer.loaded": "ao.v2.renderer.loaded",
+	"ao.renderer.api_error": "ao.v2.renderer.api_error",
+	"ao.renderer.daemon_failure": "ao.v2.renderer.daemon_failure",
+};
 
 let initPromise: Promise<boolean> | null = null;
 let errorHandlersBound = false;
@@ -79,11 +87,48 @@ export function buildTelemetryContext(appVersion: string, platform: string): Tel
 		ao_version: version,
 		platform,
 		build_mode: import.meta.env.DEV ? "dev" : "packaged",
+		telemetry_schema_version: TELEMETRY_SCHEMA_VERSION,
 	};
 }
 
 export function withTelemetryContext(properties: TelemetryProperties): TelemetryProperties {
 	return { ...telemetryContext, ...properties, $process_person_profile: false };
+}
+
+export function postHogEventName(event: string): string {
+	return POSTHOG_EVENT_NAME_ALIASES[event] ?? event;
+}
+
+// Streams the supervisor has silenced, delivered on the telemetry bootstrap.
+// The daemon enforces the same list on its own sink, but renderer events go
+// straight to PostHog, so without this the kill switch would only cover half
+// the producers.
+let disabledEventMatchers: string[] = [];
+
+/**
+ * Whether a stream is silenced.
+ *
+ * Mirrors the daemon's DenylistSink: case-insensitive, `*` matches by prefix,
+ * and both the internal name and the exported alias are checked so an operator
+ * can type whichever one they see.
+ */
+export function isDeniedEvent(event: string, denied: string[] = disabledEventMatchers): boolean {
+	if (denied.length === 0) return false;
+	const candidates = [event.trim().toLowerCase(), postHogEventName(event).trim().toLowerCase()];
+	return denied.some((raw) => {
+		const rule = raw.trim().toLowerCase();
+		if (rule === "" || rule === "*") return false;
+		if (rule.endsWith("*")) {
+			const prefix = rule.slice(0, -1);
+			return prefix !== "" && candidates.some((name) => name.startsWith(prefix));
+		}
+		return candidates.includes(rule);
+	});
+}
+
+/** Test seam: the real value arrives with the bootstrap in initTelemetry. */
+export function setDisabledEventsForTest(denied: string[]): void {
+	disabledEventMatchers = denied;
 }
 
 export function reserveDailyActiveCapture(storage?: DailyActiveStorage, now = new Date()): boolean {
@@ -413,6 +458,17 @@ export async function sanitizeRendererProperties(
 			if (properties?.field === "status" || properties?.field === "activity") safe.field = properties.field;
 			if (properties?.reason === "missing" || properties?.reason === "unrecognized") safe.reason = properties.reason;
 			break;
+		case "ao.renderer.update_failed":
+		case "ao.renderer.update_downloaded":
+		case "ao.renderer.update_unsupported":
+			// Version strings are release identifiers, not user data. The updater's
+			// raw error message is deliberately absent: it can carry feed URLs and
+			// local paths, so update-telemetry.ts maps it to error_category first.
+			if (typeof properties?.to_version === "string") safe.to_version = properties.to_version;
+			if (typeof properties?.error_category === "string") safe.error_category = properties.error_category;
+			if (properties?.phase === "check" || properties?.phase === "download") safe.phase = properties.phase;
+			if (properties?.trigger === "automatic" || properties?.trigger === "manual") safe.trigger = properties.trigger;
+			break;
 	}
 	return safe;
 }
@@ -460,6 +516,16 @@ export function buildPostHogConfig(distinctId: string): PostHogInitOptions {
 		capture_pageview: false,
 		capture_exceptions: false,
 		capture_performance: false,
+		// Session replay is billed per recording, not per event, so it bypasses
+		// every limiter in this file. AO never watches replays, so keep the
+		// recorder off in the client instead of relying on the project-side
+		// toggle staying off.
+		disable_session_recording: true,
+		// AO reads no feature flags and ships no surveys. Both of these poll
+		// PostHog on init, and /flags requests are billed, so every one of these
+		// requests is pure cost for data nothing consumes.
+		advanced_disable_flags: true,
+		disable_surveys: true,
 		// AO owns the stable random installation ID. Memory-only SDK
 		// persistence prevents legacy identified state from replacing it after
 		// an upgrade; the AO-owned heartbeat and route reservations continue to
@@ -487,7 +553,10 @@ export async function initTelemetry(): Promise<boolean> {
 	initPromise = (async () => {
 		if (!POSTHOG_KEY) return false;
 		const bootstrap = await aoBridge.telemetry.getBootstrap();
+		// Null means the supervisor withheld it: no key, no data dir, or an
+		// unpackaged build that has not opted in. The client is never created.
 		if (!bootstrap) return false;
+		disabledEventMatchers = bootstrap.disabledEvents ?? [];
 		telemetryContext = buildTelemetryContext(bootstrap.appVersion, bootstrap.platform);
 		posthog.init(POSTHOG_KEY, buildPostHogConfig(bootstrap.distinctId));
 		posthog.register({
@@ -500,21 +569,32 @@ export async function initTelemetry(): Promise<boolean> {
 			window,
 			document,
 			capture: async () =>
-				Boolean(
+				isDeniedEvent("ao.app.active")
+					? true
+					: Boolean(
 					posthog.capture(
-						"ao.app.active",
+						postHogEventName("ao.app.active"),
 						withTelemetryContext(await sanitizeRendererProperties("ao.app.active", { channel: "renderer" })),
 						{ send_instantly: true },
 					),
 				),
 		});
-		posthog.capture("ao.renderer.loaded", withTelemetryContext(await sanitizeRendererProperties("ao.renderer.loaded")));
+		if (!isDeniedEvent("ao.renderer.loaded")) {
+			posthog.capture(
+				postHogEventName("ao.renderer.loaded"),
+				withTelemetryContext(await sanitizeRendererProperties("ao.renderer.loaded")),
+			);
+		}
 		return true;
 	})().catch(() => false);
 	return initPromise;
 }
 
 export async function captureRendererEvent(event: string, properties?: Record<string, unknown>): Promise<void> {
+	// Checked before the reservations so a silenced stream does not consume a
+	// rate-limit slot on its way to being discarded, matching the daemon, where
+	// the denylist sits outermost.
+	if (isDeniedEvent(event)) return;
 	const sanitizedProperties = await sanitizeRendererProperties(event, properties);
 	if (event === "ao.renderer.route_viewed") {
 		const surface = typeof sanitizedProperties.surface === "string" ? sanitizedProperties.surface : "other";
@@ -524,10 +604,13 @@ export async function captureRendererEvent(event: string, properties?: Record<st
 	}
 	if (!(await initTelemetry())) return;
 	const safeProperties = withTelemetryContext(sanitizedProperties);
-	posthog.capture(event, safeProperties);
+	posthog.capture(postHogEventName(event), safeProperties);
 }
 
 export async function captureRendererException(error: unknown, properties?: Record<string, unknown>): Promise<void> {
+	// "$exception" is the name this lands under in PostHog, so that is what an
+	// operator would type to silence a crash loop.
+	if (isDeniedEvent("$exception")) return;
 	if (!reserveCapture(`exception:${exceptionName(error)}`)) return;
 	if (!(await initTelemetry())) return;
 	const safeProperties = withTelemetryContext(await sanitizeRendererExceptionProperties(error, properties));

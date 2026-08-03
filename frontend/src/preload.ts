@@ -10,6 +10,8 @@ import type { DaemonStatus } from "./shared/daemon-status";
 import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
+import type { UpdateOutcome } from "./shared/update-telemetry";
+import type { UiSettings } from "./main/ui-settings";
 import type { UpdateCheckOptions } from "./main/auto-updater";
 import type { FeatureBuild } from "./main/feature-builds";
 import type {
@@ -56,6 +58,8 @@ const api = {
 		openExternal: (url: string) => ipcRenderer.invoke("app:openExternal", url) as Promise<void>,
 		scanImportFolder: (input: { path: string; mode: ImportFolderMode }) =>
 			ipcRenderer.invoke("app:scanImportFolder", input) as Promise<ImportFolderScan>,
+		checkAncestorRepo: (path: string) =>
+			ipcRenderer.invoke("app:checkAncestorRepo", path) as Promise<string | undefined>,
 		// Fired by the main process when the app-level new-session shortcut
 		// (⌘N / Ctrl+Shift+N) is pressed in any web contents.
 		onNewSessionShortcut: (listener: () => void) => {
@@ -232,6 +236,10 @@ const api = {
 		get: () => ipcRenderer.invoke("updateSettings:get") as Promise<UpdateSettings>,
 		set: (settings: UpdateSettings) => ipcRenderer.invoke("updateSettings:set", settings) as Promise<void>,
 	},
+	uiSettings: {
+		get: () => ipcRenderer.invoke("uiSettings:get") as Promise<UiSettings>,
+		set: (settings: UiSettings) => ipcRenderer.invoke("uiSettings:set", settings) as Promise<UiSettings>,
+	},
 	keybindings: {
 		get: () => ipcRenderer.invoke("keybindings:get") as Promise<KeybindingOverrides>,
 		set: (overrides: KeybindingOverrides) =>
@@ -249,6 +257,15 @@ const api = {
 			ipcRenderer.on("updates:status", wrapped);
 			return () => {
 				ipcRenderer.off("updates:status", wrapped);
+			};
+		},
+		// Separate from onStatus: the main process suppresses the *status* for
+		// automatic failures but still reports the outcome here.
+		onTelemetry: (listener: (outcome: UpdateOutcome) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, outcome: UpdateOutcome) => listener(outcome);
+			ipcRenderer.on("updates:telemetry", wrapped);
+			return () => {
+				ipcRenderer.off("updates:telemetry", wrapped);
 			};
 		},
 	},

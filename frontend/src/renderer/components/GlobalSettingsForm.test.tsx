@@ -2,12 +2,16 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { appI18n } from "../i18n";
 import { GlobalSettingsForm } from "./GlobalSettingsForm";
+import { useLocaleStore } from "../stores/locale-store";
 import { useUiStore } from "../stores/ui-store";
 
 const {
 	getUpdate,
 	setUpdate,
+	getUiSettings,
+	setUiSettings,
 	updGetStatus,
 	updCheck,
 	updReturnHome,
@@ -27,6 +31,8 @@ const {
 } = vi.hoisted(() => ({
 	getUpdate: vi.fn(),
 	setUpdate: vi.fn(),
+	getUiSettings: vi.fn(),
+	setUiSettings: vi.fn(),
 	updGetStatus: vi.fn(),
 	updReturnHome: vi.fn(),
 	updCheck: vi.fn(),
@@ -59,6 +65,7 @@ vi.mock("../lib/bridge", () => ({
 		clipboard: { writeText },
 		daemon: { getStatus: getDaemonStatus },
 		updateSettings: { get: getUpdate, set: setUpdate },
+		uiSettings: { get: getUiSettings, set: setUiSettings },
 		keybindings: {
 			get: getKeybindings,
 			set: setKeybindings,
@@ -86,10 +93,12 @@ function renderForm() {
 	return qc;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
 	for (const m of [
 		getUpdate,
 		setUpdate,
+		getUiSettings,
+		setUiSettings,
 		updGetStatus,
 		updCheck,
 		updReturnHome,
@@ -111,6 +120,10 @@ beforeEach(() => {
 	}
 	getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: null });
 	setUpdate.mockResolvedValue(undefined);
+	getUiSettings.mockResolvedValue({ locale: "en" });
+	setUiSettings.mockImplementation(async (settings: { locale: "en" | "zh-CN" }) => ({
+		locale: settings.locale === "zh-CN" ? "zh-CN" : "en",
+	}));
 	updGetStatus.mockResolvedValue({ state: "idle" });
 	updCheck.mockResolvedValue(undefined);
 	updReturnHome.mockResolvedValue(undefined);
@@ -128,6 +141,10 @@ beforeEach(() => {
 	setKeybindingRecording.mockResolvedValue(undefined);
 	// Feature Releases lives behind Developer Mode; reset to the default (off).
 	useUiStore.getState().setDeveloperMode(false);
+	// Locale defaults to English so existing copy assertions stay green.
+	await appI18n.changeLanguage("en");
+	useLocaleStore.setState({ locale: "en", loaded: false, saving: false, saveError: false });
+	document.documentElement.lang = "en";
 });
 
 describe("GlobalSettingsForm", () => {
@@ -136,10 +153,42 @@ describe("GlobalSettingsForm", () => {
 		expect(await screen.findByLabelText("Settings")).toBeInTheDocument();
 		expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
 		expect(screen.getByText("General")).toBeInTheDocument();
+		expect(screen.getByText("Language")).toBeInTheDocument();
 		expect(screen.getByText("Updates")).toBeInTheDocument();
 		expect(screen.getByRole("switch", { name: "Developer Mode" })).toBeInTheDocument();
 		expect(screen.getByText("Get help")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Report a problem" })).toBeInTheDocument();
+	});
+
+	it("switches General settings labels to Simplified Chinese and persists locale", async () => {
+		const user = userEvent.setup();
+		renderForm();
+		expect(await screen.findByText("General")).toBeInTheDocument();
+		expect(screen.getByLabelText("Language")).toBeInTheDocument();
+
+		await user.click(screen.getByLabelText("Language"));
+		await user.click(await screen.findByRole("menuitem", { name: "Simplified Chinese" }));
+
+		await waitFor(() => expect(setUiSettings).toHaveBeenCalledWith({ locale: "zh-CN" }));
+		await waitFor(() => expect(screen.getByText("通用")).toBeInTheDocument());
+		expect(screen.getByText("语言")).toBeInTheDocument();
+		expect(screen.getByText("主题")).toBeInTheDocument();
+		expect(document.documentElement.lang).toBe("zh-CN");
+		expect(useLocaleStore.getState().locale).toBe("zh-CN");
+	});
+
+	it("keeps the current language and reports a persistence failure", async () => {
+		setUiSettings.mockRejectedValue(new Error("disk full"));
+		const user = userEvent.setup();
+		renderForm();
+		await screen.findByText("General");
+
+		await user.click(screen.getByLabelText("Language"));
+		await user.click(await screen.findByRole("menuitem", { name: "Simplified Chinese" }));
+
+		expect(await screen.findByRole("alert")).toHaveTextContent("Could not save the language preference.");
+		expect(useLocaleStore.getState().locale).toBe("en");
+		expect(screen.getByText("General")).toBeInTheDocument();
 	});
 
 	it("closes settings with Escape", async () => {
@@ -290,7 +339,7 @@ describe("GlobalSettingsForm", () => {
 		expect(copied).not.toContain("## Type");
 		expect(copied).not.toContain("Generated locally by AO");
 		expect(openExternal).toHaveBeenCalledWith(
-			expect.stringContaining("https://github.com/AgentWrapper/agent-orchestrator/issues/new"),
+			expect.stringContaining("https://github.com/Untrivial-ai/agent-orchestrator/issues/new"),
 		);
 		expect(open).not.toHaveBeenCalled();
 		expect(screen.getByLabelText("Title")).toHaveValue("");
@@ -330,10 +379,10 @@ describe("GlobalSettingsForm", () => {
 
 		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
 		expect(writeText.mock.calls[0][0]).toContain("Daemon: unknown");
-		expect(writeText.mock.calls[1][0]).toContain("To: support@aoagents.dev");
+		expect(writeText.mock.calls[1][0]).toContain("To: prateek@untrivial.ai");
 		expect(writeText.mock.calls[1][0]).toContain("AO feedback");
 		expect(openExternal).toHaveBeenCalledWith("https://discord.com/invite/UZv7JjxbwG");
-		expect(openExternal).toHaveBeenCalledWith(expect.stringContaining("mailto:support@aoagents.dev"));
+		expect(openExternal).toHaveBeenCalledWith(expect.stringContaining("mailto:prateek@untrivial.ai"));
 		expect(open).not.toHaveBeenCalled();
 	});
 
