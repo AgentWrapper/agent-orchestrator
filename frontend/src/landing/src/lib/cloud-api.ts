@@ -132,6 +132,17 @@ export interface CloudSession {
   createdAt: string;
 }
 
+export interface CloudSharedProject {
+  id: string;
+  orgId: string;
+  project: CloudProject;
+  session?: CloudSession;
+  role: "viewer" | "admin" | "owner";
+  sharedByEmail: string;
+  sharedByName: string;
+  redeemedAt: string;
+}
+
 export interface CloudTurn {
   id: string;
   sessionId: string;
@@ -232,6 +243,8 @@ export interface ProviderConnection {
   validationState: "pending" | "valid" | "invalid";
   validatedAt?: string;
 }
+
+export type AgentCredentialsMode = "custom" | "personal_default";
 
 export type CloudAgent = "claude-code" | "codex" | "cursor";
 export type AgentCredentialType = "oauth_token" | "api_key" | "access_token";
@@ -473,6 +486,28 @@ export class CloudAPI {
     });
   }
 
+  async createProjectShareLink(
+    orgId: string,
+    projectId: string,
+    input: { sessionId?: string; role: "viewer" | "admin" | "owner" },
+  ) {
+    return this.request<{ token: string }>(
+      this.orgPath(orgId, `/projects/${encodeURIComponent(projectId)}/shares`),
+      { method: "POST", body: input },
+    );
+  }
+
+  async redeemProjectShareLink(token: string) {
+    return this.request<{ share: CloudSharedProject }>(
+      `/api/cloud/v1/share-links/${encodeURIComponent(token)}/redeem`,
+      { method: "POST", body: {} },
+    );
+  }
+
+  async sharedProjects() {
+    return this.request<{ shares: CloudSharedProject[] }>("/api/cloud/v1/shares");
+  }
+
   async sessions(orgId: string) {
     return this.request<{ sessions: CloudSession[] }>(
       this.orgPath(orgId, "/sessions"),
@@ -609,9 +644,25 @@ export class CloudAPI {
   }
 
   async providerConnections(orgId: string) {
-    return this.request<{ providerConnections: ProviderConnection[] }>(
+    return this.request<{
+      providerConnections: ProviderConnection[];
+      agentCredentialsMode: AgentCredentialsMode;
+    }>(
       this.orgPath(orgId, "/provider-connections"),
     );
+  }
+
+  async updateProviderSettings(
+    orgId: string,
+    input: { agentCredentialsMode: AgentCredentialsMode },
+  ) {
+    return this.request<{
+      agentCredentialsMode: AgentCredentialsMode;
+      providerConnections: ProviderConnection[];
+    }>(this.orgPath(orgId, "/provider-settings"), {
+      method: "PATCH",
+      body: input,
+    });
   }
 
   async connectDaytona(orgId: string, input: {

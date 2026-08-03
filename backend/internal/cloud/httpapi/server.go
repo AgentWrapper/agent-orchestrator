@@ -3,6 +3,7 @@ package httpapi
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -53,6 +54,9 @@ type store interface {
 	CreateProject(context.Context, clouddomain.AccountID, cloudpostgres.CreateProjectInput) (clouddomain.Project, error)
 	ListProjects(context.Context, clouddomain.AccountID) ([]clouddomain.Project, error)
 	GetProject(context.Context, clouddomain.AccountID, clouddomain.ProjectID) (clouddomain.Project, error)
+	CreateProjectShareLink(context.Context, clouddomain.OrgID, clouddomain.ProjectID, clouddomain.SessionID, clouddomain.UserID, string, string) (cloudpostgres.ProjectShareLink, error)
+	RedeemProjectShareLink(context.Context, string, string) (cloudpostgres.SharedProjectGrant, error)
+	ListSharedProjectGrants(context.Context, string) ([]cloudpostgres.SharedProjectGrant, error)
 	CreateSession(context.Context, clouddomain.AccountID, cloudpostgres.CreateSessionInput) (cloudpostgres.CreateSessionResult, error)
 	ListSessions(context.Context, clouddomain.AccountID) ([]clouddomain.Session, error)
 	GetSession(context.Context, clouddomain.AccountID, clouddomain.SessionID) (clouddomain.Session, error)
@@ -74,6 +78,10 @@ type store interface {
 	LatestPromptAcceptedSequence(context.Context, clouddomain.AccountID, clouddomain.SessionID) (int64, error)
 	SetAgentSessionID(context.Context, clouddomain.AccountID, clouddomain.SessionID, string) error
 	UpsertProviderConnection(context.Context, clouddomain.AccountID, string, string, []byte, []byte, json.RawMessage) (cloudpostgres.ProviderConnection, error)
+	SetOrgProviderSettings(context.Context, clouddomain.OrgID, string) (cloudpostgres.OrgProviderSettings, error)
+	OrgProviderSettings(context.Context, clouddomain.OrgID) (cloudpostgres.OrgProviderSettings, error)
+	PersonalOrgIDForUser(context.Context, string) (clouddomain.OrgID, error)
+	ListDefaultProviderOrgsForUser(context.Context, string) ([]clouddomain.OrgID, error)
 	ListProviderConnections(context.Context, clouddomain.AccountID) ([]cloudpostgres.ProviderConnection, error)
 	ProviderConnectionSecretByProvider(context.Context, clouddomain.AccountID, string, string) ([]byte, []byte, json.RawMessage, error)
 	DeleteProviderConnection(context.Context, clouddomain.AccountID, string, string) error
@@ -173,6 +181,12 @@ func (s *Server) Handler() http.Handler {
 
 type accountContextKey struct{}
 type orgContextKey struct{}
+type sharedProjectAccessContextKey struct{}
+
+type sharedProjectAccess struct {
+	ProjectIDs map[clouddomain.ProjectID]struct{}
+	Role       string
+}
 
 func accountFromContext(ctx context.Context) (clouddomain.Account, bool) {
 	account, ok := ctx.Value(accountContextKey{}).(clouddomain.Account)
@@ -182,6 +196,11 @@ func accountFromContext(ctx context.Context) (clouddomain.Account, bool) {
 func orgFromContext(ctx context.Context) (clouddomain.UserOrganization, bool) {
 	org, ok := ctx.Value(orgContextKey{}).(clouddomain.UserOrganization)
 	return org, ok
+}
+
+func sharedProjectAccessFromContext(ctx context.Context) (sharedProjectAccess, bool) {
+	access, ok := ctx.Value(sharedProjectAccessContextKey{}).(sharedProjectAccess)
+	return access, ok
 }
 
 func tenantAccountIDFromContext(ctx context.Context) clouddomain.AccountID {
@@ -244,6 +263,8 @@ func (s *Server) routes() http.Handler {
 			protected.Get("/invitations", s.listMyInvitations)
 			protected.Post("/invitations/{invitationId}/accept", s.acceptInvitation)
 			protected.Post("/invitations/{invitationId}/decline", s.declineInvitation)
+			protected.Get("/shares", s.listSharedProjects)
+			protected.Post("/share-links/{token}/redeem", s.redeemProjectShareLink)
 			// Compatibility aliases for existing local tests/tools. The browser UI
 			// uses the explicit /orgs/{orgId}/... routes below.
 			protected.Get("/projects", s.listProjects)
@@ -280,6 +301,7 @@ func (s *Server) routes() http.Handler {
 				org.Post("/invitations/{invitationId}/revoke", s.revokeInvitation)
 				org.Get("/projects", s.listProjects)
 				org.With(s.requireOrgRole("member")).Post("/projects", s.createProject)
+				org.With(s.requireOrgRole("member")).Post("/projects/{projectId}/shares", s.createProjectShareLink)
 				org.Get("/sessions", s.listSessions)
 				org.With(s.requireOrgRole("member")).Post("/sessions", s.createSession)
 				org.Get("/sessions/{sessionId}", s.getSession)
@@ -298,6 +320,7 @@ func (s *Server) routes() http.Handler {
 				org.Post("/sessions/{sessionId}/workspace/file-preview-ticket", s.issueWorkspaceFilePreview)
 				org.Post("/sessions/{sessionId}/terminal-ticket", s.issueTerminalTicket)
 				org.Get("/provider-connections", s.listProviderConnections)
+				org.With(s.requireOrgRole("admin")).Patch("/provider-settings", s.updateProviderSettings)
 				org.With(s.requireOrgRole("admin")).Put("/provider-connections/daytona", s.putDaytonaConnection)
 				org.With(s.requireOrgRole("admin")).Put("/provider-connections/agents/{agent}", s.putAgentConnection)
 				org.With(s.requireOrgRole("admin")).Delete("/provider-connections/agents/{agent}", s.deleteAgentConnection)
@@ -518,6 +541,20 @@ func (s *Server) createOrg(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "create organization", err)
 		return
 	}
+	if org.Organization.Kind != "personal" {
+		if _, err := s.store.SetOrgProviderSettings(r.Context(), org.Organization.ID, "personal_default"); err != nil {
+			s.internalError(w, r, "set organization provider defaults", err)
+			return
+		}
+		if err := s.syncPersonalDefaultAgentConnections(
+			r.Context(),
+			principal.UserID,
+			org.Organization.ID,
+		); err != nil {
+			s.internalError(w, r, "sync organization provider defaults", err)
+			return
+		}
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{"organization": org})
 }
 
@@ -736,7 +773,40 @@ func (s *Server) requireOrg(next http.Handler) http.Handler {
 		}
 		org, err := s.store.GetOrgMembership(r.Context(), principal.UserID, orgID)
 		if errors.Is(err, cloudpostgres.ErrOrgMembershipNotFound) {
-			writeError(w, r, http.StatusForbidden, "ORG_FORBIDDEN", "You do not have access to this organization.")
+			shared, sharedOK, sharedErr := s.sharedAccessForOrg(r.Context(), principal.UserID, orgID)
+			if sharedErr != nil {
+				s.internalError(w, r, "authorize shared organization", sharedErr)
+				return
+			}
+			if !sharedOK {
+				writeError(w, r, http.StatusForbidden, "ORG_FORBIDDEN", "You do not have access to this organization.")
+				return
+			}
+			org = clouddomain.UserOrganization{
+				Organization: clouddomain.Organization{
+					ID:          orgID,
+					DisplayName: "Shared",
+					Kind:        "shared",
+					Status:      "active",
+				},
+				Membership: clouddomain.OrgMembership{
+					OrgID:  orgID,
+					UserID: clouddomain.UserID(principal.UserID),
+					Role:   shared.Role,
+					Status: "active",
+				},
+			}
+			account := clouddomain.Account{
+				ID:          clouddomain.AccountID(org.Organization.ID),
+				OwnerUserID: principal.UserID,
+				DisplayName: org.Organization.DisplayName,
+				CreatedAt:   org.Organization.CreatedAt,
+				UpdatedAt:   org.Organization.UpdatedAt,
+			}
+			ctx := context.WithValue(r.Context(), orgContextKey{}, org)
+			ctx = context.WithValue(ctx, accountContextKey{}, account)
+			ctx = context.WithValue(ctx, sharedProjectAccessContextKey{}, shared)
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 		if err != nil {
@@ -754,6 +824,28 @@ func (s *Server) requireOrg(next http.Handler) http.Handler {
 		ctx = context.WithValue(ctx, accountContextKey{}, account)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func (s *Server) sharedAccessForOrg(
+	ctx context.Context,
+	userID string,
+	orgID clouddomain.OrgID,
+) (sharedProjectAccess, bool, error) {
+	grants, err := s.store.ListSharedProjectGrants(ctx, userID)
+	if err != nil {
+		return sharedProjectAccess{}, false, err
+	}
+	access := sharedProjectAccess{ProjectIDs: map[clouddomain.ProjectID]struct{}{}, Role: "viewer"}
+	for _, grant := range grants {
+		if grant.OrgID != orgID {
+			continue
+		}
+		access.ProjectIDs[grant.Project.ID] = struct{}{}
+		if orgRoleRank(grant.Role) > orgRoleRank(access.Role) {
+			access.Role = grant.Role
+		}
+	}
+	return access, len(access.ProjectIDs) > 0, nil
 }
 
 func (s *Server) requireOrgRole(required string) func(http.Handler) http.Handler {
@@ -957,12 +1049,133 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"project": project})
 }
 
+func (s *Server) createProjectShareLink(w http.ResponseWriter, r *http.Request) {
+	account, _ := accountFromContext(r.Context())
+	org, _ := orgFromContext(r.Context())
+	principal, _ := cloudauth.PrincipalFromContext(r.Context())
+	projectID := clouddomain.ProjectID(strings.TrimSpace(chi.URLParam(r, "projectId")))
+	if projectID == "" {
+		writeError(w, r, http.StatusBadRequest, "PROJECT_REQUIRED", "A project is required.")
+		return
+	}
+	var input struct {
+		SessionID clouddomain.SessionID `json:"sessionId"`
+		Role      string                `json:"role"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	role := strings.TrimSpace(input.Role)
+	if role == "" {
+		role = "viewer"
+	}
+	if role != "viewer" && role != "admin" && role != "owner" {
+		writeError(w, r, http.StatusBadRequest, "INVALID_SHARE_ROLE", "Share role must be viewer, admin, or owner.")
+		return
+	}
+	if role == "owner" && org.Membership.Role != "owner" {
+		writeError(w, r, http.StatusForbidden, "ORG_ROLE_REQUIRED", "Only organization owners can create owner share links.")
+		return
+	}
+	if _, err := s.store.GetProject(r.Context(), account.ID, projectID); errors.Is(err, cloudpostgres.ErrProjectNotFound) {
+		writeError(w, r, http.StatusNotFound, "PROJECT_NOT_FOUND", "The cloud project does not exist.")
+		return
+	} else if err != nil {
+		s.internalError(w, r, "load share project", err)
+		return
+	}
+	if input.SessionID != "" {
+		session, err := s.store.GetSession(r.Context(), account.ID, input.SessionID)
+		if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
+			writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The cloud session does not exist in this project.")
+			return
+		}
+		if err != nil {
+			s.internalError(w, r, "load share session", err)
+			return
+		}
+		if session.ProjectID != projectID {
+			writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The cloud session does not exist in this project.")
+			return
+		}
+	}
+	token, err := newShareToken()
+	if err != nil {
+		s.internalError(w, r, "generate share token", err)
+		return
+	}
+	link, err := s.store.CreateProjectShareLink(
+		r.Context(),
+		org.Organization.ID,
+		projectID,
+		input.SessionID,
+		clouddomain.UserID(principal.UserID),
+		role,
+		token,
+	)
+	if err != nil {
+		s.internalError(w, r, "create project share link", err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"shareLink": link, "token": token})
+}
+
+func (s *Server) redeemProjectShareLink(w http.ResponseWriter, r *http.Request) {
+	principal, _ := cloudauth.PrincipalFromContext(r.Context())
+	token := strings.TrimSpace(chi.URLParam(r, "token"))
+	if token == "" {
+		writeError(w, r, http.StatusBadRequest, "SHARE_TOKEN_REQUIRED", "A share token is required.")
+		return
+	}
+	grant, err := s.store.RedeemProjectShareLink(r.Context(), token, principal.UserID)
+	if errors.Is(err, cloudpostgres.ErrProjectShareLinkNotFound) {
+		writeError(w, r, http.StatusNotFound, "SHARE_LINK_NOT_FOUND", "This share link is no longer available.")
+		return
+	}
+	if errors.Is(err, cloudpostgres.ErrProjectShareSelfRedeem) {
+		writeError(w, r, http.StatusBadRequest, "SHARE_SELF_REDEEM", "You already own this shared project.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "redeem project share link", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"share": grant})
+}
+
+func (s *Server) listSharedProjects(w http.ResponseWriter, r *http.Request) {
+	principal, _ := cloudauth.PrincipalFromContext(r.Context())
+	grants, err := s.store.ListSharedProjectGrants(r.Context(), principal.UserID)
+	if err != nil {
+		s.internalError(w, r, "list shared projects", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"shares": grants})
+}
+
+func newShareToken() (string, error) {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
+}
+
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	account, _ := accountFromContext(r.Context())
 	projects, err := s.store.ListProjects(r.Context(), account.ID)
 	if err != nil {
 		s.internalError(w, r, "list projects", err)
 		return
+	}
+	if shared, ok := sharedProjectAccessFromContext(r.Context()); ok {
+		filtered := projects[:0]
+		for _, project := range projects {
+			if _, allowed := shared.ProjectIDs[project.ID]; allowed {
+				filtered = append(filtered, project)
+			}
+		}
+		projects = filtered
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"projects": projects})
 }
@@ -1002,6 +1215,12 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	if input.ProjectID == "" || input.DisplayName == "" {
 		writeError(w, r, http.StatusBadRequest, "INVALID_SESSION", "projectId and displayName are required.")
 		return
+	}
+	if shared, ok := sharedProjectAccessFromContext(r.Context()); ok {
+		if _, allowed := shared.ProjectIDs[input.ProjectID]; !allowed {
+			writeError(w, r, http.StatusForbidden, "PROJECT_FORBIDDEN", "This shared link does not grant access to that project.")
+			return
+		}
 	}
 	defaultResource := clouddomain.DefaultResourceProfile()
 	if input.Resource == (clouddomain.ResourceProfile{}) {
@@ -1088,6 +1307,15 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "list sessions", err)
 		return
 	}
+	if shared, ok := sharedProjectAccessFromContext(r.Context()); ok {
+		filtered := sessions[:0]
+		for _, session := range sessions {
+			if _, allowed := shared.ProjectIDs[session.ProjectID]; allowed {
+				filtered = append(filtered, session)
+			}
+		}
+		sessions = filtered
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
 }
 
@@ -1106,6 +1334,12 @@ func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "get session", err)
 		return
 	}
+	if shared, ok := sharedProjectAccessFromContext(r.Context()); ok {
+		if _, allowed := shared.ProjectIDs[session.ProjectID]; !allowed {
+			writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The cloud session does not exist.")
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"session": session})
 }
 
@@ -1118,15 +1352,8 @@ func (s *Server) activeTurn(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) chatEvents(w http.ResponseWriter, r *http.Request) {
-	account, _ := accountFromContext(r.Context())
-	account.ID = tenantAccountIDFromContext(r.Context())
-	sessionID := clouddomain.SessionID(chi.URLParam(r, "sessionId"))
-	if _, err := s.store.GetSession(r.Context(), account.ID, sessionID); err != nil {
-		if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
-			writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The cloud session does not exist.")
-			return
-		}
-		s.internalError(w, r, "authorize chat event replay", err)
+	account, session, ok := s.authorizedSession(w, r, "authorize chat event replay")
+	if !ok {
 		return
 	}
 	after, err := parseAfter(r)
@@ -1139,7 +1366,7 @@ func (s *Server) chatEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "INVALID_LIMIT", "limit must be a positive integer no greater than 500.")
 		return
 	}
-	events, err := s.events.ReplayChat(r.Context(), account.ID, sessionID, after, limit)
+	events, err := s.events.ReplayChat(r.Context(), account.ID, session.ID, after, limit)
 	if err != nil {
 		s.internalError(w, r, "replay chat events", err)
 		return
@@ -1148,15 +1375,8 @@ func (s *Server) chatEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
-	account, _ := accountFromContext(r.Context())
-	account.ID = tenantAccountIDFromContext(r.Context())
-	sessionID := clouddomain.SessionID(chi.URLParam(r, "sessionId"))
-	if _, err := s.store.GetSession(r.Context(), account.ID, sessionID); err != nil {
-		if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
-			writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The cloud session does not exist.")
-			return
-		}
-		s.internalError(w, r, "authorize cloud message", err)
+	account, session, ok := s.authorizedSession(w, r, "authorize cloud message")
+	if !ok {
 		return
 	}
 	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
@@ -1177,7 +1397,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 	event, err := s.events.AppendUserMessage(
 		r.Context(),
 		account.ID,
-		sessionID,
+		session.ID,
 		idempotencyKey,
 		input.Text,
 	)
@@ -1193,7 +1413,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "append cloud message", err)
 		return
 	}
-	if err := s.wakeSessionForMessage(r.Context(), account.ID, sessionID); err != nil {
+	if err := s.wakeSessionForMessage(r.Context(), account.ID, session.ID); err != nil {
 		s.internalError(w, r, "wake cloud session for message", err)
 		return
 	}
@@ -1202,13 +1422,13 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		Data:     base64.StdEncoding.EncodeToString([]byte(input.Text)),
 		Sequence: event.Sequence,
 	}
-	if err := s.workerHub.Send(sessionID, command); err != nil {
+	if err := s.workerHub.Send(session.ID, command); err != nil {
 		writeError(w, r, http.StatusServiceUnavailable, "WORKER_BACKPRESSURE", "The message was saved but worker delivery is temporarily unavailable.")
 		return
 	}
 	s.log.Info("cloud turn queued",
 		"request_id", middleware.GetReqID(r.Context()),
-		"session_id", sessionID,
+		"session_id", session.ID,
 		"message_sequence", event.Sequence,
 	)
 	writeJSON(w, http.StatusAccepted, map[string]any{"event": event})
@@ -1344,6 +1564,12 @@ func (s *Server) authorizedSession(
 	if err != nil {
 		s.internalError(w, r, action, err)
 		return clouddomain.Account{}, clouddomain.Session{}, false
+	}
+	if shared, ok := sharedProjectAccessFromContext(r.Context()); ok {
+		if _, allowed := shared.ProjectIDs[session.ProjectID]; !allowed {
+			writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The cloud session does not exist.")
+			return clouddomain.Account{}, clouddomain.Session{}, false
+		}
 	}
 	return account, session, true
 }
@@ -2992,15 +3218,8 @@ func (s *Server) writeWorkerSocket(
 }
 
 func (s *Server) issueTerminalTicket(w http.ResponseWriter, r *http.Request) {
-	account, _ := accountFromContext(r.Context())
-	account.ID = tenantAccountIDFromContext(r.Context())
-	sessionID := clouddomain.SessionID(chi.URLParam(r, "sessionId"))
-	if _, err := s.store.GetSession(r.Context(), account.ID, sessionID); err != nil {
-		if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
-			writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The cloud session does not exist.")
-			return
-		}
-		s.internalError(w, r, "authorize terminal ticket", err)
+	account, session, ok := s.authorizedSession(w, r, "authorize terminal ticket")
+	if !ok {
 		return
 	}
 	var input struct {
@@ -3021,7 +3240,7 @@ func (s *Server) issueTerminalTicket(w http.ResponseWriter, r *http.Request) {
 	ticket, err := s.store.IssueAccessTicket(
 		r.Context(),
 		account.ID,
-		sessionID,
+		session.ID,
 		terminalTicketPurpose(kind),
 		scopes,
 		60*time.Second,
@@ -3312,7 +3531,15 @@ func (s *Server) listProviderConnections(w http.ResponseWriter, r *http.Request)
 		s.internalError(w, r, "list provider connections", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"providerConnections": connections})
+	settings, err := s.store.OrgProviderSettings(r.Context(), clouddomain.OrgID(account.ID))
+	if err != nil {
+		s.internalError(w, r, "load provider settings", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"providerConnections":  connections,
+		"agentCredentialsMode": settings.AgentCredentialsMode,
+	})
 }
 
 const maxAgentCredentialBytes = 64 << 10
@@ -3323,6 +3550,7 @@ type agentConnectionConfig struct {
 
 func (s *Server) putAgentConnection(w http.ResponseWriter, r *http.Request) {
 	account, _ := accountFromContext(r.Context())
+	principal, _ := cloudauth.PrincipalFromContext(r.Context())
 	agent := strings.TrimSpace(chi.URLParam(r, "agent"))
 	if _, ok := agentCredentialTypes[agent]; !ok {
 		writeError(w, r, http.StatusBadRequest, "INVALID_AGENT", "The selected coding agent is not supported.")
@@ -3390,7 +3618,71 @@ func (s *Server) putAgentConnection(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "save agent connection", err)
 		return
 	}
+	if org, ok := orgFromContext(r.Context()); ok {
+		if org.Organization.Kind == "personal" {
+			if err := s.syncDefaultAgentConnectionToOwnedOrgs(
+				r.Context(),
+				principal.UserID,
+				agent,
+				secret,
+				config,
+			); err != nil {
+				s.internalError(w, r, "sync personal provider defaults", err)
+				return
+			}
+		} else if org.Membership.Role == "owner" || org.Membership.Role == "admin" {
+			if _, err := s.store.SetOrgProviderSettings(r.Context(), org.Organization.ID, "custom"); err != nil {
+				s.internalError(w, r, "set custom provider mode", err)
+				return
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"providerConnection": connection})
+}
+
+func (s *Server) updateProviderSettings(w http.ResponseWriter, r *http.Request) {
+	org, _ := orgFromContext(r.Context())
+	principal, _ := cloudauth.PrincipalFromContext(r.Context())
+	var input struct {
+		AgentCredentialsMode string `json:"agentCredentialsMode"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	mode := strings.TrimSpace(input.AgentCredentialsMode)
+	if org.Organization.Kind == "personal" && mode != "custom" {
+		writeError(w, r, http.StatusBadRequest, "INVALID_PROVIDER_SETTINGS", "Personal workspaces always use their own provider credentials.")
+		return
+	}
+	settings, err := s.store.SetOrgProviderSettings(r.Context(), org.Organization.ID, mode)
+	if errors.Is(err, cloudpostgres.ErrInvalidProviderSettings) {
+		writeError(w, r, http.StatusBadRequest, "INVALID_PROVIDER_SETTINGS", "agentCredentialsMode must be custom or personal_default.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "save provider settings", err)
+		return
+	}
+	if mode == "personal_default" {
+		if err := s.syncPersonalDefaultAgentConnections(
+			r.Context(),
+			principal.UserID,
+			org.Organization.ID,
+		); err != nil {
+			s.internalError(w, r, "sync provider defaults", err)
+			return
+		}
+	}
+	connections, err := s.store.ListProviderConnections(r.Context(), clouddomain.AccountID(org.Organization.ID))
+	if err != nil {
+		s.internalError(w, r, "list provider connections", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"providerSettings":     settings,
+		"providerConnections":  connections,
+		"agentCredentialsMode": settings.AgentCredentialsMode,
+	})
 }
 
 func (s *Server) deleteAgentConnection(w http.ResponseWriter, r *http.Request) {
@@ -3490,6 +3782,105 @@ func (s *Server) loadAgentCredential(
 	}
 	clearBytes(plaintext)
 	return credential, nil
+}
+
+func (s *Server) syncPersonalDefaultAgentConnections(
+	ctx context.Context,
+	userID string,
+	targetOrgID clouddomain.OrgID,
+) error {
+	personalOrgID, err := s.store.PersonalOrgIDForUser(ctx, userID)
+	if errors.Is(err, cloudpostgres.ErrOrganizationNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if personalOrgID == targetOrgID {
+		return nil
+	}
+	connections, err := s.store.ListProviderConnections(ctx, clouddomain.AccountID(personalOrgID))
+	if err != nil {
+		return err
+	}
+	for _, connection := range connections {
+		if connection.Label != "default" || connection.ValidationState != "valid" {
+			continue
+		}
+		if _, ok := agentCredentialTypes[connection.Provider]; !ok {
+			continue
+		}
+		encrypted, nonce, config, err := s.store.ProviderConnectionSecretByProvider(
+			ctx,
+			clouddomain.AccountID(personalOrgID),
+			connection.Provider,
+			"default",
+		)
+		if errors.Is(err, cloudpostgres.ErrProviderConnectionNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		plaintext, err := s.secretCipher.Decrypt(
+			encrypted,
+			nonce,
+			string(personalOrgID)+":"+connection.Provider+":default",
+		)
+		if err != nil {
+			clearBytes(plaintext)
+			return err
+		}
+		if err := s.upsertAgentSecretForOrg(ctx, targetOrgID, connection.Provider, plaintext, config); err != nil {
+			clearBytes(plaintext)
+			return err
+		}
+		clearBytes(plaintext)
+	}
+	return nil
+}
+
+func (s *Server) syncDefaultAgentConnectionToOwnedOrgs(
+	ctx context.Context,
+	userID string,
+	agent string,
+	secret []byte,
+	config json.RawMessage,
+) error {
+	orgIDs, err := s.store.ListDefaultProviderOrgsForUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	for _, orgID := range orgIDs {
+		if err := s.upsertAgentSecretForOrg(ctx, orgID, agent, secret, config); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Server) upsertAgentSecretForOrg(
+	ctx context.Context,
+	orgID clouddomain.OrgID,
+	agent string,
+	secret []byte,
+	config json.RawMessage,
+) error {
+	associatedData := string(orgID) + ":" + agent + ":default"
+	encrypted, nonce, err := s.secretCipher.Encrypt(secret, associatedData)
+	if err != nil {
+		return err
+	}
+	_, err = s.store.UpsertProviderConnection(
+		ctx,
+		clouddomain.AccountID(orgID),
+		agent,
+		"default",
+		encrypted,
+		nonce,
+		config,
+	)
+	return err
 }
 
 func clearBytes(value []byte) {

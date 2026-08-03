@@ -323,3 +323,83 @@ it("links project creation to the selected GitHub repository grant", async () =>
     }),
   );
 });
+
+it("updates org provider credential source", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ agentCredentialsMode: "personal_default", providerConnections: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  const api = Object.assign(Object.create(CloudAPI.prototype) as CloudAPI, {
+    baseURL: "https://cloud.example.com",
+    accessToken: "access-token",
+  });
+
+  await api.updateProviderSettings("org one", {
+    agentCredentialsMode: "personal_default",
+  });
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "https://cloud.example.com/api/cloud/v1/orgs/org%20one/provider-settings",
+    expect.objectContaining({
+      method: "PATCH",
+      body: JSON.stringify({ agentCredentialsMode: "personal_default" }),
+    }),
+  );
+});
+
+it("creates, redeems, and lists scoped project share links", async () => {
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ token: "share-token" }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ share: { id: "share-one" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ shares: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+  vi.stubGlobal("fetch", fetchMock);
+  const api = Object.assign(Object.create(CloudAPI.prototype) as CloudAPI, {
+    baseURL: "https://cloud.example.com",
+    accessToken: "access-token",
+  });
+
+  await api.createProjectShareLink("org one", "project one", {
+    sessionId: "session one",
+    role: "viewer",
+  });
+  await api.redeemProjectShareLink("share-token");
+  await api.sharedProjects();
+
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    1,
+    "https://cloud.example.com/api/cloud/v1/orgs/org%20one/projects/project%20one/shares",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ sessionId: "session one", role: "viewer" }),
+    }),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "https://cloud.example.com/api/cloud/v1/share-links/share-token/redeem",
+    expect.objectContaining({ method: "POST", body: "{}" }),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    3,
+    "https://cloud.example.com/api/cloud/v1/shares",
+    expect.any(Object),
+  );
+});

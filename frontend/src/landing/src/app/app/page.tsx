@@ -39,6 +39,7 @@ import {
 
 import {
   CloudAPI,
+  type AgentCredentialsMode,
   type AgentCredentialType,
   type CloudAgent,
   type CloudGitHubConnection,
@@ -51,6 +52,7 @@ import {
   type CloudRepository,
   type CloudSession,
   type CloudSessionSCM,
+  type CloudSharedProject,
   type CloudUser,
   type CloudUserOrganization,
   type ProviderConnection,
@@ -181,6 +183,7 @@ export default function CloudAppPage() {
   }, [status]);
   const [projects, setProjects] = useState<CloudProject[]>([]);
   const [sessions, setSessions] = useState<CloudSession[]>([]);
+  const [sharedProjects, setSharedProjects] = useState<CloudSharedProject[]>([]);
   const [sessionSCM, setSessionSCM] = useState<Record<string, CloudSessionSCM | null>>({});
   const [organizations, setOrganizations] = useState<CloudUserOrganization[]>(
     [],
@@ -199,6 +202,8 @@ export default function CloudAppPage() {
   const [githubConnection, setGitHubConnection] =
     useState<CloudGitHubConnection | null>(null);
   const [connections, setConnections] = useState<ProviderConnection[]>([]);
+  const [agentCredentialsMode, setAgentCredentialsMode] =
+    useState<AgentCredentialsMode>("custom");
   const [sandboxProvider, setSandboxProvider] = useState<"daytona" | "fly">(
     "daytona",
   );
@@ -227,6 +232,18 @@ export default function CloudAppPage() {
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [showSessionForm, setShowSessionForm] = useState(false);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+  const [shareRole, setShareRole] = useState<"viewer" | "admin" | "owner">(
+    "viewer",
+  );
+  const [shareMessage, setShareMessage] = useState<string | null>(null);
+  const [settingsPanelTarget, setSettingsPanelTarget] = useState<
+    "profile" | "notifications" | "createOrg" | "org" | "agents" | "sandbox"
+  >(() =>
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("settings") === "github"
+      ? "agents"
+      : "org",
+  );
   const [activeChatSessionIds, setActiveChatSessionIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -509,21 +526,30 @@ export default function CloudAppPage() {
     if (refreshInFlight.current) return refreshInFlight.current;
     const request = (async () => {
       try {
-        const [runtimeData, incomingInvitationData] = await Promise.all([
+        const [runtimeData, incomingInvitationData, sharedData] = await Promise.all([
           api.me(),
           api.invitations(),
+          typeof api.sharedProjects === "function"
+            ? api.sharedProjects().catch(() => ({ shares: [] }))
+            : Promise.resolve({ shares: [] }),
         ]);
         setCurrentUser(runtimeData.user ?? session?.user ?? null);
         setIncomingInvitations(incomingInvitationData.invitations);
+        setSharedProjects(sharedData.shares);
         const nextOrganizations = runtimeData.organizations ?? [];
         setOrganizations(nextOrganizations);
         const nextOrgId =
           selectedOrgIdRef.current &&
-          nextOrganizations.some(
+          (nextOrganizations.some(
             ({ organization }) => organization.id === selectedOrgIdRef.current,
-          )
+          ) ||
+            sharedData.shares.some(
+              (share) => share.orgId === selectedOrgIdRef.current,
+            ))
             ? selectedOrgIdRef.current
-            : (nextOrganizations[0]?.organization.id ?? null);
+            : (nextOrganizations[0]?.organization.id ??
+              sharedData.shares[0]?.orgId ??
+              null);
         if (selectedOrgIdRef.current !== nextOrgId) {
           selectedOrgIdRef.current = nextOrgId;
           setSelectedOrgId(nextOrgId);
@@ -531,7 +557,9 @@ export default function CloudAppPage() {
         if (!nextOrgId) {
           setProjects([]);
           setSessions([]);
+          setSharedProjects(sharedData.shares);
           setConnections([]);
+          setAgentCredentialsMode("custom");
           setGitHubConnection(null);
           setOrgInvitations([]);
           setOrgMembers([]);
@@ -541,6 +569,9 @@ export default function CloudAppPage() {
         const selectedOrgMembership = nextOrganizations.find(
           ({ organization }) => organization.id === nextOrgId,
         )?.membership;
+        const selectedSharedOrg =
+          !selectedOrgMembership &&
+          sharedData.shares.some((share) => share.orgId === nextOrgId);
         const canLoadOrgInvitations =
           selectedOrgMembership?.role === "owner" ||
           selectedOrgMembership?.role === "admin";
@@ -554,9 +585,21 @@ export default function CloudAppPage() {
         ] = await Promise.all([
           api.projects(nextOrgId),
           api.sessions(nextOrgId),
-          api.providerConnections(nextOrgId),
-          api.githubConnection(nextOrgId),
-          api.orgMembers(nextOrgId),
+          selectedSharedOrg
+            ? Promise.resolve({
+                providerConnections: [],
+                agentCredentialsMode: "custom" as AgentCredentialsMode,
+              })
+            : api.providerConnections(nextOrgId),
+          selectedSharedOrg
+            ? Promise.resolve({
+                mode: "disabled" as const,
+                appSlug: "",
+                installations: [],
+                repositories: [],
+              })
+            : api.githubConnection(nextOrgId),
+          selectedSharedOrg ? Promise.resolve({ members: [] }) : api.orgMembers(nextOrgId),
           canLoadOrgInvitations
             ? api.orgInvitations(nextOrgId)
             : Promise.resolve({ invitations: [] }),
@@ -574,6 +617,7 @@ export default function CloudAppPage() {
         );
         setActiveChatSessionIds(authoritativeActive);
         setConnections(connectionData.providerConnections);
+        setAgentCredentialsMode(connectionData.agentCredentialsMode ?? "custom");
         setGitHubConnection(githubData);
         setOrgMembers(orgMemberData.members);
         setOrgInvitations(orgInvitationData.invitations);
@@ -596,6 +640,36 @@ export default function CloudAppPage() {
 
   useEffect(() => {
     if (!api) return;
+    const url = new URL(window.location.href);
+    const token = url.searchParams.get("share");
+    if (!token) return;
+    url.searchParams.delete("share");
+    window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+    void (async () => {
+      setLoading(true);
+      try {
+        const redeemed = await api.redeemProjectShareLink(token);
+        selectedOrgIdRef.current = redeemed.share.orgId;
+        setSelectedOrgId(redeemed.share.orgId);
+        await refresh();
+        setSelectedProjectId(redeemed.share.project.id);
+        setSelectedSessionId(redeemed.share.session?.id ?? null);
+        setView(redeemed.share.session ? "session" : "board");
+        setError(null);
+      } catch (shareError) {
+        setError(
+          shareError instanceof Error
+            ? shareError.message
+            : "Could not redeem this share link.",
+        );
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [api, refresh]);
+
+  useEffect(() => {
+    if (!api) return;
     void refresh();
     const timer = window.setInterval(() => void refresh(), 2000);
     const refreshNow = () => void refresh();
@@ -613,8 +687,15 @@ export default function CloudAppPage() {
     };
   }, [api, refresh]);
 
-  const selectedProject = projects.find(({ id }) => id === selectedProjectId);
-  const selectedSession = sessions.find(({ id }) => id === selectedSessionId);
+  const selectedShare = sharedProjects.find(
+    (share) =>
+      share.project.id === selectedProjectId ||
+      (selectedSessionId && share.session?.id === selectedSessionId),
+  );
+  const selectedProject =
+    projects.find(({ id }) => id === selectedProjectId) ?? selectedShare?.project;
+  const selectedSession =
+    sessions.find(({ id }) => id === selectedSessionId) ?? selectedShare?.session;
   const selectedOrg = organizations.find(
     ({ organization }) => organization.id === selectedOrgId,
   );
@@ -631,7 +712,8 @@ export default function CloudAppPage() {
     setView("board");
     setWorkspaceMenuOpen(false);
   };
-  const selectedOrgRole = selectedOrg?.membership.role ?? "viewer";
+  const selectedOrgRole =
+    selectedOrg?.membership.role ?? selectedShare?.role ?? "viewer";
   const canEditOrg =
     selectedOrgRole === "owner" ||
     selectedOrgRole === "admin" ||
@@ -835,6 +917,29 @@ export default function CloudAppPage() {
     });
     setSelectedSessionId(null);
     setView("board");
+  };
+
+  const shareSelectedSession = async () => {
+    if (!api || !selectedOrgId || !selectedProject || !selectedSession) return;
+    setShareMessage(null);
+    await run(async () => {
+      const result = await api.createProjectShareLink(
+        selectedOrgId,
+        selectedProject.id,
+        { sessionId: selectedSession.id, role: shareRole },
+      );
+      const url = new URL(window.location.href);
+      url.pathname = "/app";
+      url.search = "";
+      url.searchParams.set("share", result.token);
+      const shareURL = url.toString();
+      try {
+        await navigator.clipboard.writeText(shareURL);
+        setShareMessage("Share link copied.");
+      } catch {
+        setShareMessage(shareURL);
+      }
+    });
   };
 
   const toggleSidebar = () => {
@@ -1072,7 +1177,10 @@ export default function CloudAppPage() {
               className="grid size-5 place-items-center rounded-md text-[#646a73] transition-colors hover:bg-white/[0.04] hover:text-white"
               onClick={() => {
                 if (defaultAgent && canEditOrg) setShowProjectForm(true);
-                else setView("settings");
+                else {
+                  setSettingsPanelTarget("agents");
+                  setView("settings");
+                }
               }}
               aria-label="Add cloud project"
               title={
@@ -1215,6 +1323,64 @@ export default function CloudAppPage() {
               );
             })}
           </div>
+          {sharedProjects.length > 0 ? (
+            <div className="border-t border-white/[0.06] px-1.5 py-3">
+              <div
+                className={`mb-1 flex items-center ${
+                  sidebarCollapsed ? "justify-center" : "justify-between px-1.5"
+                }`}
+              >
+                {!sidebarCollapsed ? (
+                  <span className="font-mono text-[10.5px] font-medium uppercase tracking-[0.05em] text-[#646a73]">
+                    Shared
+                  </span>
+                ) : null}
+              </div>
+              <div className="space-y-1">
+                {sharedProjects.map((share) => {
+                  const active =
+                    selectedProjectId === share.project.id ||
+                    (share.session?.id && selectedSessionId === share.session.id);
+                  return (
+                    <button
+                      key={share.id}
+                      className={`flex w-full items-center rounded-lg text-left text-[12px] ${
+                        sidebarCollapsed ? "h-8 justify-center px-0" : "gap-2 px-2 py-1.5"
+                      } ${
+                        active && (view === "board" || view === "session")
+                          ? "bg-white/[0.07] text-white"
+                          : "text-[#9ba1aa] hover:bg-white/[0.04] hover:text-white"
+                      }`}
+                      onClick={() => {
+                        selectedOrgIdRef.current = share.orgId;
+                        setSelectedOrgId(share.orgId);
+                        setSelectedProjectId(share.project.id);
+                        setSelectedSessionId(share.session?.id ?? null);
+                        setView(share.session ? "session" : "board");
+                      }}
+                      title={
+                        sidebarCollapsed
+                          ? `${share.project.displayName} shared by ${share.sharedByName || share.sharedByEmail}`
+                          : undefined
+                      }
+                    >
+                      <FolderGit2 className="size-[15px] shrink-0" />
+                      {!sidebarCollapsed ? (
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate">
+                            {share.session?.displayName ?? share.project.displayName}
+                          </span>
+                          <span className="block truncate text-[10px] text-white/30">
+                            from {share.sharedByName || share.sharedByEmail} · {share.role}
+                          </span>
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
           <div className="min-h-[105px] shrink-0 border-t border-white/[0.06] p-1.5">
             <button
               className={`relative flex h-8 w-full items-center rounded-lg text-sm text-[#9ba1aa] hover:bg-white/[0.04] hover:text-white ${
@@ -1310,6 +1476,29 @@ export default function CloudAppPage() {
             <div className="ml-auto flex max-w-full shrink-0 items-center gap-2 overflow-x-auto">
               {view === "session" && selectedSession ? (
                 <>
+                  <select
+                    className={`${field} h-8 w-[104px]`}
+                    value={shareRole}
+                    onChange={(event) =>
+                      setShareRole(event.target.value as typeof shareRole)
+                    }
+                    disabled={loading || !canEditOrg}
+                    aria-label="Share role"
+                  >
+                    <option value="viewer">Viewer</option>
+                    <option value="admin">Admin</option>
+                    <option value="owner">Owner</option>
+                  </select>
+                  <button
+                    className={button}
+                    disabled={loading || !canEditOrg}
+                    onClick={() => void shareSelectedSession()}
+                    aria-label="Share session"
+                    title={shareMessage ?? undefined}
+                  >
+                    <ExternalLink className="size-3.5" />
+                    <span className="hidden xl:inline">Share</span>
+                  </button>
                   <button
                     className={button}
                     disabled={loading || !canEditOrg}
@@ -1448,7 +1637,9 @@ export default function CloudAppPage() {
                 orgMembers={orgMembers}
                 connections={connections}
                 githubConnection={githubConnection}
+                agentCredentialsMode={agentCredentialsMode}
                 sandboxProvider={sandboxProvider}
+                initialPanel={settingsPanelTarget}
                 run={run}
                 loading={loading}
               />
@@ -1520,6 +1711,7 @@ export default function CloudAppPage() {
           loading={loading}
           onOpenGitHubSettings={() => {
             setShowProjectForm(false);
+            setSettingsPanelTarget("agents");
             window.history.replaceState({}, "", "/app?settings=github");
             setView("settings");
           }}
@@ -2002,7 +2194,9 @@ function CloudSettings({
   orgMembers,
   connections,
   githubConnection,
+  agentCredentialsMode,
   sandboxProvider,
+  initialPanel,
   run,
   loading,
 }: {
@@ -2018,7 +2212,9 @@ function CloudSettings({
   orgMembers: CloudOrgMember[];
   connections: ProviderConnection[];
   githubConnection: CloudGitHubConnection | null;
+  agentCredentialsMode: AgentCredentialsMode;
   sandboxProvider: "daytona" | "fly";
+  initialPanel: "profile" | "notifications" | "createOrg" | "org" | "agents" | "sandbox";
   run: (operation: () => Promise<unknown>) => Promise<unknown>;
   loading: boolean;
 }) {
@@ -2038,6 +2234,9 @@ function CloudSettings({
       ? "agents"
       : "org",
   );
+  useEffect(() => {
+    setSettingsPanel(initialPanel);
+  }, [initialPanel]);
   const [orgName, setOrgName] = useState(
     selectedOrg?.organization.displayName ?? "",
   );
@@ -2237,6 +2436,7 @@ function CloudSettings({
                     displayName: newOrgName,
                   });
                   onSelectOrg(created.organization.organization.id);
+                  onBack();
                 }).then(() => setNewOrgName(""));
               }}
             >
@@ -2515,6 +2715,52 @@ function CloudSettings({
               title="Coding agents"
               description="Credentials are encrypted in AO Cloud and delivered only to authenticated workers during bootstrap."
             >
+              {canAdminOrg && selectedOrgId && selectedOrg?.organization.kind !== "personal" ? (
+                <div className="mb-4 rounded-lg border border-white/10 bg-[#15171b] p-3">
+                  <p className="text-sm font-medium text-white/80">API key source</p>
+                  <p className="mt-1 text-xs leading-5 text-white/40">
+                    Use your personal workspace credentials as this org&apos;s default,
+                    or switch to credentials owned by this organization.
+                  </p>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {[
+                      {
+                        value: "personal_default" as const,
+                        title: "Use personal default",
+                        description: "Sync from your personal provider keys.",
+                      },
+                      {
+                        value: "custom" as const,
+                        title: "Use org custom keys",
+                        description: "Keep separate credentials for this org.",
+                      },
+                    ].map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+                          agentCredentialsMode === option.value
+                            ? "border-[#4d8dff]/45 bg-[#4d8dff]/10 text-white"
+                            : "border-white/10 bg-[#0f1115] text-white/55 hover:border-white/20 hover:text-white"
+                        }`}
+                        disabled={loading || agentCredentialsMode === option.value}
+                        onClick={() =>
+                          void run(() =>
+                            api.updateProviderSettings(selectedOrgId, {
+                              agentCredentialsMode: option.value,
+                            }),
+                          )
+                        }
+                      >
+                        <span className="block text-sm">{option.title}</span>
+                        <span className="mt-1 block text-xs leading-5 text-white/40">
+                          {option.description}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               {canAdminOrg && selectedOrgId ? (
                 <div className="divide-y divide-white/10 border-y border-white/10">
                   {CLOUD_AGENTS.map((agent) => (
