@@ -534,14 +534,15 @@ function PRSummaryCard({ pr, sessionId }: { pr: SessionPRSummary; sessionId: str
 }
 
 function InspectorMergePRButton({ pr, sessionId }: { pr: SessionPRSummary; sessionId: string }) {
+	const { t } = useTranslation();
 	const mutation = useMergePR();
 	const eligible = isPRMergeable(pr);
 	const tooltipText = mutation.isError
 		? mutation.error instanceof Error
 			? mutation.error.message
-			: "Merge failed"
+			: t("pr.mergeFailed")
 		: eligible
-			? "Merge this pull request"
+			? t("pr.mergeTooltip")
 			: mergeDisabledReason(pr);
 
 	return (
@@ -550,7 +551,7 @@ function InspectorMergePRButton({ pr, sessionId }: { pr: SessionPRSummary; sessi
 				<TooltipTrigger asChild>
 					<span className="inline-flex" tabIndex={!eligible ? 0 : -1}>
 						<Button
-							aria-label={`Merge PR #${pr.number}`}
+							aria-label={t("pr.mergeAriaLabel", { number: pr.number })}
 							className={cn(
 								"h-6 gap-1 px-1.5 text-caption",
 								mutation.isError ? "text-error hover:bg-error/10" : "text-accent hover:bg-accent/10",
@@ -562,7 +563,7 @@ function InspectorMergePRButton({ pr, sessionId }: { pr: SessionPRSummary; sessi
 							variant="ghost"
 						>
 							<GitMerge className="size-icon-2xs" aria-hidden="true" />
-							{mutation.isPending ? "Merging..." : mutation.isError ? "Retry" : "Merge"}
+							{mutation.isPending ? t("pr.merging") : mutation.isError ? t("pr.retry") : t("pr.merge")}
 						</Button>
 					</span>
 				</TooltipTrigger>

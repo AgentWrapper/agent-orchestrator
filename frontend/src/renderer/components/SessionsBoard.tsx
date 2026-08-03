@@ -1070,14 +1070,15 @@ function BoardPRGroup({
 }
 
 function MergePRButton({ pr, sessionId }: { pr: SessionPRSummary; sessionId: string }) {
+	const { t } = useTranslation();
 	const mutation = useMergePR();
 	const eligible = isPRMergeable(pr);
 	const tooltipText = mutation.isError
 		? mutation.error instanceof Error
 			? mutation.error.message
-			: "Merge failed"
+			: t("pr.mergeFailed")
 		: eligible
-			? "Merge this pull request"
+			? t("pr.mergeTooltip")
 			: mergeDisabledReason(pr);
 
 	return (
@@ -1090,7 +1091,7 @@ function MergePRButton({ pr, sessionId }: { pr: SessionPRSummary; sessionId: str
 						tabIndex={!eligible ? 0 : -1}
 					>
 						<button
-							aria-label={`Merge PR #${pr.number}`}
+							aria-label={t("pr.mergeAriaLabel", { number: pr.number })}
 							className={cn(
 								"inline-flex items-center gap-0.5 rounded-sm px-1 py-0.5 text-2xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent",
 								mutation.isError ? "text-destructive hover:bg-destructive/10" : "text-accent hover:bg-accent/10",
@@ -1100,7 +1101,7 @@ function MergePRButton({ pr, sessionId }: { pr: SessionPRSummary; sessionId: str
 							type="button"
 						>
 							<GitMerge className="size-icon-2xs" aria-hidden="true" />
-							{mutation.isPending ? "Merging…" : mutation.isError ? "Retry merge" : "Merge"}
+							{mutation.isPending ? t("pr.merging") : mutation.isError ? t("pr.retryMerge") : t("pr.merge")}
 						</button>
 					</span>
 				</TooltipTrigger>
