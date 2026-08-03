@@ -5,6 +5,8 @@ import type {
 	SessionStatus,
 	WorkspaceSession,
 } from "../types/workspace";
+import { appI18n, type MessageKey } from "../i18n";
+import type { TFunction } from "i18next";
 
 export type AgentActivityView = {
 	state: SessionActivityState;
@@ -14,54 +16,58 @@ export type AgentActivityView = {
 	breathe: boolean;
 };
 
-const agentActivityViews: Record<SessionActivityState, AgentActivityView> = {
+type AgentActivityBase = Omit<AgentActivityView, "label"> & { labelKey: MessageKey };
+
+const agentActivityBases: Record<SessionActivityState, AgentActivityBase> = {
 	active: {
 		state: "active",
-		label: "Working",
+		labelKey: "activity.active",
 		tone: "var(--color-status-working)",
 		dotClassName: "bg-status-working",
 		breathe: true,
 	},
 	idle: {
 		state: "idle",
-		label: "Idle",
+		labelKey: "activity.idle",
 		tone: "var(--color-status-idle)",
 		dotClassName: "bg-status-idle",
 		breathe: false,
 	},
 	waiting_input: {
 		state: "waiting_input",
-		label: "Input Needed",
+		labelKey: "activity.waiting_input",
 		tone: "var(--color-status-needs-you)",
 		dotClassName: "bg-status-needs-you",
 		breathe: false,
 	},
 	blocked: {
 		state: "blocked",
-		label: "Awaiting Decision",
+		labelKey: "activity.blocked",
 		tone: "var(--color-status-needs-you)",
 		dotClassName: "bg-status-needs-you",
 		breathe: false,
 	},
 	exited: {
 		state: "exited",
-		label: "Exited",
+		labelKey: "activity.exited",
 		tone: "var(--color-status-exited)",
 		dotClassName: "bg-status-exited",
 		breathe: false,
 	},
 	unknown: {
 		state: "unknown",
-		label: "Unknown",
+		labelKey: "activity.unknown",
 		tone: "var(--color-status-unknown)",
 		dotClassName: "bg-status-unknown",
 		breathe: false,
 	},
 };
 
-export function getAgentActivityView(activity?: SessionActivity | null): AgentActivityView {
+export function getAgentActivityView(activity?: SessionActivity | null, t: TFunction = appI18n.t): AgentActivityView {
 	const state = activity?.state ?? "unknown";
-	return agentActivityViews[state] ?? agentActivityViews.unknown;
+	const base = agentActivityBases[state] ?? agentActivityBases.unknown;
+	const { labelKey, ...rest } = base;
+	return { ...rest, label: t(labelKey) };
 }
 
 export function isAgentActivityWorking(activity?: SessionActivity | null): boolean {
@@ -74,30 +80,49 @@ export type SessionStatusView = {
 	cardClassName?: string;
 };
 
-const sessionStatusViews: Record<SessionStatus, SessionStatusView> = {
-	working: { label: "Working", className: "text-status-working" },
-	idle: { label: "Idle", className: "text-status-idle" },
-	needs_input: { label: "Input needed", className: "text-status-needs-you" },
-	exited: { label: "Exited", className: "text-status-exited" },
-	no_signal: { label: "No signal", className: "text-status-unknown" },
-	ci_failed: { label: "CI failed", className: "text-status-exited" },
-	changes_requested: { label: "Changes requested", className: "text-status-needs-you" },
-	review_pending: { label: "Review pending", className: "text-status-in-review" },
-	draft: { label: "Draft PR", className: "text-status-in-review" },
-	pr_open: { label: "PR open", className: "text-status-in-review" },
-	approved: { label: "Approved", className: "text-status-ready" },
-	mergeable: { label: "Ready", className: "text-status-ready" },
-	merged: { label: "Merged", className: "text-status-merged" },
+const sessionStatusLabelKeys: Record<SessionStatus, MessageKey> = {
+	working: "status.working",
+	idle: "status.idle",
+	needs_input: "status.needs_input",
+	exited: "status.exited",
+	no_signal: "status.no_signal",
+	ci_failed: "status.ci_failed",
+	changes_requested: "status.changes_requested",
+	review_pending: "status.review_pending",
+	draft: "status.draft",
+	pr_open: "status.pr_open",
+	approved: "status.approved",
+	mergeable: "status.mergeable",
+	merged: "status.merged",
+	terminated: "status.terminated",
+	unknown: "status.unknown",
+};
+
+const sessionStatusStyles: Record<SessionStatus, Omit<SessionStatusView, "label">> = {
+	working: { className: "text-status-working" },
+	idle: { className: "text-status-idle" },
+	needs_input: { className: "text-status-needs-you" },
+	exited: { className: "text-status-exited" },
+	no_signal: { className: "text-status-unknown" },
+	ci_failed: { className: "text-status-exited" },
+	changes_requested: { className: "text-status-needs-you" },
+	review_pending: { className: "text-status-in-review" },
+	draft: { className: "text-status-in-review" },
+	pr_open: { className: "text-status-in-review" },
+	approved: { className: "text-status-ready" },
+	mergeable: { className: "text-status-ready" },
+	merged: { className: "text-status-merged" },
 	terminated: {
-		label: "Terminated",
 		className: "text-status-terminated-foreground",
 		cardClassName: "session-card-terminated",
 	},
-	unknown: { label: "Unknown status", className: "text-status-unknown" },
+	unknown: { className: "text-status-unknown" },
 };
 
-export function getSessionStatusView(status: SessionStatus): SessionStatusView {
-	return sessionStatusViews[status] ?? sessionStatusViews.unknown;
+export function getSessionStatusView(status: SessionStatus, t: TFunction = appI18n.t): SessionStatusView {
+	const key = sessionStatusLabelKeys[status] ?? sessionStatusLabelKeys.unknown;
+	const style = sessionStatusStyles[status] ?? sessionStatusStyles.unknown;
+	return { ...style, label: t(key) };
 }
 
 export type AttentionZone = "merge" | "action" | "pending" | "working" | "done";
@@ -112,10 +137,12 @@ export type AttentionZoneView = {
 	dotClassName: string;
 };
 
-const attentionZoneViews: Record<AttentionZone, AttentionZoneView> = {
+type AttentionZoneBase = Omit<AttentionZoneView, "label"> & { labelKey: MessageKey };
+
+const attentionZoneBases: Record<AttentionZone, AttentionZoneBase> = {
 	working: {
 		zone: "working",
-		label: "Working",
+		labelKey: "zone.working",
 		glow: "color-mix(in srgb, var(--color-status-working) 7%, transparent)",
 		dot: "var(--color-status-working)",
 		dotGlow: true,
@@ -124,7 +151,7 @@ const attentionZoneViews: Record<AttentionZone, AttentionZoneView> = {
 	},
 	action: {
 		zone: "action",
-		label: "Needs you",
+		labelKey: "zone.action",
 		glow: "color-mix(in srgb, var(--color-status-needs-you) 6%, transparent)",
 		dot: "var(--color-status-needs-you)",
 		dotGlow: true,
@@ -133,7 +160,7 @@ const attentionZoneViews: Record<AttentionZone, AttentionZoneView> = {
 	},
 	pending: {
 		zone: "pending",
-		label: "In review",
+		labelKey: "zone.pending",
 		glow: "color-mix(in srgb, var(--color-status-in-review) 5%, transparent)",
 		dot: "var(--color-status-in-review)",
 		dotGlow: false,
@@ -142,7 +169,7 @@ const attentionZoneViews: Record<AttentionZone, AttentionZoneView> = {
 	},
 	merge: {
 		zone: "merge",
-		label: "Ready to merge",
+		labelKey: "zone.merge",
 		glow: "color-mix(in srgb, var(--color-status-ready) 7%, transparent)",
 		dot: "var(--color-status-ready)",
 		dotGlow: true,
@@ -151,7 +178,7 @@ const attentionZoneViews: Record<AttentionZone, AttentionZoneView> = {
 	},
 	done: {
 		zone: "done",
-		label: "Terminated",
+		labelKey: "zone.done",
 		glow: "var(--color-overlay-faint)",
 		dot: "var(--color-status-terminated)",
 		dotGlow: false,
@@ -163,12 +190,23 @@ const attentionZoneViews: Record<AttentionZone, AttentionZoneView> = {
 export const attentionZoneOrder: AttentionZone[] = ["merge", "action", "pending", "working", "done"];
 export const boardAttentionZoneOrder: AttentionZone[] = ["working", "action", "pending", "merge"];
 
+/** Live labels for the current locale (getters re-resolve on each access). */
 export const attentionZoneLabel: Record<AttentionZone, string> = {
-	merge: attentionZoneViews.merge.label,
-	action: attentionZoneViews.action.label,
-	pending: attentionZoneViews.pending.label,
-	working: attentionZoneViews.working.label,
-	done: attentionZoneViews.done.label,
+	get merge() {
+		return getAttentionZoneViewForZone("merge").label;
+	},
+	get action() {
+		return getAttentionZoneViewForZone("action").label;
+	},
+	get pending() {
+		return getAttentionZoneViewForZone("pending").label;
+	},
+	get working() {
+		return getAttentionZoneViewForZone("working").label;
+	},
+	get done() {
+		return getAttentionZoneViewForZone("done").label;
+	},
 };
 
 export function attentionZone(input: SessionStatus | Pick<WorkspaceSession, "status">): AttentionZone {
@@ -198,12 +236,14 @@ export function attentionZone(input: SessionStatus | Pick<WorkspaceSession, "sta
 	}
 }
 
-export function getAttentionZoneView(status: SessionStatus): AttentionZoneView {
-	return attentionZoneViews[attentionZone(status)];
+export function getAttentionZoneView(status: SessionStatus, t: TFunction = appI18n.t): AttentionZoneView {
+	return getAttentionZoneViewForZone(attentionZone(status), t);
 }
 
-export function getAttentionZoneViewForZone(zone: AttentionZone): AttentionZoneView {
-	return attentionZoneViews[zone];
+export function getAttentionZoneViewForZone(zone: AttentionZone, t: TFunction = appI18n.t): AttentionZoneView {
+	const base = attentionZoneBases[zone];
+	const { labelKey, ...rest } = base;
+	return { ...rest, label: t(labelKey) };
 }
 
 const activeSessionDotClassNames: Partial<Record<SessionStatus, string>> = {
@@ -274,14 +314,25 @@ export type SessionTimelinePillView = {
 	breathe: boolean;
 };
 
-const sessionTimelinePillViews: Record<SessionTimelinePillStatus, SessionTimelinePillView> = {
-	no_signal: { label: "No Signal", tone: "var(--color-status-unknown)", breathe: false },
-	ci_failed: { label: "CI Failed", tone: "var(--color-status-exited)", breathe: false },
-	changes_requested: { label: "Changes Requested", tone: "var(--color-status-needs-you)", breathe: false },
+const sessionTimelinePillBases: Record<
+	SessionTimelinePillStatus,
+	{ labelKey: MessageKey; tone: string; breathe: boolean }
+> = {
+	no_signal: { labelKey: "timeline.no_signal", tone: "var(--color-status-unknown)", breathe: false },
+	ci_failed: { labelKey: "timeline.ci_failed", tone: "var(--color-status-exited)", breathe: false },
+	changes_requested: {
+		labelKey: "timeline.changes_requested",
+		tone: "var(--color-status-needs-you)",
+		breathe: false,
+	},
 };
 
-export function getSessionTimelinePillView(status: SessionTimelinePillStatus): SessionTimelinePillView {
-	return sessionTimelinePillViews[status];
+export function getSessionTimelinePillView(
+	status: SessionTimelinePillStatus,
+	t: TFunction = appI18n.t,
+): SessionTimelinePillView {
+	const base = sessionTimelinePillBases[status];
+	return { label: t(base.labelKey), tone: base.tone, breathe: base.breathe };
 }
 
 export function isSessionIdle(session: Pick<WorkspaceSession, "status">): boolean {
