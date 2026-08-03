@@ -59,7 +59,7 @@ func TestMigrateCompactsLegacyUsageTablesWithoutLosingEvents(t *testing.T) {
 	if _, err := db.Exec(`
 		DROP VIEW usage_codex_pending_children;
 		DROP VIEW usage_codex_source_discovery;
-		DELETE FROM goose_db_version WHERE version_id IN (43, 44);
+		DELETE FROM goose_db_version WHERE version_id IN (44, 45);
 	`); err != nil {
 		t.Fatalf("rewind compaction migration: %v", err)
 	}

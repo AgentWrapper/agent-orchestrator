@@ -1,4 +1,7 @@
 import { Check, Keyboard, Pencil, Plus, RotateCcw, Search, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
+import { shortcutCategoryLabelKeys, shortcutLabelKeys } from "../../i18n/key-maps";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
 	APP_SHORTCUTS,
@@ -7,6 +10,7 @@ import {
 	shortcutBindingLabel,
 	shortcutBindingValidationError,
 	type AppShortcutId,
+	type ShortcutCategory,
 	type KeybindingOverrides,
 	type ShortcutBinding,
 } from "../../../shared/shortcuts";
@@ -27,6 +31,14 @@ import {
 } from "../ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { ConfirmDialog } from "../ConfirmDialog";
+
+function shortcutLabel(id: AppShortcutId, t: TFunction): string {
+	return t(shortcutLabelKeys[id]);
+}
+
+function shortcutCategoryLabel(category: ShortcutCategory, t: TFunction): string {
+	return t(shortcutCategoryLabelKeys[category]);
+}
 
 type RecordingState = { id: AppShortcutId; mode: "replace" | "add" };
 type ConflictState = {
@@ -80,6 +92,7 @@ export function KeyboardShortcutsSettingsDialog({
 	onOpenChange: (open: boolean) => void;
 	isMac?: boolean;
 }) {
+	const { t } = useTranslation();
 	const overrides = useKeybindingsStore((state) => state.overrides);
 	const setOverrides = useKeybindingsStore((state) => state.setOverrides);
 	const resetBinding = useKeybindingsStore((state) => state.resetBinding);
@@ -138,8 +151,8 @@ export function KeyboardShortcutsSettingsDialog({
 			setRecordingState(next);
 		} catch {
 			showToast({
-				title: "Could not record shortcut",
-				body: "Try reopening keyboard shortcut settings.",
+				title: t("shortcut.couldNotRecord"),
+				body: t("shortcut.tryReopen"),
 			});
 		}
 	};
@@ -157,9 +170,9 @@ export function KeyboardShortcutsSettingsDialog({
 			const labels = effectiveShortcutBindings(shortcut.id, isMac, overrides)
 				.map((candidate) => shortcutBindingLabel(candidate, isMac))
 				.join(" ");
-			return `${shortcut.label} ${shortcut.category} ${labels}`.toLowerCase().includes(needle);
+			return `${shortcutLabel(shortcut.id, t)} ${shortcutCategoryLabel(shortcut.category, t)} ${labels}`.toLowerCase().includes(needle);
 		});
-	}, [isMac, overrides, query]);
+	}, [isMac, overrides, query, t]);
 
 	const applyBinding = async (
 		targetId: AppShortcutId,
@@ -177,16 +190,20 @@ export function KeyboardShortcutsSettingsDialog({
 			);
 		}
 		await setOverrides(next);
-		const targetLabel = definition(targetId)?.label ?? targetId;
-		const conflictLabel = conflictingId ? definition(conflictingId)?.label : undefined;
+		const targetLabel = shortcutLabel(targetId, t);
+		const conflictLabel = conflictingId ? shortcutLabel(conflictingId, t) : undefined;
 		showToast({
-			title: conflictingId ? "Shortcut reassigned" : "Shortcut updated",
+			title: conflictingId ? t("shortcut.reassigned") : t("shortcut.updated"),
 			body: conflictingId
-				? `${shortcutBindingLabel(candidate, isMac)} moved from ${conflictLabel} to ${targetLabel}`
-				: `${targetLabel} → ${shortcutBindingLabel(candidate, isMac)}`,
+				? t("shortcut.movedBody", {
+						binding: shortcutBindingLabel(candidate, isMac),
+						from: conflictLabel ?? "",
+						to: targetLabel,
+					})
+				: t("shortcut.updatedBody", { name: targetLabel, binding: shortcutBindingLabel(candidate, isMac) }),
 			undo: async () => {
 				await setOverrides(before);
-				showToast({ title: "Shortcut change undone" });
+				showToast({ title: t("shortcut.undone") });
 			},
 		});
 	};
@@ -207,7 +224,7 @@ export function KeyboardShortcutsSettingsDialog({
 			}
 			const validationError = shortcutBindingValidationError(candidate, isMac);
 			if (validationError) {
-				showToast({ title: "Shortcut is reserved", body: validationError });
+				showToast({ title: t("shortcut.reserved"), body: validationError });
 				return;
 			}
 			if (
@@ -217,8 +234,8 @@ export function KeyboardShortcutsSettingsDialog({
 				)
 			) {
 				showToast({
-					title: "Shortcut already assigned",
-					body: `${shortcutBindingLabel(candidate, isMac)} is already available for this command.`,
+					title: t("shortcut.alreadyAssigned"),
+					body: t("shortcut.alreadyAvailable", { binding: shortcutBindingLabel(candidate, isMac) }),
 				});
 				endRecording();
 				return;
@@ -233,8 +250,8 @@ export function KeyboardShortcutsSettingsDialog({
 			if (conflicting) {
 				if (conflicting.customizable === false) {
 					showToast({
-						title: "Shortcut is reserved",
-						body: `${shortcutBindingLabel(candidate, isMac)} is used by ${conflicting.label}.`,
+						title: t("shortcut.reserved"),
+						body: t("shortcut.usedByFixed", { binding: shortcutBindingLabel(candidate, isMac), name: shortcutLabel(conflicting.id, t) }),
 					});
 					return;
 				}
@@ -248,7 +265,7 @@ export function KeyboardShortcutsSettingsDialog({
 				return;
 			}
 			void applyBinding(recording.id, candidate, recording.mode).catch(() =>
-				showToast({ title: "Could not update shortcut", body: "Your previous binding is still active." }),
+				showToast({ title: t("shortcut.couldNotUpdate"), body: t("shortcut.previousStillActive") }),
 			);
 			endRecording();
 		};
@@ -260,11 +277,11 @@ export function KeyboardShortcutsSettingsDialog({
 		const before = overrides;
 		await resetBinding(id);
 		showToast({
-			title: "Shortcut restored",
+			title: t("shortcut.restored"),
 			body: `${definition(id)?.label ?? id} now uses its default binding.`,
 			undo: async () => {
 				await setOverrides(before);
-				showToast({ title: "Shortcut change undone" });
+				showToast({ title: t("shortcut.undone") });
 			},
 		});
 	};
@@ -275,11 +292,11 @@ export function KeyboardShortcutsSettingsDialog({
 		const removed = current[index];
 		await setOverrides({ ...overrides, [id]: current.filter((_, candidateIndex) => candidateIndex !== index) });
 		showToast({
-			title: "Shortcut removed",
+			title: t("shortcut.removed"),
 			body: removed ? `${definition(id)?.label ?? id} no longer uses ${shortcutBindingLabel(removed, isMac)}.` : undefined,
 			undo: async () => {
 				await setOverrides(before);
-				showToast({ title: "Shortcut change undone" });
+				showToast({ title: t("shortcut.undone") });
 			},
 		});
 	};
@@ -305,9 +322,9 @@ export function KeyboardShortcutsSettingsDialog({
 					}}
 				>
 					<DialogHeader className={settingsDialogHeaderClass}>
-						<DialogTitle className="settings-dialog-title">Keyboard shortcuts</DialogTitle>
+						<DialogTitle className="settings-dialog-title">{t("shortcut.dialogTitle")}</DialogTitle>
 						<DialogDescription className="text-control leading-4 text-settings-muted">
-							Change application commands without affecting terminal or text-editing shortcuts.
+							{t("shortcut.dialogDescriptionSettings")}
 						</DialogDescription>
 					</DialogHeader>
 
@@ -320,7 +337,7 @@ export function KeyboardShortcutsSettingsDialog({
 							<input
 								type="search"
 								className="settings-field-control h-10 w-full pl-9"
-								placeholder="Search commands or key combinations"
+								placeholder={t("shortcut.searchPlaceholder")}
 								value={query}
 								onChange={(event) => setQuery(event.target.value)}
 							/>
@@ -339,27 +356,27 @@ export function KeyboardShortcutsSettingsDialog({
 										<div className="flex items-center gap-3">
 											<div className="min-w-0 flex-1">
 												<div className="flex items-center gap-2">
-													<span className="text-sm font-medium text-settings-label">{shortcut.label}</span>
+													<span className="text-sm font-medium text-settings-label">{shortcutLabel(shortcut.id, t)}</span>
 													{modified ? (
 														<span className="rounded-full bg-settings-menu-selected px-2 py-0.5 text-micro text-settings-muted">
-															Modified
+															{t("shortcut.modified")}
 														</span>
 													) : null}
 												</div>
-												<span className="text-caption text-settings-muted">{shortcut.category}</span>
+												<span className="text-caption text-settings-muted">{shortcutCategoryLabel(shortcut.category, t)}</span>
 											</div>
 
 											{shortcut.customizable === false ? (
-												<span className="text-caption text-settings-muted">Fixed indexed shortcut</span>
+												<span className="text-caption text-settings-muted">{t("shortcut.fixedIndexed")}</span>
 											) : isRecording ? (
 												<div className="flex min-w-52 items-center gap-2 rounded-md border border-(--color-settings-accent) px-3 py-2 text-caption text-settings-label">
 													<Keyboard className="size-icon-base animate-pulse" aria-hidden="true" />
-													Press shortcut · Esc to cancel
+													{t("shortcut.pressRecording")}
 												</div>
 											) : (
 												<div className="flex flex-wrap items-center justify-end gap-1.5">
 													{bindings.length === 0 ? (
-														<span className="text-caption text-settings-muted">Unassigned</span>
+														<span className="text-caption text-settings-muted">{t("shortcut.unassigned")}</span>
 													) : (
 														bindings.map((candidate, index) => (
 															<span
@@ -374,13 +391,13 @@ export function KeyboardShortcutsSettingsDialog({
 																		<button
 																			type="button"
 																			className="mr-1 inline-flex size-5 items-center justify-center rounded text-settings-muted hover:bg-settings-menu-selected hover:text-settings-label"
-																			aria-label={`Remove ${shortcutBindingLabel(candidate, isMac)} from ${shortcut.label}`}
+																			aria-label={t("shortcut.removeBindingAria", { binding: shortcutBindingLabel(candidate, isMac), name: shortcutLabel(shortcut.id, t) })}
 																			onClick={() => void handleRemoveBinding(shortcut.id, index)}
 																		>
 																			<X className="size-3" aria-hidden="true" />
 																		</button>
 																	</TooltipTrigger>
-																	<TooltipContent>Remove</TooltipContent>
+																	<TooltipContent>{t("shortcut.remove")}</TooltipContent>
 																</Tooltip>
 															</span>
 														))
@@ -390,13 +407,13 @@ export function KeyboardShortcutsSettingsDialog({
 															<button
 																type="button"
 																className="inline-flex size-8 items-center justify-center rounded-md text-settings-muted hover:bg-settings-menu-selected hover:text-settings-label"
-																aria-label={`Change ${shortcut.label}`}
+																aria-label={t("shortcut.changeAria", { name: shortcutLabel(shortcut.id, t) })}
 																onClick={() => void beginRecording({ id: shortcut.id, mode: "replace" })}
 															>
 																<Pencil className="size-icon-base" aria-hidden="true" />
 															</button>
 														</TooltipTrigger>
-														<TooltipContent>Change</TooltipContent>
+														<TooltipContent>{t("shortcut.change")}</TooltipContent>
 													</Tooltip>
 													{bindings.length < 2 ? (
 														<Tooltip>
@@ -404,13 +421,13 @@ export function KeyboardShortcutsSettingsDialog({
 																<button
 																	type="button"
 																	className="inline-flex size-8 items-center justify-center rounded-md text-settings-muted hover:bg-settings-menu-selected hover:text-settings-label"
-																	aria-label={`Add alternative for ${shortcut.label}`}
+																	aria-label={t("shortcut.addAltAria", { name: shortcutLabel(shortcut.id, t) })}
 																	onClick={() => void beginRecording({ id: shortcut.id, mode: "add" })}
 																>
 																	<Plus className="size-icon-base" aria-hidden="true" />
 																</button>
 															</TooltipTrigger>
-															<TooltipContent>Add</TooltipContent>
+															<TooltipContent>{t("shortcut.add")}</TooltipContent>
 														</Tooltip>
 													) : null}
 													{modified ? (
@@ -419,13 +436,13 @@ export function KeyboardShortcutsSettingsDialog({
 																<button
 																	type="button"
 																	className="inline-flex size-8 items-center justify-center rounded-md text-settings-muted hover:bg-settings-menu-selected hover:text-settings-label"
-																	aria-label={`Reset ${shortcut.label}`}
+																	aria-label={t("shortcut.resetAria", { name: shortcutLabel(shortcut.id, t) })}
 																	onClick={() => void handleResetBinding(shortcut.id)}
 																>
 																	<RotateCcw className="size-icon-base" aria-hidden="true" />
 																</button>
 															</TooltipTrigger>
-															<TooltipContent>Reset</TooltipContent>
+															<TooltipContent>{t("shortcut.reset")}</TooltipContent>
 														</Tooltip>
 													) : null}
 												</div>
@@ -435,7 +452,7 @@ export function KeyboardShortcutsSettingsDialog({
 								);
 							})}
 							{filteredShortcuts.length === 0 ? (
-								<p className="py-8 text-center text-sm text-settings-muted">No matching commands.</p>
+								<p className="py-8 text-center text-sm text-settings-muted">{t("shortcut.noMatching")}</p>
 							) : null}
 						</div>
 					</div>
@@ -443,9 +460,9 @@ export function KeyboardShortcutsSettingsDialog({
 					<div className={settingsDialogFooterClass}>
 						{confirmResetAll ? (
 							<>
-								<span className="mr-auto text-caption text-settings-muted">Restore every shortcut to its default?</span>
+								<span className="mr-auto text-caption text-settings-muted">{t("shortcut.resetAllConfirm")}</span>
 								<button type="button" className="settings-footer-button" onClick={() => setConfirmResetAll(false)}>
-									Cancel
+									{t("confirm.cancel")}
 								</button>
 								<button
 									type="button"
@@ -453,11 +470,11 @@ export function KeyboardShortcutsSettingsDialog({
 									onClick={() => {
 										void resetAll().then(() => {
 											setConfirmResetAll(false);
-											showToast({ title: "Keyboard shortcuts restored to defaults" });
+											showToast({ title: t("shortcut.restoredDefaults") });
 										});
 									}}
 								>
-									Reset all
+									{t("shortcut.resetAll")}
 								</button>
 							</>
 						) : (
@@ -468,7 +485,7 @@ export function KeyboardShortcutsSettingsDialog({
 								onClick={() => setConfirmResetAll(true)}
 							>
 								<RotateCcw className="size-icon-base" aria-hidden="true" />
-								Reset all
+								{t("shortcut.resetAll")}
 							</button>
 						)}
 					</div>
@@ -491,13 +508,13 @@ export function KeyboardShortcutsSettingsDialog({
 									className="text-caption font-medium text-settings-label hover:underline"
 									onClick={() => void toast.undo?.()}
 								>
-									Undo
+									{t("shortcut.undo")}
 								</button>
 							) : null}
 							<button
 								type="button"
 								className="text-settings-muted hover:text-settings-label"
-								aria-label="Dismiss notification"
+								aria-label={t("shortcut.dismissNotification")}
 								onClick={() => setToast(null)}
 							>
 								<X className="size-icon-base" aria-hidden="true" />
@@ -509,15 +526,17 @@ export function KeyboardShortcutsSettingsDialog({
 
 			<ConfirmDialog
 				open={conflict !== null}
-				title="Shortcut already in use"
+				title={t("shortcut.alreadyInUse")}
 				description={
 					conflict
-						? `${shortcutBindingLabel(conflict.binding, isMac)} is assigned to ${
-								definition(conflict.conflictingId)?.label
-							}. Reassign it to ${definition(conflict.targetId)?.label}?`
+						? t("shortcut.conflictBody", {
+								binding: shortcutBindingLabel(conflict.binding, isMac),
+								from: shortcutLabel(conflict.conflictingId, t),
+								to: shortcutLabel(conflict.targetId, t),
+							})
 						: ""
 				}
-				confirmLabel="Reassign"
+				confirmLabel={t("shortcut.reassign")}
 				onOpenChange={(next) => {
 					if (!next) setConflict(null);
 				}}
@@ -532,8 +551,8 @@ export function KeyboardShortcutsSettingsDialog({
 						pending.conflictingId,
 					).catch(() =>
 						showToast({
-							title: "Could not reassign shortcut",
-							body: "Your previous bindings are still active.",
+							title: t("shortcut.couldNotReassign"),
+							body: t("shortcut.previousBindingsActive"),
 						}),
 					);
 				}}

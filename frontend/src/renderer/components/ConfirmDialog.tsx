@@ -1,4 +1,5 @@
 import { X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import {
 	Dialog,
@@ -39,6 +40,7 @@ export function ConfirmDialog({
 	onConfirm,
 	onOpenChange,
 }: ConfirmDialogProps) {
+	const { t } = useTranslation();
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent showCloseButton={false} className={settingsDialogContentClass}>
@@ -47,8 +49,8 @@ export function ConfirmDialog({
 						type="button"
 						disabled={busy}
 						className="settings-dialog-close-button settings-close-button"
-						aria-label="Close dialog"
-						title="Close (Esc)"
+						aria-label={t("confirm.close")}
+						title={t("confirm.closeEsc")}
 					>
 						<X className="size-5" aria-hidden="true" />
 					</button>
@@ -72,7 +74,7 @@ export function ConfirmDialog({
 				<div className={settingsDialogFooterClass}>
 					<DialogClose asChild>
 						<button type="button" className="settings-footer-button" disabled={busy}>
-							Cancel
+							{t("confirm.cancel")}
 						</button>
 					</DialogClose>
 					<button

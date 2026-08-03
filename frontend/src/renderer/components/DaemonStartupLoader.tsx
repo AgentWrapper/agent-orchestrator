@@ -1,31 +1,33 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import aoLogo from "../../../assets/ao-logo.svg";
 
-const STARTUP_PHRASES = [
-	"Starting local services",
-	"Connecting to the daemon",
-	"Loading workspaces",
-	"Preparing your board",
+const STARTUP_PHRASE_KEYS = [
+	"startup.startingServices",
+	"startup.connectingDaemon",
+	"startup.loadingWorkspaces",
+	"startup.preparingBoard",
 ] as const;
 
 const PHRASE_INTERVAL_MS = 2_200;
 
 export function DaemonStartupLoader() {
+	const { t } = useTranslation();
 	const [phraseIndex, setPhraseIndex] = useState(0);
 
 	useEffect(() => {
 		const timer = window.setInterval(() => {
-			setPhraseIndex((current) => (current + 1) % STARTUP_PHRASES.length);
+			setPhraseIndex((current) => (current + 1) % STARTUP_PHRASE_KEYS.length);
 		}, PHRASE_INTERVAL_MS);
 		return () => window.clearInterval(timer);
 	}, []);
 
-	const phrase = STARTUP_PHRASES[phraseIndex];
+	const phrase = t(STARTUP_PHRASE_KEYS[phraseIndex]);
 
 	return (
 		<div
 			aria-busy="true"
-			aria-label="Agent Orchestrator is starting"
+			aria-label={t("startup.aria", { brand: "Agent Orchestrator" })}
 			aria-live="polite"
 			className="ao-startup-screen flex h-full w-full items-center justify-center bg-background text-foreground"
 			data-testid="daemon-startup-loader"

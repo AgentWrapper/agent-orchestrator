@@ -9,9 +9,8 @@ import { expect, test } from "@playwright/test";
 // profiles to collapsed. Only real separator drags may write back; this needs
 // the real rrp + CSS pipeline, which the mocked unit tests can't exercise.
 test("topbar button collapses and reopens the inspector rail", async ({ page }) => {
-	await page.goto("/");
-	await page.getByRole("button", { name: "Open refactor-mux" }).click();
-	await expect(page).toHaveURL(/sessions\/refactor-mux/);
+	// A worker session from the dev:web mock dataset (lib/mock-data.ts).
+	await page.goto("/#/projects/ao-demo/sessions/demo-working");
 
 	// Fresh profile: the rail must mount open, not get toggled shut by
 	// mount-time layout events.

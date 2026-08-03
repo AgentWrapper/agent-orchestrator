@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
@@ -20,11 +21,12 @@ import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { useSessionUsage, type SessionUsage } from "../hooks/useSessionUsage";
+import { useSessionWorkspaceFilesChangedCount } from "../hooks/useSessionWorkspaceFiles";
 import { clearTerminateSessionState, useTerminateSession } from "../hooks/useTerminateSession";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { formatTokenCount } from "../lib/format-token-count";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
-import { canonicalTrackerIssueId, findProjectOrchestrator, sortedPRs } from "../types/workspace";
+import { findProjectOrchestrator, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
@@ -40,6 +42,8 @@ import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { Switch } from "./ui/switch";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { appI18n } from "../i18n";
+import type { MessageKey } from "../i18n";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -48,10 +52,10 @@ type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => v
 
 export type InspectorView = "summary" | "reviews" | "browser" | "files";
 
-const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
+const VIEW_DEFS: { id: InspectorView; labelKey: "inspector.summary" | "inspector.reviews" | "inspector.browser" | "inspector.files"; icon: ReactNode }[] = [
 	{
 		id: "summary",
-		label: "Summary",
+		labelKey: "inspector.summary",
 		icon: (
 			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
 				<line x1="8" y1="7" x2="20" y2="7" />
@@ -65,7 +69,7 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 	},
 	{
 		id: "reviews",
-		label: "Reviews",
+		labelKey: "inspector.reviews",
 		icon: (
 			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
 				<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
@@ -74,7 +78,7 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 	},
 	{
 		id: "browser",
-		label: "Browser",
+		labelKey: "inspector.browser",
 		icon: (
 			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
 				<circle cx="12" cy="12" r="9" />
@@ -85,7 +89,7 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 	},
 	{
 		id: "files",
-		label: "Files",
+		labelKey: "inspector.files",
 		icon: <FilesIcon aria-hidden="true" />,
 	},
 ];
@@ -99,20 +103,18 @@ const prStateTone: Record<SessionPRSummary["state"], string> = {
 	closed: "border-error/40 bg-error/10 text-error",
 };
 
+const prStateLabelKeys: Record<SessionPRSummary["state"], MessageKey> = {
+	open: "pr.state.open",
+	draft: "pr.state.draft",
+	merged: "pr.state.merged",
+	closed: "pr.state.closed",
+};
+
 const inspectorShellClass = "@container/inspector flex h-full min-h-0 flex-col overflow-hidden";
 
 const inspectorBodyClass = "min-h-0 flex-1 overflow-y-auto p-3 pb-4 @max-[300px]/inspector:px-2.5";
 
 const inspectorEmptyClass = "text-xs text-settings-muted leading-normal";
-
-const kvRowClass =
-	"flex items-center gap-2.5 px-1 py-1.5 text-md-sm @max-[300px]/inspector:flex-col @max-[300px]/inspector:items-start @max-[300px]/inspector:gap-1";
-
-const kvKeyClass = "w-kv-label shrink-0 text-settings-muted @max-[300px]/inspector:w-auto";
-
-const kvValueClass = "min-w-0 truncate text-settings-label @max-[300px]/inspector:w-full";
-
-const kvValueMonoClass = "font-mono text-sm-md";
 
 const reviewerVerdictTone: Record<"neutral" | "running" | "success" | "danger", string> = {
 	neutral: "text-muted-foreground",
@@ -173,32 +175,35 @@ export function SessionInspector({
 	view?: InspectorView;
 	onViewChange?: (view: InspectorView) => void;
 }) {
+	const { t } = useTranslation();
 	const [internalView, setInternalView] = useState<InspectorView>("summary");
 	const view = viewProp ?? internalView;
 	// Badge the Browser tab when a preview target arrived without us opening it.
 	const browserUnseen = useUiStore((state) =>
 		session ? Boolean(state.inspectorSessions[session.id]?.browserUnseen) : false,
 	);
+	const filesChangedCount = useSessionWorkspaceFilesChangedCount(session?.id);
 	const setView = (next: InspectorView) => {
 		setInternalView(next);
 		onViewChange?.(next);
 		if (next === "files") onOpenFiles?.();
 	};
+	const views = VIEW_DEFS.map((entry) => ({ ...entry, label: t(entry.labelKey) }));
 
 	if (!session) {
 		return (
-			<aside className={inspectorShellClass} aria-label="Session inspector">
+			<aside className={inspectorShellClass} aria-label={t("inspector.aria")}>
 				<div className={inspectorBodyClass}>
-					<p className={inspectorEmptyClass}>Loading session…</p>
+					<p className={inspectorEmptyClass}>{t("inspector.loadingSession")}</p>
 				</div>
 			</aside>
 		);
 	}
 
 	return (
-		<aside className={inspectorShellClass} aria-label="Session inspector">
+		<aside className={inspectorShellClass} aria-label={t("inspector.aria")}>
 			<div className="flex h-inspector-tabs shrink-0 items-center gap-1 border-b border-border px-2.5" role="tablist">
-				{VIEWS.map((entry) => (
+				{views.map((entry) => (
 					<button
 						aria-label={entry.label}
 						key={entry.id}
@@ -223,7 +228,11 @@ export function SessionInspector({
 								</span>
 							) : null}
 						</span>
-						<span className="truncate @max-[350px]/inspector:hidden">{entry.label}</span>
+						<span className="truncate @max-[350px]/inspector:hidden">
+							{entry.id === "files" && filesChangedCount !== undefined
+								? t("files.tabCount", { count: filesChangedCount })
+								: entry.label}
+						</span>
 					</button>
 				))}
 			</div>
@@ -267,6 +276,8 @@ function Section({
 	action?: ReactNode;
 	children: ReactNode;
 	className?: string;
+	/** Accepted for call-site compatibility; all sections use the settings-row surface. */
+	surface?: boolean;
 	title: string;
 }) {
 	// Boxed sections match the settings page row surface (bg + radius) with the
@@ -285,6 +296,7 @@ function Section({
 }
 
 function SummaryView({ session }: { session: WorkspaceSession }) {
+	const { t } = useTranslation();
 	const query = useSessionScmSummary(session.id);
 	const developerMode = useUiStore((state) => state.developerMode);
 	const usageQuery = useSessionUsage(session.id, developerMode);
@@ -294,9 +306,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 		!usageQuery.isError &&
 		hasMeaningfulSessionUsage(usageQuery.data);
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
-	const prSectionTitle = prSummaries.length > 1 ? `Pull requests (${prSummaries.length})` : "Pull request";
-	const issueId = canonicalTrackerIssueId(session.issueId);
-
+	const prSectionTitle = prSummaries.length > 1 ? t("inspector.pullRequests", { count: prSummaries.length }) : t("inspector.pullRequest");
 	const hasPRs = prSummaries.length > 0;
 	const showCompletion =
 		session.kind !== "orchestrator" && (hasPRs || session.status === "merged");
@@ -315,64 +325,63 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 
 			{showCompletion ? <CompletionControls session={session} /> : null}
 
-			<Section title="Activity">
+			<Section title={t("inspector.activity")}>
 				<ActivityTimeline prs={prSummaries} session={session} />
 				<ResumeAgentControl session={session} />
 			</Section>
 
 			{showUsage && usageQuery.data ? (
-				<Section title="Usage & cost">
+				<Section title={t("inspector.usage.title")}>
 					<UsageCostTelemetry usage={usageQuery.data} />
 				</Section>
-				) : null}
-
-			<Section title="Overview">
-				<dl className="flex flex-col gap-1">
-					<Row k="Agent" v={session.provider} mono />
-					{issueId && <Row k="Issue" v={issueId} mono />}
-					{session.branch && <Row k="Branch" v={session.branch} mono />}
-					<Row k="Started" v={formatTimeCompact(session.createdAt ?? session.updatedAt)} mono />
-					<Row k="Session" v={session.id} mono />
-				</dl>
-			</Section>
+			) : null}
 		</div>
 	);
 }
 
 function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
+	const { t } = useTranslation();
 	const totalTokens = usageTokenTotal(usage.totals);
-	const warnings = usage.warnings.filter(isUsageIntegrityWarning).map(formatUsageWarning);
+	const warnings = usage.warnings
+		.filter(isUsageIntegrityWarning)
+		.map((warning) => formatUsageWarning(warning, t("inspector.usage.warningFallback")));
 	const incomplete = usageHasConfirmedIncomplete(usage, warnings.length > 0);
 	const warningLabel =
 		warnings.length > 0
-			? `Usage may be incomplete. Details: ${warnings.join("; ")}.`
-			: "Usage may be incomplete.";
+			? t("inspector.usage.incompleteWithDetails", { details: warnings.join("; ") })
+			: t("inspector.usage.incomplete");
+	const exactTotal = totalTokens?.toLocaleString("en-US");
 
 	return (
 		<div>
 			<div className="grid grid-cols-2 gap-4">
 				<div className="min-w-0">
-					<p className="text-2xs text-settings-muted">Total tokens</p>
+					<p className="text-2xs text-settings-muted">{t("inspector.usage.totalTokens")}</p>
 					<p
 						aria-label={
 							totalTokens === null
-								? "Total tokens unavailable"
-								: `${totalTokens.toLocaleString("en-US")} total tokens${incomplete ? ". Usage may be incomplete" : ""}`
+								? t("inspector.usage.totalTokensUnavailable")
+								: t(
+									incomplete
+										? "inspector.usage.totalTokensIncompleteAria"
+										: "inspector.usage.totalTokensAria",
+									{ count: exactTotal },
+								)
 						}
 						className="mt-0.5 truncate font-mono text-md-sm font-medium text-settings-label"
-						title={totalTokens === null ? undefined : `${totalTokens.toLocaleString("en-US")} tokens`}
+						title={totalTokens === null ? undefined : t("inspector.usage.tokensExact", { count: exactTotal })}
 					>
-						{totalTokens === null ? "No usage yet" : formatTelemetryTokenValue(totalTokens)}
+						{totalTokens === null ? t("inspector.usage.noUsageYet") : formatTelemetryTokenValue(totalTokens)}
 					</p>
 				</div>
 				<div className="min-w-0 text-right">
-					<p className="text-2xs text-settings-muted">Total cost</p>
+					<p className="text-2xs text-settings-muted">{t("inspector.usage.totalCost")}</p>
 					<Badge
 						className="mt-0.5 bg-success/10 px-1.5 py-0.5 text-[9px] leading-none"
-						title="Dollar cost support is coming soon."
+						title={t("inspector.usage.costComingSoon")}
 						variant="success"
 					>
-						Coming soon
+						{t("inspector.usage.comingSoon")}
 					</Badge>
 				</div>
 			</div>
@@ -389,9 +398,9 @@ function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
 			{usage.harnesses.length > 0 ? (
 				<div className="mt-3 border-t border-(--color-border-settings-input) pt-2">
 					<div className="grid grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 px-1 pb-1 text-2xs text-settings-muted">
-						<span>Agent</span>
-						<span className="text-right">Tokens</span>
-						<span className="text-right">Cost</span>
+						<span>{t("inspector.usage.agent")}</span>
+						<span className="text-right">{t("inspector.usage.tokens")}</span>
+						<span className="text-right">{t("inspector.usage.cost")}</span>
 					</div>
 					{usage.harnesses.map((harness, index) => (
 						<UsageProviderRow
@@ -410,7 +419,7 @@ function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
 					title={warnings.length > 0 ? warnings.join("; ") : undefined}
 				>
 					<AlertTriangle aria-hidden="true" className="mt-px size-3 shrink-0 text-warning" />
-					<span>Usage may be incomplete</span>
+					<span>{t("inspector.usage.incomplete")}</span>
 				</div>
 			) : null}
 		</div>
@@ -470,15 +479,17 @@ function useHoverableUsagePopover() {
 }
 
 function UsageProviderRow({ harness }: { harness: SessionUsage["harnesses"][number] }) {
+	const { t } = useTranslation();
 	const harnessName = formatHarnessName(harness.harness);
 	const totalTokens = usageTokenTotal(harness.totals);
 	const peek = useHoverableUsagePopover();
+	const exactTotal = totalTokens?.toLocaleString("en-US");
 
 	return (
 		<Popover onOpenChange={peek.onOpenChange} open={peek.open}>
 			<PopoverTrigger asChild>
 				<button
-					aria-label={`${harnessName} usage details`}
+					aria-label={t("inspector.usage.providerDetails", { name: harnessName })}
 					className="grid w-full cursor-default grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 rounded-md px-1 py-2 text-left outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
 					onKeyDown={peek.markKeyboardOpen}
 					onPointerDown={peek.markPointerOpen}
@@ -492,22 +503,22 @@ function UsageProviderRow({ harness }: { harness: SessionUsage["harnesses"][numb
 					</span>
 					<span
 						className="text-right font-mono text-2xs text-settings-label"
-						title={totalTokens === null ? undefined : `${totalTokens.toLocaleString("en-US")} tokens`}
+						title={totalTokens === null ? undefined : t("inspector.usage.tokensExact", { count: exactTotal })}
 					>
 						{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
 					</span>
 					<span
-						aria-label="Cost: Coming soon"
+						aria-label={t("inspector.usage.costAria")}
 						className="text-right text-2xs text-settings-muted"
-						title="Cost coming soon"
+						title={t("inspector.usage.costComingSoonShort")}
 					>
-						Coming soon
+						{t("inspector.usage.comingSoon")}
 					</span>
 				</button>
 			</PopoverTrigger>
 			<PopoverContent
 				align="end"
-				aria-label={`${harnessName} usage peek`}
+				aria-label={t("inspector.usage.providerPeek", { name: harnessName })}
 				className="w-80 max-w-[calc(100vw-1rem)] p-3"
 				onCloseAutoFocus={(event) => {
 					if (peek.openedByPointer.current) event.preventDefault();
@@ -533,6 +544,7 @@ function ProviderUsagePeek({
 	harness: SessionUsage["harnesses"][number];
 	onRequestClose: () => void;
 }) {
+	const { t } = useTranslation();
 	const harnessName = formatHarnessName(harness.harness);
 	const totalTokens = usageTokenTotal(harness.totals);
 	const [activeModelKey, setActiveModelKey] = useState<string | null>(null);
@@ -548,7 +560,7 @@ function ProviderUsagePeek({
 					<p className="font-mono text-settings-label">
 						{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
 					</p>
-					<p className="text-settings-muted">Coming soon</p>
+					<p className="text-settings-muted">{t("inspector.usage.comingSoon")}</p>
 				</div>
 			</div>
 
@@ -558,9 +570,9 @@ function ProviderUsagePeek({
 
 			<div className="mt-3 border-t border-border pt-2">
 				<div className="grid grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 px-1 pb-1 text-2xs text-settings-muted">
-					<span>{formatCount(harness.models.length, "model")}</span>
-					<span className="text-right">Tokens</span>
-					<span className="text-right">Cost</span>
+					<span>{t("inspector.usage.models", { count: harness.models.length })}</span>
+					<span className="text-right">{t("inspector.usage.tokens")}</span>
+					<span className="text-right">{t("inspector.usage.cost")}</span>
 				</div>
 				{harness.models.length > 0 ? (
 					harness.models.map((model, index) => {
@@ -576,7 +588,7 @@ function ProviderUsagePeek({
 						);
 					})
 				) : (
-					<p className="px-1 py-2 text-2xs text-settings-muted">No model telemetry available.</p>
+					<p className="px-1 py-2 text-2xs text-settings-muted">{t("inspector.usage.noModelTelemetry")}</p>
 				)}
 			</div>
 		</div>
@@ -594,9 +606,11 @@ function UsageModelRow({
 	onActiveChange: (active: boolean) => void;
 	onRequestClose: () => void;
 }) {
+	const { t } = useTranslation();
 	const modelName = model.modelId || formatProviderName(model.provider);
 	const totalTokens = usageTokenTotal(model.totals);
 	const detailID = useId();
+	const exactTotal = totalTokens?.toLocaleString("en-US");
 
 	return (
 		<Tooltip delayDuration={0} onOpenChange={onActiveChange} open={active}>
@@ -604,36 +618,36 @@ function UsageModelRow({
 				<button
 					aria-controls={detailID}
 					aria-expanded={active}
-					aria-label={`${modelName} usage details`}
+					aria-label={t("inspector.usage.modelDetails", { name: modelName })}
 					className="grid w-full cursor-default grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 rounded-md px-1 py-2 text-left outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
 					type="button"
 				>
 					<span className="min-w-0 truncate font-mono text-2xs text-settings-label">{modelName}</span>
 					<span
 						className="text-right font-mono text-2xs text-settings-label"
-						title={totalTokens === null ? undefined : `${totalTokens.toLocaleString("en-US")} tokens`}
+						title={totalTokens === null ? undefined : t("inspector.usage.tokensExact", { count: exactTotal })}
 					>
 						{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
 					</span>
 					<span
-						aria-label="Cost: Coming soon"
+						aria-label={t("inspector.usage.costAria")}
 						className="text-right text-2xs text-settings-muted"
-						title="Cost coming soon"
+						title={t("inspector.usage.costComingSoonShort")}
 					>
-						Coming soon
+						{t("inspector.usage.comingSoon")}
 					</span>
 				</button>
 			</TooltipTrigger>
 			<TooltipContent
 				align="start"
-				aria-label={`${modelName} detailed token usage`}
+				aria-label={t("inspector.usage.modelDetailed", { name: modelName })}
 				className="w-80 max-w-[calc(100vw-1rem)] p-3 text-left text-popover-foreground"
 				onEscapeKeyDown={onRequestClose}
 				side="left"
 				sideOffset={8}
 			>
 				<div
-					aria-label={`${modelName} usage peek`}
+					aria-label={t("inspector.usage.modelPeek", { name: modelName })}
 					id={detailID}
 					role="region"
 				>
@@ -646,7 +660,7 @@ function UsageModelRow({
 							<p className="font-mono text-settings-label">
 								{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
 							</p>
-							<p className="text-settings-muted">Coming soon</p>
+							<p className="text-settings-muted">{t("inspector.usage.comingSoon")}</p>
 						</div>
 					</div>
 					<div className="border-t border-border pt-3">
@@ -659,14 +673,15 @@ function UsageModelRow({
 }
 
 function UsageMetrics({ totals }: { totals: SessionUsage["totals"] }) {
+	const { t } = useTranslation();
 	return (
 		<dl className="grid grid-cols-2 gap-x-4 gap-y-2 @max-[300px]/inspector:grid-cols-1">
-			<UsageMetric label="Input tokens" metric={totals.inputTokens} />
-			<UsageMetric label="Output tokens" metric={totals.outputTokens} />
-			<UsageMetric label="Cache read tokens" metric={totals.cacheReadTokens} />
-			<UsageMetric label="Cache write tokens" metric={totals.cacheWriteTokens} />
-			<UsageMetric label="Reasoning tokens" metric={totals.reasoningTokens} />
-			<UsageMetric label="Uncached input tokens" metric={totals.uncachedInputTokens} />
+			<UsageMetric label={t("inspector.usage.inputTokens")} metric={totals.inputTokens} />
+			<UsageMetric label={t("inspector.usage.outputTokens")} metric={totals.outputTokens} />
+			<UsageMetric label={t("inspector.usage.cacheReadTokens")} metric={totals.cacheReadTokens} />
+			<UsageMetric label={t("inspector.usage.cacheWriteTokens")} metric={totals.cacheWriteTokens} />
+			<UsageMetric label={t("inspector.usage.reasoningTokens")} metric={totals.reasoningTokens} />
+			<UsageMetric label={t("inspector.usage.uncachedInputTokens")} metric={totals.uncachedInputTokens} />
 		</dl>
 	);
 }
@@ -678,10 +693,12 @@ function UsageMetric({
 	label: string;
 	metric: SessionUsage["totals"]["inputTokens"];
 }) {
+	const { t } = useTranslation();
+	const exactValue = metric.value?.toLocaleString("en-US");
 	const accessibleLabel =
 		metric.value === null
-			? `${label}: telemetry unavailable`
-			: `${label}: ${metric.value.toLocaleString("en-US")} tokens`;
+			? t("inspector.usage.metricUnavailable", { label })
+			: t("inspector.usage.metricAria", { label, count: exactValue });
 	return (
 		<div className="min-w-0">
 			<dt className="truncate text-2xs text-settings-muted">{label}</dt>
@@ -690,8 +707,8 @@ function UsageMetric({
 				className="mt-0.5 truncate font-mono text-sm-md text-settings-label"
 				title={
 					metric.value === null
-						? `${label} telemetry unavailable`
-						: `${metric.value.toLocaleString("en-US")} tokens`
+						? t("inspector.usage.metricUnavailable", { label })
+						: t("inspector.usage.tokensExact", { count: exactValue })
 				}
 			>
 				{metric.value === null ? "—" : formatTelemetryTokenValue(metric.value)}
@@ -744,9 +761,9 @@ function isUsageIntegrityWarning(warning: string): boolean {
 	].includes(warning);
 }
 
-function formatUsageWarning(warning: string): string {
+function formatUsageWarning(warning: string, fallback: string): string {
 	const text = warning.replaceAll("_", " ").trim();
-	if (!text) return "Usage warning";
+	if (!text) return fallback;
 	return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
@@ -757,10 +774,6 @@ function formatTelemetryTokenValue(totalTokens: number): string {
 function usageTokenTotal(totals: SessionUsage["totals"]): number | null {
 	if (totals.inputTokens.value === null && totals.outputTokens.value === null) return null;
 	return (totals.inputTokens.value ?? 0) + (totals.outputTokens.value ?? 0);
-}
-
-function formatCount(value: number, noun: string): string {
-	return `${value} ${noun}${value === 1 ? "" : "s"}`;
 }
 
 function formatHarnessName(harness: string): string {
@@ -790,6 +803,7 @@ function formatProviderName(provider: string): string {
 }
 
 function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const resume = useMutation({
 		mutationFn: async () => {
@@ -806,8 +820,8 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 				void aoBridge.notifications
 					.show({
 						id: `resume-agent-fallback:${session.id}:${Date.now()}`,
-						title: "Started from saved prompt",
-						body: "AO could not resume the native agent session, so it started a new conversation from the saved prompt.",
+						title: t("inspector.startedFromPrompt"),
+						body: t("inspector.resumeFallbackBody"),
 					})
 					.catch((err) => {
 						console.warn("Unable to show resume fallback notification", err);
@@ -830,7 +844,7 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 				variant="outline"
 			>
 				<Play className="size-icon-sm" aria-hidden="true" />
-				{resume.isPending ? "Resuming agent…" : "Resume agent"}
+				{resume.isPending ? t("inspector.resumingAgent") : t("inspector.resumeAgent")}
 			</Button>
 			{error ? (
 				<p className="mt-2 text-2xs leading-normal text-error" role="status">
@@ -842,6 +856,7 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 }
 
 function CompletionControls({ session }: { session: WorkspaceSession }) {
+	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const [confirmOpen, setConfirmOpen] = useState(false);
@@ -891,10 +906,10 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 	if (session.isTerminated === true) return null;
 
 	return (
-		<Section title="Completion">
+		<Section title={t("inspector.completion")}>
 			{canTerminateNow ? (
 				<div className="flex items-center justify-between gap-3 py-1">
-					<span className="min-w-0 text-xs font-medium text-settings-label">Terminate</span>
+					<span className="min-w-0 text-xs font-medium text-settings-label">{t("inspector.terminateShort")}</span>
 					<SessionTerminationPopover
 						onConfirm={confirmTermination}
 						onOpenChange={setConfirmOpen}
@@ -902,7 +917,7 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 						session={session}
 						trigger={
 							<button
-								aria-label="Terminate session"
+								aria-label={t("inspector.terminate")}
 								className="inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
 								onClick={() => clearTerminateSessionState(queryClient, session.id)}
 								type="button"
@@ -916,10 +931,10 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 				<>
 					<div className="flex items-center justify-between gap-3 py-1">
 						<label className="min-w-0 text-xs font-medium text-settings-label" htmlFor={`merge-policy-${session.id}`}>
-							Terminate on merge
+							{t("inspector.terminateOnMergeShort")}
 						</label>
 						<Switch
-							aria-label="Terminate session when pull requests merge"
+							aria-label={t("inspector.terminateOnMerge")}
 							checked={Boolean(session.terminateOnPrMerge)}
 							disabled={policy.isPending}
 							id={`merge-policy-${session.id}`}
@@ -951,6 +966,7 @@ function updateSessionMergePolicy(
 }
 
 function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
+	const { t } = useTranslation();
 	return (
 		<div className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2.5 py-1.5">
 			<div className="flex items-center gap-2">
@@ -960,7 +976,7 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 					variant="outline"
 					className={cn("h-5 px-1.5 text-[9px] leading-none font-medium", prStateTone[pr.state])}
 				>
-					{pr.state}
+					{t(prStateLabelKeys[pr.state])}
 				</Badge>
 				<a
 					href={prBrowserUrl(pr)}
@@ -968,7 +984,7 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 					rel="noopener noreferrer"
 					className="ml-auto inline-flex items-center gap-0.5 text-caption font-medium text-accent hover:underline"
 				>
-					<span>Open</span>
+					<span>{t("inspector.open")}</span>
 					<ArrowUpRight aria-hidden="true" className="size-icon-2xs" strokeWidth={2} />
 				</a>
 			</div>
@@ -993,14 +1009,14 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 
 	history.push({
 		tone: "neutral",
-		node: <>Created workspace</>,
+		node: <>{appI18n.t("inspector.timeline.createdWorkspace")}</>,
 		ts: formatTimeCompact(session.createdAt ?? session.updatedAt),
 	});
 
 	for (const pr of prs.filter((pr) => pr.state === "draft")) {
 		history.push({
 			tone: "neutral",
-			node: <PRTimelineLink pr={pr} verb="Draft" />,
+			node: <PRTimelineLink pr={pr} verb={appI18n.t("inspector.timeline.draft")} />,
 			ts: prStateTime(pr),
 		});
 	}
@@ -1008,7 +1024,7 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 	for (const pr of prs.filter((pr) => pr.state !== "draft")) {
 		history.push({
 			tone: "neutral",
-			node: <PRTimelineLink pr={pr} verb="Opened" />,
+			node: <PRTimelineLink pr={pr} verb={appI18n.t("inspector.timeline.opened")} />,
 			ts: prCreatedTime(pr),
 		});
 	}
@@ -1016,7 +1032,7 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 	for (const pr of prs.filter((pr) => pr.state === "merged")) {
 		history.push({
 			tone: "good",
-			node: <PRTimelineLink pr={pr} verb="Merged" />,
+			node: <PRTimelineLink pr={pr} verb={appI18n.t("inspector.timeline.merged")} />,
 			ts: prStateTime(pr),
 		});
 	}
@@ -1024,7 +1040,7 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 	if (session.status === "merged") {
 		history.push({
 			tone: "good",
-			node: <>Done</>,
+			node: <>{appI18n.t("inspector.timeline.done")}</>,
 			ts: latestMergedTime(prs),
 		});
 	}
@@ -1087,7 +1103,7 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 	);
 }
 
-function PRTimelineLink({ pr, verb }: { pr: SessionPRSummary; verb: "Draft" | "Opened" | "Merged" }) {
+function PRTimelineLink({ pr, verb }: { pr: SessionPRSummary; verb: string }) {
 	return (
 		<a
 			aria-label={`${verb} PR #${pr.number}`}
@@ -1126,14 +1142,16 @@ function latestMergedTime(prs: SessionPRSummary[]): string | null {
 
 type ScmTimelineState = "ci_failed" | "changes_requested" | "conflict";
 
-const CONFLICT_PILL = { label: "Conflict", tone: "var(--color-danger)", breathe: false };
+function conflictPill() {
+	return { label: appI18n.t("inspector.conflict"), tone: "var(--color-danger)", breathe: false };
+}
 
 function InspectorActivityPill({ activity }: { activity?: WorkspaceSession["activity"] }) {
 	return <TimelinePill {...getAgentActivityView(activity)} />;
 }
 
 function InspectorScmPill({ state }: { state: ScmTimelineState }) {
-	if (state === "conflict") return <TimelinePill {...CONFLICT_PILL} />;
+	if (state === "conflict") return <TimelinePill {...conflictPill()} />;
 	return <TimelinePill {...getSessionTimelinePillView(state)} />;
 }
 
@@ -1168,6 +1186,7 @@ function ReviewsView({
 	session: WorkspaceSession;
 	onOpenReviewerTerminal?: OpenReviewerTerminal;
 }) {
+	const { t } = useTranslation();
 	const hasPr = sortedPRs(session).length > 0;
 	const queryClient = useQueryClient();
 	const [reviewNotice, setReviewNotice] = useState<string | null>(null);
@@ -1205,7 +1224,7 @@ function ReviewsView({
 			const { data, error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/trigger", {
 				params: { path: { sessionId: session.id } },
 			});
-			if (error) throw new Error(apiErrorMessage(error, "Unable to start review"));
+			if (error) throw new Error(apiErrorMessage(error, t("inspector.unableStartReview")));
 			return { data, reused: response?.status === 200 };
 		},
 		onMutate: () => {
@@ -1216,7 +1235,7 @@ function ReviewsView({
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			const started = data?.reviews?.find((review) => review.status === "running" && review.latestRun);
 			if (reused || !started?.latestRun) {
-				setReviewNotice("No needed reviews were started.");
+				setReviewNotice(t("inspector.noReviewsStarted"));
 				return;
 			}
 			if (data?.reviewerHandleId) {
@@ -1230,7 +1249,7 @@ function ReviewsView({
 			const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/cancel", {
 				params: { path: { sessionId: session.id } },
 			});
-			if (error) throw new Error(apiErrorMessage(error, "Unable to cancel review"));
+			if (error) throw new Error(apiErrorMessage(error, t("inspector.unableCancelReview")));
 		},
 		onSuccess: () => {
 			setReviewNotice(null);
@@ -1243,7 +1262,7 @@ function ReviewsView({
 	return (
 		<div role="tabpanel">
 			{/* AO code reviews lead: the flow is run AO review first, then raise the PR for others. */}
-			<Section title="AO code reviews">
+			<Section surface title={t("inspector.aoCodeReviews")}>
 				<ReviewPanel
 					config={projectConfigQuery.data}
 					error={reviewsQuery.error ?? triggerReview.error ?? cancelReview.error}
@@ -1400,11 +1419,12 @@ function ReviewPanel({
 	onCancel: () => void;
 	onOpenTerminal?: OpenReviewerTerminal;
 }) {
+	const { t } = useTranslation();
 	if (sortedPRs(session).length === 0) {
-		return <p className={inspectorEmptyClass}>No pull request opened yet.</p>;
+		return <p className={inspectorEmptyClass}>{t("inspector.noPROpened")}</p>;
 	}
 	if (isLoading) {
-		return <p className={inspectorEmptyClass}>Loading reviews...</p>;
+		return <p className={inspectorEmptyClass}>{t("inspector.loadingReviews")}</p>;
 	}
 
 	const openPRURLs = new Set(
@@ -1432,7 +1452,7 @@ function ReviewPanel({
 		<div className="flex flex-col gap-3">
 			{error ? (
 				<p className="m-0 rounded-md border border-error/28 bg-error/8 px-2.5 py-2 text-sm-md leading-normal text-error">
-					{apiErrorMessage(error, "Review request failed")}
+					{apiErrorMessage(error, t("inspector.reviewRequestFailed"))}
 				</p>
 			) : null}
 			{notice ? (
@@ -1446,7 +1466,7 @@ function ReviewPanel({
 			</p>
 			<div className="flex flex-col divide-y divide-border">
 				{openReviewStates.length === 0 ? (
-					<p className={cn(inspectorEmptyClass, "py-1")}>No open pull requests to review.</p>
+					<p className={cn(inspectorEmptyClass, "py-1")}>{t("inspector.noOpenPRsToReview")}</p>
 				) : (
 					openReviewStates.map((reviewState, index) => (
 						<ReviewDisclosure
@@ -1470,7 +1490,7 @@ function ReviewPanel({
 					variant="ghost"
 				>
 					{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
-					{reviewRunning ? (isCancelling ? "Cancelling..." : "Cancel review") : runAction}
+					{reviewRunning ? (isCancelling ? t("inspector.review.cancelling") : t("inspector.review.cancel")) : runAction}
 				</Button>
 				{reviewHasRun ? (
 					<Button
@@ -1482,7 +1502,7 @@ function ReviewPanel({
 						variant="ghost"
 					>
 						<Terminal aria-hidden="true" />
-						Open terminal
+						{t("inspector.openTerminal")}
 					</Button>
 				) : null}
 			</div>
@@ -1495,8 +1515,8 @@ function aoReviewMeta(reviewState: PRReviewState): string {
 	if (displayRun?.createdAt) {
 		return `#${reviewState.prNumber} · ${formatTimeCompact(displayRun.createdAt)}`;
 	}
-	if (!displayRun && reviewVerdict(reviewState).label === "Not run") {
-		return `#${reviewState.prNumber} · Not run`;
+	if (!displayRun && (reviewState.status === "needs_review" || reviewState.status === "ineligible")) {
+		return appI18n.t("inspector.notRunMeta", { number: reviewState.prNumber });
 	}
 	return `#${reviewState.prNumber}`;
 }
@@ -1506,7 +1526,9 @@ function AoReviewRow({ reviewState }: { reviewState: PRReviewState }) {
 	const verdict = displayRun ? runReviewVerdict(displayRun) : reviewVerdict(reviewState);
 	const summary = displayRun?.body?.trim();
 	const reviewUrl = aoReviewCommentUrl(displayRun);
-	const reviewLinkLabel = reviewState.latestRun ? "View review" : "View previous review";
+	const reviewLinkLabel = reviewState.latestRun
+		? appI18n.t("inspector.viewReview")
+		: appI18n.t("inspector.viewPreviousReview");
 	return (
 		<div className={cn("flex min-w-0 flex-col gap-2", reviewState.status === "ineligible" && "opacity-70")}>
 			<VerdictBadge label={verdict.label} tone={verdict.tone} />
@@ -1531,21 +1553,21 @@ function runReviewVerdict(run: NonNullable<PRReviewState["latestRun"]>): {
 	tone: "neutral" | "running" | "success" | "danger";
 } {
 	if (run.status === "failed") {
-		return { label: "Failed", tone: "danger" };
+		return { label: appI18n.t("inspector.review.failed"), tone: "danger" };
 	}
 	if (run.status === "cancelled") {
-		return { label: "Cancelled", tone: "neutral" };
+		return { label: appI18n.t("inspector.review.cancelled"), tone: "neutral" };
 	}
 	if (run.status === "running") {
-		return { label: "Reviewing...", tone: "running" };
+		return { label: appI18n.t("inspector.review.reviewing"), tone: "running" };
 	}
 	switch (run.verdict) {
 		case "approved":
-			return { label: "Approved", tone: "success" };
+			return { label: appI18n.t("inspector.review.approved"), tone: "success" };
 		case "changes_requested":
-			return { label: "Changes requested", tone: "danger" };
+			return { label: appI18n.t("inspector.review.changesRequested"), tone: "danger" };
 		default:
-			return { label: "Not run", tone: "neutral" };
+			return { label: appI18n.t("inspector.review.notRun"), tone: "neutral" };
 	}
 }
 
@@ -1561,33 +1583,33 @@ function reviewVerdict(reviewState: PRReviewState): {
 	tone: "neutral" | "running" | "success" | "danger";
 } {
 	if (reviewState.latestRun?.status === "failed") {
-		return { label: "Failed", tone: "danger" };
+		return { label: appI18n.t("inspector.review.failed"), tone: "danger" };
 	}
 	if (reviewState.latestRun?.status === "cancelled") {
-		return { label: "Cancelled", tone: "neutral" };
+		return { label: appI18n.t("inspector.review.cancelled"), tone: "neutral" };
 	}
 	switch (reviewState.status) {
 		case "running":
-			return { label: "Reviewing...", tone: "running" };
+			return { label: appI18n.t("inspector.review.reviewing"), tone: "running" };
 		case "up_to_date":
-			return { label: "Approved", tone: "success" };
+			return { label: appI18n.t("inspector.review.approved"), tone: "success" };
 		case "changes_requested":
-			return { label: "Changes requested", tone: "danger" };
+			return { label: appI18n.t("inspector.review.changesRequested"), tone: "danger" };
 		case "needs_review":
 		case "ineligible":
-			return { label: "Not run", tone: "neutral" };
+			return { label: appI18n.t("inspector.review.notRun"), tone: "neutral" };
 	}
-	return { label: "Not run", tone: "neutral" };
+	return { label: appI18n.t("inspector.review.notRun"), tone: "neutral" };
 }
 
 function reviewSessionRunAction(reviewStates: PRReviewState[], isTriggering: boolean): string {
 	if (isTriggering || reviewStates.some((reviewState) => reviewState.status === "running")) {
-		return "Reviewing...";
+		return appI18n.t("inspector.review.reviewing");
 	}
 	if (reviewStates.some((reviewState) => reviewState.status === "changes_requested" || reviewState.latestRun)) {
-		return "Re-run review";
+		return appI18n.t("inspector.review.rerun");
 	}
-	return "Run review";
+	return appI18n.t("inspector.review.run");
 }
 
 function BrowserView({
@@ -1609,13 +1631,14 @@ function BrowserView({
 	// so the inspector's Browser tab has nothing to show (and must not mount a
 	// second BrowserPanelView — it would fight the overlay over the shared native
 	// view slot). Exit is via the overlay's own minimize button.
+	const { t } = useTranslation();
 	if (browserPoppedOut) {
 		return (
 			<div role="tabpanel">
 				<div className={cn(inspectorEmptyClass, "flex flex-col items-center gap-2 py-10 px-5 text-center")}>
-					<p className="text-md-sm text-muted-foreground">Browser preview is in the center pane.</p>
+					<p className="text-md-sm text-muted-foreground">{t("inspector.browserInCenter")}</p>
 					<Button onClick={() => onTogglePopOut?.(false)} size="sm" type="button" variant="outline">
-						Return to panel
+						{t("inspector.returnToPanel")}
 					</Button>
 				</div>
 			</div>
@@ -1639,6 +1662,7 @@ function BrowserView({
 }
 
 function FilesView({ filesView, onOpenFiles }: { filesView?: ReactNode; onOpenFiles?: () => void }) {
+	const { t } = useTranslation();
 	if (filesView) {
 		return (
 			<div className="h-full min-h-0" role="tabpanel">
@@ -1649,20 +1673,11 @@ function FilesView({ filesView, onOpenFiles }: { filesView?: ReactNode; onOpenFi
 	return (
 		<div role="tabpanel">
 			<div className={cn(inspectorEmptyClass, "flex flex-col items-center gap-2 px-5 py-10 text-center")}>
-				<p className="text-md-sm text-muted-foreground">Files are not available for this session.</p>
+				<p className="text-md-sm text-muted-foreground">{t("inspector.filesUnavailable")}</p>
 				<Button disabled={!onOpenFiles} onClick={() => onOpenFiles?.()} size="sm" type="button" variant="outline">
-					Open files
+					{t("inspector.openFiles")}
 				</Button>
 			</div>
-		</div>
-	);
-}
-
-function Row({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
-	return (
-		<div className={kvRowClass}>
-			<dt className={kvKeyClass}>{k}</dt>
-			<dd className={cn(kvValueClass, mono && kvValueMonoClass)}>{v}</dd>
 		</div>
 	);
 }
