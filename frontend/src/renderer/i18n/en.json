@@ -792,8 +792,6 @@
 	"files.searchPlaceholder": "Search changed files",
 	"files.count_one": "{{count}} file",
 	"files.count_other": "{{count}} files",
-	"files.changedCount_one": "{{count}} changed file",
-	"files.changedCount_other": "{{count}} changed files",
 	"files.tabCount_one": "{{count}} File",
 	"files.tabCount_other": "{{count}} Files",
 	"files.closeSearch": "Close search",

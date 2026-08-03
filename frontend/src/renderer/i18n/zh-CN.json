@@ -792,8 +792,6 @@
 	"files.searchPlaceholder": "搜索已更改的文件",
 	"files.count_one": "{{count}} 个文件",
 	"files.count_other": "{{count}} 个文件",
-	"files.changedCount_one": "{{count}} 个已更改文件",
-	"files.changedCount_other": "{{count}} 个已更改文件",
 	"files.tabCount_one": "{{count}} 个文件",
 	"files.tabCount_other": "{{count}} 个文件",
 	"files.closeSearch": "关闭搜索",

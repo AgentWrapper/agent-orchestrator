@@ -184,7 +184,7 @@ describe("SessionFilesView", () => {
 		expect(screen.queryByRole("button", { name: "Diff layout" })).not.toBeInTheDocument();
 		expect(screen.queryByText("Stacked")).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Refresh files" })).not.toBeInTheDocument();
-		expect(screen.getByLabelText("2 changed files")).toHaveTextContent("2");
+		expect(screen.queryByLabelText("2 changed files")).not.toBeInTheDocument();
 
 		await waitFor(() =>
 			expect(getMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/file", {

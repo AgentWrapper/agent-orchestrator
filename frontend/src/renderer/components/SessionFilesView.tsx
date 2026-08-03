@@ -35,7 +35,6 @@ import {
 import { cn } from "../lib/utils";
 import type { DiffSelectionLine } from "../../shared/diff-selection";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./ui/accordion";
-import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { DiffSelectionMenu } from "./DiffSelectionMenu";
 import { Input } from "./ui/input";
@@ -97,7 +96,6 @@ export function SessionFilesView({
 	const filesQuery = useQuery(sessionWorkspaceFilesQueryOptions(sessionId, t("files.error.loadWorkspace")));
 	const files = filesQuery.data?.files ?? emptyFiles;
 	const changedFiles = useMemo(() => files.filter(isChangedWorkspaceFile), [files]);
-	const changedCount = changedFiles.length;
 
 	useEffect(() => {
 		initializedExpansionFor.current = null;
@@ -169,15 +167,6 @@ export function SessionFilesView({
 						value={filter}
 					/>
 				</label>
-				{changedCount > 0 ? (
-					<Badge
-						aria-label={t("files.changedCount", { count: changedCount })}
-						className="mx-1 h-5 shrink-0"
-						title={t("files.changedCount", { count: changedCount })}
-					>
-						{changedCount}
-					</Badge>
-				) : null}
 				<Button
 					aria-label={expandedVisibleCount > 0 ? t("files.collapseAll") : t("files.expandAll")}
 					className="shrink-0"
@@ -196,7 +185,7 @@ export function SessionFilesView({
 				<Button
 					aria-label={split ? t("files.unifiedDiff") : t("files.splitDiff")}
 					aria-pressed={split}
-					className={cn("shrink-0", split && "text-accent")}
+					className={cn("shrink-0 text-foreground", split && "bg-interactive-active")}
 					onClick={() => setSplit((current) => !current)}
 					size="icon-sm"
 					type="button"
