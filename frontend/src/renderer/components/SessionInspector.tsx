@@ -1146,8 +1146,12 @@ function ReviewPanel({
 					{apiErrorMessage(error, t("inspector.reviewRequestFailed"))}
 				</p>
 			) : null}
+			{/* Neutral, not success: a notice is the trigger declining to run and
+			    saying why, so nothing has succeeded. Green reads as "the review ran"
+			    at a glance, and DESIGN.md reserves it for the success/mergeable
+			    signal. The error variant above keeps red for actual failures. */}
 			{notice ? (
-				<p className="m-0 rounded-md border border-success/28 bg-success/8 px-2.5 py-2 text-sm-md leading-normal text-success">
+				<p className="m-0 rounded-md border border-border bg-raised px-2.5 py-2 text-sm-md leading-normal text-muted-foreground">
 					{notice}
 				</p>
 			) : null}
