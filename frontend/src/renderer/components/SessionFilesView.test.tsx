@@ -180,7 +180,6 @@ describe("SessionFilesView", () => {
 		await screen.findByRole("button", { name: "Collapse src/App.tsx" });
 		expect(screen.queryByRole("button", { name: /README\.md/ })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Download src/App.tsx" })).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Copy path for src/App.tsx" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Diff layout" })).not.toBeInTheDocument();
 		expect(screen.queryByText("Stacked")).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Refresh files" })).not.toBeInTheDocument();

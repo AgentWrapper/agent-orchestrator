@@ -12,13 +12,11 @@ import { useQuery } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import {
-	Check,
 	ChevronDown,
 	ChevronRight,
 	ChevronsDownUp,
 	ChevronsUpDown,
 	Columns2,
-	Copy,
 	Maximize2,
 	Minimize2,
 	Search,
@@ -334,7 +332,6 @@ function ReviewFileCard({
 					className="gap-2 px-3 py-1.5"
 					data-file-toggle=""
 					headerClassName="min-h-10 hover:bg-interactive-hover/50 data-[state=open]:bg-interactive-active/45"
-					trailing={<CopyPathButton path={file.path} />}
 				>
 					{expanded ? (
 						<ChevronDown className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
@@ -365,31 +362,6 @@ function ReviewFileCard({
 				</AccordionContent>
 			</li>
 		</AccordionItem>
-	);
-}
-
-function CopyPathButton({ path }: { path: string }) {
-	const { t } = useTranslation();
-	const [copied, setCopied] = useState(false);
-	return (
-		<Button
-			aria-label={copied ? t("files.pathCopied") : t("files.copyPath", { path })}
-			className="mr-1.5 shrink-0 opacity-0 transition-opacity focus-visible:opacity-100 group-hover/row:opacity-100"
-			onClick={() => {
-				void navigator.clipboard?.writeText(path);
-				setCopied(true);
-				setTimeout(() => setCopied(false), 1200);
-			}}
-			size="icon-sm"
-			type="button"
-			variant="ghost"
-		>
-			{copied ? (
-				<Check className="size-icon-sm text-success" aria-hidden="true" />
-			) : (
-				<Copy className="size-icon-sm" aria-hidden="true" />
-			)}
-		</Button>
 	);
 }
 
