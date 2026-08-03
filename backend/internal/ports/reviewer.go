@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -39,6 +40,27 @@ type TerminalOneShotReviewer interface {
 	PrepareTerminalRequest(path string, tasks []ReviewTask) (ReviewCommandSpec, error)
 	TerminalResultPath(requestPath string) string
 	ParseTerminalResult(output []byte) (TerminalReviewResult, error)
+}
+
+// TerminalReviewRequestReader is an optional capability for durable
+// output-only reviewers. It lets the launcher recover an AO-owned request
+// after a daemon restart without coupling the generic review package to a
+// reviewer's private JSON schema.
+type TerminalReviewRequestReader interface {
+	ReadTerminalRequest(path string) (TerminalReviewRequest, error)
+}
+
+// TerminalReviewRequest is the normalized subset of a reviewer's private
+// request file needed for restart recovery.
+type TerminalReviewRequest struct {
+	Version    int
+	WorkerID   domain.SessionID
+	BatchID    string
+	Harness    domain.ReviewerHarness
+	ResultPath string
+	CreatedAt  time.Time
+	DeadlineAt time.Time
+	Tasks      []ReviewTask
 }
 
 // ReviewResult is the reviewer-neutral result of a one-shot review.

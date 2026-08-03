@@ -710,7 +710,12 @@ describe("SessionInspector reviews tab", () => {
 				params: { path: { sessionId: "sess-1" } },
 			}),
 		);
-		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-pane", harness: "codex" });
+		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({
+			kind: "reviewer",
+			handleId: "reviewer-pane",
+			harness: "codex",
+			interaction: "interactive",
+		});
 	});
 
 	it("opens the display-only terminal for the Greptile reviewer", async () => {
@@ -742,7 +747,48 @@ describe("SessionInspector reviews tab", () => {
 		await userEvent.click(await screen.findByRole("button", { name: /run review/i }));
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
 
-		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-job", harness: "greptile" });
+		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({
+			kind: "reviewer",
+			handleId: "reviewer-job",
+			harness: "greptile",
+			interaction: "output-only",
+		});
+	});
+
+	it("refreshes the persisted failed row when Greptile preflight returns an error", async () => {
+		let reviewCalls = 0;
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/sessions/{sessionId}/reviews") {
+				reviewCalls += 1;
+				return {
+					data: {
+						reviewerHandleId: "",
+						reviews:
+							reviewCalls > 1
+								? [{ ...reviewState(3, "needs_review"), latestRun: { ...failedReview, harness: "greptile" } }]
+								: [reviewState(3, "needs_review")],
+					},
+				};
+			}
+			if (path === "/api/v1/projects/{id}") {
+				return {
+					data: {
+						status: "ok",
+						project: { id: "ws-1", kind: "git", name: "my-app", path: "/repo", repo: "my-app", defaultBranch: "main", config: { reviewers: [{ harness: "greptile" }] } },
+					},
+				};
+			}
+			return { data: undefined };
+		});
+		postMock.mockResolvedValueOnce({ error: new Error("Greptile CLI is not installed"), response: { status: 422 } });
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+		await userEvent.click(await screen.findByRole("button", { name: /run review/i }));
+
+		await waitFor(() => expect(reviewCalls).toBeGreaterThan(1));
+		expect(await screen.findByText("Greptile CLI is not installed")).toBeInTheDocument();
+		expect(await screen.findByText("reviewer crashed")).toBeInTheDocument();
 	});
 
 	it("shows claude-code as the default reviewer before a run exists", async () => {
@@ -953,6 +999,23 @@ describe("SessionInspector reviews tab", () => {
 		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
 		expect(screen.queryByText("review session")).not.toBeInTheDocument();
 		expect(screen.getAllByText("Changes requested")).not.toHaveLength(0);
+	});
+
+	it("labels Greptile as a non-interactive one-shot reviewer and offers output", async () => {
+		mockCommonGets([], "reviewer-job", [
+			{
+				...reviewState(3, "running"),
+				latestRun: { ...approvedReview, harness: "greptile", status: "running", verdict: "", body: "" },
+			},
+		]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+
+		expect(await screen.findByText("Greptile CLI")).toBeInTheDocument();
+		expect(screen.getByText("Non-interactive · one-shot")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "View output" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Open terminal" })).not.toBeInTheDocument();
 	});
 
 	it("omits pull request review summaries from the Reviews tab", async () => {

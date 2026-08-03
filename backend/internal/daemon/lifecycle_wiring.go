@@ -212,6 +212,17 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 	completionHandler := func(resultCtx context.Context, workerID domain.SessionID, completions []reviewcore.ReviewCompletion) {
 		submitted := make([]reviewsvc.SubmittedReview, 0, len(completions))
 		for _, completion := range completions {
+			// Recovery can encounter a sidecar more than once, and a late
+			// sidecar from an older batch must never be published against a new
+			// run. Only still-running rows enter the normal result path.
+			run, found, lookupErr := store.GetReviewRun(resultCtx, completion.RunID)
+			if lookupErr != nil {
+				log.Error("look up one-shot reviewer run", "worker", workerID, "run", completion.RunID, "error", lookupErr)
+				continue
+			}
+			if !found || run.SessionID != workerID || run.Status != domain.ReviewRunRunning {
+				continue
+			}
 			if completion.Err != nil {
 				if _, updateErr := store.UpdateReviewRunResult(resultCtx, completion.RunID, domain.ReviewRunFailed, domain.VerdictNone, completion.Err.Error(), ""); updateErr != nil {
 					log.Error("record one-shot reviewer failure", "worker", workerID, "run", completion.RunID, "error", updateErr)
@@ -250,21 +261,49 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 			log.Error("record one-shot reviewer results", "worker", workerID, "error", submitErr)
 		}
 	}
+	launcher := reviewcore.NewLauncher(
+		reviewers,
+		runtime,
+		cfg.DataDir,
+		reviewcore.WithLauncherContext(ctx),
+		reviewcore.WithCompletionHandler(completionHandler),
+		reviewcore.WithTerminalReviewConsumed(func(checkCtx context.Context, workerID domain.SessionID, runIDs []string) bool {
+			for _, runID := range runIDs {
+				run, found, lookupErr := store.GetReviewRun(checkCtx, runID)
+				if lookupErr != nil || !found || run.SessionID != workerID || run.Status == domain.ReviewRunRunning {
+					return false
+				}
+			}
+			return len(runIDs) > 0
+		}),
+		reviewcore.WithTerminalReviewActive(func(checkCtx context.Context, workerID domain.SessionID, runIDs []string) (bool, error) {
+			active := false
+			for _, runID := range runIDs {
+				run, found, lookupErr := store.GetReviewRun(checkCtx, runID)
+				if lookupErr != nil {
+					return false, lookupErr
+				}
+				if found && run.SessionID == workerID && run.Status == domain.ReviewRunRunning {
+					active = true
+				}
+			}
+			return active, nil
+		}),
+	)
 	reviewEngine := reviewcore.New(reviewcore.Deps{
 		Store:      store,
 		Sessions:   store,
 		PRs:        store,
 		Projects:   store,
 		Workspaces: store,
-		Launcher: reviewcore.NewLauncher(
-			reviewers,
-			runtime,
-			cfg.DataDir,
-			reviewcore.WithLauncherContext(ctx),
-			reviewcore.WithCompletionHandler(completionHandler),
-		),
+		Launcher:   launcher,
 	})
 	reviewSvc = reviewsvc.New(reviewEngine, store, reviewsvc.WithLifecycleReducer(lcm))
+	if recoverer, ok := launcher.(reviewcore.TerminalReviewRecoverer); ok {
+		if recoverErr := recoverer.RecoverTerminalReviews(ctx); recoverErr != nil {
+			log.Warn("recover Greptile reviewer terminals", "error", recoverErr)
+		}
+	}
 	return sessionSvc, reviewSvc, mgr, nil
 }
 

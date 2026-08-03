@@ -3,7 +3,9 @@ package greptile
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -110,6 +112,74 @@ func TestPrepareTerminalRequestWritesDisplayOnlyCommand(t *testing.T) {
 	}
 	if request.ResultPath != TerminalResultPath(path) || len(request.Tasks) != 1 || request.Tasks[0].TargetBranch != "main" {
 		t.Fatalf("request = %+v", request)
+	}
+	if _, err := os.Stat(TerminalResultPath(path)); err != nil {
+		t.Fatalf("initial result sidecar: %v", err)
+	}
+	recovered, err := New().ReadTerminalRequest(path)
+	if err != nil {
+		t.Fatalf("ReadTerminalRequest: %v", err)
+	}
+	if recovered.Version != terminalRequestVersion || recovered.WorkerID != "" || recovered.BatchID != "" || recovered.Harness != domain.ReviewerGreptile || recovered.DeadlineAt.IsZero() || len(recovered.Tasks) != 1 || recovered.Tasks[0].RunID != "run-1" {
+		t.Fatalf("recovered request = %+v", recovered)
+	}
+}
+
+func TestPrepareTerminalRequestRejectsDurablePathReuse(t *testing.T) {
+	dataDir := t.TempDir()
+	path := filepath.Join(dataDir, "reviews", "worker-1", "terminal", "batch-1", "run-1.json")
+	task := ports.ReviewTask{RunID: "run-1", PRURL: "https://github.com/acme/repo/pull/4", TargetSHA: "sha-1", WorkspacePath: t.TempDir()}
+	if _, err := New().PrepareTerminalRequest(path, []ports.ReviewTask{task}); err != nil {
+		t.Fatalf("initial PrepareTerminalRequest: %v", err)
+	}
+	reused := task
+	reused.RunID = "run-2"
+	if _, err := New().PrepareTerminalRequest(path, []ports.ReviewTask{reused}); err == nil || !strings.Contains(err.Error(), "task list does not match") {
+		t.Fatalf("reused durable request error = %v, want task identity mismatch", err)
+	}
+}
+
+func TestCommandFailureClassifiesMissingAuthentication(t *testing.T) {
+	err := commandFailure(errors.New("exit status 1"), "error: Not signed in. Run `greptile login`.")
+	if got, want := err.Error(), "Greptile CLI is not authenticated. Run greptile login and retry."; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+func TestCommandFailureClassifiesMissingBinary(t *testing.T) {
+	err := commandFailure(exec.ErrNotFound, "")
+	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
+		t.Fatalf("error = %v, want ErrAgentBinaryNotFound", err)
+	}
+	if !strings.Contains(err.Error(), "Install it") {
+		t.Fatalf("error = %q, want install guidance", err)
+	}
+}
+
+func TestCommandFailureBoundsAndRedactsDiagnostic(t *testing.T) {
+	diagnostic := "GREPTILE_API_KEY=super-secret " + strings.Repeat("x", terminalStderrLimit+100)
+	err := commandFailure(errors.New("exit status 1"), diagnostic)
+	if strings.Contains(err.Error(), "super-secret") {
+		t.Fatalf("error leaked credential: %q", err)
+	}
+	if len(err.Error()) > terminalStderrLimit+256 {
+		t.Fatalf("error length = %d, want bounded", len(err.Error()))
+	}
+}
+
+func TestTerminalSummaryTruthfullyReportsOutcomes(t *testing.T) {
+	cases := []struct {
+		succeeded, failed, total int
+		want                     string
+	}{
+		{2, 0, 2, "Greptile review finished. AO will process the result and attempt to post any findings to GitHub."},
+		{1, 1, 2, "Greptile review finished with 1 of 2 reviews failed. See the errors above."},
+		{0, 2, 2, "Greptile review failed. No review result was posted."},
+	}
+	for _, tc := range cases {
+		if got := terminalSummary(tc.succeeded, tc.failed, tc.total); got != tc.want {
+			t.Errorf("terminalSummary(%d,%d,%d) = %q, want %q", tc.succeeded, tc.failed, tc.total, got, tc.want)
+		}
 	}
 }
 

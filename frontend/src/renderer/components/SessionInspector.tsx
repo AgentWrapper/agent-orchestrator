@@ -21,6 +21,7 @@ import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSession
 import { clearTerminateSessionState, useTerminateSession } from "../hooks/useTerminateSession";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
+import { reviewerTerminalInteraction, type ReviewerTerminalTarget } from "../types/terminal";
 import { canonicalTrackerIssueId, findProjectOrchestrator, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
@@ -39,7 +40,7 @@ import { Switch } from "./ui/switch";
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
-type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
+type OpenReviewerTerminal = (target: ReviewerTerminalTarget) => void;
 
 export type InspectorView = "summary" | "reviews" | "browser" | "files";
 
@@ -755,8 +756,18 @@ function ReviewsView({
 			}
 			if (data?.reviewerHandleId) {
 				const harness = started.latestRun.harness || "reviewer";
-				onOpenReviewerTerminal?.({ handleId: data.reviewerHandleId, harness });
+				onOpenReviewerTerminal?.({
+					kind: "reviewer",
+					handleId: data.reviewerHandleId,
+					harness,
+					interaction: reviewerTerminalInteraction(harness),
+				});
 			}
+		},
+		onError: () => {
+			// Trigger persists failed preflight runs before returning an API error.
+			// Refresh here so the review row does not remain stuck at "Not run".
+			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });
 		},
 	});
 	const cancelReview = useMutation({
@@ -955,7 +966,12 @@ function ReviewPanel({
 	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
 	const openReviewerTerminal = () => {
 		if (!terminalEnabled) return;
-		onOpenTerminal?.({ handleId: reviewerHandleId, harness });
+		onOpenTerminal?.({
+			kind: "reviewer",
+			handleId: reviewerHandleId,
+			harness,
+			interaction: reviewerTerminalInteraction(harness),
+		});
 	};
 	const runDisabled =
 		isTriggering ||
@@ -974,10 +990,15 @@ function ReviewPanel({
 					{notice}
 				</p>
 			) : null}
-			<p className={cn(inspectorEmptyClass, "inline-flex min-w-0 items-center gap-1.5")}>
+			<div className={cn(inspectorEmptyClass, "flex min-w-0 items-center gap-2")}>
 				<ReviewerHarnessIcon className="size-icon-sm shrink-0 text-passive" harness={harness} />
-				<span className="truncate font-mono font-medium text-foreground">{harness}</span>
-			</p>
+				<span className="truncate font-mono font-medium text-foreground">{reviewerDisplayName(harness)}</span>
+				{harness === "greptile" ? (
+					<span className="shrink-0 rounded-full border border-border px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-settings-muted">
+						Non-interactive · one-shot
+					</span>
+				) : null}
+			</div>
 			<div className="flex flex-col divide-y divide-border">
 				{openReviewStates.length === 0 ? (
 					<p className={cn(inspectorEmptyClass, "py-1")}>No open pull requests to review.</p>
@@ -1016,12 +1037,16 @@ function ReviewPanel({
 						variant="ghost"
 					>
 						<Terminal aria-hidden="true" />
-						Open terminal
+						{harness === "greptile" ? "View output" : "Open terminal"}
 					</Button>
 				) : null}
 			</div>
 		</div>
 	);
+}
+
+function reviewerDisplayName(harness: string): string {
+	return harness === "greptile" ? "Greptile CLI" : harness;
 }
 
 function aoReviewMeta(reviewState: PRReviewState): string {

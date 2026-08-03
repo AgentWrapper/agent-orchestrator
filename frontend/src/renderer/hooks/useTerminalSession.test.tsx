@@ -132,7 +132,15 @@ function createFakeTerminal(): FakeTerminal {
 	return terminal;
 }
 
-function setup({ daemonReady = true, attachedSession = session as WorkspaceSession | undefined } = {}) {
+function setup({
+	daemonReady = true,
+	attachedSession = session as WorkspaceSession | undefined,
+	inputPolicy = "interactive",
+}: {
+	daemonReady?: boolean;
+	attachedSession?: WorkspaceSession;
+	inputPolicy?: "interactive" | "output-only";
+} = {}) {
 	const muxes: FakeMux[] = [];
 	const createMux = () => {
 		const fake = createFakeMux();
@@ -145,7 +153,7 @@ function setup({ daemonReady = true, attachedSession = session as WorkspaceSessi
 		<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 	);
 	const view = renderHook(
-		({ daemonReady: ready }) => useTerminalSession(attachedSession, { daemonReady: ready, createMux }),
+		({ daemonReady: ready }) => useTerminalSession(attachedSession, { daemonReady: ready, createMux, inputPolicy }),
 		{ initialProps: { daemonReady }, wrapper },
 	);
 	const terminal = createFakeTerminal();
@@ -218,6 +226,22 @@ describe("useTerminalSession", () => {
 			["handle-1", "\x1b[1;5D"],
 			["handle-1", "\x1b[<64;1;1M"],
 		]);
+	});
+
+	it("blocks every output-only input source while preserving PTY resize", () => {
+		const { terminal, muxes } = setup({ inputPolicy: "output-only" });
+		act(() => muxes[0].emitOpened("handle-1"));
+
+		terminal.typeKeys("a");
+		terminal.paste("paste\r");
+		terminal.compose("é");
+		terminal.shortcut("\x1b[1;5D");
+		terminal.wheel("\x1b[<64;1;1M");
+		expect(muxes[0].inputs).toEqual([]);
+
+		terminal.emitResize(120, 40);
+		act(() => void vi.advanceTimersByTime(100));
+		expect(muxes[0].resizes).toContainEqual(["handle-1", 120, 40]);
 	});
 
 	it("collapses a drag's burst of grid changes into one trailing PTY resize, then re-asserts it", () => {

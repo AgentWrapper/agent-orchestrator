@@ -262,6 +262,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const { attach, state, error, replaySettled } = useTerminalSession(attachSession, {
 		daemonReady,
 		shellTerminalHandleId,
+		inputPolicy: terminalTarget?.kind === "reviewer" ? terminalTarget.interaction : "interactive",
 		onOutput: watchLinks ? handleOutput : undefined,
 	});
 	const handleId = shellTerminalHandleId ?? attachSession?.terminalHandleId;
@@ -404,6 +405,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 				<XtermTerminal
 					ariaLabel={terminalTarget?.kind === "shell" ? "Shell terminal" : "Session terminal"}
 					fontSize={fontSize}
+					inputPolicy={terminalTarget?.kind === "reviewer" ? terminalTarget.interaction : "interactive"}
 					onError={handleInitError}
 					onLinkOpen={handleLinkOpen}
 					onReady={handleReady}

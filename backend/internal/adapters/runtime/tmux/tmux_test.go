@@ -171,6 +171,9 @@ func TestCommandBuilders(t *testing.T) {
 		[]string{"respawn-pane", "-k", "-t", "sess-1:0.0", "-c", "/tmp/ws", "/bin/sh", "-c", "echo hi"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("respawnPaneArgs = %#v, want %#v", got, want)
 	}
+	if got, want := setRemainOnExitArgs("sess-1"), []string{"set-window-option", "-t", "sess-1", "remain-on-exit", "on"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("setRemainOnExitArgs = %#v, want %#v", got, want)
+	}
 	// set-option uses pane-targeting (no = prefix).
 	if got, want := setStatusOffArgs("sess-1"), []string{"set-option", "-t", "sess-1", "status", "off"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("setStatusOffArgs = %#v, want %#v", got, want)
@@ -180,6 +183,9 @@ func TestCommandBuilders(t *testing.T) {
 	}
 	if got, want := paneCurrentPathArgs("sess-1"), []string{"display-message", "-p", "-t", "sess-1", "#{pane_current_path}"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("paneCurrentPathArgs = %#v, want %#v", got, want)
+	}
+	if got, want := paneDeadArgs("sess-1"), []string{"display-message", "-p", "-t", "sess-1:0.0", "#{pane_dead}"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("paneDeadArgs = %#v, want %#v", got, want)
 	}
 	if got, want := setMouseOnArgs("sess-1"), []string{"set-option", "-t", "sess-1", "mouse", "on"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("setMouseOnArgs = %#v, want %#v", got, want)
@@ -359,6 +365,54 @@ func TestCreateLaunchCommandContainsKeepAliveShell(t *testing.T) {
 	}
 	if !strings.Contains(launchCmd, "'myagent'") {
 		t.Fatalf("launch command missing quoted argv: %q", launchCmd)
+	}
+}
+
+func TestCreateOutputOnlyRetainsDeadPaneWithoutShell(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	// placeholder new-session, remain-on-exit, real respawn, cwd verification,
+	// status, mouse, window-size, and liveness probe.
+	fr.outputs = make([][]byte, 8)
+	fr.outputs[3] = []byte("/tmp/ws\n")
+
+	_, err := r.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:        "sess-1",
+		WorkspacePath:    "/tmp/ws",
+		Argv:             []string{"greptile", "review", "--json"},
+		TerminalBehavior: ports.TerminalOutputOnly,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(fr.calls) != 8 {
+		t.Fatalf("calls = %d, want 8", len(fr.calls))
+	}
+	if got, want := fr.calls[0].args[0], "new-session"; got != want {
+		t.Fatalf("call[0] = %q, want %q", got, want)
+	}
+	if got, want := fr.calls[1].args, setRemainOnExitArgs("sess-1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("call[1] = %#v, want %#v", got, want)
+	}
+	if got, want := fr.calls[2].args[0], "respawn-pane"; got != want {
+		t.Fatalf("call[2] = %q, want %q", got, want)
+	}
+	launchCmd := fr.calls[2].args[len(fr.calls[2].args)-1]
+	if strings.Contains(launchCmd, `exec "${SHELL:-/bin/sh}" -i`) {
+		t.Fatalf("output-only launch command opens a shell: %q", launchCmd)
+	}
+}
+
+func TestBuildLaunchCommandOutputOnlyOmitsKeepAliveShell(t *testing.T) {
+	launchCmd := buildLaunchCommand(ports.RuntimeConfig{
+		WorkspacePath:    "/tmp/ws",
+		Argv:             []string{"greptile", "review", "--json"},
+		TerminalBehavior: ports.TerminalOutputOnly,
+	})
+	if strings.Contains(launchCmd, `exec "${SHELL:-/bin/sh}" -i`) {
+		t.Fatalf("output-only launch command opens a shell: %q", launchCmd)
+	}
+	if !strings.Contains(launchCmd, "'greptile' 'review' '--json'") {
+		t.Fatalf("launch command missing argv: %q", launchCmd)
 	}
 }
 
@@ -878,6 +932,27 @@ func TestIsAliveReportsOtherExitFailuresAsProbeErrors(t *testing.T) {
 	}
 	if alive {
 		t.Fatal("alive = true on probe failure")
+	}
+}
+
+func TestIsProcessAliveDistinguishesRetainedDeadPane(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{[]byte("1\n")}
+	alive, err := r.IsProcessAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
+	if err != nil {
+		t.Fatalf("IsProcessAlive: %v", err)
+	}
+	if alive {
+		t.Fatal("alive = true, want retained dead pane to report false")
+	}
+	if got, want := fr.calls[0].args, paneDeadArgs("sess-1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("pane-dead args = %#v, want %#v", got, want)
+	}
+
+	fr.outputs = [][]byte{[]byte("0\n")}
+	alive, err = r.IsProcessAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
+	if err != nil || !alive {
+		t.Fatalf("live pane = (%v, %v), want (true, nil)", alive, err)
 	}
 }
 

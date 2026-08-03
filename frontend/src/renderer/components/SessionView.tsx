@@ -423,8 +423,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									}
 									isInspectorVisible={isInspectorOpen}
 									onOpenFiles={handleOpenFiles}
-									onOpenReviewerTerminal={({ handleId, harness }) =>
-										setTerminalTarget({ kind: "reviewer", handleId, harness })
+									onOpenReviewerTerminal={(target) =>
+										setTerminalTarget(target)
 									}
 									onToggleBrowserPopOut={handleToggleBrowserPopOut}
 									onViewChange={(next: InspectorView) => setInspectorViewForSession(sessionId, next)}

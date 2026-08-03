@@ -99,6 +99,7 @@ type fakeRuntime struct {
 	sentMsgs      []string
 	sentTo        string
 	alive         bool
+	aliveErr      error
 	interrupt     string
 	interrupts    int
 	destroyed     string
@@ -132,7 +133,7 @@ func (f *fakeRuntime) Destroy(_ context.Context, handle ports.RuntimeHandle) err
 	return nil
 }
 func (f *fakeRuntime) IsAlive(_ context.Context, _ ports.RuntimeHandle) (bool, error) {
-	return f.alive, nil
+	return f.alive, f.aliveErr
 }
 func (f *fakeRuntime) Interrupt(_ context.Context, handle ports.RuntimeHandle) error {
 	f.interrupt = handle.ID
@@ -283,6 +284,9 @@ func TestLauncherRunsGreptileThroughDisplayTerminal(t *testing.T) {
 	}
 	if handle != "review-mer-1" || len(rt.createCfg.Argv) != 3 || !filepath.IsAbs(rt.createCfg.Argv[0]) || rt.createCfg.Argv[1] != "review-terminal" {
 		t.Fatalf("terminal config = %+v", rt.createCfg)
+	}
+	if rt.createCfg.TerminalBehavior != ports.TerminalOutputOnly {
+		t.Fatalf("terminal behavior = %q, want output-only", rt.createCfg.TerminalBehavior)
 	}
 	select {
 	case completions := <-completed:
@@ -507,8 +511,259 @@ func TestLauncherPreflightEmptyArgv(t *testing.T) {
 func TestLauncherPreflightBinaryNotFound(t *testing.T) {
 	reviewer := &fakeReviewerForPreflight{Argv: []string{"this-binary-does-not-exist-12345"}}
 	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, &fakeRuntime{}, "")
-	if err := l.Preflight(context.Background(), domain.ReviewerClaudeCode, "/ws/mer-1"); err == nil || !strings.Contains(err.Error(), "not found") {
+	err := l.Preflight(context.Background(), domain.ReviewerClaudeCode, "/ws/mer-1")
+	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("err = %v, want 'not found'", err)
+	}
+	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
+		t.Fatalf("err = %v, want ErrAgentBinaryNotFound", err)
+	}
+}
+
+func TestLauncherPreflightGreptileMissingIsActionable(t *testing.T) {
+	reviewer := &fakeReviewerForPreflight{Argv: []string{"greptile-binary-does-not-exist-12345"}}
+	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, &fakeRuntime{}, "")
+	err := l.Preflight(context.Background(), domain.ReviewerGreptile, "/ws/mer-1")
+	if err == nil || !errors.Is(err, ports.ErrAgentBinaryNotFound) {
+		t.Fatalf("err = %v, want missing-binary sentinel", err)
+	}
+	for _, want := range []string{"Greptile CLI is not installed", "greptile login", "retry"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %q, want %q", err, want)
+		}
+	}
+}
+
+func writeRecoveryRequest(t *testing.T, dataDir string) (ports.ReviewTask, string) {
+	t.Helper()
+	task := ports.ReviewTask{RunID: "run-recover", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha-recover", TargetBranch: "main", WorkspacePath: "/ws/repo"}
+	spec := LaunchSpec{RunID: task.RunID, BatchID: "batch-recover", WorkerID: "mer-1", Harness: domain.ReviewerGreptile}
+	path, err := terminalRequestPath(dataDir, spec, 1)
+	if err != nil {
+		t.Fatalf("terminalRequestPath: %v", err)
+	}
+	if _, err := greptile.New().PrepareTerminalRequest(path, []ports.ReviewTask{task}); err != nil {
+		t.Fatalf("PrepareTerminalRequest: %v", err)
+	}
+	return task, path
+}
+
+func TestTerminalRequestPathUsesDurableBatchAndRunIdentity(t *testing.T) {
+	first, err := terminalRequestPath("C:\\ao-data", LaunchSpec{RunID: "run-1", BatchID: "batch-1", WorkerID: "worker-1"}, 99)
+	if err != nil {
+		t.Fatalf("first path: %v", err)
+	}
+	second, err := terminalRequestPath("C:\\ao-data", LaunchSpec{RunID: "run-2", BatchID: "batch-1", WorkerID: "worker-1"}, 1)
+	if err != nil {
+		t.Fatalf("second path: %v", err)
+	}
+	if first == second || !strings.Contains(first, filepath.Join("batch-1", "run-1.json")) || !strings.Contains(second, filepath.Join("batch-1", "run-2.json")) {
+		t.Fatalf("paths = %q, %q", first, second)
+	}
+	if _, err := terminalRequestPath("C:\\ao-data", LaunchSpec{RunID: "../old", BatchID: "batch-1", WorkerID: "worker-1"}, 1); err == nil {
+		t.Fatal("unsafe run id was accepted")
+	}
+}
+
+func TestLauncherRecoversCompleteGreptileSidecarOnce(t *testing.T) {
+	dataDir := t.TempDir()
+	task, path := writeRecoveryRequest(t, dataDir)
+	resultPath := greptile.TerminalResultPath(path)
+	if err := os.WriteFile(resultPath, []byte(`{"complete":true,"results":[{"runId":"run-recover","prUrl":"https://github.com/o/r/pull/1","targetSha":"sha-recover","verdict":"approved","body":"recovered"}]}`), 0o600); err != nil {
+		t.Fatalf("write result: %v", err)
+	}
+	completed := make(chan []ReviewCompletion, 2)
+	launcher := NewLauncher(fakeReviewerResolver{reviewer: greptile.New(), ok: true}, &fakeTerminalRuntime{}, dataDir, WithCompletionHandler(func(_ context.Context, _ domain.SessionID, completions []ReviewCompletion) {
+		completed <- completions
+	})).(TerminalReviewRecoverer)
+	if err := launcher.RecoverTerminalReviews(context.Background()); err != nil {
+		t.Fatalf("RecoverTerminalReviews: %v", err)
+	}
+	select {
+	case completions := <-completed:
+		if len(completions) != 1 || completions[0].RunID != task.RunID || completions[0].Body != "recovered" {
+			t.Fatalf("completions = %+v", completions)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for recovered completion")
+	}
+	// A second explicit probe in the same daemon must not feed the same
+	// sidecar to the completion handler twice.
+	if err := launcher.RecoverTerminalReviews(context.Background()); err != nil {
+		t.Fatalf("second RecoverTerminalReviews: %v", err)
+	}
+	select {
+	case duplicate := <-completed:
+		t.Fatalf("duplicate completion = %+v", duplicate)
+	case <-time.After(150 * time.Millisecond):
+	}
+}
+
+func TestLauncherRecoversLiveGreptileTerminalAndResumesPolling(t *testing.T) {
+	dataDir := t.TempDir()
+	_, path := writeRecoveryRequest(t, dataDir)
+	rt := &fakeTerminalRuntime{}
+	rt.alive = true
+	completed := make(chan []ReviewCompletion, 1)
+	launcher := NewLauncher(fakeReviewerResolver{reviewer: greptile.New(), ok: true}, rt, dataDir, WithCompletionHandler(func(_ context.Context, _ domain.SessionID, completions []ReviewCompletion) {
+		completed <- completions
+	})).(TerminalReviewRecoverer)
+	if err := launcher.RecoverTerminalReviews(context.Background()); err != nil {
+		t.Fatalf("RecoverTerminalReviews: %v", err)
+	}
+	if err := os.WriteFile(greptile.TerminalResultPath(path), []byte(`{"complete":true,"results":[{"runId":"run-recover","prUrl":"https://github.com/o/r/pull/1","targetSha":"sha-recover","verdict":"approved","body":"resumed"}]}`), 0o600); err != nil {
+		t.Fatalf("write result: %v", err)
+	}
+	select {
+	case completions := <-completed:
+		if len(completions) != 1 || completions[0].Body != "resumed" {
+			t.Fatalf("completions = %+v", completions)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for resumed completion")
+	}
+}
+
+func TestLauncherRecoverySkipsInactiveStaleRequest(t *testing.T) {
+	dataDir := t.TempDir()
+	_, _ = writeRecoveryRequest(t, dataDir)
+	rt := &fakeTerminalRuntime{}
+	launcher := NewLauncher(
+		fakeReviewerResolver{reviewer: greptile.New(), ok: true},
+		rt,
+		dataDir,
+		WithTerminalReviewActive(func(context.Context, domain.SessionID, []string) (bool, error) { return false, nil }),
+	).(*agentLauncher)
+	if err := launcher.RecoverTerminalReviews(context.Background()); err != nil {
+		t.Fatalf("RecoverTerminalReviews: %v", err)
+	}
+	if alive, handled := launcher.oneShotAlive("review-mer-1"); handled || alive {
+		t.Fatalf("stale request registered a watcher: alive=%v handled=%v", alive, handled)
+	}
+}
+
+func TestLauncherRecoveryFailsWhenGreptileRuntimeIsGone(t *testing.T) {
+	dataDir := t.TempDir()
+	task, _ := writeRecoveryRequest(t, dataDir)
+	completed := make(chan []ReviewCompletion, 1)
+	launcher := NewLauncher(fakeReviewerResolver{reviewer: greptile.New(), ok: true}, &fakeTerminalRuntime{}, dataDir, WithCompletionHandler(func(_ context.Context, _ domain.SessionID, completions []ReviewCompletion) {
+		completed <- completions
+	})).(TerminalReviewRecoverer)
+	if err := launcher.RecoverTerminalReviews(context.Background()); err != nil {
+		t.Fatalf("RecoverTerminalReviews: %v", err)
+	}
+	select {
+	case completions := <-completed:
+		if len(completions) != 1 || completions[0].RunID != task.RunID || !strings.Contains(completions[0].Err.Error(), "ended before publishing") {
+			t.Fatalf("completions = %+v", completions)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for dead-runtime failure")
+	}
+}
+
+func TestLauncherRecoveryLeavesTransientLivenessProbeUnresolved(t *testing.T) {
+	dataDir := t.TempDir()
+	_, _ = writeRecoveryRequest(t, dataDir)
+	rt := &fakeTerminalRuntime{}
+	rt.aliveErr = errors.New("runtime probe unavailable")
+	completed := make(chan []ReviewCompletion, 1)
+	launcher := NewLauncher(fakeReviewerResolver{reviewer: greptile.New(), ok: true}, rt, dataDir, WithCompletionHandler(func(_ context.Context, _ domain.SessionID, completions []ReviewCompletion) {
+		completed <- completions
+	})).(TerminalReviewRecoverer)
+	if err := launcher.RecoverTerminalReviews(context.Background()); err == nil {
+		t.Fatal("expected transient probe error")
+	}
+	select {
+	case completion := <-completed:
+		t.Fatalf("transient probe produced completion = %+v", completion)
+	case <-time.After(150 * time.Millisecond):
+	}
+}
+
+func TestLauncherCancelGreptileAfterRestartDestroysTerminal(t *testing.T) {
+	rt := &fakeTerminalRuntime{}
+	l := NewLauncher(fakeReviewerResolver{reviewer: greptile.New(), ok: true}, rt, t.TempDir())
+	if err := l.Cancel(context.Background(), "review-mer-1", domain.ReviewerGreptile); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if rt.destroyed != "review-mer-1" {
+		t.Fatalf("destroyed handle = %q, want review-mer-1", rt.destroyed)
+	}
+	if rt.interrupts != 0 {
+		t.Fatalf("runtime interrupts = %d, want 0", rt.interrupts)
+	}
+}
+
+func TestRunTerminalBatchHonorsPersistedDeadline(t *testing.T) {
+	task := ports.ReviewTask{RunID: "run-timeout", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha-timeout", WorkspacePath: "/ws/repo"}
+	completed := make(chan []ReviewCompletion, 1)
+	l := NewLauncher(fakeReviewerResolver{reviewer: greptile.New(), ok: true}, &fakeTerminalRuntime{}, t.TempDir(), WithCompletionHandler(func(_ context.Context, _ domain.SessionID, completions []ReviewCompletion) {
+		completed <- completions
+	})).(*agentLauncher)
+	l.runTerminalBatch(context.Background(), "review-mer-1", 1, LaunchSpec{WorkerID: "mer-1"}, greptile.New(), filepath.Join(t.TempDir(), "missing.result.json"), []ports.ReviewTask{task}, time.Now().Add(25*time.Millisecond))
+	select {
+	case completions := <-completed:
+		if len(completions) != 1 || !strings.Contains(completions[0].Err.Error(), "did not publish") {
+			t.Fatalf("completions = %+v", completions)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for persisted deadline")
+	}
+}
+
+func TestTerminalCompletionsRejectMismatchedPRIdentity(t *testing.T) {
+	task := ports.ReviewTask{RunID: "run-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha-1"}
+	completions := terminalCompletions([]ports.ReviewTask{task}, ports.TerminalReviewResult{
+		Complete: true,
+		Results:  []ports.TerminalReviewItem{{RunID: "run-1", PRURL: "https://github.com/o/r/pull/2", TargetSHA: "sha-1", Verdict: domain.VerdictApproved}},
+	})
+	if len(completions) != 1 || completions[0].Err == nil || !strings.Contains(completions[0].Err.Error(), "PR does not match") {
+		t.Fatalf("completions = %+v, want PR identity failure", completions)
+	}
+}
+
+func TestLauncherCleansOnlyOldConsumedTerminalPairs(t *testing.T) {
+	dataDir := t.TempDir()
+	task, path := writeRecoveryRequest(t, dataDir)
+	resultPath := greptile.TerminalResultPath(path)
+	old := time.Now().Add(-terminalReviewRetention - time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatalf("age request: %v", err)
+	}
+	if err := os.Chtimes(resultPath, old, old); err != nil {
+		t.Fatalf("age result: %v", err)
+	}
+	l := NewLauncher(fakeReviewerResolver{reviewer: greptile.New(), ok: true}, &fakeTerminalRuntime{}, dataDir, WithTerminalReviewConsumed(func(_ context.Context, _ domain.SessionID, runIDs []string) bool {
+		return len(runIDs) == 1 && runIDs[0] == task.RunID
+	})).(*agentLauncher)
+	if err := l.maybeCleanupTerminalReview(resultPath, "mer-1", []ports.ReviewTask{task}); err != nil {
+		t.Fatalf("maybeCleanupTerminalReview: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("request still exists, stat err = %v", err)
+	}
+	if _, err := os.Stat(resultPath); !os.IsNotExist(err) {
+		t.Fatalf("result still exists, stat err = %v", err)
+	}
+}
+
+func TestLauncherRetainsOldUnconsumedTerminalPair(t *testing.T) {
+	dataDir := t.TempDir()
+	task, path := writeRecoveryRequest(t, dataDir)
+	resultPath := greptile.TerminalResultPath(path)
+	old := time.Now().Add(-terminalReviewRetention - time.Hour)
+	_ = os.Chtimes(path, old, old)
+	_ = os.Chtimes(resultPath, old, old)
+	l := NewLauncher(fakeReviewerResolver{reviewer: greptile.New(), ok: true}, &fakeTerminalRuntime{}, dataDir, WithTerminalReviewConsumed(func(context.Context, domain.SessionID, []string) bool { return false })).(*agentLauncher)
+	if err := l.maybeCleanupTerminalReview(resultPath, "mer-1", []ports.ReviewTask{task}); err != nil {
+		t.Fatalf("maybeCleanupTerminalReview: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("unconsumed request was removed: %v", err)
+	}
+	if _, err := os.Stat(resultPath); err != nil {
+		t.Fatalf("unconsumed result was removed: %v", err)
 	}
 }
 
@@ -523,7 +778,11 @@ func TestLauncherPreflightSkipsEnvPrefix(t *testing.T) {
 func TestLauncherPreflightEnvPrefixWithMissingBinary(t *testing.T) {
 	reviewer := &fakeReviewerForPreflight{Argv: []string{"env", "KEY=val", "nonexistent-binary-999"}}
 	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, &fakeRuntime{}, "")
-	if err := l.Preflight(context.Background(), domain.ReviewerClaudeCode, "/ws/mer-1"); err == nil || !strings.Contains(err.Error(), "not found") {
+	err := l.Preflight(context.Background(), domain.ReviewerClaudeCode, "/ws/mer-1")
+	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("err = %v, want 'not found'", err)
+	}
+	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
+		t.Fatalf("err = %v, want ErrAgentBinaryNotFound", err)
 	}
 }

@@ -18,6 +18,7 @@ import { getApiBaseUrl } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
 import { createTerminalMux, muxUrlFromApiBase, type TerminalMux } from "../lib/terminal-mux";
 import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
+import type { ReviewerTerminalInteraction } from "../types/terminal";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
 
 /**
@@ -58,6 +59,8 @@ export type TerminalSessionState =
 export type UseTerminalSessionOptions = {
 	/** Gates auto-reattach: when false, a dropped socket waits instead of retrying. */
 	daemonReady: boolean;
+	/** Controls whether user-generated terminal input may reach the PTY. */
+	inputPolicy?: ReviewerTerminalInteraction;
 	/** Test seam: build the mux client. Defaults to a fresh socket against the current API base. */
 	createMux?: () => TerminalMux;
 	/**
@@ -464,6 +467,9 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		);
 		const input = terminal.onUserInput((data) => {
 			if (!isCurrentAttachment(generation, handle, mux) || !r.inputReady) {
+				return;
+			}
+			if (optionsRef.current.inputPolicy === "output-only") {
 				return;
 			}
 			// Input is accepted from `opened`, which lands before the replay — so a

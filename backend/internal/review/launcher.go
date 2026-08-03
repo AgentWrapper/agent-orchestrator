@@ -40,6 +40,13 @@ type Launcher interface {
 	Cancel(ctx context.Context, handleID string, harness domain.ReviewerHarness) error
 }
 
+// TerminalReviewRecoverer is an optional launcher capability used during
+// daemon startup. Keeping it separate from Launcher avoids forcing lightweight
+// test/future launcher implementations to persist terminal requests.
+type TerminalReviewRecoverer interface {
+	RecoverTerminalReviews(ctx context.Context) error
+}
+
 // LaunchSpec is the engine's request to (re)launch a reviewer for one pass.
 type LaunchSpec struct {
 	RunID         string
@@ -68,6 +75,17 @@ type ReviewCompletion struct {
 // CompletionHandler records results emitted by a one-shot reviewer.
 type CompletionHandler func(ctx context.Context, workerID domain.SessionID, completions []ReviewCompletion)
 
+// TerminalReviewConsumedChecker tells the launcher whether every run backed by
+// a terminal request is in a terminal persisted state. It is optional so the
+// generic launcher remains usable without a store.
+type TerminalReviewConsumedChecker func(ctx context.Context, workerID domain.SessionID, runIDs []string) bool
+
+// TerminalReviewActiveChecker reports whether at least one run referenced by
+// a durable terminal request is still running for the worker. Recovery uses it
+// before registering a watcher so an old incomplete request cannot replace the
+// watcher for a newer batch on the same stable terminal handle.
+type TerminalReviewActiveChecker func(ctx context.Context, workerID domain.SessionID, runIDs []string) (bool, error)
+
 // reviewerRuntime is the runtime surface the launcher needs: create a pane,
 // inject a message into a running pane, and probe liveness. The tmux runtime
 // satisfies it.
@@ -87,6 +105,14 @@ type reviewerTerminalRuntime interface {
 	GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error)
 }
 
+// reviewerTerminalProcessRuntime is an optional stronger liveness probe for
+// output-only terminals. A retained tmux/ConPTY host can outlive its command,
+// so session existence alone is not enough to decide whether recovery should
+// keep polling an incomplete sidecar.
+type reviewerTerminalProcessRuntime interface {
+	IsProcessAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
+}
+
 // agentLauncher resolves a reviewer adapter from the registry and drives the
 // runtime. The reviewer reuses the worker's worktree (a fresh session worktree
 // would branch off the default branch and so would not contain the PR changes).
@@ -96,11 +122,17 @@ type agentLauncher struct {
 	dataDir    string
 	rootCtx    context.Context
 	onComplete CompletionHandler
+	consumed   TerminalReviewConsumedChecker
+	active     TerminalReviewActiveChecker
 	execute    oneShotExecutor
 
 	jobsMu  sync.Mutex
 	jobs    map[string]oneShotJob
 	nextJob uint64
+	// recovered fences duplicate startup probes in one daemon process. Durable
+	// request paths remain the authority across a real restart; this map only
+	// makes an explicit second recovery call idempotent in the same process.
+	recovered map[string]struct{}
 }
 
 type preLaunchReviewer interface {
@@ -124,6 +156,20 @@ func WithCompletionHandler(handler CompletionHandler) LauncherOption {
 	return func(l *agentLauncher) { l.onComplete = handler }
 }
 
+// WithTerminalReviewConsumed enables bounded cleanup of old request/result
+// pairs after the normal completion handler has confirmed all referenced runs
+// are no longer running.
+func WithTerminalReviewConsumed(checker TerminalReviewConsumedChecker) LauncherOption {
+	return func(l *agentLauncher) { l.consumed = checker }
+}
+
+// WithTerminalReviewActive enables stale-request fencing during restart
+// recovery. It is optional so lightweight launcher users and tests retain the
+// generic behavior when no persistence layer is available.
+func WithTerminalReviewActive(checker TerminalReviewActiveChecker) LauncherOption {
+	return func(l *agentLauncher) { l.active = checker }
+}
+
 // NewLauncher builds the production reviewer launcher.
 func NewLauncher(reviewers ports.ReviewerResolver, runtime reviewerRuntime, dataDir string, opts ...LauncherOption) Launcher {
 	l := &agentLauncher{
@@ -132,6 +178,7 @@ func NewLauncher(reviewers ports.ReviewerResolver, runtime reviewerRuntime, data
 		dataDir:   dataDir,
 		rootCtx:   context.Background(),
 		jobs:      make(map[string]oneShotJob),
+		recovered: make(map[string]struct{}),
 		execute:   executeOneShot,
 	}
 	for _, opt := range opts {
@@ -170,7 +217,12 @@ func (l *agentLauncher) Preflight(ctx context.Context, harness domain.ReviewerHa
 		}
 	}
 	if _, err := exec.LookPath(bin); err != nil {
-		return fmt.Errorf("reviewer binary %q not found: %w", bin, err)
+		// Keep the executable name and the platform diagnostic while wrapping
+		// the typed port sentinel used by the service/controller mapping.
+		if harness == domain.ReviewerGreptile {
+			return fmt.Errorf("Greptile CLI is not installed (binary not found). Install it, then run greptile login and retry: %w", ports.ErrAgentBinaryNotFound)
+		}
+		return fmt.Errorf("reviewer binary %q not found: %v: %w", bin, err, ports.ErrAgentBinaryNotFound)
 	}
 	return nil
 }
@@ -302,6 +354,15 @@ func (l *agentLauncher) Notify(ctx context.Context, handleID string, spec Launch
 		return fmt.Errorf("no reviewer adapter for harness %q", spec.Harness)
 	}
 	if oneShot, ok := reviewer.(ports.OneShotReviewer); ok {
+		// A one-shot Notify is a fresh CLI process, not an input message to the
+		// existing pane. Re-run the binary preflight for terminal one-shots so a
+		// CLI removed between review passes fails before replacing the retained
+		// output pane.
+		if _, terminal := reviewer.(ports.TerminalOneShotReviewer); terminal {
+			if err := l.Preflight(ctx, spec.Harness, spec.WorkspacePath); err != nil {
+				return err
+			}
+		}
 		_, err := l.startOneShot(spec, oneShot)
 		return err
 	}
@@ -339,6 +400,13 @@ func (l *agentLauncher) Cancel(ctx context.Context, handleID string, harness dom
 	reviewer, ok := l.reviewers.Reviewer(harness)
 	if !ok {
 		return fmt.Errorf("no reviewer adapter for harness %q", harness)
+	}
+	// A daemon restart drops the in-memory one-shot job, but a recovered
+	// Greptile terminal still represents a local process/pane that must be
+	// destroyed on cancel. Do not fall back to an interrupt that would retain a
+	// dead pane for a one-shot reviewer.
+	if _, terminal := reviewer.(ports.TerminalOneShotReviewer); terminal {
+		return l.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID})
 	}
 	canceller, ok := reviewer.(ports.ReviewerCanceller)
 	if !ok {

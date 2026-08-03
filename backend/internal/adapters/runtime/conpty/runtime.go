@@ -162,6 +162,25 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 	return clientIsAlive(sess.addr)
 }
 
+// IsProcessAlive reports the child process state while retaining the host as a
+// valid output-only terminal after the child exits. IsAlive intentionally
+// answers host liveness for general terminal attachment; review recovery needs
+// this stronger signal to distinguish a completed/dead pane from a running CLI.
+func (r *Runtime) IsProcessAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error) {
+	sess := r.resolve(handle.ID)
+	if sess == nil {
+		return false, nil
+	}
+	status, hostAlive, err := clientStatus(sess.addr)
+	if err != nil {
+		return false, err
+	}
+	if !hostAlive {
+		return false, nil
+	}
+	return status.Alive, nil
+}
+
 // IsSupervisedProcessAlive uses the pty-host's child status. For a supervised
 // launch that child is the AO supervisor, whose lifetime matches the managed
 // agent process.
