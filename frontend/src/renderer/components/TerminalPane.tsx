@@ -208,8 +208,10 @@ function reviewerPreviewLines(session: WorkspaceSession | undefined): string[] {
 // keyboard, ignoring SGR wheel reports. The terminal routes the wheel to
 // PageUp/PageDown for these (see XtermTerminal's paneScrollsByKeyboard).
 // kilocode is a fork of opencode and shares its TUI surface, so it scrolls the
-// same way.
-const KEYBOARD_SCROLL_PROVIDERS = new Set(["opencode", "kilocode"]);
+// same way. Grok is the same class of alt-buffer agent TUI: wheel/SGR does not
+// move its conversation history, but PageUp/PageDown does (and on Windows the
+// ConPTY path has no mux copy-mode fallback either).
+const KEYBOARD_SCROLL_PROVIDERS = new Set(["opencode", "kilocode", "grok"]);
 
 // Whether the given provider's TUI is one of the keyboard-scroll agents above.
 export function providerScrollsByKeyboard(provider?: string): boolean {

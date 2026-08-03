@@ -660,10 +660,17 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				term.scrollLines(lines);
 				return false;
 			}
-			// Mouse tracking on: the pane (tmux/zellij copy-mode, or any app that
-			// tracks the mouse) acts on SGR wheel reports. On Windows conpty this
-			// reaches the app directly; under a mux it drives copy-mode.
+			// Mouse tracking on: under a mux (tmux with `mouse on`), SGR wheel
+			// reports drive copy-mode or the app. On Windows ConPTY there is no
+			// mux copy-mode safety net — synthetic SGR often no-ops for full-screen
+			// agent TUIs (orchestrator/claude/grok conversation history), while
+			// PageUp/PageDown reliably scroll their transcripts. Prefer page keys
+			// for alt-buffer panes on Windows; keep SGR elsewhere.
 			if (term.modes.mouseTrackingMode !== "none") {
+				if (isWindowsPlatform() && term.buffer.active.type === "alternate") {
+					emitUserInput(pageKeyReport(lines), "wheel");
+					return false;
+				}
 				const button = lines < 0 ? SGR_WHEEL_UP : SGR_WHEEL_DOWN;
 				emitUserInput(sgrWheelReport(button, Math.abs(lines)), "wheel");
 				return false;

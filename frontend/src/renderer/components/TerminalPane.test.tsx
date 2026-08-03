@@ -236,9 +236,11 @@ describe("providerScrollsByKeyboard", () => {
 	// opencode and its fork kilocode share a TUI that scrolls its own transcript
 	// by keyboard and ignores SGR wheel reports, so both must opt into the
 	// PageUp/PageDown wheel routing (see XtermTerminal's paneScrollsByKeyboard).
-	it("is true for keyboard-scroll TUIs (opencode and its kilocode fork)", () => {
+	// Grok is the same class of full-screen agent TUI.
+	it("is true for keyboard-scroll TUIs (opencode, kilocode, grok)", () => {
 		expect(providerScrollsByKeyboard("opencode")).toBe(true);
 		expect(providerScrollsByKeyboard("kilocode")).toBe(true);
+		expect(providerScrollsByKeyboard("grok")).toBe(true);
 	});
 
 	it("is false for mouse-report/native-scroll providers", () => {

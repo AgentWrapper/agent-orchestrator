@@ -716,24 +716,54 @@ describe("XtermTerminal", () => {
 		expect(onInput).toHaveBeenLastCalledWith("\x1b[6~", "wheel");
 	});
 
-	it("sends SGR reports on Windows when the pane tracks the mouse (conpty delivers them to the app)", () => {
+	it("sends PageUp/PageDown on Windows for alt-buffer mouse-tracking panes (no tmux under conpty)", () => {
 		setNavigatorPlatform("Win32");
 		const onInput = vi.fn();
 		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
-		// A mouse-tracking pane gets SGR reports on every platform; on Windows conpty
-		// forwards them straight to the app. Keyboard-scroll panes (opencode) opt out
-		// via the paneScrollsByKeyboard hint, tested separately.
+		// Full-screen agent TUIs (Grok/orchestrator session transcript) enable mouse
+		// tracking on the alternate screen. Unix can fall back to tmux copy-mode;
+		// Windows ConPTY cannot, so wheel must become page keys.
 		state.lastTerminal!.modes.mouseTrackingMode = "any";
+		state.lastTerminal!.buffer.active.type = "alternate";
+
+		expect(state.lastTerminal!.wheelHandler!({ deltaY: -50 } as WheelEvent)).toBe(false);
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[5~", "wheel");
+		expect(state.lastTerminal!.scrollLines).not.toHaveBeenCalled();
+
+		expect(state.lastTerminal!.wheelHandler!({ deltaY: 20 } as WheelEvent)).toBe(false);
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[6~", "wheel");
+	});
+
+	it("still sends SGR on Windows for normal-buffer mouse-tracking panes", () => {
+		setNavigatorPlatform("Win32");
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+		// Normal buffer + mouse tracking is uncommon; keep SGR so we do not force
+		// page keys onto a shell that expects mouse reports.
+		state.lastTerminal!.modes.mouseTrackingMode = "any";
+		state.lastTerminal!.buffer.active.type = "normal";
 
 		expect(state.lastTerminal!.wheelHandler!({ deltaY: -50 } as WheelEvent)).toBe(false);
 		expect(onInput).toHaveBeenLastCalledWith("\x1b[<64;1;1M".repeat(3), "wheel");
 	});
 
-	it("sends PageUp/PageDown for keyboard-scroll panes even under a mux (opencode on macOS/Linux)", () => {
+	it("sends SGR on non-Windows when the pane tracks the mouse (tmux/mux path)", () => {
+		setNavigatorPlatform("Linux x86_64");
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+		state.lastTerminal!.modes.mouseTrackingMode = "any";
+		state.lastTerminal!.buffer.active.type = "alternate";
+
+		expect(state.lastTerminal!.wheelHandler!({ deltaY: -50 } as WheelEvent)).toBe(false);
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[<64;1;1M".repeat(3), "wheel");
+	});
+
+	it("sends PageUp/PageDown for keyboard-scroll panes even under a mux (opencode/grok on macOS/Linux)", () => {
 		const onInput = vi.fn();
 		render(<XtermTerminal theme="dark" paneScrollsByKeyboard onReady={(terminal) => terminal.onUserInput(onInput)} />);
 		// Linux (beforeEach) + mouse tracking on: without the paneScrollsByKeyboard
-		// hint this would send SGR reports; the hint forces page keys.
+		// hint this would send SGR reports; the hint forces page keys for agents
+		// whose TUI ignores wheel (opencode, kilocode, grok).
 		state.lastTerminal!.modes.mouseTrackingMode = "any";
 
 		expect(state.lastTerminal!.wheelHandler!({ deltaY: -50 } as WheelEvent)).toBe(false);
