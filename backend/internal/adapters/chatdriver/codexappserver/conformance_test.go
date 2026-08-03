@@ -55,7 +55,9 @@ var driverMethods = []struct {
 	{codexproto.MethodMcpServerStatusList, &codexproto.ListMcpServerStatusParams{}},
 
 	// Inbound: the notifications the timeline is built from.
-	{codexproto.MethodThreadStarted, nil},
+	// NOT thread/started: AO reads the thread id from the thread/start RESPONSE, so
+	// the notification carries nothing it does not already have. Listing it here
+	// would make this table's claim — every method the driver depends on — false.
 	{codexproto.MethodTurnStarted, nil},
 	{codexproto.MethodTurnCompleted, nil},
 	{codexproto.MethodItemStarted, nil},
