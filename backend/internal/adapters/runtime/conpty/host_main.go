@@ -53,7 +53,7 @@ func RunHost(args []string, stdout io.Writer) int {
 	}
 	port := tcpAddr.Port
 
-	pty, err := newConPTY(cwd, shellCmd, shellArgs)
+	pty, err := newConPTY(cwd, shellCmd, shellArgs, nil)
 	if err != nil {
 		_ = ln.Close()
 		fmt.Fprintf(os.Stderr, "pty-host [%s]: newConPTY: %v\n", sessionID, err)

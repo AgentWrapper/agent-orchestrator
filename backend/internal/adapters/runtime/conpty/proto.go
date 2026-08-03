@@ -21,6 +21,8 @@ const (
 	MsgStatusReq     byte = 0x06 // client -> host: empty
 	MsgStatusRes     byte = 0x07 // host -> client: JSON {alive, pid, exitCode?}
 	MsgKillReq       byte = 0x08 // client -> host: empty
+	MsgRestartReq    byte = 0x09 // client -> host: JSON {workspacePath, argv, env}
+	MsgRestartRes    byte = 0x0a // host -> client: JSON {success, error?, pid?}
 )
 
 // JSON payload structs shared with later tasks (kept minimal).
@@ -41,6 +43,20 @@ type StatusPayload struct {
 // GetOutputReq is the JSON body for MsgGetOutputReq.
 type GetOutputReq struct {
 	Lines int `json:"lines"`
+}
+
+// RestartPayload is the JSON body for MsgRestartReq.
+type RestartPayload struct {
+	WorkspacePath string            `json:"workspacePath"`
+	Argv          []string          `json:"argv"`
+	Env           map[string]string `json:"env"`
+}
+
+// RestartResponse is the JSON body for MsgRestartRes.
+type RestartResponse struct {
+	Success bool   `json:"success"`
+	Error   string `json:"error,omitempty"`
+	PID     int    `json:"pid,omitempty"`
 }
 
 // EncodeMessage encodes a single frame into the binary protocol format.

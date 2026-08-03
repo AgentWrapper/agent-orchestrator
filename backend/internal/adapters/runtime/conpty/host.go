@@ -16,6 +16,9 @@ import (
 	"time"
 )
 
+// newConPTYFunc creates a new ConPTY connection. Overridden in tests.
+var newConPTYFunc = newConPTY
+
 // ptyConn is the host's handle to the running agent's pseudo-terminal.
 // The real impl (conptyConn) lives in host_conpty_windows.go; tests use a fake.
 type ptyConn interface {
@@ -117,7 +120,7 @@ func (h *host) applyLargestLocked() {
 // run is the main event loop.
 func (h *host) run(ctx context.Context) error {
 	// Pump PTY output to ring + broadcast.
-	go h.pumpPTY()
+	go h.pumpPTY(h.cfg.PTY)
 
 	// Watch for ctx cancellation and trigger shutdown.
 	go func() {
@@ -155,8 +158,14 @@ func (h *host) shutdown() {
 	h.shutdownOnce.Do(func() {
 		close(h.shutdownC)
 
+		h.mu.Lock()
+		pty := h.cfg.PTY
+		h.mu.Unlock()
+
 		// 1. Dispose the ConPTY first (critical ordering).
-		_ = h.cfg.PTY.Close()
+		if pty != nil {
+			_ = pty.Close()
+		}
 
 		// 2. Brief grace so the OS ConPTY helper can clean up.
 		time.Sleep(50 * time.Millisecond)
@@ -177,10 +186,10 @@ func (h *host) shutdown() {
 // pumpPTY reads PTY output continuously, appends to the ring, and broadcasts
 // to clients. On PTY exit it flushes the partial line and sends a status
 // update but does NOT close the listener (keep-alive).
-func (h *host) pumpPTY() {
+func (h *host) pumpPTY(pty ptyConn) {
 	buf := make([]byte, 32*1024)
 	for {
-		n, err := h.cfg.PTY.Read(buf)
+		n, err := pty.Read(buf)
 		if n > 0 {
 			chunk := make([]byte, n)
 			copy(chunk, buf[:n])
@@ -196,13 +205,20 @@ func (h *host) pumpPTY() {
 
 	// PTY reader is done (process exited or PTY closed). Wait for the Done
 	// signal so ExitCode is populated before we send the status broadcast.
-	<-h.cfg.PTY.Done()
+	<-pty.Done()
 
 	h.cfg.Ring.FlushPartial()
 
-	code, _ := h.cfg.PTY.ExitCode()
-	pid := h.cfg.PTY.PID()
-	h.broadcast(statusFrame(false, pid, &code))
+	code, _ := pty.ExitCode()
+	pid := pty.PID()
+
+	h.mu.Lock()
+	isActive := (h.cfg.PTY == pty)
+	h.mu.Unlock()
+
+	if isActive {
+		h.broadcast(statusFrame(false, pid, &code))
+	}
 	// Keep-alive: do NOT shutdown here. The host stays up so clients can
 	// still connect and read scrollback.
 }
@@ -296,25 +312,32 @@ func (h *host) handleConn(conn net.Conn) {
 func (h *host) handleClientMsg(conn net.Conn, msgType byte, payload []byte) {
 	switch msgType {
 	case MsgTerminalInput:
-		if _, alive := h.cfg.PTY.ExitCode(); !alive {
-			_, _ = h.cfg.PTY.Write(payload)
+		h.mu.Lock()
+		pty := h.cfg.PTY
+		h.mu.Unlock()
+		if pty != nil {
+			if _, alive := pty.ExitCode(); !alive {
+				_, _ = pty.Write(payload)
+			}
 		}
 
 	case MsgResize:
-		if _, alive := h.cfg.PTY.ExitCode(); !alive {
-			var rp ResizePayload
-			if err := json.Unmarshal(payload, &rp); err == nil && rp.Cols > 0 && rp.Rows > 0 {
-				// Record this client's requested grid, then size the shared PTY to
-				// the largest client (see applyLargestLocked) rather than blindly
-				// applying this one — otherwise a small viewer shrinks every viewer.
-				h.mu.Lock()
-				if cs := h.clients[conn]; cs != nil {
-					cs.cols, cs.rows, cs.sized = rp.Cols, rp.Rows, true
+		h.mu.Lock()
+		pty := h.cfg.PTY
+		h.mu.Unlock()
+		if pty != nil {
+			if _, alive := pty.ExitCode(); !alive {
+				var rp ResizePayload
+				if err := json.Unmarshal(payload, &rp); err == nil && rp.Cols > 0 && rp.Rows > 0 {
+					h.mu.Lock()
+					if cs := h.clients[conn]; cs != nil {
+						cs.cols, cs.rows, cs.sized = rp.Cols, rp.Rows, true
+					}
+					h.applyLargestLocked()
+					h.mu.Unlock()
 				}
-				h.applyLargestLocked()
-				h.mu.Unlock()
+				// Malformed resize: ignore (matches TS behavior).
 			}
-			// Malformed resize: ignore (matches TS behavior).
 		}
 
 	case MsgGetOutputReq:
@@ -329,19 +352,74 @@ func (h *host) handleClientMsg(conn net.Conn, msgType byte, payload []byte) {
 		}
 
 	case MsgStatusReq:
-		code, exited := h.cfg.PTY.ExitCode()
-		alive := !exited
-		pid := h.cfg.PTY.PID()
-		var codePtr *int
-		if exited {
-			codePtr = &code
+		h.mu.Lock()
+		pty := h.cfg.PTY
+		h.mu.Unlock()
+		if pty != nil {
+			code, exited := pty.ExitCode()
+			alive := !exited
+			pid := pty.PID()
+			var codePtr *int
+			if exited {
+				codePtr = &code
+			}
+			h.sendTo(conn, statusFrame(alive, pid, codePtr))
+		} else {
+			h.sendTo(conn, statusFrame(false, 0, nil))
 		}
-		h.sendTo(conn, statusFrame(alive, pid, codePtr))
 
 	case MsgKillReq:
 		// Trigger graceful shutdown; returns immediately (idempotent).
 		go h.shutdown()
+
+	case MsgRestartReq:
+		var req RestartPayload
+		if err := json.Unmarshal(payload, &req); err != nil {
+			h.sendRestartResponse(conn, false, "unmarshal request: "+err.Error(), 0)
+			return
+		}
+		if len(req.Argv) == 0 {
+			h.sendRestartResponse(conn, false, "empty argv", 0)
+			return
+		}
+
+		h.mu.Lock()
+		oldPTY := h.cfg.PTY
+		h.mu.Unlock()
+
+		if oldPTY != nil {
+			_ = oldPTY.Close()
+		}
+
+		newPTY, err := newConPTYFunc(req.WorkspacePath, req.Argv[0], req.Argv[1:], req.Env)
+		if err != nil {
+			h.sendRestartResponse(conn, false, "spawn new pty: "+err.Error(), 0)
+			return
+		}
+
+		h.mu.Lock()
+		h.cfg.PTY = newPTY
+		h.applyLargestLocked()
+		h.mu.Unlock()
+
+		go h.pumpPTY(newPTY)
+
+		// Broadcast that we are alive now with the new process PID.
+		h.broadcast(statusFrame(true, newPTY.PID(), nil))
+
+		h.sendRestartResponse(conn, true, "", newPTY.PID())
 	}
+}
+
+func (h *host) sendRestartResponse(conn net.Conn, success bool, errMsg string, pid int) {
+	resp := RestartResponse{
+		Success: success,
+		Error:   errMsg,
+		PID:     pid,
+	}
+	b, _ := json.Marshal(resp)
+	frame, _ := EncodeMessage(MsgRestartRes, b)
+	h.sendTo(conn, frame)
 }
 
 // statusFrame builds a MsgStatusRes frame.

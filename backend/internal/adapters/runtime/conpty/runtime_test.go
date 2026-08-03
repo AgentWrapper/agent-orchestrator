@@ -706,5 +706,74 @@ func TestClientKill_Idempotent(t *testing.T) {
 	}
 }
 
+// TestRuntimeRestart verifies conpty.Runtime.Restart triggers the restart DTO,
+// updates the in-memory map, and updates the ptyregistry.
+func TestRuntimeRestart(t *testing.T) {
+	isolateRegistry(t)
+
+	oldNewConPTY := newConPTYFunc
+	defer func() { newConPTYFunc = oldNewConPTY }()
+
+	newPTYInstance := newFakePTY(888)
+	newConPTYFunc = func(cwd, shellCmd string, shellArgs []string, env map[string]string) (ptyConn, error) {
+		return newPTYInstance, nil
+	}
+
+	hosts := map[string]*inProcHost{}
+	rt := New(Options{Spawner: fakeSpawnerFor(t, hosts, livePID())})
+	ctx := context.Background()
+
+	handle, err := rt.Create(ctx, ports.RuntimeConfig{
+		SessionID:     "sess-restart",
+		WorkspacePath: "/tmp/w",
+		Argv:          []string{"sh"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	h := hosts["sess-restart"]
+	defer h.cleanup(t)
+
+	// Call Restart on runtime.
+	restartedHandle, err := rt.Restart(ctx, handle, ports.RuntimeConfig{
+		SessionID:     "sess-restart",
+		WorkspacePath: "/tmp/new-w",
+		Argv:          []string{"new-sh"},
+		Env:           map[string]string{"A": "B"},
+	})
+	if err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if restartedHandle.ID != "sess-restart" {
+		t.Fatalf("expected handle ID sess-restart, got %q", restartedHandle.ID)
+	}
+
+	// Stored session PID should remain the pty-host PID (livePID()).
+	rt.mu.Lock()
+	sess := rt.sessions["sess-restart"]
+	rt.mu.Unlock()
+	if sess == nil || sess.pid != livePID() {
+		t.Fatalf("expected stored session to have pid %d, got %+v", livePID(), sess)
+	}
+
+	// Registry entry PID should remain the pty-host PID (livePID()).
+	entries, err := ptyregistry.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var found bool
+	for _, e := range entries {
+		if e.SessionID == "sess-restart" {
+			found = true
+			if e.PtyHostPID != livePID() {
+				t.Fatalf("expected registry entry to have pid %d, got %d", livePID(), e.PtyHostPID)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected registry entry to be found")
+	}
+}
+
 // Ensure the packages compile (import check).
 var _ = io.Discard

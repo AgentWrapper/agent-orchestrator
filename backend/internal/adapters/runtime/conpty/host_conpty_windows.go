@@ -25,7 +25,7 @@ type conptyConn struct {
 
 // newConPTY creates a ConPTY session running shellCmd in cwd with shellArgs.
 // It starts the process and returns a ptyConn ready for use.
-func newConPTY(cwd, shellCmd string, shellArgs []string) (ptyConn, error) {
+func newConPTY(cwd, shellCmd string, shellArgs []string, env map[string]string) (ptyConn, error) {
 	// go-pty's New() returns a ConPty on Windows.
 	p, err := gopty.New()
 	if err != nil {
@@ -45,8 +45,13 @@ func newConPTY(cwd, shellCmd string, shellArgs []string) (ptyConn, error) {
 
 	cmd := cp.Command(shellCmd, shellArgs...)
 	cmd.Dir = cwd
-	// Inherit parent env so PATH, HOME, etc. are available.
-	cmd.Env = os.Environ()
+
+	// Merge env: inherit parent, overlay caller-provided vars.
+	merged := os.Environ()
+	for k, v := range env {
+		merged = append(merged, k+"="+v)
+	}
+	cmd.Env = merged
 
 	if err := cmd.Start(); err != nil {
 		_ = cp.Close()

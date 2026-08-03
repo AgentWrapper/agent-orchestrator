@@ -16,6 +16,7 @@ import (
 
 // Ensure Runtime satisfies the port at compile time (Attach in attach.go).
 var _ ports.Runtime = (*Runtime)(nil)
+var _ ports.RuntimeRestarter = (*Runtime)(nil)
 
 // validSessionID matches agent-orchestrator's assertValidSessionId.
 var validSessionID = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
@@ -260,3 +261,25 @@ type processKiller interface {
 // The real defaultOSProcessFinder is in pidalive_unix.go / pidalive_windows.go
 // (same files that provide pidAlive).
 var osProcessFinder = defaultOSProcessFinder
+
+// Restart replaces the command in the existing pty-host while preserving
+// the host process and loopback connection. Satisfies ports.RuntimeRestarter.
+func (r *Runtime) Restart(ctx context.Context, handle ports.RuntimeHandle, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+	sess := r.resolve(handle.ID)
+	if sess == nil {
+		return ports.RuntimeHandle{}, fmt.Errorf("conpty: session %q not found for restart", handle.ID)
+	}
+
+	payload := RestartPayload{
+		WorkspacePath: cfg.WorkspacePath,
+		Argv:          cfg.Argv,
+		Env:           cfg.Env,
+	}
+
+	_, err := clientRestart(sess.addr, payload)
+	if err != nil {
+		return ports.RuntimeHandle{}, fmt.Errorf("conpty restart: %w", err)
+	}
+
+	return handle, nil
+}
