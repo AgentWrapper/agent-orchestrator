@@ -33,6 +33,12 @@ beforeEach(() => {
 });
 
 describe("ChatWorkspace timeline", () => {
+	it("keeps the composer aligned to the readable conversation width", () => {
+		render(<ChatWorkspace snapshot={chatFixture} />);
+		const composer = screen.getByLabelText("Message the agent").closest("form");
+		expect(composer?.parentElement).toHaveClass("mx-auto", "w-full", "max-w-3xl");
+	});
+
 	it("explains itself instead of showing an empty scroller", () => {
 		render(<ChatWorkspace snapshot={chatFixtureEmpty} />);
 		expect(screen.getByText("Start the conversation")).toBeInTheDocument();

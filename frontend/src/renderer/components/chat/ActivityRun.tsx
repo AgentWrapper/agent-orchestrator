@@ -15,7 +15,7 @@ import { useState } from "react";
 import { ChevronRight, Loader2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { ActivityRow } from "./ChatTimelineItems";
-import { commandCategory } from "./activity-command";
+import { ACTIVITY_SUMMARY_BUTTON_CLASS, commandCategory } from "./activity-command";
 import type { ConversationActivity } from "../../types/conversation";
 
 export function ActivityRun({ activities }: { activities: ConversationActivity[] }) {
@@ -43,7 +43,7 @@ export function ActivityRun({ activities }: { activities: ConversationActivity[]
 				type="button"
 				onClick={() => setOverride(!open)}
 				aria-expanded={open}
-				className="group/run flex w-full items-center gap-1.5 rounded-sm py-0.5 pr-1 text-left transition-colors hover:bg-interactive-hover"
+				className={ACTIVITY_SUMMARY_BUTTON_CLASS}
 			>
 				<span className="text-[11.5px] text-muted-foreground">{summarize(activities)}</span>
 				{failed > 0 ? (

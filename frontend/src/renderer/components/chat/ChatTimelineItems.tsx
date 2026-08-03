@@ -48,7 +48,11 @@ import { caretNotation, stripAnsi } from "../../lib/ansi";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { HighlightedCode } from "./HighlightedCode";
 import { CopyButton } from "./CopyButton";
-import { commandCategory, exploredFileCount } from "./activity-command";
+import {
+	ACTIVITY_SUMMARY_BUTTON_CLASS,
+	commandCategory,
+	exploredFileCount,
+} from "./activity-command";
 import { Button } from "../ui/button";
 import {
 	fileChangeFiles,
@@ -269,6 +273,7 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 		detail?.output || detail?.reason || detail?.text || detail?.terminalInput || files.length,
 	);
 	const { label, path } = splitSummary(activity);
+	const compactCommand = activity.activityKind === "command";
 
 	// Live output is only live if it is on screen, so a command that is still
 	// running and already printing opens itself.
@@ -276,30 +281,38 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 	const open = override ?? streamingOutput;
 
 	return (
-		<div className="group/activity border-t border-border first:border-t-0">
+		<div className={compactCommand ? "flex flex-col" : "group/activity border-t border-border first:border-t-0"}>
 			<button
 				type="button"
 				onClick={() => setOverride(!open)}
 				disabled={!hasBody}
 				aria-expanded={hasBody ? open : undefined}
 				className={cn(
-					"flex min-h-[35px] w-full items-center gap-[9px] px-[11px] py-2 text-left text-[11px] transition-colors",
-					hasBody && "hover:bg-interactive-hover",
+					compactCommand
+						? ACTIVITY_SUMMARY_BUTTON_CLASS
+						: "flex min-h-[35px] w-full items-center gap-[9px] px-[11px] py-2 text-left text-[11px] transition-colors",
+					hasBody && !compactCommand && "hover:bg-interactive-hover",
 					!hasBody && "cursor-default",
 				)}
 			>
-				<Icon
-					aria-hidden="true"
-					className={cn(
-						"w-[15px] shrink-0 text-center",
-						activity.status === "failed" ? "text-destructive" : "text-muted-foreground/70",
-					)}
-					size={13}
-				/>
+				{compactCommand ? null : (
+					<Icon
+						aria-hidden="true"
+						className={cn(
+							"w-[15px] shrink-0 text-center",
+							activity.status === "failed" ? "text-destructive" : "text-muted-foreground/70",
+						)}
+						size={13}
+					/>
+				)}
 				<strong
 					className={cn(
-						"shrink-0 font-medium",
-						activity.status === "failed" ? "text-destructive" : "text-foreground",
+						"shrink-0",
+						compactCommand
+							? "text-[11.5px] font-normal text-muted-foreground"
+							: "font-medium",
+						!compactCommand &&
+							(activity.status === "failed" ? "text-destructive" : "text-foreground"),
 					)}
 				>
 					{label}
@@ -311,10 +324,24 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 					>
 						{path}
 					</span>
-				) : (
+				) : compactCommand ? null : (
 					<span className="flex-1" />
 				)}
-				<ActivityState activity={activity} open={open} hasBody={hasBody} />
+				<ActivityState
+					activity={activity}
+					open={open}
+					hasBody={hasBody}
+					showDisclosure={!compactCommand}
+				/>
+				{compactCommand && hasBody ? (
+					<ChevronRight
+						aria-hidden="true"
+						className={cn(
+							"size-3 shrink-0 text-muted-foreground/40 transition-transform group-hover/run:text-muted-foreground",
+							open && "rotate-90",
+						)}
+					/>
+				) : null}
 			</button>
 
 			{open && hasBody ? (
@@ -460,10 +487,12 @@ function ActivityState({
 	activity,
 	open,
 	hasBody,
+	showDisclosure = true,
 }: {
 	activity: ConversationActivity;
 	open: boolean;
 	hasBody: boolean;
+	showDisclosure?: boolean;
 }) {
 	const { status, detail } = activity;
 	const files = fileChangeFiles(activity);
@@ -496,7 +525,7 @@ function ActivityState({
 	// Everything else settled fine, which is the boring majority. A chevron on
 	// hover is the whole affordance; a duration or timestamp on every row builds a
 	// column of numbers nobody reads.
-	if (hasBody) {
+	if (hasBody && showDisclosure) {
 		return (
 			<ChevronRight
 				aria-hidden="true"

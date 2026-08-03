@@ -230,4 +230,26 @@ describe("ActivityRow command labels", () => {
 		expect(screen.getByText("Ran command")).toBeInTheDocument();
 		expect(screen.queryByText("go test ./...")).not.toBeInTheDocument();
 	});
+
+	it("uses the same compact treatment as a grouped command summary", () => {
+		const { container } = render(
+			<ActivityRow
+				activity={commandActivity(
+					{ command: "git status --short", output: "fatal: not a repository", exitCode: 1 },
+					"failed",
+				)}
+			/>,
+		);
+		const row = screen.getByRole("button");
+		expect(row).toHaveClass("py-0.5", "gap-1.5", "rounded-sm");
+		expect(screen.getByText("Checked repository")).toHaveClass(
+			"text-[11.5px]",
+			"font-normal",
+			"text-muted-foreground",
+		);
+		expect(screen.getByText("exit 1")).toHaveClass("text-destructive");
+		expect(container.querySelector(".lucide-square-terminal")).toBeNull();
+		expect(row.querySelector(".flex-1")).toBeNull();
+		expect(row.textContent).toMatch(/^Checked repositoryexit 1/);
+	});
 });

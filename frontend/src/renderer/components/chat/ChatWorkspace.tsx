@@ -212,43 +212,45 @@ export function ChatWorkspace({
 				onRollback={rollbackTarget}
 			/>
 
-			<div className="flex shrink-0 flex-col gap-2 border-t border-border px-4 py-3">
-				{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
-				{turn ? (
-					<LiveTurnBar
-						startedAt={turn.startedAt ?? turn.requestedAt}
-						blocked={Boolean(approval)}
-						queuedCount={queuedCount}
-						onInterrupt={onInterrupt}
+			<div className="shrink-0 border-t border-border px-4 py-3">
+				<div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
+					{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
+					{turn ? (
+						<LiveTurnBar
+							startedAt={turn.startedAt ?? turn.requestedAt}
+							blocked={Boolean(approval)}
+							queuedCount={queuedCount}
+							onInterrupt={onInterrupt}
+						/>
+					) : null}
+					<ChatComposer
+						onSend={(text) => onSend?.(text)}
+						settings={
+							onChooseSettings ? (
+								<TurnSettingsBar
+									models={models ?? []}
+									settings={snapshot.settings}
+									reroute={snapshot.modelReroute}
+									onChange={onChooseSettings}
+									disabled={snapshot.controller.state === "stopped"}
+								/>
+							) : null
+						}
+						busy={busy}
+						willQueue={Boolean(turn)}
+						disabled={snapshot.controller.state === "stopped"}
+						skills={skills}
+						filePaths={filePaths}
+						filePathsTruncated={filePathsTruncated}
+						onStageAttachments={onStageAttachments}
+						// Steering is only meaningful into a turn that is running. A queued turn
+						// has not reached the provider, so there is nothing to steer.
+						onSteer={onSteer}
+						canSteer={Boolean(onSteer) && turn?.state === "running"}
+						steerPending={steerPending}
+						steerRefusal={steerRefusal}
 					/>
-				) : null}
-				<ChatComposer
-					onSend={(text) => onSend?.(text)}
-					settings={
-						onChooseSettings ? (
-							<TurnSettingsBar
-								models={models ?? []}
-								settings={snapshot.settings}
-								reroute={snapshot.modelReroute}
-								onChange={onChooseSettings}
-								disabled={snapshot.controller.state === "stopped"}
-							/>
-						) : null
-					}
-					busy={busy}
-					willQueue={Boolean(turn)}
-					disabled={snapshot.controller.state === "stopped"}
-					skills={skills}
-					filePaths={filePaths}
-					filePathsTruncated={filePathsTruncated}
-					onStageAttachments={onStageAttachments}
-					// Steering is only meaningful into a turn that is running. A queued turn
-					// has not reached the provider, so there is nothing to steer.
-					onSteer={onSteer}
-					canSteer={Boolean(onSteer) && turn?.state === "running"}
-					steerPending={steerPending}
-					steerRefusal={steerRefusal}
-				/>
+				</div>
 			</div>
 
 			{/* The copy has to be honest about the cost: this is not "hide these
