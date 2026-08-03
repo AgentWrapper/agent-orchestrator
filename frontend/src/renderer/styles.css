@@ -1361,6 +1361,8 @@ body.is-resizing-x [data-slot="sidebar-container"] {
  * The whole strip is the window-drag region; interactive children opt out with
  * -webkit-app-region: no-drag. */
 .window-titlebar {
+	position: relative;
+	z-index: var(--z-titlebar);
 	display: flex;
 	height: var(--size-window-titlebar);
 	flex-shrink: 0;

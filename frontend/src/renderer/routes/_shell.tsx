@@ -458,6 +458,12 @@ function ShellLayout() {
 		const handlePointerMove = (event: PointerEvent) => {
 			const target = event.target instanceof Element ? event.target : null;
 			const isInSidebarPortal = Boolean(target?.closest('[role="dialog"], [role="listbox"], [role="menu"]'));
+			// TitlebarNav / WindowTitlebar sit above the peek in z-order; keep the
+			// preview open while the pointer is on those controls so hover→click
+			// to pin still works.
+			const isInTitlebarChrome = Boolean(
+				target?.closest("[data-slot='titlebar-nav'], .window-titlebar"),
+			);
 			const sidebar = document.querySelector<HTMLElement>('[data-slot="sidebar-container"]');
 			const bounds = sidebar?.getBoundingClientRect();
 			const isInSidebar = Boolean(
@@ -468,7 +474,7 @@ function ShellLayout() {
 				event.clientY <= bounds.bottom,
 			);
 
-			if (isInSidebar || isInSidebarPortal) {
+			if (isInSidebar || isInSidebarPortal || isInTitlebarChrome) {
 				cancelSidebarPeekClose();
 				return;
 			}

@@ -70,6 +70,7 @@ export function TitlebarNav({
 	return (
 		<div
 			className={`fixed ${topClass} ${leftClass} z-titlebar flex h-traffic-light-clearance items-center gap-1`}
+			data-slot="titlebar-nav"
 			style={noDragStyle}
 		>
 			<TitlebarButton
