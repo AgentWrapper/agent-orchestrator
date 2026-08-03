@@ -12,6 +12,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import {
+	Check,
 	ChevronDown,
 	ChevronRight,
 	ChevronsDownUp,
@@ -430,9 +431,9 @@ function ReviewFileCard({
 			<li className="session-files-review-row overflow-hidden bg-transparent">
 				<AccordionTrigger
 					aria-label={t(expanded ? "files.collapseFile" : "files.expandFile", { file: fileLabel(file) })}
-					className="gap-2 px-3 py-1.5"
+					className="flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-1 text-left"
 					data-file-toggle=""
-					headerClassName="min-h-10 hover:bg-interactive-hover/50 data-[state=open]:bg-interactive-active/45"
+					headerClassName="min-h-9 hover:bg-interactive-hover/50 data-[state=open]:bg-interactive-active/35"
 					trailing={
 						<FileFeedbackButton
 							active={annotation.target?.path === file.path && annotation.target.side === "file"}
