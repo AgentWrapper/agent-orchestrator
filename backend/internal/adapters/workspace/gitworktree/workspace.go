@@ -688,13 +688,12 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 						"gitworktree: refusing to restore registered worktree %q because HEAD is not ready: %w",
 						path, err,
 					)
-				} else {
-					branch := rec.Branch
-					if branch == "" {
-						branch = cfg.Branch
-					}
-					return ports.WorkspaceInfo{Path: path, Branch: branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: repo}, nil
 				}
+				branch := rec.Branch
+				if branch == "" {
+					branch = cfg.Branch
+				}
+				return ports.WorkspaceInfo{Path: path, Branch: branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: repo}, nil
 			}
 		} else {
 			branch := rec.Branch
