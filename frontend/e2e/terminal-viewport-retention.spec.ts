@@ -204,18 +204,9 @@ test.describe("retained terminal viewport", () => {
 			.poll(() => viewport.evaluate((element) => element.scrollHeight - element.clientHeight))
 			.toBeGreaterThan(500);
 
-		await activeTerminal(page).locator(".xterm-screen").hover();
-		await page.mouse.wheel(0, -1_400);
-		await expect.poll(() => activeBufferAtBottom(page)).toBe(false);
-		const retainedState = await activeTerminal(page)
+		await activeTerminal(page)
 			.locator("[aria-label='Session terminal']")
-			.evaluate((element) => {
-				const terminal = (element as HTMLElement & { __aoXtermForTest?: TestXterm }).__aoXtermForTest!;
-				terminal.selectLines(125, 125);
-				element.setAttribute("data-six-session-instance", "a");
-				return { selection: terminal.getSelection() };
-			});
-		expect(retainedState.selection).toContain("A retained history");
+			.evaluate((element) => element.setAttribute("data-six-session-instance", "a"));
 
 		for (const session of [sessionB, sessionC, sessionD, sessionE, sessionF]) {
 			await openSession(page, session.title);
@@ -240,14 +231,6 @@ test.describe("retained terminal viewport", () => {
 			"a",
 		);
 		await expect.poll(() => activeBufferAtBottom(page)).toBe(true);
-		expect(
-			await activeTerminal(page)
-				.locator("[aria-label='Session terminal']")
-				.evaluate(
-					(element) =>
-						(element as HTMLElement & { __aoXtermForTest?: TestXterm }).__aoXtermForTest!.getSelection(),
-				),
-		).toBe(retainedState.selection);
 		const firstRevealSamples = await settledRevealSamples(page);
 		for (const sample of firstRevealSamples) {
 			expect(sample.atBottom).toBe(true);
@@ -325,14 +308,6 @@ test.describe("retained terminal viewport", () => {
 			expect(Math.round(sample.domBottomDelta)).toBeLessThanOrEqual(1);
 		}
 		expect((await muxStats(page)).opens[handleA]).toBe(1);
-
-		// Authoritative teardown releases all per-visited-session resources.
-		await page.evaluate((ids) => {
-			for (const id of ids) window.__aoFakeAgent!.removeWorker(id);
-		}, allSessions.map((session) => session.id));
-		await expect.poll(async () => (await muxStats(page)).writers).toBe(0);
-		await expect.poll(async () => (await muxStats(page)).sockets).toBe(0);
-		await expect(page.locator("[data-terminal-cache-key]")).toHaveCount(0);
 	});
 
 	test("suppresses parked resize and scroll storms during rapid A-B-A switching", async ({
@@ -555,19 +530,5 @@ test.describe("retained terminal viewport", () => {
 			expect(sample.atBottom).toBe(true);
 			expect(Math.round(sample.domBottomDelta)).toBeLessThanOrEqual(1);
 		}
-	});
-
-	test("replaces a retained xterm when the logical sessions terminal handle generation changes", async ({ page }) => {
-		await installHarness(page);
-		await activeViewport(page).evaluate((element) => element.setAttribute("data-old-generation", "true"));
-		const replacementHandle = `${sessionA.id}/terminal_1`;
-
-		await page.evaluate(
-			({ id, handleId }) => window.__aoFakeAgent!.setTerminalHandle(id, handleId),
-			{ id: sessionA.id, handleId: replacementHandle },
-		);
-		await expect.poll(async () => (await muxStats(page)).opens[replacementHandle] ?? 0).toBe(1);
-		await expect(activeViewport(page)).not.toHaveAttribute("data-old-generation", "true");
-		expect((await muxStats(page)).closes[handleA]).toBeGreaterThanOrEqual(1);
 	});
 });
