@@ -33,11 +33,13 @@ vi.mock("../lib/api-client", () => ({
 	},
 }));
 
+vi.mock("./ShellTopbar", () => ({ ShellTopbar: () => null }));
+
 import { ProjectSettingsForm } from "./ProjectSettingsForm";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import type { WorkspaceSummary } from "../types/workspace";
 
-function renderSettings(projectId = "proj-1", workspaces?: WorkspaceSummary[]) {
+function renderSettings(projectId = "proj-1", workspaces?: WorkspaceSummary[], section?: "general" | "agents" | "workflow" | "intake") {
 	const queryClient = new QueryClient({
 		defaultOptions: {
 			queries: { retry: false },
@@ -49,7 +51,7 @@ function renderSettings(projectId = "proj-1", workspaces?: WorkspaceSummary[]) {
 	}
 	render(
 		<QueryClientProvider client={queryClient}>
-			<ProjectSettingsForm projectId={projectId} />
+			<ProjectSettingsForm projectId={projectId} section={section} />
 		</QueryClientProvider>,
 	);
 	return queryClient;
@@ -114,7 +116,7 @@ beforeEach(() => {
 });
 
 describe("ProjectSettingsForm", () => {
-	it("closes project settings with the close button", async () => {
+	it("leaves Escape handling to its settings dialog", async () => {
 		mockProject({
 			id: "proj-1",
 			name: "Project One",
@@ -129,32 +131,11 @@ describe("ProjectSettingsForm", () => {
 		});
 
 		renderSettings();
-
-		await userEvent.click(await screen.findByRole("button", { name: "Close settings" }));
-
-		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
-	});
-
-	it("closes project settings with Escape", async () => {
-		mockProject({
-			id: "proj-1",
-			name: "Project One",
-			kind: "single_repo",
-			path: "/repo/project-one",
-			repo: "",
-			defaultBranch: "main",
-			config: {
-				worker: { agent: "codex" },
-				orchestrator: { agent: "claude-code" },
-			},
-		});
-
-		renderSettings();
-		await screen.findByLabelText("Settings");
+		await screen.findByLabelText("Project settings");
 
 		await userEvent.keyboard("{Escape}");
 
-		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
+		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
 	it("atomically saves the project display name and config without changing its stable ID", async () => {
@@ -186,7 +167,7 @@ describe("ProjectSettingsForm", () => {
 		expect(screen.getByText("tg_content_factory_5863f66be3")).toBeInTheDocument();
 	});
 
-	it("loads the current project settings and saves the exposed fields without dropping hidden config", async () => {
+	it("loads agent settings and saves them while preserving hidden config fields", async () => {
 		mockProject({
 			id: "proj-1",
 			name: "Project One",
@@ -213,26 +194,19 @@ describe("ProjectSettingsForm", () => {
 			},
 		});
 
-		renderSettings();
+		renderSettings("proj-1", undefined, "agents");
 
-		expect(await screen.findByText("git@github.com:acme/project-one.git")).toBeInTheDocument();
-		expect(screen.getByLabelText("Default branch")).toHaveValue("develop");
-		expect(screen.getByLabelText("Session prefix")).toHaveValue("po");
-		expect(screen.getByLabelText("Model override")).toHaveValue("claude-opus-4-5");
+		// Agent section: verify model override, agent selections, and permission mode are loaded
+		expect(await screen.findByLabelText("Model override")).toHaveValue("claude-opus-4-5");
 
 		const workerAgent = screen.getByRole("button", { name: "Default worker agent" });
 		const orchestratorAgent = screen.getByRole("button", { name: "Default orchestrator agent" });
 		const permissionMode = screen.getByRole("button", { name: "Permission mode" });
-		const reviewerAgent = screen.getByRole("button", { name: "Default reviewer agent" });
+
 		expect(workerAgent).toHaveTextContent("codex");
 		expect(orchestratorAgent).toHaveTextContent("claude-code");
 		expect(permissionMode).toHaveTextContent("Auto");
-		expect(reviewerAgent).toHaveTextContent("claude-code");
 
-		await userEvent.clear(screen.getByLabelText("Default branch"));
-		await userEvent.type(screen.getByLabelText("Default branch"), "release");
-		await userEvent.clear(screen.getByLabelText("Session prefix"));
-		await userEvent.type(screen.getByLabelText("Session prefix"), "rel");
 		await userEvent.clear(screen.getByLabelText("Model override"));
 		await userEvent.type(screen.getByLabelText("Model override"), "gpt-5-codex");
 		await chooseOption(workerAgent, "OpenCode");
@@ -248,8 +222,8 @@ describe("ProjectSettingsForm", () => {
 			body: {
 				displayName: "Project One",
 				config: {
-					defaultBranch: "release",
-					sessionPrefix: "rel",
+					defaultBranch: "develop",
+					sessionPrefix: "po",
 					env: { FOO: "bar" },
 					symlinks: [".env"],
 					postCreate: ["npm install"],
@@ -270,6 +244,61 @@ describe("ProjectSettingsForm", () => {
 		expect(postMock).toHaveBeenCalledWith("/api/v1/orchestrators", {
 			body: { projectId: "proj-1", clean: true },
 		});
+		expect(await screen.findByText("Saved.")).toBeInTheDocument();
+	}, 20_000);
+
+	it("loads workflow settings and saves them while preserving hidden config fields", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				defaultBranch: "develop",
+				sessionPrefix: "po",
+				env: { FOO: "bar" },
+				symlinks: [".env"],
+				postCreate: ["npm install"],
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+				reviewers: [{ harness: "claude-code" }],
+			},
+		});
+
+		renderSettings("proj-1", undefined, "workflow");
+
+		expect(await screen.findByLabelText("Default branch")).toHaveValue("develop");
+		expect(screen.getByLabelText("Session prefix")).toHaveValue("po");
+		const reviewerAgent = screen.getByRole("button", { name: "Default reviewer agent" });
+		expect(reviewerAgent).toHaveTextContent("claude-code");
+
+		await userEvent.clear(screen.getByLabelText("Default branch"));
+		await userEvent.type(screen.getByLabelText("Default branch"), "release");
+		await userEvent.clear(screen.getByLabelText("Session prefix"));
+		await userEvent.type(screen.getByLabelText("Session prefix"), "rel");
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
+			params: { path: { id: "proj-1" } },
+			body: {
+				displayName: "Project One",
+				config: {
+					defaultBranch: "release",
+					sessionPrefix: "rel",
+					env: { FOO: "bar" },
+					symlinks: [".env"],
+					postCreate: ["npm install"],
+					worker: { agent: "codex" },
+					orchestrator: { agent: "claude-code" },
+					reviewers: [{ harness: "claude-code" }],
+				},
+			},
+		});
+		expect(postMock).not.toHaveBeenCalled();
 		expect(await screen.findByText("Saved.")).toBeInTheDocument();
 	}, 20_000);
 
@@ -339,7 +368,7 @@ describe("ProjectSettingsForm", () => {
 			config: {},
 		});
 
-		renderSettings();
+		renderSettings("proj-1", undefined, "agents");
 
 		expect(await screen.findByText("Worker and orchestrator agents are required.")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Default worker agent" })).toHaveTextContent("Select worker agent");
@@ -378,11 +407,10 @@ describe("ProjectSettingsForm", () => {
 			};
 		});
 
-		renderSettings();
+		renderSettings("proj-1", undefined, "agents");
 
 		expect(await screen.findByRole("button", { name: "Default worker agent" })).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Default orchestrator agent" })).toBeDisabled();
-		expect(screen.getByRole("button", { name: "Default reviewer agent" })).toBeDisabled();
 	});
 
 	it("shows unknown-auth agents as selectable with a warning in project settings", async () => {
@@ -399,10 +427,10 @@ describe("ProjectSettingsForm", () => {
 			},
 		});
 
-		renderSettings();
+		renderSettings("proj-1", undefined, "agents");
 
-		await waitFor(() => expect(screen.getAllByText("/repo/project-one").length).toBeGreaterThan(0));
-		const workerAgent = screen.getByRole("button", { name: "Default worker agent" });
+		// Wait for the agents section to load by finding the worker agent button
+		const workerAgent = await screen.findByRole("button", { name: "Default worker agent" });
 		await userEvent.click(workerAgent);
 		const options = await screen.findAllByRole("menuitem");
 		expect(options.map((option) => option.textContent)).toEqual([
@@ -495,7 +523,7 @@ describe("ProjectSettingsForm", () => {
 			error: undefined,
 		});
 
-		renderSettings();
+		renderSettings("proj-1", undefined, "intake");
 
 		await userEvent.click(await screen.findByLabelText("Enable issue intake"));
 
@@ -538,7 +566,7 @@ describe("ProjectSettingsForm", () => {
 			error: undefined,
 		});
 
-		renderSettings();
+		renderSettings("proj-1", undefined, "intake");
 
 		await userEvent.click(await screen.findByLabelText("Enable issue intake"));
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
@@ -589,7 +617,7 @@ describe("ProjectSettingsForm", () => {
 					},
 				],
 			},
-		]);
+		], "agents");
 
 		const orchestratorAgent = await screen.findByRole("button", { name: "Default orchestrator agent" });
 		expect(orchestratorAgent).toHaveTextContent("goose");
@@ -628,7 +656,7 @@ describe("ProjectSettingsForm", () => {
 			response: { status: 500 },
 		});
 
-		const queryClient = renderSettings();
+		const queryClient = renderSettings("proj-1", undefined, "agents");
 		const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
 
 		const orchestratorAgent = await screen.findByRole("button", { name: "Default orchestrator agent" });

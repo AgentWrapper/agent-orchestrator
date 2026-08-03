@@ -1,5 +1,4 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, GitPullRequest, HardDriveDownload, History, Loader2, RefreshCw } from "lucide-react";
 import { aoBridge } from "../../lib/bridge";
@@ -13,28 +12,24 @@ import { Button } from "../ui/button";
 import { SettingsOptionMenu } from "./SettingsOptionMenu";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
-import type { MessageKey } from "../../i18n";
 
 export const updateSettingsQueryKey = ["update-settings"] as const;
 
 type PrimaryValue = UpdateChannel | "feature";
 
-type Translate = (key: MessageKey, vars?: Record<string, string | number>) => string;
+const ENABLED_OPTIONS = [
+	{ value: "on" as const, label: "Enabled" },
+	{ value: "off" as const, label: "Disabled" },
+];
 
-function enabledOptions(t: Translate) {
-	return [
-		{ value: "on" as const, label: t("settings.updates.enabled") },
-		{ value: "off" as const, label: t("settings.updates.disabled") },
-	];
-}
+const CHANNEL_OPTIONS: { value: PrimaryValue; label: string }[] = [
+	{ value: "latest", label: "Stable (Latest)" },
+	{ value: "nightly", label: "Nightly (Pre-release)" },
+	{ value: "feature", label: "Feature Releases" },
+];
 
-function channelOptions(t: Translate): { value: PrimaryValue; label: string }[] {
-	return [
-		{ value: "latest", label: t("settings.updates.channel.stable") },
-		{ value: "nightly", label: t("settings.updates.channel.nightly") },
-		{ value: "feature", label: t("settings.updates.channel.feature") },
-	];
-}
+// Feature Releases is developer-only; hide it entirely unless Developer Mode is on.
+const NON_FEATURE_CHANNEL_OPTIONS = CHANNEL_OPTIONS.filter((option) => option.value !== "feature");
 
 const DEFAULT_SETTINGS: UpdateSettings = { enabled: false, channel: "latest", nightlyAck: false, feature: null };
 
@@ -46,16 +41,12 @@ function nextUpdateRequestId(): string {
 	return `feature-update-${updateRequestSequence}`;
 }
 
-export function UpdatesSection() {
-	const { t } = useTranslation();
+export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) {
 	const queryClient = useQueryClient();
 	const query = useQuery({
 		queryKey: updateSettingsQueryKey,
 		queryFn: () => aoBridge.updateSettings.get(),
 	});
-	const ENABLED_OPTIONS = enabledOptions(t);
-	const CHANNEL_OPTIONS = channelOptions(t);
-	const NON_FEATURE_CHANNEL_OPTIONS = CHANNEL_OPTIONS.filter((option) => option.value !== "feature");
 
 	const [form, setForm] = useState<UpdateSettings>(DEFAULT_SETTINGS);
 	const formRef = useRef(form);
@@ -191,31 +182,29 @@ export function UpdatesSection() {
 
 	return (
 		<>
-			<SettingsSection title={t("settings.updates")} sectionId="updates">
+			<SettingsSection title="Updates" sectionId="updates" titleHidden={titleHidden}>
 				{featurePr != null && (
 					<div className="flex flex-col gap-2">
 						<div className="settings-row-bar h-auto min-h-(--size-settings-row) flex-wrap gap-2">
 							<Badge variant="accent">PR #{featurePr}</Badge>
 							<span className="min-w-0 flex-1 text-sm leading-5 text-settings-label">
 								{activeBuild
-									? t("settings.updates.onFeatureBuild", { pr: featurePr })
-									: t("settings.updates.featurePinned", { pr: featurePr })}
+									? `You are on PR #${featurePr}'s build.`
+									: `PR #${featurePr} is pinned but not yet installed.`}
 							</span>
 							<Button type="button" variant="outline" size="sm" onClick={() => void handleReturnToHome()}>
-								{form.channel === "nightly"
-									? t("settings.updates.returnToNightly")
-									: t("settings.updates.returnToStable")}
+								Return to {form.channel === "nightly" ? "Nightly" : "Stable"}
 							</Button>
 						</div>
 						<p className="px-1 text-xs text-settings-muted">
-							{t("settings.updates.featureTracking", { pr: featurePr })}
+							Automatic updates, if enabled, keep tracking PR #{featurePr} until you return home or the build retires.
 						</p>
 					</div>
 				)}
 
-				<SettingsRow icon={History} label={t("settings.updates.automatic")}>
+				<SettingsRow icon={History} label="Automatic Updates">
 					<SettingsOptionMenu
-						aria-label={t("settings.updates.automatic")}
+						aria-label="Automatic Updates"
 						value={form.enabled ? "on" : "off"}
 						options={ENABLED_OPTIONS}
 						onChange={(next) => setEnabled(next === "on")}
@@ -223,9 +212,9 @@ export function UpdatesSection() {
 					/>
 				</SettingsRow>
 
-				<SettingsRow icon={HardDriveDownload} label={t("settings.updates.channel")}>
+				<SettingsRow icon={HardDriveDownload} label="Updates channel">
 					<SettingsOptionMenu
-						aria-label={t("settings.updates.channel")}
+						aria-label="Updates channel"
 						value={primaryValue}
 						options={developerMode ? CHANNEL_OPTIONS : NON_FEATURE_CHANNEL_OPTIONS}
 						onChange={handlePrimaryChannel}
@@ -240,14 +229,15 @@ export function UpdatesSection() {
 				{primaryValue === "nightly" && form.enabled && (
 					<p className="flex items-center gap-2 px-1 text-xs leading-row text-warning">
 						<AlertTriangle className="size-icon-sm shrink-0" aria-hidden="true" />
-						<span>{t("settings.updates.nightlyWarning")}</span>
+						<span>
+							Nightly builds are cut every day and can be unstable or lose data. Only use Nightly if you are comfortable
+							with that.
+						</span>
 					</p>
 				)}
 
 				{save.isError && (
-					<p className="px-1 text-xs text-error">
-						{save.error instanceof Error ? save.error.message : t("settings.updates.saveFailed")}
-					</p>
+					<p className="px-1 text-xs text-error">{save.error instanceof Error ? save.error.message : "Save failed"}</p>
 				)}
 
 				<UpdateActions status={status} />
@@ -255,13 +245,13 @@ export function UpdatesSection() {
 
 			<ConfirmDialog
 				open={pendingPin !== null}
-				title={t("settings.updates.switchFeatureTitle")}
+				title="Switch feature build?"
 				description={
 					pendingPin
-						? t("settings.updates.switchFeatureBody", { pr: pendingPin.pr, title: pendingPin.title })
+						? `Switch to PR #${pendingPin.pr}: ${pendingPin.title}? The app will download the feature build and restart.`
 						: null
 				}
-				confirmLabel={t("settings.updates.confirm")}
+				confirmLabel="Confirm"
 				onConfirm={() => void confirmPinBuild()}
 				onOpenChange={(open) => {
 					if (!open) setPendingPin(null);
@@ -278,7 +268,6 @@ function FeatureBuildsSelect({
 	currentPr: number | null;
 	onPin: (pr: number, title: string) => Promise<void>;
 }) {
-	const { t } = useTranslation();
 	const buildsQuery = useQuery({
 		queryKey: ["feature-builds"],
 		queryFn: () => aoBridge.featureBuilds.list(),
@@ -289,8 +278,8 @@ function FeatureBuildsSelect({
 	if (!buildsQuery.isLoading && builds.length === 0) {
 		return (
 			<div className="px-1 text-xs text-settings-muted">
-				<span className="sr-only">{t("settings.updates.featureBuild")}</span>
-				{t("settings.updates.noFeatureReleases")}
+				<span className="sr-only">Feature build</span>
+				No live feature releases.
 			</div>
 		);
 	}
@@ -301,11 +290,11 @@ function FeatureBuildsSelect({
 	}));
 
 	return (
-		<SettingsRow icon={GitPullRequest} label={t("settings.updates.featureBuild")}>
+		<SettingsRow icon={GitPullRequest} label="Feature build">
 			<SettingsOptionMenu
-				aria-label={t("settings.updates.featureBuild")}
+				aria-label="Feature build"
 				value={currentPr === null ? "__none__" : currentPr.toString()}
-				placeholder={t("settings.updates.selectFeature")}
+				placeholder="Select a feature build..."
 				options={options}
 				disabled={buildsQuery.isLoading}
 				onChange={(nextPr) => {
@@ -329,7 +318,7 @@ function FeatureBuildsSelect({
 								PR #{build.pr}: {build.title}
 							</span>
 							<div className="flex min-w-0 items-center gap-1.5">
-								<span className="min-w-0 truncate font-mono text-caption text-passive">{build.buildId}</span>
+								<span className="min-w-0 truncate text-caption text-passive">{build.buildId}</span>
 								<Badge variant={isStale ? "warning" : "neutral"} className="h-3.5 px-1 text-[9px] leading-none">
 									{ageLabel}
 								</Badge>
@@ -343,7 +332,6 @@ function FeatureBuildsSelect({
 }
 
 function UpdateActions({ status }: { status: UpdateStatus }) {
-	const { t } = useTranslation();
 	const version = useQuery({ queryKey: ["app-version"], queryFn: () => aoBridge.app.getVersion() });
 
 	const checking = status.state === "checking";
@@ -360,14 +348,14 @@ function UpdateActions({ status }: { status: UpdateStatus }) {
 
 	return (
 		<>
-			<SettingsRow icon={Check} label={t("settings.updates.checksForUpdates")}>
+			<SettingsRow icon={Check} label="Checks for Updates">
 				<div className="flex items-center gap-2">
 					<span className="text-control text-settings-muted" data-testid="app-version">
-						{t("settings.updates.currentVersion", { version: version.data ? `v${version.data}` : "…" })}
+						Current version - {version.data ? `v${version.data}` : "…"}
 					</span>
 					<button
 						type="button"
-						aria-label={t("settings.updates.check")}
+						aria-label="Check for updates"
 						className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-settings-muted transition-colors hover:text-settings-label disabled:cursor-not-allowed disabled:opacity-50"
 						onClick={() => void aoBridge.updates.check()}
 						disabled={busy}
@@ -385,14 +373,12 @@ function UpdateActions({ status }: { status: UpdateStatus }) {
 				<div className="settings-row-bar h-auto min-h-0 flex-wrap justify-start gap-3 py-3">
 					{status.state === "available" && (
 						<Button type="button" variant="primary" onClick={() => void aoBridge.updates.download()}>
-							{status.version
-								? t("settings.updates.updateTo", { version: `v${status.version}` })
-								: t("settings.updates.updateToLatest")}
+							Update to {status.version ? `v${status.version}` : "latest"}
 						</Button>
 					)}
 					{status.state === "downloaded" && (
 						<Button type="button" variant="primary" onClick={() => void aoBridge.updates.install()}>
-							{t("settings.updates.restartInstall")}
+							Restart &amp; install
 						</Button>
 					)}
 					<UpdateStatusLine status={status} />
@@ -403,36 +389,25 @@ function UpdateActions({ status }: { status: UpdateStatus }) {
 }
 
 function UpdateStatusLine({ status }: { status: UpdateStatus }) {
-	const { t } = useTranslation();
 	switch (status.state) {
 		case "checking":
-			return <span className="text-xs text-settings-muted">{t("settings.updates.checking")}</span>;
+			return <span className="text-xs text-settings-muted">Checking for updates…</span>;
 		case "available":
 			return (
 				<span className="text-xs text-settings-muted">
-					{t("settings.updates.available", { version: status.version ? ` (v${status.version})` : "" })}
+					Update available{status.version ? ` (v${status.version})` : ""}.
 				</span>
 			);
 		case "downloading":
-			return (
-				<span className="text-xs text-settings-muted">
-					{t("settings.updates.downloading", { percent: status.percent ?? 0 })}
-				</span>
-			);
+			return <span className="text-xs text-settings-muted">Downloading… {status.percent ?? 0}%</span>;
 		case "downloaded":
-			return <span className="text-xs text-success">{t("settings.updates.downloaded")}</span>;
+			return <span className="text-xs text-success">Downloaded. Restart to finish updating.</span>;
 		case "not-available":
-			return <span className="text-xs text-settings-muted">{t("settings.updates.latest")}</span>;
+			return <span className="text-xs text-settings-muted">You're on the latest version.</span>;
 		case "unsupported":
-			return (
-				<span className="text-xs text-settings-muted">
-					{status.message ?? t("settings.updates.needInstalledApp")}
-				</span>
-			);
+			return <span className="text-xs text-settings-muted">{status.message ?? "Updates need the installed app."}</span>;
 		case "error":
-			return (
-				<span className="text-xs text-error">{status.message ?? t("settings.updates.updateFailed")}</span>
-			);
+			return <span className="text-xs text-error">{status.message ?? "Update failed."}</span>;
 		default:
 			return null;
 	}

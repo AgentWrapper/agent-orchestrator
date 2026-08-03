@@ -1,16 +1,34 @@
 import { create } from "zustand";
 import type { TerminalTarget } from "../types/terminal";
 import {
+	applyDocumentThemeStyle,
 	readStoredThemePreference,
+	readStoredThemeStyle,
 	resolveTheme,
 	systemTheme,
 	themeStorageKey,
+	themeStyleStorageKey,
 	type Theme,
 	type ThemePreference,
+	type ThemeStyle,
 } from "../lib/theme";
 
-export type { Theme, ThemePreference } from "../lib/theme";
-export { readStoredThemePreference, resolveTheme } from "../lib/theme";
+export type { Theme, ThemePreference, ThemeStyle } from "../lib/theme";
+export { readStoredThemePreference, readStoredThemeStyle, resolveTheme } from "../lib/theme";
+
+export type SettingsModal =
+	| { scope: "global" }
+	| {
+			scope: "project";
+			projectId: string;
+	  };
+
+export type DevSettings = {
+	/** Number of fixture sessions to generate per attention zone (0 = off). */
+	fixtureCount: number;
+	/** Number of minutes of random activity to spread sessions across. */
+	randomSpreadMinutes: number;
+};
 
 /** Worker detail view toggles — Changes (Git rail) is the default. */
 export type WorkbenchTab = "changes" | "files" | "terminal";
@@ -35,7 +53,10 @@ type UiState = {
 	isSidebarOpen: boolean;
 	inspectorSessions: Record<string, InspectorSessionState>;
 	isCommandPaletteOpen: boolean;
+	settingsModal: SettingsModal | null;
 	themePreference: ThemePreference;
+	/** Visual palette, independent of the light/dark themePreference above. */
+	themeStyle: ThemeStyle;
 	/** Resolved light/dark for React consumers; may track OS while preference is system. */
 	resolvedTheme: Theme;
 	/** When true, developer-only surfaces (e.g. Feature Releases) are revealed. Default off. */
@@ -67,8 +88,15 @@ type UiState = {
 	// session. Surfaces outside the session subtree (the notification runtime)
 	// need that distinction, and SessionView's own target is local state.
 	visibleTerminalKindBySession: Record<string, TerminalTarget["kind"]>;
+	/** Dev-only settings persisted to localStorage. */
+	devSettings: DevSettings;
 	setWorkbenchTab: (tab: WorkbenchTab) => void;
 	setThemePreference: (theme: ThemePreference) => void;
+	setThemeStyle: (style: ThemeStyle) => void;
+	openGlobalSettings: () => void;
+	openProjectSettings: (projectId: string) => void;
+	closeSettings: () => void;
+	setDevSettings: (devSettings: DevSettings) => void;
 	setDeveloperMode: (enabled: boolean) => void;
 	/** Refresh resolvedTheme from OS without writing light/dark to storage. */
 	syncSystemTheme: () => void;
@@ -92,6 +120,22 @@ type UiState = {
 
 const sidebarStorageKey = "ao.sidebar.open";
 const developerModeStorageKey = "ao.developerMode";
+const devSettingsStorageKey = "ao.devSettings";
+const defaultDevSettings: DevSettings = { fixtureCount: 8, randomSpreadMinutes: 120 };
+
+function initialDevSettings(): DevSettings {
+	try {
+		const raw = getLocalStorage()?.getItem(devSettingsStorageKey);
+		if (raw) {
+			const parsed = JSON.parse(raw) as Partial<DevSettings>;
+			return {
+				fixtureCount: typeof parsed.fixtureCount === "number" ? parsed.fixtureCount : defaultDevSettings.fixtureCount,
+				randomSpreadMinutes: typeof parsed.randomSpreadMinutes === "number" ? parsed.randomSpreadMinutes : defaultDevSettings.randomSpreadMinutes,
+			};
+		}
+	} catch { /* use defaults */ }
+	return defaultDevSettings;
+}
 
 function getLocalStorage() {
 	if (typeof window === "undefined" || !window.localStorage) return null;
@@ -111,13 +155,16 @@ function inspectorState(sessions: Record<string, InspectorSessionState>, session
 }
 
 const initialThemePreference = readStoredThemePreference();
+const initialThemeStyle = readStoredThemeStyle();
 
 export const useUiStore = create<UiState>((set) => ({
 	workbenchTab: "changes",
 	isSidebarOpen: initialSidebarOpen(),
 	inspectorSessions: {},
 	isCommandPaletteOpen: false,
+	settingsModal: null,
 	themePreference: initialThemePreference,
+	themeStyle: initialThemeStyle,
 	resolvedTheme: resolveTheme(initialThemePreference),
 	developerMode: initialDeveloperMode(),
 	restartingProjectIds: new Set<string>(),
@@ -128,10 +175,23 @@ export const useUiStore = create<UiState>((set) => ({
 	newShellTerminalNonce: 0,
 	activeShellTerminalHandleId: null,
 	visibleTerminalKindBySession: {},
+	devSettings: initialDevSettings(),
 	setWorkbenchTab: (workbenchTab) => set({ workbenchTab }),
 	setThemePreference: (themePreference) => {
 		getLocalStorage()?.setItem(themeStorageKey, themePreference);
 		set({ themePreference, resolvedTheme: resolveTheme(themePreference) });
+	},
+	setThemeStyle: (themeStyle) => {
+		getLocalStorage()?.setItem(themeStyleStorageKey, themeStyle);
+		applyDocumentThemeStyle(themeStyle);
+		set({ themeStyle });
+	},
+	openGlobalSettings: () => set({ settingsModal: { scope: "global" } }),
+	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),
+	closeSettings: () => set({ settingsModal: null }),
+	setDevSettings: (devSettings) => {
+		getLocalStorage()?.setItem(devSettingsStorageKey, JSON.stringify(devSettings));
+		set({ devSettings });
 	},
 	setDeveloperMode: (developerMode) => {
 		getLocalStorage()?.setItem(developerModeStorageKey, String(developerMode));
