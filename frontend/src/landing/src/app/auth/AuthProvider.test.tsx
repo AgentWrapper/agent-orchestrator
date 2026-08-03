@@ -1,5 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { AuthProvider, useAuth } from "./AuthProvider";
 
@@ -35,9 +35,14 @@ vi.mock("@/lib/cloud-api", () => ({
 }));
 
 beforeEach(() => {
+  vi.useRealTimers();
   window.localStorage.clear();
   mocks.authMode = "local";
   mocks.restoreWorkOSSession.mockReset();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 function AuthState() {
@@ -95,4 +100,31 @@ it("checks the server session when AuthKit briefly reports unauthenticated", asy
     ).toBeVisible(),
   );
   expect(mocks.restoreWorkOSSession).toHaveBeenCalledOnce();
+});
+
+it("refreshes WorkOS sessions when the window regains focus", async () => {
+  mocks.authMode = "workos";
+  mocks.restoreWorkOSSession.mockResolvedValue({
+    accessToken: "workos-access-token",
+    authProvider: "workos",
+    user: {
+      id: "workos-user",
+      email: "developer@example.com",
+      displayName: "Developer",
+    },
+  });
+
+  render(
+    <AuthProvider workOSStatus="authenticated">
+      <AuthState />
+    </AuthProvider>,
+  );
+
+  await waitFor(() =>
+    expect(
+      screen.getByText("authenticated:developer@example.com"),
+    ).toBeVisible(),
+  );
+  window.dispatchEvent(new Event("focus"));
+  await waitFor(() => expect(mocks.restoreWorkOSSession).toHaveBeenCalledTimes(2));
 });

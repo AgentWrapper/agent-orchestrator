@@ -102,15 +102,19 @@ export function AuthProvider({
         setStatus("unauthenticated");
       }
     };
-    try {
-      void restore();
-    } catch {
-      setStatus("unauthenticated");
+    void restore();
+    let refreshTimer: number | undefined;
+    const refreshNow = () => void restore();
+    if (authMode === "workos") {
+      refreshTimer = window.setInterval(refreshNow, 4 * 60 * 1000);
+      window.addEventListener("focus", refreshNow);
     }
     return () => {
       active = false;
+      if (refreshTimer !== undefined) window.clearInterval(refreshTimer);
+      window.removeEventListener("focus", refreshNow);
     };
-  }, [workOSStatus]);
+  }, [authMode, workOSStatus]);
 
   const login = useCallback(async () => {
     setError(null);

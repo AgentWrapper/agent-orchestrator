@@ -93,6 +93,9 @@ func TestCredentialBrokerDownscopesEveryOperation(t *testing.T) {
 		}},
 		{OperationIssueRead, cloudgithubapp.Permissions{"issues": "read"}},
 		{OperationPullRequestRead, cloudgithubapp.Permissions{"pull_requests": "read"}},
+		{OperationPullRequestWrite, cloudgithubapp.Permissions{
+			"contents": "read", "pull_requests": "write",
+		}},
 		{OperationMerge, cloudgithubapp.Permissions{"contents": "write"}},
 		{OperationResolveReviewThread, cloudgithubapp.Permissions{"pull_requests": "write"}},
 		{OperationGitUploadPack, cloudgithubapp.Permissions{"contents": "read"}},

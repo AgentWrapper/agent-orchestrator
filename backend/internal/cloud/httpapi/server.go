@@ -254,6 +254,7 @@ func (s *Server) routes() http.Handler {
 			worker.Get("/worker/orchestrate/sessions/{sessionId}/inspection", s.workerInspectSession)
 			worker.Post("/worker/blocker", s.workerReportBlocker)
 			worker.Post("/worker/scm/claim-pr", s.workerClaimOwnPullRequest)
+			worker.Post("/worker/github-token", s.workerGitHubToken)
 			worker.Handle("/git/{owner}/{repository}.git/*", http.HandlerFunc(s.gitProxy))
 		})
 
@@ -2782,6 +2783,56 @@ func (s *Server) workerClaimOwnPullRequest(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"claim": claim})
+}
+
+func (s *Server) workerGitHubToken(w http.ResponseWriter, r *http.Request) {
+	claims := workerFromContext(r.Context())
+	if !cloudworker.HasScope(claims, "worker:git") {
+		writeError(w, r, http.StatusForbidden, "SCOPE_REQUIRED", "worker:git scope is required.")
+		return
+	}
+	if strings.TrimSpace(r.Header.Get("X-AO-Session-ID")) != string(claims.SessionID) {
+		writeError(w, r, http.StatusForbidden, "SESSION_ID_MISMATCH", "Worker session identity does not match its credential.")
+		return
+	}
+	if s.localGitHub == nil {
+		writeError(w, r, http.StatusNotImplemented, "GITHUB_CONNECTION_REQUIRED", "GitHub is not configured for this deployment.")
+		return
+	}
+	session, err := s.store.GetSession(r.Context(), claims.AccountID, claims.SessionID)
+	if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
+		writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The cloud session does not exist.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "authorize worker GitHub token", err)
+		return
+	}
+	if session.IsTerminated {
+		writeError(w, r, http.StatusForbidden, "WORKER_REQUIRED", "Only an active worker can request a GitHub token.")
+		return
+	}
+	project, err := s.store.GetProject(r.Context(), claims.AccountID, session.ProjectID)
+	if err != nil {
+		s.internalError(w, r, "load project for worker GitHub token", err)
+		return
+	}
+	githubCtx, ok := s.githubOperationContext(
+		w,
+		r,
+		project,
+		cloudlocalgh.OperationPullRequestWrite,
+		"authorize worker GitHub token",
+	)
+	if !ok {
+		return
+	}
+	token, err := s.localGitHub.Token(githubCtx)
+	if err != nil {
+		s.internalError(w, r, "mint worker GitHub token", err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"token": token})
 }
 
 func (s *Server) projectOrchestrator(

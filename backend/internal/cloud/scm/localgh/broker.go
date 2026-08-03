@@ -19,6 +19,7 @@ const (
 	OperationObserve             CredentialOperation = "observe"
 	OperationIssueRead           CredentialOperation = "issue-read"
 	OperationPullRequestRead     CredentialOperation = "pull-request-read"
+	OperationPullRequestWrite    CredentialOperation = "pull-request-write"
 	OperationMerge               CredentialOperation = "merge"
 	OperationResolveReviewThread CredentialOperation = "resolve-review-thread"
 	OperationGitUploadPack       CredentialOperation = "git-upload-pack"
@@ -78,6 +79,11 @@ func permissionsForOperation(operation CredentialOperation) (cloudgithubapp.Perm
 		return cloudgithubapp.Permissions{"issues": "read"}, nil
 	case OperationPullRequestRead:
 		return cloudgithubapp.Permissions{"pull_requests": "read"}, nil
+	case OperationPullRequestWrite:
+		return cloudgithubapp.Permissions{
+			"contents":      "read",
+			"pull_requests": "write",
+		}, nil
 	case OperationMerge:
 		return cloudgithubapp.Permissions{"contents": "write"}, nil
 	case OperationResolveReviewThread:
