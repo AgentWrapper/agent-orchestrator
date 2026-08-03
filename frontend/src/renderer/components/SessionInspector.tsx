@@ -9,7 +9,6 @@ import {
 	Files as FilesIcon,
 	GitPullRequest,
 	Play,
-	ScanEye,
 	Terminal,
 	Trash2,
 	Loader2,
@@ -804,27 +803,28 @@ function ReviewsSection({
 			{/* One panel, two sources, in the order they happen: AO's own reviewer runs
 			    first, then whatever humans and bots leave on the PR. Tabs hid one
 			    behind the other when the point is to read them together. */}
-			<Section surface title={t("inspector.aoCodeReviews")}>
-				<ReviewPanel
-					config={projectConfigQuery.data}
-					error={reviewsQuery.error ?? triggerReview.error ?? cancelReview.error}
-					isLoading={reviewsQuery.isLoading}
-					isCancelling={cancelReview.isPending}
-					isTriggering={triggerReview.isPending}
-					onOpenTerminal={onOpenReviewerTerminal}
-					onCancel={() => cancelReview.mutate()}
-					onTrigger={() => triggerReview.mutate()}
-					reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
-					reviewStates={reviewStates}
-					runs={reviewsQuery.data?.runs ?? []}
-					notice={reviewNotice}
-					agentCatalog={agentsQuery.data}
-					reviewerOverride={reviewerOverride}
-					onReviewerOverrideChange={setReviewerOverride}
-					session={session}
-				/>
-			</Section>
-			<Section surface title={`${t("inspector.reviewsOnPR")}${githubReviewCount > 0 ? ` (${githubReviewCount})` : ""}`}>
+			<ReviewPanel
+				config={projectConfigQuery.data}
+				error={reviewsQuery.error ?? triggerReview.error ?? cancelReview.error}
+				isLoading={reviewsQuery.isLoading}
+				isCancelling={cancelReview.isPending}
+				isTriggering={triggerReview.isPending}
+				onOpenTerminal={onOpenReviewerTerminal}
+				onCancel={() => cancelReview.mutate()}
+				onTrigger={() => triggerReview.mutate()}
+				reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
+				reviewStates={reviewStates}
+				runs={reviewsQuery.data?.runs ?? []}
+				notice={reviewNotice}
+				agentCatalog={agentsQuery.data}
+				reviewerOverride={reviewerOverride}
+				onReviewerOverrideChange={setReviewerOverride}
+				session={session}
+			/>
+			<Section
+				surface
+				title={`${t("inspector.reviewsOnPR")}${githubReviewCount > 0 ? ` (${githubReviewCount})` : ""}`}
+			>
 				<GithubReviewPanel
 					isLoading={scmSummary.isLoading}
 					prs={githubReviews}
@@ -1129,18 +1129,14 @@ function ReviewPanel({
 			if (fallback.length > 0) runsByPR.set(state.prUrl, fallback);
 		}
 	}
-	const filteredRunsByPR = new Map<string, ReviewRunFacts[]>();
-	for (const [prUrl, prRuns] of runsByPR) {
-		filteredRunsByPR.set(prUrl, prRuns.filter((run) => (run.harness || "reviewer") === selectedReviewer));
-	}
-
 	const runDisabled =
 		isTriggering ||
 		openReviewStates.length === 0 ||
 		openReviewStates.every((reviewState) => reviewState.status === "ineligible");
 
 	return (
-		<div className="flex flex-col gap-3">
+		<div className="mb-2.5 flex flex-col">
+			<Section surface title={t("inspector.review.run")}>
 			{error ? (
 				<p className="m-0 rounded-md border border-error/28 bg-error/8 px-2.5 py-2 text-sm-md leading-normal text-error">
 					{apiErrorMessage(error, t("inspector.reviewRequestFailed"))}
@@ -1155,97 +1151,84 @@ function ReviewPanel({
 					{notice}
 				</p>
 			) : null}
-			<div className="flex min-w-0 items-center justify-between gap-3">
-				<div className="min-w-0">
-					<span className="inline-flex items-center gap-1.5 text-micro font-medium uppercase tracking-wide-sm text-passive">
-						<ScanEye aria-hidden="true" className="size-icon-2xs shrink-0" />
-						Review history
-					</span>
-					<p className="m-0 mt-0.5 text-micro text-passive">Filter history and choose the agent for the next run.</p>
-				</div>
-				<ReviewerSelect
-					ariaLabel="Select reviewer agent"
-					authorized={agentCatalog?.authorized}
-					defaultHarness={harness}
-					disabled={reviewRunning}
-					installed={agentCatalog?.installed}
-					onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
-					supported={agentCatalog?.supported}
-					triggerClassName="max-w-[10rem] shrink-0"
-					value={reviewerOverride}
-				/>
-			</div>
-			<div className="flex flex-col divide-y divide-border">
-				{openReviewStates.length === 0 ? (
-					<p className={cn(inspectorEmptyClass, "py-1")}>{t("inspector.noOpenPRsToReview")}</p>
-				) : (
-					openReviewStates.map((reviewState) => (
-						<ReviewDisclosure
-							key={`${reviewState.prUrl}:${reviewState.targetSha}`}
-							collapsible
-							defaultOpen={false}
-							meta={aoReviewMeta(reviewState)}
-							title={reviewState.title?.trim() || `PR #${reviewState.prNumber}`}
+			<div className="review-run-controls-container min-w-0">
+				<div className="review-run-controls flex min-w-0 items-center gap-1.5">
+					<ReviewerSelect
+						ariaLabel={t("inspector.selectReviewerAgent")}
+						authorized={agentCatalog?.authorized}
+						defaultHarness={harness}
+						disabled={reviewRunning}
+						installed={agentCatalog?.installed}
+						onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
+						supported={agentCatalog?.supported}
+						triggerClassName="review-run-agent-select h-control-md w-36 shrink-0 text-xs"
+						value={reviewerOverride}
+					/>
+					<div className="flex shrink-0 items-center gap-1.5">
+						<Button
+							className="shrink-0 gap-1 px-1.5 [&_svg]:size-icon-sm"
+							disabled={reviewRunning ? isCancelling : runDisabled}
+							onClick={reviewRunning ? onCancel : onTrigger}
+							size="sm"
+							type="button"
+							variant={reviewRunning ? "ghost" : reviewHasRun ? "secondary" : "primary"}
 						>
-							<ReviewerRuns
-								reviewState={reviewState}
-								runs={filteredRunsByPR.get(reviewState.prUrl) ?? []}
-								reviewer={selectedReviewer}
-								hasAnyRuns={(runsByPR.get(reviewState.prUrl)?.length ?? 0) > 0}
-							/>
-						</ReviewDisclosure>
-					))
-				)}
+							{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
+							{reviewRunning
+								? isCancelling
+									? t("inspector.review.cancelling")
+									: t("inspector.review.cancel")
+								: runAction}
+						</Button>
+						{reviewHasRun ? (
+							<Button
+								className="shrink-0 gap-1.5 [&_svg]:size-icon-sm"
+								disabled={!terminalEnabled}
+								onClick={openReviewerTerminal}
+								size="sm"
+								type="button"
+								variant="ghost"
+							>
+								<Terminal aria-hidden="true" />
+								{t("inspector.openTerminal")}
+							</Button>
+						) : null}
+					</div>
+				</div>
 			</div>
-			{/* Running is the one state worth interrupting the panel for, so it gets a
-			    live strip above the actions rather than only a word on a button. */}
 			{reviewRunning ? (
-				<div className="-mx-4 mt-1 flex items-center gap-2 border-y border-border px-4 py-2">
+				<div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
 					<Loader2 aria-hidden="true" className="size-icon-sm shrink-0 animate-spin text-muted-foreground" />
 					<span className="min-w-0 flex-1 truncate text-2xs font-medium text-muted-foreground">
-						{isCancelling ? "Cancelling review…" : `Review in progress · ${harness}`}
+						{isCancelling ? t("inspector.review.cancelling") : `Review in progress · ${harness}`}
 					</span>
 				</div>
 			) : null}
-			<div
-				className={cn(
-					"-mx-4 -mb-3 flex items-center justify-center gap-2 border-t border-border px-4 pb-3 pt-3",
-					reviewRunning ? "mt-0 border-t-0" : "mt-3",
-				)}
-			>
-				{/* The review action carries the panel, so it gets real button weight
-				    instead of reading as one more link next to Open terminal. */}
-				{/* Same accent as the Orchestrator action, so the two primary buttons in
-				    the app read as the same kind of thing. */}
-				<Button
-					className={cn(
-						"shrink-0 gap-1.5 [&_svg]:size-icon-sm",
-						!reviewRunning &&
-							"border-transparent bg-accent-strong text-accent-foreground hover:opacity-100 hover:brightness-110 active:brightness-95",
+			</Section>
+			<Section surface title={t("inspector.aoCodeReviews")}>
+				<div className="flex flex-col divide-y divide-border">
+					{openReviewStates.length === 0 ? (
+						<p className={cn(inspectorEmptyClass, "py-1")}>{t("inspector.noOpenPRsToReview")}</p>
+					) : (
+						openReviewStates.map((reviewState) => (
+							<ReviewDisclosure
+								key={`${reviewState.prUrl}:${reviewState.targetSha}`}
+								collapsible
+								defaultOpen={false}
+								meta={aoReviewMeta(reviewState)}
+								title={reviewState.title?.trim() || `PR #${reviewState.prNumber}`}
+							>
+								<ReviewerRuns
+									reviewState={reviewState}
+									runs={runsByPR.get(reviewState.prUrl) ?? []}
+									reviewer={selectedReviewer}
+									hasAnyRuns={(runsByPR.get(reviewState.prUrl)?.length ?? 0) > 0}
+								/>
+							</ReviewDisclosure>
+						))
 					)}
-					disabled={reviewRunning ? isCancelling : runDisabled}
-					onClick={reviewRunning ? onCancel : onTrigger}
-					size="sm"
-					type="button"
-					variant={reviewRunning ? "outline" : "primary"}
-				>
-					{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
-					{reviewRunning ? (isCancelling ? t("inspector.review.cancelling") : t("inspector.review.cancel")) : runAction}
-				</Button>
-				{reviewHasRun ? (
-					<Button
-						className="shrink-0 gap-1.5 [&_svg]:size-icon-sm"
-						disabled={!terminalEnabled}
-						onClick={openReviewerTerminal}
-						size="sm"
-						type="button"
-						variant="ghost"
-						>
-							<Terminal aria-hidden="true" />
-							{t("inspector.openTerminal")}
-						</Button>
-				) : null}
-			</div>
+				</div>
+			</Section>
 		</div>
 	);
 }

@@ -1031,7 +1031,7 @@ describe("SessionInspector reviews tab", () => {
 		expect(screen.queryByText("Review in progress · claude-code")).not.toBeInTheDocument();
 	});
 
-	it("filters review history by the selected harness while keeping PR context", async () => {
+	it("keeps all review history visible when selecting the harness for the next run", async () => {
 		const state = {
 			...reviewState(3, "changes_requested", "sha-1"),
 			latestRun: {
@@ -1072,11 +1072,11 @@ describe("SessionInspector reviews tab", () => {
 		await openReviewsTab();
 
 		expect(await screen.findByText("codex asked for tests.")).toBeInTheDocument();
-		expect(screen.queryByText("claude-code found nothing blocking.")).not.toBeInTheDocument();
+		expect(screen.getByText("claude-code found nothing blocking.")).toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: /Select reviewer agent/ }));
 		await userEvent.click(screen.getByRole("menuitem", { name: /claude-code/ }));
-		expect(await screen.findByText("claude-code found nothing blocking.")).toBeInTheDocument();
-		expect(screen.queryByText("codex asked for tests.")).not.toBeInTheDocument();
+		expect(screen.getByText("claude-code found nothing blocking.")).toBeInTheDocument();
+		expect(screen.getByText("codex asked for tests.")).toBeInTheDocument();
 		expect(screen.getByText("Reviewable change 3")).toBeInTheDocument();
 	});
 
