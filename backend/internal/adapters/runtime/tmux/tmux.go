@@ -237,8 +237,10 @@ func stableRunDir() string {
 }
 
 // New builds a tmux Runtime, filling unset Options with defaults: binary "tmux"
-// (resolved via exec.LookPath), shell from $SHELL (else /bin/sh), and the
-// default timeout and output chunk size.
+// (resolved via exec.LookPath), pane interpreter /bin/sh (always POSIX —
+// $SHELL is used only by the keep-alive `exec "${SHELL:-/bin/sh}" -i` so the
+// user's interactive shell is preserved without exposing buildLaunchCommand's
+// export/unset syntax to non-POSIX shells), and the default timeout and chunk size.
 func New(opts Options) *Runtime {
 	binary := opts.Binary
 	if binary == "" {
