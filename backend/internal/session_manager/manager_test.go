@@ -784,6 +784,32 @@ func testRoleAgents() domain.ProjectConfig {
 		Orchestrator: domain.RoleOverride{Harness: domain.HarnessClaudeCode},
 	}
 }
+
+func newManagerGitRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	runManagerGit(t, dir, "init")
+	runManagerGit(t, dir, "config", "user.email", "ao@example.com")
+	runManagerGit(t, dir, "config", "user.name", "AO Tests")
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	runManagerGit(t, dir, "add", ".")
+	runManagerGit(t, dir, "commit", "-m", "initial")
+	runManagerGit(t, dir, "branch", "-M", "main")
+	return dir
+}
+
+func runManagerGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git -C %s %s: %v\n%s", dir, strings.Join(args, " "), err, out)
+	}
+	return string(out)
+}
+
 func seedTerminal(st *fakeStore, id domain.SessionID, meta domain.SessionMetadata) {
 	st.sessions[id] = domain.SessionRecord{ID: id, ProjectID: "mer", Metadata: meta, IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited}}
 }
@@ -835,6 +861,60 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	}
 	if !agent.lastConfig.IsZero() {
 		t.Fatalf("launch config = %#v, want zero for project without config", agent.lastConfig)
+	}
+}
+
+func TestSpawnRecordsDiffBaseForSingleRepoSessions(t *testing.T) {
+	m, st, _, ws := newManager()
+	repo := newManagerGitRepo(t)
+	cfg := testRoleAgents()
+	cfg.DefaultBranch = "main"
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: repo, Config: cfg}
+	ws.path = repo
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBase := strings.TrimSpace(runManagerGit(t, repo, "rev-parse", "main"))
+	if rec.Metadata.DiffBaseSHA != wantBase || rec.Metadata.DiffBaseRef != "main" {
+		t.Fatalf("spawn diff base = sha:%q ref:%q, want %s main", rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, wantBase)
+	}
+}
+
+func TestSpawnRecordsRemoteTrackingDiffBaseWhenLocalDefaultBranchLags(t *testing.T) {
+	m, st, _, ws := newManager()
+	repo := newManagerGitRepo(t)
+	localMain := strings.TrimSpace(runManagerGit(t, repo, "rev-parse", "HEAD"))
+	runManagerGit(t, repo, "switch", "-c", "upstream-main")
+	if err := os.WriteFile(filepath.Join(repo, "upstream.txt"), []byte("upstream\n"), 0o644); err != nil {
+		t.Fatalf("write upstream file: %v", err)
+	}
+	runManagerGit(t, repo, "add", "upstream.txt")
+	runManagerGit(t, repo, "commit", "-m", "upstream change")
+	originMain := strings.TrimSpace(runManagerGit(t, repo, "rev-parse", "HEAD"))
+	runManagerGit(t, repo, "update-ref", "refs/remotes/origin/main", originMain)
+	runManagerGit(t, repo, "switch", "-c", "ao/work")
+	runManagerGit(t, repo, "branch", "-f", "main", localMain)
+	cfg := testRoleAgents()
+	cfg.DefaultBranch = "main"
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: repo, Config: cfg}
+	ws.path = repo
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Metadata.DiffBaseSHA != originMain || rec.Metadata.DiffBaseRef != "origin/main" {
+		t.Fatalf("spawn diff base = sha:%q ref:%q, want %s origin/main", rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, originMain)
+	}
+}
+
+func TestSpawnDiffBaseRefCandidatesPreferRemoteTrackingDefault(t *testing.T) {
+	got := spawnDiffBaseRefCandidates("main")
+	want := []string{"origin/main", "refs/remotes/origin/main", "main"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("spawn diff candidates = %#v, want %#v", got, want)
 	}
 }
 

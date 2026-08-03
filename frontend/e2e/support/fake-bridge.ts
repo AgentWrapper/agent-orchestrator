@@ -146,6 +146,10 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
 					set: async () => undefined,
 				},
+				uiSettings: {
+					get: async () => ({ locale: "en" }),
+					set: async (settings) => settings,
+				},
 				keybindings: {
 					get: async () => ({}),
 					set: async (overrides) => overrides,
@@ -519,6 +523,10 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				updateSettings: {
 					get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
 					set: async () => undefined,
+				},
+				uiSettings: {
+					get: async () => ({ locale: "en" }),
+					set: async (settings) => settings,
 				},
 				keybindings: {
 					get: async () => ({}),

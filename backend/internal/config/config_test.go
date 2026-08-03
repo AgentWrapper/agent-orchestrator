@@ -83,11 +83,15 @@ func TestLoadAbsolutizesRelativeOverrides(t *testing.T) {
 }
 
 func TestLoadOverrides(t *testing.T) {
+	overrideDir := t.TempDir()
+	runFilePath := filepath.Join(overrideDir, "ao-test-running.json")
+	dataDir := filepath.Join(overrideDir, "ao-test-data")
+
 	t.Setenv("AO_PORT", "4002")
 	t.Setenv("AO_REQUEST_TIMEOUT", "5s")
 	t.Setenv("AO_SHUTDOWN_TIMEOUT", "3s")
-	t.Setenv("AO_RUN_FILE", "/tmp/ao-test-running.json")
-	t.Setenv("AO_DATA_DIR", "/tmp/ao-test-data")
+	t.Setenv("AO_RUN_FILE", runFilePath)
+	t.Setenv("AO_DATA_DIR", dataDir)
 	t.Setenv("AO_TELEMETRY_EVENTS", "on")
 	t.Setenv("AO_TELEMETRY_METRICS", "off")
 	t.Setenv("AO_TELEMETRY_REMOTE", "posthog")
@@ -107,11 +111,11 @@ func TestLoadOverrides(t *testing.T) {
 	if cfg.ShutdownTimeout != 3*time.Second {
 		t.Errorf("ShutdownTimeout = %s, want 3s", cfg.ShutdownTimeout)
 	}
-	if cfg.RunFilePath != "/tmp/ao-test-running.json" {
-		t.Errorf("RunFilePath = %q, want /tmp/ao-test-running.json", cfg.RunFilePath)
+	if cfg.RunFilePath != runFilePath {
+		t.Errorf("RunFilePath = %q, want %q", cfg.RunFilePath, runFilePath)
 	}
-	if cfg.DataDir != "/tmp/ao-test-data" {
-		t.Errorf("DataDir = %q, want /tmp/ao-test-data", cfg.DataDir)
+	if cfg.DataDir != dataDir {
+		t.Errorf("DataDir = %q, want %q", cfg.DataDir, dataDir)
 	}
 	if !cfg.Telemetry.Events || cfg.Telemetry.Metrics {
 		t.Fatalf("Telemetry toggles = %+v", cfg.Telemetry)
