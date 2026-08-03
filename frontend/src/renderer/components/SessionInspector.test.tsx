@@ -357,6 +357,8 @@ describe("SessionInspector PR section", () => {
 			"href",
 			"https://github.com/acme/repo/pull/7",
 		);
+		expect(prSection("Pull request").queryByText("Review")).not.toBeInTheDocument();
+		expect(prSection("Pull request").queryByText("Approved")).not.toBeInTheDocument();
 		expect(prSection("Pull request").getByText("open")).toHaveClass("text-[9px]", "leading-none");
 		expect(prSection("Pull request").getByRole("button", { name: "Merge PR #7" })).toBeInTheDocument();
 	});

@@ -10,6 +10,7 @@ import {
 	type PRDisplayTone,
 	type PRNoun,
 	type PRSummaryLink,
+	type PRSummaryPartKey,
 } from "../lib/pr-display";
 import { cn } from "../lib/utils";
 
@@ -111,13 +112,17 @@ function PRDiffMeta({ pr }: { pr: SessionPRSummary }) {
 export function PRCardStatusSummary({
 	action,
 	className,
+	omit,
 	pr,
 }: {
 	action?: ReactNode;
 	className?: string;
+	omit?: PRSummaryPartKey[];
 	pr: SessionPRSummary;
 }) {
 	const presentation = prCardPresentation(pr);
+	const omitted = omit ? new Set(omit) : undefined;
+	const supporting = presentation.supporting.filter((status) => !omitted?.has(status.key as PRSummaryPartKey));
 	return (
 		<div className={cn("border-t border-border pt-2", className)}>
 			<div className="flex min-w-0 items-center gap-3">
@@ -154,10 +159,10 @@ export function PRCardStatusSummary({
 							) : null}
 						</div>
 					</div>
-					{presentation.supporting.length > 0 ? (
+					{supporting.length > 0 ? (
 						<div className="min-w-0 pl-4">
 							<div className="flex min-w-0 flex-wrap gap-x-3 gap-y-1 font-mono text-2xs">
-								{presentation.supporting.map((status) => (
+								{supporting.map((status) => (
 									<span
 										className={cn("inline-flex items-center gap-1", toneClass[status.tone])}
 										key={status.key}
@@ -196,19 +201,22 @@ function PRCardStatusLink({ status }: { status: ReturnType<typeof prCardPresenta
 
 export function PRSummaryParts({
 	className,
+	omit,
 	interactiveLinks = true,
 	maxLinks = 3,
 	pr,
 	variant = "compact",
 }: {
 	className?: string;
+	omit?: PRSummaryPartKey[];
 	interactiveLinks?: boolean;
 	maxLinks?: number;
 	pr: SessionPRSummary;
 	variant?: "compact" | "stacked";
 }) {
 	const { t } = useTranslation();
-	const parts = prSummaryParts(pr);
+	const omitted = omit ? new Set(omit) : undefined;
+	const parts = prSummaryParts(pr).filter((part) => !omitted?.has(part.key));
 	const stacked = variant === "stacked";
 	return (
 		<div

@@ -890,6 +890,7 @@ function PRSummaryCard({ pr, sessionId }: { pr: SessionPRSummary; sessionId: str
 							) : undefined
 						}
 						className="mt-2"
+						omit={["review"]}
 						pr={pr}
 					/>
 					{mergeError ? (
