@@ -6,6 +6,7 @@ describe("currentReviewerTerminal", () => {
 		const response: ReviewsResponse = {
 			reviewerGeneration: "batch-hidden-from-pr-projection",
 			reviewerHandleId: "review-worker-1",
+			reviewerHarness: "codex",
 			reviews: [],
 		};
 

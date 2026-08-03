@@ -260,6 +260,22 @@ describe("useTerminalSession", () => {
 		expect(muxes[0].resizes.slice(initialResizes)).toEqual([["handle-1", 150, 55]]);
 	});
 
+	it("publishes a locally refitted parked grid when the terminal becomes visible", () => {
+		const { view, terminal, muxes } = setup();
+		act(() => muxes[0].emitOpened("handle-1"));
+		const initialResizes = muxes[0].resizes.length;
+
+		view.rerender({ daemonReady: true, isVisible: false });
+		// prepareForActivation refits xterm while resize forwarding is suppressed.
+		// Model the resulting live getters without emitting onResize.
+		terminal.cols = 132;
+		terminal.rows = 47;
+		view.rerender({ daemonReady: true, isVisible: true });
+		act(() => view.result.current.syncVisibleSize(terminal.cols, terminal.rows));
+
+		expect(muxes[0].resizes.slice(initialResizes)).toEqual([["handle-1", 132, 47]]);
+	});
+
 	it("collapses a drag's burst of grid changes into one trailing PTY resize, then re-asserts it", () => {
 		const { terminal, muxes } = setup();
 		const initialResizes = muxes[0].resizes.length; // connect() sends the opening size

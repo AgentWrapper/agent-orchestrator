@@ -102,10 +102,16 @@ function renderWithQuery(children: ReactNode, workspaces?: WorkspaceSummary[]) {
 	return render(<QueryClientProvider client={client}>{children}</QueryClientProvider>);
 }
 
-function mockCommonGets(_unusedRuns: unknown[] = [], reviewerHandleId = "", reviews: unknown[] = []) {
+function mockCommonGets(
+	_unusedRuns: unknown[] = [],
+	reviewerHandleId = "",
+	reviews: unknown[] = [],
+	reviewerGeneration = "",
+	reviewerHarness = "",
+) {
 	getMock.mockImplementation(async (path: string) => {
 		if (path === "/api/v1/sessions/{sessionId}/reviews") {
-			return { data: { reviewerGeneration: "", reviewerHandleId, reviews } };
+			return { data: { reviewerGeneration, reviewerHandleId, reviewerHarness, reviews } };
 		}
 		if (path === "/api/v1/projects/{id}") {
 			return {
@@ -164,7 +170,7 @@ beforeEach(() => {
 	patchMock.mockReset();
 	postMock.mockReset();
 	getMock.mockResolvedValue({
-		data: { reviewerGeneration: "", reviewerHandleId: "", reviews: [] },
+		data: { reviewerGeneration: "", reviewerHandleId: "", reviewerHarness: "", reviews: [] },
 		error: undefined,
 	});
 	patchMock.mockResolvedValue({ data: { ok: true }, error: undefined, response: { status: 200 } });
@@ -587,7 +593,7 @@ describe("SessionInspector Activity section", () => {
 				return { data: { sessionId: "sess-1", prs: summaries }, error: undefined };
 			}
 			return {
-				data: { reviewerGeneration: "", reviewerHandleId: "", reviews: [] },
+				data: { reviewerGeneration: "", reviewerHandleId: "", reviewerHarness: "", reviews: [] },
 				error: undefined,
 			};
 		});
@@ -717,6 +723,7 @@ describe("SessionInspector reviews tab", () => {
 			data: {
 				reviewerGeneration: "batch-new",
 				reviewerHandleId: "reviewer-pane",
+				reviewerHarness: "codex",
 				reviews: [
 					{ ...reviewState(2, "running"), latestRun: olderRunningReview },
 					{ ...reviewState(3, "running"), latestRun: runningReview },
@@ -786,11 +793,40 @@ describe("SessionInspector reviews tab", () => {
 		});
 	});
 
+	it("uses the persisted owner harness when a newer replacement run failed", async () => {
+		const failedReplacement = {
+			...failedReview,
+			batchId: "batch-new-failed",
+			createdAt: "2026-06-16T10:07:00Z",
+			harness: "codex",
+		};
+		mockCommonGets(
+			[],
+			"reviewer-pane",
+			[{ ...reviewState(3, "needs_review"), latestRun: failedReplacement }],
+			"batch-old-live",
+			"claude-code",
+		);
+		const onOpenReviewerTerminal = vi.fn();
+
+		renderWithQuery(
+			<SessionInspector onOpenReviewerTerminal={onOpenReviewerTerminal} session={session([pr(3, "open")])} />,
+		);
+		await openReviewsTab();
+		await userEvent.click(await screen.findByRole("button", { name: "Open terminal" }));
+
+		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({
+			generation: "batch-old-live",
+			handleId: "reviewer-pane",
+			harness: "claude-code",
+		});
+	});
+
 	it("shows claude-code as the default reviewer before a run exists", async () => {
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/sessions/{sessionId}/reviews") {
 				return {
-					data: { reviewerGeneration: "", reviewerHandleId: "", reviews: [] },
+					data: { reviewerGeneration: "", reviewerHandleId: "", reviewerHarness: "", reviews: [] },
 				};
 			}
 			if (path === "/api/v1/projects/{id}") {
@@ -933,6 +969,7 @@ describe("SessionInspector reviews tab", () => {
 			data: {
 				reviewerGeneration: "batch-current",
 				reviewerHandleId: "reviewer-pane",
+				reviewerHarness: "codex",
 				reviews: [],
 			},
 		});

@@ -13,7 +13,7 @@
 // derived status flow back (docs/architecture.md).
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { getApiBaseUrl } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
 import { createTerminalMux, muxUrlFromApiBase, type TerminalMux } from "../lib/terminal-mux";
@@ -726,9 +726,9 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 	);
 
 	// Reassert the retained terminal's positive grid only after activation has
-	// painted it and made it visible. A parked reconnect opens at 0×0 so it
-	// cannot claim a stale off-screen size; FitAddon emits no onResize when the
-	// local grid is unchanged, so activation must explicitly promote that
+	// painted it and made it visible. A parked reconnect opens at 0×0, while a
+	// continuously connected parked terminal may be refitted locally with resize
+	// forwarding suppressed. In both cases activation must explicitly promote the
 	// retained primary back to an authoritative size.
 	const syncVisibleSize = useCallback((cols: number, rows: number) => {
 		const r = runtime.current;
@@ -768,12 +768,15 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 	}, [daemonReady, connect]);
 
 	// A parked cache entry keeps parsing output, but it must be inert as a PTY
-	// client. Cancel resize work queued while it was visible; returning to a
-	// differently sized slot makes FitAddon emit the authoritative new grid.
+	// client. Cancel resize work queued while it was visible and remember that a
+	// hidden local refit cannot be forwarded. useLayoutEffect runs before the
+	// cache's activation preparation, so the first visible frame always publishes
+	// its final positive grid even when xterm's local size no longer changes.
 	const isVisible = options.isVisible !== false;
-	useEffect(() => {
+	useLayoutEffect(() => {
 		if (isVisible) return;
 		const r = runtime.current;
+		r.needsVisibleSizeSync = true;
 		if (r.resizeTimer) {
 			clearTimeout(r.resizeTimer);
 			r.resizeTimer = null;

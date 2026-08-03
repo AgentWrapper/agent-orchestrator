@@ -88,6 +88,7 @@ func TestReviewsListIncludesReviewStates(t *testing.T) {
 	srv := newReviewTestServer(t, &fakeReviewService{list: reviewcore.SessionReviews{
 		ReviewerHandleID:   "review-mer-1",
 		ReviewerGeneration: "batch-1",
+		ReviewerHarness:    domain.ReviewerCodex,
 		Runs:               []domain.ReviewRun{{ID: "run-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1"}},
 		Reviews:            []reviewcore.PRReviewState{{PRURL: "https://github.com/o/r/pull/1", PRNumber: 1, TargetSHA: "sha1", Status: reviewcore.ReviewStateUpToDate}},
 	}})
@@ -97,7 +98,7 @@ func TestReviewsListIncludesReviewStates(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("status = %d body=%s", status, body)
 	}
-	if !strings.Contains(string(body), `"reviews"`) || !strings.Contains(string(body), `"up_to_date"`) || !strings.Contains(string(body), `"reviewerHandleId":"review-mer-1"`) || !strings.Contains(string(body), `"reviewerGeneration":"batch-1"`) {
+	if !strings.Contains(string(body), `"reviews"`) || !strings.Contains(string(body), `"up_to_date"`) || !strings.Contains(string(body), `"reviewerHandleId":"review-mer-1"`) || !strings.Contains(string(body), `"reviewerGeneration":"batch-1"`) || !strings.Contains(string(body), `"reviewerHarness":"codex"`) {
 		t.Fatalf("body missing review states/handle: %s", body)
 	}
 	if strings.Contains(string(body), `"items"`) || strings.Contains(string(body), `"reviewItems"`) || strings.Contains(string(body), `"reviewRuns"`) {
@@ -112,6 +113,7 @@ func TestReviewsTriggerIncludesBatchFields(t *testing.T) {
 		Run:                run1,
 		ReviewerHandleID:   "review-mer-1",
 		ReviewerGeneration: "batch-1",
+		ReviewerHarness:    domain.ReviewerCodex,
 		Created:            true,
 		CreatedRuns:        []domain.ReviewRun{run1, run2},
 		Reviews: []reviewcore.PRReviewState{
@@ -125,7 +127,7 @@ func TestReviewsTriggerIncludesBatchFields(t *testing.T) {
 	if status != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", status, body)
 	}
-	for _, want := range []string{`"reviews"`, `"running"`, `"run-1"`, `"run-2"`, `"reviewerHandleId":"review-mer-1"`, `"reviewerGeneration":"batch-1"`} {
+	for _, want := range []string{`"reviews"`, `"running"`, `"run-1"`, `"run-2"`, `"reviewerHandleId":"review-mer-1"`, `"reviewerGeneration":"batch-1"`, `"reviewerHarness":"codex"`} {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("body missing %s: %s", want, body)
 		}
@@ -141,6 +143,7 @@ func TestReviewsCancelIncludesReviewStates(t *testing.T) {
 	srv := newReviewTestServer(t, &fakeReviewService{cancel: reviewcore.CancelResult{
 		ReviewerHandleID:   "review-mer-1",
 		ReviewerGeneration: "batch-1",
+		ReviewerHarness:    domain.ReviewerCodex,
 		Reviews: []reviewcore.PRReviewState{
 			{PRURL: "https://github.com/o/r/pull/1", PRNumber: 1, TargetSHA: "sha1", Status: reviewcore.ReviewStateNeedsReview},
 		},
@@ -151,7 +154,7 @@ func TestReviewsCancelIncludesReviewStates(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("status = %d body=%s", status, body)
 	}
-	for _, want := range []string{`"reviews"`, `"needs_review"`, `"reviewerHandleId":"review-mer-1"`, `"reviewerGeneration":"batch-1"`} {
+	for _, want := range []string{`"reviews"`, `"needs_review"`, `"reviewerHandleId":"review-mer-1"`, `"reviewerGeneration":"batch-1"`, `"reviewerHarness":"codex"`} {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("body missing %s: %s", want, body)
 		}

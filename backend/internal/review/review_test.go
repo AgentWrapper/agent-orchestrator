@@ -233,7 +233,7 @@ func TestTriggerSpawnsNewReviewerAndRecordsRunAfterLaunch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
-	if !res.Created || res.ReviewerHandleID != "review-mer-1" || res.ReviewerGeneration != res.Run.BatchID {
+	if !res.Created || res.ReviewerHandleID != "review-mer-1" || res.ReviewerGeneration != res.Run.BatchID || res.ReviewerHarness != domain.ReviewerClaudeCode {
 		t.Fatalf("result = %+v", res)
 	}
 	if !launcher.spawned || launcher.notified {
@@ -708,8 +708,8 @@ func TestTriggerLaunchFailureDoesNotAdvanceReviewerGeneration(t *testing.T) {
 			if err != nil {
 				t.Fatalf("List: %v", err)
 			}
-			if got.ReviewerHandleID != "review-mer-1" || got.ReviewerGeneration != "batch-old" {
-				t.Fatalf("reviewer identity = handle %q generation %q, want old successful owner", got.ReviewerHandleID, got.ReviewerGeneration)
+			if got.ReviewerHandleID != "review-mer-1" || got.ReviewerGeneration != "batch-old" || got.ReviewerHarness != domain.ReviewerClaudeCode {
+				t.Fatalf("reviewer identity = handle %q generation %q harness %q, want old successful owner", got.ReviewerHandleID, got.ReviewerGeneration, got.ReviewerHarness)
 			}
 		})
 	}
@@ -926,7 +926,7 @@ func TestListReturnsHandleAndRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if got.ReviewerHandleID != "review-mer-1" || got.ReviewerGeneration != "batch-2" || len(got.Runs) != 2 {
+	if got.ReviewerHandleID != "review-mer-1" || got.ReviewerGeneration != "batch-2" || got.ReviewerHarness != domain.ReviewerClaudeCode || len(got.Runs) != 2 {
 		t.Fatalf("list = %+v", got)
 	}
 }

@@ -20,6 +20,7 @@ import (
 type ListReviewsResponse struct {
 	ReviewerHandleID   string                     `json:"reviewerHandleId"`
 	ReviewerGeneration string                     `json:"reviewerGeneration"`
+	ReviewerHarness    domain.ReviewerHarness     `json:"reviewerHarness"`
 	Reviews            []reviewcore.PRReviewState `json:"reviews"`
 }
 
@@ -36,6 +37,7 @@ type ReviewRunResponse struct {
 type TriggerReviewResponse struct {
 	ReviewerHandleID   string                     `json:"reviewerHandleId"`
 	ReviewerGeneration string                     `json:"reviewerGeneration"`
+	ReviewerHarness    domain.ReviewerHarness     `json:"reviewerHarness"`
 	Reviews            []reviewcore.PRReviewState `json:"reviews"`
 	// Created is true when a new review pass was started (HTTP 201) and false
 	// when an existing run for the same commit was reused (HTTP 200).
@@ -47,6 +49,7 @@ type TriggerReviewResponse struct {
 type CancelReviewResponse struct {
 	ReviewerHandleID   string                     `json:"reviewerHandleId"`
 	ReviewerGeneration string                     `json:"reviewerGeneration"`
+	ReviewerHarness    domain.ReviewerHarness     `json:"reviewerHarness"`
 	Reviews            []reviewcore.PRReviewState `json:"reviews"`
 }
 
@@ -97,6 +100,7 @@ func (c *ReviewsController) list(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusOK, ListReviewsResponse{
 		ReviewerHandleID:   res.ReviewerHandleID,
 		ReviewerGeneration: res.ReviewerGeneration,
+		ReviewerHarness:    res.ReviewerHarness,
 		Reviews:            reviews,
 	})
 }
@@ -124,6 +128,7 @@ func (c *ReviewsController) trigger(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, status, TriggerReviewResponse{
 		ReviewerHandleID:   res.ReviewerHandleID,
 		ReviewerGeneration: res.ReviewerGeneration,
+		ReviewerHarness:    res.ReviewerHarness,
 		Reviews:            reviews,
 		Created:            res.Created,
 	})
@@ -146,6 +151,7 @@ func (c *ReviewsController) cancel(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusOK, CancelReviewResponse{
 		ReviewerHandleID:   res.ReviewerHandleID,
 		ReviewerGeneration: res.ReviewerGeneration,
+		ReviewerHarness:    res.ReviewerHarness,
 		Reviews:            reviews,
 	})
 }

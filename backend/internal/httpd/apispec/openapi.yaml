@@ -2646,6 +2646,8 @@ components:
           type: string
         reviewerHandleId:
           type: string
+        reviewerHarness:
+          type: string
         reviews:
           items:
             $ref: '#/components/schemas/PRReviewState'
@@ -2653,6 +2655,7 @@ components:
       required:
       - reviewerHandleId
       - reviewerGeneration
+      - reviewerHarness
       - reviews
       type: object
     ClaimPRRequest:
@@ -3026,6 +3029,8 @@ components:
           type: string
         reviewerHandleId:
           type: string
+        reviewerHarness:
+          type: string
         reviews:
           items:
             $ref: '#/components/schemas/PRReviewState'
@@ -3033,6 +3038,7 @@ components:
       required:
       - reviewerHandleId
       - reviewerGeneration
+      - reviewerHarness
       - reviews
       type: object
     ListSessionPRsResponse:
@@ -4221,6 +4227,8 @@ components:
           type: string
         reviewerHandleId:
           type: string
+        reviewerHarness:
+          type: string
         reviews:
           items:
             $ref: '#/components/schemas/PRReviewState'
@@ -4228,6 +4236,7 @@ components:
       required:
       - reviewerHandleId
       - reviewerGeneration
+      - reviewerHarness
       - reviews
       - created
       type: object

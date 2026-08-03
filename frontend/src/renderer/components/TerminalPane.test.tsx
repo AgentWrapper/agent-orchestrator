@@ -37,7 +37,7 @@ const {
 			) => ({
 				data:
 					reviewResponses.get(options.params?.path?.sessionId ?? "") ??
-					{ reviewerGeneration: "", reviewerHandleId: "", reviews: [] },
+					{ reviewerGeneration: "", reviewerHandleId: "", reviewerHarness: "", reviews: [] },
 			}),
 		),
 		postMock: vi.fn(),
@@ -241,6 +241,7 @@ function reviewerResponse(handleId: string, generation: string) {
 	return {
 		reviewerGeneration: generation,
 		reviewerHandleId: handleId,
+		reviewerHarness: "codex",
 		reviews: [
 			{
 				latestRun: {

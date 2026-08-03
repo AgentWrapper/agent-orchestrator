@@ -781,7 +781,7 @@ function ReviewsView({
 				return;
 			}
 			if (data?.reviewerHandleId) {
-				const harness = started.harness || "reviewer";
+				const harness = data.reviewerHarness || started.harness || "reviewer";
 				onOpenReviewerTerminal?.({
 					generation: data.reviewerGeneration || started.batchId || started.id,
 					handleId: data.reviewerHandleId,
@@ -820,6 +820,7 @@ function ReviewsView({
 					onTrigger={() => triggerReview.mutate()}
 					reviewerGeneration={reviewsQuery.data?.reviewerGeneration ?? ""}
 					reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
+					reviewerHarness={reviewsQuery.data?.reviewerHarness ?? ""}
 					reviewStates={reviewStates}
 					notice={reviewNotice}
 					session={session}
@@ -881,6 +882,7 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 	return {
 		reviewerGeneration: `demo-batch-${session.id}`,
 		reviewerHandleId: `${session.id}-reviewer`,
+		reviewerHarness: "codex",
 		reviews: sortedPRs(session).map((pr, index) => {
 			const targetSha = `demo${pr.number}${index}`;
 			const reviewedAt = new Date(Date.now() - (index + 1) * 11 * 60 * 1000).toISOString();
@@ -946,6 +948,7 @@ function ReviewPanel({
 	reviewStates,
 	reviewerGeneration,
 	reviewerHandleId,
+	reviewerHarness,
 	isLoading,
 	isTriggering,
 	isCancelling,
@@ -960,6 +963,7 @@ function ReviewPanel({
 	reviewStates: PRReviewState[];
 	reviewerGeneration: string;
 	reviewerHandleId: string;
+	reviewerHarness: string;
 	isLoading: boolean;
 	isTriggering: boolean;
 	isCancelling: boolean;
@@ -987,7 +991,10 @@ function ReviewPanel({
 	// Closed/merged PRs remain authoritative for that generation even though
 	// their rows are omitted from the actionable open-PR list below.
 	const latest = newestReviewRun(reviewStates);
-	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
+	// Handle, generation, and harness describe one successfully launched owner.
+	// The newest projected run may be a failed replacement batch and must not
+	// change how the retained older terminal is rendered or receives wheel input.
+	const harness = reviewerHarness || latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
 	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
 	const reviewHasRun = reviewRunning || Boolean(latest) || Boolean(reviewerGeneration);

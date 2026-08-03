@@ -906,6 +906,7 @@ export interface components {
         CancelReviewResponse: {
             reviewerGeneration: string;
             reviewerHandleId: string;
+            reviewerHarness: string;
             reviews: components["schemas"]["PRReviewState"][];
         };
         ClaimPRRequest: {
@@ -1042,6 +1043,7 @@ export interface components {
         ListReviewsResponse: {
             reviewerGeneration: string;
             reviewerHandleId: string;
+            reviewerHarness: string;
             reviews: components["schemas"]["PRReviewState"][];
         };
         ListSessionPRsResponse: {
@@ -1517,6 +1519,7 @@ export interface components {
             created: boolean;
             reviewerGeneration: string;
             reviewerHandleId: string;
+            reviewerHarness: string;
             reviews: components["schemas"]["PRReviewState"][];
         };
         UnregisterPushDeviceResponse: {

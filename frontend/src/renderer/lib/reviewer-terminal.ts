@@ -18,7 +18,7 @@ export async function fetchSessionReviews(sessionId: string): Promise<ReviewsRes
 		params: { path: { sessionId } },
 	});
 	if (error) throw new Error(apiErrorMessage(error, "Unable to load reviews"));
-	return data ?? { reviewerGeneration: "", reviewerHandleId: "", reviews: [] };
+	return data ?? { reviewerGeneration: "", reviewerHandleId: "", reviewerHarness: "", reviews: [] };
 }
 
 export function newestReviewRun(

@@ -136,6 +136,7 @@ type TriggerResult struct {
 	Run                domain.ReviewRun
 	ReviewerHandleID   string
 	ReviewerGeneration string
+	ReviewerHarness    domain.ReviewerHarness
 	Created            bool
 	Reviews            []PRReviewState
 	CreatedRuns        []domain.ReviewRun
@@ -146,6 +147,7 @@ type TriggerResult struct {
 type SessionReviews struct {
 	ReviewerHandleID   string
 	ReviewerGeneration string
+	ReviewerHarness    domain.ReviewerHarness
 	Runs               []domain.ReviewRun
 	Reviews            []PRReviewState
 }
@@ -154,6 +156,7 @@ type SessionReviews struct {
 type CancelResult struct {
 	ReviewerHandleID   string
 	ReviewerGeneration string
+	ReviewerHarness    domain.ReviewerHarness
 	Reviews            []PRReviewState
 	CancelledRuns      []domain.ReviewRun
 }
@@ -286,6 +289,7 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 			Run:                firstReusableRun(reviews),
 			ReviewerHandleID:   reviewRow.ReviewerHandleID,
 			ReviewerGeneration: reviewRow.ReviewerGeneration,
+			ReviewerHarness:    reviewRow.Harness,
 			Created:            false,
 			Reviews:            reviews,
 		}, nil
@@ -340,6 +344,7 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 		Run:                created[0],
 		ReviewerHandleID:   handleID,
 		ReviewerGeneration: batchID,
+		ReviewerHarness:    harness,
 		Created:            true,
 		Reviews:            reviews,
 		CreatedRuns:        created,
@@ -407,11 +412,13 @@ func (e *Engine) List(ctx stdctx.Context, workerID domain.SessionID) (SessionRev
 		return SessionReviews{}, err
 	}
 	var handle, generation string
+	var harness domain.ReviewerHarness
 	if review, ok, err := e.store.GetReviewBySession(ctx, workerID); err != nil {
 		return SessionReviews{}, err
 	} else if ok {
 		handle = review.ReviewerHandleID
 		generation = review.ReviewerGeneration
+		harness = review.Harness
 	}
 	prs, err := e.prs.ListPRsBySession(ctx, workerID)
 	if err != nil {
@@ -420,6 +427,7 @@ func (e *Engine) List(ctx stdctx.Context, workerID domain.SessionID) (SessionRev
 	return SessionReviews{
 		ReviewerHandleID:   handle,
 		ReviewerGeneration: generation,
+		ReviewerHarness:    harness,
 		Runs:               runs,
 		Reviews:            Plan(prs, runs),
 	}, nil
@@ -473,6 +481,7 @@ func (e *Engine) Cancel(ctx stdctx.Context, workerID domain.SessionID) (CancelRe
 	return CancelResult{
 		ReviewerHandleID:   review.ReviewerHandleID,
 		ReviewerGeneration: review.ReviewerGeneration,
+		ReviewerHarness:    review.Harness,
 		Reviews:            Plan(prs, runs),
 		CancelledRuns:      cancelled,
 	}, nil
