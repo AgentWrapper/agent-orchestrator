@@ -40,14 +40,12 @@ import {
 	fetchNotificationsPage,
 	getCachedNotifications,
 	getCachedUnreadCount,
-	getCachedUnresolvedCount,
 	keepLatestNotificationsPage,
 	markAllCachedNotificationsRead,
 	mergeUnreadNotification,
 	NOTIFICATION_PAGE_SIZE,
 	recentNotificationsQueryKey,
 	unreadNotificationsQueryKey,
-	unresolvedNotificationsQueryKey,
 } from "./notifications";
 
 class EventSourceStub {
@@ -126,7 +124,6 @@ describe("notification cache helpers", () => {
 	it.each([
 		{ cursor: "previous", nextCursor: "older", status: "all" as const, unreadCount: 4 },
 		{ cursor: "", nextCursor: undefined, status: "unread" as const, unreadCount: 1 },
-		{ cursor: "", nextCursor: undefined, status: "unresolved" as const, unreadCount: 0 },
 	])("requests a bounded $status page", async ({ cursor, nextCursor, status, unreadCount }) => {
 		apiGetMock.mockResolvedValue({
 			data: { notifications: [notification()], nextCursor, unreadCount, unresolvedCount: 3 },
@@ -288,37 +285,30 @@ describe("notification cache helpers", () => {
 		});
 	});
 
-	it("drops a notification from Unresolved once AO closes the underlying issue", () => {
+	// Resolution is not acknowledgement: a resolved notification the user has not
+	// looked at yet must still show up as unseen, with unresolvedCount updated.
+	it("leaves the seen state alone when a notification resolves", () => {
 		const qc = queryClient();
-		qc.setQueryData<NotificationsCache>(unresolvedNotificationsQueryKey, {
+		mergeUnreadNotification(qc, notification());
+		qc.setQueryData<NotificationsCache>(recentNotificationsQueryKey, {
 			pageParams: [""],
-			pages: [
-				{
-					notifications: [notification(), notification({ id: "ntf_2" })],
-					unreadCount: 0,
-					unresolvedCount: 2,
-				},
-			],
+			pages: [{ notifications: [notification()], unreadCount: 1, unresolvedCount: 1 }],
 		});
 
 		applyResolvedNotification(qc, notification({ resolvedAt: "2026-06-16T11:00:00Z" }));
 
-		const cache = qc.getQueryData<NotificationsCache>(unresolvedNotificationsQueryKey);
-		expect(getCachedNotifications(cache).map((item) => item.id)).toEqual(["ntf_2"]);
-		expect(getCachedUnresolvedCount(cache)).toBe(1);
-	});
+		const unread = qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey);
+		expect(getCachedNotifications(unread)).toEqual([
+			expect.objectContaining({ id: "ntf_1", status: "unread", resolvedAt: "2026-06-16T11:00:00Z" }),
+		]);
+		expect(getCachedUnreadCount(unread)).toBe(1);
+		expect(unread?.pages[0]?.unresolvedCount).toBe(0);
 
-	// Resolution is not acknowledgement: a resolved notification the user has not
-	// looked at yet must still show up as unseen.
-	it("leaves the seen state alone when a notification resolves", () => {
-		const qc = queryClient();
-		mergeUnreadNotification(qc, notification());
-
-		applyResolvedNotification(qc, notification({ resolvedAt: "2026-06-16T11:00:00Z" }));
-
-		const cache = qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey);
-		expect(getCachedNotifications(cache)).toEqual([expect.objectContaining({ id: "ntf_1", status: "unread" })]);
-		expect(getCachedUnreadCount(cache)).toBe(1);
+		const recent = qc.getQueryData<NotificationsCache>(recentNotificationsQueryKey);
+		expect(getCachedNotifications(recent)).toEqual([
+			expect.objectContaining({ id: "ntf_1", status: "unread", resolvedAt: "2026-06-16T11:00:00Z" }),
+		]);
+		expect(recent?.pages[0]?.unresolvedCount).toBe(0);
 	});
 
 	it("drops older pages after the panel closes while keeping the latest page", () => {
@@ -371,19 +361,7 @@ describe("createNotificationsTransport", () => {
 		});
 	});
 
-	it("routes a live notification into Unresolved only when it can still be resolved", () => {
-		const qc = queryClient();
-		createNotificationsTransport(qc).connect();
-		const source = EventSourceStub.instances[0];
-
-		source.dispatch("notification_created", notification());
-		source.dispatch("notification_created", notification({ id: "ntf_2", type: "pr_merged" }));
-
-		const cache = qc.getQueryData<NotificationsCache>(unresolvedNotificationsQueryKey);
-		expect(getCachedNotifications(cache).map((item) => item.id)).toEqual(["ntf_1"]);
-	});
-
-	it("drops a resolved notification from the live unresolved cache", () => {
+	it("patches resolvedAt on live unread/all caches when AO closes the issue", () => {
 		const qc = queryClient();
 		createNotificationsTransport(qc).connect();
 		const source = EventSourceStub.instances[0];
@@ -391,9 +369,14 @@ describe("createNotificationsTransport", () => {
 
 		source.dispatch("notification_resolved", notification({ resolvedAt: "2026-06-16T11:00:00Z" }));
 
-		expect(
-			getCachedNotifications(qc.getQueryData<NotificationsCache>(unresolvedNotificationsQueryKey)),
-		).toHaveLength(0);
+		expect(getCachedNotifications(qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey))).toEqual([
+			expect.objectContaining({ id: "ntf_1", status: "unread", resolvedAt: "2026-06-16T11:00:00Z" }),
+		]);
+		expect(getCachedNotifications(qc.getQueryData<NotificationsCache>(recentNotificationsQueryKey))).toEqual([
+			expect.objectContaining({ id: "ntf_1", status: "unread", resolvedAt: "2026-06-16T11:00:00Z" }),
+		]);
+		expect(qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey)?.pages[0]?.unresolvedCount).toBe(0);
+		expect(qc.getQueryData<NotificationsCache>(recentNotificationsQueryKey)?.pages[0]?.unresolvedCount).toBe(0);
 	});
 
 	it("suppresses the needs_input toast for the session the user is already watching", () => {

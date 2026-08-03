@@ -6,33 +6,27 @@ import { apiClient, apiErrorMessage, getApiBaseUrl, subscribeApiBaseUrl } from "
 export type NotificationDTO = components["schemas"]["NotificationResponse"];
 export type NotificationsPage = components["schemas"]["ListNotificationsResponse"];
 export type NotificationsCache = InfiniteData<NotificationsPage>;
-export type NotificationListStatus = "unread" | "all" | "unresolved";
+export type NotificationListStatus = "unread" | "all";
 
 export const unreadNotificationsQueryKey = ["notifications", "history", "unread"] as const;
 export const recentNotificationsQueryKey = ["notifications", "history", "all"] as const;
-export const unresolvedNotificationsQueryKey = ["notifications", "history", "unresolved"] as const;
 export const NOTIFICATION_PAGE_SIZE = 100;
 
 const SSE_RETRY_MS = 5_000;
 const EVENTSOURCE_CLOSED = 2;
 
 /**
- * Only these two kinds describe something still waiting on the user, so only
- * they can sit in the unresolved list. `pr_merged` / `pr_closed_unmerged` report
- * something that already happened: worth seeing once, never worth resolving.
- * Mirrors NotificationType.NeedsResolution on the backend.
+ * Only these two kinds describe something still waiting on the user.
+ * `pr_merged` / `pr_closed_unmerged` report something that already happened.
+ * Mirrors NotificationType.NeedsResolution on the backend — used here only to
+ * keep `unresolvedCount` accurate on the unread/all caches.
  */
 const UNRESOLVABLE_TYPES = new Set(["needs_input", "ready_to_merge"]);
 
-type NotificationsQueryKey =
-	| typeof unreadNotificationsQueryKey
-	| typeof recentNotificationsQueryKey
-	| typeof unresolvedNotificationsQueryKey;
+type NotificationsQueryKey = typeof unreadNotificationsQueryKey | typeof recentNotificationsQueryKey;
 
 export function notificationsQueryKey(status: NotificationListStatus): NotificationsQueryKey {
-	if (status === "unread") return unreadNotificationsQueryKey;
-	if (status === "unresolved") return unresolvedNotificationsQueryKey;
-	return recentNotificationsQueryKey;
+	return status === "unread" ? unreadNotificationsQueryKey : recentNotificationsQueryKey;
 }
 
 function isUnresolved(notification: NotificationDTO): boolean {
@@ -87,29 +81,11 @@ function mergeRecentNotification(queryClient: QueryClient, notification: Notific
 	return inserted;
 }
 
-function mergeUnresolvedNotification(queryClient: QueryClient, notification: NotificationDTO): void {
-	if (!isUnresolved(notification)) return;
-	mergeNotificationIntoCache(queryClient, unresolvedNotificationsQueryKey, notification);
-	rebaseOversizedFirstPage(queryClient, unresolvedNotificationsQueryKey);
-}
-
 /**
- * AO resolved the issue behind a notification, so it drops out of the
- * unresolved list without the user acknowledging anything. The seen state is a
- * separate axis and is deliberately left untouched here.
+ * AO resolved the issue behind a notification. Update the row in unread/all
+ * caches; the seen state is a separate axis and is deliberately left untouched.
  */
 export function applyResolvedNotification(queryClient: QueryClient, notification: NotificationDTO): void {
-	queryClient.setQueryData<NotificationsCache>(unresolvedNotificationsQueryKey, (current) => {
-		if (!current) return current;
-		return {
-			...current,
-			pages: current.pages.map((page) => ({
-				...page,
-				notifications: page.notifications.filter((item) => item.id !== notification.id),
-				unresolvedCount: Math.max(0, page.unresolvedCount - 1),
-			})),
-		};
-	});
 	for (const queryKey of [unreadNotificationsQueryKey, recentNotificationsQueryKey] as const) {
 		queryClient.setQueryData<NotificationsCache>(queryKey, (current) => {
 			if (!current) return current;
@@ -197,30 +173,24 @@ export function markAllCachedNotificationsRead(queryClient: QueryClient, ids: st
 				],
 			};
 		});
-		for (const queryKey of [recentNotificationsQueryKey, unresolvedNotificationsQueryKey] as const) {
-			queryClient.setQueryData<NotificationsCache>(queryKey, (current) => {
-				if (!current) return current;
-				return {
-					...current,
-					pages: current.pages.map((page) => ({
-						...page,
-						notifications: page.notifications.map((item) =>
-							item.status === "read" ? item : { ...item, status: "read" as const },
-						),
-						unreadCount: 0,
-					})),
-				};
-			});
-		}
+		queryClient.setQueryData<NotificationsCache>(recentNotificationsQueryKey, (current) => {
+			if (!current) return current;
+			return {
+				...current,
+				pages: current.pages.map((page) => ({
+					...page,
+					notifications: page.notifications.map((item) =>
+						item.status === "read" ? item : { ...item, status: "read" as const },
+					),
+					unreadCount: 0,
+				})),
+			};
+		});
 		return;
 	}
 
 	const acknowledged = new Set(ids);
-	for (const queryKey of [
-		unreadNotificationsQueryKey,
-		recentNotificationsQueryKey,
-		unresolvedNotificationsQueryKey,
-	] as const) {
+	for (const queryKey of [unreadNotificationsQueryKey, recentNotificationsQueryKey] as const) {
 		queryClient.setQueryData<NotificationsCache>(queryKey, (current) => {
 			if (!current) return current;
 			return {
@@ -254,10 +224,6 @@ export function getCachedUnreadCount(cache: NotificationsCache | undefined): num
 	return (
 		cache?.pages[0]?.unreadCount ?? getCachedNotifications(cache).filter((item) => item.status === "unread").length
 	);
-}
-
-export function getCachedUnresolvedCount(cache: NotificationsCache | undefined): number {
-	return cache?.pages[0]?.unresolvedCount ?? getCachedNotifications(cache).filter(isUnresolved).length;
 }
 
 export function keepLatestNotificationsPage(
@@ -313,7 +279,6 @@ export function createNotificationsTransport(
 			const invalidateNotifications = () => {
 				void queryClient.invalidateQueries({ queryKey: unreadNotificationsQueryKey });
 				void queryClient.invalidateQueries({ queryKey: recentNotificationsQueryKey });
-				void queryClient.invalidateQueries({ queryKey: unresolvedNotificationsQueryKey });
 			};
 
 			const scheduleRetry = () => {
@@ -342,7 +307,6 @@ export function createNotificationsTransport(
 						if (!notification) return;
 						const inserted = mergeUnreadNotification(queryClient, notification);
 						mergeRecentNotification(queryClient, notification);
-						mergeUnresolvedNotification(queryClient, notification);
 						if (inserted && !suppressToastForWatchedSession(notification, getVisibleAgentSessionId())) {
 							void aoBridge.notifications.show({
 								id: notification.id,
@@ -352,8 +316,8 @@ export function createNotificationsTransport(
 						}
 					});
 					// AO closed the underlying issue (the session got its input, the
-					// PR stopped waiting on a merge). Drop the row live so an open
-					// panel never shows something the user already dealt with.
+					// PR stopped waiting on a merge). Patch the row live so an open
+					// panel reflects that without waiting for a refetch.
 					source.addEventListener("notification_resolved", (event) => {
 						const notification = parseNotificationEvent(event);
 						if (!notification) return;
