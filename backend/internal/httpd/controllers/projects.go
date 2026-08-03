@@ -27,6 +27,7 @@ func (c *ProjectsController) Register(r chi.Router) {
 	r.Get("/projects", c.list)
 	r.Post("/projects", c.add)
 	r.Post("/projects/initialize", c.initialize)
+	r.Post("/projects/discover-branches", c.discoverBranches)
 	r.Get("/projects/{id}", c.get)
 	r.Put("/projects/{id}", c.updateSettings)
 	r.Put("/projects/{id}/config", c.setConfig)
@@ -83,6 +84,35 @@ func (c *ProjectsController) initialize(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, result)
+}
+
+func (c *ProjectsController) discoverBranches(w http.ResponseWriter, r *http.Request) {
+	if c.Mgr == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/projects/discover-branches")
+		return
+	}
+	var req DiscoverBranchesRequest
+	if err := decodeJSONStrict(r, &req); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	discoverer, ok := c.Mgr.(projectsvc.BranchDiscoverer)
+	if !ok {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/projects/discover-branches")
+		return
+	}
+	var res projectsvc.BranchDiscoverResult
+	var err error
+	if req.RefreshOrigin {
+		res, err = discoverer.DiscoverBranchesAndRefreshOrigin(r.Context(), req.Path)
+	} else {
+		res, err = discoverer.DiscoverBranches(r.Context(), req.Path)
+	}
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, res)
 }
 func (c *ProjectsController) get(w http.ResponseWriter, r *http.Request) {
 	if c.Mgr == nil {

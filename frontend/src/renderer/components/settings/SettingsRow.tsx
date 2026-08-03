@@ -1,12 +1,29 @@
-import { ChevronRight, type LucideIcon } from "lucide-react";
+import { ChevronRight, Info, type LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "../../lib/utils";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 
-function SettingsRowLabel({ icon: Icon, label }: { icon?: LucideIcon; label: string }) {
+function SettingsRowLabel({ icon: Icon, label, tooltip }: { icon?: LucideIcon; label: string; tooltip?: string }) {
 	return (
 		<div className="flex shrink-0 items-center gap-(--size-settings-row-icon-gap)">
 			{Icon ? <Icon className="size-icon-lg shrink-0 text-settings-muted" aria-hidden="true" /> : null}
 			<span className="whitespace-nowrap text-sm leading-5 text-settings-label">{label}</span>
+			{tooltip && (
+				<TooltipProvider delayDuration={0}>
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<button
+								type="button"
+								className="grid size-icon-base place-items-center rounded-full text-settings-muted hover:text-settings-label focus-visible:outline-none"
+								aria-label={`About ${label}`}
+							>
+								<Info className="size-3.5" aria-hidden="true" />
+							</button>
+						</TooltipTrigger>
+						<TooltipContent>{tooltip}</TooltipContent>
+					</Tooltip>
+				</TooltipProvider>
+			)}
 		</div>
 	);
 }
@@ -15,17 +32,19 @@ function SettingsRowLabel({ icon: Icon, label }: { icon?: LucideIcon; label: str
 export function SettingsRow({
 	icon,
 	label,
+	tooltip,
 	children,
 	className,
 }: {
 	icon?: LucideIcon;
 	label: string;
+	tooltip?: string;
 	children: ReactNode;
 	className?: string;
 }) {
 	return (
 		<div className={cn("settings-row-bar", className)}>
-			<SettingsRowLabel icon={icon} label={label} />
+			<SettingsRowLabel icon={icon} label={label} tooltip={tooltip} />
 			<div className="flex min-w-0 flex-1 items-center justify-end">{children}</div>
 		</div>
 	);

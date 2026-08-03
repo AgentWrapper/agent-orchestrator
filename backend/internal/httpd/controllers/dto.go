@@ -43,6 +43,15 @@ type ProjectResponse struct {
 	Project projectsvc.Project `json:"project"`
 }
 
+// DiscoverBranchesRequest is the body of POST /api/v1/projects/discover-branches.
+type DiscoverBranchesRequest struct {
+	Path          string `json:"path"`
+	RefreshOrigin bool   `json:"refreshOrigin,omitempty"`
+}
+
+// DiscoverBranchesResponse is the body of POST /api/v1/projects/discover-branches.
+type DiscoverBranchesResponse = projectsvc.BranchDiscoverResult
+
 // GetProjectResponse is the { status, project } body of GET /projects/{id},
 // where project is oneOf Project|Degraded discriminated by status.
 type GetProjectResponse struct {

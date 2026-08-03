@@ -53,15 +53,27 @@ func TestCommandArgs(t *testing.T) {
 
 func TestBaseRefCandidates(t *testing.T) {
 	got := baseRefCandidates("feature/test", "main")
-	want := []string{"origin/feature/test", "origin/main", "refs/heads/main", "feature/test"}
+	want := []string{"origin/feature/test", "origin/main", "refs/heads/main", "main", "feature/test"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("candidates = %#v, want %#v", got, want)
 	}
 
-	got = baseRefCandidates("feature/test", "upstream/main")
-	want = []string{"origin/feature/test", "upstream/main", "feature/test"}
+	got = baseRefCandidates("feature/test", "release/2026")
+	want = []string{"origin/feature/test", "origin/release/2026", "refs/heads/release/2026", "release/2026", "feature/test"}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("qualified candidates = %#v, want %#v", got, want)
+		t.Fatalf("slash candidates = %#v, want %#v", got, want)
+	}
+
+	got = baseRefCandidates("feature/test", "upstream/main")
+	want = []string{"origin/feature/test", "origin/upstream/main", "refs/heads/upstream/main", "upstream/main", "feature/test"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("non-origin remote candidates = %#v, want %#v", got, want)
+	}
+
+	got = baseRefCandidates("feature/test", "origin/release/2026")
+	want = []string{"origin/feature/test", "origin/release/2026", "refs/heads/release/2026", "feature/test"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("origin slash candidates = %#v, want %#v", got, want)
 	}
 }
 
@@ -1041,6 +1053,92 @@ func TestAddWorktreeReportsBranchNotFetched(t *testing.T) {
 	_, err = ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/missing"})
 	if !errors.Is(err, ports.ErrWorkspaceBranchNotFetched) {
 		t.Fatalf("err = %v, want ports.ErrWorkspaceBranchNotFetched", err)
+	}
+}
+
+func TestCreateSpawnsWorktreeFromRemoteOnlySlashBranch(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "init", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v (%s)", err, out)
+	}
+	if out, err := exec.Command("git", "-C", repo, "config", "user.email", "test@example.com").CombinedOutput(); err != nil {
+		t.Fatalf("git config user.email: %v (%s)", err, out)
+	}
+	if out, err := exec.Command("git", "-C", repo, "config", "user.name", "Test").CombinedOutput(); err != nil {
+		t.Fatalf("git config user.name: %v (%s)", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("# demo"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", repo, "add", ".").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v (%s)", err, out)
+	}
+	if out, err := exec.Command("git", "-C", repo, "commit", "-m", "init").CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v (%s)", err, out)
+	}
+	if out, err := exec.Command("git", "-C", repo, "update-ref", "refs/remotes/origin/release/2026", "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("git update-ref: %v (%s)", err, out)
+	}
+
+	ws, err := New(Options{ManagedRoot: root, DefaultBranch: "release/2026", RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+
+	info, err := ws.Create(context.Background(), ports.WorkspaceConfig{
+		ProjectID: "proj",
+		SessionID: "sess-1",
+		Branch:    "ao/work",
+	})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if info.Path == "" {
+		t.Fatalf("workspace path is empty")
+	}
+}
+
+func TestCreateSpawnsWorktreeFromNonOriginRemoteQualifiedBranch(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "init", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v (%s)", err, out)
+	}
+	if out, err := exec.Command("git", "-C", repo, "config", "user.email", "test@example.com").CombinedOutput(); err != nil {
+		t.Fatalf("git config user.email: %v (%s)", err, out)
+	}
+	if out, err := exec.Command("git", "-C", repo, "config", "user.name", "Test").CombinedOutput(); err != nil {
+		t.Fatalf("git config user.name: %v (%s)", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("# demo"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", repo, "add", ".").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v (%s)", err, out)
+	}
+	if out, err := exec.Command("git", "-C", repo, "commit", "-m", "init").CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v (%s)", err, out)
+	}
+	if out, err := exec.Command("git", "-C", repo, "update-ref", "refs/remotes/upstream/main", "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("git update-ref: %v (%s)", err, out)
+	}
+
+	ws, err := New(Options{ManagedRoot: root, DefaultBranch: "upstream/main", RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+
+	info, err := ws.Create(context.Background(), ports.WorkspaceConfig{
+		ProjectID: "proj",
+		SessionID: "sess-1",
+		Branch:    "ao/work",
+	})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if info.Path == "" {
+		t.Fatalf("workspace path is empty")
 	}
 }
 

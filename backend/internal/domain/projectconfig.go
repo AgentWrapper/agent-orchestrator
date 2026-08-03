@@ -139,6 +139,9 @@ func (c ProjectConfig) Validate() error {
 	if err := c.AgentConfig.Validate(); err != nil {
 		return err
 	}
+	if err := validateCanonicalBranchName("defaultBranch", c.DefaultBranch); err != nil {
+		return err
+	}
 	if err := validateNameComponent("sessionPrefix", c.SessionPrefix); err != nil {
 		return err
 	}
@@ -165,6 +168,23 @@ func (c ProjectConfig) Validate() error {
 	}
 	if err := c.TrackerIntake.Validate(); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateCanonicalBranchName(name, value string) error {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	if trimmed != value {
+		return fmt.Errorf("%s: must not have leading or trailing whitespace", name)
+	}
+	if strings.HasPrefix(value, "refs/") || strings.HasPrefix(value, "origin/") || value == "HEAD" {
+		return fmt.Errorf("%s: must be a canonical short branch name, not a qualified ref or HEAD", name)
+	}
+	if strings.ContainsAny(value, " \t\n\r~^:?*[\\]") || strings.Contains(value, "..") || strings.Contains(value, "@{") {
+		return fmt.Errorf("%s: contains invalid branch characters", name)
 	}
 	return nil
 }

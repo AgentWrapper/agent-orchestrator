@@ -930,6 +930,37 @@ paths:
       summary: Replace a project's per-project config
       tags:
       - projects
+  /api/v1/projects/discover-branches:
+    post:
+      operationId: discoverProjectBranches
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DiscoverBranchesRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BranchDiscoverResult'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Discover repository branch choices and optionally refresh origin remote
+      tags:
+      - projects
   /api/v1/projects/initialize:
     post:
       operationId: initializeProjectRepository
@@ -2596,6 +2627,24 @@ components:
       - id
       - label
       type: object
+    BranchDiscoverResult:
+      properties:
+        branches:
+          items:
+            type: string
+          type: array
+        canRefreshOrigin:
+          type: boolean
+        defaultBranch:
+          type: string
+        hasOrigin:
+          type: boolean
+      required:
+      - defaultBranch
+      - branches
+      - hasOrigin
+      - canRefreshOrigin
+      type: object
     BrowserCommandRequest:
       properties:
         action:
@@ -2890,6 +2939,15 @@ components:
           $ref: '#/components/schemas/DevImportProjectsReport'
       required:
       - report
+      type: object
+    DiscoverBranchesRequest:
+      properties:
+        path:
+          type: string
+        refreshOrigin:
+          type: boolean
+      required:
+      - path
       type: object
     DomainActivity:
       properties:

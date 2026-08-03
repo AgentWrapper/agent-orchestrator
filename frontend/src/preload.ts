@@ -37,6 +37,7 @@ export type ImportRepoScan = {
 	path: string;
 	relativePath: string;
 	branch: string;
+	branches?: string[];
 	remote: string;
 	hasRemote: boolean;
 	status?: "ok" | "error";

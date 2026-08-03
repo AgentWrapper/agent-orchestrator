@@ -11,6 +11,7 @@ export type GitRepoScanResult = {
 	path: string;
 	relativePath: string;
 	branch: string;
+	branches?: string[];
 	remote: string;
 	hasRemote: boolean;
 	status: "ok" | "error";
@@ -123,6 +124,57 @@ async function resolveDefaultBranch(repoPath: string, options: ScanOptions = {})
 	return "HEAD";
 }
 
+export async function resolveRepoBranches(
+	repoPath: string,
+	options: ScanOptions = {},
+): Promise<{ defaultBranch: string; branches: string[] }> {
+	const defaultBranch = await resolveDefaultBranch(repoPath, options);
+	const branchesSet = new Set<string>();
+
+	try {
+		const localOutput = await gitOutput(
+			repoPath,
+			["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+			options,
+		);
+		if (localOutput) {
+			for (const line of localOutput.split("\n")) {
+				const trimmed = line.trim();
+				if (trimmed) branchesSet.add(trimmed);
+			}
+		}
+	} catch {
+		// Ignore git errors
+	}
+
+	try {
+		const remoteOutput = await gitOutput(
+			repoPath,
+			["for-each-ref", "--format=%(refname:short)", "refs/remotes/origin"],
+			options,
+		);
+		if (remoteOutput) {
+			for (const line of remoteOutput.split("\n")) {
+				const trimmed = line.trim();
+				if (!trimmed || trimmed === "origin/HEAD") continue;
+				const shortBranch = trimmed.replace(/^origin\//, "");
+				if (shortBranch && shortBranch !== "HEAD") {
+					branchesSet.add(shortBranch);
+				}
+			}
+		}
+	} catch {
+		// Ignore git errors
+	}
+
+	if (defaultBranch && defaultBranch !== "HEAD") {
+		branchesSet.add(defaultBranch);
+	}
+
+	const branches = Array.from(branchesSet).sort();
+	return { defaultBranch, branches };
+}
+
 async function scanGitRepo(
 	repoPath: string,
 	rootPath: string,
@@ -164,15 +216,16 @@ async function scanGitRepo(
 		return null;
 	}
 	if (!(await isGitRepo(repoPath, options))) return null;
-	const [branchResult, remoteResult, bareResult, headResult] = await Promise.allSettled([
-		resolveDefaultBranch(repoPath, options),
+	const [branchesResult, remoteResult, bareResult, headResult] = await Promise.allSettled([
+		resolveRepoBranches(repoPath, options),
 		gitOutput(repoPath, ["remote", "get-url", "origin"], options),
 		gitOutput(repoPath, ["rev-parse", "--is-bare-repository"], options),
 		gitOutput(repoPath, ["rev-parse", "--verify", "HEAD"], options),
 	]);
+	const branchInfo = branchesResult.status === "fulfilled" ? branchesResult.value : { defaultBranch: "HEAD", branches: [] };
 	const validationReason = scanRepoValidationReason(
 		name,
-		branchResult.status === "fulfilled" && branchResult.value ? branchResult.value : "HEAD",
+		branchInfo.defaultBranch,
 		remoteResult.status === "fulfilled" && remoteResult.value.length > 0,
 		bareResult.status === "fulfilled" && bareResult.value === "true",
 		headResult.status === "fulfilled",
@@ -181,7 +234,8 @@ async function scanGitRepo(
 		name,
 		path: repoPath,
 		relativePath,
-		branch: branchResult.status === "fulfilled" && branchResult.value ? branchResult.value : "HEAD",
+		branch: branchInfo.defaultBranch,
+		branches: branchInfo.branches,
 		remote: remoteResult.status === "fulfilled" ? remoteResult.value : "",
 		hasRemote: remoteResult.status === "fulfilled" && remoteResult.value.length > 0,
 		status: validationReason ? "error" : "ok",

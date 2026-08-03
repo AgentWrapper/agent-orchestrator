@@ -3,10 +3,12 @@ package project
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,6 +48,20 @@ type Manager interface {
 	// Remove unregisters a project, stopping its sessions and reclaiming
 	// managed workspaces.
 	Remove(ctx context.Context, id domain.ProjectID) (RemoveResult, error)
+}
+
+// BranchDiscoverResult carries branch discovery results for project creation.
+type BranchDiscoverResult struct {
+	DefaultBranch    string   `json:"defaultBranch"`
+	Branches         []string `json:"branches"`
+	HasOrigin        bool     `json:"hasOrigin"`
+	CanRefreshOrigin bool     `json:"canRefreshOrigin"`
+}
+
+// BranchDiscoverer contract for discovering and refreshing repository branches.
+type BranchDiscoverer interface {
+	DiscoverBranches(ctx context.Context, path string) (BranchDiscoverResult, error)
+	DiscoverBranchesAndRefreshOrigin(ctx context.Context, path string) (BranchDiscoverResult, error)
 }
 
 // SessionTeardowner is the narrow session-service surface project removal
@@ -248,7 +264,14 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	// `master` (or any non-`main` default) falls back to DefaultBranchName and
 	// every spawn fails BRANCH_NOT_FETCHED. Only persist when it diverges from
 	// the default, so the common `main` repo keeps an empty (NULL) config.
-	if row.Config.DefaultBranch == "" {
+	if row.Config.DefaultBranch != "" {
+		if !branchExists(ctx, path, row.Config.DefaultBranch) {
+			return Project{}, apierr.Invalid("INVALID_DEFAULT_BRANCH", fmt.Sprintf("Default branch %q does not exist in repository", row.Config.DefaultBranch), map[string]any{
+				"branch": row.Config.DefaultBranch,
+				"path":   path,
+			})
+		}
+	} else {
 		if branch := resolveDefaultBranch(path); branch != "" && branch != domain.DefaultBranchName {
 			row.Config.DefaultBranch = branch
 		}
@@ -672,6 +695,102 @@ func resolveDefaultBranch(path string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func branchExists(ctx context.Context, repoPath, branch string) bool {
+	candidates := []string{
+		"refs/heads/" + branch,
+		"refs/remotes/origin/" + branch,
+	}
+	for _, ref := range candidates {
+		if _, err := aoprocess.CommandContext(ctx, "git", "-C", repoPath, "rev-parse", "--verify", "--quiet", ref).Output(); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// DiscoverBranches scans local and remote branches in the repository at path without performing any network fetch.
+func (m *Service) DiscoverBranches(ctx context.Context, repoPath string) (BranchDiscoverResult, error) {
+	path, err := normalizePath(repoPath)
+	if err != nil {
+		return BranchDiscoverResult{}, err
+	}
+	if !isGitRepo(path) {
+		return BranchDiscoverResult{}, apierr.Invalid("NOT_A_GIT_REPO", "Selected path is not a Git repository", map[string]any{"path": path})
+	}
+	return m.discoverBranchesInternal(ctx, path)
+}
+
+// DiscoverBranchesAndRefreshOrigin explicitly fetches `origin` remote, then discovers local and remote branches.
+func (m *Service) DiscoverBranchesAndRefreshOrigin(ctx context.Context, repoPath string) (BranchDiscoverResult, error) {
+	path, err := normalizePath(repoPath)
+	if err != nil {
+		return BranchDiscoverResult{}, err
+	}
+	if !isGitRepo(path) {
+		return BranchDiscoverResult{}, apierr.Invalid("NOT_A_GIT_REPO", "Selected path is not a Git repository", map[string]any{"path": path})
+	}
+	hasOrigin := resolveGitOriginURL(path) != ""
+	if !hasOrigin {
+		return BranchDiscoverResult{}, apierr.Invalid("ORIGIN_NOT_CONFIGURED", "Repository has no origin remote configured to refresh", map[string]any{"path": path})
+	}
+
+	if out, err := aoprocess.CommandContext(ctx, "git", "-C", path, "fetch", "origin").CombinedOutput(); err != nil {
+		return BranchDiscoverResult{}, apierr.Invalid("ORIGIN_FETCH_FAILED", fmt.Sprintf("Failed to fetch origin remote: %s", strings.TrimSpace(string(out))), map[string]any{
+			"path":  path,
+			"error": strings.TrimSpace(string(out)),
+		})
+	}
+
+	return m.discoverBranchesInternal(ctx, path)
+}
+
+func (m *Service) discoverBranchesInternal(ctx context.Context, path string) (BranchDiscoverResult, error) {
+	defaultBranch := resolveDefaultBranch(path)
+	if defaultBranch == "" {
+		defaultBranch = domain.DefaultBranchName
+	}
+	branchesSet := make(map[string]struct{})
+
+	if out, err := aoprocess.CommandContext(ctx, "git", "-C", path, "for-each-ref", "--format=%(refname:short)", "refs/heads").Output(); err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			if trimmed := strings.TrimSpace(line); trimmed != "" {
+				branchesSet[trimmed] = struct{}{}
+			}
+		}
+	}
+
+	if out, err := aoprocess.CommandContext(ctx, "git", "-C", path, "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin").Output(); err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" || trimmed == "origin" || trimmed == "origin/HEAD" {
+				continue
+			}
+			shortBranch := strings.TrimPrefix(trimmed, "origin/")
+			if shortBranch != "" && shortBranch != "HEAD" && shortBranch != "origin" {
+				branchesSet[shortBranch] = struct{}{}
+			}
+		}
+	}
+
+	if defaultBranch != "" && defaultBranch != "HEAD" {
+		branchesSet[defaultBranch] = struct{}{}
+	}
+
+	branches := make([]string, 0, len(branchesSet))
+	for b := range branchesSet {
+		branches = append(branches, b)
+	}
+	sort.Strings(branches)
+
+	hasOrigin := resolveGitOriginURL(path) != ""
+	return BranchDiscoverResult{
+		DefaultBranch:    defaultBranch,
+		Branches:         branches,
+		HasOrigin:        hasOrigin,
+		CanRefreshOrigin: hasOrigin,
+	}, nil
 }
 
 // Remove stops live project sessions, reclaims safe managed workspaces, then

@@ -263,6 +263,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						id="defaultBranch"
 						value={form.defaultBranch}
 						placeholder="main"
+						tooltip="Changes affect new worktrees and do not migrate an existing Canonical Orchestrator Branch."
 						onChange={(value) => setForm((f) => ({ ...f, defaultBranch: value }))}
 					/>
 					<SettingsInputRow
@@ -436,6 +437,7 @@ function SettingsInputRow({
 	value,
 	onChange,
 	placeholder,
+	tooltip,
 }: {
 	icon?: LucideIcon;
 	label: string;
@@ -443,9 +445,10 @@ function SettingsInputRow({
 	value: string;
 	onChange: (value: string) => void;
 	placeholder?: string;
+	tooltip?: string;
 }) {
 	return (
-		<SettingsRow icon={icon} label={label}>
+		<SettingsRow icon={icon} label={label} tooltip={tooltip}>
 			<input
 				id={id}
 				aria-label={label}

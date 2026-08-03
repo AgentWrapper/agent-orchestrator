@@ -259,6 +259,8 @@ var schemaNames = map[string]string{
 	"ProjectSetConfigInput":             "SetProjectConfigInput",
 	"ProjectUpdateSettingsInput":        "UpdateProjectSettingsInput",
 	"ProjectWorkspaceRepo":              "WorkspaceRepo",
+	"ProjectBranchDiscoverResult":       "BranchDiscoverResult",
+	"ControllersDiscoverBranchesRequest": "DiscoverBranchesRequest",
 	"SessionWorkspaceFileStatus":        "WorkspaceFileStatus",
 }
 
@@ -742,6 +744,16 @@ func projectOperations() []operation {
 				{http.StatusOK, projectsvc.InitializeRepositoryResult{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/projects/discover-branches", id: "discoverProjectBranches", tag: "projects",
+			summary: "Discover repository branch choices and optionally refresh origin remote",
+			reqBody: controllers.DiscoverBranchesRequest{},
+			resps: []respUnit{
+				{http.StatusOK, projectsvc.BranchDiscoverResult{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 			},
 		}, {

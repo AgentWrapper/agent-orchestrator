@@ -502,8 +502,8 @@ func TestManager_AddDetectsNonMainDefaultBranch(t *testing.T) {
 		t.Fatalf("Get DefaultBranch = %#v, want master", got.Project)
 	}
 
-	// An explicit config wins over detection.
-	mainRepo := gitRepoOnBranch(t, "trunk")
+	// An explicit config wins over detection when the branch exists in the repository.
+	mainRepo := gitRepoOnBranch(t, "release")
 	proj2, err := m.Add(ctx, project.AddInput{
 		Path:      mainRepo,
 		ProjectID: ptr("ao2"),
@@ -551,6 +551,85 @@ func TestManager_AddPrefersOriginHeadNonMain(t *testing.T) {
 	if proj.DefaultBranch != "master" {
 		t.Fatalf("DefaultBranch = %q, want master (origin/HEAD), not feature branch", proj.DefaultBranch)
 	}
+}
+
+func TestManager_DiscoverBranches(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+
+	t.Run("read-only discovery without origin", func(t *testing.T) {
+		repo := gitRepoOnBranch(t, "main")
+		if out, err := exec.Command("git", "-C", repo, "branch", "feature/local-1").CombinedOutput(); err != nil {
+			t.Fatalf("git branch: %v (%s)", err, out)
+		}
+
+		discoverer, ok := m.(project.BranchDiscoverer)
+		if !ok {
+			t.Fatal("Manager does not implement BranchDiscoverer")
+		}
+
+		res, err := discoverer.DiscoverBranches(ctx, repo)
+		if err != nil {
+			t.Fatalf("DiscoverBranches: %v", err)
+		}
+
+		if res.DefaultBranch != "main" {
+			t.Errorf("DefaultBranch = %q, want main", res.DefaultBranch)
+		}
+		if res.HasOrigin || res.CanRefreshOrigin {
+			t.Errorf("HasOrigin/CanRefreshOrigin = %v/%v, want false", res.HasOrigin, res.CanRefreshOrigin)
+		}
+		wantBranches := []string{"feature/local-1", "main"}
+		if len(res.Branches) != len(wantBranches) || res.Branches[0] != wantBranches[0] || res.Branches[1] != wantBranches[1] {
+			t.Errorf("Branches = %v, want %v", res.Branches, wantBranches)
+		}
+	})
+
+	t.Run("discovery with origin and remote branches", func(t *testing.T) {
+		repo := gitRepoWithOriginHead(t, "main", "dev")
+		if out, err := exec.Command("git", "-C", repo, "remote", "add", "origin", "https://example.com/repo.git").CombinedOutput(); err != nil {
+			t.Fatalf("git remote add: %v (%s)", err, out)
+		}
+		if out, err := exec.Command("git", "-C", repo, "update-ref", "refs/remotes/origin/release/v1", "HEAD").CombinedOutput(); err != nil {
+			t.Fatalf("git update-ref: %v (%s)", err, out)
+		}
+
+		discoverer := m.(project.BranchDiscoverer)
+		res, err := discoverer.DiscoverBranches(ctx, repo)
+		if err != nil {
+			t.Fatalf("DiscoverBranches: %v", err)
+		}
+
+		if !res.HasOrigin || !res.CanRefreshOrigin {
+			t.Errorf("HasOrigin/CanRefreshOrigin = %v/%v, want true", res.HasOrigin, res.CanRefreshOrigin)
+		}
+		wantBranches := []string{"dev", "main", "release/v1"}
+		if len(res.Branches) != len(wantBranches) {
+			t.Fatalf("Branches = %v, want %v", res.Branches, wantBranches)
+		}
+		for i, b := range wantBranches {
+			if res.Branches[i] != b {
+				t.Errorf("Branches[%d] = %q, want %q", i, res.Branches[i], b)
+			}
+		}
+	})
+
+	t.Run("refresh origin fails when no origin configured", func(t *testing.T) {
+		repo := gitRepo(t)
+		discoverer := m.(project.BranchDiscoverer)
+		_, err := discoverer.DiscoverBranchesAndRefreshOrigin(ctx, repo)
+		wantCode(t, err, "ORIGIN_NOT_CONFIGURED")
+	})
+
+	t.Run("refresh origin error on network/remote failure", func(t *testing.T) {
+		repo := gitRepo(t)
+		if out, err := exec.Command("git", "-C", repo, "remote", "add", "origin", "https://invalid.example.com/nonexistent.git").CombinedOutput(); err != nil {
+			t.Fatalf("git remote add: %v (%s)", err, out)
+		}
+		discoverer := m.(project.BranchDiscoverer)
+		_, err := discoverer.DiscoverBranchesAndRefreshOrigin(ctx, repo)
+		wantCode(t, err, "ORIGIN_FETCH_FAILED")
+	})
 }
 
 func TestManager_UpdateSettings(t *testing.T) {
@@ -624,7 +703,7 @@ func TestManager_UpdateSettings(t *testing.T) {
 func TestManager_ListIncludesOnlySummarySafeProjectConfig(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)
-	repo := gitRepo(t)
+	repo := gitRepoOnBranch(t, "develop")
 
 	cfg := domain.ProjectConfig{
 		DefaultBranch: "develop",
@@ -1435,3 +1514,64 @@ func TestManager_AddWorkspaceRejectsBareParent(t *testing.T) {
 	_, err := m.Add(ctx, project.AddInput{Path: bareParent, ProjectID: ptr("bare"), AsWorkspace: true})
 	wantCode(t, err, "WORKSPACE_PARENT_BARE")
 }
+
+func TestManager_AddValidatesExplicitDefaultBranch(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	repo := gitRepoOnBranch(t, "main")
+
+	// Create local branch "feature/demo" in repo.
+	if out, err := exec.Command("git", "-C", repo, "branch", "feature/demo").CombinedOutput(); err != nil {
+		t.Fatalf("git branch feature/demo: %v (%s)", err, out)
+	}
+
+	// 1. Valid existing branch succeeds and sets DefaultBranch.
+	proj, err := m.Add(ctx, project.AddInput{
+		Path:      repo,
+		ProjectID: ptr("p1"),
+		Config:    &domain.ProjectConfig{DefaultBranch: "feature/demo"},
+	})
+	if err != nil {
+		t.Fatalf("Add with existing branch feature/demo failed: %v", err)
+	}
+	if proj.DefaultBranch != "feature/demo" {
+		t.Fatalf("DefaultBranch = %q, want feature/demo", proj.DefaultBranch)
+	}
+
+	// 2. Non-existent branch is rejected with INVALID_DEFAULT_BRANCH and no project is stored.
+	repo2 := gitRepoOnBranch(t, "main")
+	_, err = m.Add(ctx, project.AddInput{
+		Path:      repo2,
+		ProjectID: ptr("p2"),
+		Config:    &domain.ProjectConfig{DefaultBranch: "nonexistent-branch"},
+	})
+	wantCode(t, err, "INVALID_DEFAULT_BRANCH")
+
+	list, err := m.List(ctx)
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	for _, p := range list {
+		if p.ID == "p2" {
+			t.Fatalf("Project p2 was stored despite invalid default branch error")
+		}
+	}
+
+	// 4. Remote-only branch containing a slash (e.g., release/2026) validates and sets DefaultBranch.
+	repo3 := gitRepoOnBranch(t, "main")
+	if out, err := exec.Command("git", "-C", repo3, "update-ref", "refs/remotes/origin/release/2026", "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("git update-ref refs/remotes/origin/release/2026: %v (%s)", err, out)
+	}
+	proj3, err := m.Add(ctx, project.AddInput{
+		Path:      repo3,
+		ProjectID: ptr("p4"),
+		Config:    &domain.ProjectConfig{DefaultBranch: "release/2026"},
+	})
+	if err != nil {
+		t.Fatalf("Add with remote-only slash branch failed: %v", err)
+	}
+	if proj3.DefaultBranch != "release/2026" {
+		t.Fatalf("DefaultBranch = %q, want release/2026", proj3.DefaultBranch)
+	}
+}
+

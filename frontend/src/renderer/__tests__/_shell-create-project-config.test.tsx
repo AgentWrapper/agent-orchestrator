@@ -27,4 +27,18 @@ describe("createProjectConfig", () => {
 			trackerIntake: { enabled: true, provider: "github", assignee: "octocat" },
 		});
 	});
+
+	it("includes defaultBranch in project config when specified", () => {
+		expect(
+			createProjectConfig({
+				workerAgent: "codex",
+				orchestratorAgent: "claude-code",
+				defaultBranch: "develop",
+			}),
+		).toEqual({
+			defaultBranch: "develop",
+			worker: { agent: "codex" },
+			orchestrator: { agent: "claude-code" },
+		});
+	});
 });
