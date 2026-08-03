@@ -42,7 +42,7 @@ export function ConnectMobileSetup({ port, enabled }: ConnectMobileSetupProps) {
 				<div className="mt-3 w-full px-(--size-settings-mobile-details-pad-x)">
 					<ol className="settings-mobile-steps">
 						<li>Put your phone on the same Wi-Fi as this computer.</li>
-						<li>Open Agent Orchestrator on your phone and tap Scan.</li>
+						<li>Open Agent Orchestrator on your phone and tap Pair Desktop.</li>
 						<li>Scan the code below — address and password fill in automatically.</li>
 					</ol>
 				</div>
