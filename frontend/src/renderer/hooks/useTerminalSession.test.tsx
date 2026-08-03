@@ -87,7 +87,9 @@ function createFakeMux(): FakeMux {
 }
 
 type FakeTerminal = AttachableTerminal & {
+	autoCompleteWrites: boolean;
 	lines: string[];
+	pendingWriteCallbacks: Array<() => void>;
 	clears: number;
 	latestOutputRequests: number;
 	typeKeys(data: string): void;
@@ -96,6 +98,7 @@ type FakeTerminal = AttachableTerminal & {
 	shortcut(data: string): void;
 	wheel(data: string): void;
 	emitResize(cols: number, rows: number): void;
+	completeWrites(): void;
 };
 
 function createFakeTerminal(): FakeTerminal {
@@ -104,13 +107,18 @@ function createFakeTerminal(): FakeTerminal {
 	const terminal: FakeTerminal = {
 		cols: 80,
 		rows: 24,
+		autoCompleteWrites: true,
 		lines: [],
+		pendingWriteCallbacks: [],
 		clears: 0,
 		latestOutputRequests: 0,
 		// Mirrors xterm: the callback fires once the chunk has been parsed.
 		write: (bytes, done) => {
 			terminal.lines.push(new TextDecoder().decode(bytes));
-			done?.();
+			if (done) {
+				if (terminal.autoCompleteWrites) done();
+				else terminal.pendingWriteCallbacks.push(done);
+			}
 		},
 		writeln: (line) => terminal.lines.push(line),
 		showLatestOutput: () => {
@@ -134,11 +142,15 @@ function createFakeTerminal(): FakeTerminal {
 		shortcut: (data) => inputListeners.forEach((listener) => listener(data, "shortcut")),
 		wheel: (data) => inputListeners.forEach((listener) => listener(data, "wheel")),
 		emitResize: (cols, rows) => resizeListeners.forEach((listener) => listener({ cols, rows })),
+		completeWrites: () => {
+			for (const callback of terminal.pendingWriteCallbacks.splice(0)) callback();
+		},
 	};
 	return terminal;
 }
 
 function setup({
+	coverInitialReplay = true,
 	daemonReady = true,
 	attachedSession = session as WorkspaceSession | undefined,
 	isVisible = true,
@@ -156,7 +168,12 @@ function setup({
 	);
 	const view = renderHook(
 		({ daemonReady: ready, isVisible: visible = true }: { daemonReady: boolean; isVisible?: boolean }) =>
-			useTerminalSession(attachedSession, { daemonReady: ready, createMux, isVisible: visible }),
+			useTerminalSession(attachedSession, {
+				coverInitialReplay,
+				daemonReady: ready,
+				createMux,
+				isVisible: visible,
+			}),
 		{ initialProps: { daemonReady, isVisible }, wrapper },
 	);
 	const terminal = createFakeTerminal();
@@ -322,6 +339,27 @@ describe("useTerminalSession", () => {
 	// the tail; writing the burst frame-by-frame paints every intermediate
 	// scroll position on the way down.
 	describe("initial replay gate", () => {
+		it("never reveals before xterm finishes parsing the buffered replay", () => {
+			const { view, terminal, muxes } = setup();
+			terminal.autoCompleteWrites = false;
+			act(() => muxes[0].emitOpened("handle-1"));
+			act(() => muxes[0].emitData("handle-1", "large replay"));
+			act(() => void vi.advanceTimersByTime(60 + 750));
+			expect(view.result.current.replaySettled).toBe(false);
+			expect(terminal.latestOutputRequests).toBe(0);
+			act(() => terminal.completeWrites());
+			expect(view.result.current.replaySettled).toBe(true);
+			expect(terminal.latestOutputRequests).toBe(1);
+		});
+
+		it("streams reviewer-style attachments without the replay gate", () => {
+			const { view, terminal, muxes } = setup({ coverInitialReplay: false });
+			expect(view.result.current.replaySettled).toBe(true);
+			act(() => muxes[0].emitData("handle-1", "review output"));
+			expect(terminal.lines).toEqual(["review output"]);
+			expect(view.result.current.replaySettled).toBe(true);
+		});
+
 		it("keeps the parsed replay covered through a quiet tail, then reveals at latest", () => {
 			const { view, terminal, muxes } = setup();
 			expect(view.result.current.replaySettled).toBe(false);

@@ -62,6 +62,7 @@ type CachedTerminalEntry = TerminalCacheDescriptor & {
 	activationPhase: "parked" | "preparing" | "ready" | "revealed" | "visible";
 	container: HTMLDivElement;
 	discardOnDeactivate?: boolean;
+	lastActivatedAt: number;
 	props: TerminalPaneProps;
 	terminal?: AttachableTerminal;
 };
@@ -78,6 +79,11 @@ type TerminalCacheController = {
 };
 
 const TerminalCacheContext = createContext<TerminalCacheController | null>(null);
+
+// Bound retained xterm buffers, renderer contexts and mux writers. The active
+// terminal is always retained; opening a seventh terminal evicts the oldest
+// parked entry, which can use the covered replay path when opened again.
+const MAX_RETAINED_TERMINALS = 6;
 
 function terminalTargetMatches(left?: TerminalTarget, right?: TerminalTarget): boolean {
 	if (left === right) return true;
@@ -293,6 +299,7 @@ export function TerminalCacheProvider({
 	const workspaceQuery = useWorkspaceQuery();
 	const shellTerminalsQuery = useShellTerminals();
 	const entriesRef = useRef(new Map<string, CachedTerminalEntry>());
+	const activationClockRef = useRef(0);
 	const activeRef = useRef<ActiveTerminalEntry | null>(null);
 	const parkingRef = useRef<HTMLDivElement | null>(null);
 	const muxPoolRef = useRef<TerminalMuxPool | null>(null);
@@ -366,14 +373,27 @@ export function TerminalCacheProvider({
 					activationId: 0,
 					activationPhase: "parked",
 					container,
+					lastActivatedAt: 0,
 					props: cachedProps,
 				};
 				entriesRef.current.set(entry.cacheKey, entry);
 			} else {
 				entry.props = cachedProps;
 			}
+			entry.lastActivatedAt = ++activationClockRef.current;
 			showTerminal(entry, slot);
 			activeRef.current = { key: entry.cacheKey, slot };
+			if (entriesRef.current.size > MAX_RETAINED_TERMINALS) {
+				const parked = [...entriesRef.current.values()]
+					.filter((candidate) => candidate.cacheKey !== entry.cacheKey)
+					.sort((left, right) => left.lastActivatedAt - right.lastActivatedAt);
+				while (entriesRef.current.size > MAX_RETAINED_TERMINALS) {
+					const oldest = parked.shift();
+					if (!oldest) break;
+					entriesRef.current.delete(oldest.cacheKey);
+					oldest.container.remove();
+				}
+			}
 			rerender();
 		},
 		[muxPool, rerender],
@@ -906,6 +926,7 @@ function AttachedTerminal({
 		[session?.id],
 	);
 	const { attach, state, error, replaySettled, syncVisibleSize } = useTerminalSession(attachSession, {
+		coverInitialReplay: terminalTarget?.kind !== "reviewer",
 		createMux,
 		daemonReady,
 		isVisible,

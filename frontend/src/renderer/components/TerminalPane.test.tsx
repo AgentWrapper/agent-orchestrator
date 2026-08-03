@@ -24,6 +24,7 @@ const {
 	replaySettled,
 	terminalPreparations,
 	terminalOutputHandlers,
+	terminalSessionOptions,
 	xtermMounts,
 	xtermUnmounts,
 } = vi.hoisted(
@@ -36,6 +37,7 @@ const {
 		replaySettled: { value: true },
 		terminalPreparations: { value: 0 },
 		terminalOutputHandlers: new Map<string, (text: string) => void>(),
+		terminalSessionOptions: [] as Array<{ coverInitialReplay?: boolean }>,
 		xtermMounts: { value: 0 },
 		xtermUnmounts: { value: 0 },
 	}),
@@ -90,8 +92,9 @@ vi.mock("./XtermTerminal", () => ({
 vi.mock("../hooks/useTerminalSession", () => ({
 	useTerminalSession: (
 		session: WorkspaceSession | undefined,
-		options: { onOutput?: (text: string) => void },
+		options: { coverInitialReplay?: boolean; onOutput?: (text: string) => void },
 	) => {
+		terminalSessionOptions.push(options);
 		if (session?.id && options.onOutput) terminalOutputHandlers.set(session.id, options.onOutput);
 		return {
 			attach: attachMock,
@@ -132,6 +135,7 @@ beforeEach(() => {
 	terminalPreparations.value = 0;
 	terminalLinkHandler = undefined;
 	terminalOutputHandlers.clear();
+	terminalSessionOptions.length = 0;
 	attachMock.mockClear();
 	xtermMounts.value = 0;
 	xtermUnmounts.value = 0;
@@ -352,6 +356,32 @@ describe("TerminalCacheProvider", () => {
 		}
 	});
 
+	it("evicts the oldest parked terminal after the retained cache reaches its limit", async () => {
+		const sessions = Array.from({ length: 7 }, (_, index) => ({
+			...worker,
+			id: `sess-lru-${index}`,
+			title: `session ${index}`,
+			terminalHandleId: `handle-lru-${index}`,
+		}));
+		const view = renderCachedPane({ session: sessions[0], sessions });
+		try {
+			const oldest = await waitFor(() => activeXterm());
+			for (const session of sessions.slice(1)) {
+				view.show(session);
+				await waitFor(() =>
+					expect(
+						document.querySelector(`[data-terminal-cache-key^="session:${session.id}:worker|"]`),
+					).not.toBeNull(),
+				);
+			}
+			expect(document.querySelectorAll("[data-terminal-cache-key]")).toHaveLength(6);
+			expect(oldest.isConnected).toBe(false);
+			await waitFor(() => expect(xtermUnmounts.value).toBe(1));
+		} finally {
+			view.restore();
+		}
+	});
+
 	it("disposes an old handle generation instead of reusing its terminal state", async () => {
 		const replacement = { ...sessionA, terminalHandleId: "handle-a-generation-2" };
 		const view = renderCachedPane({ session: sessionA, sessions: [sessionA] });
@@ -440,6 +470,7 @@ describe("TerminalCacheProvider", () => {
 		try {
 			const first = await waitFor(() => screen.getByTestId("xterm"));
 			expect(document.querySelector("[data-terminal-cache-key*='reviewer']")).toBeNull();
+			expect(terminalSessionOptions.at(-1)?.coverInitialReplay).toBe(false);
 			view.show(sessionA, { kind: "worker" });
 			await waitFor(() => expect(first.isConnected).toBe(false));
 		} finally {

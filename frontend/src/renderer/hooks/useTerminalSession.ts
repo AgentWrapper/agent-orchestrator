@@ -67,6 +67,8 @@ export type TerminalSessionState =
 export type UseTerminalSessionOptions = {
 	/** Gates auto-reattach: when false, a dropped socket waits instead of retrying. */
 	daemonReady: boolean;
+	/** Coalesce and cover the initial replay. Disable for non-retained reviewer panes. */
+	coverInitialReplay?: boolean;
 	/**
 	 * False while a retained terminal is parked off screen. Output and transport
 	 * recovery continue, but hidden panes cannot send user input or PTY resizes.
@@ -359,13 +361,14 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		const emitOutput = (bytes: Uint8Array) => {
 			if (outputDecoder) optionsRef.current.onOutput?.(outputDecoder.decode(bytes, { stream: true }));
 		};
+		let pendingReplayWrites = 0;
+		let replayRevealDeadlineReached = false;
 
 		// Reveal only after xterm has parsed the coalesced replay and any late tail
 		// frames have gone quiet. The tail itself streams straight into xterm behind
 		// the cover, avoiding an unbounded duplicate replay buffer.
 		const revealReplayTail = () => {
 			if (!r.replayTailPending || !isCurrentAttachment(generation, handle, mux)) return;
-			r.replayTailPending = false;
 			if (r.replayTailQuietTimer) {
 				clearTimeout(r.replayTailQuietTimer);
 				r.replayTailQuietTimer = null;
@@ -374,11 +377,22 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				clearTimeout(r.replayTailCapTimer);
 				r.replayTailCapTimer = null;
 			}
+			if (pendingReplayWrites > 0) {
+				replayRevealDeadlineReached = true;
+				return;
+			}
+			r.replayTailPending = false;
+			replayRevealDeadlineReached = false;
 			terminal.showLatestOutput();
 			setReplaySettled(true);
 		};
 		const scheduleReplayTailReveal = () => {
 			if (!r.replayTailPending || !isCurrentAttachment(generation, handle, mux)) return;
+			if (pendingReplayWrites > 0) return;
+			if (replayRevealDeadlineReached) {
+				revealReplayTail();
+				return;
+			}
 			if (r.replayTailQuietTimer) clearTimeout(r.replayTailQuietTimer);
 			r.replayTailQuietTimer = setTimeout(revealReplayTail, REPLAY_TAIL_QUIET_MS);
 		};
@@ -431,8 +445,10 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			// Observers (the URL watcher) must still see the replay text, and see
 			// it once, in order — decode the joined buffer, not the pieces.
 			emitOutput(replay);
+			pendingReplayWrites += 1;
 			terminal.write(replay, () => {
 				if (!isCurrentAttachment(generation, handle, mux)) return;
+				pendingReplayWrites = Math.max(0, pendingReplayWrites - 1);
 				if (holdTail) scheduleReplayTailReveal();
 				else {
 					terminal.showLatestOutput();
@@ -468,7 +484,12 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 						clearTimeout(r.replayTailQuietTimer);
 						r.replayTailQuietTimer = null;
 					}
-					terminal.write(bytes, scheduleReplayTailReveal);
+					pendingReplayWrites += 1;
+					terminal.write(bytes, () => {
+						if (!isCurrentAttachment(generation, handle, mux)) return;
+						pendingReplayWrites = Math.max(0, pendingReplayWrites - 1);
+						scheduleReplayTailReveal();
+					});
 					emitOutput(bytes);
 					return;
 				}
@@ -633,11 +654,12 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		// wait for `opened`: the daemon fires onOpen from setPTY and only then
 		// starts copyOut (attachment.go), so `attached` arrives before the first
 		// replay byte and would uncover a pane that has not drawn yet.
-		r.replayBuffering = true;
+		const coverInitialReplay = optionsRef.current.coverInitialReplay !== false;
+		r.replayBuffering = coverInitialReplay;
 		r.replayChunks = [];
 		r.replayBytes = 0;
 		r.replayPendingReassert = null;
-		setReplaySettled(false);
+		setReplaySettled(!coverInitialReplay);
 		// The cap is armed from `opened`, NOT from here. A slow attach — the
 		// daemon runs a liveness probe and spawns the runtime client before the
 		// first byte, which is why OPEN_TIMEOUT_MS budgets 3s — would otherwise

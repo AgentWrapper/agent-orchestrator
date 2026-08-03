@@ -757,11 +757,13 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				let firstFrame: number | null = null;
 				let paintFrame: number | null = null;
 				let renderListener: { dispose: () => void } | null = null;
+				let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
 				let finished = false;
 				const finish = () => {
 					if (finished) return;
 					finished = true;
 					renderListener?.dispose();
+					if (fallbackTimer !== null) clearTimeout(fallbackTimer);
 					if (firstFrame !== null) cancelAnimationFrame(firstFrame);
 					if (paintFrame !== null) cancelAnimationFrame(paintFrame);
 					if (cancelActivationPreparation === finish) cancelActivationPreparation = null;
@@ -769,9 +771,13 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				};
 				cancelActivationPreparation = finish;
 
-				renderListener = term.onRender(() => {
+				const finishAcrossPaintFrames = () => {
 					renderListener?.dispose();
 					renderListener = null;
+					if (fallbackTimer !== null) {
+						clearTimeout(fallbackTimer);
+						fallbackTimer = null;
+					}
 					firstFrame = requestAnimationFrame(() => {
 						firstFrame = null;
 						// Reconcile again after fit/reflow has rendered, then keep the
@@ -782,7 +788,11 @@ export function XtermTerminal(props: XtermTerminalProps) {
 							finish();
 						});
 					});
-				});
+				};
+				renderListener = term.onRender(finishAcrossPaintFrames);
+				// Renderer suspension, a temporarily zero-sized slot, or a no-op
+				// refresh must not leave the retained pane hidden forever.
+				fallbackTimer = setTimeout(finishAcrossPaintFrames, 250);
 				// The container has already moved into its real slot but remains
 				// hidden. Fit locally now; useTerminalSession suppresses the emitted
 				// PTY resize until the terminal becomes fully visible.
