@@ -67,6 +67,8 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					onNewSessionShortcut: unsubscribe,
 					onKeyboardShortcutsHelp: unsubscribe,
 					onNewShellTerminalShortcut: unsubscribe,
+					onCloseShellTerminalShortcut: unsubscribe,
+					setCloseShellTerminalShortcutEnabled: () => undefined,
 					onOpenSettingsShortcut: unsubscribe,
 					onPreviousSessionShortcut: unsubscribe,
 					onNextSessionShortcut: unsubscribe,
@@ -162,6 +164,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					download: async () => undefined,
 					install: async () => undefined,
 					onStatus: unsubscribe,
+					onTelemetry: unsubscribe,
 				},
 				// UpdatesSection calls featureBuilds.getActive() immediately on mount; an
 				// omitted namespace would surface as a swallowed React Query error.
@@ -469,6 +472,8 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					onNewSessionShortcut: unsubscribe,
 					onKeyboardShortcutsHelp: unsubscribe,
 					onNewShellTerminalShortcut: unsubscribe,
+					onCloseShellTerminalShortcut: unsubscribe,
+					setCloseShellTerminalShortcutEnabled: () => undefined,
 					onOpenSettingsShortcut: unsubscribe,
 					onPreviousSessionShortcut: unsubscribe,
 					onNextSessionShortcut: unsubscribe,
@@ -554,6 +559,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					download: async () => undefined,
 					install: async () => undefined,
 					onStatus: unsubscribe,
+					onTelemetry: unsubscribe,
 				},
 				// UpdatesSection calls featureBuilds.getActive() immediately on mount; an
 				// omitted namespace would surface as a swallowed React Query error.

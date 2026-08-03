@@ -52,7 +52,7 @@ type UiState = {
 	// when no project is in scope).
 	createProjectNonce: number;
 	// Bumps to ask for a new standalone shell terminal. Like newTaskRequest this
-	// is a one-shot signal, not state: the tab-strip + button and Ctrl+Shift+` both
+	// is a one-shot signal, not state: the tab-strip + button and ⌘T / Ctrl+T both
 	// raise it so they cannot drift apart, and a repeat press re-fires because
 	// the nonce always changes. The shell layout is its single consumer — it is
 	// mounted on every route, so the request is honoured from anywhere in the app.

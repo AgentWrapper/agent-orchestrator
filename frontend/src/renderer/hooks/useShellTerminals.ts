@@ -1,5 +1,5 @@
 // Standalone shell terminals: shells the user opens by hand from the topbar or
-// Ctrl+`, with no agent session behind them. They are deliberately kept out of
+// ⌘T / Ctrl+T, with no agent session behind them. They are deliberately kept out of
 // the workspaces query — they are not sessions, never appear on the board, and
 // must not invalidate session state when they come and go.
 

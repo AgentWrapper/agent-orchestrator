@@ -90,6 +90,39 @@ type WorkspaceFileDetail struct {
 	CompareMode        WorkspaceCompareMode
 }
 
+// WorkspaceWatchPaths returns every worktree that contributes files to a
+// session workspace read model. Workspace projects include child repositories
+// that are deliberately ignored by the parent Git repository.
+func (s *Service) WorkspaceWatchPaths(ctx context.Context, id domain.SessionID) ([]string, error) {
+	rec, err := s.sessionWorkspaceRecord(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	paths := []string{rec.Metadata.WorkspacePath}
+	seen := map[string]struct{}{filepath.Clean(rec.Metadata.WorkspacePath): {}}
+	rows, err := s.store.ListSessionWorktrees(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("list workspace project rows: %w", err)
+	}
+	for _, row := range rows {
+		workspacePath := strings.TrimSpace(row.WorktreePath)
+		if workspacePath == "" {
+			continue
+		}
+		workspacePath = filepath.Clean(workspacePath)
+		if _, ok := seen[workspacePath]; ok {
+			continue
+		}
+		info, statErr := os.Stat(workspacePath)
+		if statErr != nil || !info.IsDir() {
+			continue
+		}
+		seen[workspacePath] = struct{}{}
+		paths = append(paths, workspacePath)
+	}
+	return paths, nil
+}
+
 // ListWorkspaceFiles returns all tracked and untracked, non-ignored files in a
 // session worktree, annotated with their current git status against the
 // session's recorded base when available.
