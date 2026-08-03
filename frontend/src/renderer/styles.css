@@ -944,36 +944,6 @@ select {
 	}
 }
 
-.session-files-diff-scrollbar {
-	scrollbar-width: thin;
-	scrollbar-color: var(--color-scrollbar) transparent;
-}
-
-.session-files-diff-scrollbar::-webkit-scrollbar {
-	width: 8px;
-	height: 8px;
-}
-
-.session-files-diff-scrollbar::-webkit-scrollbar-track {
-	background: transparent;
-}
-
-.session-files-diff-scrollbar::-webkit-scrollbar-thumb {
-	border: 2px solid transparent;
-	border-radius: var(--radius-full);
-	background: var(--color-scrollbar);
-	background-clip: content-box;
-}
-
-.session-files-diff-scrollbar::-webkit-scrollbar-thumb:hover {
-	background: var(--color-scrollbar-hover);
-	background-clip: content-box;
-}
-
-.session-files-diff-scrollbar::-webkit-scrollbar-corner {
-	background: transparent;
-}
-
 .terminal-pane-frame:fullscreen {
 	background: var(--color-bg-primary);
 }
@@ -2309,6 +2279,13 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	backdrop-filter: blur(10px);
 }
 
+/* The maximized browser reaches the native titlebar. Keep its navigation
+   controls to the right of macOS traffic lights while leaving other platforms
+   edge-aligned. */
+.browser-panel__toolbar--mac-maximized {
+	padding-left: calc(var(--size-titlebar-cluster-left) + var(--space-2));
+}
+
 .browser-panel__url,
 .browser-panel__url-wrap {
 	display: flex;
@@ -2437,10 +2414,38 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	z-index: 2;
 	width: 100%;
 	height: 100%;
-	object-fit: fill;
+	/* Tab-switch captures keep the same geometry, so contain preserves the
+	   captured page's aspect ratio without distortion. Popout handoffs override
+	   this below because their source and destination geometries differ. */
+	object-fit: contain;
 	background: var(--bg);
 	pointer-events: none;
 	animation: browser-transition-frame 240ms ease-out forwards;
+}
+
+/* A popout frame is held while the native view moves to its new bounds. The
+   240ms animation above is sized for tab switches, so the handoff drives its
+   release explicitly after the destination layout commits. */
+[data-transition="popout"] .browser-panel__transition-frame {
+	animation: none;
+	opacity: 1;
+	transition: opacity var(--duration-normal) ease-out;
+}
+
+/* Crossfades the held snapshot out once endPopoutTransition() reveals the
+   native view underneath — not an instant removal, which raced the native
+   view's own reveal and briefly showed both at once. */
+[data-transition="popout"] .browser-panel__transition-frame--releasing {
+	opacity: 0;
+}
+
+/* cover, not contain: maximize/restore does not animate, so this box is fixed
+   for the frame's whole life and is only ever fitted once. The capture comes
+   from the other geometry though, so its aspect differs — cover fills the box
+   with the page uniformly scaled and cropped, where contain would letterbox it
+   against --bg. */
+[data-transition="popout"] .browser-panel__transition-frame {
+	object-fit: cover;
 }
 
 .browser-panel__slot {
@@ -2505,7 +2510,8 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 
 	.browser-panel,
 	.browser-panel__annotation-status,
-	.browser-panel__toolbar button {
+	.browser-panel__toolbar button,
+	.session-files-diff-collapse {
 		transition: none;
 	}
 

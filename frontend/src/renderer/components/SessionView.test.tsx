@@ -1,5 +1,5 @@
 import { StrictMode, type ReactNode, type Ref } from "react";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { SessionView } from "./SessionView";
 import { useUiStore } from "../stores/ui-store";
@@ -153,9 +153,12 @@ vi.mock("./SessionFilesView", () => ({
 		</button>
 	),
 }));
-const { browserDestroy, browserViewOptions } = vi.hoisted(() => ({
+const { browserDestroy, browserViewOptions, beginPopoutTransitionMock, endPopoutTransitionMock } = vi.hoisted(() => ({
 	browserDestroy: vi.fn(),
 	browserViewOptions: { current: undefined as { active: boolean; sessionId: string; terminated: boolean } | undefined },
+	// Resolves true = a frozen frame is on screen to cover the native view.
+	beginPopoutTransitionMock: vi.fn(async () => true),
+	endPopoutTransitionMock: vi.fn(),
 }));
 vi.mock("../hooks/useBrowserView", () => ({
 	useBrowserView: (options: { active: boolean; sessionId: string; terminated: boolean }) => {
@@ -185,6 +188,8 @@ vi.mock("../hooks/useBrowserView", () => ({
 			annotationMode: false,
 			setAnnotationMode: vi.fn(),
 			destroy: browserDestroy,
+			beginPopoutTransition: beginPopoutTransitionMock,
+			endPopoutTransition: endPopoutTransitionMock,
 		};
 	},
 }));
@@ -333,6 +338,8 @@ describe("SessionView", () => {
 		useUiStore.setState({ inspectorSessions: {}, visibleTerminalKindBySession: {} });
 		panels.clear();
 		browserDestroy.mockReset();
+		beginPopoutTransitionMock.mockReset().mockResolvedValue(true);
+		endPopoutTransitionMock.mockReset();
 		browserViewOptions.current = undefined;
 		shellTerminalsState.data = [];
 		navigateMock.mockReset();
@@ -638,7 +645,7 @@ describe("SessionView", () => {
 		expect(useUiStore.getState().inspectorSessions["sess-orch"]).toBeUndefined();
 	});
 
-	it("maximizes the browser over the whole app window and returns to the rail", () => {
+	it("maximizes the browser over the whole app window and returns to the rail", async () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
 
@@ -646,13 +653,19 @@ describe("SessionView", () => {
 		fireEvent.click(screen.getByRole("button", { name: "pop browser" }));
 
 		// The maximized overlay appears; the terminal stays mounted behind it.
-		expect(screen.getByRole("button", { name: "browser center" })).toBeInTheDocument();
+		expect(await screen.findByRole("button", { name: "browser center" })).toBeInTheDocument();
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
+		// A snapshot is held while the native view moves to its new bounds.
+		expect(beginPopoutTransitionMock).toHaveBeenCalledTimes(1);
 
 		fireEvent.click(screen.getByRole("button", { name: "browser center" }));
-		expect(screen.queryByRole("button", { name: "browser center" })).not.toBeInTheDocument();
+		await waitFor(() =>
+			expect(screen.queryByRole("button", { name: "browser center" })).not.toBeInTheDocument(),
+		);
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
 		expect(browserDestroy).not.toHaveBeenCalled();
+		// Restore also freezes a snapshot for the native-view handoff.
+		expect(beginPopoutTransitionMock).toHaveBeenCalledTimes(2);
 	});
 
 	it("does not carry popped-out browser visibility into the next session", () => {
@@ -665,6 +678,67 @@ describe("SessionView", () => {
 		rerender(<SessionView sessionId="sess-2" />);
 
 		expect(browserViewOptions.current).toMatchObject({ sessionId: "sess-2", active: false });
+	});
+
+	// The frozen frame is what covers the native view through the move, so the
+	// layout must not flip until it is actually on screen — otherwise the panel
+	// paints nothing for the first stretch of the grow and the snapshot pops in
+	// partway through.
+	it("waits for the frozen frame before maximizing the browser", async () => {
+		let releaseCapture: (captured: boolean) => void = () => undefined;
+		beginPopoutTransitionMock.mockReturnValue(
+			new Promise<boolean>((resolve) => {
+				releaseCapture = resolve;
+			}),
+		);
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "pop browser" }));
+
+		expect(beginPopoutTransitionMock).toHaveBeenCalledTimes(1);
+		expect(screen.queryByRole("button", { name: "browser center" })).not.toBeInTheDocument();
+
+		await act(async () => {
+			releaseCapture(true);
+		});
+
+		expect(screen.getByRole("button", { name: "browser center" })).toBeInTheDocument();
+	});
+
+	// With no frame captured there is nothing covering the native view, so the
+	// grow would animate an empty panel. Switch outright instead — still
+	// maximizing, just without the transition.
+	it("still maximizes without animating when no frame could be captured", async () => {
+		beginPopoutTransitionMock.mockResolvedValue(false);
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "pop browser" }));
+
+		expect(await screen.findByRole("button", { name: "browser center" })).toBeInTheDocument();
+		expect(screen.getByText("terminal center")).toBeInTheDocument();
+	});
+
+	it("ignores a pending browser popout capture after switching sessions", async () => {
+		let releaseCapture: (captured: boolean) => void = () => undefined;
+		beginPopoutTransitionMock.mockReturnValue(
+			new Promise<boolean>((resolve) => {
+				releaseCapture = resolve;
+			}),
+		);
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
+		const { rerender } = render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "pop browser" }));
+		rerender(<SessionView sessionId="sess-2" />);
+
+		await act(async () => {
+			releaseCapture(true);
+		});
+
+		expect(screen.queryByRole("button", { name: "browser center" })).not.toBeInTheDocument();
+		expect(screen.getByTestId("session-tab")).toHaveTextContent("do the other thing");
 	});
 
 	it("opens the files view in the inspector rail first", () => {

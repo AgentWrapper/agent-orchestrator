@@ -195,6 +195,44 @@ describe("SessionInspector tabs", () => {
 		expect(onOpenFiles).toHaveBeenCalledTimes(1);
 		expect(screen.getByText("workspace file review")).toBeInTheDocument();
 	});
+
+	// The maximized files view is a full-window overlay, and it shares a single
+	// maximize-transition node ref with the rail's copy. Mounting both lets
+	// whichever attaches last win that ref, so the docked one must stand down
+	// while maximized — same rule the Browser tab already follows.
+	it("does not mount the rail's files view while it is maximized", async () => {
+		renderWithQuery(
+			<SessionInspector
+				filesPoppedOut
+				filesView={<div>workspace file review</div>}
+				onOpenFiles={vi.fn()}
+				session={session([])}
+			/>,
+		);
+
+		await userEvent.click(screen.getByRole("tab", { name: "Files" }));
+
+		expect(screen.queryByText("workspace file review")).not.toBeInTheDocument();
+		expect(screen.getByText("Files are in the center pane.")).toBeInTheDocument();
+	});
+
+	it("restores the files view from the rail while it is maximized", async () => {
+		const onToggleFilesPopOut = vi.fn();
+		renderWithQuery(
+			<SessionInspector
+				filesPoppedOut
+				filesView={<div>workspace file review</div>}
+				onOpenFiles={vi.fn()}
+				onToggleFilesPopOut={onToggleFilesPopOut}
+				session={session([])}
+			/>,
+		);
+
+		await userEvent.click(screen.getByRole("tab", { name: "Files" }));
+		await userEvent.click(screen.getByRole("button", { name: "Return to panel" }));
+
+		expect(onToggleFilesPopOut).toHaveBeenCalledWith(false);
+	});
 });
 
 describe("SessionInspector PR section", () => {

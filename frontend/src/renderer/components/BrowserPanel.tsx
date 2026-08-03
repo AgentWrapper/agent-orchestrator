@@ -12,6 +12,7 @@ import {
 	X,
 } from "lucide-react";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { isMacPlatform } from "../lib/platform";
 import { useBrowserView, type BrowserViewModel } from "../hooks/useBrowserView";
 import { formatBrowserAnnotationMessage, type BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
 import type { WorkspaceSession } from "../types/workspace";
@@ -358,6 +359,7 @@ export function BrowserPanelView({
 							? error
 							: "";
 	const agentStatusLabel = agentActivityLabel(agentBrowserActivity, agentBrowserActive);
+	const clearsMacTrafficLights = poppedOut && isMacPlatform();
 
 	return (
 		<div
@@ -371,7 +373,10 @@ export function BrowserPanelView({
 			role="tabpanel"
 		>
 			<form
-				className="browser-panel__toolbar flex shrink-0 min-w-0 items-center gap-1 border-b border-border bg-surface p-1.5"
+				className={cn(
+					"browser-panel__toolbar flex shrink-0 min-w-0 items-center gap-1 border-b border-border bg-surface p-1.5",
+					clearsMacTrafficLights && "browser-panel__toolbar--mac-maximized",
+				)}
 				data-testid="browser-toolbar"
 				onSubmit={submit}
 			>
@@ -514,7 +519,7 @@ export function BrowserPanelView({
 					</DropdownMenuContent>
 				</DropdownMenu>
 				<Button
-					aria-label={poppedOut ? "Return to panel" : "Pop out"}
+					aria-label={poppedOut ? "Minimize browser" : "Maximize browser"}
 					disabled={!canPopOut}
 					onClick={() => {
 						if (!canPopOut) return;
@@ -545,7 +550,10 @@ export function BrowserPanelView({
 				{visualTransition ? (
 					<img
 						alt=""
-						className="browser-panel__transition-frame"
+						className={cn(
+							"browser-panel__transition-frame",
+							visualTransition.releasing && "browser-panel__transition-frame--releasing",
+						)}
 						data-testid="browser-transition-frame"
 						src={visualTransition.snapshotUrl}
 					/>

@@ -10,6 +10,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resiz
 import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-store";
 import { useShell } from "../lib/shell-context";
 import { useBrowserView } from "../hooks/useBrowserView";
+import { useMaximizeTransition } from "../hooks/useMaximizeTransition";
 import {
 	useCloseShellTerminal,
 	useOpenShellTerminal,
@@ -187,8 +188,23 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		sessionId: session?.id,
 		navUrl: browserView.navState.url,
 	});
+	const filesMaximize = useMaximizeTransition(filesPoppedOut);
+	// The browser deliberately does not animate its maximize. Its content is a
+	// native WebContentsView that cannot be transformed, clipped or tweened, so
+	// any grow/shrink is really a captured bitmap standing in for the page, and
+	// a bitmap cannot match a live view that relayouts at the new size — it
+	// either scales (the page appears to zoom, then snaps back on handoff) or
+	// stays put (the panel grows around it into empty space). The frozen frame
+	// is still used, but only to cover the native view's handoff, which is an
+	// IPC round trip and would otherwise flash. See DESIGN.md's Motion section.
+	const browserPopoutSettleRef = useRef(false);
+	const browserPopoutRequestRef = useRef(0);
+	const currentSessionIdRef = useRef(sessionId);
+	currentSessionIdRef.current = sessionId;
 
 	useLayoutEffect(() => {
+		browserPopoutRequestRef.current += 1;
+		browserPopoutSettleRef.current = false;
 		setTerminalTarget({ kind: "worker" });
 		setBrowserPoppedOut(false);
 		setFilesPoppedOut(false);
@@ -213,17 +229,53 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const handleToggleFilesPopOut = useCallback(
 		(next: boolean) => {
 			if (next) setBrowserPoppedOut(false);
+			filesMaximize.captureOrigin();
 			setFilesPoppedOut(next);
 			setInspectorViewForSession(sessionId, "files");
 			setInspectorOpenForSession(sessionId, true);
 		},
-		[sessionId, setInspectorOpenForSession, setInspectorViewForSession],
+		[filesMaximize, sessionId, setInspectorOpenForSession, setInspectorViewForSession],
 	);
 
-	const handleToggleBrowserPopOut = useCallback((next: boolean) => {
-		if (next) setFilesPoppedOut(false);
-		setBrowserPoppedOut(next);
-	}, []);
+	const handleToggleBrowserPopOut = useCallback(
+		(next: boolean) => {
+			if (next) setFilesPoppedOut(false);
+			const requestId = ++browserPopoutRequestRef.current;
+			const requestSessionId = sessionId;
+			// The frozen frame has to be on screen *before* the layout moves: the
+			// native view is hidden across the move, so flipping first would leave
+			// the panel painting nothing until the capture round trip resolves.
+			// Once the new layout is committed the effect below reveals the live
+			// view and crossfades the frame out.
+			void browserView.beginPopoutTransition().then((captured) => {
+				// Capturing crosses an IPC boundary. If the route changed while it
+				// was pending, this completion belongs to the outgoing session and
+				// must not pop out the incoming session's browser.
+				if (
+					browserPopoutRequestRef.current !== requestId ||
+					currentSessionIdRef.current !== requestSessionId
+				) {
+					return;
+				}
+				browserPopoutSettleRef.current = captured;
+				setBrowserPoppedOut(next);
+			});
+		},
+		[browserView, sessionId],
+	);
+
+	// Reveals the native view at the slot's new bounds once React has committed
+	// the maximized/restored layout, and crossfades the frozen frame out over it.
+	// Deliberately not a layout effect: the panel's own slot ref has to be
+	// registered first, and child effects run before this one.
+	useEffect(() => {
+		if (!browserPopoutSettleRef.current) return;
+		browserPopoutSettleRef.current = false;
+		browserView.endPopoutTransition();
+		// Keyed on the layout change alone; browserView is a fresh object each
+		// render and would otherwise re-run this on every unrelated update.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [browserPoppedOut]);
 
 	// `ao preview` sets session.previewUrl (streamed over CDC); badge the inspector
 	// rail's Browser tab so the user can open it when they choose — we never steal
@@ -412,10 +464,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 								<SessionInspector
 									browserAnnotationQueue={browserAnnotationQueue}
 									browserPoppedOut={browserPoppedOut}
+									filesPoppedOut={filesPoppedOut}
 									filesView={
-										session ? (
+										session && !filesPoppedOut ? (
 											<SessionFilesView
-												onClose={() => setInspectorViewForSession(sessionId, "summary")}
+												containerRef={filesMaximize.setNodeRef}
 												onToggleMaximized={handleToggleFilesPopOut}
 												sessionId={session.id}
 											/>
@@ -427,6 +480,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 										setTerminalTarget({ kind: "reviewer", handleId, harness })
 									}
 									onToggleBrowserPopOut={handleToggleBrowserPopOut}
+									onToggleFilesPopOut={handleToggleFilesPopOut}
 									onViewChange={(next: InspectorView) => setInspectorViewForSession(sessionId, next)}
 									view={inspectorView}
 									browserView={browserView}
@@ -440,11 +494,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			{filesPoppedOut && session ? (
 				<div className="absolute inset-0 z-30 bg-background">
 					<SessionFilesView
+						containerRef={filesMaximize.setNodeRef}
 						isMaximized
-						onClose={() => {
-							setFilesPoppedOut(false);
-							setInspectorViewForSession(sessionId, "summary");
-						}}
 						onToggleMaximized={handleToggleFilesPopOut}
 						sessionId={session.id}
 					/>

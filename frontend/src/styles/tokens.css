@@ -132,6 +132,11 @@
 	/* Motion */
 	--duration-fast: 120ms;
 	--duration-normal: 150ms;
+	/* Emphasized: the File diff viewer's maximize/restore grow/shrink, an
+	   approved DESIGN.md divergence scoped to that surface. The ease is the CSS
+	   equivalent of the GSAP `expo.out` that drives the Flip tween itself. */
+	--duration-emphasized: 320ms;
+	--ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
 
 	/* ═══════════════════════════════════════════════════════════════
 	   SPACING — 4px base (audit: 4/6/8/10/12/14/16/18 most common)

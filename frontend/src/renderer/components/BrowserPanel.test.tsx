@@ -1,12 +1,33 @@
 import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserPanel, BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { useBrowserView, type BrowserNavState } from "../hooks/useBrowserView";
 import type { WorkspaceSession } from "../types/workspace";
 import type { BrowserAnnotationCancelPayload, BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
 
 const postMock = vi.hoisted(() => vi.fn());
+
+const originalPlatform = Object.getOwnPropertyDescriptor(window.navigator, "platform");
+const originalUserAgent = Object.getOwnPropertyDescriptor(window.navigator, "userAgent");
+const originalUserAgentData = Object.getOwnPropertyDescriptor(window.navigator, "userAgentData");
+
+function spoofMacPlatform() {
+	Object.defineProperty(window.navigator, "platform", { configurable: true, get: () => "MacIntel" });
+	Object.defineProperty(window.navigator, "userAgent", {
+		configurable: true,
+		get: () => "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+	});
+	Object.defineProperty(window.navigator, "userAgentData", {
+		configurable: true,
+		get: () => ({ platform: "macOS" }),
+	});
+}
+
+function restoreNavigatorProperty(name: "platform" | "userAgent" | "userAgentData", descriptor?: PropertyDescriptor) {
+	if (descriptor) Object.defineProperty(window.navigator, name, descriptor);
+	else delete (window.navigator as unknown as Record<string, unknown>)[name];
+}
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: { POST: postMock },
@@ -31,7 +52,9 @@ const hookState = vi.hoisted(() => ({
 	tabNotice: "",
 	agentBrowserActive: false,
 	agentBrowserActivity: null as { active: boolean; action?: string; phase?: "started" | "finished" } | null,
-	visualTransition: null as { kind: "tab-switch" | "popout"; snapshotUrl: string } | null,
+	visualTransition: null as
+		| { kind: "tab-switch" | "popout"; snapshotUrl: string; releasing?: boolean }
+		| null,
 	previewUrl: undefined as string | undefined,
 	navState: {
 		viewId: "42:sess-1",
@@ -178,6 +201,12 @@ describe("BrowserPanel", () => {
 		};
 	});
 
+	afterEach(() => {
+		restoreNavigatorProperty("platform", originalPlatform);
+		restoreNavigatorProperty("userAgent", originalUserAgent);
+		restoreNavigatorProperty("userAgentData", originalUserAgentData);
+	});
+
 	it("navigates to the entered URL on submit", async () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 		const input = screen.getByRole("textbox", { name: /browser url/i });
@@ -255,21 +284,35 @@ describe("BrowserPanel", () => {
 		expect(screen.getByText("Connection refused")).toBeInTheDocument();
 	});
 
-	it("toggles pop-out mode", async () => {
+	it("labels and toggles browser maximize", async () => {
 		const onTogglePopOut = vi.fn();
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
 		render(<BrowserPanel active onTogglePopOut={onTogglePopOut} poppedOut={false} session={session} />);
 
-		await userEvent.click(screen.getByRole("button", { name: /pop out/i }));
+		await userEvent.click(screen.getByRole("button", { name: "Maximize browser" }));
 
 		expect(onTogglePopOut).toHaveBeenCalledWith(true);
+		expect(screen.queryByRole("button", { name: "Pop out" })).not.toBeInTheDocument();
+	});
+
+	it("labels browser restore as minimize and clears macOS traffic lights", async () => {
+		spoofMacPlatform();
+		const onTogglePopOut = vi.fn();
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		render(<BrowserPanel active onTogglePopOut={onTogglePopOut} poppedOut session={session} />);
+
+		expect(screen.getByTestId("browser-toolbar")).toHaveClass("browser-panel__toolbar--mac-maximized");
+		await userEvent.click(screen.getByRole("button", { name: "Minimize browser" }));
+
+		expect(onTogglePopOut).toHaveBeenCalledWith(false);
+		expect(screen.queryByRole("button", { name: "Return to panel" })).not.toBeInTheDocument();
 	});
 
 	it("does not pop out an empty browser", async () => {
 		const onTogglePopOut = vi.fn();
 		render(<BrowserPanel active onTogglePopOut={onTogglePopOut} poppedOut={false} session={session} />);
 
-		const popOut = screen.getByRole("button", { name: /pop out/i });
+		const popOut = screen.getByRole("button", { name: "Maximize browser" });
 		expect(popOut).toBeDisabled();
 		await userEvent.click(popOut);
 
@@ -341,6 +384,19 @@ describe("BrowserPanel", () => {
 
 		const frame = screen.getByTestId("browser-transition-frame");
 		expect(frame).toHaveAttribute("src", "data:image/jpeg;base64,snapshot");
+	});
+
+	it("crossfades a releasing popout transition frame out instead of removing it instantly", () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		hookState.visualTransition = {
+			kind: "popout",
+			snapshotUrl: "data:image/jpeg;base64,snapshot",
+			releasing: true,
+		};
+
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		expect(screen.getByTestId("browser-transition-frame")).toHaveClass("browser-panel__transition-frame--releasing");
 	});
 
 	it("renders the premium browser shell hooks in the default view", () => {

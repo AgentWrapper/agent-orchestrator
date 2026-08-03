@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
 	Check,
 	ChevronDown,
@@ -10,9 +10,7 @@ import {
 	Copy,
 	Maximize2,
 	Minimize2,
-	RefreshCw,
 	Search,
-	X,
 } from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
@@ -35,9 +33,10 @@ type WorkspaceFileStatus = WorkspaceFileSummary["status"];
 
 type SessionFilesViewProps = {
 	sessionId: string;
-	onClose: () => void;
 	isMaximized?: boolean;
 	onToggleMaximized?: (next: boolean) => void;
+	/** Root element, for measuring/animating maximize-restore FLIP transitions. */
+	containerRef?: (node: HTMLElement | null) => void;
 };
 
 const emptyFiles: WorkspaceFileSummary[] = [];
@@ -60,11 +59,10 @@ const statusTone: Record<WorkspaceFileStatus, string> = {
 
 export function SessionFilesView({
 	sessionId,
-	onClose,
 	isMaximized = false,
 	onToggleMaximized,
+	containerRef,
 }: SessionFilesViewProps) {
-	const queryClient = useQueryClient();
 	const [filter, setFilter] = useState("");
 	const [searchOpen, setSearchOpen] = useState(false);
 	const [split, setSplit] = useState(false);
@@ -110,11 +108,6 @@ export function SessionFilesView({
 	const changedCount = changedFiles.length;
 	const expandedVisibleCount = visibleFiles.filter((file) => expandedPaths.has(file.path)).length;
 
-	const refresh = () => {
-		void filesQuery.refetch();
-		void queryClient.invalidateQueries({ queryKey: ["session-workspace-file", sessionId] });
-	};
-
 	const toggleFile = (path: string) => {
 		setExpandedPaths((current) => {
 			const next = new Set(current);
@@ -159,10 +152,14 @@ export function SessionFilesView({
 
 	return (
 		<section
-			ref={rootRef}
+			ref={(node) => {
+				rootRef.current = node;
+				containerRef?.(node);
+			}}
 			onKeyDown={onFilesKeyDown}
 			className="flex h-full min-h-0 flex-col bg-background text-foreground"
 			aria-label="Session files"
+			data-flip-id="session-files-panel"
 		>
 			<header className="flex h-11 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-1.5">
 				{searchOpen ? (
@@ -223,17 +220,6 @@ export function SessionFilesView({
 				>
 					<Columns2 className="size-icon-sm" aria-hidden="true" />
 				</Button>
-				<Button
-					aria-label="Refresh files"
-					className="shrink-0"
-					disabled={filesQuery.isFetching}
-					onClick={refresh}
-					size="icon-sm"
-					type="button"
-					variant="ghost"
-				>
-					<RefreshCw className={cn("size-icon-sm", filesQuery.isFetching && "animate-spin")} aria-hidden="true" />
-				</Button>
 				{onToggleMaximized ? (
 					<Button
 						aria-label={isMaximized ? "Minimize files" : "Maximize files"}
@@ -250,16 +236,6 @@ export function SessionFilesView({
 						)}
 					</Button>
 				) : null}
-				<Button
-					aria-label="Close files"
-					className="shrink-0"
-					onClick={onClose}
-					size="icon-sm"
-					type="button"
-					variant="ghost"
-				>
-					<X className="size-icon-sm" aria-hidden="true" />
-				</Button>
 			</header>
 
 			<div className="min-h-0 flex-1 overflow-auto bg-background">
@@ -384,8 +360,15 @@ function ReviewFileCard({
 				</button>
 				<CopyPathButton path={file.path} />
 			</div>
-			{expanded ? (
-				<div id={`workspace-diff-${file.path}`} className="border-t border-border/60 bg-background/40">
+			<div
+				className="session-files-diff-collapse grid overflow-hidden transition-[grid-template-rows] duration-normal ease-out"
+				style={{ gridTemplateRows: expanded ? "1fr" : "0fr" }}
+			>
+				<div
+					id={`workspace-diff-${file.path}`}
+					className="min-h-0 overflow-hidden border-t border-border/60 bg-background/40"
+					inert={!expanded}
+				>
 					{detailQuery.isPending ? <PanelMessage>Loading diff...</PanelMessage> : null}
 					{!detailQuery.isPending && detailQuery.error ? (
 						<PanelMessage action={<RetryButton onClick={() => void detailQuery.refetch()} />}>
@@ -396,7 +379,7 @@ function ReviewFileCard({
 						<ReviewDiffBody detail={detailQuery.data} split={split} wrap={wrap} />
 					) : null}
 				</div>
-			) : null}
+			</div>
 		</article>
 	);
 }
@@ -664,13 +647,13 @@ function DiffView({
 	wrap: boolean;
 }) {
 	return (
-		<div className="flex min-h-[180px] max-h-[min(620px,calc(100vh-18rem))] flex-col">
+		<div className="flex min-h-[180px] flex-col">
 			{truncated ? (
 				<div className="shrink-0 border-b border-border bg-warning/10 px-3 py-1.5 text-xs text-warning">
 					Diff preview truncated.
 				</div>
 			) : null}
-			<div className="session-files-diff-scrollbar min-h-0 flex-1 overflow-auto bg-terminal font-mono text-xs leading-row text-terminal-foreground">
+			<div className="min-h-0 flex-1 bg-terminal font-mono text-xs leading-row text-terminal-foreground">
 				{split ? (
 					<SplitDiff rows={rows} />
 				) : (

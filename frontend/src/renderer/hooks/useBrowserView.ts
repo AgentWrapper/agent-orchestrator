@@ -14,6 +14,14 @@ export type { BrowserNavState };
 export type BrowserVisualTransition = {
 	kind: "tab-switch" | "popout";
 	snapshotUrl: string;
+	/**
+	 * True once endPopoutTransition() has revealed the native view and the
+	 * snapshot is crossfading out, rather than being removed outright. An
+	 * instant removal would race the native view's reveal (an async IPC round
+	 * trip vs. a React state update landing on a different tick), briefly
+	 * showing both the frozen snapshot and the live view at once.
+	 */
+	releasing?: boolean;
 };
 
 type UseBrowserViewOptions = {
@@ -63,6 +71,19 @@ export type BrowserViewModel = {
 	destroy: () => void;
 	annotationMode: boolean;
 	setAnnotationMode: (enabled: boolean) => Promise<void>;
+	/**
+	 * Captures a frozen snapshot and holds the native view hidden until
+	 * `endPopoutTransition` is called — unlike a tab-switch transition, this
+	 * does not auto-clear, since the caller drives its lifetime from a FLIP
+	 * animation of unknown/variable duration.
+	 *
+	 * Resolves once the frame is on screen, so callers can await it before
+	 * changing layout; resolves false if no frame could be captured, meaning
+	 * nothing covers the handoff and the move should not be animated.
+	 */
+	beginPopoutTransition: () => Promise<boolean>;
+	/** Releases a held popout transition and reveals the native view at its current bounds. */
+	endPopoutTransition: () => void;
 };
 
 const EMPTY_NAV_STATE: BrowserNavState = {
@@ -83,6 +104,7 @@ const EMPTY_TABS_STATE: BrowserTabsState = {
 const HIDDEN_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 };
 const VISUAL_TRANSITION_DURATION_MS = 240;
 const VISUAL_TRANSITION_CAPTURE_TIMEOUT_MS = 120;
+const POPOUT_RELEASE_FADE_MS = 160;
 
 // The native WebContentsView is a window-level overlay, so DOM `overflow:
 // hidden` never clips it — it paints wherever the slot's bounding box lands.
@@ -150,6 +172,7 @@ export function useBrowserView({
 	const modalOpenRef = useRef(false);
 	const mirrorTokenRef = useRef(0);
 	const mirrorTimerRef = useRef<number | null>(null);
+	const popoutTransitionRef = useRef(false);
 	const tabNoticeTimerRef = useRef<number | null>(null);
 	const visualTransitionTimerRef = useRef<number | null>(null);
 	const mirrorStreamRef = useRef<MediaStream | null>(null);
@@ -184,12 +207,15 @@ export function useBrowserView({
 		mirrorTimerRef.current = null;
 	}, []);
 
+	// Resolves true only if a frozen frame actually made it on screen, so a
+	// caller that relies on one to cover a native-view handoff can tell whether
+	// it got that cover or has to proceed uncovered.
 	const showVisualTransition = useCallback(
-		async (kind: BrowserVisualTransition["kind"], timeoutCapture = true) => {
+		async (kind: BrowserVisualTransition["kind"], timeoutCapture = true): Promise<boolean> => {
 			const id = viewIdRef.current;
-			if (!id || !hasNativeBrowser || !hasUrlRef.current) return;
+			if (!id || !hasNativeBrowser || !hasUrlRef.current) return false;
 			const capture = window.ao?.browser.capture?.(id).catch(() => "");
-			if (!capture) return;
+			if (!capture) return false;
 			let timeoutId: number | null = null;
 			const snapshotUrl = timeoutCapture
 				? await Promise.race([
@@ -200,13 +226,18 @@ export function useBrowserView({
 					])
 				: await capture;
 			if (timeoutId !== null) window.clearTimeout(timeoutId);
-			if (!snapshotUrl || viewIdRef.current !== id) return;
+			if (!snapshotUrl || viewIdRef.current !== id) return false;
 			clearVisualTransitionTimer();
 			setVisualTransition({ kind, snapshotUrl });
+			// A "popout" transition's lifetime is driven by the caller's FLIP
+			// animation (variable duration), not a fixed timer like tab-switch —
+			// the caller clears it explicitly via endPopoutTransition().
+			if (kind === "popout") return true;
 			visualTransitionTimerRef.current = window.setTimeout(() => {
 				visualTransitionTimerRef.current = null;
 				setVisualTransition(null);
 			}, VISUAL_TRANSITION_DURATION_MS);
+			return true;
 		},
 		[clearVisualTransitionTimer, hasNativeBrowser],
 	);
@@ -226,6 +257,13 @@ export function useBrowserView({
 		const id = viewIdRef.current;
 		const node = slotNodeRef.current;
 		if (!id) return;
+		// A held popout transition (FLIP-driven, variable duration) keeps the
+		// native view hidden regardless of intervening layout/measure triggers —
+		// the frozen snapshot covers it until endPopoutTransition() reveals it.
+		if (popoutTransitionRef.current) {
+			sendHiddenBounds(id);
+			return;
+		}
 		if (!activeRef.current || !node || !node.isConnected || !hasUrlRef.current || hiddenByFullscreen(node)) {
 			sendHiddenBounds(id);
 			return;
@@ -246,6 +284,33 @@ export function useBrowserView({
 		};
 		window.ao?.browser.setBounds(payload);
 	}, [sendHiddenBounds]);
+
+	const beginPopoutTransition = useCallback(async () => {
+		const captured = await showVisualTransition("popout");
+		// Engage the hold only once the frozen frame is on screen to cover it.
+		// Held from the first line instead, the native view would be blanked for
+		// the whole capture round trip while the panel is still in place, and if
+		// the capture came back empty it would stay blank for the entire
+		// transition with nothing covering it — so report that back and let the
+		// caller move without an animation instead.
+		popoutTransitionRef.current = captured;
+		return captured;
+	}, [showVisualTransition]);
+
+	const endPopoutTransition = useCallback(() => {
+		popoutTransitionRef.current = false;
+		measureAndSend();
+		// Crossfade the snapshot out instead of removing it the instant the
+		// native view is revealed above — measureAndSend()'s IPC round trip and
+		// this state update settle on different ticks, so an instant removal
+		// briefly showed both the frozen snapshot and the live view at once.
+		clearVisualTransitionTimer();
+		setVisualTransition((current) => (current ? { ...current, releasing: true } : current));
+		visualTransitionTimerRef.current = window.setTimeout(() => {
+			visualTransitionTimerRef.current = null;
+			setVisualTransition(null);
+		}, POPOUT_RELEASE_FADE_MS);
+	}, [clearVisualTransitionTimer, measureAndSend]);
 
 	const cancelScheduledMeasure = useCallback(() => {
 		if (frameRef.current === null) return;
@@ -315,6 +380,10 @@ export function useBrowserView({
 		setAgentBrowserActivity(null);
 		setVisualTransition(null);
 		clearVisualTransitionTimer();
+		// A held popout transition is scoped to the outgoing session's view — a
+		// session switch mid-transition must not leave the new session's view
+		// stuck hidden waiting for an endPopoutTransition() that may never come.
+		popoutTransitionRef.current = false;
 		if (tabNoticeTimerRef.current !== null) {
 			window.clearTimeout(tabNoticeTimerRef.current);
 			tabNoticeTimerRef.current = null;
@@ -710,5 +779,7 @@ export function useBrowserView({
 		destroy,
 		annotationMode,
 		setAnnotationMode,
+		beginPopoutTransition,
+		endPopoutTransition,
 	};
 }

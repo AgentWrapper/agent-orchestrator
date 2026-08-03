@@ -151,6 +151,8 @@ export function SessionInspector({
 	onToggleBrowserPopOut,
 	onOpenFiles,
 	filesView,
+	filesPoppedOut = false,
+	onToggleFilesPopOut,
 	browserView,
 	view: viewProp,
 	onViewChange,
@@ -163,6 +165,8 @@ export function SessionInspector({
 	onToggleBrowserPopOut?: (next: boolean) => void;
 	onOpenFiles?: () => void;
 	filesView?: ReactNode;
+	filesPoppedOut?: boolean;
+	onToggleFilesPopOut?: (next: boolean) => void;
 	browserView?: BrowserViewModel;
 	/** Controlled active tab. Omit to let the inspector own its own selection. */
 	view?: InspectorView;
@@ -247,7 +251,14 @@ export function SessionInspector({
 						session={session}
 					/>
 				) : null}
-				{view === "files" ? <FilesView filesView={filesView} onOpenFiles={onOpenFiles} /> : null}
+				{view === "files" ? (
+					<FilesView
+						filesPoppedOut={filesPoppedOut}
+						filesView={filesView}
+						onOpenFiles={onOpenFiles}
+						onTogglePopOut={onToggleFilesPopOut}
+					/>
+				) : null}
 			</div>
 		</aside>
 	);
@@ -1149,7 +1160,7 @@ function BrowserView({
 				<div className={cn(inspectorEmptyClass, "flex flex-col items-center gap-2 py-10 px-5 text-center")}>
 					<p className="text-md-sm text-muted-foreground">Browser preview is in the center pane.</p>
 					<Button onClick={() => onTogglePopOut?.(false)} size="sm" type="button" variant="outline">
-						Return to panel
+						Minimize browser
 					</Button>
 				</div>
 			</div>
@@ -1172,7 +1183,36 @@ function BrowserView({
 	);
 }
 
-function FilesView({ filesView, onOpenFiles }: { filesView?: ReactNode; onOpenFiles?: () => void }) {
+function FilesView({
+	filesView,
+	filesPoppedOut,
+	onOpenFiles,
+	onTogglePopOut,
+}: {
+	filesView?: ReactNode;
+	filesPoppedOut?: boolean;
+	onOpenFiles?: () => void;
+	onTogglePopOut?: (next: boolean) => void;
+}) {
+	// While maximized the files view is a full-window overlay, so the rail's
+	// Files tab has nothing to show — and must not mount a second
+	// SessionFilesView. Two of them share one maximize-transition node ref, so
+	// whichever mounted last would silently win it, and on restore the
+	// unmounting overlay would hand back a null node and drop the animation.
+	// Mirrors the Browser tab's handling; exit is via the overlay's own button.
+	if (filesPoppedOut) {
+		return (
+			<div role="tabpanel">
+				<div className={cn(inspectorEmptyClass, "flex flex-col items-center gap-2 px-5 py-10 text-center")}>
+					<p className="text-md-sm text-muted-foreground">Files are in the center pane.</p>
+					<Button onClick={() => onTogglePopOut?.(false)} size="sm" type="button" variant="outline">
+						Return to panel
+					</Button>
+				</div>
+			</div>
+		);
+	}
+
 	if (filesView) {
 		return (
 			<div className="h-full min-h-0" role="tabpanel">
