@@ -1,5 +1,6 @@
 import { StrictMode, type ReactNode, type Ref } from "react";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, fireEvent, render as rtlRender, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { SessionView } from "./SessionView";
 import { useUiStore } from "../stores/ui-store";
@@ -381,6 +382,15 @@ function inspectorButton(): HTMLElement {
 	const button = screen.getByText("pop browser").closest("button");
 	if (!button) throw new Error("missing inspector button");
 	return button;
+}
+
+function render(ui: ReactNode) {
+	const client = new QueryClient({
+		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+	});
+	return rtlRender(ui, {
+		wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+	});
 }
 
 describe("SessionView", () => {
