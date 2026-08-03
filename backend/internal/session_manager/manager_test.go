@@ -1949,10 +1949,12 @@ func (f *fakeShellTerminalCloser) BeginSessionTeardown(_ context.Context, id dom
 }
 
 type fakeReviewerTerminator struct {
-	calls     []domain.SessionID
-	bodies    []string
-	err       error
-	sharedLog *[]string
+	calls        []domain.SessionID
+	bodies       []string
+	restoreCalls []domain.SessionID
+	err          error
+	restoreErr   error
+	sharedLog    *[]string
 }
 
 func (f *fakeReviewerTerminator) TerminateReviewer(_ context.Context, id domain.SessionID, body string) error {
@@ -1962,6 +1964,14 @@ func (f *fakeReviewerTerminator) TerminateReviewer(_ context.Context, id domain.
 		*f.sharedLog = append(*f.sharedLog, "TerminateReviewer:"+string(id))
 	}
 	return f.err
+}
+
+func (f *fakeReviewerTerminator) RestoreReviewer(_ context.Context, id domain.SessionID) error {
+	f.restoreCalls = append(f.restoreCalls, id)
+	if f.sharedLog != nil {
+		*f.sharedLog = append(*f.sharedLog, "RestoreReviewer:"+string(id))
+	}
+	return f.restoreErr
 }
 
 // TestKill_ClosesScopedShellTerminalsBeforeWorkspaceTeardown is the regression
@@ -2250,11 +2260,15 @@ func TestRestore_ReopensTerminal(t *testing.T) {
 	}
 }
 
-func TestRestore_DoesNotTerminateReviewer(t *testing.T) {
+func TestRestore_RestoresReviewerWithoutTerminating(t *testing.T) {
 	m, st, rt, _ := newManager()
 	reviewer := &fakeReviewerTerminator{err: errors.New("reviewer still alive")}
 	m.SetReviewerTerminator(reviewer)
 	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})
+	rec := st.sessions["mer-1"]
+	rec.Kind = domain.KindWorker
+	rec.Harness = domain.HarnessClaudeCode
+	st.sessions["mer-1"] = rec
 
 	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
 		t.Fatalf("RestoreWithMode: %v", err)
@@ -2264,6 +2278,37 @@ func TestRestore_DoesNotTerminateReviewer(t *testing.T) {
 	}
 	if len(reviewer.calls) != 0 {
 		t.Fatalf("reviewer terminates = %v, want none", reviewer.calls)
+	}
+	if !reflect.DeepEqual(reviewer.restoreCalls, []domain.SessionID{"mer-1"}) {
+		t.Fatalf("reviewer restores = %v, want [mer-1]", reviewer.restoreCalls)
+	}
+}
+
+func TestRestore_ReviewerRestoreFailureLeavesWorkerRestored(t *testing.T) {
+	m, st, rt, _ := newManager()
+	reviewer := &fakeReviewerTerminator{restoreErr: errors.New("reviewer unavailable")}
+	m.SetReviewerTerminator(reviewer)
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})
+	rec := st.sessions["mer-1"]
+	rec.Kind = domain.KindWorker
+	rec.Harness = domain.HarnessClaudeCode
+	st.sessions["mer-1"] = rec
+
+	res, err := m.RestoreWithMode(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("RestoreWithMode: %v", err)
+	}
+	if res.Session.ID != "mer-1" || res.Session.IsTerminated {
+		t.Fatalf("restore result session = %+v, want active mer-1", res.Session)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime created = %d, want 1", rt.created)
+	}
+	if !reflect.DeepEqual(reviewer.restoreCalls, []domain.SessionID{"mer-1"}) {
+		t.Fatalf("reviewer restores = %v, want [mer-1]", reviewer.restoreCalls)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("worker session must remain restored when reviewer restore fails")
 	}
 }
 

@@ -440,11 +440,10 @@ describe("SessionView", () => {
 		browserDestroy.mockReset();
 		browserViewOptions.current = undefined;
 		shellTerminalsState.data = [];
-		navigateMock.mockReset();
-		openShellTerminalMock.mockReset();
-		closeShellTerminalMock.mockReset();
-<<<<<<< HEAD
-		interfaceTransitionMock.start.mockReset();
+	navigateMock.mockReset();
+	openShellTerminalMock.mockReset();
+	closeShellTerminalMock.mockReset();
+	interfaceTransitionMock.start.mockReset();
 		interfaceTransitionMock.resetStartError.mockReset();
 		interfaceTransitionMock.cancel.mockReset();
 		interfaceTransitionState.status = undefined;

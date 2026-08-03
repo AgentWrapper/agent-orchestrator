@@ -194,19 +194,27 @@ func TestBrokerCancellationSendsCancelFrame(t *testing.T) {
 		errCh <- err
 	}()
 	var command wireMessage
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
 	if err := dec.Decode(&command); err != nil {
 		t.Fatal(err)
 	}
 	cancel()
 	var cancelMessage wireMessage
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
 	if err := dec.Decode(&cancelMessage); err != nil {
 		t.Fatal(err)
 	}
+	_ = conn.SetReadDeadline(time.Time{})
 	if cancelMessage.Type != "cancel" || cancelMessage.RequestID != command.RequestID {
 		t.Fatalf("cancel message = %#v, command = %#v", cancelMessage, command)
 	}
-	if err := <-errCh; !errors.Is(err, context.Canceled) {
-		t.Fatalf("Execute error = %v", err)
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Execute error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Execute did not return after request cancellation")
 	}
 }
 

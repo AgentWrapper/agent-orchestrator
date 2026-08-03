@@ -173,6 +173,7 @@ type fakeLauncher struct {
 	spawnErr         error
 	notifyErr        error
 	spawned          bool
+	restored         bool
 	spawnCount       int
 	notified         bool
 	cancelled        bool
@@ -194,6 +195,15 @@ type fakeLauncher struct {
 func (f *fakeLauncher) Spawn(_ context.Context, spec LaunchSpec) (string, error) {
 	f.spawned = true
 	f.spawnCount++
+	f.gotSpec = spec
+	f.specs = append(f.specs, spec)
+	if f.spawnErr != nil {
+		return "", f.spawnErr
+	}
+	return f.handle, nil
+}
+func (f *fakeLauncher) RestoreTerminal(_ context.Context, spec LaunchSpec) (string, error) {
+	f.restored = true
 	f.gotSpec = spec
 	f.specs = append(f.specs, spec)
 	if f.spawnErr != nil {
@@ -275,6 +285,43 @@ func TestTriggerSpawnsNewReviewerAndRecordsRunAfterLaunch(t *testing.T) {
 	}
 	if len(store.runs) != 1 || store.review == nil || store.review.ReviewerHandleID != "review-mer-1" {
 		t.Fatalf("persisted review=%+v runs=%+v", store.review, store.runs)
+	}
+}
+
+func TestRestoreReviewerNoopsWithoutReviewHistory(t *testing.T) {
+	store := &fakeStore{}
+	launcher := &fakeLauncher{handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.RestoreReviewer(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("RestoreReviewer: %v", err)
+	}
+	if res.Restored || launcher.restored {
+		t.Fatalf("expected no reviewer restore without review history: res=%+v launcher=%+v", res, launcher)
+	}
+}
+
+func TestRestoreReviewerRestoresDeadReviewerFromHistory(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerCodex, ReviewerHandleID: "review-mer-1"},
+		runs:   []domain.ReviewRun{{ID: "run-1", ReviewID: "rev-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1", Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved}},
+	}
+	launcher := &fakeLauncher{alive: false, handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.RestoreReviewer(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("RestoreReviewer: %v", err)
+	}
+	if !res.Restored || res.ReviewerHandleID != "review-mer-1" || !launcher.restored {
+		t.Fatalf("expected reviewer terminal restore: res=%+v launcher=%+v", res, launcher)
+	}
+	if launcher.gotSpec.ProjectID != "mer" || launcher.gotSpec.WorkerID != "mer-1" || launcher.gotSpec.Harness != domain.ReviewerCodex {
+		t.Fatalf("restore spec = %+v", launcher.gotSpec)
+	}
+	if store.review.ReviewerHandleID != "review-mer-1" {
+		t.Fatalf("stored reviewer handle = %q", store.review.ReviewerHandleID)
 	}
 }
 
@@ -404,7 +451,33 @@ func TestTerminateReviewerDestroysPaneAndCancelsRunningRuns(t *testing.T) {
 	}
 }
 
-func TestTerminateReviewerNoopsWhenNoReviewerHandle(t *testing.T) {
+func TestTerminateReviewerCancelsRunningRunsWithoutReviewerHandle(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerCodex},
+		runs: []domain.ReviewRun{{
+			ID: "run-1", ReviewID: "rev-1", SessionID: "mer-1",
+			Status: domain.ReviewRunRunning, Verdict: domain.VerdictNone,
+		}},
+	}
+	launcher := &fakeLauncher{}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.TerminateReviewer(context.Background(), "mer-1", "")
+	if err != nil {
+		t.Fatalf("TerminateReviewer: %v", err)
+	}
+	if launcher.destroyed {
+		t.Fatal("destroy should not run without a reviewer handle")
+	}
+	if len(res.CancelledRuns) != 1 {
+		t.Fatalf("cancelled runs = %d, want 1", len(res.CancelledRuns))
+	}
+	if store.runs[0].Status != domain.ReviewRunCancelled || store.runs[0].Body != "cancelled by worker session lifecycle" {
+		t.Fatalf("run after terminate = %+v", store.runs[0])
+	}
+}
+
+func TestTerminateReviewerNoopsWhenNoReviewHistory(t *testing.T) {
 	store := &fakeStore{}
 	launcher := &fakeLauncher{}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)

@@ -796,7 +796,7 @@
 	"terminal.rename": "Rename terminal {{title}}",
 	"terminal.renameHintDoubleClick": "{{workingDir}} (double-click to rename)",
 	"terminal.renameHintRightClick": "{{workingDir}} (right-click to rename)",
-	"terminal.reviewer": "reviewer",
+	"terminal.reviewer": "Reviewer",
 	"terminal.scrollTabsLeft": "Scroll tabs left",
 	"terminal.scrollTabsRight": "Scroll tabs right",
 	"terminal.ended": "Terminal ended",

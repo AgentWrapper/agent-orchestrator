@@ -31,6 +31,9 @@ type Launcher interface {
 	// Spawn launches a fresh reviewer and returns the runtime handle id of the
 	// live pane (stable per worker, reused across passes).
 	Spawn(ctx context.Context, spec LaunchSpec) (handleID string, err error)
+	// RestoreTerminal launches an idle reviewer pane for a worker that already
+	// has review history, without creating or starting a new review run.
+	RestoreTerminal(ctx context.Context, spec LaunchSpec) (handleID string, err error)
 	// Notify asks an already-running reviewer pane to review a new commit.
 	Notify(ctx context.Context, handleID string, spec LaunchSpec) error
 	// Alive reports whether a reviewer pane is still running.
@@ -180,15 +183,48 @@ func (l *agentLauncher) prepareInvocation(spec LaunchSpec) (ports.ReviewInvocati
 	return inv, nil
 }
 
-func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (string, error) {
-	reviewer, ok := l.reviewers.Reviewer(spec.Harness)
-	if !ok {
-		return "", fmt.Errorf("no reviewer adapter for harness %q", spec.Harness)
+func (l *agentLauncher) prepareIdleInvocation(spec LaunchSpec) (ports.ReviewInvocation, error) {
+	promptRoot := filepath.Join(l.dataDir, "prompts", string(spec.WorkerID), "reviewer")
+	systemPath := filepath.Join(promptRoot, "system.md")
+	systemPrompt := reviewSystemPrompt() + "\n\n" +
+		"AO may restore your terminal before a new review task exists. In that state, wait for AO to send a review task file path before reviewing or submitting results.\n"
+	if err := os.MkdirAll(promptRoot, 0o700); err != nil {
+		return ports.ReviewInvocation{}, fmt.Errorf("create reviewer prompt directory: %w", err)
 	}
-	handleID := reviewerHandleID(spec.WorkerID)
+	if err := os.WriteFile(systemPath, []byte(systemPrompt), 0o600); err != nil {
+		return ports.ReviewInvocation{}, fmt.Errorf("write reviewer system prompt: %w", err)
+	}
+	return ports.ReviewInvocation{
+		ReviewerID:       reviewerHandleID(spec.WorkerID),
+		WorkerSessionID:  spec.WorkerID,
+		WorkspacePath:    spec.WorkspacePath,
+		Prompt:           fmt.Sprintf("Reviewer terminal restored for worker session %s. Wait for AO to send the next review task before submitting a review.", spec.WorkerID),
+		SystemPrompt:     "",
+		SystemPromptFile: systemPath,
+		TaskPromptRoot:   promptRoot,
+	}, nil
+}
+
+func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (string, error) {
 	inv, err := l.prepareInvocation(spec)
 	if err != nil {
 		return "", err
+	}
+	return l.launchReviewerTerminal(ctx, spec, inv)
+}
+
+func (l *agentLauncher) RestoreTerminal(ctx context.Context, spec LaunchSpec) (string, error) {
+	inv, err := l.prepareIdleInvocation(spec)
+	if err != nil {
+		return "", err
+	}
+	return l.launchReviewerTerminal(ctx, spec, inv)
+}
+
+func (l *agentLauncher) launchReviewerTerminal(ctx context.Context, spec LaunchSpec, inv ports.ReviewInvocation) (string, error) {
+	reviewer, ok := l.reviewers.Reviewer(spec.Harness)
+	if !ok {
+		return "", fmt.Errorf("no reviewer adapter for harness %q", spec.Harness)
 	}
 	if pl, ok := reviewer.(preLaunchReviewer); ok {
 		if err := pl.PreLaunch(ctx, inv); err != nil {
@@ -199,6 +235,7 @@ func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (string, err
 	if err != nil {
 		return "", fmt.Errorf("reviewer command: %w", err)
 	}
+	handleID := reviewerHandleID(spec.WorkerID)
 	// The reviewer handle is stable per worker, so a still-live pane from a
 	// previous pass would otherwise block `tmux new-session` (duplicate name) or,
 	// worse, keep serving under its old harness. Destroy any stale pane on this

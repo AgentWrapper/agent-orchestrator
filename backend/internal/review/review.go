@@ -165,6 +165,13 @@ type TerminateResult struct {
 	CancelledRuns    []domain.ReviewRun
 }
 
+// RestoreReviewerResult reports an idle reviewer pane restored alongside its
+// worker session.
+type RestoreReviewerResult struct {
+	ReviewerHandleID string
+	Restored         bool
+}
+
 // Trigger starts reviews for every PR on the worker session that needs review.
 // It reuses running/up-to-date runs, retries failed/current changes-requested
 // heads, and uses one reviewer pane for every new run in the batch.
@@ -332,6 +339,67 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override
 		created[i].ReviewID = reviewRow.ID
 	}
 	return TriggerResult{Run: created[0], ReviewerHandleID: handleID, Created: true, Reviews: reviews, CreatedRuns: created}, nil
+}
+
+// RestoreReviewer relaunches the reviewer terminal for a restored worker when
+// that worker already has review history. It does not create review_run rows or
+// start a review; explicit trigger remains the only path that starts review
+// work.
+func (e *Engine) RestoreReviewer(ctx stdctx.Context, workerID domain.SessionID) (RestoreReviewerResult, error) {
+	if workerID == "" {
+		return RestoreReviewerResult{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
+	}
+	worker, ok, err := e.sessions.GetSession(ctx, workerID)
+	if err != nil {
+		return RestoreReviewerResult{}, err
+	}
+	if !ok {
+		return RestoreReviewerResult{}, fmt.Errorf("%w: worker session %q", ErrNotFound, workerID)
+	}
+	if worker.IsTerminated || worker.Metadata.WorkspacePath == "" {
+		return RestoreReviewerResult{}, nil
+	}
+	runs, err := e.store.ListReviewRunsBySession(ctx, workerID)
+	if err != nil {
+		return RestoreReviewerResult{}, err
+	}
+	reviewRow, hasReview, err := e.store.GetReviewBySession(ctx, workerID)
+	if err != nil {
+		return RestoreReviewerResult{}, err
+	}
+	if !hasReview && len(runs) == 0 {
+		return RestoreReviewerResult{}, nil
+	}
+	if hasReview && reviewRow.ReviewerHandleID != "" {
+		alive, err := e.launcher.Alive(ctx, reviewRow.ReviewerHandleID)
+		if err != nil {
+			return RestoreReviewerResult{}, err
+		}
+		if alive {
+			return RestoreReviewerResult{ReviewerHandleID: reviewRow.ReviewerHandleID, Restored: false}, nil
+		}
+	}
+	harness := reviewRow.Harness
+	if !harness.IsKnown() {
+		harness, err = e.reviewerHarness(ctx, worker)
+		if err != nil {
+			return RestoreReviewerResult{}, err
+		}
+	}
+	handleID, err := e.launcher.RestoreTerminal(ctx, LaunchSpec{
+		WorkerID:      worker.ID,
+		ProjectID:     worker.ProjectID,
+		Harness:       harness,
+		WorkspacePath: worker.Metadata.WorkspacePath,
+	})
+	if err != nil {
+		return RestoreReviewerResult{}, fmt.Errorf("restore reviewer: %w", err)
+	}
+	if _, err := e.upsertReview(ctx, worker, harness, handleID, e.clock()); err != nil {
+		_ = e.launcher.Destroy(ctx, handleID)
+		return RestoreReviewerResult{}, err
+	}
+	return RestoreReviewerResult{ReviewerHandleID: handleID, Restored: true}, nil
 }
 
 func (e *Engine) cancelStaleRunningRuns(ctx stdctx.Context, workerID domain.SessionID, reviewRow domain.Review, hasReview bool, runs []domain.ReviewRun) (bool, error) {
@@ -514,18 +582,17 @@ func (e *Engine) TerminateReviewer(ctx stdctx.Context, workerID domain.SessionID
 	if err != nil {
 		return TerminateResult{}, err
 	}
-	if !ok || review.ReviewerHandleID == "" {
-		return TerminateResult{}, nil
-	}
 	running, err := e.store.ListRunningReviewRunsBySession(ctx, workerID)
 	if err != nil {
 		return TerminateResult{}, err
 	}
-	if err := e.launcher.Destroy(ctx, review.ReviewerHandleID); err != nil {
-		return TerminateResult{}, err
-	}
-	if err := e.store.ClearReviewerHandle(ctx, workerID); err != nil {
-		return TerminateResult{}, err
+	if ok && review.ReviewerHandleID != "" {
+		if err := e.launcher.Destroy(ctx, review.ReviewerHandleID); err != nil {
+			return TerminateResult{}, err
+		}
+		if err := e.store.ClearReviewerHandle(ctx, workerID); err != nil {
+			return TerminateResult{}, err
+		}
 	}
 	if body == "" {
 		body = "cancelled by worker session lifecycle"

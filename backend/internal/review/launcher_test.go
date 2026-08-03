@@ -237,6 +237,29 @@ func TestLauncherSpawnReplacesStalePane(t *testing.T) {
 	}
 }
 
+func TestLauncherRestoreTerminalStartsIdlePane(t *testing.T) {
+	reviewer := &fakeReviewer{}
+	rt := &fakeRuntime{}
+	l := newTestLauncher(t, reviewer, rt)
+
+	handle, err := l.RestoreTerminal(context.Background(), launchSpec())
+	if err != nil {
+		t.Fatalf("RestoreTerminal: %v", err)
+	}
+	if handle != "review-mer-1" || rt.createCfg.SessionID != "review-mer-1" {
+		t.Fatalf("handle=%q runtime session=%q, want review-mer-1", handle, rt.createCfg.SessionID)
+	}
+	if rt.destroyed != "review-mer-1" || !rt.destroyBefore {
+		t.Fatalf("stale pane replacement destroyed=%q before=%v", rt.destroyed, rt.destroyBefore)
+	}
+	if !strings.Contains(reviewer.gotInv.Prompt, "Wait for AO to send the next review task") {
+		t.Fatalf("restore prompt = %q", reviewer.gotInv.Prompt)
+	}
+	if reviewer.gotInv.RunID != "" || reviewer.gotInv.PRURL != "" || reviewer.gotInv.TargetSHA != "" {
+		t.Fatalf("restore invocation should not start review work: %+v", reviewer.gotInv)
+	}
+}
+
 func TestLauncherSpawnRunsReviewerPreLaunch(t *testing.T) {
 	reviewer := &fakePreLaunchReviewer{}
 	rt := &fakeRuntime{}

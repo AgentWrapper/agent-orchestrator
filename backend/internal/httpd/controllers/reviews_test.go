@@ -59,6 +59,10 @@ func (f *fakeReviewService) TerminateReviewer(context.Context, domain.SessionID,
 	return nil
 }
 
+func (f *fakeReviewService) RestoreReviewer(context.Context, domain.SessionID) error {
+	return nil
+}
+
 func (f *fakeReviewService) SubmitMany(_ context.Context, _ domain.SessionID, reviews []reviewsvc.SubmittedReview) ([]domain.ReviewRun, error) {
 	f.submitted = append([]reviewsvc.SubmittedReview(nil), reviews...)
 	runs := make([]domain.ReviewRun, 0, len(reviews))

@@ -52,6 +52,7 @@ type Manager interface {
 	Trigger(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (reviewcore.TriggerResult, error)
 	Cancel(ctx context.Context, workerID domain.SessionID) (reviewcore.CancelResult, error)
 	TerminateReviewer(ctx context.Context, workerID domain.SessionID, body string) error
+	RestoreReviewer(ctx context.Context, workerID domain.SessionID) error
 	Submit(ctx context.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body, githubReviewID string) (domain.ReviewRun, error)
 	SubmitMany(ctx context.Context, workerID domain.SessionID, reviews []SubmittedReview) ([]domain.ReviewRun, error)
 	List(ctx context.Context, workerID domain.SessionID) (reviewcore.SessionReviews, error)
@@ -183,6 +184,12 @@ func (s *Service) Cancel(ctx context.Context, workerID domain.SessionID) (review
 // teardown and marks any running review runs as cancelled.
 func (s *Service) TerminateReviewer(ctx context.Context, workerID domain.SessionID, body string) error {
 	_, err := s.engine.TerminateReviewer(ctx, workerID, body)
+	return err
+}
+
+// RestoreReviewer relaunches an idle reviewer pane after its worker has been restored.
+func (s *Service) RestoreReviewer(ctx context.Context, workerID domain.SessionID) error {
+	_, err := s.engine.RestoreReviewer(ctx, workerID)
 	return err
 }
 

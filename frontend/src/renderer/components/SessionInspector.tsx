@@ -134,6 +134,15 @@ function VerdictBadge({ label, tone }: { label: string; tone: "neutral" | "runni
 	);
 }
 
+function reviewerHarnessFallback(session: WorkspaceSession, config: ProjectConfig | undefined): string {
+	const configured = config?.reviewers?.[0]?.harness;
+	if (configured) return configured;
+	if (session.provider === "claude-code" || session.provider === "codex" || session.provider === "opencode") {
+		return session.provider;
+	}
+	return "claude-code";
+}
+
 /**
  * Tabbed inspector rail beside the terminal (Summary · Browser · Files).
  */
@@ -1183,7 +1192,9 @@ function ReviewsSection({
 			setReviewNotice(null);
 		},
 		onSuccess: ({ data, reused }) => {
-			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });
+			if (data) {
+				queryClient.setQueryData(["session-reviews", session.id], data);
+			}
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			const started = data?.reviews?.find((review) => review.status === "running" && review.latestRun);
 			if (reused || !started?.latestRun) {
@@ -1531,7 +1542,7 @@ function ReviewPanel({
 		.filter((run): run is NonNullable<typeof run> => Boolean(run))
 		.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 	const latest = runningRun ?? newestRun;
-	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
+	const harness = latest?.harness || reviewerHarnessFallback(session, config);
 	const projectDefaultLabel = t("newTask.projectDefault");
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
 	const reviewHasRun = reviewRunning || Boolean(latest);

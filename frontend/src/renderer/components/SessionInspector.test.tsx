@@ -160,6 +160,7 @@ function renderWithQuery(children: ReactNode, workspaces?: WorkspaceSummary[], s
 				<TooltipProvider>{children}</TooltipProvider>
 			</QueryClientProvider>,
 		),
+		client,
 		queryClient: client,
 	};
 }
@@ -1189,7 +1190,7 @@ describe("SessionInspector summary reviews", () => {
 				reviews: [{ ...reviewState(3, "running"), latestRun: runningReview }],
 			},
 		});
-		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		const view = renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
 		await userEvent.click(await screen.findByRole("button", { name: /run review/i }));
@@ -1199,10 +1200,15 @@ describe("SessionInspector summary reviews", () => {
 				params: { path: { sessionId: "sess-1" } },
 			}),
 		);
+		await waitFor(() =>
+			expect(view.client.getQueryData(["session-reviews", "sess-1"])).toMatchObject({
+				reviewerHandleId: "reviewer-pane",
+			}),
+		);
 		expect(screen.queryByRole("button", { name: "Open terminal" })).not.toBeInTheDocument();
 	});
 
-	it("shows claude-code as the default reviewer before a run exists", async () => {
+	it("shows codex as the default reviewer for a codex worker before a run exists", async () => {
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/sessions/{sessionId}/reviews") {
 				return { data: { reviewerHandleId: "", reviews: [] } };
@@ -1229,8 +1235,8 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={sessionWithProvider([pr(3, "open")], "codex")} />);
 		await openReviewsSection();
 
-		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("claude-code");
-		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
+			expect(await screen.findByText("codex")).toBeInTheDocument();
+			expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
 	});
 
 	it("hides review summary sections when no review data exists", async () => {
@@ -1668,15 +1674,15 @@ describe("SessionInspector summary reviews", () => {
 				reviews: [{ ...reviewState(3, "running"), latestRun: runningReview }],
 			},
 		});
-		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
-		await openReviewsSection();
+			renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+			await openReviewsSection();
 
-		await userEvent.click(await screen.findByRole("button", { name: /re-run review/i }));
+			await userEvent.click(await screen.findByRole("button", { name: /re-run review/i }));
 
-		expect(
-			await screen.findByText("This commit has already been reviewed. Push a new commit to run another review."),
-		).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "Open terminal" })).not.toBeInTheDocument();
+			expect(
+				await screen.findByText("This commit has already been reviewed. Push a new commit to run another review."),
+			).toBeInTheDocument();
+			expect(screen.queryByRole("button", { name: "Open terminal" })).not.toBeInTheDocument();
 	});
 
 	it("cancels the running review instead of allowing rerun", async () => {

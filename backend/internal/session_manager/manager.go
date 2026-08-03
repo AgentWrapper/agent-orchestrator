@@ -159,6 +159,7 @@ type TerminalInputGate interface {
 // services are assembled after the session manager in daemon wiring.
 type ReviewerTerminator interface {
 	TerminateReviewer(ctx context.Context, workerID domain.SessionID, body string) error
+	RestoreReviewer(ctx context.Context, workerID domain.SessionID) error
 }
 
 type runtimeController interface {
@@ -342,8 +343,8 @@ func (m *Manager) beginShellTerminalTeardown(ctx context.Context, id domain.Sess
 	return closer.BeginSessionTeardown(ctx, id)
 }
 
-// SetReviewerTerminator wires worker lifecycle paths to hard-destroy the
-// worker's reviewer pane. Safe to leave unset: a nil terminator is a no-op.
+// SetReviewerTerminator wires worker lifecycle paths to the worker's reviewer
+// pane. Safe to leave unset: a nil terminator is a no-op.
 func (m *Manager) SetReviewerTerminator(terminator ReviewerTerminator) {
 	m.reviewersMu.Lock()
 	defer m.reviewersMu.Unlock()
@@ -358,6 +359,16 @@ func (m *Manager) terminateReviewer(ctx context.Context, id domain.SessionID, bo
 		return nil
 	}
 	return terminator.TerminateReviewer(ctx, id, body)
+}
+
+func (m *Manager) restoreReviewer(ctx context.Context, id domain.SessionID) error {
+	m.reviewersMu.Lock()
+	reviewer := m.reviewers
+	m.reviewersMu.Unlock()
+	if reviewer == nil {
+		return nil
+	}
+	return reviewer.RestoreReviewer(ctx, id)
 }
 
 // PreviewLifecycle is the narrow teardown hook consumed by Session Manager.
@@ -1355,7 +1366,16 @@ func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (Res
 }
 
 func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo) (RestoreResult, error) {
-	return m.relaunchSession(ctx, "restore", rec, project, ws, nil)
+	result, err := m.relaunchSession(ctx, "restore", rec, project, ws, nil)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	if rec.Kind == domain.KindWorker {
+		if err := m.restoreReviewer(ctx, rec.ID); err != nil {
+			m.logger.Warn("restore: reviewer terminal restore failed; worker remains restored", "sessionID", rec.ID, "error", err)
+		}
+	}
+	return result, nil
 }
 
 // ResumeAgentWithMode replaces an exited agent inside its still-live session.
