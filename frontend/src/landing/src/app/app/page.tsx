@@ -54,6 +54,7 @@ import {
   type CloudOrgMembership,
   type CloudOrgInvitation,
   type CloudProject,
+  type CloudProjectShareAccess,
   type CloudRepository,
   type CloudSession,
   type CloudSessionSCM,
@@ -265,6 +266,15 @@ export default function CloudAppPage() {
   const [projectMenuOpenId, setProjectMenuOpenId] = useState<string | null>(null);
   const [shareProject, setShareProject] = useState<CloudProject | null>(null);
   const [shareRole, setShareRole] = useState<"viewer" | "editor">("viewer");
+  const [shareAccessScope, setShareAccessScope] = useState<
+    "anyone" | "restricted"
+  >("anyone");
+  const [shareRecipientEmails, setShareRecipientEmails] = useState("");
+  const [shareRecipientOrgIds, setShareRecipientOrgIds] = useState<string[]>([]);
+  const [shareAccess, setShareAccess] = useState<CloudProjectShareAccess | null>(
+    null,
+  );
+  const [shareAccessLoading, setShareAccessLoading] = useState(false);
   const [shareLink, setShareLink] = useState("");
   const [shareCopied, setShareCopied] = useState(false);
   const [settingsPanelTarget, setSettingsPanelTarget] = useState<
@@ -870,6 +880,31 @@ export default function CloudAppPage() {
     }
   };
 
+  const loadProjectShareAccess = useCallback(async () => {
+    if (!api || !selectedOrgId || !shareProject) {
+      setShareAccess(null);
+      return;
+    }
+    setShareAccessLoading(true);
+    try {
+      const result = await api.projectShareAccess(selectedOrgId, shareProject.id);
+      setShareAccess(result.access);
+    } catch (accessError) {
+      setError(
+        accessError instanceof Error
+          ? accessError.message
+          : "Could not load shared access.",
+      );
+    } finally {
+      setShareAccessLoading(false);
+    }
+  }, [api, selectedOrgId, shareProject]);
+
+  useEffect(() => {
+    if (!shareProject) return;
+    void loadProjectShareAccess();
+  }, [loadProjectShareAccess, shareProject]);
+
   const createSessionAndOpen = async (
     operation: () => Promise<{ session: CloudSession }>,
   ) => {
@@ -988,11 +1023,28 @@ export default function CloudAppPage() {
 
   const createProjectShareLink = async () => {
     if (!api || !selectedOrgId || !shareProject) return;
+    const recipientEmails = shareRecipientEmails
+      .split(/[\n,]/)
+      .map((email) => email.trim())
+      .filter(Boolean);
+    if (
+      shareAccessScope === "restricted" &&
+      recipientEmails.length === 0 &&
+      shareRecipientOrgIds.length === 0
+    ) {
+      setError("Add at least one email or workspace for restricted sharing.");
+      return;
+    }
     await run(async () => {
       const result = await api.createProjectShareLink(
         selectedOrgId,
         shareProject.id,
-        { role: shareRole },
+        {
+          role: shareRole,
+          accessScope: shareAccessScope,
+          recipientEmails,
+          recipientOrgIds: shareRecipientOrgIds,
+        },
       );
       const url = new URL(window.location.href);
       url.pathname = "/app";
@@ -1000,12 +1052,47 @@ export default function CloudAppPage() {
       url.searchParams.set("share", result.token);
       setShareLink(url.toString());
       setShareCopied(false);
+      await loadProjectShareAccess();
+    });
+  };
+
+  const updateShareGrantRole = async (
+    grantId: string,
+    role: "viewer" | "editor",
+  ) => {
+    if (!api || !selectedOrgId || !shareProject) return;
+    await run(async () => {
+      await api.updateProjectShareGrant(selectedOrgId, shareProject.id, grantId, {
+        role,
+      });
+      await loadProjectShareAccess();
+    });
+  };
+
+  const revokeShareGrant = async (grantId: string) => {
+    if (!api || !selectedOrgId || !shareProject) return;
+    await run(async () => {
+      await api.revokeProjectShareGrant(selectedOrgId, shareProject.id, grantId);
+      await loadProjectShareAccess();
+      await refresh();
+    });
+  };
+
+  const revokeShareLink = async (linkId: string) => {
+    if (!api || !selectedOrgId || !shareProject) return;
+    await run(async () => {
+      await api.revokeProjectShareLink(selectedOrgId, shareProject.id, linkId);
+      await loadProjectShareAccess();
     });
   };
 
   const closeProjectShare = () => {
     setShareProject(null);
     setShareRole("viewer");
+    setShareAccessScope("anyone");
+    setShareRecipientEmails("");
+    setShareRecipientOrgIds([]);
+    setShareAccess(null);
     setShareLink("");
     setShareCopied(false);
   };
@@ -1995,10 +2082,196 @@ export default function CloudAppPage() {
               </div>
             </div>
 
+            <div className="space-y-3">
+              <div className="text-xs font-medium text-white/50">
+                Link access
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  {
+                    scope: "anyone" as const,
+                    label: "Anyone with link",
+                    description: "Any signed-in AO user can redeem it",
+                  },
+                  {
+                    scope: "restricted" as const,
+                    label: "Restricted",
+                    description: "Only listed people or workspaces",
+                  },
+                ].map((option) => {
+                  const selected = shareAccessScope === option.scope;
+                  return (
+                    <button
+                      key={option.scope}
+                      type="button"
+                      className={`rounded-xl border p-3 text-left transition-colors ${
+                        selected
+                          ? "border-[#4d8dff]/55 bg-[#4d8dff]/10"
+                          : "border-white/[0.07] bg-white/[0.02] hover:border-white/[0.13] hover:bg-white/[0.04]"
+                      }`}
+                      onClick={() => {
+                        setShareAccessScope(option.scope);
+                        setShareLink("");
+                        setShareCopied(false);
+                      }}
+                    >
+                      <span className="block text-xs font-medium text-white/80">
+                        {option.label}
+                      </span>
+                      <span className="mt-1 block text-[11px] leading-4 text-white/35">
+                        {option.description}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              {shareAccessScope === "restricted" ? (
+                <div className="space-y-3 rounded-xl border border-white/[0.07] bg-white/[0.02] p-3">
+                  <label className="block text-xs text-white/45">
+                    People
+                    <textarea
+                      className={`${field} mt-1.5 min-h-16 resize-none py-2`}
+                      value={shareRecipientEmails}
+                      placeholder="teammate@company.com, reviewer@company.com"
+                      onChange={(event) => {
+                        setShareRecipientEmails(event.target.value);
+                        setShareLink("");
+                        setShareCopied(false);
+                      }}
+                    />
+                  </label>
+                  <div>
+                    <div className="mb-2 text-xs text-white/45">
+                      Workspaces
+                    </div>
+                    <div className="space-y-1">
+                      {organizations.map(({ organization }) => {
+                        const checked = shareRecipientOrgIds.includes(
+                          organization.id,
+                        );
+                        return (
+                          <label
+                            key={organization.id}
+                            className="flex h-8 items-center gap-2 rounded-lg px-2 text-xs text-white/60 hover:bg-white/[0.04]"
+                          >
+                            <input
+                              type="checkbox"
+                              className="size-3 accent-[#4d8dff]"
+                              checked={checked}
+                              onChange={(event) => {
+                                setShareRecipientOrgIds((current) =>
+                                  event.target.checked
+                                    ? [...current, organization.id]
+                                    : current.filter(
+                                        (id) => id !== organization.id,
+                                      ),
+                                );
+                                setShareLink("");
+                                setShareCopied(false);
+                              }}
+                            />
+                            <span className="truncate">
+                              {organization.displayName}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
             <p className="flex items-start gap-2.5 rounded-lg bg-white/[0.025] px-3.5 py-3 text-xs leading-5 text-white/40">
               <ExternalLink className="mt-0.5 size-3.5 shrink-0 text-white/30" />
               The recipient must sign in before AO grants access.
             </p>
+            <div className="space-y-3 rounded-xl border border-white/[0.07] bg-white/[0.015] p-3">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-medium text-white/50">
+                  Manage access
+                </div>
+                {shareAccessLoading ? (
+                  <LoaderCircle className="size-3.5 animate-spin text-white/35 motion-reduce:animate-none" />
+                ) : null}
+              </div>
+              {(shareAccess?.grants.length ?? 0) > 0 ? (
+                <div className="space-y-1">
+                  {shareAccess?.grants.map((grant) => (
+                    <div
+                      key={grant.id}
+                      className="flex items-center gap-2 rounded-lg bg-white/[0.025] px-2 py-2"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-xs text-white/75">
+                          {grant.user.displayName || grant.user.email}
+                        </div>
+                        <div className="truncate text-[11px] text-white/30">
+                          {grant.user.email}
+                        </div>
+                      </div>
+                      <select
+                        className="h-7 rounded-md border border-white/[0.08] bg-[#111317] px-2 text-xs text-white/70"
+                        value={grant.role}
+                        disabled={loading}
+                        onChange={(event) =>
+                          void updateShareGrantRole(
+                            grant.id,
+                            event.target.value as "viewer" | "editor",
+                          )
+                        }
+                        aria-label={`Access for ${grant.user.email}`}
+                      >
+                        <option value="viewer">Viewer</option>
+                        <option value="editor">Editor</option>
+                      </select>
+                      <button
+                        type="button"
+                        className="h-7 rounded-md px-2 text-xs text-white/35 hover:bg-white/[0.05] hover:text-white/70"
+                        onClick={() => void revokeShareGrant(grant.id)}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-xs text-white/30">
+                  No one has redeemed this project yet.
+                </div>
+              )}
+              {(shareAccess?.links.length ?? 0) > 0 ? (
+                <div className="border-t border-white/[0.06] pt-3">
+                  <div className="mb-2 text-[11px] uppercase tracking-[0.08em] text-white/25">
+                    Active links
+                  </div>
+                  <div className="space-y-1">
+                    {shareAccess?.links.map((link) => (
+                      <div
+                        key={link.id}
+                        className="flex items-center gap-2 rounded-lg px-2 py-2 text-xs text-white/50"
+                      >
+                        <span className="min-w-0 flex-1 truncate">
+                          {link.accessScope === "restricted"
+                            ? `Restricted to ${
+                                link.recipients?.length ?? 0
+                              } recipient${(link.recipients?.length ?? 0) === 1 ? "" : "s"}`
+                            : "Anyone with the link"}{" "}
+                          · {link.role}
+                        </span>
+                        <button
+                          type="button"
+                          className="h-7 rounded-md px-2 text-xs text-white/35 hover:bg-white/[0.05] hover:text-white/70"
+                          onClick={() => void revokeShareLink(link.id)}
+                        >
+                          Revoke
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
             {shareLink ? (
               <div className="space-y-3 rounded-xl border border-[#4d8dff]/20 bg-[#4d8dff]/[0.06] p-3">
                 <label className="block text-xs text-white/45">
@@ -3762,7 +4035,7 @@ function Overlay({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="w-full max-w-lg overflow-hidden rounded-xl border border-white/[0.12] bg-[#0f1013] shadow-[0_24px_80px_rgba(0,0,0,0.55)]"
+        className="max-h-[min(760px,calc(100dvh-2rem))] w-full max-w-lg overflow-y-auto rounded-xl border border-white/[0.12] bg-[#0f1013] shadow-[0_24px_80px_rgba(0,0,0,0.55)]"
       >
         <header className="flex h-14 items-center border-b border-white/[0.08] px-5 sm:px-6">
           <h2 className="font-mono text-xs uppercase tracking-[0.14em] text-white/80">

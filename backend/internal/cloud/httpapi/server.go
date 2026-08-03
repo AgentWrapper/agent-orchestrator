@@ -54,9 +54,13 @@ type store interface {
 	CreateProject(context.Context, clouddomain.AccountID, cloudpostgres.CreateProjectInput) (clouddomain.Project, error)
 	ListProjects(context.Context, clouddomain.AccountID) ([]clouddomain.Project, error)
 	GetProject(context.Context, clouddomain.AccountID, clouddomain.ProjectID) (clouddomain.Project, error)
-	CreateProjectShareLink(context.Context, clouddomain.OrgID, clouddomain.ProjectID, clouddomain.SessionID, clouddomain.UserID, string, string) (cloudpostgres.ProjectShareLink, error)
+	CreateProjectShareLink(context.Context, cloudpostgres.CreateProjectShareLinkInput) (cloudpostgres.ProjectShareLink, error)
 	RedeemProjectShareLink(context.Context, string, string) (cloudpostgres.SharedProjectGrant, error)
 	ListSharedProjectGrants(context.Context, string) ([]cloudpostgres.SharedProjectGrant, error)
+	ListProjectShareAccess(context.Context, clouddomain.OrgID, clouddomain.ProjectID) (cloudpostgres.ProjectShareAccess, error)
+	UpdateProjectShareGrantRole(context.Context, clouddomain.OrgID, clouddomain.ProjectID, string, string) (cloudpostgres.ProjectShareGrant, error)
+	RevokeProjectShareGrant(context.Context, clouddomain.OrgID, clouddomain.ProjectID, string) error
+	RevokeProjectShareLink(context.Context, clouddomain.OrgID, clouddomain.ProjectID, string) error
 	CreateSession(context.Context, clouddomain.AccountID, cloudpostgres.CreateSessionInput) (cloudpostgres.CreateSessionResult, error)
 	ListSessions(context.Context, clouddomain.AccountID) ([]clouddomain.Session, error)
 	GetSession(context.Context, clouddomain.AccountID, clouddomain.SessionID) (clouddomain.Session, error)
@@ -301,7 +305,11 @@ func (s *Server) routes() http.Handler {
 				org.Post("/invitations/{invitationId}/revoke", s.revokeInvitation)
 				org.Get("/projects", s.listProjects)
 				org.With(s.requireOrgRole("member")).Post("/projects", s.createProject)
+				org.With(s.requireOrgRole("member")).Get("/projects/{projectId}/shares", s.listProjectShareAccess)
 				org.With(s.requireOrgRole("member")).Post("/projects/{projectId}/shares", s.createProjectShareLink)
+				org.With(s.requireOrgRole("member")).Patch("/projects/{projectId}/shares/grants/{grantId}", s.updateProjectShareGrant)
+				org.With(s.requireOrgRole("member")).Delete("/projects/{projectId}/shares/grants/{grantId}", s.revokeProjectShareGrant)
+				org.With(s.requireOrgRole("member")).Delete("/projects/{projectId}/shares/links/{linkId}", s.revokeProjectShareLink)
 				org.Get("/sessions", s.listSessions)
 				org.With(s.requireOrgRole("member")).Post("/sessions", s.createSession)
 				org.Get("/sessions/{sessionId}", s.getSession)
@@ -1111,8 +1119,11 @@ func (s *Server) createProjectShareLink(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var input struct {
-		SessionID clouddomain.SessionID `json:"sessionId"`
-		Role      string                `json:"role"`
+		SessionID       clouddomain.SessionID `json:"sessionId"`
+		Role            string                `json:"role"`
+		AccessScope     string                `json:"accessScope"`
+		RecipientEmails []string              `json:"recipientEmails"`
+		RecipientOrgIDs []clouddomain.OrgID   `json:"recipientOrgIds"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -1124,6 +1135,35 @@ func (s *Server) createProjectShareLink(w http.ResponseWriter, r *http.Request) 
 	if !validProjectShareRole(role) {
 		writeError(w, r, http.StatusBadRequest, "INVALID_SHARE_ROLE", "Share role must be viewer or editor.")
 		return
+	}
+	accessScope := strings.TrimSpace(input.AccessScope)
+	if accessScope == "" {
+		accessScope = "anyone"
+	}
+	if accessScope != "anyone" && accessScope != "restricted" {
+		writeError(w, r, http.StatusBadRequest, "INVALID_SHARE_SCOPE", "Share access must be anyone or restricted.")
+		return
+	}
+	if accessScope == "restricted" && len(input.RecipientEmails) == 0 && len(input.RecipientOrgIDs) == 0 {
+		writeError(w, r, http.StatusBadRequest, "SHARE_RECIPIENT_REQUIRED", "Restricted links require at least one email or organization.")
+		return
+	}
+	if len(input.RecipientOrgIDs) > 0 {
+		organizations, err := s.store.ListUserOrganizations(r.Context(), principal.UserID)
+		if err != nil {
+			s.internalError(w, r, "validate share recipient organizations", err)
+			return
+		}
+		allowed := map[clouddomain.OrgID]struct{}{}
+		for _, organization := range organizations {
+			allowed[organization.Organization.ID] = struct{}{}
+		}
+		for _, orgID := range input.RecipientOrgIDs {
+			if _, ok := allowed[orgID]; !ok {
+				writeError(w, r, http.StatusForbidden, "SHARE_ORG_FORBIDDEN", "You can only restrict links to organizations you belong to.")
+				return
+			}
+		}
 	}
 	if _, err := s.store.GetProject(r.Context(), account.ID, projectID); errors.Is(err, cloudpostgres.ErrProjectNotFound) {
 		writeError(w, r, http.StatusNotFound, "PROJECT_NOT_FOUND", "The cloud project does not exist.")
@@ -1152,20 +1192,100 @@ func (s *Server) createProjectShareLink(w http.ResponseWriter, r *http.Request) 
 		s.internalError(w, r, "generate share token", err)
 		return
 	}
-	link, err := s.store.CreateProjectShareLink(
-		r.Context(),
-		org.Organization.ID,
-		projectID,
-		input.SessionID,
-		clouddomain.UserID(principal.UserID),
-		role,
-		token,
-	)
+	link, err := s.store.CreateProjectShareLink(r.Context(), cloudpostgres.CreateProjectShareLinkInput{
+		OrgID:           org.Organization.ID,
+		ProjectID:       projectID,
+		SessionID:       input.SessionID,
+		CreatedByUserID: clouddomain.UserID(principal.UserID),
+		Role:            role,
+		Token:           token,
+		AccessScope:     accessScope,
+		RecipientEmails: input.RecipientEmails,
+		RecipientOrgIDs: input.RecipientOrgIDs,
+	})
+	if errors.Is(err, cloudpostgres.ErrProjectShareInvalidRecipient) {
+		writeError(w, r, http.StatusBadRequest, "INVALID_SHARE_RECIPIENT", "Enter valid email recipients.")
+		return
+	}
 	if err != nil {
 		s.internalError(w, r, "create project share link", err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"shareLink": link, "token": token})
+}
+
+func (s *Server) listProjectShareAccess(w http.ResponseWriter, r *http.Request) {
+	org, _ := orgFromContext(r.Context())
+	projectID := clouddomain.ProjectID(strings.TrimSpace(chi.URLParam(r, "projectId")))
+	if projectID == "" {
+		writeError(w, r, http.StatusBadRequest, "PROJECT_REQUIRED", "A project is required.")
+		return
+	}
+	access, err := s.store.ListProjectShareAccess(r.Context(), org.Organization.ID, projectID)
+	if err != nil {
+		s.internalError(w, r, "list project share access", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"access": access})
+}
+
+func (s *Server) updateProjectShareGrant(w http.ResponseWriter, r *http.Request) {
+	org, _ := orgFromContext(r.Context())
+	projectID := clouddomain.ProjectID(strings.TrimSpace(chi.URLParam(r, "projectId")))
+	grantID := strings.TrimSpace(chi.URLParam(r, "grantId"))
+	var input struct {
+		Role string `json:"role"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	role := strings.TrimSpace(input.Role)
+	if !validProjectShareRole(role) {
+		writeError(w, r, http.StatusBadRequest, "INVALID_SHARE_ROLE", "Share role must be viewer or editor.")
+		return
+	}
+	grant, err := s.store.UpdateProjectShareGrantRole(r.Context(), org.Organization.ID, projectID, grantID, role)
+	if errors.Is(err, cloudpostgres.ErrProjectShareGrantNotFound) {
+		writeError(w, r, http.StatusNotFound, "SHARE_GRANT_NOT_FOUND", "That shared access no longer exists.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "update project share grant", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"grant": grant})
+}
+
+func (s *Server) revokeProjectShareGrant(w http.ResponseWriter, r *http.Request) {
+	org, _ := orgFromContext(r.Context())
+	projectID := clouddomain.ProjectID(strings.TrimSpace(chi.URLParam(r, "projectId")))
+	grantID := strings.TrimSpace(chi.URLParam(r, "grantId"))
+	err := s.store.RevokeProjectShareGrant(r.Context(), org.Organization.ID, projectID, grantID)
+	if errors.Is(err, cloudpostgres.ErrProjectShareGrantNotFound) {
+		writeError(w, r, http.StatusNotFound, "SHARE_GRANT_NOT_FOUND", "That shared access no longer exists.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "revoke project share grant", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) revokeProjectShareLink(w http.ResponseWriter, r *http.Request) {
+	org, _ := orgFromContext(r.Context())
+	projectID := clouddomain.ProjectID(strings.TrimSpace(chi.URLParam(r, "projectId")))
+	linkID := strings.TrimSpace(chi.URLParam(r, "linkId"))
+	err := s.store.RevokeProjectShareLink(r.Context(), org.Organization.ID, projectID, linkID)
+	if errors.Is(err, cloudpostgres.ErrProjectShareLinkNotFound) {
+		writeError(w, r, http.StatusNotFound, "SHARE_LINK_NOT_FOUND", "That share link no longer exists.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "revoke project share link", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) redeemProjectShareLink(w http.ResponseWriter, r *http.Request) {
@@ -1182,6 +1302,10 @@ func (s *Server) redeemProjectShareLink(w http.ResponseWriter, r *http.Request) 
 	}
 	if errors.Is(err, cloudpostgres.ErrProjectShareSelfRedeem) {
 		writeError(w, r, http.StatusBadRequest, "SHARE_SELF_REDEEM", "You already own this shared project.")
+		return
+	}
+	if errors.Is(err, cloudpostgres.ErrProjectShareUnauthorized) {
+		writeError(w, r, http.StatusForbidden, "SHARE_RECIPIENT_REQUIRED", "This share link is not available for your account.")
 		return
 	}
 	if err != nil {

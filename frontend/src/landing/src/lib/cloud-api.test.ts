@@ -381,7 +381,7 @@ it("creates, redeems, and lists scoped project share links", async () => {
   const fetchMock = vi
     .fn()
     .mockResolvedValueOnce(
-      new Response(JSON.stringify({ token: "share-token" }), {
+      new Response(JSON.stringify({ token: "share-token", shareLink: { id: "link-one" } }), {
         status: 201,
         headers: { "Content-Type": "application/json" },
       }),
@@ -397,7 +397,21 @@ it("creates, redeems, and lists scoped project share links", async () => {
         status: 200,
         headers: { "Content-Type": "application/json" },
       }),
-    );
+    )
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ access: { links: [], grants: [] } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ grant: { id: "grant-one" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+    .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    .mockResolvedValueOnce(new Response(null, { status: 204 }));
   vi.stubGlobal("fetch", fetchMock);
   const api = Object.assign(Object.create(CloudAPI.prototype) as CloudAPI, {
     baseURL: "https://cloud.example.com",
@@ -407,16 +421,31 @@ it("creates, redeems, and lists scoped project share links", async () => {
   await api.createProjectShareLink("org one", "project one", {
     sessionId: "session one",
     role: "viewer",
+    accessScope: "restricted",
+    recipientEmails: ["reader@example.com"],
+    recipientOrgIds: ["org two"],
   });
   await api.redeemProjectShareLink("share-token");
   await api.sharedProjects();
+  await api.projectShareAccess("org one", "project one");
+  await api.updateProjectShareGrant("org one", "project one", "grant one", {
+    role: "editor",
+  });
+  await api.revokeProjectShareGrant("org one", "project one", "grant one");
+  await api.revokeProjectShareLink("org one", "project one", "link one");
 
   expect(fetchMock).toHaveBeenNthCalledWith(
     1,
     "https://cloud.example.com/api/cloud/v1/orgs/org%20one/projects/project%20one/shares",
     expect.objectContaining({
       method: "POST",
-      body: JSON.stringify({ sessionId: "session one", role: "viewer" }),
+      body: JSON.stringify({
+        sessionId: "session one",
+        role: "viewer",
+        accessScope: "restricted",
+        recipientEmails: ["reader@example.com"],
+        recipientOrgIds: ["org two"],
+      }),
     }),
   );
   expect(fetchMock).toHaveBeenNthCalledWith(
@@ -428,5 +457,23 @@ it("creates, redeems, and lists scoped project share links", async () => {
     3,
     "https://cloud.example.com/api/cloud/v1/shares",
     expect.any(Object),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    5,
+    "https://cloud.example.com/api/cloud/v1/orgs/org%20one/projects/project%20one/shares/grants/grant%20one",
+    expect.objectContaining({
+      method: "PATCH",
+      body: JSON.stringify({ role: "editor" }),
+    }),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    6,
+    "https://cloud.example.com/api/cloud/v1/orgs/org%20one/projects/project%20one/shares/grants/grant%20one",
+    expect.objectContaining({ method: "DELETE" }),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    7,
+    "https://cloud.example.com/api/cloud/v1/orgs/org%20one/projects/project%20one/shares/links/link%20one",
+    expect.objectContaining({ method: "DELETE" }),
   );
 });

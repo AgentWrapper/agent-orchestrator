@@ -28,6 +28,10 @@ const apiMocks = vi.hoisted(() => ({
   updateProviderSettings: vi.fn(),
   createProjectShareLink: vi.fn(),
   redeemProjectShareLink: vi.fn(),
+  projectShareAccess: vi.fn(),
+  updateProjectShareGrant: vi.fn(),
+  revokeProjectShareGrant: vi.fn(),
+  revokeProjectShareLink: vi.fn(),
   sharedProjects: vi.fn(),
   invitations: vi.fn(),
   orgInvitations: vi.fn(),
@@ -67,6 +71,10 @@ vi.mock("@/lib/cloud-api", () => ({
     updateProviderSettings = apiMocks.updateProviderSettings;
     createProjectShareLink = apiMocks.createProjectShareLink;
     redeemProjectShareLink = apiMocks.redeemProjectShareLink;
+    projectShareAccess = apiMocks.projectShareAccess;
+    updateProjectShareGrant = apiMocks.updateProjectShareGrant;
+    revokeProjectShareGrant = apiMocks.revokeProjectShareGrant;
+    revokeProjectShareLink = apiMocks.revokeProjectShareLink;
     sharedProjects = apiMocks.sharedProjects;
     invitations = apiMocks.invitations;
     orgInvitations = apiMocks.orgInvitations;
@@ -199,7 +207,14 @@ beforeEach(() => {
   apiMocks.updateProviderSettings.mockResolvedValue(undefined);
   apiMocks.createProjectShareLink.mockResolvedValue({
     token: "share-token",
+    shareLink: { id: "link-one" },
   });
+  apiMocks.projectShareAccess.mockResolvedValue({
+    access: { links: [], grants: [] },
+  });
+  apiMocks.updateProjectShareGrant.mockResolvedValue({ grant: { id: "grant-one" } });
+  apiMocks.revokeProjectShareGrant.mockResolvedValue(undefined);
+  apiMocks.revokeProjectShareLink.mockResolvedValue(undefined);
   apiMocks.sharedProjects.mockResolvedValue({ shares: [] });
 });
 
@@ -361,16 +376,91 @@ it("shares a project from its three-dot menu with the selected role", async () =
     screen.getByRole("heading", { name: "Share project" }),
   ).toBeVisible();
   fireEvent.click(screen.getByRole("radio", { name: /Editor/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Restricted/ }));
+  fireEvent.change(screen.getByLabelText("People"), {
+    target: { value: "reader@example.com" },
+  });
+  fireEvent.click(screen.getByLabelText("Personal"));
   fireEvent.click(screen.getByRole("button", { name: "Create link" }));
 
   await waitFor(() =>
     expect(apiMocks.createProjectShareLink).toHaveBeenCalledWith(
       "org-one",
       project.id,
-      { role: "editor" },
+      {
+        role: "editor",
+        accessScope: "restricted",
+        recipientEmails: ["reader@example.com"],
+        recipientOrgIds: ["org-one"],
+      },
     ),
   );
   expect(await screen.findByDisplayValue(/share=share-token/)).toBeVisible();
+});
+
+it("manages redeemed project share access", async () => {
+  apiMocks.projectShareAccess.mockResolvedValue({
+    access: {
+      links: [
+        {
+          id: "link-one",
+          accessScope: "anyone",
+          role: "viewer",
+          recipients: [],
+        },
+      ],
+      grants: [
+        {
+          id: "grant-one",
+          role: "viewer",
+          user: {
+            id: "user-two",
+            email: "reader@example.com",
+            displayName: "Reader",
+          },
+        },
+      ],
+    },
+  });
+  render(<CloudAppPage />);
+
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: `More actions for ${project.displayName}`,
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Share project" }));
+
+  const accessSelect = await screen.findByLabelText(
+    "Access for reader@example.com",
+  );
+  fireEvent.change(accessSelect, { target: { value: "editor" } });
+  await waitFor(() =>
+    expect(apiMocks.updateProjectShareGrant).toHaveBeenCalledWith(
+      "org-one",
+      project.id,
+      "grant-one",
+      { role: "editor" },
+    ),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+  await waitFor(() =>
+    expect(apiMocks.revokeProjectShareGrant).toHaveBeenCalledWith(
+      "org-one",
+      project.id,
+      "grant-one",
+    ),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
+  await waitFor(() =>
+    expect(apiMocks.revokeProjectShareLink).toHaveBeenCalledWith(
+      "org-one",
+      project.id,
+      "link-one",
+    ),
+  );
 });
 
 it("shows shared projects with their sessions without switching workspace", async () => {

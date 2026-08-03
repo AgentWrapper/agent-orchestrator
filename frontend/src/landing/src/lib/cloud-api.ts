@@ -144,6 +144,44 @@ export interface CloudSharedProject {
   redeemedAt: string;
 }
 
+export interface CloudProjectShareRecipient {
+  id: string;
+  shareLinkId: string;
+  recipientType: "email" | "org";
+  email?: string;
+  orgId?: string;
+  orgName?: string;
+  createdAt: string;
+}
+
+export interface CloudProjectShareLink {
+  id: string;
+  orgId: string;
+  projectId: string;
+  sessionId?: string;
+  createdByUserId: string;
+  role: "viewer" | "editor";
+  status: "active" | "revoked";
+  accessScope: "anyone" | "restricted";
+  recipients?: CloudProjectShareRecipient[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CloudProjectShareGrant {
+  id: string;
+  user: CloudUser;
+  role: "viewer" | "editor";
+  status: "active" | "revoked";
+  redeemedAt: string;
+  updatedAt: string;
+}
+
+export interface CloudProjectShareAccess {
+  links: CloudProjectShareLink[];
+  grants: CloudProjectShareGrant[];
+}
+
 export interface CloudTurn {
   id: string;
   sessionId: string;
@@ -502,11 +540,62 @@ export class CloudAPI {
   async createProjectShareLink(
     orgId: string,
     projectId: string,
-    input: { sessionId?: string; role: "viewer" | "editor" },
+    input: {
+      sessionId?: string;
+      role: "viewer" | "editor";
+      accessScope?: "anyone" | "restricted";
+      recipientEmails?: string[];
+      recipientOrgIds?: string[];
+    },
   ) {
-    return this.request<{ token: string }>(
+    return this.request<{ token: string; shareLink: CloudProjectShareLink }>(
       this.orgPath(orgId, `/projects/${encodeURIComponent(projectId)}/shares`),
       { method: "POST", body: input },
+    );
+  }
+
+  async projectShareAccess(orgId: string, projectId: string) {
+    return this.request<{ access: CloudProjectShareAccess }>(
+      this.orgPath(orgId, `/projects/${encodeURIComponent(projectId)}/shares`),
+    );
+  }
+
+  async updateProjectShareGrant(
+    orgId: string,
+    projectId: string,
+    grantId: string,
+    input: { role: "viewer" | "editor" },
+  ) {
+    return this.request<{ grant: CloudProjectShareGrant }>(
+      this.orgPath(
+        orgId,
+        `/projects/${encodeURIComponent(projectId)}/shares/grants/${encodeURIComponent(grantId)}`,
+      ),
+      { method: "PATCH", body: input },
+    );
+  }
+
+  async revokeProjectShareGrant(
+    orgId: string,
+    projectId: string,
+    grantId: string,
+  ) {
+    return this.request<void>(
+      this.orgPath(
+        orgId,
+        `/projects/${encodeURIComponent(projectId)}/shares/grants/${encodeURIComponent(grantId)}`,
+      ),
+      { method: "DELETE" },
+    );
+  }
+
+  async revokeProjectShareLink(orgId: string, projectId: string, linkId: string) {
+    return this.request<void>(
+      this.orgPath(
+        orgId,
+        `/projects/${encodeURIComponent(projectId)}/shares/links/${encodeURIComponent(linkId)}`,
+      ),
+      { method: "DELETE" },
     );
   }
 
