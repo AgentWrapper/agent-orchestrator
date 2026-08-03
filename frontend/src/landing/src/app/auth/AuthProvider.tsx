@@ -28,7 +28,6 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 const cloudSessionKey = "ao-cloud-session";
-const authMode = env.NEXT_PUBLIC_AO_AUTH_MODE;
 
 export function AuthProvider({
   children,
@@ -37,6 +36,7 @@ export function AuthProvider({
   children: React.ReactNode;
   workOSStatus?: AuthStatus;
 }) {
+  const authMode = env.NEXT_PUBLIC_AO_AUTH_MODE;
   const [session, setSession] = useState<CloudAuthSession | null>(null);
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -55,10 +55,8 @@ export function AuthProvider({
       }
     }
 
-    if (authMode === "workos" && workOSStatus !== "authenticated") {
-      window.localStorage.removeItem(cloudSessionKey);
-      setSession(null);
-      setStatus(workOSStatus ?? "loading");
+    if (authMode === "workos" && workOSStatus === "loading") {
+      setStatus("loading");
       return;
     }
 
@@ -71,6 +69,8 @@ export function AuthProvider({
           const workOSSession = await restoreWorkOSSession();
           if (!active) return;
           if (!workOSSession) {
+            window.localStorage.removeItem(cloudSessionKey);
+            setSession(null);
             setStatus("unauthenticated");
             return;
           }

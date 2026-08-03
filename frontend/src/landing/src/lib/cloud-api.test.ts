@@ -1,9 +1,36 @@
 import { afterEach, expect, it, vi } from "vitest";
 
-import { CloudAPI, type CloudEvent } from "./cloud-api";
+import { CloudAPI, CloudAPIError, type CloudEvent } from "./cloud-api";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+it("preserves API error codes for caller-specific recovery", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          code: "SHARE_SELF_REDEEM",
+          message: "You already own this shared project.",
+        }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      ),
+    ),
+  );
+  const api = Object.assign(Object.create(CloudAPI.prototype) as CloudAPI, {
+    baseURL: "https://cloud.example.com",
+    accessToken: "access-token",
+  });
+
+  await expect(api.redeemProjectShareLink("own-token")).rejects.toEqual(
+    expect.objectContaining<Partial<CloudAPIError>>({
+      name: "CloudAPIError",
+      status: 400,
+      code: "SHARE_SELF_REDEEM",
+    }),
+  );
 });
 
 it("streams replayed and live SSE events with authenticated fetch", async () => {

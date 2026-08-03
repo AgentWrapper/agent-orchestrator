@@ -13,6 +13,46 @@ import (
 	cloudworker "github.com/aoagents/agent-orchestrator/backend/internal/cloud/worker"
 )
 
+func TestProjectShareRoles(t *testing.T) {
+	if !validProjectShareRole("viewer") || !validProjectShareRole("editor") {
+		t.Fatal("viewer and editor must be valid project share roles")
+	}
+	for _, role := range []string{"owner", "admin", "member", ""} {
+		if validProjectShareRole(role) {
+			t.Fatalf("%q must not be a valid project share role", role)
+		}
+	}
+	if !orgRoleAtLeast("editor", "member") {
+		t.Fatal("project editors must be allowed to operate project sessions")
+	}
+	if orgRoleAtLeast("editor", "admin") {
+		t.Fatal("project editors must not receive organization admin access")
+	}
+}
+
+func TestSharedProjectRequestScope(t *testing.T) {
+	orgID := clouddomain.OrgID("org-one")
+	for _, test := range []struct {
+		method  string
+		path    string
+		allowed bool
+	}{
+		{method: http.MethodGet, path: "/api/cloud/v1/orgs/org-one/projects", allowed: true},
+		{method: http.MethodPost, path: "/api/cloud/v1/orgs/org-one/projects", allowed: false},
+		{method: http.MethodGet, path: "/api/cloud/v1/orgs/org-one/sessions", allowed: true},
+		{method: http.MethodPost, path: "/api/cloud/v1/orgs/org-one/sessions", allowed: true},
+		{method: http.MethodGet, path: "/api/cloud/v1/orgs/org-one/sessions/session-one", allowed: true},
+		{method: http.MethodGet, path: "/api/cloud/v1/orgs/org-one/members", allowed: false},
+		{method: http.MethodGet, path: "/api/cloud/v1/orgs/org-one/provider-connections", allowed: false},
+		{method: http.MethodGet, path: "/api/cloud/v1/orgs/other/sessions", allowed: false},
+	} {
+		request := httptest.NewRequest(test.method, test.path, nil)
+		if got := sharedProjectRequestAllowed(request, orgID); got != test.allowed {
+			t.Fatalf("%s %s allowed = %t, want %t", test.method, test.path, got, test.allowed)
+		}
+	}
+}
+
 func TestActivityTurnTransitions(t *testing.T) {
 	for _, test := range []struct {
 		event         string

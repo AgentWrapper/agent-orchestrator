@@ -1,7 +1,26 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import { expect, it, vi } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 
 import { AuthProvider, useAuth } from "./AuthProvider";
+
+const mocks = vi.hoisted(() => ({
+  authMode: "local",
+  restoreWorkOSSession: vi.fn(),
+}));
+
+vi.mock("@/env", () => ({
+  env: {
+    get NEXT_PUBLIC_AO_AUTH_MODE() {
+      return mocks.authMode;
+    },
+    NEXT_PUBLIC_WEB_URL: undefined,
+  },
+}));
+
+vi.mock("@/lib/workos-cloud", () => ({
+  restoreWorkOSSession: mocks.restoreWorkOSSession,
+  redirectToWorkOSLogout: vi.fn(),
+}));
 
 vi.mock("@/lib/cloud-api", () => ({
   CloudAPI: class {
@@ -14,6 +33,12 @@ vi.mock("@/lib/cloud-api", () => ({
     });
   },
 }));
+
+beforeEach(() => {
+  window.localStorage.clear();
+  mocks.authMode = "local";
+  mocks.restoreWorkOSSession.mockReset();
+});
 
 function AuthState() {
   const { session, status } = useAuth();
@@ -44,4 +69,30 @@ it("restores the local control-plane session", async () => {
       screen.getByText("authenticated:developer@example.com"),
     ).toBeVisible(),
   );
+});
+
+it("checks the server session when AuthKit briefly reports unauthenticated", async () => {
+  mocks.authMode = "workos";
+  mocks.restoreWorkOSSession.mockResolvedValue({
+    accessToken: "workos-access-token",
+    authProvider: "workos",
+    user: {
+      id: "workos-user",
+      email: "developer@example.com",
+      displayName: "Developer",
+    },
+  });
+
+  render(
+    <AuthProvider workOSStatus="unauthenticated">
+      <AuthState />
+    </AuthProvider>,
+  );
+
+  await waitFor(() =>
+    expect(
+      screen.getByText("authenticated:developer@example.com"),
+    ).toBeVisible(),
+  );
+  expect(mocks.restoreWorkOSSession).toHaveBeenCalledOnce();
 });

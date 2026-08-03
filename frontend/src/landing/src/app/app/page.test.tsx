@@ -7,7 +7,11 @@ import {
 } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 
-import type { CloudProject, CloudSession } from "@/lib/cloud-api";
+import {
+  CloudAPIError,
+  type CloudProject,
+  type CloudSession,
+} from "@/lib/cloud-api";
 import CloudAppPage, { SessionBoard } from "./page";
 
 const apiMocks = vi.hoisted(() => ({
@@ -23,6 +27,8 @@ const apiMocks = vi.hoisted(() => ({
   providerConnections: vi.fn(),
   updateProviderSettings: vi.fn(),
   createProjectShareLink: vi.fn(),
+  redeemProjectShareLink: vi.fn(),
+  sharedProjects: vi.fn(),
   invitations: vi.fn(),
   orgInvitations: vi.fn(),
   orgMembers: vi.fn(),
@@ -37,6 +43,16 @@ const apiMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/cloud-api", () => ({
+  CloudAPIError: class extends Error {
+    code?: string;
+    status: number;
+
+    constructor(message: string, status: number, code?: string) {
+      super(message);
+      this.status = status;
+      this.code = code;
+    }
+  },
   CloudAPI: class {
     me = apiMocks.me;
     projects = apiMocks.projects;
@@ -50,6 +66,8 @@ vi.mock("@/lib/cloud-api", () => ({
     providerConnections = apiMocks.providerConnections;
     updateProviderSettings = apiMocks.updateProviderSettings;
     createProjectShareLink = apiMocks.createProjectShareLink;
+    redeemProjectShareLink = apiMocks.redeemProjectShareLink;
+    sharedProjects = apiMocks.sharedProjects;
     invitations = apiMocks.invitations;
     orgInvitations = apiMocks.orgInvitations;
     orgMembers = apiMocks.orgMembers;
@@ -182,6 +200,7 @@ beforeEach(() => {
   apiMocks.createProjectShareLink.mockResolvedValue({
     token: "share-token",
   });
+  apiMocks.sharedProjects.mockResolvedValue({ shares: [] });
 });
 
 function renderBoard(
@@ -339,21 +358,95 @@ it("shares a project from its three-dot menu with the selected role", async () =
   fireEvent.click(screen.getByRole("button", { name: "Share project" }));
 
   expect(
-    screen.getByRole("heading", { name: `Share ${project.displayName}` }),
+    screen.getByRole("heading", { name: "Share project" }),
   ).toBeVisible();
-  fireEvent.change(screen.getByLabelText("Access level"), {
-    target: { value: "admin" },
-  });
+  fireEvent.click(screen.getByRole("radio", { name: /Editor/ }));
   fireEvent.click(screen.getByRole("button", { name: "Create link" }));
 
   await waitFor(() =>
     expect(apiMocks.createProjectShareLink).toHaveBeenCalledWith(
       "org-one",
       project.id,
-      { role: "admin" },
+      { role: "editor" },
     ),
   );
   expect(await screen.findByDisplayValue(/share=share-token/)).toBeVisible();
+});
+
+it("shows shared projects with their sessions without switching workspace", async () => {
+  const sharedProject: CloudProject = {
+    ...project,
+    id: "shared-project",
+    orgId: "shared-org",
+    displayName: "Shared AO",
+  };
+  const sharedOrchestrator: CloudSession = {
+    ...orchestrator,
+    id: "shared-orchestrator",
+    projectId: sharedProject.id,
+    displayName: "Shared Orchestrator",
+  };
+  apiMocks.sharedProjects.mockResolvedValue({
+    shares: [
+      {
+        id: "share-one",
+        orgId: "shared-org",
+        project: sharedProject,
+        role: "viewer",
+        sharedByEmail: "teammate@example.com",
+        sharedByName: "Teammate",
+        redeemedAt: "2026-08-04T00:00:00Z",
+      },
+    ],
+  });
+  apiMocks.sessions.mockImplementation((orgId: string) =>
+    Promise.resolve({
+      sessions: orgId === "shared-org" ? [sharedOrchestrator] : [],
+    }),
+  );
+
+  render(<CloudAppPage />);
+
+  const sharedProjectButton = await screen.findByRole("button", {
+      name: "Shared AO, shared by Teammate",
+    });
+  expect(sharedProjectButton).toBeVisible();
+  fireEvent.click(
+    screen.getByRole("button", { name: sharedOrchestrator.displayName }),
+  );
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "Connecting orchestrator",
+  );
+  fireEvent.click(sharedProjectButton);
+  expect(sharedProjectButton).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(screen.getByText("Personal"));
+
+  expect(
+    screen.getByRole("menuitemradio", { name: /Personal.*owner/i }),
+  ).toHaveAttribute("aria-checked", "true");
+});
+
+it("silently ignores a share link redeemed by its creator", async () => {
+  window.history.replaceState({}, "", "/app?share=own-share-token");
+  apiMocks.redeemProjectShareLink.mockRejectedValue(
+    new CloudAPIError(
+      "You already own this shared project.",
+      400,
+      "SHARE_SELF_REDEEM",
+    ),
+  );
+
+  render(<CloudAppPage />);
+
+  await waitFor(() =>
+    expect(apiMocks.redeemProjectShareLink).toHaveBeenCalledWith(
+      "own-share-token",
+    ),
+  );
+  expect(window.location.search).toBe("");
+  expect(
+    screen.queryByText("You already own this shared project."),
+  ).not.toBeInTheDocument();
 });
 
 it("shows GitHub App accounts, grants, and owner controls", async () => {

@@ -185,7 +185,7 @@ type sharedProjectAccessContextKey struct{}
 
 type sharedProjectAccess struct {
 	ProjectIDs map[clouddomain.ProjectID]struct{}
-	Role       string
+	Roles      map[clouddomain.ProjectID]string
 }
 
 func accountFromContext(ctx context.Context) (clouddomain.Account, bool) {
@@ -315,7 +315,7 @@ func (s *Server) routes() http.Handler {
 				org.Get("/sessions/{sessionId}/workspace/files", s.workspaceFiles)
 				org.Get("/sessions/{sessionId}/workspace/file", s.workspaceFile)
 				org.Get("/sessions/{sessionId}/workspace/diff", s.workspaceDiff)
-				org.Post("/sessions/{sessionId}/workspace/preview", s.workspacePreview)
+				org.With(s.requireOrgRole("member")).Post("/sessions/{sessionId}/workspace/preview", s.workspacePreview)
 				org.Post("/sessions/{sessionId}/workspace/preview-ticket", s.issueWorkspacePreview)
 				org.Post("/sessions/{sessionId}/workspace/file-preview-ticket", s.issueWorkspaceFilePreview)
 				org.Post("/sessions/{sessionId}/terminal-ticket", s.issueTerminalTicket)
@@ -782,6 +782,10 @@ func (s *Server) requireOrg(next http.Handler) http.Handler {
 				writeError(w, r, http.StatusForbidden, "ORG_FORBIDDEN", "You do not have access to this organization.")
 				return
 			}
+			if !sharedProjectRequestAllowed(r, orgID) {
+				writeError(w, r, http.StatusForbidden, "PROJECT_SHARE_SCOPE_REQUIRED", "This share grants access only to its project and sessions.")
+				return
+			}
 			org = clouddomain.UserOrganization{
 				Organization: clouddomain.Organization{
 					ID:          orgID,
@@ -792,7 +796,7 @@ func (s *Server) requireOrg(next http.Handler) http.Handler {
 				Membership: clouddomain.OrgMembership{
 					OrgID:  orgID,
 					UserID: clouddomain.UserID(principal.UserID),
-					Role:   shared.Role,
+					Role:   "viewer",
 					Status: "active",
 				},
 			}
@@ -826,6 +830,22 @@ func (s *Server) requireOrg(next http.Handler) http.Handler {
 	})
 }
 
+func sharedProjectRequestAllowed(r *http.Request, orgID clouddomain.OrgID) bool {
+	prefix := "/api/cloud/v1/orgs/" + string(orgID)
+	path := strings.TrimPrefix(r.URL.Path, prefix)
+	if path == r.URL.Path {
+		return false
+	}
+	switch path {
+	case "/projects":
+		return r.Method == http.MethodGet
+	case "/sessions":
+		return r.Method == http.MethodGet || r.Method == http.MethodPost
+	default:
+		return strings.HasPrefix(path, "/sessions/")
+	}
+}
+
 func (s *Server) sharedAccessForOrg(
 	ctx context.Context,
 	userID string,
@@ -835,15 +855,16 @@ func (s *Server) sharedAccessForOrg(
 	if err != nil {
 		return sharedProjectAccess{}, false, err
 	}
-	access := sharedProjectAccess{ProjectIDs: map[clouddomain.ProjectID]struct{}{}, Role: "viewer"}
+	access := sharedProjectAccess{
+		ProjectIDs: map[clouddomain.ProjectID]struct{}{},
+		Roles:      map[clouddomain.ProjectID]string{},
+	}
 	for _, grant := range grants {
 		if grant.OrgID != orgID {
 			continue
 		}
 		access.ProjectIDs[grant.Project.ID] = struct{}{}
-		if orgRoleRank(grant.Role) > orgRoleRank(access.Role) {
-			access.Role = grant.Role
-		}
+		access.Roles[grant.Project.ID] = grant.Role
 	}
 	return access, len(access.ProjectIDs) > 0, nil
 }
@@ -851,6 +872,25 @@ func (s *Server) sharedAccessForOrg(
 func (s *Server) requireOrgRole(required string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if shared, ok := sharedProjectAccessFromContext(r.Context()); ok {
+				if required != "member" {
+					writeError(w, r, http.StatusForbidden, "ORG_ROLE_REQUIRED", "A project share does not grant organization administration access.")
+					return
+				}
+				sessionID := clouddomain.SessionID(strings.TrimSpace(chi.URLParam(r, "sessionId")))
+				if sessionID == "" {
+					next.ServeHTTP(w, r)
+					return
+				}
+				account, _ := accountFromContext(r.Context())
+				session, err := s.store.GetSession(r.Context(), account.ID, sessionID)
+				if err != nil || shared.Roles[session.ProjectID] != "editor" {
+					writeError(w, r, http.StatusForbidden, "ORG_ROLE_REQUIRED", "Viewer access is read-only for this project.")
+					return
+				}
+				next.ServeHTTP(w, r)
+				return
+			}
 			org, ok := orgFromContext(r.Context())
 			if !ok || !orgRoleAtLeast(org.Membership.Role, required) {
 				writeError(w, r, http.StatusForbidden, "ORG_ROLE_REQUIRED", "Your organization role cannot perform this action.")
@@ -879,6 +919,10 @@ func validOrgRole(role string) bool {
 	}
 }
 
+func validProjectShareRole(role string) bool {
+	return role == "viewer" || role == "editor"
+}
+
 func orgRoleAtLeast(actual, required string) bool {
 	return orgRoleRank(actual) >= orgRoleRank(required)
 }
@@ -889,7 +933,7 @@ func orgRoleRank(role string) int {
 		return 3
 	case "admin":
 		return 2
-	case "member":
+	case "member", "editor":
 		return 1
 	case "viewer":
 		return 0
@@ -965,6 +1009,10 @@ func writeLocalAuthResponse(w http.ResponseWriter, status int, principal cloudau
 }
 
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
+	if _, shared := sharedProjectAccessFromContext(r.Context()); shared {
+		writeError(w, r, http.StatusForbidden, "PROJECT_FORBIDDEN", "A project share does not grant permission to create other projects.")
+		return
+	}
 	account, _ := accountFromContext(r.Context())
 	var input struct {
 		DisplayName        string          `json:"displayName"`
@@ -1050,6 +1098,10 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createProjectShareLink(w http.ResponseWriter, r *http.Request) {
+	if _, shared := sharedProjectAccessFromContext(r.Context()); shared {
+		writeError(w, r, http.StatusForbidden, "PROJECT_SHARE_FORBIDDEN", "Shared project access cannot be reshared.")
+		return
+	}
 	account, _ := accountFromContext(r.Context())
 	org, _ := orgFromContext(r.Context())
 	principal, _ := cloudauth.PrincipalFromContext(r.Context())
@@ -1069,12 +1121,8 @@ func (s *Server) createProjectShareLink(w http.ResponseWriter, r *http.Request) 
 	if role == "" {
 		role = "viewer"
 	}
-	if role != "viewer" && role != "admin" && role != "owner" {
-		writeError(w, r, http.StatusBadRequest, "INVALID_SHARE_ROLE", "Share role must be viewer, admin, or owner.")
-		return
-	}
-	if role == "owner" && org.Membership.Role != "owner" {
-		writeError(w, r, http.StatusForbidden, "ORG_ROLE_REQUIRED", "Only organization owners can create owner share links.")
+	if !validProjectShareRole(role) {
+		writeError(w, r, http.StatusBadRequest, "INVALID_SHARE_ROLE", "Share role must be viewer or editor.")
 		return
 	}
 	if _, err := s.store.GetProject(r.Context(), account.ID, projectID); errors.Is(err, cloudpostgres.ErrProjectNotFound) {
@@ -1219,6 +1267,10 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	if shared, ok := sharedProjectAccessFromContext(r.Context()); ok {
 		if _, allowed := shared.ProjectIDs[input.ProjectID]; !allowed {
 			writeError(w, r, http.StatusForbidden, "PROJECT_FORBIDDEN", "This shared link does not grant access to that project.")
+			return
+		}
+		if shared.Roles[input.ProjectID] != "editor" {
+			writeError(w, r, http.StatusForbidden, "ORG_ROLE_REQUIRED", "Viewer access is read-only for this project.")
 			return
 		}
 	}
@@ -3234,7 +3286,13 @@ func (s *Server) issueTerminalTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scopes := []string{"terminal:read"}
-	if org, ok := orgFromContext(r.Context()); !ok || orgRoleAtLeast(org.Membership.Role, "member") {
+	canOperate := false
+	if shared, ok := sharedProjectAccessFromContext(r.Context()); ok {
+		canOperate = shared.Roles[session.ProjectID] == "editor"
+	} else if org, ok := orgFromContext(r.Context()); !ok || orgRoleAtLeast(org.Membership.Role, "member") {
+		canOperate = true
+	}
+	if canOperate {
 		scopes = append(scopes, "terminal:operate")
 	}
 	ticket, err := s.store.IssueAccessTicket(

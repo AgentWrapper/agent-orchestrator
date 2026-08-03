@@ -137,7 +137,8 @@ export interface CloudSharedProject {
   orgId: string;
   project: CloudProject;
   session?: CloudSession;
-  role: "viewer" | "admin" | "owner";
+  sessions?: CloudSession[];
+  role: "viewer" | "editor";
   sharedByEmail: string;
   sharedByName: string;
   redeemedAt: string;
@@ -263,6 +264,18 @@ export interface CloudAuthSession {
 type FetchOptions = Omit<RequestInit, "body"> & {
   body?: unknown;
 };
+
+export class CloudAPIError extends Error {
+  readonly code?: string;
+  readonly status: number;
+
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = "CloudAPIError";
+    this.status = status;
+    this.code = code;
+  }
+}
 
 export class CloudAPI {
   readonly baseURL: string;
@@ -489,7 +502,7 @@ export class CloudAPI {
   async createProjectShareLink(
     orgId: string,
     projectId: string,
-    input: { sessionId?: string; role: "viewer" | "admin" | "owner" },
+    input: { sessionId?: string; role: "viewer" | "editor" },
   ) {
     return this.request<{ token: string }>(
       this.orgPath(orgId, `/projects/${encodeURIComponent(projectId)}/shares`),
@@ -783,9 +796,11 @@ export class CloudAPI {
         message?: string;
         code?: string;
       } | null;
-      throw new Error(
+      throw new CloudAPIError(
         failure?.message ??
           `AO Cloud request failed (${failure?.code ?? response.status}).`,
+        response.status,
+        failure?.code,
       );
     }
     if (response.status === 204) return undefined as T;
