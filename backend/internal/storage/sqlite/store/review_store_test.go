@@ -149,8 +149,7 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	if err := s.UpsertReview(ctx, domain.Review{
 		ID: "rev-1", SessionID: rec.ID, ProjectID: rec.ProjectID,
 		Harness: domain.ReviewerClaudeCode, PRURL: "https://example/pr/1",
-		ReviewerHandleID:   "review-mer-1",
-		ReviewerGeneration: "batch-1",
+		ReviewerHandleID: "review-mer-1",
 		CreatedAt:          now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("upsert review: %v", err)
@@ -160,8 +159,7 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	if err := s.UpsertReview(ctx, domain.Review{
 		ID: "rev-2", SessionID: rec.ID, ProjectID: rec.ProjectID,
 		Harness: domain.ReviewerHarness("greptile"), PRURL: "https://example/pr/2",
-		ReviewerHandleID:   "review-mer-1b",
-		ReviewerGeneration: "batch-2",
+		ReviewerHandleID: "review-mer-1b",
 		CreatedAt:          now, UpdatedAt: now.Add(time.Second),
 	}); err != nil {
 		t.Fatalf("upsert review (reuse): %v", err)
@@ -175,8 +173,7 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	}
 	if got.Harness != domain.ReviewerHarness("greptile") ||
 		got.PRURL != "https://example/pr/2" ||
-		got.ReviewerHandleID != "review-mer-1b" ||
-		got.ReviewerGeneration != "batch-2" {
+		got.ReviewerHandleID != "review-mer-1b" {
 		t.Fatalf("upsert did not refresh fields: %+v", got)
 	}
 

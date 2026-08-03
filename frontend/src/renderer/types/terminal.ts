@@ -1,8 +1,6 @@
 export type TerminalTarget =
 	| { kind: "worker" }
 	| {
-			/** Review batch identity; the stable handle can be reused by a new runtime. */
-			generation: string;
 			kind: "reviewer";
 			handleId: string;
 			harness: string;

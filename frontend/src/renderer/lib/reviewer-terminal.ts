@@ -4,11 +4,6 @@ import { apiClient, apiErrorMessage } from "./api-client";
 export type PRReviewState = components["schemas"]["PRReviewState"];
 export type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 
-export type ReviewerTerminalIdentity = {
-	generation: string;
-	handleId: string;
-};
-
 export function sessionReviewsQueryKey(sessionId: string) {
 	return ["session-reviews", sessionId] as const;
 }
@@ -18,7 +13,7 @@ export async function fetchSessionReviews(sessionId: string): Promise<ReviewsRes
 		params: { path: { sessionId } },
 	});
 	if (error) throw new Error(apiErrorMessage(error, "Unable to load reviews"));
-	return data ?? { reviewerGeneration: "", reviewerHandleId: "", reviewerHarness: "", reviews: [] };
+	return data ?? { reviewerHandleId: "", reviewerHarness: "", reviews: [] };
 }
 
 export function newestReviewRun(
@@ -40,23 +35,4 @@ export function newestReviewRun(
 		}
 	}
 	return newest;
-}
-
-export function currentReviewerTerminal(
-	response: ReviewsResponse | undefined,
-): ReviewerTerminalIdentity | undefined {
-	if (!response?.reviewerHandleId) return undefined;
-	// The daemon derives this from the full run history. The PR projection can
-	// omit an old-head running/failed run, so it is not an ownership source.
-	const generation =
-		response.reviewerGeneration ||
-		(() => {
-			const run = newestReviewRun(response.reviews);
-			return run?.batchId || run?.id;
-		})();
-	if (!generation) return undefined;
-	return {
-		generation,
-		handleId: response.reviewerHandleId,
-	};
 }

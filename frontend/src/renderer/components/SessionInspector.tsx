@@ -47,7 +47,7 @@ import { appI18n } from "../i18n";
 import type { MessageKey } from "../i18n";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
-type OpenReviewerTerminal = (target: { generation: string; handleId: string; harness: string }) => void;
+type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
 
 export type InspectorView = "summary" | "reviews" | "browser" | "files";
 
@@ -783,7 +783,6 @@ function ReviewsView({
 			if (data?.reviewerHandleId) {
 				const harness = data.reviewerHarness || started.harness || "reviewer";
 				onOpenReviewerTerminal?.({
-					generation: data.reviewerGeneration || started.batchId || started.id,
 					handleId: data.reviewerHandleId,
 					harness,
 				});
@@ -818,7 +817,6 @@ function ReviewsView({
 					onOpenTerminal={onOpenReviewerTerminal}
 					onCancel={() => cancelReview.mutate()}
 					onTrigger={() => triggerReview.mutate()}
-					reviewerGeneration={reviewsQuery.data?.reviewerGeneration ?? ""}
 					reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
 					reviewerHarness={reviewsQuery.data?.reviewerHarness ?? ""}
 					reviewStates={reviewStates}
@@ -880,7 +878,6 @@ function mockProjectConfig(): ProjectConfig {
 
 function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 	return {
-		reviewerGeneration: `demo-batch-${session.id}`,
 		reviewerHandleId: `${session.id}-reviewer`,
 		reviewerHarness: "codex",
 		reviews: sortedPRs(session).map((pr, index) => {
@@ -946,7 +943,6 @@ function ReviewPanel({
 	session,
 	config,
 	reviewStates,
-	reviewerGeneration,
 	reviewerHandleId,
 	reviewerHarness,
 	isLoading,
@@ -961,7 +957,6 @@ function ReviewPanel({
 	session: WorkspaceSession;
 	config?: ProjectConfig;
 	reviewStates: PRReviewState[];
-	reviewerGeneration: string;
 	reviewerHandleId: string;
 	reviewerHarness: string;
 	isLoading: boolean;
@@ -997,17 +992,12 @@ function ReviewPanel({
 	const harness = reviewerHarness || latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
 	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
-	const reviewHasRun = reviewRunning || Boolean(latest) || Boolean(reviewerGeneration);
+	const reviewHasRun = reviewRunning || Boolean(latest);
 	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
 	const openReviewerTerminal = () => {
-		if (!terminalEnabled) return;
-		onOpenTerminal?.({
-			generation:
-				reviewerGeneration ||
-				latest?.batchId ||
-				latest?.id ||
-				reviewerHandleId,
-			handleId: reviewerHandleId,
+	if (!terminalEnabled) return;
+	onOpenTerminal?.({
+		handleId: reviewerHandleId,
 			harness,
 		});
 	};

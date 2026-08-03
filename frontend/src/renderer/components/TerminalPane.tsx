@@ -1,4 +1,4 @@
-import { useQueries, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { RotateCcw } from "lucide-react";
 import {
 	createContext,
@@ -32,11 +32,6 @@ import {
 	type TerminalMuxPool,
 } from "../lib/terminal-mux";
 import { cn } from "../lib/utils";
-import {
-	currentReviewerTerminal,
-	fetchSessionReviews,
-	sessionReviewsQueryKey,
-} from "../lib/reviewer-terminal";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useShellTerminals } from "../hooks/useShellTerminals";
@@ -57,7 +52,7 @@ type TerminalCacheDescriptor = {
 	cacheKey: string;
 	generation?: string;
 	handleId: string;
-	kind: "reviewer" | "shell" | "worker";
+	kind: "shell" | "worker";
 	ownerKey: string;
 	sessionId?: string;
 };
@@ -83,7 +78,6 @@ type TerminalCacheController = {
 };
 
 const TerminalCacheContext = createContext<TerminalCacheController | null>(null);
-const RETAINED_REVIEWER_POLL_MS = 2_500;
 
 function terminalTargetMatches(left?: TerminalTarget, right?: TerminalTarget): boolean {
 	if (left === right) return true;
@@ -130,20 +124,16 @@ function cacheDescriptor(
 		};
 	}
 
-	const handleId =
-		terminalTarget?.kind === "reviewer" ? terminalTarget.handleId : session?.terminalHandleId;
+	// Reviewer terminals still use AttachedTerminal's replay cover and bulk-write
+	// handling, but mount fresh instead of entering the retained cache.
+	if (terminalTarget?.kind === "reviewer") return null;
+	const handleId = session?.terminalHandleId;
 	if (!session?.id || !handleId) return null;
-	const kind = terminalTarget?.kind === "reviewer" ? "reviewer" : "worker";
-	if (terminalTarget?.kind === "reviewer" && terminalTarget.sessionId !== session.id) return null;
-	const ownerKey = `session:${session.id}:${kind}`;
+	const ownerKey = `session:${session.id}:worker`;
 	return {
-		cacheKey:
-			terminalTarget?.kind === "reviewer"
-				? `${ownerKey}|handle:${handleId}|generation:${terminalTarget.generation}`
-				: `${ownerKey}|handle:${handleId}`,
-		generation: terminalTarget?.kind === "reviewer" ? terminalTarget.generation : undefined,
+		cacheKey: `${ownerKey}|handle:${handleId}`,
 		handleId,
-		kind,
+		kind: "worker",
 		ownerKey,
 		sessionId: session.id,
 	};
@@ -313,22 +303,6 @@ export function TerminalCacheProvider({
 	}
 	const muxPool = muxPoolRef.current;
 	const [, setRevision] = useState(0);
-	const reviewerSessionIds = [
-		...new Set(
-			[...entriesRef.current.values()]
-				.filter((entry) => entry.kind === "reviewer" && entry.sessionId)
-				.map((entry) => entry.sessionId as string),
-		),
-	];
-	const reviewerStateQueries = useQueries({
-		queries: reviewerSessionIds.map((sessionId) => ({
-			queryKey: sessionReviewsQueryKey(sessionId),
-			queryFn: () => fetchSessionReviews(sessionId),
-			refetchInterval: RETAINED_REVIEWER_POLL_MS,
-			refetchIntervalInBackground: true,
-		})),
-	});
-
 	const rerender = useCallback(() => setRevision((current) => current + 1), []);
 
 	const removeEntry = useCallback(
@@ -550,47 +524,12 @@ export function TerminalCacheProvider({
 				removeEntry(entry.cacheKey);
 				continue;
 			}
-			if (entry.kind === "reviewer" && session && entry.sessionId !== session.id) {
-				removeEntry(entry.cacheKey);
-				continue;
-			}
 			if (session && entry.props.session !== session) {
 				entry.props = { ...entry.props, session };
 				rerender();
 			}
 		}
 	}, [removeEntry, workspaceQuery.data, workspaceQuery.isSuccess]);
-
-	// Reviewer panes use a stable session-wide handle that is replaced logically
-	// by each review batch. Workspace snapshots do not carry that generation, so
-	// retained reviewer owners observe the authoritative reviews endpoint and
-	// dispose a parked writer as soon as its handle or batch is superseded.
-	useEffect(() => {
-		for (let index = 0; index < reviewerSessionIds.length; index += 1) {
-			const query = reviewerStateQueries[index];
-			if (!query?.isSuccess) continue;
-			const sessionId = reviewerSessionIds[index];
-			const current = currentReviewerTerminal(query.data);
-			for (const entry of [...entriesRef.current.values()]) {
-				if (entry.kind !== "reviewer" || entry.sessionId !== sessionId) continue;
-				if (
-					!current ||
-					entry.handleId !== current.handleId ||
-					entry.generation !== current.generation
-				) {
-					if (activeRef.current?.key === entry.cacheKey) {
-						// Removing the active portal would leave SessionView's
-						// still-selected target pointing at a blank slot. Keep its
-						// inspectable terminal until the user leaves; activation of
-						// the new generation or ordinary deactivation disposes it.
-						entry.discardOnDeactivate = true;
-					} else {
-						removeEntry(entry.cacheKey);
-					}
-				}
-			}
-		}
-	}, [removeEntry, reviewerSessionIds, reviewerStateQueries]);
 
 	// Shell handles have their own lifecycle outside WorkspaceSession. Closing a
 	// shell must close its retained mux writer even if it was parked.

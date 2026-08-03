@@ -106,12 +106,11 @@ function mockCommonGets(
 	_unusedRuns: unknown[] = [],
 	reviewerHandleId = "",
 	reviews: unknown[] = [],
-	reviewerGeneration = "",
 	reviewerHarness = "",
 ) {
 	getMock.mockImplementation(async (path: string) => {
 		if (path === "/api/v1/sessions/{sessionId}/reviews") {
-			return { data: { reviewerGeneration, reviewerHandleId, reviewerHarness, reviews } };
+			return { data: { reviewerHandleId, reviewerHarness, reviews } };
 		}
 		if (path === "/api/v1/projects/{id}") {
 			return {
@@ -170,7 +169,7 @@ beforeEach(() => {
 	patchMock.mockReset();
 	postMock.mockReset();
 	getMock.mockResolvedValue({
-		data: { reviewerGeneration: "", reviewerHandleId: "", reviewerHarness: "", reviews: [] },
+		data: { reviewerHandleId: "", reviewerHarness: "", reviews: [] },
 		error: undefined,
 	});
 	patchMock.mockResolvedValue({ data: { ok: true }, error: undefined, response: { status: 200 } });
@@ -593,7 +592,7 @@ describe("SessionInspector Activity section", () => {
 				return { data: { sessionId: "sess-1", prs: summaries }, error: undefined };
 			}
 			return {
-				data: { reviewerGeneration: "", reviewerHandleId: "", reviewerHarness: "", reviews: [] },
+				data: { reviewerHandleId: "", reviewerHarness: "", reviews: [] },
 				error: undefined,
 			};
 		});
@@ -721,7 +720,6 @@ describe("SessionInspector reviews tab", () => {
 		postMock.mockResolvedValue({
 			response: { status: 201 },
 			data: {
-				reviewerGeneration: "batch-new",
 				reviewerHandleId: "reviewer-pane",
 				reviewerHarness: "codex",
 				reviews: [
@@ -804,7 +802,6 @@ describe("SessionInspector reviews tab", () => {
 			[],
 			"reviewer-pane",
 			[{ ...reviewState(3, "needs_review"), latestRun: failedReplacement }],
-			"batch-old-live",
 			"claude-code",
 		);
 		const onOpenReviewerTerminal = vi.fn();
@@ -816,7 +813,6 @@ describe("SessionInspector reviews tab", () => {
 		await userEvent.click(await screen.findByRole("button", { name: "Open terminal" }));
 
 		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({
-			generation: "batch-old-live",
 			handleId: "reviewer-pane",
 			harness: "claude-code",
 		});
@@ -826,7 +822,7 @@ describe("SessionInspector reviews tab", () => {
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/sessions/{sessionId}/reviews") {
 				return {
-					data: { reviewerGeneration: "", reviewerHandleId: "", reviewerHarness: "", reviews: [] },
+					data: { reviewerHandleId: "", reviewerHarness: "", reviews: [] },
 				};
 			}
 			if (path === "/api/v1/projects/{id}") {
@@ -967,7 +963,6 @@ describe("SessionInspector reviews tab", () => {
 		postMock.mockResolvedValue({
 			response: { status: 200 },
 			data: {
-				reviewerGeneration: "batch-current",
 				reviewerHandleId: "reviewer-pane",
 				reviewerHarness: "codex",
 				reviews: [],

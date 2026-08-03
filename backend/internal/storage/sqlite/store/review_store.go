@@ -23,8 +23,7 @@ func (s *Store) UpsertReview(ctx context.Context, r domain.Review) error {
 		ProjectID:          r.ProjectID,
 		Harness:            r.Harness,
 		PRURL:              r.PRURL,
-		ReviewerHandleID:   r.ReviewerHandleID,
-		ReviewerGeneration: r.ReviewerGeneration,
+		ReviewerHandleID: r.ReviewerHandleID,
 		CreatedAt:          r.CreatedAt,
 		UpdatedAt:          r.UpdatedAt,
 	})
@@ -199,8 +198,7 @@ func reviewFromRow(r gen.Review) domain.Review {
 		ProjectID:          r.ProjectID,
 		Harness:            r.Harness,
 		PRURL:              r.PRURL,
-		ReviewerHandleID:   r.ReviewerHandleID,
-		ReviewerGeneration: r.ReviewerGeneration,
+		ReviewerHandleID: r.ReviewerHandleID,
 		CreatedAt:          r.CreatedAt,
 		UpdatedAt:          r.UpdatedAt,
 	}

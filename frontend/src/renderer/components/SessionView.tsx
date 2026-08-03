@@ -454,10 +454,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									}
 									isInspectorVisible={isInspectorOpen}
 									onOpenFiles={handleOpenFiles}
-									onOpenReviewerTerminal={({ generation, handleId, harness }) =>
-										setTerminalTarget({
-											generation,
-											kind: "reviewer",
+								onOpenReviewerTerminal={({ handleId, harness }) =>
+									setTerminalTarget({
+										kind: "reviewer",
 											handleId,
 											harness,
 											sessionId,

@@ -31,13 +31,24 @@ func (q *Queries) CancelRunningReviewRunsBySession(ctx context.Context, arg Canc
 }
 
 const getReviewBySession = `-- name: GetReviewBySession :one
-SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, created_at, updated_at, reviewer_generation
+SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, created_at, updated_at
 FROM review WHERE session_id = ?
 `
 
-func (q *Queries) GetReviewBySession(ctx context.Context, sessionID domain.SessionID) (Review, error) {
+type GetReviewBySessionRow struct {
+	ID               string
+	SessionID        domain.SessionID
+	ProjectID        domain.ProjectID
+	Harness          domain.ReviewerHarness
+	PRURL            string
+	ReviewerHandleID string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+func (q *Queries) GetReviewBySession(ctx context.Context, sessionID domain.SessionID) (GetReviewBySessionRow, error) {
 	row := q.db.QueryRowContext(ctx, getReviewBySession, sessionID)
-	var i Review
+	var i GetReviewBySessionRow
 	err := row.Scan(
 		&i.ID,
 		&i.SessionID,
@@ -47,7 +58,6 @@ func (q *Queries) GetReviewBySession(ctx context.Context, sessionID domain.Sessi
 		&i.ReviewerHandleID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.ReviewerGeneration,
 	)
 	return i, err
 }
@@ -347,26 +357,24 @@ func (q *Queries) UpdateReviewRunResult(ctx context.Context, arg UpdateReviewRun
 }
 
 const upsertReview = `-- name: UpsertReview :exec
-INSERT INTO review (id, session_id, project_id, harness, pr_url, reviewer_handle_id, reviewer_generation, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO review (id, session_id, project_id, harness, pr_url, reviewer_handle_id, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (session_id) DO UPDATE SET
     harness = excluded.harness,
     pr_url = excluded.pr_url,
     reviewer_handle_id = excluded.reviewer_handle_id,
-    reviewer_generation = excluded.reviewer_generation,
     updated_at = excluded.updated_at
 `
 
 type UpsertReviewParams struct {
-	ID                 string
-	SessionID          domain.SessionID
-	ProjectID          domain.ProjectID
-	Harness            domain.ReviewerHarness
-	PRURL              string
-	ReviewerHandleID   string
-	ReviewerGeneration string
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	ID               string
+	SessionID        domain.SessionID
+	ProjectID        domain.ProjectID
+	Harness          domain.ReviewerHarness
+	PRURL            string
+	ReviewerHandleID string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 func (q *Queries) UpsertReview(ctx context.Context, arg UpsertReviewParams) error {
@@ -377,7 +385,6 @@ func (q *Queries) UpsertReview(ctx context.Context, arg UpsertReviewParams) erro
 		arg.Harness,
 		arg.PRURL,
 		arg.ReviewerHandleID,
-		arg.ReviewerGeneration,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)

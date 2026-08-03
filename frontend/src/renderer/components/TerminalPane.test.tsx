@@ -19,7 +19,6 @@ const {
 	attachMock,
 	getMock,
 	postMock,
-	reviewResponses,
 	terminalError,
 	terminalState,
 	replaySettled,
@@ -30,18 +29,8 @@ const {
 } = vi.hoisted(
 	() => ({
 		attachMock: vi.fn(() => vi.fn()),
-		getMock: vi.fn(
-			async (
-				_path: string,
-				options: { params?: { path?: { sessionId?: string } } },
-			) => ({
-				data:
-					reviewResponses.get(options.params?.path?.sessionId ?? "") ??
-					{ reviewerGeneration: "", reviewerHandleId: "", reviewerHarness: "", reviews: [] },
-			}),
-		),
+		getMock: vi.fn(async () => ({ data: undefined })),
 		postMock: vi.fn(),
-		reviewResponses: new Map<string, unknown>(),
 		terminalError: { value: undefined as string | undefined },
 		terminalState: { value: "idle" },
 		replaySettled: { value: true },
@@ -137,7 +126,6 @@ beforeEach(() => {
 	getMock.mockClear();
 	postMock.mockReset();
 	postMock.mockResolvedValue({ data: {} });
-	reviewResponses.clear();
 	terminalError.value = undefined;
 	terminalState.value = "idle";
 	replaySettled.value = true;
@@ -195,16 +183,6 @@ function renderCachedPane({
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	queryClient.setQueryData(workspaceQueryKey, workspaceWithSessions(sessions));
 	queryClient.setQueryData(shellTerminalsQueryKey, shellTerminals);
-	if (session && terminalTarget?.kind === "reviewer") {
-		reviewResponses.set(
-			session.id,
-			reviewerResponse(terminalTarget.handleId, terminalTarget.generation),
-		);
-		queryClient.setQueryData(
-			["session-reviews", session.id],
-			reviewerResponse(terminalTarget.handleId, terminalTarget.generation),
-		);
-	}
 	const previousAO = window.ao;
 	window.ao = {} as typeof window.ao;
 
@@ -234,37 +212,6 @@ function renderCachedPane({
 		restore: () => {
 			window.ao = previousAO;
 		},
-	};
-}
-
-function reviewerResponse(handleId: string, generation: string) {
-	return {
-		reviewerGeneration: generation,
-		reviewerHandleId: handleId,
-		reviewerHarness: "codex",
-		reviews: [
-			{
-				latestRun: {
-					batchId: generation,
-					body: "",
-					createdAt: "2026-07-31T00:00:00Z",
-					githubReviewId: "",
-					harness: "codex",
-					id: `${generation}-run`,
-					prUrl: "https://github.com/example/repo/pull/1",
-					reviewId: `${generation}-review`,
-					sessionId: "sess-a",
-					status: "delivered",
-					targetSha: generation,
-					verdict: "approved",
-				},
-				prNumber: 1,
-				prUrl: "https://github.com/example/repo/pull/1",
-				status: "up_to_date",
-				targetSha: generation,
-				title: "Review",
-			},
-		],
 	};
 }
 
@@ -525,139 +472,23 @@ describe("TerminalCacheProvider", () => {
 		}
 	});
 
-	it("rejects a reviewer target retained from the previous route before assigning cache ownership", async () => {
-		const staleTarget = {
-			generation: "review-batch-a",
-			handleId: "review-handle-a",
+	it("does not retain reviewer terminals in the worker cache", async () => {
+		const reviewer = {
+			handleId: "stable-reviewer-handle",
 			harness: "codex",
 			kind: "reviewer",
 			sessionId: sessionA.id,
-		} as unknown as TerminalTarget;
-		const view = renderCachedPane({
-			session: sessionB,
-			sessions: [sessionA, sessionB],
-			terminalTarget: staleTarget,
-		});
-		try {
-			await waitFor(() => activeXterm());
-			const keys = [...document.querySelectorAll<HTMLElement>("[data-terminal-cache-key]")].map(
-				(element) => element.dataset.terminalCacheKey,
-			);
-			expect(keys).toContain(`session:${sessionB.id}:worker|handle:${sessionB.terminalHandleId}`);
-			expect(keys.some((key) => key?.includes("review-handle-a"))).toBe(false);
-		} finally {
-			view.restore();
-		}
-	});
-
-	it("replaces an exited reviewer renderer when its run generation changes", async () => {
-		const reviewer = (generation: string) =>
-			({
-				generation,
-				handleId: "stable-reviewer-handle",
-				harness: "codex",
-				kind: "reviewer",
-				sessionId: sessionA.id,
-			}) as unknown as TerminalTarget;
+		} satisfies TerminalTarget;
 		const view = renderCachedPane({
 			session: sessionA,
 			sessions: [sessionA],
-			terminalTarget: reviewer("batch-1"),
+			terminalTarget: reviewer,
 		});
 		try {
 			const first = await waitFor(() => activeXterm());
-			reviewResponses.set(sessionA.id, reviewerResponse("stable-reviewer-handle", "batch-2"));
-			act(() => {
-				view.queryClient.setQueryData(
-					["session-reviews", sessionA.id],
-					reviewerResponse("stable-reviewer-handle", "batch-2"),
-				);
-			});
-			view.show(sessionA, reviewer("batch-2"));
-			await waitFor(() => expect(activeXterm()).not.toBe(first));
-			expect(first.isConnected).toBe(false);
-			expect(xtermMounts.value).toBe(2);
-		} finally {
-			view.restore();
-		}
-	});
-
-	it("disposes a parked reviewer when authoritative review state replaces its generation", async () => {
-		const reviewer = {
-			generation: "batch-1",
-			handleId: "stable-reviewer-handle",
-			harness: "codex",
-			kind: "reviewer",
-			sessionId: sessionA.id,
-		} as unknown as TerminalTarget;
-		const view = renderCachedPane({
-			session: sessionA,
-			sessions: [sessionA],
-			terminalTarget: reviewer,
-		});
-		try {
-			const retainedReviewer = await waitFor(() => activeXterm());
+			expect(document.querySelector("[data-terminal-cache-key*='reviewer']")).toBeNull();
 			view.show(sessionA, { kind: "worker" });
-			await waitFor(() => expect(activeXterm()).not.toBe(retainedReviewer));
-
-			reviewResponses.set(
-				sessionA.id,
-				reviewerResponse("stable-reviewer-handle", "batch-2"),
-			);
-			await act(async () => {
-				await view.queryClient.refetchQueries({
-					queryKey: ["session-reviews", sessionA.id],
-				});
-			});
-
-			await waitFor(() => expect(retainedReviewer.isConnected).toBe(false));
-			expect(
-				document.querySelector(
-					`[data-terminal-cache-key*="generation:batch-1"]`,
-				),
-			).not.toBeInTheDocument();
-		} finally {
-			view.restore();
-		}
-	});
-
-	it("keeps an active superseded reviewer visible until the user leaves it", async () => {
-		const reviewer = {
-			generation: "batch-1",
-			handleId: "stable-reviewer-handle",
-			harness: "codex",
-			kind: "reviewer",
-			sessionId: sessionA.id,
-		} as unknown as TerminalTarget;
-		const view = renderCachedPane({
-			session: sessionA,
-			sessions: [sessionA],
-			terminalTarget: reviewer,
-		});
-		try {
-			const activeReviewer = await waitFor(() => activeXterm());
-			await waitFor(() => expect(getMock).toHaveBeenCalled());
-			const replacement = reviewerResponse("stable-reviewer-handle", "batch-2");
-			reviewResponses.set(sessionA.id, replacement);
-			await act(async () => {
-				await view.queryClient.refetchQueries({
-					queryKey: ["session-reviews", sessionA.id],
-				});
-			});
-			await waitFor(() =>
-				expect(
-					view.queryClient.getQueryData(["session-reviews", sessionA.id]),
-				).toEqual(replacement),
-			);
-			await act(async () => {
-				await new Promise((resolve) => setTimeout(resolve, 0));
-			});
-
-			expect(activeReviewer.isConnected).toBe(true);
-			expect(activeXterm()).toBe(activeReviewer);
-
-			view.show(sessionA, { kind: "worker" });
-			await waitFor(() => expect(activeReviewer.isConnected).toBe(false));
+			await waitFor(() => expect(first.isConnected).toBe(false));
 		} finally {
 			view.restore();
 		}

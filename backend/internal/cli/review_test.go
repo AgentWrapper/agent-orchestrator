@@ -329,7 +329,6 @@ func TestReviewListJSONPreservesResponse(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, _ := reviewServer(t, http.StatusOK, `{
 		"reviewerHandleId":"handle-1",
-		"reviewerGeneration":"batch-1",
 		"reviewerHarness":"codex",
 		"reviews":[{
 			"prUrl":"https://github.com/example/repo/pull/42",
@@ -351,7 +350,7 @@ func TestReviewListJSONPreservesResponse(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &res); err != nil {
 		t.Fatalf("decode output: %v", err)
 	}
-	if res.ReviewerHandleID != "handle-1" || res.ReviewerGeneration != "batch-1" || res.ReviewerHarness != "codex" || len(res.Reviews) != 1 {
+	if res.ReviewerHandleID != "handle-1" || res.ReviewerHarness != "codex" || len(res.Reviews) != 1 {
 		t.Fatalf("response = %+v", res)
 	}
 	if res.Reviews[0].LatestRun == nil || res.Reviews[0].LatestRun.ReviewID != "review-1" {

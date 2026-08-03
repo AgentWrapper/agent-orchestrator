@@ -233,7 +233,7 @@ func TestTriggerSpawnsNewReviewerAndRecordsRunAfterLaunch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
-	if !res.Created || res.ReviewerHandleID != "review-mer-1" || res.ReviewerGeneration != res.Run.BatchID || res.ReviewerHarness != domain.ReviewerClaudeCode {
+	if !res.Created || res.ReviewerHandleID != "review-mer-1" || res.ReviewerHarness != domain.ReviewerClaudeCode {
 		t.Fatalf("result = %+v", res)
 	}
 	if !launcher.spawned || launcher.notified {
@@ -651,7 +651,7 @@ func TestTriggerLaunchFailureRecordsFailedRun(t *testing.T) {
 	}
 }
 
-func TestTriggerLaunchFailureDoesNotAdvanceReviewerGeneration(t *testing.T) {
+func TestTriggerLaunchFailurePreservesReviewerOwner(t *testing.T) {
 	tests := []struct {
 		name     string
 		launcher *fakeLauncher
@@ -680,11 +680,10 @@ func TestTriggerLaunchFailureDoesNotAdvanceReviewerGeneration(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			store := &fakeStore{
 				review: &domain.Review{
-					ID:                 "rev-1",
-					SessionID:          "mer-1",
-					Harness:            domain.ReviewerClaudeCode,
-					ReviewerHandleID:   "review-mer-1",
-					ReviewerGeneration: "batch-old",
+					ID:               "rev-1",
+					SessionID:        "mer-1",
+					Harness:          domain.ReviewerClaudeCode,
+					ReviewerHandleID: "review-mer-1",
 				},
 				runs: []domain.ReviewRun{{
 					ID: "run-old", BatchID: "batch-old", ReviewID: "rev-1", SessionID: "mer-1",
@@ -708,8 +707,8 @@ func TestTriggerLaunchFailureDoesNotAdvanceReviewerGeneration(t *testing.T) {
 			if err != nil {
 				t.Fatalf("List: %v", err)
 			}
-			if got.ReviewerHandleID != "review-mer-1" || got.ReviewerGeneration != "batch-old" || got.ReviewerHarness != domain.ReviewerClaudeCode {
-				t.Fatalf("reviewer identity = handle %q generation %q harness %q, want old successful owner", got.ReviewerHandleID, got.ReviewerGeneration, got.ReviewerHarness)
+			if got.ReviewerHandleID != "review-mer-1" || got.ReviewerHarness != domain.ReviewerClaudeCode {
+				t.Fatalf("reviewer identity = handle %q harness %q, want old successful owner", got.ReviewerHandleID, got.ReviewerHarness)
 			}
 		})
 	}
@@ -820,7 +819,7 @@ func TestTriggerSkipsApprovedAndRunningCurrentHead(t *testing.T) {
 	store := &fakeStore{
 		review: &domain.Review{
 			ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode,
-			ReviewerHandleID: "review-mer-1", ReviewerGeneration: "running",
+			ReviewerHandleID: "review-mer-1",
 		},
 		runs: []domain.ReviewRun{
 			{ID: "approved", ReviewID: "rev-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1", Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved, CreatedAt: time.Unix(1, 0)},
@@ -846,9 +845,6 @@ func TestTriggerSkipsApprovedAndRunningCurrentHead(t *testing.T) {
 	}
 	if len(res.Reviews) != 2 || res.Reviews[0].Status != ReviewStateUpToDate || res.Reviews[1].Status != ReviewStateRunning {
 		t.Fatalf("review states = %+v", res.Reviews)
-	}
-	if res.ReviewerGeneration != "running" {
-		t.Fatalf("reviewer generation = %q, want newest full-history run", res.ReviewerGeneration)
 	}
 }
 
@@ -906,7 +902,7 @@ func TestListReturnsHandleAndRuns(t *testing.T) {
 	store := &fakeStore{
 		review: &domain.Review{
 			ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode,
-			ReviewerHandleID: "review-mer-1", ReviewerGeneration: "batch-2",
+			ReviewerHandleID: "review-mer-1",
 		},
 		runs: []domain.ReviewRun{
 			{
@@ -926,7 +922,7 @@ func TestListReturnsHandleAndRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if got.ReviewerHandleID != "review-mer-1" || got.ReviewerGeneration != "batch-2" || got.ReviewerHarness != domain.ReviewerClaudeCode || len(got.Runs) != 2 {
+	if got.ReviewerHandleID != "review-mer-1" || got.ReviewerHarness != domain.ReviewerClaudeCode || len(got.Runs) != 2 {
 		t.Fatalf("list = %+v", got)
 	}
 }
