@@ -810,8 +810,6 @@
 	"files.expandFile": "Expand {{file}}",
 	"files.loadingDiff": "Loading diff...",
 	"files.error.loadFile": "Unable to load this file.",
-	"files.pathCopied": "Path copied",
-	"files.copyPath": "Copy path for {{path}}",
 	"files.noChangesHead": "No changes against HEAD.",
 	"files.noChangesBase": "No changes against base.",
 	"files.noneChanged": "No changed files found.",
