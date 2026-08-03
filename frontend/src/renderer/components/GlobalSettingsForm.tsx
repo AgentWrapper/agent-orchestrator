@@ -1,3 +1,5 @@
+export type GlobalSettingsSection = "general" | "keyboard" | "updates" | "developer" | "help" | "all";
+
 import { useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
@@ -14,7 +16,7 @@ import { UpdatesSection } from "./settings/UpdatesSection";
 import { KeyboardShortcutsSettingsDialog } from "./settings/KeyboardShortcutsSettingsDialog";
 import { ShellTopbar } from "./ShellTopbar";
 
-export function GlobalSettingsForm() {
+export function GlobalSettingsForm({ section: _section }: { section?: Exclude<GlobalSettingsSection, "all"> } = {}) {
 	const navigate = useNavigate();
 	const { t } = useTranslation();
 	const [mobileOpen, setMobileOpen] = useState(false);

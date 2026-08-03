@@ -39,3 +39,6 @@ export function TopbarButton({
 export function TopbarKillError({ className, ...props }: React.HTMLAttributes<HTMLSpanElement>) {
 	return <span className={cn("text-caption text-destructive", className)} role="alert" {...props} />;
 }
+
+export const topbarProjectLabelClass =
+	"shrink-0 text-sm font-semibold leading-none text-foreground";

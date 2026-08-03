@@ -108,7 +108,7 @@ type SidebarProps = {
 	isOverlay?: boolean;
 	underTopbar?: boolean;
 	/** Chrome height to clear when underTopbar is set. Defaults to the 40px Reverb workspace bar. */
-	topbarOffset?: "toolbar" | "titlebar";
+	topbarOffset?: "toolbar" | "titlebar" | "trafficLights";
 	onPreviewLeave?: () => void;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];

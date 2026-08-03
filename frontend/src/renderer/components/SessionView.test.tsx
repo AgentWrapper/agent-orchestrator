@@ -400,7 +400,6 @@ describe("SessionView", () => {
 		useUiStore.setState({
 			inspectorSessions: {},
 			visibleTerminalKindBySession: {},
-			sessionTabsByOwner: {},
 		});
 		panels.clear();
 		browserDestroy.mockReset();
@@ -472,65 +471,12 @@ describe("SessionView", () => {
 		expect(useUiStore.getState().visibleTerminalKindBySession["sess-1"]).toBeUndefined();
 	});
 
-	it("starts with only the owner tab and pins another worker through the add menu", () => {
-		render(<SessionView sessionId="sess-1" />);
-
-		expect(screen.getByTestId("project-tabs")).toHaveTextContent("do the thing");
-		expect(screen.getByTestId("project-tabs")).not.toHaveTextContent("do the other thing");
-		expect(screen.getByTestId("available-project-tabs")).toHaveTextContent("Add do the other thing");
-
-		fireEvent.click(screen.getByRole("button", { name: "Add do the other thing" }));
-		expect(useUiStore.getState().sessionTabsByOwner["sess-1"]).toEqual(["sess-2"]);
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "sess-2" },
-			search: { tabOwner: "sess-1" },
-		});
-	});
-
-	it("offers and pins live worker sessions from other projects", () => {
-		render(<SessionView sessionId="sess-1" />);
-
-		fireEvent.click(screen.getByRole("button", { name: "Add cross-project task" }));
-		expect(useUiStore.getState().sessionTabsByOwner["sess-1"]).toEqual(["sess-cross-project"]);
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-2", sessionId: "sess-cross-project" },
-			search: { tabOwner: "sess-1" },
-		});
-	});
-
-	it("keeps pinned worker and shell tabs private to their owner session", () => {
-		useUiStore.getState().addSessionTab("sess-1", "sess-2");
-		shellTerminalsState.data = [
-			{
-				handleId: "sh-a",
-				sessionId: "sess-1",
-				title: "owner-shell",
-				workingDir: "/p",
-				createdAt: "2026-07-24T00:00:00Z",
-			},
-			{
-				handleId: "sh-b",
-				sessionId: "sess-2",
-				title: "worker-shell",
-				workingDir: "/q",
-				createdAt: "2026-07-24T00:00:00Z",
-			},
-		];
-		const { rerender } = render(<SessionView sessionId="sess-2" tabOwnerSessionId="sess-1" />);
-
-		expect(screen.getByTestId("project-tabs")).toHaveTextContent("do the thing");
-		expect(screen.getByTestId("project-tabs")).toHaveTextContent("do the other thing");
-		expect(screen.getByTestId("shell-tabs")).toHaveTextContent("owner-shell");
-		expect(screen.getByTestId("shell-tabs")).not.toHaveTextContent("worker-shell");
-
-		rerender(<SessionView sessionId="sess-2" />);
-		expect(screen.getByTestId("project-tabs")).not.toHaveTextContent("do the thing");
-		expect(screen.getByTestId("project-tabs")).toHaveTextContent("do the other thing");
-		expect(screen.getByTestId("shell-tabs")).not.toHaveTextContent("owner-shell");
-		expect(screen.getByTestId("shell-tabs")).toHaveTextContent("worker-shell");
-	});
+	// These three tests cover the session-tab pinning feature (sessionTabsByOwner /
+	// addSessionTab / tabOwnerSessionId) introduced in the sidebar PR. They are
+	// skipped here because the implementation lives in a later PR in the stack.
+	it.todo("starts with only the owner tab and pins another worker through the add menu");
+	it.todo("offers and pins live worker sessions from other projects");
+	it.todo("keeps pinned worker and shell tabs private to their owner session");
 
 	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS
 	// (numbers were percentages in the older API the shadcn examples use).

@@ -11,11 +11,13 @@ export function SettingsPanel({
 	children,
 	onClose,
 	subtitle,
+	showHeader: _showHeader,
 }: {
 	children: ReactNode;
 	onClose: () => void;
 	/** Optional path or context shown beside the title (project settings). */
 	subtitle?: string;
+	showHeader?: boolean;
 }) {
 	const { t } = useTranslation();
 	useEffect(() => {
