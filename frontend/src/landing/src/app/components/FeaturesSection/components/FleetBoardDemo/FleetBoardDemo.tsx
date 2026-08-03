@@ -2,6 +2,7 @@
 
 import { LayoutGroup, motion } from "motion/react";
 import { GitBranch } from "lucide-react";
+import Image from "next/image";
 import { useEffect, useState } from "react";
 import { featurePreviewTokens } from "../FeaturePreviewShell";
 
@@ -171,7 +172,14 @@ function BoardCard({
 			className="w-full cursor-pointer rounded-lg border border-[var(--preview-border)] bg-[var(--preview-card)] text-left outline-none transition-[border-color] hover:border-[var(--preview-border-strong)] focus-visible:ring-2 focus-visible:ring-[var(--preview-ring)]"
 		>
 			<div className="flex items-start gap-2 px-2.5 pb-2 pt-2.5">
-				<img src={icon} alt="" className="mt-0.5 size-3.5 shrink-0 rounded-[3px]" draggable="false" />
+				<Image
+					src={icon}
+					alt=""
+					width={14}
+					height={14}
+					className="mt-0.5 size-3.5 shrink-0 rounded-[3px]"
+					draggable={false}
+				/>
 				<div className="min-w-0 flex-1">
 					<div className="line-clamp-2 text-[10px] font-semibold leading-[14px] text-[var(--preview-card-foreground)]">
 						{title}
