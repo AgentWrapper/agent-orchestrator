@@ -50,12 +50,16 @@ describe("MakerNSIS", () => {
 		expect(String(options.config.nsis.include)).toMatch(/nsis-keep-user-data\.nsh$/);
 	});
 
-	it("forces deleteAppDataOnUninstall false even when config asks to wipe AppData", async () => {
+	it("forces deleteAppDataOnUninstall false and keep-user-data include even when config asks to wipe", async () => {
 		const maker = new MakerNSIS(
 			{
 				appId: "dev.agent-orchestrator.desktop",
 				// Caller must not be able to re-enable wipe of user records on uninstall.
-				nsis: { deleteAppDataOnUninstall: true, oneClick: true },
+				nsis: {
+					deleteAppDataOnUninstall: true,
+					oneClick: true,
+					include: "/tmp/hostile-wipe.nsh",
+				},
 			},
 			["win32"],
 		);
@@ -64,8 +68,9 @@ describe("MakerNSIS", () => {
 
 		const [, options] = buildForge.mock.calls.at(-1)!;
 		expect(options.config.nsis.deleteAppDataOnUninstall).toBe(false);
-		// oneClick from the caller merge is still allowed; only the wipe flag is forced off.
+		// oneClick from the caller merge is still allowed; wipe + include are forced safe.
 		expect(options.config.nsis.oneClick).toBe(true);
+		expect(String(options.config.nsis.include)).toMatch(/nsis-keep-user-data\.nsh$/);
 	});
 
 	it("forwards executableName so the Start menu shortcut targets the real binary (#2414)", async () => {

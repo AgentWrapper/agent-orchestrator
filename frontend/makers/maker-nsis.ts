@@ -72,14 +72,14 @@ export default class MakerNSIS extends MakerBase<MakerNSISConfig> {
 						allowToChangeInstallationDirectory: true,
 						createDesktopShortcut: true,
 						createStartMenuShortcut: true,
-						// customUnInstall: log that ~/.ao is preserved (see nsis-keep-user-data.nsh).
-						include: path.join(__dirname, "nsis-keep-user-data.nsh"),
 						...cfg.nsis,
-						// Forced after the caller merge: durable AO state is ~/.ao only
-						// (projects/sessions/settings). Never wipe AppData on uninstall —
-						// reinstall must keep project records without a manual backup.
-						// electron-builder only honors this for one-click uninstallers, but
-						// we still pin it so a future oneClick flip cannot reintroduce wipe.
+						// Forced AFTER caller merge so reinstall cannot wipe user projects:
+						// durable AO state lives under ~/.ao (not $INSTDIR, not %APPDATA%).
+						// electron-builder's deleteAppData only removes $APPDATA\<app> for
+						// one-click uninstallers; we still pin false so a oneClick flip
+						// cannot reintroduce wipe. The include only DetailPrints that
+						// $PROFILE\.ao is kept — it never RMDirs it.
+						include: path.join(__dirname, "nsis-keep-user-data.nsh"),
 						deleteAppDataOnUninstall: false,
 					},
 				},

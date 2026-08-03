@@ -184,6 +184,10 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 // a live daemon may already own. Migrations are validated by the daemon at
 // startup and surfaced through /readyz, so doctor only confirms whether the
 // database file exists yet.
+//
+// The message also documents the reinstall contract: ao.db lives under the
+// data dir (~/.ao/data by default), outside the desktop install folder, so
+// uninstall/reinstall of the app binary leaves project records intact.
 func checkStore(dataDir string) doctorCheck {
 	dbPath := filepath.Join(dataDir, "ao.db")
 	info, err := os.Stat(dbPath)
@@ -191,12 +195,12 @@ func checkStore(dataDir string) doctorCheck {
 	case err == nil:
 		return doctorCheck{
 			Level: doctorPass, Section: doctorSectionCore, Name: "sqlite",
-			Message: fmt.Sprintf("%s (%d bytes); migrations are applied by the daemon at startup", dbPath, info.Size()),
+			Message: fmt.Sprintf("%s (%d bytes); survives app reinstall (state is outside the install dir); migrations are applied by the daemon at startup", dbPath, info.Size()),
 		}
 	case errors.Is(err, fs.ErrNotExist):
 		return doctorCheck{
 			Level: doctorWarn, Section: doctorSectionCore, Name: "sqlite",
-			Message: "database not created yet; run `ao start` to initialize and migrate it",
+			Message: "database not created yet; run `ao start` to initialize and migrate it (reinstall alone does not create or wipe this file)",
 		}
 	default:
 		return doctorCheck{Level: doctorFail, Section: doctorSectionCore, Name: "sqlite", Message: err.Error()}
