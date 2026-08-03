@@ -322,7 +322,7 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 							}
 						/>
 						<AgentModelField
-							role="Worker"
+							role="worker"
 							agentId={form.workerAgent}
 							projectId={projectId}
 							model={form.workerModel}
@@ -347,7 +347,7 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 							}
 						/>
 						<AgentModelField
-							role="Orchestrator"
+							role="orchestrator"
 							agentId={form.orchestratorAgent}
 							projectId={projectId}
 							model={form.orchestratorModel}
@@ -509,7 +509,7 @@ function AgentModelField({
 	onModelChange,
 	onModeChange,
 }: {
-	role: "Worker" | "Orchestrator";
+	role: "worker" | "orchestrator";
 	agentId: string;
 	projectId: string;
 	model: string;
@@ -517,6 +517,7 @@ function AgentModelField({
 	onModelChange: (value: string) => void;
 	onModeChange: (value: string) => void;
 }) {
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [customAgentId, setCustomAgentId] = useState<string | null>(null);
 	const query = useQuery(agentModelsQueryOptions(agentId, projectId));
@@ -538,25 +539,25 @@ function AgentModelField({
 		onSuccess: (catalog) => queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), catalog),
 	});
 	const isMode = catalog?.selectionMode === "mode";
-	const label = `${role} ${isMode ? "mode" : "model"}`;
-	const datalistID = `${role.toLowerCase()}-model-options`;
+	const label = t(`settings.models.${role}${isMode ? "Mode" : "Model"}`);
+	const datalistID = `${role}-model-options`;
 	const warning =
 		(refreshMutation.isError
 			? refreshMutation.error instanceof Error
 				? refreshMutation.error.message
-				: "Could not refresh models."
+				: t("settings.models.refreshFailed")
 			: undefined) ??
 		(revalidationQuery.isError
 			? revalidationQuery.error instanceof Error
 				? revalidationQuery.error.message
-				: "Could not validate cached models."
+				: t("settings.models.validateFailed")
 			: undefined) ??
 		catalog?.warning ??
-		(query.isError ? (query.error instanceof Error ? query.error.message : "Could not load models.") : undefined);
+		(query.isError ? (query.error instanceof Error ? query.error.message : t("settings.models.loadFailed")) : undefined);
 
 	if (isMode) {
 		const options = [
-			{ value: "__default__", label: "Agent default" },
+			{ value: "__default__", label: t("settings.models.agentDefault") },
 			...(catalog.models ?? []).map((item) => ({ value: item.id, label: item.label })),
 		];
 		return (
@@ -625,17 +626,17 @@ function AgentModelField({
 									onModelChange(event.target.value);
 									onModeChange("");
 								}}
-								placeholder={query.isFetching ? "Loading models…" : "(agent default)"}
+								placeholder={query.isFetching ? t("settings.models.loading") : t("settings.project.agentDefault")}
 							/>
 							{hasCatalog && (
 								<AgentModelCombobox
-									aria-label={`${label} options`}
+									aria-label={t("settings.models.optionsAria", { label })}
 									value={model}
 									models={catalog.models}
 									allowCustom={catalog.allowCustom}
 									onChange={selectCatalogModel}
 									onCustom={selectCustomModel}
-									triggerLabel="Browse"
+									triggerLabel={t("settings.models.browse")}
 									triggerClassName="shrink-0"
 								/>
 							)}
@@ -665,11 +666,12 @@ function ModelRefreshButton({
 	disabled: boolean;
 	onClick: () => void;
 }) {
+	const { t } = useTranslation();
 	return (
 		<button
 			type="button"
-			aria-label={`Refresh ${label.toLowerCase()} list`}
-			title={`Refresh ${label.toLowerCase()} list`}
+			aria-label={t("settings.models.refreshAria", { label: label.toLocaleLowerCase() })}
+			title={t("settings.models.refreshAria", { label: label.toLocaleLowerCase() })}
 			className="settings-option-trigger shrink-0 disabled:pointer-events-none disabled:opacity-50"
 			disabled={disabled || pending}
 			onClick={onClick}

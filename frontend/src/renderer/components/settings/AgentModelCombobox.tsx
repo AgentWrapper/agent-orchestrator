@@ -1,5 +1,6 @@
 import { ChevronDown } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { AgentModelCatalog } from "../../hooks/useAgentModelsQuery";
 import { cn } from "../../lib/utils";
 import {
@@ -58,6 +59,7 @@ export function AgentModelCombobox({
 	triggerClassName?: string;
 	"aria-label": string;
 }) {
+	const { t } = useTranslation();
 	const [search, setSearch] = useState("");
 	const normalizedSearch = normalizeSearch(search);
 	const searchIndex = useMemo(() => buildModelSearchIndex(models), [models]);
@@ -86,7 +88,7 @@ export function AgentModelCombobox({
 					)}
 					aria-label={ariaLabel}
 				>
-					<span className="min-w-0 truncate">{triggerLabel ?? selected?.label ?? "Agent default"}</span>
+					<span className="min-w-0 truncate">{triggerLabel ?? selected?.label ?? t("settings.models.agentDefault")}</span>
 					<ChevronDown className="size-icon-sm shrink-0 opacity-70" aria-hidden="true" />
 				</button>
 			</DropdownMenuTrigger>
@@ -97,17 +99,17 @@ export function AgentModelCombobox({
 				<div className="p-1" onKeyDown={(event) => event.stopPropagation()}>
 					<input
 						type="search"
-						aria-label={`Search ${ariaLabel.toLowerCase()}`}
+						aria-label={t("settings.models.searchAria", { label: ariaLabel.toLocaleLowerCase() })}
 						value={search}
 						onChange={(event) => setSearch(event.target.value)}
-						placeholder="Search models or providers…"
+						placeholder={t("settings.models.searchPlaceholder")}
 						className="settings-inline-input w-full"
 					/>
 				</div>
 
 				{normalizedSearch === "" && (
 					<DropdownMenuItem onSelect={() => onChange("")} className={modelItemClass(value === "")}>
-						Agent default
+						{t("settings.models.agentDefault")}
 					</DropdownMenuItem>
 				)}
 
@@ -127,7 +129,7 @@ export function AgentModelCombobox({
 											<span className="truncate text-settings-label">{item.label}</span>
 											{item.model.isDefault && (
 												<span className="rounded-full bg-settings-menu-selected px-1.5 py-0.5 text-micro text-settings-muted">
-													Default
+											{t("settings.models.default")}
 												</span>
 											)}
 										</div>
@@ -144,23 +146,26 @@ export function AgentModelCombobox({
 
 				{showCustomSearchAction && (
 					<DropdownMenuItem onSelect={() => onCustom(customSearchValue)} className={modelItemClass(false)}>
-						Use “{customSearchValue}” as a custom model
+						{t("settings.models.useCustom", { model: customSearchValue })}
 					</DropdownMenuItem>
 				)}
 				{normalizedSearch !== "" && rankedModels.length === 0 && !allowCustom && (
-					<p className="px-2 py-1.5 text-xs text-settings-muted">No matching models.</p>
+					<p className="px-2 py-1.5 text-xs text-settings-muted">{t("settings.models.noMatches")}</p>
 				)}
 				{normalizedSearch === "" && allowCustom && (
 					<>
 						<DropdownMenuSeparator />
 						<DropdownMenuItem onSelect={() => onCustom("")} className={modelItemClass(false)}>
-							Custom model…
+							{t("settings.models.custom")}
 						</DropdownMenuItem>
 					</>
 				)}
 				<p className="px-2 py-1.5 text-xs text-settings-muted" aria-live="polite">
-					Showing {visibleModels.length.toLocaleString()} of {rankedModels.length.toLocaleString()} matching models
-					{normalizedSearch === "" && rankedModels.length > MAX_VISIBLE_MODELS ? " — type to narrow" : ""}
+					{t("settings.models.matchingCount", {
+						visible: visibleModels.length.toLocaleString(),
+						total: rankedModels.length.toLocaleString(),
+					})}
+					{normalizedSearch === "" && rankedModels.length > MAX_VISIBLE_MODELS ? t("settings.models.typeToNarrow") : ""}
 				</p>
 			</DropdownMenuContent>
 		</DropdownMenu>
