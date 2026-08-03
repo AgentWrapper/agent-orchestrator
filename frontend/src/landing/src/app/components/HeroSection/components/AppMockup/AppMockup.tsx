@@ -81,6 +81,11 @@ const STATUS_COLORS = {
 	unknown: "#a78bfa",
 } as const;
 
+/** Initial sidebar width for the landing mockup (also seeds resize clamping). */
+const SIDEBAR_DEFAULT_WIDTH = 218;
+const SIDEBAR_MIN_WIDTH = 200;
+const SIDEBAR_MAX_WIDTH = 320;
+
 const previewAgents = {
 	claude: { agent: "Claude", icon: "/app-icons/agents/claude-code.svg" },
 	codex: { agent: "Codex", icon: "/app-icons/agents/codex.svg" },
@@ -665,10 +670,11 @@ const incomingCardsByTrack: Record<TrackId, StaticPreviewCard[]> = {
 
 const BASE_WIDTH = 1140;
 const BASE_HEIGHT = 615;
+const WINDOW_ASPECT = BASE_WIDTH / BASE_HEIGHT;
 const WINDOW_MARGIN = 4;
 // Shell can shrink with the hero frame; inner board stays at BASE_* and CSS-scales.
+// Keep the shell aspect-locked so the scaled board fills both axes (no letterbox gaps).
 const MIN_WINDOW_WIDTH = 280;
-const MIN_WINDOW_HEIGHT = 180;
 
 interface WindowState {
 	x: number;
@@ -677,23 +683,43 @@ interface WindowState {
 	height: number;
 }
 
+function sizeFromWidth(width: number): Pick<WindowState, "width" | "height"> {
+	return { width, height: width / WINDOW_ASPECT };
+}
+
+function sizeFromHeight(height: number): Pick<WindowState, "width" | "height"> {
+	return { width: height * WINDOW_ASPECT, height };
+}
+
+/** Fit a width into max bounds while preserving the design aspect ratio. */
+function fitAspectWidth(
+	desiredWidth: number,
+	maxWidth: number,
+	maxHeight: number,
+): Pick<WindowState, "width" | "height"> {
+	let { width, height } = sizeFromWidth(desiredWidth);
+	if (width > maxWidth) ({ width, height } = sizeFromWidth(maxWidth));
+	if (height > maxHeight) ({ width, height } = sizeFromHeight(maxHeight));
+	if (width > maxWidth) ({ width, height } = sizeFromWidth(maxWidth));
+
+	const minWidth = Math.min(MIN_WINDOW_WIDTH, maxWidth);
+	const minSized = sizeFromWidth(minWidth);
+	if (width < minSized.width && minSized.height <= maxHeight) {
+		({ width, height } = minSized);
+	}
+	return { width, height };
+}
+
 function clampWindowState(
 	state: WindowState,
 	containerWidth: number,
 	containerHeight: number,
 ): WindowState {
-	let { x, y, width, height } = state;
 	const maxWidth = Math.max(1, containerWidth - WINDOW_MARGIN * 2);
 	const maxHeight = Math.max(1, containerHeight - WINDOW_MARGIN * 2);
-	const minWidth = Math.min(MIN_WINDOW_WIDTH, maxWidth);
-	const minHeight = Math.min(MIN_WINDOW_HEIGHT, maxHeight);
-
-	width = Math.max(minWidth, Math.min(width, maxWidth));
-	height = Math.max(minHeight, Math.min(height, maxHeight));
-
-	x = Math.max(WINDOW_MARGIN, Math.min(x, containerWidth - width - WINDOW_MARGIN));
-	y = Math.max(WINDOW_MARGIN, Math.min(y, containerHeight - height - WINDOW_MARGIN));
-
+	const { width, height } = fitAspectWidth(state.width, maxWidth, maxHeight);
+	const x = Math.max(WINDOW_MARGIN, Math.min(state.x, containerWidth - width - WINDOW_MARGIN));
+	const y = Math.max(WINDOW_MARGIN, Math.min(state.y, containerHeight - height - WINDOW_MARGIN));
 	return { x, y, width, height };
 }
 
@@ -708,8 +734,7 @@ function createInitialWindowState(
 		availableWidth / BASE_WIDTH,
 		availableHeight / BASE_HEIGHT,
 	);
-	const width = BASE_WIDTH * scale;
-	const height = BASE_HEIGHT * scale;
+	const { width, height } = sizeFromWidth(BASE_WIDTH * scale);
 	return {
 		x: (containerWidth - width) / 2,
 		y: (containerHeight - height) / 2,
@@ -717,6 +742,12 @@ function createInitialWindowState(
 		height,
 	};
 }
+
+const mockupShellStyle = {
+	...previewTokenStyle,
+	"--mockup-design-w": `${BASE_WIDTH}px`,
+	"--mockup-design-h": `${BASE_HEIGHT}px`,
+} as CSSProperties;
 
 function useFloatingWindow(
 	outerRef: React.RefObject<HTMLElement | null>,
@@ -825,31 +856,30 @@ function useFloatingWindow(
 				next.x = interaction.initial.x + dx;
 				next.y = interaction.initial.y + dy;
 			} else if (interaction.type === "resize" && interaction.direction) {
-				if (interaction.direction.includes("e")) {
-					next.width = interaction.initial.width + dx;
+				const dir = interaction.direction;
+				const initial = interaction.initial;
+				const widthDelta = dir.includes("e") ? dx : dir.includes("w") ? -dx : 0;
+				const heightDelta = dir.includes("s") ? dy : dir.includes("n") ? -dy : 0;
+
+				// Aspect-lock: edge drags follow that axis; corners follow the dominant delta.
+				let sized: Pick<WindowState, "width" | "height">;
+				if (dir === "e" || dir === "w") {
+					sized = sizeFromWidth(initial.width + widthDelta);
+				} else if (dir === "n" || dir === "s") {
+					sized = sizeFromHeight(initial.height + heightDelta);
+				} else if (Math.abs(widthDelta) >= Math.abs(heightDelta)) {
+					sized = sizeFromWidth(initial.width + widthDelta);
+				} else {
+					sized = sizeFromHeight(initial.height + heightDelta);
 				}
-				if (interaction.direction.includes("s")) {
-					next.height = interaction.initial.height + dy;
+
+				next.width = sized.width;
+				next.height = sized.height;
+				if (dir.includes("w")) {
+					next.x = initial.x + initial.width - next.width;
 				}
-				if (interaction.direction.includes("w")) {
-					next.width = interaction.initial.width - dx;
-					next.x = interaction.initial.x + dx;
-				}
-				if (interaction.direction.includes("n")) {
-					next.height = interaction.initial.height - dy;
-					next.y = interaction.initial.y + dy;
-				}
-				if (interaction.direction === "n") {
-					next.width = interaction.initial.width;
-				}
-				if (interaction.direction === "s") {
-					next.width = interaction.initial.width;
-				}
-				if (interaction.direction === "w") {
-					next.height = interaction.initial.height;
-				}
-				if (interaction.direction === "e") {
-					next.height = interaction.initial.height;
+				if (dir.includes("n")) {
+					next.y = initial.y + initial.height - next.height;
 				}
 			}
 
@@ -1019,6 +1049,29 @@ function cardStatusColor(card: PreviewCard): string {
 	return STATUS_COLORS.idle;
 }
 
+/** Most-urgent board status for a track — same palette as kanban card dots. */
+function trackDotColor(cards: PreviewCard[]): string {
+	if (cards.length === 0) return STATUS_COLORS.idle;
+	let best = cards[0]!;
+	let bestRank = cardAttentionRank(best);
+	for (const card of cards) {
+		const rank = cardAttentionRank(card);
+		if (rank < bestRank) {
+			best = card;
+			bestRank = rank;
+		}
+	}
+	return cardStatusColor(best);
+}
+
+function cardAttentionRank(card: PreviewCard): number {
+	if (card.column === "action" || card.tone === "blocked") return 0;
+	if (card.activityState === "running") return 1;
+	if (card.column === "pending" || card.tone === "review") return 2;
+	if (card.column === "merge" || card.tone === "ready") return 3;
+	return 4;
+}
+
 function isIdleCard(card: PreviewCard): boolean {
 	return card.column === "working" && card.activityState !== "running";
 }
@@ -1030,27 +1083,6 @@ function randomDelay() {
 function randomItem<T>(items: T[]): T | null {
 	if (items.length === 0) return null;
 	return items[Math.floor(Math.random() * items.length)] ?? null;
-}
-
-function useImageReady(src: string) {
-	const [isReady, setIsReady] = useState(false);
-
-	useEffect(() => {
-		setIsReady(false);
-		const image = new window.Image();
-		image.src = src;
-
-		if (image.complete) {
-			setIsReady(true);
-			return;
-		}
-
-		const handleLoad = () => setIsReady(true);
-		image.addEventListener("load", handleLoad);
-		return () => image.removeEventListener("load", handleLoad);
-	}, [src]);
-
-	return isReady;
 }
 
 // The preview is a prop, not a real app. It exposes ~13 fake controls, so pull the
@@ -1100,7 +1132,13 @@ function PanelLeftIcon({ className = "" }: { className?: string }) {
 function ArrowLeftIcon({ className = "" }: { className?: string }) {
 	return (
 		<svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-			<path d="M10 3.5 5.5 8 10 12.5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.4" />
+			<path
+				d="M12.5 8H3.5M7 4.5 3.5 8 7 11.5"
+				stroke="currentColor"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+				strokeWidth="1.3"
+			/>
 		</svg>
 	);
 }
@@ -1108,7 +1146,13 @@ function ArrowLeftIcon({ className = "" }: { className?: string }) {
 function ArrowRightIcon({ className = "" }: { className?: string }) {
 	return (
 		<svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-			<path d="M6 3.5 10.5 8 6 12.5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.4" />
+			<path
+				d="M3.5 8h9M9 4.5 12.5 8 9 11.5"
+				stroke="currentColor"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+				strokeWidth="1.3"
+			/>
 		</svg>
 	);
 }
@@ -1193,14 +1237,6 @@ function BeakerIcon({ className = "" }: { className?: string }) {
 	);
 }
 
-function GitHubIcon({ className = "" }: { className?: string }) {
-	return (
-		<svg className={className} viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-			<path d="M8 0C3.58 0 0 3.67 0 8.2c0 3.62 2.29 6.69 5.47 7.78.4.08.55-.18.55-.4 0-.2-.01-.86-.01-1.56-2.01.38-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.16-.28-.16-.68-.56-.01-.57.63-.01 1.08.59 1.23.84.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.04 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.42 7.42 0 0 1 8 3.52c.68 0 1.36.09 1.99.27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.14-1.87 3.83-3.65 4.04.29.26.54.76.54 1.53 0 1.1-.01 1.99-.01 2.26 0 .22.15.48.55.4A8.15 8.15 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z" />
-		</svg>
-	);
-}
-
 function CheckIcon({ className = "" }: { className?: string }) {
 	return (
 		<svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -1249,6 +1285,34 @@ function SettingsIcon({ className = "" }: { className?: string }) {
 	);
 }
 
+function PinIcon({ className = "" }: { className?: string }) {
+	return (
+		<svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+			<path
+				d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1z"
+				stroke="currentColor"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+				strokeWidth="1.75"
+			/>
+		</svg>
+	);
+}
+
+function FolderOpenIcon({ className = "" }: { className?: string }) {
+	return (
+		<svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+			<path
+				d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+				stroke="currentColor"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+				strokeWidth="1.75"
+			/>
+		</svg>
+	);
+}
+
 function ChevronRightIcon({ className = "", expanded = false }: { className?: string; expanded?: boolean }) {
 	return (
 		<svg
@@ -1271,191 +1335,200 @@ function ChevronRightIcon({ className = "", expanded = false }: { className?: st
 function ProjectActionIcon({
 	children,
 	className = "",
-	label,
 }: {
 	children: ReactNode;
 	className?: string;
-	label?: string;
 }) {
 	return (
 		<span
-			className={`group/action relative z-20 grid size-5 shrink-0 place-items-center rounded-md text-[var(--preview-passive)] transition-colors hover:bg-[var(--preview-sidebar-hover)] hover:text-[var(--preview-foreground)] ${className}`}
+			className={`relative z-20 grid size-4 shrink-0 place-items-center text-[var(--preview-passive)] ${className}`}
 		>
 			{children}
-			{label ? (
-				<span
-					aria-hidden="true"
-					className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-md border border-[var(--preview-border-strong)] bg-[var(--preview-sidebar)] px-2 py-1 text-[11px] font-normal normal-case tracking-normal text-[var(--preview-foreground)] opacity-0 shadow-[0_4px_12px_rgba(0,0,0,0.35)] transition-opacity group-hover/action:opacity-100"
-				>
-					{label}
-				</span>
-			) : null}
 		</span>
 	);
 }
 
+const pinnedItems = [
+	{ id: "pin-review", label: "landing review", color: STATUS_COLORS.inReview },
+	{ id: "pin-merge", label: "ready to merge", color: STATUS_COLORS.ready },
+] as const;
+
+function SidebarSessionRow({
+	active,
+	dotColor,
+	label,
+	onClick,
+}: {
+	active?: boolean;
+	dotColor: string;
+	label: string;
+	onClick?: () => void;
+}) {
+	return (
+		<div className="pl-7">
+			<button
+				type="button"
+				onClick={onClick}
+				className={`flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] outline-none transition-colors ${
+					active
+						? "bg-[var(--preview-sidebar-accent)] font-medium text-[var(--preview-foreground)]"
+						: "text-[var(--preview-muted-foreground)] hover:bg-[var(--preview-sidebar-hover)] hover:text-[var(--preview-foreground)]"
+				}`}
+			>
+				<span
+					aria-hidden="true"
+					className="mt-px h-1.5 w-1.5 shrink-0 rounded-full"
+					style={{ backgroundColor: dotColor }}
+				/>
+				<span className="min-w-0 flex-1 truncate">{label}</span>
+			</button>
+		</div>
+	);
+}
+
 function Sidebar({
-	isRepoAvatarReady,
 	onResizeStart,
 	onSelectTrack,
 	onTitlebarPointerDown,
-	selectedTrackId,
 	sidebarRef,
+	trackCards,
 }: {
-	isRepoAvatarReady: boolean;
 	onResizeStart: (clientX: number) => void;
 	onSelectTrack: (trackId: TrackId) => void;
 	onTitlebarPointerDown: (clientX: number, clientY: number) => void;
-	selectedTrackId: TrackId;
 	sidebarRef: React.RefObject<HTMLElement | null>;
+	trackCards: Record<TrackId, PreviewCard[]>;
 }) {
 	return (
 		<aside
 			ref={sidebarRef}
 			className="relative flex shrink-0 flex-col bg-[var(--preview-sidebar)] text-[var(--preview-muted-foreground)]"
-			style={{ width: 175 }}
+			style={{ width: SIDEBAR_DEFAULT_WIDTH }}
 		>
-			{/* Traffic lights + sidebar toggle + history — brand sits on the next row. */}
+			{/* Traffic lights + nav — taller row; lights share the same h-6 center box as the buttons. */}
 			<div
-				className="flex cursor-grab items-center gap-1 px-2.5 pb-1.5 pt-3 active:cursor-grabbing"
+				className="flex h-11 cursor-grab items-center gap-2 px-3 active:cursor-grabbing"
 				onPointerDown={(event) => {
 					if ((event.target as HTMLElement).closest("button")) return;
 					event.preventDefault();
 					onTitlebarPointerDown(event.clientX, event.clientY);
 				}}
 			>
-				<div className="relative z-50 flex items-center gap-1.5 pr-1.5">
-					<span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
-					<span className="h-2.5 w-2.5 rounded-full bg-[#ffbd2e]" />
-					<span className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
+				<div className="flex h-6 items-center gap-1.5">
+					<span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#ff5f57]" />
+					<span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#ffbd2e]" />
+					<span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#28c840]" />
 				</div>
 				<button
 					type="button"
 					aria-label="Collapse sidebar"
-					className="grid h-6 w-6 place-items-center rounded-md text-[var(--preview-passive)] transition-colors hover:bg-[var(--preview-sidebar-hover)] hover:text-[var(--preview-muted-foreground)]"
+					className="grid h-6 w-6 shrink-0 place-items-center text-[var(--preview-passive)]"
 				>
 					<PanelLeftIcon className="h-3.5 w-3.5" />
 				</button>
 				<button
 					type="button"
 					aria-label="Go back"
-					className="grid h-6 w-6 place-items-center rounded-md text-[var(--preview-passive)] opacity-45"
+					className="grid h-6 w-6 shrink-0 place-items-center text-[var(--preview-passive)] opacity-45"
 				>
 					<ArrowLeftIcon className="h-3.5 w-3.5" />
 				</button>
 				<button
 					type="button"
 					aria-label="Go forward"
-					className="grid h-6 w-6 place-items-center rounded-md text-[var(--preview-passive)] opacity-45"
+					className="grid h-6 w-6 shrink-0 place-items-center text-[var(--preview-passive)] opacity-45"
 				>
 					<ArrowRightIcon className="h-3.5 w-3.5" />
 				</button>
 			</div>
 
-			<div className="flex items-center gap-2 px-3 pb-2.5 pt-1">
+			{/* Brand left edge lines up with the red traffic light (same px-3). */}
+			<div className="flex shrink-0 items-center gap-1.5 px-3 pb-2 pt-0.5">
 				<img
 					src="/ao-logo.svg"
 					alt=""
-					width={22}
-					height={22}
+					width={20}
+					height={20}
 					aria-hidden="true"
-					className="h-[22px] w-[22px] shrink-0 rounded-md"
+					className="h-5 w-5 shrink-0 rounded-md"
 					draggable="false"
 				/>
-				<div className="min-w-0 flex-1 truncate text-[12px] font-semibold tracking-[-0.5px] text-[var(--preview-sidebar-foreground)]">
+				<div className="min-w-0 flex-1 truncate text-[12px] font-bold leading-tight tracking-tight text-[var(--preview-sidebar-foreground)]">
 					Agent Orchestrator
 				</div>
 			</div>
 
-			<div className="shrink-0 pl-1.5 pr-1.75">
+			<div className="flex shrink-0 flex-col px-2">
 				<div className="pb-3">
-					<div className="flex h-8 items-center gap-2 rounded-2xl bg-[var(--preview-sidebar-hover)] px-3 text-[12px] font-medium text-[var(--preview-passive)]">
-						<SearchIcon className="h-3.5 w-3.5 shrink-0 opacity-70" />
-						<span className="min-w-0 flex-1">Search</span>
-						<span className="shrink-0 font-mono text-[10px] leading-none">⌘K</span>
+					<div className="flex h-7 w-full items-center gap-2 rounded-lg bg-[var(--preview-muted)] px-2.5 text-[12px] font-normal text-[var(--preview-muted-foreground)]">
+						<SearchIcon className="h-3 w-3 shrink-0 opacity-80" />
+						<span className="min-w-0 flex-1 truncate leading-none">Search</span>
 					</div>
 				</div>
-				<div className="flex items-center justify-between px-1.5 pb-2">
-					<span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--preview-passive)]">
-						Projects
-					</span>
-					<span
-						aria-hidden="true"
-						className="grid h-4 w-4 place-items-center text-[var(--preview-passive)]"
-					>
-						<PlusIcon className="h-3 w-3" />
-					</span>
-				</div>
-			</div>
 
-			<div className="flex min-h-0 flex-1 flex-col pl-1.5 pr-1.75">
-				<div className="relative z-20 mb-px shrink-0 overflow-visible">
-					<button
-						type="button"
-						aria-expanded="true"
-						className="relative flex h-9 w-full items-center gap-2.25 rounded-sm px-1.5 pr-[84px] text-left text-[12px] font-medium text-[var(--preview-muted-foreground)] transition-colors hover:bg-[var(--preview-sidebar-hover)] hover:text-[var(--preview-foreground)]"
-					>
-						<ChevronRightIcon expanded className="h-2.5 w-2.5 shrink-0 text-[var(--preview-passive)] transition-transform" />
-						<div className="relative h-3.5 w-3.5 shrink-0 overflow-hidden rounded-sm bg-[var(--preview-muted)]">
-							<img
-								src={repoAvatar}
-								alt=""
-								width={14}
-								height={14}
-								aria-hidden="true"
-								loading="eager"
-								decoding="sync"
-								fetchPriority="high"
-								className={`h-3.5 w-3.5 rounded-sm object-cover transition-opacity ${
-									isRepoAvatarReady ? "opacity-100" : "opacity-0"
-								}`}
-								draggable="false"
-							/>
-							{isRepoAvatarReady ? null : (
-								<GitHubIcon className="absolute inset-0 m-auto h-2.5 w-2.5 text-[var(--preview-muted-foreground)]/65" />
-							)}
-						</div>
-						<span className="min-w-0 flex-1 truncate">agent-orchestrator</span>
-					</button>
-					<div className="absolute top-0 right-1 z-30 flex h-9 items-center gap-px">
-						<ProjectActionIcon label="Dashboard">
-							<LayoutGridIcon className="h-3.5 w-3.5" />
-						</ProjectActionIcon>
-						<ProjectActionIcon label="Orchestrator">
-							<OrchestratorIcon className="h-3.5 w-3.5" />
-						</ProjectActionIcon>
-						<ProjectActionIcon label="More">
-							<MoreVerticalIcon className="h-3.5 w-3.5" />
-						</ProjectActionIcon>
-					</div>
+				{/* Pinned — compact section + a couple of session-style rows. */}
+				<div className="flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-[var(--preview-passive)]">
+					<PinIcon className="h-3.5 w-3.5 shrink-0" />
+					<span className="min-w-0 truncate">Pinned</span>
+					<ChevronRightIcon expanded className="h-3 w-3 shrink-0" />
 				</div>
-				<div className="min-h-0 flex-1 overflow-y-auto ml-3.5 py-1 scrollbar-hide">
-					{projectItems.map((item) => (
-						<button
-							type="button"
-							key={item.id}
-							onClick={() => onSelectTrack(item.id)}
-							className={`relative flex w-full items-center gap-2.25 rounded-sm py-1.25 pl-1.5 pr-2 text-left before:absolute before:top-1.5 before:bottom-1.5 before:left-0 before:w-px before:rounded-full ${
-								item.id === selectedTrackId
-									? "text-[var(--preview-foreground)] before:bg-[var(--preview-accent)]"
-									: "text-[var(--preview-muted-foreground)] before:bg-transparent hover:text-[var(--preview-foreground)]"
-							}`}
-						>
-							<span
-								aria-hidden="true"
-								className="mt-px h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--preview-passive)]"
-							/>
-							<span className={`min-w-0 flex-1 truncate text-[12px] ${item.id === selectedTrackId ? "text-[var(--preview-foreground)]" : ""}`}>
-								{item.label}
-							</span>
-						</button>
+				<div className="mb-1 ml-2 flex flex-col gap-px">
+					{pinnedItems.map((item) => (
+						<SidebarSessionRow key={item.id} dotColor={item.color} label={item.label} />
 					))}
 				</div>
+
+				{/* Projects — plus only; no disclosure chevron beside it. */}
+				<div className="mb-0.5 flex h-7 w-full items-center gap-1.5 rounded-md px-2 pr-1 text-[12px] font-medium text-[var(--preview-passive)]">
+					<FolderOpenIcon className="h-3.5 w-3.5 shrink-0" />
+					<span className="min-w-0 flex-1 truncate">Projects</span>
+					<span
+						aria-hidden="true"
+						className="grid h-4 w-4 shrink-0 place-items-center text-[var(--preview-passive)]"
+					>
+						<PlusIcon className="h-3.5 w-3.5" />
+					</span>
+				</div>
 			</div>
 
-			<div className="mt-auto shrink-0 px-2.5 pb-3 pt-2">
-				<div className="flex w-full items-center justify-center gap-2.5 rounded-2xl bg-[var(--preview-sidebar-hover)] px-2.5 py-2.5 text-[12px] font-medium text-[var(--preview-muted-foreground)]">
-					<SettingsIcon className="h-4 w-4" />
+			<div className="flex min-h-0 flex-1 flex-col overflow-hidden px-2">
+				<div className="relative z-20 mb-px shrink-0">
+					{/* Project row — selected accent pill; foreground text matches real app. */}
+					<div className="relative flex h-8 w-full items-center gap-2 rounded-lg bg-[var(--preview-sidebar-accent)] px-2 pr-[72px] text-left text-[12px] font-medium text-[var(--preview-foreground)]">
+						<FolderOpenIcon className="h-3.5 w-3.5 shrink-0" />
+						<span className="min-w-0 flex-1 truncate">agent-orchestrator</span>
+					</div>
+					<div className="absolute inset-y-0 right-1.5 z-30 flex items-center gap-px">
+						<ProjectActionIcon>
+							<LayoutGridIcon className="h-3 w-3" />
+						</ProjectActionIcon>
+						<ProjectActionIcon>
+							<OrchestratorIcon className="h-3 w-3" />
+						</ProjectActionIcon>
+						<ProjectActionIcon>
+							<MoreVerticalIcon className="h-3 w-3" />
+						</ProjectActionIcon>
+					</div>
+				</div>
+
+				<div className="min-h-0 flex-1 overflow-y-auto py-0.5 scrollbar-hide">
+					<div className="ml-2 flex flex-col gap-px">
+						{projectItems.map((item) => (
+							<SidebarSessionRow
+								key={item.id}
+								dotColor={trackDotColor(trackCards[item.id] ?? [])}
+								label={item.label}
+								onClick={() => onSelectTrack(item.id)}
+							/>
+						))}
+					</div>
+				</div>
+			</div>
+
+			{/* Settings — mb is panel inset (2px) + panel border (1px) so this hairline meets Archive's. */}
+			<div className="mt-auto mb-[3px] flex h-13 shrink-0 items-center border-t border-[var(--preview-border-strong)] px-2">
+				<div className="flex h-full w-full items-center gap-2 px-2 text-[12px] font-medium text-[var(--preview-muted-foreground)]">
+					<SettingsIcon className="h-3.5 w-3.5 shrink-0" />
 					<span>Settings</span>
 				</div>
 			</div>
@@ -1474,19 +1547,45 @@ function Sidebar({
 	);
 }
 
+function ArchiveBar({ count }: { count: number }) {
+	return (
+		<div className="flex h-13 shrink-0 items-center border-t border-[var(--preview-border-strong)] px-3">
+			<button
+				type="button"
+				className="group inline-flex h-full w-full items-center gap-2 text-[11px] text-[var(--preview-muted-foreground)] transition-colors hover:text-[var(--preview-foreground)]"
+			>
+				<svg
+					aria-hidden="true"
+					className="h-3 w-3 shrink-0 text-[var(--preview-passive)]"
+					viewBox="0 0 16 16"
+					fill="none"
+				>
+					<path
+						d="M6 4l4 4-4 4"
+						stroke="currentColor"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						strokeWidth="1.5"
+					/>
+				</svg>
+				<span className="font-mono text-[10px] font-medium uppercase tracking-[0.04em]">Archive</span>
+				<span className="font-mono tabular-nums text-[var(--preview-passive)]">{count}</span>
+			</button>
+		</div>
+	);
+}
+
 function BoardChrome({
 	onNewTask,
-	trackLabel,
 	viewMode,
 }: {
 	onNewTask: () => void;
-	trackLabel: string;
 	viewMode: ViewMode;
 }) {
 	return (
 		<div className="flex h-12 shrink-0 items-center gap-2 px-4">
 			<div className="min-w-0 truncate text-[13px] font-semibold tracking-tight text-[var(--preview-foreground)]">
-				{viewMode === "orchestrator" ? "Orchestrator" : trackLabel}
+				{viewMode === "orchestrator" ? "Orchestrator" : "agent-orchestrator"}
 			</div>
 			<div className="min-w-0 flex-1" />
 			<button
@@ -1776,34 +1875,6 @@ function BoardGrid({
 	);
 }
 
-function ArchiveBar({ count }: { count: number }) {
-	return (
-		<div className="flex shrink-0 items-center border-t border-[var(--preview-divider)] px-3 pb-3 pt-2">
-			<button
-				type="button"
-				className="group inline-flex w-full items-center gap-2 py-2.5 text-[11px] text-[var(--preview-muted-foreground)] transition-colors hover:text-[var(--preview-foreground)]"
-			>
-				<svg
-					aria-hidden="true"
-					className="h-3 w-3 shrink-0 text-[var(--preview-passive)]"
-					viewBox="0 0 16 16"
-					fill="none"
-				>
-					<path
-						d="M6 4l4 4-4 4"
-						stroke="currentColor"
-						strokeLinecap="round"
-						strokeLinejoin="round"
-						strokeWidth="1.5"
-					/>
-				</svg>
-				<span className="font-mono text-[10px] font-medium uppercase tracking-[0.04em]">Archive</span>
-				<span className="font-mono tabular-nums text-[var(--preview-passive)]">{count}</span>
-			</button>
-		</div>
-	);
-}
-
 function OrchestratorView({
 	cards,
 	onNewTask,
@@ -1937,14 +2008,13 @@ export function AppMockup() {
 	const windowRef = useRef<HTMLDivElement>(null);
 	const contentRef = useRef<HTMLDivElement>(null);
 	const sidebarRef = useRef<HTMLElement>(null);
-	const sidebarWidthRef = useRef(178);
+	const sidebarWidthRef = useRef(SIDEBAR_DEFAULT_WIDTH);
 	const { startDrag, startResize } = useFloatingWindow(windowRef);
-	const isRepoAvatarReady = useImageReady(repoAvatar);
 	useDecorativeSubtree(windowRef);
 
 	// Keep the board at the design size and scale the whole chrome to the shell.
 	// Shrinking the layout box itself reflows columns and clips Mergeable / Merge.
-	// Apply transform via ref so it stays in sync with shell resizes (no React lag).
+	// Shell resize is aspect-locked, so width/BASE_WIDTH fills both axes with no gaps.
 	useLayoutEffect(() => {
 		const outer = windowRef.current;
 		const content = contentRef.current;
@@ -1952,10 +2022,8 @@ export function AppMockup() {
 
 		const syncScale = () => {
 			const width = outer.clientWidth;
-			const height = outer.clientHeight;
-			if (width <= 0 || height <= 0) return;
-			const scale = Math.min(width / BASE_WIDTH, height / BASE_HEIGHT);
-			content.style.transform = `scale(${scale})`;
+			if (width <= 0) return;
+			content.style.transform = `scale(${width / BASE_WIDTH})`;
 		};
 
 		syncScale();
@@ -1989,7 +2057,7 @@ export function AppMockup() {
 
 		const handleMove = (event: PointerEvent) => {
 			const delta = event.clientX - startX;
-			const nextWidth = Math.max(140, Math.min(320, startWidth + delta));
+			const nextWidth = Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, startWidth + delta));
 			sidebarWidthRef.current = nextWidth;
 			if (sidebarRef.current) {
 				sidebarRef.current.style.width = `${nextWidth}px`;
@@ -2142,39 +2210,25 @@ export function AppMockup() {
 			role="img"
 			aria-label="Preview of the Agent Orchestrator board: agent tasks move across Idle, Working, Needs you, In review, and Ready to merge."
 			className="absolute z-10 select-none overflow-hidden rounded-[20px] border border-[var(--preview-border)] bg-[var(--preview-sidebar)] font-sans tracking-tight text-[var(--preview-foreground)] antialiased shadow-[0_30px_80px_-24px_rgba(0,0,0,0.75)] [&_.font-mono]:tracking-normal"
-			style={{
-				...previewTokenStyle,
-				position: "absolute",
-				left: "50%",
-				top: "50%",
-				width: `min(${BASE_WIDTH}px, calc(100% - ${WINDOW_MARGIN * 2}px))`,
-				height: `min(${BASE_HEIGHT}px, calc(100% - ${WINDOW_MARGIN * 2}px))`,
-				transform: "translate(-50%, -50%)",
-			}}
+			style={mockupShellStyle}
 		>
 			<div className="relative h-full w-full overflow-hidden">
 				<div
 					ref={contentRef}
-					className="origin-top-left"
-					style={{
-						width: BASE_WIDTH,
-						height: BASE_HEIGHT,
-					}}
+					className="h-(--mockup-design-h) w-(--mockup-design-w) origin-top-left"
 				>
 					<div className="flex h-full min-h-0">
 						<Sidebar
-							isRepoAvatarReady={isRepoAvatarReady}
 							onResizeStart={startSidebarResize}
 							onSelectTrack={selectTrack}
 							onTitlebarPointerDown={startDrag}
-							selectedTrackId={selectedTrack.id}
 							sidebarRef={sidebarRef}
+							trackCards={cardsByTrack}
 						/>
 						<div className="flex min-h-0 min-w-0 flex-1 flex-col p-[2px]">
 							<div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[17px] border border-[var(--preview-border-strong)] bg-[var(--preview-background)]">
 								<BoardChrome
 									onNewTask={spawnRandomTask}
-									trackLabel={selectedTrack.label}
 									viewMode={viewMode}
 								/>
 								{viewMode === "orchestrator" ? (
