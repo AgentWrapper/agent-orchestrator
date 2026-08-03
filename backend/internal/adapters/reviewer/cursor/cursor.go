@@ -14,12 +14,17 @@ import (
 
 // Reviewer is the Cursor code-review adapter.
 type Reviewer struct {
-	agent ports.Agent
+	agent agent
 }
 
 // New builds the Cursor reviewer adapter.
 func New() *Reviewer {
 	return &Reviewer{agent: workeragent.New()}
+}
+
+type agent interface {
+	ports.Agent
+	InstallWorkspaceTrust(context.Context, ports.WorkspaceHookConfig) error
 }
 
 // Harness identifies this reviewer in the reviewer registry.
@@ -33,7 +38,15 @@ var _ ports.ReviewerCanceller = (*Reviewer)(nil)
 // PreLaunch installs the reviewer-only Cursor permissions into its isolated
 // AO-owned data directory without touching the checkout or user configuration.
 func (r *Reviewer) PreLaunch(ctx context.Context, inv ports.ReviewInvocation) error {
-	return installReviewerConfig(ctx, inv)
+	if err := installReviewerConfig(ctx, inv); err != nil {
+		return err
+	}
+	return r.agent.InstallWorkspaceTrust(ctx, ports.WorkspaceHookConfig{
+		DataDir:       inv.DataDir,
+		Env:           reviewerEnv(inv),
+		SessionID:     inv.ReviewerID,
+		WorkspacePath: inv.WorkspacePath,
+	})
 }
 
 // ReviewCommand launches Cursor's normal persistent interactive TUI. Cursor

@@ -36,6 +36,9 @@ func (a *captureAgent) GetPromptDeliveryStrategy(context.Context, ports.LaunchCo
 	return ports.PromptDeliveryInCommand, nil
 }
 func (a *captureAgent) GetAgentHooks(context.Context, ports.WorkspaceHookConfig) error { return nil }
+func (a *captureAgent) InstallWorkspaceTrust(context.Context, ports.WorkspaceHookConfig) error {
+	return nil
+}
 func (a *captureAgent) GetRestoreCommand(context.Context, ports.RestoreConfig) ([]string, bool, error) {
 	return nil, false, nil
 }
@@ -176,7 +179,7 @@ func TestPreLaunchWritesIsolatedReviewerConfig(t *testing.T) {
 		WorkspacePath:  workspace,
 		TaskPromptRoot: filepath.Join(dataDir, "prompts", "w1", "reviewer"),
 	}
-	if err := (&Reviewer{}).PreLaunch(context.Background(), inv); err != nil {
+	if err := New().PreLaunch(context.Background(), inv); err != nil {
 		t.Fatalf("PreLaunch: %v", err)
 	}
 
@@ -205,6 +208,20 @@ func TestPreLaunchWritesIsolatedReviewerConfig(t *testing.T) {
 	if configInfo.Mode().Perm() != 0o600 {
 		t.Fatalf("config mode = %o, want 600", configInfo.Mode().Perm())
 	}
+	trustPaths, err := filepath.Glob(filepath.Join(profileDir, "projects", "*", ".workspace-trusted"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(trustPaths) != 1 {
+		t.Fatalf("reviewer trust markers = %#v, want exactly one", trustPaths)
+	}
+	trustData, err := os.ReadFile(trustPaths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(trustData), workspace) || !strings.Contains(string(trustData), `"aoManaged": true`) {
+		t.Fatalf("reviewer trust marker = %s", trustData)
+	}
 	config := readReviewerConfig(t, configPath)
 	if config.Version != 1 {
 		t.Fatalf("version = %d, want 1", config.Version)
@@ -229,8 +246,8 @@ func TestPreLaunchWritesIsolatedReviewerConfig(t *testing.T) {
 }
 
 func TestPreLaunchWithoutPromptRootOmitsExternalRead(t *testing.T) {
-	inv := ports.ReviewInvocation{ReviewerID: "review-w1", DataDir: t.TempDir()}
-	if err := (&Reviewer{}).PreLaunch(context.Background(), inv); err != nil {
+	inv := ports.ReviewInvocation{ReviewerID: "review-w1", DataDir: t.TempDir(), WorkspacePath: t.TempDir()}
+	if err := New().PreLaunch(context.Background(), inv); err != nil {
 		t.Fatalf("PreLaunch: %v", err)
 	}
 	config := readReviewerConfig(t, filepath.Join(reviewerProfileDir(inv), cursorConfigFileName))
@@ -243,7 +260,7 @@ func TestPreLaunchHonorsContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	inv := ports.ReviewInvocation{ReviewerID: "review-w1", DataDir: t.TempDir()}
-	if err := (&Reviewer{}).PreLaunch(ctx, inv); !errors.Is(err, context.Canceled) {
+	if err := New().PreLaunch(ctx, inv); !errors.Is(err, context.Canceled) {
 		t.Fatalf("PreLaunch err = %v, want context cancellation", err)
 	}
 	if _, err := os.Stat(reviewerProfileDir(inv)); !errors.Is(err, os.ErrNotExist) {

@@ -40,9 +40,9 @@ surface (`npm run sqlc`, `npm run api`).
   `/prs/{id}/resolve-comments`.
 - Review routes registered: `GET /reviews`, `POST /reviews/execute`,
   `POST /reviews/{id}/send`.
-- Interactive reviewer panes for Aider, Agy, Amp, Claude Code, Codex,
-  Continue, GitHub Copilot, Cursor, Devin, Droid, Goose, Kilo Code, Kiro,
-  Kimi, OpenCode, Pi, Qwen, and Vibe. Pi uses an AO-data-owned extension with built-in/project
+- Interactive reviewer panes for Aider, Agy, Amp, Auggie, Autohand,
+  Claude Code, Cline, Codex, Continue, GitHub Copilot, Crush, Cursor, Devin,
+  Droid, Goose, Grok, Kilo Code, Kiro, Kimi, OpenCode, Pi, Qwen, and Vibe. Pi uses an AO-data-owned extension with built-in/project
   resources disabled, structured read-only inspection/reporting tools, and
   Escape-based turn cancellation. Kiro also uses its native Escape
   cancellation. Continue, Qwen, and Vibe also use Escape cancellation. Agy,
