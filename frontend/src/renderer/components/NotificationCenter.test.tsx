@@ -176,7 +176,10 @@ beforeEach(() => {
 				],
 			},
 		],
+		isError: false,
 		isPending: false,
+		isSuccess: true,
+		refetch: vi.fn(),
 	});
 	notificationQueryMock.mockReset().mockImplementation((status: NotificationListStatus) =>
 		status === "unread" ? stableUnreadQuery : status === "all" ? stableAllQuery : notificationQueryResult(status),
@@ -281,18 +284,119 @@ describe("NotificationCenter", () => {
 		]);
 	});
 
-	// Opening the panel is the acknowledgement; there is no manual control.
-	it("acknowledges every unread notification on open and keeps showing them highlighted", async () => {
+	// Opening acknowledges loaded unread ids only, so later unread pages stay
+	// fetchable and highlighted when they appear in the all-list.
+	it("acknowledges loaded unread ids on open and keeps showing them highlighted", async () => {
 		renderNotificationCenter();
 		await clickOpen();
 
-		expect(markAllMock).toHaveBeenCalledWith([]);
+		expect(markAllMock.mock.calls[0][0]).toEqual(expect.arrayContaining(["ntf_1", "ntf_2"]));
+		expect(markAllMock.mock.calls[0][0]).toHaveLength(2);
 		expect(screen.queryByRole("button", { name: "Mark all notifications read" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Mark notification read" })).not.toBeInTheDocument();
 		expect(screen.getByText("Checkout flow needs input")).toBeInTheDocument();
 		expect(screen.getByText("Checkout flow needs input").className).toContain("font-medium");
 		expect(screen.getByRole("link", { name: "PR #67 is ready to merge" }).className).toContain("font-medium");
 		expect(screen.getByText("Docs sweep needs input").className).not.toContain("font-medium");
+	});
+
+	it("keeps later unread pages highlighted when they load after open", async () => {
+		const laterUnread: NotificationDTO = {
+			id: "ntf_later",
+			sessionId: "sess-1",
+			projectId: "proj-1",
+			prUrl: "",
+			type: "needs_input",
+			title: "Later unread needs input",
+			body: "Still waiting after the first page.",
+			status: "unread",
+			createdAt: "2026-07-18T09:00:00Z",
+			target: { kind: "session", sessionId: "sess-1" },
+		};
+		const allState = {
+			pages: [
+				{
+					notifications: allNotifications,
+					nextCursor: "older" as string | undefined,
+					unreadCount: 3,
+					unresolvedCount: 2,
+				},
+			],
+		};
+		fetchNextPageMock.mockImplementation(async () => {
+			allState.pages = [
+				{
+					notifications: allNotifications,
+					nextCursor: "older",
+					unreadCount: 3,
+					unresolvedCount: 2,
+				},
+				{
+					notifications: [laterUnread],
+					nextCursor: undefined,
+					unreadCount: 3,
+					unresolvedCount: 2,
+				},
+			];
+		});
+		const unreadQuery = {
+			...notificationQueryResult("unread", { hasNextPage: true }),
+			data: {
+				pageParams: [""],
+				pages: [
+					{
+						notifications: unreadNotifications,
+						nextCursor: "older-unread",
+						unreadCount: 3,
+						unresolvedCount: 2,
+					},
+				],
+			},
+		};
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+		notificationQueryMock.mockImplementation((status: NotificationListStatus) => {
+			if (status === "unread") return unreadQuery;
+			return {
+				data: {
+					pageParams: allState.pages.map((_, index) => (index === 0 ? "" : "older")),
+					pages: allState.pages,
+				},
+				fetchNextPage: fetchNextPageMock,
+				hasNextPage: allState.pages.length < 2,
+				isError: false,
+				isFetchNextPageError: false,
+				isFetchingNextPage: false,
+				isLoading: false,
+			};
+		});
+
+		const view = render(
+			<QueryClientProvider client={queryClient}>
+				<NotificationCenter />
+			</QueryClientProvider>,
+		);
+		await clickOpen();
+		expect(markAllMock.mock.calls[0][0]).toEqual(expect.arrayContaining(["ntf_1", "ntf_2"]));
+		markAllMock.mockClear();
+
+		const list = screen.getByRole("list");
+		Object.defineProperties(list, {
+			clientHeight: { configurable: true, value: 420 },
+			scrollHeight: { configurable: true, value: 600 },
+			scrollTop: { configurable: true, value: 130 },
+		});
+		fireEvent.scroll(list);
+		await waitFor(() => expect(fetchNextPageMock).toHaveBeenCalled());
+
+		view.rerender(
+			<QueryClientProvider client={queryClient}>
+				<NotificationCenter />
+			</QueryClientProvider>,
+		);
+
+		expect(await screen.findByText("Later unread needs input")).toHaveClass("font-medium");
+		await waitFor(() => expect(markAllMock).toHaveBeenCalledWith(["ntf_later"]));
 	});
 
 	it("surfaces a failed all-list load instead of claiming success", async () => {
@@ -383,13 +487,43 @@ describe("NotificationCenter", () => {
 	});
 
 	it("does not open sessions while workspace facts are still loading", async () => {
-		workspaceQueryMock.mockReturnValue({ data: undefined, isPending: true });
+		workspaceQueryMock.mockReturnValue({
+			data: undefined,
+			isError: false,
+			isPending: true,
+			isSuccess: false,
+			refetch: vi.fn(),
+		});
 		renderNotificationCenter();
 		await clickOpen();
 
 		await userEvent.click(screen.getByText("The agent is waiting for your response."));
 		expect(navigateMock).not.toHaveBeenCalled();
 		expect(screen.queryByRole("button", { name: "Restore session" })).not.toBeInTheDocument();
+	});
+
+	it("does not treat terminated sessions as live when the workspace query fails", async () => {
+		const refetch = vi.fn();
+		workspaceQueryMock.mockReturnValue({
+			data: undefined,
+			isError: true,
+			isPending: false,
+			isSuccess: false,
+			refetch,
+		});
+		renderNotificationCenter();
+		await clickOpen();
+
+		expect(screen.getByText("Could not load sessions. Restore and open may be unavailable.")).toBeInTheDocument();
+
+		await userEvent.click(screen.getByText("The agent is waiting for your response."));
+		expect(navigateMock).not.toHaveBeenCalled();
+		await userEvent.click(screen.getByText("The agent session has ended."));
+		expect(navigateMock).not.toHaveBeenCalled();
+		expect(screen.queryByRole("button", { name: "Restore session" })).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+		expect(refetch).toHaveBeenCalledTimes(1);
 	});
 
 	it("loads earlier history near the end of the scroll viewport", async () => {

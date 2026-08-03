@@ -74,8 +74,13 @@ function useNotificationTargetNavigation() {
 	return { openPrimary, openSession };
 }
 
-function useSessionTerminationLookup(): { sessionsReady: boolean; terminatedIds: Set<string> } {
-	const { data: workspaces, isPending } = useWorkspaceQuery();
+function useSessionTerminationLookup(): {
+	retryWorkspace: () => void;
+	sessionsReady: boolean;
+	terminatedIds: Set<string>;
+	workspaceError: boolean;
+} {
+	const { data: workspaces, isError, isSuccess, refetch } = useWorkspaceQuery();
 	const terminatedIds = useMemo(() => {
 		const ids = new Set<string>();
 		for (const workspace of workspaces ?? []) {
@@ -87,9 +92,16 @@ function useSessionTerminationLookup(): { sessionsReady: boolean; terminatedIds:
 		}
 		return ids;
 	}, [workspaces]);
-	// Until workspace facts land, treat sessions as not-yet-openable so a
-	// terminated row cannot navigate for one frame before restore appears.
-	return { sessionsReady: !isPending, terminatedIds };
+	// Only successful workspace data is trustworthy. Pending and error both leave
+	// sessions non-navigable — a failed query must not treat terminated rows as live.
+	return {
+		retryWorkspace: () => {
+			void refetch();
+		},
+		sessionsReady: isSuccess,
+		terminatedIds,
+		workspaceError: isError,
+	};
 }
 
 export function NotificationRuntime() {
@@ -142,74 +154,63 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 	const allQuery = useNotificationsQuery("all", open);
 	const markAllRead = useMarkAllNotificationsReadMutation();
 	const restoreSession = useRestoreSession();
-	const { sessionsReady, terminatedIds } = useSessionTerminationLookup();
+	const { retryWorkspace, sessionsReady, terminatedIds, workspaceError } = useSessionTerminationLookup();
 	const notifications = useMemo(() => getCachedNotifications(allQuery.data), [allQuery.data]);
 	const unreadCount = getCachedUnreadCount(unreadQuery.data);
 	const { openPrimary, openSession } = useNotificationTargetNavigation();
 	const markAllMutate = markAllRead.mutateAsync;
 
-	const pendingUnread = useMemo(
-		() => getCachedNotifications(unreadQuery.data).filter((item) => item.status === "unread"),
-		[unreadQuery.data],
-	);
-	const pendingRef = useRef(pendingUnread);
-	pendingRef.current = pendingUnread;
-	const pendingKey = pendingUnread.map((item) => item.id).join("|");
-	const acknowledgedKeyRef = useRef("");
-	const fullAckDoneRef = useRef(false);
+	// Concrete ids only — never `[]` — so unread pages past the first stay
+	// reachable and arrive as unread (still highlighted) when the all-list loads them.
+	const acknowledgedIdsRef = useRef<Set<string>>(new Set());
+	const visibleUnreadIds = useMemo(() => {
+		const ids = new Set<string>();
+		for (const item of getCachedNotifications(unreadQuery.data)) {
+			if (item.status === "unread") ids.add(item.id);
+		}
+		for (const item of notifications) {
+			if (item.status === "unread") ids.add(item.id);
+		}
+		return [...ids];
+	}, [notifications, unreadQuery.data]);
+	const visibleUnreadKey = visibleUnreadIds.join("|");
 
-	// Opening the panel is the acknowledgement. Mark every unread row on the
-	// server once (empty ids) so badge/history stay consistent past the first
-	// loaded page; the all-list still shows those rows. Later arrivals while the
-	// panel stays open are acknowledged by the ids that actually appeared.
+	// Opening the panel acknowledges what has actually been loaded. Later unread
+	// rows are acknowledged as they appear, keeping the unread pagination cursor.
 	useEffect(() => {
 		if (!open) {
 			setHighlightedIds(new Set());
-			acknowledgedKeyRef.current = "";
-			fullAckDoneRef.current = false;
+			acknowledgedIdsRef.current = new Set();
 			return;
 		}
 		if (unreadQuery.isLoading) return;
 
-		const acknowledge = (ids: string[]) => {
-			setActionError(null);
-			void captureRendererEvent("ao.renderer.notification_mark_read_requested", { scope: "all" });
-			void markAllMutate(ids)
-				.then(() => captureRendererEvent("ao.renderer.notification_mark_read_succeeded", { scope: "all" }))
-				.catch((error: unknown) => {
-					void captureRendererEvent("ao.renderer.notification_mark_read_failed", { scope: "all" });
-					fullAckDoneRef.current = false;
-					acknowledgedKeyRef.current = "";
-					setActionError(error instanceof Error ? error.message : t("notify.couldNotMarkAllRead"));
-				});
-		};
+		const visibleIds = visibleUnreadKey === "" ? [] : visibleUnreadKey.split("|");
+		const newly = visibleIds.filter((id) => !acknowledgedIdsRef.current.has(id));
+		if (newly.length === 0) return;
 
-		if (!fullAckDoneRef.current && unreadCount > 0) {
-			fullAckDoneRef.current = true;
-			acknowledgedKeyRef.current = pendingKey;
-			const pending = pendingRef.current;
-			if (pending.length > 0) {
-				setHighlightedIds(new Set(pending.map((item) => item.id)));
-			}
-			acknowledge([]);
-			return;
-		}
-
-		if (pendingKey === "" || acknowledgedKeyRef.current === pendingKey) return;
-		acknowledgedKeyRef.current = pendingKey;
-		const pending = pendingRef.current;
+		for (const id of newly) acknowledgedIdsRef.current.add(id);
 		setHighlightedIds((current) => {
 			const next = new Set(current);
 			let changed = false;
-			for (const item of pending) {
-				if (next.has(item.id)) continue;
-				next.add(item.id);
+			for (const id of newly) {
+				if (next.has(id)) continue;
+				next.add(id);
 				changed = true;
 			}
 			return changed ? next : current;
 		});
-		acknowledge(pending.map((item) => item.id));
-	}, [markAllMutate, open, pendingKey, t, unreadCount, unreadQuery.isLoading]);
+
+		setActionError(null);
+		void captureRendererEvent("ao.renderer.notification_mark_read_requested", { scope: "all" });
+		void markAllMutate(newly)
+			.then(() => captureRendererEvent("ao.renderer.notification_mark_read_succeeded", { scope: "all" }))
+			.catch((error: unknown) => {
+				void captureRendererEvent("ao.renderer.notification_mark_read_failed", { scope: "all" });
+				for (const id of newly) acknowledgedIdsRef.current.delete(id);
+				setActionError(error instanceof Error ? error.message : t("notify.couldNotMarkAllRead"));
+			});
+	}, [markAllMutate, open, t, unreadQuery.isLoading, visibleUnreadKey]);
 
 	const setPanelOpen = (nextOpen: boolean) => {
 		setOpen(nextOpen);
@@ -289,6 +290,21 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 
 				{actionError ? (
 					<div className="border-b border-border bg-error/5 px-4 py-2 text-caption text-error">{actionError}</div>
+				) : null}
+				{workspaceError ? (
+					<div
+						aria-live="polite"
+						className="flex items-center justify-between gap-2 border-b border-border bg-error/5 px-4 py-2 text-caption text-error"
+					>
+						<span>{t("notify.workspaceLoadFailed")}</span>
+						<button
+							className="shrink-0 font-medium underline underline-offset-2 hover:text-foreground"
+							onClick={retryWorkspace}
+							type="button"
+						>
+							{t("notify.retry")}
+						</button>
+					</div>
 				) : null}
 				{allQuery.isError && isEmpty ? (
 					<NotificationEmpty icon={CircleAlert} message={t("notify.loadFailed")} />

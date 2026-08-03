@@ -309,6 +309,7 @@
 	"notify.restoreUnavailable": "This session can no longer be restored.",
 	"notify.title": "Notifications",
 	"notify.unreadCount": "{{count}} unread notifications",
+	"notify.workspaceLoadFailed": "Could not load sessions. Restore and open may be unavailable.",
 	"pr.botSuffix": "{{name}} bot",
 	"pr.ci.checking": "Checking",
 	"pr.ci.failing": "Failing",
