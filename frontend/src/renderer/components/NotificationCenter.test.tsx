@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { NotificationDTO, NotificationListStatus } from "../lib/notifications";
 import { useUiStore } from "../stores/ui-store";
 import { NotificationCenter, NotificationRuntime } from "./NotificationCenter";
+import { TooltipProvider } from "./ui/tooltip";
 
 const {
 	connectMock,
@@ -107,7 +108,9 @@ function renderNotificationCenter() {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	return render(
 		<QueryClientProvider client={queryClient}>
-			<NotificationCenter />
+			<TooltipProvider>
+				<NotificationCenter />
+			</TooltipProvider>
 		</QueryClientProvider>,
 	);
 }
@@ -373,7 +376,9 @@ describe("NotificationCenter", () => {
 
 		const view = render(
 			<QueryClientProvider client={queryClient}>
-				<NotificationCenter />
+				<TooltipProvider>
+					<NotificationCenter />
+				</TooltipProvider>
 			</QueryClientProvider>,
 		);
 		await clickOpen();
@@ -391,7 +396,9 @@ describe("NotificationCenter", () => {
 
 		view.rerender(
 			<QueryClientProvider client={queryClient}>
-				<NotificationCenter />
+				<TooltipProvider>
+					<NotificationCenter />
+				</TooltipProvider>
 			</QueryClientProvider>,
 		);
 

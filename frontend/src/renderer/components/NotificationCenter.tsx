@@ -35,6 +35,7 @@ import { captureRendererEvent } from "../lib/telemetry";
 import { cn } from "../lib/utils";
 import { TopbarButton } from "./TopbarButton";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type NotificationCenterProps = {
 	style?: React.CSSProperties;
@@ -486,19 +487,25 @@ function NotificationItem({
 						{formatTimeCompact(notification.createdAt)}
 					</time>
 					{terminated && sessionId ? (
-						<button
-							aria-label={t("shell.restoreSession")}
-							className="grid size-notification-icon place-items-center rounded-md text-passive transition-colors hover:bg-interactive-active hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
-							disabled={restoreDisabled}
-							onClick={(event) => {
-								event.stopPropagation();
-								onRestore();
-							}}
-							title={restoring ? t("shell.restoringSession") : t("shell.restoreSession")}
-							type="button"
-						>
-							<RotateCcw className={cn("size-icon-md", restoring && "animate-spin")} aria-hidden="true" />
-						</button>
+						<Tooltip delayDuration={0}>
+							<TooltipTrigger asChild>
+								<button
+									aria-label={t("shell.restoreSession")}
+									className="grid size-notification-icon place-items-center rounded-md text-passive transition-colors hover:bg-interactive-active hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+									disabled={restoreDisabled}
+									onClick={(event) => {
+										event.stopPropagation();
+										onRestore();
+									}}
+									type="button"
+								>
+									<RotateCcw className={cn("size-icon-md", restoring && "animate-spin")} aria-hidden="true" />
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="top">
+								{restoring ? t("shell.restoringSession") : t("shell.restoreSession")}
+							</TooltipContent>
+						</Tooltip>
 					) : null}
 				</div>
 			</div>
