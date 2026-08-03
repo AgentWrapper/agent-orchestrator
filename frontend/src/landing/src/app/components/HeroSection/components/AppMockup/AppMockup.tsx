@@ -87,10 +87,7 @@ const STATUS_COLORS = {
 	unknown: "#a78bfa",
 } as const;
 
-/** Initial sidebar width for the landing mockup (also seeds resize clamping). */
 const SIDEBAR_DEFAULT_WIDTH = 218;
-const SIDEBAR_MIN_WIDTH = 200;
-const SIDEBAR_MAX_WIDTH = 320;
 
 const previewAgents = {
 	claude: { agent: "Claude", icon: "/app-icons/agents/claude-code.svg" },
@@ -702,7 +699,6 @@ const WINDOW_ASPECT = BASE_WIDTH / BASE_HEIGHT;
 const WINDOW_MARGIN = 4;
 // Shell can shrink with the hero frame; inner board stays at BASE_* and CSS-scales.
 // Keep the shell aspect-locked so the scaled board fills both axes (no letterbox gaps).
-const MIN_WINDOW_WIDTH = 280;
 
 interface WindowState {
 	x: number;
@@ -713,42 +709,6 @@ interface WindowState {
 
 function sizeFromWidth(width: number): Pick<WindowState, "width" | "height"> {
 	return { width, height: width / WINDOW_ASPECT };
-}
-
-function sizeFromHeight(height: number): Pick<WindowState, "width" | "height"> {
-	return { width: height * WINDOW_ASPECT, height };
-}
-
-/** Fit a width into max bounds while preserving the design aspect ratio. */
-function fitAspectWidth(
-	desiredWidth: number,
-	maxWidth: number,
-	maxHeight: number,
-): Pick<WindowState, "width" | "height"> {
-	let { width, height } = sizeFromWidth(desiredWidth);
-	if (width > maxWidth) ({ width, height } = sizeFromWidth(maxWidth));
-	if (height > maxHeight) ({ width, height } = sizeFromHeight(maxHeight));
-	if (width > maxWidth) ({ width, height } = sizeFromWidth(maxWidth));
-
-	const minWidth = Math.min(MIN_WINDOW_WIDTH, maxWidth);
-	const minSized = sizeFromWidth(minWidth);
-	if (width < minSized.width && minSized.height <= maxHeight) {
-		({ width, height } = minSized);
-	}
-	return { width, height };
-}
-
-function clampWindowState(
-	state: WindowState,
-	containerWidth: number,
-	containerHeight: number,
-): WindowState {
-	const maxWidth = Math.max(1, containerWidth - WINDOW_MARGIN * 2);
-	const maxHeight = Math.max(1, containerHeight - WINDOW_MARGIN * 2);
-	const { width, height } = fitAspectWidth(state.width, maxWidth, maxHeight);
-	const x = Math.max(WINDOW_MARGIN, Math.min(state.x, containerWidth - width - WINDOW_MARGIN));
-	const y = Math.max(WINDOW_MARGIN, Math.min(state.y, containerHeight - height - WINDOW_MARGIN));
-	return { x, y, width, height };
 }
 
 function createInitialWindowState(
@@ -781,18 +741,6 @@ function useFloatingWindow(
 	outerRef: React.RefObject<HTMLElement | null>,
 ) {
 	const stateRef = useRef<WindowState | null>(null);
-	// The geometry the user asked for, kept unclamped by container size. Narrow
-	// containers squash the rendered state into the corner; replaying from this
-	// instead lets a return to a wide viewport restore the original placement.
-	const desiredStateRef = useRef<WindowState | null>(null);
-	const containerSizeRef = useRef({ width: 0, height: 0 });
-	const interactionRef = useRef<{
-		type: "drag" | "resize";
-		direction?: string;
-		startX: number;
-		startY: number;
-		initial: WindowState;
-	} | null>(null);
 
 	const applyState = useCallback(() => {
 		const outer = outerRef.current;
@@ -810,25 +758,7 @@ function useFloatingWindow(
 		const parent = outer?.offsetParent as HTMLElement | null;
 		if (!parent) return;
 		const rect = parent.getBoundingClientRect();
-		containerSizeRef.current = { width: rect.width, height: rect.height };
-		const maxWidth = Math.max(1, rect.width - WINDOW_MARGIN * 2);
-		const maxHeight = Math.max(1, rect.height - WINDOW_MARGIN * 2);
-		const desired = desiredStateRef.current;
-		const fitted = createInitialWindowState(rect.width, rect.height);
-		// Until the user drags/resizes, always re-fit to the container. If a prior
-		// desired size no longer fits (viewport shrunk), drop it and re-center.
-		const desiredFits =
-			desired != null &&
-			desired.width <= maxWidth + 0.5 &&
-			desired.height <= maxHeight + 0.5;
-		stateRef.current = clampWindowState(
-			desiredFits && desired ? desired : fitted,
-			rect.width,
-			rect.height,
-		);
-		if (desired && !desiredFits) {
-			desiredStateRef.current = null;
-		}
+		stateRef.current = createInitialWindowState(rect.width, rect.height);
 		applyState();
 	}, [applyState, outerRef]);
 
@@ -845,173 +775,6 @@ function useFloatingWindow(
 			window.removeEventListener("resize", updateContainer);
 		};
 	}, [updateContainer, outerRef]);
-
-	const startDrag = useCallback((clientX: number, clientY: number) => {
-		if (!stateRef.current) return;
-		interactionRef.current = {
-			type: "drag",
-			startX: clientX,
-			startY: clientY,
-			initial: { ...stateRef.current },
-		};
-	}, []);
-
-	const startResize = useCallback(
-		(direction: string, clientX: number, clientY: number) => {
-			if (!stateRef.current) return;
-			interactionRef.current = {
-				type: "resize",
-				direction,
-				startX: clientX,
-				startY: clientY,
-				initial: { ...stateRef.current },
-			};
-		},
-		[],
-	);
-
-	useEffect(() => {
-		const handleMove = (event: PointerEvent) => {
-			const interaction = interactionRef.current;
-			if (!interaction || !stateRef.current) return;
-			const { width: containerWidth, height: containerHeight } =
-				containerSizeRef.current;
-			const dx = event.clientX - interaction.startX;
-			const dy = event.clientY - interaction.startY;
-			let next: WindowState = { ...interaction.initial };
-
-			if (interaction.type === "drag") {
-				next.x = interaction.initial.x + dx;
-				next.y = interaction.initial.y + dy;
-			} else if (interaction.type === "resize" && interaction.direction) {
-				const dir = interaction.direction;
-				const initial = interaction.initial;
-				const widthDelta = dir.includes("e") ? dx : dir.includes("w") ? -dx : 0;
-				const heightDelta = dir.includes("s") ? dy : dir.includes("n") ? -dy : 0;
-
-				// Aspect-lock: edge drags follow that axis; corners follow the dominant delta.
-				let sized: Pick<WindowState, "width" | "height">;
-				if (dir === "e" || dir === "w") {
-					sized = sizeFromWidth(initial.width + widthDelta);
-				} else if (dir === "n" || dir === "s") {
-					sized = sizeFromHeight(initial.height + heightDelta);
-				} else if (Math.abs(widthDelta) >= Math.abs(heightDelta)) {
-					sized = sizeFromWidth(initial.width + widthDelta);
-				} else {
-					sized = sizeFromHeight(initial.height + heightDelta);
-				}
-
-				next.width = sized.width;
-				next.height = sized.height;
-				if (dir.includes("w")) {
-					next.x = initial.x + initial.width - next.width;
-				}
-				if (dir.includes("n")) {
-					next.y = initial.y + initial.height - next.height;
-				}
-			}
-
-			next = clampWindowState(next, containerWidth, containerHeight);
-			desiredStateRef.current = next;
-			stateRef.current = next;
-			applyState();
-		};
-
-		const handleUp = () => {
-			interactionRef.current = null;
-		};
-
-		window.addEventListener("pointermove", handleMove);
-		window.addEventListener("pointerup", handleUp);
-		return () => {
-			window.removeEventListener("pointermove", handleMove);
-			window.removeEventListener("pointerup", handleUp);
-		};
-	}, [applyState]);
-
-	return { startDrag, startResize };
-}
-
-function ResizeHandle({
-	className,
-	cursor,
-	direction,
-	onResizeStart,
-}: {
-	className: string;
-	cursor: string;
-	direction: string;
-	onResizeStart: (direction: string, clientX: number, clientY: number) => void;
-}) {
-	return (
-		<div
-			className={`absolute z-20 ${cursor} ${className}`}
-			onPointerDown={(event) => {
-				event.preventDefault();
-				event.stopPropagation();
-				onResizeStart(direction, event.clientX, event.clientY);
-			}}
-		/>
-	);
-}
-
-function ResizeHandles({
-	onResizeStart,
-}: {
-	onResizeStart: (direction: string, clientX: number, clientY: number) => void;
-}) {
-	return (
-		<>
-			<ResizeHandle
-				className="-left-1 -top-1 h-3 w-3"
-				cursor="cursor-nwse-resize"
-				direction="nw"
-				onResizeStart={onResizeStart}
-			/>
-			<ResizeHandle
-				className="-right-1 -top-1 h-3 w-3"
-				cursor="cursor-nesw-resize"
-				direction="ne"
-				onResizeStart={onResizeStart}
-			/>
-			<ResizeHandle
-				className="-left-1 -bottom-1 h-3 w-3"
-				cursor="cursor-nesw-resize"
-				direction="sw"
-				onResizeStart={onResizeStart}
-			/>
-			<ResizeHandle
-				className="-right-1 -bottom-1 h-3 w-3"
-				cursor="cursor-nwse-resize"
-				direction="se"
-				onResizeStart={onResizeStart}
-			/>
-			<ResizeHandle
-				className="left-2 right-2 -top-1 h-2"
-				cursor="cursor-ns-resize"
-				direction="n"
-				onResizeStart={onResizeStart}
-			/>
-			<ResizeHandle
-				className="left-2 right-2 -bottom-1 h-2"
-				cursor="cursor-ns-resize"
-				direction="s"
-				onResizeStart={onResizeStart}
-			/>
-			<ResizeHandle
-				className="-left-1 top-2 bottom-2 w-2"
-				cursor="cursor-ew-resize"
-				direction="w"
-				onResizeStart={onResizeStart}
-			/>
-			<ResizeHandle
-				className="-right-1 top-2 bottom-2 w-2"
-				cursor="cursor-ew-resize"
-				direction="e"
-				onResizeStart={onResizeStart}
-			/>
-		</>
-	);
 }
 
 function createInitialCards(trackId: TrackId): PreviewCard[] {
@@ -1407,22 +1170,18 @@ function SidebarSessionRow({
 	active,
 	dotColor,
 	label,
-	onClick,
 }: {
 	active?: boolean;
 	dotColor: string;
 	label: string;
-	onClick?: () => void;
 }) {
 	return (
 		<div className="pl-7">
-			<button
-				type="button"
-				onClick={onClick}
-				className={`flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] outline-none transition-colors ${
+			<div
+				className={`flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] ${
 					active
 						? "bg-[var(--preview-sidebar-accent)] font-medium text-[var(--preview-foreground)]"
-						: "text-[var(--preview-muted-foreground)] hover:bg-[var(--preview-sidebar-hover)] hover:text-[var(--preview-foreground)]"
+						: "text-[var(--preview-muted-foreground)]"
 				}`}
 			>
 				<span
@@ -1431,65 +1190,47 @@ function SidebarSessionRow({
 					style={{ backgroundColor: dotColor }}
 				/>
 				<span className="min-w-0 flex-1 truncate">{label}</span>
-			</button>
+			</div>
 		</div>
 	);
 }
 
 function Sidebar({
-	onResizeStart,
-	onSelectTrack,
-	onTitlebarPointerDown,
-	sidebarRef,
 	trackCards,
 }: {
-	onResizeStart: (clientX: number) => void;
-	onSelectTrack: (trackId: TrackId) => void;
-	onTitlebarPointerDown: (clientX: number, clientY: number) => void;
-	sidebarRef: React.RefObject<HTMLElement | null>;
 	trackCards: Record<TrackId, PreviewCard[]>;
 }) {
 	return (
 		<aside
-			ref={sidebarRef}
-			className="relative flex shrink-0 flex-col bg-[var(--preview-sidebar)] text-[var(--preview-muted-foreground)]"
+			aria-hidden="true"
+			className="pointer-events-none relative flex shrink-0 flex-col bg-[var(--preview-sidebar)] text-[var(--preview-muted-foreground)]"
 			style={{ width: SIDEBAR_DEFAULT_WIDTH }}
 		>
-			{/* Traffic lights + nav — taller row; lights share the same h-6 center box as the buttons. */}
-			<div
-				className="flex h-11 cursor-grab items-center gap-2 px-3 active:cursor-grabbing"
-				onPointerDown={(event) => {
-					if ((event.target as HTMLElement).closest("button")) return;
-					event.preventDefault();
-					onTitlebarPointerDown(event.clientX, event.clientY);
-				}}
-			>
+			{/* Traffic lights + nav — decorative only; whole sidebar is pointer-events-none. */}
+			<div className="flex h-11 items-center gap-2 px-3">
 				<div className="flex h-6 items-center gap-1.5">
 					<span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#ff5f57]" />
 					<span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#ffbd2e]" />
 					<span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#28c840]" />
 				</div>
-				<button
-					type="button"
-					aria-label="Collapse sidebar"
+				<span
+					aria-hidden="true"
 					className="grid h-6 w-6 shrink-0 place-items-center text-[var(--preview-passive)]"
 				>
 					<PanelLeftIcon className="h-3.5 w-3.5" />
-				</button>
-				<button
-					type="button"
-					aria-label="Go back"
+				</span>
+				<span
+					aria-hidden="true"
 					className="grid h-6 w-6 shrink-0 place-items-center text-[var(--preview-passive)] opacity-45"
 				>
 					<ArrowLeftIcon className="h-3.5 w-3.5" />
-				</button>
-				<button
-					type="button"
-					aria-label="Go forward"
+				</span>
+				<span
+					aria-hidden="true"
 					className="grid h-6 w-6 shrink-0 place-items-center text-[var(--preview-passive)] opacity-45"
 				>
 					<ArrowRightIcon className="h-3.5 w-3.5" />
-				</button>
+				</span>
 			</div>
 
 			{/* Brand left edge lines up with the red traffic light (same px-3). */}
@@ -1568,7 +1309,6 @@ function Sidebar({
 								key={item.id}
 								dotColor={trackDotColor(trackCards[item.id] ?? [])}
 								label={item.label}
-								onClick={() => onSelectTrack(item.id)}
 							/>
 						))}
 					</div>
@@ -1582,24 +1322,13 @@ function Sidebar({
 					<span>Settings</span>
 				</div>
 			</div>
-
-			<div
-				className="absolute right-0 top-0 bottom-0 z-10 w-[6px] cursor-col-resize group"
-				onPointerDown={(event) => {
-					event.preventDefault();
-					event.stopPropagation();
-					onResizeStart(event.clientX);
-				}}
-			>
-				<div className="absolute inset-y-0 left-1/2 w-[2px] -translate-x-1/2 bg-[var(--preview-muted-foreground)]/0 transition-colors group-hover:bg-[var(--preview-muted-foreground)]/25" />
-			</div>
 		</aside>
 	);
 }
 
 function ArchiveBar({ count }: { count: number }) {
 	return (
-		<div className="flex h-13 shrink-0 items-center border-t border-[var(--preview-border-strong)] px-3">
+		<div className="flex h-13 shrink-0 items-center border-t border-[var(--preview-divider)] px-3">
 			<button
 				type="button"
 				className="group inline-flex h-full w-full items-center gap-2 text-[11px] text-[var(--preview-muted-foreground)] transition-colors hover:text-[var(--preview-foreground)]"
@@ -1748,14 +1477,14 @@ function ActivityIcon({ id, testResults }: { id: ActivityIconId; testResults?: {
 	);
 }
 
+// Card boxes from PR #3496 (ronishrohan hero board redesign), adapted to
+// this branch's column ids: staging→action, in_review→pending.
 function BoardCard({
 	card,
 	isPulsing,
-	onMerge,
 }: {
 	card: PreviewCard;
 	isPulsing: boolean;
-	onMerge: (id: string) => void;
 }) {
 	const isTestCard = card.column === "action" && !!card.testResults;
 	const testTotal = card.testResults?.total ?? 0;
@@ -1805,7 +1534,7 @@ function BoardCard({
 				ease: [0.22, 1, 0.36, 1],
 				layout: { duration: 0.55, ease: [0.22, 1, 0.36, 1] },
 			}}
-			className={`rounded-lg border ${attentionBorder} bg-[var(--preview-card)] shadow-[0_1px_1px_rgba(0,0,0,0.05)] outline-none transition-colors hover:bg-[var(--preview-muted)] ${attentionAnim}`}
+			className={`pointer-events-none rounded-lg border ${attentionBorder} bg-[var(--preview-card)] shadow-[0_1px_1px_rgba(0,0,0,0.05)] ${attentionAnim}`}
 		>
 			<div className="flex items-start gap-2.5 px-3.5 pb-2.5 pt-3">
 				<div className="relative mt-0.5 h-3.5 w-3.5 shrink-0">
@@ -1884,16 +1613,9 @@ function BoardCard({
 			) : null}
 			{card.tone === "ready" ? (
 				<div className="flex items-center justify-between gap-2 border-t border-[var(--preview-border)] px-3.5 py-2.5">
-					<button
-						type="button"
-						onClick={(event) => {
-							event.stopPropagation();
-							onMerge(card.id);
-						}}
-						className="inline-flex h-6 items-center justify-center whitespace-nowrap rounded-md bg-[var(--preview-primary)] px-2.5 text-[10.5px] font-semibold text-[var(--preview-primary-foreground)] transition-transform active:scale-[0.96]"
-					>
+					<span className="inline-flex h-6 items-center justify-center whitespace-nowrap rounded-md bg-white px-2.5 text-[10.5px] font-semibold text-black">
 						Merge PR
-					</button>
+					</span>
 					<span className="shrink-0 font-mono text-[10.5px] text-[var(--preview-muted-foreground)]">
 						{card.time}
 					</span>
@@ -1916,129 +1638,53 @@ function BoardCard({
 	);
 }
 
-function LaneLabel({
-	color,
-	label,
-	compact = false,
-}: {
-	color: string;
-	compact?: boolean;
-	glow?: boolean;
-	label: string;
-}) {
-	return (
-		<span
-			className={`inline-flex items-center gap-1 ${compact ? "shrink-0 whitespace-nowrap" : "min-w-0"}`}
-			style={{ color }}
-		>
-			<span
-				aria-hidden="true"
-				className="h-[7px] w-[7px] shrink-0 rounded-full"
-				style={{ backgroundColor: color }}
-			/>
-			<span className={compact ? "" : "truncate"}>{label}</span>
-		</span>
-	);
-}
-
-const columnHeaderTitleClass =
-	"text-[12px] font-semibold uppercase leading-none tracking-[0.04em]";
-const columnHeaderCountClass =
-	"shrink-0 font-mono text-[11px] tabular-nums leading-none text-[var(--preview-passive)]";
-
-function BoardColumnHeader({
+// Column chrome + titles from PR #3496.
+function BoardColumn({
+	cards,
 	color,
 	count,
 	title,
 }: {
+	cards: PreviewCard[];
 	color: string;
 	count: number;
-	id: BoardColumnId;
-	idleCount: number;
 	title: string;
-	workingCount: number;
 }) {
-	return (
-		<div className="flex items-center gap-2 px-3 py-2.5">
-			<div className={`min-w-0 flex-1 overflow-hidden ${columnHeaderTitleClass}`}>
-				<LaneLabel color={color} label={title} />
-			</div>
-			<div className={`pl-2 ${columnHeaderCountClass}`}>{count}</div>
-		</div>
-	);
-}
-
-function BoardColumnBody({
-	cards,
-	onMerge,
-}: {
-	cards: PreviewCard[];
-	id: BoardColumnId;
-	onMerge: (id: string) => void;
-}) {
-	const attentionCards = cards.filter((card) => card.activityState === "waiting");
-	const normalCards = cards.filter((card) => card.activityState !== "waiting");
-	const visibleCards = [...attentionCards, ...normalCards];
+	const attentionCards = cards.filter((c) => c.activityState === "waiting");
+	const normalCards = cards.filter((c) => c.activityState !== "waiting");
+	const sortedCards = [...attentionCards, ...normalCards];
 	const pulsingId = attentionCards[0]?.id ?? null;
+	const extraWaiting = Math.max(0, attentionCards.length - 1);
 
 	return (
-		<div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2.5 py-2 scrollbar-hide">
-			<AnimatePresence initial={false}>
-				{visibleCards.map((card) => (
-					<BoardCard
-						key={`${card.id}-${card.column}`}
-						card={card}
-						isPulsing={card.id === pulsingId}
-						onMerge={onMerge}
-					/>
-				))}
-			</AnimatePresence>
-		</div>
-	);
-}
-
-function BoardGrid({
-	columns,
-	onMerge,
-}: {
-	columns: Array<{
-		cards: PreviewCard[];
-		count: number;
-		id: BoardColumnId;
-		title: string;
-	}>;
-	onMerge: (id: string) => void;
-}) {
-	return (
-		<div className="flex h-full min-h-0 flex-col overflow-hidden">
-			<div className="grid shrink-0 grid-cols-4 border-b border-[var(--preview-divider)]">
-				{columns.map((column) => {
-					const idleCards = column.id === "working" ? column.cards.filter(isIdleCard) : [];
-					const workingCards =
-						column.id === "working" ? column.cards.filter((card) => !isIdleCard(card)) : column.cards;
-
-					return (
-						<div key={`${column.title}-header`} className="min-w-0">
-							<BoardColumnHeader
-								color={COLUMN_COLORS[column.id]}
-								count={column.count}
-								id={column.id}
-								idleCount={idleCards.length}
-								title={column.title}
-								workingCount={workingCards.length}
-							/>
-						</div>
-					);
-				})}
-			</div>
-			<div className="grid min-h-0 flex-1 grid-cols-4">
-				{columns.map((column) => (
-					<div key={`${column.title}-body`} className="flex min-h-0 min-w-0 flex-col">
-						<BoardColumnBody cards={column.cards} id={column.id} onMerge={onMerge} />
+		<section className="flex min-h-0 min-w-0 snap-start flex-col border-r border-[var(--preview-divider)] last:border-r-0">
+			<div className="flex h-12 shrink-0 items-center gap-2.5 border-b border-[var(--preview-divider)] px-4">
+				<span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
+				<div className="font-mono text-[10.5px] font-medium uppercase tracking-wide text-[var(--preview-muted-foreground)]">
+					{title}
+				</div>
+				<div className="ml-auto font-mono text-[10.5px] leading-none text-[var(--preview-muted-foreground)] opacity-60">
+					{count}
+				</div>
+				{extraWaiting > 0 ? (
+					<div className="inline-flex items-center gap-1 rounded-[4px] bg-[#fb923c]/10 px-1.5 py-0.5 text-[9px] font-semibold text-[#fb923c]">
+						<WaitingIcon className="h-2.5 w-2.5" />
+						{extraWaiting} waiting
 					</div>
-				))}
+				) : null}
 			</div>
-		</div>
+			<div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-3 pb-3 pt-3 scrollbar-hide">
+				<AnimatePresence initial={false}>
+					{sortedCards.map((card) => (
+						<BoardCard
+							key={`${card.id}-${card.column}`}
+							card={card}
+							isPulsing={card.id === pulsingId}
+						/>
+					))}
+				</AnimatePresence>
+			</div>
+		</section>
 	);
 }
 
@@ -2162,8 +1808,7 @@ export function AppMockup() {
 		icons: 16,
 		footer: 9,
 	});
-	const [boardVersion, setBoardVersion] = useState(0);
-	const [selectedTrackId, setSelectedTrackId] = useState<TrackId>("landing");
+	const selectedTrackId: TrackId = "landing";
 	const [viewMode, setViewMode] = useState<ViewMode>("board");
 	const incomingIndexes = useRef<Record<TrackId, number>>({
 		landing: 0,
@@ -2174,9 +1819,7 @@ export function AppMockup() {
 	});
 	const windowRef = useRef<HTMLDivElement>(null);
 	const contentRef = useRef<HTMLDivElement>(null);
-	const sidebarRef = useRef<HTMLElement>(null);
-	const sidebarWidthRef = useRef(SIDEBAR_DEFAULT_WIDTH);
-	const { startDrag, startResize } = useFloatingWindow(windowRef);
+	useFloatingWindow(windowRef);
 	useDecorativeSubtree(windowRef);
 
 	// Keep the board at the design size and scale the whole chrome to the shell.
@@ -2217,28 +1860,6 @@ export function AppMockup() {
 		},
 		[],
 	);
-
-	const startSidebarResize = useCallback((clientX: number) => {
-		const startWidth = sidebarWidthRef.current;
-		const startX = clientX;
-
-		const handleMove = (event: PointerEvent) => {
-			const delta = event.clientX - startX;
-			const nextWidth = Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, startWidth + delta));
-			sidebarWidthRef.current = nextWidth;
-			if (sidebarRef.current) {
-				sidebarRef.current.style.width = `${nextWidth}px`;
-			}
-		};
-
-		const handleUp = () => {
-			window.removeEventListener("pointermove", handleMove);
-			window.removeEventListener("pointerup", handleUp);
-		};
-
-		window.addEventListener("pointermove", handleMove);
-		window.addEventListener("pointerup", handleUp);
-	}, []);
 
 	const mergeCard = useCallback((id: string) => {
 		const trackId = selectedTrackId;
@@ -2288,12 +1909,6 @@ export function AppMockup() {
 			];
 		});
 	}, [selectedTrackId, updateTrackCards]);
-
-	const selectTrack = useCallback((trackId: TrackId) => {
-		setSelectedTrackId(trackId);
-		setViewMode("board");
-		setBoardVersion((current) => current + 1);
-	}, []);
 
 	useEffect(() => {
 		let timeoutId: number;
@@ -2397,13 +2012,7 @@ export function AppMockup() {
 					className="h-(--mockup-design-h) w-(--mockup-design-w) origin-top-left"
 				>
 					<div className="flex h-full min-h-0">
-						<Sidebar
-							onResizeStart={startSidebarResize}
-							onSelectTrack={selectTrack}
-							onTitlebarPointerDown={startDrag}
-							sidebarRef={sidebarRef}
-							trackCards={cardsByTrack}
-						/>
+						<Sidebar trackCards={cardsByTrack} />
 						<div className="flex min-h-0 min-w-0 flex-1 flex-col p-[2px]">
 							<div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[17px] border border-[var(--preview-border-strong)] bg-[var(--preview-background)]">
 								<BoardChrome
@@ -2419,16 +2028,18 @@ export function AppMockup() {
 								) : (
 									<>
 										<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden border-t border-[var(--preview-divider)]">
-											<div aria-hidden="true" className="pointer-events-none absolute inset-0 z-10">
-												<div className="absolute inset-y-0 left-1/4 w-px bg-[var(--preview-divider)]" />
-												<div className="absolute inset-y-0 left-2/4 w-px bg-[var(--preview-divider)]" />
-												<div className="absolute inset-y-0 left-3/4 w-px bg-[var(--preview-divider)]" />
-											</div>
-											<LayoutGroup key={`${selectedTrack.id}-${boardVersion}`}>
-												<BoardGrid
-													columns={boardColumns}
-													onMerge={mergeCard}
-												/>
+											<LayoutGroup key={selectedTrack.id}>
+												<div className="grid min-h-0 flex-1 grid-cols-4 overflow-hidden">
+													{boardColumns.map((column) => (
+														<BoardColumn
+															key={column.id}
+															cards={column.cards}
+															color={COLUMN_COLORS[column.id]}
+															count={column.count}
+															title={column.title}
+														/>
+													))}
+												</div>
 											</LayoutGroup>
 										</div>
 										<ArchiveBar count={mergedCount} />
@@ -2439,7 +2050,6 @@ export function AppMockup() {
 					</div>
 				</div>
 			</div>
-			<ResizeHandles onResizeStart={startResize} />
 		</div>
 	);
 }
