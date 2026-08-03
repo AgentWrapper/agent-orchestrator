@@ -210,10 +210,13 @@
 
 	/* ═══════════════════════════════════════════════════════════════
 	   Z-INDEX — stacking layers
+	   chrome < sidebar-preview < titlebar < overlay
+	   Preview peeks paint behind the titlebar cluster so the expand
+	   toggle stays clickable while the overlay is open.
 	   ═══════════════════════════════════════════════════════════════ */
 
 	--z-chrome: 10;
-	--z-sidebar-preview: 55;
+	--z-sidebar-preview: 15;
 	--z-titlebar: 20;
 	--z-overlay: 50;
 
