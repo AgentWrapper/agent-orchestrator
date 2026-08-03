@@ -391,6 +391,12 @@ func (l *agentLauncher) Cancel(ctx context.Context, handleID string, harness dom
 		return fmt.Errorf("reviewer cancel: %w", err)
 	}
 	switch spec.Mode {
+	case ports.ReviewCancelMessage:
+		message := strings.TrimSpace(spec.Message)
+		if message == "" {
+			return fmt.Errorf("reviewer adapter %q returned empty cancel message", harness)
+		}
+		return l.runtime.SendMessage(ctx, ports.RuntimeHandle{ID: handleID}, message)
 	case ports.ReviewCancelInterrupt:
 		interrupts := spec.Interrupts
 		if interrupts <= 0 {

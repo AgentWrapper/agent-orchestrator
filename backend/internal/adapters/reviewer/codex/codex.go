@@ -75,9 +75,14 @@ func (r *Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) 
 }
 
 // ReviewCancel stops the active Codex reviewer turn while preserving the
-// terminal pane for inspection.
+// terminal pane for inspection. Codex treats Ctrl-C as a TUI exit in common
+// states, so cancellation is an in-band steering message instead of an
+// interrupt.
 func (r *Reviewer) ReviewCancel(context.Context) (ports.ReviewCancelSpec, error) {
-	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelInterrupt, Interrupts: 2}, nil
+	return ports.ReviewCancelSpec{
+		Mode:    ports.ReviewCancelMessage,
+		Message: "Stop the current review task immediately. Do not submit or post any review result for that cancelled task. Wait for AO to send the next review task.",
+	}, nil
 }
 
 func insertBeforePrompt(argv []string, extra ...string) []string {

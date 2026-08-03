@@ -130,6 +130,7 @@ type fakeCancellableReviewer struct {
 	cancelErr  error
 	mode       ports.ReviewCancelMode
 	interrupts int
+	message    string
 }
 
 type fakeRestoringReviewer struct {
@@ -157,7 +158,7 @@ func (f *fakeCancellableReviewer) ReviewCancel(context.Context) (ports.ReviewCan
 	if mode == "" {
 		mode = ports.ReviewCancelInterrupt
 	}
-	return ports.ReviewCancelSpec{Mode: mode, Interrupts: f.interrupts}, nil
+	return ports.ReviewCancelSpec{Mode: mode, Interrupts: f.interrupts, Message: f.message}, nil
 }
 
 type fakeReviewerForPreflight struct {
@@ -478,6 +479,25 @@ func TestLauncherCancelUsesReviewerCancelMode(t *testing.T) {
 	}
 	if rt.interrupts != 2 {
 		t.Fatalf("interrupt count = %d, want 2", rt.interrupts)
+	}
+}
+
+func TestLauncherCancelCanSendReviewerMessage(t *testing.T) {
+	reviewer := &fakeCancellableReviewer{mode: ports.ReviewCancelMessage, message: "stop reviewing"}
+	rt := &fakeRuntime{}
+	l := newTestLauncher(t, reviewer, rt)
+
+	if err := l.Cancel(context.Background(), "review-mer-1", domain.ReviewerCodex); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if !reviewer.cancelled {
+		t.Fatal("expected reviewer cancel hook to run")
+	}
+	if rt.interrupts != 0 {
+		t.Fatalf("interrupt count = %d, want 0", rt.interrupts)
+	}
+	if len(rt.sentMsgs) != 1 || rt.sentMsgs[0] != "stop reviewing" {
+		t.Fatalf("sent messages = %#v, want cancel message", rt.sentMsgs)
 	}
 }
 
