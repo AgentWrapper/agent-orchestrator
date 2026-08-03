@@ -771,3 +771,30 @@ func freePort(t *testing.T) int {
 	}
 	return port
 }
+
+// harnessWithoutChatDriver names an agent the daemon says cannot run chat mode.
+//
+// Read from the daemon rather than hardcoded: drivers get added, and a test naming
+// an agent by hand quietly stops testing anything the day that agent gains one.
+func harnessWithoutChatDriver(t *testing.T, d *daemon) string {
+	t.Helper()
+	var settings struct {
+		ChatHarnesses []string `json:"chatHarnesses"`
+	}
+	d.mustCall("GET", "/settings", http.StatusOK, nil, &settings)
+
+	supported := map[string]bool{}
+	for _, harness := range settings.ChatHarnesses {
+		supported[harness] = true
+	}
+	// Any real harness will do; these are simply ones with no machine protocol AO
+	// drives. The loop is what keeps the test honest if one of them ever gains a
+	// driver.
+	for _, candidate := range []string{"aider", "goose", "continue", "cline", "amp"} {
+		if !supported[candidate] {
+			return candidate
+		}
+	}
+	t.Fatalf("every candidate harness now has a chat driver: %v", settings.ChatHarnesses)
+	return ""
+}

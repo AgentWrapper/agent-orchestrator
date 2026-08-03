@@ -320,11 +320,12 @@ type Snapshot struct {
 	RateLimits *domain.ConversationRateLimits
 	// Capabilities is what this session's provider can actually do, so a client can
 	// decide what to offer BEFORE offering it. Without this the only way to find out
-	// is to try: a Claude session would draw "Steer this turn", take the press, and
-	// withdraw the control on the refusal — which reads as a bug rather than as a
-	// harness difference. Nil when no controller is live, because an unstarted
-	// session's abilities are not yet known and guessing them is how a control
-	// appears and then vanishes.
+	// is to try: a session whose harness cannot steer would still draw "Steer this
+	// turn", take the press, and withdraw the control on the refusal — which reads
+	// as a bug rather than as a harness difference. That matters as soon as a second
+	// driver lands, and the abilities already differ per install today. Nil when no
+	// controller is live, because an unstarted session's abilities are not yet known
+	// and guessing them is how a control appears and then vanishes.
 	Capabilities ports.ChatCapabilities
 }
 
