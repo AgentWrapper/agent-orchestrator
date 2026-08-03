@@ -7,6 +7,7 @@ import {
   Check,
   ChevronsUpDown,
   Cloud,
+  Copy,
   ExternalLink,
   FolderGit2,
   GitBranch,
@@ -16,6 +17,7 @@ import {
   LayoutDashboard,
   LoaderCircle,
   LogOut,
+  MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightOpen,
@@ -232,10 +234,13 @@ export default function CloudAppPage() {
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [showSessionForm, setShowSessionForm] = useState(false);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+  const [projectMenuOpenId, setProjectMenuOpenId] = useState<string | null>(null);
+  const [shareProject, setShareProject] = useState<CloudProject | null>(null);
   const [shareRole, setShareRole] = useState<"viewer" | "admin" | "owner">(
     "viewer",
   );
-  const [shareMessage, setShareMessage] = useState<string | null>(null);
+  const [shareLink, setShareLink] = useState("");
+  const [shareCopied, setShareCopied] = useState(false);
   const [settingsPanelTarget, setSettingsPanelTarget] = useState<
     "profile" | "notifications" | "createOrg" | "org" | "agents" | "sandbox"
   >(() =>
@@ -712,6 +717,10 @@ export default function CloudAppPage() {
     setView("board");
     setWorkspaceMenuOpen(false);
   };
+  const openProviderSettings = () => {
+    setSettingsPanelTarget("agents");
+    setView("settings");
+  };
   const selectedOrgRole =
     selectedOrg?.membership.role ?? selectedShare?.role ?? "viewer";
   const canEditOrg =
@@ -861,7 +870,7 @@ export default function CloudAppPage() {
   }) => {
     if (!api || !selectedOrgId || !defaultAgent || !canEditOrg) {
       setError("Connect a coding agent before creating a cloud project.");
-      setView("settings");
+      openProviderSettings();
       return;
     }
     setLoading(true);
@@ -919,27 +928,28 @@ export default function CloudAppPage() {
     setView("board");
   };
 
-  const shareSelectedSession = async () => {
-    if (!api || !selectedOrgId || !selectedProject || !selectedSession) return;
-    setShareMessage(null);
+  const createProjectShareLink = async () => {
+    if (!api || !selectedOrgId || !shareProject) return;
     await run(async () => {
       const result = await api.createProjectShareLink(
         selectedOrgId,
-        selectedProject.id,
-        { sessionId: selectedSession.id, role: shareRole },
+        shareProject.id,
+        { role: shareRole },
       );
       const url = new URL(window.location.href);
       url.pathname = "/app";
       url.search = "";
       url.searchParams.set("share", result.token);
-      const shareURL = url.toString();
-      try {
-        await navigator.clipboard.writeText(shareURL);
-        setShareMessage("Share link copied.");
-      } catch {
-        setShareMessage(shareURL);
-      }
+      setShareLink(url.toString());
+      setShareCopied(false);
     });
+  };
+
+  const closeProjectShare = () => {
+    setShareProject(null);
+    setShareRole("viewer");
+    setShareLink("");
+    setShareCopied(false);
   };
 
   const toggleSidebar = () => {
@@ -1132,6 +1142,7 @@ export default function CloudAppPage() {
                     className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-white/70 hover:bg-white/[0.05] hover:text-white"
                     onClick={() => {
                       setWorkspaceMenuOpen(false);
+                      setSettingsPanelTarget("createOrg");
                       setView("settings");
                     }}
                   >
@@ -1206,55 +1217,93 @@ export default function CloudAppPage() {
                 selectedProjectId === project.id && view === "board";
               return (
                 <div key={project.id} className="mb-1">
-                  <button
-                    className={`flex h-8 w-full items-center rounded-lg text-left text-sm ${
-                      sidebarCollapsed ? "justify-center px-0" : "gap-2 px-2"
-                    } ${
-                      projectActive
-                        ? "bg-white/[0.07] text-white"
-                        : "text-[#9ba1aa] hover:bg-white/[0.04] hover:text-white"
-                    }`}
-                    onClick={() => {
-                      if (!expanded) {
-                        setCollapsedProjectIds((current) => {
-                          const next = new Set(current);
-                          next.delete(project.id);
-                          return next;
-                        });
-                      } else if (projectActive) {
-                        setCollapsedProjectIds((current) => {
-                          const next = new Set(current);
-                          next.add(project.id);
-                          return next;
-                        });
-                        return;
-                      }
-                      setSelectedProjectId(project.id);
-                      setSelectedSessionId(null);
-                      setView("board");
-                    }}
-                    aria-label={project.displayName}
-                    aria-expanded={expanded}
-                    title={sidebarCollapsed ? project.displayName : undefined}
-                  >
-                    {!sidebarCollapsed ? (
-                      <>
-                        <ChevronRight
-                          className={`size-3.5 shrink-0 text-[#646a73] transition-transform duration-150 motion-reduce:transition-none ${
-                            expanded ? "rotate-90" : ""
-                          }`}
-                          strokeWidth={2.5}
-                          aria-hidden="true"
-                        />
+                  <div className="group relative flex items-center">
+                    <button
+                      className={`flex h-8 min-w-0 flex-1 items-center rounded-lg text-left text-sm ${
+                        sidebarCollapsed ? "justify-center px-0" : "gap-2 px-2"
+                      } ${
+                        projectActive
+                          ? "bg-white/[0.07] text-white"
+                          : "text-[#9ba1aa] hover:bg-white/[0.04] hover:text-white"
+                      }`}
+                      onClick={() => {
+                        if (!expanded) {
+                          setCollapsedProjectIds((current) => {
+                            const next = new Set(current);
+                            next.delete(project.id);
+                            return next;
+                          });
+                        } else if (projectActive) {
+                          setCollapsedProjectIds((current) => {
+                            const next = new Set(current);
+                            next.add(project.id);
+                            return next;
+                          });
+                          return;
+                        }
+                        setSelectedProjectId(project.id);
+                        setSelectedSessionId(null);
+                        setView("board");
+                      }}
+                      aria-label={project.displayName}
+                      aria-expanded={expanded}
+                      title={sidebarCollapsed ? project.displayName : undefined}
+                    >
+                      {!sidebarCollapsed ? (
+                        <>
+                          <ChevronRight
+                            className={`size-3.5 shrink-0 text-[#646a73] transition-transform duration-150 motion-reduce:transition-none ${
+                              expanded ? "rotate-90" : ""
+                            }`}
+                            strokeWidth={2.5}
+                            aria-hidden="true"
+                          />
+                          <FolderGit2 className="size-[15px] shrink-0" />
+                        </>
+                      ) : (
                         <FolderGit2 className="size-[15px] shrink-0" />
-                      </>
-                    ) : (
-                      <FolderGit2 className="size-[15px] shrink-0" />
-                    )}
-                    {!sidebarCollapsed ? (
-                      <span className="truncate">{project.displayName}</span>
+                      )}
+                      {!sidebarCollapsed ? (
+                        <span className="truncate">{project.displayName}</span>
+                      ) : null}
+                    </button>
+                    {!sidebarCollapsed && canEditOrg ? (
+                      <button
+                        type="button"
+                        className={`mr-0.5 grid size-7 shrink-0 place-items-center rounded-md text-[#646a73] hover:bg-white/[0.06] hover:text-white ${
+                          projectMenuOpenId === project.id
+                            ? "bg-white/[0.06] text-white"
+                            : "opacity-0 group-hover:opacity-100 focus:opacity-100"
+                        }`}
+                        aria-label={`More actions for ${project.displayName}`}
+                        aria-expanded={projectMenuOpenId === project.id}
+                        onClick={() =>
+                          setProjectMenuOpenId((current) =>
+                            current === project.id ? null : project.id,
+                          )
+                        }
+                      >
+                        <MoreHorizontal className="size-3.5" />
+                      </button>
                     ) : null}
-                  </button>
+                    {projectMenuOpenId === project.id ? (
+                      <div className="absolute right-0 top-8 z-40 w-36 rounded-lg border border-white/[0.1] bg-[#15171b] p-1 shadow-xl shadow-black/30">
+                        <button
+                          type="button"
+                          className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-white/70 hover:bg-white/[0.06] hover:text-white"
+                          onClick={() => {
+                            setProjectMenuOpenId(null);
+                            setShareProject(project);
+                            setShareRole("viewer");
+                            setShareLink("");
+                          }}
+                        >
+                          <ExternalLink className="size-3.5" />
+                          Share project
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
                   {expanded ? (
                     <div
                       className={
@@ -1386,7 +1435,10 @@ export default function CloudAppPage() {
               className={`relative flex h-8 w-full items-center rounded-lg text-sm text-[#9ba1aa] hover:bg-white/[0.04] hover:text-white ${
                 sidebarCollapsed ? "justify-center px-0" : "gap-2 px-2"
               }`}
-              onClick={() => setView("settings")}
+              onClick={() => {
+                setSettingsPanelTarget("org");
+                setView("settings");
+              }}
               aria-label="Settings"
               title={sidebarCollapsed ? "Settings" : undefined}
             >
@@ -1476,29 +1528,6 @@ export default function CloudAppPage() {
             <div className="ml-auto flex max-w-full shrink-0 items-center gap-2 overflow-x-auto">
               {view === "session" && selectedSession ? (
                 <>
-                  <select
-                    className={`${field} h-8 w-[104px]`}
-                    value={shareRole}
-                    onChange={(event) =>
-                      setShareRole(event.target.value as typeof shareRole)
-                    }
-                    disabled={loading || !canEditOrg}
-                    aria-label="Share role"
-                  >
-                    <option value="viewer">Viewer</option>
-                    <option value="admin">Admin</option>
-                    <option value="owner">Owner</option>
-                  </select>
-                  <button
-                    className={button}
-                    disabled={loading || !canEditOrg}
-                    onClick={() => void shareSelectedSession()}
-                    aria-label="Share session"
-                    title={shareMessage ?? undefined}
-                  >
-                    <ExternalLink className="size-3.5" />
-                    <span className="hidden xl:inline">Share</span>
-                  </button>
                   <button
                     className={button}
                     disabled={loading || !canEditOrg}
@@ -1630,6 +1659,7 @@ export default function CloudAppPage() {
                 onBack={() => setView("board")}
                 onSelectOrg={(orgId) => {
                   switchOrg(orgId);
+                  setSettingsPanelTarget("org");
                   setView("settings");
                 }}
                 incomingInvitations={incomingInvitations}
@@ -1695,7 +1725,7 @@ export default function CloudAppPage() {
                 }
                 agentAvailable={Boolean(defaultAgent)}
                 loading={loading}
-                onOpenSettings={() => setView("settings")}
+                onOpenSettings={openProviderSettings}
               />
             )}
           </div>
@@ -1719,6 +1749,78 @@ export default function CloudAppPage() {
           onSubmit={createProjectAndPrewarmOrchestrator}
         />
       )}
+      {shareProject ? (
+        <Overlay title={`Share ${shareProject.displayName}`} onClose={closeProjectShare}>
+          <div className="space-y-4">
+            <p className="text-sm leading-6 text-white/45">
+              Anyone who redeems this link gets access only to this project and its
+              sessions. They must sign in before access is granted.
+            </p>
+            <label className="block text-xs text-white/45">
+              Access level
+              <select
+                className={`${field} mt-1.5`}
+                value={shareRole}
+                disabled={loading}
+                onChange={(event) => {
+                  setShareRole(event.target.value as typeof shareRole);
+                  setShareLink("");
+                  setShareCopied(false);
+                }}
+              >
+                <option value="viewer">Viewer — read-only access</option>
+                <option value="admin">Admin — can manage this project</option>
+                <option value="owner">Owner — full project access</option>
+              </select>
+            </label>
+            {shareLink ? (
+              <div className="space-y-2">
+                <label className="block text-xs text-white/45">
+                  Share link
+                  <input
+                    className={`${field} mt-1.5 font-mono text-[11px]`}
+                    value={shareLink}
+                    readOnly
+                    onFocus={(event) => event.currentTarget.select()}
+                  />
+                </label>
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    className={button}
+                    onClick={() => {
+                      void navigator.clipboard.writeText(shareLink).then(() => {
+                        setShareCopied(true);
+                      });
+                    }}
+                  >
+                    <Copy className="size-3.5" />
+                    {shareCopied ? "Copied" : "Copy link"}
+                  </button>
+                  <button type="button" className={primaryButton} onClick={closeProjectShare}>
+                    Done
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex justify-end gap-2">
+                <button type="button" className={button} onClick={closeProjectShare}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className={primaryButton}
+                  disabled={loading}
+                  onClick={() => void createProjectShareLink()}
+                >
+                  <ExternalLink className="size-3.5" />
+                  Create link
+                </button>
+              </div>
+            )}
+          </div>
+        </Overlay>
+      ) : null}
       {showSessionForm && selectedOrgId && selectedProjectId && (
         <SessionForm
           projectId={selectedProjectId}
@@ -2543,6 +2645,85 @@ function CloudSettings({
                     Organization names can be edited by owners and admins.
                   </p>
                 ) : null}
+                <div className="border-y border-white/[0.08] py-4">
+                  <div className="flex items-start gap-4">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm text-white/85">Coding agent credentials</p>
+                      <p className="mt-1 text-xs leading-5 text-white/40">
+                        {selectedOrg.organization.kind === "personal"
+                          ? "This personal workspace is the default credential source for organizations that inherit your keys."
+                          : "Choose whether this organization inherits your personal API keys or keeps separate keys."}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className={button}
+                      onClick={() => setSettingsPanel("agents")}
+                    >
+                      Manage keys
+                    </button>
+                  </div>
+                  {selectedOrg.organization.kind === "personal" ? (
+                    <div className="mt-3 flex items-center justify-between rounded-lg border border-[#4d8dff]/35 bg-[#4d8dff]/[0.08] px-3 py-2">
+                      <div>
+                        <p className="text-sm text-white/80">Personal default</p>
+                        <p className="mt-0.5 text-xs text-white/40">
+                          Keys saved here can be inherited by your other organizations.
+                        </p>
+                      </div>
+                      <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-[#7ba8ff]">
+                        Default
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      {[
+                        {
+                          value: "personal_default" as const,
+                          title: "Use personal default",
+                          description: "Inherit keys from your personal workspace.",
+                        },
+                        {
+                          value: "custom" as const,
+                          title: "Use separate org keys",
+                          description: "Keep credentials owned only by this organization.",
+                        },
+                      ].map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+                            agentCredentialsMode === option.value
+                              ? "border-[#4d8dff]/45 bg-[#4d8dff]/10 text-white"
+                              : "border-white/10 bg-[#0f1115] text-white/55 hover:border-white/20 hover:text-white"
+                          }`}
+                          disabled={
+                            !canAdminOrg ||
+                            loading ||
+                            agentCredentialsMode === option.value
+                          }
+                          onClick={() =>
+                            void run(() =>
+                              api.updateProviderSettings(selectedOrgId, {
+                                agentCredentialsMode: option.value,
+                              }),
+                            )
+                          }
+                        >
+                          <span className="block text-sm">{option.title}</span>
+                          <span className="mt-1 block text-xs leading-5 text-white/40">
+                            {option.description}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {!canAdminOrg ? (
+                    <p className="mt-2 text-xs text-white/35">
+                      Only owners and admins can change the credential source.
+                    </p>
+                  ) : null}
+                </div>
                 <div>
                   <div className="mb-2 flex items-center gap-2">
                     <p className="text-sm text-white/85">Members</p>
@@ -2715,6 +2896,19 @@ function CloudSettings({
               title="Coding agents"
               description="Credentials are encrypted in AO Cloud and delivered only to authenticated workers during bootstrap."
             >
+              {selectedOrgId && selectedOrg?.organization.kind === "personal" ? (
+                <div className="mb-4 flex items-center justify-between rounded-lg border border-[#4d8dff]/35 bg-[#4d8dff]/[0.08] px-3 py-2">
+                  <div>
+                    <p className="text-sm text-white/80">Personal default</p>
+                    <p className="mt-0.5 text-xs text-white/40">
+                      These keys are the default for organizations that inherit your credentials.
+                    </p>
+                  </div>
+                  <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-[#7ba8ff]">
+                    Default
+                  </span>
+                </div>
+              ) : null}
               {canAdminOrg && selectedOrgId && selectedOrg?.organization.kind !== "personal" ? (
                 <div className="mb-4 rounded-lg border border-white/10 bg-[#15171b] p-3">
                   <p className="text-sm font-medium text-white/80">API key source</p>
@@ -3392,6 +3586,12 @@ function ProjectForm({
     );
   }, [repositories]);
   const selected = repositories.find(({ url }) => url === repositoryURL);
+  const hasActiveGitHubAppInstallation =
+    githubConnection?.mode === "github-app" &&
+    githubConnection.installations.some(
+      (installation) => installation.status === "active",
+    );
+  const showRepositorySelect = repositoriesLoading || repositories.length > 0;
   return (
     <Overlay title="Add cloud project" onClose={onClose}>
       <form
@@ -3408,22 +3608,24 @@ function ProjectForm({
           });
         }}
       >
-        <label className="block text-xs text-white/45">
-          GitHub repository
-          <select
-            className={`${field} mt-1.5`}
-            value={repositoryURL}
-            onChange={(event) => setRepositoryURL(event.target.value)}
-            disabled={loading || repositoriesLoading}
-          >
-            {repositories.map((repository) => (
-              <option value={repository.url} key={repository.url}>
-                {repository.fullName}
-                {repository.private ? " · private" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
+        {showRepositorySelect ? (
+          <label className="block text-xs text-white/45">
+            GitHub repository
+            <select
+              className={`${field} mt-1.5`}
+              value={repositoryURL}
+              onChange={(event) => setRepositoryURL(event.target.value)}
+              disabled={loading || repositoriesLoading}
+            >
+              {repositories.map((repository) => (
+                <option value={repository.url} key={repository.url}>
+                  {repository.fullName}
+                  {repository.private ? " · private" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         {repositoriesLoading ? (
           <p className="text-sm text-muted-foreground">
             Loading GitHub repositories…
@@ -3434,19 +3636,20 @@ function ProjectForm({
         {!repositoriesLoading && repositories.length === 0 ? (
           <div className="rounded-lg border border-[#e8c14a]/20 bg-[#e8c14a]/[0.06] px-3 py-2.5">
             <p className="text-sm text-[#e8c14a]">
-              {githubConnection?.mode === "github-app" &&
-              githubConnection.installations.some(
-                (installation) => installation.status === "active",
-              )
+              {hasActiveGitHubAppInstallation
                 ? "No repositories are granted to this organization."
-                : "GitHub is not connected for this organization."}
+                : "GitHub not connected."}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-white/45">
+              Connect GitHub from Provider connections to choose a repository for
+              this project.
             </p>
             <button
               type="button"
-              className="mt-1.5 text-xs text-[#8eb6ff] hover:underline"
+              className="mt-2 text-xs text-[#8eb6ff] hover:underline"
               onClick={onOpenGitHubSettings}
             >
-              Manage GitHub connection in Settings
+              Connect GitHub in Settings
             </button>
           </div>
         ) : null}

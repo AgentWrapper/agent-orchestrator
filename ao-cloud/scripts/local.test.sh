@@ -42,12 +42,12 @@ gh() {
 
 require_github_app_env
 [[ "$AO_GITHUB_APP_ID" == "4475070" ]]
-[[ "$AO_GITHUB_APP_CLIENT_ID" == "Iv23lIaAnXMSyGGzVI4" ]]
+[[ "$AO_GITHUB_APP_CLIENT_ID" == "Iv23liLaAnXMSyGGzVl4" ]]
 [[ "$AO_GITHUB_APP_SLUG" == "ao-cloud-test" ]]
 [[ "$AO_GITHUB_AUTH_MODE" == "github-app" ]]
 [[ -z "$AO_LOCAL_GITHUB_TOKEN" ]]
 [[ ! -e "$gh_marker" ]]
-bash -c '[[ "$AO_GITHUB_APP_ID" == 4475070 && "$AO_GITHUB_APP_CLIENT_ID" == Iv23lIaAnXMSyGGzVI4 && "$AO_GITHUB_APP_SLUG" == ao-cloud-test ]]'
+bash -c '[[ "$AO_GITHUB_APP_ID" == 4475070 && "$AO_GITHUB_APP_CLIENT_ID" == Iv23liLaAnXMSyGGzVl4 && "$AO_GITHUB_APP_SLUG" == ao-cloud-test ]]'
 
 for override in \
   "AO_GITHUB_APP_ID=999" \

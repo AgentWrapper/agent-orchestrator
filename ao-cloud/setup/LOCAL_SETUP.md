@@ -138,7 +138,7 @@ credential. The local runner expects these test-app defaults:
 
 ```text
 App ID:    4475070
-Client ID: Iv23lIaAnXMSyGGzVI4
+Client ID: Iv23liLaAnXMSyGGzVl4
 App slug:  ao-cloud-test
 ```
 

@@ -8,7 +8,7 @@ log_dir="$data_dir/logs"
 pid_dir="$data_dir/pids"
 env_file="$root/.env.cloud.local"
 github_app_id="4475070"
-github_app_client_id="Iv23lIaAnXMSyGGzVI4"
+github_app_client_id="Iv23liLaAnXMSyGGzVl4"
 github_app_slug="ao-cloud-test"
 webhook_path="/api/cloud/v1/github/webhooks"
 

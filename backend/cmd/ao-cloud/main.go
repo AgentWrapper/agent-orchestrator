@@ -82,7 +82,7 @@ func run(log *slog.Logger) error {
 	var githubAppClient *cloudgithubapp.Client
 	if cfg.GitHubAuthMode == "github-app" {
 		githubAppClient, err = cloudgithubapp.New(cloudgithubapp.Config{
-			ClientID:      cfg.GitHubAppClientID,
+			AppID:         cfg.GitHubAppID,
 			PrivateKeyPEM: cfg.GitHubAppPrivateKeyPEM,
 		})
 		if err != nil {

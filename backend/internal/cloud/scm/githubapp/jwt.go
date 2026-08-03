@@ -64,15 +64,15 @@ func (c *Client) AppJWT() (string, error) {
 	claims := appJWTClaims{
 		IssuedAt:  now.Add(-appJWTIssuedAtSkew).Unix(),
 		ExpiresAt: now.Add(appJWTLifetime).Unix(),
-		Issuer:    c.clientID,
+		Issuer:    c.appID,
 	}
 	return signJWT(c.privateKey, claims)
 }
 
 type appJWTClaims struct {
-	IssuedAt  int64  `json:"iat"`
-	ExpiresAt int64  `json:"exp"`
-	Issuer    string `json:"iss"`
+	IssuedAt  int64 `json:"iat"`
+	ExpiresAt int64 `json:"exp"`
+	Issuer    int64 `json:"iss"`
 }
 
 func signJWT(key *rsa.PrivateKey, claims appJWTClaims) (string, error) {

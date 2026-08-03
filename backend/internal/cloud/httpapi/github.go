@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 
 	cloudauth "github.com/aoagents/agent-orchestrator/backend/internal/cloud/auth"
@@ -269,7 +270,24 @@ func (s *Server) githubInstallCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	installation, err := s.githubApp.client.GetInstallation(r.Context(), installationID)
-	if err != nil || !s.isConfiguredGitHubInstallation(installation) {
+	if err != nil {
+		s.log.Warn("GitHub installation verification failed",
+			"request_id", middleware.GetReqID(r.Context()),
+			"installation_id", installationID,
+			"error", err,
+		)
+		writeError(w, r, http.StatusBadGateway, "GITHUB_INSTALLATION_VERIFICATION_FAILED", "GitHub could not verify this installation. Check the configured App ID and private key.")
+		return
+	}
+	if !s.isConfiguredGitHubInstallation(installation) {
+		s.log.Warn("GitHub installation application mismatch",
+			"request_id", middleware.GetReqID(r.Context()),
+			"installation_id", installation.ID,
+			"expected_app_id", s.githubApp.appID,
+			"actual_app_id", installation.AppID,
+			"expected_client_id", s.githubApp.clientID,
+			"actual_client_id", installation.ClientID,
+		)
 		writeError(w, r, http.StatusBadRequest, "INVALID_GITHUB_INSTALLATION", "GitHub installation does not belong to this application.")
 		return
 	}
@@ -389,7 +407,16 @@ func (s *Server) confirmGitHubInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	installation, err := s.githubApp.client.GetInstallation(r.Context(), *pendingAttempt.PendingGitHubInstallationID)
-	if err != nil || !s.isConfiguredGitHubInstallation(installation) {
+	if err != nil {
+		s.log.Warn("pending GitHub installation verification failed",
+			"request_id", middleware.GetReqID(r.Context()),
+			"installation_id", *pendingAttempt.PendingGitHubInstallationID,
+			"error", err,
+		)
+		writeError(w, r, http.StatusBadGateway, "GITHUB_INSTALLATION_VERIFICATION_FAILED", "GitHub could not verify this installation. Check the configured App ID and private key.")
+		return
+	}
+	if !s.isConfiguredGitHubInstallation(installation) {
 		writeError(w, r, http.StatusBadRequest, "INVALID_GITHUB_INSTALLATION", "GitHub installation does not belong to this application.")
 		return
 	}
@@ -695,7 +722,9 @@ func (s *Server) requireGitHubApp(w http.ResponseWriter, r *http.Request) bool {
 func (s *Server) isConfiguredGitHubInstallation(installation cloudgithubapp.Installation) bool {
 	return installation.ID > 0 &&
 		installation.AppID == s.githubApp.appID &&
-		(s.githubApp.clientID == "" || installation.ClientID == s.githubApp.clientID)
+		(installation.ClientID == "" ||
+			s.githubApp.clientID == "" ||
+			installation.ClientID == s.githubApp.clientID)
 }
 
 func (s *Server) loadGitHubState(ctx context.Context, orgID clouddomain.OrgID) (map[string]any, error) {

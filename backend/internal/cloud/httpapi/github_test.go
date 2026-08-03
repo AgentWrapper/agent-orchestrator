@@ -57,6 +57,42 @@ func TestGitHubInstallStateRejectsTamperingAndExpiry(t *testing.T) {
 	}
 }
 
+func TestConfiguredGitHubInstallationAllowsMissingClientID(t *testing.T) {
+	t.Parallel()
+	server := &Server{
+		githubApp: &githubAppRuntime{
+			appID:    4475070,
+			clientID: "Iv23liLaAnXMSyGGzVl4",
+		},
+	}
+	if !server.isConfiguredGitHubInstallation(cloudgithubapp.Installation{
+		ID:    123,
+		AppID: 4475070,
+	}) {
+		t.Fatal("matching App ID with omitted client ID should be accepted")
+	}
+	if !server.isConfiguredGitHubInstallation(cloudgithubapp.Installation{
+		ID:       123,
+		AppID:    4475070,
+		ClientID: "Iv23liLaAnXMSyGGzVl4",
+	}) {
+		t.Fatal("matching App ID and client ID should be accepted")
+	}
+	if server.isConfiguredGitHubInstallation(cloudgithubapp.Installation{
+		ID:    123,
+		AppID: 1,
+	}) {
+		t.Fatal("wrong App ID should be rejected")
+	}
+	if server.isConfiguredGitHubInstallation(cloudgithubapp.Installation{
+		ID:       123,
+		AppID:    4475070,
+		ClientID: "wrong-client",
+	}) {
+		t.Fatal("explicit wrong client ID should be rejected")
+	}
+}
+
 func TestConfirmGitHubInstallRejectsWrongUserOrOrganizationBeforeAtomicConfirm(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)

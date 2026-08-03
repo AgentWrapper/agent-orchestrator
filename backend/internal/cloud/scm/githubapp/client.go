@@ -34,8 +34,8 @@ const (
 
 // Config configures a GitHub App client.
 type Config struct {
-	// ClientID is used as the issuer of App JWTs.
-	ClientID string
+	// AppID is used as the numeric issuer of App JWTs.
+	AppID int64
 	// PrivateKeyPEM is an unencrypted RSA private key in PKCS#1 or PKCS#8 PEM form.
 	PrivateKeyPEM []byte
 
@@ -56,7 +56,7 @@ type Config struct {
 
 // Client signs GitHub App requests and performs bounded REST and GraphQL calls.
 type Client struct {
-	clientID          string
+	appID             int64
 	privateKey        *rsa.PrivateKey
 	apiBaseURL        *url.URL
 	graphQLURL        *url.URL
@@ -71,9 +71,8 @@ type Client struct {
 
 // New creates a GitHub App client.
 func New(config Config) (*Client, error) {
-	clientID := strings.TrimSpace(config.ClientID)
-	if clientID == "" {
-		return nil, errors.New("GitHub App client ID is required")
+	if config.AppID <= 0 {
+		return nil, errors.New("GitHub App ID must be positive")
 	}
 	key, err := ParseRSAPrivateKey(config.PrivateKeyPEM)
 	if err != nil {
@@ -131,7 +130,7 @@ func New(config Config) (*Client, error) {
 	}
 
 	return &Client{
-		clientID:          clientID,
+		appID:             config.AppID,
 		privateKey:        key,
 		apiBaseURL:        apiBaseURL,
 		graphQLURL:        graphQLURL,

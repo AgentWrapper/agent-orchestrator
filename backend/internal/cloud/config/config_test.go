@@ -322,7 +322,7 @@ func configureGitHubApp(t *testing.T) string {
 	}
 	t.Setenv("AO_GITHUB_AUTH_MODE", "github-app")
 	t.Setenv("AO_GITHUB_APP_ID", "4475070")
-	t.Setenv("AO_GITHUB_APP_CLIENT_ID", "Iv23lIaAnXMSyGGzVI4")
+	t.Setenv("AO_GITHUB_APP_CLIENT_ID", "Iv23liLaAnXMSyGGzVl4")
 	t.Setenv("AO_GITHUB_APP_SLUG", "ao-cloud-test")
 	t.Setenv("AO_GITHUB_APP_PRIVATE_KEY_PATH", privateKeyPath)
 	t.Setenv("AO_GITHUB_APP_WEBHOOK_SECRET", strings.Repeat("a", 64))

@@ -381,7 +381,7 @@ func newTestClient(t *testing.T, serverURL string, override Config) *Client {
 	t.Helper()
 	_, encoded := testRSAKey(t)
 	config := override
-	config.ClientID = "Iv1.test-client"
+	config.AppID = 123456
 	config.PrivateKeyPEM = encoded
 	config.APIBaseURL = serverURL + "/api/v3"
 	config.GraphQLURL = serverURL + "/api/graphql"

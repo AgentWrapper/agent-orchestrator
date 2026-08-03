@@ -40,7 +40,7 @@ func TestAppJWTClaimsAndSignature(t *testing.T) {
 	key, encoded := testRSAKey(t)
 	now := time.Date(2026, 8, 3, 12, 34, 56, 0, time.UTC)
 	client, err := New(Config{
-		ClientID:      "Iv1.client-id",
+		AppID:         4475070,
 		PrivateKeyPEM: encoded,
 		Now:           func() time.Time { return now },
 	})
@@ -64,8 +64,8 @@ func TestAppJWTClaimsAndSignature(t *testing.T) {
 	}
 	var claims appJWTClaims
 	decodeJWTSegment(t, parts[1], &claims)
-	if claims.Issuer != "Iv1.client-id" {
-		t.Fatalf("issuer = %q", claims.Issuer)
+	if claims.Issuer != 4475070 {
+		t.Fatalf("issuer = %d", claims.Issuer)
 	}
 	if claims.IssuedAt != now.Add(-time.Minute).Unix() {
 		t.Fatalf("iat = %d, want %d", claims.IssuedAt, now.Add(-time.Minute).Unix())

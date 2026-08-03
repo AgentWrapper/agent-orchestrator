@@ -21,6 +21,8 @@ const apiMocks = vi.hoisted(() => ({
   syncGitHub: vi.fn(),
   disconnectGitHubInstallation: vi.fn(),
   providerConnections: vi.fn(),
+  updateProviderSettings: vi.fn(),
+  createProjectShareLink: vi.fn(),
   invitations: vi.fn(),
   orgInvitations: vi.fn(),
   orgMembers: vi.fn(),
@@ -46,6 +48,8 @@ vi.mock("@/lib/cloud-api", () => ({
     syncGitHub = apiMocks.syncGitHub;
     disconnectGitHubInstallation = apiMocks.disconnectGitHubInstallation;
     providerConnections = apiMocks.providerConnections;
+    updateProviderSettings = apiMocks.updateProviderSettings;
+    createProjectShareLink = apiMocks.createProjectShareLink;
     invitations = apiMocks.invitations;
     orgInvitations = apiMocks.orgInvitations;
     orgMembers = apiMocks.orgMembers;
@@ -174,6 +178,10 @@ beforeEach(() => {
   });
   apiMocks.syncGitHub.mockResolvedValue(undefined);
   apiMocks.disconnectGitHubInstallation.mockResolvedValue(undefined);
+  apiMocks.updateProviderSettings.mockResolvedValue(undefined);
+  apiMocks.createProjectShareLink.mockResolvedValue({
+    token: "share-token",
+  });
 });
 
 function renderBoard(
@@ -302,10 +310,50 @@ it("loads GitHub repositories only when the project form opens", async () => {
   expect(apiMocks.repositories).toHaveBeenCalledTimes(1);
   expect(
     screen.getByRole("button", {
-      name: "Manage GitHub connection in Settings",
+      name: "Connect GitHub in Settings",
     }),
   ).toBeVisible();
   expect(screen.getByText(project.displayName)).toBeVisible();
+});
+
+it("opens provider connections from the no-agent empty state", async () => {
+  apiMocks.providerConnections.mockResolvedValue({ providerConnections: [] });
+  render(<CloudAppPage />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Connect an agent" }));
+
+  expect(
+    await screen.findByRole("heading", { name: "Provider connections" }),
+  ).toBeVisible();
+  expect(screen.getByText("Coding agents")).toBeVisible();
+});
+
+it("shares a project from its three-dot menu with the selected role", async () => {
+  render(<CloudAppPage />);
+
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: `More actions for ${project.displayName}`,
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Share project" }));
+
+  expect(
+    screen.getByRole("heading", { name: `Share ${project.displayName}` }),
+  ).toBeVisible();
+  fireEvent.change(screen.getByLabelText("Access level"), {
+    target: { value: "admin" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Create link" }));
+
+  await waitFor(() =>
+    expect(apiMocks.createProjectShareLink).toHaveBeenCalledWith(
+      "org-one",
+      project.id,
+      { role: "admin" },
+    ),
+  );
+  expect(await screen.findByDisplayValue(/share=share-token/)).toBeVisible();
 });
 
 it("shows GitHub App accounts, grants, and owner controls", async () => {
@@ -572,6 +620,39 @@ it("updates editable team organization names", async () => {
   await waitFor(() =>
     expect(apiMocks.updateOrganization).toHaveBeenCalledWith("org-one", {
       displayName: "Team Renamed",
+    }),
+  );
+});
+
+it("shows and updates the organization credential source in org settings", async () => {
+  apiMocks.me.mockResolvedValue({
+    sandboxProvider: "daytona",
+    organizations: [
+      {
+        ...ownerOrg,
+        organization: {
+          ...ownerOrg.organization,
+          kind: "team",
+          displayName: "Team One",
+        },
+      },
+    ],
+  });
+  apiMocks.providerConnections.mockResolvedValue({
+    providerConnections: [],
+    agentCredentialsMode: "personal_default",
+  });
+
+  render(<CloudAppPage />);
+  fireEvent.click(await screen.findByRole("button", { name: /Settings/ }));
+
+  expect(await screen.findByText("Coding agent credentials")).toBeVisible();
+  expect(screen.getByRole("button", { name: /Use personal default/ })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: /Use separate org keys/ }));
+
+  await waitFor(() =>
+    expect(apiMocks.updateProviderSettings).toHaveBeenCalledWith("org-one", {
+      agentCredentialsMode: "custom",
     }),
   );
 });
