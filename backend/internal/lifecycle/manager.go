@@ -122,11 +122,23 @@ type Manager struct {
 	// This coordination is intentionally memory-only: a daemon crash leaves the
 	// durable session exited, so the user can safely retry the resume.
 	pendingLaunches map[domain.SessionID]pendingLaunch
+	// pendingWorkerIdle queues worker turn-completion messages when the project's
+	// orchestrator is mid-turn and cannot safely receive a coordination write.
+	// Flushed when the orchestrator next becomes idle. Memory-only: a daemon
+	// restart drops the queue (the orchestrator can still observe worker state
+	// via the board / `ao session` and workers can still `ao send`).
+	pendingWorkerIdle map[domain.ProjectID][]pendingWorkerIdle
 	// steerActive reports whether a harness can safely receive a write during an
 	// active turn (input steers the run) rather than only while idle. Supplied by
 	// the agent adapter via WithActiveSteering; the default answers false, so an
 	// unknown harness is only written to while idle.
 	steerActive func(domain.AgentHarness) bool
+}
+
+// pendingWorkerIdle is one deferred worker-turn-completion coordination message.
+type pendingWorkerIdle struct {
+	workerID domain.SessionID
+	msg      string
 }
 
 // New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.
@@ -137,13 +149,14 @@ func New(store sessionStore, messenger ports.AgentMessenger, opts ...Option) *Ma
 	// WithClock option may still override this in tests.
 	clock := func() time.Time { return time.Now().UTC() }
 	m := &Manager{
-		store:           store,
-		window:          defaultRecentActivityWindow,
-		clock:           clock,
-		react:           newReactionState(),
-		flights:         map[domain.SessionID]*toolFlight{},
-		pendingLaunches: map[domain.SessionID]pendingLaunch{},
-		steerActive:     func(domain.AgentHarness) bool { return false },
+		store:             store,
+		window:            defaultRecentActivityWindow,
+		clock:             clock,
+		react:             newReactionState(),
+		flights:           map[domain.SessionID]*toolFlight{},
+		pendingLaunches:   map[domain.SessionID]pendingLaunch{},
+		pendingWorkerIdle: map[domain.ProjectID][]pendingWorkerIdle{},
+		steerActive:       func(domain.AgentHarness) bool { return false },
 	}
 	if messenger != nil {
 		m.guard = sessionguard.New(store, messenger, nil)
@@ -429,13 +442,48 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	// that pinged them has nothing left to resolve.
 	resolutions := needsInputResolutions(rec, next, now)
 	waitingEvents := m.waitingInputEvents(next, prevState, prevAt, now)
+	// Capture the transition facts the dispatcher needs before releasing the
+	// reducer lock: side-effect deliveries re-read the store and must not run
+	// under m.mu (they take the guard's own session read + messenger I/O).
+	workerTurnComplete := isWorkerTurnComplete(prevState, next)
+	orchBecameIdle := isOrchestratorBecameIdle(prevState, next)
 	m.mu.Unlock()
 	for _, ev := range waitingEvents {
 		m.emitTelemetry(ctx, ev)
 	}
 	m.emitNotification(ctx, intent)
 	m.resolveNotifications(ctx, resolutions...)
+	// Worker turn completion → parent orchestrator coordination message. Runs
+	// after the activity write so the board already shows idle when the
+	// orchestrator looks; failures are best-effort (logged inside).
+	if workerTurnComplete {
+		m.dispatchWorkerIdle(ctx, next)
+	}
+	// An orchestrator that just became idle may now accept messages that were
+	// deferred while it was mid-turn.
+	if orchBecameIdle {
+		m.flushPendingWorkerIdle(ctx, next)
+	}
 	return nil
+}
+
+// isWorkerTurnComplete reports a worker finishing an agent turn: active → idle.
+// waiting_input → idle is not a completion (the worker was already paused for
+// input). Other transitions never notify the orchestrator.
+func isWorkerTurnComplete(prev domain.ActivityState, next domain.SessionRecord) bool {
+	return next.Kind == domain.KindWorker &&
+		!next.IsTerminated &&
+		prev == domain.ActivityActive &&
+		next.Activity.State == domain.ActivityIdle
+}
+
+// isOrchestratorBecameIdle reports an orchestrator entering idle so deferred
+// worker-completion messages can be delivered.
+func isOrchestratorBecameIdle(prev domain.ActivityState, next domain.SessionRecord) bool {
+	return next.Kind == domain.KindOrchestrator &&
+		!next.IsTerminated &&
+		prev != domain.ActivityIdle &&
+		next.Activity.State == domain.ActivityIdle
 }
 
 // toolFlight tracks one session's in-flight tool executions and the pending

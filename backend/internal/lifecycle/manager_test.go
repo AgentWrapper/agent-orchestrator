@@ -2043,7 +2043,7 @@ func TestSCMObservation_ReadyToMergeSuppressedWhileWaitingInput(t *testing.T) {
 	}
 }
 
-func TestActivity_WorkerIdleDoesNotNudgeOrchestrator(t *testing.T) {
+func TestActivity_WorkerIdleNudgesOrchestrator(t *testing.T) {
 	m, st, msg := newManager()
 	now := time.Now()
 	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
@@ -2055,8 +2055,14 @@ func TestActivity_WorkerIdleDoesNotNudgeOrchestrator(t *testing.T) {
 	if got := st.sessions["mer-8"].Activity.State; got != domain.ActivityIdle {
 		t.Fatalf("worker activity = %q, want idle", got)
 	}
-	if len(msg.msgs) != 0 {
-		t.Fatalf("orchestrator nudges = %d, want 0", len(msg.msgs))
+	if len(msg.msgs) != 1 {
+		t.Fatalf("orchestrator nudges = %d, want 1: %v", len(msg.msgs), msg.msgs)
+	}
+	if msg.ids[0] != "mer-orch" {
+		t.Fatalf("nudge target = %q, want mer-orch", msg.ids[0])
+	}
+	if !strings.Contains(msg.msgs[0], "mer-8") || !strings.Contains(msg.msgs[0], "husky-setup") || !strings.Contains(msg.msgs[0], "idle") {
+		t.Fatalf("worker-idle nudge missing identity: %q", msg.msgs[0])
 	}
 }
 
@@ -2108,13 +2114,40 @@ func TestActivity_WorkerIdleOrchestratorActiveDefersNoNudge(t *testing.T) {
 	m, st, msg := newManager()
 	now := time.Now()
 	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
-	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "husky-setup", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
 
 	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
 		t.Fatal(err)
 	}
 	if len(msg.msgs) != 0 {
 		t.Fatalf("nudged a busy orchestrator: %d, want 0", len(msg.msgs))
+	}
+
+	// When the orchestrator later becomes idle, the deferred completion lands.
+	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("deferred worker-idle nudges = %d, want 1: %v", len(msg.msgs), msg.msgs)
+	}
+	if msg.ids[0] != "mer-orch" {
+		t.Fatalf("deferred nudge target = %q, want mer-orch", msg.ids[0])
+	}
+	if !strings.Contains(msg.msgs[0], "mer-8") {
+		t.Fatalf("deferred nudge missing worker id: %q", msg.msgs[0])
+	}
+}
+
+func TestActivity_WorkerIdleNoOrchestratorIsNoop(t *testing.T) {
+	m, st, msg := newManager()
+	now := time.Now()
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("nudges without orchestrator = %d, want 0", len(msg.msgs))
 	}
 }
 

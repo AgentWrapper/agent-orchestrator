@@ -580,6 +580,144 @@ func cannotNudge(rec domain.SessionRecord) bool {
 	return rec.IsTerminated || rec.Activity.State.NeedsInput() || rec.Activity.State == domain.ActivityExited
 }
 
+// dispatchWorkerIdle notifies the project's live orchestrator that a worker
+// finished a turn (activity active → idle). Delivery uses NudgeCoordination so
+// a blocked/busy orchestrator is not interrupted; when the orchestrator is
+// mid-turn the message is queued and flushed on its next idle transition.
+//
+// This is the path that closes the "worker finished, orchestrator gets silence"
+// coordination gap: workers are still free to `ao send` richer status, but the
+// orchestrator must learn of turn completion even when they do not.
+func (m *Manager) dispatchWorkerIdle(ctx context.Context, worker domain.SessionRecord) {
+	if m.guard == nil {
+		return
+	}
+	orchID, ok, err := m.resolveLiveOrchestrator(ctx, worker.ProjectID)
+	if err != nil {
+		slog.Default().Warn("lifecycle: resolve orchestrator for worker idle", "worker", worker.ID, "err", err)
+		return
+	}
+	if !ok {
+		return
+	}
+	msg := workerIdleMessage(worker)
+	outcome, err := m.guard.NudgeCoordination(ctx, orchID, msg, m.steerActive)
+	if err != nil {
+		slog.Default().Warn("lifecycle: worker-idle orchestrator nudge failed",
+			"worker", worker.ID, "orchestrator", orchID, "err", err)
+		return
+	}
+	switch outcome {
+	case sessionguard.Sent:
+		// Drop any previously deferred message for this worker: the live send
+		// supersedes a stale queued copy from an earlier busy attempt.
+		m.dropPendingWorkerIdle(worker.ProjectID, worker.ID)
+	case sessionguard.SuppressedBusy:
+		m.queuePendingWorkerIdle(worker.ProjectID, pendingWorkerIdle{workerID: worker.ID, msg: msg})
+	default:
+		// blocked / terminated / exited / not found: drop. A blocked
+		// orchestrator must not receive automated Enter; the operator can
+		// re-check the board once they unblock it.
+	}
+}
+
+// flushPendingWorkerIdle delivers any worker-idle messages queued while the
+// orchestrator was mid-turn. Called when the orchestrator itself becomes idle.
+func (m *Manager) flushPendingWorkerIdle(ctx context.Context, orch domain.SessionRecord) {
+	if m.guard == nil {
+		return
+	}
+	pending := m.takePendingWorkerIdle(orch.ProjectID)
+	if len(pending) == 0 {
+		return
+	}
+	for i, item := range pending {
+		outcome, err := m.guard.NudgeCoordination(ctx, orch.ID, item.msg, m.steerActive)
+		if err != nil {
+			slog.Default().Warn("lifecycle: deferred worker-idle nudge failed",
+				"worker", item.workerID, "orchestrator", orch.ID, "err", err)
+			// Messenger failure is unlikely to recover mid-flush; drop the rest
+			// rather than re-spamming on every subsequent idle.
+			return
+		}
+		if outcome == sessionguard.SuppressedBusy {
+			// Orchestrator went busy again mid-flush; re-queue this item and
+			// everything still pending so a later idle can retry.
+			for _, p := range pending[i:] {
+				m.queuePendingWorkerIdle(orch.ProjectID, p)
+			}
+			return
+		}
+		// Sent, or suppressed for blocked/terminated/not-found: drop this item
+		// and continue best-effort with the rest.
+	}
+}
+
+func (m *Manager) resolveLiveOrchestrator(ctx context.Context, project domain.ProjectID) (domain.SessionID, bool, error) {
+	recs, err := m.store.ListSessions(ctx, project)
+	if err != nil {
+		return "", false, err
+	}
+	for _, rec := range recs {
+		if rec.Kind == domain.KindOrchestrator && !rec.IsTerminated {
+			return rec.ID, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func workerIdleMessage(worker domain.SessionRecord) string {
+	name := strings.TrimSpace(worker.DisplayName)
+	if name == "" {
+		return fmt.Sprintf("[AO] Worker %s finished its turn and is now idle.", worker.ID)
+	}
+	return fmt.Sprintf("[AO] Worker %s (%s) finished its turn and is now idle.", worker.ID, name)
+}
+
+func (m *Manager) queuePendingWorkerIdle(project domain.ProjectID, item pendingWorkerIdle) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.pendingWorkerIdle == nil {
+		m.pendingWorkerIdle = map[domain.ProjectID][]pendingWorkerIdle{}
+	}
+	// One pending entry per worker: a later idle supersedes an earlier one.
+	out := m.pendingWorkerIdle[project][:0]
+	for _, p := range m.pendingWorkerIdle[project] {
+		if p.workerID != item.workerID {
+			out = append(out, p)
+		}
+	}
+	m.pendingWorkerIdle[project] = append(out, item)
+}
+
+func (m *Manager) dropPendingWorkerIdle(project domain.ProjectID, workerID domain.SessionID) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	pending := m.pendingWorkerIdle[project]
+	if len(pending) == 0 {
+		return
+	}
+	out := pending[:0]
+	for _, p := range pending {
+		if p.workerID != workerID {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		delete(m.pendingWorkerIdle, project)
+		return
+	}
+	m.pendingWorkerIdle[project] = out
+}
+
+func (m *Manager) takePendingWorkerIdle(project domain.ProjectID) []pendingWorkerIdle {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	pending := m.pendingWorkerIdle[project]
+	delete(m.pendingWorkerIdle, project)
+	return pending
+}
+
 func isTerminalTrackerState(state domain.NormalizedIssueState) bool {
 	return state == domain.IssueDone || state == domain.IssueCancelled
 }
