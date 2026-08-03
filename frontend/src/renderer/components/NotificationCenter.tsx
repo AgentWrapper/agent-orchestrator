@@ -418,7 +418,7 @@ function NotificationItem({
 		<div role="listitem">
 			<div
 				className={cn(
-					"group grid grid-cols-notification gap-3 px-4 py-3 text-left transition-[background-color,opacity] duration-fast",
+					"group grid grid-cols-notification items-start gap-3 px-4 py-3 text-left transition-[background-color,opacity] duration-fast",
 					canOpenSession ? "cursor-pointer hover:bg-interactive-hover" : "cursor-default",
 					!highlighted && "opacity-55 hover:opacity-80",
 				)}
@@ -435,18 +435,19 @@ function NotificationItem({
 			>
 				<div
 					className={cn(
-						"mt-0.5 grid size-notification-icon place-items-center rounded-md bg-surface",
+						"grid size-notification-icon shrink-0 place-items-center rounded-md bg-surface",
 						notificationIconClass(notification.type),
 					)}
 				>
 					<Icon className="size-icon-base" aria-hidden="true" />
 				</div>
 				<div className="min-w-0">
-					<div className="flex min-w-0 items-start gap-2">
+					{/* Match the 26px icon band so the title centers with the left glyph. */}
+					<div className="flex min-h-notification-icon items-center">
 						{isPR ? (
 							<a
 								className={cn(
-									"inline-flex min-w-0 items-start gap-1 text-left text-control leading-snug text-foreground underline decoration-border-strong underline-offset-3 transition-colors hover:text-accent hover:decoration-accent/60",
+									"inline-flex min-w-0 items-center gap-1 text-left text-control leading-snug text-foreground underline decoration-border-strong underline-offset-3 transition-colors hover:text-accent hover:decoration-accent/60",
 									highlighted && "font-medium",
 								)}
 								href={notification.target.prUrl}
@@ -460,7 +461,7 @@ function NotificationItem({
 								title={t("notify.openPR")}
 							>
 								<span className="break-words">{notification.title}</span>
-								<ExternalLink className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+								<ExternalLink className="size-3 shrink-0" aria-hidden="true" />
 							</a>
 						) : (
 							<span
@@ -472,9 +473,6 @@ function NotificationItem({
 								{notification.title}
 							</span>
 						)}
-						<time className="ml-auto shrink-0 font-mono text-[9px] text-passive" dateTime={notification.createdAt}>
-							{formatTimeCompact(notification.createdAt)}
-						</time>
 					</div>
 					{notification.body ? (
 						<p className="mt-0.5 whitespace-pre-wrap break-words text-caption leading-snug text-muted-foreground">
@@ -482,21 +480,27 @@ function NotificationItem({
 						</p>
 					) : null}
 				</div>
-				{terminated && sessionId ? (
-					<button
-						aria-label={t("shell.restoreSession")}
-						className="mt-0.5 grid size-control-md place-items-center rounded-md text-passive transition-colors hover:bg-interactive-active hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
-						disabled={restoreDisabled}
-						onClick={(event) => {
-							event.stopPropagation();
-							onRestore();
-						}}
-						title={restoring ? t("shell.restoringSession") : t("shell.restoreSession")}
-						type="button"
-					>
-						<RotateCcw className={cn("size-icon-md", restoring && "animate-spin")} aria-hidden="true" />
-					</button>
-				) : null}
+				{/* Time + restore share the same icon-height band so they stay level. */}
+				<div className="flex h-notification-icon shrink-0 items-center gap-1">
+					<time className="shrink-0 font-mono text-[9px] leading-none text-passive" dateTime={notification.createdAt}>
+						{formatTimeCompact(notification.createdAt)}
+					</time>
+					{terminated && sessionId ? (
+						<button
+							aria-label={t("shell.restoreSession")}
+							className="grid size-notification-icon place-items-center rounded-md text-passive transition-colors hover:bg-interactive-active hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+							disabled={restoreDisabled}
+							onClick={(event) => {
+								event.stopPropagation();
+								onRestore();
+							}}
+							title={restoring ? t("shell.restoringSession") : t("shell.restoreSession")}
+							type="button"
+						>
+							<RotateCcw className={cn("size-icon-md", restoring && "animate-spin")} aria-hidden="true" />
+						</button>
+					) : null}
+				</div>
 			</div>
 		</div>
 	);
