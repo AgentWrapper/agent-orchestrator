@@ -65,7 +65,7 @@ describe("CenterPane toolbar session label", () => {
 	it("uses the inspector tab height for the terminal header", () => {
 		render(<CenterPane session={worker} theme="dark" daemonReady />);
 
-		const header = screen.getByText("Terminal").parentElement?.parentElement;
+		const header = screen.getByRole("button", { name: worker.title }).closest(".h-inspector-tabs");
 		expect(header).toHaveClass("h-inspector-tabs");
 	});
 
@@ -86,7 +86,7 @@ describe("CenterPane toolbar session label", () => {
 
 		// The display controls float over the terminal body, not the tab bar,
 		// so tabs and controls can never overlap.
-		const tabBarRow = screen.getByText("Terminal").closest("div")?.parentElement;
+		const tabBarRow = screen.getByRole("button", { name: worker.title }).closest(".h-inspector-tabs");
 		expect(tabBarRow).not.toBeNull();
 		expect(tabBarRow?.contains(screen.getByRole("button", { name: /fullscreen/i }))).toBe(false);
 	});

@@ -123,16 +123,13 @@ export function CenterPane({
 			className="terminal-pane-frame flex h-full min-h-0 min-w-flex-min flex-col"
 			onWheelCapture={handleWheelZoom}
 		>
-			<div className="flex h-inspector-tabs shrink-0 items-center border-b border-border px-5">
-				<div className="flex min-w-flex-min flex-1 items-center gap-3">
-					<span className="shrink-0 font-mono text-caption font-semibold uppercase tracking-wide-lg text-muted-foreground">
-						{t("workbench.terminal")}
-					</span>
+			<div className="flex h-inspector-tabs shrink-0 items-center border-b border-border px-2">
+				<div className="flex min-w-flex-min flex-1 items-center">
 					<button
 						aria-label={t("terminal.scrollTabsLeft")}
 						className={cn(
-							"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
-							!tabsOverflow.canScrollLeft && "invisible",
+							"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none",
+							!tabsOverflow.canScrollLeft && "w-0 min-w-0 overflow-hidden p-0 opacity-0",
 						)}
 						disabled={!tabsOverflow.canScrollLeft}
 						onClick={() => tabsOverflow.scrollByDirection(-1)}
@@ -170,8 +167,8 @@ export function CenterPane({
 					<button
 						aria-label={t("terminal.scrollTabsRight")}
 						className={cn(
-							"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
-							!tabsOverflow.canScrollRight && "invisible",
+							"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none",
+							!tabsOverflow.canScrollRight && "w-0 min-w-0 overflow-hidden p-0 opacity-0",
 						)}
 						disabled={!tabsOverflow.canScrollRight}
 						onClick={() => tabsOverflow.scrollByDirection(1)}
