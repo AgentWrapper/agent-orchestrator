@@ -1,6 +1,6 @@
 import { StrictMode, type ReactNode, type Ref } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render as rtlRender, screen, within } from "@testing-library/react";
+import { act, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { SessionView } from "./SessionView";
 import { useUiStore } from "../stores/ui-store";
@@ -20,6 +20,7 @@ const interfaceTransitionState = vi.hoisted(() => ({
 		| { supported: boolean; targetMode?: "chat" | "tui"; reason?: string }
 		| undefined,
 }));
+const reviewGetMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigateMock,
@@ -49,6 +50,13 @@ vi.mock("../hooks/useSessionInterfaceTransition", () => ({
 		cancelling: false,
 		cancelError: undefined,
 	}),
+}));
+
+vi.mock("../lib/api-client", () => ({
+	apiClient: {
+		GET: reviewGetMock,
+	},
+	apiErrorMessage: (_error: unknown, fallback: string) => fallback,
 }));
 
 type FakePanelHandle = {
@@ -145,6 +153,7 @@ vi.mock("./CenterPane", () => ({
 		onSelectSessionTerminal,
 		onNewShellTerminal,
 		topbarActions,
+		reviewerTerminal,
 	}: {
 		terminalTarget?: { kind: string; handleId?: string };
 		session?: WorkspaceSession;
@@ -154,6 +163,7 @@ vi.mock("./CenterPane", () => ({
 		onSelectSessionTerminal?: () => void;
 		onNewShellTerminal?: () => void;
 		topbarActions?: ReactNode;
+		reviewerTerminal?: { handleId: string; harness: string };
 	}) => (
 		<div>
 			terminal center
@@ -162,6 +172,7 @@ vi.mock("./CenterPane", () => ({
 				{terminalTarget?.kind === "shell" ? terminalTarget.handleId : "worker"}
 			</div>
 			<div data-testid="session-tab">{session?.title ?? ""}</div>
+			<div data-testid="reviewer-harness">{reviewerTerminal?.harness ?? ""}</div>
 			<div data-testid="shell-tabs">{shellTerminals.map((s) => s.title).join(",")}</div>
 			{shellTerminals.map((s) => (
 				<button key={s.handleId} type="button" onClick={() => onSelectShellTerminal?.(s.handleId)}>
@@ -403,6 +414,7 @@ describe("SessionView", () => {
 			delete session.isTerminated;
 			session.status = "working";
 			delete session.mode;
+			session.prs = [];
 		}
 		workspaceQueryState.data = workspaces;
 		workspaceQueryState.isLoading = false;
@@ -418,10 +430,13 @@ describe("SessionView", () => {
 		navigateMock.mockReset();
 		openShellTerminalMock.mockReset();
 		closeShellTerminalMock.mockReset();
+<<<<<<< HEAD
 		interfaceTransitionMock.start.mockReset();
 		interfaceTransitionMock.resetStartError.mockReset();
 		interfaceTransitionMock.cancel.mockReset();
 		interfaceTransitionState.status = undefined;
+		reviewGetMock.mockReset();
+		reviewGetMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [], runs: [] }, error: undefined });
 	});
 
 	// Regression: shell terminals are an app-wide list, so without a per-session
@@ -617,6 +632,30 @@ describe("SessionView", () => {
 		expect(closeShellTerminalMock).toHaveBeenCalledWith("sh-a");
 		expect(screen.getByTestId("terminal-target")).toHaveTextContent("worker");
 		expect(useUiStore.getState().activeShellTerminalHandleId).toBeNull();
+	});
+
+	it("uses the stored reviewer harness for the reviewer tab icon when no latest run is current", async () => {
+		const worker = workerSession("sess-1");
+		worker.prs = [
+			{
+				url: "https://github.com/acme/repo/pull/7",
+				number: 7,
+				state: "open",
+				ci: "passing",
+				review: "none",
+				mergeability: "mergeable",
+				reviewComments: false,
+				updatedAt: "2026-06-15T00:00:00Z",
+			},
+		];
+		reviewGetMock.mockResolvedValueOnce({
+			data: { reviewerHandleId: "review-sess-1", reviewerHarness: "codex", reviews: [], runs: [] },
+			error: undefined,
+		});
+
+		render(<SessionView sessionId="sess-1" />);
+
+		await waitFor(() => expect(screen.getByTestId("reviewer-harness")).toHaveTextContent("codex"));
 	});
 
 	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS

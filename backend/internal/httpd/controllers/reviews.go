@@ -19,6 +19,7 @@ import (
 // attach its terminal over /mux (empty when no reviewer has run).
 type ListReviewsResponse struct {
 	ReviewerHandleID string                     `json:"reviewerHandleId"`
+	ReviewerHarness  domain.ReviewerHarness     `json:"reviewerHarness,omitempty"`
 	Reviews          []reviewcore.PRReviewState `json:"reviews"`
 	// Runs is every recorded pass for this session, newest first. Reviews only
 	// carries the current and previous run per PR, which cannot answer "what did
@@ -102,6 +103,7 @@ func (c *ReviewsController) list(w http.ResponseWriter, r *http.Request) {
 	}
 	envelope.WriteJSON(w, http.StatusOK, ListReviewsResponse{
 		ReviewerHandleID: res.ReviewerHandleID,
+		ReviewerHarness:  res.ReviewerHarness,
 		Reviews:          reviews,
 		Runs:             runs,
 	})

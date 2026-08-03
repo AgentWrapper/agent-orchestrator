@@ -5257,6 +5257,8 @@ components:
       properties:
         reviewerHandleId:
           type: string
+        reviewerHarness:
+          type: string
         reviews:
           items:
             $ref: '#/components/schemas/PRReviewState'

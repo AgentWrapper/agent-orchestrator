@@ -1779,6 +1779,7 @@ export interface components {
         };
         ListReviewsResponse: {
             reviewerHandleId: string;
+            reviewerHarness?: string;
             reviews: components["schemas"]["PRReviewState"][];
             runs: components["schemas"]["ReviewRun"][];
         };

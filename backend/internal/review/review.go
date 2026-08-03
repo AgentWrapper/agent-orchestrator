@@ -146,6 +146,7 @@ type TriggerResult struct {
 // recorded passes, newest first.
 type SessionReviews struct {
 	ReviewerHandleID string
+	ReviewerHarness  domain.ReviewerHarness
 	Runs             []domain.ReviewRun
 	Reviews          []PRReviewState
 }
@@ -400,16 +401,18 @@ func (e *Engine) List(ctx stdctx.Context, workerID domain.SessionID) (SessionRev
 		return SessionReviews{}, err
 	}
 	var handle string
+	var harness domain.ReviewerHarness
 	if review, ok, err := e.store.GetReviewBySession(ctx, workerID); err != nil {
 		return SessionReviews{}, err
 	} else if ok {
 		handle = review.ReviewerHandleID
+		harness = review.Harness
 	}
 	prs, err := e.prs.ListPRsBySession(ctx, workerID)
 	if err != nil {
 		return SessionReviews{}, err
 	}
-	return SessionReviews{ReviewerHandleID: handle, Runs: runs, Reviews: Plan(prs, runs)}, nil
+	return SessionReviews{ReviewerHandleID: handle, ReviewerHarness: harness, Runs: runs, Reviews: Plan(prs, runs)}, nil
 }
 
 // Cancel interrupts the live reviewer pane for a worker and marks running
