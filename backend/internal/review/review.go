@@ -213,12 +213,20 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override
 	if err != nil {
 		return TriggerResult{}, err
 	}
-	reviews := Plan(prs, runs)
 
 	reviewRow, hasReview, err := e.store.GetReviewBySession(ctx, workerID)
 	if err != nil {
 		return TriggerResult{}, err
 	}
+	if stale, err := e.cancelStaleRunningRuns(ctx, workerID, reviewRow, hasReview, runs); err != nil {
+		return TriggerResult{}, err
+	} else if stale {
+		runs, err = e.store.ListReviewRunsBySession(ctx, workerID)
+		if err != nil {
+			return TriggerResult{}, err
+		}
+	}
+	reviews := Plan(prs, runs)
 
 	harness, err := e.reviewerHarness(ctx, worker)
 	if err != nil {
@@ -326,11 +334,42 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override
 	return TriggerResult{Run: created[0], ReviewerHandleID: handleID, Created: true, Reviews: reviews, CreatedRuns: created}, nil
 }
 
+func (e *Engine) cancelStaleRunningRuns(ctx stdctx.Context, workerID domain.SessionID, reviewRow domain.Review, hasReview bool, runs []domain.ReviewRun) (bool, error) {
+	hasRunning := false
+	for _, run := range runs {
+		if run.SessionID == workerID && run.Status == domain.ReviewRunRunning && run.Verdict == domain.VerdictNone {
+			hasRunning = true
+			break
+		}
+	}
+	if !hasRunning {
+		return false, nil
+	}
+	if !hasReview || reviewRow.ReviewerHandleID == "" {
+		if _, err := e.store.CancelRunningReviewRunsBySession(ctx, workerID, "cancelled because reviewer terminal is unavailable"); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	alive, err := e.launcher.Alive(ctx, reviewRow.ReviewerHandleID)
+	if err != nil {
+		return false, err
+	}
+	if alive {
+		return false, nil
+	}
+	if _, err := e.store.CancelRunningReviewRunsBySession(ctx, workerID, "cancelled because reviewer terminal is unavailable"); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func reviewLaunchSpec(worker domain.SessionRecord, harness domain.ReviewerHarness, run domain.ReviewRun, queue []ports.ReviewTask, index int) LaunchSpec {
 	return LaunchSpec{
 		RunID:         run.ID,
 		BatchID:       run.BatchID,
 		WorkerID:      worker.ID,
+		ProjectID:     worker.ProjectID,
 		Harness:       harness,
 		WorkspacePath: worker.Metadata.WorkspacePath,
 		PRURL:         run.PRURL,

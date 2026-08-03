@@ -10,19 +10,50 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
 
 type fakeReviewer struct {
 	gotInv ports.ReviewInvocation
+	env    map[string]string
 }
 
 func (f *fakeReviewer) ReviewCommand(_ context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
 	f.gotInv = inv
-	return ports.ReviewCommandSpec{Argv: []string{"greptile", "review"}}, nil
+	return ports.ReviewCommandSpec{Argv: []string{"greptile", "review"}, Env: f.env}, nil
 }
 func (f *fakeReviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
 	f.gotInv = inv
 	return inv.Prompt, nil
+}
+
+func TestLauncherSpawnEnvCannotOverrideWorkerContext(t *testing.T) {
+	reviewer := &fakeReviewer{env: map[string]string{
+		sessionmanager.EnvSessionID: "hacked-session",
+		sessionmanager.EnvProjectID: "hacked-project",
+		sessionmanager.EnvDataDir:   "hacked-data",
+		"REVIEW_ONLY":               "1",
+	}}
+	rt := &fakeRuntime{}
+	dataDir := t.TempDir()
+	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, rt, dataDir)
+
+	if _, err := l.Spawn(context.Background(), launchSpec()); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+
+	if rt.createCfg.Env["REVIEW_ONLY"] != "1" {
+		t.Fatalf("reviewer env dropped adapter value: %v", rt.createCfg.Env)
+	}
+	if rt.createCfg.Env[sessionmanager.EnvSessionID] != "mer-1" {
+		t.Fatalf("%s = %q, want mer-1", sessionmanager.EnvSessionID, rt.createCfg.Env[sessionmanager.EnvSessionID])
+	}
+	if rt.createCfg.Env[sessionmanager.EnvProjectID] != "mer" {
+		t.Fatalf("%s = %q, want mer", sessionmanager.EnvProjectID, rt.createCfg.Env[sessionmanager.EnvProjectID])
+	}
+	if rt.createCfg.Env[sessionmanager.EnvDataDir] != dataDir {
+		t.Fatalf("%s = %q, want %q", sessionmanager.EnvDataDir, rt.createCfg.Env[sessionmanager.EnvDataDir], dataDir)
+	}
 }
 
 type fakePreLaunchReviewer struct {
@@ -124,7 +155,7 @@ func (f *fakeRuntime) SendMessage(_ context.Context, handle ports.RuntimeHandle,
 
 func launchSpec() LaunchSpec {
 	return LaunchSpec{
-		RunID: "run-1", BatchID: "batch-1", WorkerID: "mer-1", Harness: domain.ReviewerClaudeCode,
+		RunID: "run-1", BatchID: "batch-1", WorkerID: "mer-1", ProjectID: "mer", Harness: domain.ReviewerClaudeCode,
 		WorkspacePath: "/ws/mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
 	}
 }
@@ -150,9 +181,14 @@ func TestLauncherSpawnReturnsStableHandle(t *testing.T) {
 	if rt.createCfg.WorkspacePath != "/ws/mer-1" || len(rt.createCfg.Argv) == 0 || rt.createCfg.Argv[0] != "greptile" {
 		t.Fatalf("create cfg = %+v", rt.createCfg)
 	}
-	// No environment is used to carry review identity.
-	if len(rt.createCfg.Env) != 0 {
-		t.Fatalf("expected no env, got %v", rt.createCfg.Env)
+	if rt.createCfg.Env[sessionmanager.EnvSessionID] != "mer-1" {
+		t.Fatalf("reviewer %s = %q, want mer-1", sessionmanager.EnvSessionID, rt.createCfg.Env[sessionmanager.EnvSessionID])
+	}
+	if rt.createCfg.Env[sessionmanager.EnvProjectID] != "mer" {
+		t.Fatalf("reviewer %s = %q, want mer", sessionmanager.EnvProjectID, rt.createCfg.Env[sessionmanager.EnvProjectID])
+	}
+	if rt.createCfg.Env[sessionmanager.EnvDataDir] != dataDir {
+		t.Fatalf("reviewer %s = %q, want %q", sessionmanager.EnvDataDir, rt.createCfg.Env[sessionmanager.EnvDataDir], dataDir)
 	}
 	if reviewer.gotInv.RunID != "run-1" || reviewer.gotInv.TargetSHA != "sha1" || reviewer.gotInv.ReviewerID != "review-mer-1" {
 		t.Fatalf("invocation = %+v", reviewer.gotInv)

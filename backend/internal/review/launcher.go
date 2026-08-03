@@ -47,6 +47,7 @@ type LaunchSpec struct {
 	RunID         string
 	BatchID       string
 	WorkerID      domain.SessionID
+	ProjectID     domain.ProjectID
 	Harness       domain.ReviewerHarness
 	WorkspacePath string
 	PRURL         string
@@ -211,7 +212,7 @@ func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (string, err
 		SessionID:     domain.SessionID(handleID),
 		WorkspacePath: spec.WorkspacePath,
 		Argv:          cmd.Argv,
-		Env:           pinnedEnv(cmd.Env),
+		Env:           l.runtimeEnv(spec, cmd.Env),
 	})
 	if err != nil {
 		return "", fmt.Errorf("reviewer runtime: %w", err)
@@ -219,21 +220,18 @@ func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (string, err
 	return handle.ID, nil
 }
 
-// pinnedEnv returns the reviewer command's env with PATH pinned to the daemon's
-// own directory, so the bare `ao` the reviewer runs (e.g. `ao review submit`)
-// resolves to this daemon's CLI rather than a foreign `ao` first on the
-// inherited PATH. Mirrors the worker-session pin in the session manager.
-// Best-effort: an unpinnable daemon (not named "ao") keeps the inherited PATH.
-func pinnedEnv(base map[string]string) map[string]string {
-	path, err := sessionmanager.HookPATH(os.Executable, os.Getenv, base)
-	if err != nil {
-		return base
-	}
-	env := make(map[string]string, len(base)+1)
+func (l *agentLauncher) runtimeEnv(spec LaunchSpec, base map[string]string) map[string]string {
+	env := make(map[string]string, len(base)+3)
 	for k, v := range base {
 		env[k] = v
 	}
-	env["PATH"] = path
+	env[sessionmanager.EnvSessionID] = string(spec.WorkerID)
+	env[sessionmanager.EnvProjectID] = string(spec.ProjectID)
+	env[sessionmanager.EnvDataDir] = l.dataDir
+	path, err := sessionmanager.HookPATH(os.Executable, os.Getenv, env)
+	if err == nil {
+		env["PATH"] = path
+	}
 	return env
 }
 

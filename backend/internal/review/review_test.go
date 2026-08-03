@@ -63,10 +63,8 @@ func (f *fakeStore) InsertReviewRun(_ context.Context, r domain.ReviewRun) error
 			existing.TargetSHA == r.TargetSHA &&
 			existing.Harness == r.Harness &&
 			existing.TargetSHA != "" &&
-			existing.Status != domain.ReviewRunFailed &&
-			existing.Status != domain.ReviewRunCancelled &&
-			(existing.Status == domain.ReviewRunRunning ||
-				(existing.Verdict != domain.VerdictNone && existing.Verdict != domain.VerdictChangesRequested)) {
+			existing.Status == domain.ReviewRunRunning &&
+			existing.Verdict == domain.VerdictNone {
 			return domain.ErrDuplicateReviewRun
 		}
 	}
@@ -515,7 +513,7 @@ func TestTriggerIsIdempotentForSameCommit(t *testing.T) {
 			Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved,
 		}},
 	}
-	launcher := &fakeLauncher{alive: true}
+	launcher := &fakeLauncher{alive: true, handle: "review-mer-1"}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
 
 	res, err := eng.Trigger(context.Background(), "mer-1", "")
@@ -615,7 +613,7 @@ func TestTriggerReusesRunningRowWithNoVerdict(t *testing.T) {
 		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1"},
 		runs:   []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}},
 	}
-	launcher := &fakeLauncher{alive: false, handle: "review-mer-2"}
+	launcher := &fakeLauncher{alive: true, handle: "review-mer-2"}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
 
 	res, err := eng.Trigger(context.Background(), "mer-1", "")
@@ -630,6 +628,32 @@ func TestTriggerReusesRunningRowWithNoVerdict(t *testing.T) {
 	}
 	if got := store.runs[0]; got.Status != domain.ReviewRunRunning {
 		t.Fatalf("running row should remain running, got %+v", got)
+	}
+}
+
+func TestTriggerRetriesRunningRowWhenReviewerDead(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1"},
+		runs:   []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}},
+	}
+	launcher := &fakeLauncher{alive: false, handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if !res.Created || res.Run.ID == "run-1" {
+		t.Fatalf("expected stale running review to be retried with a new run: %+v", res)
+	}
+	if !launcher.spawned || launcher.notified {
+		t.Fatalf("expected reviewer relaunch for stale running row: %+v", launcher)
+	}
+	if store.runs[0].Status != domain.ReviewRunCancelled {
+		t.Fatalf("stale running row = %+v, want cancelled", store.runs[0])
+	}
+	if len(store.runs) != 2 || store.runs[1].Status != domain.ReviewRunRunning {
+		t.Fatalf("runs = %+v, want cancelled old run and new running run", store.runs)
 	}
 }
 
@@ -936,7 +960,7 @@ func TestTriggerAllowsTwoPRsWithSameHeadSHA(t *testing.T) {
 	}
 }
 
-func TestTriggerSkipsApprovedAndRunningCurrentHead(t *testing.T) {
+func TestTriggerRerunsApprovedAndReusesRunningCurrentHead(t *testing.T) {
 	store := &fakeStore{
 		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1"},
 		runs: []domain.ReviewRun{
@@ -955,13 +979,16 @@ func TestTriggerSkipsApprovedAndRunningCurrentHead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
-	if res.Created || len(res.CreatedRuns) != 0 || launcher.spawned || launcher.notified {
-		t.Fatalf("expected no new work: res=%+v launcher=%+v", res, launcher)
+	if !res.Created || len(res.CreatedRuns) != 1 || res.CreatedRuns[0].PRURL != "https://github.com/o/r/pull/1" {
+		t.Fatalf("expected one rerun for the approved PR: res=%+v", res)
+	}
+	if !launcher.notified || launcher.spawned {
+		t.Fatalf("expected live reviewer to receive the approved PR rerun: %+v", launcher)
 	}
 	if launcher.preflighted {
 		t.Fatal("expected preflight not to run")
 	}
-	if len(res.Reviews) != 2 || res.Reviews[0].Status != ReviewStateUpToDate || res.Reviews[1].Status != ReviewStateRunning {
+	if len(res.Reviews) != 2 || res.Reviews[0].Status != ReviewStateRunning || res.Reviews[1].Status != ReviewStateRunning {
 		t.Fatalf("review states = %+v", res.Reviews)
 	}
 }

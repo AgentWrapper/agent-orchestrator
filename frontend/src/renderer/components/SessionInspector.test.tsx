@@ -1662,13 +1662,14 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
 	});
 
-	it("shows a no-needed-reviews notice instead of opening the terminal when the backend reuses runs", async () => {
+	it("re-runs an up-to-date review and opens the reviewer terminal", async () => {
 		mockCommonGets([approvedReview], "reviewer-pane", [reviewState(3, "up_to_date")]);
+		const runningReview = { ...approvedReview, id: "run-rerun", status: "running", verdict: "", body: "" };
 		postMock.mockResolvedValue({
-			response: { status: 200 },
+			response: { status: 201 },
 			data: {
 				reviewerHandleId: "reviewer-pane",
-				reviews: [],
+				reviews: [{ ...reviewState(3, "running"), latestRun: runningReview }],
 			},
 		});
 		const onOpenReviewerTerminal = vi.fn();
