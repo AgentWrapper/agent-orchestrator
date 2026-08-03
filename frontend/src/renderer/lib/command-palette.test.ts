@@ -66,6 +66,8 @@ describe("buildCommands grouping", () => {
 		expect(map.get("current-project-settings")?.group).toBe("current");
 		expect(map.get("current-copy-branch")?.group).toBe("current");
 		expect(map.get("current-copy-branch")?.action).toEqual({ kind: "copy-branch", branch: "feature/w-pr" });
+		expect(map.get("current-trigger-review")?.group).toBe("current");
+		expect(map.get("current-trigger-review")?.action).toEqual({ kind: "trigger-review", sessionId: "w-pr" });
 	});
 
 	it("disables New task with a reason when the route project is absent from workspaces", () => {
@@ -133,17 +135,30 @@ describe("buildCommands sessions", () => {
 });
 
 describe("buildCommands pull requests", () => {
-	it("creates a per-PR item searchable by number, #number, url, branch and project", () => {
+	it("creates per-PR open/copy items searchable by number, url, branch and project", () => {
 		const items = buildCommands({ workspaces: workspaces() });
 		const prItem = byId(items).get("pr:w-pr:42");
+		const copyItem = byId(items).get("pr-copy:w-pr:42");
 		expect(prItem?.group).toBe("prs");
-		expect(prItem?.title).toBe("#42");
+		expect(prItem?.title).toBe("Open PR #42");
+		expect(prItem?.action).toEqual({ kind: "open-pr", url: "https://github.com/o/r/pull/42" });
+		expect(copyItem?.group).toBe("prs");
+		expect(copyItem?.title).toBe("Copy PR #42 URL");
+		expect(copyItem?.action).toEqual({ kind: "copy-pr-url", url: "https://github.com/o/r/pull/42" });
 		const keywords = prItem?.keywords ?? [];
 		expect(keywords).toContain("#42");
 		expect(keywords).toContain("42");
 		expect(keywords).toContain("https://github.com/o/r/pull/42");
 		expect(keywords).toContain("feature/w-pr");
 		expect(keywords).toContain("app");
+	});
+
+	it("creates review actions for sessions with open PRs", () => {
+		const items = buildCommands({ workspaces: workspaces() });
+		const reviewItem = byId(items).get("review:w-pr");
+		expect(reviewItem?.group).toBe("prs");
+		expect(reviewItem?.title).toBe("Trigger review");
+		expect(reviewItem?.action).toEqual({ kind: "trigger-review", sessionId: "w-pr" });
 	});
 
 	it("excludes merged and closed PRs (open/draft only)", () => {
@@ -160,6 +175,7 @@ describe("buildCommands pull requests", () => {
 		];
 		const ids = new Set(buildCommands({ workspaces: ws }).map((item) => item.id));
 		expect(ids.has("pr:w-mix:9")).toBe(true);
+		expect(ids.has("pr-copy:w-mix:9")).toBe(true);
 		expect(ids.has("pr:w-mix:7")).toBe(false);
 		expect(ids.has("pr:w-mix:8")).toBe(false);
 	});
