@@ -536,6 +536,24 @@ describe("SessionFilesView", () => {
 		expect(diffScroller?.parentElement).not.toHaveClass("max-h-[min(620px,calc(100vh-18rem))]");
 	});
 
+	it("routes vertical wheel gestures over a diff to the Files scroller immediately", async () => {
+		const { container } = renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+		await userEvent.click(await screen.findByRole("button", { name: "Expand src/App.tsx" }));
+		await screen.findByText(diffLine("const value = 1;"));
+
+		const panelScroller = container.querySelector<HTMLElement>("[data-files-scroll-root]");
+		const diffScroller = container.querySelector<HTMLElement>(".session-files-diff-scrollbar");
+		expect(panelScroller).not.toBeNull();
+		expect(diffScroller).not.toBeNull();
+		if (!panelScroller || !diffScroller) return;
+
+		fireEvent.wheel(diffScroller, { deltaX: 0, deltaY: 80, deltaMode: WheelEvent.DOM_DELTA_PIXEL });
+		expect(panelScroller.scrollTop).toBe(80);
+
+		fireEvent.wheel(diffScroller, { deltaX: 80, deltaY: 4, deltaMode: WheelEvent.DOM_DELTA_PIXEL });
+		expect(panelScroller.scrollTop).toBe(80);
+	});
+
 	it("shows binary-file feedback as a compact inline state", async () => {
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/sessions/{sessionId}/workspace/files") {

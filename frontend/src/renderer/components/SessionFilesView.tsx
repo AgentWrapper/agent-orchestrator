@@ -132,6 +132,29 @@ export function SessionFilesView({
 		[],
 	);
 
+	useEffect(() => {
+		const root = rootRef.current;
+		if (!root) return;
+		const routeDiffWheel = (event: WheelEvent) => {
+			if (event.ctrlKey || event.metaKey || event.shiftKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+			const target = event.target;
+			if (!(target instanceof Element) || !target.closest(".session-files-diff-scrollbar")) return;
+			const scrollRoot = root.querySelector<HTMLElement>("[data-files-scroll-root]");
+			if (!scrollRoot) return;
+			const delta =
+				event.deltaMode === WheelEvent.DOM_DELTA_LINE
+					? event.deltaY * 16
+					: event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+						? event.deltaY * scrollRoot.clientHeight
+						: event.deltaY;
+			if (delta === 0) return;
+			event.preventDefault();
+			scrollRoot.scrollTop += delta;
+		};
+		root.addEventListener("wheel", routeDiffWheel, { capture: true, passive: false });
+		return () => root.removeEventListener("wheel", routeDiffWheel, { capture: true });
+	}, []);
+
 	const beginAnnotation = (target: ActiveFileAnnotationTarget) => {
 		annotationGenerationRef.current += 1;
 		if (annotationSentTimerRef.current !== null) window.clearTimeout(annotationSentTimerRef.current);
