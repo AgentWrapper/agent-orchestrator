@@ -89,7 +89,7 @@ const STATUS_COLORS = {
 	unknown: "oklch(0.37 0.013 285.805)", // --chart-4
 } as const;
 
-const SIDEBAR_DEFAULT_WIDTH = 218;
+const SIDEBAR_DEFAULT_WIDTH = 208;
 
 const previewAgents = {
 	claude: { agent: "Claude", icon: "/app-icons/agents/claude-code.svg" },
@@ -1307,7 +1307,7 @@ function Sidebar({ cards }: { cards: PreviewCard[] }) {
 			style={{ width: SIDEBAR_DEFAULT_WIDTH }}
 		>
 			{/* Traffic lights + nav — decorative only; whole sidebar is pointer-events-none. */}
-			<div className="flex h-11 items-center gap-2 px-3">
+			<div className="flex h-10 items-center gap-2 px-3">
 				<div className="flex h-6 items-center gap-1.5">
 					<span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#ff5f57]" />
 					<span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#ffbd2e]" />
@@ -1389,7 +1389,7 @@ function Sidebar({ cards }: { cards: PreviewCard[] }) {
 			<div className="flex min-h-0 flex-1 flex-col overflow-hidden px-2">
 				<div className="relative z-20 mb-px shrink-0">
 					{/* Project row — h-9 + action cluster footprint matches real Sidebar. */}
-					<div className="relative flex h-9 w-full items-center gap-2 rounded-lg bg-[var(--preview-sidebar-accent)] px-2 pr-[84px] text-left text-[13px] font-medium text-[var(--preview-foreground)]">
+					<div className="relative flex h-9 w-full items-center gap-2 rounded-lg bg-[var(--preview-sidebar-accent)] px-2 pr-[84px] text-left text-[12px] font-medium text-[var(--preview-foreground)]">
 						<FolderOpenIcon className="h-4 w-4 shrink-0" />
 						<span className="min-w-0 flex-1 truncate">agent-orchestrator</span>
 					</div>
@@ -1420,7 +1420,7 @@ function Sidebar({ cards }: { cards: PreviewCard[] }) {
 			</div>
 
 			{/* Settings — mb is panel inset (2px) + panel border (1px) so this hairline meets Archive's. */}
-			<div className="mt-auto mb-[3px] flex h-13 shrink-0 items-center border-t border-[var(--preview-border-strong)] px-2">
+			<div className="mt-auto mb-[3px] flex h-12 shrink-0 items-center border-t border-[var(--preview-border-strong)] px-2">
 				<div className="flex h-full w-full items-center gap-2 px-2 text-[12px] font-medium text-[var(--preview-muted-foreground)]">
 					<SettingsIcon className="h-3.5 w-3.5 shrink-0" />
 					<span>Settings</span>
@@ -1432,8 +1432,8 @@ function Sidebar({ cards }: { cards: PreviewCard[] }) {
 
 function ArchiveBar({ count }: { count: number }) {
 	return (
-		<div className="flex h-13 shrink-0 items-center border-t border-[var(--preview-divider)] px-3">
-			<div className="inline-flex h-full w-full items-center gap-2 text-[11px] text-[var(--preview-muted-foreground)] outline-none">
+		<div className="flex h-12 shrink-0 items-center border-t border-[var(--preview-divider)] px-3">
+			<div className="inline-flex h-full w-full items-center gap-2 text-[10.5px] text-[var(--preview-muted-foreground)] outline-none">
 				<svg
 					aria-hidden="true"
 					className="h-3 w-3 shrink-0 text-[var(--preview-passive)]"
@@ -1465,23 +1465,23 @@ function BoardChrome({ viewMode }: { viewMode: ViewMode }) {
 			{/* Static chrome — TopbarButton accent / primary / icon at control-lg (34px). */}
 			<span
 				aria-hidden="true"
-				className="inline-flex h-[34px] items-center gap-1.5 rounded-md border border-[var(--preview-border)] bg-[var(--preview-raised)] px-3.5 text-sm font-semibold leading-none text-[var(--preview-muted-foreground)]"
+				className="inline-flex h-[32px] items-center gap-1.5 rounded-md border border-[var(--preview-border)] bg-[var(--preview-raised)] px-3 text-[12px] font-semibold leading-none text-[var(--preview-muted-foreground)]"
 			>
-				<PlusIcon className="h-4 w-4" />
+				<PlusIcon className="h-3.5 w-3.5" />
 				<span>New task</span>
 			</span>
 			<span
 				aria-hidden="true"
-				className="inline-flex h-[34px] items-center gap-1.5 rounded-md bg-[var(--preview-primary)] px-3.5 text-sm font-semibold leading-none text-[var(--preview-primary-foreground)]"
+				className="inline-flex h-[32px] items-center gap-1.5 rounded-md bg-[var(--preview-primary)] px-3 text-[12px] font-semibold leading-none text-[var(--preview-primary-foreground)]"
 			>
-				<OrchestratorIcon className="h-4 w-4" />
+				<OrchestratorIcon className="h-3.5 w-3.5" />
 				Orchestrator
 			</span>
 			<span
 				aria-hidden="true"
-				className="grid size-[34px] shrink-0 place-items-center rounded-md text-[var(--preview-muted-foreground)]"
+				className="grid size-[32px] shrink-0 place-items-center rounded-md text-[var(--preview-muted-foreground)]"
 			>
-				<BellIcon className="h-6 w-6 mb-2" />
+				<BellIcon className="h-5 w-5 mb-2" />
 			</span>
 		</div>
 	);
