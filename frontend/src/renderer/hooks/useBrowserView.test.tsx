@@ -215,9 +215,10 @@ describe("useBrowserView", () => {
 		expect(result.current.agentBrowserActive).toBe(false);
 
 		act(() => {
-			bridge.emitActivity({ viewId: "42:sess-1", active: true, action: "click" });
+			bridge.emitActivity({ viewId: "42:sess-1", active: true, action: "click", tabId: "t2" });
 		});
 		expect(result.current.agentBrowserActive).toBe(true);
+		expect(result.current.agentBrowserActivity).toMatchObject({ tabId: "t2" });
 
 		act(() => {
 			bridge.emitActivity({ viewId: "42:sess-1", active: false, action: "click" });

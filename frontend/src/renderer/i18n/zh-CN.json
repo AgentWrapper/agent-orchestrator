@@ -14,6 +14,8 @@
 	"board.empty.body": "描述一个任务后，编排器会进行规划、创建 worker 会话，并在工作推进时在此跟踪。",
 	"board.empty.title": "还没有 worker 会话",
 	"browser.agentAction": "代理正在{{verb}}",
+	"browser.agent": "代理",
+	"browser.agentWorkingOnTab": "代理正在此标签上工作",
 	"browser.agentUsing": "代理正在使用浏览器",
 	"browser.annotate": "标注页面",
 	"browser.back": "后退",

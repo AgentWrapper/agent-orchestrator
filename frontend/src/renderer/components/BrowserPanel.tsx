@@ -250,6 +250,7 @@ export function BrowserPanelView({
 		closeDevTools = async () => undefined,
 		prepareForOverlay,
 		agentBrowserActive,
+		agentBrowserActivity,
 		visualTransition,
 		annotationMode,
 		setAnnotationMode,
@@ -263,6 +264,7 @@ export function BrowserPanelView({
 	const canPopOut = poppedOut || Boolean(navState.url);
 	const canRetryAnnotation = status === "error" && queuedCount > 0;
 	const canUseDevTools = hasNativeBrowser && Boolean(viewId);
+	const agentWorkingTabId = agentBrowserActive ? (agentBrowserActivity?.tabId ?? activeTabId) : "";
 	const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
 	const tabsMenuWarmupRef = useRef<Promise<void> | null>(null);
 
@@ -468,7 +470,10 @@ export function BrowserPanelView({
 					<DropdownMenuTrigger asChild>
 						<Button
 							aria-label={t("browser.tabsAria", { count: tabs.length })}
-							className={cn("browser-panel__tabs-trigger gap-1 px-2", tabs.length > 1 && "bg-accent-weak text-accent")}
+							className={cn(
+								"browser-panel__tabs-trigger gap-1 px-2 text-muted-foreground",
+								tabs.length > 1 && "bg-accent-weak",
+							)}
 							disabled={tabs.length === 0}
 							onFocus={warmTabsMenuFrame}
 							onKeyDown={handleTabsTriggerKeyDown}
@@ -479,8 +484,8 @@ export function BrowserPanelView({
 							type="button"
 							variant="ghost"
 						>
-							<Layers3 aria-hidden="true" className="size-icon-base" />
-							<span className="font-mono text-caption">{tabs.length}</span>
+							<Layers3 aria-hidden="true" className="size-icon-base text-muted-foreground" />
+							<span className="font-mono text-caption text-foreground">{tabs.length}</span>
 						</Button>
 					</DropdownMenuTrigger>
 					<DropdownMenuContent
@@ -492,6 +497,7 @@ export function BrowserPanelView({
 						<DropdownMenuLabel>{t("browser.tabs")}</DropdownMenuLabel>
 						{tabs.map((tab) => {
 							const label = browserTabLabel(tab.title, tab.url);
+							const agentWorkingOnTab = agentWorkingTabId === tab.id;
 							return (
 								<div className="flex min-w-0 items-center gap-0.5" key={tab.id}>
 									<DropdownMenuItem
@@ -500,10 +506,23 @@ export function BrowserPanelView({
 										textValue={`${label.title} ${label.subtitle}`}
 									>
 										<span className="flex size-4 shrink-0 items-center justify-center">
-											{tab.id === activeTabId ? <Check aria-hidden="true" className="text-accent" /> : null}
+											{tab.id === activeTabId ? <Check aria-hidden="true" className="text-foreground" /> : null}
 										</span>
 										<span className="min-w-0 flex-1">
-											<span className="block truncate text-xs text-foreground">{label.title}</span>
+											<span className="flex min-w-0 items-center gap-1.5">
+												<span className="min-w-0 flex-1 truncate text-xs text-foreground">{label.title}</span>
+												{agentWorkingOnTab ? (
+													<span
+														aria-label={t("browser.agentWorkingOnTab")}
+														className="browser-panel__agent-tab-indicator"
+														data-testid={`browser-agent-tab-${tab.id}`}
+														title={t("browser.agentWorkingOnTab")}
+													>
+														<span aria-hidden="true" className="browser-panel__agent-tab-dot" />
+														{t("browser.agent")}
+													</span>
+												) : null}
+											</span>
 											<span className="block truncate font-mono text-caption text-passive">{label.subtitle}</span>
 										</span>
 									</DropdownMenuItem>

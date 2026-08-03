@@ -69,6 +69,7 @@ export type BrowserTabsState = {
 
 export type BrowserAgentActivityState = {
 	viewId: string;
+	tabId?: string;
 	active: boolean;
 	action: string;
 	phase?: "started" | "finished";
@@ -488,10 +489,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		active: boolean,
 		commandId?: string,
 		phase?: BrowserAgentActivityState["phase"],
+		tabId?: string,
 	): void => {
 		session.agentBrowserCommands = Math.max(0, session.agentBrowserCommands + (active ? 1 : -1));
 		options.mainWindow.webContents.send("browser:agentActivity", {
 			viewId: session.viewId,
+			...(tabId ? { tabId } : {}),
 			active: session.agentBrowserCommands > 0,
 			action,
 			...(phase ? { phase } : {}),
@@ -1205,6 +1208,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			}
 			const session = ensureSession(sessionId);
 			const entry = activeEntry(session);
+			const agentTabId = entry.tabId;
 			const runNative = async (nativeAction: string, nativeArgs: Record<string, unknown> = {}) => {
 				if (!options.agentBrowserRuntime) {
 					throw browserError("BROWSER_AUTOMATION_UNAVAILABLE", "Browser automation runtime is unavailable");
@@ -1218,7 +1222,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				);
 			};
 			const commandId = randomUUID();
-			setAgentBrowserActivity(session, action, true, commandId, "started");
+			setAgentBrowserActivity(session, action, true, commandId, "started", agentTabId);
 			try {
 				switch (action) {
 				case "open": {
@@ -1330,7 +1334,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 					throw browserError("INVALID_ARGUMENT", `Unsupported browser action: ${action}`);
 				}
 			} finally {
-				setAgentBrowserActivity(session, action, false, commandId, "finished");
+				setAgentBrowserActivity(session, action, false, commandId, "finished", agentTabId);
 			}
 		},
 		dispose: async () => {

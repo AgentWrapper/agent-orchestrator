@@ -614,6 +614,7 @@ describe("agent browser runtime", () => {
 		expect(activity).toHaveLength(2);
 		expect(activity[0].payload).toMatchObject({
 			viewId: "0:sess-1",
+			tabId: "t1",
 			active: true,
 			action: "tabs",
 			phase: "started",
@@ -621,6 +622,7 @@ describe("agent browser runtime", () => {
 		});
 		expect(activity[1].payload).toMatchObject({
 			viewId: "0:sess-1",
+			tabId: "t1",
 			active: false,
 			action: "tabs",
 			phase: "finished",
