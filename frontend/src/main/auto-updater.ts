@@ -1,6 +1,6 @@
 import { autoUpdater } from "electron-updater";
 import { app, BrowserWindow, dialog } from "electron";
-import { existsSync } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -774,10 +774,58 @@ export async function downloadUpdateNow(requestId?: string): Promise<void> {
   }
 }
 
+// getMacInstallBlocker is the macOS install preflight. An app launched straight
+// from where it was downloaded runs under App Translocation: a randomized
+// READ-ONLY mount beneath /private/var/folders/.../AppTranslocation. Squirrel
+// cannot replace that bundle, so quitAndInstall() silently does nothing — no
+// restart, no error, a dead button (#3527). The same dead end applies to any
+// bundle the user cannot write to. Returns the user-facing explanation when
+// installing cannot work from here, undefined when the install may proceed.
+// Fails open: only a positively identified blocker suppresses the attempt.
+export function getMacInstallBlocker(): string | undefined {
+  if (process.platform !== "darwin") return undefined;
+  // .../Agent Orchestrator.app/Contents/MacOS/<binary> -> the .app bundle root
+  const bundle = path.resolve(process.execPath, "..", "..", "..");
+  if (bundle.includes("/AppTranslocation/")) {
+    return (
+      "macOS is running Agent Orchestrator from a temporary read-only location " +
+      "because it was opened straight from where it was downloaded. Quit the app, " +
+      "move Agent Orchestrator.app into /Applications, reopen it from there, and " +
+      "then restart to update."
+    );
+  }
+  try {
+    if (existsSync(bundle)) accessSync(bundle, fsConstants.W_OK);
+  } catch {
+    return (
+      "The update can't be installed because the app's location isn't writable. " +
+      "Move Agent Orchestrator.app into /Applications (or fix the folder's " +
+      "permissions), reopen it, and then restart to update."
+    );
+  }
+  return undefined;
+}
+
 // quitAndInstallUpdate installs a downloaded update and relaunches. isSilent
 // false keeps the installer UI on Windows; isForceRunAfter relaunches the app.
 export function quitAndInstallUpdate(): void {
   if (!app.isPackaged) return;
+  const blocker = getMacInstallBlocker();
+  if (blocker !== undefined) {
+    console.warn("update install blocked:", blocker);
+    // A dialog, not a status broadcast: the click came from the sidebar row,
+    // and replacing the "downloaded" status would hide that row (losing the
+    // retry affordance) without guaranteeing the user ever sees the message.
+    // The staged build stays staged; after the user moves the app the same
+    // row installs it.
+    void dialog.showMessageBox({
+      type: "warning",
+      message: "The update can't be installed from this location",
+      detail: blocker,
+      buttons: ["OK"],
+    });
+    return;
+  }
   autoUpdater.quitAndInstall(false, true);
 }
 
