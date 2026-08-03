@@ -459,12 +459,14 @@ function ProjectItem({
 	onRemoveProject: (projectId: string) => Promise<void>;
 }) {
 	const { t } = useTranslation();
-	const projectActive =
-		selection.activeProjectId === workspace.id &&
-		(!selection.activeSessionId ||
-			workspace.sessions.some(
-				(session) => session.id === selection.activeSessionId && session.kind === "orchestrator",
-			));
+	const activeProjectMatches = selection.activeProjectId === workspace.id;
+	const dashboardActive = activeProjectMatches && !selection.activeSessionId;
+	const orchestratorActive =
+		activeProjectMatches &&
+		workspace.sessions.some(
+			(session) => session.id === selection.activeSessionId && session.kind === "orchestrator",
+		);
+	const projectActive = dashboardActive || orchestratorActive;
 	const queryClient = useQueryClient();
 	const [removeError, setRemoveError] = useState<string | null>(null);
 	const [isRemoving, setIsRemoving] = useState(false);
@@ -550,7 +552,7 @@ function ProjectItem({
 		<SidebarMenuItem className="group-data-[collapsible=icon]:mb-0">
 			{/* project-sidebar__proj-row */}
 			<SidebarMenuButton
-				aria-current={projectActive ? "page" : undefined}
+				aria-current={dashboardActive ? "page" : undefined}
 				aria-expanded={expanded}
 				isActive={projectActive}
 				onClick={onProjectClick}
@@ -593,12 +595,13 @@ function ProjectItem({
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<button
+							aria-current={dashboardActive ? "page" : undefined}
 							aria-label={t("shell.openProjectDashboard", { name: workspace.name })}
-							className={HOVER_ACTION_CLASS}
+							className={cn(HOVER_ACTION_CLASS, dashboardActive && "text-foreground")}
 							onClick={() => selection.goProject(workspace.id)}
 							type="button"
 						>
-							<LayoutDashboard aria-hidden="true" />
+							<LayoutDashboard aria-hidden="true" strokeWidth={dashboardActive ? 2.5 : 2} />
 						</button>
 					</TooltipTrigger>
 					<TooltipContent>{t("shell.dashboard")}</TooltipContent>
@@ -606,17 +609,18 @@ function ProjectItem({
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<button
+							aria-current={orchestratorActive ? "page" : undefined}
 							aria-label={
 								orchestrator
 									? t("shell.openProjectOrchestrator", { name: workspace.name })
 									: t("shell.spawnProjectOrchestrator", { name: workspace.name })
 							}
-							className={HOVER_ACTION_CLASS}
+							className={cn(HOVER_ACTION_CLASS, orchestratorActive && "text-foreground")}
 							disabled={isSpawning || isProjectRestarting}
 							onClick={() => void openOrchestrator()}
 							type="button"
 						>
-							<OrchestratorIcon aria-hidden="true" />
+							<OrchestratorIcon aria-hidden="true" strokeWidth={orchestratorActive ? 2.5 : 2} />
 						</button>
 					</TooltipTrigger>
 					<TooltipContent>

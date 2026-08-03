@@ -401,6 +401,16 @@ describe("Sidebar", () => {
 		expect(screen.getByLabelText("Project actions for Project One")).toBeInTheDocument();
 	});
 
+	it("emphasizes the dashboard icon on the project board", () => {
+		mockParams.projectId = workspace.id;
+		renderSidebar();
+
+		const dashboard = screen.getByLabelText("Open Project One dashboard");
+		expect(dashboard).toHaveAttribute("aria-current", "page");
+		expect(dashboard).toHaveClass("text-foreground");
+		expect(screen.getByLabelText("Spawn Project One orchestrator")).not.toHaveAttribute("aria-current");
+	});
+
 	it("keeps the project pill active while its orchestrator session is open", () => {
 		const orchestrator = { ...session, id: "orch-1", kind: "orchestrator" as const, title: "orchestrator" };
 		mockParams.projectId = workspace.id;
@@ -409,6 +419,10 @@ describe("Sidebar", () => {
 		renderSidebar({ workspaces: [{ ...workspace, sessions: [orchestrator] }] });
 
 		expect(screen.getByText("Project One").closest("button")).toHaveAttribute("data-active", "true");
+		const orchestratorButton = screen.getByLabelText("Open Project One orchestrator");
+		expect(orchestratorButton).toHaveAttribute("aria-current", "page");
+		expect(orchestratorButton).toHaveClass("text-foreground");
+		expect(screen.getByLabelText("Open Project One dashboard")).not.toHaveAttribute("aria-current");
 	});
 
 	it("toggles project sessions from the folder icon without selecting the project first", async () => {
