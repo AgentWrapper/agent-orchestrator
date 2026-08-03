@@ -33,6 +33,8 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 | `ao completion <shell>`       | Generate completions for `bash`, `zsh`, `fish`, or `powershell`.                                                                  |
 | `ao version` / `ao --version` | Print build metadata.                                                                                                             |
 | `ao daemon`                   | Hidden internal daemon entrypoint used by `ao start`.                                                                             |
+| `ao backup create [path]`     | Zip durable `~/.ao` state for reinstall/migration (daemon must be stopped).                                                      |
+| `ao backup restore <path>`    | Restore durable state from a backup zip (daemon must be stopped). See [backup-restore.md](../backup-restore.md).                 |
 
 ### Product commands
 
