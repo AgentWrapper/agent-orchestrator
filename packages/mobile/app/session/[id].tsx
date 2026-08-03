@@ -2,15 +2,28 @@ import { Feather } from "@expo/vector-icons";
 import { XtermJsWebView, type XtermWebViewHandle } from "@fressh/react-native-xtermjs-webview";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Alert, Keyboard, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Keyboard, LayoutAnimation, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
-import { getPreview, isTerminalStatus, killSession, sendMessage } from "../../lib/api";
+import { ApiError, getPreview, isTerminalStatus, killSession, sendMessage } from "../../lib/api";
 import { authHeaders, isConfigured, loadConfig, type ServerConfig } from "../../lib/config";
+import { terminalTheme, type Theme } from "../../lib/theme";
 import { haptics } from "../../lib/haptics";
 import { MuxClient, type MuxStatus } from "../../lib/mux";
+import { Composer } from "../../lib/session/Composer";
+import { dockInset } from "../../lib/session/keyboardInset";
+import { KeyRow } from "../../lib/session/KeyRow";
+import {
+	REROUTED_NOTICE,
+	routeForSend,
+	terminalPayload,
+	TERMINAL_MODE_NOTICE,
+	TERMINAL_UNAVAILABLE_NOTICE,
+	type SendTarget,
+} from "../../lib/session/sendRoute";
 import { useApp } from "../../lib/store";
-import { theme } from "../../lib/theme";
+import { useVoiceInput } from "../../lib/voice/useVoiceInput";
+import { useTheme, useThemedStyles, useThemeState } from "../../lib/ThemeProvider";
 
 const FONT_SIZE = 12;
 
@@ -478,47 +491,23 @@ const TERMINAL_ENHANCE_JS = `
 true;
 `;
 
-// Keys a phone keyboard lacks - sent straight to the PTY as escape sequences.
-const EXTRA_KEYS: { label: string; seq: string }[] = [
-	{ label: "esc", seq: "\x1b" },
-	{ label: "tab", seq: "\t" },
-	{ label: "^C", seq: "\x03" },
-	{ label: "←", seq: "\x1b[D" },
-	{ label: "↑", seq: "\x1b[A" },
-	{ label: "↓", seq: "\x1b[B" },
-	{ label: "→", seq: "\x1b[C" },
-	{ label: "↵", seq: "\r" },
-];
-
-// Named keys a hardware/Bluetooth keyboard emits (key.length > 1) mapped to the
-// bytes the PTY expects. Single-char keys are sent as-is.
-const NAMED_KEYS: Record<string, string> = {
-	Backspace: "\x7f",
-	Enter: "\r",
-	"\n": "\r",
-	Space: " ",
-	Tab: "\t",
-	Escape: "\x1b",
-	ArrowUp: "\x1b[A",
-	ArrowDown: "\x1b[B",
-	ArrowRight: "\x1b[C",
-	ArrowLeft: "\x1b[D",
-};
-
 const statusLabel: Record<MuxStatus, string> = {
 	connecting: "connecting...",
 	open: "live",
 	closed: "disconnected",
 	error: "error",
 };
-const statusColors: Record<MuxStatus, string> = {
-	connecting: theme.attention,
-	open: theme.green,
-	closed: theme.textTertiary,
-	error: theme.red,
-};
+const statusColorFor = (t: Theme): Record<MuxStatus, string> => ({
+	connecting: t.attention,
+	open: t.green,
+	closed: t.textTertiary,
+	error: t.red,
+});
 
 export default function TerminalScreen() {
+	const t = useTheme();
+	const { scheme } = useThemeState();
+	const styles = useThemedStyles(makeStyles);
 	const params = useLocalSearchParams<{ id: string; projectId?: string }>();
 	const id = String(params.id);
 	const projectId = params.projectId ? String(params.projectId) : undefined;
@@ -545,10 +534,6 @@ export default function TerminalScreen() {
 	// THIS grid (scaled to fit), not the phone's own fit, so the display matches the
 	// PTY and a full-screen TUI doesn't mis-render. Null until the daemon reports it.
 	const authRef = useRef<{ cols: number; rows: number } | null>(null);
-	// The REAL keyboard input. The WebView can't show/control a keyboard reliably,
-	// so this hidden RN TextInput is what raises the keyboard and captures typing,
-	// which we forward to the PTY over the mux. Focus it to type, blur it to hide.
-	const kbInputRef = useRef<TextInput | null>(null);
 
 	const [cfg, setCfg] = useState<ServerConfig | null>(null);
 	const [status, setStatus] = useState<MuxStatus>("connecting");
@@ -556,9 +541,9 @@ export default function TerminalScreen() {
 	const [banner, setBanner] = useState<string | null>(null);
 	const [kbHeight, setKbHeight] = useState(0); // iOS: space to reserve for keyboard
 	const [kbVisible, setKbVisible] = useState(false); // both platforms
-	const [compose, setCompose] = useState(false); // high-level "send message" bar
 	const [msg, setMsg] = useState("");
 	const [sending, setSending] = useState(false);
+	const [sendTarget, setSendTarget] = useState<SendTarget>("agent");
 	// Terminal font size. Smaller font = more rows/cols, which is the only way to
 	// see more of a full-screen TUI (alt-screen apps have no scrollback). Changing
 	// it remounts the xterm; the PTY persists and re-attaches at the denser grid.
@@ -594,32 +579,60 @@ export default function TerminalScreen() {
 	// Android edge-to-edge (edgeToEdgeEnabled) defeats windowSoftInputMode=adjustResize
 	// so the window no longer resizes - the keyboard just draws over our content.
 	// So reserve kbHeight on BOTH platforms and let the screen pad itself above the
-	// keyboard, else the key/compose bar (and its send button) hide behind it.
+	// keyboard, else the input dock (and its send button) hide behind it. This is
+	// the ONLY place the keyboard height is applied — the dock adds nothing on top
+	// of it (see dockInset), because doing both is what made the bar kick.
 	useEffect(() => {
 		const isIOS = Platform.OS === "ios";
 		const showEvt = isIOS ? "keyboardWillShow" : "keyboardDidShow";
 		const hideEvt = isIOS ? "keyboardWillHide" : "keyboardDidHide";
+		// Ride the system keyboard curve. Without this the relayout lands as an
+		// instant jump while the keyboard is still sliding, which is most of why
+		// the dock looked like it kicked.
+		const animate = (duration?: number) =>
+			LayoutAnimation.configureNext({
+				duration: duration || 250,
+				update: { type: LayoutAnimation.Types.keyboard },
+			});
 		const show = Keyboard.addListener(showEvt, (e) => {
+			animate(e.duration);
 			setKbVisible(true);
 			setKbHeight(e.endCoordinates.height);
 		});
-		const hide = Keyboard.addListener(hideEvt, () => {
+		const hide = Keyboard.addListener(hideEvt, (e) => {
+			animate(e?.duration);
 			setKbVisible(false);
 			setKbHeight(0);
 		});
 		// willShow can report a height that still includes the accessory bar we hid,
 		// leaving a gap. didShow reports the actual final frame - use it to correct.
-		const didShow = isIOS ? Keyboard.addListener("keyboardDidShow", (e) => setKbHeight(e.endCoordinates.height)) : null;
+		// Guarded so the common case where the two agree is a no-op instead of a
+		// second visible nudge.
+		const didShow = isIOS
+			? Keyboard.addListener("keyboardDidShow", (e) => {
+					const next = e.endCoordinates.height;
+					setKbHeight((h) => {
+						if (h === next) return h;
+						animate(e.duration);
+						return next;
+					});
+				})
+			: null;
 		// Backup: guarantee the reserved space collapses even if willHide is missed.
-		const didHide = Keyboard.addListener("keyboardDidHide", () => {
-			setKbVisible(false);
-			setKbHeight(0);
-		});
+		// iOS-only, like didShow above — Android's hide listener is already bound to
+		// keyboardDidHide, so registering this there subscribed the same handler to
+		// the same event twice and collapsed the dock on both.
+		const didHide = isIOS
+			? Keyboard.addListener("keyboardDidHide", () => {
+					setKbVisible(false);
+					setKbHeight(0);
+				})
+			: null;
 		return () => {
 			show.remove();
 			hide.remove();
 			didShow?.remove();
-			didHide.remove();
+			didHide?.remove();
 		};
 	}, []);
 
@@ -634,7 +647,7 @@ export default function TerminalScreen() {
 			// has no history for the default back button to use.
 			headerLeft: () => (
 				<Pressable onPress={leave} hitSlop={12} style={styles.headerBack}>
-					<Feather name="chevron-left" size={22} color={theme.blue} />
+					<Feather name="chevron-left" size={22} color={t.blue} />
 					<Text style={styles.headerBackText}>Back</Text>
 				</Pressable>
 			),
@@ -777,41 +790,91 @@ export default function TerminalScreen() {
 		[id, projectId],
 	);
 
-	// Show/hide the keyboard by focusing/blurring our RN input (fully reliable,
-	// unlike the WebView's keyboard).
-	const toggleKeyboard = useCallback(() => {
-		if (kbVisible) kbInputRef.current?.blur();
-		else kbInputRef.current?.focus();
-	}, [kbVisible]);
-
-	// Each key press in the hidden input -> the matching byte(s) to the PTY.
-	const onKeyPress = useCallback(
-		(e: { nativeEvent: { key: string } }) => {
-			const k = e.nativeEvent.key;
-			const seq = NAMED_KEYS[k] ?? (k.length === 1 ? k : null);
-			if (seq !== null) muxRef.current?.sendInput(id, seq, projectId);
-		},
-		[id, projectId],
-	);
-
-	// High-level message to the agent (AO's /send) - distinct from raw keystrokes.
+	// Send the composed text to the selected route. The agent route can still
+	// auto-engage the terminal route when the daemon reports a blocked prompt.
+	//
+	// AO's /send is the right route for a message: the daemon hands it to the
+	// harness and submits it. But it sanitises control characters and refuses
+	// outright while a session is paused on a permission prompt — answering 409
+	// SESSION_AWAITING_DECISION with the advice "answer it in the session
+	// terminal first". So on exactly that code we do what it says and write the
+	// line to the PTY instead. `shouldRetryOnTerminal` keeps that narrow: a
+	// terminated or exited session has no PTY, and rerouting there would swallow
+	// the user's text and report success.
+	//
+	// The reroute is announced in the banner rather than done silently, and the
+	// text stays in the field on any failure we did NOT handle, so nothing typed
+	// is ever lost.
 	const sendPrompt = useCallback(async () => {
 		const text = msg.trim();
 		if (!text) return;
+		if (routeForSend(sendTarget) === "terminal") {
+			if (muxRef.current && status === "open") {
+				muxRef.current.sendInput(id, terminalPayload(text), projectId);
+				haptics.success();
+				setMsg("");
+				setBanner(TERMINAL_MODE_NOTICE);
+			} else {
+				haptics.error();
+				setBanner(TERMINAL_UNAVAILABLE_NOTICE);
+			}
+			return;
+		}
 		setSending(true);
 		try {
 			const config = cfg ?? (await loadConfig());
 			await sendMessage(config, id, text);
 			haptics.success();
 			setMsg("");
-			setCompose(false);
 		} catch (e) {
-			haptics.error();
-			setBanner(`Send failed: ${e instanceof Error ? e.message : String(e)}`);
+			const failure = e instanceof ApiError ? e : null;
+			// Only reroute onto a mux we actually hold open — otherwise the write is
+			// a no-op and we would clear the field having sent nothing.
+			if (routeForSend(sendTarget, failure) === "terminal" && muxRef.current && status === "open") {
+				muxRef.current.sendInput(id, terminalPayload(text), projectId);
+				haptics.success();
+				setMsg("");
+				setSendTarget("terminal");
+				setBanner(REROUTED_NOTICE);
+			} else {
+				haptics.error();
+				setBanner(`Send failed: ${e instanceof Error ? e.message : String(e)}`);
+			}
 		} finally {
 			setSending(false);
 		}
-	}, [msg, cfg, id]);
+	}, [msg, sendTarget, cfg, id, projectId, status]);
+
+	// Push-to-talk dictation, captured on the PHONE rather than by the harness.
+	//
+	// Driving a harness's own voice mode from here (Claude Code's /voice) looks
+	// easy — the key row already sends arbitrary bytes to the PTY — but it records
+	// through the *daemon host's* microphone, which is a machine the user is not
+	// sitting at. It would also only ever work for the harnesses that ship a voice
+	// mode at all.
+	//
+	// Capturing here inverts both: the transcript is just text, so it leaves
+	// through sendPrompt like anything typed, and every harness gets it for free.
+	const voice = useVoiceInput({
+		onTranscript: useCallback((text: string) => {
+			// Land in the composer as an editable draft rather than sending. This
+			// text reaches an agent with tool access and speech-to-text mishears code
+			// vocabulary often enough that silent submission isn't acceptable.
+			//
+			// The composer is always mounted now, so there is nothing to open — and
+			// nothing focuses the field either, which would pop the keyboard over the
+			// terminal mid-phrase.
+			// Append, so several held phrases build one prompt (the same way holding
+			// the key again appends in Claude Code's own dictation).
+			setMsg((m) => (m ? `${m} ${text}` : text));
+			haptics.success();
+		}, []),
+	});
+
+	// Recognition failures surface in the existing banner rather than new UI.
+	useEffect(() => {
+		if (voice.error) setBanner(voice.error);
+	}, [voice.error]);
 
 	// Toggle the in-app browser. The poll above keeps `preview` current, so a tap
 	// just shows/hides the overlay. A bare README (the detector's markdown fallback)
@@ -828,6 +891,30 @@ export default function TerminalScreen() {
 		}
 		setBrowserOpen(true);
 	}, [browserOpen, hasPreview]);
+
+	// The browser toggle lives in the nav bar, beside the session name, to keep the
+	// status row uncluttered. Separate from the headerLeft effect above because
+	// `toggleBrowser` is declared here — referencing it in that effect's dep array
+	// would read it before initialisation.
+	useLayoutEffect(() => {
+		navigation.setOptions({
+			headerRight: () => (
+				<Pressable
+					hitSlop={12}
+					accessibilityLabel={browserOpen ? "Close preview" : "Open preview"}
+					onPress={toggleBrowser}
+					style={({ pressed }) => [styles.headerBrowserBtn, pressed && { opacity: 0.6 }]}
+				>
+					<Feather
+						name="globe"
+						size={19}
+						color={browserOpen ? t.blue : hasPreview ? t.green : t.textSecondary}
+					/>
+					{hasPreview && !browserOpen && <View style={styles.browserReadyDot} />}
+				</Pressable>
+			),
+		});
+	}, [navigation, browserOpen, hasPreview, toggleBrowser, styles, t]);
 
 	const confirmKill = useCallback(() => {
 		const doKill = async () => {
@@ -885,13 +972,19 @@ export default function TerminalScreen() {
 			// Move more rows per swipe so touch scrolling feels responsive.
 			scrollSensitivity: 3,
 			fastScrollSensitivity: 8,
-			theme: {
-				background: theme.term,
-				foreground: theme.textPrimary,
-				cursor: theme.orange,
-			},
+			// The terminal's own palette, not the product one: agent TUIs own the
+			// meaning of the ANSI slots.
+			theme: terminalTheme(scheme),
+			// Agent TUIs pick their colours assuming a dark canvas, so on the light
+			// theme they can land white-on-white — the prompt row is exactly that
+			// once its background band is collapsed away. xterm nudges any pair that
+			// falls below this ratio until it is readable, which is cheaper and far
+			// more reliable than trying to anticipate every colour a TUI might emit.
+			minimumContrastRatio: 4.5,
 		}),
-		[fontSize],
+		// `scheme` matters: without it the terminal keeps the palette it was built
+		// with and stays dark after a theme switch.
+		[fontSize, scheme],
 	);
 
 	// Zoom re-mounts the terminal at a new font size (see fontSize note above).
@@ -929,55 +1022,43 @@ export default function TerminalScreen() {
 		);
 	}
 
-	// The composer and key bar sit directly atop each other, so they share one
-	// bottom inset: reserve room above the keyboard, else the home-indicator inset.
-	const bottomPad = kbHeight > 0 ? 8 : insets.bottom > 0 ? insets.bottom : 8;
+	// One inset for the whole dock. The root already reserves kbHeight, so the
+	// dock owes nothing more while the keyboard is up — see dockInset.
+	const bottomPad = dockInset(kbHeight, insets.bottom);
 
 	return (
 		<View style={[styles.screen, kbHeight > 0 && { paddingBottom: kbHeight }]}>
-			<TextInput
-				ref={kbInputRef}
-				value=""
-				onKeyPress={onKeyPress}
-				onChangeText={() => {}}
-				blurOnSubmit={false}
-				multiline={false}
-				autoCapitalize="none"
-				autoCorrect={false}
-				autoComplete="off"
-				spellCheck={false}
-				keyboardAppearance="dark"
-				caretHidden
-				style={styles.kbInput}
-			/>
 			<View style={styles.statusBar}>
-				<View style={[styles.statusDot, { backgroundColor: statusColors[status] }]} />
+				<View style={[styles.statusDot, { backgroundColor: statusColorFor(t)[status] }]} />
 				<Text style={styles.statusText}>{statusLabel[status]}</Text>
 				{size && !dead && (
 					<Text style={styles.dims}>
 						{size.cols}x{size.rows}
 					</Text>
 				)}
-				{/* In-app browser toggle - shows a page or doc the agent generated. Goes
-				    green with a dot when one is available; tap to open (we never
-				    auto-open, so a bare README can't pop a blank page). */}
-				<Pressable
-					hitSlop={8}
-					onPress={toggleBrowser}
-					style={({ pressed }) => [
-						styles.browserBtn,
-						browserOpen && styles.browserBtnActive,
-						hasPreview && !browserOpen && styles.browserBtnReady,
-						pressed && { opacity: 0.6 },
-					]}
-				>
-					<Feather
-						name="globe"
-						size={13}
-						color={browserOpen ? theme.blue : hasPreview ? theme.green : theme.textSecondary}
-					/>
-					{hasPreview && !browserOpen && <View style={styles.browserReadyDot} />}
-				</Pressable>
+				{/* Zoom the terminal font: smaller = more rows/cols (see more of a TUI).
+				    Grid geometry belongs beside the grid readout, not in the input dock. */}
+				{!dead && (
+					<View style={styles.zoomGroup}>
+						<Pressable
+							hitSlop={6}
+							accessibilityLabel="Smaller text"
+							onPress={() => zoom(-1)}
+							style={({ pressed }) => [styles.zoomBtn, pressed && { opacity: 0.6 }]}
+						>
+							<Feather name="minus" size={13} color={t.textSecondary} />
+						</Pressable>
+						<View style={styles.zoomDivider} />
+						<Pressable
+							hitSlop={6}
+							accessibilityLabel="Larger text"
+							onPress={() => zoom(1)}
+							style={({ pressed }) => [styles.zoomBtn, pressed && { opacity: 0.6 }]}
+						>
+							<Feather name="plus" size={13} color={t.textSecondary} />
+						</Pressable>
+					</View>
+				)}
 				{dead ? (
 					<Pressable
 						hitSlop={8}
@@ -985,17 +1066,19 @@ export default function TerminalScreen() {
 						disabled={restoring}
 						style={({ pressed }) => [styles.restoreBtn, (pressed || restoring) && { opacity: 0.7 }]}
 					>
-						<Feather name="rotate-ccw" size={12} color={theme.blue} />
+						<Feather name="rotate-ccw" size={12} color={t.blue} />
 						<Text style={styles.restoreText}>{restoring ? "Restoring..." : "Restore"}</Text>
 					</Pressable>
 				) : (
+					// Icon-only: the trash glyph reads as "destroy this session" on its
+					// own, so the label would only cost width. Hence accessibilityLabel.
 					<Pressable
 						hitSlop={8}
+						accessibilityLabel="Kill session"
 						onPress={confirmKill}
 						style={({ pressed }) => [styles.killBtn, pressed && { opacity: 0.7 }]}
 					>
-						<Feather name="x" size={12} color={theme.red} />
-						<Text style={styles.killText}>Kill</Text>
+						<Feather name="trash-2" size={14} color={t.red} />
 					</Pressable>
 				)}
 			</View>
@@ -1008,7 +1091,10 @@ export default function TerminalScreen() {
 
 			<View style={styles.termWrap}>
 				<XtermJsWebView
-					key={`term-${fontSize}`}
+					// Remount on a theme change as well as a font change: xterm applies
+					// its palette at construction, so a live options swap leaves the
+					// already-painted rows in the old colours.
+					key={`term-${fontSize}-${scheme}`}
 					ref={xtermRef}
 					autoFit={false}
 					xtermOptions={xtermOptions}
@@ -1016,12 +1102,12 @@ export default function TerminalScreen() {
 					logger={logger}
 					onInitialized={onInitialized}
 					onData={onData}
-					style={{ flex: 1, backgroundColor: theme.bgBase }}
+					style={{ flex: 1, backgroundColor: t.bgBase }}
 				/>
 				{dead && (
 					<View style={styles.deadOverlay}>
 						<View style={styles.deadIcon}>
-							<Feather name="power" size={24} color={theme.textTertiary} />
+							<Feather name="power" size={24} color={t.textTertiary} />
 						</View>
 						<Text style={styles.deadTitle}>Session terminated</Text>
 						<Text style={styles.deadMsg}>This session has no live terminal. Restore it to bring the agent back.</Text>
@@ -1030,7 +1116,7 @@ export default function TerminalScreen() {
 							disabled={restoring}
 							style={({ pressed }) => [styles.restoreCta, (pressed || restoring) && { opacity: 0.8 }]}
 						>
-							<Feather name="rotate-ccw" size={16} color="#06101f" />
+							<Feather name="rotate-ccw" size={16} color={t.onAccent} />
 							<Text style={styles.restoreCtaText}>{restoring ? "Restoring..." : "Restore session"}</Text>
 						</Pressable>
 					</View>
@@ -1041,15 +1127,15 @@ export default function TerminalScreen() {
 				{browserOpen && preview && (
 					<View style={styles.browserOverlay}>
 						<View style={styles.browserBar}>
-							<Feather name="globe" size={13} color={theme.textTertiary} />
+							<Feather name="globe" size={13} color={t.textTertiary} />
 							<Text style={styles.browserPath} numberOfLines={1}>
 								{preview.entry}
 							</Text>
 							<Pressable hitSlop={8} onPress={() => previewWebRef.current?.reload()} style={styles.browserAction}>
-								<Feather name="rotate-cw" size={15} color={theme.blue} />
+								<Feather name="rotate-cw" size={15} color={t.blue} />
 							</Pressable>
 							<Pressable hitSlop={8} onPress={() => setBrowserOpen(false)} style={styles.browserAction}>
-								<Feather name="x" size={17} color={theme.textSecondary} />
+								<Feather name="x" size={17} color={t.textSecondary} />
 							</Pressable>
 						</View>
 						<WebView
@@ -1067,72 +1153,56 @@ export default function TerminalScreen() {
 				)}
 			</View>
 
-			{compose && (
-				<View style={[styles.composer, { paddingBottom: bottomPad }]}>
-					<TextInput
-						style={styles.composerInput}
-						value={msg}
-						onChangeText={setMsg}
-						placeholder="Message the agent..."
-						placeholderTextColor={theme.textTertiary}
-						autoFocus
-						multiline
-						keyboardAppearance="dark"
-						onSubmitEditing={sendPrompt}
-					/>
-					<Pressable
-						style={({ pressed }) => [styles.sendBtn, pressed && { opacity: 0.8 }, !msg.trim() && { opacity: 0.4 }]}
-						onPress={sendPrompt}
-						disabled={!msg.trim() || sending}
-					>
-						<Feather name="send" size={16} color="#06101f" />
-					</Pressable>
-				</View>
-			)}
+			{/* The input dock. One container, one bottom inset, fixed slots — every
+			    control sits in the same place in every state the screen can reach. */}
+			<View style={[styles.dock, { paddingBottom: bottomPad }]}>
+				{/* Live dictation readout. Deliberately not inside the field: the
+				    partial transcript changes on every syllable, and rewriting the
+				    input under the user's caret is hostile. */}
+				{(voice.state === "starting" || voice.state === "recording" || voice.state === "transcribing") && (
+					<View style={[styles.voiceStrip, voice.state === "starting" && styles.voiceStripWarmup]}>
+						<Feather name="mic" size={13} color={voice.state === "starting" ? t.textTertiary : t.blue} />
+						<Text style={styles.voiceText} numberOfLines={2}>
+							{voice.partial ||
+								(voice.state === "starting"
+									? // The mic is not capturing yet. Saying "Listening" here would
+										// invite speech that gets dropped during warm-up.
+										"Keep holding..."
+									: voice.state === "transcribing"
+										? "Transcribing..."
+										: voice.mode === "latched"
+											? "Recording hands-free - tap the mic to finish"
+											: "Speak now - release to insert")}
+						</Text>
+					</View>
+				)}
 
-			<View style={[styles.keys, { paddingBottom: bottomPad }]}>
-				{EXTRA_KEYS.map((k) => (
-					<Pressable
-						key={k.label}
-						style={({ pressed }) => [styles.key, pressed && styles.keyPressed]}
-						onPress={() => sendKey(k.seq)}
-					>
-						<Text style={styles.keyText}>{k.label}</Text>
-					</Pressable>
-				))}
-				{/* Zoom the terminal font: smaller = more rows/cols (see more of a TUI). */}
-				<Pressable style={({ pressed }) => [styles.key, pressed && styles.keyPressed]} onPress={() => zoom(-1)}>
-					<Feather name="zoom-out" size={15} color={theme.textPrimary} />
-				</Pressable>
-				<Pressable style={({ pressed }) => [styles.key, pressed && styles.keyPressed]} onPress={() => zoom(1)}>
-					<Feather name="zoom-in" size={15} color={theme.textPrimary} />
-				</Pressable>
-				{/* Compose a high-level message to the agent. */}
-				<Pressable
-					style={({ pressed }) => [styles.key, compose && styles.keyToggle, pressed && styles.keyPressed]}
-					onPress={() => setCompose((c) => !c)}
-				>
-					<Feather name="message-square" size={15} color={compose ? theme.blue : theme.textPrimary} />
-				</Pressable>
-				{/* Show/hide the keyboard (replaces the OS "Done" button we removed). */}
-				<Pressable
-					style={({ pressed }) => [styles.key, styles.keyToggle, pressed && styles.keyPressed]}
-					onPress={toggleKeyboard}
-				>
-					<Text style={styles.keyText}>{kbVisible ? "⌨▾" : "⌨▴"}</Text>
-				</Pressable>
+				<KeyRow onKey={sendKey} />
+
+				<Composer
+					value={msg}
+					onChangeText={setMsg}
+					onSend={sendPrompt}
+					sending={sending}
+					target={sendTarget}
+					onTargetChange={setSendTarget}
+					voice={voice}
+					keyboardVisible={kbVisible}
+					onDismissKeyboard={Keyboard.dismiss}
+				/>
 			</View>
 		</View>
 	);
 }
 
-const styles = StyleSheet.create({
-	screen: { flex: 1, backgroundColor: theme.bgBase },
+const makeStyles = (t: Theme) =>
+	StyleSheet.create({
+	screen: { flex: 1, backgroundColor: t.bgBase },
 	center: {
 		flex: 1,
 		alignItems: "center",
 		justifyContent: "center",
-		backgroundColor: theme.bgBase,
+		backgroundColor: t.bgBase,
 	},
 	statusBar: {
 		flexDirection: "row",
@@ -1140,169 +1210,145 @@ const styles = StyleSheet.create({
 		paddingHorizontal: 14,
 		paddingVertical: 6,
 		borderBottomWidth: 1,
-		borderBottomColor: theme.borderSubtle,
+		borderBottomColor: t.borderSubtle,
 	},
 	statusDot: { width: 8, height: 8, borderRadius: 4, marginRight: 8 },
-	statusText: { color: theme.textSecondary, fontSize: 12, flex: 1 },
-	dims: { color: theme.textTertiary, fontSize: 11, fontFamily: theme.fontMono },
+	statusText: { color: t.textSecondary, fontSize: 12, flex: 1 },
+	dims: { color: t.textTertiary, fontSize: 11, fontFamily: t.fontMono },
+	zoomGroup: {
+		flexDirection: "row",
+		alignItems: "center",
+		marginLeft: 10,
+		borderWidth: 1,
+		borderColor: t.borderDefault,
+		borderRadius: 7,
+		backgroundColor: t.bgElevated,
+		overflow: "hidden",
+	},
+	zoomBtn: { width: 28, height: 24, alignItems: "center", justifyContent: "center" },
+	zoomDivider: { width: 1, height: 24, backgroundColor: t.borderDefault },
 	banner: {
-		backgroundColor: theme.bgElevated,
+		backgroundColor: t.bgElevated,
 		paddingHorizontal: 14,
 		paddingVertical: 8,
 		borderBottomWidth: 1,
-		borderBottomColor: theme.borderDefault,
+		borderBottomColor: t.borderDefault,
 	},
-	bannerText: { color: theme.attention, fontSize: 12 },
-	termWrap: { flex: 1, backgroundColor: theme.bgBase },
-	keys: {
-		flexDirection: "row",
-		flexWrap: "wrap",
-		gap: 6,
-		paddingHorizontal: 8,
-		paddingTop: 8,
+	bannerText: { color: t.attention, fontSize: 12 },
+	termWrap: { flex: 1, backgroundColor: t.bgBase },
+	dock: {
 		borderTopWidth: 1,
-		borderTopColor: theme.borderSubtle,
-		backgroundColor: theme.bgSurface,
+		borderTopColor: t.borderSubtle,
+		backgroundColor: t.bgSurface,
 	},
-	key: {
-		backgroundColor: theme.bgElevated,
-		borderWidth: 1,
-		borderColor: theme.borderDefault,
-		borderRadius: 6,
-		paddingVertical: 8,
-		paddingHorizontal: 12,
-		minWidth: 44,
-		alignItems: "center",
-	},
-	keyPressed: { backgroundColor: theme.accentTint, borderColor: theme.accent },
-	keyToggle: { borderColor: theme.accent, marginLeft: "auto" },
-	kbInput: { position: "absolute", width: 1, height: 1, top: 0, left: 0, opacity: 0 },
-	keyText: { color: theme.textPrimary, fontFamily: theme.fontMono, fontSize: 14 },
+	// Square-ish now that it holds a glyph and no label.
 	killBtn: {
-		flexDirection: "row",
-		alignItems: "center",
-		gap: 4,
-		backgroundColor: theme.tintRed,
-		borderRadius: 12,
-		paddingHorizontal: 11,
-		paddingVertical: 4,
-		marginLeft: 12,
-	},
-	killText: { color: theme.red, fontWeight: "700", fontSize: 12 },
-	browserBtn: {
-		flexDirection: "row",
 		alignItems: "center",
 		justifyContent: "center",
-		backgroundColor: theme.bgElevated,
-		borderWidth: 1,
-		borderColor: theme.borderDefault,
+		backgroundColor: t.tintRed,
 		borderRadius: 12,
-		paddingHorizontal: 10,
-		paddingVertical: 4,
+		paddingHorizontal: 8,
+		paddingVertical: 5,
 		marginLeft: 12,
 	},
-	browserBtnActive: { backgroundColor: theme.tintBlue, borderColor: theme.blue },
-	// A live web preview: tint the pill green so the globe reads as "ready to open".
-	browserBtnReady: { backgroundColor: theme.tintGreen, borderColor: theme.green },
-	// Small green badge on the globe when a real preview is available.
+	// Bare glyph in the nav bar: iOS draws its own round box behind header buttons,
+	// so a tinted pill here would fight it. Colour carries the state instead.
+	// A fixed square with centred content, not padding — asymmetric padding leaves
+	// the glyph visibly off-centre inside the circle iOS draws around it.
+	headerBrowserBtn: {
+		width: 35,
+		height: 30,
+		alignItems: "center",
+		justifyContent: "center",
+	},
+	// Small green badge on the globe when a real preview is available. Offsets are
+	// from the square's centre, so it rides the glyph rather than the button frame.
 	browserReadyDot: {
 		position: "absolute",
-		top: -2,
-		right: -2,
+		top: 4,
+		right: 3,
 		width: 8,
 		height: 8,
 		borderRadius: 4,
-		backgroundColor: theme.green,
+		backgroundColor: t.green,
 		borderWidth: 1,
-		borderColor: theme.bgSurface,
+		borderColor: t.bgSurface,
 	},
-	browserOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: theme.bgBase },
+	browserOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: t.bgBase },
 	browserBar: {
 		flexDirection: "row",
 		alignItems: "center",
 		gap: 10,
 		paddingHorizontal: 12,
 		paddingVertical: 8,
-		backgroundColor: theme.bgSurface,
+		backgroundColor: t.bgSurface,
 		borderBottomWidth: 1,
-		borderBottomColor: theme.borderSubtle,
+		borderBottomColor: t.borderSubtle,
 	},
-	browserPath: { flex: 1, color: theme.textSecondary, fontFamily: theme.fontMono, fontSize: 12 },
+	browserPath: { flex: 1, color: t.textSecondary, fontFamily: t.fontMono, fontSize: 12 },
 	browserAction: { paddingHorizontal: 4, paddingVertical: 2 },
 	browserWeb: { flex: 1, backgroundColor: "#ffffff" },
 	headerBack: { flexDirection: "row", alignItems: "center", paddingRight: 8 },
-	headerBackText: { color: theme.blue, fontSize: 17, marginLeft: 2 },
+	headerBackText: { color: t.blue, fontSize: 17, marginLeft: 2 },
 	restoreBtn: {
 		flexDirection: "row",
 		alignItems: "center",
 		gap: 4,
-		backgroundColor: theme.tintBlue,
+		backgroundColor: t.tintBlue,
 		borderRadius: 12,
 		paddingHorizontal: 11,
 		paddingVertical: 4,
 		marginLeft: 12,
 	},
-	restoreText: { color: theme.blue, fontWeight: "700", fontSize: 12 },
+	restoreText: { color: t.blue, fontWeight: "700", fontSize: 12 },
 	deadOverlay: {
 		...StyleSheet.absoluteFillObject,
 		alignItems: "center",
 		justifyContent: "center",
 		padding: 32,
 		gap: 10,
-		backgroundColor: theme.bgBase,
+		backgroundColor: t.bgBase,
 	},
 	deadIcon: {
 		width: 64,
 		height: 64,
 		borderRadius: 18,
-		backgroundColor: theme.bgElevated,
+		backgroundColor: t.bgElevated,
 		borderWidth: 1,
-		borderColor: theme.borderSubtle,
+		borderColor: t.borderSubtle,
 		alignItems: "center",
 		justifyContent: "center",
 		marginBottom: 6,
 	},
-	deadTitle: { color: theme.textPrimary, fontSize: 17, fontWeight: "700", textAlign: "center" },
-	deadMsg: { color: theme.textSecondary, fontSize: 13, lineHeight: 20, textAlign: "center", maxWidth: 300 },
+	deadTitle: { color: t.textPrimary, fontSize: 17, fontWeight: "700", textAlign: "center" },
+	deadMsg: { color: t.textSecondary, fontSize: 13, lineHeight: 20, textAlign: "center", maxWidth: 300 },
 	restoreCta: {
 		flexDirection: "row",
 		alignItems: "center",
 		gap: 8,
-		backgroundColor: theme.blue,
+		backgroundColor: t.blue,
 		borderRadius: 10,
 		paddingVertical: 12,
 		paddingHorizontal: 20,
 		marginTop: 10,
 	},
-	restoreCtaText: { color: "#06101f", fontSize: 15, fontWeight: "700" },
-	composer: {
+	restoreCtaText: { color: t.onAccent, fontSize: 15, fontWeight: "700" },
+	// Accent-blue like the rest of the chrome. Red is reserved for the mic button
+	// alone: one small saturated element reads as "recording", a whole red panel
+	// reads as an error. It sits at the top of the dock, so it divides itself from
+	// the keys below rather than redrawing the dock's own top border.
+	voiceStrip: {
 		flexDirection: "row",
-		alignItems: "flex-end",
-		gap: 8,
-		paddingHorizontal: 10,
-		paddingTop: 8,
-		backgroundColor: theme.bgSurface,
-		borderTopWidth: 1,
-		borderTopColor: theme.borderSubtle,
-	},
-	composerInput: {
-		flex: 1,
-		backgroundColor: theme.bgElevated,
-		borderWidth: 1,
-		borderColor: theme.borderDefault,
-		borderRadius: 10,
-		color: theme.textPrimary,
-		paddingHorizontal: 12,
-		paddingVertical: 9,
-		fontSize: 14,
-		maxHeight: 110,
-	},
-	sendBtn: {
-		width: 40,
-		height: 40,
-		borderRadius: 10,
-		backgroundColor: theme.blue,
 		alignItems: "center",
-		justifyContent: "center",
+		gap: 8,
+		paddingHorizontal: 12,
+		paddingVertical: 7,
+		backgroundColor: t.tintBlue,
+		borderBottomWidth: 1,
+		borderBottomColor: t.blue,
 	},
+	// Muted while the mic warms up, so "ready to speak" is a visible state change
+	// and not just a wording difference.
+	voiceStripWarmup: { backgroundColor: t.bgElevated, borderBottomColor: t.borderDefault },
+	voiceText: { flex: 1, color: t.textPrimary, fontSize: 13 },
 });

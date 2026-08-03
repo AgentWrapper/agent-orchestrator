@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
 	ChevronRight,
@@ -58,7 +59,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { OrchestratorIcon } from "./icons";
 import aoLogo from "../../../assets/ao-logo.svg";
 import { cn } from "../lib/utils";
-import { useUiStore } from "../stores/ui-store";
+import { useUiStore } from "../stores/ui-store"
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
@@ -91,7 +92,6 @@ const MAX_DISPLAY_NAME_LEN = 20;
 export const SIDEBAR_DEFAULT_WIDTH = 240;
 export const SIDEBAR_MIN_WIDTH = 200;
 export const SIDEBAR_MAX_WIDTH = 420;
-export const SIDEBAR_COLLAPSE_THRESHOLD = SIDEBAR_MIN_WIDTH;
 
 type SidebarProps = {
 	/** Hide the sidebar's right edge stroke on the welcome board inset chrome. */
@@ -151,6 +151,7 @@ export function Sidebar({
 	onInitializeProject,
 	onRemoveProject,
 }: SidebarProps) {
+	const { t } = useTranslation();
 	const selection = useSelection();
 	const { state, setOpen } = useSidebar();
 	const isCollapsed = state === "collapsed";
@@ -204,7 +205,9 @@ export function Sidebar({
 
 	// agent-orchestrator's sidebar resize: drag the right edge (200-420px,
 	// persisted), double-click to reset to 240px. Drives --ao-sidebar-w on :root,
-	// which the provider forwards into shadcn's --sidebar-width.
+	// which the provider forwards into shadcn's --sidebar-width. Dragging clamps
+	// at SIDEBAR_MIN_WIDTH — collapsing stays on the explicit toggle (⌘B /
+	// titlebar button), never on a drag.
 	const {
 		onPointerDown: onResizePointerDown,
 		onCollapsedPointerDown: onCollapsedResizePointerDown,
@@ -216,8 +219,6 @@ export function Sidebar({
 		min: SIDEBAR_MIN_WIDTH,
 		max: SIDEBAR_MAX_WIDTH,
 		edge: "right",
-		collapseBelow: SIDEBAR_COLLAPSE_THRESHOLD,
-		onCollapse: () => setOpen(false),
 		onExpand: () => setOpen(true),
 	});
 
@@ -256,7 +257,7 @@ export function Sidebar({
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
-								aria-label="Orchestrator board"
+								aria-label={t("shell.orchestratorBoard")}
 								className={cn(
 									"grid h-5.5 w-5.5 shrink-0 place-items-center",
 									"group-data-[collapsible=icon]:size-control-board group-data-[collapsible=icon]:rounded-lg",
@@ -271,7 +272,7 @@ export function Sidebar({
 							</button>
 						</TooltipTrigger>
 						<TooltipContent side="right" hidden={state !== "collapsed"}>
-							Orchestrator board
+							{t("shell.orchestratorBoard")}
 						</TooltipContent>
 					</Tooltip>
 					<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-sm font-bold leading-tight tracking-tight-lg text-foreground group-data-[collapsible=icon]:hidden">
@@ -279,7 +280,7 @@ export function Sidebar({
 					</span>
 					{isNightly && (
 						<span className="sidebar-expanded-chrome shrink-0 rounded-full bg-purple-subtle px-1.5 py-0.5 text-micro font-semibold leading-none text-purple-accent group-data-[collapsible=icon]:hidden">
-							nightly
+							{t("shell.nightly")}
 						</span>
 					)}
 				</div>
@@ -301,7 +302,7 @@ export function Sidebar({
 				<div className="sidebar-expanded-chrome flex shrink-0 flex-col group-data-[collapsible=icon]:hidden">
 					<SectionDisclosure
 						icon={<Pin strokeWidth={1.75} aria-hidden="true" />}
-						label="Pinned"
+						label={t("shell.pinned")}
 						open={pinnedOpen}
 						onToggle={() => setPinnedOpen((v) => !v)}
 						className="mb-1"
@@ -319,7 +320,7 @@ export function Sidebar({
 								<Folder strokeWidth={1.75} aria-hidden="true" />
 							)
 						}
-						label="Projects"
+						label={t("shell.projects")}
 						open={projectsOpen}
 						onToggle={() => setProjectsOpen((v) => !v)}
 						trailing={
@@ -342,7 +343,7 @@ export function Sidebar({
 						<SidebarGroupContent>
 							{workspaceError ? (
 								<div className="sidebar-expanded-chrome px-2.5 py-3 group-data-[collapsible=icon]:hidden">
-									<p className="text-sm text-foreground">Could not load projects.</p>
+									<p className="text-sm text-foreground">{t("shell.couldNotLoadProjects")}</p>
 									<p className="mt-1 text-caption text-passive">{workspaceError}</p>
 								</div>
 							) : workspaces.length === 0 ? null : (
@@ -391,7 +392,7 @@ export function Sidebar({
 				>
 					<RestartToUpdateRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
 					<button
-						aria-label="Settings"
+						aria-label={t("shell.settings")}
 						className={cn(
 							NAV_ROW_CLASS,
 							"flex h-row-md w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
@@ -401,7 +402,7 @@ export function Sidebar({
 						type="button"
 					>
 						<Settings aria-hidden="true" />
-						<span className="tracking-tight">Settings</span>
+						<span className="tracking-tight">{t("shell.settings")}</span>
 					</button>
 				</div>
 				<div
@@ -412,7 +413,7 @@ export function Sidebar({
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
-								aria-label="Settings"
+								aria-label={t("shell.settings")}
 								className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
 								onClick={() => selection.goGlobalSettings()}
 								tabIndex={isCollapsed ? 0 : -1}
@@ -421,7 +422,7 @@ export function Sidebar({
 								<Settings aria-hidden="true" />
 							</button>
 						</TooltipTrigger>
-						<TooltipContent side="right">Settings</TooltipContent>
+						<TooltipContent side="right">{t("shell.settings")}</TooltipContent>
 					</Tooltip>
 				</div>
 			</SidebarFooter>
@@ -434,7 +435,7 @@ export function Sidebar({
 				style={noDragStyle}
 			/>
 			<SidebarRail
-				aria-label="Expand sidebar"
+				aria-label={t("shell.expandSidebar")}
 				className="group-data-[state=expanded]:hidden hover:after:bg-transparent"
 				onClick={() => setOpen(true)}
 				onPointerDown={onCollapsedResizePointerDown}
@@ -458,6 +459,7 @@ function ProjectItem({
 	onToggle: () => void;
 	onRemoveProject: (projectId: string) => Promise<void>;
 }) {
+	const { t } = useTranslation();
 	const projectActive = selection.activeProjectId === workspace.id && !selection.activeSessionId;
 	const queryClient = useQueryClient();
 	const [removeError, setRemoveError] = useState<string | null>(null);
@@ -533,7 +535,7 @@ function ProjectItem({
 		try {
 			await onRemoveProject(workspace.id);
 		} catch (err) {
-			const message = err instanceof Error ? err.message : "Could not remove project";
+			const message = err instanceof Error ? err.message : t("shell.couldNotRemoveProject");
 			setRemoveError(message);
 		} finally {
 			setIsRemoving(false);
@@ -587,7 +589,7 @@ function ProjectItem({
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<button
-							aria-label={`Open ${workspace.name} dashboard`}
+							aria-label={t("shell.openProjectDashboard", { name: workspace.name })}
 							className={HOVER_ACTION_CLASS}
 							onClick={() => selection.goProject(workspace.id)}
 							type="button"
@@ -595,12 +597,16 @@ function ProjectItem({
 							<LayoutDashboard aria-hidden="true" />
 						</button>
 					</TooltipTrigger>
-					<TooltipContent>Dashboard</TooltipContent>
+					<TooltipContent>{t("shell.dashboard")}</TooltipContent>
 				</Tooltip>
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<button
-							aria-label={orchestrator ? `Open ${workspace.name} orchestrator` : `Spawn ${workspace.name} orchestrator`}
+							aria-label={
+								orchestrator
+									? t("shell.openProjectOrchestrator", { name: workspace.name })
+									: t("shell.spawnProjectOrchestrator", { name: workspace.name })
+							}
 							className={HOVER_ACTION_CLASS}
 							disabled={isSpawning || isProjectRestarting}
 							onClick={() => void openOrchestrator()}
@@ -611,29 +617,29 @@ function ProjectItem({
 					</TooltipTrigger>
 					<TooltipContent>
 						{isProjectRestarting
-							? "Restarting…"
+							? t("shell.restarting")
 							: isSpawning
-								? "Spawning…"
+								? t("shell.spawning")
 								: orchestrator
-									? "Orchestrator"
-									: "Spawn orchestrator"}
+									? t("shell.orchestrator")
+									: t("shell.spawnOrchestratorLower")}
 					</TooltipContent>
 				</Tooltip>
 				<DropdownMenu>
 					<DropdownMenuTrigger asChild>
-						<button aria-label={`Project actions for ${workspace.name}`} className={HOVER_ACTION_CLASS} type="button">
+							<button aria-label={t("shell.projectActions", { name: workspace.name })} className={HOVER_ACTION_CLASS} type="button">
 							<MoreVertical aria-hidden="true" />
 						</button>
 					</DropdownMenuTrigger>
 					<DropdownMenuContent side="right" align="start" className="min-w-44">
 						<DropdownMenuItem disabled={isProjectRestarting} onSelect={() => requestNewTask(workspace.id)}>
 							<Plus aria-hidden="true" />
-							New session
+								{t("shell.newSession")}
 						</DropdownMenuItem>
 						<DropdownMenuSeparator />
 						<DropdownMenuItem onSelect={() => selection.goSettings(workspace.id)}>
 							<Settings aria-hidden="true" />
-							Project settings
+								{t("shell.projectSettings")}
 						</DropdownMenuItem>
 						<DropdownMenuSeparator />
 						<DropdownMenuItem
@@ -642,14 +648,14 @@ function ProjectItem({
 							onSelect={() => void removeProject()}
 						>
 							<Trash2 aria-hidden="true" />
-							Remove project
+								{t("shell.removeProjectTitle")}
 						</DropdownMenuItem>
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</div>
 			{isRemoving ? (
 				<div className="sidebar-expanded-chrome px-5 py-1 text-2xs text-muted-foreground" role="status">
-					Removing {workspace.name}…
+						{t("shell.removingNamed", { name: workspace.name })}
 				</div>
 			) : removeError ? (
 				<div className="sidebar-expanded-chrome px-5 py-1 text-2xs text-destructive" role="alert">
@@ -673,19 +679,16 @@ function ProjectItem({
 			<ConfirmDialog
 				open={confirmOpen}
 				onOpenChange={setConfirmOpen}
-				title={`Remove project`}
+				title={t("shell.removeProjectTitle")}
 				description={
 					<>
 						<p className="text-sm font-medium text-foreground">
-							This will remove <strong>{workspace.name}</strong> from AO
+							{t("shell.removeProjectLead", { name: workspace.name })}
 						</p>
-						<p className="mt-1 text-xs text-muted-foreground">
-							This stops its live sessions and removes it from the sidebar, but keeps the repository folder and stored
-							history on disk.
-						</p>
+						<p className="mt-1 text-xs text-muted-foreground">{t("shell.removeProjectBody")}</p>
 					</>
 				}
-				confirmLabel="Remove"
+				confirmLabel={t("shell.remove")}
 				destructive
 				onConfirm={handleConfirmRemove}
 			/>
@@ -697,6 +700,7 @@ function ProjectItem({
 // flips the label into an inline input (Enter/blur saves, Escape cancels) that
 // persists through the daemon rename endpoint, so the new name survives reload.
 function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; active: boolean; onOpen: () => void }) {
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState(session.title);
@@ -732,7 +736,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 				<div className="relative flex h-8 w-full items-center gap-2 rounded-lg px-2.5 py-0">
 					<SessionDot session={session} />
 					<input
-						aria-label={`Rename ${session.title}`}
+							aria-label={t("shell.renameSession", { title: session.title })}
 						autoFocus
 						className="min-w-0 flex-1 rounded-xs border border-accent bg-transparent px-1 py-px text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-accent"
 						maxLength={MAX_DISPLAY_NAME_LEN}
@@ -760,7 +764,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 		<SidebarMenuSubItem className="pl-7">
 			<button
 				aria-current={active ? "page" : undefined}
-				aria-label={`Open ${session.title}`}
+					aria-label={t("shell.openSession", { title: session.title })}
 				className={cn(
 					"relative flex h-8 w-full items-center gap-2 rounded-lg px-2.5 py-0 pr-7 text-left text-sm outline-hidden transition-[background-color,color]",
 					"hover:bg-interactive-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
@@ -779,7 +783,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 			{/* Pencil reveals on row hover/focus (named group on SidebarMenuSubItem);
 			it sits beside the row button rather than nested inside it. */}
 			<button
-				aria-label={`Rename ${session.title}`}
+					aria-label={t("shell.renameSession", { title: session.title })}
 				className={cn(
 					HOVER_ACTION_CLASS,
 					"absolute top-1/2 right-1 -translate-y-1/2 opacity-0",
@@ -800,11 +804,16 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 // the row itself is the prompt, so no confirmation dialog. Renders nothing in
 // every other update state.
 function RestartToUpdateRow({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
+	const { t } = useTranslation();
 	if (status.state !== "downloaded") return null;
 	const escalated = status.escalated === true;
 	return (
 		<button
-			aria-label={`Restart to install update${status.version ? ` v${status.version}` : ""}`}
+			aria-label={
+				status.version
+					? t("shell.restartInstallUpdateVersion", { version: status.version })
+					: t("shell.restartInstallUpdate")
+			}
 			className={cn(
 				"flex w-full items-center gap-2.5 rounded-lg p-2.5 text-left text-control font-medium transition-colors",
 				escalated
@@ -817,10 +826,10 @@ function RestartToUpdateRow({ status, tabIndex }: { status: UpdateStatus; tabInd
 		>
 			<RefreshCw aria-hidden="true" className="size-icon-lg shrink-0" />
 			<span className="min-w-0 flex-1">
-				<span className="block truncate tracking-tight">Restart to update</span>
+				<span className="block truncate tracking-tight">{t("shell.restartToUpdate")}</span>
 				{status.version && (
 					<span className={cn("block truncate text-caption font-normal", escalated ? "text-working" : "text-passive")}>
-						v{status.version} ready
+							{t("shell.versionReady", { version: status.version })}
 					</span>
 				)}
 			</span>
@@ -835,13 +844,18 @@ function RestartToUpdateRow({ status, tabIndex }: { status: UpdateStatus; tabInd
 // Icon-rail variant of RestartToUpdateRow for the collapsed sidebar: icon-only
 // with the two-line copy in the tooltip.
 function RestartToUpdateRailButton({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
+	const { t } = useTranslation();
 	if (status.state !== "downloaded") return null;
 	const escalated = status.escalated === true;
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
 				<button
-					aria-label={`Restart to install update${status.version ? ` v${status.version}` : ""}`}
+						aria-label={
+							status.version
+								? t("shell.restartInstallUpdateVersion", { version: status.version })
+								: t("shell.restartInstallUpdate")
+						}
 					className={cn(
 						"grid size-9 place-items-center rounded-lg transition-colors [&_svg]:size-4",
 						escalated
@@ -856,7 +870,8 @@ function RestartToUpdateRailButton({ status, tabIndex }: { status: UpdateStatus;
 				</button>
 			</TooltipTrigger>
 			<TooltipContent side="right">
-				Restart to update{status.version ? ` · v${status.version} ready` : ""}
+					{t("shell.restartToUpdate")}
+					{status.version ? ` · ${t("shell.versionReady", { version: status.version })}` : ""}
 			</TooltipContent>
 		</Tooltip>
 	);
@@ -921,12 +936,13 @@ function SectionDisclosure({
 }
 
 function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
+	const { t } = useTranslation();
 	const { state } = useSidebar();
 	const isCollapsed = state === "collapsed";
 	return (
 		<SidebarMenuItem className="group-data-[collapsible=icon]:mb-0">
 			<SidebarMenuButton
-				aria-label="Search"
+				aria-label={t("shell.search")}
 				onClick={() => {
 					// Open on the microtask after this click rather than inside it: mounting
 					// the palette dialog while this button's tooltip layer is still tearing
@@ -934,7 +950,7 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 					// "defers opening" test pins the deferral so it is not dropped as noise.
 					queueMicrotask(onOpen);
 				}}
-				tooltip={isCollapsed ? "Search" : undefined}
+				tooltip={isCollapsed ? t("shell.search") : undefined}
 				className={cn(
 					// Filled search trigger (Cursor-style): icon + label.
 					"h-8 gap-2 rounded-lg bg-muted px-2.5 text-sm font-normal text-muted-foreground",
@@ -944,7 +960,7 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 			>
 				<Search strokeWidth={1.75} aria-hidden="true" />
 				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-left leading-none group-data-[collapsible=icon]:hidden">
-					Search
+						{t("shell.search")}
 				</span>
 			</SidebarMenuButton>
 		</SidebarMenuItem>
@@ -956,6 +972,7 @@ function CreateProjectButton({
 	onCreateProject,
 	onInitializeProject,
 }: Pick<SidebarProps, "onCreateProject" | "onInitializeProject"> & { hideTrigger?: boolean }) {
+	const { t } = useTranslation();
 	// Single CreateProjectFlow owner for the sidebar: the header "+" stays mounted
 	// (CSS-hidden when collapsed or on the empty start page) so it can own
 	// openSignal for ⌘N on every shell route. The collapsed rail button below
@@ -972,7 +989,7 @@ function CreateProjectButton({
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<button
-							aria-label="New project"
+							aria-label={t("shell.newProject")}
 							className={cn(
 								// No own hover fill — lives inside the Projects section hover pill.
 								"grid size-icon-xl shrink-0 place-items-center rounded-sm text-passive transition-colors hover:text-foreground",
@@ -993,13 +1010,14 @@ function CreateProjectButton({
 }
 
 function CreateProjectListItem() {
+	const { t } = useTranslation();
 	const requestCreateProject = useUiStore((state) => state.requestCreateProject);
 	return (
 		<SidebarMenuItem className="mb-px group-data-[collapsible=icon]:mb-0">
 			<Tooltip>
 				<TooltipTrigger asChild>
 					<button
-						aria-label="New project"
+						aria-label={t("shell.newProject")}
 						className="grid h-control-board w-full place-items-center rounded-lg text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
 						onClick={() => requestCreateProject()}
 						type="button"
@@ -1007,7 +1025,7 @@ function CreateProjectListItem() {
 						<Plus className="size-icon-sm" aria-hidden="true" />
 					</button>
 				</TooltipTrigger>
-				<TooltipContent side="right">New project</TooltipContent>
+				<TooltipContent side="right">{t("shell.newProject")}</TooltipContent>
 			</Tooltip>
 		</SidebarMenuItem>
 	);

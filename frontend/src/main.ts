@@ -29,6 +29,7 @@ import {
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { readKeybindingOverrides, writeKeybindingOverrides } from "./main/keybinding-settings";
+import { readUiSettings, writeUiSettings, type UiSettings } from "./main/ui-settings";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
@@ -398,12 +399,25 @@ let shellEnvPromise: Promise<void> | null = null;
 
 // Telemetry defaults stamped on the daemon env on every platform; explicit env
 // always wins.
+//
+// Unpackaged builds keep local event recording but never export to PostHog: a
+// dev loop or a CI job driving the real app would otherwise bill production
+// events and inflate install/DAU counts. Set AO_TELEMETRY_REMOTE explicitly to
+// exercise the export path from a dev build.
 function telemetryOverrides(): Record<string, string> {
 	return {
 		AO_TELEMETRY_EVENTS: process.env.AO_TELEMETRY_EVENTS ?? "on",
-		AO_TELEMETRY_REMOTE: process.env.AO_TELEMETRY_REMOTE ?? "posthog",
+		AO_TELEMETRY_REMOTE: process.env.AO_TELEMETRY_REMOTE ?? (isDev ? "off" : "posthog"),
 		AO_TELEMETRY_POSTHOG_KEY: process.env.AO_TELEMETRY_POSTHOG_KEY ?? DEFAULT_POSTHOG_PROJECT_KEY,
 		AO_TELEMETRY_POSTHOG_HOST: process.env.AO_TELEMETRY_POSTHOG_HOST ?? DEFAULT_POSTHOG_HOST,
+		// The daemon binary has no version of its own that release tooling sets,
+		// so without this every daemon event lands unattributable to a release.
+		AO_TELEMETRY_APP_VERSION: process.env.AO_TELEMETRY_APP_VERSION ?? app.getVersion(),
+		// Kill switch: forwarded so a noisy stream can be silenced by env on an
+		// install that already exists, without shipping a new build.
+		...(process.env.AO_TELEMETRY_DISABLED_EVENTS
+			? { AO_TELEMETRY_DISABLED_EVENTS: process.env.AO_TELEMETRY_DISABLED_EVENTS }
+			: {}),
 	};
 }
 
@@ -1295,7 +1309,7 @@ ipcMain.handle("menu:action", (_event, action: string) => {
 	}
 });
 ipcMain.handle("telemetry:getBootstrap", () =>
-	buildTelemetryBootstrap(process.env, app.getVersion(), process.platform),
+	buildTelemetryBootstrap(process.env, app.getVersion(), process.platform, os.homedir(), app.isPackaged),
 );
 async function chooseDirectory(title: string): Promise<string | null> {
 	const options: OpenDialogOptions = {
@@ -1365,6 +1379,17 @@ ipcMain.handle("updateSettings:set", async (_event, settings: UpdateSettings) =>
 	const runFile = runFilePath();
 	if (!runFile) return;
 	await setUpdateSettings(path.dirname(runFile), settings);
+});
+
+ipcMain.handle("uiSettings:get", async (): Promise<UiSettings> => {
+	const runFile = runFilePath();
+	if (!runFile) return { locale: "en" };
+	return readUiSettings(path.dirname(runFile));
+});
+ipcMain.handle("uiSettings:set", async (_event, settings: UiSettings): Promise<UiSettings> => {
+	const runFile = runFilePath();
+	if (!runFile) return { locale: settings?.locale === "zh-CN" ? "zh-CN" : "en" };
+	return writeUiSettings(path.dirname(runFile), settings);
 });
 
 ipcMain.handle("keybindings:get", (): KeybindingOverrides => keybindingOverrides);

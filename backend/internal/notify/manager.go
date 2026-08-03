@@ -16,15 +16,31 @@ import (
 // Store is the write-side notification persistence boundary.
 type Store interface {
 	CreateNotification(ctx context.Context, rec domain.NotificationRecord) (domain.NotificationRecord, bool, error)
+	ResolveSessionNotifications(
+		ctx context.Context,
+		id domain.SessionID,
+		typ domain.NotificationType,
+		at time.Time,
+	) ([]domain.NotificationRecord, error)
+	ResolvePRNotifications(
+		ctx context.Context,
+		prURL string,
+		typ domain.NotificationType,
+		at time.Time,
+	) ([]domain.NotificationRecord, error)
+	ReconcileResolvedNotifications(ctx context.Context, at time.Time) ([]domain.NotificationRecord, error)
 }
 
-// Publisher pushes newly persisted notifications to live dashboard subscribers.
+// Publisher pushes notification events to live dashboard subscribers.
 type Publisher interface {
-	Publish(ctx context.Context, rec domain.NotificationRecord) error
+	Publish(ctx context.Context, event domain.NotificationEvent) error
 }
 
 // Intent is the lifecycle-to-notification producer contract.
 type Intent = ports.NotificationIntent
+
+// Resolution is the lifecycle-to-notification resolution contract.
+type Resolution = ports.NotificationResolution
 
 // Manager validates lifecycle intents, enriches them into stored rows, persists
 // unread notifications, and publishes newly inserted rows to live subscribers.
@@ -76,8 +92,68 @@ func (m *Manager) Notify(ctx context.Context, intent Intent) error {
 	if !inserted || m.publisher == nil {
 		return nil
 	}
-	if err := m.publisher.Publish(ctx, created); err != nil {
+	if err := m.publisher.Publish(ctx, domain.NotificationEvent{Kind: domain.NotificationCreated, Record: created}); err != nil {
 		return fmt.Errorf("notify publish: %w", err)
+	}
+	return nil
+}
+
+// Resolve closes every open notification the resolution matches and publishes
+// the rows it changed. Resolution is always derived from a lifecycle fact —
+// the session got its input, the PR stopped waiting on a merge — never from a
+// user action, so there is no manual counterpart to this call.
+func (m *Manager) Resolve(ctx context.Context, res Resolution) error {
+	if m == nil || m.store == nil {
+		return errors.New("notify: store is required")
+	}
+	if !res.Type.Valid() {
+		return fmt.Errorf("notify resolve: %w", domain.ErrInvalidNotificationType)
+	}
+	at := res.ResolvedAt
+	if at.IsZero() {
+		at = m.clock().UTC()
+	}
+	var (
+		resolved []domain.NotificationRecord
+		err      error
+	)
+	if res.PRURL != "" {
+		resolved, err = m.store.ResolvePRNotifications(ctx, res.PRURL, res.Type, at)
+	} else {
+		if res.SessionID == "" {
+			return errors.New("notify resolve: session id or pr url is required")
+		}
+		resolved, err = m.store.ResolveSessionNotifications(ctx, res.SessionID, res.Type, at)
+	}
+	if err != nil {
+		return fmt.Errorf("notify resolve: %w", err)
+	}
+	return m.publishResolved(ctx, resolved)
+}
+
+// Reconcile closes notifications whose resolving transition happened while the
+// daemon was down. Lifecycle only observes live transitions, so without this a
+// restart could strand a needs-input row as unresolved forever.
+func (m *Manager) Reconcile(ctx context.Context) error {
+	if m == nil || m.store == nil {
+		return errors.New("notify: store is required")
+	}
+	resolved, err := m.store.ReconcileResolvedNotifications(ctx, m.clock().UTC())
+	if err != nil {
+		return fmt.Errorf("notify reconcile: %w", err)
+	}
+	return m.publishResolved(ctx, resolved)
+}
+
+func (m *Manager) publishResolved(ctx context.Context, resolved []domain.NotificationRecord) error {
+	if m.publisher == nil {
+		return nil
+	}
+	for _, rec := range resolved {
+		event := domain.NotificationEvent{Kind: domain.NotificationResolved, Record: rec}
+		if err := m.publisher.Publish(ctx, event); err != nil {
+			return fmt.Errorf("notify publish resolved: %w", err)
+		}
 	}
 	return nil
 }

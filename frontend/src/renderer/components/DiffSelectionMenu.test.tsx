@@ -134,6 +134,35 @@ describe("DiffSelectionMenu", () => {
 		}
 	});
 
+	it("ignores a send result from a previous menu opening", async () => {
+		vi.useFakeTimers();
+		try {
+			let resolvePost: (value: unknown) => void = () => undefined;
+			postMock.mockReturnValueOnce(
+				new Promise((resolve) => {
+					resolvePost = resolve;
+				}),
+			);
+			const onOpenChange = vi.fn();
+			const { rerender, props } = renderMenu({ onOpenChange });
+
+			fireEvent.click(screen.getByRole("menuitem", { name: "Explain" }));
+			rerender(<DiffSelectionMenu {...props} onOpenChange={onOpenChange} open={false} />);
+			rerender(<DiffSelectionMenu {...props} filePath="src/new.ts" onOpenChange={onOpenChange} open />);
+
+			await act(async () => {
+				resolvePost({ data: {} });
+				await Promise.resolve();
+			});
+
+			expect(screen.queryByText("Sent")).not.toBeInTheDocument();
+			act(() => vi.advanceTimersByTime(2_000));
+			expect(onOpenChange).not.toHaveBeenCalledWith(false);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("clears the pending sent auto-close timer and resets status when switching to Make changes", async () => {
 		vi.useFakeTimers();
 		try {

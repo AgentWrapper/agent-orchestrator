@@ -12,20 +12,20 @@ export type WorkspaceFilesResponse = components["schemas"]["ListWorkspaceFilesRe
 
 export const sessionWorkspaceFilesQueryKey = (sessionId: string) => ["session-workspace-files", sessionId] as const;
 
-async function fetchSessionWorkspaceFiles(sessionId: string): Promise<WorkspaceFilesResponse> {
+async function fetchSessionWorkspaceFiles(sessionId: string, errorMessage: string): Promise<WorkspaceFilesResponse> {
 	const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/workspace/files", {
 		params: { path: { sessionId } },
 	});
-	if (error) throw new Error(apiErrorMessage(error, "Unable to load workspace files"));
+	if (error) throw new Error(apiErrorMessage(error, errorMessage));
 	return (data ?? { sessionId, files: [], truncated: false }) as WorkspaceFilesResponse;
 }
 
 // Shared so SessionFilesView (full fetch + polling) and SessionInspector
 // (cache-only read for the tab count) always resolve to the same cache entry.
-export function sessionWorkspaceFilesQueryOptions(sessionId: string) {
+export function sessionWorkspaceFilesQueryOptions(sessionId: string, errorMessage = "Unable to load workspace files") {
 	return {
 		queryKey: sessionWorkspaceFilesQueryKey(sessionId),
-		queryFn: () => fetchSessionWorkspaceFiles(sessionId),
+		queryFn: () => fetchSessionWorkspaceFiles(sessionId, errorMessage),
 		refetchInterval: 3500,
 	};
 }

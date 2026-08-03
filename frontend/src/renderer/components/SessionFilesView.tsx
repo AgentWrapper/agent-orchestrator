@@ -9,6 +9,8 @@ import {
 	type ReactNode,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
+import type { TFunction } from "i18next";
+import { useTranslation } from "react-i18next";
 import {
 	Check,
 	ChevronDown,
@@ -85,13 +87,14 @@ export function SessionFilesView({
 	isMaximized = false,
 	onToggleMaximized,
 }: SessionFilesViewProps) {
+	const { t } = useTranslation();
 	const [filter, setFilter] = useState("");
 	const [split, setSplit] = useState(false);
 	const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
 	const initializedExpansionFor = useRef<string | null>(null);
 	const rootRef = useRef<HTMLElement>(null);
 
-	const filesQuery = useQuery(sessionWorkspaceFilesQueryOptions(sessionId));
+	const filesQuery = useQuery(sessionWorkspaceFilesQueryOptions(sessionId, t("files.error.loadWorkspace")));
 	const files = filesQuery.data?.files ?? emptyFiles;
 	const changedFiles = useMemo(() => files.filter(isChangedWorkspaceFile), [files]);
 	const changedCount = changedFiles.length;
@@ -154,7 +157,7 @@ export function SessionFilesView({
 			ref={rootRef}
 			onKeyDown={onFilesKeyDown}
 			className="flex h-full min-h-0 flex-col bg-background text-foreground"
-			aria-label="Session files"
+			aria-label={t("files.sessionFiles")}
 		>
 			<header className="flex h-11 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-1.5">
 				<label className="relative mr-auto min-w-0 max-w-[280px] flex-1">
@@ -162,21 +165,21 @@ export function SessionFilesView({
 					<Input
 						className="h-8 pl-8 font-mono text-xs"
 						onChange={(event) => setFilter(event.target.value)}
-						placeholder="Search changed files"
+						placeholder={t("files.searchPlaceholder")}
 						value={filter}
 					/>
 				</label>
 				{changedCount > 0 ? (
 					<Badge
-						aria-label={`${changedCount} changed ${changedCount === 1 ? "file" : "files"}`}
+						aria-label={t("files.changedCount", { count: changedCount })}
 						className="mx-1 h-5 shrink-0"
-						title={`${changedCount} changed ${changedCount === 1 ? "file" : "files"}`}
+						title={t("files.changedCount", { count: changedCount })}
 					>
 						{changedCount}
 					</Badge>
 				) : null}
 				<Button
-					aria-label={expandedVisibleCount > 0 ? "Collapse all files" : "Expand all files"}
+					aria-label={expandedVisibleCount > 0 ? t("files.collapseAll") : t("files.expandAll")}
 					className="shrink-0"
 					disabled={visibleFiles.length === 0}
 					onClick={toggleVisibleFiles}
@@ -191,7 +194,7 @@ export function SessionFilesView({
 					)}
 				</Button>
 				<Button
-					aria-label={split ? "Unified diff view" : "Split diff view"}
+					aria-label={split ? t("files.unifiedDiff") : t("files.splitDiff")}
 					aria-pressed={split}
 					className={cn("shrink-0", split && "text-accent")}
 					onClick={() => setSplit((current) => !current)}
@@ -203,7 +206,7 @@ export function SessionFilesView({
 				</Button>
 				{onToggleMaximized ? (
 					<Button
-						aria-label={isMaximized ? "Minimize files" : "Maximize files"}
+						aria-label={isMaximized ? t("files.minimize") : t("files.maximize")}
 						className="shrink-0"
 						onClick={() => onToggleMaximized(!isMaximized)}
 						size="icon-sm"
@@ -219,7 +222,7 @@ export function SessionFilesView({
 				) : null}
 				{isMaximized && onClose ? (
 					<Button
-						aria-label="Close files"
+						aria-label={t("files.close")}
 						className="shrink-0"
 						onClick={onClose}
 						size="icon-sm"
@@ -274,16 +277,17 @@ function ReviewFileList({
 	split: boolean;
 	wrap: boolean;
 }) {
+	const { t } = useTranslation();
 	if (isLoading) {
-		return <PanelMessage>Loading files...</PanelMessage>;
+		return <PanelMessage>{t("files.loading")}</PanelMessage>;
 	}
 	if (error) {
 		return (
-			<PanelMessage action={<RetryButton onClick={onRetry} />}>{error.message || "Unable to load files."}</PanelMessage>
+			<PanelMessage action={<RetryButton onClick={onRetry} />}>{error.message || t("files.error.load")}</PanelMessage>
 		);
 	}
 	if (files.length === 0) {
-		return <PanelMessage>{emptyFilesMessage(compareMode)}</PanelMessage>;
+		return <PanelMessage>{emptyFilesMessage(compareMode, t)}</PanelMessage>;
 	}
 	return (
 		<Accordion
@@ -321,6 +325,7 @@ function ReviewFileCard({
 	split: boolean;
 	wrap: boolean;
 }) {
+	const { t } = useTranslation();
 	// While the user has an active text selection (or the context menu it opens)
 	// in this file's diff, a background refetch would re-render the diff body
 	// out from under them and blow away the browser's native selection.
@@ -329,14 +334,14 @@ function ReviewFileCard({
 		queryKey: ["session-workspace-file", sessionId, file.path],
 		enabled: expanded,
 		refetchInterval: expanded && !selectionOrMenuActive ? 3500 : false,
-		queryFn: () => loadWorkspaceFile(sessionId, file.path),
+		queryFn: () => loadWorkspaceFile(sessionId, file.path, t),
 	});
 
 	return (
 		<AccordionItem asChild value={file.path}>
 			<li className="session-files-review-row overflow-hidden bg-transparent">
 				<AccordionTrigger
-					aria-label={`${expanded ? "Collapse" : "Expand"} ${fileLabel(file)}`}
+					aria-label={t(expanded ? "files.collapseFile" : "files.expandFile", { file: fileLabel(file) })}
 					className="gap-2 px-3 py-1.5"
 					data-file-toggle=""
 					headerClassName="min-h-10 hover:bg-interactive-hover/50 data-[state=open]:bg-interactive-active/45"
@@ -352,10 +357,10 @@ function ReviewFileCard({
 					<ChangeBadges additions={file.additions} deletions={file.deletions} />
 				</AccordionTrigger>
 				<AccordionContent className="border-t border-border/60 bg-background/40">
-					{detailQuery.isPending ? <PanelMessage>Loading diff...</PanelMessage> : null}
+					{detailQuery.isPending ? <PanelMessage>{t("files.loadingDiff")}</PanelMessage> : null}
 					{!detailQuery.isPending && detailQuery.error ? (
 						<PanelMessage action={<RetryButton onClick={() => void detailQuery.refetch()} />}>
-							{detailQuery.error.message || "Unable to load this file."}
+							{detailQuery.error.message || t("files.error.loadFile")}
 						</PanelMessage>
 					) : null}
 					{!detailQuery.isPending && !detailQuery.error && detailQuery.data ? (
@@ -375,10 +380,11 @@ function ReviewFileCard({
 }
 
 function CopyPathButton({ path }: { path: string }) {
+	const { t } = useTranslation();
 	const [copied, setCopied] = useState(false);
 	return (
 		<Button
-			aria-label={copied ? "Path copied" : `Copy path for ${path}`}
+			aria-label={copied ? t("files.pathCopied") : t("files.copyPath", { path })}
 			className="mr-1.5 shrink-0 opacity-0 transition-opacity focus-visible:opacity-100 group-hover/row:opacity-100"
 			onClick={() => {
 				void navigator.clipboard?.writeText(path);
@@ -419,22 +425,22 @@ function fileSearchText(file: WorkspaceFileSummary): string {
 	return fileLabel(file).toLowerCase();
 }
 
-function emptyFilesMessage(compareMode?: WorkspaceCompareMode): string {
-	if (compareMode === "head_fallback") return "No changes against HEAD.";
-	if (compareMode === "base") return "No changes against base.";
-	return "No changed files found.";
+function emptyFilesMessage(compareMode: WorkspaceCompareMode | undefined, t: TFunction): string {
+	if (compareMode === "head_fallback") return t("files.noChangesHead");
+	if (compareMode === "base") return t("files.noChangesBase");
+	return t("files.noneChanged");
 }
 
-function emptyDiffMessage(compareMode?: WorkspaceCompareMode): string {
-	return compareMode === "base" ? "No changes against base." : "No changes against HEAD.";
+function emptyDiffMessage(compareMode: WorkspaceCompareMode | undefined, t: TFunction): string {
+	return compareMode === "base" ? t("files.noChangesBase") : t("files.noChangesHead");
 }
 
-async function loadWorkspaceFile(sessionId: string, path: string) {
+async function loadWorkspaceFile(sessionId: string, path: string, t: TFunction) {
 	const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/workspace/file", {
 		params: { path: { sessionId }, query: { path } },
 	});
-	if (error) throw new Error(apiErrorMessage(error, "Unable to load workspace file"));
-	if (!data) throw new Error("Workspace file response was empty");
+	if (error) throw new Error(apiErrorMessage(error, t("files.error.loadWorkspaceFile")));
+	if (!data) throw new Error(t("files.error.emptyResponse"));
 	return data;
 }
 
@@ -453,12 +459,13 @@ function ReviewDiffBody({
 	split: boolean;
 	wrap: boolean;
 }) {
+	const { t } = useTranslation();
 	if (detail.binary) {
-		return <PanelMessage>Binary file preview is not available.</PanelMessage>;
+		return <PanelMessage>{t("files.binaryUnavailable")}</PanelMessage>;
 	}
 	const rows = parseUnifiedDiff(detail.diff);
 	if (rows.length === 0) {
-		return <PanelMessage>{emptyDiffMessage(detail.compareMode)}</PanelMessage>;
+		return <PanelMessage>{emptyDiffMessage(detail.compareMode, t)}</PanelMessage>;
 	}
 	return (
 		<DiffView
@@ -705,6 +712,7 @@ function DiffView({
 	truncated?: boolean;
 	wrap: boolean;
 }) {
+	const { t } = useTranslation();
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [hasSelection, setHasSelection] = useState(false);
 	const [menuState, setMenuState] = useState<DiffViewMenuState | null>(null);
@@ -763,7 +771,7 @@ function DiffView({
 		<div className="flex min-h-[180px] max-h-[min(620px,calc(100vh-18rem))] flex-col">
 			{truncated ? (
 				<div className="shrink-0 border-b border-border bg-warning/10 px-3 py-1.5 text-xs text-warning">
-					Diff preview truncated.
+					{t("files.diffTruncated")}
 				</div>
 			) : null}
 			<div
@@ -957,14 +965,16 @@ function PanelMessage({ action, children }: { action?: ReactNode; children: Reac
 }
 
 function RetryButton({ onClick }: { onClick: () => void }) {
+	const { t } = useTranslation();
 	return (
 		<Button onClick={onClick} size="sm" type="button" variant="outline">
-			Retry
+			{t("files.retry")}
 		</Button>
 	);
 }
 
 function StatusMark({ status }: { status: WorkspaceFileStatus }) {
+	const { t } = useTranslation();
 	const label = statusLabel[status];
 	return (
 		<span
@@ -972,7 +982,7 @@ function StatusMark({ status }: { status: WorkspaceFileStatus }) {
 				"inline-flex size-5 shrink-0 items-center justify-center rounded border font-mono text-micro font-semibold",
 				statusTone[status],
 			)}
-			title={status}
+			title={t(`files.status.${status}`)}
 		>
 			{label}
 		</span>

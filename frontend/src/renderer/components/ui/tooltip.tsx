@@ -15,6 +15,7 @@ export function TooltipContent({
 			<TooltipPrimitive.Content
 				className={cn(
 					"z-overlay rounded-md border border-border bg-popover px-2 py-1 text-xs text-popover-foreground shadow-md",
+					"data-[state=delayed-open]:animate-popover-in data-[state=instant-open]:animate-popover-in data-[state=closed]:animate-popover-out",
 					className,
 				)}
 				sideOffset={sideOffset}

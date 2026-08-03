@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useTranslation } from "react-i18next";
 import { formatDiffSelectionMessage, type DiffSelectionLine } from "../../shared/diff-selection";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { cn } from "../lib/utils";
@@ -27,7 +28,6 @@ export type DiffSelectionMenuProps = {
 type Mode = "actions" | "input";
 type SendStatus = "idle" | "sending" | "sent" | "error";
 
-const EXPLAIN_INSTRUCTION = "Explain what these lines do and why.";
 // Mirrors BrowserPanel's ~2s "Sent" confirmation window before auto-close.
 const SENT_AUTO_CLOSE_MS = 2_000;
 
@@ -40,12 +40,14 @@ export function DiffSelectionMenu({
 	position,
 	onOpenChange,
 }: DiffSelectionMenuProps) {
+	const { t } = useTranslation();
 	const [mode, setMode] = useState<Mode>("actions");
 	const [status, setStatus] = useState<SendStatus>("idle");
 	const [errorMessage, setErrorMessage] = useState("");
 	const [inputValue, setInputValue] = useState("");
 	const inputRef = useRef<HTMLInputElement | null>(null);
 	const sentTimerRef = useRef<number | null>(null);
+	const openGenerationRef = useRef(0);
 
 	const clearSentTimer = useCallback(() => {
 		if (sentTimerRef.current !== null) {
@@ -71,6 +73,7 @@ export function DiffSelectionMenu({
 	// This effect's dependency is only `open`, so it fires on mount and on every
 	// false -> true transition, but not on unrelated re-renders while open.
 	useEffect(() => {
+		openGenerationRef.current += 1;
 		if (!open) return;
 		clearSentTimer();
 		setMode("actions");
@@ -87,6 +90,7 @@ export function DiffSelectionMenu({
 
 	const send = useCallback(
 		async (instruction: string) => {
+			const openGeneration = openGenerationRef.current;
 			clearSentTimer();
 			setStatus("sending");
 			setErrorMessage("");
@@ -96,9 +100,10 @@ export function DiffSelectionMenu({
 					params: { path: { sessionId } },
 					body: { message },
 				});
+				if (openGeneration !== openGenerationRef.current) return;
 				if (error) {
 					setStatus("error");
-					setErrorMessage(apiErrorMessage(error, "Unable to send message."));
+					setErrorMessage(apiErrorMessage(error, t("diffSelection.error.send")));
 					return;
 				}
 				setStatus("sent");
@@ -107,11 +112,12 @@ export function DiffSelectionMenu({
 					onOpenChange(false);
 				}, SENT_AUTO_CLOSE_MS);
 			} catch (thrown) {
+				if (openGeneration !== openGenerationRef.current) return;
 				setStatus("error");
-				setErrorMessage(apiErrorMessage(thrown, "Unable to send message."));
+				setErrorMessage(apiErrorMessage(thrown, t("diffSelection.error.send")));
 			}
 		},
-		[clearSentTimer, filePath, lines, onOpenChange, sessionId],
+		[clearSentTimer, filePath, lines, onOpenChange, sessionId, t],
 	);
 
 	const handleCopy = useCallback(() => {
@@ -147,7 +153,13 @@ export function DiffSelectionMenu({
 	);
 
 	const statusLabel =
-		status === "sending" ? "Sending" : status === "sent" ? "Sent" : status === "error" ? errorMessage : "";
+		status === "sending"
+			? t("diffSelection.sending")
+			: status === "sent"
+				? t("diffSelection.sent")
+				: status === "error"
+					? errorMessage
+					: "";
 
 	return (
 		<DropdownMenu modal={false} open={open} onOpenChange={onOpenChange}>
@@ -202,17 +214,17 @@ export function DiffSelectionMenu({
 								handleCopy();
 							}}
 						>
-							Copy
+							{t("diffSelection.copy")}
 						</DropdownMenuItem>
 						<DropdownMenuSeparator />
 						<DropdownMenuItem
 							disabled={status === "sending"}
 							onSelect={(event) => {
 								event.preventDefault();
-								void send(EXPLAIN_INSTRUCTION);
+								void send(t("diffSelection.explainInstruction"));
 							}}
 						>
-							Explain
+							{t("diffSelection.explain")}
 						</DropdownMenuItem>
 						<DropdownMenuItem
 							disabled={status === "sending"}
@@ -229,17 +241,17 @@ export function DiffSelectionMenu({
 								setMode("input");
 							}}
 						>
-							Make changes
+							{t("diffSelection.makeChanges")}
 						</DropdownMenuItem>
 					</>
 				) : (
 					<div className="p-1.5">
 						<Input
-							aria-label="Describe the change"
+							aria-label={t("diffSelection.describeChange")}
 							disabled={status === "sending"}
 							onChange={(event) => setInputValue(event.target.value)}
 							onKeyDown={handleInputKeyDown}
-							placeholder="Tell the agent what to change…"
+							placeholder={t("diffSelection.placeholder")}
 							ref={inputRef}
 							value={inputValue}
 						/>
