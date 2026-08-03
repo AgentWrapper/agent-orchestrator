@@ -740,6 +740,16 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		host.addEventListener("dragover", dragOverInput);
 		host.addEventListener("drop", dropInput);
 
+		const showLatestOutput = () => {
+			term.scrollToBottom();
+			// Hidden output can leave the offscreen DOM scrollbar stale even
+			// after xterm's logical viewport moves. Synchronize it before either
+			// the first-load cover or retained-cache container is revealed.
+			const viewport = host.querySelector<HTMLElement>(".xterm-viewport");
+			if (!viewport) return;
+			viewport.scrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+		};
+
 		let cancelActivationPreparation: (() => void) | null = null;
 		const prepareForActivation = (): Promise<void> => {
 			cancelActivationPreparation?.();
@@ -758,16 +768,6 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					resolve();
 				};
 				cancelActivationPreparation = finish;
-
-				const showLatestOutput = () => {
-					term.scrollToBottom();
-					// Hidden output can leave the offscreen DOM scrollbar stale even
-					// after xterm's logical viewport moves. Synchronize it before the
-					// cache reveals the container.
-					const viewport = host.querySelector<HTMLElement>(".xterm-viewport");
-					if (!viewport) return;
-					viewport.scrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
-				};
 
 				renderListener = term.onRender(() => {
 					renderListener?.dispose();
@@ -811,6 +811,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// pane at the replay's settled scroll position (issue #3160).
 			write: (data, done) => term.write(data, done),
 			writeln: (line) => term.writeln(line),
+			showLatestOutput,
 			prepareForActivation,
 			clear: () => term.write(CLEAR_SEQUENCE),
 			onUserInput: (listener) => {

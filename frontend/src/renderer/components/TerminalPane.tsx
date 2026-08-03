@@ -380,7 +380,11 @@ export function TerminalCacheProvider({
 			let entry = entriesRef.current.get(descriptor.cacheKey);
 			if (!entry) {
 				const container = document.createElement("div");
-				container.className = "h-full min-h-0 w-full overflow-hidden";
+				// The normal terminal surface is intentionally translucent. A retained
+				// terminal host must be opaque, though: during route/cache hand-off an
+				// older frame can still be composited beneath it for a paint, which would
+				// otherwise produce a visible double terminal.
+				container.className = "h-full min-h-0 w-full overflow-hidden bg-terminal-opaque";
 				container.style.position = "relative";
 				container.dataset.terminalCacheKey = descriptor.cacheKey;
 				entry = {
@@ -1160,7 +1164,7 @@ function ReplayCover() {
 		// live the whole time, so clicks, selection and wheel must pass through
 		// rather than being swallowed for the length of the gate.
 		<div
-			className="pointer-events-none absolute inset-0 grid place-items-center bg-terminal"
+			className="pointer-events-none absolute inset-0 grid place-items-center bg-terminal-opaque opacity-100 transition-none"
 			data-testid="terminal-replay-cover"
 		>
 			{showLabel && <div className="font-mono text-caption text-terminal-dim">{t("terminal.loadingOutput")}</div>}

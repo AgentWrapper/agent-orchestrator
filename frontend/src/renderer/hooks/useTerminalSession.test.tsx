@@ -89,6 +89,7 @@ function createFakeMux(): FakeMux {
 type FakeTerminal = AttachableTerminal & {
 	lines: string[];
 	clears: number;
+	latestOutputRequests: number;
 	typeKeys(data: string): void;
 	paste(data: string): void;
 	compose(data: string): void;
@@ -105,12 +106,16 @@ function createFakeTerminal(): FakeTerminal {
 		rows: 24,
 		lines: [],
 		clears: 0,
+		latestOutputRequests: 0,
 		// Mirrors xterm: the callback fires once the chunk has been parsed.
 		write: (bytes, done) => {
 			terminal.lines.push(new TextDecoder().decode(bytes));
 			done?.();
 		},
 		writeln: (line) => terminal.lines.push(line),
+		showLatestOutput: () => {
+			terminal.latestOutputRequests += 1;
+		},
 		prepareForActivation: async () => undefined,
 		clear: () => {
 			terminal.clears += 1;
@@ -301,7 +306,7 @@ describe("useTerminalSession", () => {
 	// the tail; writing the burst frame-by-frame paints every intermediate
 	// scroll position on the way down.
 	describe("initial replay gate", () => {
-		it("writes the whole replay burst as one chunk once the stream goes quiet", () => {
+		it("keeps the parsed replay covered through a quiet tail, then reveals at latest", () => {
 			const { view, terminal, muxes } = setup();
 			expect(view.result.current.replaySettled).toBe(false);
 
@@ -318,14 +323,36 @@ describe("useTerminalSession", () => {
 
 			act(() => void vi.advanceTimersByTime(60));
 			expect(terminal.lines).toEqual(["line one\r\nline two\r\nline three\r\n"]);
+			expect(view.result.current.replaySettled).toBe(false);
+			expect(terminal.latestOutputRequests).toBe(0);
+
+			act(() => void vi.advanceTimersByTime(180));
 			expect(view.result.current.replaySettled).toBe(true);
+			expect(terminal.latestOutputRequests).toBe(1);
+		});
+
+		it("restarts the hidden-tail window when a late replay frame arrives", () => {
+			const { view, terminal, muxes } = setup();
+			act(() => muxes[0].emitOpened("handle-1"));
+			act(() => muxes[0].emitData("handle-1", "initial replay"));
+			act(() => void vi.advanceTimersByTime(60)); // coalesced write lands
+
+			act(() => void vi.advanceTimersByTime(170));
+			act(() => muxes[0].emitData("handle-1", " late tail"));
+			act(() => void vi.advanceTimersByTime(10)); // original tail deadline
+			expect(view.result.current.replaySettled).toBe(false);
+			expect(terminal.lines).toEqual(["initial replay", " late tail"]);
+
+			act(() => void vi.advanceTimersByTime(170));
+			expect(view.result.current.replaySettled).toBe(true);
+			expect(terminal.latestOutputRequests).toBe(1);
 		});
 
 		it("streams live output straight through once the gate has closed", () => {
 			const { terminal, muxes } = setup();
 			act(() => muxes[0].emitOpened("handle-1"));
 			act(() => muxes[0].emitData("handle-1", "replay"));
-			act(() => void vi.advanceTimersByTime(60));
+			act(() => void vi.advanceTimersByTime(60 + 180));
 
 			act(() => muxes[0].emitData("handle-1", "live-1"));
 			expect(terminal.lines).toEqual(["replay", "live-1"]);
@@ -367,24 +394,40 @@ describe("useTerminalSession", () => {
 			expect(terminal.lines).toEqual(["late one late two late three"]);
 		});
 
-		it("flushes what arrived and reveals when the burst never goes quiet", () => {
+		it("flushes at the cap but keeps late replay frames covered until quiet", () => {
 			const { view, terminal, muxes } = setup();
 			act(() => muxes[0].emitOpened("handle-1"));
-			// A stream trickling faster than the quiet window would restart it
-			// forever; the cap is what bounds the cover. Chunk i lands at t=40i,
-			// so the 750ms cap fires during chunk-18's gap.
+			// A stream trickling faster than the first quiet window would keep the
+			// coalesced buffer growing. The cap flushes it during chunk-18's gap;
+			// chunk-19 streams into xterm but remains behind the same cover.
 			for (let i = 0; i < 20; i += 1) {
 				act(() => muxes[0].emitData("handle-1", `chunk-${i} `));
 				act(() => void vi.advanceTimersByTime(40));
 			}
+			expect(view.result.current.replaySettled).toBe(false);
+			act(() => void vi.advanceTimersByTime(180));
 			expect(view.result.current.replaySettled).toBe(true);
-			// Everything buffered up to the cap goes out as ONE write — the cap
-			// degrades to a single jump, never back to the frame-by-frame walk —
-			// and whatever arrives after it is ordinary live output.
+			// Everything buffered up to the cap goes out as one write; the late tail
+			// is a separate write, but neither intermediate state is exposed.
 			expect(terminal.lines).toHaveLength(2);
 			expect(terminal.lines[0]).toContain("chunk-0 ");
 			expect(terminal.lines[0]).toContain("chunk-18 ");
 			expect(terminal.lines[1]).toBe("chunk-19 ");
+		});
+
+		it("bounds the hidden tail when the worker is continuously producing output", () => {
+			const { view, terminal, muxes } = setup();
+			act(() => muxes[0].emitOpened("handle-1"));
+
+			for (let i = 0; i < 40; i += 1) {
+				act(() => muxes[0].emitData("handle-1", `chunk-${i} `));
+				act(() => void vi.advanceTimersByTime(40));
+			}
+
+			// The first cap ends buffering at 750ms; the tail cap reveals at
+			// 1500ms even though the worker never produced a quiet window.
+			expect(view.result.current.replaySettled).toBe(true);
+			expect(terminal.latestOutputRequests).toBe(1);
 		});
 
 		it("lands buffered output and lifts the cover when the pane exits mid-replay", () => {
@@ -411,7 +454,7 @@ describe("useTerminalSession", () => {
 			const { view, terminal, muxes } = setup();
 			act(() => muxes[0].emitOpened("handle-1"));
 			act(() => muxes[0].emitData("handle-1", "first"));
-			act(() => void vi.advanceTimersByTime(60));
+			act(() => void vi.advanceTimersByTime(60 + 180));
 			expect(view.result.current.replaySettled).toBe(true);
 
 			act(() => muxes[0].emitConnection("closed"));
@@ -421,7 +464,7 @@ describe("useTerminalSession", () => {
 
 			act(() => muxes[1].emitOpened("handle-1"));
 			act(() => muxes[1].emitData("handle-1", "second"));
-			act(() => void vi.advanceTimersByTime(60));
+			act(() => void vi.advanceTimersByTime(60 + 180));
 			expect(view.result.current.replaySettled).toBe(true);
 			expect(terminal.lines).toContain("second");
 		});
@@ -471,7 +514,7 @@ describe("useTerminalSession", () => {
 			act(() => muxes[0].emitData("handle-1", "three"));
 			expect(terminal.lines).toEqual([]);
 
-			act(() => void vi.advanceTimersByTime(60));
+			act(() => void vi.advanceTimersByTime(60 + 180));
 			expect(terminal.lines).toEqual(["one two three"]);
 			expect(view.result.current.replaySettled).toBe(true);
 		});
@@ -533,6 +576,8 @@ describe("useTerminalSession", () => {
 				act(() => void vi.advanceTimersByTime(5));
 			}
 
+			expect(view.result.current.replaySettled).toBe(false);
+			act(() => void vi.advanceTimersByTime(180));
 			expect(view.result.current.replaySettled).toBe(true);
 			// Never accumulate an unbounded single write.
 			for (const line of terminal.lines) {
@@ -654,7 +699,7 @@ describe("useTerminalSession", () => {
 			// new attachment's replay, nor uncover it.
 			act(() => muxes[0].emitData("handle-1", "stale"));
 			act(() => muxes[1].emitData("handle-1", "fresh"));
-			act(() => void vi.advanceTimersByTime(60));
+			act(() => void vi.advanceTimersByTime(60 + 180));
 
 			expect(terminal.lines).toEqual(["fresh"]);
 			expect(view.result.current.replaySettled).toBe(true);

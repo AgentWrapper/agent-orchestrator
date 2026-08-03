@@ -82,6 +82,7 @@ vi.mock("./XtermTerminal", () => ({
 				rows: 24,
 				write: vi.fn((_data, done) => done?.()),
 				writeln: vi.fn(),
+				showLatestOutput: vi.fn(),
 				prepareForActivation: vi.fn(async () => {
 					terminalPreparations.value += 1;
 				}),
@@ -325,7 +326,10 @@ describe("TerminalPane replay cover", () => {
 		replaySettled.value = false;
 		const view = renderPane({ ...worker, terminalHandleId: "term-1" });
 		try {
-			expect(screen.getByTestId("terminal-replay-cover")).toBeInTheDocument();
+			const cover = screen.getByTestId("terminal-replay-cover");
+			expect(cover).toBeInTheDocument();
+			expect(cover).toHaveClass("bg-terminal-opaque", "opacity-100", "transition-none");
+			expect(cover).not.toHaveClass("bg-terminal");
 			// xterm keeps rendering underneath — covered, never unmounted, so the
 			// grid it measures stays correct.
 			expect(screen.getByTestId("xterm")).toBeInTheDocument();
@@ -395,6 +399,16 @@ describe("TerminalCacheProvider", () => {
 			view.unmount();
 			expect(document.querySelectorAll("[data-terminal-cache-key]")).toHaveLength(0);
 			expect(xtermUnmounts.value).toBe(2);
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("uses an opaque backing so another retained frame cannot show through", async () => {
+		const view = renderCachedPane({ session: sessionA, sessions: [sessionA] });
+		try {
+			const terminal = await waitFor(() => activeXterm());
+			expect(terminal.closest("[data-terminal-cache-key]")).toHaveClass("bg-terminal-opaque");
 		} finally {
 			view.restore();
 		}
