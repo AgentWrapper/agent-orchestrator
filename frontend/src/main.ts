@@ -70,7 +70,7 @@ import { keepDaemonAlive, shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
 import { shouldSignalAttention, shouldToast } from "./main/notification-signals";
-import { buildWindowsAppMenuTemplate } from "./main/menu";
+import { APP_NAME, buildAppMenuTemplate } from "./main/menu";
 import { ancestorRepositorySetupWarning, scanImportFolder } from "./main/import-folder-scan";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
@@ -90,7 +90,7 @@ process.stdout.on("error", ignoreStdStreamError);
 process.stderr.on("error", ignoreStdStreamError);
 
 // Must run before app ready so the About panel and default-menu role labels use it.
-app.setName("Agent Orchestrator");
+app.setName(APP_NAME);
 
 // Windows shows native toasts only when the app declares an AppUserModelID that
 // matches its installer shortcut (the NSIS maker's appId). Without it,
@@ -268,8 +268,8 @@ function appendDaemonOutput(text: string): void {
 // bar stays out of sight, but the roles keep their accelerators alive (Reload,
 // DevTools, zoom, full screen, edit commands) and each acts on the *focused*
 // webContents — including a BrowserView panel — matching native menu behaviour.
-function buildWindowsAppMenu(): Menu {
-	return Menu.buildFromTemplate(buildWindowsAppMenuTemplate());
+function buildAppMenu(): Menu {
+	return Menu.buildFromTemplate(buildAppMenuTemplate(process.platform));
 }
 
 function createWindow(): void {
@@ -280,7 +280,7 @@ function createWindow(): void {
 		height: 860,
 		minWidth: 960,
 		minHeight: 640,
-		title: "Agent Orchestrator",
+		title: APP_NAME,
 		icon: windowIconPath(),
 		backgroundColor: "#0f1014",
 		// Windows goes frameless with a Window Controls Overlay: Electron still draws
@@ -309,13 +309,17 @@ function createWindow(): void {
 		},
 	});
 
+	// Install our own native menu on every OS so dev and packaged builds use the
+	// product name instead of Electron's default app identity. On Windows this
+	// stays hidden below; only its native accelerators are used.
+	Menu.setApplicationMenu(buildAppMenu());
+
 	// On Windows the app paints its own title bar (WindowTitlebar), so the native
 	// menu bar is hidden (autoHideMenuBar above). The role-based menu is still
 	// installed so its accelerators keep working and act on the focused pane;
 	// setMenuBarVisibility(false) keeps the strip itself out of view. macOS/Linux
 	// keep their native menus.
 	if (process.platform === "win32") {
-		Menu.setApplicationMenu(buildWindowsAppMenu());
 		mainWindow.setMenuBarVisibility(false);
 	}
 
