@@ -155,6 +155,7 @@ export const aoBridge: AoBridge =
 			download: async () => undefined,
 			install: async () => undefined,
 			onStatus: () => () => undefined,
+			onTelemetry: () => () => undefined,
 		},
 		featureBuilds: {
 			list: async () => [],
