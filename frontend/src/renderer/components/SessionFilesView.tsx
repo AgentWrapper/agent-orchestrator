@@ -88,7 +88,6 @@ export function SessionFilesView({
 	const [filter, setFilter] = useState("");
 	const [split, setSplit] = useState(false);
 	const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
-	const initializedExpansionFor = useRef<string | null>(null);
 	const rootRef = useRef<HTMLElement>(null);
 
 	const filesQuery = useQuery(sessionWorkspaceFilesQueryOptions(sessionId, t("files.error.loadWorkspace")));
@@ -96,17 +95,9 @@ export function SessionFilesView({
 	const changedFiles = useMemo(() => files.filter(isChangedWorkspaceFile), [files]);
 
 	useEffect(() => {
-		initializedExpansionFor.current = null;
 		setExpandedPaths(new Set());
 		setFilter("");
 	}, [sessionId]);
-
-	useEffect(() => {
-		if (filesQuery.isPending) return;
-		if (initializedExpansionFor.current === sessionId) return;
-		initializedExpansionFor.current = sessionId;
-		setExpandedPaths(changedFiles[0] ? new Set([changedFiles[0].path]) : new Set());
-	}, [changedFiles, filesQuery.isPending, sessionId]);
 
 	const normalizedFilter = filter.trim().toLowerCase();
 	const visibleFiles = useMemo(
@@ -155,7 +146,7 @@ export function SessionFilesView({
 			className="flex h-full min-h-0 flex-col bg-background text-foreground"
 			aria-label={t("files.sessionFiles")}
 		>
-			<header className="flex h-11 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-1.5">
+			<header className="flex h-10 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-2">
 				<label className="relative mr-auto min-w-0 max-w-[280px] flex-1">
 					<Search className="pointer-events-none absolute left-2.5 top-1/2 size-icon-sm -translate-y-1/2 text-passive" />
 					<Input
@@ -221,8 +212,11 @@ export function SessionFilesView({
 				) : null}
 			</header>
 
-			<div className="min-h-0 flex-1 overflow-auto bg-background">
-				<div className={cn("flex w-full flex-col px-0 py-1", !isMaximized && "mx-auto max-w-[1200px]")}>
+			<div
+				className="board-scrollbar min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain bg-background"
+				data-files-scroll-root=""
+			>
+				<div className={cn("flex w-full flex-col px-0", !isMaximized && "mx-auto max-w-[1200px]")}>
 					<ReviewFileList
 						compareMode={filesQuery.data?.compareMode}
 						error={filesQuery.error}
@@ -343,9 +337,9 @@ function ReviewFileCard({
 					<ChangeBadges additions={file.additions} deletions={file.deletions} />
 				</AccordionTrigger>
 				<AccordionContent className="border-t border-border/60 bg-background/40">
-					{detailQuery.isPending ? <PanelMessage>{t("files.loadingDiff")}</PanelMessage> : null}
+					{detailQuery.isPending ? <PanelMessage compact>{t("files.loadingDiff")}</PanelMessage> : null}
 					{!detailQuery.isPending && detailQuery.error ? (
-						<PanelMessage action={<RetryButton onClick={() => void detailQuery.refetch()} />}>
+						<PanelMessage compact action={<RetryButton onClick={() => void detailQuery.refetch()} />}>
 							{detailQuery.error.message || t("files.error.loadFile")}
 						</PanelMessage>
 					) : null}
@@ -367,10 +361,10 @@ function ReviewFileCard({
 
 function FilePathLabel({ file }: { file: WorkspaceFileSummary }) {
 	if (!file.previousPath) {
-		return <span className="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-foreground">{file.path}</span>;
+		return <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-foreground">{file.path}</span>;
 	}
 	return (
-		<span className="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-foreground">
+		<span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-foreground">
 			<span className="text-passive line-through decoration-border">{file.previousPath}</span>
 			<span className="px-1 text-passive">-&gt;</span>
 			<span>{file.path}</span>
@@ -422,11 +416,11 @@ function ReviewDiffBody({
 }) {
 	const { t } = useTranslation();
 	if (detail.binary) {
-		return <PanelMessage>{t("files.binaryUnavailable")}</PanelMessage>;
+		return <PanelMessage compact>{t("files.binaryUnavailable")}</PanelMessage>;
 	}
 	const rows = parseUnifiedDiff(detail.diff);
 	if (rows.length === 0) {
-		return <PanelMessage>{emptyDiffMessage(detail.compareMode, t)}</PanelMessage>;
+		return <PanelMessage compact>{emptyDiffMessage(detail.compareMode, t)}</PanelMessage>;
 	}
 	return (
 		<DiffView
@@ -729,14 +723,14 @@ function DiffView({
 	);
 
 	return (
-		<div className="flex min-h-[180px] max-h-[min(620px,calc(100vh-18rem))] flex-col">
+		<div>
 			{truncated ? (
 				<div className="shrink-0 border-b border-border bg-warning/10 px-3 py-1.5 text-xs text-warning">
 					{t("files.diffTruncated")}
 				</div>
 			) : null}
 			<div
-				className="session-files-diff-scrollbar min-h-0 flex-1 overflow-auto bg-terminal font-mono text-xs leading-row text-terminal-foreground"
+				className="session-files-diff-scrollbar overflow-x-auto overflow-y-visible bg-terminal font-mono text-xs leading-row text-terminal-foreground"
 				onContextMenu={onContextMenu}
 				ref={containerRef}
 			>
@@ -907,16 +901,21 @@ function DiffLineSegments({ add, segments }: { add: boolean; segments: DiffSegme
 
 function ChangeBadges({ additions, deletions }: { additions: number; deletions: number }) {
 	return (
-		<span className="flex shrink-0 items-center gap-1 font-mono text-xs font-semibold">
-			{additions > 0 ? <span className="rounded bg-success/20 px-1.5 py-0.5 text-success">+{additions}</span> : null}
-			{deletions > 0 ? <span className="rounded bg-error/20 px-1.5 py-0.5 text-error">-{deletions}</span> : null}
+		<span className="flex shrink-0 items-center gap-1 font-mono text-caption font-medium">
+			{additions > 0 ? <span className="px-0.5 text-success">+{additions}</span> : null}
+			{deletions > 0 ? <span className="px-0.5 text-error">-{deletions}</span> : null}
 		</span>
 	);
 }
 
-function PanelMessage({ action, children }: { action?: ReactNode; children: ReactNode }) {
+function PanelMessage({ action, children, compact = false }: { action?: ReactNode; children: ReactNode; compact?: boolean }) {
 	return (
-		<div className="grid min-h-[180px] place-items-center p-6 text-center text-xs text-muted-foreground">
+		<div
+			className={cn(
+				"grid place-items-center text-center text-xs text-muted-foreground",
+				compact ? "min-h-16 p-3" : "min-h-[180px] p-6",
+			)}
+		>
 			<div className="flex max-w-sm flex-col items-center gap-3">
 				<p>{children}</p>
 				{action ?? null}

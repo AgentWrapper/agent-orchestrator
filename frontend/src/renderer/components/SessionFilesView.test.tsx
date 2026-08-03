@@ -177,13 +177,16 @@ describe("SessionFilesView", () => {
 	it("loads the workspace files and requests detail for the selected file", async () => {
 		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
 
-		await screen.findByRole("button", { name: "Collapse src/App.tsx" });
+		const firstFile = await screen.findByRole("button", { name: "Expand src/App.tsx" });
 		expect(screen.queryByRole("button", { name: /README\.md/ })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Download src/App.tsx" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Diff layout" })).not.toBeInTheDocument();
 		expect(screen.queryByText("Stacked")).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Refresh files" })).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("2 changed files")).not.toBeInTheDocument();
+		expect(getMock).not.toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/file", expect.anything());
+
+		await userEvent.click(firstFile);
 
 		await waitFor(() =>
 			expect(getMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/file", {
@@ -292,7 +295,7 @@ describe("SessionFilesView", () => {
 	it("uses the terminal foreground color for diff content", async () => {
 		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
 
-		await screen.findByRole("button", { name: "Collapse src/App.tsx" });
+		await userEvent.click(await screen.findByRole("button", { name: "Expand src/App.tsx" }));
 
 		const codePane = (await screen.findByText(diffLine("const value = 1;"))).closest(".session-files-diff-scrollbar");
 		expect(codePane).toHaveClass("text-terminal-foreground");
@@ -331,7 +334,7 @@ describe("SessionFilesView", () => {
 		});
 
 		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
-		await screen.findByRole("button", { name: "Collapse src/App.tsx" });
+		await userEvent.click(await screen.findByRole("button", { name: "Expand src/App.tsx" }));
 
 		// Content renders without the leading +/- marker (it lives in the gutter).
 		expect(await screen.findByText(diffLine("new line"))).toBeInTheDocument();
@@ -349,6 +352,7 @@ describe("SessionFilesView", () => {
 	it("wraps long diff lines by default without a toggle", async () => {
 		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
 
+		await userEvent.click(await screen.findByRole("button", { name: "Expand src/App.tsx" }));
 		expect(await screen.findByText(diffLine("const value = 1;"))).toHaveClass("whitespace-pre-wrap");
 		expect(screen.queryByRole("button", { name: "Wrap long lines" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Disable line wrapping" })).not.toBeInTheDocument();
@@ -384,6 +388,7 @@ describe("SessionFilesView", () => {
 		});
 
 		const { container } = renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		await userEvent.click(await screen.findByRole("button", { name: "Expand src/App.tsx" }));
 		await screen.findByText(diffLine("const value = 1;"));
 
 		// Only the differing token is highlighted on each side, not the whole line.
@@ -393,6 +398,7 @@ describe("SessionFilesView", () => {
 
 	it("switches between unified and side-by-side split diff", async () => {
 		const { container } = renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		await userEvent.click(await screen.findByRole("button", { name: "Expand src/App.tsx" }));
 		await screen.findByText(diffLine("const value = 1;"));
 		expect(container.querySelector(".grid-cols-2")).toBeNull();
 
@@ -428,7 +434,7 @@ describe("SessionFilesView", () => {
 
 	it("moves focus between file rows with j and k", async () => {
 		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
-		const first = await screen.findByRole("button", { name: "Collapse src/App.tsx" });
+		const first = await screen.findByRole("button", { name: "Expand src/App.tsx" });
 		const second = screen.getByRole("button", { name: "Expand docs/guide.md" });
 
 		first.focus();
@@ -442,7 +448,7 @@ describe("SessionFilesView", () => {
 	it("renders changed files as one integrated review list instead of boxed cards", async () => {
 		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
 
-		const activeRowButton = await screen.findByRole("button", { name: "Collapse src/App.tsx" });
+		const activeRowButton = await screen.findByRole("button", { name: "Expand src/App.tsx" });
 		const list = screen.getByRole("list");
 		const row = activeRowButton.closest("li");
 
@@ -451,9 +457,60 @@ describe("SessionFilesView", () => {
 		expect(row).not.toHaveClass("border");
 		expect(row).not.toHaveClass("bg-surface");
 		expect(row).not.toHaveClass("shadow-sm");
-		expect(activeRowButton.parentElement).toHaveClass("min-h-10");
-		expect(activeRowButton).toHaveClass("gap-2", "px-3", "py-1.5");
-		expect(screen.getByLabelText("Session files").querySelector("header")).toHaveClass("h-11", "px-1.5");
+		expect(activeRowButton.parentElement).toHaveClass("min-h-9");
+		expect(activeRowButton).toHaveClass("gap-1.5", "px-2.5", "py-1");
+		expect(screen.getByLabelText("Session files").querySelector("header")).toHaveClass("h-10", "px-2");
+	});
+
+	it("uses one vertical scroller for the file list and expanded diffs", async () => {
+		const { container } = renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		await userEvent.click(await screen.findByRole("button", { name: "Expand src/App.tsx" }));
+		await screen.findByText(diffLine("const value = 1;"));
+
+		const panelScroller = container.querySelector("[data-files-scroll-root]");
+		const diffScroller = container.querySelector(".session-files-diff-scrollbar");
+		expect(panelScroller).toHaveClass("overflow-y-auto");
+		expect(diffScroller).toHaveClass("overflow-x-auto");
+		expect(diffScroller).not.toHaveClass("overflow-auto");
+		expect(diffScroller?.parentElement).not.toHaveClass("max-h-[min(620px,calc(100vh-18rem))]");
+	});
+
+	it("shows binary-file feedback as a compact inline state", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
+				return {
+					data: {
+						sessionId: "sess-1",
+						truncated: false,
+						files: [{ path: "screenshot.png", status: "added", additions: 0, deletions: 0, size: 120, binary: true }],
+					},
+				};
+			}
+			return {
+				data: {
+					sessionId: "sess-1",
+					path: "screenshot.png",
+					status: "added",
+					additions: 0,
+					deletions: 0,
+					size: 120,
+					binary: true,
+					deleted: false,
+					content: "",
+					contentTruncated: false,
+					diff: "",
+					diffTruncated: false,
+				},
+			};
+		});
+
+		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		await userEvent.click(await screen.findByRole("button", { name: "Expand screenshot.png" }));
+
+		expect((await screen.findByText("Binary file preview is not available.")).parentElement?.parentElement).toHaveClass(
+			"min-h-16",
+			"p-3",
+		);
 	});
 
 	it("uses the full session panel width while maximized", async () => {
