@@ -220,7 +220,7 @@ function CircleProgressIcon({ pass, total }: { pass: number; total: number }) {
 	const dash = ratio * circ;
 	const fillColor = ratio >= 1 ? "#4ade80" : ratio < 0.5 ? "#fb923c" : "#e5e7eb";
 	return (
-		<svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true" style={{ flexShrink: 0 }}>
+		<svg width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden="true" style={{ flexShrink: 0 }}>
 			<circle cx="6" cy="6" r={r} stroke="#374151" strokeWidth="1.5" />
 			<circle cx="6" cy="6" r={r} stroke={fillColor} strokeWidth="1.5"
 				strokeDasharray={`${dash} ${circ}`} strokeLinecap="round"
@@ -230,11 +230,11 @@ function CircleProgressIcon({ pass, total }: { pass: number; total: number }) {
 }
 
 function ActivityIcon({ state, testResults }: { state: ActivityState; testResults?: { pass: number; total: number } }) {
-	if (state === "passed") return <CheckIcon className="h-3 w-3 shrink-0" />;
-	if (state === "waiting") return <WaitingIcon className="h-3 w-3 shrink-0" />;
-	if (state === "reviewing") return <ReviewingIcon className="h-3 w-3 shrink-0" />;
+	if (state === "passed") return <CheckIcon className="h-2.5 w-2.5 shrink-0" />;
+	if (state === "waiting") return <WaitingIcon className="h-2.5 w-2.5 shrink-0" />;
+	if (state === "reviewing") return <ReviewingIcon className="h-2.5 w-2.5 shrink-0" />;
 	if (testResults) return <CircleProgressIcon pass={testResults.pass} total={testResults.total} />;
-	return <span className="h-3 w-3 shrink-0 animate-spin rounded-full border border-[#4b5563] border-t-[#d1d5db]" />;
+	return <span className="h-2.5 w-2.5 shrink-0 animate-spin rounded-full border border-[#4b5563] border-t-[#d1d5db]" />;
 }
 
 // ── AnimatedTestCount ─────────────────────────────────────────────────────────
@@ -297,34 +297,34 @@ function BoardCard({ card, isPulsing }: { card: Card; isPulsing: boolean }) {
 				ease: [0.22, 1, 0.36, 1],
 				layout: { duration: 0.55, ease: [0.22, 1, 0.36, 1] },
 			}}
-			className={`rounded-lg border ${attentionBorder} bg-[var(--preview-card)] shadow-[0_1px_1px_rgba(0,0,0,0.05)] ${attentionAnim}`}
+			className={`rounded-[6px] border ${attentionBorder} bg-[var(--preview-card)] shadow-[0_1px_1px_rgba(0,0,0,0.05)] ${attentionAnim}`}
 		>
 			{/* Title row */}
-			<div className="flex items-start gap-2.5 px-3.5 pb-2.5 pt-3">
-				<div className="relative mt-0.5 h-3.5 w-3.5 shrink-0">
-					<img src={card.icon} alt="" width={14} height={14}
-						aria-hidden="true" draggable="false" className="h-3.5 w-3.5" />
+			<div className="flex items-start gap-2 px-2.5 pb-2 pt-2.5">
+				<div className="relative mt-0.5 h-3 w-3 shrink-0">
+					<img src={card.icon} alt="" width={12} height={12}
+						aria-hidden="true" draggable="false" className="h-3 w-3" />
 					{isWaiting ? (
 						<span aria-hidden="true"
-							className={`pointer-events-none absolute -right-1 -top-1 flex h-2.5 w-2.5 items-center justify-center rounded-full ${badgeColor} text-[7px] font-black leading-none text-white shadow-[0_0_0_1.5px_var(--preview-card)]`}>
+							className={`pointer-events-none absolute -right-0.5 -top-0.5 flex h-2 w-2 items-center justify-center rounded-full ${badgeColor} text-[6px] font-black leading-none text-white shadow-[0_0_0_1px_var(--preview-card)]`}>
 							!
 						</span>
 					) : null}
 				</div>
-				<div className="min-w-0 text-[11.5px] font-semibold leading-tight tracking-tight text-[var(--preview-card-foreground)]">
+				<div className="min-w-0 text-[9px] font-semibold leading-tight tracking-tight text-[var(--preview-card-foreground)]">
 					{card.title}
 				</div>
 			</div>
 
 			{/* Branch + PR rows */}
-			<div className="px-3.5 text-[9.5px] leading-4 text-[var(--preview-muted-foreground)]">
-				<div className="flex items-center gap-1.5 py-1">
-					<BranchIcon className="h-3 w-3 shrink-0" />
+			<div className="px-2.5 text-[8px] leading-[14px] text-[var(--preview-muted-foreground)]">
+				<div className="flex items-center gap-1 py-0.5">
+					<BranchIcon className="h-2.5 w-2.5 shrink-0" />
 					<span className="truncate font-mono">{card.branch}</span>
 				</div>
 				{prMatch ? (
-					<div className="flex items-center gap-1.5 py-1 text-[var(--preview-muted-foreground)]">
-						<PullRequestIcon className="h-3 w-3 shrink-0" />
+					<div className="flex items-center gap-1 py-0.5 text-[var(--preview-muted-foreground)]">
+						<PullRequestIcon className="h-2.5 w-2.5 shrink-0" />
 						<span className="font-mono">#{prMatch[1]}</span>
 					</div>
 				) : null}
@@ -332,20 +332,20 @@ function BoardCard({ card, isPulsing }: { card: Card; isPulsing: boolean }) {
 
 			{/* Reviewer avatars + PR comments (in_review / merge) */}
 			{(card.column === "in_review" || card.column === "merge") ? (
-				<div className="flex items-center justify-between px-3.5 pb-2">
-					<div className="flex items-center gap-1.5">
+				<div className="flex items-center justify-between px-2.5 pb-1.5 pt-1">
+					<div className="flex items-center gap-1">
 						{card.reviewers && card.reviewers.length > 0 ? (
-							<div className="flex -space-x-1.5">
+							<div className="flex -space-x-1">
 								{card.reviewers.slice(0, 3).map((src) => (
-									<img key={src} src={src} alt="" width={18} height={18}
+									<img key={src} src={src} alt="" width={14} height={14}
 										aria-hidden="true" draggable="false"
-										className="h-[18px] w-[18px] rounded-full ring-1 ring-[var(--preview-card)]" />
+										className="h-[14px] w-[14px] rounded-full ring-1 ring-[var(--preview-card)]" />
 								))}
 							</div>
 						) : null}
 					</div>
 					{card.prComments !== undefined ? (
-						<span className={`text-[10px] ${card.prComments > 0 ? "text-[#fb923c]" : "text-[var(--preview-muted-foreground)]"}`}>
+						<span className={`text-[8px] ${card.prComments > 0 ? "text-[#fb923c]" : "text-[var(--preview-muted-foreground)]"}`}>
 							{card.prComments === 0 ? "no comments" : `${card.prComments} comment${card.prComments !== 1 ? "s" : ""}`}
 						</span>
 					) : null}
@@ -354,15 +354,15 @@ function BoardCard({ card, isPulsing }: { card: Card; isPulsing: boolean }) {
 
 			{/* Activity / action row */}
 			{card.column === "merge" ? (
-				<div className="flex items-center justify-between gap-2 border-t border-[var(--preview-border)] px-3.5 py-2.5">
-					<div className="inline-flex h-6 items-center justify-center whitespace-nowrap rounded-md bg-[var(--preview-primary)] px-2.5 text-[10.5px] font-semibold text-[var(--preview-primary-foreground)]">
+				<div className="flex items-center justify-between gap-2 border-t border-[var(--preview-border)] px-2.5 py-2">
+					<div className="inline-flex h-5 items-center justify-center whitespace-nowrap rounded-[4px] bg-[var(--preview-primary)] px-2 text-[8.5px] font-semibold text-[var(--preview-primary-foreground)]">
 						Merge PR
 					</div>
-					<span className="shrink-0 font-mono text-[10.5px] text-[var(--preview-muted-foreground)]">{card.time}</span>
+					<span className="shrink-0 font-mono text-[8px] text-[var(--preview-muted-foreground)]">{card.time}</span>
 				</div>
 			) : (
-				<div className={`flex items-center justify-between border-t border-[var(--preview-border)] px-3.5 py-2.5 ${activityColor}`}>
-					<span className="inline-flex items-center gap-1.5 text-[10.5px]">
+				<div className={`flex items-center justify-between border-t border-[var(--preview-border)] px-2.5 py-2 ${activityColor}`}>
+					<span className="inline-flex items-center gap-1.5 text-[8.5px]">
 						{isTestCard ? (
 							<AnimatedTestCount testResults={card.testResults!} />
 						) : (
@@ -372,7 +372,7 @@ function BoardCard({ card, isPulsing }: { card: Card; isPulsing: boolean }) {
 							</>
 						)}
 					</span>
-					<span className="font-mono text-[10.5px] text-[var(--preview-muted-foreground)]">{card.time}</span>
+					<span className="font-mono text-[8px] text-[var(--preview-muted-foreground)]">{card.time}</span>
 				</div>
 			)}
 		</motion.div>
@@ -390,18 +390,18 @@ function BoardColumn({ cards, color, title }: { cards: Card[]; color: string; ti
 
 	return (
 		<section className="flex min-h-0 min-w-0 snap-start flex-col border-r border-[var(--preview-border)] last:border-r-0">
-			<div className="flex h-12 shrink-0 items-center gap-2.5 border-b border-[var(--preview-border)] px-4">
-				<span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
-				<div className="font-mono text-[10.5px] font-medium uppercase tracking-wide text-[var(--preview-muted-foreground)]">{title}</div>
-				<div className="ml-auto font-mono text-[10.5px] leading-none text-[var(--preview-muted-foreground)] opacity-60">{cards.length}</div>
+			<div className="flex h-9 shrink-0 items-center gap-2 border-b border-[var(--preview-border)] px-3">
+				<span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />
+				<div className="font-mono text-[8px] font-medium uppercase tracking-wide text-[var(--preview-muted-foreground)]">{title}</div>
+				<div className="ml-auto font-mono text-[8px] leading-none text-[var(--preview-muted-foreground)] opacity-60">{cards.length}</div>
 				{extraWaiting > 0 ? (
-					<div className="inline-flex items-center gap-1 rounded-[4px] bg-[#fb923c]/10 px-1.5 py-0.5 text-[9px] font-semibold text-[#fb923c]">
-						<WaitingIcon className="h-2.5 w-2.5" />
+					<div className="inline-flex items-center gap-1 rounded-[3px] bg-[#fb923c]/10 px-1 py-0.5 text-[7px] font-semibold text-[#fb923c]">
+						<WaitingIcon className="h-2 w-2" />
 						{extraWaiting} waiting
 					</div>
 				) : null}
 			</div>
-			<div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-3 pb-3 pt-3 scrollbar-hide">
+			<div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-2 pb-2 pt-2 scrollbar-hide">
 				<AnimatePresence initial={false}>
 					{sorted.map((card) => (
 						<BoardCard key={card.id} card={card} isPulsing={card.id === pulsingId} />
@@ -521,7 +521,7 @@ export function FleetBoardDemo() {
 
 	return (
 		<div
-			className="mx-auto h-[318px] w-full min-w-0 max-w-[570px] overflow-hidden rounded-[20px] border border-[var(--preview-border)] bg-[var(--preview-background)] font-sans text-[var(--preview-foreground)] shadow-[0_24px_64px_-20px_rgba(0,0,0,0.8)]"
+			className="mx-auto h-[318px] w-full min-w-0 max-w-[570px] overflow-hidden rounded-[12px] border border-[var(--preview-border)] bg-[var(--preview-background)] font-sans text-[9px] text-[var(--preview-foreground)] shadow-[0_24px_64px_-20px_rgba(0,0,0,0.8)]"
 			style={featurePreviewTokens}
 		>
 			<style>{`
