@@ -5,6 +5,7 @@ import { CommandPalette } from "../components/CommandPalette";
 import { CenterPanelShell } from "../components/CenterPanelShell";
 import { DaemonFailureBanner } from "../components/DaemonFailureBanner";
 import { NotificationRuntime } from "../components/NotificationCenter";
+import { TrayRuntime } from "../components/TrayRuntime";
 import { GlobalNewTaskDialog } from "../components/GlobalNewTaskDialog";
 import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
 import { KeyboardShortcutsSettingsDialog } from "../components/settings/KeyboardShortcutsSettingsDialog";
@@ -602,6 +603,7 @@ function ShellLayout() {
 	return (
 		<ShellProvider value={{ daemonStatus, workspaceStartupState, createProject, initializeProjectRepository }}>
 			<NotificationRuntime />
+			<TrayRuntime />
 			<GlobalNewTaskDialog />
 			<KeyboardShortcutsDialog
 				open={isKeyboardShortcutsOpen}

@@ -45,6 +45,12 @@ import {
 	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
 	type KeybindingOverrides,
 } from "./shared/shortcuts";
+import { createTrayController, type TrayController } from "./main/tray";
+import { createTrayLifecycle, isTrayEnabled } from "./main/tray-lifecycle";
+import {
+	TRAY_RENDERER_READY_CHANNEL,
+	TRAY_SET_ATTENTION_STATE_CHANNEL,
+} from "./shared/tray";
 import {
 	type DaemonProbe,
 	expectedDaemonPort,
@@ -108,6 +114,12 @@ app.setPath(
 );
 
 let mainWindow: BrowserWindow | null = null;
+let trayController: TrayController | null = null;
+const trayLifecycle = createTrayLifecycle({
+	getWindow: () => mainWindow,
+	getTrayController: () => trayController,
+	focusWindow: () => focusMainWindow(),
+});
 let daemonProcess: ChildProcess | null = null;
 let daemonStoppingProcess: ChildProcess | null = null;
 let daemonRestartAfterExitProcess: ChildProcess | null = null;
@@ -221,6 +233,16 @@ function applyRuntimeAppIcon(): void {
 	if (!icon.isEmpty()) {
 		app.dock.setIcon(icon);
 	}
+}
+
+function focusMainWindow(): void {
+	if (!mainWindow) {
+		createWindow();
+		return;
+	}
+	if (mainWindow.isMinimized()) mainWindow.restore();
+	mainWindow.show();
+	mainWindow.focus();
 }
 
 function setDaemonStatus(nextStatus: DaemonStatus): void {
@@ -357,6 +379,8 @@ function createWindow(): void {
 	mainWindow.webContents.on("render-process-gone", () => {
 		keybindingRecordingActive = false;
 	});
+	mainWindow.webContents.on("did-start-loading", () => trayLifecycle.clear());
+	mainWindow.webContents.on("render-process-gone", () => trayLifecycle.clear());
 
 	mainWindow.on("closed", () => {
 		browserRuntimeLink?.dispose();
@@ -365,6 +389,7 @@ function createWindow(): void {
 		browserViewHost?.dispose();
 		browserViewHost = null;
 		mainWindow = null;
+		trayLifecycle.clear();
 	});
 }
 
@@ -1388,8 +1413,11 @@ ipcMain.handle("uiSettings:get", async (): Promise<UiSettings> => {
 });
 ipcMain.handle("uiSettings:set", async (_event, settings: UiSettings): Promise<UiSettings> => {
 	const runFile = runFilePath();
-	if (!runFile) return { locale: settings?.locale === "zh-CN" ? "zh-CN" : "en" };
-	return writeUiSettings(path.dirname(runFile), settings);
+	const result = !runFile
+		? { locale: settings?.locale === "zh-CN" ? ("zh-CN" as const) : ("en" as const) }
+		: await writeUiSettings(path.dirname(runFile), settings);
+	trayController?.setLocale(result.locale);
+	return result;
 });
 
 ipcMain.handle("keybindings:get", (): KeybindingOverrides => keybindingOverrides);
@@ -1440,6 +1468,10 @@ ipcMain.handle("notifications:show", (_event, notification: { id: string; title:
 	});
 	toast.show();
 });
+
+ipcMain.on(TRAY_SET_ATTENTION_STATE_CHANNEL, (event, state) => trayLifecycle.handleSetAttentionState(event, state));
+
+ipcMain.on(TRAY_RENDERER_READY_CHANNEL, (event) => trayLifecycle.handleRendererReady(event));
 
 // Auto-update only runs for packaged builds reading the GitHub Releases feed
 // (see forge.config.ts publishers). In dev there is no feed, so it is skipped.
@@ -1540,6 +1572,14 @@ app.whenReady().then(async () => {
 
 	registerRendererProtocol();
 	applyRuntimeAppIcon();
+	if (isTrayEnabled(process.platform, app.isPackaged, app.getVersion())) {
+		const initialUiSettings = keybindingRunFile ? await readUiSettings(path.dirname(keybindingRunFile)) : { locale: "en" as const };
+		trayController = createTrayController({
+			focusWindow: focusMainWindow,
+			openSession: trayLifecycle.openSession,
+			locale: initialUiSettings.locale,
+		});
+	}
 	createWindow();
 	void startDaemon();
 	initAutoUpdates();
@@ -1560,6 +1600,8 @@ app.on("before-quit", () => {
 	browserRuntimeLink = null;
 	browserViewHost?.dispose();
 	browserViewHost = null;
+	trayLifecycle.dispose();
+	trayController = null;
 });
 
 // Last resort: if the OS-native supervisor link is not actually connected
