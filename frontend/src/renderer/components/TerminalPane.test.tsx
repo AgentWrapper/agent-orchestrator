@@ -29,7 +29,7 @@ const {
 } = vi.hoisted(
 	() => ({
 		attachMock: vi.fn(() => vi.fn()),
-		getMock: vi.fn(async () => ({ data: undefined })),
+		getMock: vi.fn(async (_path: string, _options: unknown) => ({ data: undefined })),
 		postMock: vi.fn(),
 		terminalError: { value: undefined as string | undefined },
 		terminalState: { value: "idle" },
@@ -485,7 +485,7 @@ describe("TerminalCacheProvider", () => {
 			terminalTarget: reviewer,
 		});
 		try {
-			const first = await waitFor(() => activeXterm());
+			const first = await waitFor(() => screen.getByTestId("xterm"));
 			expect(document.querySelector("[data-terminal-cache-key*='reviewer']")).toBeNull();
 			view.show(sessionA, { kind: "worker" });
 			await waitFor(() => expect(first.isConnected).toBe(false));

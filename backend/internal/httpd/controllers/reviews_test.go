@@ -86,10 +86,10 @@ func TestReviewsTrigger_MissingReviewerBinaryReturns422WithCause(t *testing.T) {
 
 func TestReviewsListIncludesReviewStates(t *testing.T) {
 	srv := newReviewTestServer(t, &fakeReviewService{list: reviewcore.SessionReviews{
-		ReviewerHandleID:   "review-mer-1",
-		ReviewerHarness:    domain.ReviewerCodex,
-		Runs:               []domain.ReviewRun{{ID: "run-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1"}},
-		Reviews:            []reviewcore.PRReviewState{{PRURL: "https://github.com/o/r/pull/1", PRNumber: 1, TargetSHA: "sha1", Status: reviewcore.ReviewStateUpToDate}},
+		ReviewerHandleID: "review-mer-1",
+		ReviewerHarness:  domain.ReviewerCodex,
+		Runs:             []domain.ReviewRun{{ID: "run-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1"}},
+		Reviews:          []reviewcore.PRReviewState{{PRURL: "https://github.com/o/r/pull/1", PRNumber: 1, TargetSHA: "sha1", Status: reviewcore.ReviewStateUpToDate}},
 	}})
 
 	body, status, headers := doRequest(t, srv, "GET", "/api/v1/sessions/mer-1/reviews", "")
@@ -109,11 +109,11 @@ func TestReviewsTriggerIncludesBatchFields(t *testing.T) {
 	run1 := domain.ReviewRun{ID: "run-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1"}
 	run2 := domain.ReviewRun{ID: "run-2", PRURL: "https://github.com/o/r/pull/2", TargetSHA: "sha2"}
 	srv := newReviewTestServer(t, &fakeReviewService{trigger: reviewcore.TriggerResult{
-		Run:                run1,
-		ReviewerHandleID:   "review-mer-1",
-		ReviewerHarness:    domain.ReviewerCodex,
-		Created:            true,
-		CreatedRuns:        []domain.ReviewRun{run1, run2},
+		Run:              run1,
+		ReviewerHandleID: "review-mer-1",
+		ReviewerHarness:  domain.ReviewerCodex,
+		Created:          true,
+		CreatedRuns:      []domain.ReviewRun{run1, run2},
 		Reviews: []reviewcore.PRReviewState{
 			{PRURL: run1.PRURL, PRNumber: 1, TargetSHA: run1.TargetSHA, Status: reviewcore.ReviewStateRunning, LatestRun: &run1},
 			{PRURL: run2.PRURL, PRNumber: 2, TargetSHA: run2.TargetSHA, Status: reviewcore.ReviewStateRunning, LatestRun: &run2},
@@ -139,8 +139,8 @@ func TestReviewsTriggerIncludesBatchFields(t *testing.T) {
 
 func TestReviewsCancelIncludesReviewStates(t *testing.T) {
 	srv := newReviewTestServer(t, &fakeReviewService{cancel: reviewcore.CancelResult{
-		ReviewerHandleID:   "review-mer-1",
-		ReviewerHarness:    domain.ReviewerCodex,
+		ReviewerHandleID: "review-mer-1",
+		ReviewerHarness:  domain.ReviewerCodex,
 		Reviews: []reviewcore.PRReviewState{
 			{PRURL: "https://github.com/o/r/pull/1", PRNumber: 1, TargetSHA: "sha1", Status: reviewcore.ReviewStateNeedsReview},
 		},

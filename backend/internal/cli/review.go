@@ -43,9 +43,9 @@ type reviewState struct {
 }
 
 type listReviewsResponse struct {
-	ReviewerHandleID   string        `json:"reviewerHandleId"`
-	ReviewerHarness    string        `json:"reviewerHarness"`
-	Reviews            []reviewState `json:"reviews"`
+	ReviewerHandleID string        `json:"reviewerHandleId"`
+	ReviewerHarness  string        `json:"reviewerHarness"`
+	Reviews          []reviewState `json:"reviews"`
 }
 
 // triggerReviewResponse mirrors controllers.TriggerReviewResponse. Only the

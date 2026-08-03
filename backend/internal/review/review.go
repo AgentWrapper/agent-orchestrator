@@ -133,29 +133,29 @@ func (e *Engine) lockWorker(id domain.SessionID) func() {
 // reviewer pane's handle so the UI can attach its terminal, and whether a new
 // pass was started (false when an existing run for the same commit was reused).
 type TriggerResult struct {
-	Run                domain.ReviewRun
-	ReviewerHandleID   string
-	ReviewerHarness    domain.ReviewerHarness
-	Created            bool
-	Reviews            []PRReviewState
-	CreatedRuns        []domain.ReviewRun
+	Run              domain.ReviewRun
+	ReviewerHandleID string
+	ReviewerHarness  domain.ReviewerHarness
+	Created          bool
+	Reviews          []PRReviewState
+	CreatedRuns      []domain.ReviewRun
 }
 
 // SessionReviews is a worker's review state: the live reviewer handle plus its
 // recorded passes, newest first.
 type SessionReviews struct {
-	ReviewerHandleID   string
-	ReviewerHarness    domain.ReviewerHarness
-	Runs               []domain.ReviewRun
-	Reviews            []PRReviewState
+	ReviewerHandleID string
+	ReviewerHarness  domain.ReviewerHarness
+	Runs             []domain.ReviewRun
+	Reviews          []PRReviewState
 }
 
 // CancelResult is the review state after a reviewer pane cancellation.
 type CancelResult struct {
-	ReviewerHandleID   string
-	ReviewerHarness    domain.ReviewerHarness
-	Reviews            []PRReviewState
-	CancelledRuns      []domain.ReviewRun
+	ReviewerHandleID string
+	ReviewerHarness  domain.ReviewerHarness
+	Reviews          []PRReviewState
+	CancelledRuns    []domain.ReviewRun
 }
 
 // Trigger starts reviews for every PR on the worker session that needs review.
@@ -282,11 +282,11 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 	}
 	if len(created) == 0 {
 		return TriggerResult{
-			Run:                firstReusableRun(reviews),
-			ReviewerHandleID:   reviewRow.ReviewerHandleID,
-			ReviewerHarness:    reviewRow.Harness,
-			Created:            false,
-			Reviews:            reviews,
+			Run:              firstReusableRun(reviews),
+			ReviewerHandleID: reviewRow.ReviewerHandleID,
+			ReviewerHarness:  reviewRow.Harness,
+			Created:          false,
+			Reviews:          reviews,
 		}, nil
 	}
 
@@ -336,12 +336,12 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 		created[i].ReviewID = reviewRow.ID
 	}
 	return TriggerResult{
-		Run:                created[0],
-		ReviewerHandleID:   handleID,
-		ReviewerHarness:    harness,
-		Created:            true,
-		Reviews:            reviews,
-		CreatedRuns:        created,
+		Run:              created[0],
+		ReviewerHandleID: handleID,
+		ReviewerHarness:  harness,
+		Created:          true,
+		Reviews:          reviews,
+		CreatedRuns:      created,
 	}, nil
 }
 
@@ -418,10 +418,10 @@ func (e *Engine) List(ctx stdctx.Context, workerID domain.SessionID) (SessionRev
 		return SessionReviews{}, err
 	}
 	return SessionReviews{
-		ReviewerHandleID:   handle,
-		ReviewerHarness:    harness,
-		Runs:               runs,
-		Reviews:            Plan(prs, runs),
+		ReviewerHandleID: handle,
+		ReviewerHarness:  harness,
+		Runs:             runs,
+		Reviews:          Plan(prs, runs),
 	}, nil
 }
 
@@ -471,10 +471,10 @@ func (e *Engine) Cancel(ctx stdctx.Context, workerID domain.SessionID) (CancelRe
 		return CancelResult{}, err
 	}
 	return CancelResult{
-		ReviewerHandleID:   review.ReviewerHandleID,
-		ReviewerHarness:    review.Harness,
-		Reviews:            Plan(prs, runs),
-		CancelledRuns:      cancelled,
+		ReviewerHandleID: review.ReviewerHandleID,
+		ReviewerHarness:  review.Harness,
+		Reviews:          Plan(prs, runs),
+		CancelledRuns:    cancelled,
 	}, nil
 }
 
@@ -505,14 +505,14 @@ func (e *Engine) upsertReview(
 		return domain.Review{}, err
 	}
 	review := domain.Review{
-		ID:                 e.newID(),
-		SessionID:          worker.ID,
-		ProjectID:          worker.ProjectID,
-		Harness:            harness,
-		PRURL:              "",
+		ID:               e.newID(),
+		SessionID:        worker.ID,
+		ProjectID:        worker.ProjectID,
+		Harness:          harness,
+		PRURL:            "",
 		ReviewerHandleID: handleID,
-		CreatedAt:          now,
-		UpdatedAt:          now,
+		CreatedAt:        now,
+		UpdatedAt:        now,
 	}
 	if ok {
 		// Reuse the existing row's identity and creation time; UpsertReview
