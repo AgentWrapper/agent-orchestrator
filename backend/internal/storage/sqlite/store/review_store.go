@@ -40,6 +40,14 @@ func (s *Store) GetReviewBySession(ctx context.Context, id domain.SessionID) (do
 	return reviewFromRow(row), true, nil
 }
 
+// ClearReviewerHandle removes the persisted terminal handle after a hard
+// reviewer pane teardown.
+func (s *Store) ClearReviewerHandle(ctx context.Context, id domain.SessionID) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.qw.ClearReviewerHandle(ctx, id)
+}
+
 // InsertReviewRun records a new review pass. A unique-constraint hit on the
 // (session_id, pr_url, target_sha) index (migration 0020) is surfaced as the sentinel
 // domain.ErrDuplicateReviewRun so the engine can fall back to the existing run.

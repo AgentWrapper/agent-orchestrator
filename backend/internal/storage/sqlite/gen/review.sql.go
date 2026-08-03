@@ -30,6 +30,15 @@ func (q *Queries) CancelRunningReviewRunsBySession(ctx context.Context, arg Canc
 	return result.RowsAffected()
 }
 
+const clearReviewerHandle = `-- name: ClearReviewerHandle :exec
+UPDATE review SET reviewer_handle_id = '', updated_at = CURRENT_TIMESTAMP WHERE session_id = ?
+`
+
+func (q *Queries) ClearReviewerHandle(ctx context.Context, sessionID domain.SessionID) error {
+	_, err := q.db.ExecContext(ctx, clearReviewerHandle, sessionID)
+	return err
+}
+
 const getReviewBySession = `-- name: GetReviewBySession :one
 SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, created_at, updated_at
 FROM review WHERE session_id = ?

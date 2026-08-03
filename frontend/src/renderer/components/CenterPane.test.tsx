@@ -225,6 +225,7 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.getByRole("button", { name: "Reviewer" })).toHaveAttribute("aria-current", "true");
 		expect(screen.getByRole("button", { name: "do the thing" })).not.toHaveAttribute("aria-current", "true");
 		expect(screen.getByRole("button", { name: "Reviewer" }).querySelector("img")).toHaveAttribute("src");
+		expect(screen.queryByRole("button", { name: "Back to agent" })).not.toBeInTheDocument();
 	});
 
 	it("opens reviewer from the tab strip when a reviewer handle exists", () => {

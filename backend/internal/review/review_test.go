@@ -38,6 +38,12 @@ func (f *fakeStore) GetReviewBySession(_ context.Context, _ domain.SessionID) (d
 	}
 	return *f.review, true, nil
 }
+func (f *fakeStore) ClearReviewerHandle(_ context.Context, id domain.SessionID) error {
+	if f.review != nil && f.review.SessionID == id {
+		f.review.ReviewerHandleID = ""
+	}
+	return nil
+}
 func (f *fakeStore) InsertReviewRun(_ context.Context, r domain.ReviewRun) error {
 	if f.insertErr != nil {
 		winner := r
@@ -387,6 +393,16 @@ func TestTerminateReviewerDestroysPaneAndCancelsRunningRuns(t *testing.T) {
 	}
 	if store.runs[0].Status != domain.ReviewRunCancelled || store.runs[0].Body != "cancelled by worker termination" {
 		t.Fatalf("run after terminate = %+v", store.runs[0])
+	}
+	if store.review.ReviewerHandleID != "" {
+		t.Fatalf("reviewer handle after terminate = %q, want cleared", store.review.ReviewerHandleID)
+	}
+	list, err := eng.List(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("List after terminate: %v", err)
+	}
+	if list.ReviewerHandleID != "" {
+		t.Fatalf("list reviewer handle after terminate = %q, want empty", list.ReviewerHandleID)
 	}
 }
 

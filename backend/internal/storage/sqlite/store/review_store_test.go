@@ -215,6 +215,16 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	if got.Harness != domain.ReviewerHarness("greptile") || got.PRURL != "https://example/pr/2" || got.ReviewerHandleID != "review-mer-1b" {
 		t.Fatalf("upsert did not refresh fields: %+v", got)
 	}
+	if err := s.ClearReviewerHandle(ctx, rec.ID); err != nil {
+		t.Fatalf("clear reviewer handle: %v", err)
+	}
+	got, ok, err = s.GetReviewBySession(ctx, rec.ID)
+	if err != nil || !ok {
+		t.Fatalf("get review after clear: ok=%v err=%v", ok, err)
+	}
+	if got.ReviewerHandleID != "" {
+		t.Fatalf("reviewer handle after clear = %q, want empty", got.ReviewerHandleID)
+	}
 
 	// A run inserts running and updates to complete/changes_requested.
 	if err := s.InsertReviewRun(ctx, domain.ReviewRun{

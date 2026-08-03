@@ -32,6 +32,7 @@ var (
 type Store interface {
 	UpsertReview(ctx stdctx.Context, r domain.Review) error
 	GetReviewBySession(ctx stdctx.Context, id domain.SessionID) (domain.Review, bool, error)
+	ClearReviewerHandle(ctx stdctx.Context, id domain.SessionID) error
 	InsertReviewRun(ctx stdctx.Context, r domain.ReviewRun) error
 	UpdateReviewRunResult(ctx stdctx.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
 	SupersedeStaleRunningReviewRuns(ctx stdctx.Context, sessionID domain.SessionID, prURL, targetSHA, body string) (int64, error)
@@ -479,6 +480,9 @@ func (e *Engine) TerminateReviewer(ctx stdctx.Context, workerID domain.SessionID
 		return TerminateResult{}, err
 	}
 	if err := e.launcher.Destroy(ctx, review.ReviewerHandleID); err != nil {
+		return TerminateResult{}, err
+	}
+	if err := e.store.ClearReviewerHandle(ctx, workerID); err != nil {
 		return TerminateResult{}, err
 	}
 	if body == "" {
