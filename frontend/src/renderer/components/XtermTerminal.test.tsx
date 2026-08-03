@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
 		buffer: { active: { type: string } };
 		scrollLines: ReturnType<typeof vi.fn>;
 		clear: ReturnType<typeof vi.fn>;
+		write: ReturnType<typeof vi.fn>;
 		focus: ReturnType<typeof vi.fn>;
 		selectAll: ReturnType<typeof vi.fn>;
 		dataListeners: Set<(data: string) => void>;
@@ -40,6 +41,7 @@ vi.mock("@xterm/xterm", () => ({
 		buffer = { active: { type: "normal" } };
 		scrollLines = vi.fn();
 		clear = vi.fn();
+		write = vi.fn((_data: string | Uint8Array, done?: () => void) => done?.());
 		focus = vi.fn();
 		selectAll = vi.fn();
 		dataListeners = new Set<(data: string) => void>();
@@ -62,7 +64,6 @@ vi.mock("@xterm/xterm", () => ({
 		open(host: HTMLElement) {
 			host.appendChild(document.createElement("textarea"));
 		}
-		write() {}
 		writeln() {}
 		dispose() {}
 		onData(listener: (data: string) => void) {
@@ -132,6 +133,10 @@ vi.mock("@xterm/addon-webgl", () => ({
 	},
 }));
 
+function terminalWrittenText(callIndex = 0): string {
+	const [written] = state.lastTerminal!.write.mock.calls[callIndex];
+	return typeof written === "string" ? written : new TextDecoder().decode(written as Uint8Array);
+}
 function setNavigatorPlatform(platform: string) {
 	Object.defineProperty(window.navigator, "platform", {
 		configurable: true,
@@ -150,8 +155,96 @@ describe("XtermTerminal", () => {
 		setNavigatorPlatform("Linux x86_64");
 		window.ao!.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
 		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("");
+		document.documentElement.style.setProperty("--color-term-light-panel-bg", "#e5e7eb");
 	});
 
+	it("remaps very-dark truecolor backgrounds to a soft light panel in light mode", () => {
+		let terminalHandle: { write: (data: Uint8Array, done?: () => void) => void } | null = null;
+		render(<XtermTerminal theme="light" onReady={(terminal) => (terminalHandle = terminal)} />);
+
+		terminalHandle!.write(new TextEncoder().encode("before\x1b[48;2;37;37;37mhidden\x1b[0m after"));
+
+		expect(terminalWrittenText()).toBe("before\x1b[48;2;229;231;235mhidden\x1b[0m after");
+	});
+
+	it("remaps low-contrast truecolor prompt text in light mode", () => {
+		let terminalHandle: { write: (data: Uint8Array, done?: () => void) => void } | null = null;
+		render(<XtermTerminal theme="light" onReady={(terminal) => (terminalHandle = terminal)} />);
+
+		terminalHandle!.write(new TextEncoder().encode("\x1b[38;2;242;214;109mgpt\x1b[38;2;98;223;145mpath\x1b[0m"));
+
+		expect(terminalWrittenText()).toBe("\x1b[38;2;132;117;60mgpt\x1b[38;2;64;145;94mpath\x1b[0m");
+	});
+
+	it("remaps bright ANSI prompt colors in light mode", () => {
+		let terminalHandle: { write: (data: Uint8Array, done?: () => void) => void } | null = null;
+		render(<XtermTerminal theme="light" onReady={(terminal) => (terminalHandle = terminal)} />);
+
+		terminalHandle!.write(new TextEncoder().encode("\x1b[93mgpt\x1b[92mpath\x1b[0m"));
+
+		expect(terminalWrittenText()).toBe("\x1b[33mgpt\x1b[32mpath\x1b[0m");
+	});
+
+	it("remaps 256-color bright prompt colors in light mode", () => {
+		let terminalHandle: { write: (data: Uint8Array, done?: () => void) => void } | null = null;
+		render(<XtermTerminal theme="light" onReady={(terminal) => (terminalHandle = terminal)} />);
+
+		terminalHandle!.write(new TextEncoder().encode("\x1b[38;5;11mgpt\x1b[38;5;10mpath\x1b[0m"));
+
+		expect(terminalWrittenText()).toBe("\x1b[33mgpt\x1b[32mpath\x1b[0m");
+	});
+
+	it("darkens nearby bright truecolor prompt text in light mode", () => {
+		let terminalHandle: { write: (data: Uint8Array, done?: () => void) => void } | null = null;
+		render(<XtermTerminal theme="light" onReady={(terminal) => (terminalHandle = terminal)} />);
+
+		terminalHandle!.write(new TextEncoder().encode("\x1b[38;2;255;230;120mgpt\x1b[38;2;170;255;190mpath\x1b[0m"));
+
+		expect(terminalWrittenText()).toBe("\x1b[38;2;130;118;61mgpt\x1b[38;2;88;132;98mpath\x1b[0m");
+	});
+
+	it("darkens nearby bright 256-color prompt text in light mode", () => {
+		let terminalHandle: { write: (data: Uint8Array, done?: () => void) => void } | null = null;
+		render(<XtermTerminal theme="light" onReady={(terminal) => (terminalHandle = terminal)} />);
+
+		terminalHandle!.write(new TextEncoder().encode("\x1b[38;5;229mgpt\x1b[38;5;157mpath\x1b[0m"));
+
+		expect(terminalWrittenText()).toBe("\x1b[38;2;119;119;82mgpt\x1b[38;2;91;132;91mpath\x1b[0m");
+	});
+
+	it("preserves split UTF-8 characters while remapping split light-mode SGR", () => {
+		let terminalHandle: { write: (data: Uint8Array, done?: () => void) => void } | null = null;
+		render(<XtermTerminal theme="light" onReady={(terminal) => (terminalHandle = terminal)} />);
+		const encoded = new TextEncoder().encode("λ\x1b[48;2;37;37;37mpanel");
+
+		terminalHandle!.write(encoded.slice(0, 1));
+		terminalHandle!.write(encoded.slice(1, 8));
+		terminalHandle!.write(encoded.slice(8));
+
+		expect(terminalWrittenText(0)).toBe("");
+		expect(terminalWrittenText(1)).toBe("λ");
+		expect(terminalWrittenText(2)).toBe("\x1b[48;2;229;231;235mpanel");
+	});
+	it("preserves a split UTF-8 character when the theme changes from light to dark", () => {
+		let terminalHandle: { write: (data: Uint8Array, done?: () => void) => void } | null = null;
+		const { rerender } = render(<XtermTerminal theme="light" onReady={(terminal) => (terminalHandle = terminal)} />);
+		const encoded = new TextEncoder().encode("\u03bb");
+
+		terminalHandle!.write(encoded.slice(0, 1));
+		rerender(<XtermTerminal theme="dark" onReady={(terminal) => (terminalHandle = terminal)} />);
+		terminalHandle!.write(encoded.slice(1));
+
+		expect(terminalWrittenText(0)).toBe("");
+		expect(terminalWrittenText(1)).toBe("\u03bb");
+	});
+	it("does not buffer complete non-SGR CSI sequences in light mode", () => {
+		let terminalHandle: { write: (data: Uint8Array, done?: () => void) => void } | null = null;
+		render(<XtermTerminal theme="light" onReady={(terminal) => (terminalHandle = terminal)} />);
+
+		terminalHandle!.write(new TextEncoder().encode("before\x1b[?25l after"));
+
+		expect(terminalWrittenText()).toBe("before\x1b[?25l after");
+	});
 	it("preserves the agent TUI palette without contrast remapping", () => {
 		render(<XtermTerminal theme="dark" />);
 
