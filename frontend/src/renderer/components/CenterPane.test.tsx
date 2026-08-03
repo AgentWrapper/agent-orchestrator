@@ -222,9 +222,9 @@ describe("CenterPane toolbar session label", () => {
 			/>,
 		);
 
-		expect(screen.getByRole("button", { name: "Reviewer" })).toHaveAttribute("aria-current", "true");
+		expect(screen.getByRole("button", { name: "reviewer" })).toHaveAttribute("aria-current", "true");
 		expect(screen.getByRole("button", { name: "do the thing" })).not.toHaveAttribute("aria-current", "true");
-		expect(screen.getByRole("button", { name: "Reviewer" }).querySelector("img")).toHaveAttribute("src");
+		expect(screen.getByRole("button", { name: "reviewer" }).querySelector("img")).toHaveAttribute("src");
 		expect(screen.queryByRole("button", { name: "Back to agent" })).not.toBeInTheDocument();
 	});
 
@@ -240,7 +240,7 @@ describe("CenterPane toolbar session label", () => {
 			/>,
 		);
 
-		fireEvent.click(screen.getByRole("button", { name: "Reviewer" }));
+		fireEvent.click(screen.getByRole("button", { name: "reviewer" }));
 		expect(onSelectReviewerTerminal).toHaveBeenCalledWith({ handleId: "review-sess-1", harness: "codex" });
 	});
 
