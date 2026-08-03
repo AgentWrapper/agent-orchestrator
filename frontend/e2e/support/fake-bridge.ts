@@ -100,9 +100,10 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 				browser: {
 					ensure: async (sessionId: string) => navState(`preview:${sessionId}`),
 					setBounds: () => undefined,
+					setAgentStatus: async () => undefined,
 					navigate: async ({ viewId }: { viewId: string }) => navState(viewId),
 					clear: async (viewId: string) => navState(viewId),
-					capture: async () => "",
+					capture: async () => null,
 					requestMirror: async () => false,
 					goBack: async (viewId: string) => navState(viewId),
 					goForward: async (viewId: string) => navState(viewId),
@@ -123,6 +124,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 						activeTabId: "t1",
 						tabs: [{ id: "t1", url: "", title: "", active: true }],
 					}),
+					devtools: async (input: { viewId: string }) => ({ viewId: input.viewId, open: false, activeTabId: "" }),
 					destroy: () => undefined,
 					// Annotation contract (mirrors src/preload.ts): useBrowserView subscribes
 					// to these whenever SessionView mounts with window.ao.browser present, so
@@ -132,6 +134,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					onAnnotationCancel: unsubscribe,
 					onNavState: unsubscribe,
 					onTabsState: unsubscribe,
+					onDevToolsState: unsubscribe,
 					onAgentActivity: unsubscribe,
 				},
 				notifications: {
@@ -482,10 +485,11 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				browser: {
 					ensure: async (sessionId: string) => navState(`preview:${sessionId}`),
 					setBounds: () => undefined,
+					setAgentStatus: async () => undefined,
 					navigate: async ({ viewId, url }: { viewId: string; url: string }) =>
 						state.browserError ? navState(viewId, "", state.browserError) : navState(viewId, url),
 					clear: async (viewId: string) => navState(viewId),
-					capture: async () => "",
+					capture: async () => null,
 					requestMirror: async () => false,
 					goBack: async (viewId: string) => navState(viewId),
 					goForward: async (viewId: string) => navState(viewId),
@@ -506,6 +510,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 						activeTabId: "t1",
 						tabs: [{ id: "t1", url: "", title: "", active: true }],
 					}),
+					devtools: async (input: { viewId: string }) => ({ viewId: input.viewId, open: false, activeTabId: "" }),
 					destroy: () => undefined,
 					// Annotation contract (mirrors src/preload.ts): useBrowserView subscribes
 					// to these whenever SessionView mounts with window.ao.browser present, so
@@ -515,6 +520,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					onAnnotationCancel: unsubscribe,
 					onNavState: unsubscribe,
 					onTabsState: unsubscribe,
+					onDevToolsState: unsubscribe,
 					onAgentActivity: unsubscribe,
 				},
 				notifications: { show: async () => undefined, onClick: unsubscribe },

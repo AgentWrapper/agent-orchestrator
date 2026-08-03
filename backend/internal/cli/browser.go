@@ -110,7 +110,6 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 		{name: "focus", short: "Focus an element reference from the latest snapshot"},
 		{name: "scrollintoview", short: "Scroll an element reference into view"},
 	} {
-		action := action
 		cmd.AddCommand(&cobra.Command{
 			Use:   action.name + " <ref>",
 			Short: action.short,
@@ -476,7 +475,6 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 		},
 	})
 	for _, operation := range []string{"dismiss", "status"} {
-		operation := operation
 		dialogCmd.AddCommand(&cobra.Command{
 			Use:   operation,
 			Short: operation + " the current page dialog",

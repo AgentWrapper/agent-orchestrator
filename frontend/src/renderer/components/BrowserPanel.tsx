@@ -541,12 +541,12 @@ export function BrowserPanelView({
 					</DropdownMenuContent>
 				</DropdownMenu>
 				<Button
-					aria-label={devtoolsState.open ? "Close DevTools" : "Open DevTools"}
+					aria-label={t(devtoolsState.open ? "browser.closeDevTools" : "browser.openDevTools")}
 					className={cn(devtoolsState.open && "bg-accent-weak text-accent")}
 					disabled={!canUseDevTools}
 					onClick={() => void (devtoolsState.open ? closeDevTools() : openDevTools())}
 					size="icon-sm"
-					title={devtoolsState.open ? "Close DevTools" : "Open DevTools"}
+					title={t(devtoolsState.open ? "browser.closeDevTools" : "browser.openDevTools")}
 					type="button"
 					variant="ghost"
 				>
@@ -624,7 +624,7 @@ export function BrowserPanelView({
 						role="status"
 						aria-live="polite"
 					>
-						<span className="browser-panel__agent-status-label">Agent working</span>
+						<span className="browser-panel__agent-status-label">{t("browser.agentWorking")}</span>
 						<span aria-hidden="true" className="browser-panel__agent-status-dot" />
 					</div>
 				) : null}
