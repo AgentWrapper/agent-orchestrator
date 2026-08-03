@@ -17,13 +17,29 @@ func TestParseCrushConfigExtractsModelsWithoutCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(models) != 2 || models[0].ID != "claude-opus" || !models[0].IsDefault || models[0].Provider != "anthropic" {
+	if len(models) != 2 || models[0].ID != "anthropic/claude-opus" || !models[0].IsDefault || models[0].Provider != "anthropic" {
 		t.Fatalf("models = %#v", models)
 	}
 	for _, model := range models {
 		if strings.Contains(model.ID+model.Label+model.Provider, "must-not-leak") {
 			t.Fatalf("credential leaked into model metadata: %#v", model)
 		}
+	}
+}
+
+func TestParseCurrentCrushConfigExtractsQualifiedModels(t *testing.T) {
+	models, err := parseCrushConfig([]byte(`{
+		"models":{"large":{"provider":"openai","model":"gpt-5"}},
+		"providers":{"openai":{"api_key":"must-not-leak","models":[
+			{"id":"gpt-5","name":"GPT-5"},
+			{"id":"gpt-5-mini","name":"GPT-5 mini"}
+		]}}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 2 || models[0].ID != "openai/gpt-5" || models[0].Label != "GPT-5" || !models[0].IsDefault {
+		t.Fatalf("models = %#v", models)
 	}
 }
 
@@ -81,6 +97,150 @@ func TestParseQwenConfigExtractsProviderModels(t *testing.T) {
 	if len(models) != 2 || models[0].ID != "qwen3-coder" || !models[0].IsDefault || models[0].Provider != "openai" {
 		t.Fatalf("models = %#v", models)
 	}
+}
+
+func TestParseQwenConfigSupportsCurrentProviderShape(t *testing.T) {
+	models, err := parseQwenConfig([]byte(`{
+		"model":{"name":"claude-sonnet-4"},
+		"modelProviders":{"anthropic":{"protocol":"anthropic","models":[
+			{"id":"claude-sonnet-4","name":"Claude Sonnet 4","envKey":"ANTHROPIC_API_KEY"}
+		]}}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 1 || models[0].ID != "claude-sonnet-4" || models[0].Label != "Claude Sonnet 4" || models[0].Provider != "anthropic" || !models[0].IsDefault {
+		t.Fatalf("models = %#v", models)
+	}
+}
+
+func TestConfigPathsHonorAgentOverrides(t *testing.T) {
+	t.Run("crush", func(t *testing.T) {
+		ctx := testConfigPathContext("/home/alice", "/repo", "linux", map[string]string{
+			"CRUSH_GLOBAL_CONFIG": "/profiles/crush-config",
+			"CRUSH_GLOBAL_DATA":   "/profiles/crush-data",
+			"CRUSH_DATA_DIR":      "/legacy/crush-data",
+			"XDG_DATA_HOME":       "/xdg/data",
+		})
+		paths := crushConfigPaths(ctx)
+		assertConfigPath(t, paths, "/profiles/crush-config", "crush.json")
+		assertConfigPath(t, paths, "/profiles/crush-data", "crush.json")
+		assertConfigPath(t, paths, "/xdg/data/crush", "providers.json")
+		assertConfigPath(t, paths, "/legacy/crush-data", "providers.json")
+	})
+
+	t.Run("opencode", func(t *testing.T) {
+		ctx := testConfigPathContext("/home/alice", "/repo", "linux", map[string]string{
+			"OPENCODE_CONFIG":     "/profiles/work.jsonc",
+			"OPENCODE_CONFIG_DIR": "/profiles/opencode",
+			"XDG_CONFIG_HOME":     "/xdg/config",
+		})
+		paths := openCodeConfigPaths(ctx)
+		assertConfigPath(t, paths, "/xdg/config/opencode", "opencode.json")
+		assertConfigPath(t, paths, "/profiles", "work.jsonc")
+		assertConfigPath(t, paths, "/profiles/opencode", "opencode.jsonc")
+		assertConfigPath(t, paths, "/etc/opencode", "opencode.json")
+	})
+
+	t.Run("continue", func(t *testing.T) {
+		ctx := testConfigPathContext("/home/alice", "/repo", "windows", nil)
+		paths := configSpecs["continue"].paths(ctx)
+		assertConfigPath(t, paths, "/home/alice", filepath.Join(".continue", "config.yaml"))
+		assertConfigPath(t, paths, "/repo", filepath.Join(".continue", "config.yaml"))
+	})
+
+	t.Run("qwen", func(t *testing.T) {
+		ctx := testConfigPathContext("/home/alice", "/repo", "linux", map[string]string{
+			"QWEN_HOME":                      "profiles/qwen",
+			"QWEN_CODE_SYSTEM_DEFAULTS_PATH": "/managed/qwen/defaults.json",
+			"QWEN_CODE_SYSTEM_SETTINGS_PATH": "/managed/qwen/locked.json",
+		})
+		paths := qwenConfigPaths(ctx)
+		assertConfigPath(t, paths, "/managed/qwen", "defaults.json")
+		assertConfigPath(t, paths, "/repo/profiles/qwen", "settings.json")
+		assertConfigPath(t, paths, "/repo", filepath.Join(".qwen", "settings.json"))
+		assertConfigPath(t, paths, "/managed/qwen", "locked.json")
+	})
+
+	t.Run("kimi", func(t *testing.T) {
+		ctx := testConfigPathContext("/home/alice", "/repo", "linux", map[string]string{
+			"KIMI_CODE_HOME": "/profiles/kimi",
+		})
+		paths := configSpecs["kimi"].paths(ctx)
+		assertConfigPath(t, paths, "/profiles/kimi", "config.toml")
+	})
+}
+
+func TestConfigPathsCoverPlatformManagedLocations(t *testing.T) {
+	tests := []struct {
+		goos         string
+		programData  string
+		opencodeRoot string
+		qwenRoot     string
+		crushRoot    string
+	}{
+		{goos: "darwin", opencodeRoot: "/Library/Application Support/opencode", qwenRoot: "/Library/Application Support/QwenCode", crushRoot: "/home/alice/.local/share/crush"},
+		{goos: "linux", opencodeRoot: "/etc/opencode", qwenRoot: "/etc/qwen-code", crushRoot: "/home/alice/.local/share/crush"},
+		{goos: "windows", programData: `C:\ProgramData`, opencodeRoot: `C:\ProgramData/opencode`, qwenRoot: `C:\ProgramData/qwen-code`, crushRoot: `C:\Users\alice/AppData/Local/crush`},
+	}
+	for _, test := range tests {
+		t.Run(test.goos, func(t *testing.T) {
+			env := map[string]string{"ProgramData": test.programData}
+			ctx := testConfigPathContext(platformHome(test.goos), "", test.goos, env)
+			if got := filepath.ToSlash(openCodeManagedConfigDir(ctx)); got != test.opencodeRoot {
+				t.Fatalf("OpenCode managed root = %q, want %q", got, test.opencodeRoot)
+			}
+			if got := filepath.ToSlash(qwenSystemConfigDir(ctx)); got != test.qwenRoot {
+				t.Fatalf("Qwen managed root = %q, want %q", got, test.qwenRoot)
+			}
+			assertConfigPath(t, crushConfigPaths(ctx), test.crushRoot, "providers.json")
+		})
+	}
+}
+
+func TestOpenCodeConfigPathsWalkToGitRoot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	workingDir := filepath.Join(root, "packages", "web")
+	if err := os.MkdirAll(workingDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	paths := openCodeConfigPaths(testConfigPathContext(t.TempDir(), workingDir, "linux", nil))
+	assertConfigPath(t, paths, root, "opencode.json")
+	assertConfigPath(t, paths, filepath.Join(root, "packages"), "opencode.jsonc")
+	assertConfigPath(t, paths, filepath.Join(workingDir, ".opencode"), "opencode.json")
+}
+
+func testConfigPathContext(home, workingDir, goos string, env map[string]string) configPathContext {
+	return configPathContext{
+		home:       home,
+		workingDir: workingDir,
+		goos:       goos,
+		getenv: func(name string) string {
+			return env[name]
+		},
+	}
+}
+
+func assertConfigPath(t *testing.T, paths []configPath, root, name string) {
+	t.Helper()
+	wantRoot := filepath.ToSlash(filepath.Clean(root))
+	wantName := filepath.ToSlash(filepath.Clean(name))
+	for _, path := range paths {
+		if filepath.ToSlash(filepath.Clean(path.root)) == wantRoot && filepath.ToSlash(filepath.Clean(path.name)) == wantName {
+			return
+		}
+	}
+	t.Fatalf("config path root=%q name=%q not found in %#v", root, name, paths)
+}
+
+func platformHome(goos string) string {
+	if goos == "windows" {
+		return `C:\Users\alice`
+	}
+	return "/home/alice"
 }
 
 func TestParseKimiConfigUsesModelSectionsOnly(t *testing.T) {
