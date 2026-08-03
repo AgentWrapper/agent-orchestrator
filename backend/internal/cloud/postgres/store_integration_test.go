@@ -577,6 +577,16 @@ func TestIssueLinkAndPullRequestClaimAreDurableAndExclusive(t *testing.T) {
 	if err != nil || retriedClaim.ID != firstClaim.ID {
 		t.Fatalf("idempotent claim = %#v, error = %v", retriedClaim, err)
 	}
+	scm, err := store.SessionSCM(ctx, account.ID, first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scm == nil ||
+		scm.PullRequest.Number != claim.Number ||
+		scm.PullRequest.URL != claim.URL ||
+		scm.PullRequest.Mergeability != "unknown" {
+		t.Fatalf("claimed session SCM = %#v", scm)
+	}
 	second := createWorker("second")
 	claim.SessionID = second.ID
 	if _, err := store.ClaimPullRequest(ctx, account.ID, claim); !errors.Is(err, ErrPRClaimed) {

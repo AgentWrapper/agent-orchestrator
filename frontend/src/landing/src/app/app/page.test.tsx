@@ -500,6 +500,9 @@ it("shows shared projects with their sessions without switching workspace", asyn
   const sharedProjectButton = await screen.findByRole("button", {
       name: "Shared AO, shared by Teammate",
     });
+  const sharedProjectToggle = screen.getByRole("button", {
+    name: "Collapse Shared AO",
+  });
   expect(sharedProjectButton).toBeVisible();
   fireEvent.click(
     screen.getByRole("button", { name: sharedOrchestrator.displayName }),
@@ -508,7 +511,10 @@ it("shows shared projects with their sessions without switching workspace", asyn
     "Connecting orchestrator",
   );
   fireEvent.click(sharedProjectButton);
-  expect(sharedProjectButton).toHaveAttribute("aria-expanded", "false");
+  expect(screen.getByRole("region", { name: "Working sessions" })).toBeVisible();
+  expect(sharedProjectToggle).toHaveAttribute("aria-expanded", "true");
+  fireEvent.click(sharedProjectToggle);
+  expect(sharedProjectToggle).toHaveAttribute("aria-expanded", "false");
   fireEvent.click(screen.getByText("Personal"));
 
   expect(
@@ -692,6 +698,7 @@ it("opens provider settings when returning from the GitHub callback", async () =
 
   expect(await screen.findByText("GitHub App not connected")).toBeVisible();
   expect(screen.getByText("Coding agents")).toBeVisible();
+  expect(window.location.search).toBe("");
 });
 
 it("shows invitation status, inviter, and settings notification badge", async () => {

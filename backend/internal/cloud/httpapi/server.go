@@ -2344,6 +2344,7 @@ func (s *Server) workerClaimPullRequest(w http.ResponseWriter, r *http.Request) 
 		s.internalError(w, r, "claim pull request", err)
 		return
 	}
+	s.refreshClaimedPullRequest(r.Context(), project)
 	writeJSON(w, http.StatusOK, map[string]any{"claim": claim})
 }
 
@@ -2773,6 +2774,7 @@ func (s *Server) workerClaimOwnPullRequest(w http.ResponseWriter, r *http.Reques
 		s.internalError(w, r, "claim worker pull request", err)
 		return
 	}
+	s.refreshClaimedPullRequest(r.Context(), project)
 	payload, _ := json.Marshal(map[string]any{
 		"repository": pull.Repository,
 		"number":     pull.Number,
@@ -2784,6 +2786,22 @@ func (s *Server) workerClaimOwnPullRequest(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"claim": claim})
+}
+
+func (s *Server) refreshClaimedPullRequest(ctx context.Context, project clouddomain.Project) {
+	if s.githubApp == nil ||
+		s.githubApp.repositoryRefresh == nil ||
+		project.GitHubRepositoryID == nil {
+		return
+	}
+	if err := s.githubApp.repositoryRefresh(ctx, project.OrgID, *project.GitHubRepositoryID); err != nil {
+		s.log.Warn("claimed pull request refresh failed",
+			"org_id", project.OrgID,
+			"project_id", project.ID,
+			"github_repository_id", *project.GitHubRepositoryID,
+			"err", err,
+		)
+	}
 }
 
 func (s *Server) workerGitHubToken(w http.ResponseWriter, r *http.Request) {

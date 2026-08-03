@@ -98,15 +98,22 @@ func (c *Client) ObserveBranch(
 		state = "merged"
 	}
 	checks, ciState, err := c.observeChecks(ctx, owner, repository, pull.Head.SHA)
-	if err != nil {
+	if isOptionalGitHubObservationError(err) {
+		checks = nil
+		ciState = "unknown"
+	} else if err != nil {
 		return nil, err
 	}
 	reviewState, err := c.observeReviews(ctx, owner, repository, pull.Number)
-	if err != nil {
+	if isOptionalGitHubObservationError(err) {
+		reviewState = "none"
+	} else if err != nil {
 		return nil, err
 	}
 	reviewThreads, err := c.observeReviewThreads(ctx, owner, repository, pull.Number)
-	if err != nil {
+	if isOptionalGitHubObservationError(err) {
+		reviewThreads = nil
+	} else if err != nil {
 		return nil, err
 	}
 	mergeability := normalizeMergeability(pull.MergedAt, pull.Mergeable, pull.MergeableState)
@@ -153,6 +160,15 @@ func normalizeMergeability(mergedAt *time.Time, mergeable *bool, state string) s
 	default:
 		return "unknown"
 	}
+}
+
+func isOptionalGitHubObservationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "403 Forbidden") ||
+		strings.Contains(message, "404 Not Found")
 }
 
 func (c *Client) observeChecks(

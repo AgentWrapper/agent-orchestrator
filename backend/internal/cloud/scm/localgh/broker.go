@@ -70,11 +70,7 @@ func ContextWithCredentialScope(
 func permissionsForOperation(operation CredentialOperation) (cloudgithubapp.Permissions, error) {
 	switch operation {
 	case OperationObserve:
-		return cloudgithubapp.Permissions{
-			"checks":        "read",
-			"pull_requests": "read",
-			"statuses":      "read",
-		}, nil
+		return cloudgithubapp.Permissions{"pull_requests": "read"}, nil
 	case OperationIssueRead:
 		return cloudgithubapp.Permissions{"issues": "read"}, nil
 	case OperationPullRequestRead:

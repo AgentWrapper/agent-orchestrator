@@ -433,8 +433,6 @@ func TestPrepareRepositoryConfiguresWorkerCredentialForNewAndResumedWorkspace(t 
 		"worker-token",
 	)
 
-	runGitTestCommand(t, workspaceDir, nil, "config", "--local", "--unset-all", "credential.helper")
-	runGitTestCommand(t, workspaceDir, nil, "config", "--local", "--unset-all", "credential.useHttpPath")
 	if err := runner.prepareRepository(context.Background()); err != nil {
 		t.Fatalf("prepareRepository(resumed) error = %v", err)
 	}

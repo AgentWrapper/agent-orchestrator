@@ -185,7 +185,7 @@ func (s *Store) SessionSCM(
 		&observation.ObservedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
+		return s.claimedSessionSCM(ctx, accountID, sessionID)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get cloud session SCM: %w", err)
@@ -249,6 +249,37 @@ func (s *Store) SessionSCM(
 	}
 	observation.ReviewThreads = threads
 	return &SessionSCM{PullRequest: observation, ReviewThreads: threads}, nil
+}
+
+func (s *Store) claimedSessionSCM(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+) (*SessionSCM, error) {
+	var observation cloudlocalgh.PullRequestObservation
+	err := s.pool.QueryRow(ctx, `
+		SELECT repository, number, url, claimed_at
+		FROM ao_pr_claims
+		WHERE org_id = $1 AND session_id = $2 AND released_at IS NULL
+		ORDER BY claimed_at DESC
+		LIMIT 1
+	`, accountID, sessionID).Scan(
+		&observation.Repository,
+		&observation.Number,
+		&observation.URL,
+		&observation.ObservedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get cloud session PR claim SCM: %w", err)
+	}
+	observation.State = "open"
+	observation.CIState = "unknown"
+	observation.ReviewState = "none"
+	observation.Mergeability = "unknown"
+	return &SessionSCM{PullRequest: observation}, nil
 }
 
 // MarkReviewThreadResolved records a successful provider-side resolution.

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -50,6 +52,32 @@ func TestSharedProjectRequestScope(t *testing.T) {
 		if got := sharedProjectRequestAllowed(request, orgID); got != test.allowed {
 			t.Fatalf("%s %s allowed = %t, want %t", test.method, test.path, got, test.allowed)
 		}
+	}
+}
+
+func TestRefreshClaimedPullRequestRefreshesGitHubAppProject(t *testing.T) {
+	var gotOrg clouddomain.OrgID
+	var gotRepositoryID int64
+	server := &Server{
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		githubApp: &githubAppRuntime{
+			repositoryRefresh: func(_ context.Context, orgID clouddomain.OrgID, repositoryID int64) error {
+				gotOrg = orgID
+				gotRepositoryID = repositoryID
+				return nil
+			},
+		},
+	}
+	repositoryID := int64(991)
+
+	server.refreshClaimedPullRequest(context.Background(), clouddomain.Project{
+		ID:                 "project-one",
+		OrgID:              "org-one",
+		GitHubRepositoryID: &repositoryID,
+	})
+
+	if gotOrg != "org-one" || gotRepositoryID != repositoryID {
+		t.Fatalf("refresh = (%q, %d), want (org-one, %d)", gotOrg, gotRepositoryID, repositoryID)
 	}
 }
 

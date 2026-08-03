@@ -90,6 +90,78 @@ func TestObserveBranchNormalizesPRChecksAndReviews(t *testing.T) {
 	}
 }
 
+func TestObserveBranchKeepsPRWhenOptionalDetailPermissionsAreMissing(t *testing.T) {
+	client := NewWithTokenSource(staticToken("token"), &http.Client{
+		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			var body string
+			statusCode := http.StatusOK
+			status := "200 OK"
+			switch {
+			case request.URL.Path == "/repos/aoagents/agent-orchestrator/pulls":
+				body = `[{
+					"number":42,
+					"html_url":"https://github.com/aoagents/agent-orchestrator/pull/42",
+					"title":"Cloud worker",
+					"state":"open",
+					"draft":false,
+					"mergeable":true,
+					"head":{"sha":"abc","ref":"ao/cloud-worker"},
+					"base":{"ref":"main"}
+				}]`
+			case request.URL.Path == "/repos/aoagents/agent-orchestrator/pulls/42":
+				body = `{
+					"number":42,
+					"html_url":"https://github.com/aoagents/agent-orchestrator/pull/42",
+					"title":"Cloud worker",
+					"state":"open",
+					"draft":false,
+					"mergeable":true,
+					"mergeable_state":"clean",
+					"head":{"sha":"abc","ref":"ao/cloud-worker"},
+					"base":{"ref":"main"}
+				}`
+			case strings.Contains(request.URL.Path, "/check-runs"):
+				statusCode = http.StatusForbidden
+				status = "403 Forbidden"
+				body = `{"message":"Resource not accessible by integration"}`
+			case strings.Contains(request.URL.Path, "/reviews"):
+				body = `[]`
+			case request.URL.Path == "/graphql":
+				statusCode = http.StatusForbidden
+				status = "403 Forbidden"
+				body = `{"message":"Resource not accessible by integration"}`
+			default:
+				t.Fatalf("unexpected GitHub path %q", request.URL.Path)
+			}
+			return &http.Response{
+				StatusCode: statusCode,
+				Status:     status,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Request:    request,
+			}, nil
+		}),
+	})
+
+	observation, err := client.ObserveBranch(
+		context.Background(),
+		"https://github.com/aoagents/agent-orchestrator",
+		"ao/cloud-worker",
+	)
+	if err != nil {
+		t.Fatalf("ObserveBranch() error = %v", err)
+	}
+	if observation == nil {
+		t.Fatal("ObserveBranch() = nil")
+	}
+	if observation.Number != 42 || observation.Mergeability != "mergeable" {
+		t.Fatalf("observation = %#v", observation)
+	}
+	if observation.CIState != "unknown" || len(observation.Checks) != 0 {
+		t.Fatalf("optional checks should be omitted: %#v", observation)
+	}
+}
+
 func TestGetIssueAndPullRequestStayInRegisteredRepository(t *testing.T) {
 	client := NewWithTokenSource(staticToken("token"), &http.Client{
 		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {

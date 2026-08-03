@@ -677,9 +677,9 @@ func (r *Runner) configureWorkerGitCredential(ctx context.Context, helperPath st
 	}
 	commands := [][]string{
 		{"remote", "set-url", "origin", proxyURL},
-		{"config", "--local", "credential.helper", ""},
+		{"config", "--local", "--replace-all", "credential.helper", ""},
 		{"config", "--local", "--add", "credential.helper", helperPath},
-		{"config", "--local", "credential.useHttpPath", "true"},
+		{"config", "--local", "--replace-all", "credential.useHttpPath", "true"},
 	}
 	for _, arguments := range commands {
 		command := exec.CommandContext(ctx, "git", append([]string{"-C", r.workspaceDir}, arguments...)...)
@@ -700,8 +700,8 @@ func (r *Runner) configureLocalGitHubCredential(ctx context.Context, tokenPath s
 		shellQuote(tokenPath) + `)"; }; f`
 	commands := [][]string{
 		{"remote", "set-url", "origin", r.bootstrap.Launch.RepositoryURL},
-		{"config", "--local", "credential.helper", ""},
-		{"config", "--local", "credential.https://github.com.helper", helper},
+		{"config", "--local", "--replace-all", "credential.helper", ""},
+		{"config", "--local", "--replace-all", "credential.https://github.com.helper", helper},
 	}
 	for _, arguments := range commands {
 		command := exec.CommandContext(ctx, "git", append([]string{"-C", r.workspaceDir}, arguments...)...)

@@ -371,11 +371,13 @@ export default function CloudAppPage() {
         selectedOrgIdRef.current = savedSelection.orgId;
         setSelectedOrgId(savedSelection.orgId);
       }
-      setView(
-        new URLSearchParams(window.location.search).has("settings")
-          ? "settings"
-          : "board",
-      );
+      const url = new URL(window.location.href);
+      const openSettings = url.searchParams.has("settings");
+      setView(openSettings ? "settings" : "board");
+      if (openSettings) {
+        url.searchParams.delete("settings");
+        window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+      }
       if (Number.isFinite(savedWidth)) {
         setSidebarWidth(
           Math.min(
@@ -1544,56 +1546,65 @@ export default function CloudAppPage() {
                   const sharedBy = share.sharedByName || share.sharedByEmail;
                   return (
                     <div key={share.id} className="mb-1">
-                      <button
-                        className={`flex h-8 w-full items-center rounded-lg text-left text-[12px] ${
-                          sidebarCollapsed ? "justify-center px-0" : "gap-2 px-2"
-                        } ${
-                          projectActive
-                            ? "bg-white/[0.07] text-white"
-                            : "text-[#9ba1aa] hover:bg-white/[0.04] hover:text-white"
-                        }`}
-                        onClick={() => {
-                          if (!expanded) {
-                            setCollapsedProjectIds((current) => {
-                              const next = new Set(current);
-                              next.delete(disclosureID);
-                              return next;
-                            });
-                          } else if (selectedShareId === share.id) {
-                            setCollapsedProjectIds((current) => {
-                              const next = new Set(current);
-                              next.add(disclosureID);
-                              return next;
-                            });
-                            return;
+                      <div className="flex items-center">
+                        {!sidebarCollapsed ? (
+                          <button
+                            type="button"
+                            className="grid size-8 shrink-0 place-items-center rounded-lg text-[#646a73] hover:bg-white/[0.04] hover:text-white"
+                            onClick={() => {
+                              setCollapsedProjectIds((current) => {
+                                const next = new Set(current);
+                                if (expanded) {
+                                  next.add(disclosureID);
+                                } else {
+                                  next.delete(disclosureID);
+                                }
+                                return next;
+                              });
+                            }}
+                            aria-label={`${expanded ? "Collapse" : "Expand"} ${share.project.displayName}`}
+                            aria-expanded={expanded}
+                          >
+                            <ChevronRight
+                              className={`size-3.5 transition-transform duration-150 motion-reduce:transition-none ${
+                                expanded ? "rotate-90" : ""
+                              }`}
+                              strokeWidth={2.5}
+                              aria-hidden="true"
+                            />
+                          </button>
+                        ) : null}
+                        <button
+                          className={`flex h-8 min-w-0 flex-1 items-center rounded-lg text-left text-[12px] ${
+                            sidebarCollapsed
+                              ? "justify-center px-0"
+                              : "gap-2 px-2"
+                          } ${
+                            projectActive
+                              ? "bg-white/[0.07] text-white"
+                              : "text-[#9ba1aa] hover:bg-white/[0.04] hover:text-white"
+                          }`}
+                          onClick={() => {
+                            setSelectedShareId(share.id);
+                            setSelectedProjectId(share.project.id);
+                            setSelectedSessionId(null);
+                            setView("board");
+                          }}
+                          aria-label={`${share.project.displayName}, shared by ${sharedBy}`}
+                          title={
+                            sidebarCollapsed
+                              ? `${share.project.displayName} shared by ${sharedBy}`
+                              : undefined
                           }
-                          setSelectedShareId(share.id);
-                          setSelectedProjectId(share.project.id);
-                          setSelectedSessionId(null);
-                          setView("board");
-                        }}
-                        aria-label={`${share.project.displayName}, shared by ${sharedBy}`}
-                        aria-expanded={expanded}
-                        title={
-                          sidebarCollapsed
-                            ? `${share.project.displayName} shared by ${sharedBy}`
-                            : undefined
-                        }
-                      >
-                        {!sidebarCollapsed ? (
-                          <ChevronRight
-                            className={`size-3.5 shrink-0 text-[#646a73] transition-transform duration-150 motion-reduce:transition-none ${
-                              expanded ? "rotate-90" : ""
-                            }`}
-                            strokeWidth={2.5}
-                            aria-hidden="true"
-                          />
-                        ) : null}
-                        <FolderGit2 className="size-[15px] shrink-0" />
-                        {!sidebarCollapsed ? (
-                          <span className="truncate">{share.project.displayName}</span>
-                        ) : null}
-                      </button>
+                        >
+                          <FolderGit2 className="size-[15px] shrink-0" />
+                          {!sidebarCollapsed ? (
+                            <span className="truncate">
+                              {share.project.displayName}
+                            </span>
+                          ) : null}
+                        </button>
+                      </div>
                       {!sidebarCollapsed ? (
                         <div className="ml-[42px] -mt-0.5 truncate pr-2 text-[10px] text-white/30">
                           {sharedBy} · {share.role}

@@ -88,9 +88,7 @@ func TestCredentialBrokerDownscopesEveryOperation(t *testing.T) {
 		operation CredentialOperation
 		want      cloudgithubapp.Permissions
 	}{
-		{OperationObserve, cloudgithubapp.Permissions{
-			"checks": "read", "pull_requests": "read", "statuses": "read",
-		}},
+		{OperationObserve, cloudgithubapp.Permissions{"pull_requests": "read"}},
 		{OperationIssueRead, cloudgithubapp.Permissions{"issues": "read"}},
 		{OperationPullRequestRead, cloudgithubapp.Permissions{"pull_requests": "read"}},
 		{OperationPullRequestWrite, cloudgithubapp.Permissions{
