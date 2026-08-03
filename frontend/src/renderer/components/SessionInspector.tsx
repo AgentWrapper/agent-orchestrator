@@ -1129,82 +1129,86 @@ function ReviewPanel({
 			if (fallback.length > 0) runsByPR.set(state.prUrl, fallback);
 		}
 	}
+	const filteredRunsByPR = new Map<string, ReviewRunFacts[]>();
+	for (const [prUrl, prRuns] of runsByPR) {
+		filteredRunsByPR.set(prUrl, prRuns.filter((run) => (run.harness || "reviewer") === selectedReviewer));
+	}
 	const runDisabled =
 		isTriggering ||
 		openReviewStates.length === 0 ||
 		openReviewStates.every((reviewState) => reviewState.status === "ineligible");
 
 	return (
-			<div className="mb-2.5 flex flex-col">
-				<Section surface title={t("inspector.review.run")}>
-					{error ? (
-						<p className="m-0 rounded-md border border-error/28 bg-error/8 px-2.5 py-2 text-sm-md leading-normal text-error">
-							{apiErrorMessage(error, t("inspector.reviewRequestFailed"))}
-						</p>
-					) : null}
-					{/* Neutral, not success: a notice is the trigger declining to run and
-					    saying why, so nothing has succeeded. Green reads as "the review ran"
-					    at a glance, and DESIGN.md reserves it for the success/mergeable
-					    signal. The error variant above keeps red for actual failures. */}
-					{notice ? (
-						<p className="m-0 rounded-md border border-border bg-raised px-2.5 py-2 text-sm-md leading-normal text-muted-foreground">
-							{notice}
-						</p>
-					) : null}
-					<div className="review-run-controls-container min-w-0">
-						<div className="review-run-controls flex min-w-0 items-center gap-1.5">
-							<ReviewerSelect
-								ariaLabel={t("inspector.selectReviewerAgent")}
-								authorized={agentCatalog?.authorized}
-								defaultHarness={harness}
-								disabled={reviewRunning}
-								installed={agentCatalog?.installed}
-								onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
-								supported={agentCatalog?.supported}
-								triggerClassName="review-run-agent-select h-control-md w-36 shrink-0 text-xs"
-								value={reviewerOverride}
-							/>
-							<div className="flex shrink-0 items-center gap-1.5">
+		<div className="mb-2.5 flex flex-col">
+			<Section surface title={t("inspector.review.run")}>
+				{error ? (
+					<p className="m-0 rounded-md border border-error/28 bg-error/8 px-2.5 py-2 text-sm-md leading-normal text-error">
+						{apiErrorMessage(error, t("inspector.reviewRequestFailed"))}
+					</p>
+				) : null}
+				{/* Neutral, not success: a notice is the trigger declining to run and
+				    saying why, so nothing has succeeded. Green reads as "the review ran"
+				    at a glance, and DESIGN.md reserves it for the success/mergeable
+				    signal. The error variant above keeps red for actual failures. */}
+				{notice ? (
+					<p className="m-0 rounded-md border border-border bg-raised px-2.5 py-2 text-sm-md leading-normal text-muted-foreground">
+						{notice}
+					</p>
+				) : null}
+				<div className="review-run-controls-container min-w-0">
+					<div className="review-run-controls flex min-w-0 items-center gap-1.5">
+						<ReviewerSelect
+							ariaLabel={t("inspector.selectReviewerAgent")}
+							authorized={agentCatalog?.authorized}
+							defaultHarness={harness}
+							disabled={reviewRunning}
+							installed={agentCatalog?.installed}
+							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
+							supported={agentCatalog?.supported}
+							triggerClassName="review-run-agent-select h-control-md w-36 shrink-0 text-xs"
+							value={reviewerOverride}
+						/>
+						<div className="flex shrink-0 items-center gap-1.5">
+							<Button
+								className="shrink-0 gap-1 px-1.5 [&_svg]:size-icon-sm"
+								disabled={reviewRunning ? isCancelling : runDisabled}
+								onClick={reviewRunning ? onCancel : onTrigger}
+								size="sm"
+								type="button"
+								variant={reviewRunning ? "ghost" : reviewHasRun ? "secondary" : "primary"}
+							>
+								{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
+								{reviewRunning
+									? isCancelling
+										? t("inspector.review.cancelling")
+										: t("inspector.review.cancel")
+									: runAction}
+							</Button>
+							{reviewHasRun ? (
 								<Button
-									className="shrink-0 gap-1 px-1.5 [&_svg]:size-icon-sm"
-									disabled={reviewRunning ? isCancelling : runDisabled}
-									onClick={reviewRunning ? onCancel : onTrigger}
+									className="shrink-0 gap-1.5 [&_svg]:size-icon-sm"
+									disabled={!terminalEnabled}
+									onClick={openReviewerTerminal}
 									size="sm"
 									type="button"
-									variant={reviewRunning ? "ghost" : reviewHasRun ? "secondary" : "primary"}
+									variant="ghost"
 								>
-									{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
-									{reviewRunning
-										? isCancelling
-											? t("inspector.review.cancelling")
-											: t("inspector.review.cancel")
-										: runAction}
+									<Terminal aria-hidden="true" />
+									{t("inspector.openTerminal")}
 								</Button>
-								{reviewHasRun ? (
-									<Button
-										className="shrink-0 gap-1.5 [&_svg]:size-icon-sm"
-										disabled={!terminalEnabled}
-										onClick={openReviewerTerminal}
-										size="sm"
-										type="button"
-										variant="ghost"
-									>
-										<Terminal aria-hidden="true" />
-										{t("inspector.openTerminal")}
-									</Button>
-								) : null}
-							</div>
+							) : null}
 						</div>
 					</div>
-					{reviewRunning ? (
-						<div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
-							<Loader2 aria-hidden="true" className="size-icon-sm shrink-0 animate-spin text-muted-foreground" />
-							<span className="min-w-0 flex-1 truncate text-2xs font-medium text-muted-foreground">
-								{isCancelling ? t("inspector.review.cancelling") : `Review in progress · ${harness}`}
-							</span>
-						</div>
-					) : null}
-				</Section>
+				</div>
+				{reviewRunning ? (
+					<div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
+						<Loader2 aria-hidden="true" className="size-icon-sm shrink-0 animate-spin text-muted-foreground" />
+						<span className="min-w-0 flex-1 truncate text-2xs font-medium text-muted-foreground">
+							{isCancelling ? t("inspector.review.cancelling") : `Review in progress · ${harness}`}
+						</span>
+					</div>
+				) : null}
+			</Section>
 			<Section surface title={t("inspector.aoCodeReviews")}>
 				<div className="flex flex-col divide-y divide-border">
 					{openReviewStates.length === 0 ? (
@@ -1220,7 +1224,7 @@ function ReviewPanel({
 							>
 								<ReviewerRuns
 									reviewState={reviewState}
-									runs={runsByPR.get(reviewState.prUrl) ?? []}
+									runs={filteredRunsByPR.get(reviewState.prUrl) ?? []}
 									reviewer={selectedReviewer}
 									hasAnyRuns={(runsByPR.get(reviewState.prUrl)?.length ?? 0) > 0}
 								/>
