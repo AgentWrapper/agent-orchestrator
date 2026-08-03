@@ -30,8 +30,10 @@ func newBackupCommand(ctx *commandContext) *cobra.Command {
 		Short: "Backup and restore durable AO state under ~/.ao",
 		Long: "Backup and restore the durable Agent Orchestrator state directory " +
 			"(~/.ao, or the parent of AO_RUN_FILE).\n\n" +
-			"Create a zip before reinstalling the desktop app; restore it after a " +
-			"fresh install so projects, sessions, settings, and worktrees survive.\n\n" +
+			"Reinstalling the desktop app does NOT wipe ~/.ao: projects, sessions, " +
+			"and settings already survive a normal uninstall/reinstall. Use this " +
+			"command for machine migration, disaster recovery, or when you may " +
+			"manually delete the state directory.\n\n" +
 			"Ephemeral files are excluded: running.json, windows-pty-hosts.json, " +
 			"electron/ (Chromium cache), staging/, daemon.log, and lock/temp files.\n\n" +
 			"The daemon must be stopped for both create and restore so SQLite and " +

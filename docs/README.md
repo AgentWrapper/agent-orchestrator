@@ -15,7 +15,7 @@ Start with [architecture.md](architecture.md) for the current backend model and
 | [architecture.md](architecture.md)                     | Current backend model, package layout, status derivation, persistence/CDC, and load-bearing rules.                    |
 | [backend-code-structure.md](backend-code-structure.md) | Package ownership rules for the Go backend: domain, services, ports, adapters, storage, HTTP, CLI, and daemon wiring. |
 | [cli/README.md](cli/README.md)                         | CLI commands and daemon control surface.                                                                              |
-| [backup-restore.md](backup-restore.md)                 | Backup/restore durable `~/.ao` state for reinstall and machine migration.                                             |
+| [backup-restore.md](backup-restore.md)                 | Reinstall keeps `~/.ao` projects by default; optional backup for migration/disaster recovery.                         |
 | [development.md](development.md)                       | Prerequisites, build steps, running tests, and troubleshooting for local development.                                 |
 | [STATUS.md](STATUS.md)                                 | What is shipped on `main` today and what is still in flight.                                                          |
 | [stack.md](stack.md)                                   | Accepted library/runtime choices, pending stack decisions, and dependencies explicitly avoided for V1.                |

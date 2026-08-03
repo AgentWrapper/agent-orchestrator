@@ -53,6 +53,38 @@ func TestLoadDefaults(t *testing.T) {
 	}
 }
 
+// TestDefaultDataDirIndependentOfInstallCwd is the reinstall contract for path
+// resolution: with no AO_DATA_DIR override, durable state always resolves under
+// the user home (~/.ao/data), never under the desktop install directory / cwd.
+// Reinstalling the app binary (or launching from a different install path)
+// must reopen the same project database.
+func TestDefaultDataDirIndependentOfInstallCwd(t *testing.T) {
+	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_ALLOWED_ORIGINS", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST", "AO_TELEMETRY_DISABLED_EVENTS", "AO_TELEMETRY_APP_VERSION"} {
+		t.Setenv(k, "")
+	}
+
+	// Pretend the process was launched from a typical Windows install folder.
+	installDir := t.TempDir()
+	t.Chdir(installDir)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("UserHomeDir: %v", err)
+	}
+	want := filepath.Join(homeDir, ".ao", "data")
+	if cfg.DataDir != want {
+		t.Fatalf("DataDir = %q, want %q (must not follow install cwd %q)", cfg.DataDir, want, installDir)
+	}
+	// Must not nest under the install dir.
+	if filepath.Dir(cfg.DataDir) == installDir || cfg.DataDir == filepath.Join(installDir, "data") {
+		t.Fatalf("DataDir %q is under install dir %q", cfg.DataDir, installDir)
+	}
+}
+
 func TestLoadAbsolutizesRelativeOverrides(t *testing.T) {
 	// A relative override must be resolved to absolute at Load time. The daemon
 	// chdir's into its data dir at startup, so a relative path left as-is would

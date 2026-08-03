@@ -73,7 +73,15 @@ description: The questions people actually ask before adopting AO.
 	download](/docs/installation). Existing CLI users can run `ao start` to fetch and open the desktop build.
 </Accordion>
 
+  <Accordion title="Does reinstalling the desktop app delete my projects?">
+    No. Projects, sessions, and settings live under `~/.ao`, outside the install folder. Uninstall/reinstall only
+    replaces the app binary; the next launch reopens the same `~/.ao` data. Use `ao backup` only for machine migration
+    or if you plan to delete `~/.ao` yourself.
+  </Accordion>
+
   <Accordion title="How do I completely uninstall?">
-    `npm uninstall -g @aoagents/ao`, then `rm -rf ~/.agent-orchestrator` if you want to wipe all session history.
+    Uninstall the desktop app from the OS (or remove the install folder). That does **not** delete projects. To wipe all
+    AO history as well, stop the daemon and remove `~/.ao` (and the legacy `~/.agent-orchestrator` only if you still have
+    an old npm-era store). Prefer `ao backup create` first if you might want the data back.
   </Accordion>
 </Accordions>

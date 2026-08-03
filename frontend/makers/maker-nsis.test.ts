@@ -45,6 +45,27 @@ describe("MakerNSIS", () => {
 		// A real installer: not Squirrel's silent one-click per-user drop.
 		expect(options.config.nsis.oneClick).toBe(false);
 		expect(options.config.nsis.allowToChangeInstallationDirectory).toBe(true);
+		// Reinstall safety: durable state is ~/.ao; uninstaller must not wipe AppData.
+		expect(options.config.nsis.deleteAppDataOnUninstall).toBe(false);
+		expect(String(options.config.nsis.include)).toMatch(/nsis-keep-user-data\.nsh$/);
+	});
+
+	it("forces deleteAppDataOnUninstall false even when config asks to wipe AppData", async () => {
+		const maker = new MakerNSIS(
+			{
+				appId: "dev.agent-orchestrator.desktop",
+				// Caller must not be able to re-enable wipe of user records on uninstall.
+				nsis: { deleteAppDataOnUninstall: true, oneClick: true },
+			},
+			["win32"],
+		);
+		await maker.prepareConfig(makeOptions.targetArch);
+		await maker.make(makeOptions);
+
+		const [, options] = buildForge.mock.calls.at(-1)!;
+		expect(options.config.nsis.deleteAppDataOnUninstall).toBe(false);
+		// oneClick from the caller merge is still allowed; only the wipe flag is forced off.
+		expect(options.config.nsis.oneClick).toBe(true);
 	});
 
 	it("forwards executableName so the Start menu shortcut targets the real binary (#2414)", async () => {

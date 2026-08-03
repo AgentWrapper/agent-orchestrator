@@ -65,6 +65,7 @@ import { readMigrationState, updateMigration, writeAppStateMarker, type Migratio
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
 import { buildWindowsAppMenuTemplate } from "./main/menu";
 import { ancestorRepositorySetupWarning, scanImportFolder } from "./main/import-folder-scan";
+import { resolveElectronUserDataPath } from "./shared/durable-state";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -103,10 +104,9 @@ if (process.platform === "win32") {
 // keeps this directory open, and two Chromium instances sharing one profile
 // corrupt its LevelDB stores. Mirrors how dev already isolates running.json and
 // the daemon data dir into ~/.ao/dev.
-app.setPath(
-	"userData",
-	app.isPackaged ? path.join(os.homedir(), ".ao", "electron") : path.join(os.homedir(), ".ao", "dev", "electron"),
-);
+// Install path (e.g. D:\e\agent-orchestrator) is never used for durable state —
+// reinstall may remove the app folder without touching projects under ~/.ao.
+app.setPath("userData", resolveElectronUserDataPath(os.homedir(), app.isPackaged));
 
 let mainWindow: BrowserWindow | null = null;
 let daemonProcess: ChildProcess | null = null;

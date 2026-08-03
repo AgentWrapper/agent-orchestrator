@@ -77,6 +77,38 @@ describe("writeAppStateMarker", () => {
 		expect(m.lastReconciledAt).toBe("2026-06-26T11:30:00.000Z");
 	});
 
+	// Reinstall: new install path + version, same ~/.ao stateDir. Marker rewrite
+	// must not reset installedAt/installSource (and never touches data/ao.db).
+	it("reinstall launch rewrites appPath/version only under the same stateDir", async () => {
+		await writeAppStateMarker({
+			stateDir: dir,
+			appPath: "D:\\e\\agent-orchestrator\\agent-orchestrator.exe",
+			version: "0.10.3",
+			installedVia: "github",
+			now: () => new Date("2026-08-02T11:00:00.000Z"),
+		});
+		await updateMigration({
+			stateDir: dir,
+			migration: { status: "completed", completedAt: "2026-08-02T12:00:00.000Z" },
+			now: () => new Date("2026-08-02T12:00:00.000Z"),
+		});
+
+		await writeAppStateMarker({
+			stateDir: dir,
+			appPath: "C:\\Users\\me\\AppData\\Local\\Programs\\Agent Orchestrator\\agent-orchestrator.exe",
+			version: "0.11.0",
+			installedVia: "unknown",
+			now: () => new Date("2026-08-04T09:00:00.000Z"),
+		});
+
+		const m = await readMarker(dir);
+		expect(m.installedAt).toBe("2026-08-02T11:00:00.000Z");
+		expect(m.installSource).toBe("github");
+		expect(m.appPath).toContain("Agent Orchestrator");
+		expect(m.version).toBe("0.11.0");
+		expect(m.migration?.status).toBe("completed");
+	});
+
 	it("written JSON keys exactly match the Go reader struct", async () => {
 		await writeAppStateMarker({
 			stateDir: dir,

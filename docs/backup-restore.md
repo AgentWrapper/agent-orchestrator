@@ -1,23 +1,49 @@
 # Backup and restore AO state (`~/.ao`)
 
-Use `ao backup` when you need durable AO data to survive a desktop app reinstall
-or a machine migration. This is distinct from `ao import`, which only ports the
-**legacy** flat-file store (`~/.agent-orchestrator`).
+## Reinstall does not wipe projects
 
 All durable app state lives under `~/.ao` (overridable via `AO_RUN_FILE` /
-`AO_DATA_DIR`). The backup root is the directory that holds `running.json`
-(normally `~/.ao`).
+`AO_DATA_DIR`), **outside** the desktop install directory. Uninstalling or
+reinstalling the app binary removes only the program files (for example
+`D:\e\agent-orchestrator` or `%LOCALAPPDATA%\Programs\Agent Orchestrator`).
 
-## Quick recovery (reinstall)
+On the next launch, the app and daemon reopen the existing `~/.ao` tree —
+including `data/ao.db` (projects, sessions, PRs), settings, and worktrees —
+without any backup step.
+
+| Action | What happens to projects |
+| ------ | ------------------------ |
+| Uninstall desktop app | **Kept** under `~/.ao` |
+| Reinstall / open a new build | **Kept**; same `~/.ao` is reopened |
+| Delete `~/.ao` yourself | **Lost** (use backup first) |
+| Move to another machine | Use `ao backup` (below) |
+
+Do **not** treat `ao backup` as a required step for ordinary reinstall. Manual
+backup is an advanced recovery tool.
+
+## When to use `ao backup`
+
+Use `ao backup` when you need durable AO data to survive:
+
+- **Machine migration** (new laptop / new user profile)
+- **Disaster recovery** (disk failure, accidental `rm -rf ~/.ao`)
+- **Intentional state reset** (you plan to delete `~/.ao` and may want it back)
+
+This is distinct from `ao import`, which only ports the **legacy** flat-file
+store (`~/.agent-orchestrator`).
+
+The backup root is the directory that holds `running.json` (normally `~/.ao`).
+
+## Quick recovery (migration or accidental wipe)
 
 ```bash
-# 1. Before uninstalling / wiping the app: stop the daemon, then backup.
+# 1. On the source machine (or before deleting ~/.ao): stop the daemon, then backup.
 ao stop
 ao backup create ~/ao-backup.zip
 
-# 2. Reinstall the desktop app (or open a fresh install).
+# 2. On the target machine: install the desktop app if needed.
 
-# 3. Stop the new install's daemon if it started, then restore.
+# 3. Stop the daemon if it started, then restore.
 ao stop
 ao backup restore ~/ao-backup.zip --yes
 
@@ -84,6 +110,12 @@ After restore, any **local** ephemeral files that were not in the archive
   `~/.ao/.ao-pre-restore-<timestamp>/`. The command prints that path on success.
 - Archive entries with `..` or absolute paths are rejected (zip-slip).
 
+## Installer / uninstaller guarantees (Windows)
+
+The NSIS uninstaller removes only the application install directory. It does
+**not** delete `~/.ao`. `deleteAppDataOnUninstall` is forced off, and the
+installer include script documents that user data under `$PROFILE\.ao` is kept.
+
 ## Notes
 
 - Restoring `app-state.json` may point `appPath` at a previous install location.
@@ -97,6 +129,9 @@ After restore, any **local** ephemeral files that were not in the archive
   external data dir separately.
 - Install history beyond what already lives in `app-state.json` is not extended
   by this feature (possible follow-up).
+- **Complete wipe:** only delete `~/.ao` when you intentionally want to erase
+  all projects and sessions. Uninstalling the app alone is not enough and is
+  not required for a clean reinstall of the binary.
 
 ## Related
 
