@@ -1,4 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import {
@@ -36,7 +38,6 @@ import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { SettingsPageShell } from "./settings/SettingsPageShell";
 import { SettingsPanel } from "./settings/SettingsPanel";
 import { SettingsRow } from "./settings/SettingsRow";
-import { useT } from "../stores/locale-store";
 import { SettingsSection } from "./settings/SettingsSection";
 
 type Project = components["schemas"]["Project"];
@@ -50,7 +51,7 @@ const KNOWN_REVIEWER_HARNESS_IDS = new Set(["claude-code", "codex", "opencode"])
 const projectQueryKey = (id: string) => ["project", id] as const;
 
 export function ProjectSettingsForm({ projectId }: { projectId: string }) {
-	const t = useT();
+	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const closeSettings = () => navigate({ to: "/projects/$projectId", params: { projectId } });
@@ -62,7 +63,7 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 				params: { path: { id: projectId } },
 			});
 			if (error) throw new Error(apiErrorMessage(error));
-			if (data?.status !== "ok") throw new Error("Project config is unavailable (degraded).");
+			if (data?.status !== "ok") throw new Error(t("settings.project.degraded"));
 			return data.project as Project;
 		},
 	});
@@ -90,7 +91,7 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 }
 
 function SettingsBody({ project, projectId, onSaved }: { project: Project; projectId: string; onSaved: () => void }) {
-	const t = useT();
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
 	const config = project.config ?? {};
@@ -180,7 +181,8 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					await spawnOrchestrator(projectId, "settings", true);
 				} catch (error) {
 					return {
-						replacementError: error instanceof Error ? error.message : "Could not replace orchestrator",
+						replacementError:
+							error instanceof Error ? error.message : t("settings.project.replaceOrchestratorFailed"),
 					};
 				}
 			}
@@ -230,10 +232,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					value={form.displayName}
 					onChange={(value) => setForm((f) => ({ ...f, displayName: value }))}
 				/>
-				<SettingsValueRow icon={Fingerprint} label="id" value={project.id} />
-				<SettingsValueRow icon={Layers} label="kind" value={projectKindLabel(project.kind)} />
-				<SettingsValueRow icon={FolderOpen} label="path" value={project.path} />
-				<SettingsValueRow icon={Link} label="repo" value={project.repo || "—"} />
+				<SettingsValueRow icon={Fingerprint} label={t("settings.project.id")} value={project.id} />
+				<SettingsValueRow icon={Layers} label={t("settings.project.kind")} value={projectKindLabel(project.kind, t)} />
+				<SettingsValueRow icon={FolderOpen} label={t("settings.project.path")} value={project.path} />
+				<SettingsValueRow icon={Link} label={t("settings.project.repo")} value={project.repo || "—"} />
 			</SettingsSection>
 
 			{project.kind === "workspace" && (
@@ -248,7 +250,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 							</SettingsRow>
 						))
 					) : (
-						<p className="px-1 text-xs text-settings-muted">No child repositories are registered.</p>
+						<p className="px-1 text-xs text-settings-muted">{t("settings.project.childReposEmpty")}</p>
 					)}
 				</SettingsSection>
 			)}
@@ -323,17 +325,17 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					</p>
 				)}
 				{missingRequiredAgent && (
-					<p className="px-1 text-xs leading-row text-error">Worker and orchestrator agents are required.</p>
+					<p className="px-1 text-xs leading-row text-error">{t("settings.project.agentsRequired")}</p>
 				)}
 				<SettingsInputRow
 					icon={Sparkles}
 					label={t("settings.project.modelOverride")}
 					id="model"
 					value={form.model}
-					placeholder="(agent default)"
+					placeholder={t("settings.project.agentDefault")}
 					onChange={(value) => setForm((f) => ({ ...f, model: value }))}
 				/>
-				<SettingsRow icon={Shield} label="Permission mode">
+				<SettingsRow icon={Shield} label={t("settings.project.permissionMode")}>
 					<PermissionModeSelect
 						value={form.permissions}
 						onChange={(v) => setForm((f) => ({ ...f, permissions: v }))}
@@ -351,8 +353,8 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			</SettingsSection>
 
 			{!isScratchProject && (
-				<SettingsSection title="Reviewers">
-					<SettingsRow icon={ScanEye} label="Default reviewer agent">
+				<SettingsSection title={t("settings.project.reviewers")}>
+					<SettingsRow icon={ScanEye} label={t("settings.project.defaultReviewer")}>
 						<ReviewerSelect
 							value={form.reviewerHarness}
 							onChange={(v) => setForm((f) => ({ ...f, reviewerHarness: v }))}
@@ -366,7 +368,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			)}
 
 			{!isScratchProject && (
-				<SettingsSection title="Tracker intake">
+				<SettingsSection title={t("settings.project.trackerIntake")}>
 					<IntakeFields
 						variant="settings"
 						form={intakeForm}
@@ -399,6 +401,7 @@ function SaveChangesFooter({
 	savedAt: number | null;
 	replacementError: string | null;
 }) {
+	const { t } = useTranslation();
 	return (
 		<div className="flex flex-col items-start">
 			<button
@@ -406,7 +409,7 @@ function SaveChangesFooter({
 				className="settings-footer-button settings-footer-button-primary"
 				disabled={isPending}
 			>
-				{isPending ? "Saving…" : "Save changes"}
+				{isPending ? t("settings.project.saving") : t("settings.project.saveChanges")}
 			</button>
 			{validationError && (
 				<span className="inline-flex items-center gap-1.5 text-xs text-error">
@@ -416,12 +419,14 @@ function SaveChangesFooter({
 			)}
 			{mutationError != null && (
 				<span className="text-xs text-error">
-					{mutationError instanceof Error ? mutationError.message : "Save failed"}
+					{mutationError instanceof Error ? mutationError.message : t("settings.project.saveFailed")}
 				</span>
 			)}
-			{savedAt && !isPending && !mutationError && <span className="text-xs text-success">Saved.</span>}
+			{savedAt && !isPending && !mutationError && (
+				<span className="text-xs text-success">{t("settings.project.saved")}</span>
+			)}
 			{replacementError && !isPending && !mutationError && (
-				<span className="text-xs text-warning">Orchestrator restart failed: {replacementError}</span>
+				<span className="text-xs text-warning">{t("settings.project.restartFailed", { error: replacementError })}</span>
 			)}
 		</div>
 	);
@@ -475,7 +480,7 @@ function SettingsValueRow({
 }
 
 function PermissionModeSelect({ value, onChange }: { value: string; onChange: (value: string) => void }) {
-	const t = useT();
+	const { t } = useTranslation();
 	const options = [
 		{ value: "__default__", label: t("settings.project.default") },
 		...PERMISSION_MODE_VALUES.map((value) => ({
@@ -521,7 +526,7 @@ function ReviewerSelect({
 	installed?: components["schemas"]["AgentInfo"][];
 	supported?: components["schemas"]["AgentInfo"][];
 }) {
-	const t = useT();
+	const { t } = useTranslation();
 	const fallbackAgents: components["schemas"]["AgentInfo"][] = [...KNOWN_REVIEWER_HARNESS_IDS].map((id) => ({
 		id,
 		label: id,
@@ -580,16 +585,16 @@ function ReviewerSelect({
 	);
 }
 
-function projectKindLabel(kind: string): string {
+function projectKindLabel(kind: string, t: TFunction): string {
 	switch (kind) {
 		case "single_repo":
-			return "single repo";
+			return t("settings.project.kind.singleRepo");
 		case "workspace":
-			return "workspace";
+			return t("settings.project.kind.workspace");
 		case "scratch":
-			return "scratch";
+			return t("settings.project.kind.scratch");
 		default:
-			return kind || "unknown";
+			return kind || t("settings.project.kind.unknown");
 	}
 }
 

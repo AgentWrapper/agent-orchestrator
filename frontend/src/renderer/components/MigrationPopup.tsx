@@ -1,8 +1,8 @@
 import * as Dialog from "@radix-ui/react-dialog";
+import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useT } from "../stores/locale-store";
 import { Button } from "./ui/button";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { aoBridge } from "../lib/bridge";
@@ -15,7 +15,7 @@ import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 // for this launch (re-prompts next launch); {t("migration.dontMigrate")} declines permanently
 // (re-runnable later once the Settings entry point lands, issue #2205).
 export function MigrationPopup() {
-	const t = useT();
+	const { t } = useTranslation();
 	const offer = useMigrationOffer();
 	const queryClient = useQueryClient();
 	const [skipped, setSkipped] = useState(false);

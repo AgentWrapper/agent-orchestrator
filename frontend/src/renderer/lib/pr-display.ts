@@ -1,7 +1,6 @@
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { sortedPRs, type PRState, type PullRequestFacts, type WorkspaceSession } from "../types/workspace";
-import { t, type MessageKey } from "../i18n";
-import { activeLocale } from "../stores/locale-store";
+import { appI18n, type PluralMessageKey } from "../i18n";
 
 const prStateRank: Record<PRState, number> = { open: 0, draft: 1, merged: 2, closed: 3 };
 const ciStates = new Set<SessionPRSummary["ci"]["state"]>(["unknown", "pending", "passing", "failing"]);
@@ -30,6 +29,16 @@ export type PRStatusRow = {
 };
 
 export type PRSummaryPartKey = "ci" | "review" | "merge";
+export type PRNoun = "check" | "comment" | "file" | "line" | "reason" | "reviewer";
+
+export const prNounKeys: Record<PRNoun, PluralMessageKey> = {
+	check: "pr.noun.check",
+	comment: "pr.noun.comment",
+	file: "pr.noun.file",
+	line: "pr.noun.line",
+	reason: "pr.noun.reason",
+	reviewer: "pr.noun.reviewer",
+};
 
 export type PRSummaryLink = {
 	label: string;
@@ -45,7 +54,7 @@ export type PRSummaryPart = {
 	links: PRSummaryLink[];
 	linkTotal?: number;
 	overflowLabel?: string;
-	overflowNoun?: string;
+	overflowNoun?: PRNoun;
 	tone: PRDisplayTone;
 };
 
@@ -251,11 +260,10 @@ export function prStatusRows(pr: SessionPRSummary): PRStatusRow[] {
 }
 
 export function prSummaryParts(pr: SessionPRSummary): PRSummaryPart[] {
-	const locale = activeLocale();
 	return [
 		{
 			key: "ci",
-			label: t(locale, "pr.section.ci"),
+			label: appI18n.t("pr.section.ci"),
 			status: ciLabel(pr.ci.state),
 			summary: ciSummary(pr),
 			links: ciLinks(pr),
@@ -266,7 +274,7 @@ export function prSummaryParts(pr: SessionPRSummary): PRSummaryPart[] {
 		},
 		{
 			key: "merge",
-			label: t(locale, "pr.section.merge"),
+			label: appI18n.t("pr.section.merge"),
 			status: mergeabilityLabel(pr.mergeability.state),
 			summary: mergeSummary(pr),
 			links: mergeLinks(pr),
@@ -277,7 +285,7 @@ export function prSummaryParts(pr: SessionPRSummary): PRSummaryPart[] {
 		},
 		{
 			key: "review",
-			label: t(locale, "pr.section.review"),
+			label: appI18n.t("pr.section.review"),
 			status: reviewLabel(pr.review.decision),
 			summary: reviewSummary(pr),
 			links: reviewLinks(pr),
@@ -306,7 +314,7 @@ export function prDiffSummary(pr: SessionPRSummary): string | undefined {
 
 function ciSummary(pr: SessionPRSummary): string | undefined {
 	if (pr.ci.state === "failing") {
-		return pr.ci.failingChecks.length === 0 ? t(activeLocale(), "pr.ci.noFailingLink") : undefined;
+		return pr.ci.failingChecks.length === 0 ? appI18n.t("pr.ci.noFailingLink") : undefined;
 	}
 	return undefined;
 }
@@ -323,18 +331,17 @@ function ciLinks(pr: SessionPRSummary): PRSummaryLink[] {
 }
 
 function reviewSummary(pr: SessionPRSummary): string | undefined {
-	const locale = activeLocale();
 	if (pr.state === "merged" || pr.state === "closed") {
 		return undefined;
 	}
 	if (pr.state === "draft") {
-		return t(locale, "pr.review.draftNotReady");
+		return appI18n.t("pr.review.draftNotReady");
 	}
 	if (pr.review.decision === "changes_requested" || pr.review.hasUnresolvedHumanComments) {
-		return reviewLinks(pr).length === 0 ? t(locale, "pr.review.changesActive") : undefined;
+		return reviewLinks(pr).length === 0 ? appI18n.t("pr.review.changesActive") : undefined;
 	}
 	if (pr.review.decision === "review_required") {
-		return t(locale, "pr.review.requiredNotSubmitted");
+		return appI18n.t("pr.review.requiredNotSubmitted");
 	}
 	return undefined;
 }
@@ -348,26 +355,24 @@ function reviewLinks(pr: SessionPRSummary): PRSummaryLink[] {
 	}
 	const links = pr.review.unresolvedBy.slice(0, 3).map((reviewer) => reviewAttentionLink(pr, reviewer));
 	if (links.length === 0 && pr.review.decision === "changes_requested") {
-		const locale = activeLocale();
 		links.push({
-			label: t(locale, "pr.short"),
+			label: appI18n.t("pr.short"),
 			href: prBrowserUrl(pr),
-			title: t(locale, "pr.review.openPR"),
+			title: appI18n.t("pr.review.openPR"),
 		});
 	}
 	return links;
 }
 
 function mergeSummary(pr: SessionPRSummary): string | undefined {
-	const locale = activeLocale();
 	if (pr.state === "merged" || pr.state === "closed") {
 		return formatDiffSummary(pr);
 	}
 	if (pr.mergeability.state === "conflicting") {
-		return mergeLinks(pr).length === 0 ? t(locale, "pr.merge.conflictsWithBase") : undefined;
+		return mergeLinks(pr).length === 0 ? appI18n.t("pr.merge.conflictsWithBase") : undefined;
 	}
 	if (pr.mergeability.state === "blocked" || pr.mergeability.state === "unstable") {
-		return mergeLinks(pr).length === 0 ? t(locale, "pr.merge.providerBlocked") : undefined;
+		return mergeLinks(pr).length === 0 ? appI18n.t("pr.merge.providerBlocked") : undefined;
 	}
 	return formatDiffSummary(pr);
 }
@@ -413,7 +418,7 @@ function mergeLinkTotal(pr: SessionPRSummary): number {
 	return 0;
 }
 
-function mergeOverflowNoun(pr: SessionPRSummary): string {
+function mergeOverflowNoun(pr: SessionPRSummary): PRNoun {
 	return (pr.mergeability.conflictFiles ?? []).length > 0 ? "file" : "reason";
 }
 
@@ -446,16 +451,15 @@ function toMergeabilityState(value: string): SessionPRSummary["mergeability"]["s
 }
 
 function ciLabel(state: SessionPRSummary["ci"]["state"]): string {
-	const locale = activeLocale();
 	switch (state) {
 		case "passing":
-			return t(locale, "pr.ci.passing");
+			return appI18n.t("pr.ci.passing");
 		case "failing":
-			return t(locale, "pr.ci.failing");
+			return appI18n.t("pr.ci.failing");
 		case "pending":
-			return t(locale, "pr.ci.pending");
+			return appI18n.t("pr.ci.pending");
 		case "unknown":
-			return t(locale, "pr.ci.checking");
+			return appI18n.t("pr.ci.checking");
 	}
 }
 
@@ -473,16 +477,15 @@ function ciTone(state: SessionPRSummary["ci"]["state"]): PRDisplayTone {
 }
 
 function reviewLabel(decision: SessionPRSummary["review"]["decision"]): string {
-	const locale = activeLocale();
 	switch (decision) {
 		case "approved":
-			return t(locale, "pr.review.approved");
+			return appI18n.t("pr.review.approved");
 		case "changes_requested":
-			return t(locale, "pr.review.changesRequested");
+			return appI18n.t("pr.review.changesRequested");
 		case "review_required":
-			return t(locale, "pr.review.pending");
+			return appI18n.t("pr.review.pending");
 		case "none":
-			return t(locale, "pr.review.none");
+			return appI18n.t("pr.review.none");
 	}
 }
 
@@ -503,18 +506,17 @@ function reviewTone(
 }
 
 function mergeabilityLabel(state: SessionPRSummary["mergeability"]["state"]): string {
-	const locale = activeLocale();
 	switch (state) {
 		case "mergeable":
-			return t(locale, "pr.merge.mergeable");
+			return appI18n.t("pr.merge.mergeable");
 		case "conflicting":
-			return t(locale, "pr.merge.conflict");
+			return appI18n.t("pr.merge.conflict");
 		case "blocked":
-			return t(locale, "pr.merge.blocked");
+			return appI18n.t("pr.merge.blocked");
 		case "unstable":
-			return t(locale, "pr.merge.unstable");
+			return appI18n.t("pr.merge.unstable");
 		case "unknown":
-			return t(locale, "pr.merge.checking");
+			return appI18n.t("pr.merge.checking");
 	}
 }
 
@@ -555,10 +557,9 @@ function formatLineDelta(additions: number, deletions: number): string | undefin
 }
 
 function mergeAttentionLinks(pr: SessionPRSummary, kind: "merge_conflict" | "merge_blocked"): PRSummaryLink[] {
-	const locale = activeLocale();
 	const href =
 		kind === "merge_conflict" ? mergeConflictUrl(pr) : pr.mergeability.prUrl || pr.htmlUrl || pr.url || undefined;
-	const openConflicts = t(locale, "pr.merge.openConflicts");
+	const openConflicts = appI18n.t("pr.merge.openConflicts");
 	const fileLinks = (pr.mergeability.conflictFiles ?? []).slice(0, 3).map((file) => ({
 		label: file.path,
 		href: file.url || href,
@@ -573,7 +574,7 @@ function mergeAttentionLinks(pr: SessionPRSummary, kind: "merge_conflict" | "mer
 				}));
 	const fallbackLink =
 		kind === "merge_conflict" && href
-			? [{ label: t(locale, "pr.merge.conflicts"), href, title: openConflicts }]
+			? [{ label: appI18n.t("pr.merge.conflicts"), href, title: openConflicts }]
 			: [];
 	return fileLinks.length > 0 ? fileLinks : reasonLinks.length > 0 ? reasonLinks : fallbackLink;
 }
@@ -621,72 +622,67 @@ function reviewerLabel(reviewer: SessionPRSummary["review"]["unresolvedBy"][numb
 
 function reviewerDisplayName(reviewer: SessionPRSummary["review"]["unresolvedBy"][number]): string {
 	if (!reviewer.isBot) return reviewer.reviewerId;
-	return t(activeLocale(), "pr.botSuffix", { name: reviewer.reviewerId });
+	return appI18n.t("pr.botSuffix", { name: reviewer.reviewerId });
 }
 
 function reviewAttentionLink(
 	pr: SessionPRSummary,
 	reviewer: SessionPRSummary["review"]["unresolvedBy"][number],
 ): PRSummaryLink {
-	const locale = activeLocale();
 	const name = reviewerDisplayName(reviewer);
 	const inlineURL = reviewer.links.find((link) => link.url)?.url;
 	if (reviewer.reviewUrl) {
 		return {
 			label: reviewerLabel(reviewer),
 			href: reviewer.reviewUrl,
-			title: t(locale, "pr.openReviewFrom", { name }),
+			title: appI18n.t("pr.openReviewFrom", { name }),
 		};
 	}
 	if (inlineURL) {
 		return {
 			label: reviewerLabel(reviewer),
 			href: inlineURL,
-			title:
-				reviewer.count > 0
-					? t(locale, "pr.unresolvedComments", {
-							count: reviewer.count,
-							noun: pluralize("comment", reviewer.count),
-							name,
-						})
-					: t(locale, "pr.openCommentsFrom", { name }),
+				title:
+					reviewer.count > 0
+						? appI18n.t("pr.unresolvedComments", {
+								count: reviewer.count,
+								name,
+							})
+					: appI18n.t("pr.openCommentsFrom", { name }),
 		};
 	}
 	return {
 		label: reviewerLabel(reviewer),
 		href: prBrowserUrl(pr),
-		title: t(locale, "pr.openPRFor", { name }),
+		title: appI18n.t("pr.openPRFor", { name }),
 	};
 }
 
 function mergeReasonLabel(reason: string): string {
-	const locale = activeLocale();
 	switch (reason) {
 		case "behind_base":
-			return t(locale, "pr.reason.behindBase");
+			return appI18n.t("pr.reason.behindBase");
 		case "ci_failing":
-			return t(locale, "pr.reason.ciFailing");
+			return appI18n.t("pr.reason.ciFailing");
 		case "changes_requested":
-			return t(locale, "pr.reason.changesRequested");
+			return appI18n.t("pr.reason.changesRequested");
 		case "review_required":
-			return t(locale, "pr.reason.reviewRequired");
+			return appI18n.t("pr.reason.reviewRequired");
 		case "blocked_by_provider":
-			return t(locale, "pr.reason.providerBlocked");
+			return appI18n.t("pr.reason.providerBlocked");
 		default:
 			return reason.replaceAll("_", " ");
 	}
 }
 
-function overflowLabel(total: number, shown: number, noun: string): string | undefined {
+function overflowLabel(total: number, shown: number, noun: PRNoun): string | undefined {
 	const extra = total - shown;
 	if (extra <= 0) {
 		return undefined;
 	}
-	return t(activeLocale(), "pr.overflow", { n: extra, noun: pluralize(noun, extra) });
+	return appI18n.t("pr.overflow", { n: extra, noun: pluralize(noun, extra) });
 }
 
-function pluralize(noun: string, count: number): string {
-	const locale = activeLocale();
-	const key = (count === 1 ? `pr.noun.${noun}` : `pr.noun.${noun}s`) as MessageKey;
-	return t(locale, key);
+function pluralize(noun: PRNoun, count: number): string {
+	return appI18n.t(prNounKeys[noun], { count });
 }

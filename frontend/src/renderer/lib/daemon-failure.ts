@@ -1,52 +1,49 @@
 import type { DaemonStatus } from "../../shared/daemon-status";
-import { t } from "../i18n";
-import { activeLocale } from "../stores/locale-store";
+import type { TFunction } from "i18next";
+import { appI18n } from "../i18n";
 
-export function daemonFailureMessage(status: DaemonStatus): string {
+export function daemonFailureMessage(status: DaemonStatus, t: TFunction = appI18n.t): string {
 	// Prefer the daemon-provided English diagnostic when present.
 	if (status.message) return status.message;
-	const locale = activeLocale();
-	if (status.state === "starting") return t(locale, "daemon.message.starting");
-	return t(locale, "daemon.message.notReady");
+	if (status.state === "starting") return t("daemon.message.starting");
+	return t("daemon.message.notReady");
 }
 
-export function daemonFailureTitle(status: DaemonStatus): string {
-	const locale = activeLocale();
+export function daemonFailureTitle(status: DaemonStatus, t: TFunction = appI18n.t): string {
 	switch (status.code) {
 		case "not_ready":
 		case "port_unconfirmed":
-			return t(locale, "daemon.title.notReady");
+			return t("daemon.title.notReady");
 		case "not_configured":
-			return t(locale, "daemon.title.notConfigured");
+			return t("daemon.title.notConfigured");
 		case "daemon_unreachable":
-			return t(locale, "daemon.title.unreachable");
+			return t("daemon.title.unreachable");
 		case "identity_mismatch":
-			return t(locale, "daemon.title.identityMismatch");
+			return t("daemon.title.identityMismatch");
 		case "binary_missing":
-			return t(locale, "daemon.title.binaryMissing");
+			return t("daemon.title.binaryMissing");
 		case "spawn_failed":
 		case "exited":
 		default:
-			return t(locale, "daemon.title.failed");
+			return t("daemon.title.failed");
 	}
 }
 
-export function daemonFailureHint(status: DaemonStatus): string {
-	const locale = activeLocale();
+export function daemonFailureHint(status: DaemonStatus, t: TFunction = appI18n.t): string {
 	switch (status.code) {
 		case "binary_missing":
-			return t(locale, "daemon.hint.binaryMissing");
+			return t("daemon.hint.binaryMissing");
 		case "spawn_failed":
 		case "exited":
 			return "";
 		case "not_ready":
-			return t(locale, "daemon.hint.notReady");
+			return t("daemon.hint.notReady");
 		case "not_configured":
-			return t(locale, "daemon.hint.notConfigured");
+			return t("daemon.hint.notConfigured");
 		case "daemon_unreachable":
 		case "identity_mismatch":
-			return t(locale, "daemon.hint.conflict");
+			return t("daemon.hint.conflict");
 		default:
-			return t(locale, "daemon.hint.default");
+			return t("daemon.hint.default");
 	}
 }

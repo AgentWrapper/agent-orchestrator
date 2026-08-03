@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useT } from "../../stores/locale-store";
+import { useTranslation } from "react-i18next";
 import { RadioGroup } from "radix-ui";
 
 interface ConnectMobileSetupProps {
@@ -20,7 +20,7 @@ type SetupMode = "lan" | "tailscale";
 // because AutopickLANIP skips utun* interfaces and rejects Tailscale's
 // 100.64.0.0/10 CGNAT range as non-private (backend/internal/mobilebridge/netiface.go).
 export function ConnectMobileSetup({ port, enabled }: ConnectMobileSetupProps) {
-	const t = useT();
+	const { t } = useTranslation();
 	const [mode, setMode] = useState<SetupMode>("lan");
 
 	// Margin-free on purpose: the modal owns the spacing around this block.

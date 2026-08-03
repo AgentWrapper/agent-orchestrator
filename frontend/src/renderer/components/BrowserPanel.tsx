@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent } from "react";
+import { useTranslation } from "react-i18next";
 import {
 	ArrowLeft,
 	ArrowRight,
@@ -25,8 +26,7 @@ import {
 	DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { cn } from "../lib/utils";
-import { t as translate, type MessageKey } from "../i18n";
-import { activeLocale, useT } from "../stores/locale-store";
+import { appI18n, type MessageKey } from "../i18n";
 
 type BrowserPanelProps = {
 	session: WorkspaceSession;
@@ -91,7 +91,7 @@ export function useBrowserAnnotationQueue({
 
 		void (async () => {
 			let sent = false;
-			let failureMessage = translate(activeLocale(), "browser.unableSendAnnotation");
+			let failureMessage = appI18n.t("browser.unableSendAnnotation");
 			try {
 				const message = formatBrowserAnnotationMessage(payload);
 				const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
@@ -99,12 +99,12 @@ export function useBrowserAnnotationQueue({
 					body: { message },
 				});
 				if (error) {
-					failureMessage = apiErrorMessage(error, translate(activeLocale(), "browser.unableSendAnnotation"));
+					failureMessage = apiErrorMessage(error, appI18n.t("browser.unableSendAnnotation"));
 					return;
 				}
 				sent = true;
 			} catch (error) {
-				failureMessage = apiErrorMessage(error, translate(activeLocale(), "browser.unableSendAnnotation"));
+				failureMessage = apiErrorMessage(error, appI18n.t("browser.unableSendAnnotation"));
 			} finally {
 				if (sendGeneration !== generationRef.current || sendSessionId !== sessionIdRef.current) return;
 				annotationSendingRef.current = false;
@@ -225,7 +225,7 @@ export function BrowserPanelView({
 	browserView,
 	annotationQueue,
 }: BrowserPanelProps & { annotationQueue: BrowserAnnotationQueueModel; browserView: BrowserViewModel }) {
-	const t = useT();
+	const { t } = useTranslation();
 	const {
 		viewId,
 		navState,
@@ -299,7 +299,7 @@ export function BrowserPanelView({
 				cancelPicking();
 			}
 		} catch (error) {
-			failPicking(error instanceof Error ? error.message : translate(activeLocale(), "browser.unableStartAnnotation"));
+			failPicking(error instanceof Error ? error.message : appI18n.t("browser.unableStartAnnotation"));
 		}
 	};
 
@@ -475,7 +475,7 @@ export function BrowserPanelView({
 							onPointerDown={handleTabsTriggerPointerDown}
 							onPointerEnter={warmTabsMenuFrame}
 							size="sm"
-							title={t("browser.tabsTitle", { count: tabs.length, noun: tabs.length === 1 ? t("browser.tab") : t("browser.tabsNoun") })}
+							title={t("browser.tabsTitle", { count: tabs.length })}
 							type="button"
 							variant="ghost"
 						>
@@ -576,15 +576,13 @@ export function BrowserPanelView({
 }
 
 function agentActivityLabel(activity: BrowserViewModel["agentBrowserActivity"], active: boolean): string {
-	const locale = activeLocale();
 	if (!active && !activity?.active) return "";
 	const action = activity?.active ? activity.action : "";
-	if (!action) return translate(locale, "browser.agentUsing");
-	return translate(locale, "browser.agentAction", { verb: browserActionVerb(action) });
+	if (!action) return appI18n.t("browser.agentUsing");
+	return appI18n.t("browser.agentAction", { verb: browserActionVerb(action) });
 }
 
 function browserActionVerb(action: string): string {
-	const locale = activeLocale();
 	const key = ((): MessageKey => {
 		switch (action) {
 			case "click":
@@ -620,13 +618,12 @@ function browserActionVerb(action: string): string {
 				return "browser.verb.using";
 		}
 	})();
-	return translate(locale, key);
+	return appI18n.t(key);
 }
 
 function browserTabLabel(title: string, url: string): { title: string; subtitle: string } {
-	const locale = activeLocale();
 	const cleanTitle = title.trim();
-	if (!url) return { title: cleanTitle || translate(locale, "browser.newTab"), subtitle: translate(locale, "browser.blankPage") };
+	if (!url) return { title: cleanTitle || appI18n.t("browser.newTab"), subtitle: appI18n.t("browser.blankPage") };
 	try {
 		const parsed = new URL(url);
 		const subtitle = parsed.protocol === "file:" ? parsed.pathname.split("/").filter(Boolean).at(-1) || url : parsed.host;

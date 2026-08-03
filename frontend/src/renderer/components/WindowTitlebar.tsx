@@ -1,7 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
 import { PanelLeft } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useT } from "../stores/locale-store";
 import { useResolvedTheme, useUiStore } from "../stores/ui-store";
 import {
 	DropdownMenu,
@@ -73,7 +73,7 @@ export function WindowTitlebar({
 	onSidebarPreviewEnter?: React.PointerEventHandler<HTMLButtonElement>;
 }) {
 	const navigate = useNavigate();
-	const t = useT();
+	const { t } = useTranslation();
 	const theme = useResolvedTheme();
 	const { isSidebarOpen, toggleSidebar } = useUiStore();
 	const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);

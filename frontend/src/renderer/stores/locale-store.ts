@@ -1,64 +1,72 @@
 import { create } from "zustand";
 import { aoBridge } from "../lib/bridge";
-import {
-	DEFAULT_LOCALE,
-	documentLang,
-	t as translate,
-	type AppLocale,
-	type MessageKey,
-	type TVars,
-} from "../i18n";
+import { appI18n, coerceLocale, DEFAULT_LOCALE, documentLang, type AppLocale } from "../i18n";
 
 type LocaleState = {
 	locale: AppLocale;
 	loaded: boolean;
+	saving: boolean;
+	saveError: boolean;
 	load: () => Promise<void>;
 	setLocale: (locale: AppLocale) => Promise<void>;
-	/** Bound translator for the current locale (re-renders when locale changes). */
-	t: (key: MessageKey, vars?: TVars) => string;
 };
 
-function applyDocumentLang(locale: AppLocale): void {
-	if (typeof document === "undefined") return;
-	document.documentElement.lang = documentLang(locale);
-}
-
-function boundT(locale: AppLocale): LocaleState["t"] {
-	return (key, vars) => translate(locale, key, vars);
+async function applyLocale(locale: AppLocale): Promise<void> {
+	const changingLanguage = appI18n.changeLanguage(locale);
+	if (typeof document !== "undefined") {
+		document.documentElement.lang = documentLang(locale);
+		document.documentElement.dir = appI18n.dir(locale);
+	}
+	await changingLanguage;
 }
 
 // Apply default lang early so the document attribute is correct before hydrate.
-applyDocumentLang(DEFAULT_LOCALE);
+void applyLocale(DEFAULT_LOCALE);
+
+let localeRevision = 0;
+let pendingLoad: Promise<void> | undefined;
 
 export const useLocaleStore = create<LocaleState>((set, get) => ({
 	locale: DEFAULT_LOCALE,
 	loaded: false,
-	t: boundT(DEFAULT_LOCALE),
+	saving: false,
+	saveError: false,
 	load: async () => {
 		if (get().loaded) return;
-		const settings = await aoBridge.uiSettings.get();
-		const locale = settings.locale === "zh-CN" ? "zh-CN" : "en";
-		applyDocumentLang(locale);
-		set({ locale, loaded: true, t: boundT(locale) });
+		if (pendingLoad) return pendingLoad;
+		const revisionAtStart = localeRevision;
+		pendingLoad = (async () => {
+			let locale = DEFAULT_LOCALE;
+			try {
+				const settings = await aoBridge.uiSettings.get();
+				locale = coerceLocale(settings.locale);
+			} catch {
+				// A missing bridge or unreadable setting must not prevent the UI from starting.
+			}
+			if (revisionAtStart !== localeRevision) return;
+			await applyLocale(locale);
+			if (revisionAtStart === localeRevision) set({ locale, loaded: true });
+		})();
+		try {
+			await pendingLoad;
+		} finally {
+			pendingLoad = undefined;
+		}
 	},
 	setLocale: async (candidate) => {
-		const locale = candidate === "zh-CN" ? "zh-CN" : "en";
-		await aoBridge.uiSettings.set({ locale });
-		applyDocumentLang(locale);
-		set({ locale, loaded: true, t: boundT(locale) });
+		const locale = coerceLocale(candidate);
+		const revision = ++localeRevision;
+		set({ saving: true, saveError: false });
+		try {
+			await aoBridge.uiSettings.set({ locale });
+			await applyLocale(locale);
+			if (revision === localeRevision) set({ locale, loaded: true, saving: false });
+		} catch {
+			if (revision === localeRevision) set({ saving: false, saveError: true });
+		}
 	},
 }));
 
-/** Hook: re-render when locale changes and get a stable-enough t for JSX. */
-export function useT(): LocaleState["t"] {
-	return useLocaleStore((state) => state.t);
-}
-
 export function useLocale(): AppLocale {
 	return useLocaleStore((state) => state.locale);
-}
-
-/** Non-React access for pure presentation helpers; defaults to en before hydrate. */
-export function activeLocale(): AppLocale {
-	return useLocaleStore.getState().locale;
 }

@@ -1,6 +1,6 @@
 import { Plus } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useShell } from "../lib/shell-context";
-import { useT } from "../stores/locale-store";
 import { CreateProjectFlow } from "./CreateProjectFlow";
 import { TopbarButton } from "./TopbarButton";
 import { WelcomePanel } from "./WelcomePanel";
@@ -45,7 +45,7 @@ export function ProjectBoardEmpty({
 	onOpenOrchestrator: () => void;
 	spawnError?: string | null;
 }) {
-	const t = useT();
+	const { t } = useTranslation();
 	const orchestratorLabel = hasOrchestrator ? t("shell.orchestrator") : t("shell.spawnOrchestrator");
 	const busyLabel = isProjectRestarting
 		? t("shell.restartingDots")

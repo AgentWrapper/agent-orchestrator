@@ -1,26 +1,14 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { DEFAULT_UI_SETTINGS, coerceUiSettings, type UiSettings } from "../shared/ui-locale";
 
-/** Supported UI locales for the desktop shell. Default is always English. */
-export type AppLocale = "en" | "zh-CN";
-
-export interface UiSettings {
-	locale: AppLocale;
-}
+export { DEFAULT_UI_SETTINGS, coerceUiSettings } from "../shared/ui-locale";
+export type { AppLocale, UiSettings } from "../shared/ui-locale";
 
 /** File holding lightweight UI prefs (locale) under the ~/.ao state dir. */
 export const UI_SETTINGS_FILE_NAME = "ui-settings.json";
 
-export const DEFAULT_UI_SETTINGS: UiSettings = { locale: "en" };
-
 let settingsOperationQueue: Promise<void> = Promise.resolve();
-
-/** Coerce unknown stored values; corrupt/unknown locale → en. */
-export function coerceUiSettings(raw: unknown): UiSettings {
-	const o = (raw ?? {}) as Record<string, unknown>;
-	const locale: AppLocale = o.locale === "zh-CN" ? "zh-CN" : "en";
-	return { locale };
-}
 
 async function readUiSettingsUnlocked(stateDir: string): Promise<UiSettings> {
 	let raw: string;

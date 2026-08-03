@@ -1,7 +1,7 @@
 import { X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useEffect, type ReactNode } from "react";
 import { isDialogOrMenuOpen } from "../../lib/dom-selectors";
-import { useT } from "../../stores/locale-store";
 
 /**
  * Figma "Settings Container": centered column, max-width 768px,
@@ -17,7 +17,7 @@ export function SettingsPanel({
 	/** Optional path or context shown beside the title (project settings). */
 	subtitle?: string;
 }) {
-	const t = useT();
+	const { t } = useTranslation();
 	useEffect(() => {
 		const handleKeyDown = (event: KeyboardEvent) => {
 			if (event.key !== "Escape" || event.defaultPrevented || isDialogOrMenuOpen()) return;

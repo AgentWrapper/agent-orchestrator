@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import * as Dialog from "@radix-ui/react-dialog";
 import { TriangleAlert, X, type LucideIcon } from "lucide-react";
 import { memo, useEffect, useState } from "react";
@@ -16,8 +17,7 @@ import type { ProjectKind } from "../types/workspace";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { t as translate } from "../i18n";
-import { activeLocale, useT } from "../stores/locale-store";
+import { appI18n } from "../i18n";
 
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
@@ -55,7 +55,6 @@ type SheetError = {
 };
 
 function projectSheetError(error: string): SheetError {
-	const locale = activeLocale();
 	const setupMessage = error.replace(/^Setup failed:\s*/i, "").trim();
 	const codeMatch = setupMessage.match(/\(([A-Z0-9_]+)\)\s*$/);
 	const code = codeMatch?.[1];
@@ -64,28 +63,28 @@ function projectSheetError(error: string): SheetError {
 	switch (code) {
 		case "PROJECT_PATH_NOT_REPO_ROOT":
 			return {
-				title: translate(locale, "createProject.error.notRepoRootTitle"),
-				message: translate(locale, "createProject.error.notRepoRootBody"),
+				title: appI18n.t("createProject.error.notRepoRootTitle"),
+				message: appI18n.t("createProject.error.notRepoRootBody"),
 				tone: "warning",
 			};
 		case "PROJECT_BARE_REPOSITORY":
 			return {
-				title: translate(locale, "createProject.error.bareTitle"),
-				message: translate(locale, "createProject.error.bareBody"),
+				title: appI18n.t("createProject.error.bareTitle"),
+				message: appI18n.t("createProject.error.bareBody"),
 				tone: "warning",
 			};
 		case "UNSUPPORTED_GIT_REPO":
 			return {
-				title: translate(locale, "createProject.error.unsupportedTitle"),
-				message: translate(locale, "createProject.error.unsupportedBody"),
+				title: appI18n.t("createProject.error.unsupportedTitle"),
+				message: appI18n.t("createProject.error.unsupportedBody"),
 				tone: "warning",
 			};
 		default:
 			return {
 				title: error.toLowerCase().startsWith("setup failed:")
-					? translate(locale, "createProject.error.setupFailedTitle")
-					: translate(locale, "createProject.error.createFailedTitle"),
-				message: message || translate(locale, "createProject.error.tryAgain"),
+					? appI18n.t("createProject.error.setupFailedTitle")
+					: appI18n.t("createProject.error.createFailedTitle"),
+				message: message || appI18n.t("createProject.error.tryAgain"),
 				tone: "error",
 			};
 	}
@@ -103,7 +102,7 @@ export function CreateProjectAgentSheet({
 	repositorySetupNeeded = false,
 	repositorySetupWarning = null,
 }: CreateProjectAgentSheetProps) {
-	const t = useT();
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const agentsQuery = useQuery({
 		...agentsQueryOptions,
@@ -267,7 +266,7 @@ export function CreateProjectAgentSheet({
 
 						{repositorySetupNeeded && (
 							<div className="rounded-lg border border-[var(--color-border-agents-sheet)] bg-[var(--color-bg-agents-sheet-control)]/80 px-3 py-2.5 text-xs leading-body-md text-[var(--color-text-agents-sheet-description)]">
-								<p>If this folder needs Git setup, AO will initialize it and create the first commit before starting.</p>
+								<p>{t("createProject.gitSetupNotice")}</p>
 								{repositorySetupWarning && (
 									<p className="mt-2 text-warning">
 										{repositorySetupWarning}

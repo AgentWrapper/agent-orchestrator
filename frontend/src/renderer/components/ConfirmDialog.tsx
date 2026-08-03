@@ -1,6 +1,6 @@
 import { X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
-import { useT } from "../stores/locale-store";
 import {
 	Dialog,
 	DialogClose,
@@ -40,7 +40,7 @@ export function ConfirmDialog({
 	onConfirm,
 	onOpenChange,
 }: ConfirmDialogProps) {
-	const t = useT();
+	const { t } = useTranslation();
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent showCloseButton={false} className={settingsDialogContentClass}>

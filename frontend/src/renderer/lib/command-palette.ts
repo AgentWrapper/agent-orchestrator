@@ -1,3 +1,4 @@
+import type { TFunction } from "i18next";
 import {
 	attentionZone,
 	attentionZoneOrder,
@@ -8,8 +9,7 @@ import {
 	type WorkspaceSession,
 	type WorkspaceSummary,
 } from "../types/workspace";
-import { t, type MessageKey } from "../i18n";
-import { activeLocale } from "../stores/locale-store";
+import { appI18n, type MessageKey } from "../i18n";
 
 export type CommandGroupId = "current" | "attention" | "projects" | "sessions" | "prs" | "global";
 
@@ -60,22 +60,22 @@ const commandGroupLabelKeys: Record<CommandGroupId, MessageKey> = {
 /** Live labels for the current locale. */
 export const commandGroupLabel: Record<CommandGroupId, string> = {
 	get current() {
-		return t(activeLocale(), commandGroupLabelKeys.current);
+		return appI18n.t(commandGroupLabelKeys.current);
 	},
 	get attention() {
-		return t(activeLocale(), commandGroupLabelKeys.attention);
+		return appI18n.t(commandGroupLabelKeys.attention);
 	},
 	get projects() {
-		return t(activeLocale(), commandGroupLabelKeys.projects);
+		return appI18n.t(commandGroupLabelKeys.projects);
 	},
 	get sessions() {
-		return t(activeLocale(), commandGroupLabelKeys.sessions);
+		return appI18n.t(commandGroupLabelKeys.sessions);
 	},
 	get prs() {
-		return t(activeLocale(), commandGroupLabelKeys.prs);
+		return appI18n.t(commandGroupLabelKeys.prs);
 	},
 	get global() {
-		return t(activeLocale(), commandGroupLabelKeys.global);
+		return appI18n.t(commandGroupLabelKeys.global);
 	},
 };
 
@@ -116,7 +116,7 @@ function findSession(workspaces: WorkspaceSummary[], sessionId: string): Workspa
 	return undefined;
 }
 
-export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
+export function buildCommands(ctx: CommandPaletteContext, t: TFunction = appI18n.t): CommandItem[] {
 	const { workspaces, currentProjectId, currentSessionId, restartingProjectIds } = ctx;
 	const items: CommandItem[] = [];
 
@@ -126,18 +126,17 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 	const currentSession = currentSessionId ? findSession(workspaces, currentSessionId) : undefined;
 	const isProjectRestarting = Boolean(currentProject && restartingProjectIds?.has(currentProject.id));
 
-	const locale = activeLocale();
 	items.push({
 		id: "current-new-task",
 		group: "current",
-		title: t(locale, "command.newTask"),
+		title: t("command.newTask"),
 		subtitle: currentProject?.name,
 		keywords: ["worker", "chat", "start"],
 		disabled: !currentProject || isProjectRestarting,
 		disabledReason: !currentProject
-			? t(locale, "command.noCurrentProject")
+			? t("command.noCurrentProject")
 			: isProjectRestarting
-				? t(locale, "command.orchestratorRestarting")
+				? t("command.orchestratorRestarting")
 				: undefined,
 		...(currentProject ? { action: { kind: "open-new-task" as const, projectId: currentProject.id } } : {}),
 	});
@@ -146,17 +145,17 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 		items.push({
 			id: "current-open-orchestrator",
 			group: "current",
-			title: t(locale, "command.openOrchestrator"),
+			title: t("command.openOrchestrator"),
 			subtitle: currentProject.name,
 			keywords: ["orchestrator", "spawn", currentProject.name],
 			disabled: isProjectRestarting,
-			disabledReason: isProjectRestarting ? t(locale, "command.orchestratorRestarting") : undefined,
+			disabledReason: isProjectRestarting ? t("command.orchestratorRestarting") : undefined,
 			action: { kind: "open-orchestrator", projectId: currentProject.id },
 		});
 		items.push({
 			id: "current-project-settings",
 			group: "current",
-			title: t(locale, "command.projectSettings"),
+			title: t("command.projectSettings"),
 			subtitle: currentProject.name,
 			keywords: ["settings", "config", currentProject.name],
 			action: {
@@ -171,7 +170,7 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 		items.push({
 			id: "current-copy-branch",
 			group: "current",
-			title: t(locale, "command.copyBranch"),
+			title: t("command.copyBranch"),
 			subtitle: currentBranch,
 			keywords: ["branch", "git", currentBranch, currentSession.title],
 			action: { kind: "copy-branch", branch: currentBranch },
@@ -245,21 +244,21 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 	items.push({
 		id: "global-new-project",
 		group: "global",
-		title: t(locale, "command.newProject"),
+		title: t("command.newProject"),
 		keywords: ["add", "import", "repo", "workspace"],
 		action: { kind: "open-new-project" },
 	});
 	items.push({
 		id: "global-settings",
 		group: "global",
-		title: t(locale, "command.globalSettings"),
+		title: t("command.globalSettings"),
 		keywords: ["settings", "preferences", "config"],
 		action: { kind: "navigate", target: { to: "/settings" } },
 	});
 	items.push({
 		id: "global-theme",
 		group: "global",
-		title: t(locale, "command.toggleTheme"),
+		title: t("command.toggleTheme"),
 		keywords: ["dark", "light", "appearance"],
 		action: { kind: "toggle-theme" },
 	});
@@ -303,11 +302,14 @@ export const MAX_ITEMS_PER_GROUP = 20;
 
 export const MAX_SEARCH_RESULTS = 20;
 
-export function groupCommands(items: CommandItem[]): { id: CommandGroupId; label: string; items: CommandItem[] }[] {
+export function groupCommands(
+	items: CommandItem[],
+	t: TFunction = appI18n.t,
+): { id: CommandGroupId; label: string; items: CommandItem[] }[] {
 	return commandGroupOrder
 		.map((id) => ({
 			id,
-			label: commandGroupLabel[id],
+			label: t(commandGroupLabelKeys[id]),
 			items: items.filter((item) => item.group === id).slice(0, MAX_ITEMS_PER_GROUP),
 		}))
 		.filter((group) => group.items.length > 0);
@@ -320,9 +322,9 @@ export function visibleForQuery(items: CommandItem[], query: string): CommandIte
 
 export type DisplayGroup = { id: string; label: string; items: CommandItem[] };
 
-export function displayGroups(items: CommandItem[], query: string): DisplayGroup[] {
+export function displayGroups(items: CommandItem[], query: string, t: TFunction = appI18n.t): DisplayGroup[] {
 	// Keep matches under their category headings (Cursor-style), including while typing.
-	const groups = groupCommands(visibleForQuery(items, query));
+	const groups = groupCommands(visibleForQuery(items, query), t);
 	if (!query.trim()) return groups;
 	// The palette runs cmdk with shouldFilter:false and selects the first item in DOM
 	// order, so Enter follows category order. Rank categories by their best match to

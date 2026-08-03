@@ -1,7 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { Keyboard, Mail } from "lucide-react";
-import { useT } from "../stores/locale-store";
 import { ConnectMobileModal } from "./ConnectMobileModal";
 import { DeveloperModeSection } from "./settings/DeveloperModeSection";
 import { GeneralSettingsSection } from "./settings/GeneralSettingsSection";
@@ -15,7 +15,7 @@ import { KeyboardShortcutsSettingsDialog } from "./settings/KeyboardShortcutsSet
 
 export function GlobalSettingsForm() {
 	const navigate = useNavigate();
-	const t = useT();
+	const { t } = useTranslation();
 	const [mobileOpen, setMobileOpen] = useState(false);
 	const [reportProblemOpen, setReportProblemOpen] = useState(false);
 	const [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false);

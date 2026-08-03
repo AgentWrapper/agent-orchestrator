@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import {
 	Bell,
@@ -22,7 +23,6 @@ import {
 } from "../hooks/useNotificationsQuery";
 import { aoBridge } from "../lib/bridge";
 import { formatTimeCompact } from "../lib/format-time";
-import { useT } from "../stores/locale-store";
 import {
 	createNotificationsTransport,
 	getCachedNotifications,
@@ -117,7 +117,7 @@ export function NotificationRuntime() {
 }
 
 export function NotificationCenter({ style }: NotificationCenterProps) {
-	const t = useT();
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [actionError, setActionError] = useState<string | null>(null);
 	const [view, setView] = useState<NotificationView>("unread");
@@ -229,7 +229,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 							type="button"
 						>
 							<CheckCheck className="size-icon-md" aria-hidden="true" />
-							Mark all read
+							{t("notify.markAllReadShort")}
 						</button>
 					</div>
 				</div>
@@ -274,13 +274,13 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 								aria-live="polite"
 								className="flex items-center justify-center gap-2 px-4 py-3 text-caption text-error"
 							>
-								Couldn’t load earlier notifications.
+								{t("notify.earlierLoadFailed")}
 								<button
 									className="font-medium underline underline-offset-2 hover:text-foreground"
 									onClick={() => void notificationsQuery.fetchNextPage()}
 									type="button"
 								>
-									Retry
+									{t("notify.retry")}
 								</button>
 							</div>
 						) : notificationsQuery.isFetchingNextPage ? (
@@ -289,7 +289,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 								className="flex items-center justify-center gap-2 px-4 py-3 text-caption text-passive"
 							>
 								<LoaderCircle className="size-icon-md animate-spin" aria-hidden="true" />
-								Loading earlier notifications…
+								{t("notify.loadingEarlier")}
 							</div>
 						) : null}
 					</div>
@@ -362,7 +362,7 @@ function NotificationItem({
 	onOpenPrimary: (notification: NotificationDTO) => void;
 	onOpenSession: (notification: NotificationDTO) => void;
 }) {
-	const t = useT();
+	const { t } = useTranslation();
 	const Icon = notificationIcon(notification.type);
 	const isUnread = notification.status === "unread";
 	const isPR = notification.target.kind === "pr" && Boolean(notification.target.prUrl);

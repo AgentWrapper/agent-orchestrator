@@ -1,18 +1,21 @@
 import { Languages, Monitor, Moon, Palette, Smartphone, Sun } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { ThemePreference } from "../../lib/theme";
 import type { AppLocale } from "../../i18n";
-import { useLocaleStore, useT } from "../../stores/locale-store";
+import { useLocaleStore } from "../../stores/locale-store";
 import { useUiStore } from "../../stores/ui-store";
 import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { SettingsLinkRow, SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
 
 export function GeneralSettingsSection({ onConnectMobile }: { onConnectMobile: () => void }) {
-	const t = useT();
+	const { t } = useTranslation();
 	const themePreference = useUiStore((state) => state.themePreference);
 	const setThemePreference = useUiStore((state) => state.setThemePreference);
 	const locale = useLocaleStore((state) => state.locale);
 	const setLocale = useLocaleStore((state) => state.setLocale);
+	const localeSaving = useLocaleStore((state) => state.saving);
+	const localeSaveError = useLocaleStore((state) => state.saveError);
 
 	const themeOptions = [
 		{ value: "light", label: t("settings.theme.light"), icon: <Sun className="size-icon-lg" aria-hidden="true" /> },
@@ -42,6 +45,7 @@ export function GeneralSettingsSection({ onConnectMobile }: { onConnectMobile: (
 			<SettingsRow icon={Languages} label={t("settings.language")}>
 				<SettingsOptionMenu
 					aria-label={t("settings.language")}
+					disabled={localeSaving}
 					value={locale}
 					options={languageOptions}
 					onChange={(next) => {
@@ -49,6 +53,11 @@ export function GeneralSettingsSection({ onConnectMobile }: { onConnectMobile: (
 					}}
 				/>
 			</SettingsRow>
+			{localeSaveError ? (
+				<p role="alert" className="px-3 text-caption leading-4 text-error">
+					{t("settings.language.saveFailed")}
+				</p>
+			) : null}
 			<SettingsLinkRow icon={Smartphone} label={t("settings.connectMobile")} onClick={onConnectMobile} />
 		</SettingsSection>
 	);

@@ -4,23 +4,20 @@ import {
 	SHORTCUT_CATEGORIES,
 	shortcutBindingKeys,
 } from "../../shared/shortcuts";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
+import { shortcutCategoryLabelKeys, shortcutLabelKeys } from "../i18n/key-maps";
+import type { AppShortcutId, ShortcutCategory } from "../../shared/shortcuts";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { useKeybindingsStore } from "../stores/keybindings-store";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
-import { useT } from "../stores/locale-store";
 
-function shortcutLabel(id: string, t: ReturnType<typeof useT>): string {
-	const key = `shortcut.${id}` as Parameters<typeof t>[0];
-	return t(key);
+function shortcutLabel(id: AppShortcutId, t: TFunction): string {
+	return t(shortcutLabelKeys[id]);
 }
 
-function shortcutCategoryLabel(category: string, t: ReturnType<typeof useT>): string {
-	const map: Record<string, Parameters<typeof t>[0]> = {
-		General: "shortcut.category.general",
-		Navigation: "shortcut.category.navigation",
-		Session: "shortcut.category.session",
-	};
-	return t(map[category] ?? "shortcut.category.general");
+function shortcutCategoryLabel(category: ShortcutCategory, t: TFunction): string {
+	return t(shortcutCategoryLabelKeys[category]);
 }
 
 
@@ -44,7 +41,7 @@ export function KeyboardShortcutsDialog({
 	onCustomize,
 	isMac = isMacPlatform(),
 }: KeyboardShortcutsDialogProps) {
-	const t = useT();
+	const { t } = useTranslation();
 	const isCommandPaletteEnabled = useCommandPaletteEnabled();
 	const overrides = useKeybindingsStore((state) => state.overrides);
 	const availableShortcuts = APP_SHORTCUTS.filter(
@@ -109,7 +106,7 @@ export function KeyboardShortcutsDialog({
 							className="rounded-md bg-accent px-3 py-2 text-control font-medium text-accent-foreground transition-opacity hover:opacity-90"
 							onClick={onCustomize}
 						>
-							Customize
+							{t("shortcut.customize")}
 						</button>
 					</div>
 				) : null}

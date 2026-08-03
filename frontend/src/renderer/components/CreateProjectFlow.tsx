@@ -1,4 +1,5 @@
 import * as Dialog from "@radix-ui/react-dialog";
+import { useTranslation } from "react-i18next";
 import { CheckCircle2, ChevronRight, Folder, FolderPlus, X, XCircle } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ImportFolderScan } from "../../preload";
@@ -6,7 +7,6 @@ import { aoBridge } from "../lib/bridge";
 import { cn } from "../lib/utils";
 import type { ProjectKind } from "../types/workspace";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
-import { useT } from "../stores/locale-store";
 import { Button } from "./ui/button";
 
 export type CreateProjectInput = { path: string; asWorkspace?: boolean } & CreateProjectAgentSelection;
@@ -38,7 +38,7 @@ export function CreateProjectFlow({
 	// create-project flow instead of a separate delegating component.
 	openSignal?: number;
 }) {
-	const t = useT();
+	const { t } = useTranslation();
 	const resolvedIdleLabel = idleLabel ?? t("createProject.newProject");
 	const [error, setError] = useState<string | null>(null);
 	const [modePickerOpen, setModePickerOpen] = useState(false);
@@ -341,7 +341,7 @@ function ImportModePicker({
 	onClose?: () => void;
 	onSelect: (kind: ProjectKind) => void;
 }) {
-	const t = useT();
+	const { t } = useTranslation();
 	return (
 		<div
 			className="relative isolate flex w-full max-w-(--size-import-modal-max) flex-col items-stretch gap-8 rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] p-8 shadow-[var(--shadow-import-modal)]"
@@ -400,7 +400,7 @@ function ProjectModeButton({
 	kind: ProjectKind;
 	onClick: () => void;
 }) {
-	const t = useT();
+	const { t } = useTranslation();
 	const isWorkspace = kind === "workspace";
 	const title = isWorkspace ? t("createProject.workspace") : t("createProject.project");
 	return (
@@ -481,16 +481,13 @@ function CreateProjectFolderDialog({
 	open: boolean;
 	scan: ImportFolderScan | null;
 }) {
-	const t = useT();
+	const { t } = useTranslation();
 	const isWorkspace = kind === "workspace";
 	const failedRepos = scan?.repos.filter((repo) => repo.status === "error" || !repo.hasRemote) ?? [];
 	const hasScan = scan !== null;
 	const footerMessage =
 		failedRepos.length > 0
-			? t("createProject.footerResolve", {
-					count: failedRepos.length,
-					noun: t(failedRepos.length === 1 ? "createProject.noun.repository" : "createProject.noun.repositories"),
-				})
+			? t("createProject.footerResolve", { count: failedRepos.length })
 			: hasScan
 				? t("createProject.footerReview")
 				: t("createProject.footerChoose");
@@ -623,7 +620,7 @@ function CreateProjectFolderDialog({
 }
 
 function ImportRepoRow({ failed = false, repo }: { failed?: boolean; repo: ImportFolderScan["repos"][number] }) {
-	const t = useT();
+	const { t } = useTranslation();
 	return (
 		<div className="flex items-center gap-3 px-4 py-3">
 			{failed ? (

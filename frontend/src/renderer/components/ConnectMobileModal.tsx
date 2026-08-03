@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState } from "react";
 import { Check, Copy, Info, Loader2, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
@@ -7,7 +8,6 @@ import { cn } from "../lib/utils";
 import { ConnectMobileGetApp } from "./settings/ConnectMobileGetApp";
 import { ConnectMobileSetup } from "./settings/ConnectMobileSetup";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
-import { useT } from "../stores/locale-store";
 import { Switch } from "./ui/switch";
 
 export const mobileStatusQueryKey = ["mobile-status"] as const;
@@ -49,7 +49,7 @@ interface ConnectMobileModalProps {
 // a QR code (host/port/password), the plaintext address + password with a copy
 // affordance, and a Regenerate action. Flipping it off tears the bridge down.
 export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalProps) {
-	const t = useT();
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [copied, setCopied] = useState(false);
 	const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);

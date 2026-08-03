@@ -1,6 +1,6 @@
 import { QrCode } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
-import { useT } from "../../stores/locale-store";
 import { QRCodeSVG } from "qrcode.react";
 import { aoBridge } from "../../lib/bridge";
 import { cn } from "../../lib/utils";
@@ -20,7 +20,7 @@ const TESTFLIGHT_QR_SIZE = 140;
 // the LAN bridge is running. The QR (of the TestFlight URL itself) hides
 // behind a disclosure so the widened modal keeps its height.
 export function ConnectMobileGetApp() {
-	const t = useT();
+	const { t } = useTranslation();
 	const [showQR, setShowQR] = useState(false);
 
 	return (

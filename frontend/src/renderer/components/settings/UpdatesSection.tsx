@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, GitPullRequest, HardDriveDownload, History, Loader2, RefreshCw } from "lucide-react";
 import { aoBridge } from "../../lib/bridge";
 import { formatTimeCompact } from "../../lib/format-time";
 import { useUpdateStatus } from "../../hooks/useUpdateStatus";
-import { useT } from "../../stores/locale-store";
 import { useUiStore } from "../../stores/ui-store";
 import type { UpdateChannel, UpdateSettings, UpdateState, UpdateStatus } from "../../../main/update-settings";
 import { ConfirmDialog } from "../ConfirmDialog";
@@ -47,7 +47,7 @@ function nextUpdateRequestId(): string {
 }
 
 export function UpdatesSection() {
-	const t = useT();
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const query = useQuery({
 		queryKey: updateSettingsQueryKey,
@@ -278,7 +278,7 @@ function FeatureBuildsSelect({
 	currentPr: number | null;
 	onPin: (pr: number, title: string) => Promise<void>;
 }) {
-	const t = useT();
+	const { t } = useTranslation();
 	const buildsQuery = useQuery({
 		queryKey: ["feature-builds"],
 		queryFn: () => aoBridge.featureBuilds.list(),
@@ -289,8 +289,8 @@ function FeatureBuildsSelect({
 	if (!buildsQuery.isLoading && builds.length === 0) {
 		return (
 			<div className="px-1 text-xs text-settings-muted">
-				<span className="sr-only">Feature build</span>
-				No live feature releases.
+				<span className="sr-only">{t("settings.updates.featureBuild")}</span>
+				{t("settings.updates.noFeatureReleases")}
 			</div>
 		);
 	}
@@ -343,7 +343,7 @@ function FeatureBuildsSelect({
 }
 
 function UpdateActions({ status }: { status: UpdateStatus }) {
-	const t = useT();
+	const { t } = useTranslation();
 	const version = useQuery({ queryKey: ["app-version"], queryFn: () => aoBridge.app.getVersion() });
 
 	const checking = status.state === "checking";
@@ -363,7 +363,7 @@ function UpdateActions({ status }: { status: UpdateStatus }) {
 			<SettingsRow icon={Check} label={t("settings.updates.checksForUpdates")}>
 				<div className="flex items-center gap-2">
 					<span className="text-control text-settings-muted" data-testid="app-version">
-						Current version - {version.data ? `v${version.data}` : "…"}
+						{t("settings.updates.currentVersion", { version: version.data ? `v${version.data}` : "…" })}
 					</span>
 					<button
 						type="button"
@@ -385,12 +385,14 @@ function UpdateActions({ status }: { status: UpdateStatus }) {
 				<div className="settings-row-bar h-auto min-h-0 flex-wrap justify-start gap-3 py-3">
 					{status.state === "available" && (
 						<Button type="button" variant="primary" onClick={() => void aoBridge.updates.download()}>
-							Update to {status.version ? `v${status.version}` : "latest"}
+							{status.version
+								? t("settings.updates.updateTo", { version: `v${status.version}` })
+								: t("settings.updates.updateToLatest")}
 						</Button>
 					)}
 					{status.state === "downloaded" && (
 						<Button type="button" variant="primary" onClick={() => void aoBridge.updates.install()}>
-							Restart &amp; install
+							{t("settings.updates.restartInstall")}
 						</Button>
 					)}
 					<UpdateStatusLine status={status} />
@@ -401,7 +403,7 @@ function UpdateActions({ status }: { status: UpdateStatus }) {
 }
 
 function UpdateStatusLine({ status }: { status: UpdateStatus }) {
-	const t = useT();
+	const { t } = useTranslation();
 	switch (status.state) {
 		case "checking":
 			return <span className="text-xs text-settings-muted">{t("settings.updates.checking")}</span>;

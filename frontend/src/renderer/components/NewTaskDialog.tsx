@@ -1,4 +1,5 @@
 import * as Dialog from "@radix-ui/react-dialog";
+import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ImagePlus, Loader2, X } from "lucide-react";
 import { type ClipboardEvent, type DragEvent, type FormEvent, useEffect, useId, useRef, useState } from "react";
@@ -13,7 +14,6 @@ import type { AgentProvider } from "../types/workspace";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useImageAttachments } from "../hooks/useImageAttachments";
 import { cn } from "../lib/utils";
-import { useT } from "../stores/locale-store";
 
 type Project = components["schemas"]["Project"];
 
@@ -25,7 +25,7 @@ type NewTaskDialogProps = {
 };
 
 export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewTaskDialogProps) {
-	const t = useT();
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const titleId = useId();
 	const promptId = useId();
@@ -171,7 +171,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 						<div className="min-w-0">
 							<Dialog.Title className="text-subtitle font-semibold text-foreground">{t("newTask.title")}</Dialog.Title>
 							<Dialog.Description className="mt-1 text-xs text-muted-foreground">
-								Start a worker directly from this project.
+								{t("newTask.description")}
 							</Dialog.Description>
 						</div>
 						<Dialog.Close asChild>
@@ -188,7 +188,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 					<form onSubmit={submit} className="space-y-4 px-5 py-4">
 						<div className="space-y-1.5">
 							<label className="text-xs font-medium text-muted-foreground" htmlFor={titleId}>
-								Title
+								{t("newTask.titleLabel")}
 							</label>
 							<Input
 								id={titleId}
@@ -202,7 +202,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 						<div className="space-y-1.5">
 							<div className="flex items-center justify-between">
 								<label className="text-xs font-medium text-muted-foreground" htmlFor={promptId}>
-									Brief
+									{t("newTask.brief")}
 								</label>
 								<button
 									type="button"
@@ -210,7 +210,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 									onClick={() => fileInputRef.current?.click()}
 								>
 									<ImagePlus className="size-icon-sm" aria-hidden="true" />
-									Add image
+									{t("newTask.addImage")}
 								</button>
 							</div>
 							<div
@@ -225,7 +225,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 								<textarea
 									id={promptId}
 									className="min-h-textarea-min w-full resize-y rounded-md bg-transparent px-3 py-2 text-control leading-relaxed text-foreground outline-none transition placeholder:text-passive focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent-weak"
-									placeholder="Describe the change, constraints, and expected verification. Paste or drop images to attach them."
+									placeholder={t("newTask.briefPlaceholder")}
 									value={prompt}
 									onChange={(event) => setPrompt(event.target.value)}
 									onPaste={handlePaste}
@@ -251,14 +251,16 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 											>
 												<img
 													src={attachment.dataUrl}
-													alt={`Image ${index + 1}`}
+													alt={t("newTask.image", { number: index + 1 })}
 													className="size-7 shrink-0 rounded object-cover"
 												/>
-												<span className="min-w-0 flex-1 truncate font-medium">Image {index + 1}</span>
+												<span className="min-w-0 flex-1 truncate font-medium">
+													{t("newTask.image", { number: index + 1 })}
+												</span>
 												<button
 													type="button"
 													className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground transition hover:bg-border hover:text-foreground"
-													aria-label={`Remove image ${index + 1}`}
+													aria-label={t("newTask.removeImage", { number: index + 1 })}
 													onClick={() => removeAttachment(attachment.id)}
 												>
 													<X className="size-icon-sm" aria-hidden="true" />
@@ -311,11 +313,11 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 							{!isScratchProject && (
 								<div className="space-y-1.5">
 									<Label className="text-xs font-medium text-muted-foreground" htmlFor={branchId}>
-										Branch
+										{t("newTask.branch")}
 									</Label>
 									<Input
 										id={branchId}
-										placeholder="optional"
+										placeholder={t("newTask.optional")}
 										value={branch}
 										onChange={(event) => setBranch(event.target.value)}
 									/>
@@ -340,7 +342,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 						<div className="flex items-center justify-end gap-2 pt-1">
 							<Dialog.Close asChild>
 								<Button type="button" variant="ghost" disabled={isSubmitting}>
-									Cancel
+									{t("newTask.cancel")}
 								</Button>
 							</Dialog.Close>
 							<Button type="submit" disabled={isSubmitting || !projectId}>

@@ -1,4 +1,5 @@
 import { RadioGroup } from "radix-ui";
+import { useTranslation } from "react-i18next";
 import { X } from "lucide-react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
@@ -9,7 +10,6 @@ import {
 	type ReportProblemOutput,
 } from "../../lib/report-problem";
 import { aoBridge } from "../../lib/bridge";
-import { useT } from "../../stores/locale-store";
 import {
 	Dialog,
 	DialogClose,
@@ -72,7 +72,7 @@ type DestinationOption = {
 };
 
 export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogProps) {
-	const t = useT();
+	const { t } = useTranslation();
 	const destinations: DestinationOption[] = [
 		{ value: "github", label: t("report.github"), action: t("report.githubAction"), icon: GithubIcon },
 		{ value: "discord", label: t("report.discord"), action: t("report.discordAction"), icon: DiscordIcon },
@@ -238,7 +238,7 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 				<div className={settingsDialogFooterClass}>
 					<DialogClose asChild>
 						<button type="button" className="settings-footer-button">
-							Cancel
+							{t("report.cancel")}
 						</button>
 					</DialogClose>
 					<button

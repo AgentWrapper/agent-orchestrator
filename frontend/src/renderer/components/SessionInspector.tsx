@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 import {
@@ -35,8 +36,8 @@ import { StatusPill } from "./StatusPill";
 import { CodexIcon } from "./icons";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { Switch } from "./ui/switch";
-import { t as translate } from "../i18n";
-import { activeLocale, useT } from "../stores/locale-store";
+import { appI18n } from "../i18n";
+import type { MessageKey } from "../i18n";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -94,6 +95,13 @@ const prStateTone: Record<SessionPRSummary["state"], string> = {
 	draft: "border-border bg-raised text-muted-foreground",
 	merged: "border-accent/40 bg-accent-weak text-accent",
 	closed: "border-error/40 bg-error/10 text-error",
+};
+
+const prStateLabelKeys: Record<SessionPRSummary["state"], MessageKey> = {
+	open: "pr.state.open",
+	draft: "pr.state.draft",
+	merged: "pr.state.merged",
+	closed: "pr.state.closed",
 };
 
 const inspectorShellClass = "@container/inspector flex h-full min-h-0 flex-col overflow-hidden";
@@ -170,7 +178,7 @@ export function SessionInspector({
 	view?: InspectorView;
 	onViewChange?: (view: InspectorView) => void;
 }) {
-	const t = useT();
+	const { t } = useTranslation();
 	const [internalView, setInternalView] = useState<InspectorView>("summary");
 	const view = viewProp ?? internalView;
 	// Badge the Browser tab when a preview target arrived without us opening it.
@@ -286,7 +294,7 @@ function Section({
 }
 
 function SummaryView({ session }: { session: WorkspaceSession }) {
-	const t = useT();
+	const { t } = useTranslation();
 	const query = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? t("inspector.pullRequests", { count: prSummaries.length }) : t("inspector.pullRequest");
@@ -329,7 +337,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 }
 
 function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
-	const t = useT();
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const resume = useMutation({
 		mutationFn: async () => {
@@ -382,7 +390,7 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 }
 
 function CompletionControls({ session }: { session: WorkspaceSession }) {
-	const t = useT();
+	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const [confirmOpen, setConfirmOpen] = useState(false);
@@ -492,6 +500,7 @@ function updateSessionMergePolicy(
 }
 
 function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
+	const { t } = useTranslation();
 	return (
 		<div className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2.5 py-1.5">
 			<div className="flex items-center gap-2">
@@ -501,7 +510,7 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 					variant="outline"
 					className={cn("h-5 px-1.5 text-[9px] leading-none font-medium", prStateTone[pr.state])}
 				>
-					{pr.state}
+					{t(prStateLabelKeys[pr.state])}
 				</Badge>
 				<a
 					href={prBrowserUrl(pr)}
@@ -509,7 +518,7 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 					rel="noopener noreferrer"
 					className="ml-auto inline-flex items-center gap-0.5 text-caption font-medium text-accent hover:underline"
 				>
-					<span>Open</span>
+					<span>{t("inspector.open")}</span>
 					<ArrowUpRight aria-hidden="true" className="size-icon-2xs" strokeWidth={2} />
 				</a>
 			</div>
@@ -534,14 +543,14 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 
 	history.push({
 		tone: "neutral",
-		node: <>{translate(activeLocale(), "inspector.timeline.createdWorkspace")}</>,
+		node: <>{appI18n.t("inspector.timeline.createdWorkspace")}</>,
 		ts: formatTimeCompact(session.createdAt ?? session.updatedAt),
 	});
 
 	for (const pr of prs.filter((pr) => pr.state === "draft")) {
 		history.push({
 			tone: "neutral",
-			node: <PRTimelineLink pr={pr} verb={translate(activeLocale(), "inspector.timeline.draft")} />,
+			node: <PRTimelineLink pr={pr} verb={appI18n.t("inspector.timeline.draft")} />,
 			ts: prStateTime(pr),
 		});
 	}
@@ -549,7 +558,7 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 	for (const pr of prs.filter((pr) => pr.state !== "draft")) {
 		history.push({
 			tone: "neutral",
-			node: <PRTimelineLink pr={pr} verb={translate(activeLocale(), "inspector.timeline.opened")} />,
+			node: <PRTimelineLink pr={pr} verb={appI18n.t("inspector.timeline.opened")} />,
 			ts: prCreatedTime(pr),
 		});
 	}
@@ -557,7 +566,7 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 	for (const pr of prs.filter((pr) => pr.state === "merged")) {
 		history.push({
 			tone: "good",
-			node: <PRTimelineLink pr={pr} verb={translate(activeLocale(), "inspector.timeline.merged")} />,
+			node: <PRTimelineLink pr={pr} verb={appI18n.t("inspector.timeline.merged")} />,
 			ts: prStateTime(pr),
 		});
 	}
@@ -565,7 +574,7 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 	if (session.status === "merged") {
 		history.push({
 			tone: "good",
-			node: <>{translate(activeLocale(), "inspector.timeline.done")}</>,
+			node: <>{appI18n.t("inspector.timeline.done")}</>,
 			ts: latestMergedTime(prs),
 		});
 	}
@@ -668,7 +677,7 @@ function latestMergedTime(prs: SessionPRSummary[]): string | null {
 type ScmTimelineState = "ci_failed" | "changes_requested" | "conflict";
 
 function conflictPill() {
-	return { label: translate(activeLocale(), "inspector.conflict"), tone: "var(--color-danger)", breathe: false };
+	return { label: appI18n.t("inspector.conflict"), tone: "var(--color-danger)", breathe: false };
 }
 
 function InspectorActivityPill({ activity }: { activity?: WorkspaceSession["activity"] }) {
@@ -711,7 +720,7 @@ function ReviewsView({
 	session: WorkspaceSession;
 	onOpenReviewerTerminal?: OpenReviewerTerminal;
 }) {
-	const t = useT();
+	const { t } = useTranslation();
 	const hasPr = sortedPRs(session).length > 0;
 	const queryClient = useQueryClient();
 	const [reviewNotice, setReviewNotice] = useState<string | null>(null);
@@ -944,7 +953,7 @@ function ReviewPanel({
 	onCancel: () => void;
 	onOpenTerminal?: OpenReviewerTerminal;
 }) {
-	const t = useT();
+	const { t } = useTranslation();
 	if (sortedPRs(session).length === 0) {
 		return <p className={inspectorEmptyClass}>{t("inspector.noPROpened")}</p>;
 	}
@@ -1015,7 +1024,7 @@ function ReviewPanel({
 					variant="ghost"
 				>
 					{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
-					{reviewRunning ? (isCancelling ? translate(activeLocale(), "inspector.review.cancelling") : translate(activeLocale(), "inspector.review.cancel")) : runAction}
+					{reviewRunning ? (isCancelling ? t("inspector.review.cancelling") : t("inspector.review.cancel")) : runAction}
 				</Button>
 				{reviewHasRun ? (
 					<Button
@@ -1027,7 +1036,7 @@ function ReviewPanel({
 						variant="ghost"
 					>
 						<Terminal aria-hidden="true" />
-						Open terminal
+						{t("inspector.openTerminal")}
 					</Button>
 				) : null}
 			</div>
@@ -1041,20 +1050,19 @@ function aoReviewMeta(reviewState: PRReviewState): string {
 		return `#${reviewState.prNumber} · ${formatTimeCompact(displayRun.createdAt)}`;
 	}
 	if (!displayRun && (reviewState.status === "needs_review" || reviewState.status === "ineligible")) {
-		return translate(activeLocale(), "inspector.notRunMeta", { number: reviewState.prNumber });
+		return appI18n.t("inspector.notRunMeta", { number: reviewState.prNumber });
 	}
 	return `#${reviewState.prNumber}`;
 }
 
 function AoReviewRow({ reviewState }: { reviewState: PRReviewState }) {
-	const locale = activeLocale();
 	const displayRun = reviewState.latestRun ?? reviewState.previousRun;
 	const verdict = displayRun ? runReviewVerdict(displayRun) : reviewVerdict(reviewState);
 	const summary = displayRun?.body?.trim();
 	const reviewUrl = aoReviewCommentUrl(displayRun);
 	const reviewLinkLabel = reviewState.latestRun
-		? translate(locale, "inspector.viewReview")
-		: translate(locale, "inspector.viewPreviousReview");
+		? appI18n.t("inspector.viewReview")
+		: appI18n.t("inspector.viewPreviousReview");
 	return (
 		<div className={cn("flex min-w-0 flex-col gap-2", reviewState.status === "ineligible" && "opacity-70")}>
 			<VerdictBadge label={verdict.label} tone={verdict.tone} />
@@ -1079,21 +1087,21 @@ function runReviewVerdict(run: NonNullable<PRReviewState["latestRun"]>): {
 	tone: "neutral" | "running" | "success" | "danger";
 } {
 	if (run.status === "failed") {
-		return { label: translate(activeLocale(), "inspector.review.failed"), tone: "danger" };
+		return { label: appI18n.t("inspector.review.failed"), tone: "danger" };
 	}
 	if (run.status === "cancelled") {
-		return { label: translate(activeLocale(), "inspector.review.cancelled"), tone: "neutral" };
+		return { label: appI18n.t("inspector.review.cancelled"), tone: "neutral" };
 	}
 	if (run.status === "running") {
-		return { label: translate(activeLocale(), "inspector.review.reviewing"), tone: "running" };
+		return { label: appI18n.t("inspector.review.reviewing"), tone: "running" };
 	}
 	switch (run.verdict) {
 		case "approved":
-			return { label: translate(activeLocale(), "inspector.review.approved"), tone: "success" };
+			return { label: appI18n.t("inspector.review.approved"), tone: "success" };
 		case "changes_requested":
-			return { label: translate(activeLocale(), "inspector.review.changesRequested"), tone: "danger" };
+			return { label: appI18n.t("inspector.review.changesRequested"), tone: "danger" };
 		default:
-			return { label: translate(activeLocale(), "inspector.review.notRun"), tone: "neutral" };
+			return { label: appI18n.t("inspector.review.notRun"), tone: "neutral" };
 	}
 }
 
@@ -1109,34 +1117,33 @@ function reviewVerdict(reviewState: PRReviewState): {
 	tone: "neutral" | "running" | "success" | "danger";
 } {
 	if (reviewState.latestRun?.status === "failed") {
-		return { label: translate(activeLocale(), "inspector.review.failed"), tone: "danger" };
+		return { label: appI18n.t("inspector.review.failed"), tone: "danger" };
 	}
 	if (reviewState.latestRun?.status === "cancelled") {
-		return { label: translate(activeLocale(), "inspector.review.cancelled"), tone: "neutral" };
+		return { label: appI18n.t("inspector.review.cancelled"), tone: "neutral" };
 	}
 	switch (reviewState.status) {
 		case "running":
-			return { label: translate(activeLocale(), "inspector.review.reviewing"), tone: "running" };
+			return { label: appI18n.t("inspector.review.reviewing"), tone: "running" };
 		case "up_to_date":
-			return { label: translate(activeLocale(), "inspector.review.approved"), tone: "success" };
+			return { label: appI18n.t("inspector.review.approved"), tone: "success" };
 		case "changes_requested":
-			return { label: translate(activeLocale(), "inspector.review.changesRequested"), tone: "danger" };
+			return { label: appI18n.t("inspector.review.changesRequested"), tone: "danger" };
 		case "needs_review":
 		case "ineligible":
-			return { label: translate(activeLocale(), "inspector.review.notRun"), tone: "neutral" };
+			return { label: appI18n.t("inspector.review.notRun"), tone: "neutral" };
 	}
-	return { label: translate(activeLocale(), "inspector.review.notRun"), tone: "neutral" };
+	return { label: appI18n.t("inspector.review.notRun"), tone: "neutral" };
 }
 
 function reviewSessionRunAction(reviewStates: PRReviewState[], isTriggering: boolean): string {
-	const locale = activeLocale();
 	if (isTriggering || reviewStates.some((reviewState) => reviewState.status === "running")) {
-		return translate(locale, "inspector.review.reviewing");
+		return appI18n.t("inspector.review.reviewing");
 	}
 	if (reviewStates.some((reviewState) => reviewState.status === "changes_requested" || reviewState.latestRun)) {
-		return translate(locale, "inspector.review.rerun");
+		return appI18n.t("inspector.review.rerun");
 	}
-	return translate(locale, "inspector.review.run");
+	return appI18n.t("inspector.review.run");
 }
 
 function BrowserView({
@@ -1158,7 +1165,7 @@ function BrowserView({
 	// so the inspector's Browser tab has nothing to show (and must not mount a
 	// second BrowserPanelView — it would fight the overlay over the shared native
 	// view slot). Exit is via the overlay's own minimize button.
-	const t = useT();
+	const { t } = useTranslation();
 	if (browserPoppedOut) {
 		return (
 			<div role="tabpanel">
@@ -1189,7 +1196,7 @@ function BrowserView({
 }
 
 function FilesView({ filesView, onOpenFiles }: { filesView?: ReactNode; onOpenFiles?: () => void }) {
-	const t = useT();
+	const { t } = useTranslation();
 	if (filesView) {
 		return (
 			<div className="h-full min-h-0" role="tabpanel">

@@ -1,16 +1,7 @@
-/** Supported UI locales. Default is always English unless the user chooses otherwise. */
-export type AppLocale = "en" | "zh-CN";
+import type { AppLocale } from "../../shared/ui-locale";
 
-export const DEFAULT_LOCALE: AppLocale = "en";
-
-export const APP_LOCALES: readonly AppLocale[] = ["en", "zh-CN"] as const;
-
-/** Coerce unknown stored values to a supported locale; corrupt/unknown → en. */
-export function coerceLocale(raw: unknown): AppLocale {
-	if (raw === "zh-CN") return "zh-CN";
-	if (raw === "en") return "en";
-	return DEFAULT_LOCALE;
-}
+export { APP_LOCALES, DEFAULT_LOCALE, coerceLocale } from "../../shared/ui-locale";
+export type { AppLocale } from "../../shared/ui-locale";
 
 /** Value for `document.documentElement.lang`. */
 export function documentLang(locale: AppLocale): string {

@@ -5,8 +5,8 @@ import type {
 	SessionStatus,
 	WorkspaceSession,
 } from "../types/workspace";
-import { t, type MessageKey } from "../i18n";
-import { activeLocale } from "../stores/locale-store";
+import { appI18n, type MessageKey } from "../i18n";
+import type { TFunction } from "i18next";
 
 export type AgentActivityView = {
 	state: SessionActivityState;
@@ -63,11 +63,11 @@ const agentActivityBases: Record<SessionActivityState, AgentActivityBase> = {
 	},
 };
 
-export function getAgentActivityView(activity?: SessionActivity | null): AgentActivityView {
+export function getAgentActivityView(activity?: SessionActivity | null, t: TFunction = appI18n.t): AgentActivityView {
 	const state = activity?.state ?? "unknown";
 	const base = agentActivityBases[state] ?? agentActivityBases.unknown;
 	const { labelKey, ...rest } = base;
-	return { ...rest, label: t(activeLocale(), labelKey) };
+	return { ...rest, label: t(labelKey) };
 }
 
 export function isAgentActivityWorking(activity?: SessionActivity | null): boolean {
@@ -119,10 +119,10 @@ const sessionStatusStyles: Record<SessionStatus, Omit<SessionStatusView, "label"
 	unknown: { className: "text-status-unknown" },
 };
 
-export function getSessionStatusView(status: SessionStatus): SessionStatusView {
+export function getSessionStatusView(status: SessionStatus, t: TFunction = appI18n.t): SessionStatusView {
 	const key = sessionStatusLabelKeys[status] ?? sessionStatusLabelKeys.unknown;
 	const style = sessionStatusStyles[status] ?? sessionStatusStyles.unknown;
-	return { ...style, label: t(activeLocale(), key) };
+	return { ...style, label: t(key) };
 }
 
 export type AttentionZone = "merge" | "action" | "pending" | "working" | "done";
@@ -236,14 +236,14 @@ export function attentionZone(input: SessionStatus | Pick<WorkspaceSession, "sta
 	}
 }
 
-export function getAttentionZoneView(status: SessionStatus): AttentionZoneView {
-	return getAttentionZoneViewForZone(attentionZone(status));
+export function getAttentionZoneView(status: SessionStatus, t: TFunction = appI18n.t): AttentionZoneView {
+	return getAttentionZoneViewForZone(attentionZone(status), t);
 }
 
-export function getAttentionZoneViewForZone(zone: AttentionZone): AttentionZoneView {
+export function getAttentionZoneViewForZone(zone: AttentionZone, t: TFunction = appI18n.t): AttentionZoneView {
 	const base = attentionZoneBases[zone];
 	const { labelKey, ...rest } = base;
-	return { ...rest, label: t(activeLocale(), labelKey) };
+	return { ...rest, label: t(labelKey) };
 }
 
 const activeSessionDotClassNames: Partial<Record<SessionStatus, string>> = {
@@ -327,9 +327,12 @@ const sessionTimelinePillBases: Record<
 	},
 };
 
-export function getSessionTimelinePillView(status: SessionTimelinePillStatus): SessionTimelinePillView {
+export function getSessionTimelinePillView(
+	status: SessionTimelinePillStatus,
+	t: TFunction = appI18n.t,
+): SessionTimelinePillView {
 	const base = sessionTimelinePillBases[status];
-	return { label: t(activeLocale(), base.labelKey), tone: base.tone, breathe: base.breathe };
+	return { label: t(base.labelKey), tone: base.tone, breathe: base.breathe };
 }
 
 export function isSessionIdle(session: Pick<WorkspaceSession, "status">): boolean {

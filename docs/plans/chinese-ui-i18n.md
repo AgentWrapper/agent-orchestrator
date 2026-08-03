@@ -1,122 +1,82 @@
-# Chinese UI i18n — decision & plan
+# Desktop UI localization foundation
 
-**Status:** architecture + thin skeleton (this draft PR)  
-**Date:** 2026-08-03  
-**Surfaces:** desktop Electron renderer first; main-process locale file for future native chrome
+**Status:** long-term foundation plus first Simplified Chinese coverage
 
-Synthesizes prior analysis from architecture, no-library verdict, and scope/impact notes.
+**Date:** 2026-08-02
 
----
+**Surfaces:** Electron renderer first; main-process locale persistence for future native chrome
 
 ## Decision
 
-| Question | Answer |
-|----------|--------|
-| Skip a traditional i18n **library**? | **Yes** — no i18next / Lingui / FormatJS / Paraglide |
-| Skip i18n **architecture**? | **No** — catalogs, keys, `t()`, EN fallback, switch, persistence are required |
-| Default locale | **`en`** (never auto-force OS Chinese on first launch) |
-| Locales v1 | `en` \| `zh-CN` only |
-| Persistence | Main-process `~/.ao/ui-settings.json` + IPC (mirror update-settings / keybindings) |
-| Storage shape | `{ "locale": "en" \| "zh-CN" }` — unknown/corrupt → `en` |
-| Fallback | Missing zh key → English catalog → key id as last resort |
-| Component rule | Call `t(key)`; **no Chinese literals** in components |
+AO uses `i18next` with `react-i18next` for desktop display text. English remains the default and source catalog; Simplified Chinese (`zh-CN`) is the first additional locale.
 
-### Why first-party `t()` (not a library)
+| Concern | Decision |
+| --- | --- |
+| Runtime | `i18next` + `react-i18next` |
+| React integration | One `I18nextProvider`; components use `useTranslation()` |
+| Locales | `en` and `zh-CN` |
+| Default | `en`; do not infer the OS language on first launch |
+| Persistence | Main-process `~/.ao/ui-settings.json` through preload IPC |
+| Fallback | Selected locale → English → key identifier |
+| Interpolation | Standard i18next `{{name}}` syntax |
+| Plurals | i18next/CLDR `_one` and `_other` forms with `count` |
+| Document metadata | Update both `<html lang>` and `<html dir>` on load and switch |
 
-1. **Two locales**, desktop chrome scale (~300–500 strings), sparse plurals — framework features unused day one.
-2. **Matches AO style:** thin Zustand stores, atomic JSON under `~/.ao`, explicit IPC bridges; zero new dep surface in Electron packaging/review.
-3. **English as source catalog** makes fallback trivial: `zh[key] ?? en[key] ?? key`.
-4. **Easy PR slicing:** skeleton + proof settings strings first; full extraction later without rewriting call sites if keys stay stable.
-5. **Exit hatch:** if catalogs grow, rich text, third locale, or translator tooling appears, swap the resolver (e.g. FormatJS/i18next) without redrafting every component.
+This supersedes the earlier first-party `t()` proposal. A standard runtime is the final architecture because localization is intended to grow beyond a two-locale experiment. It provides established fallback, interpolation, plural selection, React subscriptions, and future locale support without growing equivalent framework code in AO.
 
-**Reject:** dual component trees, in-component `locale === 'zh' ? '…' : '…'`, CSS content hacks, OS-locale-only, runtime LLM translation, English-replacement-only.
+PR #2503 explored the same library direction. This implementation stays on the current #3465 branch because it also contains the newer `~/.ao` persistence boundary, settings UI, larger aligned catalogs, and broader renderer migration.
 
----
+## Architecture
 
-## This PR (Phase 0) — skeleton only
+- `frontend/src/renderer/i18n/instance.ts` creates the configured i18next instance with embedded English and zh-CN resources.
+- `frontend/src/renderer/i18n/i18next.d.ts` derives typed translation keys from the English source catalog.
+- `frontend/src/renderer/main.tsx` provides that instance to React.
+- `frontend/src/renderer/stores/locale-store.ts` owns only persisted locale loading and selection. i18next owns translation state and React subscriptions.
+- Pure presentation helpers use the configured i18next instance. Callers whose memoized output contains translated text pass the reactive `t` function explicitly.
+- `frontend/src/main/ui-settings.ts` reads and atomically writes the selected locale beneath the AO data directory; preload exposes only the typed get/set bridge.
 
-| Piece | Location |
-|-------|----------|
-| Catalogs + typed keys + `t()` + `{var}` interpolation | `frontend/src/renderer/i18n/` |
-| Persist locale under state dir | `frontend/src/main/ui-settings.ts` → `ui-settings.json` |
-| IPC + preload types | `uiSettings:get` / `uiSettings:set` |
-| Renderer locale store + `document.documentElement.lang` | `locale-store` |
-| Language control next to Theme | `GeneralSettingsSection` |
-| Proof + expanded migration | Settings + presentation maps + shell chrome + notifications chrome + inspector tabs + New Task/Confirm |
-| Tests | `t()` fallback; presentation maps; settings switch; default `en` keeps English assertions green |
+Both catalogs are bundled today. Their combined size is small enough that lazy locale loading would add complexity without a useful startup or package-size benefit. Revisit loading strategy when more locales or materially larger catalogs are added.
 
-**Landed in this PR (beyond skeleton):** session status/activity/zone labels, PR display chrome, relative time, daemon failure copy, board columns/empty states, sidebar, topbar/titlebar, notification center chrome, updates/developer/project settings labels, keyboard shortcut labels, New Task dialog, Confirm cancel/close.
+## Key conventions
 
-**Still English (intentional / follow-up):** agent terminal I/O, PR titles/bodies, daemon notify payloads, Create Project flow copy, many inspector detail section titles (Overview/Activity/Completion row labels), Connect Mobile setup, landing/mobile/CLI, brand “Agent Orchestrator”.
+- Use semantic, surface-oriented keys such as `settings.project.saveChanges`, not English sentences as identifiers.
+- Keep user, repository, branch, PR, daemon payload, and terminal content as data; translate only surrounding UI chrome.
+- Keep English and zh-CN key sets aligned and non-empty.
+- Use interpolation for runtime values: `"shell.updatedAt": "Updated {{time}}"`.
+- Use plural families and pass `count`: `pr.noun.file_one`, `pr.noun.file_other`, then `t("pr.noun.file", { count })`.
+- Do not branch on locale in components and do not reconstruct English nouns in JSX.
 
----
+## Delivered coverage
 
-## Scope boundaries (desktop Chinese UI track)
+The first migration covers high-visibility desktop chrome, including:
 
-### In scope (later phases)
+- Settings, language selection, project settings, update controls, and keyboard shortcuts
+- Board lanes and empty states, sidebar, topbar, titlebar, notifications, and dialogs
+- New Task and Create Project flows
+- Session inspector, PR/CI/review presentation, compact relative time, and terminal chrome
+- Connect Mobile setup and browser-panel controls
+- Command palette actions, headings, states, and footer help
+- Session files and diffs, migration, restore/replacement failures, terminal tabs, and reusable dialog/sidebar chrome
 
-- Renderer chrome: sidebar, board, inspector, dialogs, empty states, command palette, settings
-- Presentation maps (`session-presentation`, `pr-display`, `format-time`, shortcut catalog labels)
-- a11y labels for icon buttons
-- Main-process menus/dialogs (phase with same catalogs)
-- In-app notification **chrome** (filters, empty states) — not daemon payload bodies
+English remains the source of truth. The language selector persists through the main process, changes visible React text without restart, and updates the document language and direction.
 
-### Out of scope by design
+## Scope boundaries
 
-| Surface | Reason |
-|---------|--------|
-| Agent terminal I/O | Agent/tooling language |
-| PR titles, branches, review bodies | User/SCM content |
-| Daemon API errors / notify title-body written in Go | Domain English; prefer display-layer reformat later |
-| CLI (`ao`) | Separate UX |
-| `packages/mobile` | Separate app; no shared catalog yet |
-| Landing / docs sites | Marketing/docs, not desktop shell |
-| Brand “Agent Orchestrator” | Keep English unless product renames |
+The desktop renderer's application chrome is extracted in this change. A CI test walks renderer TSX and rejects new hardcoded English JSX text and accessibility attributes. Its narrow allowlist contains only product names, keyboard chords, technical units/commands, example repository values, and the simulated external page shown by the browser-preview fixture.
 
----
+Separate product work:
 
-## Persistence & boot
+- Native main-process menus and operating-system dialogs
+- Formatting known daemon notification/error types at the display layer
+- Mobile, landing, documentation, and CLI localization
 
-1. Main reads `ui-settings.json` from the AO state dir (same root as `update-settings.json` / `keybindings.json`, under `~/.ao` or `AO_DATA_DIR`).
-2. Preload exposes `ao.uiSettings.get/set`.
-3. Renderer `locale-store` loads on root mount (like keybindings); default in-memory/`t()` path is `en` so CI stays green before load completes.
-4. On set: write file → update store → set `document.documentElement.lang`.
-5. Do **not** put locale in `app-state.json` (CLI/install marker) or localStorage-only (main would never see it).
+Always leave agent terminal I/O, PR titles/bodies, branch names, paths, repository content, and unknown daemon/provider messages unchanged.
 
----
+## Verification
 
-## Phased follow-ups
-
-| Phase | Work | Size |
-|-------|------|------|
-| **0 (this PR)** | Architecture + skeleton + settings proof strings | S |
-| **1** | High-leverage maps: session-presentation, pr-display, format-time, shortcuts labels, command-palette groups | M |
-| **2** | Settings remaining + dialogs + shell chrome (sidebar, titlebar, empty states) | M–L |
-| **3** | Main menus / auto-updater dialogs / import-folder errors | M |
-| **4** | Notification display-layer (format known types in UI; leave DB English) | M, separate PR |
-| Later | Mobile shared catalogs; landing/docs if product wants | — |
-
-### Test strategy (all phases)
-
-- **Default locale remains `en`** in unit/e2e CI — do not flip global suite to Chinese.
-- Cover zh with: `t()` unit tests, settings persistence, optional smoke for one Chinese label.
-- Budget `data-testid` where English accessible names were the only handle when mass-migrating.
-
-### Upgrade triggers (revisit a real library when 2+ apply)
-
-Third locale; rich nested markup in translations; external translators/TMS; custom layer grows past ~200–300 LOC of framework-like code; heavy plural/select product copy.
-
----
-
-## Open product questions (not blocking skeleton)
-
-1. First-run OS Chinese auto-detect vs explicit-only (skeleton: explicit-only, default `en`)?
-2. Status jargon: fully translate “CI failed” / “Draft PR” or keep English tokens?
-3. Brand string: keep untranslated?
-4. macOS system menus: invest in custom labels vs OS roles + English custom items initially?
-
----
-
-## Bottom line
-
-Skip the **library**; do not skip the **architecture**. Ship a minimal first-party dictionary layer that matches AO’s Electron/`~/.ao` settings patterns, keep English default and complete, and migrate strings incrementally.
+- i18next unit tests cover English defaulting, zh-CN selection, English fallback, missing-key behavior, standard interpolation, CLDR plural selection, catalog/placeholder parity, and required plural families.
+- Locale-store tests cover persisted loading, switching, `lang`, `dir`, single-flight initialization, stale-read protection, and IPC failure behavior.
+- Component tests cover live language switches, persistence failures, localized accessibility labels, and localized PR plural output.
+- The renderer coverage test prevents newly hardcoded English JSX chrome from bypassing the catalogs.
+- Command-palette tests require an explicit reactive translator so memoized commands cannot remain in the previous language.
+- Frontend typecheck, the complete Vitest suite, and all Electron/Vite builds must pass before merge.

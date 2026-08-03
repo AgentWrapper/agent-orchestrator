@@ -1,4 +1,7 @@
 import { Check, Keyboard, Pencil, Plus, RotateCcw, Search, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
+import { shortcutCategoryLabelKeys, shortcutLabelKeys } from "../../i18n/key-maps";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
 	APP_SHORTCUTS,
@@ -7,6 +10,7 @@ import {
 	shortcutBindingLabel,
 	shortcutBindingValidationError,
 	type AppShortcutId,
+	type ShortcutCategory,
 	type KeybindingOverrides,
 	type ShortcutBinding,
 } from "../../../shared/shortcuts";
@@ -27,20 +31,13 @@ import {
 } from "../ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { ConfirmDialog } from "../ConfirmDialog";
-import { useT } from "../../stores/locale-store";
 
-function shortcutLabel(id: string, t: ReturnType<typeof useT>): string {
-	const key = `shortcut.${id}` as Parameters<typeof t>[0];
-	return t(key);
+function shortcutLabel(id: AppShortcutId, t: TFunction): string {
+	return t(shortcutLabelKeys[id]);
 }
 
-function shortcutCategoryLabel(category: string, t: ReturnType<typeof useT>): string {
-	const map: Record<string, Parameters<typeof t>[0]> = {
-		General: "shortcut.category.general",
-		Navigation: "shortcut.category.navigation",
-		Session: "shortcut.category.session",
-	};
-	return t(map[category] ?? "shortcut.category.general");
+function shortcutCategoryLabel(category: ShortcutCategory, t: TFunction): string {
+	return t(shortcutCategoryLabelKeys[category]);
 }
 
 type RecordingState = { id: AppShortcutId; mode: "replace" | "add" };
@@ -95,7 +92,7 @@ export function KeyboardShortcutsSettingsDialog({
 	onOpenChange: (open: boolean) => void;
 	isMac?: boolean;
 }) {
-	const t = useT();
+	const { t } = useTranslation();
 	const overrides = useKeybindingsStore((state) => state.overrides);
 	const setOverrides = useKeybindingsStore((state) => state.setOverrides);
 	const resetBinding = useKeybindingsStore((state) => state.resetBinding);

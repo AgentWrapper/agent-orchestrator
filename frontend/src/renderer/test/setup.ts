@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest";
+import "../i18n";
 
 // Guard: src/main/** tests run in the Node.js environment (no DOM). vitest still
 // routes setupFiles here, so only install the DOM stubs when a DOM exists.

@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { t as translate } from "../i18n";
+import { appI18n } from "../i18n";
 import { GlobalSettingsForm } from "./GlobalSettingsForm";
 import { useLocaleStore } from "../stores/locale-store";
 import { useUiStore } from "../stores/ui-store";
@@ -93,7 +93,7 @@ function renderForm() {
 	return qc;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
 	for (const m of [
 		getUpdate,
 		setUpdate,
@@ -142,11 +142,8 @@ beforeEach(() => {
 	// Feature Releases lives behind Developer Mode; reset to the default (off).
 	useUiStore.getState().setDeveloperMode(false);
 	// Locale defaults to English so existing copy assertions stay green.
-	useLocaleStore.setState({
-		locale: "en",
-		loaded: false,
-		t: (key, vars) => translate("en", key, vars),
-	});
+	await appI18n.changeLanguage("en");
+	useLocaleStore.setState({ locale: "en", loaded: false, saving: false, saveError: false });
 	document.documentElement.lang = "en";
 });
 
@@ -178,6 +175,20 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.getByText("主题")).toBeInTheDocument();
 		expect(document.documentElement.lang).toBe("zh-CN");
 		expect(useLocaleStore.getState().locale).toBe("zh-CN");
+	});
+
+	it("keeps the current language and reports a persistence failure", async () => {
+		setUiSettings.mockRejectedValue(new Error("disk full"));
+		const user = userEvent.setup();
+		renderForm();
+		await screen.findByText("General");
+
+		await user.click(screen.getByLabelText("Language"));
+		await user.click(await screen.findByRole("menuitem", { name: "Simplified Chinese" }));
+
+		expect(await screen.findByRole("alert")).toHaveTextContent("Could not save the language preference.");
+		expect(useLocaleStore.getState().locale).toBe("en");
+		expect(screen.getByText("General")).toBeInTheDocument();
 	});
 
 	it("closes settings with Escape", async () => {

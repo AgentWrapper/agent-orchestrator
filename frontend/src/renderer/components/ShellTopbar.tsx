@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
@@ -27,7 +28,6 @@ import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { StatusPill } from "./StatusPill";
 import { TopbarButton, TopbarKillError, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
-import { useT } from "../stores/locale-store";
 
 const isMac = isMacPlatform();
 const boardActionsInPanel = usesBoardActionsInPanel();
@@ -46,7 +46,7 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 // DashboardTopbar/Topbar pair — agent-orchestrator keeps those as two components
 // aligned only by CSS.
 export function ShellTopbar() {
-	const t = useT();
+	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
@@ -78,7 +78,7 @@ export function ShellTopbar() {
 	const project = projectId ? all.find((workspace) => workspace.id === projectId) : undefined;
 	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : t("shell.board"));
 	const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
-	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity).label : undefined;
+	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity, t).label : undefined;
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
 
 	const openBoard = () =>
@@ -151,7 +151,7 @@ export function ShellTopbar() {
 							</span>
 							<span className="inline-flex h-control-sm items-center gap-1 rounded-md border border-border bg-surface px-2 text-micro font-semibold leading-none tracking-wide-sm text-muted-foreground">
 								<OrchestratorIcon className="size-3 shrink-0" aria-hidden="true" />
-								Orchestrator
+								{t("shell.orchestrator")}
 							</span>
 						</div>
 					</div>
@@ -311,7 +311,7 @@ export function TopbarKillButton({
 	orchestratorId?: string;
 	onKilled: (workspaceId: string, orchestratorId?: string) => void;
 }) {
-	const t = useT();
+	const { t } = useTranslation();
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const queryClient = useQueryClient();
 	const kill = useTerminateSession();
@@ -351,7 +351,7 @@ export function TopbarKillButton({
 }
 
 function ProjectTerminationFeedback({ projectId }: { projectId: string | undefined }) {
-	const t = useT();
+	const { t } = useTranslation();
 	const states = useProjectTerminateSessionStates(projectId);
 	if (states.length === 0) return null;
 
@@ -377,7 +377,8 @@ function ProjectTerminationFeedback({ projectId }: { projectId: string | undefin
 	);
 }
 function SessionStatusPill({ session }: { session: WorkspaceSession }) {
-	const { label, tone, breathe } = getAgentActivityView(session.activity);
+	const { t } = useTranslation();
+	const { label, tone, breathe } = getAgentActivityView(session.activity, t);
 	return (
 		<StatusPill label={label} tone={tone} breathe={breathe} leading="none" className="px-3.5 py-2 text-sm" />
 	);
