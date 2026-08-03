@@ -8,6 +8,7 @@ import {
 	type KeyboardEvent,
 	type PointerEvent,
 } from "react";
+import { useTranslation } from "react-i18next";
 import {
 	ArrowLeft,
 	ArrowRight,
@@ -35,6 +36,7 @@ import {
 	DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { cn } from "../lib/utils";
+import { appI18n, type MessageKey } from "../i18n";
 
 type BrowserPanelProps = {
 	session: WorkspaceSession;
@@ -99,7 +101,7 @@ export function useBrowserAnnotationQueue({
 
 		void (async () => {
 			let sent = false;
-			let failureMessage = "Unable to send annotation.";
+			let failureMessage = appI18n.t("browser.unableSendAnnotation");
 			try {
 				const message = formatBrowserAnnotationMessage(payload);
 				const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
@@ -107,12 +109,12 @@ export function useBrowserAnnotationQueue({
 					body: { message },
 				});
 				if (error) {
-					failureMessage = apiErrorMessage(error, "Unable to send annotation.");
+					failureMessage = apiErrorMessage(error, appI18n.t("browser.unableSendAnnotation"));
 					return;
 				}
 				sent = true;
 			} catch (error) {
-				failureMessage = apiErrorMessage(error, "Unable to send annotation.");
+				failureMessage = apiErrorMessage(error, appI18n.t("browser.unableSendAnnotation"));
 			} finally {
 				if (sendGeneration !== generationRef.current || sendSessionId !== sessionIdRef.current) return;
 				annotationSendingRef.current = false;
@@ -233,6 +235,7 @@ export function BrowserPanelView({
 	browserView,
 	annotationQueue,
 }: BrowserPanelProps & { annotationQueue: BrowserAnnotationQueueModel; browserView: BrowserViewModel }) {
+	const { t } = useTranslation();
 	const {
 		viewId,
 		navState,
@@ -315,7 +318,7 @@ export function BrowserPanelView({
 				cancelPicking();
 			}
 		} catch (error) {
-			failPicking(error instanceof Error ? error.message : "Unable to start annotation.");
+			failPicking(error instanceof Error ? error.message : appI18n.t("browser.unableStartAnnotation"));
 		}
 	};
 
@@ -364,15 +367,15 @@ export function BrowserPanelView({
 
 	const annotationStatusLabel =
 		status === "picking"
-			? "Pick element"
+			? t("browser.pickElement")
 			: status === "queued"
 				? queuedCount > 1
-					? `Queued (${queuedCount})`
-					: "Queued"
+					? t("browser.queuedCount", { count: queuedCount })
+					: t("browser.queued")
 				: status === "sending"
-					? "Sending"
+					? t("browser.sending")
 					: status === "sent"
-						? "Sent"
+						? t("browser.sent")
 						: status === "error"
 							? error
 							: "";
@@ -403,7 +406,7 @@ export function BrowserPanelView({
 				onSubmit={submit}
 			>
 				<Button
-					aria-label="Back"
+					aria-label={t("browser.back")}
 					disabled={!navState.canGoBack}
 					onClick={() => void goBack()}
 					size="icon-sm"
@@ -413,7 +416,7 @@ export function BrowserPanelView({
 					<ArrowLeft aria-hidden="true" className="size-icon-base" />
 				</Button>
 				<Button
-					aria-label="Forward"
+					aria-label={t("browser.forward")}
 					disabled={!navState.canGoForward}
 					onClick={() => void goForward()}
 					size="icon-sm"
@@ -423,7 +426,7 @@ export function BrowserPanelView({
 					<ArrowRight aria-hidden="true" className="size-icon-base" />
 				</Button>
 				<Button
-					aria-label={navState.isLoading ? "Stop" : "Reload"}
+					aria-label={navState.isLoading ? t("browser.stop") : t("browser.reload")}
 					onClick={() => void (navState.isLoading ? stop() : reload())}
 					size="icon-sm"
 					type="button"
@@ -438,17 +441,17 @@ export function BrowserPanelView({
 				<Button
 					aria-label={
 						canRetryAnnotation
-							? "Retry annotation"
+							? t("browser.retryAnnotation")
 							: annotationMode || status === "picking"
-								? "Cancel annotation"
-								: "Annotate page"
+								? t("browser.cancelAnnotation")
+								: t("browser.annotate")
 					}
 					aria-pressed={annotationMode || status === "picking"}
 					className="browser-panel__annotate-btn"
 					disabled={!canAnnotate || status === "sending"}
 					onClick={() => void toggleAnnotationMode()}
 					size="icon-sm"
-					title={canRetryAnnotation ? "Retry annotation" : "Annotate page"}
+					title={canRetryAnnotation ? t("browser.retryAnnotation") : t("browser.annotate")}
 					type="button"
 					variant="ghost"
 				>
@@ -476,10 +479,10 @@ export function BrowserPanelView({
 							data-testid="browser-url-icon"
 						/>
 					<Input
-						aria-label="Browser URL"
+						aria-label={t("browser.url")}
 						className="browser-panel__url-input h-browser-url pl-browser-url font-mono text-xs"
 						onChange={(event) => setUrlInput(event.target.value)}
-						placeholder="localhost:5173"
+						placeholder={t("browser.urlPlaceholder")}
 						value={urlInput}
 					/>
 				</div>
@@ -491,7 +494,7 @@ export function BrowserPanelView({
 				<DropdownMenu modal={false} onOpenChange={handleTabsMenuOpenChange} open={tabsMenuOpen}>
 					<DropdownMenuTrigger asChild>
 						<Button
-							aria-label={`Browser tabs (${tabs.length})`}
+							aria-label={t("browser.tabsAria", { count: tabs.length })}
 							className={cn("browser-panel__tabs-trigger gap-1 px-2", tabs.length > 1 && "bg-accent-weak text-accent")}
 							disabled={tabs.length === 0}
 							onFocus={warmTabsMenuFrame}
@@ -499,7 +502,7 @@ export function BrowserPanelView({
 							onPointerDown={handleTabsTriggerPointerDown}
 							onPointerEnter={warmTabsMenuFrame}
 							size="sm"
-							title={`${tabs.length} browser ${tabs.length === 1 ? "tab" : "tabs"}`}
+							title={t("browser.tabsTitle", { count: tabs.length })}
 							type="button"
 							variant="ghost"
 						>
@@ -509,12 +512,13 @@ export function BrowserPanelView({
 					</DropdownMenuTrigger>
 					<DropdownMenuContent align="end" className="w-72" sideOffset={8}>
 						<div className="flex items-center justify-between pr-1">
-							<DropdownMenuLabel>Browser tabs</DropdownMenuLabel>
+							<DropdownMenuLabel>{t("browser.tabs")}</DropdownMenuLabel>
 							<Button
-								aria-label="New tab"
+								aria-label={t("browser.newTab")}
 								className="size-6 shrink-0"
 								onClick={() => void openNewTab()}
 								size="icon-sm"
+								title={t("browser.newTab")}
 								type="button"
 								variant="ghost"
 							>
@@ -539,7 +543,7 @@ export function BrowserPanelView({
 										</span>
 									</DropdownMenuItem>
 									<DropdownMenuItem
-										aria-label={`Close tab ${label.title}`}
+										aria-label={t("browser.closeTab", { title: label.title })}
 										className="size-8 shrink-0 cursor-pointer justify-center px-0"
 										disabled={tabs.length === 1}
 										onSelect={(event) => {
@@ -548,7 +552,7 @@ export function BrowserPanelView({
 											event.preventDefault();
 											void closeTab(tab.id);
 										}}
-										title={tabs.length === 1 ? "The only tab cannot be closed" : `Close ${label.title}`}
+										title={tabs.length === 1 ? t("browser.onlyTab") : t("browser.closeTab", { title: label.title })}
 									>
 										<X aria-hidden="true" className="size-icon-sm" />
 									</DropdownMenuItem>
@@ -558,14 +562,14 @@ export function BrowserPanelView({
 					</DropdownMenuContent>
 				</DropdownMenu>
 				<Button
-					aria-label={poppedOut ? "Return to panel" : "Pop out"}
+					aria-label={poppedOut ? t("browser.returnToPanel") : t("browser.popOut")}
 					disabled={!canPopOut}
 					onClick={() => {
 						if (!canPopOut) return;
 						onTogglePopOut(!poppedOut);
 					}}
 					size="icon-sm"
-					title={canPopOut ? undefined : "Open a page before maximizing the browser"}
+					title={canPopOut ? undefined : t("browser.openPageFirst")}
 					type="button"
 					variant="ghost"
 				>
@@ -597,7 +601,7 @@ export function BrowserPanelView({
 				{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
 				{navState.url === "" ? (
 					<div className="pointer-events-none absolute inset-0 grid place-items-center p-5 text-center font-mono text-xs text-passive">
-						<p>Enter a URL or click one in the terminal.</p>
+						<p>{t("browser.emptyUrl")}</p>
 					</div>
 				) : null}
 				{navState.error ? (
@@ -619,49 +623,52 @@ export function BrowserPanelView({
 function agentActivityLabel(activity: BrowserViewModel["agentBrowserActivity"], active: boolean): string {
 	if (!active && !activity?.active) return "";
 	const action = activity?.active ? activity.action : "";
-	if (!action) return "Agent using browser";
-	return `Agent ${browserActionVerb(action)}`;
+	if (!action) return appI18n.t("browser.agentUsing");
+	return appI18n.t("browser.agentAction", { verb: browserActionVerb(action) });
 }
 
 function browserActionVerb(action: string): string {
-	switch (action) {
-		case "click":
-			return "clicking";
-		case "fill":
-		case "type":
-			return "typing";
-		case "press":
-			return "pressing";
-		case "hover":
-			return "hovering";
-		case "scroll":
-			return "scrolling";
-		case "open":
-			return "opening";
-		case "wait":
-			return "waiting";
-		case "snapshot":
-			return "reading";
-		case "highlight":
-			return "highlighting";
-		case "unhighlight":
-			return "clearing highlight";
-		case "tab-new":
-			return "opening tab";
-		case "tab-select":
-			return "switching tabs";
-		case "tab-close":
-			return "closing tab";
-		case "tabs":
-			return "checking tabs";
-		default:
-			return "using browser";
-	}
+	const key = ((): MessageKey => {
+		switch (action) {
+			case "click":
+				return "browser.verb.click";
+			case "fill":
+			case "type":
+				return "browser.verb.type";
+			case "press":
+				return "browser.verb.press";
+			case "hover":
+				return "browser.verb.hover";
+			case "scroll":
+				return "browser.verb.scroll";
+			case "open":
+				return "browser.verb.open";
+			case "wait":
+				return "browser.verb.wait";
+			case "snapshot":
+				return "browser.verb.read";
+			case "highlight":
+				return "browser.verb.highlight";
+			case "unhighlight":
+				return "browser.verb.clearHighlight";
+			case "tab-new":
+				return "browser.verb.openTab";
+			case "tab-select":
+				return "browser.verb.switchTab";
+			case "tab-close":
+				return "browser.verb.closeTab";
+			case "tabs":
+				return "browser.verb.checkTabs";
+			default:
+				return "browser.verb.using";
+		}
+	})();
+	return appI18n.t(key);
 }
 
 function browserTabLabel(title: string, url: string): { title: string; subtitle: string } {
 	const cleanTitle = title.trim();
-	if (!url) return { title: cleanTitle || "New tab", subtitle: "Blank page" };
+	if (!url) return { title: cleanTitle || appI18n.t("browser.newTab"), subtitle: appI18n.t("browser.blankPage") };
 	try {
 		const parsed = new URL(url);
 		const subtitle = parsed.protocol === "file:" ? parsed.pathname.split("/").filter(Boolean).at(-1) || url : parsed.host;

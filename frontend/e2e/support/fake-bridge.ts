@@ -153,6 +153,10 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
 					set: async () => undefined,
 				},
+				uiSettings: {
+					get: async () => ({ locale: "en" }),
+					set: async (settings) => settings,
+				},
 				keybindings: {
 					get: async () => ({}),
 					set: async (overrides) => overrides,
@@ -165,6 +169,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					download: async () => undefined,
 					install: async () => undefined,
 					onStatus: unsubscribe,
+					onTelemetry: unsubscribe,
 				},
 				// UpdatesSection calls featureBuilds.getActive() immediately on mount; an
 				// omitted namespace would surface as a swallowed React Query error.
@@ -533,6 +538,10 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
 					set: async () => undefined,
 				},
+				uiSettings: {
+					get: async () => ({ locale: "en" }),
+					set: async (settings) => settings,
+				},
 				keybindings: {
 					get: async () => ({}),
 					set: async (overrides) => overrides,
@@ -545,6 +554,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					download: async () => undefined,
 					install: async () => undefined,
 					onStatus: unsubscribe,
+					onTelemetry: unsubscribe,
 				},
 				// UpdatesSection calls featureBuilds.getActive() immediately on mount; an
 				// omitted namespace would surface as a swallowed React Query error.
