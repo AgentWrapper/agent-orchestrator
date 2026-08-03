@@ -292,82 +292,87 @@ const UNTRUSTED_END = "<<<END UNTRUSTED EXTERNAL CONTENT>>>";
 // The human-facing address bar may open local preview files. Agent commands use
 // normalizeAgentBrowserURL below, which permits only explicit HTTP(S) targets.
 const ALLOWED_PROTOCOLS = new Set(["http:", "https:", "file:"]);
-const AGENT_STATUS_HOST_ID = "__ao_agent_working_badge__";
+const AGENT_STATUS_HOST_ID = "__ao_agent_working_pill__";
 const AGENT_STATUS_MARKUP = `
 <style>
   :host {
     all: initial;
     position: fixed;
-    right: 12px;
-    bottom: 12px;
+    right: 8px;
+    bottom: 10px;
     z-index: 2147483647;
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     justify-content: flex-end;
-    width: 116px;
+    width: 110px;
     height: 26px;
     pointer-events: none;
   }
-  .badge {
+  .status {
     box-sizing: border-box;
-    margin-left: auto;
     display: inline-flex;
     align-items: center;
-    gap: 7px;
-    width: 116px;
+    justify-content: flex-start;
+    gap: 4px;
+    width: 110px;
+    min-width: 110px;
     height: 26px;
-    min-height: 26px;
-    padding: 0 8px;
-    border: 1px solid rgba(255, 255, 255, 0.18);
+    padding: 0 5px 0 8px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
     border-radius: 999px;
-    background: rgba(25, 28, 34, 0.8);
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.04);
-    backdrop-filter: blur(10px);
-    color: rgba(255, 255, 255, 0.78);
+    background: rgba(20, 24, 30, 0.74);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(8px);
+    color: rgba(255, 255, 255, 0.84);
     font: 600 11px/1.1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     white-space: nowrap;
     pointer-events: none;
     user-select: none;
     -webkit-user-select: none;
     overflow: hidden;
-    animation:
-      ao-agent-working-in 180ms ease-out both,
-      ao-agent-working-collapse 2.2s cubic-bezier(0.22, 1, 0.36, 1) 180ms forwards;
+    animation: ao-agent-working-collapse 3s cubic-bezier(0.22, 1, 0.36, 1) 180ms forwards;
   }
   .label {
     flex: 0 0 auto;
-    max-width: 78px;
+    max-width: 86px;
     overflow: hidden;
     opacity: 1;
-    animation: ao-agent-working-label-collapse 2.2s cubic-bezier(0.22, 1, 0.36, 1) 180ms forwards;
+    animation: ao-agent-working-label-collapse 3s cubic-bezier(0.22, 1, 0.36, 1) 180ms forwards;
   }
   .dot {
     width: 12px;
     height: 7px;
     flex: 0 0 auto;
     border-radius: 999px;
-    margin-left: auto;
     background: #75d69b;
     box-shadow: 0 0 0 3px rgba(117, 214, 155, 0.16);
     animation: ao-agent-working-breathe 2.4s ease-in-out infinite;
   }
-  @keyframes ao-agent-working-in {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
   @keyframes ao-agent-working-collapse {
     0%, 64% {
-      width: 116px;
-      gap: 7px;
+      width: 110px;
+      min-width: 110px;
+      height: 26px;
+      padding: 0 5px 0 8px;
+      gap: 4px;
+      border-color: rgba(255, 255, 255, 0.14);
+      background: rgba(20, 24, 30, 0.74);
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(255, 255, 255, 0.03);
     }
     100% {
-      width: 30px;
+      width: 12px;
+      min-width: 12px;
+      height: 7px;
+      padding: 0;
       gap: 0;
+      border-color: transparent;
+      background: transparent;
+      box-shadow: none;
     }
   }
   @keyframes ao-agent-working-label-collapse {
     0%, 64% {
-      max-width: 78px;
+      max-width: 86px;
       opacity: 1;
     }
     100% {
@@ -386,16 +391,12 @@ const AGENT_STATUS_MARKUP = `
     }
   }
   @media (prefers-reduced-motion: reduce) {
-    .badge {
-      animation: ao-agent-working-collapse 0s 1.65s forwards;
-    }
-    .label {
-      animation: ao-agent-working-label-collapse 0s 1.65s forwards;
-    }
+    .status { animation: ao-agent-working-collapse 0s 2.3s forwards; }
+    .label { animation: ao-agent-working-label-collapse 0s 2.3s forwards; }
     .dot { animation: none; }
   }
 </style>
-<div class="badge" role="presentation"><span class="label">Agent working</span><span class="dot" aria-hidden="true"></span></div>`;
+<div class="status" role="presentation"><span class="label">Agent working</span><span class="dot" aria-hidden="true"></span></div>`;
 
 function agentStatusScript(active: boolean): string {
 	return `(() => {

@@ -247,7 +247,6 @@ export function BrowserPanelView({
 		closeDevTools = async () => undefined,
 		prepareForOverlay,
 		agentBrowserActive,
-		agentBrowserActivity,
 		visualTransition,
 		annotationMode,
 		setAnnotationMode,
@@ -365,14 +364,11 @@ export function BrowserPanelView({
 						: status === "error"
 							? error
 							: "";
-	const agentStatusLabel = agentActivityLabel(agentBrowserActivity, agentBrowserActive);
-
 	return (
 		<div
 			className={cn(
 				"browser-panel flex h-full min-h-browser-min flex-col overflow-hidden rounded-lg border border-border bg-background",
 				poppedOut && "browser-panel--popped-out",
-				agentStatusLabel && "browser-panel--agent-active",
 			)}
 			data-testid="browser-panel"
 			data-transition={visualTransition?.kind}
@@ -444,10 +440,6 @@ export function BrowserPanelView({
 						}
 					>
 						{annotationStatusLabel}
-					</span>
-				) : agentStatusLabel ? (
-					<span className="browser-panel__annotation-status" role="status" aria-live="polite">
-						{agentStatusLabel}
 					</span>
 				) : null}
 					<div className="browser-panel__url-wrap relative min-w-0 flex-1">
@@ -617,49 +609,6 @@ export function BrowserPanelView({
 			</div>
 		</div>
 	);
-}
-
-function agentActivityLabel(activity: BrowserViewModel["agentBrowserActivity"], active: boolean): string {
-	if (!active && !activity?.active) return "";
-	const action = activity?.active ? activity.action : "";
-	if (!action) return "Agent using browser";
-	return `Agent ${browserActionVerb(action)}`;
-}
-
-function browserActionVerb(action: string): string {
-	switch (action) {
-		case "click":
-			return "clicking";
-		case "fill":
-		case "type":
-			return "typing";
-		case "press":
-			return "pressing";
-		case "hover":
-			return "hovering";
-		case "scroll":
-			return "scrolling";
-		case "open":
-			return "opening";
-		case "wait":
-			return "waiting";
-		case "snapshot":
-			return "reading";
-		case "highlight":
-			return "highlighting";
-		case "unhighlight":
-			return "clearing highlight";
-		case "tab-new":
-			return "opening tab";
-		case "tab-select":
-			return "switching tabs";
-		case "tab-close":
-			return "closing tab";
-		case "tabs":
-			return "checking tabs";
-		default:
-			return "using browser";
-	}
 }
 
 function browserTabLabel(title: string, url: string): { title: string; subtitle: string } {

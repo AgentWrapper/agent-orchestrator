@@ -348,7 +348,7 @@ describe("BrowserPanel", () => {
 		expect(hookState.setAnnotationMode).toHaveBeenCalledWith(true);
 	});
 
-	it("shows browser activity only for browser commands, not general worker activity", () => {
+	it("shows the bottom browser activity pill, not general worker activity text", () => {
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
 		const first = render(
 			<BrowserPanel
@@ -385,17 +385,19 @@ describe("BrowserPanel", () => {
 		const status = screen.getByTestId("browser-agent-status");
 		expect(status).toHaveTextContent("Agent working");
 		expect(status).toHaveClass("browser-panel__agent-status");
+		expect(screen.getByTestId("browser-toolbar")).not.toHaveTextContent("Agent working");
 	});
 
-	it("shows the concrete browser action while the agent controls the page", () => {
+	it("does not render browser activity text in the toolbar", () => {
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
 		hookState.agentBrowserActive = true;
 		hookState.agentBrowserActivity = { active: true, action: "click", phase: "started" };
 
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
-		expect(screen.getByText("Agent clicking")).toBeInTheDocument();
+		expect(screen.queryByText("Agent clicking")).not.toBeInTheDocument();
 		expect(screen.queryByText("Agent using browser")).not.toBeInTheDocument();
+		expect(screen.getByTestId("browser-agent-status")).toBeInTheDocument();
 	});
 
 	it("renders a captured transition frame over the native browser slot", () => {
