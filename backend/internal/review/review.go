@@ -158,9 +158,17 @@ type CancelResult struct {
 // Trigger starts reviews for every PR on the worker session that needs review.
 // It reuses running/up-to-date runs, retries failed/current changes-requested
 // heads, and uses one reviewer pane for every new run in the batch.
-func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (TriggerResult, error) {
+//
+// An empty override keeps the project's configured reviewer. A known one runs
+// this pass under it without editing project config, so picking a reviewer for
+// one session cannot change what any other session in the project runs. The
+// harness-change path below already handles the swap by respawning the pane.
+func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override domain.ReviewerHarness) (TriggerResult, error) {
 	if workerID == "" {
 		return TriggerResult{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
+	}
+	if override != "" && !override.IsKnown() {
+		return TriggerResult{}, fmt.Errorf("%w: unknown reviewer harness %q", ErrInvalid, override)
 	}
 
 	// Serialise concurrent triggers for this worker so the idempotency check
@@ -205,6 +213,9 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 	harness, err := e.reviewerHarness(ctx, worker)
 	if err != nil {
 		return TriggerResult{}, err
+	}
+	if override != "" {
+		harness = override
 	}
 
 	// Harness the live reviewer pane was launched under, captured before the

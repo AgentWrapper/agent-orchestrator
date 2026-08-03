@@ -852,3 +852,11 @@ type UnregisterPushDeviceResponse struct {
 	Token   string `json:"token"`
 	Deleted bool   `json:"deleted"`
 }
+
+// TriggerReviewRequest is the optional body of the review trigger route. An
+// empty harness keeps the project's configured reviewer; setting one overrides
+// it for this pass only, without editing project config, so one session's choice
+// cannot change what another session in the project runs.
+type TriggerReviewRequest struct {
+	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,opencode"`
+}

@@ -1059,6 +1059,7 @@ export interface components {
         ListReviewsResponse: {
             reviewerHandleId: string;
             reviews: components["schemas"]["PRReviewState"][];
+            runs: components["schemas"]["ReviewRun"][];
         };
         ListSessionPRsResponse: {
             prs: components["schemas"]["SessionPRSummary"][];
@@ -1536,6 +1537,10 @@ export interface components {
             /** @enum {string} */
             provider?: "github";
             repo?: string;
+        };
+        TriggerReviewRequest: {
+            /** @enum {string} */
+            harness?: "claude-code" | "codex" | "opencode";
         };
         TriggerReviewResponse: {
             /** @description True when a new review pass was started; false when an existing run for the same commit was reused. */
@@ -4344,7 +4349,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["TriggerReviewRequest"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {

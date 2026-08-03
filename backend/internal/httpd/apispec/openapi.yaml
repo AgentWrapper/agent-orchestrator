@@ -2140,6 +2140,11 @@ paths:
         schema:
           description: Session identifier, e.g. project-1.
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TriggerReviewRequest'
       responses:
         "200":
           content:
@@ -3082,9 +3087,14 @@ components:
           items:
             $ref: '#/components/schemas/PRReviewState'
           type: array
+        runs:
+          items:
+            $ref: '#/components/schemas/ReviewRun'
+          type: array
       required:
       - reviewerHandleId
       - reviews
+      - runs
       type: object
     ListSessionPRsResponse:
       properties:
@@ -4276,6 +4286,15 @@ components:
           - github
           type: string
         repo:
+          type: string
+      type: object
+    TriggerReviewRequest:
+      properties:
+        harness:
+          enum:
+          - claude-code
+          - codex
+          - opencode
           type: string
       type: object
     TriggerReviewResponse:
