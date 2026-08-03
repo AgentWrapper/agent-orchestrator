@@ -163,9 +163,13 @@ func (r *Runner) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	runtimeEnvironment := append(os.Environ(), envList(hookEnvironment)...)
+	agentEnvironment := append(sanitizedProcessEnvironment(), envList(hookEnvironment)...)
 	clearEnvironmentSecret(hookEnvironment, credentialEnvironmentName)
-	return r.runInteractiveAgent(ctx, argv, runtimeEnvironment)
+	workspaceEnvironment := append(
+		sanitizedProcessEnvironment(),
+		envList(workspaceShellEnvironment(r.bootstrap.Launch.Session.Branch))...,
+	)
+	return r.runInteractiveAgent(ctx, argv, agentEnvironment, workspaceEnvironment)
 }
 
 func prepareWorkerHome() error {
@@ -246,11 +250,12 @@ func cloudAgentCommand(
 func (r *Runner) runInteractiveAgent(
 	ctx context.Context,
 	argv []string,
-	environment []string,
+	agentEnvironment []string,
+	workspaceEnvironment []string,
 ) error {
 	command := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	command.Dir = r.workspaceDir
-	command.Env = environment
+	command.Env = agentEnvironment
 	terminal, err := pty.Start(command)
 	if err != nil {
 		return fmt.Errorf("start agent PTY: %w", err)
@@ -258,7 +263,7 @@ func (r *Runner) runInteractiveAgent(
 	defer func() { _ = terminal.Close() }()
 	workspaceCommand := exec.CommandContext(ctx, "/bin/bash", "-i")
 	workspaceCommand.Dir = r.workspaceDir
-	workspaceCommand.Env = environment
+	workspaceCommand.Env = workspaceEnvironment
 	workspaceTerminal, err := pty.Start(workspaceCommand)
 	if err != nil {
 		return fmt.Errorf("start workspace shell PTY: %w", err)
@@ -505,7 +510,7 @@ func (r *Runner) prepareRepository(ctx context.Context) error {
 		return fmt.Errorf("create workspace parent: %w", err)
 	}
 	cloneURL := r.bootstrap.Launch.RepositoryURL
-	commandEnvironment := os.Environ()
+	commandEnvironment := sanitizedProcessEnvironment()
 	if localGitHubTokenPath == "" {
 		cloneURL, err = cloudlocalgh.ProxyURL(
 			os.Getenv("AO_CLOUD_PUBLIC_URL"),
@@ -1009,6 +1014,44 @@ func workerEnvironment(token string) map[string]string {
 		"AO_SESSION_ID":       os.Getenv("AO_CLOUD_SESSION_ID"),
 		"AO_DATA_DIR":         os.Getenv("AO_DATA_DIR"),
 	}
+}
+
+func workspaceShellEnvironment(branch string) map[string]string {
+	return map[string]string{
+		"AO_CLOUD_PUBLIC_URL": os.Getenv("AO_CLOUD_PUBLIC_URL"),
+		"AO_SESSION_ID":       os.Getenv("AO_CLOUD_SESSION_ID"),
+		"AO_SESSION_BRANCH":   branch,
+	}
+}
+
+func sanitizedProcessEnvironment() []string {
+	sensitive := map[string]struct{}{ // #nosec G101 -- these are environment variable names, not secret values.
+		"ANTHROPIC_API_KEY":         {},
+		"AO_LOCAL_GITHUB_TOKEN":     {},
+		"AO_WORKER_BOOTSTRAP_TOKEN": {},
+		"AO_WORKER_TOKEN":           {},
+		"CLAUDE_CODE_OAUTH_TOKEN":   {},
+		"CURSOR_API_KEY":            {},
+		"OPENAI_API_KEY":            {},
+		"OPENAI_API_KEY_FILE":       {},
+		"OPENAI_API_KEY_PATH":       {},
+		"WORKOS_API_KEY":            {},
+		"WORKOS_COOKIE_PASSWORD":    {},
+		"WORKOS_CLIENT_SECRET":      {},
+		"WORKOS_WEBHOOK_SECRET":     {},
+	}
+	result := make([]string, 0)
+	for _, entry := range os.Environ() {
+		name, _, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		if _, skip := sensitive[name]; skip {
+			continue
+		}
+		result = append(result, entry)
+	}
+	return result
 }
 
 func envList(values map[string]string) []string {

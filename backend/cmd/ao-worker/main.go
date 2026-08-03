@@ -45,6 +45,7 @@ func run(log *slog.Logger) error {
 		return errors.New("AO_WORKER_BOOTSTRAP_TOKEN is required")
 	}
 	bootstrap, err := client.Bootstrap(ctx, bootstrapToken, cloudworker.Version, cloudworker.DefaultCapabilities)
+	_ = os.Unsetenv("AO_WORKER_BOOTSTRAP_TOKEN")
 	if err != nil {
 		return fmt.Errorf("bootstrap worker: %w", err)
 	}

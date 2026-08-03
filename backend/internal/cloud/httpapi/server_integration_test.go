@@ -484,25 +484,8 @@ func TestWorkerAndBrowserTerminalReplayLiveRouting(t *testing.T) {
 		nil,
 	)
 	defer retryResponse.Body.Close()
-	if retryResponse.StatusCode != http.StatusOK {
-		t.Fatalf("bootstrap retry status = %d", retryResponse.StatusCode)
-	}
-	var retryBody struct {
-		WorkerID string `json:"workerId"`
-		Epoch    int64  `json:"epoch"`
-	}
-	if err := json.NewDecoder(retryResponse.Body).Decode(&retryBody); err != nil {
-		t.Fatalf("decode bootstrap retry: %v", err)
-	}
-	if retryBody.WorkerID != bootstrapBody.WorkerID ||
-		retryBody.Epoch != bootstrapBody.Epoch {
-		t.Fatalf(
-			"bootstrap retry identity = %q/%d, want %q/%d",
-			retryBody.WorkerID,
-			retryBody.Epoch,
-			bootstrapBody.WorkerID,
-			bootstrapBody.Epoch,
-		)
+	if retryResponse.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("bootstrap retry status = %d, want 401", retryResponse.StatusCode)
 	}
 	markWorkerReady(t, server, bootstrapBody.WorkerToken)
 

@@ -369,14 +369,8 @@ func TestCreateSessionIsIdempotentAndEventsAreOrdered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RedeemWorkerBootstrapTicket() error = %v", err)
 	}
-	secondRedemption, err := store.RedeemWorkerBootstrapTicket(ctx, retryableTicket)
-	if err != nil {
-		t.Fatalf("retry RedeemWorkerBootstrapTicket() error = %v", err)
-	}
-	if firstRedemption.SessionID != secondRedemption.SessionID ||
-		firstRedemption.WorkerEpoch <= 0 ||
-		firstRedemption.WorkerEpoch != secondRedemption.WorkerEpoch {
-		t.Fatalf("bootstrap retry changed ticket identity")
+	if _, err := store.RedeemWorkerBootstrapTicket(ctx, retryableTicket); !errors.Is(err, ErrInvalidTicket) {
+		t.Fatalf("retry RedeemWorkerBootstrapTicket() error = %v, want ErrInvalidTicket", err)
 	}
 	if firstRedemption.WorkerEpoch <= consumed.WorkerEpoch {
 		t.Fatalf(

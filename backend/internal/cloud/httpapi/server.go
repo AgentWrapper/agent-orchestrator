@@ -2507,6 +2507,7 @@ func (s *Server) workerEvent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	input.Payload = redactWorkerEventPayload(input.Type, input.Payload)
 	event, err := s.events.Append(r.Context(), claims.AccountID, claims.SessionID, input.Type, input.Payload)
 	if err != nil {
 		s.internalError(w, r, "append worker event", err)
@@ -2526,6 +2527,86 @@ func (s *Server) workerEvent(w http.ResponseWriter, r *http.Request) {
 
 func activityStartsTurn(event, state string) bool {
 	return event == "user-prompt-submit" && state == "active"
+}
+
+func redactWorkerEventPayload(eventType string, payload json.RawMessage) json.RawMessage {
+	if len(payload) == 0 {
+		return payload
+	}
+	var value any
+	if err := json.Unmarshal(payload, &value); err != nil {
+		return payload
+	}
+	value = redactJSONValue(value)
+	if eventType == "terminal.output" || eventType == "workspace_terminal.output" {
+		if object, ok := value.(map[string]any); ok {
+			if data, ok := object["data"].(string); ok {
+				if encoding, _ := object["encoding"].(string); encoding == "base64" {
+					if decoded, err := base64.StdEncoding.DecodeString(data); err == nil {
+						object["data"] = base64.StdEncoding.EncodeToString([]byte(redactSecretText(string(decoded))))
+					}
+				}
+			}
+		}
+	}
+	redacted, err := json.Marshal(value)
+	if err != nil {
+		return payload
+	}
+	return redacted
+}
+
+func redactJSONValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if sensitivePayloadKey(key) {
+				typed[key] = "[redacted]"
+				continue
+			}
+			typed[key] = redactJSONValue(child)
+		}
+		return typed
+	case []any:
+		for index, child := range typed {
+			typed[index] = redactJSONValue(child)
+		}
+		return typed
+	case string:
+		return redactSecretText(typed)
+	default:
+		return value
+	}
+}
+
+func sensitivePayloadKey(key string) bool {
+	normalized := strings.ToLower(strings.ReplaceAll(key, "_", ""))
+	return strings.Contains(normalized, "token") ||
+		strings.Contains(normalized, "secret") ||
+		strings.Contains(normalized, "apikey") ||
+		strings.Contains(normalized, "authorization")
+}
+
+func redactSecretText(value string) string {
+	prefixes := []string{ // #nosec G101 -- these are environment variable names, not secret values.
+		"ANTHROPIC_API_KEY=",
+		"AO_LOCAL_GITHUB_TOKEN=",
+		"AO_WORKER_BOOTSTRAP_TOKEN=",
+		"AO_WORKER_TOKEN=",
+		"CLAUDE_CODE_OAUTH_TOKEN=",
+		"CURSOR_API_KEY=",
+		"OPENAI_API_KEY=",
+	}
+	lines := strings.Split(value, "\n")
+	for index, line := range lines {
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(line, prefix) {
+				lines[index] = prefix + "[redacted]"
+				break
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func activityNativeSessionID(native json.RawMessage) string {
@@ -3319,6 +3400,10 @@ func (s *Server) putDaytonaConnection(w http.ResponseWriter, r *http.Request) {
 	if input.APIURL == "" {
 		input.APIURL = s.daytonaAPIURL
 	}
+	if !validDaytonaAPIURL(input.APIURL, s.daytonaAPIURL) {
+		writeError(w, r, http.StatusBadRequest, "INVALID_DAYTONA_URL", "Daytona API URL must use an approved HTTPS Daytona origin.")
+		return
+	}
 	if input.Target == "" {
 		input.Target = s.daytonaTarget
 	}
@@ -3353,6 +3438,24 @@ func (s *Server) putDaytonaConnection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"providerConnection": connection})
+}
+
+func validDaytonaAPIURL(candidate, configured string) bool {
+	parsed, err := url.Parse(candidate)
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.Host == "" {
+		return false
+	}
+	configuredParsed, err := url.Parse(configured)
+	if err == nil &&
+		configuredParsed.Scheme == "https" &&
+		strings.EqualFold(parsed.Host, configuredParsed.Host) {
+		return true
+	}
+	if parsed.Port() != "" && parsed.Port() != "443" {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == "app.daytona.io" || strings.HasSuffix(host, ".daytona.io")
 }
 
 func (s *Server) cors(next http.Handler) http.Handler {

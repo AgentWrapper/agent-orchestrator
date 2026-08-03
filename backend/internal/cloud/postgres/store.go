@@ -1431,7 +1431,7 @@ func (s *Store) RedeemWorkerBootstrapTicket(
 	ctx context.Context,
 	token string,
 ) (ConsumedTicket, error) {
-	return s.redeemAccessTicket(ctx, token, "worker_bootstrap", true)
+	return s.redeemAccessTicket(ctx, token, "worker_bootstrap", false)
 }
 
 func (s *Store) redeemAccessTicket(
