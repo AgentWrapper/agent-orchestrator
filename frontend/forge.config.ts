@@ -5,9 +5,13 @@ import MakerDMG, { sealDmg, verifyDmg } from "./makers/maker-dmg";
 import MakerAppImage from "./makers/maker-appimage";
 import { writeFileSync } from "node:fs";
 
-// Default GitHub release target (production). aoagents was the temporary rewrite
-// home; releases land on AgentWrapper (spec §1.1).
-const DEFAULT_RELEASE_REPO = "AgentWrapper/agent-orchestrator";
+// Default GitHub release target (production). Releases land on Untrivial-ai
+// (the org the repo was transferred to in July 2026; AgentWrapper and aoagents
+// are prior homes). Builds cut by CI must NOT rely on this fallback: the
+// workflows set AO_RELEASE_REPO to the repo they run in, and build-artifacts.yml
+// asserts the baked app-update.yml matches it, so a future org/repo rename
+// fails the build instead of stranding the fleet on a redirect (#3523).
+const DEFAULT_RELEASE_REPO = "Untrivial-ai/agent-orchestrator";
 
 // The packaged binary name (no extension). Single source of truth: the packager
 // names the exe/ELF from this, and the NSIS + deb makers must point their
@@ -183,8 +187,9 @@ const config: ForgeConfig = {
 			// fork without a source edit. AO_RELEASE_REPO is "owner/repo"; it defaults
 			// to the production target. The dev/test loop sets
 			// AO_RELEASE_REPO=harshitsinghbhandari/agent-orchestrator (spec §1.1, §8).
-			// Note: aoagents/agent-orchestrator was the temporary rewrite home and is
-			// intentionally NOT the default; releases land on AgentWrapper.
+			// Note: aoagents/agent-orchestrator and AgentWrapper/agent-orchestrator
+			// are prior homes and intentionally NOT the default; releases land on
+			// Untrivial-ai.
 			config: {
 				repository: parseReleaseRepo(process.env.AO_RELEASE_REPO),
 				prerelease: process.env.AO_RELEASE_PRERELEASE === "true",
