@@ -155,8 +155,16 @@ function mergeNotificationIntoCache(
  *
  * Non-empty `ids` marks exactly those rows and keeps unread pagination cursors
  * intact so later pages stay reachable when a client acknowledges incrementally.
+ *
+ * `updatedCount` is the mutation's server tally. Prefer it over locally cleared
+ * rows: later all-list pages can acknowledge unread ids that were never loaded
+ * into the unread cache, which would otherwise leave the bell badge stuck.
  */
-export function markAllCachedNotificationsRead(queryClient: QueryClient, ids: string[]): void {
+export function markAllCachedNotificationsRead(
+	queryClient: QueryClient,
+	ids: string[],
+	updatedCount?: number,
+): void {
 	if (ids.length === 0) {
 		queryClient.setQueryData<NotificationsCache>(unreadNotificationsQueryKey, (current) => {
 			if (!current) {
@@ -193,17 +201,24 @@ export function markAllCachedNotificationsRead(queryClient: QueryClient, ids: st
 	for (const queryKey of [unreadNotificationsQueryKey, recentNotificationsQueryKey] as const) {
 		queryClient.setQueryData<NotificationsCache>(queryKey, (current) => {
 			if (!current) return current;
+
+			let clearedAcrossPages = 0;
+			const pages = current.pages.map((page) => {
+				const notifications = page.notifications.map((item) => {
+					if (!acknowledged.has(item.id) || item.status === "read") return item;
+					clearedAcrossPages++;
+					return { ...item, status: "read" as const };
+				});
+				return { ...page, notifications };
+			});
+			const delta = updatedCount ?? clearedAcrossPages;
+
 			return {
 				...current,
-				pages: current.pages.map((page) => {
-					let cleared = 0;
-					const notifications = page.notifications.map((item) => {
-						if (!acknowledged.has(item.id) || item.status === "read") return item;
-						cleared++;
-						return { ...item, status: "read" as const };
-					});
-					return { ...page, notifications, unreadCount: Math.max(0, page.unreadCount - cleared) };
-				}),
+				pages: pages.map((page) => ({
+					...page,
+					unreadCount: Math.max(0, page.unreadCount - delta),
+				})),
 			};
 		});
 	}

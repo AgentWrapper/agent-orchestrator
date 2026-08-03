@@ -242,6 +242,54 @@ describe("notification cache helpers", () => {
 		).toBe("unread");
 	});
 
+	// Later all-list pages can ack unread ids that were never loaded into the
+	// unread cache. updatedCount must still move the badge, without wiping the
+	// unread pagination cursor.
+	it("decrements unreadCount from updatedCount when ids are absent from the unread cache", () => {
+		const qc = queryClient();
+		const loaded = Array.from({ length: NOTIFICATION_PAGE_SIZE }, (_, index) =>
+			notification({ id: `ntf_${index + 1}`, status: "read", type: "pr_merged" }),
+		);
+		qc.setQueryData<NotificationsCache>(unreadNotificationsQueryKey, {
+			pageParams: [""],
+			pages: [
+				{
+					notifications: loaded,
+					nextCursor: "older-unread",
+					unreadCount: 1,
+					unresolvedCount: 0,
+				},
+			],
+		});
+		qc.setQueryData<NotificationsCache>(recentNotificationsQueryKey, {
+			pageParams: ["", "older"],
+			pages: [
+				{
+					notifications: loaded.slice(0, 2),
+					nextCursor: "older",
+					unreadCount: 1,
+					unresolvedCount: 0,
+				},
+				{
+					notifications: [notification({ id: "ntf_101", type: "pr_merged" })],
+					unreadCount: 1,
+					unresolvedCount: 0,
+				},
+			],
+		});
+
+		markAllCachedNotificationsRead(qc, ["ntf_101"], 1);
+
+		const unread = qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey);
+		expect(unread?.pages[0]?.nextCursor).toBe("older-unread");
+		expect(getCachedUnreadCount(unread)).toBe(0);
+		expect(getCachedNotifications(unread)).toHaveLength(NOTIFICATION_PAGE_SIZE);
+
+		const recent = qc.getQueryData<NotificationsCache>(recentNotificationsQueryKey);
+		expect(getCachedUnreadCount(recent)).toBe(0);
+		expect(getCachedNotifications(recent).find((item) => item.id === "ntf_101")?.status).toBe("read");
+	});
+
 	it("deduplicates and updates notifications across cached pages", () => {
 		const qc = queryClient();
 		qc.setQueryData<NotificationsCache>(unreadNotificationsQueryKey, {

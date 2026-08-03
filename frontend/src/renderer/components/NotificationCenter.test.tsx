@@ -342,20 +342,30 @@ describe("NotificationCenter", () => {
 				},
 			];
 		});
+		// Unread cache only has the first page; unreadCount still includes the
+		// later row that will arrive through the all list.
+		const unreadPage = {
+			notifications: unreadNotifications,
+			nextCursor: "older-unread",
+			unreadCount: 3,
+			unresolvedCount: 2,
+		};
 		const unreadQuery = {
 			...notificationQueryResult("unread", { hasNextPage: true }),
 			data: {
 				pageParams: [""],
-				pages: [
-					{
-						notifications: unreadNotifications,
-						nextCursor: "older-unread",
-						unreadCount: 3,
-						unresolvedCount: 2,
-					},
-				],
+				pages: [unreadPage],
 			},
 		};
+		// Mirror mutation onSuccess: decrement the badge from updatedCount even
+		// when the acknowledged id is absent from the unread cache.
+		markAllMock.mockImplementation(async (ids: string[]) => {
+			unreadPage.unreadCount = Math.max(0, unreadPage.unreadCount - ids.length);
+			unreadPage.notifications = unreadPage.notifications.map((item) =>
+				ids.includes(item.id) && item.status === "unread" ? { ...item, status: "read" as const } : item,
+			);
+			return ids.length;
+		});
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
 		notificationQueryMock.mockImplementation((status: NotificationListStatus) => {
@@ -383,6 +393,8 @@ describe("NotificationCenter", () => {
 		);
 		await clickOpen();
 		expect(markAllMock.mock.calls[0][0]).toEqual(expect.arrayContaining(["ntf_1", "ntf_2"]));
+		expect(markAllMock.mock.calls[0][0]).toHaveLength(2);
+		await waitFor(() => expect(screen.getByRole("button", { name: "1 unread notifications" })).toBeInTheDocument());
 		markAllMock.mockClear();
 
 		const list = screen.getByRole("list");
@@ -404,6 +416,8 @@ describe("NotificationCenter", () => {
 
 		expect(await screen.findByText("Later unread needs input")).toHaveClass("font-medium");
 		await waitFor(() => expect(markAllMock).toHaveBeenCalledWith(["ntf_later"]));
+		await waitFor(() => expect(screen.getByRole("button", { name: "Notifications" })).toBeInTheDocument());
+		expect(screen.queryByRole("button", { name: /unread notifications/ })).not.toBeInTheDocument();
 	});
 
 	it("surfaces a failed all-list load instead of claiming success", async () => {
