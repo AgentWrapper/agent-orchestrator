@@ -154,6 +154,13 @@ type TerminalInputGate interface {
 	BeginInputDrain(terminalID string) (lastInputAt time.Time, release func())
 }
 
+// ReviewerTerminator tears down a worker's reviewer pane when the worker leaves
+// its live lifecycle. It is late-bound like ShellTerminalCloser because review
+// services are assembled after the session manager in daemon wiring.
+type ReviewerTerminator interface {
+	TerminateReviewer(ctx context.Context, workerID domain.SessionID, body string) error
+}
+
 type runtimeController interface {
 	Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error)
 	Destroy(ctx context.Context, handle ports.RuntimeHandle) error
@@ -276,6 +283,9 @@ type Manager struct {
 
 	terminalInputGateMu sync.Mutex
 	terminalInputGate   TerminalInputGate
+
+	reviewersMu      sync.Mutex
+	reviewers        ReviewerTerminator
 }
 
 // SetShellTerminalCloser wires every worktree-releasing path to gate the
@@ -330,6 +340,24 @@ func (m *Manager) beginShellTerminalTeardown(ctx context.Context, id domain.Sess
 		return nil, nil
 	}
 	return closer.BeginSessionTeardown(ctx, id)
+}
+
+// SetReviewerTerminator wires worker lifecycle paths to hard-destroy the
+// worker's reviewer pane. Safe to leave unset: a nil terminator is a no-op.
+func (m *Manager) SetReviewerTerminator(terminator ReviewerTerminator) {
+	m.reviewersMu.Lock()
+	defer m.reviewersMu.Unlock()
+	m.reviewers = terminator
+}
+
+func (m *Manager) terminateReviewer(ctx context.Context, id domain.SessionID, body string) error {
+	m.reviewersMu.Lock()
+	terminator := m.reviewers
+	m.reviewersMu.Unlock()
+	if terminator == nil {
+		return nil
+	}
+	return terminator.TerminateReviewer(ctx, id, body)
 }
 
 // PreviewLifecycle is the narrow teardown hook consumed by Session Manager.
@@ -1065,6 +1093,9 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 			return false, fmt.Errorf("kill %s: runtime: %w", id, err)
 		}
 	}
+	if err := m.terminateReviewer(ctx, id, "cancelled by worker session termination"); err != nil {
+		return false, fmt.Errorf("kill %s: reviewer: %w", id, err)
+	}
 	// Gate shut any shell terminal scoped to this session BEFORE the worktree
 	// goes away: an open shell whose cwd is that directory can otherwise
 	// survive the removal (and on Windows can even block it — an open handle
@@ -1309,6 +1340,9 @@ func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (Res
 	// letting workspace.Restore fail with an opaque wrapped error.
 	if meta.WorkspacePath == "" || (meta.Branch == "" && project.Kind.WithDefault() != domain.ProjectKindScratch) {
 		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, ErrIncompleteHandle)
+	}
+	if err := m.terminateReviewer(ctx, id, "cancelled by worker session restore"); err != nil {
+		return RestoreResult{}, fmt.Errorf("restore %s: reviewer: %w", id, err)
 	}
 	// Resumability is decided inside restoreArgv, not here. A promptless session
 	// can still be fully resumable when the harness pins a deterministic session id
@@ -1629,7 +1663,9 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 		return fmt.Errorf("save %s: upsert worktree row: %w", rec.ID, err)
 	}
 
-	// 3. Mark terminal via the LCM (same path Kill uses).
+	// 3. Mark terminal via the LCM (same path Kill uses). Do not terminate the
+	// reviewer here: shutdown save/teardown is recovery-oriented lifecycle, not
+	// user intent to kill worker-adjacent panes.
 	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
 		return fmt.Errorf("save %s: mark terminated: %w", rec.ID, err)
 	}

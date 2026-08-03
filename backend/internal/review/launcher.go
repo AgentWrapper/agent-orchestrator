@@ -37,6 +37,9 @@ type Launcher interface {
 	Alive(ctx context.Context, handleID string) (bool, error)
 	// Cancel interrupts a running reviewer pane while keeping the terminal alive.
 	Cancel(ctx context.Context, handleID string, harness domain.ReviewerHarness) error
+	// Destroy tears down a reviewer pane entirely. This is used when the owning
+	// worker session itself is torn down, not for user-facing review cancellation.
+	Destroy(ctx context.Context, handleID string) error
 }
 
 // LaunchSpec is the engine's request to (re)launch a reviewer for one pass.
@@ -300,4 +303,11 @@ func (l *agentLauncher) Cancel(ctx context.Context, handleID string, harness dom
 	default:
 		return fmt.Errorf("reviewer adapter %q returned unsupported cancel mode %q", harness, spec.Mode)
 	}
+}
+
+func (l *agentLauncher) Destroy(ctx context.Context, handleID string) error {
+	if handleID == "" {
+		return nil
+	}
+	return l.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID})
 }

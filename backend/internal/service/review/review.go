@@ -51,6 +51,7 @@ func reviewErrorKind(err error) string {
 type Manager interface {
 	Trigger(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (reviewcore.TriggerResult, error)
 	Cancel(ctx context.Context, workerID domain.SessionID) (reviewcore.CancelResult, error)
+	TerminateReviewer(ctx context.Context, workerID domain.SessionID, body string) error
 	Submit(ctx context.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body, githubReviewID string) (domain.ReviewRun, error)
 	SubmitMany(ctx context.Context, workerID domain.SessionID, reviews []SubmittedReview) ([]domain.ReviewRun, error)
 	List(ctx context.Context, workerID domain.SessionID) (reviewcore.SessionReviews, error)
@@ -176,6 +177,13 @@ func (s *Service) Cancel(ctx context.Context, workerID domain.SessionID) (review
 		"cancelled_runs": len(result.CancelledRuns),
 	})
 	return result, nil
+}
+
+// TerminateReviewer hard-destroys the reviewer pane for worker lifecycle
+// teardown and marks any running review runs as cancelled.
+func (s *Service) TerminateReviewer(ctx context.Context, workerID domain.SessionID, body string) error {
+	_, err := s.engine.TerminateReviewer(ctx, workerID, body)
+	return err
 }
 
 // SubmittedReview is one review result supplied by the reviewer CLI.

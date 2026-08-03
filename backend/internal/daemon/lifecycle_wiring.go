@@ -131,6 +131,9 @@ type sessionLifecycle interface {
 	SetShellTerminalCloser(closer sessionmanager.ShellTerminalCloser)
 	// SetTerminalInputGate prevents mux input from racing a TUI-to-Chat handoff.
 	SetTerminalInputGate(gate sessionmanager.TerminalInputGate)
+	// SetReviewerTerminator late-binds worker lifecycle teardown to the review
+	// service, which is built alongside the controller-facing service below.
+	SetReviewerTerminator(terminator sessionmanager.ReviewerTerminator)
 }
 
 // startSession builds the controller-facing session service: a session manager
@@ -223,6 +226,7 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 	reviewSvc := reviewsvc.New(reviewEngine, store,
 		reviewsvc.WithLifecycleReducer(lcm),
 		reviewsvc.WithTelemetry(telemetry))
+	mgr.SetReviewerTerminator(reviewSvc)
 	return sessionSvc, reviewSvc, mgr, nil
 }
 

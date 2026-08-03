@@ -178,6 +178,9 @@ type fakeLauncher struct {
 	gotHandle        string
 	cancelledHandle  string
 	cancelledHarness domain.ReviewerHarness
+	destroyed        bool
+	destroyedHandle  string
+	destroyErr       error
 	specs            []LaunchSpec
 	handles          []string
 	preflightErr     error
@@ -210,6 +213,11 @@ func (f *fakeLauncher) Cancel(_ context.Context, handleID string, harness domain
 	f.cancelledHandle = handleID
 	f.cancelledHarness = harness
 	return f.cancelErr
+}
+func (f *fakeLauncher) Destroy(_ context.Context, handleID string) error {
+	f.destroyed = true
+	f.destroyedHandle = handleID
+	return f.destroyErr
 }
 func (f *fakeLauncher) Preflight(_ context.Context, _ domain.ReviewerHarness, _ string) error {
 	f.preflighted = true
@@ -350,6 +358,48 @@ func TestCancelKeepsRunsRunningWhenReviewerCancelFailsAndHandleIsAlive(t *testin
 	}
 	if got := store.runs[0]; got.Status != domain.ReviewRunRunning {
 		t.Fatalf("run should remain running when reviewer is still alive: %+v", got)
+	}
+}
+
+func TestTerminateReviewerDestroysPaneAndCancelsRunningRuns(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerCodex, ReviewerHandleID: "review-mer-1"},
+		runs: []domain.ReviewRun{{
+			ID: "run-1", ReviewID: "rev-1", SessionID: "mer-1",
+			Status: domain.ReviewRunRunning, Verdict: domain.VerdictNone,
+		}},
+	}
+	launcher := &fakeLauncher{}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.TerminateReviewer(context.Background(), "mer-1", "cancelled by worker termination")
+	if err != nil {
+		t.Fatalf("TerminateReviewer: %v", err)
+	}
+	if !launcher.destroyed || launcher.destroyedHandle != "review-mer-1" {
+		t.Fatalf("launcher destroy = %v handle=%q", launcher.destroyed, launcher.destroyedHandle)
+	}
+	if launcher.cancelled {
+		t.Fatal("TerminateReviewer must hard-destroy, not adapter-cancel")
+	}
+	if res.ReviewerHandleID != "review-mer-1" || len(res.CancelledRuns) != 1 {
+		t.Fatalf("terminate result = %+v", res)
+	}
+	if store.runs[0].Status != domain.ReviewRunCancelled || store.runs[0].Body != "cancelled by worker termination" {
+		t.Fatalf("run after terminate = %+v", store.runs[0])
+	}
+}
+
+func TestTerminateReviewerNoopsWhenNoReviewerHandle(t *testing.T) {
+	store := &fakeStore{}
+	launcher := &fakeLauncher{}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	if _, err := eng.TerminateReviewer(context.Background(), "mer-1", ""); err != nil {
+		t.Fatalf("TerminateReviewer: %v", err)
+	}
+	if launcher.destroyed {
+		t.Fatal("destroy should not run without a reviewer handle")
 	}
 }
 

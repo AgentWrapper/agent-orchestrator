@@ -156,6 +156,13 @@ type CancelResult struct {
 	CancelledRuns    []domain.ReviewRun
 }
 
+// TerminateResult reports the reviewer pane hard-teardown performed because
+// the owning worker session is leaving its live lifecycle.
+type TerminateResult struct {
+	ReviewerHandleID string
+	CancelledRuns    []domain.ReviewRun
+}
+
 // Trigger starts reviews for every PR on the worker session that needs review.
 // It reuses running/up-to-date runs, retries failed/current changes-requested
 // heads, and uses one reviewer pane for every new run in the batch.
@@ -450,6 +457,45 @@ func (e *Engine) Cancel(ctx stdctx.Context, workerID domain.SessionID) (CancelRe
 		return CancelResult{}, err
 	}
 	return CancelResult{ReviewerHandleID: review.ReviewerHandleID, Reviews: Plan(prs, runs), CancelledRuns: cancelled}, nil
+}
+
+// TerminateReviewer destroys the live reviewer pane for a worker and cancels
+// any running review runs. Unlike Cancel, this does not ask the reviewer
+// adapter for a graceful interrupt sequence: worker termination/restore must
+// remove the terminal pane itself.
+func (e *Engine) TerminateReviewer(ctx stdctx.Context, workerID domain.SessionID, body string) (TerminateResult, error) {
+	if workerID == "" {
+		return TerminateResult{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
+	}
+	review, ok, err := e.store.GetReviewBySession(ctx, workerID)
+	if err != nil {
+		return TerminateResult{}, err
+	}
+	if !ok || review.ReviewerHandleID == "" {
+		return TerminateResult{}, nil
+	}
+	running, err := e.store.ListRunningReviewRunsBySession(ctx, workerID)
+	if err != nil {
+		return TerminateResult{}, err
+	}
+	if err := e.launcher.Destroy(ctx, review.ReviewerHandleID); err != nil {
+		return TerminateResult{}, err
+	}
+	if body == "" {
+		body = "cancelled by worker session lifecycle"
+	}
+	if _, err := e.store.CancelRunningReviewRunsBySession(ctx, workerID, body); err != nil {
+		return TerminateResult{}, err
+	}
+	cancelled := make([]domain.ReviewRun, 0, len(running))
+	for _, run := range running {
+		run.Status = domain.ReviewRunCancelled
+		run.Verdict = domain.VerdictNone
+		run.Body = body
+		run.GithubReviewID = ""
+		cancelled = append(cancelled, run)
+	}
+	return TerminateResult{ReviewerHandleID: review.ReviewerHandleID, CancelledRuns: cancelled}, nil
 }
 
 // reviewerHarness resolves which harness reviews the worker's PR: a persisted
