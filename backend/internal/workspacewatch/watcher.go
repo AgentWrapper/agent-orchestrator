@@ -140,7 +140,7 @@ func addInitialDirectories(ctx context.Context, watcher *fsnotify.Watcher, root 
 
 func run(ctx context.Context, watcher *fsnotify.Watcher, root string, git gitWorkspace, changes chan struct{}) {
 	defer close(changes)
-	defer watcher.Close()
+	defer func() { _ = watcher.Close() }()
 	notify := func() {
 		select {
 		case changes <- struct{}{}:
@@ -152,11 +152,10 @@ func run(ctx context.Context, watcher *fsnotify.Watcher, root string, git gitWor
 		select {
 		case <-ctx.Done():
 			return
-		case watchErr, ok := <-watcher.Errors:
+		case _, ok := <-watcher.Errors:
 			if !ok {
 				return
 			}
-			_ = watchErr
 			// The precise event may have been dropped. Force one model refresh;
 			// subsequent filesystem notifications can still keep the stream live.
 			notify()
