@@ -149,7 +149,7 @@ export function ShellTopbar() {
 							<span aria-hidden="true" className="text-xs leading-none text-passive">
 								·
 							</span>
-							<span className="inline-flex h-control-sm items-center gap-1 rounded-md border border-border bg-surface px-2 text-micro font-semibold leading-none tracking-wide-sm text-muted-foreground">
+							<span className="inline-flex h-control-sm items-center gap-1 rounded-md border border-border bg-surface px-2 text-micro font-semibold leading-none tracking-tight text-muted-foreground">
 								<OrchestratorIcon className="size-3 shrink-0" aria-hidden="true" />
 								{t("shell.orchestrator")}
 							</span>

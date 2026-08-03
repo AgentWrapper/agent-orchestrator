@@ -64,7 +64,7 @@ export function KeyboardShortcutsDialog({
 						if (shortcuts.length === 0) return null;
 						return (
 							<section className="border-b border-border py-4 last:border-b-0" key={shortcutCategoryLabel(category, t)}>
-								<h2 className="mb-2 font-mono text-micro font-semibold uppercase tracking-wide-lg text-passive">
+								<h2 className="mb-2 text-micro font-semibold tracking-tight text-passive">
 									{shortcutCategoryLabel(category, t)}
 								</h2>
 								<div className="flex flex-col">

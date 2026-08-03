@@ -285,11 +285,11 @@ function Section({
 	title: string;
 }) {
 	// Boxed sections match the settings page row surface (bg + radius) with the
-	// uppercase muted kicker kept inside the card, as in the inspector refs.
+	// muted kicker kept inside the card, as in the inspector refs.
 	return (
 		<section className={cn("mb-2.5 last:mb-0", className)} data-testid="inspector-section">
 			<div className="overflow-hidden rounded-settings-row bg-settings-row px-3.5 py-3">
-				<div className="mb-2 flex items-center justify-between gap-2 text-2xs font-bold uppercase tracking-settings-section text-settings-muted">
+				<div className="mb-2 flex items-center justify-between gap-2 text-2xs font-medium tracking-tight text-settings-muted">
 					<span>{title}</span>
 					{action ?? null}
 				</div>

@@ -545,7 +545,7 @@ function CreateProjectFolderDialog({
 
 								{error && (
 									<div className="rounded-lg border border-destructive/40 bg-destructive/10">
-										<div className="border-b border-destructive/30 px-4 py-3 font-mono text-[12px] font-semibold uppercase tracking-[0.12em] text-destructive">
+										<div className="border-b border-destructive/30 px-4 py-3 text-[12px] font-semibold tracking-tight text-destructive">
 											<span className="mr-2 inline-block size-2 rounded-full bg-destructive" aria-hidden="true" />
 											{isWorkspace ? t("createProject.importFailedWorkspace") : t("createProject.importFailedProject")}
 										</div>

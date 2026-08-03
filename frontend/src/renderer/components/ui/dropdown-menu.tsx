@@ -56,7 +56,7 @@ export function DropdownMenuLabel({
 	return (
 		<DropdownMenuPrimitive.Label
 			className={cn(
-				"px-2 py-1.5 text-micro tracking-wide text-passive",
+				"px-2 py-1.5 text-micro tracking-tight text-passive",
 				inset && "pl-8",
 				className,
 			)}

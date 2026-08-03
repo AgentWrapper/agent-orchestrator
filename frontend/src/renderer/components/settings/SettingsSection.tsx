@@ -20,7 +20,7 @@ export function SettingsSection({
 			data-testid={sectionId ? "settings-section" : undefined}
 			data-section={sectionId}
 		>
-			<h2 className="text-xs font-bold uppercase leading-4 tracking-settings-section text-settings-muted">{title}</h2>
+			<h2 className="text-xs font-medium leading-4 tracking-tight text-settings-muted">{title}</h2>
 			<div className="flex w-full flex-col gap-1.5">{children}</div>
 		</section>
 	);

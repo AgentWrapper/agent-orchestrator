@@ -45,7 +45,7 @@ export function ShellTerminalsView() {
 	return (
 		<div className="flex h-full min-h-0 flex-col text-foreground">
 			<div className="flex h-inspector-tabs shrink-0 items-center gap-3 border-b border-border px-5">
-				<span className="shrink-0 font-mono text-caption font-semibold uppercase tracking-wide-lg text-muted-foreground">
+				<span className="shrink-0 text-caption font-semibold tracking-tight text-muted-foreground">
 					{t("workbench.terminals")}
 				</span>
 				<button

@@ -1646,7 +1646,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	font-size: 11px;
 	font-weight: 700;
 	color: #8bdc75;
-	text-transform: uppercase;
+	letter-spacing: var(--tracking-tight);
 }
 
 :root[data-theme="light"] .reviewer-terminal-header__role {
@@ -1690,15 +1690,13 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	margin-bottom: 11px;
 	font-size: 10.5px;
 	font-weight: 600;
-	text-transform: uppercase;
-	letter-spacing: 0.09em;
+	letter-spacing: var(--tracking-tight);
 	color: var(--fg-passive);
 }
 
 .inspector-section__link {
 	font-size: 11px;
 	font-weight: 500;
-	text-transform: none;
 	letter-spacing: 0;
 	color: var(--accent);
 }

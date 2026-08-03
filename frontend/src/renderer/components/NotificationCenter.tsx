@@ -355,9 +355,9 @@ function NotificationSectionError({
 
 function NotificationSectionHeading({ count, label }: { count: number; label: string }) {
 	return (
-		<div className="flex items-center gap-1.5 px-4 pb-1 pt-2 text-caption font-medium uppercase tracking-wide text-passive">
+		<div className="flex items-center gap-1.5 px-4 pb-1 pt-2 text-caption font-medium tracking-tight text-passive">
 			{label}
-			<span className="grid min-w-4 place-items-center rounded-full bg-surface px-1 font-mono text-[9px] normal-case leading-4 text-muted-foreground">
+			<span className="grid min-w-4 place-items-center rounded-full bg-surface px-1 font-mono text-[9px] leading-4 text-muted-foreground">
 				{count > 99 ? "99+" : count}
 			</span>
 		</div>

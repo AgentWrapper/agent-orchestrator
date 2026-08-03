@@ -53,7 +53,7 @@ function CommandDialog({
 					<Dialog.Description className="sr-only">{description}</Dialog.Description>
 					<Command
 						className={cn(
-							"**:[[cmdk-group-heading]]:px-[var(--size-command-pad-x)] **:[[cmdk-group-heading]]:pt-2.5 **:[[cmdk-group-heading]]:pb-1 **:[[cmdk-group-heading]]:text-[11px] **:[[cmdk-group-heading]]:font-normal **:[[cmdk-group-heading]]:tracking-wide **:[[cmdk-group-heading]]:text-[var(--color-text-command-muted)] **:[[cmdk-group]]:px-0",
+							"**:[[cmdk-group-heading]]:px-[var(--size-command-pad-x)] **:[[cmdk-group-heading]]:pt-2.5 **:[[cmdk-group-heading]]:pb-1 **:[[cmdk-group-heading]]:text-[11px] **:[[cmdk-group-heading]]:font-normal **:[[cmdk-group-heading]]:tracking-tight **:[[cmdk-group-heading]]:text-[var(--color-text-command-muted)] **:[[cmdk-group]]:px-0",
 							commandClassName,
 						)}
 						{...restCommandProps}

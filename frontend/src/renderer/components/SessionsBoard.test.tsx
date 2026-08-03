@@ -399,7 +399,7 @@ describe("SessionsBoard", () => {
 
 		expect(within(workSummary).getByText("Idle").querySelector("span")).toHaveClass("bg-status-idle");
 		expect(within(workSummary).getByText("Working").querySelector("span")).toHaveClass("bg-status-working");
-		expect(workSummary).toHaveClass("font-mono", "text-2xs", "uppercase");
+		expect(workSummary).toHaveClass("text-2xs", "tracking-tight");
 		expect(workSummary.parentElement).toHaveClass("h-12");
 		expect(workingRegion.firstElementChild).toHaveClass("py-2.5");
 		expect(within(workLane).getByLabelText("2 idle sessions")).toHaveTextContent("2");

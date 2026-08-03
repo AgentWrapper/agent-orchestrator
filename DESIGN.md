@@ -111,13 +111,14 @@ list of independent sessions. Grounded in the daemon
 
 System fonts only — no custom/Google fonts, zero font payload.
 
-- **UI / body / display:** `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+- **UI / body / display / labels:** `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
 Oxygen, Ubuntu, Cantarell, "Fira Sans", "Helvetica Neue", sans-serif` (San Francisco
   on macOS).
-- **Mono / terminal / code / eyebrow labels:** `Menlo, Monaco, Consolas,
-"Liberation Mono", "Courier New", monospace`.
-- **Eyebrow labels** (section titles, dialog titles, the rail "PROJECTS" header):
-  mono, **uppercase**, `letter-spacing: .12–.14em`, `--foreground-passive`.
+- **Mono / terminal / code only:** `Menlo, Monaco, Consolas,
+"Liberation Mono", "Courier New", monospace`. Never use mono for UI labels or buttons.
+- **Labels / section titles / buttons:** sans, **never all-caps**, `tracking-tight`
+  (`letter-spacing: -0.01em`), weight medium/semibold as needed. Do not apply
+  `text-transform: uppercase` or wide letter-spacing to chrome text.
 - **Scale:** 14px base UI / sidebar (`text-sm`, weight 400) · 12px secondary + labels
   (`text-xs`) · 13px code/mono/terminal · 11px tiny · 10px micro + badges · 9px sidebar
   badge label. Buttons are `font-normal` (400), not bold.
@@ -195,10 +196,10 @@ left rail stay name-only — no glyph.)
   1. **Orchestrator anchor** — pinned, single, visually distinct (blue 2px left bar,
      `--bg-2` fill, hub/`waypoints` icon, name "Orchestrator", a `5 agents · 2 need you`
      mono summary). This is ReverbCode's one addition over the reference. Default landing view.
-  2. `PROJECTS` eyebrow label + a `+`.
+  2. `Projects` section label + a `+`.
   3. Project rows (folder icon + name) with nested **worker rows beneath**. Each project
      row has a hover-revealed **`+`** that opens the New-worker modal pre-scoped to that
-     project (distinct from the `PROJECTS` header `+`, which registers a repo).
+     project (distinct from the `Projects` header `+`, which registers a repo).
   4. **Footer:** `Search ⌘K`, `Settings ⌘,`. (No Library.)
   5. **Account** row pinned at the very bottom.
 - **Worker rows are name-only.** Just the session name, truncated. Status, branch, diff,
@@ -234,7 +235,7 @@ mirrors the reference exactly. Launching from a project row pre-fills the Projec
 
 - Centered dialog, **12px radius**, `max-w` ~512px, `bg` canvas, `ring-1` at 10% fg,
   fade + zoom-95 enter.
-- **Header:** eyebrow mono-uppercase title `New worker` + `×` close.
+- **Header:** sans title `New worker` + `×` close.
 - **Body** (`gap` 15–16px): a **borderless large name field** (18px, auto-focus, slug
   rule "letters, numbers, hyphens") → **Project** selector → **Agent** selector
   (claude-code / codex / opencode / …) → a **"Based on"** bordered card with a segmented

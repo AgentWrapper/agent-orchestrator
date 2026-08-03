@@ -395,7 +395,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 							>
 								<path d="m9 18 6-6-6-6" />
 							</svg>
-							<span className="font-mono text-2xs font-medium uppercase tracking-wide-sm">{t("shell.archive")}</span>
+							<span className="text-2xs font-medium tracking-tight">{t("shell.archive")}</span>
 							<span className="ml-1.5 font-mono text-micro text-passive">{archived.length}</span>
 						</button>
 					</div>
@@ -478,7 +478,7 @@ function ZoneColumn({
 						boxShadow: col.dotGlow ? `0 0 7px color-mix(in srgb, ${col.dot} 60%, transparent)` : undefined,
 					}}
 				/>
-				<span className={cn("font-mono text-2xs font-medium uppercase tracking-wide-sm", col.titleClassName)}>
+				<span className={cn("text-2xs font-medium tracking-tight", col.titleClassName)}>
 					{col.label}
 				</span>
 				<span className="ml-auto font-mono text-2xs leading-none text-passive">{sessions.length}</span>
@@ -648,7 +648,7 @@ function SplitLaneColumn({
 			<div className="flex h-12 shrink-0 items-center gap-2.5 px-4">
 				<div
 					aria-label={t("shell.laneSummaryAria", { primary: primaryTone.label, secondary: secondaryTone.label })}
-					className="flex min-w-0 items-center gap-2 font-mono text-2xs font-medium uppercase tracking-wide-sm"
+					className="flex min-w-0 items-center gap-2 text-2xs font-medium tracking-tight"
 					role="group"
 				>
 					<LaneStatusLabel tone={primaryTone} />
@@ -739,7 +739,7 @@ function SecondaryLaneSection({
 			role="region"
 		>
 			<div className="flex shrink-0 items-center gap-2.5 px-4 py-2.5">
-				<div className="font-mono text-2xs font-medium uppercase tracking-wide-sm">
+				<div className="text-2xs font-medium tracking-tight">
 					<LaneStatusLabel tone={tone} />
 				</div>
 				<span className="ml-auto font-mono text-2xs leading-none text-passive">{sessions.length}</span>

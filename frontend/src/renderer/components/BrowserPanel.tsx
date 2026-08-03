@@ -649,7 +649,7 @@ function StaticPreview({ url }: { url: string }) {
 	return (
 		<div className="absolute inset-0 overflow-auto bg-preview text-preview-foreground">
 			<div className="border-b border-preview bg-surface px-4 py-3">
-				<div className="text-caption font-semibold uppercase tracking-wide-md text-preview-muted">AO Preview</div>
+				<div className="text-caption font-semibold tracking-tight text-preview-muted">AO Preview</div>
 				<div className="mt-1 truncate font-mono text-xs text-preview-link">{url}</div>
 			</div>
 			<div className="mx-auto max-w-preview-max px-5 py-6">
@@ -674,7 +674,7 @@ function StaticPreview({ url }: { url: string }) {
 							["Latency", "42 ms"],
 						].map(([label, value]) => (
 							<div key={label} className="rounded-md border border-preview-tile bg-preview-tile p-3">
-								<div className="text-caption font-medium uppercase tracking-wide text-preview-muted">{label}</div>
+								<div className="text-caption font-medium tracking-tight text-preview-muted">{label}</div>
 								<div className="mt-1 text-subtitle font-semibold text-preview-heading">{value}</div>
 							</div>
 						))}
