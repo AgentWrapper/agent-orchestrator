@@ -146,6 +146,10 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [actionError, setActionError] = useState<string | null>(null);
+	const [markReadError, setMarkReadError] = useState<string | null>(null);
+	// Bumped by the mark-read Retry control so a failed ack can run again even
+	// when visibleUnreadKey is unchanged (removing ids from the ref alone does not).
+	const [ackRetryNonce, setAckRetryNonce] = useState(0);
 	const [open, setOpen] = useState(false);
 	// Opening marks unread as read, which would drop the highlight under the
 	// cursor. Keep the open-time unread ids highlighted until the panel closes.
@@ -181,6 +185,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 	useEffect(() => {
 		if (!open) {
 			setHighlightedIds(new Set());
+			setMarkReadError(null);
 			acknowledgedIdsRef.current = new Set();
 			return;
 		}
@@ -202,16 +207,16 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 			return changed ? next : current;
 		});
 
-		setActionError(null);
+		setMarkReadError(null);
 		void captureRendererEvent("ao.renderer.notification_mark_read_requested", { scope: "all" });
 		void markAllMutate(newly)
 			.then(() => captureRendererEvent("ao.renderer.notification_mark_read_succeeded", { scope: "all" }))
 			.catch((error: unknown) => {
 				void captureRendererEvent("ao.renderer.notification_mark_read_failed", { scope: "all" });
 				for (const id of newly) acknowledgedIdsRef.current.delete(id);
-				setActionError(error instanceof Error ? error.message : t("notify.couldNotMarkAllRead"));
+				setMarkReadError(error instanceof Error ? error.message : t("notify.couldNotMarkAllRead"));
 			});
-	}, [markAllMutate, open, t, unreadQuery.isLoading, visibleUnreadKey]);
+	}, [ackRetryNonce, markAllMutate, open, t, unreadQuery.isLoading, visibleUnreadKey]);
 
 	const setPanelOpen = (nextOpen: boolean) => {
 		setOpen(nextOpen);
@@ -219,6 +224,11 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 			keepLatestNotificationsPage(queryClient, unreadNotificationsQueryKey);
 			keepLatestNotificationsPage(queryClient, recentNotificationsQueryKey);
 		}
+	};
+
+	const retryMarkRead = () => {
+		setMarkReadError(null);
+		setAckRetryNonce((nonce) => nonce + 1);
 	};
 
 	const openSessionAndDismiss = (notification: NotificationDTO) => {
@@ -289,6 +299,21 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 					<p className="text-subtitle font-semibold tracking-tight text-foreground">{t("notify.title")}</p>
 				</div>
 
+				{markReadError ? (
+					<div
+						aria-live="polite"
+						className="flex items-center justify-between gap-2 border-b border-border bg-error/5 px-4 py-2 text-caption text-error"
+					>
+						<span>{markReadError}</span>
+						<button
+							className="shrink-0 font-medium underline underline-offset-2 hover:text-foreground"
+							onClick={retryMarkRead}
+							type="button"
+						>
+							{t("notify.retry")}
+						</button>
+					</div>
+				) : null}
 				{actionError ? (
 					<div className="border-b border-border bg-error/5 px-4 py-2 text-caption text-error">{actionError}</div>
 				) : null}

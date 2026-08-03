@@ -303,6 +303,23 @@ describe("NotificationCenter", () => {
 		expect(screen.getByText("Docs sweep needs input").className).not.toContain("font-medium");
 	});
 
+	it("retries mark-read after a transient failure without closing the panel", async () => {
+		markAllMock.mockRejectedValueOnce(new Error("network down")).mockResolvedValueOnce(2);
+		renderNotificationCenter();
+		await clickOpen();
+
+		expect(await screen.findByText("network down")).toBeInTheDocument();
+		expect(markAllMock).toHaveBeenCalledTimes(1);
+
+		await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+		await waitFor(() => expect(markAllMock).toHaveBeenCalledTimes(2));
+		expect(markAllMock.mock.calls[1][0]).toEqual(expect.arrayContaining(["ntf_1", "ntf_2"]));
+		expect(markAllMock.mock.calls[1][0]).toHaveLength(2);
+		await waitFor(() => expect(screen.queryByText("network down")).not.toBeInTheDocument());
+		expect(screen.getByText("Checkout flow needs input").className).toContain("font-medium");
+	});
+
 	it("keeps later unread pages highlighted when they load after open", async () => {
 		const laterUnread: NotificationDTO = {
 			id: "ntf_later",
