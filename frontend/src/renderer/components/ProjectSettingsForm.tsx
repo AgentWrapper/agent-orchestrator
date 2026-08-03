@@ -567,6 +567,7 @@ function AgentModelField({
 							aria-label={label}
 							value={mode || "__default__"}
 							options={options}
+							triggerClassName="settings-inline-input settings-model-control justify-end"
 							onChange={(value) => {
 								onModeChange(value === "__default__" ? "" : value);
 								onModelChange("");
@@ -610,14 +611,14 @@ function AgentModelField({
 							allowCustom={catalog.allowCustom}
 							onChange={selectCatalogModel}
 							onCustom={selectCustomModel}
-							triggerClassName="settings-inline-input justify-end"
+							triggerClassName="settings-inline-input settings-model-control justify-end"
 						/>
 					) : (
 						<>
 							<input
 								id={datalistID}
 								aria-label={label}
-								className="settings-inline-input"
+								className="settings-inline-input settings-model-control"
 								value={model}
 								disabled={agentId === ""}
 								onChange={(event) => {

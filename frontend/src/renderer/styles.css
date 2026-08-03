@@ -690,6 +690,11 @@ button.settings-row-bar {
 	}
 }
 
+@utility settings-model-control {
+	width: var(--size-settings-inline-input-max);
+	max-width: var(--size-settings-inline-input-max);
+}
+
 @utility settings-row-value {
 	min-width: 0;
 	max-width: min(var(--size-settings-row-value-max), var(--size-settings-row-value-max-percent));
