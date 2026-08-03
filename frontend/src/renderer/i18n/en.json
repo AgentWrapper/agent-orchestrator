@@ -209,7 +209,6 @@
 	"inspector.review.reviewing": "Reviewing...",
 	"inspector.review.run": "Run review",
 	"inspector.reviewRequestFailed": "Review request failed",
-	"inspector.reviewerAgent": "Reviewer agent",
 	"inspector.reviewAlreadyRanForCommit": "This commit has already been reviewed. Push a new commit to run another review.",
 	"inspector.selectReviewerAgent": "Select reviewer agent",
 	"inspector.showMore": "Show more",
