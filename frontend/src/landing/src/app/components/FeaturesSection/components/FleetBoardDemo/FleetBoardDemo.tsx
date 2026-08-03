@@ -78,7 +78,6 @@ function advanceCard(card: Card): Card {
 			column: "staging",
 			activity: pickRandom(STAGING_ACTIVITIES),
 			activityState: "running",
-			pr: card.pr,
 			time: randomTime(),
 			testResults: pickTestResults(),
 			reviewers: undefined,
