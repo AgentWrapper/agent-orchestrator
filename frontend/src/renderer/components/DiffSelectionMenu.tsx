@@ -54,6 +54,18 @@ export function DiffSelectionMenu({
 		}
 	}, []);
 
+	// Shared by every transition away from a prior send's outcome (Copy,
+	// Explain-then-Make-changes, and both Escape-from-input paths below): a
+	// still-armed "sent" auto-close timer or leftover status/error must never
+	// leak into the next action — otherwise a stale "Sent"/error label renders
+	// under the new state, and the old timer can later close the whole menu
+	// out from under the user with no action on their part.
+	const resetSendState = useCallback(() => {
+		clearSentTimer();
+		setStatus("idle");
+		setErrorMessage("");
+	}, [clearSentTimer]);
+
 	// One active selection at a time: a fresh open always starts at the action
 	// list, even if the previous open ended in the input state or an error.
 	// This effect's dependency is only `open`, so it fires on mount and on every
@@ -122,6 +134,7 @@ export function DiffSelectionMenu({
 				// A step back to the action list, not a dismiss — must not let
 				// DropdownMenuContent's own Escape handling close the whole menu.
 				event.preventDefault();
+				resetSendState();
 				setMode("actions");
 				return;
 			}
@@ -130,7 +143,7 @@ export function DiffSelectionMenu({
 				submitInput();
 			}
 		},
-		[submitInput],
+		[resetSendState, submitInput],
 	);
 
 	const statusLabel =
@@ -170,6 +183,7 @@ export function DiffSelectionMenu({
 				onEscapeKeyDown={(event) => {
 					if (mode !== "input") return;
 					event.preventDefault();
+					resetSendState();
 					setMode("actions");
 				}}
 				side="right"
@@ -183,10 +197,8 @@ export function DiffSelectionMenu({
 								event.preventDefault();
 								// Guards against a stale "sent" auto-close timer (armed by a
 								// prior Explain/Make changes send) firing after Copy has
-								// already closed the menu itself — see the same reset below.
-								clearSentTimer();
-								setStatus("idle");
-								setErrorMessage("");
+								// already closed the menu itself — see resetSendState above.
+								resetSendState();
 								handleCopy();
 							}}
 						>
@@ -213,9 +225,7 @@ export function DiffSelectionMenu({
 								// itself — otherwise the stale "Sent" label renders under the
 								// fresh input, and the old timer later closes the whole menu
 								// out from under the user's in-progress draft.
-								clearSentTimer();
-								setStatus("idle");
-								setErrorMessage("");
+								resetSendState();
 								setMode("input");
 							}}
 						>

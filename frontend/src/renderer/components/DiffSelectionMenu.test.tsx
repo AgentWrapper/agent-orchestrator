@@ -205,6 +205,42 @@ describe("DiffSelectionMenu", () => {
 		expect(onOpenChange).not.toHaveBeenCalledWith(false);
 	});
 
+	it("clears the pending sent auto-close timer and resets status when pressing Escape from the input", async () => {
+		vi.useFakeTimers();
+		try {
+			postMock.mockResolvedValue({ data: {} });
+			const onOpenChange = vi.fn();
+			renderMenu({ onOpenChange });
+
+			fireEvent.click(screen.getByRole("menuitem", { name: "Make changes" }));
+			const input = screen.getByRole("textbox", { name: "Describe the change" });
+
+			fireEvent.change(input, { target: { value: "Rename this to bar" } });
+			fireEvent.keyDown(input, { key: "Enter" });
+
+			await act(async () => {
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(screen.getByText("Sent")).toBeInTheDocument();
+
+			fireEvent.keyDown(input, { key: "Escape" });
+
+			expect(screen.getByRole("menuitem", { name: "Copy" })).toBeInTheDocument();
+			expect(screen.queryByRole("textbox", { name: "Describe the change" })).not.toBeInTheDocument();
+			expect(screen.queryByText("Sent")).not.toBeInTheDocument();
+
+			act(() => {
+				vi.advanceTimersByTime(2_000);
+			});
+
+			expect(onOpenChange).not.toHaveBeenCalledWith(false);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("shows an error status and does not auto-close when the send fails", async () => {
 		postMock.mockResolvedValue({ error: { message: "AO daemon is not ready." } });
 		const onOpenChange = vi.fn();
@@ -237,6 +273,22 @@ describe("DiffSelectionMenu", () => {
 		await userEvent.click(screen.getByRole("menuitem", { name: "Make changes" }));
 
 		expect(screen.getByRole("textbox", { name: "Describe the change" })).toBeInTheDocument();
+		expect(screen.queryByText("AO daemon is not ready.")).not.toBeInTheDocument();
+	});
+
+	it("clears the stale error text when pressing Escape from the input after a failed send", async () => {
+		postMock.mockResolvedValue({ error: { message: "AO daemon is not ready." } });
+		renderMenu();
+
+		await userEvent.click(screen.getByRole("menuitem", { name: "Make changes" }));
+		const input = await screen.findByRole("textbox", { name: "Describe the change" });
+		await userEvent.type(input, "Rename this to bar{Enter}");
+
+		expect(await screen.findByText("AO daemon is not ready.")).toBeInTheDocument();
+
+		await userEvent.keyboard("{Escape}");
+
+		expect(screen.getByRole("menuitem", { name: "Copy" })).toBeInTheDocument();
 		expect(screen.queryByText("AO daemon is not ready.")).not.toBeInTheDocument();
 	});
 
