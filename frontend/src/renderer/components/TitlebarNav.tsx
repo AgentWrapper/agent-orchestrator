@@ -10,9 +10,9 @@ const isLinux = isLinuxPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
 // Sidebar chrome cluster (sidebar toggle + history arrows). It stays fixed while
-// the sidebar expands, collapses, or appears as a hover preview. macOS pins it
-// beside the traffic lights; Linux has no traffic lights, so it sits at the
-// sidebar's top-left. (Windows keeps these controls in its own titlebar.)
+// the sidebar expands or collapses. macOS pins it beside the traffic lights;
+// Linux has no traffic lights, so it sits at the sidebar's top-left. (Windows
+// keeps these controls in its own titlebar.)
 // The installed router has no useCanGoForward, and deriving one as
 // `__TSR_index < history.length - 1` (the upstream hook's approach) is wrong
 // here: window.history.length also counts entries the router never created —
@@ -39,11 +39,9 @@ function useCanGoForward(): boolean {
 export function TitlebarNav({
 	historyLocked = false,
 	isFullScreen = false,
-	onSidebarPreviewEnter,
 }: {
 	historyLocked?: boolean;
 	isFullScreen?: boolean;
-	onSidebarPreviewEnter?: React.PointerEventHandler<HTMLButtonElement>;
 }) {
 	const { t } = useTranslation();
 	const { isSidebarOpen, toggleSidebar } = useUiStore();
@@ -73,7 +71,6 @@ export function TitlebarNav({
 			<TitlebarButton
 				label={isSidebarOpen ? t("shell.collapseSidebar") : t("shell.expandSidebar")}
 				onClick={toggleSidebar}
-				onPointerEnter={onSidebarPreviewEnter}
 				title={isSidebarOpen ? t("titlebar.collapseSidebarShortcut") : t("titlebar.expandSidebarShortcut")}
 			>
 				<PanelLeft className="size-icon-lg" aria-hidden="true" />

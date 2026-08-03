@@ -140,14 +140,13 @@ vi.mock("../components/ShellTopbar", () => ({ ShellTopbar: () => null }));
 vi.mock("../components/TitlebarNav", async () => {
 	const { useUiStore: useStore } = await vi.importActual<typeof import("../stores/ui-store")>("../stores/ui-store");
 	return {
-		TitlebarNav: ({ onSidebarPreviewEnter }: { onSidebarPreviewEnter?: () => void }) => {
+		TitlebarNav: () => {
 			const isSidebarOpen = useStore((state) => state.isSidebarOpen);
 			const toggleSidebar = useStore((state) => state.toggleSidebar);
 			return (
 				<button
 					aria-label={isSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
 					onClick={toggleSidebar}
-					onPointerEnter={onSidebarPreviewEnter}
 					type="button"
 				/>
 			);
@@ -185,10 +184,10 @@ vi.mock("../components/GlobalNewTaskDialog", async () => {
 vi.mock("../components/Sidebar", async () => {
 	const { useUiStore: useStore } = await vi.importActual<typeof import("../stores/ui-store")>("../stores/ui-store");
 	return {
-		Sidebar: ({ isOverlay, onPreviewLeave }: { isOverlay?: boolean; onPreviewLeave?: () => void }) => {
+		Sidebar: () => {
 			const nonce = useStore((state) => state.createProjectNonce);
 			return (
-				<div data-overlay={isOverlay ? "true" : "false"} data-testid="sidebar" onPointerLeave={onPreviewLeave}>
+				<div data-testid="sidebar">
 					{nonce > 0 ? <div data-testid="create-project-flow" /> : null}
 				</div>
 			);
