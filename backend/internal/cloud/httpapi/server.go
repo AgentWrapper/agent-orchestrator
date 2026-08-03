@@ -362,10 +362,7 @@ func (s *Server) requestLogger(next http.Handler) http.Handler {
 		if routeContext := chi.RouteContext(r.Context()); routeContext != nil {
 			route = routeContext.RoutePattern()
 		}
-		logPath := r.URL.Path
-		if strings.HasPrefix(logPath, "/api/cloud/v1/preview/") {
-			logPath = "/api/cloud/v1/preview/[redacted]"
-		}
+		logPath := redactedRequestLogPath(r.URL.Path)
 		s.log.Info("AO Cloud request completed",
 			"request_id", middleware.GetReqID(r.Context()),
 			"method", r.Method,
@@ -376,6 +373,16 @@ func (s *Server) requestLogger(next http.Handler) http.Handler {
 			"duration_ms", time.Since(startedAt).Milliseconds(),
 		)
 	})
+}
+
+func redactedRequestLogPath(path string) string {
+	if strings.HasPrefix(path, "/api/cloud/v1/preview/") {
+		return "/api/cloud/v1/preview/[redacted]"
+	}
+	if strings.HasPrefix(path, "/api/cloud/v1/share-links/") {
+		return "/api/cloud/v1/share-links/[redacted]"
+	}
+	return path
 }
 
 func quietCloudRequest(path string) bool {
@@ -1806,17 +1813,11 @@ func (s *Server) setDesiredState(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
-	account, _ := accountFromContext(r.Context())
-	account.ID = tenantAccountIDFromContext(r.Context())
-	sessionID := clouddomain.SessionID(chi.URLParam(r, "sessionId"))
-	if _, err := s.store.GetSession(r.Context(), account.ID, sessionID); err != nil {
-		if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
-			writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The cloud session does not exist.")
-			return
-		}
-		s.internalError(w, r, "authorize event stream", err)
+	account, session, ok := s.authorizedSession(w, r, "authorize event stream")
+	if !ok {
 		return
 	}
+	sessionID := session.ID
 	after, err := parseAfter(r)
 	if err != nil {
 		writeError(w, r, http.StatusBadRequest, "INVALID_AFTER", "after must be a non-negative integer.")

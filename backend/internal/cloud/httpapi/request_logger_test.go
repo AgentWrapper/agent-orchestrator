@@ -87,3 +87,27 @@ func TestRequestLoggerRedactsFailedPreviewTokens(t *testing.T) {
 		t.Fatalf("request log did not include redacted preview path: %s", output.String())
 	}
 }
+
+func TestRequestLoggerRedactsShareTokens(t *testing.T) {
+	var output bytes.Buffer
+	server := &Server{
+		log: slog.New(slog.NewJSONHandler(&output, nil)),
+	}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/cloud/v1/share-links/private-share-token/redeem",
+		nil,
+	)
+	response := httptest.NewRecorder()
+
+	server.requestLogger(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "failed", http.StatusUnauthorized)
+	})).ServeHTTP(response, request)
+
+	if bytes.Contains(output.Bytes(), []byte("private-share-token")) {
+		t.Fatalf("request log included share token: %s", output.String())
+	}
+	if !bytes.Contains(output.Bytes(), []byte("/api/cloud/v1/share-links/[redacted]")) {
+		t.Fatalf("request log did not include redacted share path: %s", output.String())
+	}
+}
