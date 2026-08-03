@@ -28,6 +28,16 @@ const png = (name = "shot.png") =>
 /* ---- the keyboard contract the composer already had ---------------------- */
 
 describe("send keys", () => {
+	it("uses the AO logo palette for the send control", async () => {
+		const { field } = renderComposer();
+		const send = screen.getByRole("button", { name: "Send message" });
+		expect(send).toHaveClass("bg-logo-accent", "text-logo-accent-foreground");
+
+		await userEvent.type(field, "hello");
+		expect(send).toBeEnabled();
+		expect(send).toHaveClass("hover:bg-logo-accent-bright", "focus-visible:ring-logo-accent/45");
+	});
+
 	it("sends on Enter", async () => {
 		const { onSend, field } = renderComposer();
 		await userEvent.type(field, "hello");

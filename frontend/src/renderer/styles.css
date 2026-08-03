@@ -210,6 +210,11 @@
 	--color-muted: var(--color-bg-tertiary);
 	--color-muted-foreground: var(--color-text-muted);
 	--color-passive: var(--color-text-passive);
+	--color-logo-accent: var(--color-brand-logo);
+	--color-logo-accent-foreground: var(--color-brand-logo-foreground);
+	--color-markdown-code: var(--color-text-markdown-code);
+	--color-markdown-link: var(--color-text-markdown-link);
+	--color-markdown-link-hover: var(--color-text-markdown-link-hover);
 	--color-secondary: var(--color-bg-tertiary);
 
 	--color-primary: var(--bridge-accent);

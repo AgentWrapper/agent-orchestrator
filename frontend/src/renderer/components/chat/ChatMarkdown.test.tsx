@@ -53,6 +53,25 @@ describe("ChatMarkdown", () => {
 		const code = screen.getByText("go test ./...");
 		expect(code.tagName).toBe("CODE");
 		expect(code.closest("pre")).toBeNull();
+		expect(code).toHaveClass("text-markdown-code");
+	});
+
+	it("uses the AO logo colour for file paths and inline notation", () => {
+		render(
+			<ChatMarkdown
+				text={"See `backend/internal/adapters/agent/` and then pass `--resume` to `ao`."}
+			/>,
+		);
+
+		expect(screen.getByText("backend/internal/adapters/agent/")).toHaveClass("text-markdown-code");
+		expect(screen.getByText("--resume")).toHaveClass("text-markdown-code");
+		expect(screen.getByText("ao")).toHaveClass("text-markdown-code");
+	});
+
+	it("recognizes standalone filenames and paths with line locations", () => {
+		render(<ChatMarkdown text={"Compare `README.md` with `backend/service.go:42`."} />);
+		expect(screen.getByText("README.md")).toHaveClass("text-markdown-code");
+		expect(screen.getByText("backend/service.go:42")).toHaveClass("text-markdown-code");
 	});
 
 	it("escapes raw HTML instead of rendering it", () => {
@@ -68,6 +87,7 @@ describe("ChatMarkdown", () => {
 		const link = screen.getByRole("link", { name: "the issue" });
 		expect(link).toHaveAttribute("href", "https://example.com/i/1");
 		expect(link).toHaveAttribute("target", "_blank");
+		expect(link).toHaveClass("text-markdown-link", "hover:text-markdown-link-hover");
 		// Without noreferrer the opened page gets a handle on the renderer.
 		expect(link.getAttribute("rel")).toContain("noreferrer");
 	});

@@ -228,7 +228,7 @@ const COMPONENTS: Components = {
 	},
 	// Only inline code reaches here; `pre` above takes every fence.
 	code: ({ children }) => (
-		<code className="rounded bg-surface px-[5px] py-[2px] font-mono text-[11.5px] text-accent">
+		<code className="rounded bg-surface px-[5px] py-[2px] font-mono text-[11.5px] text-markdown-code">
 			{children}
 		</code>
 	),
@@ -266,7 +266,7 @@ const COMPONENTS: Components = {
 			href={href}
 			target="_blank"
 			rel="noreferrer noopener"
-			className="text-accent underline decoration-accent-dim underline-offset-2 hover:decoration-accent"
+			className="text-markdown-link underline decoration-markdown-link/45 underline-offset-2 transition-colors hover:text-markdown-link-hover hover:decoration-markdown-link-hover/75"
 		>
 			{children}
 		</a>

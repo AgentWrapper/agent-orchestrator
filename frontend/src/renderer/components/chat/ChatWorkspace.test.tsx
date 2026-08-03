@@ -2,8 +2,9 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatWorkspace } from "./ChatWorkspace";
+import { OriginMessage } from "./ChatTimelineItems";
 import { chatFixture, chatFixtureEmpty, chatFixtureLongHistory } from "../../lib/chat-fixture";
-import type { ConversationSnapshot } from "../../types/conversation";
+import type { ConversationMessage, ConversationSnapshot } from "../../types/conversation";
 
 const writeText = vi.fn(async (_text: string) => undefined);
 
@@ -52,6 +53,10 @@ describe("ChatWorkspace timeline", () => {
 		expect(question).toBeGreaterThan(-1);
 		expect(answer).toBeGreaterThan(question);
 		expect(relay).toBeGreaterThan(answer);
+
+		const relayCard = screen.getByText(/Checks failed on the base branch/).parentElement;
+		expect(relayCard).toHaveClass("border-l-logo-accent/60");
+		expect(relayCard?.querySelector("svg")).toHaveClass("text-logo-accent");
 	});
 
 	it("offers Jump to latest only once the reader has scrolled away from the bottom", async () => {
@@ -112,12 +117,55 @@ describe("ChatWorkspace timeline", () => {
 	});
 });
 
+describe("automation reports", () => {
+	it("collapses a long report until the reader asks to expand it", async () => {
+		const user = userEvent.setup();
+		const source = chatFixture.items.find((item) => item.id === "m-4") as ConversationMessage;
+		const message: ConversationMessage = {
+			...source,
+			text: `READ-ONLY follow-up report. ${"Adapter evidence and implementation details. ".repeat(20)}END OF REPORT`,
+		};
+		render(<OriginMessage message={message} />);
+
+		expect(screen.getByRole("button", { name: "Show full report" })).toHaveAttribute(
+			"aria-expanded",
+			"false",
+		);
+		expect(screen.queryByText(/END OF REPORT/)).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: "Show full report" }));
+		expect(screen.getByText(/END OF REPORT/)).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Hide report" })).toHaveAttribute(
+			"aria-expanded",
+			"true",
+		);
+	});
+
+	it("keeps a short automation alert fully visible", () => {
+		const message = chatFixture.items.find((item) => item.id === "m-4") as ConversationMessage;
+		render(<OriginMessage message={message} />);
+		expect(screen.getByText(/Checks failed on the base branch/)).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Show full report" })).not.toBeInTheDocument();
+	});
+});
+
 describe("ChatWorkspace message actions", () => {
 	it("copies an assistant message as the markdown the agent wrote", async () => {
 		const user = userEvent.setup();
-		render(<ChatWorkspace snapshot={chatFixture} />);
+		const snapshot = structuredClone(chatFixture);
+		const finalIndex = snapshot.items.findIndex((item) => item.id === "m-2");
+		const finalMessage = snapshot.items[finalIndex] as ConversationMessage;
+		snapshot.items.splice(finalIndex, 0, {
+			...finalMessage,
+			id: "m-intermediate",
+			sequence: finalMessage.sequence - 0.5,
+			text: "Intermediate progress while the turn is still working.",
+		});
+		render(<ChatWorkspace snapshot={snapshot} />);
 
-		const copy = screen.getAllByRole("button", { name: /copy message as markdown/i })[0]!;
+		const copies = screen.getAllByRole("button", { name: /copy message as markdown/i });
+		expect(copies).toHaveLength(1);
+		const copy = copies[0]!;
 		await user.click(copy);
 
 		expect(writeText).toHaveBeenCalledTimes(1);
@@ -125,6 +173,7 @@ describe("ChatWorkspace message actions", () => {
 		// The stored text, fences and all — not a re-serialization of the rendered DOM.
 		expect(copied).toContain("```go");
 		expect(copied).toContain("func (m *Manager) Spawn");
+		expect(copied).not.toContain("Intermediate progress");
 	});
 
 	it("offers no copy on a message that is still arriving", () => {

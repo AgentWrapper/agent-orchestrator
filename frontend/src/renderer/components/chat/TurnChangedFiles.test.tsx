@@ -202,3 +202,32 @@ describe("ActivityRun with a streaming command", () => {
 		expect(container.querySelector("pre")).toBeNull();
 	});
 });
+
+describe("ActivityRow command labels", () => {
+	it("describes read-only shell inspection as file exploration", () => {
+		render(
+			<ActivityRow
+				activity={commandActivity(
+					{
+						command:
+							"sed -n '1,240p' ~/.ao/dev/data/skills/using-ao/SKILL.md && sed -n '1,240p' ~/.ao/dev/data/skills/other/SKILL.md",
+						output: "skill contents",
+					},
+					"completed",
+				)}
+			/>,
+		);
+		expect(screen.getByText("Explored 2 files")).toBeInTheDocument();
+		expect(screen.queryByText(/sed -n/)).not.toBeInTheDocument();
+	});
+
+	it("describes execution as a command", () => {
+		render(
+			<ActivityRow
+				activity={commandActivity({ command: "go test ./...", output: "ok" }, "completed")}
+			/>,
+		);
+		expect(screen.getByText("Ran command")).toBeInTheDocument();
+		expect(screen.queryByText("go test ./...")).not.toBeInTheDocument();
+	});
+});

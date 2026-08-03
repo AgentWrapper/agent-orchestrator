@@ -61,9 +61,9 @@ describe("ContextMeter", () => {
 	});
 
 	describe("threshold colours", () => {
-		it("uses the ordinary-progress token below 70%", () => {
+		it("uses the AO logo accent below 70%", () => {
 			render(<ContextMeter usage={usage({ contextUsed: 172_000 })} />);
-			expect(fill().className).toContain("bg-status-working");
+			expect(fill().className).toContain("bg-logo-accent");
 		});
 
 		it("shifts to the needs-you token from 70%", () => {

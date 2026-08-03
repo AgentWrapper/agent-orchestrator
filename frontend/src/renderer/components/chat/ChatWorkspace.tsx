@@ -720,6 +720,11 @@ const TurnGroup = memo(function TurnGroup({
 	queued: boolean;
 }) {
 	const runs = useMemo(() => runsOf(group.items), [group.items]);
+	const copyableMessageId = group.outcome
+		? [...group.items]
+				.reverse()
+				.find((item) => item.kind === "message" && item.role === "assistant")?.id
+		: undefined;
 	return (
 		<div className="flex flex-col gap-3">
 			{runs.map((run) =>
@@ -737,6 +742,7 @@ const TurnGroup = memo(function TurnGroup({
 						onDecide={onDecide}
 						busy={busy}
 						queued={queued}
+						showCopy={run.items[0]?.id === copyableMessageId}
 					/>
 				),
 			)}
@@ -765,6 +771,7 @@ function TimelineItem({
 	onDecide,
 	busy,
 	queued,
+	showCopy,
 }: {
 	item: ConversationItem;
 	onDecide?: (requestId: string, decisionId: string) => void;
@@ -774,9 +781,11 @@ function TimelineItem({
 	 * so. A group is one turn, so this holds for every item in it.
 	 */
 	queued?: boolean;
+	/** This is the final assistant response of a turn that has finished. */
+	showCopy?: boolean;
 }) {
 	if (item.kind === "message") {
-		if (item.role === "assistant") return <AssistantMessage message={item} />;
+		if (item.role === "assistant") return <AssistantMessage message={item} showCopy={showCopy} />;
 		// A user-role message that did not come from this human is an automation or
 		// worker relay, and is attributed differently.
 		if (item.origin === "human") return <HumanMessage message={item} queued={queued} />;

@@ -343,8 +343,8 @@ export function ChatComposer({
 			onDragLeave={() => setDragging(false)}
 			onDrop={onDrop}
 			className={cn(
-				"relative flex flex-col gap-2 rounded-lg border bg-surface p-2 focus-within:border-accent-dim",
-				dragging ? "border-accent" : "border-border-strong",
+				"relative flex flex-col gap-2 rounded-lg border bg-surface p-2 focus-within:border-logo-accent/45",
+				dragging ? "border-logo-accent" : "border-border-strong",
 			)}
 		>
 			{menuOpen && trigger ? (
@@ -480,6 +480,7 @@ export function ChatComposer({
 					size="icon-sm"
 					disabled={!canSend}
 					aria-label={steering ? "Steer the running turn" : "Send message"}
+					className="border-logo-accent bg-logo-accent text-logo-accent-foreground hover:bg-logo-accent-bright focus-visible:ring-logo-accent/45"
 				>
 					{steerPending ? (
 						<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />

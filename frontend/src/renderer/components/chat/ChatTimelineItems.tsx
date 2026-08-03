@@ -48,6 +48,7 @@ import { caretNotation, stripAnsi } from "../../lib/ansi";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { HighlightedCode } from "./HighlightedCode";
 import { CopyButton } from "./CopyButton";
+import { commandCategory, exploredFileCount } from "./activity-command";
 import { Button } from "../ui/button";
 import {
 	fileChangeFiles,
@@ -66,6 +67,9 @@ const timeFormatter = new Intl.DateTimeFormat(undefined, {
 	hour: "numeric",
 	minute: "2-digit",
 });
+
+const ORIGIN_REPORT_COLLAPSE_AT = 600;
+const ORIGIN_REPORT_PREVIEW_LENGTH = 240;
 
 /** Collapse the home directory so a long absolute path does not eat the row. */
 function shortenPaths(text: string): string {
@@ -125,22 +129,55 @@ export function HumanMessage({
  * durable origin field, never from a prefix parsed out of the text.
  */
 export function OriginMessage({ message }: { message: ConversationMessage }) {
+	const longReport = message.text.length > ORIGIN_REPORT_COLLAPSE_AT;
+	const [expanded, setExpanded] = useState(false);
+	const preview = longReport
+		? `${message.text.slice(0, ORIGIN_REPORT_PREVIEW_LENGTH).trimEnd()}…`
+		: message.text;
+
 	return (
-		<div className="rounded-md border border-border border-l-2 border-l-accent-dim bg-surface/60 px-3.5 py-2.5">
+		<div className="rounded-md border border-border border-l-2 border-l-logo-accent/60 bg-surface/60 px-3.5 py-2.5">
 			<div className="mb-1.5 flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-				<CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />
+				<CircleAlert aria-hidden="true" className="size-3.5 shrink-0 text-logo-accent" />
 				<span className="truncate">{message.senderLabel ?? message.origin}</span>
 				<span className="ml-auto shrink-0 font-normal tabular-nums">
 					{formatTime(message.createdAt)}
 				</span>
 			</div>
-			<p className="text-sm leading-relaxed text-muted-foreground">{message.text}</p>
+			{longReport && expanded ? (
+				<ChatMarkdown text={message.text} muted />
+			) : (
+				<p className={cn("text-sm leading-relaxed text-muted-foreground", longReport && "line-clamp-3")}>
+					{preview}
+				</p>
+			)}
+			{longReport ? (
+				<button
+					type="button"
+					onClick={() => setExpanded((current) => !current)}
+					aria-expanded={expanded}
+					className="mt-2 flex items-center gap-1 text-[11px] font-medium text-logo-accent transition-colors hover:text-markdown-link-hover"
+				>
+					<ChevronRight
+						aria-hidden="true"
+						className={cn("size-3 transition-transform", expanded && "rotate-90")}
+					/>
+					{expanded ? "Hide report" : "Show full report"}
+				</button>
+			) : null}
 		</div>
 	);
 }
 
 /** The agent's prose. A trailing caret marks text still arriving. */
-export function AssistantMessage({ message }: { message: ConversationMessage }) {
+export function AssistantMessage({
+	message,
+	showCopy = false,
+}: {
+	message: ConversationMessage;
+	/** Only the final answer of a finished turn owns the turn's copy action. */
+	showCopy?: boolean;
+}) {
 	return (
 		<div className="group/message relative">
 			<ChatMarkdown text={message.text} streaming={message.streaming} />
@@ -149,10 +186,9 @@ export function AssistantMessage({ message }: { message: ConversationMessage }) 
 					aria-label="still writing"
 					className="ml-0.5 inline-block h-4 w-[2px] translate-y-0.5 animate-pulse bg-accent align-baseline"
 				/>
-			) : (
-				// Absent rather than disabled while streaming: half a message is not what
-				// the reader means by "copy this". The row keeps its height either way so
-				// settling does not shift the prose above it.
+			) : showCopy ? (
+				// One action for the completed answer, not one after every prose fragment
+				// the provider emitted while working.
 				<div className="flex h-[18px] items-center opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/message:opacity-100">
 					{/* The stored markdown, not a re-serialization of what was rendered:
 					    pasting it into an editor has to give back what the agent wrote. */}
@@ -163,7 +199,7 @@ export function AssistantMessage({ message }: { message: ConversationMessage }) 
 						className="-ml-1.5"
 					/>
 				</div>
-			)}
+			) : null}
 		</div>
 	);
 }
@@ -405,12 +441,13 @@ function CommandOutput({ activity }: { activity: ConversationActivity }) {
  */
 function splitSummary(activity: ConversationActivity): { label: string; path?: string } {
 	if (activity.activityKind === "command") {
-		const command = shortenPaths(activity.summary).trim();
-		const space = command.indexOf(" ");
-		if (space > 0) {
-			return { label: command.slice(0, space), path: command.slice(space + 1) };
+		const rawCommand = activity.detail?.command ?? activity.summary;
+		const category = commandCategory(rawCommand);
+		if (category === "read" || category === "search") {
+			const count = exploredFileCount(rawCommand);
+			return { label: count ? `Explored ${count} ${count === 1 ? "file" : "files"}` : "Explored files" };
 		}
-		return { label: command };
+		return { label: category === "vcs" ? "Checked repository" : "Ran command" };
 	}
 	const files = fileChangeFiles(activity);
 	if (activity.activityKind === "file_change" && files.length === 1) {

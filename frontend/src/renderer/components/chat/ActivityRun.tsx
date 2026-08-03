@@ -15,14 +15,8 @@ import { useState } from "react";
 import { ChevronRight, Loader2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { ActivityRow } from "./ChatTimelineItems";
+import { commandCategory } from "./activity-command";
 import type { ConversationActivity } from "../../types/conversation";
-
-/** Commands that read a file's contents. */
-const READERS = new Set(["cat", "sed", "nl", "head", "tail", "bat", "less", "more", "wc", "jq"]);
-/** Commands that search for files or content. */
-const SEARCHERS = new Set(["rg", "grep", "find", "fd", "ls", "tree", "glob", "ag"]);
-/** Commands that inspect version control. */
-const VCS = new Set(["git", "gh"]);
 
 export function ActivityRun({ activities }: { activities: ConversationActivity[] }) {
 	// null until someone decides, so a run holding a command that is printing right
@@ -113,11 +107,19 @@ function summarize(activities: ConversationActivity[]): string {
 			reviews += 1;
 			continue;
 		}
-		const binary = firstWord(activity.detail?.command ?? activity.summary);
-		if (READERS.has(binary)) reads += 1;
-		else if (SEARCHERS.has(binary)) searches += 1;
-		else if (VCS.has(binary)) vcs += 1;
-		else other += 1;
+		switch (commandCategory(activity.detail?.command ?? activity.summary)) {
+			case "read":
+				reads += 1;
+				break;
+			case "search":
+				searches += 1;
+				break;
+			case "vcs":
+				vcs += 1;
+				break;
+			default:
+				other += 1;
+		}
 	}
 
 	const parts: string[] = [];
@@ -135,14 +137,4 @@ function summarize(activities: ConversationActivity[]): string {
 	// "Explored" when the agent was reading or searching; "Ran" when it was doing.
 	const verb = reads > 0 || searches > 0 ? "Explored" : "Ran";
 	return `${verb} ${parts.join(", ")}`;
-}
-
-/** The command's binary, which is what classifies the call. */
-function firstWord(text: string): string {
-	const trimmed = text.trim();
-	const space = trimmed.indexOf(" ");
-	const head = space > 0 ? trimmed.slice(0, space) : trimmed;
-	// Keep only the basename, so /bin/sed and sed classify the same.
-	const slash = head.lastIndexOf("/");
-	return slash >= 0 ? head.slice(slash + 1) : head;
 }

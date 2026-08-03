@@ -56,14 +56,12 @@ function quotaSeverity(percent: number): Severity {
 }
 
 /**
- * AO's existing status tokens, not a palette invented here. `working` is the
- * ordinary-progress teal already used for a session doing its job, `needs-you` is
- * the amber that already means "a human should look", and `exited` is the red that
- * already means "this stopped". Reusing them keeps one vocabulary of urgency
- * across the app.
+ * Normal usage is informational rather than session activity, so it uses AO's
+ * logo blue. Warning and critical retain the established status colours: amber
+ * means "a human should look", and red means the next turn is at risk.
  */
 const FILL: Record<Severity, string> = {
-	normal: "bg-status-working",
+	normal: "bg-logo-accent",
 	warn: "bg-status-needs-you",
 	critical: "bg-status-exited",
 };
