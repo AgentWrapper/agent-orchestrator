@@ -59,7 +59,7 @@ export function TitlebarNav({
 	// traffic lights, so it sits at the sidebar's top-left within the reserved
 	// titlebar band.
 	const leftClass = !isMac
-		? "left-1.5"
+		? "left-0"
 		: isFullScreen
 			? "left-titlebar-cluster-left-fullscreen"
 			: "left-titlebar-cluster-left";

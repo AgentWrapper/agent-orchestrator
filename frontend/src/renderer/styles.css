@@ -173,7 +173,7 @@
 	--spacing-titlebar-content-offset: var(--size-titlebar-content-offset);
 	--spacing-titlebar-cluster-left: var(--size-titlebar-cluster-left);
 	/* Fullscreen has no traffic lights — park the cluster at the panel inset. */
-	--spacing-titlebar-cluster-left-fullscreen: var(--size-center-panel-inset);
+	--spacing-titlebar-cluster-left-fullscreen: var(--size-center-panel-inset-mac);
 	--spacing-traffic-light-clearance: var(--size-traffic-light-clearance);
 	--spacing-traffic-light-clearance-fullscreen: var(--size-traffic-light-clearance-fullscreen);
 	--spacing-control-xs: var(--size-control-xs);
