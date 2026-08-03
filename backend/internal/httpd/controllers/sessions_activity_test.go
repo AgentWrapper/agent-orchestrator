@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -125,6 +126,38 @@ func TestSessionsAPI_ActivityThreadsAgentSessionIDWithState(t *testing.T) {
 	want := ports.ActivitySignal{Valid: true, State: domain.ActivityIdle, Event: "stop", AgentSessionID: "native-session-1"}
 	if rec.gotSignal != want {
 		t.Fatalf("recorder signal = %#v, want %#v", rec.gotSignal, want)
+	}
+}
+
+func TestSessionsAPI_ActivityAcceptsContextPressureOnly(t *testing.T) {
+	rec := &fakeActivityRecorder{}
+	srv := newActivityTestServer(t, rec)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity",
+		`{"contextPressure":{"usedPercent":91,"untilAutoCompactPercent":9,"source":"claude-code","observedAt":"2026-06-02T12:30:00Z"}}`)
+	if status != http.StatusOK {
+		t.Fatalf("activity = %d, want 200; body=%s", status, body)
+	}
+	wantObservedAt := time.Date(2026, 6, 2, 12, 30, 0, 0, time.UTC)
+	if rec.gotSignal.Valid || rec.gotSignal.ContextPressure == nil {
+		t.Fatalf("recorder signal = %#v, want pressure-only signal", rec.gotSignal)
+	}
+	if got := rec.gotSignal.ContextPressure; got.UsedPercent != 91 || got.UntilAutoCompactPercent != 9 || got.Source != "claude-code" || !got.ObservedAt.Equal(wantObservedAt) {
+		t.Fatalf("context pressure = %#v", got)
+	}
+}
+
+func TestSessionsAPI_ActivityRejectsInvalidContextPressure(t *testing.T) {
+	rec := &fakeActivityRecorder{}
+	srv := newActivityTestServer(t, rec)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity",
+		`{"state":"active","contextPressure":{"usedPercent":101,"untilAutoCompactPercent":9,"source":"claude-code","observedAt":"2026-06-02T12:30:00Z"}}`)
+	if status != http.StatusBadRequest {
+		t.Fatalf("activity = %d, want 400; body=%s", status, body)
+	}
+	if rec.calls != 0 {
+		t.Fatalf("recorder called for invalid context pressure")
 	}
 }
 

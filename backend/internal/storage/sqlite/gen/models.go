@@ -189,6 +189,7 @@ type Session struct {
 	TerminateOnPRMerge bool
 	DiffBaseSha        string
 	DiffBaseRef        string
+	ContextPressure    sql.NullString
 }
 
 type SessionCleanupFact struct {

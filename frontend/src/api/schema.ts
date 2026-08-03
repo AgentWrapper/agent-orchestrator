@@ -933,6 +933,7 @@ export interface components {
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
             branch?: string;
+            contextPressure?: components["schemas"]["DomainContextPressure"];
             /** Format: date-time */
             createdAt: string;
             displayName?: string;
@@ -994,6 +995,13 @@ export interface components {
             /** Format: date-time */
             lastActivityAt: string;
             state: string;
+        };
+        DomainContextPressure: {
+            /** Format: date-time */
+            observedAt: string;
+            source: string;
+            untilAutoCompactPercent: number;
+            usedPercent: number;
         };
         DomainReviewerConfig: {
             harness: string;
@@ -1406,6 +1414,8 @@ export interface components {
         SetActivityRequest: {
             /** @description Native agent session identifier used to resume its transcript. */
             agentSessionId?: string;
+            /** @description Best-effort harness context-pressure reading. Omitted when unknown. */
+            contextPressure?: components["schemas"]["DomainContextPressure"];
             /** @description AO hook sub-command that produced this state (e.g. post-tool-use). */
             event?: string;
             /** @description AO process generation that produced the signal. */

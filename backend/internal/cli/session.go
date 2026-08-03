@@ -41,22 +41,30 @@ type sessionRenameRequest struct {
 }
 
 type sessionDTO struct {
-	ID           string          `json:"id"`
-	ProjectID    string          `json:"projectId"`
-	IssueID      string          `json:"issueId,omitempty"`
-	Kind         string          `json:"kind"`
-	Harness      string          `json:"harness,omitempty"`
-	DisplayName  string          `json:"displayName,omitempty"`
-	Activity     sessionActivity `json:"activity"`
-	IsTerminated bool            `json:"isTerminated"`
-	CreatedAt    time.Time       `json:"createdAt"`
-	UpdatedAt    time.Time       `json:"updatedAt"`
-	Status       string          `json:"status"`
+	ID              string                  `json:"id"`
+	ProjectID       string                  `json:"projectId"`
+	IssueID         string                  `json:"issueId,omitempty"`
+	Kind            string                  `json:"kind"`
+	Harness         string                  `json:"harness,omitempty"`
+	DisplayName     string                  `json:"displayName,omitempty"`
+	Activity        sessionActivity         `json:"activity"`
+	IsTerminated    bool                    `json:"isTerminated"`
+	ContextPressure *sessionContextPressure `json:"contextPressure,omitempty"`
+	CreatedAt       time.Time               `json:"createdAt"`
+	UpdatedAt       time.Time               `json:"updatedAt"`
+	Status          string                  `json:"status"`
 }
 
 type sessionActivity struct {
 	State          string    `json:"state"`
 	LastActivityAt time.Time `json:"lastActivityAt"`
+}
+
+type sessionContextPressure struct {
+	UsedPercent             int       `json:"usedPercent"`
+	UntilAutoCompactPercent int       `json:"untilAutoCompactPercent"`
+	Source                  string    `json:"source"`
+	ObservedAt              time.Time `json:"observedAt"`
 }
 
 type sessionListResponse struct {
@@ -117,16 +125,17 @@ type claimPRResponse struct {
 }
 
 type sessionListEntry struct {
-	ID             string     `json:"id"`
-	ProjectID      string     `json:"projectId"`
-	Role           string     `json:"role"`
-	Status         string     `json:"status,omitempty"`
-	IssueID        string     `json:"issueId,omitempty"`
-	Harness        string     `json:"harness,omitempty"`
-	IsTerminated   bool       `json:"isTerminated"`
-	LastActivityAt *time.Time `json:"lastActivityAt,omitempty"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	UpdatedAt      time.Time  `json:"updatedAt"`
+	ID              string                  `json:"id"`
+	ProjectID       string                  `json:"projectId"`
+	Role            string                  `json:"role"`
+	Status          string                  `json:"status,omitempty"`
+	IssueID         string                  `json:"issueId,omitempty"`
+	Harness         string                  `json:"harness,omitempty"`
+	IsTerminated    bool                    `json:"isTerminated"`
+	ContextPressure *sessionContextPressure `json:"contextPressure,omitempty"`
+	LastActivityAt  *time.Time              `json:"lastActivityAt,omitempty"`
+	CreatedAt       time.Time               `json:"createdAt"`
+	UpdatedAt       time.Time               `json:"updatedAt"`
 }
 
 type sessionListOutput struct {
@@ -635,16 +644,17 @@ func sessionListEntries(sessions []sessionDTO) []sessionListEntry {
 			last = &activity
 		}
 		entries = append(entries, sessionListEntry{
-			ID:             sess.ID,
-			ProjectID:      sess.ProjectID,
-			Role:           sessionRole(sess),
-			Status:         sess.Status,
-			IssueID:        sess.IssueID,
-			Harness:        sess.Harness,
-			IsTerminated:   sess.IsTerminated,
-			LastActivityAt: last,
-			CreatedAt:      sess.CreatedAt,
-			UpdatedAt:      sess.UpdatedAt,
+			ID:              sess.ID,
+			ProjectID:       sess.ProjectID,
+			Role:            sessionRole(sess),
+			Status:          sess.Status,
+			IssueID:         sess.IssueID,
+			Harness:         sess.Harness,
+			IsTerminated:    sess.IsTerminated,
+			ContextPressure: sess.ContextPressure,
+			LastActivityAt:  last,
+			CreatedAt:       sess.CreatedAt,
+			UpdatedAt:       sess.UpdatedAt,
 		})
 	}
 	return entries
@@ -727,6 +737,9 @@ func sessionLineParts(sess sessionDTO) []string {
 	if sess.Status != "" {
 		parts = append(parts, "["+sess.Status+"]")
 	}
+	if sess.ContextPressure != nil {
+		parts = append(parts, fmt.Sprintf("ctx %d%%", sess.ContextPressure.UsedPercent))
+	}
 	if sess.Kind != "" {
 		parts = append(parts, sess.Kind)
 	}
@@ -764,6 +777,15 @@ func writeSessionDetails(cmd *cobra.Command, sess sessionDTO) error {
 	}
 	if !sess.UpdatedAt.IsZero() {
 		if _, err := fmt.Fprintf(out, "updated: %s\n", sess.UpdatedAt.Format(time.RFC3339)); err != nil {
+			return err
+		}
+	}
+	if sess.ContextPressure != nil {
+		if _, err := fmt.Fprintf(out, "contextPressure: used=%d%% untilAutoCompact=%d%% source=%s observedAt=%s\n",
+			sess.ContextPressure.UsedPercent,
+			sess.ContextPressure.UntilAutoCompactPercent,
+			sess.ContextPressure.Source,
+			sess.ContextPressure.ObservedAt.Format(time.RFC3339)); err != nil {
 			return err
 		}
 	}

@@ -19,7 +19,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref
+    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
+    context_pressure
 FROM sessions WHERE id = ?
 `
 
@@ -53,6 +54,7 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.TerminateOnPRMerge,
 		&i.DiffBaseSha,
 		&i.DiffBaseRef,
+		&i.ContextPressure,
 	)
 	return i, err
 }
@@ -63,9 +65,9 @@ INSERT INTO sessions (
     activity_state, activity_last_at, first_signal_at, is_terminated,
     branch, workspace_path, workspace_repo_path, diff_base_sha, diff_base_ref, runtime_handle_id,
     runtime_launch_id, agent_session_id, prompt,
-    preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation,
+    preview_url, preview_revision, terminate_on_pr_merge, context_pressure, cleanup_generation,
     created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSessionParams struct {
@@ -92,6 +94,7 @@ type InsertSessionParams struct {
 	PreviewURL         string
 	PreviewRevision    int64
 	TerminateOnPRMerge bool
+	ContextPressure    sql.NullString
 	CleanupGeneration  int64
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
@@ -122,6 +125,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.PreviewURL,
 		arg.PreviewRevision,
 		arg.TerminateOnPRMerge,
+		arg.ContextPressure,
 		arg.CleanupGeneration,
 		arg.CreatedAt,
 		arg.UpdatedAt,
@@ -135,7 +139,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref
+    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
+    context_pressure
 FROM sessions ORDER BY project_id, num
 `
 
@@ -175,6 +180,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.TerminateOnPRMerge,
 			&i.DiffBaseSha,
 			&i.DiffBaseRef,
+			&i.ContextPressure,
 		); err != nil {
 			return nil, err
 		}
@@ -195,7 +201,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref
+    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
+    context_pressure
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -235,6 +242,7 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.TerminateOnPRMerge,
 			&i.DiffBaseSha,
 			&i.DiffBaseRef,
+			&i.ContextPressure,
 		); err != nil {
 			return nil, err
 		}
@@ -348,7 +356,7 @@ UPDATE sessions SET
     branch = ?, workspace_path = ?, workspace_repo_path = ?, diff_base_sha = ?, diff_base_ref = ?, runtime_handle_id = ?,
     runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
     preview_url = ?, preview_revision = ?, terminate_on_pr_merge = ?,
-    cleanup_generation = ?, updated_at = ?
+    context_pressure = ?, cleanup_generation = ?, updated_at = ?
 WHERE id = ?
 `
 
@@ -373,6 +381,7 @@ type UpdateSessionParams struct {
 	PreviewURL         string
 	PreviewRevision    int64
 	TerminateOnPRMerge bool
+	ContextPressure    sql.NullString
 	CleanupGeneration  int64
 	UpdatedAt          time.Time
 	ID                 domain.SessionID
@@ -400,6 +409,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.PreviewURL,
 		arg.PreviewRevision,
 		arg.TerminateOnPRMerge,
+		arg.ContextPressure,
 		arg.CleanupGeneration,
 		arg.UpdatedAt,
 		arg.ID,

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -232,6 +233,7 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 			PreviewURL:        row.PreviewURL,
 			PreviewRevision:   row.PreviewRevision,
 		},
+		ContextPressure:   nullStringToContextPressure(row.ContextPressure),
 		CleanupGeneration: row.CleanupGeneration,
 		CreatedAt:         row.CreatedAt,
 		UpdatedAt:         row.UpdatedAt,
@@ -264,6 +266,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		PreviewURL:         rec.Metadata.PreviewURL,
 		PreviewRevision:    rec.Metadata.PreviewRevision,
 		TerminateOnPRMerge: rec.TerminateOnPRMerge,
+		ContextPressure:    contextPressureToNullString(rec.ContextPressure),
 		CleanupGeneration:  rec.CleanupGeneration,
 		CreatedAt:          rec.CreatedAt,
 		UpdatedAt:          rec.UpdatedAt,
@@ -294,9 +297,32 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		PreviewURL:         rec.Metadata.PreviewURL,
 		PreviewRevision:    rec.Metadata.PreviewRevision,
 		TerminateOnPRMerge: rec.TerminateOnPRMerge,
+		ContextPressure:    contextPressureToNullString(rec.ContextPressure),
 		CleanupGeneration:  rec.CleanupGeneration,
 		UpdatedAt:          rec.UpdatedAt,
 	}
+}
+
+func nullStringToContextPressure(s sql.NullString) *domain.ContextPressure {
+	if !s.Valid || s.String == "" {
+		return nil
+	}
+	var cp domain.ContextPressure
+	if err := json.Unmarshal([]byte(s.String), &cp); err != nil {
+		return nil
+	}
+	return &cp
+}
+
+func contextPressureToNullString(cp *domain.ContextPressure) sql.NullString {
+	if cp == nil {
+		return sql.NullString{}
+	}
+	b, err := json.Marshal(cp)
+	if err != nil {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: string(b), Valid: true}
 }
 
 // nullTimeToTime / timeToNullTime bridge the nullable first_signal_at column

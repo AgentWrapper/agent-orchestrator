@@ -93,6 +93,46 @@ func TestSessionPersistsDiffBaseMetadata(t *testing.T) {
 	}
 }
 
+func TestSessionPersistsContextPressure(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec := sampleRecord("mer")
+
+	created, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	got, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("get session: ok=%v err=%v", ok, err)
+	}
+	if got.ContextPressure != nil {
+		t.Fatalf("new session context pressure = %#v, want nil", got.ContextPressure)
+	}
+
+	observedAt := time.Date(2026, 6, 2, 12, 30, 0, 0, time.UTC)
+	got.ContextPressure = &domain.ContextPressure{
+		UsedPercent:             91,
+		UntilAutoCompactPercent: 9,
+		Source:                  "claude-code",
+		ObservedAt:              observedAt,
+	}
+	if err := s.UpdateSession(ctx, got); err != nil {
+		t.Fatalf("update session: %v", err)
+	}
+	updated, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("get updated session: ok=%v err=%v", ok, err)
+	}
+	if updated.ContextPressure == nil {
+		t.Fatal("updated context pressure is nil")
+	}
+	if *updated.ContextPressure != *got.ContextPressure {
+		t.Fatalf("updated context pressure = %#v, want %#v", updated.ContextPressure, got.ContextPressure)
+	}
+}
+
 func TestProjectCRUDAndArchive(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

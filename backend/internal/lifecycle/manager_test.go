@@ -222,6 +222,35 @@ func TestActivity_MetadataOnlyStoresAgentSessionIDWithoutChangingActivity(t *tes
 	}
 }
 
+func TestActivity_ContextPressureOnlyDoesNotChangeActivity(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.FirstSignalAt = time.Now().Add(-time.Minute)
+	st.sessions["mer-1"] = rec
+	observedAt := time.Date(2026, 6, 2, 12, 30, 0, 0, time.UTC)
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		ContextPressure: &domain.ContextPressure{
+			UsedPercent:             91,
+			UntilAutoCompactPercent: 9,
+			Source:                  "claude-code",
+			ObservedAt:              observedAt,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if got.ContextPressure == nil || got.ContextPressure.UsedPercent != 91 || !got.ContextPressure.ObservedAt.Equal(observedAt) {
+		t.Fatalf("ContextPressure = %#v", got.ContextPressure)
+	}
+	if got.Activity != rec.Activity {
+		t.Fatalf("context-pressure-only hook changed activity: got %+v, want %+v", got.Activity, rec.Activity)
+	}
+	if !got.FirstSignalAt.Equal(rec.FirstSignalAt) {
+		t.Fatalf("context-pressure-only hook changed FirstSignalAt: got %v, want %v", got.FirstSignalAt, rec.FirstSignalAt)
+	}
+}
+
 func TestActivity_SameStateSignalStillStoresAgentSessionID(t *testing.T) {
 	m, st, _ := newManager()
 	rec := working("mer-1")

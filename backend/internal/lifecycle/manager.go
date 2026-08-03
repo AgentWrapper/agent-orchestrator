@@ -275,7 +275,7 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ports.ActivitySignal) error {
 	s.AgentSessionID = strings.TrimSpace(s.AgentSessionID)
 	s.LaunchID = strings.TrimSpace(s.LaunchID)
-	if !s.Valid && s.AgentSessionID == "" {
+	if !s.Valid && s.AgentSessionID == "" && s.ContextPressure == nil {
 		return nil
 	}
 	var intent *ports.NotificationIntent
@@ -332,15 +332,22 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	// (old CLIs, adapters without tool identity) pass through untouched —
 	// last-writer-wins, exactly as before.
 	metadataChanged := s.AgentSessionID != "" && rec.Metadata.AgentSessionID != s.AgentSessionID
+	pressureChanged := s.ContextPressure != nil && !contextPressureEqual(rec.ContextPressure, s.ContextPressure)
 	if s.Valid {
 		s = m.applyToolPrecedenceLocked(id, rec.Activity.State, s)
 	}
-	if !s.Valid && !metadataChanged {
+	if !s.Valid && !metadataChanged && !pressureChanged {
 		m.mu.Unlock()
 		return nil
 	}
 	if !s.Valid {
-		rec.Metadata.AgentSessionID = s.AgentSessionID
+		if metadataChanged {
+			rec.Metadata.AgentSessionID = s.AgentSessionID
+		}
+		if pressureChanged {
+			cp := *s.ContextPressure
+			rec.ContextPressure = &cp
+		}
 		rec.UpdatedAt = now
 		err := m.store.UpdateSession(ctx, rec)
 		m.mu.Unlock()
@@ -350,6 +357,10 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		// Fold metadata into rec before copying it into next below, so the
 		// activity and resume handle land in one store update.
 		rec.Metadata.AgentSessionID = s.AgentSessionID
+	}
+	if pressureChanged {
+		cp := *s.ContextPressure
+		rec.ContextPressure = &cp
 	}
 	prevState := rec.Activity.State
 	prevAt := rec.Activity.LastActivityAt
@@ -361,7 +372,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	// first to ARRIVE may match the seeded state — e.g. a turn's "active"
 	// POST is lost and its Stop hook lands idle on the idle-seeded row.
 	if sameState && !rec.FirstSignalAt.IsZero() {
-		if metadataChanged || s.Event == "user-prompt-submit" {
+		if metadataChanged || pressureChanged || s.Event == "user-prompt-submit" {
 			rec.UpdatedAt = now
 			err := m.store.UpdateSession(ctx, rec)
 			m.mu.Unlock()
@@ -406,6 +417,16 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	}
 	m.emitNotification(ctx, intent)
 	return nil
+}
+
+func contextPressureEqual(a, b *domain.ContextPressure) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.UsedPercent == b.UsedPercent &&
+		a.UntilAutoCompactPercent == b.UntilAutoCompactPercent &&
+		a.Source == b.Source &&
+		a.ObservedAt.Equal(b.ObservedAt)
 }
 
 // toolFlight tracks one session's in-flight tool executions and the pending
