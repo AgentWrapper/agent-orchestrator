@@ -479,6 +479,28 @@ func TestPrepareAgentCredentialEnvironment(t *testing.T) {
 	}
 }
 
+func TestSanitizedProcessEnvironmentDropsSecrets(t *testing.T) {
+	t.Setenv("AO_WORKER_TOKEN", "worker-token")
+	t.Setenv("AO_WORKER_BOOTSTRAP_TOKEN", "bootstrap-token")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-key")
+	t.Setenv("AO_SESSION_ID", "session-id")
+
+	environment := sanitizedProcessEnvironment()
+	joined := "\n" + strings.Join(environment, "\n") + "\n"
+	for _, name := range []string{
+		"AO_WORKER_TOKEN",
+		"AO_WORKER_BOOTSTRAP_TOKEN",
+		"ANTHROPIC_API_KEY",
+	} {
+		if strings.Contains(joined, "\n"+name+"=") {
+			t.Fatalf("sanitized environment retained %s", name)
+		}
+	}
+	if !strings.Contains(joined, "\nAO_SESSION_ID=session-id\n") {
+		t.Fatal("sanitized environment dropped non-secret session id")
+	}
+}
+
 func TestPrepareAgentCredentialCodexLoginUsesStdin(t *testing.T) {
 	for _, credentialType := range []string{"api_key", "access_token"} {
 		t.Run(credentialType, func(t *testing.T) {
