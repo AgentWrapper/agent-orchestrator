@@ -624,7 +624,7 @@ function ShellLayout() {
             macOS/Linux. */}
 				<WindowTitlebar onSidebarPreviewEnter={previewSidebar} />
 				{/* App routes render their topbar inside the framed panel, matching the board chrome across platforms while leaving OS titlebars native. */}
-				{!framedAppTopbar && !hideShellTopbar ? <ShellTopbar /> : null}
+				{!framedAppTopbar && !hideShellTopbar && !routeParams.sessionId ? <ShellTopbar /> : null}
 				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
             call the store directly) stay in sync. --sidebar-width chains to
             the drag-resizable --ao-sidebar-w set on :root by useResizable. */}
@@ -673,7 +673,7 @@ function ShellLayout() {
 								)
 							) : framedAppTopbar ? (
 								<CenterPanelShell>
-									<ShellTopbar />
+									{!routeParams.sessionId ? <ShellTopbar /> : null}
 									<div className="flex min-h-0 flex-1 flex-col">
 										<Outlet />
 									</div>

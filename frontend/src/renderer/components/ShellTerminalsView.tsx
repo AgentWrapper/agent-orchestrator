@@ -5,6 +5,7 @@ import { useOverflowScroll } from "../hooks/useOverflowScroll";
 import { useCloseShellTerminal, useRenameShellTerminal, useShellTerminals } from "../hooks/useShellTerminals";
 import { useShell } from "../lib/shell-context";
 import { cn } from "../lib/utils";
+import { handleTerminalTabListKeyDown } from "../lib/terminal-tabs";
 import { useResolvedTheme, useUiStore } from "../stores/ui-store";
 import { ShellTerminalTab } from "./ShellTerminalTab";
 import { TerminalPane } from "./TerminalPane";
@@ -65,7 +66,10 @@ export function ShellTerminalsView() {
 				    strip scrolls and edge chevrons reveal the overflow. */}
 				<div
 					ref={tabsOverflow.ref}
+					aria-label={t("terminal.tabsAria")}
 					className="scrollbar-none flex min-w-flex-min flex-1 items-center gap-3 overflow-x-auto"
+					onKeyDown={handleTerminalTabListKeyDown}
+					role="tablist"
 				>
 					{shellTerminals.map((shell) => {
 						const isActive = shell.handleId === active?.handleId;

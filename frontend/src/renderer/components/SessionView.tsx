@@ -28,7 +28,6 @@ import { matchesRendererShortcut } from "../stores/keybindings-store";
 const INSPECTOR_MIN_PERCENT = 22;
 const INSPECTOR_MAX_PERCENT = 45;
 const inspectorSplitStorageKey = "ao.inspector.split";
-const shellTopbarHiddenByPlatform = hidesShellTopbar();
 
 function initialSplitPercent(): number {
 	const raw = typeof window === "undefined" ? null : window.localStorage?.getItem(inspectorSplitStorageKey);
@@ -388,7 +387,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	return (
 		<div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="session-detail">
-			{shellTopbarHiddenByPlatform ? <ShellTopbar /> : null}
 			<ResizablePanelGroup className="session-split min-h-0 flex-1" id="session-workspace" orientation="horizontal">
 				{/* react-resizable-panels v4: bare numbers are PIXELS; percentages must
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
@@ -405,6 +403,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						shellTerminals={shellTerminals}
 						terminalTarget={terminalTarget}
 						theme={theme}
+						topbarActions={<ShellTopbar embedded />}
 					/>
 				</ResizablePanel>
 				{hasInspector ? (
