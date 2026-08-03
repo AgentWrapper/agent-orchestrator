@@ -28,6 +28,13 @@ interface PreviewCard {
 	time: string;
 	title: string;
 	tone: CardTone;
+	// Extended metadata — optional so existing cards without these fields
+	// still type-check. Rendered per-column (see BoardCard).
+	lastAction?: string;
+	prComments?: number;
+	reviewers?: string[];
+	runtime?: string;
+	testResults?: { pass: number; total: number };
 }
 
 type StaticPreviewCard = Omit<PreviewCard, "column" | "id" | "merging">;
@@ -46,6 +53,68 @@ interface TrackItem {
 
 const repoName = "Untrivial-ai/agent-orchestrator";
 const repoAvatar = "https://github.com/Untrivial-ai.png?size=64";
+
+// Top contributors from github.com/Untrivial-ai/agent-orchestrator
+// used as reviewer avatars on in_review and merge column cards.
+const REVIEWERS = {
+	harshit:  "https://avatars.githubusercontent.com/u/212377671?v=4&s=36",
+	agent:    "https://avatars.githubusercontent.com/u/11289825?v=4&s=36",
+	suraj:    "https://avatars.githubusercontent.com/u/96483690?v=4&s=36",
+	ashish:   "https://avatars.githubusercontent.com/u/73213873?v=4&s=36",
+	illegal:  "https://avatars.githubusercontent.com/u/44542765?v=4&s=36",
+	harsh2:   "https://avatars.githubusercontent.com/u/40922251?v=4&s=36",
+	whoisasx: "https://avatars.githubusercontent.com/u/106678504?v=4&s=36",
+	itry:     "https://avatars.githubusercontent.com/u/193449657?v=4&s=36",
+} as const;
+
+const REVIEWER_LIST = Object.values(REVIEWERS);
+
+function pickRandom<T>(items: T[]): T {
+	return items[Math.floor(Math.random() * items.length)] as T;
+}
+
+// Lottery pools for activity labels per column transition
+function pickStagingActivity(): { activity: string; testResults?: { pass: number; total: number } } {
+	const total = pickRandom([42, 50, 54, 60, 28]);
+	const pass = pickRandom([
+		total,
+		total,
+		total - 1,
+		total - 2,
+		Math.max(0, total - Math.floor(Math.random() * 5 + 3)),
+	]);
+	const labels: Array<{ activity: string; testResults?: { pass: number; total: number } }> = [
+		{ activity: `${pass}/${total} tests passing`, testResults: { pass, total } },
+		{ activity: `${pass}/${total} tests passing`, testResults: { pass, total } },
+		{ activity: "Building...", testResults: undefined },
+		{ activity: "Linting codebase", testResults: undefined },
+		{ activity: "Type checking", testResults: undefined },
+		{ activity: "Running CI pipeline", testResults: { pass, total } },
+		{ activity: "Running e2e suite", testResults: { pass, total } },
+	];
+	return pickRandom(labels);
+}
+
+const IN_REVIEW_ACTIVITIES = [
+	"Reviewer assigned",
+	"Awaiting review",
+	"Changes requested",
+	"Review in progress",
+	"Second reviewer added",
+];
+
+const MERGE_ACTIVITIES = [
+	"Ready to land",
+	"Approved · ready to merge",
+	"All checks passed",
+	"LGTM",
+	"Approved by 2 reviewers",
+];
+
+function pickReviewers(): string[] {
+	const shuffled = [...REVIEWER_LIST].sort(() => Math.random() - 0.5);
+	return shuffled.slice(0, 1 + Math.floor(Math.random() * 3));
+}
 
 const previewTokenStyle = {
 	"--preview-background": "oklch(0.153 0.006 107.1)",
@@ -84,6 +153,8 @@ const columns = [
 				time: "1h ago",
 				badge: "Needs input",
 				tone: "blocked",
+				runtime: "1h 12m",
+				lastAction: "paused · copy decision pending",
 			},
 			{
 				title: "Port Figma board mock into the hero preview",
@@ -98,6 +169,8 @@ const columns = [
 				time: "12m ago",
 				badge: null,
 				tone: "default",
+				runtime: "23m",
+				lastAction: "editing HeroSection.tsx",
 			},
 		],
 	},
@@ -118,13 +191,16 @@ const columns = [
 				time: "46m ago",
 				badge: "Needs input",
 				tone: "blocked",
+				runtime: "46m",
+				lastAction: "awaiting input on metrics",
+				testResults: { pass: 38, total: 42 },
 			},
 			{
 				title: "Run integration tests on webhook handler",
 				branch: "webhooks/integration-tests",
 				agent: "Codex",
 				icon: "/app-icons/coverage-codex.svg",
-				activity: "Running checks",
+				activity: "51/54 tests passing",
 				activityState: "running",
 				pr: "draft",
 				checks: "checks running",
@@ -132,6 +208,24 @@ const columns = [
 				time: "22m ago",
 				badge: null,
 				tone: "default",
+				runtime: "22m",
+				lastAction: "running webhook_test.go",
+				testResults: { pass: 51, total: 54 },
+			},
+			{
+				title: "Migrate auth tokens to short-lived JWTs",
+				branch: "auth/jwt-rotation",
+				agent: "Codex",
+				icon: "/app-icons/coverage-codex.svg",
+				activity: "44/44 tests passing",
+				activityState: "running",
+				pr: "PR #331",
+				checks: "checks running",
+				files: "5 files",
+				time: "34m ago",
+				badge: null,
+				tone: "default",
+				testResults: { pass: 44, total: 44 },
 			},
 		],
 	},
@@ -152,6 +246,9 @@ const columns = [
 				time: "1h ago",
 				badge: "Changes requested",
 				tone: "review",
+				testResults: { pass: 60, total: 60 },
+				prComments: 3,
+				reviewers: [REVIEWERS.harshit, REVIEWERS.suraj],
 			},
 			{
 				title: "Ignore local reference snapshots in deploy payloads",
@@ -166,6 +263,9 @@ const columns = [
 				time: "2h ago",
 				badge: "Awaiting review",
 				tone: "review",
+				testResults: { pass: 28, total: 28 },
+				prComments: 1,
+				reviewers: [REVIEWERS.ashish, REVIEWERS.harsh2, REVIEWERS.illegal],
 			},
 		],
 	},
@@ -184,8 +284,10 @@ const columns = [
 				checks: "approved",
 				files: "2 files",
 				time: "3h ago",
-				badge: "Changes requested",
+				badge: null,
 				tone: "ready",
+				prComments: 0,
+				reviewers: [REVIEWERS.harshit, REVIEWERS.agent],
 			},
 			{
 				title: "Stabilize Vercel framework detection",
@@ -200,6 +302,8 @@ const columns = [
 				time: "4h ago",
 				badge: "Ready",
 				tone: "ready",
+				prComments: 2,
+				reviewers: [REVIEWERS.suraj, REVIEWERS.whoisasx],
 			},
 		],
 	},
@@ -437,7 +541,7 @@ const landingIncomingCards: StaticPreviewCard[] = [
 		pr: "draft",
 		checks: "editing",
 		files: "1 file",
-		time: "now",
+		time: "3m ago",
 		badge: null,
 		tone: "default",
 	},
@@ -451,7 +555,7 @@ const landingIncomingCards: StaticPreviewCard[] = [
 		pr: "draft",
 		checks: "debugging",
 		files: "4 files",
-		time: "now",
+		time: "8m ago",
 		badge: null,
 		tone: "default",
 	},
@@ -465,7 +569,7 @@ const landingIncomingCards: StaticPreviewCard[] = [
 		pr: "draft",
 		checks: "cleanup",
 		files: "2 files",
-		time: "now",
+		time: "14m ago",
 		badge: null,
 		tone: "default",
 	},
@@ -479,7 +583,7 @@ const landingIncomingCards: StaticPreviewCard[] = [
 		pr: "draft",
 		checks: "animation pass",
 		files: "1 file",
-		time: "now",
+		time: "21m ago",
 		badge: null,
 		tone: "default",
 	},
@@ -493,7 +597,7 @@ const landingIncomingCards: StaticPreviewCard[] = [
 		pr: "draft",
 		checks: "editing",
 		files: "1 file",
-		time: "now",
+		time: "27m ago",
 		badge: null,
 		tone: "default",
 	},
@@ -507,7 +611,7 @@ const landingIncomingCards: StaticPreviewCard[] = [
 		pr: "draft",
 		checks: "tests",
 		files: "2 files",
-		time: "now",
+		time: "35m ago",
 		badge: null,
 		tone: "default",
 	},
@@ -521,7 +625,7 @@ const landingIncomingCards: StaticPreviewCard[] = [
 		pr: "draft",
 		checks: "layout pass",
 		files: "1 file",
-		time: "now",
+		time: "42m ago",
 		badge: null,
 		tone: "default",
 	},
@@ -535,7 +639,7 @@ const landingIncomingCards: StaticPreviewCard[] = [
 		pr: "draft",
 		checks: "copy pass",
 		files: "1 file",
-		time: "now",
+		time: "19m ago",
 		badge: null,
 		tone: "default",
 	},
@@ -549,7 +653,7 @@ const landingIncomingCards: StaticPreviewCard[] = [
 		pr: "draft",
 		checks: "motion debug",
 		files: "1 file",
-		time: "now",
+		time: "6m ago",
 		badge: null,
 		tone: "default",
 	},
@@ -926,38 +1030,53 @@ function advanceCard(card: PreviewCard): PreviewCard {
 	// Advancing an attention card ("waiting") represents the agent unblocking.
 	// Clear the blocked/waiting state so the next column shows normal progress.
 	if (card.column === "working") {
+		const { activity, testResults } = pickStagingActivity();
 		return {
 			...card,
 			column: "staging",
-			activity: "Running checks",
+			activity,
 			activityState: "running",
 			badge: null,
 			tone: "default",
-			time: "just now",
+			time: randomTime(),
+			// staging-specific metadata; clear working-column fields
+			testResults,
+			runtime: undefined,
+			lastAction: undefined,
 		};
 	}
 
 	if (card.column === "staging") {
+		const inReviewActivity = pickRandom(IN_REVIEW_ACTIVITIES);
 		return {
 			...card,
 			column: "in_review",
-			activity: "Reviewer assigned",
+			activity: inReviewActivity,
 			activityState: "reviewing",
 			badge: "Awaiting review",
 			tone: "review",
-			time: "just now",
+			time: randomTime(),
+			reviewers: pickReviewers(),
+			prComments: Math.floor(Math.random() * 4),
+			// clear staging-specific fields
+			testResults: undefined,
+			runtime: undefined,
+			lastAction: undefined,
 		};
 	}
 
 	if (card.column === "in_review") {
+		const mergeActivity = pickRandom(MERGE_ACTIVITIES);
 		return {
 			...card,
 			column: "merge",
-			activity: "Ready to land",
+			activity: mergeActivity,
 			activityState: "passed",
 			badge: "Ready",
 			tone: "ready",
-			time: "just now",
+			time: randomTime(),
+			reviewers: card.reviewers ?? pickReviewers(),
+			prComments: card.prComments ?? 0,
 		};
 	}
 
@@ -965,9 +1084,15 @@ function advanceCard(card: PreviewCard): PreviewCard {
 	return card;
 }
 
-function randomDelay() {
-	return 1000 + Math.random() * 2000;
+const RELATIVE_TIMES = ["2m ago", "4m ago", "7m ago", "11m ago", "18m ago", "24m ago", "31m ago"];
+function randomTime() {
+	return RELATIVE_TIMES[Math.floor(Math.random() * RELATIVE_TIMES.length)] as string;
 }
+
+function randomDelay() {
+	return 6000 + Math.random() * 6000;
+}
+
 
 function randomItem<T>(items: T[]): T | null {
 	if (items.length === 0) return null;
@@ -1070,11 +1195,11 @@ function FolderIcon({ className = "" }: { className?: string }) {
 function BranchIcon({ className = "" }: { className?: string }) {
 	return (
 		<svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-			<circle cx="4" cy="3.5" r="1.5" stroke="currentColor" strokeWidth="1.2" />
-			<circle cx="4" cy="12.5" r="1.5" stroke="currentColor" strokeWidth="1.2" />
-			<circle cx="12" cy="12.5" r="1.5" stroke="currentColor" strokeWidth="1.2" />
-			<path d="M4 5v6M8 3.5h1.5A2.5 2.5 0 0 1 12 6v5" stroke="currentColor" strokeLinecap="round" strokeWidth="1.2" />
-			<path d="m7.5 1.8 1.8 1.7-1.8 1.8" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.2" />
+			<circle cx="4.5" cy="3.5" r="1.5" stroke="currentColor" strokeWidth="1.3" />
+			<circle cx="4.5" cy="12.5" r="1.5" stroke="currentColor" strokeWidth="1.3" />
+			<circle cx="11.5" cy="5.5" r="1.5" stroke="currentColor" strokeWidth="1.3" />
+			<path d="M4.5 5v6" stroke="currentColor" strokeLinecap="round" strokeWidth="1.3" />
+			<path d="M4.5 3.5C4.5 7 11.5 7 11.5 7" stroke="currentColor" strokeLinecap="round" strokeWidth="1.3" />
 		</svg>
 	);
 }
@@ -1131,6 +1256,20 @@ function FileIcon({ className = "" }: { className?: string }) {
 	);
 }
 
+function PullRequestIcon({ className = "" }: { className?: string }) {
+	return (
+		<svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+			<circle cx="4.5" cy="3.5" r="1.5" stroke="currentColor" strokeWidth="1.3" />
+			<circle cx="4.5" cy="12.5" r="1.5" stroke="currentColor" strokeWidth="1.3" />
+			<circle cx="11.5" cy="12.5" r="1.5" stroke="currentColor" strokeWidth="1.3" />
+			<path d="M4.5 5v6" stroke="currentColor" strokeLinecap="round" strokeWidth="1.3" />
+			<path d="M11.5 5v6" stroke="currentColor" strokeLinecap="round" strokeWidth="1.3" />
+			<path d="M8.5 3.5h1A2 2 0 0 1 11.5 5.5" stroke="currentColor" strokeLinecap="round" strokeWidth="1.3" />
+			<path d="m6.8 1.8 1.7 1.7-1.7 1.7" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.3" />
+		</svg>
+	);
+}
+
 function GitHubIcon({ className = "" }: { className?: string }) {
 	return (
 		<svg className={className} viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
@@ -1162,6 +1301,15 @@ function WaitingIcon({ className = "" }: { className?: string }) {
 		<svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
 			<circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.4" />
 			<path d="M6.3 5.8v4.4M9.7 5.8v4.4" stroke="currentColor" strokeLinecap="round" strokeWidth="1.5" />
+		</svg>
+	);
+}
+
+function ClockIcon({ className = "" }: { className?: string }) {
+	return (
+		<svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+			<circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.4" />
+			<path d="M8 5.5V8l1.8 1.8" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.4" />
 		</svg>
 	);
 }
@@ -1562,44 +1710,102 @@ function BoardCard({
 				</div>
 			</div>
 			<div className="mt-3 text-[10px] leading-4 text-[var(--preview-muted-foreground)]">
-				<div className="flex items-center gap-1.5 py-1.5">
+				<div className="flex items-center gap-1.5 py-1">
 					<BranchIcon className="h-3 w-3 shrink-0" />
 					<span className="truncate font-mono">{card.branch}</span>
 				</div>
-				{prMatch ? (
-					<div className={`flex items-center gap-1.5 border-t border-[var(--preview-border)] py-1.5 ${prClass}`}>
-						<GitHubIcon className="h-3 w-3 shrink-0" />
-						<span className="font-mono">#{prMatch[1]}</span>
-						<span className="truncate">{prStatus}</span>
-					</div>
+			{prMatch ? (
+				<div className={`flex items-center gap-1.5 py-1 ${prClass}`}>
+					<PullRequestIcon className="h-3 w-3 shrink-0" />
+					<span className="font-mono">#{prMatch[1]}</span>
+					<span className="truncate">{prStatus}</span>
+				</div>
+			) : null}
+			</div>
+		{/* Per-column metadata row */}
+		{(card.column === "working" || card.column === "staging") &&
+			(card.runtime ?? card.lastAction) ? (
+			<div className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-[var(--preview-muted-foreground)]">
+				{card.runtime ? (
+					<span className="inline-flex items-center gap-1">
+						<ClockIcon className="h-3 w-3 shrink-0" />
+						{card.runtime}
+					</span>
+				) : null}
+				{card.lastAction ? (
+					<span className="min-w-0 truncate italic" title={card.lastAction}>
+						{card.lastAction}
+					</span>
 				) : null}
 			</div>
-			{card.tone === "ready" ? (
-				<div className="mt-3 flex items-center justify-between gap-2">
-					<button
-						type="button"
-						onClick={(event) => {
-							event.stopPropagation();
-							onMerge(card.id);
-						}}
-						className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-[6px] bg-[var(--preview-primary)] px-2.5 text-[10px] font-semibold text-[var(--preview-primary-foreground)] transition-transform active:scale-[0.96]"
-					>
-						Review PR
-					</button>
-					<span className="shrink-0 text-[10px] text-[var(--preview-muted-foreground)]">{card.time}</span>
+		) : null}
+		{(card.column === "in_review" || card.column === "merge") ? (
+			<div className="mt-2 flex items-center justify-between">
+				<div className="flex items-center gap-1.5">
+					{/* reviewer avatars */}
+					{card.reviewers && card.reviewers.length > 0 ? (
+						<div className="flex -space-x-1.5">
+							{card.reviewers.slice(0, 3).map((src) => (
+								<img
+									key={src}
+									src={src}
+									alt=""
+									width={18}
+									height={18}
+									aria-hidden="true"
+									draggable="false"
+									className="h-[18px] w-[18px] rounded-full ring-1 ring-[var(--preview-card)]"
+								/>
+							))}
+						</div>
+					) : null}
+					{/* test results for in_review */}
+					{card.column === "in_review" && card.testResults ? (
+						<span
+							className={`text-[10px] ${card.testResults.pass < card.testResults.total ? "text-[#fb923c]" : "text-[var(--preview-muted-foreground)]"}`}
+						>
+							{card.testResults.pass}/{card.testResults.total} tests
+						</span>
+					) : null}
 				</div>
-			) : (
-				<div className="mt-3 flex items-center justify-between">
+				{/* PR comments */}
+				{card.prComments !== undefined ? (
 					<span
-						className={`inline-flex items-center gap-1.5 text-[10px] ${activityColor}`}
+						className={`text-[10px] ${card.prComments > 0 ? "text-[#fb923c]" : "text-[var(--preview-muted-foreground)]"}`}
 					>
-						<ActivityIcon id={activityIcon} />
-						{card.activity}
+						{card.prComments === 0 ? "no comments" : `${card.prComments} comment${card.prComments !== 1 ? "s" : ""}`}
 					</span>
-					<span className="text-[10px] text-[var(--preview-muted-foreground)]">{card.time}</span>
-				</div>
-			)}
-		</motion.div>
+				) : null}
+			</div>
+		) : null}
+		{card.tone === "ready" ? (
+			<div className="mt-3 flex items-center justify-between gap-2">
+				<button
+					type="button"
+					onClick={(event) => {
+						event.stopPropagation();
+						onMerge(card.id);
+					}}
+					className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-[6px] bg-[var(--preview-primary)] px-2.5 text-[10px] font-semibold text-[var(--preview-primary-foreground)] transition-transform active:scale-[0.96]"
+				>
+					Merge PR
+				</button>
+				<span className="shrink-0 text-[10px] text-[var(--preview-muted-foreground)]">{card.time}</span>
+			</div>
+		) : (
+			<div className="mt-3 flex items-center justify-between">
+				<span
+					className={`inline-flex items-center gap-1.5 text-[10px] ${activityColor}`}
+				>
+					<ActivityIcon id={activityIcon} />
+					{card.testResults && card.column === "staging"
+						? `${card.testResults.pass}/${card.testResults.total} tests passing`
+						: card.activity}
+				</span>
+				<span className="text-[10px] text-[var(--preview-muted-foreground)]">{card.time}</span>
+			</div>
+		)}
+	</motion.div>
 	);
 }
 
@@ -2084,7 +2290,7 @@ export function AppMockup() {
 					badge: "New task",
 					column: "working",
 					id: `${trackId}-manual-${Date.now()}-${incomingIndexes.current[trackId]}`,
-					time: "now",
+					time: randomTime(),
 				},
 				...current,
 			];
@@ -2156,7 +2362,7 @@ export function AppMockup() {
 										activityState: "waiting" as const,
 										badge: isReview ? "Changes requested" : "Needs input",
 										tone: "blocked" as const,
-										time: "just now",
+										time: randomTime(),
 									}
 								: card,
 						);
