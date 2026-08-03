@@ -112,9 +112,9 @@ func Manual(agentID string) ports.AgentModelCatalog {
 
 // Discover executes a documented non-interactive model-list command when the
 // agent exposes one. Static catalogs are returned without executing the binary.
-func Discover(ctx context.Context, agentID, binary, workingDir string) (ports.AgentModelCatalog, error) {
+func Discover(ctx context.Context, agentID, binary, workingDir string, env map[string]string) (ports.AgentModelCatalog, error) {
 	base := Base(agentID)
-	configured, configErr := ConfigModels(agentID, workingDir)
+	configured, configErr := ConfigModels(ctx, agentID, workingDir, env)
 	spec, ok := commandSpecs[agentID]
 	if !ok {
 		if len(configured) > 0 {
@@ -142,7 +142,7 @@ func Discover(ctx context.Context, agentID, binary, workingDir string) (ports.Ag
 	}
 	runCtx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
-	cmd := modelCommand(runCtx, binary, spec.args, workingDir)
+	cmd := modelCommand(runCtx, binary, spec.args, workingDir, env)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		if len(configured) > 0 {
@@ -176,13 +176,36 @@ func hasDiscoverySource(agentID string) bool {
 	return hasCommand || hasConfig
 }
 
-func modelCommand(ctx context.Context, binary string, args []string, workingDir string) *exec.Cmd {
+func modelCommand(ctx context.Context, binary string, args []string, workingDir string, env map[string]string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, binary, args...) //nolint:gosec // binary is adapter-resolved, args are static
 	cmd.WaitDelay = commandTerminationWait
 	if strings.TrimSpace(workingDir) != "" {
 		cmd.Dir = workingDir
 	}
+	cmd.Env = mergedEnvironment(os.Environ(), env)
 	return cmd
+}
+
+func mergedEnvironment(base []string, overrides map[string]string) []string {
+	if len(overrides) == 0 {
+		return base
+	}
+	keys := make([]string, 0, len(overrides))
+	for key := range overrides {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]string, 0, len(base)+len(keys))
+	for _, item := range base {
+		key, _, _ := strings.Cut(item, "=")
+		if _, replaced := overrides[key]; !replaced {
+			out = append(out, item)
+		}
+	}
+	for _, key := range keys {
+		out = append(out, key+"="+overrides[key])
+	}
+	return out
 }
 
 func modelDiscoveryError(runCtx context.Context, agentID string, commandErr error) error {

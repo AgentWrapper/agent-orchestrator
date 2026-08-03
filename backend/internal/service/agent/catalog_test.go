@@ -598,6 +598,37 @@ func TestModelsResolvesProjectWorkingDirectory(t *testing.T) {
 	}
 }
 
+func TestModelsUsesProjectEnvironmentForConfigDiscovery(t *testing.T) {
+	home := t.TempDir()
+	customDir := t.TempDir()
+	custom := filepath.Join(customDir, "opencode.json")
+	if err := os.WriteFile(custom, []byte(`{"model":"project/model"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	projects := &fakeProjectLookup{records: map[string]domain.ProjectRecord{
+		"proj-1": {
+			ID:   "proj-1",
+			Path: t.TempDir(),
+			Config: domain.ProjectConfig{Env: map[string]string{
+				"OPENCODE_CONFIG": custom,
+			}},
+		},
+	}}
+	svc := newService([]agentregistry.HarnessAgent{
+		harnessAgent("opencode", "OpenCode", ports.ErrAgentBinaryNotFound),
+	}, nil, projects)
+
+	got, err := svc.Models(context.Background(), "opencode", "proj-1", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Models) != 1 || got.Models[0].ID != "project/model" {
+		t.Fatalf("catalog = %#v, want project environment config", got)
+	}
+}
+
 func TestModelsRejectsUnknownProjectScope(t *testing.T) {
 	svc := newService([]agentregistry.HarnessAgent{
 		harnessAgent("codex", "Codex", nil),
@@ -717,6 +748,49 @@ func TestModelsReturnsAndCachesPartialConfigCatalogWhenCLIIsUnavailable(t *testi
 	}
 	if cache.puts != 1 {
 		t.Fatalf("cache puts = %d, want 1", cache.puts)
+	}
+}
+
+func TestModelsKeepsFullerCacheWhenRefreshReturnsPartialConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	configDir := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "opencode.json"), []byte(`{"model":"configured/model"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cached := ports.AgentModelCatalog{
+		AgentID:       "opencode",
+		SelectionMode: ports.ModelSelectionCatalog,
+		Models: []ports.AgentModelInfo{
+			{ID: "configured/model", Label: "Configured"},
+			{ID: "cli/one", Label: "CLI one"},
+			{ID: "cli/two", Label: "CLI two"},
+		},
+		AllowCustom: true,
+		Source:      "cli+config",
+		FetchedAt:   time.Now().Add(-time.Hour),
+	}
+	data, err := json.Marshal(cached)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := &fakeModelCache{records: map[string]ports.CachedAgentModelCatalog{
+		"opencode\x00": {AgentID: "opencode", CatalogJSON: string(data)},
+	}}
+	svc := newService([]agentregistry.HarnessAgent{
+		harnessAgent("opencode", "OpenCode", ports.ErrAgentBinaryNotFound),
+	}, cache, nil)
+
+	got, err := svc.Models(context.Background(), "opencode", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Models) != 3 || !got.Stale || got.Warning == "" {
+		t.Fatalf("catalog = %#v, want fuller stale cache", got)
 	}
 }
 

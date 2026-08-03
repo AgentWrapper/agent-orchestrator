@@ -46,7 +46,11 @@ func (c *AgentsController) refreshModels(w http.ResponseWriter, r *http.Request)
 
 func (c *AgentsController) writeModels(w http.ResponseWriter, r *http.Request, refresh, revalidate bool) {
 	if c.Catalog == nil {
-		apispec.NotImplemented(w, r, r.Method, "/api/v1/agents/{agent}/models")
+		route := "/api/v1/agents/{agent}/models"
+		if refresh {
+			route += "/refresh"
+		}
+		apispec.NotImplemented(w, r, r.Method, route)
 		return
 	}
 	agentID := strings.TrimSpace(chi.URLParam(r, "agent"))

@@ -1,6 +1,8 @@
 package modelcatalog
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,6 +61,34 @@ models:
 	}
 	if len(models) != 2 || models[0].ID != "claude-sonnet-4" || models[0].Provider != "anthropic" {
 		t.Fatalf("models = %#v", models)
+	}
+}
+
+func TestParseContinueConfigOnlyIncludesChatCapableModels(t *testing.T) {
+	models, err := parseContinueConfig([]byte(`
+models:
+  - name: Default chat
+    model: chat-default
+  - name: Explicit chat
+    model: chat-explicit
+    roles: [chat, edit]
+  - name: Autocomplete only
+    model: autocomplete-only
+    roles: [autocomplete]
+  - name: Embeddings only
+    model: embeddings-only
+    roles: embeddings
+autocompleteModels:
+  - name: Legacy autocomplete
+    model: legacy-autocomplete
+embedOptions:
+  model: nested-embedding
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 2 || models[0].ID != "chat-default" || models[1].ID != "chat-explicit" {
+		t.Fatalf("models = %#v, want only chat-capable entries", models)
 	}
 }
 
@@ -215,6 +245,7 @@ func TestOpenCodeConfigPathsWalkToGitRoot(t *testing.T) {
 
 func testConfigPathContext(home, workingDir, goos string, env map[string]string) configPathContext {
 	return configPathContext{
+		ctx:        context.Background(),
 		home:       home,
 		workingDir: workingDir,
 		goos:       goos,
@@ -300,7 +331,7 @@ func TestConfigModelsFromPathsMergesFilesAndIgnoresMissing(t *testing.T) {
 	if err := os.WriteFile(project, []byte("models:\n  - name: Project\n    provider: local\n    model: project-only\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	models, err := configModelsFromPaths(configSpecs["continue"], []configPath{
+	models, err := configModelsFromPaths(context.Background(), configSpecs["continue"], []configPath{
 		{root: dir, name: filepath.Base(global)},
 		{root: dir, name: "missing.yaml"},
 		{root: dir, name: filepath.Base(project)},
@@ -310,6 +341,66 @@ func TestConfigModelsFromPathsMergesFilesAndIgnoresMissing(t *testing.T) {
 	}
 	if len(models) != 2 {
 		t.Fatalf("models = %#v", models)
+	}
+}
+
+func TestConfigModelsFromPathsAppliesLaterDefaultPrecedence(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "global.json"), []byte(`{"model":"global/model","provider":{"global":{"models":{"model":{"name":"Global label"}}}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "project.json"), []byte(`{"model":"project/model","provider":{"project":{"models":{"model":{"name":"Project label"}}}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	models, err := configModelsFromPaths(context.Background(), configSpecs["opencode"], []configPath{
+		{root: dir, name: "global.json"},
+		{root: dir, name: "project.json"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("models = %#v", models)
+	}
+	defaults := 0
+	for _, model := range models {
+		if model.IsDefault {
+			defaults++
+			if model.ID != "project/model" {
+				t.Fatalf("default = %#v, want project/model", model)
+			}
+		}
+	}
+	if defaults != 1 {
+		t.Fatalf("defaults = %d in %#v, want one", defaults, models)
+	}
+}
+
+func TestConfigModelsUsesProjectEnvironmentOverrides(t *testing.T) {
+	home := t.TempDir()
+	customDir := t.TempDir()
+	custom := filepath.Join(customDir, "project-opencode.json")
+	if err := os.WriteFile(custom, []byte(`{"model":"project/model"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	models, err := ConfigModels(context.Background(), "opencode", "/work/project", map[string]string{
+		"OPENCODE_CONFIG": custom,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 1 || models[0].ID != "project/model" || !models[0].IsDefault {
+		t.Fatalf("models = %#v", models)
+	}
+}
+
+func TestConfigModelsHonorsCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := ConfigModels(ctx, "opencode", "", nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ConfigModels error = %v, want context canceled", err)
 	}
 }
 
@@ -325,7 +416,7 @@ func TestReadBoundedConfigRejectsOversizedFile(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readBoundedConfig(configPath{root: filepath.Dir(path), name: filepath.Base(path)}); err == nil {
+	if _, _, err := readBoundedConfig(context.Background(), configPath{root: filepath.Dir(path), name: filepath.Base(path)}); err == nil {
 		t.Fatal("readBoundedConfig: want size-limit error")
 	}
 }
@@ -340,7 +431,7 @@ func TestReadBoundedConfigRejectsSymlink(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if _, _, err := readBoundedConfig(configPath{root: dir, name: filepath.Base(link)}); err == nil {
+	if _, _, err := readBoundedConfig(context.Background(), configPath{root: dir, name: filepath.Base(link)}); err == nil {
 		t.Fatal("readBoundedConfig: want symlink error")
 	}
 }
@@ -354,7 +445,7 @@ func TestReadBoundedConfigRejectsSymlinkDirectoryComponent(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, "linked")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if _, _, err := readBoundedConfig(configPath{root: root, name: filepath.Join("linked", "config.json")}); err == nil {
+	if _, _, err := readBoundedConfig(context.Background(), configPath{root: root, name: filepath.Join("linked", "config.json")}); err == nil {
 		t.Fatal("readBoundedConfig: want symlink-component error")
 	}
 }
@@ -369,14 +460,14 @@ func TestReadBoundedConfigRejectsSymlinkRoot(t *testing.T) {
 	if err := os.Symlink(target, root); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if _, _, err := readBoundedConfig(configPath{root: root, name: "config.json"}); err == nil {
+	if _, _, err := readBoundedConfig(context.Background(), configPath{root: root, name: "config.json"}); err == nil {
 		t.Fatal("readBoundedConfig: want symlink-root error")
 	}
 }
 
 func TestReadBoundedConfigRejectsParentTraversal(t *testing.T) {
 	root := t.TempDir()
-	if _, _, err := readBoundedConfig(configPath{root: root, name: filepath.Join("..", "config.json")}); err == nil {
+	if _, _, err := readBoundedConfig(context.Background(), configPath{root: root, name: filepath.Join("..", "config.json")}); err == nil {
 		t.Fatal("readBoundedConfig: want traversal error")
 	}
 }
@@ -386,14 +477,14 @@ func TestConfigVersionChangesWhenConfigMetadataChanges(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	path := filepath.Join(home, ".config", "opencode", "opencode.json")
-	before := ConfigVersion("opencode", "")
+	before := ConfigVersion(context.Background(), "opencode", "", nil)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte(`{"model":"zai/glm-5"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	after := ConfigVersion("opencode", "")
+	after := ConfigVersion(context.Background(), "opencode", "", nil)
 	if before == "" || after == "" || before == after {
 		t.Fatalf("versions before=%q after=%q, want a change", before, after)
 	}

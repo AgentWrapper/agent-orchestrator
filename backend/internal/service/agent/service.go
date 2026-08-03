@@ -289,7 +289,7 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 	if !ok {
 		return ports.AgentModelCatalog{}, apierr.NotFound("AGENT_NOT_FOUND", "Unknown agent adapter")
 	}
-	workingDir, err := s.projectWorkingDir(ctx, projectID)
+	discovery, err := s.projectDiscoveryContext(ctx, projectID)
 	if err != nil {
 		return ports.AgentModelCatalog{}, err
 	}
@@ -314,7 +314,7 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 		}
 	}
 	version := modelcatalog.BinaryVersion(ctx, binary)
-	if configVersion := modelcatalog.ConfigVersion(agentID, workingDir); configVersion != "" {
+	if configVersion := modelcatalog.ConfigVersion(ctx, agentID, discovery.workingDir, discovery.env); configVersion != "" {
 		version += ";config=" + configVersion
 	}
 	discoveryFresh := !cached.Catalog.FetchedAt.IsZero() &&
@@ -328,11 +328,21 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 		return cached.Catalog, nil
 	}
 
-	discovered, discoverErr := modelcatalog.Discover(ctx, agentID, binary, workingDir)
+	discovered, discoverErr := modelcatalog.Discover(ctx, agentID, binary, discovery.workingDir, discovery.env)
 	discovered.BinaryVersion = version
 	discovered.ValidatedAt = time.Now().UTC()
 	discovered.RefreshRecommended = false
 	if discoverErr != nil {
+		if hasCached && len(cached.Catalog.Models) > len(discovered.Models) {
+			cached.Catalog.Stale = true
+			cached.Catalog.Warning = discoverErr.Error()
+			cached.Catalog.ValidatedAt = time.Now().UTC()
+			cached.Catalog.RefreshRecommended = false
+			if err := s.saveCatalog(ctx, projectID, cached.Catalog); err != nil {
+				cached.Catalog.Warning = appendCacheWarning(cached.Catalog.Warning)
+			}
+			return cached.Catalog, nil
+		}
 		if len(discovered.Models) > 0 {
 			discovered.Stale = true
 			discovered.Warning = discoverErr.Error()
@@ -372,18 +382,23 @@ func appendCacheWarning(current string) string {
 	return current + " " + next
 }
 
-func (s *Service) projectWorkingDir(ctx context.Context, projectID string) (string, error) {
+type projectDiscovery struct {
+	workingDir string
+	env        map[string]string
+}
+
+func (s *Service) projectDiscoveryContext(ctx context.Context, projectID string) (projectDiscovery, error) {
 	if projectID == "" || s.projects == nil {
-		return "", nil
+		return projectDiscovery{}, nil
 	}
 	project, ok, err := s.projects.GetProject(ctx, projectID)
 	if err != nil {
-		return "", apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
+		return projectDiscovery{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	}
 	if !ok || !project.ArchivedAt.IsZero() {
-		return "", apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
+		return projectDiscovery{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
-	return project.Path, nil
+	return projectDiscovery{workingDir: project.Path, env: project.Config.Env}, nil
 }
 
 type decodedCatalog struct {

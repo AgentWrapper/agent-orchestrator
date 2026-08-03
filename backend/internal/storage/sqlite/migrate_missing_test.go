@@ -73,9 +73,8 @@ WHERE is_applied = 1 AND version_id IN (28, 29, 30, 31)
 }
 
 // TestMigrateAppliesAgentModelCatalogAfterUpstreamMigration covers a database
-// that has already seen version 39 from another build. The model catalog
-// migration must keep its own version so goose does not mistake the unrelated
-// applied migration for this table.
+// that has already applied main's version 41. The catalog must use the next
+// migration version so goose applies it independently.
 func TestMigrateAppliesAgentModelCatalogAfterUpstreamMigration(t *testing.T) {
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
 	if err != nil {
@@ -83,13 +82,7 @@ func TestMigrateAppliesAgentModelCatalogAfterUpstreamMigration(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	upTo(t, db, 38)
-	if _, err := db.Exec(
-		`INSERT INTO goose_db_version (version_id, is_applied) VALUES (?, 1)`,
-		39,
-	); err != nil {
-		t.Fatalf("seed upstream migration version 39: %v", err)
-	}
+	upTo(t, db, 41)
 
 	if err := migrate(db); err != nil {
 		t.Fatalf("migrate database after upstream migration: %v", err)

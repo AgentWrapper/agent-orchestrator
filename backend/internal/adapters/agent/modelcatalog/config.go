@@ -2,6 +2,7 @@ package modelcatalog
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -27,6 +28,7 @@ type configSpec struct {
 }
 
 type configPathContext struct {
+	ctx        context.Context
 	home       string
 	workingDir string
 	goos       string
@@ -76,12 +78,18 @@ var configSpecs = map[string]configSpec{
 	},
 }
 
-func defaultConfigPathContext(home, workingDir string) configPathContext {
+func defaultConfigPathContext(ctx context.Context, home, workingDir string, env map[string]string) configPathContext {
 	return configPathContext{
+		ctx:        ctx,
 		home:       home,
 		workingDir: workingDir,
 		goos:       runtime.GOOS,
-		getenv:     os.Getenv,
+		getenv: func(name string) string {
+			if value, ok := env[name]; ok {
+				return value
+			}
+			return os.Getenv(name)
+		},
 	}
 }
 
@@ -122,7 +130,7 @@ func crushConfigPaths(ctx configPathContext) []configPath {
 	if legacyDataDir := envValue(ctx, "CRUSH_DATA_DIR"); legacyDataDir != "" {
 		paths = append(paths, configPath{root: resolveConfigLocation(ctx, legacyDataDir), name: "providers.json"})
 	}
-	for _, dir := range projectConfigDirs(ctx.workingDir) {
+	for _, dir := range projectConfigDirs(ctx.ctx, ctx.workingDir) {
 		// Crush loads the hidden file after crush.json, so keep it last.
 		paths = append(paths,
 			configPath{root: dir, name: "crush.json"},
@@ -145,7 +153,7 @@ func openCodeConfigPaths(ctx configPathContext) []configPath {
 		paths = append(paths, custom)
 	}
 
-	dirs := projectConfigDirs(ctx.workingDir)
+	dirs := projectConfigDirs(ctx.ctx, ctx.workingDir)
 	for _, dir := range dirs {
 		paths = append(paths,
 			configPath{root: dir, name: "opencode.json"},
@@ -275,8 +283,8 @@ func envValue(ctx configPathContext, name string) string {
 // projectConfigDirs mirrors agents that walk upward only within the current
 // Git worktree. If no worktree marker is found, it intentionally returns the
 // working directory alone rather than adopting unrelated parent configs.
-func projectConfigDirs(workingDir string) []string {
-	if strings.TrimSpace(workingDir) == "" {
+func projectConfigDirs(ctx context.Context, workingDir string) []string {
+	if ctx.Err() != nil || strings.TrimSpace(workingDir) == "" {
 		return nil
 	}
 	start, err := filepath.Abs(workingDir)
@@ -285,6 +293,9 @@ func projectConfigDirs(workingDir string) []string {
 	}
 	boundary := start
 	for dir := start; ; dir = filepath.Dir(dir) {
+		if ctx.Err() != nil {
+			return nil
+		}
 		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
 			boundary = dir
 			break
@@ -310,7 +321,10 @@ func projectConfigDirs(workingDir string) []string {
 
 // ConfigModels reads only declarative, bounded agent configuration files. It
 // never expands references, executes plugins, or retains unrelated fields.
-func ConfigModels(agentID, workingDir string) ([]ports.AgentModelInfo, error) {
+func ConfigModels(ctx context.Context, agentID, workingDir string, env map[string]string) ([]ports.AgentModelInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	spec, ok := configSpecs[agentID]
 	if !ok {
 		return nil, nil
@@ -319,13 +333,20 @@ func ConfigModels(agentID, workingDir string) ([]ports.AgentModelInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve user home: %w", err)
 	}
-	return configModelsFromPaths(spec, spec.paths(defaultConfigPathContext(home, workingDir)))
+	paths := spec.paths(defaultConfigPathContext(ctx, home, workingDir, env))
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return configModelsFromPaths(ctx, spec, paths)
 }
 
 // ConfigVersion returns a non-sensitive fingerprint of the config files that
 // can affect a catalog. It uses path, size, and modification time only; config
 // contents and credentials are never hashed into or exposed through the API.
-func ConfigVersion(agentID, workingDir string) string {
+func ConfigVersion(ctx context.Context, agentID, workingDir string, env map[string]string) string {
+	if ctx.Err() != nil {
+		return ""
+	}
 	spec, ok := configSpecs[agentID]
 	if !ok {
 		return ""
@@ -335,9 +356,16 @@ func ConfigVersion(agentID, workingDir string) string {
 		return ""
 	}
 	hash := sha256.New()
-	for _, path := range spec.paths(defaultConfigPathContext(home, workingDir)) {
+	paths := spec.paths(defaultConfigPathContext(ctx, home, workingDir, env))
+	if ctx.Err() != nil {
+		return ""
+	}
+	for _, path := range paths {
+		if ctx.Err() != nil {
+			return ""
+		}
 		_, _ = io.WriteString(hash, path.root+"\x00"+path.name)
-		file, found, err := openSecureConfig(path)
+		file, found, err := openSecureConfig(ctx, path)
 		if err != nil || !found {
 			_, _ = io.WriteString(hash, "\x00missing\x00")
 			continue
@@ -354,13 +382,16 @@ func ConfigVersion(agentID, workingDir string) string {
 	return fmt.Sprintf("%x", hash.Sum(nil)[:8])
 }
 
-func configModelsFromPaths(spec configSpec, paths []configPath) ([]ports.AgentModelInfo, error) {
+func configModelsFromPaths(ctx context.Context, spec configSpec, paths []configPath) ([]ports.AgentModelInfo, error) {
 	var (
-		models []ports.AgentModelInfo
+		layers [][]ports.AgentModelInfo
 		errs   []error
 	)
 	for _, path := range paths {
-		data, found, err := readBoundedConfig(path)
+		if err := ctx.Err(); err != nil {
+			return mergeConfigLayers(layers), errors.Join(append(errs, err)...)
+		}
+		data, found, err := readBoundedConfig(ctx, path)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("read %s: %w", filepath.Base(path.name), err))
 			continue
@@ -373,13 +404,54 @@ func configModelsFromPaths(spec configSpec, paths []configPath) ([]ports.AgentMo
 			errs = append(errs, fmt.Errorf("parse %s: %w", filepath.Base(path.name), err))
 			continue
 		}
-		models = append(models, parsed...)
+		if err := ctx.Err(); err != nil {
+			return mergeConfigLayers(layers), errors.Join(append(errs, err)...)
+		}
+		layers = append(layers, parsed)
 	}
-	return normalize(models), errors.Join(errs...)
+	return mergeConfigLayers(layers), errors.Join(errs...)
 }
 
-func readBoundedConfig(path configPath) ([]byte, bool, error) {
-	file, found, err := openSecureConfig(path)
+func mergeConfigLayers(layers [][]ports.AgentModelInfo) []ports.AgentModelInfo {
+	merged := make(map[string]ports.AgentModelInfo)
+	for _, layer := range layers {
+		hasDefault := false
+		for _, item := range layer {
+			hasDefault = hasDefault || item.IsDefault
+		}
+		if hasDefault {
+			for id, item := range merged {
+				item.IsDefault = false
+				merged[id] = item
+			}
+		}
+		for _, item := range layer {
+			item.ID = strings.TrimSpace(item.ID)
+			if item.ID == "" {
+				continue
+			}
+			previous := merged[item.ID]
+			if strings.TrimSpace(item.Label) == "" || item.Label == item.ID {
+				item.Label = previous.Label
+			}
+			if strings.TrimSpace(item.Provider) == "" {
+				item.Provider = previous.Provider
+			}
+			merged[item.ID] = item
+		}
+	}
+	models := make([]ports.AgentModelInfo, 0, len(merged))
+	for _, item := range merged {
+		models = append(models, item)
+	}
+	return normalize(models)
+}
+
+func readBoundedConfig(ctx context.Context, path configPath) ([]byte, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	file, found, err := openSecureConfig(ctx, path)
 	if err != nil {
 		return nil, false, err
 	}
@@ -404,13 +476,19 @@ func readBoundedConfig(path configPath) ([]byte, bool, error) {
 	if len(data) > maxConfigFileSize {
 		return nil, false, fmt.Errorf("file exceeds %d bytes", maxConfigFileSize)
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	return data, true, nil
 }
 
 // openSecureConfig resolves platform path aliases, opens the configured root
 // without trusting its pathname after resolution, rejects symlink components,
 // and verifies that the final opened file is the inode that was inspected.
-func openSecureConfig(path configPath) (*os.File, bool, error) {
+func openSecureConfig(ctx context.Context, path configPath) (*os.File, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	if strings.TrimSpace(path.root) == "" || strings.TrimSpace(path.name) == "" || filepath.IsAbs(path.name) {
 		return nil, false, errors.New("invalid config path")
 	}
@@ -418,7 +496,7 @@ func openSecureConfig(path configPath) (*os.File, bool, error) {
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return nil, false, errors.New("config path escapes trusted root")
 	}
-	root, err := openSecureConfigRoot(path.root)
+	root, err := openSecureConfigRoot(ctx, path.root)
 	if os.IsNotExist(err) {
 		return nil, false, nil
 	}
@@ -429,6 +507,9 @@ func openSecureConfig(path configPath) (*os.File, bool, error) {
 
 	parts := strings.FieldsFunc(clean, func(r rune) bool { return r == '/' || r == '\\' })
 	for _, part := range parts[:len(parts)-1] {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		info, err := root.Lstat(part)
 		if os.IsNotExist(err) {
 			return nil, false, nil
@@ -484,7 +565,10 @@ func openSecureConfig(path configPath) (*os.File, bool, error) {
 	return file, true, nil
 }
 
-func openSecureConfigRoot(name string) (*os.Root, error) {
+func openSecureConfigRoot(ctx context.Context, name string) (*os.Root, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	info, err := os.Lstat(name)
 	if err != nil {
 		return nil, err
@@ -513,6 +597,10 @@ func openSecureConfigRoot(name string) (*os.Root, error) {
 	relative := strings.TrimPrefix(resolved, rootName)
 	parts := strings.FieldsFunc(relative, func(r rune) bool { return r == '/' || r == '\\' })
 	for _, part := range parts {
+		if err := ctx.Err(); err != nil {
+			_ = root.Close()
+			return nil, err
+		}
 		before, err := root.Lstat(part)
 		if err != nil {
 			_ = root.Close()
@@ -650,11 +738,21 @@ func parseContinueConfig(data []byte) ([]ports.AgentModelInfo, error) {
 	if err := yaml.Unmarshal(data, &root); err != nil {
 		return nil, err
 	}
+	if len(root.Content) == 0 {
+		return nil, nil
+	}
+	modelsNode := yamlMapNode(root.Content[0], "models")
+	if modelsNode == nil {
+		return nil, nil
+	}
 	var models []ports.AgentModelInfo
-	walkYAMLMaps(&root, func(node *yaml.Node) {
+	for _, node := range modelsNode.Content {
+		if node.Kind != yaml.MappingNode || !continueChatCapable(node) {
+			continue
+		}
 		modelID := yamlMapString(node, "model")
 		if modelID == "" {
-			return
+			continue
 		}
 		label := yamlMapString(node, "name")
 		if label == "" {
@@ -665,20 +763,39 @@ func parseContinueConfig(data []byte) ([]ports.AgentModelInfo, error) {
 			Label:    label,
 			Provider: yamlMapString(node, "provider"),
 		})
-	})
+	}
 	return normalize(models), nil
 }
 
-func walkYAMLMaps(node *yaml.Node, visit func(*yaml.Node)) {
-	if node == nil {
-		return
+func continueChatCapable(node *yaml.Node) bool {
+	roles := yamlMapNode(node, "roles")
+	if roles == nil {
+		return true
 	}
-	if node.Kind == yaml.MappingNode {
-		visit(node)
+	if roles.Kind == yaml.ScalarNode {
+		return strings.EqualFold(strings.TrimSpace(roles.Value), "chat")
 	}
-	for _, child := range node.Content {
-		walkYAMLMaps(child, visit)
+	if roles.Kind != yaml.SequenceNode {
+		return false
 	}
+	for _, role := range roles.Content {
+		if role.Kind == yaml.ScalarNode && strings.EqualFold(strings.TrimSpace(role.Value), "chat") {
+			return true
+		}
+	}
+	return false
+}
+
+func yamlMapNode(node *yaml.Node, wanted string) *yaml.Node {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == wanted {
+			return node.Content[i+1]
+		}
+	}
+	return nil
 }
 
 func yamlMapString(node *yaml.Node, wanted string) string {

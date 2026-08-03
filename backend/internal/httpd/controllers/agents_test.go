@@ -196,6 +196,20 @@ func TestGetAndRefreshAgentModels(t *testing.T) {
 	}
 }
 
+func TestRefreshAgentModelsWithoutCatalogReturnsNotImplemented(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{}, httpd.ControlDeps{}))
+	defer srv.Close()
+
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/agents/codex/models/refresh", "")
+	if status != http.StatusNotImplemented {
+		t.Fatalf("POST refresh without catalog = %d, body=%s", status, body)
+	}
+	if !strings.Contains(string(body), `"error"`) {
+		t.Fatalf("body = %s, want API error envelope", body)
+	}
+}
+
 func btoi(value bool) int {
 	if value {
 		return 1

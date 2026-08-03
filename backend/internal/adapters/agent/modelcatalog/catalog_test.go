@@ -11,13 +11,25 @@ import (
 )
 
 func TestModelCommandUsesProjectWorkingDirectory(t *testing.T) {
-	cmd := modelCommand(context.Background(), "agent", []string{"models"}, "/work/project")
+	cmd := modelCommand(context.Background(), "agent", []string{"models"}, "/work/project", map[string]string{"OPENCODE_CONFIG": "/project/opencode.json"})
 	if cmd.Dir != "/work/project" {
 		t.Fatalf("Dir = %q, want /work/project", cmd.Dir)
 	}
 	if cmd.WaitDelay != commandTerminationWait {
 		t.Fatalf("WaitDelay = %s, want %s", cmd.WaitDelay, commandTerminationWait)
 	}
+	if !environmentContains(cmd.Env, "OPENCODE_CONFIG=/project/opencode.json") {
+		t.Fatalf("Env does not contain project override: %#v", cmd.Env)
+	}
+}
+
+func environmentContains(env []string, wanted string) bool {
+	for _, item := range env {
+		if item == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCommandDiscoveryTimeoutAllowsSlowModelRegistries(t *testing.T) {
