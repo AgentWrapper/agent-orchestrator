@@ -8,10 +8,11 @@ import {
 	type MouseEvent,
 	type ReactNode,
 } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import {
+	Check,
 	ChevronDown,
 	ChevronRight,
 	ChevronsDownUp,
@@ -19,10 +20,13 @@ import {
 	Columns2,
 	Maximize2,
 	Minimize2,
+	Plus,
+	Rows3,
 	Search,
-	X,
+	Send as SendIcon,
 } from "lucide-react";
 import type { components } from "../../api/schema";
+import { formatFileAnnotationMessage, type FileAnnotationTarget } from "../../shared/file-annotations";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import {
 	isChangedWorkspaceFile,
@@ -33,6 +37,7 @@ import {
 import { cn } from "../lib/utils";
 import type { DiffSelectionLine } from "../../shared/diff-selection";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./ui/accordion";
+import { subscribeWorkspaceFileChanges } from "../lib/workspace-file-events";
 import { Button } from "./ui/button";
 import { DiffSelectionMenu } from "./DiffSelectionMenu";
 import { Input } from "./ui/input";
@@ -43,11 +48,21 @@ type WorkspaceFileDetail = components["schemas"]["WorkspaceFileResponse"] & {
 };
 type WorkspaceFileStatus = WorkspaceFileSummary["status"];
 
+type ActiveFileAnnotationTarget = FileAnnotationTarget & { rowIndex?: number };
+type FileAnnotationStatus = "idle" | "sending" | "sent" | "error";
+type FileAnnotationModel = {
+	target: ActiveFileAnnotationTarget | null;
+	draft: string;
+	status: FileAnnotationStatus;
+	error: string;
+	begin: (target: ActiveFileAnnotationTarget) => void;
+	setDraft: (draft: string) => void;
+	cancel: () => void;
+	submit: () => Promise<void>;
+};
+
 type SessionFilesViewProps = {
 	sessionId: string;
-	/** Only rendered as a button when `isMaximized` — the embedded panel has
-	 *  the inspector's tab strip for that, right above the toolbar. */
-	onClose?: () => void;
 	isMaximized?: boolean;
 	onToggleMaximized?: (next: boolean) => void;
 };
@@ -63,11 +78,11 @@ const statusLabel: Record<WorkspaceFileStatus, string> = {
 };
 
 const statusTone: Record<WorkspaceFileStatus, string> = {
-	added: "border-success/40 bg-success/10 text-success",
-	deleted: "border-error/40 bg-error/10 text-error",
-	modified: "border-warning/40 bg-warning/10 text-warning",
-	renamed: "border-accent/40 bg-accent-weak text-accent",
-	unmodified: "border-border bg-raised text-passive",
+	added: "text-success",
+	deleted: "text-error",
+	modified: "text-warning",
+	renamed: "text-accent",
+	unmodified: "text-passive",
 };
 
 // Split (old | new) view only means something when both sides have content to
@@ -80,33 +95,118 @@ function canSplitCompare(status: WorkspaceFileStatus): boolean {
 
 export function SessionFilesView({
 	sessionId,
-	onClose,
 	isMaximized = false,
 	onToggleMaximized,
 }: SessionFilesViewProps) {
 	const { t } = useTranslation();
+	const queryClient = useQueryClient();
 	const [filter, setFilter] = useState("");
 	const [split, setSplit] = useState(false);
 	const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
-	const initializedExpansionFor = useRef<string | null>(null);
+	const [annotationTarget, setAnnotationTarget] = useState<ActiveFileAnnotationTarget | null>(null);
+	const [annotationDraft, setAnnotationDraft] = useState("");
+	const [annotationStatus, setAnnotationStatus] = useState<FileAnnotationStatus>("idle");
+	const [annotationError, setAnnotationError] = useState("");
+	const annotationGenerationRef = useRef(0);
+	const annotationSentTimerRef = useRef<number | null>(null);
 	const rootRef = useRef<HTMLElement>(null);
 
 	const filesQuery = useQuery(sessionWorkspaceFilesQueryOptions(sessionId, t("files.error.loadWorkspace")));
+	useEffect(() => subscribeWorkspaceFileChanges(sessionId, queryClient), [queryClient, sessionId]);
 	const files = filesQuery.data?.files ?? emptyFiles;
 	const changedFiles = useMemo(() => files.filter(isChangedWorkspaceFile), [files]);
 
 	useEffect(() => {
-		initializedExpansionFor.current = null;
+		annotationGenerationRef.current += 1;
 		setExpandedPaths(new Set());
 		setFilter("");
+		setAnnotationTarget(null);
+		setAnnotationDraft("");
+		setAnnotationStatus("idle");
+		setAnnotationError("");
 	}, [sessionId]);
 
+	useEffect(
+		() => () => {
+			if (annotationSentTimerRef.current !== null) window.clearTimeout(annotationSentTimerRef.current);
+		},
+		[],
+	);
+
 	useEffect(() => {
-		if (filesQuery.isPending) return;
-		if (initializedExpansionFor.current === sessionId) return;
-		initializedExpansionFor.current = sessionId;
-		setExpandedPaths(changedFiles[0] ? new Set([changedFiles[0].path]) : new Set());
-	}, [changedFiles, filesQuery.isPending, sessionId]);
+		const root = rootRef.current;
+		if (!root) return;
+		const routeDiffWheel = (event: WheelEvent) => {
+			if (event.ctrlKey || event.metaKey || event.shiftKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+			const target = event.target;
+			if (!(target instanceof Element) || !target.closest(".session-files-diff-scrollbar")) return;
+			const scrollRoot = root.querySelector<HTMLElement>("[data-files-scroll-root]");
+			if (!scrollRoot) return;
+			const delta =
+				event.deltaMode === WheelEvent.DOM_DELTA_LINE
+					? event.deltaY * 16
+					: event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+						? event.deltaY * scrollRoot.clientHeight
+						: event.deltaY;
+			if (delta === 0) return;
+			event.preventDefault();
+			scrollRoot.scrollTop += delta;
+		};
+		root.addEventListener("wheel", routeDiffWheel, { capture: true, passive: false });
+		return () => root.removeEventListener("wheel", routeDiffWheel, { capture: true });
+	}, []);
+
+	const beginAnnotation = (target: ActiveFileAnnotationTarget) => {
+		annotationGenerationRef.current += 1;
+		if (annotationSentTimerRef.current !== null) window.clearTimeout(annotationSentTimerRef.current);
+		annotationSentTimerRef.current = null;
+		setAnnotationTarget(target);
+		setAnnotationDraft("");
+		setAnnotationStatus("idle");
+		setAnnotationError("");
+	};
+	const cancelAnnotation = () => {
+		annotationGenerationRef.current += 1;
+		setAnnotationTarget(null);
+		setAnnotationDraft("");
+		setAnnotationStatus("idle");
+		setAnnotationError("");
+	};
+	const submitAnnotation = async () => {
+		if (!annotationTarget || !annotationDraft.trim() || annotationStatus === "sending") return;
+		const sendGeneration = annotationGenerationRef.current;
+		const sendTarget = annotationTarget;
+		const sendFeedback = annotationDraft;
+		setAnnotationStatus("sending");
+		setAnnotationError("");
+		try {
+			const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
+				params: { path: { sessionId } },
+				body: { message: formatFileAnnotationMessage(sendTarget, sendFeedback) },
+			});
+			if (sendGeneration !== annotationGenerationRef.current) return;
+			if (error) throw new Error(apiErrorMessage(error, t("files.feedbackError")));
+			setAnnotationStatus("sent");
+			annotationSentTimerRef.current = window.setTimeout(() => {
+				annotationSentTimerRef.current = null;
+				cancelAnnotation();
+			}, 1_200);
+		} catch (error) {
+			if (sendGeneration !== annotationGenerationRef.current) return;
+			setAnnotationStatus("error");
+			setAnnotationError(apiErrorMessage(error, t("files.feedbackError")));
+		}
+	};
+	const annotation: FileAnnotationModel = {
+		target: annotationTarget,
+		draft: annotationDraft,
+		status: annotationStatus,
+		error: annotationError,
+		begin: beginAnnotation,
+		setDraft: setAnnotationDraft,
+		cancel: cancelAnnotation,
+		submit: submitAnnotation,
+	};
 
 	const normalizedFilter = filter.trim().toLowerCase();
 	const visibleFiles = useMemo(
@@ -116,6 +216,7 @@ export function SessionFilesView({
 				: changedFiles,
 		[changedFiles, normalizedFilter],
 	);
+	const changedCount = changedFiles.length;
 	const expandedVisibleCount = visibleFiles.filter((file) => expandedPaths.has(file.path)).length;
 
 	const toggleVisibleFiles = () => {
@@ -155,13 +256,14 @@ export function SessionFilesView({
 			className="flex h-full min-h-0 flex-col bg-background text-foreground"
 			aria-label={t("files.sessionFiles")}
 		>
-			<header className="flex h-11 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-1.5">
-				<label className="relative mr-auto min-w-0 max-w-[280px] flex-1">
+			<header className="flex h-10 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-2">
+				<label className="relative mr-1 min-w-0 flex-1">
 					<Search className="pointer-events-none absolute left-2.5 top-1/2 size-icon-sm -translate-y-1/2 text-passive" />
 					<Input
+						aria-label={t("files.search")}
 						className="h-8 pl-8 font-mono text-xs"
 						onChange={(event) => setFilter(event.target.value)}
-						placeholder={t("files.searchPlaceholder")}
+						placeholder={t("files.searchCountPlaceholder", { count: changedCount })}
 						value={filter}
 					/>
 				</label>
@@ -183,13 +285,17 @@ export function SessionFilesView({
 				<Button
 					aria-label={split ? t("files.unifiedDiff") : t("files.splitDiff")}
 					aria-pressed={split}
-					className={cn("shrink-0 text-foreground", split && "bg-interactive-active")}
+					className="shrink-0"
 					onClick={() => setSplit((current) => !current)}
 					size="icon-sm"
 					type="button"
 					variant="ghost"
 				>
-					<Columns2 className="size-icon-sm" aria-hidden="true" />
+					{split ? (
+						<Columns2 className="size-icon-sm" aria-hidden="true" />
+					) : (
+						<Rows3 className="size-icon-sm" aria-hidden="true" />
+					)}
 				</Button>
 				{onToggleMaximized ? (
 					<Button
@@ -207,23 +313,15 @@ export function SessionFilesView({
 						)}
 					</Button>
 				) : null}
-				{isMaximized && onClose ? (
-					<Button
-						aria-label={t("files.close")}
-						className="shrink-0"
-						onClick={onClose}
-						size="icon-sm"
-						type="button"
-						variant="ghost"
-					>
-						<X className="size-icon-sm" aria-hidden="true" />
-					</Button>
-				) : null}
 			</header>
 
-			<div className="min-h-0 flex-1 overflow-auto bg-background">
-				<div className={cn("flex w-full flex-col px-0 py-1", !isMaximized && "mx-auto max-w-[1200px]")}>
+			<div
+				className="board-scrollbar min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain bg-background"
+				data-files-scroll-root=""
+			>
+				<div className={cn("flex w-full flex-col px-0", !isMaximized && "mx-auto max-w-[1200px]")}>
 					<ReviewFileList
+						annotation={annotation}
 						compareMode={filesQuery.data?.compareMode}
 						error={filesQuery.error}
 						expandedPaths={expandedPaths}
@@ -242,6 +340,7 @@ export function SessionFilesView({
 }
 
 function ReviewFileList({
+	annotation,
 	compareMode,
 	error,
 	expandedPaths,
@@ -253,6 +352,7 @@ function ReviewFileList({
 	split,
 	wrap,
 }: {
+	annotation: FileAnnotationModel;
 	compareMode?: WorkspaceCompareMode;
 	error: Error | null;
 	expandedPaths: Set<string>;
@@ -286,6 +386,7 @@ function ReviewFileList({
 			<ul className="session-files-review-list flex flex-col gap-0.5">
 				{files.map((file) => (
 					<ReviewFileCard
+						annotation={annotation}
 						expanded={expandedPaths.has(file.path)}
 						file={file}
 						key={file.path}
@@ -300,12 +401,14 @@ function ReviewFileList({
 }
 
 function ReviewFileCard({
+	annotation,
 	expanded,
 	file,
 	sessionId,
 	split,
 	wrap,
 }: {
+	annotation: FileAnnotationModel;
 	expanded: boolean;
 	file: WorkspaceFileSummary;
 	sessionId: string;
@@ -319,8 +422,7 @@ function ReviewFileCard({
 	const [selectionOrMenuActive, setSelectionOrMenuActive] = useState(false);
 	const detailQuery = useQuery({
 		queryKey: ["session-workspace-file", sessionId, file.path],
-		enabled: expanded,
-		refetchInterval: expanded && !selectionOrMenuActive ? 3500 : false,
+		enabled: expanded && !selectionOrMenuActive,
 		queryFn: () => loadWorkspaceFile(sessionId, file.path, t),
 	});
 
@@ -329,9 +431,16 @@ function ReviewFileCard({
 			<li className="session-files-review-row overflow-hidden bg-transparent">
 				<AccordionTrigger
 					aria-label={t(expanded ? "files.collapseFile" : "files.expandFile", { file: fileLabel(file) })}
-					className="gap-2 px-3 py-1.5"
+					className="flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-1 text-left"
 					data-file-toggle=""
-					headerClassName="min-h-10 hover:bg-interactive-hover/50 data-[state=open]:bg-interactive-active/45"
+					headerClassName="min-h-9 hover:bg-interactive-hover/50 data-[state=open]:bg-interactive-active/35"
+					trailing={
+						<FileFeedbackButton
+							active={annotation.target?.path === file.path && annotation.target.side === "file"}
+							file={file}
+							onClick={() => annotation.begin({ path: file.path, previousPath: file.previousPath, side: "file" })}
+						/>
+					}
 				>
 					{expanded ? (
 						<ChevronDown className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
@@ -342,15 +451,19 @@ function ReviewFileCard({
 					<FilePathLabel file={file} />
 					<ChangeBadges additions={file.additions} deletions={file.deletions} />
 				</AccordionTrigger>
+				{annotation.target?.path === file.path && annotation.target.side === "file" ? (
+					<FileAnnotationComposer annotation={annotation} />
+				) : null}
 				<AccordionContent className="border-t border-border/60 bg-background/40">
-					{detailQuery.isPending ? <PanelMessage>{t("files.loadingDiff")}</PanelMessage> : null}
+					{detailQuery.isPending ? <PanelMessage compact>{t("files.loadingDiff")}</PanelMessage> : null}
 					{!detailQuery.isPending && detailQuery.error ? (
-						<PanelMessage action={<RetryButton onClick={() => void detailQuery.refetch()} />}>
+						<PanelMessage compact action={<RetryButton onClick={() => void detailQuery.refetch()} />}>
 							{detailQuery.error.message || t("files.error.loadFile")}
 						</PanelMessage>
 					) : null}
 					{!detailQuery.isPending && !detailQuery.error && detailQuery.data ? (
 						<ReviewDiffBody
+							annotation={annotation}
 							detail={detailQuery.data}
 							filePath={file.path}
 							onActiveSelectionChange={setSelectionOrMenuActive}
@@ -365,12 +478,28 @@ function ReviewFileCard({
 	);
 }
 
+function FileFeedbackButton({ active, file, onClick }: { active: boolean; file: WorkspaceFileSummary; onClick: () => void }) {
+	const { t } = useTranslation();
+	if (active) return <span className="size-7 shrink-0" aria-hidden="true" />;
+	return (
+		<Button
+			aria-label={t("files.addFileFeedback", { file: file.path })}
+			className="size-7 shrink-0 opacity-0 transition-opacity focus-visible:opacity-100 group-hover/row:opacity-100"
+			onClick={onClick}
+			size={null}
+			type="button"
+			variant="ghost"
+		>
+			<Plus className="size-icon-sm" aria-hidden="true" />
+		</Button>
+	);
+}
 function FilePathLabel({ file }: { file: WorkspaceFileSummary }) {
 	if (!file.previousPath) {
-		return <span className="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-foreground">{file.path}</span>;
+		return <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-foreground">{file.path}</span>;
 	}
 	return (
-		<span className="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-foreground">
+		<span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-foreground">
 			<span className="text-passive line-through decoration-border">{file.previousPath}</span>
 			<span className="px-1 text-passive">-&gt;</span>
 			<span>{file.path}</span>
@@ -406,6 +535,7 @@ async function loadWorkspaceFile(sessionId: string, path: string, t: TFunction) 
 }
 
 function ReviewDiffBody({
+	annotation,
 	detail,
 	filePath,
 	onActiveSelectionChange,
@@ -413,6 +543,7 @@ function ReviewDiffBody({
 	split,
 	wrap,
 }: {
+	annotation: FileAnnotationModel;
 	detail: WorkspaceFileDetail;
 	filePath: string;
 	onActiveSelectionChange: (active: boolean) => void;
@@ -422,16 +553,19 @@ function ReviewDiffBody({
 }) {
 	const { t } = useTranslation();
 	if (detail.binary) {
-		return <PanelMessage>{t("files.binaryUnavailable")}</PanelMessage>;
+		return <PanelMessage compact>{t("files.binaryUnavailable")}</PanelMessage>;
 	}
 	const rows = parseUnifiedDiff(detail.diff);
 	if (rows.length === 0) {
-		return <PanelMessage>{emptyDiffMessage(detail.compareMode, t)}</PanelMessage>;
+		return <PanelMessage compact>{emptyDiffMessage(detail.compareMode, t)}</PanelMessage>;
 	}
 	return (
 		<DiffView
+			annotation={annotation}
 			filePath={filePath}
 			onActiveSelectionChange={onActiveSelectionChange}
+			path={detail.path}
+			previousPath={detail.previousPath}
 			rows={rows}
 			sessionId={sessionId}
 			split={split}
@@ -657,16 +791,22 @@ type DiffViewMenuState = {
 };
 
 function DiffView({
+	annotation,
 	filePath,
 	onActiveSelectionChange,
+	path,
+	previousPath,
 	rows,
 	sessionId,
 	split,
 	truncated,
 	wrap,
 }: {
+	annotation: FileAnnotationModel;
 	filePath: string;
 	onActiveSelectionChange: (active: boolean) => void;
+	path: string;
+	previousPath?: string;
 	rows: DiffRow[];
 	sessionId: string;
 	split: boolean;
@@ -729,53 +869,62 @@ function DiffView({
 	);
 
 	return (
-		<div className="flex min-h-[180px] max-h-[min(620px,calc(100vh-18rem))] flex-col">
+		<div>
 			{truncated ? (
 				<div className="shrink-0 border-b border-border bg-warning/10 px-3 py-1.5 text-xs text-warning">
 					{t("files.diffTruncated")}
 				</div>
 			) : null}
 			<div
-				className="session-files-diff-scrollbar min-h-0 flex-1 overflow-auto bg-terminal font-mono text-xs leading-row text-terminal-foreground"
+				className="session-files-diff-scrollbar overflow-x-auto overflow-y-visible bg-terminal font-mono text-xs leading-row text-terminal-foreground"
 				onContextMenu={onContextMenu}
 				ref={containerRef}
 			>
 				{split ? (
-					<SplitDiff rows={rows} />
+					<SplitDiff annotation={annotation} path={path} previousPath={previousPath} rows={rows} />
 				) : (
 					<div className={cn(!wrap && "min-w-max")}>
 						{rows.map((row, index) =>
 							row.kind === "hunk" ? (
 								<HunkBand key={`h${index}`} row={row} />
 							) : (
-								<div
-									className={cn("flex", diffRowTone[row.kind])}
-									data-diff-row=""
-									data-kind={row.kind}
-									data-new-no={row.newNo ?? ""}
-									data-old-no={row.oldNo ?? ""}
-									data-row-index={index}
-									key={`r${index}`}
-								>
-									<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
-										{row.newNo ?? row.oldNo ?? ""}
-									</span>
-									<span
-										className={cn(
-											"w-4 shrink-0 select-none text-center",
-											row.kind === "add" && "text-success",
-											row.kind === "del" && "text-error",
-										)}
+								<div key={`r${index}`}>
+									<div
+										className={cn("group/line relative flex", diffRowTone[row.kind])}
+										data-diff-row=""
+										data-kind={row.kind}
+										data-new-no={row.newNo ?? ""}
+										data-old-no={row.oldNo ?? ""}
+										data-row-index={index}
 									>
-										{diffMarkerGlyph[row.kind]}
-									</span>
-									<span className={cn("pr-3", wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre")}>
-										{row.segments ? (
-											<DiffLineSegments add={row.kind === "add"} segments={row.segments} />
-										) : (
-											row.text || " "
-										)}
-									</span>
+										<LineFeedbackButton
+											active={isAnnotationRow(annotation.target, path, index)}
+											onClick={() => annotation.begin(lineAnnotationTarget(path, previousPath, row, index))}
+											target={lineAnnotationTarget(path, previousPath, row, index)}
+										/>
+										<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
+											{row.newNo ?? row.oldNo ?? ""}
+										</span>
+										<span
+											className={cn(
+												"w-4 shrink-0 select-none text-center",
+												row.kind === "add" && "text-success",
+												row.kind === "del" && "text-error",
+											)}
+										>
+											{diffMarkerGlyph[row.kind]}
+										</span>
+										<span className={cn("pr-3", wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre")}>
+											{row.segments ? (
+												<DiffLineSegments add={row.kind === "add"} segments={row.segments} />
+											) : (
+												row.text || " "
+											)}
+										</span>
+									</div>
+									{isAnnotationRow(annotation.target, path, index) ? (
+										<FileAnnotationComposer annotation={annotation} />
+									) : null}
 								</div>
 							),
 						)}
@@ -849,16 +998,46 @@ function toSplitRows(rows: DiffRow[]): SplitRow[] {
 	return out;
 }
 
-function SplitDiff({ rows }: { rows: DiffRow[] }) {
+function SplitDiff({
+	annotation,
+	path,
+	previousPath,
+	rows,
+}: {
+	annotation: FileAnnotationModel;
+	path: string;
+	previousPath?: string;
+	rows: DiffRow[];
+}) {
 	return (
 		<div>
 			{toSplitRows(rows).map((splitRow, index) =>
 				splitRow.kind === "hunk" ? (
 					<HunkBand key={`sh${index}`} row={splitRow.row} />
 				) : (
-					<div className="grid grid-cols-2 divide-x divide-border/40" key={`sp${index}`}>
-						<SplitSide row={splitRow.left} rowIndex={splitRow.leftIndex} side="old" />
-						<SplitSide row={splitRow.right} rowIndex={splitRow.rightIndex} side="new" />
+					<div key={`sp${index}`}>
+						<div className="grid grid-cols-2 divide-x divide-border/40">
+							<SplitSide
+								annotation={annotation}
+								path={path}
+								previousPath={previousPath}
+								row={splitRow.left}
+								rowIndex={splitRow.leftIndex}
+								side="old"
+							/>
+							<SplitSide
+								annotation={annotation}
+								path={path}
+								previousPath={previousPath}
+								row={splitRow.right}
+								rowIndex={splitRow.rightIndex}
+								side="new"
+							/>
+						</div>
+						{(splitRow.leftIndex !== null && isAnnotationRow(annotation.target, path, splitRow.leftIndex)) ||
+						(splitRow.rightIndex !== null && isAnnotationRow(annotation.target, path, splitRow.rightIndex)) ? (
+							<FileAnnotationComposer annotation={annotation} />
+						) : null}
 					</div>
 				),
 			)}
@@ -866,19 +1045,41 @@ function SplitDiff({ rows }: { rows: DiffRow[] }) {
 	);
 }
 
-function SplitSide({ row, rowIndex, side }: { row: DiffRow | null; rowIndex: number | null; side: "old" | "new" }) {
+function SplitSide({
+	annotation,
+	path,
+	previousPath,
+	row,
+	rowIndex,
+	side,
+}: {
+	annotation: FileAnnotationModel;
+	path: string;
+	previousPath?: string;
+	row: DiffRow | null;
+	rowIndex: number | null;
+	side: "old" | "new";
+}) {
 	if (!row || rowIndex === null) return <div className="bg-surface-faint/20" aria-hidden="true" />;
 	const lineNo = side === "old" ? row.oldNo : row.newNo;
 	const tone = row.kind === "hunk" ? "" : diffRowTone[row.kind];
+	const target = lineNo == null ? null : lineAnnotationTarget(path, previousPath, row, rowIndex, side);
 	return (
 		<div
-			className={cn("flex min-w-0", tone)}
+			className={cn("group/line relative flex min-w-0", tone)}
 			data-diff-row=""
 			data-kind={row.kind}
 			data-new-no={row.newNo ?? ""}
 			data-old-no={row.oldNo ?? ""}
 			data-row-index={rowIndex}
 		>
+			{target ? (
+				<LineFeedbackButton
+					active={isAnnotationRow(annotation.target, path, rowIndex)}
+					onClick={() => annotation.begin(target)}
+					target={target}
+				/>
+			) : null}
 			<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
 				{lineNo ?? ""}
 			</span>
@@ -886,6 +1087,132 @@ function SplitSide({ row, rowIndex, side }: { row: DiffRow | null; rowIndex: num
 				{row.segments ? <DiffLineSegments add={row.kind === "add"} segments={row.segments} /> : row.text || " "}
 			</span>
 		</div>
+	);
+}
+
+function lineAnnotationTarget(
+	path: string,
+	previousPath: string | undefined,
+	row: DiffRow,
+	rowIndex: number,
+	side: "old" | "new" = row.kind === "del" ? "old" : "new",
+): ActiveFileAnnotationTarget {
+	return {
+		path,
+		previousPath,
+		side,
+		line: side === "old" ? (row.oldNo ?? undefined) : (row.newNo ?? undefined),
+		oldLine: row.oldNo ?? undefined,
+		newLine: row.newNo ?? undefined,
+		lineKind: row.kind === "hunk" ? undefined : row.kind,
+		lineText: row.text,
+		rowIndex,
+	};
+}
+
+function isAnnotationRow(target: ActiveFileAnnotationTarget | null, path: string, rowIndex: number): boolean {
+	return target?.path === path && target.side !== "file" && target.rowIndex === rowIndex;
+}
+
+function LineFeedbackButton({
+	active,
+	onClick,
+	target,
+}: {
+	active: boolean;
+	onClick: () => void;
+	target: ActiveFileAnnotationTarget;
+}) {
+	const { t } = useTranslation();
+	if (active) return null;
+	const side = t(target.side === "old" ? "files.oldSide" : "files.newSide");
+	const label = t("files.addLineFeedback", { file: target.path, line: target.line, side });
+	return (
+		<Button
+			aria-label={label}
+			className="absolute inset-y-0 left-6 z-20 my-auto size-6 rounded-sm border-primary/70 opacity-0 shadow-md shadow-black/30 transition-opacity active:translate-y-0 active:scale-100 focus-visible:opacity-100 group-hover/line:opacity-100"
+			onClick={onClick}
+			size={null}
+			type="button"
+			variant="primary"
+		>
+			<Plus className="size-4" aria-hidden="true" />
+		</Button>
+	);
+}
+
+function FileAnnotationComposer({ annotation }: { annotation: FileAnnotationModel }) {
+	const { t } = useTranslation();
+	const target = annotation.target;
+	if (!target) return null;
+	const side = target.side === "file" ? "" : t(target.side === "old" ? "files.oldSide" : "files.newSide");
+	const targetLabel =
+		target.side === "file"
+			? t("files.fileFeedbackTarget", { file: target.path })
+			: t("files.lineFeedbackTarget", { file: target.path, line: target.line, side });
+	const submit = () => void annotation.submit();
+
+	return (
+		<form
+			className="border-y border-border/70 bg-surface px-3 py-2 font-sans"
+			onSubmit={(event) => {
+				event.preventDefault();
+				submit();
+			}}
+		>
+			<div className="mb-1.5 flex items-center justify-between gap-2">
+				<span className="min-w-0 truncate font-mono text-caption text-passive">{targetLabel}</span>
+				{annotation.status === "sent" ? (
+					<span className="inline-flex items-center gap-1 text-caption text-success" role="status">
+						<Check className="size-icon-sm" aria-hidden="true" />
+						{t("files.feedbackSent")}
+					</span>
+				) : null}
+			</div>
+			<textarea
+				aria-label={t("files.feedbackLabel", { target: targetLabel })}
+				autoFocus
+				className="min-h-20 w-full resize-y rounded-md border border-input bg-background px-2.5 py-2 text-sm text-foreground outline-none placeholder:text-passive focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 disabled:opacity-60"
+				disabled={annotation.status === "sending" || annotation.status === "sent"}
+				onChange={(event) => annotation.setDraft(event.target.value)}
+				onKeyDown={(event) => {
+					if (event.key === "Escape") {
+						event.preventDefault();
+						annotation.cancel();
+					} else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+						event.preventDefault();
+						submit();
+					}
+				}}
+				placeholder={t("files.feedbackPlaceholder")}
+				value={annotation.draft}
+			/>
+			{annotation.status === "error" ? (
+				<p className="mt-1.5 text-xs text-error" role="alert">
+					{annotation.error}
+				</p>
+			) : null}
+			<div className="mt-2 flex items-center justify-end gap-1.5">
+				<span className="mr-auto text-caption text-passive">{t("files.feedbackShortcut")}</span>
+				<Button
+					disabled={annotation.status === "sending" || annotation.status === "sent"}
+					onClick={annotation.cancel}
+					size="sm"
+					type="button"
+					variant="ghost"
+				>
+					{t("files.cancelFeedback")}
+				</Button>
+				<Button
+					disabled={!annotation.draft.trim() || annotation.status === "sending" || annotation.status === "sent"}
+					size="sm"
+					type="submit"
+				>
+					<SendIcon className="size-icon-sm" aria-hidden="true" />
+					{annotation.status === "sending" ? t("files.sendingFeedback") : t("files.sendFeedback")}
+				</Button>
+			</div>
+		</form>
 	);
 }
 
@@ -907,16 +1234,21 @@ function DiffLineSegments({ add, segments }: { add: boolean; segments: DiffSegme
 
 function ChangeBadges({ additions, deletions }: { additions: number; deletions: number }) {
 	return (
-		<span className="flex shrink-0 items-center gap-1 font-mono text-xs font-semibold">
-			{additions > 0 ? <span className="rounded bg-success/20 px-1.5 py-0.5 text-success">+{additions}</span> : null}
-			{deletions > 0 ? <span className="rounded bg-error/20 px-1.5 py-0.5 text-error">-{deletions}</span> : null}
+		<span className="flex shrink-0 items-center gap-1 font-mono text-caption font-medium">
+			{additions > 0 ? <span className="px-0.5 text-success">+{additions}</span> : null}
+			{deletions > 0 ? <span className="px-0.5 text-error">-{deletions}</span> : null}
 		</span>
 	);
 }
 
-function PanelMessage({ action, children }: { action?: ReactNode; children: ReactNode }) {
+function PanelMessage({ action, children, compact = false }: { action?: ReactNode; children: ReactNode; compact?: boolean }) {
 	return (
-		<div className="grid min-h-[180px] place-items-center p-6 text-center text-xs text-muted-foreground">
+		<div
+			className={cn(
+				"grid place-items-center text-center text-xs text-muted-foreground",
+				compact ? "min-h-16 p-3" : "min-h-[180px] p-6",
+			)}
+		>
 			<div className="flex max-w-sm flex-col items-center gap-3">
 				<p>{children}</p>
 				{action ?? null}
@@ -940,7 +1272,7 @@ function StatusMark({ status }: { status: WorkspaceFileStatus }) {
 	return (
 		<span
 			className={cn(
-				"inline-flex size-5 shrink-0 items-center justify-center rounded border font-mono text-micro font-semibold",
+				"inline-flex w-5 shrink-0 items-center justify-center font-mono text-caption font-medium",
 				statusTone[status],
 			)}
 			title={t(`files.status.${status}`)}
