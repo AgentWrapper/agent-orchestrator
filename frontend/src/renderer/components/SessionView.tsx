@@ -28,6 +28,7 @@ import { matchesRendererShortcut } from "../stores/keybindings-store";
 const INSPECTOR_MIN_PERCENT = 22;
 const INSPECTOR_MAX_PERCENT = 45;
 const inspectorSplitStorageKey = "ao.inspector.split";
+const shellTopbarHiddenByPlatform = hidesShellTopbar();
 
 function initialSplitPercent(): number {
 	const raw = typeof window === "undefined" ? null : window.localStorage?.getItem(inspectorSplitStorageKey);
