@@ -288,7 +288,7 @@ function BoardCard({ card, isPulsing }: { card: Card; isPulsing: boolean }) {
 	return (
 		<motion.div
 			layout
-			layoutId={card.id}
+			layoutId={`${card.id}-${card.column}`}
 			initial={{ opacity: 0, scale: 0.98, y: -8 }}
 			animate={card.merging ? { opacity: 0, scale: 0.96, y: -8 } : { opacity: 1, scale: 1, y: 0 }}
 			exit={{ opacity: 0, scale: 0.96, y: -8 }}
