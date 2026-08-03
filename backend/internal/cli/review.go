@@ -44,7 +44,6 @@ type reviewState struct {
 
 type listReviewsResponse struct {
 	ReviewerHandleID string        `json:"reviewerHandleId"`
-	ReviewerHarness  string        `json:"reviewerHarness"`
 	Reviews          []reviewState `json:"reviews"`
 }
 

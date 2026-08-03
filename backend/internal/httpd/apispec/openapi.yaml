@@ -2698,15 +2698,12 @@ components:
       properties:
         reviewerHandleId:
           type: string
-        reviewerHarness:
-          type: string
         reviews:
           items:
             $ref: '#/components/schemas/PRReviewState'
           type: array
       required:
       - reviewerHandleId
-      - reviewerHarness
       - reviews
       type: object
     ClaimPRRequest:
@@ -3081,15 +3078,12 @@ components:
       properties:
         reviewerHandleId:
           type: string
-        reviewerHarness:
-          type: string
         reviews:
           items:
             $ref: '#/components/schemas/PRReviewState'
           type: array
       required:
       - reviewerHandleId
-      - reviewerHarness
       - reviews
       type: object
     ListSessionPRsResponse:
@@ -4293,15 +4287,12 @@ components:
           type: boolean
         reviewerHandleId:
           type: string
-        reviewerHarness:
-          type: string
         reviews:
           items:
             $ref: '#/components/schemas/PRReviewState'
           type: array
       required:
       - reviewerHandleId
-      - reviewerHarness
       - reviews
       - created
       type: object

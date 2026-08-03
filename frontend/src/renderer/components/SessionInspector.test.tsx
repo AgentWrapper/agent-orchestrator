@@ -104,15 +104,10 @@ function renderWithQuery(children: ReactNode, workspaces?: WorkspaceSummary[], s
 	return render(<QueryClientProvider client={client}>{children}</QueryClientProvider>);
 }
 
-function mockCommonGets(
-	_unusedRuns: unknown[] = [],
-	reviewerHandleId = "",
-	reviews: unknown[] = [],
-	reviewerHarness = "",
-) {
+function mockCommonGets(_unusedRuns: unknown[] = [], reviewerHandleId = "", reviews: unknown[] = []) {
 	getMock.mockImplementation(async (path: string) => {
 		if (path === "/api/v1/sessions/{sessionId}/reviews") {
-			return { data: { reviewerHandleId, reviewerHarness, reviews } };
+			return { data: { reviewerHandleId, reviews } };
 		}
 		if (path === "/api/v1/projects/{id}") {
 			return {
@@ -170,10 +165,7 @@ beforeEach(() => {
 	navigateMock.mockReset();
 	patchMock.mockReset();
 	postMock.mockReset();
-	getMock.mockResolvedValue({
-		data: { reviewerHandleId: "", reviewerHarness: "", reviews: [] },
-		error: undefined,
-	});
+	getMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [] }, error: undefined });
 	patchMock.mockResolvedValue({ data: { ok: true }, error: undefined, response: { status: 200 } });
 	postMock.mockResolvedValue({ data: { ok: true, sessionId: "sess-1" }, error: undefined });
 });
@@ -632,10 +624,7 @@ describe("SessionInspector Activity section", () => {
 			if (path === "/api/v1/sessions/{sessionId}/pr") {
 				return { data: { sessionId: "sess-1", prs: summaries }, error: undefined };
 			}
-			return {
-				data: { reviewerHandleId: "", reviewerHarness: "", reviews: [] },
-				error: undefined,
-			};
+			return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
 		});
 
 		renderWithQuery(
@@ -735,42 +724,18 @@ describe("SessionInspector reviews tab", () => {
 
 	it("triggers a review and opens the returned reviewer terminal", async () => {
 		mockCommonGets([], "", [reviewState(3, "needs_review")]);
-		const olderRunningReview = {
-			...approvedReview,
-			batchId: "batch-old",
-			createdAt: "2026-06-16T10:05:00Z",
-			id: "run-old",
-			prUrl: "https://example.com/pr/2",
-			status: "running",
-			verdict: "",
-			body: "",
-		};
-		const runningReview = {
-			...approvedReview,
-			batchId: "batch-new",
-			createdAt: "2026-06-16T10:07:00Z",
-			status: "running",
-			verdict: "",
-			body: "",
-		};
+		const runningReview = { ...approvedReview, status: "running", verdict: "", body: "" };
 		postMock.mockResolvedValue({
 			response: { status: 201 },
 			data: {
 				reviewerHandleId: "reviewer-pane",
-				reviewerHarness: "codex",
-				reviews: [
-					{ ...reviewState(2, "running"), latestRun: olderRunningReview },
-					{ ...reviewState(3, "running"), latestRun: runningReview },
-				],
+				reviews: [{ ...reviewState(3, "running"), latestRun: runningReview }],
 			},
 		});
 		const onOpenReviewerTerminal = vi.fn();
 
 		renderWithQuery(
-			<SessionInspector
-				onOpenReviewerTerminal={onOpenReviewerTerminal}
-				session={session([pr(2, "open"), pr(3, "open")])}
-			/>,
+			<SessionInspector onOpenReviewerTerminal={onOpenReviewerTerminal} session={session([pr(3, "open")])} />,
 		);
 		await openReviewsTab();
 
@@ -781,85 +746,13 @@ describe("SessionInspector reviews tab", () => {
 				params: { path: { sessionId: "sess-1" } },
 			}),
 		);
-		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({
-			generation: "batch-new",
-			handleId: "reviewer-pane",
-			harness: "codex",
-		});
-	});
-
-	it("opens the reviewer terminal using the newest run across multiple PRs", async () => {
-		const older = {
-			...approvedReview,
-			batchId: "batch-old",
-			createdAt: "2026-06-16T10:05:00Z",
-			id: "run-old",
-			prUrl: "https://example.com/pr/2",
-			status: "running",
-			verdict: "",
-		};
-		const newer = {
-			...approvedReview,
-			batchId: "batch-new",
-			createdAt: "2026-06-16T10:07:00Z",
-			id: "run-new",
-			prUrl: "https://example.com/pr/3",
-		};
-		mockCommonGets([], "reviewer-pane", [
-			{ ...reviewState(2, "running"), latestRun: older },
-			{ ...reviewState(3, "up_to_date"), latestRun: newer },
-		]);
-		const onOpenReviewerTerminal = vi.fn();
-
-		renderWithQuery(
-			<SessionInspector
-				onOpenReviewerTerminal={onOpenReviewerTerminal}
-				session={session([pr(2, "open"), pr(3, "merged")])}
-			/>,
-		);
-		await openReviewsTab();
-		await userEvent.click(await screen.findByRole("button", { name: "Open terminal" }));
-
-		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({
-			generation: "batch-new",
-			handleId: "reviewer-pane",
-			harness: "codex",
-		});
-	});
-
-	it("uses the persisted owner harness when a newer replacement run failed", async () => {
-		const failedReplacement = {
-			...failedReview,
-			batchId: "batch-new-failed",
-			createdAt: "2026-06-16T10:07:00Z",
-			harness: "codex",
-		};
-		mockCommonGets(
-			[],
-			"reviewer-pane",
-			[{ ...reviewState(3, "needs_review"), latestRun: failedReplacement }],
-			"claude-code",
-		);
-		const onOpenReviewerTerminal = vi.fn();
-
-		renderWithQuery(
-			<SessionInspector onOpenReviewerTerminal={onOpenReviewerTerminal} session={session([pr(3, "open")])} />,
-		);
-		await openReviewsTab();
-		await userEvent.click(await screen.findByRole("button", { name: "Open terminal" }));
-
-		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({
-			handleId: "reviewer-pane",
-			harness: "claude-code",
-		});
+		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-pane", harness: "codex" });
 	});
 
 	it("shows claude-code as the default reviewer before a run exists", async () => {
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/sessions/{sessionId}/reviews") {
-				return {
-					data: { reviewerHandleId: "", reviewerHarness: "", reviews: [] },
-				};
+				return { data: { reviewerHandleId: "", reviews: [] } };
 			}
 			if (path === "/api/v1/projects/{id}") {
 				return {
@@ -1000,7 +893,6 @@ describe("SessionInspector reviews tab", () => {
 			response: { status: 200 },
 			data: {
 				reviewerHandleId: "reviewer-pane",
-				reviewerHarness: "codex",
 				reviews: [],
 			},
 		});

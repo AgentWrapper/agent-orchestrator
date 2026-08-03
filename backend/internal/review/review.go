@@ -135,7 +135,6 @@ func (e *Engine) lockWorker(id domain.SessionID) func() {
 type TriggerResult struct {
 	Run              domain.ReviewRun
 	ReviewerHandleID string
-	ReviewerHarness  domain.ReviewerHarness
 	Created          bool
 	Reviews          []PRReviewState
 	CreatedRuns      []domain.ReviewRun
@@ -145,7 +144,6 @@ type TriggerResult struct {
 // recorded passes, newest first.
 type SessionReviews struct {
 	ReviewerHandleID string
-	ReviewerHarness  domain.ReviewerHarness
 	Runs             []domain.ReviewRun
 	Reviews          []PRReviewState
 }
@@ -153,7 +151,6 @@ type SessionReviews struct {
 // CancelResult is the review state after a reviewer pane cancellation.
 type CancelResult struct {
 	ReviewerHandleID string
-	ReviewerHarness  domain.ReviewerHarness
 	Reviews          []PRReviewState
 	CancelledRuns    []domain.ReviewRun
 }
@@ -231,13 +228,7 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 	if hasReview {
 		eagerHarness = prevHarness
 	}
-	reviewRow, err = e.upsertReview(
-		ctx,
-		worker,
-		eagerHarness,
-		reviewRow.ReviewerHandleID,
-		now,
-	)
+	reviewRow, err = e.upsertReview(ctx, worker, eagerHarness, reviewRow.ReviewerHandleID, now)
 	if err != nil {
 		return TriggerResult{}, err
 	}
@@ -281,13 +272,7 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 		reviews = replaceReviewLatestRun(reviews, reviewState.PRURL, reviewState.TargetSHA, run)
 	}
 	if len(created) == 0 {
-		return TriggerResult{
-			Run:              firstReusableRun(reviews),
-			ReviewerHandleID: reviewRow.ReviewerHandleID,
-			ReviewerHarness:  reviewRow.Harness,
-			Created:          false,
-			Reviews:          reviews,
-		}, nil
+		return TriggerResult{Run: firstReusableRun(reviews), ReviewerHandleID: reviewRow.ReviewerHandleID, Created: false, Reviews: reviews}, nil
 	}
 
 	failRuns := func(start int, err error) error {
@@ -335,14 +320,7 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 	for i := range created {
 		created[i].ReviewID = reviewRow.ID
 	}
-	return TriggerResult{
-		Run:              created[0],
-		ReviewerHandleID: handleID,
-		ReviewerHarness:  harness,
-		Created:          true,
-		Reviews:          reviews,
-		CreatedRuns:      created,
-	}, nil
+	return TriggerResult{Run: created[0], ReviewerHandleID: handleID, Created: true, Reviews: reviews, CreatedRuns: created}, nil
 }
 
 func reviewLaunchSpec(worker domain.SessionRecord, harness domain.ReviewerHarness, run domain.ReviewRun, queue []ports.ReviewTask, index int) LaunchSpec {
@@ -406,23 +384,16 @@ func (e *Engine) List(ctx stdctx.Context, workerID domain.SessionID) (SessionRev
 		return SessionReviews{}, err
 	}
 	var handle string
-	var harness domain.ReviewerHarness
 	if review, ok, err := e.store.GetReviewBySession(ctx, workerID); err != nil {
 		return SessionReviews{}, err
 	} else if ok {
 		handle = review.ReviewerHandleID
-		harness = review.Harness
 	}
 	prs, err := e.prs.ListPRsBySession(ctx, workerID)
 	if err != nil {
 		return SessionReviews{}, err
 	}
-	return SessionReviews{
-		ReviewerHandleID: handle,
-		ReviewerHarness:  harness,
-		Runs:             runs,
-		Reviews:          Plan(prs, runs),
-	}, nil
+	return SessionReviews{ReviewerHandleID: handle, Runs: runs, Reviews: Plan(prs, runs)}, nil
 }
 
 // Cancel interrupts the live reviewer pane for a worker and marks running
@@ -470,12 +441,7 @@ func (e *Engine) Cancel(ctx stdctx.Context, workerID domain.SessionID) (CancelRe
 	if err != nil {
 		return CancelResult{}, err
 	}
-	return CancelResult{
-		ReviewerHandleID: review.ReviewerHandleID,
-		ReviewerHarness:  review.Harness,
-		Reviews:          Plan(prs, runs),
-		CancelledRuns:    cancelled,
-	}, nil
+	return CancelResult{ReviewerHandleID: review.ReviewerHandleID, Reviews: Plan(prs, runs), CancelledRuns: cancelled}, nil
 }
 
 // reviewerHarness resolves which harness reviews the worker's PR: a configured
@@ -493,13 +459,7 @@ func (e *Engine) reviewerHarness(ctx stdctx.Context, worker domain.SessionRecord
 	return cfg.ResolveReviewerHarness(worker.Harness), nil
 }
 
-func (e *Engine) upsertReview(
-	ctx stdctx.Context,
-	worker domain.SessionRecord,
-	harness domain.ReviewerHarness,
-	handleID string,
-	now time.Time,
-) (domain.Review, error) {
+func (e *Engine) upsertReview(ctx stdctx.Context, worker domain.SessionRecord, harness domain.ReviewerHarness, handleID string, now time.Time) (domain.Review, error) {
 	existing, ok, err := e.store.GetReviewBySession(ctx, worker.ID)
 	if err != nil {
 		return domain.Review{}, err
@@ -516,7 +476,7 @@ func (e *Engine) upsertReview(
 	}
 	if ok {
 		// Reuse the existing row's identity and creation time; UpsertReview
-		// refreshes harness, handle ownership, and updated_at.
+		// refreshes harness/pr_url/reviewer_handle_id/updated_at.
 		review.ID = existing.ID
 		review.CreatedAt = existing.CreatedAt
 	}

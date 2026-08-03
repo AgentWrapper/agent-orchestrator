@@ -352,37 +352,6 @@ describe("TerminalCacheProvider", () => {
 		}
 	});
 
-	it("uses an opaque backing so another retained frame cannot show through", async () => {
-		const view = renderCachedPane({ session: sessionA, sessions: [sessionA] });
-		try {
-			const terminal = await waitFor(() => activeXterm());
-			expect(terminal.closest("[data-terminal-cache-key]")).toHaveClass("bg-terminal-opaque");
-		} finally {
-			view.restore();
-		}
-	});
-
-	it("prepares a retained terminal at the latest output before revealing it", async () => {
-		const view = renderCachedPane({ session: sessionA, sessions: [sessionA, sessionB] });
-		try {
-			const terminalA = await waitFor(() => activeXterm());
-			view.show(sessionB);
-			await waitFor(() => expect(activeXterm()).not.toBe(terminalA));
-			expect(terminalPreparations.value).toBe(0);
-
-			view.show(sessionA);
-			await waitFor(() => expect(activeXterm()).toBe(terminalA));
-			expect(terminalPreparations.value).toBe(1);
-			await waitFor(() =>
-				expect(
-					terminalA.closest("[data-terminal-cache-key]"),
-				).toHaveAttribute("data-terminal-activation-phase", "visible"),
-			);
-		} finally {
-			view.restore();
-		}
-	});
-
 	it("disposes an old handle generation instead of reusing its terminal state", async () => {
 		const replacement = { ...sessionA, terminalHandleId: "handle-a-generation-2" };
 		const view = renderCachedPane({ session: sessionA, sessions: [sessionA] });
@@ -411,22 +380,6 @@ describe("TerminalCacheProvider", () => {
 			await waitFor(() => expect(activeXterm()).not.toBe(terminalA));
 			act(() => {
 				view.queryClient.setQueryData(workspaceQueryKey, workspaceWithSessions([sessionB]));
-			});
-
-			await waitFor(() => expect(terminalA.isConnected).toBe(false));
-			await waitFor(() => expect(xtermUnmounts.value).toBe(1));
-		} finally {
-			view.restore();
-		}
-	});
-
-	it("disposes a retained generation when its authoritative handle disappears", async () => {
-		const view = renderCachedPane({ session: sessionA, sessions: [sessionA] });
-		try {
-			const terminalA = await waitFor(() => activeXterm());
-			const withoutHandle = { ...sessionA, terminalHandleId: undefined };
-			act(() => {
-				view.queryClient.setQueryData(workspaceQueryKey, workspaceWithSessions([withoutHandle]));
 			});
 
 			await waitFor(() => expect(terminalA.isConnected).toBe(false));

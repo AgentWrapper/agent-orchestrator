@@ -922,7 +922,6 @@ export interface components {
         };
         CancelReviewResponse: {
             reviewerHandleId: string;
-            reviewerHarness: string;
             reviews: components["schemas"]["PRReviewState"][];
         };
         ClaimPRRequest: {
@@ -1059,7 +1058,6 @@ export interface components {
         };
         ListReviewsResponse: {
             reviewerHandleId: string;
-            reviewerHarness: string;
             reviews: components["schemas"]["PRReviewState"][];
         };
         ListSessionPRsResponse: {
@@ -1543,7 +1541,6 @@ export interface components {
             /** @description True when a new review pass was started; false when an existing run for the same commit was reused. */
             created: boolean;
             reviewerHandleId: string;
-            reviewerHarness: string;
             reviews: components["schemas"]["PRReviewState"][];
         };
         UnregisterPushDeviceResponse: {

@@ -26,13 +26,6 @@ import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { findProjectOrchestrator, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
-import {
-	fetchSessionReviews,
-	newestReviewRun,
-	sessionReviewsQueryKey,
-	type PRReviewState,
-	type ReviewsResponse,
-} from "../lib/reviewer-terminal";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
 import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { useUiStore } from "../stores/ui-store";
@@ -48,6 +41,8 @@ import { appI18n } from "../i18n";
 import type { MessageKey } from "../i18n";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
+type PRReviewState = components["schemas"]["PRReviewState"];
+type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
 
 export type InspectorView = "summary" | "reviews" | "browser" | "files";
@@ -715,7 +710,7 @@ function ReviewsView({
 	const queryClient = useQueryClient();
 	const [reviewNotice, setReviewNotice] = useState<string | null>(null);
 	const reviewsQuery = useQuery({
-		queryKey: sessionReviewsQueryKey(session.id),
+		queryKey: ["session-reviews", session.id],
 		enabled: hasPr,
 		refetchInterval: (query) => {
 			const data = query.state.data as ReviewsResponse | undefined;
@@ -724,7 +719,11 @@ function ReviewsView({
 		},
 		queryFn: async () => {
 			if (usePreviewData) return mockReviewsResponse(session);
-			return fetchSessionReviews(session.id);
+			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/reviews", {
+				params: { path: { sessionId: session.id } },
+			});
+			if (error) throw new Error(apiErrorMessage(error, "Unable to load reviews"));
+			return data ?? ({ reviewerHandleId: "", reviews: [] } satisfies ReviewsResponse);
 		},
 	});
 	const projectConfigQuery = useQuery({
@@ -751,26 +750,16 @@ function ReviewsView({
 			setReviewNotice(null);
 		},
 		onSuccess: ({ data, reused }) => {
-			if (data) {
-				queryClient.setQueryData(sessionReviewsQueryKey(session.id), data);
-			} else {
-				void queryClient.invalidateQueries({ queryKey: sessionReviewsQueryKey(session.id) });
-			}
+			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			const started = newestReviewRun(
-				data?.reviews ?? [],
-				(review) => review.status === "running",
-			);
-			if (reused || !started) {
+			const started = data?.reviews?.find((review) => review.status === "running" && review.latestRun);
+			if (reused || !started?.latestRun) {
 				setReviewNotice(t("inspector.noReviewsStarted"));
 				return;
 			}
 			if (data?.reviewerHandleId) {
-				const harness = data.reviewerHarness || started.harness || "reviewer";
-				onOpenReviewerTerminal?.({
-					handleId: data.reviewerHandleId,
-					harness,
-				});
+				const harness = started.latestRun.harness || "reviewer";
+				onOpenReviewerTerminal?.({ handleId: data.reviewerHandleId, harness });
 			}
 		},
 	});
@@ -783,7 +772,7 @@ function ReviewsView({
 		},
 		onSuccess: () => {
 			setReviewNotice(null);
-			void queryClient.invalidateQueries({ queryKey: sessionReviewsQueryKey(session.id) });
+			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		},
 	});
@@ -803,7 +792,6 @@ function ReviewsView({
 					onCancel={() => cancelReview.mutate()}
 					onTrigger={() => triggerReview.mutate()}
 					reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
-					reviewerHarness={reviewsQuery.data?.reviewerHarness ?? ""}
 					reviewStates={reviewStates}
 					notice={reviewNotice}
 					session={session}
@@ -864,7 +852,6 @@ function mockProjectConfig(): ProjectConfig {
 function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 	return {
 		reviewerHandleId: `${session.id}-reviewer`,
-		reviewerHarness: "codex",
 		reviews: sortedPRs(session).map((pr, index) => {
 			const targetSha = `demo${pr.number}${index}`;
 			const reviewedAt = new Date(Date.now() - (index + 1) * 11 * 60 * 1000).toISOString();
@@ -929,7 +916,6 @@ function ReviewPanel({
 	config,
 	reviewStates,
 	reviewerHandleId,
-	reviewerHarness,
 	isLoading,
 	isTriggering,
 	isCancelling,
@@ -943,7 +929,6 @@ function ReviewPanel({
 	config?: ProjectConfig;
 	reviewStates: PRReviewState[];
 	reviewerHandleId: string;
-	reviewerHarness: string;
 	isLoading: boolean;
 	isTriggering: boolean;
 	isCancelling: boolean;
@@ -967,24 +952,15 @@ function ReviewPanel({
 			.map((pr) => pr.url),
 	);
 	const openReviewStates = reviewStates.filter((reviewState) => openPRURLs.has(reviewState.prUrl));
-	// The reviewer handle is session-wide and is replaced for each review batch.
-	// Closed/merged PRs remain authoritative for that generation even though
-	// their rows are omitted from the actionable open-PR list below.
-	const latest = newestReviewRun(reviewStates);
-	// Handle, generation, and harness describe one successfully launched owner.
-	// The newest projected run may be a failed replacement batch and must not
-	// change how the retained older terminal is rendered or receives wheel input.
-	const harness = reviewerHarness || latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
+	const latest = openReviewStates.find((review) => review.latestRun)?.latestRun;
+	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
 	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
 	const reviewHasRun = reviewRunning || Boolean(latest);
 	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
 	const openReviewerTerminal = () => {
-	if (!terminalEnabled) return;
-	onOpenTerminal?.({
-		handleId: reviewerHandleId,
-			harness,
-		});
+		if (!terminalEnabled) return;
+		onOpenTerminal?.({ handleId: reviewerHandleId, harness });
 	};
 	const runDisabled =
 		isTriggering ||
