@@ -215,8 +215,14 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	if got.Harness != domain.ReviewerHarness("greptile") || got.PRURL != "https://example/pr/2" || got.ReviewerHandleID != "review-mer-1b" {
 		t.Fatalf("upsert did not refresh fields: %+v", got)
 	}
-	if ok, err := s.UpdateReviewAgentSessionID(ctx, rec.ID, "reviewer-native-1"); err != nil || !ok {
-		t.Fatalf("update reviewer agent session id: ok=%v err=%v", ok, err)
+	if err := s.UpsertReview(ctx, domain.Review{
+		ID: "rev-3", SessionID: rec.ID, ProjectID: rec.ProjectID,
+		Harness: domain.ReviewerHarness("greptile"), PRURL: "https://example/pr/2",
+		ReviewerHandleID: "review-mer-1b",
+		AgentSessionID:   "reviewer-native-1",
+		CreatedAt:        now, UpdatedAt: now.Add(2 * time.Second),
+	}); err != nil {
+		t.Fatalf("upsert review (agent session): %v", err)
 	}
 	got, ok, err = s.GetReviewBySession(ctx, rec.ID)
 	if err != nil || !ok {

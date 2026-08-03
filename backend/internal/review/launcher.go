@@ -29,11 +29,12 @@ type Launcher interface {
 	// mark those rows as failed, matching the existing Spawn failure semantics.
 	Preflight(ctx context.Context, harness domain.ReviewerHarness, workspacePath string) error
 	// Spawn launches a fresh reviewer and returns the runtime handle id of the
-	// live pane (stable per worker, reused across passes).
-	Spawn(ctx context.Context, spec LaunchSpec) (handleID string, err error)
+	// live pane (stable per worker, reused across passes) plus any native agent
+	// session id known at launch time.
+	Spawn(ctx context.Context, spec LaunchSpec) (LaunchResult, error)
 	// RestoreTerminal launches an idle reviewer pane for a worker that already
 	// has review history, without creating or starting a new review run.
-	RestoreTerminal(ctx context.Context, spec LaunchSpec) (handleID string, err error)
+	RestoreTerminal(ctx context.Context, spec LaunchSpec) (LaunchResult, error)
 	// Notify asks an already-running reviewer pane to review a new commit.
 	Notify(ctx context.Context, handleID string, spec LaunchSpec) error
 	// Alive reports whether a reviewer pane is still running.
@@ -54,10 +55,17 @@ type LaunchSpec struct {
 	Harness        domain.ReviewerHarness
 	WorkspacePath  string
 	AgentSessionID string
+	PreviousRuns   []domain.ReviewRun
 	PRURL          string
 	TargetSHA      string
 	ReviewQueue    []ports.ReviewTask
 	ReviewIndex    int
+}
+
+// LaunchResult is the terminal/runtime state created by a reviewer launch.
+type LaunchResult struct {
+	HandleID       string
+	AgentSessionID string
 }
 
 // reviewerRuntime is the runtime surface the launcher needs: create a pane,
@@ -196,46 +204,87 @@ func (l *agentLauncher) prepareIdleInvocation(spec LaunchSpec) (ports.ReviewInvo
 	if err := os.WriteFile(systemPath, []byte(systemPrompt), 0o600); err != nil {
 		return ports.ReviewInvocation{}, fmt.Errorf("write reviewer system prompt: %w", err)
 	}
+	prompt := fmt.Sprintf("Reviewer terminal restored for worker session %s.\n\n%s\n\nWait for AO to send the next review task file path before submitting a new review.", spec.WorkerID, previousReviewHistoryText(spec.PreviousRuns))
 	return ports.ReviewInvocation{
 		ReviewerID:       reviewerHandleID(spec.WorkerID),
 		WorkerSessionID:  spec.WorkerID,
 		AgentSessionID:   spec.AgentSessionID,
 		WorkspacePath:    spec.WorkspacePath,
-		Prompt:           fmt.Sprintf("Reviewer terminal restored for worker session %s. Wait for AO to send the next review task before submitting a review.", spec.WorkerID),
+		Prompt:           prompt,
 		SystemPrompt:     "",
 		SystemPromptFile: systemPath,
 		TaskPromptRoot:   promptRoot,
 	}, nil
 }
 
-func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (string, error) {
+func previousReviewHistoryText(runs []domain.ReviewRun) string {
+	if len(runs) == 0 {
+		return "No previous review runs are recorded for this worker session."
+	}
+	var b strings.Builder
+	b.WriteString("Previous review runs for this worker session, newest first:")
+	const maxRuns = 20
+	for i, run := range runs {
+		if i >= maxRuns {
+			fmt.Fprintf(&b, "\n* ... %d older review run(s) omitted.", len(runs)-maxRuns)
+			break
+		}
+		fmt.Fprintf(&b, "\n* %s", run.PRURL)
+		if run.TargetSHA != "" {
+			fmt.Fprintf(&b, " at %s", run.TargetSHA)
+		}
+		fmt.Fprintf(&b, " - status: %s", run.Status)
+		if run.Verdict != "" {
+			fmt.Fprintf(&b, ", verdict: %s", run.Verdict)
+		}
+		if run.GithubReviewID != "" {
+			fmt.Fprintf(&b, ", GitHub review: %s", run.GithubReviewID)
+		}
+		body := strings.TrimSpace(run.Body)
+		if body != "" {
+			fmt.Fprintf(&b, "\n  Body: %s", truncateReviewHistoryBody(body))
+		}
+	}
+	return b.String()
+}
+
+func truncateReviewHistoryBody(body string) string {
+	const maxBody = 1200
+	body = strings.Join(strings.Fields(body), " ")
+	if len(body) <= maxBody {
+		return body
+	}
+	return strings.TrimSpace(body[:maxBody]) + "..."
+}
+
+func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (LaunchResult, error) {
 	inv, err := l.prepareInvocation(spec)
 	if err != nil {
-		return "", err
+		return LaunchResult{}, err
 	}
 	return l.launchReviewerTerminal(ctx, spec, inv)
 }
 
-func (l *agentLauncher) RestoreTerminal(ctx context.Context, spec LaunchSpec) (string, error) {
+func (l *agentLauncher) RestoreTerminal(ctx context.Context, spec LaunchSpec) (LaunchResult, error) {
 	inv, err := l.prepareIdleInvocation(spec)
 	if err != nil {
-		return "", err
+		return LaunchResult{}, err
 	}
 	return l.launchReviewerTerminalWithMode(ctx, spec, inv, true)
 }
 
-func (l *agentLauncher) launchReviewerTerminal(ctx context.Context, spec LaunchSpec, inv ports.ReviewInvocation) (string, error) {
+func (l *agentLauncher) launchReviewerTerminal(ctx context.Context, spec LaunchSpec, inv ports.ReviewInvocation) (LaunchResult, error) {
 	return l.launchReviewerTerminalWithMode(ctx, spec, inv, false)
 }
 
-func (l *agentLauncher) launchReviewerTerminalWithMode(ctx context.Context, spec LaunchSpec, inv ports.ReviewInvocation, restoring bool) (string, error) {
+func (l *agentLauncher) launchReviewerTerminalWithMode(ctx context.Context, spec LaunchSpec, inv ports.ReviewInvocation, restoring bool) (LaunchResult, error) {
 	reviewer, ok := l.reviewers.Reviewer(spec.Harness)
 	if !ok {
-		return "", fmt.Errorf("no reviewer adapter for harness %q", spec.Harness)
+		return LaunchResult{}, fmt.Errorf("no reviewer adapter for harness %q", spec.Harness)
 	}
 	if pl, ok := reviewer.(preLaunchReviewer); ok {
 		if err := pl.PreLaunch(ctx, inv); err != nil {
-			return "", fmt.Errorf("reviewer pre-launch: %w", err)
+			return LaunchResult{}, fmt.Errorf("reviewer pre-launch: %w", err)
 		}
 	}
 	var cmd ports.ReviewCommandSpec
@@ -243,7 +292,7 @@ func (l *agentLauncher) launchReviewerTerminalWithMode(ctx context.Context, spec
 		if restorer, ok := reviewer.(ports.ReviewerRestorer); ok {
 			restoreCmd, restoreOK, err := restorer.ReviewRestoreCommand(ctx, inv)
 			if err != nil {
-				return "", fmt.Errorf("reviewer restore command: %w", err)
+				return LaunchResult{}, fmt.Errorf("reviewer restore command: %w", err)
 			}
 			if restoreOK {
 				cmd = restoreCmd
@@ -254,7 +303,7 @@ func (l *agentLauncher) launchReviewerTerminalWithMode(ctx context.Context, spec
 		var err error
 		cmd, err = reviewer.ReviewCommand(ctx, inv)
 		if err != nil {
-			return "", fmt.Errorf("reviewer command: %w", err)
+			return LaunchResult{}, fmt.Errorf("reviewer command: %w", err)
 		}
 	}
 	handleID := reviewerHandleID(spec.WorkerID)
@@ -265,7 +314,7 @@ func (l *agentLauncher) launchReviewerTerminalWithMode(ctx context.Context, spec
 	// sandbox/permissions/env — which are applied only here at Create, never by
 	// Notify. Destroy is idempotent when no pane exists (first spawn / dead pane).
 	if err := l.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID}); err != nil {
-		return "", fmt.Errorf("reviewer replace stale pane: %w", err)
+		return LaunchResult{}, fmt.Errorf("reviewer replace stale pane: %w", err)
 	}
 	handle, err := l.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     domain.SessionID(handleID),
@@ -274,9 +323,13 @@ func (l *agentLauncher) launchReviewerTerminalWithMode(ctx context.Context, spec
 		Env:           l.runtimeEnv(ctx, spec, cmd.Argv, cmd.Env),
 	})
 	if err != nil {
-		return "", fmt.Errorf("reviewer runtime: %w", err)
+		return LaunchResult{}, fmt.Errorf("reviewer runtime: %w", err)
 	}
-	return handle.ID, nil
+	agentSessionID := strings.TrimSpace(cmd.AgentSessionID)
+	if agentSessionID == "" {
+		agentSessionID = strings.TrimSpace(spec.AgentSessionID)
+	}
+	return LaunchResult{HandleID: handle.ID, AgentSessionID: agentSessionID}, nil
 }
 
 func (l *agentLauncher) runtimeEnv(ctx context.Context, spec LaunchSpec, argv []string, base map[string]string) map[string]string {
@@ -285,7 +338,6 @@ func (l *agentLauncher) runtimeEnv(ctx context.Context, spec LaunchSpec, argv []
 		env[k] = v
 	}
 	env[sessionmanager.EnvSessionID] = string(spec.WorkerID)
-	env["AO_REVIEWER_WORKER_SESSION_ID"] = string(spec.WorkerID)
 	env[sessionmanager.EnvProjectID] = string(spec.ProjectID)
 	env[sessionmanager.EnvDataDir] = l.dataDir
 	path, err := sessionmanager.HookPATH(os.Executable, os.Getenv, env)

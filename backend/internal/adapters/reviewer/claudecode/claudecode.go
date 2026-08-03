@@ -93,7 +93,7 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	if err != nil {
 		return ports.ReviewCommandSpec{}, err
 	}
-	return ports.ReviewCommandSpec{Argv: argv}, nil
+	return ports.ReviewCommandSpec{Argv: argv, AgentSessionID: workeragent.SessionUUID(inv.ReviewerID)}, nil
 }
 
 // PreLaunch runs any reviewer-specific preflight. For Claude Code this records
@@ -120,11 +120,18 @@ func (r *Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) 
 // ReviewRestoreCommand resumes the reviewer Claude Code conversation captured
 // from hooks, reapplying the same read-only tool policy as a fresh review launch.
 func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
-	return agentrestore.Command(ctx, r.agent, inv, agentrestore.Options{
+	cmd, ok, err := agentrestore.Command(ctx, r.agent, inv, agentrestore.Options{
 		Permissions:     ports.PermissionModeAuto,
 		AllowedTools:    reviewerAllowedTools,
 		DisallowedTools: reviewerDisallowedTools,
 	})
+	if err != nil || !ok {
+		return cmd, ok, err
+	}
+	if cmd.AgentSessionID == "" {
+		cmd.AgentSessionID = workeragent.SessionUUID(inv.ReviewerID)
+	}
+	return cmd, true, nil
 }
 
 // ReviewCancel stops the active Claude Code reviewer turn while preserving the

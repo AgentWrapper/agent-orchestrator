@@ -47,13 +47,6 @@ func (f *fakeStore) ClearReviewerHandle(_ context.Context, id domain.SessionID) 
 	}
 	return nil
 }
-func (f *fakeStore) UpdateReviewAgentSessionID(_ context.Context, id domain.SessionID, agentSessionID string) (bool, error) {
-	if f.review == nil || f.review.SessionID != id {
-		return false, nil
-	}
-	f.review.AgentSessionID = agentSessionID
-	return true, nil
-}
 func (f *fakeStore) InsertReviewRun(_ context.Context, r domain.ReviewRun) error {
 	if f.insertErr != nil {
 		winner := r
@@ -179,6 +172,7 @@ func (f fakeProjects) GetProject(_ context.Context, id string) (domain.ProjectRe
 
 type fakeLauncher struct {
 	handle           string
+	agentSessionID   string
 	alive            bool
 	spawnErr         error
 	notifyErr        error
@@ -202,24 +196,24 @@ type fakeLauncher struct {
 	preflighted      bool
 }
 
-func (f *fakeLauncher) Spawn(_ context.Context, spec LaunchSpec) (string, error) {
+func (f *fakeLauncher) Spawn(_ context.Context, spec LaunchSpec) (LaunchResult, error) {
 	f.spawned = true
 	f.spawnCount++
 	f.gotSpec = spec
 	f.specs = append(f.specs, spec)
 	if f.spawnErr != nil {
-		return "", f.spawnErr
+		return LaunchResult{}, f.spawnErr
 	}
-	return f.handle, nil
+	return LaunchResult{HandleID: f.handle, AgentSessionID: f.agentSessionID}, nil
 }
-func (f *fakeLauncher) RestoreTerminal(_ context.Context, spec LaunchSpec) (string, error) {
+func (f *fakeLauncher) RestoreTerminal(_ context.Context, spec LaunchSpec) (LaunchResult, error) {
 	f.restored = true
 	f.gotSpec = spec
 	f.specs = append(f.specs, spec)
 	if f.spawnErr != nil {
-		return "", f.spawnErr
+		return LaunchResult{}, f.spawnErr
 	}
-	return f.handle, nil
+	return LaunchResult{HandleID: f.handle, AgentSessionID: f.agentSessionID}, nil
 }
 func (f *fakeLauncher) Notify(_ context.Context, handleID string, spec LaunchSpec) error {
 	f.notified = true
@@ -329,6 +323,9 @@ func TestRestoreReviewerRestoresDeadReviewerFromHistory(t *testing.T) {
 	}
 	if launcher.gotSpec.ProjectID != "mer" || launcher.gotSpec.WorkerID != "mer-1" || launcher.gotSpec.Harness != domain.ReviewerCodex {
 		t.Fatalf("restore spec = %+v", launcher.gotSpec)
+	}
+	if len(launcher.gotSpec.PreviousRuns) != 1 || launcher.gotSpec.PreviousRuns[0].ID != "run-1" {
+		t.Fatalf("previous runs passed to restore = %+v", launcher.gotSpec.PreviousRuns)
 	}
 	if store.review.ReviewerHandleID != "review-mer-1" {
 		t.Fatalf("stored reviewer handle = %q", store.review.ReviewerHandleID)

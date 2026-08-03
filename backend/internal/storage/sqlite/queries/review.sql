@@ -15,9 +15,6 @@ FROM review WHERE session_id = ?;
 -- name: ClearReviewerHandle :exec
 UPDATE review SET reviewer_handle_id = '', updated_at = CURRENT_TIMESTAMP WHERE session_id = ?;
 
--- name: UpdateReviewAgentSessionID :execrows
-UPDATE review SET agent_session_id = ?, updated_at = CURRENT_TIMESTAMP WHERE session_id = ?;
-
 -- name: InsertReviewRun :exec
 INSERT INTO review_run (id, review_id, session_id, batch_id, harness, pr_url, target_sha, status, verdict, body, github_review_id, created_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);

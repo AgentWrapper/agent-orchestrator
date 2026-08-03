@@ -243,12 +243,12 @@ func TestLauncherSpawnReturnsStableHandle(t *testing.T) {
 	dataDir := t.TempDir()
 	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, rt, dataDir)
 
-	handle, err := l.Spawn(context.Background(), launchSpec())
+	launch, err := l.Spawn(context.Background(), launchSpec())
 	if err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
-	if handle != "review-mer-1" {
-		t.Fatalf("handle = %q, want review-mer-1", handle)
+	if launch.HandleID != "review-mer-1" {
+		t.Fatalf("handle = %q, want review-mer-1", launch.HandleID)
 	}
 	if rt.createCfg.WorkspacePath != "/ws/mer-1" || len(rt.createCfg.Argv) == 0 || rt.createCfg.Argv[0] != "greptile" {
 		t.Fatalf("create cfg = %+v", rt.createCfg)
@@ -313,19 +313,38 @@ func TestLauncherRestoreTerminalStartsIdlePane(t *testing.T) {
 	reviewer := &fakeReviewer{}
 	rt := &fakeRuntime{}
 	l := newTestLauncher(t, reviewer, rt)
+	spec := launchSpec()
+	spec.PreviousRuns = []domain.ReviewRun{{
+		ID:             "run-1",
+		PRURL:          "https://github.com/o/r/pull/1",
+		TargetSHA:      "sha1",
+		Status:         domain.ReviewRunComplete,
+		Verdict:        domain.VerdictChangesRequested,
+		Body:           "Fix the restore path.",
+		GithubReviewID: "484",
+	}}
 
-	handle, err := l.RestoreTerminal(context.Background(), launchSpec())
+	launch, err := l.RestoreTerminal(context.Background(), spec)
 	if err != nil {
 		t.Fatalf("RestoreTerminal: %v", err)
 	}
-	if handle != "review-mer-1" || rt.createCfg.SessionID != "review-mer-1" {
-		t.Fatalf("handle=%q runtime session=%q, want review-mer-1", handle, rt.createCfg.SessionID)
+	if launch.HandleID != "review-mer-1" || rt.createCfg.SessionID != "review-mer-1" {
+		t.Fatalf("handle=%q runtime session=%q, want review-mer-1", launch.HandleID, rt.createCfg.SessionID)
 	}
 	if rt.destroyed != "review-mer-1" || !rt.destroyBefore {
 		t.Fatalf("stale pane replacement destroyed=%q before=%v", rt.destroyed, rt.destroyBefore)
 	}
-	if !strings.Contains(reviewer.gotInv.Prompt, "Wait for AO to send the next review task") {
-		t.Fatalf("restore prompt = %q", reviewer.gotInv.Prompt)
+	for _, want := range []string{
+		"Previous review runs",
+		"https://github.com/o/r/pull/1",
+		"verdict: changes_requested",
+		"GitHub review: 484",
+		"Fix the restore path.",
+		"Wait for AO to send the next review task",
+	} {
+		if !strings.Contains(reviewer.gotInv.Prompt, want) {
+			t.Fatalf("restore prompt missing %q: %q", want, reviewer.gotInv.Prompt)
+		}
 	}
 	if reviewer.gotInv.RunID != "" || reviewer.gotInv.PRURL != "" || reviewer.gotInv.TargetSHA != "" {
 		t.Fatalf("restore invocation should not start review work: %+v", reviewer.gotInv)
@@ -339,12 +358,12 @@ func TestLauncherRestoreTerminalUsesReviewerRestoreCommandWhenAvailable(t *testi
 	spec := launchSpec()
 	spec.AgentSessionID = "native-reviewer-1"
 
-	handle, err := l.RestoreTerminal(context.Background(), spec)
+	launch, err := l.RestoreTerminal(context.Background(), spec)
 	if err != nil {
 		t.Fatalf("RestoreTerminal: %v", err)
 	}
-	if handle != "review-mer-1" {
-		t.Fatalf("handle = %q, want review-mer-1", handle)
+	if launch.HandleID != "review-mer-1" {
+		t.Fatalf("handle = %q, want review-mer-1", launch.HandleID)
 	}
 	if !reviewer.restored {
 		t.Fatal("restore command was not used")
@@ -354,9 +373,6 @@ func TestLauncherRestoreTerminalUsesReviewerRestoreCommandWhenAvailable(t *testi
 	}
 	if strings.Join(rt.createCfg.Argv, " ") != "agent resume native-reviewer-1" {
 		t.Fatalf("runtime argv = %#v", rt.createCfg.Argv)
-	}
-	if rt.createCfg.Env["AO_REVIEWER_WORKER_SESSION_ID"] != "mer-1" {
-		t.Fatalf("reviewer env missing worker id: %#v", rt.createCfg.Env)
 	}
 }
 

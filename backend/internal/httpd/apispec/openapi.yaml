@@ -3344,57 +3344,6 @@ paths:
       summary: List a worker's code-review runs
       tags:
       - reviews
-  /api/v1/sessions/{sessionId}/reviews/activity:
-    post:
-      operationId: recordReviewerActivity
-      parameters:
-      - description: Session identifier, e.g. project-1.
-        in: path
-        name: sessionId
-        required: true
-        schema:
-          description: Session identifier, e.g. project-1.
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ReviewerActivityInput'
-        required: true
-      responses:
-        "204":
-          content:
-            application/json:
-              schema:
-                type: string
-          description: No Content
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Bad Request
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Found
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Unprocessable Entity
-        "501":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Implemented
-      summary: Record reviewer agent metadata from a hook
-      tags:
-      - reviews
   /api/v1/sessions/{sessionId}/reviews/cancel:
     post:
       operationId: cancelReview
@@ -6076,12 +6025,6 @@ components:
       - review
       - reviews
       - reviewerHandleId
-      type: object
-    ReviewerActivityInput:
-      properties:
-        agentSessionId:
-          description: Native reviewer agent conversation id used for restore/resume.
-          type: string
       type: object
     RoleOverride:
       properties:

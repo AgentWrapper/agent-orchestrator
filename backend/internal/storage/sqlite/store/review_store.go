@@ -49,20 +49,6 @@ func (s *Store) ClearReviewerHandle(ctx context.Context, id domain.SessionID) er
 	return s.qw.ClearReviewerHandle(ctx, id)
 }
 
-// UpdateReviewAgentSessionID records the reviewer's native resumable session id.
-func (s *Store) UpdateReviewAgentSessionID(ctx context.Context, id domain.SessionID, agentSessionID string) (bool, error) {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	n, err := s.qw.UpdateReviewAgentSessionID(ctx, gen.UpdateReviewAgentSessionIDParams{
-		SessionID:      id,
-		AgentSessionID: agentSessionID,
-	})
-	if err != nil {
-		return false, err
-	}
-	return n > 0, nil
-}
-
 // InsertReviewRun records a new review pass. A unique-constraint hit on the
 // (session_id, pr_url, target_sha) index (migration 0020) is surfaced as the sentinel
 // domain.ErrDuplicateReviewRun so the engine can fall back to the existing run.

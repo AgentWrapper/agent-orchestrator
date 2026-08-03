@@ -379,23 +379,6 @@ func (q *Queries) SupersedeStaleRunningReviewRuns(ctx context.Context, arg Super
 	return result.RowsAffected()
 }
 
-const updateReviewAgentSessionID = `-- name: UpdateReviewAgentSessionID :execrows
-UPDATE review SET agent_session_id = ?, updated_at = CURRENT_TIMESTAMP WHERE session_id = ?
-`
-
-type UpdateReviewAgentSessionIDParams struct {
-	AgentSessionID string
-	SessionID      domain.SessionID
-}
-
-func (q *Queries) UpdateReviewAgentSessionID(ctx context.Context, arg UpdateReviewAgentSessionIDParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, updateReviewAgentSessionID, arg.AgentSessionID, arg.SessionID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
 const updateReviewRunResult = `-- name: UpdateReviewRunResult :execrows
 UPDATE review_run SET status = ?, verdict = ?, body = ?, github_review_id = ? WHERE id = ? AND status = 'running'
 `

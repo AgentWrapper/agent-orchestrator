@@ -479,6 +479,12 @@ func claudeSessionUUID(aoSessionID string) string {
 	return uuid.NewSHA1(claudeSessionNamespace, []byte(aoSessionID)).String()
 }
 
+// SessionUUID maps an AO session id onto the native Claude Code session UUID
+// used by --session-id and --resume.
+func SessionUUID(aoSessionID string) string {
+	return claudeSessionUUID(aoSessionID)
+}
+
 // resolveSystemPrompt returns the system prompt text to append, preferring
 // inline instructions when AO has them.
 func resolveSystemPrompt(cfg ports.LaunchConfig) (string, error) {

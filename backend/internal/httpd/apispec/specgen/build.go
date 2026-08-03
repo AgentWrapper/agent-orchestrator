@@ -297,7 +297,6 @@ var schemaNames = map[string]string{
 	"ControllersRestoreReviewResponse": "RestoreReviewResponse",
 	"ControllersSubmitReviewItem":      "SubmitReviewItem",
 	"ControllersSubmitReviewInput":     "SubmitReviewInput",
-	"ControllersReviewerActivityInput": "ReviewerActivityInput",
 	// domain review entities
 	"DomainReviewRun":     "ReviewRun",
 	"ReviewPRReviewState": "PRReviewState",
@@ -1051,19 +1050,6 @@ func reviewOperations() []operation {
 			reqBody:    controllers.SubmitReviewInput{},
 			resps: []respUnit{
 				{http.StatusOK, controllers.ReviewRunResponse{}},
-				{http.StatusBadRequest, envelope.APIError{}},
-				{http.StatusUnprocessableEntity, envelope.APIError{}},
-				{http.StatusNotFound, envelope.APIError{}},
-				{http.StatusNotImplemented, envelope.APIError{}},
-			},
-		},
-		{
-			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/reviews/activity", id: "recordReviewerActivity", tag: "reviews",
-			summary:    "Record reviewer agent metadata from a hook",
-			pathParams: []any{controllers.SessionIDParam{}},
-			reqBody:    controllers.ReviewerActivityInput{},
-			resps: []respUnit{
-				{http.StatusNoContent, ""},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusUnprocessableEntity, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},

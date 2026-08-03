@@ -58,10 +58,6 @@ type usageHookMetadata struct {
 	SubagentTranscriptPath string `json:"subagentTranscriptPath,omitempty"`
 }
 
-type reviewerActivityAPIRequest struct {
-	AgentSessionID string `json:"agentSessionId,omitempty"`
-}
-
 // maxActivityMetaLen caps the correlation fields lifted from a native hook
 // payload before they go on the wire — they are ids/names, anything longer is
 // garbage and gets dropped rather than truncated (a truncated id would never
@@ -202,18 +198,6 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	}
 
 	toolName, toolUseID := activityMeta(payload)
-	if reviewerWorkerID := strings.TrimSpace(os.Getenv("AO_REVIEWER_WORKER_SESSION_ID")); sessionIDPattern.MatchString(reviewerWorkerID) {
-		if agentSessionID == "" {
-			return nil
-		}
-		path := "sessions/" + url.PathEscape(reviewerWorkerID) + "/reviews/activity"
-		req := reviewerActivityAPIRequest{AgentSessionID: agentSessionID}
-		if err := c.postJSON(ctx, path, req, nil); err != nil {
-			c.reportHookFailure(agent, event, reviewerWorkerID, err)
-		}
-		return nil
-	}
-
 	path := "sessions/" + url.PathEscape(sessionID) + "/activity"
 	req := setActivityAPIRequest{
 		Event:          event,

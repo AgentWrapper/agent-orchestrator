@@ -104,11 +104,13 @@ type ReviewTask struct {
 	TargetSHA string
 }
 
-// ReviewCommandSpec is how to launch a reviewer: the argv and any extra env the
-// adapter needs. AO supplies the workspace and review-tracking env around it.
+// ReviewCommandSpec is how to launch a reviewer: the argv, any extra env, and
+// any launch-time native session id the adapter can determine. AO supplies the
+// workspace and review-tracking env around it.
 type ReviewCommandSpec struct {
-	Argv []string
-	Env  map[string]string
+	Argv           []string
+	Env            map[string]string
+	AgentSessionID string
 }
 
 // ReviewerResolver maps a reviewer harness onto its adapter. ok=false means no

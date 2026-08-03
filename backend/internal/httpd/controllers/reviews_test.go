@@ -27,7 +27,6 @@ type fakeReviewService struct {
 	cancel           reviewcore.CancelResult
 	list             reviewcore.SessionReviews
 	submitted        []reviewsvc.SubmittedReview
-	agentID          string
 	killed           bool
 	restored         bool
 }
@@ -69,11 +68,6 @@ func (f *fakeReviewService) RestoreReviewer(context.Context, domain.SessionID) e
 	if f.list.ReviewerHandleID == "" {
 		f.list.ReviewerHandleID = "review-mer-1"
 	}
-	return nil
-}
-
-func (f *fakeReviewService) RecordReviewerAgentSession(_ context.Context, _ domain.SessionID, agentSessionID string) error {
-	f.agentID = agentSessionID
 	return nil
 }
 
@@ -242,18 +236,5 @@ func TestReviewsSubmitAcceptsBatchedReviews(t *testing.T) {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("body missing %s: %s", want, body)
 		}
-	}
-}
-
-func TestReviewsActivityRecordsReviewerAgentSessionID(t *testing.T) {
-	svc := &fakeReviewService{}
-	srv := newReviewTestServer(t, svc)
-
-	_, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/mer-1/reviews/activity", `{"agentSessionId":"reviewer-native-1"}`)
-	if status != http.StatusNoContent {
-		t.Fatalf("status = %d, want 204", status)
-	}
-	if svc.agentID != "reviewer-native-1" {
-		t.Fatalf("agent session id = %q, want reviewer-native-1", svc.agentID)
 	}
 }
