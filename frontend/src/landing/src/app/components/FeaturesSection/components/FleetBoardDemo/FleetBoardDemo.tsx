@@ -311,7 +311,7 @@ function BoardCard({ card, isPulsing }: { card: Card; isPulsing: boolean }) {
 						</span>
 					) : null}
 				</div>
-				<div className="min-w-0 text-[9px] font-semibold leading-tight tracking-tight text-[var(--preview-card-foreground)]">
+				<div className="line-clamp-2 min-w-0 text-[8px] font-semibold leading-tight tracking-tight text-[var(--preview-card-foreground)]">
 					{card.title}
 				</div>
 			</div>
@@ -346,7 +346,7 @@ function BoardCard({ card, isPulsing }: { card: Card; isPulsing: boolean }) {
 					</div>
 					{card.prComments !== undefined ? (
 						<span className={`text-[8px] ${card.prComments > 0 ? "text-[#fb923c]" : "text-[var(--preview-muted-foreground)]"}`}>
-							{card.prComments === 0 ? "no comments" : `${card.prComments} comment${card.prComments !== 1 ? "s" : ""}`}
+							{card.prComments === 0 ? "0 cmt" : `${card.prComments} cmt`}
 						</span>
 					) : null}
 				</div>
@@ -358,21 +358,21 @@ function BoardCard({ card, isPulsing }: { card: Card; isPulsing: boolean }) {
 					<div className="inline-flex h-5 items-center justify-center whitespace-nowrap rounded-[4px] bg-[var(--preview-primary)] px-2 text-[8.5px] font-semibold text-[var(--preview-primary-foreground)]">
 						Merge PR
 					</div>
-					<span className="shrink-0 font-mono text-[8px] text-[var(--preview-muted-foreground)]">{card.time}</span>
+					<span className="shrink-0 font-mono text-[7.5px] text-[var(--preview-muted-foreground)]">{card.time}</span>
 				</div>
 			) : (
-				<div className={`flex items-center justify-between border-t border-[var(--preview-border)] px-2.5 py-2 ${activityColor}`}>
-					<span className="inline-flex items-center gap-1.5 text-[8.5px]">
+				<div className={`flex items-center gap-1.5 border-t border-[var(--preview-border)] px-2.5 py-2 ${activityColor}`}>
+					<span className="inline-flex min-w-0 flex-1 items-center gap-1.5 text-[8px]">
 						{isTestCard ? (
 							<AnimatedTestCount testResults={card.testResults!} />
 						) : (
 							<>
 								<ActivityIcon state={card.activityState} />
-								{card.activity}
+								<span className="truncate">{card.activity}</span>
 							</>
 						)}
 					</span>
-					<span className="font-mono text-[8px] text-[var(--preview-muted-foreground)]">{card.time}</span>
+					<span className="shrink-0 font-mono text-[7.5px] text-[var(--preview-muted-foreground)]">{card.time}</span>
 				</div>
 			)}
 		</motion.div>
@@ -392,7 +392,7 @@ function BoardColumn({ cards, color, title }: { cards: Card[]; color: string; ti
 		<section className="flex min-h-0 min-w-0 snap-start flex-col border-r border-[var(--preview-border)] last:border-r-0">
 			<div className="flex h-9 shrink-0 items-center gap-2 border-b border-[var(--preview-border)] px-3">
 				<span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />
-				<div className="text-[8px] font-medium tracking-wide text-[var(--preview-muted-foreground)]">{title}</div>
+				<div className="truncate text-[8px] font-medium tracking-wide text-[var(--preview-muted-foreground)]">{title}</div>
 				<div className="ml-auto font-mono text-[8px] leading-none text-[var(--preview-muted-foreground)] opacity-60">{cards.length}</div>
 				{extraWaiting > 0 ? (
 					<div className="inline-flex items-center gap-1 rounded-[3px] bg-[#fb923c]/10 px-1 py-0.5 text-[7px] font-semibold text-[#fb923c]">
