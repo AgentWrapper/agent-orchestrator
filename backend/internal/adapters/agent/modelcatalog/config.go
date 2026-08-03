@@ -407,9 +407,9 @@ func readBoundedConfig(path configPath) ([]byte, bool, error) {
 	return data, true, nil
 }
 
-// openSecureConfig walks from an already-open trusted root, rejects symlink
-// components, and verifies that the final opened file is the inode that was
-// inspected. os.Root prevents a raced component from escaping the trusted tree.
+// openSecureConfig resolves platform path aliases, opens the configured root
+// without trusting its pathname after resolution, rejects symlink components,
+// and verifies that the final opened file is the inode that was inspected.
 func openSecureConfig(path configPath) (*os.File, bool, error) {
 	if strings.TrimSpace(path.root) == "" || strings.TrimSpace(path.name) == "" || filepath.IsAbs(path.name) {
 		return nil, false, errors.New("invalid config path")
@@ -418,7 +418,7 @@ func openSecureConfig(path configPath) (*os.File, bool, error) {
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return nil, false, errors.New("config path escapes trusted root")
 	}
-	root, err := os.OpenRoot(path.root)
+	root, err := openSecureConfigRoot(path.root)
 	if os.IsNotExist(err) {
 		return nil, false, nil
 	}
@@ -482,6 +482,75 @@ func openSecureConfig(path configPath) (*os.File, bool, error) {
 		return nil, false, errors.New("config changed during secure open")
 	}
 	return file, true, nil
+}
+
+func openSecureConfigRoot(name string) (*os.Root, error) {
+	info, err := os.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return nil, errors.New("config root is not a non-symlink directory")
+	}
+
+	// Resolve parent aliases such as macOS /var -> /private/var once, then walk
+	// the resolved absolute path through directory handles. Subsequent pathname
+	// swaps cannot redirect traversal outside an already-open parent.
+	resolved, err := filepath.EvalSymlinks(name)
+	if err != nil {
+		return nil, err
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return nil, err
+	}
+	volume := filepath.VolumeName(resolved)
+	rootName := volume + string(filepath.Separator)
+	root, err := os.OpenRoot(rootName)
+	if err != nil {
+		return nil, err
+	}
+	relative := strings.TrimPrefix(resolved, rootName)
+	parts := strings.FieldsFunc(relative, func(r rune) bool { return r == '/' || r == '\\' })
+	for _, part := range parts {
+		before, err := root.Lstat(part)
+		if err != nil {
+			_ = root.Close()
+			return nil, err
+		}
+		if before.Mode()&os.ModeSymlink != 0 || !before.IsDir() {
+			_ = root.Close()
+			return nil, errors.New("config root contains a symbolic link or non-directory component")
+		}
+		next, err := root.OpenRoot(part)
+		if err != nil {
+			_ = root.Close()
+			return nil, err
+		}
+		after, err := next.Lstat(".")
+		if err != nil || !os.SameFile(before, after) {
+			_ = next.Close()
+			_ = root.Close()
+			if err != nil {
+				return nil, err
+			}
+			return nil, errors.New("config root changed during secure open")
+		}
+		if err := root.Close(); err != nil {
+			_ = next.Close()
+			return nil, err
+		}
+		root = next
+	}
+	opened, err := root.Lstat(".")
+	if err != nil || !os.SameFile(info, opened) {
+		_ = root.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, errors.New("config root changed during secure open")
+	}
+	return root, nil
 }
 
 func parseCrushConfig(data []byte) ([]ports.AgentModelInfo, error) {

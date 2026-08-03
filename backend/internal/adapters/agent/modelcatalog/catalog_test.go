@@ -29,7 +29,7 @@ func TestCommandDiscoveryTimeoutAllowsSlowModelRegistries(t *testing.T) {
 func TestModelDiscoveryErrorExplainsTimeout(t *testing.T) {
 	deadlineCtx, deadlineCancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer deadlineCancel()
-	err := modelDiscoveryError("kilocode", deadlineCtx, errors.New("signal: killed"))
+	err := modelDiscoveryError(deadlineCtx, "kilocode", errors.New("signal: killed"))
 	if !strings.Contains(err.Error(), "kilocode model discovery timed out after 20s") {
 		t.Fatalf("error = %q, want clear timeout", err)
 	}

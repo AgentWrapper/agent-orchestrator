@@ -359,6 +359,21 @@ func TestReadBoundedConfigRejectsSymlinkDirectoryComponent(t *testing.T) {
 	}
 }
 
+func TestReadBoundedConfigRejectsSymlinkRoot(t *testing.T) {
+	parent := t.TempDir()
+	target := t.TempDir()
+	if err := os.WriteFile(filepath.Join(target, "config.json"), []byte(`{"model":"must-not-read"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(parent, "linked-root")
+	if err := os.Symlink(target, root); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, _, err := readBoundedConfig(configPath{root: root, name: "config.json"}); err == nil {
+		t.Fatal("readBoundedConfig: want symlink-root error")
+	}
+}
+
 func TestReadBoundedConfigRejectsParentTraversal(t *testing.T) {
 	root := t.TempDir()
 	if _, _, err := readBoundedConfig(configPath{root: root, name: filepath.Join("..", "config.json")}); err == nil {

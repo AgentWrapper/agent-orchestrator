@@ -47,6 +47,13 @@ type countingResolverAgent struct {
 	calls atomic.Int32
 }
 
+type blockingResolverAgent struct {
+	fakeAgent
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
 type fakeModelCache struct {
 	records map[string]ports.CachedAgentModelCatalog
 	puts    int
@@ -102,6 +109,16 @@ func (f *concurrentResolverAgent) ResolveBinary(ctx context.Context) (string, er
 func (f *countingResolverAgent) ResolveBinary(ctx context.Context) (string, error) {
 	f.calls.Add(1)
 	return f.fakeAgent.ResolveBinary(ctx)
+}
+
+func (f *blockingResolverAgent) ResolveBinary(ctx context.Context) (string, error) {
+	f.once.Do(func() { close(f.started) })
+	select {
+	case <-f.release:
+		return "agent", nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }
 
 func (f fakeAgent) GetConfigSpec(context.Context) (ports.ConfigSpec, error) {
@@ -489,6 +506,79 @@ func TestModelsReturnsExpiredCacheBeforeBackgroundRevalidation(t *testing.T) {
 	}
 	if revalidated.RefreshRecommended || revalidated.ValidatedAt.Before(cached.ValidatedAt) {
 		t.Fatalf("revalidated catalog = %#v", revalidated)
+	}
+}
+
+func TestRevalidateModelsRediscoversCatalogAfterDiscoveryTTL(t *testing.T) {
+	cache := &fakeModelCache{}
+	agent := &countingResolverAgent{}
+	svc := newService([]agentregistry.HarnessAgent{{
+		Harness:  domain.AgentHarness("codex"),
+		Manifest: adapters.Manifest{ID: "codex", Name: "Codex"},
+		Agent:    agent,
+	}}, cache, nil)
+
+	first, err := svc.Models(context.Background(), "codex", "proj-1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := cache.records["codex\x00proj-1"]
+	var expired ports.AgentModelCatalog
+	if err := json.Unmarshal([]byte(record.CatalogJSON), &expired); err != nil {
+		t.Fatal(err)
+	}
+	expired.FetchedAt = time.Now().Add(-modelCatalogDiscoveryTTL - time.Minute)
+	expired.ValidatedAt = time.Now().Add(-modelCatalogValidationTTL - time.Minute)
+	oldFetchedAt := expired.FetchedAt
+	data, err := json.Marshal(expired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.CatalogJSON = string(data)
+	cache.records["codex\x00proj-1"] = record
+
+	got, err := svc.RevalidateModels(context.Background(), "codex", "proj-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.FetchedAt.After(oldFetchedAt) || !got.FetchedAt.After(first.FetchedAt) {
+		t.Fatalf("FetchedAt = %s, want full rediscovery after %s", got.FetchedAt, oldFetchedAt)
+	}
+}
+
+func TestModelsLeaderCancellationDoesNotCancelCoalescedLoad(t *testing.T) {
+	agent := &blockingResolverAgent{started: make(chan struct{}), release: make(chan struct{})}
+	svc := newService([]agentregistry.HarnessAgent{{
+		Harness:  domain.AgentHarness("codex"),
+		Manifest: adapters.Manifest{ID: "codex", Name: "Codex"},
+		Agent:    agent,
+	}}, nil, nil)
+
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	leaderErr := make(chan error, 1)
+	go func() {
+		_, err := svc.Models(leaderCtx, "codex", "proj-1", true)
+		leaderErr <- err
+	}()
+	<-agent.started
+
+	waiterResult := make(chan ports.AgentModelCatalog, 1)
+	waiterErr := make(chan error, 1)
+	go func() {
+		catalog, err := svc.Models(context.Background(), "codex", "proj-1", true)
+		waiterResult <- catalog
+		waiterErr <- err
+	}()
+	cancelLeader()
+	if err := <-leaderErr; !errors.Is(err, context.Canceled) {
+		t.Fatalf("leader error = %v, want context canceled", err)
+	}
+	close(agent.release)
+	if err := <-waiterErr; err != nil {
+		t.Fatalf("coalesced waiter: %v", err)
+	}
+	if got := <-waiterResult; got.AgentID != "codex" || len(got.Models) == 0 {
+		t.Fatalf("coalesced waiter catalog = %#v", got)
 	}
 }
 

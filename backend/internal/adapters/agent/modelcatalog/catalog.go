@@ -150,7 +150,7 @@ func Discover(ctx context.Context, agentID, binary, workingDir string) (ports.Ag
 			base.Source = "config"
 			base.FetchedAt = time.Now().UTC()
 		}
-		return base, errors.Join(modelDiscoveryError(agentID, runCtx, err), configErr)
+		return base, errors.Join(modelDiscoveryError(runCtx, agentID, err), configErr)
 	}
 	models, err := spec.parser(output)
 	if err != nil {
@@ -185,7 +185,7 @@ func modelCommand(ctx context.Context, binary string, args []string, workingDir 
 	return cmd
 }
 
-func modelDiscoveryError(agentID string, runCtx context.Context, commandErr error) error {
+func modelDiscoveryError(runCtx context.Context, agentID string, commandErr error) error {
 	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 		return fmt.Errorf("%s model discovery timed out after %s", agentID, commandTimeout)
 	}

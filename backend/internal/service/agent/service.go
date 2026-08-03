@@ -22,6 +22,8 @@ var (
 	agentAuthProbeTimeout     = 10 * time.Second
 	agentRefreshMinInterval   = 10 * time.Second
 	modelCatalogValidationTTL = 10 * time.Minute
+	modelCatalogDiscoveryTTL  = 6 * time.Hour
+	modelCatalogLoadTimeout   = 30 * time.Second
 )
 
 type modelLoadMode uint8
@@ -261,12 +263,22 @@ func (s *Service) coalesceModelLoad(
 	s.modelCalls[key] = call
 	s.modelCallMu.Unlock()
 
-	call.catalog, call.err = s.loadModels(ctx, agentID, projectID, mode)
-	s.modelCallMu.Lock()
-	delete(s.modelCalls, key)
-	close(call.done)
-	s.modelCallMu.Unlock()
-	return call.catalog, call.err
+	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), modelCatalogLoadTimeout)
+	go func() {
+		defer cancel()
+		call.catalog, call.err = s.loadModels(loadCtx, agentID, projectID, mode)
+		s.modelCallMu.Lock()
+		delete(s.modelCalls, key)
+		close(call.done)
+		s.modelCallMu.Unlock()
+	}()
+
+	select {
+	case <-call.done:
+		return call.catalog, call.err
+	case <-ctx.Done():
+		return ports.AgentModelCatalog{}, ctx.Err()
+	}
 }
 
 func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mode modelLoadMode) (ports.AgentModelCatalog, error) {
@@ -305,11 +317,13 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 	if configVersion := modelcatalog.ConfigVersion(agentID, workingDir); configVersion != "" {
 		version += ";config=" + configVersion
 	}
-	if hasCached && mode == modelLoadRevalidate && cached.BinaryVersion == version {
+	discoveryFresh := !cached.Catalog.FetchedAt.IsZero() &&
+		time.Since(cached.Catalog.FetchedAt) < modelCatalogDiscoveryTTL
+	if hasCached && mode == modelLoadRevalidate && cached.BinaryVersion == version && discoveryFresh {
 		cached.Catalog.ValidatedAt = time.Now().UTC()
 		cached.Catalog.RefreshRecommended = false
 		if err := s.saveCatalog(ctx, projectID, cached.Catalog); err != nil {
-			cached.Catalog.Warning = appendWarning(cached.Catalog.Warning, "Models loaded, but AO could not update the model cache.")
+			cached.Catalog.Warning = appendCacheWarning(cached.Catalog.Warning)
 		}
 		return cached.Catalog, nil
 	}
@@ -323,7 +337,7 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 			discovered.Stale = true
 			discovered.Warning = discoverErr.Error()
 			if err := s.saveCatalog(ctx, projectID, discovered); err != nil {
-				discovered.Warning = appendWarning(discovered.Warning, "Models loaded, but AO could not update the model cache.")
+				discovered.Warning = appendCacheWarning(discovered.Warning)
 			}
 			return discovered, nil
 		}
@@ -333,7 +347,7 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 			cached.Catalog.ValidatedAt = time.Now().UTC()
 			cached.Catalog.RefreshRecommended = false
 			if err := s.saveCatalog(ctx, projectID, cached.Catalog); err != nil {
-				cached.Catalog.Warning = appendWarning(cached.Catalog.Warning, "Models loaded, but AO could not update the model cache.")
+				cached.Catalog.Warning = appendCacheWarning(cached.Catalog.Warning)
 			}
 			return cached.Catalog, nil
 		}
@@ -345,12 +359,13 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 		return fallback, nil
 	}
 	if err := s.saveCatalog(ctx, projectID, discovered); err != nil {
-		discovered.Warning = appendWarning(discovered.Warning, "Models loaded, but AO could not update the model cache.")
+		discovered.Warning = appendCacheWarning(discovered.Warning)
 	}
 	return discovered, nil
 }
 
-func appendWarning(current, next string) string {
+func appendCacheWarning(current string) string {
+	const next = "Models loaded, but AO could not update the model cache."
 	if current == "" {
 		return next
 	}
