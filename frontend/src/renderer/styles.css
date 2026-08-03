@@ -842,6 +842,8 @@ body {
 	font-size: var(--font-size-md);
 	line-height: var(--line-height-normal);
 	-webkit-font-smoothing: antialiased;
+	-webkit-user-select: none;
+	user-select: none;
 }
 
 button,
@@ -849,6 +851,13 @@ input,
 textarea,
 select {
 	font: inherit;
+}
+
+input,
+textarea,
+[contenteditable="true"] {
+	-webkit-user-select: text;
+	user-select: text;
 }
 
 :is(
