@@ -2,6 +2,7 @@ import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import { useTranslation } from "react-i18next";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
@@ -34,6 +35,7 @@ function terminalHasFocus(): boolean {
 }
 
 export function CommandPalette() {
+	const { i18n, t } = useTranslation();
 	const enabled = useCommandPaletteEnabled();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
@@ -116,11 +118,11 @@ export function CommandPalette() {
 				currentProjectId,
 				currentSessionId: params.sessionId,
 				restartingProjectIds,
-                reviewStatesBySessionId: reviewStatesSnapshot,
-            }),
-        [workspaces, currentProjectId, params.sessionId, restartingProjectIds, reviewStatesSnapshot],
+				reviewStatesBySessionId: reviewStatesSnapshot,
+			}, t),
+		[workspaces, currentProjectId, params.sessionId, restartingProjectIds, reviewStatesSnapshot, t, i18n.resolvedLanguage],
 	);
-	const groups = useMemo(() => displayGroups(items, query), [items, query]);
+	const groups = useMemo(() => displayGroups(items, query, t), [items, query, t, i18n.resolvedLanguage]);
 
 	const visibleItems = useMemo(() => groups.flatMap((group) => group.items), [groups]);
 	const value =
@@ -161,9 +163,9 @@ export function CommandPalette() {
 
 	const blockedByRestart = useCallback((projectId: string) => {
 		if (!useUiStore.getState().restartingProjectIds.has(projectId)) return false;
-		setError("Orchestrator is restarting");
+		setError(t("command.orchestratorRestarting"));
 		return true;
-	}, []);
+	}, [t]);
 
 	const openOrchestrator = useCallback(
 		async (projectId: string) => {
@@ -247,13 +249,13 @@ export function CommandPalette() {
 						break;
 				}
 			} catch (err) {
-				setError(err instanceof Error ? err.message : "Command failed");
+				setError(err instanceof Error ? err.message : t("command.failed"));
 			} finally {
 				pendingRef.current = false;
 				setPendingId(null);
 			}
 		},
-		[navigateToTarget, closePalette, toggleTheme, openOrchestrator, blockedByRestart, queryClient],
+		[navigateToTarget, closePalette, toggleTheme, openOrchestrator, blockedByRestart, queryClient, t],
 	);
 
 	const onSelectItem = useCallback(
@@ -326,7 +328,7 @@ export function CommandPalette() {
 					value,
 					onValueChange: setSelectedValue,
 					loop: true,
-					label: "Command palette",
+					label: t("command.palette"),
 				}}
 			>
 				<CommandInput
@@ -335,10 +337,10 @@ export function CommandPalette() {
 						setQuery(next);
 						setError(null);
 					}}
-					placeholder="Search projects, sessions, PRs, and commands…"
+				placeholder={t("command.searchPlaceholder")}
 				/>
 				<CommandList>
-					<CommandEmpty>No results.</CommandEmpty>
+					<CommandEmpty>{t("command.noResults")}</CommandEmpty>
 					{error && (
 						<div
 							role="alert"
@@ -380,11 +382,11 @@ export function CommandPalette() {
 				<CommandFooter aria-hidden="true">
 					<span className="inline-flex items-center gap-1.5">
 						<span>↑↓</span>
-						<span>Select</span>
+						<span>{t("command.select")}</span>
 					</span>
 					<span className="inline-flex items-center gap-1.5">
 						<span>↵</span>
-						<span>Open</span>
+						<span>{t("command.open")}</span>
 					</span>
 				</CommandFooter>
 			</CommandDialog>

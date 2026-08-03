@@ -1,53 +1,42 @@
-import { Feather } from "@expo/vector-icons";
+import Constants from "expo-constants";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import {
-	ActivityIndicator,
-	Alert,
-	KeyboardAvoidingView,
-	Modal,
-	Platform,
-	Pressable,
-	ScrollView,
-	StyleSheet,
-	Switch,
-	Text,
-	TextInput,
-	View,
-} from "react-native";
+import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { pingServer } from "../../lib/api";
-import { DEFAULT_CONFIG, loadConfig, saveConfig, type ServerConfig } from "../../lib/config";
+import { ApiError, pingServer } from "../../lib/api";
+import { bugReportBody, formatVersion, type BuildInfo } from "../../lib/appInfo";
+import { DEFAULT_CONFIG, isConfigured, loadConfig, type ServerConfig } from "../../lib/config";
+import { classifyConnectionFailure, describeConnectionFailure } from "../../lib/connectionError";
+import { forgetServer } from "../../lib/disconnect";
+import type { Theme } from "../../lib/theme";
 import { haptics } from "../../lib/haptics";
-import { getPushStatus, openNotificationSettings, registerForPush } from "../../lib/push";
-import { describePush, describeRegisterFailure, type PushStatus } from "../../lib/pushStatus";
+import { projectSheetRoute } from "../../lib/sheetResult";
+import { preferenceLabel } from "../../lib/themePreference";
+import { getPushStatus, openNotificationSettings, registerForPush, unregisterFromPush } from "../../lib/push";
+import { describePushToggle, describeRegisterFailure, type PushStatus } from "../../lib/pushStatus";
+import { openGitHub } from "../../lib/openGitHub";
 import { useApp } from "../../lib/store";
-import { theme } from "../../lib/theme";
 import { useTabScrollToTop } from "../../lib/useTabScrollToTop";
-import { Button, ConnectionPill, ScreenHeader } from "../../lib/ui";
+import { Dot, ScreenHeader, SettingsGroup, SettingsRow, SettingsToggle } from "../../lib/ui";
+import { useTheme, useThemedStyles, useThemeState } from "../../lib/ThemeProvider";
+
+const ISSUES_URL = "https://github.com/AgentWrapper/agent-orchestrator/issues/new";
 
 export default function SettingsScreen() {
+	const t = useTheme();
+	const styles = useThemedStyles(makeStyles);
 	const insets = useSafeAreaInsets();
 	const router = useRouter();
-	const { reloadConfig, projects, connection, setActiveProject } = useApp();
-
+	const { reloadConfig, projects, connection, activeProjectId, setActiveProject } = useApp();
 	const scrollRef = useTabScrollToTop<ScrollView>();
 
-	// Tapping a project scopes the Kanban board to it and jumps to that tab.
-	const openProject = (id: string) => {
-		setActiveProject(id);
-		router.navigate("/");
-	};
 	const [cfg, setCfg] = useState<ServerConfig>(DEFAULT_CONFIG);
 	const [loaded, setLoaded] = useState(false);
-	const [testing, setTesting] = useState(false);
-	const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
-	const [pwPromptOpen, setPwPromptOpen] = useState(false);
-	const [pwDraft, setPwDraft] = useState("");
+	const { preference } = useThemeState();
 
 	// Reload the saved config every time the screen regains focus — not just on
-	// mount — so returning from the QR scanner (which writes host/port to storage
-	// then navigates back here) repaints the fields with the scanned values.
+	// mount — so returning from the pairing flow (which writes host/port to
+	// storage then navigates back here) repaints the rows with the new values.
 	useFocusEffect(
 		useCallback(() => {
 			loadConfig().then((c) => {
@@ -57,232 +46,151 @@ export default function SettingsScreen() {
 		}, []),
 	);
 
-	// Once the background poller reports a live connection, drop any stale error
-	// banner (e.g. a leftover 401/429 from an earlier failed attempt) so the UI
-	// doesn't show a scary error while the app is actually connected. A success
-	// message is kept.
+	if (!loaded) {
+		return (
+			<View style={styles.center}>
+				<ActivityIndicator color={t.blue} />
+			</View>
+		);
+	}
+
+	const paired = isConfigured(cfg);
+	const activeProject = projects.find((p) => p.id === activeProjectId);
+
+	return (
+		<View style={styles.screen}>
+			<View style={{ height: insets.top }} />
+			<ScreenHeader title="Settings" status={connection} />
+			<ScrollView
+				ref={scrollRef}
+				contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
+				keyboardShouldPersistTaps="handled"
+			>
+				<ConnectionSection cfg={cfg} paired={paired} connection={connection} />
+
+				<SettingsGroup title="Projects" footer="Scopes the Agents and PRs tabs.">
+					<SettingsRow
+						icon="folder"
+						label="Active project"
+						value={activeProject?.name ?? "All projects"}
+						onPress={() =>
+							router.push(
+								projectSheetRoute({
+									selected: activeProjectId,
+									onSelect: (id) => {
+										// Picking a project scopes the board and takes you there —
+										// the choice and its effect land in one step.
+										setActiveProject(id);
+										router.navigate("/");
+									},
+								}),
+							)
+						}
+					/>
+				</SettingsGroup>
+
+				<SettingsGroup title="Appearance">
+					<SettingsRow
+						icon="moon"
+						label="Theme"
+						value={preferenceLabel(preference)}
+						onPress={() => router.push("/sheets/theme")}
+					/>
+				</SettingsGroup>
+
+				<NotificationsSection />
+
+				<AboutSection
+					onForget={async () => {
+						await forgetServer();
+						await reloadConfig();
+						router.replace("/onboarding");
+					}}
+				/>
+			</ScrollView>
+		</View>
+	);
+}
+
+// Connection is one row, not a form. `/pair` already owns the whole flow —
+// camera scan, permission fallbacks, and the "Enter details manually" sheet that
+// opens prefilled from the saved config — so editing a connection and creating
+// one go through the same door instead of two divergent forms.
+function ConnectionSection({
+	cfg,
+	paired,
+	connection,
+}: {
+	cfg: ServerConfig;
+	paired: boolean;
+	connection: string;
+}) {
+	const t = useTheme();
+	const router = useRouter();
+	const [testing, setTesting] = useState(false);
+	const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
+
+	// Drop a stale failure once the background poller reports a live connection,
+	// so the row doesn't keep showing a scary error while the app is connected.
 	useEffect(() => {
-		if (connection === "open") {
-			setResult((r) => (r && !r.ok ? null : r));
-		}
+		if (connection === "open") setResult((r) => (r && !r.ok ? null : r));
 	}, [connection]);
 
-	const set = (k: keyof ServerConfig) => (v: string) => setCfg((prev) => ({ ...prev, [k]: v }));
+	const dotColor =
+		connection === "open" ? t.green : connection === "connecting" ? t.amber : t.textFaint;
 
-	async function test(target: ServerConfig = cfg) {
+	async function test() {
 		setTesting(true);
 		setResult(null);
 		try {
-			await saveConfig(target);
-			const count = await pingServer(target);
+			const count = await pingServer(cfg);
 			haptics.success();
-			setResult({ ok: true, msg: `Connected — ${count} session(s) found.` });
-			await reloadConfig();
+			setResult({ ok: true, msg: `Connected — ${count} session${count === 1 ? "" : "s"}` });
 		} catch (e) {
 			haptics.error();
-			const msg = e instanceof Error ? e.message : "Could not reach server.";
-			setResult({ ok: false, msg });
-			// Wrong/missing password — reopen the prompt instead of leaving the
-			// user stuck on a silent 401.
-			if (msg.startsWith("401")) {
-				setPwDraft(target.password);
-				setPwPromptOpen(true);
-			}
+			const status = e instanceof ApiError ? e.status : undefined;
+			const { title } = describeConnectionFailure(classifyConnectionFailure(status), {
+				host: cfg.host,
+				port: cfg.httpPort,
+				platform: Platform.OS,
+			});
+			setResult({ ok: false, msg: title });
 		} finally {
 			setTesting(false);
 		}
 	}
 
-	// Save now behaves like Connect: it prompts for the password when none is set
-	// (so it can't silently persist a passwordless config that never connects),
-	// then tests + persists and reports the result. test() already calls
-	// saveConfig, so the config is persisted on the way.
-	function save() {
-		if (!cfg.password.trim()) {
-			setPwDraft("");
-			setPwPromptOpen(true);
-			return;
-		}
-		void test();
-	}
-
-	// The primary "Connect" action — gated behind a password prompt the first
-	// time (no password saved yet). Once a password is saved it persists in
-	// AsyncStorage with the rest of the config, so subsequent connects skip
-	// straight to test().
-	function connect() {
-		if (!cfg.password.trim()) {
-			setPwDraft("");
-			setPwPromptOpen(true);
-			return;
-		}
-		test();
-	}
-
-	function submitPassword() {
-		const next = { ...cfg, password: pwDraft };
-		setCfg(next);
-		setPwPromptOpen(false);
-		test(next);
-	}
-
-	if (!loaded) {
-		return (
-			<View style={styles.center}>
-				<ActivityIndicator color={theme.blue} />
-			</View>
-		);
-	}
-
 	return (
-		<KeyboardAvoidingView
-			style={{ flex: 1, backgroundColor: theme.bgBase }}
-			behavior={Platform.OS === "ios" ? "padding" : undefined}
+		<SettingsGroup
+			title="Connection"
+			footer="Your PC's Tailscale name / 100.x address, or its LAN IP on the same Wi-Fi."
 		>
-			<View style={{ height: insets.top }} />
-			<ScreenHeader title="Settings" right={<ConnectionPill status={connection} />} />
-			<ScrollView
-				ref={scrollRef}
-				style={styles.screen}
-				contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
-				keyboardShouldPersistTaps="handled"
-			>
-				<Text style={styles.sectionTitle}>SERVER</Text>
-				<Text style={styles.intro}>
-					Point the app at your AO server - your PC's Tailscale name / 100.x address (or LAN IP on the same Wi-Fi).
-				</Text>
-
-				<Field
-					label="HOST"
-					value={cfg.host}
-					onChangeText={set("host")}
-					placeholder="my-pc.tailXXXX.ts.net  or  192.168.x.x"
-					autoCapitalize="none"
-					keyboardType="url"
-				/>
-				<View style={styles.row}>
-					<View style={{ flex: 1, marginRight: 8 }}>
-						<Field label="API PORT" value={cfg.httpPort} onChangeText={set("httpPort")} keyboardType="number-pad" />
-					</View>
-					<View style={{ flex: 1, marginLeft: 8 }}>
-						<Field label="TERMINAL PORT" value={cfg.muxPort} onChangeText={set("muxPort")} keyboardType="number-pad" />
-					</View>
-				</View>
-
-				<Field
-					label="PASSWORD"
-					value={cfg.password}
-					onChangeText={set("password")}
-					placeholder="Daemon connection password"
-					autoCapitalize="none"
-					secureTextEntry
-				/>
-
-				<View style={styles.toggleRow}>
-					<View style={{ flex: 1 }}>
-						<Text style={styles.toggleLabel}>Use TLS (https / wss)</Text>
-						<Text style={styles.toggleHint}>On only if AO is served over HTTPS (e.g. a Tailscale funnel).</Text>
-					</View>
-					<Switch
-						value={!!cfg.secure}
-						onValueChange={(v) => setCfg((prev) => ({ ...prev, secure: v }))}
-						trackColor={{ true: theme.blue, false: theme.borderStrong }}
-					/>
-				</View>
-
-				<Button
-					title="Scan QR"
-					variant="ghost"
-					icon="camera"
-					onPress={() => router.navigate("/pair")}
-					style={{ marginTop: 4, marginBottom: 12 }}
-				/>
-
-				<Button
-					title="Test connection"
-					variant="ghost"
-					icon="activity"
-					loading={testing}
-					onPress={connect}
-					style={{ marginTop: 4 }}
-				/>
-				{result && (
-					<View style={[styles.resultBox, { borderColor: result.ok ? theme.tintGreen : theme.tintRed }]}>
-						<Feather
-							name={result.ok ? "check-circle" : "alert-circle"}
-							size={15}
-							color={result.ok ? theme.green : theme.red}
-						/>
-						<Text style={[styles.result, { color: result.ok ? theme.green : theme.red }]}>{result.msg}</Text>
-					</View>
-				)}
-				<Button
-					title="Save & connect"
-					icon="save"
-					loading={testing}
-					onPress={save}
-					disabled={!cfg.host.trim()}
-					style={{ marginTop: 12 }}
-				/>
-
-				<Text style={[styles.sectionTitle, { marginTop: 32 }]}>PROJECTS</Text>
-				{projects.length === 0 ? (
-					<Text style={styles.intro}>No projects found. Add a project from the AO dashboard.</Text>
-				) : (
-					projects.map((p) => (
-						<Pressable
-							key={p.id}
-							onPress={() => openProject(p.id)}
-							style={({ pressed }) => [styles.projRow, pressed && styles.projRowPressed]}
-						>
-							<Feather name="folder" size={16} color={theme.textTertiary} />
-							<Text style={styles.projName}>{p.name}</Text>
-							{p.sessionPrefix ? <Text style={styles.projPrefix}>{p.sessionPrefix}</Text> : null}
-							<Feather name="chevron-right" size={16} color={theme.textTertiary} />
-						</Pressable>
-					))
-				)}
-
-				<NotificationsSection />
-			</ScrollView>
-
-			<Modal visible={pwPromptOpen} transparent animationType="fade" onRequestClose={() => setPwPromptOpen(false)}>
-				<View style={styles.modalBackdrop}>
-					<View style={styles.modalCard}>
-						<Text style={styles.modalTitle}>Enter password</Text>
-						<Text style={styles.toggleHint}>Required to connect to this AO server.</Text>
-						<TextInput
-							style={[styles.input, { marginTop: 14 }]}
-							value={pwDraft}
-							onChangeText={setPwDraft}
-							placeholder="Password"
-							placeholderTextColor={theme.textTertiary}
-							autoCapitalize="none"
-							autoCorrect={false}
-							secureTextEntry
-							autoFocus
-							onSubmitEditing={submitPassword}
-						/>
-						<View style={styles.modalRow}>
-							<Button
-								title="Cancel"
-								variant="ghost"
-								onPress={() => setPwPromptOpen(false)}
-								style={{ flex: 1, marginRight: 8 }}
-							/>
-							<Button title="Connect" onPress={submitPassword} style={{ flex: 1, marginLeft: 8 }} />
-						</View>
-					</View>
-				</View>
-			</Modal>
-		</KeyboardAvoidingView>
+			<SettingsRow
+				icon="link"
+				label="Connect AO"
+				value={paired ? `${cfg.host}:${cfg.httpPort}` : "Not connected"}
+				leading={paired ? <Dot color={dotColor} size={7} breathing={connection === "connecting"} /> : undefined}
+				onPress={() => router.navigate("/pair")}
+			/>
+			<SettingsRow
+				icon="activity"
+				label="Test connection"
+				value={result?.msg}
+				valueColor={result ? (result.ok ? t.green : t.red) : undefined}
+				loading={testing}
+				disabled={!paired}
+				onPress={test}
+			/>
+		</SettingsGroup>
 	);
 }
 
-// Settings section that surfaces push-notification status and the one action to
-// advance it: request permission, register, or (after a permanent denial) open
-// the OS settings. Closes the "denied on first try, no way back" gap.
+// Push collapsed to a single switch. The old card offered up to three different
+// buttons (Enable / Register / Open settings) for what a user thinks of as one
+// setting; `describePushToggle` folds those states into one control plus a
+// footer that explains where it currently stands.
 function NotificationsSection() {
+	const router = useRouter();
 	const { config, connection } = useApp();
 	const [status, setStatus] = useState<PushStatus | null>(null);
 	const [busy, setBusy] = useState(false);
@@ -293,25 +201,33 @@ function NotificationsSection() {
 			.catch(() => {});
 	}, []);
 
-	// Reload on focus and whenever the connection flips (registration happens on
-	// a successful connect, so the status can change without user action here).
+	// Reload on focus and whenever the connection flips — registration happens
+	// automatically on a successful connect, so the state can change without any
+	// action on this screen.
 	useFocusEffect(useCallback(() => refresh(), [refresh]));
 	useEffect(() => refresh(), [connection, refresh]);
 
-	// Pass the config itself — describePush decides whether a server actually
-	// exists (non-empty host). Passing a caller-computed boolean is what shipped
-	// a Register button to unpaired testers.
-	const { label, hint, action, actionLabel } = describePush(status, config);
+	const toggle = describePushToggle(status, config);
 
-	async function onAction() {
-		if (!status || !action) return;
+	async function onToggle(next: boolean) {
+		// A permanent denial can only be undone in system settings; the OS will
+		// not let the app prompt again, so say so rather than failing silently.
+		if (toggle.blocked) {
+			Alert.alert(
+				"Notifications are blocked",
+				"Allow notifications for AO in your system settings, then come back.",
+				[{ text: "Not now", style: "cancel" }, { text: "Open settings", onPress: openNotificationSettings }],
+			);
+			return;
+		}
 		setBusy(true);
 		try {
-			if (action === "open-settings") {
-				await openNotificationSettings();
+			if (!next) {
+				await unregisterFromPush();
+				haptics.tap();
 			} else if (config) {
-				// Requests permission if needed, then registers with the daemon.
-				const result = await registerForPush(config);
+				// A deliberate tap is the right moment to spend the one-shot OS prompt.
+				const result = await registerForPush(config, { ask: true });
 				if (result.ok) {
 					haptics.success();
 				} else {
@@ -327,126 +243,78 @@ function NotificationsSection() {
 	}
 
 	return (
-		<>
-			<Text style={[styles.sectionTitle, { marginTop: 32 }]}>NOTIFICATIONS</Text>
-			<View style={styles.notifCard}>
-				<View style={{ flex: 1, marginRight: 12 }}>
-					<Text style={styles.toggleLabel}>{label}</Text>
-					{hint ? <Text style={styles.toggleHint}>{hint}</Text> : null}
-				</View>
-				{action && actionLabel ? (
-					<Button title={actionLabel} variant="ghost" loading={busy} onPress={onAction} />
-				) : null}
-			</View>
-		</>
-	);
-}
-
-function Field(props: {
-	label: string;
-	value: string;
-	onChangeText: (v: string) => void;
-	placeholder?: string;
-	autoCapitalize?: "none" | "sentences";
-	keyboardType?: "default" | "url" | "number-pad";
-	secureTextEntry?: boolean;
-}) {
-	return (
-		<View style={styles.field}>
-			<Text style={styles.label}>{props.label}</Text>
-			<TextInput
-				style={styles.input}
-				value={props.value}
-				onChangeText={props.onChangeText}
-				placeholder={props.placeholder}
-				placeholderTextColor={theme.textTertiary}
-				autoCapitalize={props.autoCapitalize}
-				autoCorrect={false}
-				keyboardType={props.keyboardType}
-				secureTextEntry={props.secureTextEntry}
+		<SettingsGroup title="Notifications" footer={toggle.footer}>
+			<SettingsToggle
+				icon="bell"
+				label="Agent notifications"
+				value={toggle.value}
+				disabled={toggle.disabled}
+				busy={busy}
+				onValueChange={onToggle}
 			/>
-		</View>
+			<SettingsRow icon="clock" label="History" onPress={() => router.navigate("/notifications")} />
+		</SettingsGroup>
 	);
 }
 
-const styles = StyleSheet.create({
-	screen: { flex: 1, backgroundColor: theme.bgBase },
-	center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: theme.bgBase },
-	sectionTitle: { color: theme.textTertiary, fontSize: 11, letterSpacing: 1.2, fontWeight: "700", marginBottom: 10 },
-	intro: { color: theme.textSecondary, fontSize: 13, lineHeight: 19, marginBottom: 18 },
-	field: { marginBottom: 16 },
-	row: { flexDirection: "row" },
-	label: { color: theme.textTertiary, fontSize: 10, letterSpacing: 1, marginBottom: 6, fontWeight: "600" },
-	input: {
-		backgroundColor: theme.bgElevated,
-		borderColor: theme.borderDefault,
-		borderWidth: 1,
-		borderRadius: 10,
-		color: theme.textPrimary,
-		paddingHorizontal: 12,
-		paddingVertical: 12,
-		fontSize: 14,
-	},
-	resultBox: {
-		flexDirection: "row",
-		alignItems: "center",
-		gap: 8,
-		marginTop: 12,
-		padding: 12,
-		borderRadius: 10,
-		borderWidth: 1,
-		backgroundColor: theme.bgElevated,
-	},
-	result: { fontSize: 13, lineHeight: 18, flex: 1 },
-	toggleRow: {
-		flexDirection: "row",
-		alignItems: "center",
-		gap: 12,
-		paddingVertical: 6,
-		marginBottom: 8,
-	},
-	toggleLabel: { color: theme.textPrimary, fontSize: 14, fontWeight: "600" },
-	toggleHint: { color: theme.textTertiary, fontSize: 12, marginTop: 2, lineHeight: 16 },
-	notifCard: {
-		flexDirection: "row",
-		alignItems: "center",
-		padding: 14,
-		backgroundColor: theme.bgElevated,
-		borderRadius: 10,
-		borderWidth: 1,
-		borderColor: theme.borderSubtle,
-	},
-	projRow: {
-		flexDirection: "row",
-		alignItems: "center",
-		gap: 10,
-		paddingVertical: 13,
-		paddingHorizontal: 14,
-		backgroundColor: theme.bgElevated,
-		borderRadius: 10,
-		borderWidth: 1,
-		borderColor: theme.borderSubtle,
-		marginBottom: 8,
-	},
-	projRowPressed: { backgroundColor: theme.bgElevatedHover, borderColor: theme.borderDefault },
-	projName: { color: theme.textPrimary, fontSize: 14, fontWeight: "600", flex: 1 },
-	projPrefix: { color: theme.textTertiary, fontSize: 12, fontFamily: theme.fontMono },
-	modalBackdrop: {
-		flex: 1,
-		backgroundColor: "rgba(0,0,0,0.6)",
-		alignItems: "center",
-		justifyContent: "center",
-		padding: 24,
-	},
-	modalCard: {
-		width: "100%",
-		maxWidth: 360,
-		backgroundColor: theme.bgElevated,
-		borderRadius: 14,
-		borderWidth: 1,
-		borderColor: theme.borderDefault,
-		padding: 20,
-	},
-	modalTitle: { color: theme.textPrimary, fontSize: 17, fontWeight: "700" },
-	modalRow: { flexDirection: "row", marginTop: 18 },
+function AboutSection({ onForget }: { onForget: () => Promise<void> }) {
+	const [forgetting, setForgetting] = useState(false);
+
+	const build: BuildInfo = {
+		version: Constants.expoConfig?.version,
+		build:
+			Platform.OS === "ios"
+				? Constants.expoConfig?.ios?.buildNumber
+				: (Constants.expoConfig?.android?.versionCode?.toString() ?? null),
+	};
+
+	// Routed through openGitHub for consistency, though this one always lands in
+	// the browser: the GitHub app has no deep link that accepts a prefilled issue
+	// body, and the attached diagnostics are the point of this button.
+	function report() {
+		const body = encodeURIComponent(bugReportBody(build, Platform.OS, Platform.Version));
+		void openGitHub(`${ISSUES_URL}?body=${body}`);
+	}
+
+	function confirmForget() {
+		Alert.alert(
+			"Disconnect & forget server?",
+			"This device will stop receiving notifications and the saved address and password will be removed.",
+			[
+				{ text: "Cancel", style: "cancel" },
+				{
+					text: "Disconnect",
+					style: "destructive",
+					onPress: async () => {
+						setForgetting(true);
+						try {
+							await onForget();
+						} finally {
+							setForgetting(false);
+						}
+					},
+				},
+			],
+		);
+	}
+
+	return (
+		<SettingsGroup title="About">
+			<SettingsRow icon="info" label="Version" value={formatVersion(build)} />
+			<SettingsRow icon="mail" label="Report a problem" onPress={report} />
+			<SettingsRow
+				icon="power"
+				label="Disconnect & forget server"
+				destructive
+				loading={forgetting}
+				onPress={confirmForget}
+			/>
+		</SettingsGroup>
+	);
+}
+
+const makeStyles = (t: Theme) =>
+	StyleSheet.create({
+	screen: { flex: 1, backgroundColor: t.bgBase },
+	center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: t.bgBase },
 });

@@ -99,7 +99,7 @@ describe("report problem drafts", () => {
 		const draft = formatReportProblemDraft({ summary: "", details: "" }, diagnostics, "email");
 
 		expect(draft).toContain("AO feedback");
-		expect(draft).toContain("To: support@aoagents.dev");
+		expect(draft).toContain("To: prateek@untrivial.ai");
 		expect(draft).toContain("Not provided");
 		expect(draft).toContain("Safe diagnostics");
 		expect(draft).toContain("AO version: 1.2.3-test");
@@ -122,7 +122,7 @@ describe("report problem drafts", () => {
 
 	it("builds copy handoff destinations for GitHub, Discord, and support email", () => {
 		const github = new URL(reportProblemDestinationUrl(completeInput, diagnostics, "github")!);
-		expect(`${github.origin}${github.pathname}`).toBe("https://github.com/AgentWrapper/agent-orchestrator/issues/new");
+		expect(`${github.origin}${github.pathname}`).toBe("https://github.com/Untrivial-ai/agent-orchestrator/issues/new");
 		expect(github.searchParams.get("title")).toBe("Terminal keeps reconnecting after daemon restart");
 		expect(github.searchParams.get("body")).toContain("[redacted-local-path]");
 		expect(github.searchParams.get("body")).toContain("[redacted-local-url]");
@@ -133,7 +133,7 @@ describe("report problem drafts", () => {
 
 		const email = new URL(reportProblemDestinationUrl(completeInput, diagnostics, "email")!);
 		expect(email.protocol).toBe("mailto:");
-		expect(email.pathname).toBe("support@aoagents.dev");
+		expect(email.pathname).toBe("prateek@untrivial.ai");
 		expect(email.searchParams.get("subject")).toBe("AO feedback: Terminal keeps reconnecting after daemon restart");
 		expect(email.searchParams.get("body")).toContain("AO feedback");
 		expect(email.searchParams.get("body")).toContain("AO version: 1.2.3-test");

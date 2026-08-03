@@ -1,5 +1,6 @@
 import { X } from "lucide-react";
 import { type MouseEvent, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useTruncatedText } from "../hooks/useTruncatedText";
 import type { ShellTerminal } from "../hooks/useShellTerminals";
 import { isWindowsPlatform } from "../lib/platform";
@@ -26,6 +27,7 @@ type ShellTerminalTabProps = {
 // button, not nested inside the tab button - nesting interactive elements is
 // invalid HTML and breaks keyboard traversal.
 export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename }: ShellTerminalTabProps) {
+	const { t } = useTranslation();
 	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(shell.title);
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState(shell.title);
@@ -95,7 +97,7 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 		>
 			{isEditing ? (
 				<input
-					aria-label={`Rename terminal ${shell.title}`}
+					aria-label={t("terminal.rename", { title: shell.title })}
 					className="min-w-flex-min max-w-shell-tab-max rounded-sm border border-accent bg-background px-1 font-mono text-control font-semibold text-foreground shadow-sm outline-none ring-1 ring-accent"
 					onBlur={commit}
 					onChange={(event) => setDraft(event.target.value)}
@@ -123,7 +125,9 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 					title={
 						isTruncated
 							? shell.title
-							: `${shell.workingDir} (${renameViaRightClick ? "right-click" : "double-click"} to rename)`
+							: t(renameViaRightClick ? "terminal.renameHintRightClick" : "terminal.renameHintDoubleClick", {
+									workingDir: shell.workingDir,
+								})
 					}
 					type="button"
 				>
@@ -131,7 +135,7 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 				</button>
 			)}
 			<button
-				aria-label={`Close terminal ${shell.title}`}
+				aria-label={t("terminal.closeNamed", { title: shell.title })}
 				className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-passive opacity-0 transition-[background,color,opacity] group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
 				onClick={(event) => {
 					event.stopPropagation();
@@ -139,7 +143,7 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 				}}
 				onDoubleClick={(event) => event.stopPropagation()}
 				onContextMenu={(event) => event.stopPropagation()}
-				title="Close terminal"
+				title={t("terminal.close")}
 				type="button"
 			>
 				<X aria-hidden="true" className="size-icon-sm" />

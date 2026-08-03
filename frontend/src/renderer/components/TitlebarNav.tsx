@@ -1,6 +1,7 @@
 import { useCanGoBack, useRouter } from "@tanstack/react-router";
 import { ArrowLeft, ArrowRight, PanelLeft } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { isLinuxPlatform, isMacPlatform } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
 
@@ -44,6 +45,7 @@ export function TitlebarNav({
 	isFullScreen?: boolean;
 	onSidebarPreviewEnter?: React.PointerEventHandler<HTMLButtonElement>;
 }) {
+	const { t } = useTranslation();
 	const { isSidebarOpen, toggleSidebar } = useUiStore();
 	const router = useRouter();
 	const canGoBack = useCanGoBack();
@@ -69,26 +71,26 @@ export function TitlebarNav({
 			style={noDragStyle}
 		>
 			<TitlebarButton
-				label={isSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+				label={isSidebarOpen ? t("shell.collapseSidebar") : t("shell.expandSidebar")}
 				onClick={toggleSidebar}
 				onPointerEnter={onSidebarPreviewEnter}
-				title={`${isSidebarOpen ? "Collapse" : "Expand"} sidebar · ⌘B`}
+				title={isSidebarOpen ? t("titlebar.collapseSidebarShortcut") : t("titlebar.expandSidebarShortcut")}
 			>
 				<PanelLeft className="size-icon-lg" aria-hidden="true" />
 			</TitlebarButton>
 			<TitlebarButton
 				disabled={historyLocked || !canGoBack}
-				label="Go back"
+				label={t("titlebar.goBack")}
 				onClick={() => router.history.back()}
-				title="Go back"
+				title={t("titlebar.goBack")}
 			>
 				<ArrowLeft className="size-icon-lg" aria-hidden="true" />
 			</TitlebarButton>
 			<TitlebarButton
 				disabled={historyLocked || !canGoForward}
-				label="Go forward"
+				label={t("titlebar.goForward")}
 				onClick={() => router.history.forward()}
-				title="Go forward"
+				title={t("titlebar.goForward")}
 			>
 				<ArrowRight className="size-icon-lg" aria-hidden="true" />
 			</TitlebarButton>

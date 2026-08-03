@@ -55,6 +55,22 @@ type ProjectConfig struct {
 	// read-only toward the tracker in v1: matching issues spawn sessions, but the
 	// tracker is not commented on or transitioned.
 	TrackerIntake TrackerIntakeConfig `json:"trackerIntake,omitempty"`
+
+	// ContainerReap controls whether AO reaps a worker session's ao.session-
+	// labeled Docker containers on terminal state / kill. Enabled by default;
+	// set Disabled to opt a project out entirely. Per-container sparing uses
+	// the ao.spare=true label instead (see dockerreap.SpareLabel) so the
+	// opt-out travels with the container at `docker run` time rather than
+	// drifting out of sync with a project-config list.
+	ContainerReap ContainerReapConfig `json:"containerReap,omitempty"`
+}
+
+// ContainerReapConfig is the project-level opt-out for #2652's Docker
+// container reaping on session terminal state.
+type ContainerReapConfig struct {
+	// Disabled turns off container reaping for every session in this project.
+	// Per-container sparing (ao.spare=true) is unaffected either way.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // ReviewerConfig names one reviewer agent by harness. The harness is drawn from
