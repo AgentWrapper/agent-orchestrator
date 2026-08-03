@@ -13,15 +13,70 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/fsnotify/fsnotify"
 )
 
-// Watch subscribes to relevant changes below root until ctx is cancelled. The
+// Watch subscribes to relevant changes below the workspace roots until ctx is cancelled. The
 // returned channel is intentionally edge-triggered and buffered by one: a burst
 // of editor writes only needs to tell the caller that its Git read model is
 // stale, not reproduce every low-level filesystem operation.
-func Watch(ctx context.Context, root string) (<-chan struct{}, error) {
+func Watch(ctx context.Context, roots ...string) (<-chan struct{}, error) {
+	if len(roots) == 0 {
+		return nil, fmt.Errorf("at least one workspace path is required")
+	}
+
+	unique := make(map[string]struct{}, len(roots))
+	uniqueRoots := make([]string, 0, len(roots))
+	for _, root := range roots {
+		cleanRoot, err := filepath.Abs(root)
+		if err != nil {
+			return nil, fmt.Errorf("resolve workspace path: %w", err)
+		}
+		if _, seen := unique[cleanRoot]; seen {
+			continue
+		}
+		unique[cleanRoot] = struct{}{}
+		uniqueRoots = append(uniqueRoots, cleanRoot)
+	}
+	if len(uniqueRoots) == 1 {
+		return watchRoot(ctx, uniqueRoots[0])
+	}
+
+	watchCtx, cancel := context.WithCancel(ctx)
+	sources := make([]<-chan struct{}, 0, len(uniqueRoots))
+	for _, cleanRoot := range uniqueRoots {
+		source, err := watchRoot(watchCtx, cleanRoot)
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		sources = append(sources, source)
+	}
+	changes := make(chan struct{}, 1)
+	var group sync.WaitGroup
+	group.Add(len(sources))
+	for _, source := range sources {
+		go func() {
+			defer group.Done()
+			for range source {
+				select {
+				case changes <- struct{}{}:
+				default:
+				}
+			}
+		}()
+	}
+	go func() {
+		group.Wait()
+		cancel()
+		close(changes)
+	}()
+	return changes, nil
+}
+
+func watchRoot(ctx context.Context, root string) (<-chan struct{}, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {
 		return nil, fmt.Errorf("resolve workspace path: %w", err)

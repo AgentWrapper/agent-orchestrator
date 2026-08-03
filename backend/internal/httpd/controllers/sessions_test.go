@@ -35,6 +35,7 @@ type fakeSessionService struct {
 	cleanupSkipped  []sessionsvc.CleanupSkipped
 	workspaceFiles  sessionsvc.WorkspaceFiles
 	workspaceFile   sessionsvc.WorkspaceFileDetail
+	workspacePaths  []string
 	spawnErr        error
 	claimErr        error
 	listPRErr       error
@@ -313,6 +314,20 @@ func (f *fakeSessionService) ListWorkspaceFiles(_ context.Context, id domain.Ses
 		return f.workspaceFiles, nil
 	}
 	return sessionsvc.WorkspaceFiles{SessionID: id}, nil
+}
+
+func (f *fakeSessionService) WorkspaceWatchPaths(_ context.Context, id domain.SessionID) ([]string, error) {
+	if f.workspaceErr != nil {
+		return nil, f.workspaceErr
+	}
+	session, ok := f.sessions[id]
+	if !ok {
+		return nil, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if len(f.workspacePaths) > 0 {
+		return f.workspacePaths, nil
+	}
+	return []string{session.Metadata.WorkspacePath}, nil
 }
 
 func (f *fakeSessionService) GetWorkspaceFile(_ context.Context, id domain.SessionID, path string) (sessionsvc.WorkspaceFileDetail, error) {

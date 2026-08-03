@@ -52,6 +52,23 @@ func TestWatchReportsExistingAndNewDirectoryChanges(t *testing.T) {
 	waitForChange(t, changes)
 }
 
+func TestWatchReportsChangesAcrossWorkspaceRoots(t *testing.T) {
+	first := t.TempDir()
+	second := t.TempDir()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	changes, err := Watch(ctx, first, second)
+	if err != nil {
+		t.Fatalf("Watch: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(second, "child.txt"), []byte("updated\n"), 0o644); err != nil {
+		t.Fatalf("write second workspace file: %v", err)
+	}
+	waitForChange(t, changes)
+}
+
 func TestWatchClosesWhenContextIsCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	changes, err := Watch(ctx, t.TempDir())

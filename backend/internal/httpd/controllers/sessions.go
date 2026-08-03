@@ -80,6 +80,7 @@ type SessionService interface {
 	Send(ctx context.Context, id domain.SessionID, message string) error
 	ListPRSummaries(ctx context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error)
 	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
+	WorkspaceWatchPaths(ctx context.Context, id domain.SessionID) ([]string, error)
 	ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (sessionsvc.WorkspaceFiles, error)
 	GetWorkspaceFile(ctx context.Context, id domain.SessionID, path string) (sessionsvc.WorkspaceFileDetail, error)
 }
@@ -446,16 +447,12 @@ func (c *SessionsController) streamWorkspaceChanges(w http.ResponseWriter, r *ht
 		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "SSE_UNSUPPORTED", "Streaming is not supported by this server", nil)
 		return
 	}
-	session, err := c.Svc.Get(r.Context(), sessionID(r))
+	paths, err := c.Svc.WorkspaceWatchPaths(r.Context(), sessionID(r))
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	if strings.TrimSpace(session.Metadata.WorkspacePath) == "" {
-		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "SESSION_WORKSPACE_NOT_FOUND", "Session workspace not found", nil)
-		return
-	}
-	changes, err := workspacewatch.Watch(r.Context(), session.Metadata.WorkspacePath)
+	changes, err := workspacewatch.Watch(r.Context(), paths...)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
