@@ -408,14 +408,22 @@ describe("SessionFilesView", () => {
 		await screen.findByText(diffLine("const value = 1;"));
 		expect(container.querySelector(".grid-cols-2")).toBeNull();
 
-		await userEvent.click(screen.getByRole("button", { name: "Split diff view" }));
+		const unifiedToggle = screen.getByRole("button", { name: "Split diff view" });
+		expect(unifiedToggle).toHaveAttribute("aria-pressed", "false");
+		expect(unifiedToggle.querySelector(".lucide-rows-3")).not.toBeNull();
+		await userEvent.click(unifiedToggle);
 		expect(container.querySelector(".grid-cols-2")).not.toBeNull();
 		// Old on the left, new on the right — both still rendered.
 		expect(screen.getByText(diffLine("const value = 0;"))).toBeInTheDocument();
 		expect(screen.getByText(diffLine("const value = 1;"))).toBeInTheDocument();
 
-		await userEvent.click(screen.getByRole("button", { name: "Unified diff view" }));
+		const splitToggle = screen.getByRole("button", { name: "Unified diff view" });
+		expect(splitToggle).toHaveAttribute("aria-pressed", "true");
+		expect(splitToggle.querySelector(".lucide-columns-2")).not.toBeNull();
+		expect(splitToggle).not.toHaveClass("text-accent");
+		await userEvent.click(splitToggle);
 		expect(container.querySelector(".grid-cols-2")).toBeNull();
+		expect(screen.getByRole("button", { name: "Split diff view" }).querySelector(".lucide-rows-3")).not.toBeNull();
 	});
 
 	it("ignores split view for an added file — there is no old side to compare", async () => {

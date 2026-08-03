@@ -19,6 +19,7 @@ import {
 	Columns2,
 	Maximize2,
 	Minimize2,
+	Rows3,
 	Search,
 } from "lucide-react";
 import type { components } from "../../api/schema";
@@ -173,13 +174,17 @@ export function SessionFilesView({
 				<Button
 					aria-label={split ? t("files.unifiedDiff") : t("files.splitDiff")}
 					aria-pressed={split}
-					className={cn("shrink-0 text-foreground", split && "bg-interactive-active")}
+					className="shrink-0"
 					onClick={() => setSplit((current) => !current)}
 					size="icon-sm"
 					type="button"
 					variant="ghost"
 				>
-					<Columns2 className="size-icon-sm" aria-hidden="true" />
+					{split ? (
+						<Columns2 className="size-icon-sm" aria-hidden="true" />
+					) : (
+						<Rows3 className="size-icon-sm" aria-hidden="true" />
+					)}
 				</Button>
 				{onToggleMaximized ? (
 					<Button
