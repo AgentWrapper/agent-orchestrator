@@ -1129,10 +1129,6 @@ function ReviewPanel({
 			if (fallback.length > 0) runsByPR.set(state.prUrl, fallback);
 		}
 	}
-	const filteredRunsByPR = new Map<string, ReviewRunFacts[]>();
-	for (const [prUrl, prRuns] of runsByPR) {
-		filteredRunsByPR.set(prUrl, prRuns.filter((run) => (run.harness || "reviewer") === selectedReviewer));
-	}
 	const runDisabled =
 		isTriggering ||
 		openReviewStates.length === 0 ||
@@ -1213,23 +1209,23 @@ function ReviewPanel({
 				<div className="flex flex-col divide-y divide-border">
 					{openReviewStates.length === 0 ? (
 						<p className={cn(inspectorEmptyClass, "py-1")}>{t("inspector.noOpenPRsToReview")}</p>
-					) : (
-						openReviewStates.map((reviewState) => (
-							<ReviewDisclosure
-								key={`${reviewState.prUrl}:${reviewState.targetSha}`}
-								collapsible
-								defaultOpen={false}
-								meta={aoReviewMeta(reviewState)}
-								title={reviewState.title?.trim() || `PR #${reviewState.prNumber}`}
+				) : (
+					openReviewStates.map((reviewState) => (
+						<ReviewDisclosure
+							key={`${reviewState.prUrl}:${reviewState.targetSha}`}
+							collapsible
+							defaultOpen={false}
+							meta={aoReviewMeta(reviewState)}
+							title={reviewState.title?.trim() || `PR #${reviewState.prNumber}`}
 							>
 								<ReviewerRuns
 									reviewState={reviewState}
-									runs={filteredRunsByPR.get(reviewState.prUrl) ?? []}
+									runs={runsByPR.get(reviewState.prUrl) ?? []}
 									reviewer={selectedReviewer}
 									hasAnyRuns={(runsByPR.get(reviewState.prUrl)?.length ?? 0) > 0}
 								/>
-							</ReviewDisclosure>
-						))
+						</ReviewDisclosure>
+					))
 					)}
 				</div>
 			</Section>
