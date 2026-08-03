@@ -1,4 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import {
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+	type KeyboardEvent,
+	type MouseEvent,
+	type ReactNode,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
 	Check,
@@ -22,9 +31,11 @@ import {
 	type WorkspaceFileSummary,
 } from "../hooks/useSessionWorkspaceFiles";
 import { cn } from "../lib/utils";
+import type { DiffSelectionLine } from "../../shared/diff-selection";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./ui/accordion";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import { DiffSelectionMenu } from "./DiffSelectionMenu";
 import { Input } from "./ui/input";
 
 type WorkspaceFileDetail = components["schemas"]["WorkspaceFileResponse"] & {
@@ -310,10 +321,14 @@ function ReviewFileCard({
 	split: boolean;
 	wrap: boolean;
 }) {
+	// While the user has an active text selection (or the context menu it opens)
+	// in this file's diff, a background refetch would re-render the diff body
+	// out from under them and blow away the browser's native selection.
+	const [selectionOrMenuActive, setSelectionOrMenuActive] = useState(false);
 	const detailQuery = useQuery({
 		queryKey: ["session-workspace-file", sessionId, file.path],
 		enabled: expanded,
-		refetchInterval: expanded ? 3500 : false,
+		refetchInterval: expanded && !selectionOrMenuActive ? 3500 : false,
 		queryFn: () => loadWorkspaceFile(sessionId, file.path),
 	});
 
@@ -344,7 +359,14 @@ function ReviewFileCard({
 						</PanelMessage>
 					) : null}
 					{!detailQuery.isPending && !detailQuery.error && detailQuery.data ? (
-						<ReviewDiffBody detail={detailQuery.data} split={split && canSplitCompare(file.status)} wrap={wrap} />
+						<ReviewDiffBody
+							detail={detailQuery.data}
+							filePath={file.path}
+							onActiveSelectionChange={setSelectionOrMenuActive}
+							sessionId={sessionId}
+							split={split && canSplitCompare(file.status)}
+							wrap={wrap}
+						/>
 					) : null}
 				</AccordionContent>
 			</li>
@@ -416,7 +438,21 @@ async function loadWorkspaceFile(sessionId: string, path: string) {
 	return data;
 }
 
-function ReviewDiffBody({ detail, split, wrap }: { detail: WorkspaceFileDetail; split: boolean; wrap: boolean }) {
+function ReviewDiffBody({
+	detail,
+	filePath,
+	onActiveSelectionChange,
+	sessionId,
+	split,
+	wrap,
+}: {
+	detail: WorkspaceFileDetail;
+	filePath: string;
+	onActiveSelectionChange: (active: boolean) => void;
+	sessionId: string;
+	split: boolean;
+	wrap: boolean;
+}) {
 	if (detail.binary) {
 		return <PanelMessage>Binary file preview is not available.</PanelMessage>;
 	}
@@ -424,7 +460,17 @@ function ReviewDiffBody({ detail, split, wrap }: { detail: WorkspaceFileDetail; 
 	if (rows.length === 0) {
 		return <PanelMessage>{emptyDiffMessage(detail.compareMode)}</PanelMessage>;
 	}
-	return <DiffView rows={rows} split={split} truncated={detail.diffTruncated} wrap={wrap} />;
+	return (
+		<DiffView
+			filePath={filePath}
+			onActiveSelectionChange={onActiveSelectionChange}
+			rows={rows}
+			sessionId={sessionId}
+			split={split}
+			truncated={detail.diffTruncated}
+			wrap={wrap}
+		/>
+	);
 }
 
 type DiffRowKind = "context" | "add" | "del" | "hunk";
@@ -603,17 +649,116 @@ const diffMarkerGlyph: Record<Exclude<DiffRowKind, "hunk">, string> = {
 	context: " ",
 };
 
+// isSelectionActiveIn is the shared check used both by the live selectionchange
+// listener and the context-menu handler: a real (non-collapsed) selection whose
+// anchor lives inside this DiffView's scroll container.
+function isSelectionActiveIn(selection: Selection | null, container: HTMLElement | null): boolean {
+	if (!selection || !container || selection.isCollapsed) return false;
+	return selection.anchorNode !== null && container.contains(selection.anchorNode);
+}
+
+// closestDiffRowElement climbs from a Range boundary (which for a text
+// selection is almost always a text node, and text nodes have no `.closest`)
+// up to the nearest `[data-diff-row]` element, or null if the boundary isn't
+// inside a real diff row (e.g. it landed on a hunk band or an empty
+// split-view placeholder).
+function closestDiffRowElement(node: Node | null): Element | null {
+	if (!node) return null;
+	const element = node instanceof Element ? node : node.parentElement;
+	return element?.closest?.("[data-diff-row]") ?? null;
+}
+
+// toDiffSelectionLine maps a DiffRow to the shared DiffSelectionLine shape.
+// Hunk rows never carry data-row-index themselves, but a multi-hunk selection
+// range can still include one in the middle of the sliced rows[min..max] —
+// this drops it defensively rather than emitting a bogus "hunk" line.
+function toDiffSelectionLine(row: DiffRow): DiffSelectionLine | null {
+	if (row.kind === "hunk") return null;
+	return { kind: row.kind, oldNo: row.oldNo, newNo: row.newNo, text: row.text };
+}
+
+function isNotNull<T>(value: T | null): value is T {
+	return value !== null;
+}
+
+type DiffViewMenuState = {
+	open: boolean;
+	position: { x: number; y: number };
+	lines: DiffSelectionLine[];
+	selectedText: string;
+};
+
 function DiffView({
+	filePath,
+	onActiveSelectionChange,
 	rows,
+	sessionId,
 	split,
 	truncated,
 	wrap,
 }: {
+	filePath: string;
+	onActiveSelectionChange: (active: boolean) => void;
 	rows: DiffRow[];
+	sessionId: string;
 	split: boolean;
 	truncated?: boolean;
 	wrap: boolean;
 }) {
+	const containerRef = useRef<HTMLDivElement>(null);
+	const [hasSelection, setHasSelection] = useState(false);
+	const [menuState, setMenuState] = useState<DiffViewMenuState | null>(null);
+
+	useEffect(() => {
+		const onSelectionChange = () => {
+			setHasSelection(isSelectionActiveIn(window.getSelection(), containerRef.current));
+		};
+		document.addEventListener("selectionchange", onSelectionChange);
+		return () => document.removeEventListener("selectionchange", onSelectionChange);
+	}, []);
+
+	const menuOpen = menuState?.open ?? false;
+	useEffect(() => {
+		onActiveSelectionChange(hasSelection || menuOpen);
+	}, [hasSelection, menuOpen, onActiveSelectionChange]);
+
+	const onContextMenu = useCallback(
+		(event: MouseEvent<HTMLDivElement>) => {
+			const container = containerRef.current;
+			const selection = window.getSelection();
+			if (!isSelectionActiveIn(selection, container) || !selection) return;
+
+			// Only past this point do we know we're overriding a real selection —
+			// the native context menu must stay untouched for a collapsed selection
+			// or one outside this container.
+			event.preventDefault();
+
+			const range = selection.getRangeAt(0);
+			const startRow = closestDiffRowElement(range.startContainer);
+			const endRow = closestDiffRowElement(range.endContainer);
+			if (!startRow || !endRow) return;
+
+			const startIndex = Number(startRow.getAttribute("data-row-index"));
+			const endIndex = Number(endRow.getAttribute("data-row-index"));
+			if (!Number.isFinite(startIndex) || !Number.isFinite(endIndex)) return;
+
+			const min = Math.min(startIndex, endIndex);
+			const max = Math.max(startIndex, endIndex);
+			const lines = rows
+				.slice(min, max + 1)
+				.map(toDiffSelectionLine)
+				.filter(isNotNull);
+
+			setMenuState({
+				open: true,
+				position: { x: event.clientX, y: event.clientY },
+				lines,
+				selectedText: selection.toString(),
+			});
+		},
+		[rows],
+	);
+
 	return (
 		<div className="flex min-h-[180px] max-h-[min(620px,calc(100vh-18rem))] flex-col">
 			{truncated ? (
@@ -621,7 +766,11 @@ function DiffView({
 					Diff preview truncated.
 				</div>
 			) : null}
-			<div className="session-files-diff-scrollbar min-h-0 flex-1 overflow-auto bg-terminal font-mono text-xs leading-row text-terminal-foreground">
+			<div
+				className="session-files-diff-scrollbar min-h-0 flex-1 overflow-auto bg-terminal font-mono text-xs leading-row text-terminal-foreground"
+				onContextMenu={onContextMenu}
+				ref={containerRef}
+			>
 				{split ? (
 					<SplitDiff rows={rows} />
 				) : (
@@ -630,7 +779,15 @@ function DiffView({
 							row.kind === "hunk" ? (
 								<HunkBand key={`h${index}`} row={row} />
 							) : (
-								<div className={cn("flex", diffRowTone[row.kind])} key={`r${index}`}>
+								<div
+									className={cn("flex", diffRowTone[row.kind])}
+									data-diff-row=""
+									data-kind={row.kind}
+									data-new-no={row.newNo ?? ""}
+									data-old-no={row.oldNo ?? ""}
+									data-row-index={index}
+									key={`r${index}`}
+								>
 									<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
 										{row.newNo ?? row.oldNo ?? ""}
 									</span>
@@ -656,6 +813,15 @@ function DiffView({
 					</div>
 				)}
 			</div>
+			<DiffSelectionMenu
+				filePath={filePath}
+				lines={menuState?.lines ?? []}
+				onOpenChange={(open) => setMenuState((current) => (current ? { ...current, open } : current))}
+				open={menuOpen}
+				position={menuState?.position ?? { x: 0, y: 0 }}
+				selectedText={menuState?.selectedText ?? ""}
+				sessionId={sessionId}
+			/>
 		</div>
 	);
 }
@@ -669,34 +835,47 @@ function HunkBand({ row }: { row: DiffRow }) {
 	);
 }
 
-type SplitRow = { kind: "hunk"; row: DiffRow } | { kind: "pair"; left: DiffRow | null; right: DiffRow | null };
+type SplitRow =
+	| { kind: "hunk"; row: DiffRow }
+	| { kind: "pair"; left: DiffRow | null; leftIndex: number | null; right: DiffRow | null; rightIndex: number | null };
 
 // toSplitRows aligns the unified rows into left (old) / right (new) pairs: each
 // run of deletions lines up index-for-index with the additions that follow it,
-// context appears on both sides, and hunk headers span the full width.
+// context appears on both sides, and hunk headers span the full width. Each
+// side also carries its original index into the flat `rows` array (leftIndex /
+// rightIndex) so SplitSide can stamp the same data-row-index the unified view
+// uses, without SplitSide re-deriving it via `rows.indexOf`.
 function toSplitRows(rows: DiffRow[]): SplitRow[] {
 	const out: SplitRow[] = [];
-	let dels: DiffRow[] = [];
-	let adds: DiffRow[] = [];
+	let dels: Array<{ row: DiffRow; index: number }> = [];
+	let adds: Array<{ row: DiffRow; index: number }> = [];
 	const flush = () => {
 		const count = Math.max(dels.length, adds.length);
-		for (let i = 0; i < count; i += 1) out.push({ kind: "pair", left: dels[i] ?? null, right: adds[i] ?? null });
+		for (let i = 0; i < count; i += 1) {
+			out.push({
+				kind: "pair",
+				left: dels[i]?.row ?? null,
+				leftIndex: dels[i]?.index ?? null,
+				right: adds[i]?.row ?? null,
+				rightIndex: adds[i]?.index ?? null,
+			});
+		}
 		dels = [];
 		adds = [];
 	};
-	for (const row of rows) {
+	rows.forEach((row, index) => {
 		if (row.kind === "del") {
-			dels.push(row);
-			continue;
+			dels.push({ row, index });
+			return;
 		}
 		if (row.kind === "add") {
-			adds.push(row);
-			continue;
+			adds.push({ row, index });
+			return;
 		}
 		flush();
 		if (row.kind === "hunk") out.push({ kind: "hunk", row });
-		else out.push({ kind: "pair", left: row, right: row });
-	}
+		else out.push({ kind: "pair", left: row, leftIndex: index, right: row, rightIndex: index });
+	});
 	flush();
 	return out;
 }
@@ -709,8 +888,8 @@ function SplitDiff({ rows }: { rows: DiffRow[] }) {
 					<HunkBand key={`sh${index}`} row={splitRow.row} />
 				) : (
 					<div className="grid grid-cols-2 divide-x divide-border/40" key={`sp${index}`}>
-						<SplitSide row={splitRow.left} side="old" />
-						<SplitSide row={splitRow.right} side="new" />
+						<SplitSide row={splitRow.left} rowIndex={splitRow.leftIndex} side="old" />
+						<SplitSide row={splitRow.right} rowIndex={splitRow.rightIndex} side="new" />
 					</div>
 				),
 			)}
@@ -718,12 +897,19 @@ function SplitDiff({ rows }: { rows: DiffRow[] }) {
 	);
 }
 
-function SplitSide({ row, side }: { row: DiffRow | null; side: "old" | "new" }) {
-	if (!row) return <div className="bg-surface-faint/20" aria-hidden="true" />;
+function SplitSide({ row, rowIndex, side }: { row: DiffRow | null; rowIndex: number | null; side: "old" | "new" }) {
+	if (!row || rowIndex === null) return <div className="bg-surface-faint/20" aria-hidden="true" />;
 	const lineNo = side === "old" ? row.oldNo : row.newNo;
 	const tone = row.kind === "hunk" ? "" : diffRowTone[row.kind];
 	return (
-		<div className={cn("flex min-w-0", tone)}>
+		<div
+			className={cn("flex min-w-0", tone)}
+			data-diff-row=""
+			data-kind={row.kind}
+			data-new-no={row.newNo ?? ""}
+			data-old-no={row.oldNo ?? ""}
+			data-row-index={rowIndex}
+		>
 			<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
 				{lineNo ?? ""}
 			</span>
