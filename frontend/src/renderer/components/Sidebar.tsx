@@ -63,13 +63,12 @@ import { useUiStore } from "../stores/ui-store"
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
-import { isLinuxPlatform, isMacPlatform } from "../lib/platform";
+import { isMacPlatform } from "../lib/platform";
 
-// macOS + Linux paint framed chrome: the fixed TitlebarNav cluster carries the
+// macOS paints framed chrome: the fixed TitlebarNav cluster carries the
 // sidebar toggle + history arrows above this surface. Windows hangs the sidebar
 // under its custom titlebar.
 const isMac = isMacPlatform();
-const isLinux = isLinuxPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
 // Shared styling for the per-project hover action buttons (dashboard,
@@ -369,14 +368,14 @@ export function Sidebar({
 			{/* Footer — Settings opens the global settings page directly.
 			    Top hairline matches the board Archive `border-t border-border-strong`.
 			    Row height matches Archive (`h-row-md`). Bottom margin is the shell
-			    inset minus 1px so the hairline meets Archive (the +1 surface-border
-			    compensation overshoots on mac/linux). */}
+			    inset plus the center-panel surface's 1px border so the hairline
+			    meets Archive (Archive sits inside that bordered surface). */}
 			<SidebarFooter
 				className={cn(
 					"relative mt-auto gap-0 overflow-hidden border-t border-border-strong px-2 pb-0 pt-0 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:border-t-0 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pb-0 group-data-[collapsible=icon]:pt-1.5",
-					isMac || isLinux
-						? "mb-[calc(var(--size-center-panel-inset-mac)-1px)]"
-						: "mb-[calc(var(--size-center-panel-bottom-inset)-1px)]",
+					isMac
+						? "mb-[calc(var(--size-center-panel-inset-mac)+1px)]"
+						: "mb-[calc(var(--size-center-panel-bottom-inset)+1px)]",
 				)}
 			>
 				{/* Always-present daemon status mirror for the smoke suite: no visible

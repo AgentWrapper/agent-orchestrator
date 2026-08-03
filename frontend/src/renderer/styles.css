@@ -415,7 +415,7 @@
 	padding-left: var(--size-center-panel-inline-inset);
 }
 
-/* macOS + Linux: inset on all sides except left (flush with sidebar). */
+/* macOS: inset on all sides except left (flush with sidebar). */
 .center-panel-shell.center-panel-shell--mac {
 	padding-top: var(--size-center-panel-inset-mac);
 	padding-right: var(--size-center-panel-inset-mac);
