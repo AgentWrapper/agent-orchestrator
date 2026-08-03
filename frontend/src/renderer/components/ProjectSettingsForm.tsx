@@ -37,6 +37,7 @@ import { newestActiveOrchestrator } from "../types/workspace";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeNeedsRule } from "./IntakeFields";
 import { ReviewerSelect } from "./ReviewerSelect";
+import { AgentModelCombobox } from "./settings/AgentModelCombobox";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { SettingsRow } from "./settings/SettingsRow";
 import { SettingsSection } from "./settings/SettingsSection";
@@ -569,22 +570,14 @@ function AgentModelField({
 	const hasCatalog = catalog?.selectionMode === "catalog" && (catalog.models?.length ?? 0) > 0;
 	const modelIsInCatalog = catalog?.models?.some((item) => item.id === model) ?? false;
 	const showCustomInput = hasCatalog && (customAgentId === agentId || (model !== "" && !modelIsInCatalog));
-	const catalogOptions = hasCatalog
-		? [
-				{ value: "__default__", label: "Agent default" },
-				...catalog.models.map((item) => ({ value: item.id, label: item.label })),
-				...(catalog.allowCustom ? [{ value: "__custom__", label: "Custom model…" }] : []),
-			]
-		: [];
-	const catalogValue = model === "" ? "__default__" : modelIsInCatalog ? model : "__custom__";
 	const selectCatalogModel = (value: string) => {
-		if (value === "__custom__") {
-			setCustomAgentId(agentId);
-			onModelChange("");
-		} else {
-			setCustomAgentId(null);
-			onModelChange(value === "__default__" ? "" : value);
-		}
+		setCustomAgentId(null);
+		onModelChange(value);
+		onModeChange("");
+	};
+	const selectCustomModel = (value: string) => {
+		setCustomAgentId(agentId);
+		onModelChange(value);
 		onModeChange("");
 	};
 	return (
@@ -592,39 +585,14 @@ function AgentModelField({
 			<SettingsRow icon={Sparkles} label={label}>
 				<div className="flex min-w-0 items-center gap-2">
 					{hasCatalog && !showCustomInput ? (
-						<SettingsOptionMenu
+						<AgentModelCombobox
 							aria-label={label}
-							value={catalogValue}
-							options={catalogOptions}
+							value={model}
+							models={catalog.models}
+							allowCustom={catalog.allowCustom}
 							onChange={selectCatalogModel}
-							searchable
-							searchPlaceholder="Search models…"
+							onCustom={selectCustomModel}
 							triggerClassName="settings-inline-input justify-end"
-							menuClassName="w-[min(24rem,calc(100vw-2rem))]"
-							renderTrigger={(selected) => (
-								<span className="min-w-0 truncate">{selected?.label ?? "Agent default"}</span>
-							)}
-							renderMenuItem={(option) => {
-								const item = catalog.models.find((candidate) => candidate.id === option.value);
-								return (
-									<div className="flex min-w-0 flex-1 items-center gap-3">
-										<div className="min-w-0 flex-1">
-											<div className="flex items-center gap-2">
-												<span className="truncate text-settings-label">{option.label}</span>
-												{item?.isDefault && (
-													<span className="rounded-full bg-settings-menu-selected px-1.5 py-0.5 text-micro text-settings-muted">
-														Default
-													</span>
-												)}
-											</div>
-											{item && item.id !== item.label && (
-												<p className="truncate text-xs text-settings-muted">{item.id}</p>
-											)}
-										</div>
-										{item?.provider && <span className="shrink-0 text-xs text-settings-muted">{item.provider}</span>}
-									</div>
-								);
-							}}
 						/>
 					) : (
 						<>
@@ -641,15 +609,15 @@ function AgentModelField({
 								placeholder={query.isFetching ? "Loading models…" : "(agent default)"}
 							/>
 							{hasCatalog && (
-								<SettingsOptionMenu
+								<AgentModelCombobox
 									aria-label={`${label} options`}
-									value="__custom__"
-									options={catalogOptions}
+									value={model}
+									models={catalog.models}
+									allowCustom={catalog.allowCustom}
 									onChange={selectCatalogModel}
-									searchable
-									searchPlaceholder="Search models…"
+									onCustom={selectCustomModel}
+									triggerLabel="Browse"
 									triggerClassName="shrink-0"
-									renderTrigger={() => <span>Browse</span>}
 								/>
 							)}
 						</>
