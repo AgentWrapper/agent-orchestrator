@@ -392,7 +392,7 @@ function BoardColumn({ cards, color, title }: { cards: Card[]; color: string; ti
 		<section className="flex min-h-0 min-w-0 snap-start flex-col border-r border-[var(--preview-border)] last:border-r-0">
 			<div className="flex h-9 shrink-0 items-center gap-2 border-b border-[var(--preview-border)] px-3">
 				<span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />
-				<div className="font-mono text-[8px] font-medium tracking-wide text-[var(--preview-muted-foreground)]">{title}</div>
+				<div className="text-[8px] font-medium tracking-wide text-[var(--preview-muted-foreground)]">{title}</div>
 				<div className="ml-auto font-mono text-[8px] leading-none text-[var(--preview-muted-foreground)] opacity-60">{cards.length}</div>
 				{extraWaiting > 0 ? (
 					<div className="inline-flex items-center gap-1 rounded-[3px] bg-[#fb923c]/10 px-1 py-0.5 text-[7px] font-semibold text-[#fb923c]">
