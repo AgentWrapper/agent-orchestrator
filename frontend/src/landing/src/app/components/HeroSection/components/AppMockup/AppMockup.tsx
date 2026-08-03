@@ -918,34 +918,14 @@ function advanceCard(card: PreviewCard): PreviewCard {
 }
 
 function cardStatusColor(card: PreviewCard): string {
-	if (card.tone === "blocked" || card.activityState === "waiting") return STATUS_COLORS.needsYou;
-	if (card.tone === "review" || card.activityState === "reviewing") return STATUS_COLORS.inReview;
-	if (card.tone === "ready") return STATUS_COLORS.ready;
-	if (card.activityState === "running") return STATUS_COLORS.working;
-	return STATUS_COLORS.idle;
-}
-
-/** Most-urgent board status for a track — same palette as kanban card dots. */
-function trackDotColor(cards: PreviewCard[]): string {
-	if (cards.length === 0) return STATUS_COLORS.idle;
-	let best = cards[0]!;
-	let bestRank = cardAttentionRank(best);
-	for (const card of cards) {
-		const rank = cardAttentionRank(card);
-		if (rank < bestRank) {
-			best = card;
-			bestRank = rank;
-		}
+	// Match kanban column dots: Pending=blue, Iterating=orange, Review=yellow, Ready=green.
+	if (card.tone === "blocked" || card.activityState === "waiting" || card.column === "action") {
+		return STATUS_COLORS.needsYou;
 	}
-	return cardStatusColor(best);
-}
-
-function cardAttentionRank(card: PreviewCard): number {
-	if (card.tone === "blocked" || card.activityState === "waiting") return 0;
-	if (card.activityState === "running") return 1;
-	if (card.tone === "review" || card.activityState === "reviewing") return 2;
-	if (card.tone === "ready") return 3;
-	return 4;
+	if (card.column === "pending" || card.tone === "review") return STATUS_COLORS.inReview;
+	if (card.column === "merge" || card.tone === "ready") return STATUS_COLORS.ready;
+	if (card.activityState === "running" || card.column === "working") return STATUS_COLORS.working;
+	return STATUS_COLORS.idle;
 }
 
 function isIdleCard(card: PreviewCard): boolean {
@@ -953,7 +933,7 @@ function isIdleCard(card: PreviewCard): boolean {
 }
 
 function randomDelay() {
-	return 5000 + Math.random() * 5000;
+	return 1400 + Math.random() * 1400;
 }
 
 function randomItem<T>(items: T[]): T | null {
@@ -1242,17 +1222,50 @@ function ProjectActionIcon({
 	return (
 		<span
 			aria-hidden="true"
-			className={`grid size-5 shrink-0 place-items-center text-[var(--preview-passive)] ${className}`}
+			className={`grid size-6 shrink-0 place-items-center text-[var(--preview-passive)] ${className}`}
 		>
 			{children}
 		</span>
 	);
 }
 
-const pinnedItems = [
-	{ id: "pin-review", label: "landing review", color: STATUS_COLORS.inReview },
-	{ id: "pin-merge", label: "ready to merge", color: STATUS_COLORS.ready },
-] as const;
+/** Compact sidebar labels for the same tasks shown on the kanban. */
+function sidebarSessionLabel(card: PreviewCard): string {
+	const short: Record<string, string> = {
+		"Tighten hero window border alignment": "window border",
+		"Remove stale generated icon imports": "stale icons",
+		"Document preview alias ownership": "alias ownership",
+		"Confirm whether download labels stay platform-aware": "download labels",
+		"Pick final titlebar metrics for the preview": "titlebar metrics",
+		"Wire hero mockup progression delays": "progression timing",
+		"Verify preview environment variables": "preview env",
+		"Preload GitHub stars before hydration": "preload stars",
+		"Ship AO logo in top navigation": "ao logo",
+		"Choose production region failover": "region failover",
+		"Cache workspace dependencies in builds": "workspace cache",
+		"Repair mobile overflow on landing preview": "mobile overflow",
+		"Shrink card metadata copy for preview scale": "card density",
+		"Verify GitHub avatar fallback in project list": "repo avatar",
+		"Replace placeholder project copy with repo-specific tasks": "organic tasks",
+		"Smooth card collapse when PRs merge out": "merge collapse",
+		"Add rate-limit telemetry for star fetches": "star rate limit",
+		"Test zero-star fallback rendering": "zero-star fallback",
+		"Normalize harness icon viewboxes": "icon viewboxes",
+		"Add Gemini CLI authorized state": "gemini state",
+		"Verify video controls on iOS": "video ios",
+		"Audit footer links and focus order": "footer focus",
+	};
+	return short[card.title] ?? card.title.toLowerCase();
+}
+
+function isPinnedSidebarCard(card: PreviewCard): boolean {
+	return (
+		card.column === "pending" ||
+		card.column === "merge" ||
+		card.tone === "review" ||
+		card.tone === "ready"
+	);
+}
 
 function SidebarSessionRow({
 	active,
@@ -1283,11 +1296,10 @@ function SidebarSessionRow({
 	);
 }
 
-function Sidebar({
-	trackCards,
-}: {
-	trackCards: Record<TrackId, PreviewCard[]>;
-}) {
+function Sidebar({ cards }: { cards: PreviewCard[] }) {
+	const activeCards = cards.filter((card) => !card.merging);
+	const pinnedCards = activeCards.filter(isPinnedSidebarCard);
+	const projectCards = activeCards.filter((card) => !isPinnedSidebarCard(card));
 	return (
 		<aside
 			aria-hidden="true"
@@ -1345,15 +1357,19 @@ function Sidebar({
 					</div>
 				</div>
 
-				{/* Pinned — compact section + a couple of session-style rows. */}
+				{/* Pinned — In Review / Ready cards from the live kanban. */}
 				<div className="flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-[var(--preview-passive)]">
 					<PinIcon className="h-3.5 w-3.5 shrink-0" />
 					<span className="min-w-0 truncate">Pinned</span>
 					<ChevronRightIcon expanded className="h-3 w-3 shrink-0" />
 				</div>
 				<div className="mb-1 ml-2 flex flex-col gap-px">
-					{pinnedItems.map((item) => (
-						<SidebarSessionRow key={item.id} dotColor={item.color} label={item.label} />
+					{pinnedCards.map((card) => (
+						<SidebarSessionRow
+							key={card.id}
+							dotColor={cardStatusColor(card)}
+							label={sidebarSessionLabel(card)}
+						/>
 					))}
 				</div>
 
@@ -1372,31 +1388,31 @@ function Sidebar({
 
 			<div className="flex min-h-0 flex-1 flex-col overflow-hidden px-2">
 				<div className="relative z-20 mb-px shrink-0">
-					{/* Project row — selected accent pill; foreground text matches real app. */}
-					<div className="relative flex h-8 w-full items-center gap-2 rounded-lg bg-[var(--preview-sidebar-accent)] px-2 pr-[72px] text-left text-[12px] font-medium text-[var(--preview-foreground)]">
-						<FolderOpenIcon className="h-3.5 w-3.5 shrink-0" />
+					{/* Project row — h-9 + action cluster footprint matches real Sidebar. */}
+					<div className="relative flex h-9 w-full items-center gap-2 rounded-lg bg-[var(--preview-sidebar-accent)] px-2 pr-[84px] text-left text-[13px] font-medium text-[var(--preview-foreground)]">
+						<FolderOpenIcon className="h-4 w-4 shrink-0" />
 						<span className="min-w-0 flex-1 truncate">agent-orchestrator</span>
 					</div>
 					<div className="absolute inset-y-0 right-1.5 z-30 flex items-center gap-px">
 						<ProjectActionIcon>
-							<LayoutGridIcon className="h-3.5 w-3.5" />
+							<LayoutGridIcon className="h-4 w-4" />
 						</ProjectActionIcon>
 						<ProjectActionIcon>
-							<OrchestratorIcon className="h-3.5 w-3.5" />
+							<OrchestratorIcon className="h-4 w-4" />
 						</ProjectActionIcon>
 						<ProjectActionIcon>
-							<MoreVerticalIcon className="h-3.5 w-3.5" />
+							<MoreVerticalIcon className="h-4 w-4" />
 						</ProjectActionIcon>
 					</div>
 				</div>
 
 				<div className="min-h-0 flex-1 overflow-y-auto py-0.5 scrollbar-hide">
 					<div className="ml-2 flex flex-col gap-px">
-						{projectItems.map((item) => (
+						{projectCards.map((card) => (
 							<SidebarSessionRow
-								key={item.id}
-								dotColor={trackDotColor(trackCards[item.id] ?? [])}
-								label={item.label}
+								key={card.id}
+								dotColor={cardStatusColor(card)}
+								label={sidebarSessionLabel(card)}
 							/>
 						))}
 					</div>
@@ -1446,26 +1462,31 @@ function BoardChrome({ viewMode }: { viewMode: ViewMode }) {
 				{viewMode === "orchestrator" ? "Orchestrator" : "agent-orchestrator"}
 			</div>
 			<div className="min-w-0 flex-1" />
-			{/* Static chrome — matches TopbarButton accent / primary / icon, non-interactive. */}
+			{/* Static chrome — TopbarButton accent / primary / icon at control-lg (34px). */}
 			<span
 				aria-hidden="true"
-				className="inline-flex h-[34px] items-center gap-1.5 rounded-md border border-[var(--preview-border)] bg-[var(--preview-raised)] px-3.5 text-[13px] font-semibold leading-none text-[var(--preview-muted-foreground)]"
+				className="inline-flex h-[34px] items-center gap-1.5 rounded-md border border-[var(--preview-border)] bg-[var(--preview-raised)] px-3.5 text-sm font-semibold leading-none text-[var(--preview-muted-foreground)]"
 			>
-				<PlusIcon className="h-3.5 w-3.5" />
+				<PlusIcon className="h-4 w-4" />
 				<span>New task</span>
 			</span>
 			<span
 				aria-hidden="true"
-				className="inline-flex h-[34px] items-center gap-1.5 rounded-md bg-[var(--preview-primary)] px-3.5 text-[13px] font-semibold leading-none text-[var(--preview-primary-foreground)]"
+				className="inline-flex h-[34px] items-center gap-1.5 rounded-md bg-[var(--preview-primary)] px-3.5 text-sm font-semibold leading-none text-[var(--preview-primary-foreground)]"
 			>
-				<OrchestratorIcon className="h-3.5 w-3.5" />
+				<OrchestratorIcon className="h-4 w-4" />
+				<span
+					aria-hidden="true"
+					className="h-[7px] w-[7px] shrink-0 rounded-full"
+					style={{ backgroundColor: STATUS_COLORS.ready }}
+				/>
 				Orchestrator
 			</span>
 			<span
 				aria-hidden="true"
 				className="grid size-[34px] shrink-0 place-items-center rounded-md text-[var(--preview-muted-foreground)]"
 			>
-				<BellIcon className="h-4 w-4" />
+				<BellIcon className="h-[18px] w-[18px]" />
 			</span>
 		</div>
 	);
@@ -1578,9 +1599,9 @@ function BoardCard({
 				const next = p + jump;
 				return next >= testTotal ? Math.floor(testTotal * 0.2) : next;
 			});
-			timeout = window.setTimeout(tick, 300 + Math.random() * 600);
+			timeout = window.setTimeout(tick, 200 + Math.random() * 350);
 		};
-		timeout = window.setTimeout(tick, 300 + Math.random() * 600);
+		timeout = window.setTimeout(tick, 200 + Math.random() * 350);
 		return () => window.clearTimeout(timeout);
 	}, [isTestCard, testTotal]);
 
@@ -1608,9 +1629,9 @@ function BoardCard({
 			}
 			exit={{ opacity: 0, scale: 0.96, y: -8 }}
 			transition={{
-				duration: 0.45,
+				duration: 0.22,
 				ease: [0.22, 1, 0.36, 1],
-				layout: { duration: 0.55, ease: [0.22, 1, 0.36, 1] },
+				layout: { duration: 0.25, ease: [0.22, 1, 0.36, 1] },
 			}}
 			className={`pointer-events-none rounded-lg border ${attentionBorder} bg-[var(--preview-card)] shadow-[0_1px_1px_rgba(0,0,0,0.05)] ${attentionAnim}`}
 		>
@@ -1767,11 +1788,9 @@ function BoardColumn({
 
 function OrchestratorView({
 	cards,
-	onNewTask,
 	selectedTrack,
 }: {
 	cards: PreviewCard[];
-	onNewTask: () => void;
 	selectedTrack: TrackItem;
 }) {
 	const activeCards = cards.filter((card) => !card.merging);
@@ -1863,14 +1882,13 @@ function OrchestratorView({
 						</div>
 					))}
 				</div>
-				<button
-					type="button"
-					onClick={onNewTask}
-					className="mt-4 inline-flex h-8 items-center justify-center gap-2 rounded-[8px] bg-[var(--preview-primary)] px-3 text-[12px] font-semibold text-[var(--preview-primary-foreground)] transition-transform active:scale-[0.96]"
+				<span
+					aria-hidden="true"
+					className="mt-4 inline-flex h-8 items-center justify-center gap-2 rounded-[8px] bg-[var(--preview-primary)] px-3 text-[12px] font-semibold text-[var(--preview-primary-foreground)]"
 				>
 					<PlusIcon className="h-4 w-4" />
 					Spawn worker
-				</button>
+				</span>
 			</aside>
 		</div>
 	);
@@ -1886,7 +1904,7 @@ export function AppMockup() {
 		footer: 9,
 	});
 	const selectedTrackId: TrackId = "landing";
-	const [viewMode, setViewMode] = useState<ViewMode>("board");
+	const viewMode: ViewMode = "board";
 	const incomingIndexes = useRef<Record<TrackId, number>>({
 		landing: 0,
 		deploy: 0,
@@ -1950,40 +1968,7 @@ export function AppMockup() {
 				...current,
 				[trackId]: current[trackId] + 1,
 			}));
-		}, 520);
-	}, [selectedTrackId, updateTrackCards]);
-
-	const spawnRandomTask = useCallback(() => {
-		setViewMode("board");
-		const trackId = selectedTrackId;
-		const incomingCards = incomingCardsByTrack[trackId];
-		updateTrackCards(trackId, (current) => {
-			const existingTitles = new Set(current.map((card) => card.title));
-			const startIndex = Math.floor(Math.random() * incomingCards.length);
-			const templateOffset = incomingCards.findIndex((_, offset) => {
-				const candidate = incomingCards[(startIndex + offset) % incomingCards.length];
-				return candidate ? !existingTitles.has(candidate.title) : false;
-			});
-
-			if (templateOffset < 0) return current;
-
-			const templateIndex = (startIndex + templateOffset) % incomingCards.length;
-			const template = incomingCards[templateIndex];
-			if (!template) return current;
-
-			incomingIndexes.current[trackId] += 1;
-			return [
-				{
-					...template,
-					badge: null,
-					column: "working",
-					activityState: "running",
-					id: `${trackId}-manual-${Date.now()}-${incomingIndexes.current[trackId]}`,
-					time: "now",
-				},
-				...current,
-			];
-		});
+		}, 240);
 	}, [selectedTrackId, updateTrackCards]);
 
 	useEffect(() => {
@@ -2075,7 +2060,7 @@ export function AppMockup() {
 					50% { box-shadow: 0 0 0 4px rgba(251, 146, 60, 0); }
 				}
 				.ao-attention-pulse {
-					animation: ao-attention-pulse-frames 2.2s ease-in-out infinite;
+					animation: ao-attention-pulse-frames 1.2s ease-in-out infinite;
 				}
 				@media (prefers-reduced-motion: reduce) {
 					.ao-attention-pulse { animation: none; }
@@ -2087,39 +2072,28 @@ export function AppMockup() {
 					className="h-(--mockup-design-h) w-(--mockup-design-w) origin-top-left"
 				>
 					<div className="flex h-full min-h-0">
-						<Sidebar trackCards={cardsByTrack} />
+						<Sidebar cards={cards} />
 						<div className="flex min-h-0 min-w-0 flex-1 flex-col p-[2px]">
 							<div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[17px] border border-[var(--preview-border-strong)] bg-[var(--preview-background)]">
-								<BoardChrome
-									onNewTask={spawnRandomTask}
-									viewMode={viewMode}
-								/>
-								{viewMode === "orchestrator" ? (
-									<OrchestratorView
-										cards={cards}
-										onNewTask={spawnRandomTask}
-										selectedTrack={selectedTrack}
-									/>
-								) : (
-									<>
-										<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-											<LayoutGroup key={selectedTrack.id}>
-												<div className="grid min-h-0 flex-1 grid-cols-4 overflow-hidden">
-													{boardColumns.map((column) => (
-														<BoardColumn
-															key={column.id}
-															cards={column.cards}
-															color={COLUMN_COLORS[column.id]}
-															count={column.count}
-															title={column.title}
-														/>
-													))}
-												</div>
-											</LayoutGroup>
-										</div>
-										<ArchiveBar count={mergedCount} />
-									</>
-								)}
+								<BoardChrome viewMode={viewMode} />
+								<>
+									<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+										<LayoutGroup key={selectedTrack.id}>
+											<div className="grid min-h-0 flex-1 grid-cols-4 overflow-hidden">
+												{boardColumns.map((column) => (
+													<BoardColumn
+														key={column.id}
+														cards={column.cards}
+														color={COLUMN_COLORS[column.id]}
+														count={column.count}
+														title={column.title}
+													/>
+												))}
+											</div>
+										</LayoutGroup>
+									</div>
+									<ArchiveBar count={mergedCount} />
+								</>
 							</div>
 						</div>
 					</div>
