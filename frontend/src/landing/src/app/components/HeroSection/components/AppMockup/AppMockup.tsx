@@ -1683,37 +1683,37 @@ function BoardCard({
 				ease: [0.22, 1, 0.36, 1],
 				layout: { duration: 0.55, ease: [0.22, 1, 0.36, 1] },
 			}}
-			className={`cursor-pointer rounded-[8px] border ${attentionBorder} bg-[var(--preview-card)] p-[15px] shadow-[0_1px_1px_rgba(0,0,0,0.05)] outline-none transition-colors hover:bg-[var(--preview-muted)] focus-visible:ring-2 focus-visible:ring-[var(--preview-ring)] ${attentionAnim}`}
+			className={`cursor-pointer rounded-lg border ${attentionBorder} bg-[var(--preview-card)] shadow-[0_1px_1px_rgba(0,0,0,0.05)] outline-none transition-colors hover:bg-[var(--preview-muted)] focus-visible:ring-2 focus-visible:ring-[var(--preview-ring)] ${attentionAnim}`}
 		>
-			<div className="flex items-start gap-2">
-				<div className="relative mt-0.5 h-4 w-4 shrink-0">
-					<img
-						src={card.icon}
-						alt=""
-						width={16}
-						height={16}
+		<div className="flex items-start gap-2.5 px-3.5 pb-2.5 pt-3">
+			<div className="relative mt-0.5 h-3.5 w-3.5 shrink-0">
+				<img
+					src={card.icon}
+					alt=""
+					width={14}
+					height={14}
+					aria-hidden="true"
+					className="h-3.5 w-3.5"
+					draggable="false"
+				/>
+				{isWaiting ? (
+					<span
 						aria-hidden="true"
-						className="h-4 w-4"
-						draggable="false"
-					/>
-					{isWaiting ? (
-						<span
-							aria-hidden="true"
-							className={`pointer-events-none absolute -right-1 -top-1 flex h-3 w-3 items-center justify-center rounded-full ${badgeColor} text-[8px] font-black leading-none text-white shadow-[0_0_0_1.5px_var(--preview-card)]`}
-						>
-							!
-						</span>
-					) : null}
-				</div>
-				<div className="min-w-0 pr-2 text-[12px] font-medium leading-[16px] text-[var(--preview-card-foreground)]">
-					{card.title}
-				</div>
+						className={`pointer-events-none absolute -right-1 -top-1 flex h-2.5 w-2.5 items-center justify-center rounded-full ${badgeColor} text-[7px] font-black leading-none text-white shadow-[0_0_0_1.5px_var(--preview-card)]`}
+					>
+						!
+					</span>
+				) : null}
 			</div>
-			<div className="mt-3 text-[10px] leading-4 text-[var(--preview-muted-foreground)]">
-				<div className="flex items-center gap-1.5 py-1">
-					<BranchIcon className="h-3 w-3 shrink-0" />
-					<span className="truncate font-mono">{card.branch}</span>
-				</div>
+			<div className="min-w-0 text-[11.5px] font-semibold leading-tight tracking-tight text-[var(--preview-card-foreground)]">
+				{card.title}
+			</div>
+		</div>
+		<div className="mt-0 px-3.5 text-[9.5px] leading-4 text-[var(--preview-muted-foreground)]">
+			<div className="flex items-center gap-1.5 py-1">
+				<BranchIcon className="h-3 w-3 shrink-0" />
+				<span className="truncate font-mono">{card.branch}</span>
+			</div>
 			{prMatch ? (
 				<div className={`flex items-center gap-1.5 py-1 ${prClass}`}>
 					<PullRequestIcon className="h-3 w-3 shrink-0" />
@@ -1721,11 +1721,11 @@ function BoardCard({
 					<span className="truncate">{prStatus}</span>
 				</div>
 			) : null}
-			</div>
+		</div>
 		{/* Per-column metadata row */}
 		{(card.column === "working" || card.column === "staging") &&
 			(card.runtime ?? card.lastAction) ? (
-			<div className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-[var(--preview-muted-foreground)]">
+			<div className="flex flex-wrap gap-x-3 gap-y-0.5 px-3.5 pb-2 text-[10px] text-[var(--preview-muted-foreground)]">
 				{card.runtime ? (
 					<span className="inline-flex items-center gap-1">
 						<ClockIcon className="h-3 w-3 shrink-0" />
@@ -1740,9 +1740,8 @@ function BoardCard({
 			</div>
 		) : null}
 		{(card.column === "in_review" || card.column === "merge") ? (
-			<div className="mt-2 flex items-center justify-between">
+			<div className="flex items-center justify-between px-3.5 pb-2">
 				<div className="flex items-center gap-1.5">
-					{/* reviewer avatars */}
 					{card.reviewers && card.reviewers.length > 0 ? (
 						<div className="flex -space-x-1.5">
 							{card.reviewers.slice(0, 3).map((src) => (
@@ -1759,7 +1758,6 @@ function BoardCard({
 							))}
 						</div>
 					) : null}
-					{/* test results for in_review */}
 					{card.column === "in_review" && card.testResults ? (
 						<span
 							className={`text-[10px] ${card.testResults.pass < card.testResults.total ? "text-[#fb923c]" : "text-[var(--preview-muted-foreground)]"}`}
@@ -1768,7 +1766,6 @@ function BoardCard({
 						</span>
 					) : null}
 				</div>
-				{/* PR comments */}
 				{card.prComments !== undefined ? (
 					<span
 						className={`text-[10px] ${card.prComments > 0 ? "text-[#fb923c]" : "text-[var(--preview-muted-foreground)]"}`}
@@ -1779,30 +1776,30 @@ function BoardCard({
 			</div>
 		) : null}
 		{card.tone === "ready" ? (
-			<div className="mt-3 flex items-center justify-between gap-2">
+			<div className="flex items-center justify-between gap-2 border-t border-[var(--preview-border)] px-3.5 py-2.5">
 				<button
 					type="button"
 					onClick={(event) => {
 						event.stopPropagation();
 						onMerge(card.id);
 					}}
-					className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-[6px] bg-[var(--preview-primary)] px-2.5 text-[10px] font-semibold text-[var(--preview-primary-foreground)] transition-transform active:scale-[0.96]"
+					className="inline-flex h-6 items-center justify-center whitespace-nowrap rounded-md bg-[var(--preview-primary)] px-2.5 text-[10.5px] font-semibold text-[var(--preview-primary-foreground)] transition-transform active:scale-[0.96]"
 				>
 					Merge PR
 				</button>
-				<span className="shrink-0 text-[10px] text-[var(--preview-muted-foreground)]">{card.time}</span>
+				<span className="shrink-0 font-mono text-[10.5px] text-[var(--preview-muted-foreground)]">{card.time}</span>
 			</div>
 		) : (
-			<div className="mt-3 flex items-center justify-between">
+			<div className="flex items-center justify-between border-t border-[var(--preview-border)] px-3.5 py-2.5">
 				<span
-					className={`inline-flex items-center gap-1.5 text-[10px] ${activityColor}`}
+					className={`inline-flex items-center gap-1.5 text-[10.5px] ${activityColor}`}
 				>
 					<ActivityIcon id={activityIcon} />
 					{card.testResults && card.column === "staging"
 						? `${card.testResults.pass}/${card.testResults.total} tests passing`
 						: card.activity}
 				</span>
-				<span className="text-[10px] text-[var(--preview-muted-foreground)]">{card.time}</span>
+				<span className="font-mono text-[10.5px] text-[var(--preview-muted-foreground)]">{card.time}</span>
 			</div>
 		)}
 	</motion.div>
@@ -1838,18 +1835,18 @@ function BoardColumn({
 
 	return (
 		<section className="flex min-h-0 min-w-0 snap-start flex-col border-r border-[var(--preview-border)] last:border-r-0">
-			<div className="flex items-center gap-2 border-b border-[var(--preview-border)] px-3 py-2.5">
+			<div className="flex h-12 shrink-0 items-center gap-2.5 border-b border-[var(--preview-border)] px-4">
 				<span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
-				<div className="text-[11px] font-semibold tracking-[-0.5px] text-[var(--preview-muted-foreground)]">{title}</div>
-				<div className="ml-2 text-[10px] tabular-nums text-[var(--preview-muted-foreground)]">{count}</div>
+				<div className="font-mono text-[10.5px] font-medium uppercase tracking-wide text-[var(--preview-muted-foreground)]">{title}</div>
+				<div className="ml-auto font-mono text-[10.5px] leading-none text-[var(--preview-muted-foreground)] opacity-60">{count}</div>
 				{extraWaiting > 0 ? (
-					<div className="ml-auto inline-flex items-center gap-1 rounded-[4px] bg-[#fb923c]/10 px-1.5 py-0.5 text-[9px] font-semibold text-[#fb923c]">
+					<div className="inline-flex items-center gap-1 rounded-[4px] bg-[#fb923c]/10 px-1.5 py-0.5 text-[9px] font-semibold text-[#fb923c]">
 						<WaitingIcon className="h-2.5 w-2.5" />
 						{extraWaiting} waiting
 					</div>
 				) : null}
 			</div>
-			<div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2 scrollbar-hide">
+			<div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-3 pb-3 pt-3 scrollbar-hide">
 				<AnimatePresence initial={false}>
 					{sortedCards.map((card) => (
 						<BoardCard
@@ -2210,6 +2207,16 @@ export function AppMockup() {
 	const sidebarRef = useRef<HTMLElement>(null);
 	const sidebarWidthRef = useRef(178);
 	const { startDrag, startResize } = useFloatingWindow(windowRef);
+	const [windowScale, setWindowScale] = useState(1);
+	useLayoutEffect(() => {
+		const el = windowRef.current;
+		if (!el) return;
+		const obs = new ResizeObserver(([entry]) => {
+			if (entry) setWindowScale(entry.contentRect.width / BASE_WIDTH);
+		});
+		obs.observe(el);
+		return () => obs.disconnect();
+	}, []);
 	const isRepoAvatarReady = useImageReady(repoAvatar);
 	useDecorativeSubtree(windowRef);
 
@@ -2456,7 +2463,15 @@ export function AppMockup() {
 					.ao-attention-pulse { animation: none; }
 				}
 			`}</style>
-			<div className="flex h-full flex-col">
+			<div
+			style={{
+				width: BASE_WIDTH,
+				height: BASE_HEIGHT,
+				transform: `scale(${windowScale})`,
+				transformOrigin: "top left",
+			}}
+			className="flex flex-col"
+		>
 				<WindowTitlebar
 					mergedCount={mergedCount}
 					onNewTask={spawnRandomTask}
