@@ -76,8 +76,14 @@ frontend/test-results/
 # built daemon binary copied into the frontend bundle dir
 frontend/daemon/
 
-# Locally-added agent skills (not for the team)
+# Locally-added agent skills (not for the team), except curated project skills
 .agents/
+!.agents/
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/ao-desktop-dev/
+!.agents/skills/ao-desktop-dev/**
 skills-lock.json
 
 # e2e pod gate: downloaded pod logs/traces (uploaded as CI artifacts, not committed)
