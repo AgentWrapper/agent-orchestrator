@@ -1106,13 +1106,13 @@ function LineFeedbackButton({
 	return (
 		<Button
 			aria-label={label}
-			className="absolute left-[26px] top-1/2 z-10 size-5 -translate-y-1/2 rounded-sm opacity-0 shadow-sm transition-opacity focus-visible:opacity-100 group-hover/line:opacity-100"
+			className="absolute inset-y-0 left-6 z-20 my-auto size-6 rounded-sm border-primary/70 opacity-0 shadow-md shadow-black/30 transition-opacity active:translate-y-0 active:scale-100 focus-visible:opacity-100 group-hover/line:opacity-100"
 			onClick={onClick}
 			size={null}
 			type="button"
-			variant="ghost"
+			variant="primary"
 		>
-			<Plus className="size-3.5" aria-hidden="true" />
+			<Plus className="size-4" aria-hidden="true" />
 		</Button>
 	);
 }
