@@ -76,16 +76,10 @@ function pickRandom<T>(items: T[]): T {
 // Lottery pools for activity labels per column transition
 function pickStagingActivity(): { activity: string; testResults?: { pass: number; total: number } } {
 	const total = pickRandom([42, 50, 54, 60, 28]);
-	const pass = pickRandom([
-		total,
-		total,
-		total - 1,
-		total - 2,
-		Math.max(0, total - Math.floor(Math.random() * 5 + 3)),
-	]);
+	const pass = Math.floor(total * (0.3 + Math.random() * 0.4));
 	const labels: Array<{ activity: string; testResults?: { pass: number; total: number } }> = [
-		{ activity: `${pass}/${total} tests passing`, testResults: { pass, total } },
-		{ activity: `${pass}/${total} tests passing`, testResults: { pass, total } },
+		{ activity: `${pass}/${total} passed`, testResults: { pass, total } },
+		{ activity: `${pass}/${total} passed`, testResults: { pass, total } },
 		{ activity: "Building...", testResults: undefined },
 		{ activity: "Linting codebase", testResults: undefined },
 		{ activity: "Type checking", testResults: undefined },
@@ -145,16 +139,14 @@ const columns = [
 				branch: "landing/platform-download-copy",
 				agent: "Cursor",
 				icon: "/app-icons/cursor.svg",
-				activity: "Paused for copy decision",
-				activityState: "waiting",
+				activity: "Editing copy",
+				activityState: "running",
 				pr: "draft",
-				checks: "needs product call",
+				checks: "editing",
 				files: "3 files",
 				time: "1h ago",
-				badge: "Needs input",
-				tone: "blocked",
-				runtime: "1h 12m",
-				lastAction: "paused · copy decision pending",
+				badge: null,
+				tone: "default",
 			},
 			{
 				title: "Port Figma board mock into the hero preview",
@@ -169,8 +161,20 @@ const columns = [
 				time: "12m ago",
 				badge: null,
 				tone: "default",
-				runtime: "23m",
-				lastAction: "editing HeroSection.tsx",
+			},
+			{
+				title: "Add keyboard shortcut for session focus",
+				branch: "feat/session-focus-shortcut",
+				agent: "Codex",
+				icon: "/app-icons/coverage-codex.svg",
+				activity: "Writing implementation",
+				activityState: "running",
+				pr: "draft",
+				checks: "editing",
+				files: "2 files",
+				time: "8m ago",
+				badge: null,
+				tone: "default",
 			},
 		],
 	},
@@ -183,24 +187,22 @@ const columns = [
 				branch: "landing/titlebar-metrics",
 				agent: "Claude",
 				icon: "/app-icons/coverage-claude-code.svg",
-				activity: "Agent wants input",
-				activityState: "waiting",
+				activity: "Running checks",
+				activityState: "running",
 				pr: "PR #322",
-				checks: "review comments 4",
+				checks: "checks running",
 				files: "1 file",
 				time: "46m ago",
-				badge: "Needs input",
-				tone: "blocked",
-				runtime: "46m",
-				lastAction: "awaiting input on metrics",
-				testResults: { pass: 38, total: 42 },
+				badge: null,
+				tone: "default",
+				testResults: { pass: 27, total: 44 },
 			},
 			{
 				title: "Run integration tests on webhook handler",
 				branch: "webhooks/integration-tests",
 				agent: "Codex",
 				icon: "/app-icons/coverage-codex.svg",
-				activity: "51/54 tests passing",
+				activity: "51/54 passed",
 				activityState: "running",
 				pr: "draft",
 				checks: "checks running",
@@ -217,7 +219,7 @@ const columns = [
 				branch: "auth/jwt-rotation",
 				agent: "Codex",
 				icon: "/app-icons/coverage-codex.svg",
-				activity: "44/44 tests passing",
+				activity: "Running tests",
 				activityState: "running",
 				pr: "PR #331",
 				checks: "checks running",
@@ -225,7 +227,22 @@ const columns = [
 				time: "34m ago",
 				badge: null,
 				tone: "default",
-				testResults: { pass: 44, total: 44 },
+				testResults: { pass: 27, total: 44 },
+			},
+			{
+				title: "Throttle agent spawn rate under high load",
+				branch: "backend/spawn-throttle",
+				agent: "Claude",
+				icon: "/app-icons/coverage-claude-code.svg",
+				activity: "Running tests",
+				activityState: "running",
+				pr: "PR #334",
+				checks: "checks running",
+				files: "4 files",
+				time: "19m ago",
+				badge: null,
+				tone: "default",
+				testResults: { pass: 18, total: 38 },
 			},
 		],
 	},
@@ -246,7 +263,7 @@ const columns = [
 				time: "1h ago",
 				badge: "Changes requested",
 				tone: "review",
-				testResults: { pass: 60, total: 60 },
+				testResults: { pass: 38, total: 60 },
 				prComments: 3,
 				reviewers: [REVIEWERS.harshit, REVIEWERS.suraj],
 			},
@@ -266,6 +283,22 @@ const columns = [
 				testResults: { pass: 28, total: 28 },
 				prComments: 1,
 				reviewers: [REVIEWERS.ashish, REVIEWERS.harsh2, REVIEWERS.illegal],
+			},
+			{
+				title: "Lazy-load session terminal on first open",
+				branch: "perf/lazy-terminal",
+				agent: "Cursor",
+				icon: "/app-icons/cursor.svg",
+				activity: "Review in progress",
+				activityState: "reviewing",
+				pr: "PR #328",
+				checks: "checks passed",
+				files: "3 files",
+				time: "45m ago",
+				badge: "Awaiting review",
+				tone: "review",
+				prComments: 0,
+				reviewers: [REVIEWERS.itry, REVIEWERS.agent],
 			},
 		],
 	},
@@ -288,6 +321,22 @@ const columns = [
 				tone: "ready",
 				prComments: 0,
 				reviewers: [REVIEWERS.harshit, REVIEWERS.agent],
+			},
+			{
+				title: "Fix memory leak in terminal resize handler",
+				branch: "fix/terminal-resize-leak",
+				agent: "Claude",
+				icon: "/app-icons/coverage-claude-code.svg",
+				activity: "LGTM",
+				activityState: "passed",
+				pr: "PR #323",
+				checks: "approved",
+				files: "2 files",
+				time: "4h ago",
+				badge: null,
+				tone: "ready",
+				prComments: 1,
+				reviewers: [REVIEWERS.suraj, REVIEWERS.whoisasx],
 			},
 			{
 				title: "Stabilize Vercel framework detection",
@@ -1608,11 +1657,34 @@ function getCardVisualState(card: PreviewCard): CardVisualState {
 	return { prStatus, prClass, activityColor, activityIcon };
 }
 
-function ActivityIcon({ id }: { id: ActivityIconId }) {
+function CircleProgressIcon({ pass, total }: { pass: number; total: number }) {
+	const r = 5;
+	const circ = 2 * Math.PI * r;
+	const ratio = total > 0 ? pass / total : 0;
+	const dash = ratio * circ;
+	const trackColor = "#374151";
+	const fillColor = ratio >= 1 ? "#4ade80" : ratio < 0.5 ? "#fb923c" : "#e5e7eb";
+	return (
+		<svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true" style={{ flexShrink: 0 }}>
+			<circle cx="6" cy="6" r={r} stroke={trackColor} strokeWidth="1.5" />
+			<circle
+				cx="6" cy="6" r={r}
+				stroke={fillColor}
+				strokeWidth="1.5"
+				strokeDasharray={`${dash} ${circ}`}
+				strokeLinecap="round"
+				transform="rotate(-90 6 6)"
+			/>
+		</svg>
+	);
+}
+
+function ActivityIcon({ id, testResults }: { id: ActivityIconId; testResults?: { pass: number; total: number } }) {
 	if (id === "check") return <CheckIcon className="h-3 w-3" />;
 	if (id === "warning") return <WarningIcon className="h-3 w-3" />;
 	if (id === "github") return <GitHubIcon className="h-3 w-3" />;
 	if (id === "waiting") return <WaitingIcon className="h-3 w-3" />;
+	if (testResults) return <CircleProgressIcon pass={testResults.pass} total={testResults.total} />;
 	return (
 		<span className="h-3 w-3 animate-spin rounded-full border border-[#4b5563] border-t-[#d1d5db]" />
 	);
@@ -1630,6 +1702,30 @@ function BoardCard({
 	onOpen: (card: PreviewCard) => void;
 }) {
 	const [canPressScale, setCanPressScale] = useState(true);
+
+	// Animate test count upward for staging cards so it never looks static.
+	// Starts at ~20% of total and ticks up every 400ms, wrapping back to the
+	// start once it reaches (total - 1) so it always looks in-progress.
+	const isTestCard = card.column === "staging" && !!card.testResults;
+	const testTotal = card.testResults?.total ?? 0;
+	const [animatedPass, setAnimatedPass] = useState(() =>
+		isTestCard ? Math.floor(testTotal * 0.2) : 0,
+	);
+	useEffect(() => {
+		if (!isTestCard) return;
+		let timeout: number;
+		const tick = () => {
+			setAnimatedPass((p) => {
+				const jump = Math.floor(Math.random() * 4) + 1;
+				const next = p + jump;
+				return next >= testTotal ? Math.floor(testTotal * 0.2) : next;
+			});
+			timeout = window.setTimeout(tick, 300 + Math.random() * 600);
+		};
+		timeout = window.setTimeout(tick, 300 + Math.random() * 600);
+		return () => window.clearTimeout(timeout);
+	}, [isTestCard, testTotal]);
+
 	const prMatch = card.pr.match(/PR\s+#(\d+)/i);
 	const { prStatus, prClass, activityColor, activityIcon } =
 		getCardVisualState(card);
@@ -1723,22 +1819,6 @@ function BoardCard({
 			) : null}
 		</div>
 		{/* Per-column metadata row */}
-		{(card.column === "working" || card.column === "staging") &&
-			(card.runtime ?? card.lastAction) ? (
-			<div className="flex flex-wrap gap-x-3 gap-y-0.5 px-3.5 pb-2 text-[10px] text-[var(--preview-muted-foreground)]">
-				{card.runtime ? (
-					<span className="inline-flex items-center gap-1">
-						<ClockIcon className="h-3 w-3 shrink-0" />
-						{card.runtime}
-					</span>
-				) : null}
-				{card.lastAction ? (
-					<span className="min-w-0 truncate italic" title={card.lastAction}>
-						{card.lastAction}
-					</span>
-				) : null}
-			</div>
-		) : null}
 		{(card.column === "in_review" || card.column === "merge") ? (
 			<div className="flex items-center justify-between px-3.5 pb-2">
 				<div className="flex items-center gap-1.5">
@@ -1794,9 +1874,12 @@ function BoardCard({
 				<span
 					className={`inline-flex items-center gap-1.5 text-[10.5px] ${activityColor}`}
 				>
-					<ActivityIcon id={activityIcon} />
-					{card.testResults && card.column === "staging"
-						? `${card.testResults.pass}/${card.testResults.total} tests passing`
+					<ActivityIcon
+						id={activityIcon}
+						testResults={isTestCard ? { pass: animatedPass, total: testTotal } : undefined}
+					/>
+					{isTestCard
+						? `${animatedPass}/${testTotal} passed`
 						: card.activity}
 				</span>
 				<span className="font-mono text-[10.5px] text-[var(--preview-muted-foreground)]">{card.time}</span>
@@ -2207,16 +2290,6 @@ export function AppMockup() {
 	const sidebarRef = useRef<HTMLElement>(null);
 	const sidebarWidthRef = useRef(178);
 	const { startDrag, startResize } = useFloatingWindow(windowRef);
-	const [windowScale, setWindowScale] = useState(1);
-	useLayoutEffect(() => {
-		const el = windowRef.current;
-		if (!el) return;
-		const obs = new ResizeObserver(([entry]) => {
-			if (entry) setWindowScale(entry.contentRect.width / BASE_WIDTH);
-		});
-		obs.observe(el);
-		return () => obs.disconnect();
-	}, []);
 	const isRepoAvatarReady = useImageReady(repoAvatar);
 	useDecorativeSubtree(windowRef);
 
@@ -2376,9 +2449,24 @@ export function AppMockup() {
 					}
 				}
 
-				const workingCount = next.filter((card) => card.column === "working").length;
-				const activeCount = next.filter((card) => !card.merging).length;
-				if (workingCount < 2 && activeCount < 7 && Math.random() < 0.5) {
+			// Ensure no column ever sits empty — advance a card from the
+			// previous column immediately if needed (left-to-right, in order).
+			const columnOrder: BoardColumnId[] = ["working", "staging", "in_review", "merge"];
+			for (let i = 1; i < columnOrder.length; i++) {
+				const col = columnOrder[i] as BoardColumnId;
+				const prev = columnOrder[i - 1] as BoardColumnId;
+				const isEmpty = next.filter((c) => c.column === col && !c.merging).length === 0;
+				if (isEmpty) {
+					const donor = next.find((c) => c.column === prev && !c.merging && c.id !== selectedCardId);
+					if (donor) {
+						next = next.map((c) => c.id === donor.id ? advanceCard(c) : c);
+					}
+				}
+			}
+
+			const workingCount = next.filter((card) => card.column === "working").length;
+			const activeCount = next.filter((card) => !card.merging).length;
+				if ((workingCount < 1 || (workingCount < 2 && Math.random() < 0.4)) && activeCount < 8) {
 					const existingTitles = new Set(next.map((card) => card.title));
 					const templateOffset = incomingCards.findIndex((_, offset) => {
 						const candidate =
@@ -2463,15 +2551,7 @@ export function AppMockup() {
 					.ao-attention-pulse { animation: none; }
 				}
 			`}</style>
-			<div
-			style={{
-				width: BASE_WIDTH,
-				height: BASE_HEIGHT,
-				transform: `scale(${windowScale})`,
-				transformOrigin: "top left",
-			}}
-			className="flex flex-col"
-		>
+			<div className="flex h-full flex-col">
 				<WindowTitlebar
 					mergedCount={mergedCount}
 					onNewTask={spawnRandomTask}
