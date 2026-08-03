@@ -4,12 +4,16 @@ package modelcatalog
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -191,26 +195,31 @@ func modelDiscoveryError(agentID string, runCtx context.Context, commandErr erro
 	return fmt.Errorf("%s model discovery: %w", agentID, commandErr)
 }
 
-// BinaryVersion returns a short best-effort version string for cache
-// invalidation. Version probing failure is non-fatal.
+// BinaryVersion returns a short non-sensitive executable-metadata fingerprint
+// for cache invalidation. It deliberately does not start the agent: statting
+// the resolved executable keeps cache validation fast and side-effect free.
 func BinaryVersion(ctx context.Context, binary string) string {
-	if strings.TrimSpace(binary) == "" {
+	if ctx.Err() != nil || strings.TrimSpace(binary) == "" {
 		return ""
 	}
-	runCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	output, err := exec.CommandContext(runCtx, binary, "--version").CombinedOutput() //nolint:gosec // adapter-resolved binary
+	resolved, err := exec.LookPath(binary)
 	if err != nil {
 		return ""
 	}
-	line := strings.TrimSpace(string(output))
-	if i := strings.IndexByte(line, '\n'); i >= 0 {
-		line = line[:i]
+	if evaluated, evalErr := filepath.EvalSymlinks(resolved); evalErr == nil {
+		resolved = evaluated
 	}
-	if len(line) > 160 {
-		line = line[:160]
+	info, err := os.Stat(resolved)
+	if err != nil || !info.Mode().IsRegular() {
+		return ""
 	}
-	return line
+	hash := sha256.New()
+	_, _ = hash.Write([]byte(resolved))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write([]byte(strconv.FormatInt(info.Size(), 10)))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write([]byte(strconv.FormatInt(info.ModTime().UnixNano(), 10)))
+	return fmt.Sprintf("%x", hash.Sum(nil)[:8])
 }
 
 func catalog(agentID, source string, allowCustom bool, at time.Time, models ...ports.AgentModelInfo) ports.AgentModelCatalog {

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
 	Bot,
 	Fingerprint,
@@ -25,6 +25,7 @@ import {
 	agentModelsQueryKey,
 	agentModelsQueryOptions,
 	refreshAgentModels,
+	revalidateAgentModels,
 	type AgentModelCatalog,
 } from "../hooks/useAgentModelsQuery";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
@@ -519,11 +520,23 @@ function AgentModelField({
 	const queryClient = useQueryClient();
 	const [customAgentId, setCustomAgentId] = useState<string | null>(null);
 	const query = useQuery(agentModelsQueryOptions(agentId, projectId));
+	const catalog: AgentModelCatalog | undefined = query.data;
+	const revalidationQuery = useQuery({
+		queryKey: ["agent-model-revalidation", agentId, projectId, catalog?.validatedAt ?? ""],
+		queryFn: () => revalidateAgentModels(agentId, projectId),
+		enabled: agentId !== "" && catalog?.refreshRecommended === true,
+		staleTime: Number.POSITIVE_INFINITY,
+		retry: false,
+	});
+	useEffect(() => {
+		if (revalidationQuery.data) {
+			queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), revalidationQuery.data);
+		}
+	}, [agentId, projectId, queryClient, revalidationQuery.data]);
 	const refreshMutation = useMutation({
 		mutationFn: () => refreshAgentModels(agentId, projectId),
 		onSuccess: (catalog) => queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), catalog),
 	});
-	const catalog: AgentModelCatalog | undefined = query.data;
 	const isMode = catalog?.selectionMode === "mode";
 	const label = `${role} ${isMode ? "mode" : "model"}`;
 	const datalistID = `${role.toLowerCase()}-model-options`;
@@ -532,6 +545,11 @@ function AgentModelField({
 			? refreshMutation.error instanceof Error
 				? refreshMutation.error.message
 				: "Could not refresh models."
+			: undefined) ??
+		(revalidationQuery.isError
+			? revalidationQuery.error instanceof Error
+				? revalidationQuery.error.message
+				: "Could not validate cached models."
 			: undefined) ??
 		catalog?.warning ??
 		(query.isError ? (query.error instanceof Error ? query.error.message : "Could not load models.") : undefined);

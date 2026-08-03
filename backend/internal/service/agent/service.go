@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -17,10 +18,25 @@ import (
 )
 
 var (
-	agentInstallProbeTimeout = 2 * time.Second
-	agentAuthProbeTimeout    = 10 * time.Second
-	agentRefreshMinInterval  = 10 * time.Second
+	agentInstallProbeTimeout  = 2 * time.Second
+	agentAuthProbeTimeout     = 10 * time.Second
+	agentRefreshMinInterval   = 10 * time.Second
+	modelCatalogValidationTTL = 10 * time.Minute
 )
+
+type modelLoadMode uint8
+
+const (
+	modelLoadCached modelLoadMode = iota
+	modelLoadRevalidate
+	modelLoadRefresh
+)
+
+type modelCatalogCall struct {
+	done    chan struct{}
+	catalog ports.AgentModelCatalog
+	err     error
+}
 
 type probeResult struct {
 	info       Info
@@ -55,10 +71,12 @@ type Inventory struct {
 // Service reports supported agent adapters and best-effort local readiness
 // probes. Catalog readiness is advisory UI metadata, not a spawn precheck.
 type Service struct {
-	agents     []agentregistry.HarnessAgent
-	cache      ports.AgentModelCatalogCache
-	projects   ProjectLookup
-	resolverMu map[string]*sync.Mutex
+	agents      []agentregistry.HarnessAgent
+	cache       ports.AgentModelCatalogCache
+	projects    ProjectLookup
+	resolverMu  map[string]*sync.Mutex
+	modelCallMu sync.Mutex
+	modelCalls  map[string]*modelCatalogCall
 
 	mu          sync.RWMutex
 	inventory   Inventory
@@ -100,7 +118,7 @@ func newService(agents []agentregistry.HarnessAgent, cache ports.AgentModelCatal
 	for _, item := range agents {
 		resolverMu[string(item.Harness)] = &sync.Mutex{}
 	}
-	return &Service{agents: agents, cache: cache, projects: projects, resolverMu: resolverMu, inventory: Inventory{
+	return &Service{agents: agents, cache: cache, projects: projects, resolverMu: resolverMu, modelCalls: map[string]*modelCatalogCall{}, inventory: Inventory{
 		Supported:  supportedInfos(agents),
 		Installed:  []Info{},
 		Authorized: []Info{},
@@ -209,6 +227,49 @@ func (s *Service) Probe(ctx context.Context, agentID string) (ProbeResult, error
 // restarts; refresh forces a new documented CLI discovery attempt. Discovery
 // failures degrade to the last cached catalog or a custom model input.
 func (s *Service) Models(ctx context.Context, agentID, projectID string, refresh bool) (ports.AgentModelCatalog, error) {
+	mode := modelLoadCached
+	if refresh {
+		mode = modelLoadRefresh
+	}
+	return s.coalesceModelLoad(ctx, agentID, projectID, mode)
+}
+
+// RevalidateModels checks whether a cached catalog's executable or config-file
+// metadata changed. An unchanged catalog is touched without executing the
+// agent's model-list command; a changed catalog is rediscovered and cached.
+func (s *Service) RevalidateModels(ctx context.Context, agentID, projectID string) (ports.AgentModelCatalog, error) {
+	return s.coalesceModelLoad(ctx, agentID, projectID, modelLoadRevalidate)
+}
+
+func (s *Service) coalesceModelLoad(
+	ctx context.Context,
+	agentID, projectID string,
+	mode modelLoadMode,
+) (ports.AgentModelCatalog, error) {
+	key := agentID + "\x00" + projectID + "\x00" + strconv.Itoa(int(mode))
+	s.modelCallMu.Lock()
+	if active := s.modelCalls[key]; active != nil {
+		s.modelCallMu.Unlock()
+		select {
+		case <-active.done:
+			return active.catalog, active.err
+		case <-ctx.Done():
+			return ports.AgentModelCatalog{}, ctx.Err()
+		}
+	}
+	call := &modelCatalogCall{done: make(chan struct{})}
+	s.modelCalls[key] = call
+	s.modelCallMu.Unlock()
+
+	call.catalog, call.err = s.loadModels(ctx, agentID, projectID, mode)
+	s.modelCallMu.Lock()
+	delete(s.modelCalls, key)
+	close(call.done)
+	s.modelCallMu.Unlock()
+	return call.catalog, call.err
+}
+
+func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mode modelLoadMode) (ports.AgentModelCatalog, error) {
 	if err := ctx.Err(); err != nil {
 		return ports.AgentModelCatalog{}, err
 	}
@@ -219,6 +280,15 @@ func (s *Service) Models(ctx context.Context, agentID, projectID string, refresh
 	workingDir, err := s.projectWorkingDir(ctx, projectID)
 	if err != nil {
 		return ports.AgentModelCatalog{}, err
+	}
+	cached, hasCached, err := s.cachedCatalog(ctx, agentID, projectID)
+	if err != nil {
+		return ports.AgentModelCatalog{}, err
+	}
+	if hasCached && mode == modelLoadCached {
+		cached.Catalog.RefreshRecommended = cached.Catalog.ValidatedAt.IsZero() ||
+			time.Since(cached.Catalog.ValidatedAt) >= modelCatalogValidationTTL
+		return cached.Catalog, nil
 	}
 
 	var binary string
@@ -235,17 +305,19 @@ func (s *Service) Models(ctx context.Context, agentID, projectID string, refresh
 	if configVersion := modelcatalog.ConfigVersion(agentID, workingDir); configVersion != "" {
 		version += ";config=" + configVersion
 	}
-
-	cached, hasCached, err := s.cachedCatalog(ctx, agentID, projectID)
-	if err != nil {
-		return ports.AgentModelCatalog{}, err
-	}
-	if hasCached && !refresh && cached.BinaryVersion == version {
+	if hasCached && mode == modelLoadRevalidate && cached.BinaryVersion == version {
+		cached.Catalog.ValidatedAt = time.Now().UTC()
+		cached.Catalog.RefreshRecommended = false
+		if err := s.saveCatalog(ctx, projectID, cached.Catalog); err != nil {
+			cached.Catalog.Warning = appendWarning(cached.Catalog.Warning, "Models loaded, but AO could not update the model cache.")
+		}
 		return cached.Catalog, nil
 	}
 
 	discovered, discoverErr := modelcatalog.Discover(ctx, agentID, binary, workingDir)
 	discovered.BinaryVersion = version
+	discovered.ValidatedAt = time.Now().UTC()
+	discovered.RefreshRecommended = false
 	if discoverErr != nil {
 		if len(discovered.Models) > 0 {
 			discovered.Stale = true
@@ -258,10 +330,16 @@ func (s *Service) Models(ctx context.Context, agentID, projectID string, refresh
 		if hasCached {
 			cached.Catalog.Stale = true
 			cached.Catalog.Warning = discoverErr.Error()
+			cached.Catalog.ValidatedAt = time.Now().UTC()
+			cached.Catalog.RefreshRecommended = false
+			if err := s.saveCatalog(ctx, projectID, cached.Catalog); err != nil {
+				cached.Catalog.Warning = appendWarning(cached.Catalog.Warning, "Models loaded, but AO could not update the model cache.")
+			}
 			return cached.Catalog, nil
 		}
 		fallback := modelcatalog.Manual(agentID)
 		fallback.BinaryVersion = version
+		fallback.ValidatedAt = time.Now().UTC()
 		fallback.Stale = true
 		fallback.Warning = discoverErr.Error()
 		return fallback, nil

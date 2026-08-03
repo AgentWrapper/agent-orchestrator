@@ -419,6 +419,57 @@ describe("ProjectSettingsForm", () => {
 		expect(screen.getByRole("button", { name: "Worker model" })).toHaveTextContent("Agent default");
 	});
 
+	it("shows cached models immediately and deduplicates background revalidation", async () => {
+		const cachedCatalog = {
+			agentId: "codex",
+			selectionMode: "catalog" as const,
+			models: [{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol" }],
+			allowCustom: true,
+			source: "official-catalog",
+			fetchedAt: "2026-07-31T00:00:00Z",
+			validatedAt: "2026-07-31T00:00:00Z",
+			refreshRecommended: true,
+			stale: false,
+		};
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") return agentCatalogResponse;
+			if (path === "/api/v1/agents/{agent}/models") return { data: cachedCatalog, error: undefined };
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "proj-1",
+						name: "Project One",
+						kind: "single_repo",
+						path: "/repo/project-one",
+						repo: "",
+						defaultBranch: "main",
+						config: {
+							worker: { agent: "codex" },
+							orchestrator: { agent: "codex" },
+						},
+					},
+				},
+				error: undefined,
+			};
+		});
+		postMock.mockResolvedValue({
+			data: { ...cachedCatalog, refreshRecommended: false, validatedAt: "2026-08-03T00:00:00Z" },
+			error: undefined,
+		});
+
+		renderSettings();
+
+		expect(await screen.findByRole("button", { name: "Worker model" })).toHaveTextContent("Agent default");
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		expect(postMock).toHaveBeenCalledWith("/api/v1/agents/{agent}/models/refresh", {
+			params: {
+				path: { agent: "codex" },
+				query: { projectId: "proj-1", revalidate: true },
+			},
+		});
+	});
+
 	it("shows the daemon validation message when the atomic settings save fails", async () => {
 		mockProject({
 			id: "proj-1",

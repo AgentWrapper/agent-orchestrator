@@ -19,6 +19,7 @@ type AgentCatalog interface {
 	Refresh(ctx context.Context) (agentsvc.Inventory, error)
 	Probe(ctx context.Context, agentID string) (agentsvc.ProbeResult, error)
 	Models(ctx context.Context, agentID, projectID string, refresh bool) (ports.AgentModelCatalog, error)
+	RevalidateModels(ctx context.Context, agentID, projectID string) (ports.AgentModelCatalog, error)
 }
 
 // AgentsController owns the /agents routes.
@@ -36,14 +37,14 @@ func (c *AgentsController) Register(r chi.Router) {
 }
 
 func (c *AgentsController) models(w http.ResponseWriter, r *http.Request) {
-	c.writeModels(w, r, false)
+	c.writeModels(w, r, false, false)
 }
 
 func (c *AgentsController) refreshModels(w http.ResponseWriter, r *http.Request) {
-	c.writeModels(w, r, true)
+	c.writeModels(w, r, true, r.URL.Query().Get("revalidate") == "true")
 }
 
-func (c *AgentsController) writeModels(w http.ResponseWriter, r *http.Request, refresh bool) {
+func (c *AgentsController) writeModels(w http.ResponseWriter, r *http.Request, refresh, revalidate bool) {
 	if c.Catalog == nil {
 		apispec.NotImplemented(w, r, r.Method, "/api/v1/agents/{agent}/models")
 		return
@@ -53,7 +54,14 @@ func (c *AgentsController) writeModels(w http.ResponseWriter, r *http.Request, r
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "AGENT_REQUIRED", "agent is required", nil)
 		return
 	}
-	catalog, err := c.Catalog.Models(r.Context(), agentID, strings.TrimSpace(r.URL.Query().Get("projectId")), refresh)
+	projectID := strings.TrimSpace(r.URL.Query().Get("projectId"))
+	var catalog ports.AgentModelCatalog
+	var err error
+	if revalidate {
+		catalog, err = c.Catalog.RevalidateModels(r.Context(), agentID, projectID)
+	} else {
+		catalog, err = c.Catalog.Models(r.Context(), agentID, projectID, refresh)
+	}
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return

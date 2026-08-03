@@ -495,7 +495,7 @@ func agentOperations() []operation {
 		{
 			method: http.MethodPost, path: "/api/v1/agents/{agent}/models/refresh", id: "refreshAgentModels", tag: "agents",
 			summary:    "Refresh and cache the model picker for one agent",
-			pathParams: []any{controllers.AgentIDParam{}, controllers.AgentModelsQuery{}},
+			pathParams: []any{controllers.AgentIDParam{}, controllers.AgentModelsRefreshQuery{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.AgentModelsResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},

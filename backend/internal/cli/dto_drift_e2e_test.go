@@ -159,6 +159,10 @@ func (f *fakeAgentCatalog) Models(_ context.Context, agentID, _ string, _ bool) 
 	}, nil
 }
 
+func (f *fakeAgentCatalog) RevalidateModels(ctx context.Context, agentID, projectID string) (ports.AgentModelCatalog, error) {
+	return f.Models(ctx, agentID, projectID, false)
+}
+
 func authorizedCodexInventory() agentsvc.Inventory {
 	info := agentsvc.Info{ID: "codex", Label: "Codex", AuthStatus: "authorized"}
 	return agentsvc.Inventory{

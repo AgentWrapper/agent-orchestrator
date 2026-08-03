@@ -104,6 +104,14 @@ paths:
           description: Optional project identifier used as the model-catalog cache
             scope.
           type: string
+      - description: When true, compare executable and config metadata before running
+          discovery.
+        in: query
+        name: revalidate
+        schema:
+          description: When true, compare executable and config metadata before running
+            discovery.
+          type: boolean
       responses:
         "200":
           content:
@@ -2848,6 +2856,8 @@ components:
           items:
             $ref: '#/components/schemas/AgentModelInfo'
           type: array
+        refreshRecommended:
+          type: boolean
         selectionMode:
           enum:
           - catalog
@@ -2858,6 +2868,9 @@ components:
           type: string
         stale:
           type: boolean
+        validatedAt:
+          format: date-time
+          type: string
         warning:
           type: string
       required:

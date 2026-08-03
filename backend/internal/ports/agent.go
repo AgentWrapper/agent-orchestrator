@@ -98,10 +98,16 @@ type AgentModelCatalog struct {
 	Models        []AgentModelInfo   `json:"models"`
 	AllowCustom   bool               `json:"allowCustom"`
 	Source        string             `json:"source"`
-	BinaryVersion string             `json:"binaryVersion,omitempty"` // Also includes a non-sensitive config metadata fingerprint when applicable.
-	FetchedAt     time.Time          `json:"fetchedAt"`
-	Stale         bool               `json:"stale"`
-	Warning       string             `json:"warning,omitempty"`
+	// BinaryVersion is the legacy wire name for AO's non-sensitive executable
+	// and configuration metadata fingerprint.
+	BinaryVersion string    `json:"binaryVersion,omitempty"`
+	FetchedAt     time.Time `json:"fetchedAt"`
+	ValidatedAt   time.Time `json:"validatedAt,omitempty"`
+	// RefreshRecommended tells cache-first clients to revalidate in the
+	// background while continuing to display the cached catalog.
+	RefreshRecommended bool   `json:"refreshRecommended,omitempty"`
+	Stale              bool   `json:"stale"`
+	Warning            string `json:"warning,omitempty"`
 }
 
 // CachedAgentModelCatalog is the persistence record used by the model-catalog
@@ -109,7 +115,7 @@ type AgentModelCatalog struct {
 type CachedAgentModelCatalog struct {
 	AgentID       string
 	ProjectID     string
-	BinaryVersion string // Discovery-input version: binary version plus config metadata fingerprint when applicable.
+	BinaryVersion string // Legacy field name for the discovery-input metadata fingerprint.
 	CatalogJSON   string
 	Source        string
 	FetchedAt     time.Time

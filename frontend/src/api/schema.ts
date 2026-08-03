@@ -965,10 +965,13 @@ export interface components {
             /** Format: date-time */
             fetchedAt: string;
             models: components["schemas"]["AgentModelInfo"][];
+            refreshRecommended?: boolean;
             /** @enum {string} */
             selectionMode: "catalog" | "text" | "mode";
             source: string;
             stale: boolean;
+            /** Format: date-time */
+            validatedAt?: string;
             warning?: string;
         };
         BrowserCommandRequest: {
@@ -1788,6 +1791,8 @@ export interface operations {
             query?: {
                 /** @description Optional project identifier used as the model-catalog cache scope. */
                 projectId?: string;
+                /** @description When true, compare executable and config metadata before running discovery. */
+                revalidate?: boolean;
             };
             header?: never;
             path: {

@@ -16,19 +16,20 @@ import (
 )
 
 type fakeAgentCatalog struct {
-	inventory    agentsvc.Inventory
-	refreshed    agentsvc.Inventory
-	probed       agentsvc.ProbeResult
-	err          error
-	listCalls    int
-	refreshCalls int
-	probeCalls   int
-	probeAgent   string
-	models       ports.AgentModelCatalog
-	modelCalls   int
-	modelAgent   string
-	modelProject string
-	modelRefresh bool
+	inventory       agentsvc.Inventory
+	refreshed       agentsvc.Inventory
+	probed          agentsvc.ProbeResult
+	err             error
+	listCalls       int
+	refreshCalls    int
+	probeCalls      int
+	probeAgent      string
+	models          ports.AgentModelCatalog
+	modelCalls      int
+	modelAgent      string
+	modelProject    string
+	modelRefresh    bool
+	revalidateCalls int
 }
 
 func (f *fakeAgentCatalog) List(context.Context) (agentsvc.Inventory, error) {
@@ -55,6 +56,13 @@ func (f *fakeAgentCatalog) Models(_ context.Context, agentID, projectID string, 
 	f.modelAgent = agentID
 	f.modelProject = projectID
 	f.modelRefresh = refresh
+	return f.models, f.err
+}
+
+func (f *fakeAgentCatalog) RevalidateModels(_ context.Context, agentID, projectID string) (ports.AgentModelCatalog, error) {
+	f.revalidateCalls++
+	f.modelAgent = agentID
+	f.modelProject = projectID
 	return f.models, f.err
 }
 
@@ -147,13 +155,15 @@ func TestProbeAgent(t *testing.T) {
 func TestGetAndRefreshAgentModels(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	for _, tc := range []struct {
-		name        string
-		method      string
-		path        string
-		wantRefresh bool
+		name           string
+		method         string
+		path           string
+		wantRefresh    bool
+		wantRevalidate bool
 	}{
 		{name: "cached", method: http.MethodGet, path: "/api/v1/agents/codex/models?projectId=proj-1"},
 		{name: "refresh", method: http.MethodPost, path: "/api/v1/agents/codex/models/refresh?projectId=proj-1", wantRefresh: true},
+		{name: "revalidate", method: http.MethodPost, path: "/api/v1/agents/codex/models/refresh?projectId=proj-1&revalidate=true", wantRevalidate: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			catalog := &fakeAgentCatalog{models: ports.AgentModelCatalog{
@@ -175,9 +185,20 @@ func TestGetAndRefreshAgentModels(t *testing.T) {
 					t.Fatalf("body missing %s: %s", want, body)
 				}
 			}
-			if catalog.modelCalls != 1 || catalog.modelAgent != "codex" || catalog.modelProject != "proj-1" || catalog.modelRefresh != tc.wantRefresh {
-				t.Fatalf("model call = count:%d agent:%q project:%q refresh:%v", catalog.modelCalls, catalog.modelAgent, catalog.modelProject, catalog.modelRefresh)
+			wantModelCalls := 1
+			if tc.wantRevalidate {
+				wantModelCalls = 0
+			}
+			if catalog.modelCalls != wantModelCalls || catalog.revalidateCalls != btoi(tc.wantRevalidate) || catalog.modelAgent != "codex" || catalog.modelProject != "proj-1" || catalog.modelRefresh != tc.wantRefresh {
+				t.Fatalf("model call = count:%d revalidate:%d agent:%q project:%q refresh:%v", catalog.modelCalls, catalog.revalidateCalls, catalog.modelAgent, catalog.modelProject, catalog.modelRefresh)
 			}
 		})
 	}
+}
+
+func btoi(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }

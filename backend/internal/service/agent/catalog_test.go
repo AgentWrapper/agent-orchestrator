@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -37,7 +38,13 @@ type probeTrackingAgent struct {
 type concurrentResolverAgent struct {
 	fakeAgent
 	active  atomic.Int32
+	calls   atomic.Int32
 	overlap atomic.Bool
+}
+
+type countingResolverAgent struct {
+	fakeAgent
+	calls atomic.Int32
 }
 
 type fakeModelCache struct {
@@ -79,6 +86,7 @@ func (f *fakeModelCache) UpsertAgentModelCatalog(_ context.Context, record ports
 }
 
 func (f *concurrentResolverAgent) ResolveBinary(ctx context.Context) (string, error) {
+	f.calls.Add(1)
 	if f.active.Add(1) != 1 {
 		f.overlap.Store(true)
 	}
@@ -89,6 +97,11 @@ func (f *concurrentResolverAgent) ResolveBinary(ctx context.Context) (string, er
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
+}
+
+func (f *countingResolverAgent) ResolveBinary(ctx context.Context) (string, error) {
+	f.calls.Add(1)
+	return f.fakeAgent.ResolveBinary(ctx)
 }
 
 func (f fakeAgent) GetConfigSpec(context.Context) (ports.ConfigSpec, error) {
@@ -426,6 +439,59 @@ func TestModelsCachesStaticCatalogByProject(t *testing.T) {
 	}
 }
 
+func TestModelsReturnsExpiredCacheBeforeBackgroundRevalidation(t *testing.T) {
+	cache := &fakeModelCache{}
+	agent := &countingResolverAgent{}
+	svc := newService([]agentregistry.HarnessAgent{{
+		Harness:  domain.AgentHarness("codex"),
+		Manifest: adapters.Manifest{ID: "codex", Name: "Codex"},
+		Agent:    agent,
+	}}, cache, nil)
+
+	first, err := svc.Models(context.Background(), "codex", "proj-1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ValidatedAt.IsZero() || first.RefreshRecommended {
+		t.Fatalf("first catalog validation = %#v", first)
+	}
+	record := cache.records["codex\x00proj-1"]
+	var expired ports.AgentModelCatalog
+	if err := json.Unmarshal([]byte(record.CatalogJSON), &expired); err != nil {
+		t.Fatal(err)
+	}
+	expired.ValidatedAt = time.Now().Add(-modelCatalogValidationTTL - time.Minute)
+	data, err := json.Marshal(expired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.CatalogJSON = string(data)
+	cache.records["codex\x00proj-1"] = record
+
+	resolveCalls := agent.calls.Load()
+	cached, err := svc.Models(context.Background(), "codex", "proj-1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agent.calls.Load() != resolveCalls {
+		t.Fatalf("cache hit resolved binary: calls=%d want=%d", agent.calls.Load(), resolveCalls)
+	}
+	if !cached.RefreshRecommended {
+		t.Fatalf("expired cache = %#v, want background revalidation recommendation", cached)
+	}
+
+	revalidated, err := svc.RevalidateModels(context.Background(), "codex", "proj-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agent.calls.Load() != resolveCalls+1 {
+		t.Fatalf("revalidation resolve calls=%d want=%d", agent.calls.Load(), resolveCalls+1)
+	}
+	if revalidated.RefreshRecommended || revalidated.ValidatedAt.Before(cached.ValidatedAt) {
+		t.Fatalf("revalidated catalog = %#v", revalidated)
+	}
+}
+
 func TestModelsResolvesProjectWorkingDirectory(t *testing.T) {
 	projects := &fakeProjectLookup{records: map[string]domain.ProjectRecord{
 		"proj-1": {ID: "proj-1", Path: "/work/project"},
@@ -506,6 +572,9 @@ func TestModelsAndRefreshSerializeBinaryResolutionPerAdapter(t *testing.T) {
 	}
 	if agent.overlap.Load() {
 		t.Fatal("ResolveBinary calls overlapped for the same adapter")
+	}
+	if got := agent.calls.Load(); got != 2 {
+		t.Fatalf("ResolveBinary calls = %d, want one coalesced model load plus one inventory refresh", got)
 	}
 }
 
