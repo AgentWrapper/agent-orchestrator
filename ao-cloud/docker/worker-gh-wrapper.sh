@@ -7,7 +7,7 @@ if [ -n "${GH_TOKEN:-}" ] || [ -n "${GITHUB_TOKEN:-}" ]; then
   exec "$real_gh" "$@"
 fi
 
-if [ -n "${AO_CLOUD_PUBLIC_URL:-}" ] && [ -n "${AO_WORKER_TOKEN:-}" ] && [ -n "${AO_SESSION_ID:-}" ]; then
+if [ "${1:-}" = "pr" ] && [ -n "${AO_CLOUD_PUBLIC_URL:-}" ] && [ -n "${AO_WORKER_TOKEN:-}" ] && [ -n "${AO_SESSION_ID:-}" ]; then
   token="$(
     curl -fsS \
       -X POST \
