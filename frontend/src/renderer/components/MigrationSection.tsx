@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { aoBridge } from "../lib/bridge";
 import { migrationOfferQueryKey } from "../hooks/useMigrationOffer";
@@ -31,12 +32,12 @@ async function fetchMigrationSettings(): Promise<MigrationView> {
 	};
 }
 
-const STATUS_LABEL: Record<MigrationStatus, string> = {
-	pending: "Not migrated yet",
-	completed: "Completed",
-	declined: "Declined",
-	failed: "Last attempt failed",
-};
+const STATUS_LABEL_KEY = {
+	pending: "settings.migration.status.pending",
+	completed: "settings.migration.status.completed",
+	declined: "settings.migration.status.declined",
+	failed: "settings.migration.status.failed",
+} as const;
 
 function statusClass(status: MigrationStatus): string {
 	switch (status) {
@@ -49,10 +50,10 @@ function statusClass(status: MigrationStatus): string {
 	}
 }
 
-function formatTime(iso?: string): string {
+function formatTime(iso: string | undefined, locale: string | undefined): string {
 	if (!iso) return "";
 	const d = new Date(iso);
-	return Number.isNaN(d.getTime()) ? "" : d.toLocaleString();
+	return Number.isNaN(d.getTime()) ? "" : d.toLocaleString(locale);
 }
 
 // MigrationSection is a drop-in Settings card for re-running the legacy-AO
@@ -61,6 +62,7 @@ function formatTime(iso?: string): string {
 // idempotent POST /api/v1/import (safe even when completed/declined/failed).
 // Issue #2205.
 export function MigrationSection() {
+	const { i18n, t } = useTranslation();
 	const queryClient = useQueryClient();
 	const query = useQuery({
 		queryKey: migrationSettingsQueryKey,
@@ -99,62 +101,70 @@ export function MigrationSection() {
 	const report = migration.report;
 	const completed = migration.status === "completed";
 	const buttonLabel = run.isPending
-		? "Running…"
+		? t("settings.migration.running")
 		: completed
-			? "Re-run migration"
+			? t("settings.migration.rerun")
 			: migration.status === "failed"
-				? "Retry migration"
-				: "Run migration";
+				? t("settings.migration.retry")
+				: t("settings.migration.run");
+	const lastActivity = migration.completedAt || migration.lastAttemptAt;
+	const formattedActivity = formatTime(lastActivity, i18n.resolvedLanguage);
 
 	return (
 		<Card data-testid="settings-section" data-section="migration">
 			<CardHeader>
-				<CardTitle className="text-control">Migration</CardTitle>
+				<CardTitle className="text-control">{t("settings.migration.title")}</CardTitle>
 			</CardHeader>
 			<CardContent className="flex flex-col gap-4">
 				<p className="text-xs leading-row text-muted-foreground">
-					Import projects and orchestrator sessions from an earlier Agent Orchestrator install. Your old files are never
-					modified, and this is safe to run more than once.
+					{t("settings.migration.description")}
 				</p>
 
 				<div className="flex flex-col gap-2 text-xs">
-					<Row label="Status">
-						<span className={statusClass(migration.status)}>{STATUS_LABEL[migration.status]}</span>
+					<Row label={t("settings.migration.statusLabel")}>
+						<span className={statusClass(migration.status)}>{t(STATUS_LABEL_KEY[migration.status])}</span>
 					</Row>
-					{formatTime(migration.completedAt || migration.lastAttemptAt) && (
-						<Row label={completed ? "Completed" : "Last attempt"}>
-							<span className="text-foreground">{formatTime(migration.completedAt || migration.lastAttemptAt)}</span>
+					{formattedActivity && (
+						<Row label={completed ? t("settings.migration.completedAt") : t("settings.migration.lastAttempt")}>
+							<span className="text-foreground">{formattedActivity}</span>
 						</Row>
 					)}
 					{report && (
-						<Row label="Last report">
+						<Row label={t("settings.migration.lastReport")}>
 							<span className="text-foreground">
-								{report.projectsImported} imported, {report.projectsSkipped} already present
+								{t("settings.migration.report", {
+									imported: report.projectsImported,
+									skipped: report.projectsSkipped,
+								})}
 							</span>
 						</Row>
 					)}
-					<Row label="Legacy install">
+					<Row label={t("settings.migration.legacyInstall")}>
 						{query.isLoading ? (
-							<span className="text-passive">Checking…</span>
+							<span className="text-passive">{t("settings.migration.checking")}</span>
 						) : available ? (
-							<span className="font-mono text-caption text-foreground">{legacyRoot || "found"}</span>
+							<span className="font-mono text-caption text-foreground">
+								{legacyRoot || t("settings.migration.found")}
+							</span>
 						) : (
-							<span className="text-passive">None found</span>
+							<span className="text-passive">{t("settings.migration.noneFound")}</span>
 						)}
 					</Row>
 				</div>
 
 				{migration.status === "failed" && migration.error && (
 					<p className="text-xs leading-row text-error">
-						{migration.error}. Your legacy projects are untouched (nothing is ever deleted).
+						{t("settings.migration.failedPreserved", { error: migration.error })}
 					</p>
 				)}
 				{run.isError && (
 					<p className="text-xs leading-row text-error">
-						{run.error instanceof Error ? run.error.message : "Migration failed."}
+						{run.error instanceof Error ? run.error.message : t("settings.migration.failed")}
 					</p>
 				)}
-				{run.isSuccess && !run.isPending && <p className="text-xs leading-row text-success">Migration complete.</p>}
+				{run.isSuccess && !run.isPending && (
+					<p className="text-xs leading-row text-success">{t("settings.migration.complete")}</p>
+				)}
 
 				<div className="flex items-center gap-3">
 					<Button
@@ -167,7 +177,7 @@ export function MigrationSection() {
 						{buttonLabel}
 					</Button>
 					{!available && !query.isLoading && (
-						<span className="text-xs text-passive">Nothing to import from a legacy install.</span>
+						<span className="text-xs text-passive">{t("settings.migration.nothingToImport")}</span>
 					)}
 				</div>
 			</CardContent>

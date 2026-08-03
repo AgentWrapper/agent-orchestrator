@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import {
 	Bell,
@@ -116,6 +117,7 @@ export function NotificationRuntime() {
 }
 
 export function NotificationCenter({ style }: NotificationCenterProps) {
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [actionError, setActionError] = useState<string | null>(null);
 	const [view, setView] = useState<NotificationView>("unread");
@@ -139,7 +141,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 			void captureRendererEvent("ao.renderer.notification_mark_read_succeeded", { scope: "single" });
 		} catch (error) {
 			void captureRendererEvent("ao.renderer.notification_mark_read_failed", { scope: "single" });
-			setActionError(error instanceof Error ? error.message : "Could not mark notification read");
+			setActionError(error instanceof Error ? error.message : t("notify.couldNotMarkRead"));
 		}
 	};
 
@@ -151,7 +153,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 			void captureRendererEvent("ao.renderer.notification_mark_read_succeeded", { scope: "all" });
 		} catch (error) {
 			void captureRendererEvent("ao.renderer.notification_mark_read_failed", { scope: "all" });
-			setActionError(error instanceof Error ? error.message : "Could not mark notifications read");
+			setActionError(error instanceof Error ? error.message : t("notify.couldNotMarkAllRead"));
 		}
 	};
 
@@ -184,7 +186,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 		<Popover onOpenChange={setPanelOpen} open={open}>
 			<PopoverTrigger asChild>
 				<TopbarButton
-					aria-label={unreadCount > 0 ? `${unreadCount} unread notifications` : "Notifications"}
+					aria-label={unreadCount > 0 ? t("notify.unreadCount", { count: unreadCount }) : t("notify.bell")}
 					className="relative"
 					style={style}
 					variant="icon"
@@ -203,31 +205,31 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 			</PopoverTrigger>
 			<PopoverContent
 				align="end"
-				aria-label="Notifications"
+				aria-label={t("notify.title")}
 				className="w-notification-width max-w-[calc(100vw-1rem)] overflow-hidden rounded-panel border-border-strong p-0 shadow-xl"
 				sideOffset={8}
 			>
 				<div className="border-b border-border bg-[var(--color-overlay-subtle)] px-4 pt-3.5">
-					<p className="text-subtitle font-semibold tracking-tight text-foreground">Notifications</p>
+					<p className="text-subtitle font-semibold tracking-tight text-foreground">{t("notify.title")}</p>
 					<div className="mt-2 flex items-end justify-between gap-4">
-						<div aria-label="Notification filters" className="flex items-end gap-5" role="tablist">
+						<div aria-label={t("notify.filters")} className="flex items-end gap-5" role="tablist">
 							<NotificationTab
 								active={view === "unread"}
 								count={unreadCount}
-								label="Unread"
+								label={t("notify.unread")}
 								onClick={() => setView("unread")}
 							/>
-							<NotificationTab active={view === "all"} label="All" onClick={() => setView("all")} />
+							<NotificationTab active={view === "all"} label={t("notify.all")} onClick={() => setView("all")} />
 						</div>
 						<button
-							aria-label="Mark all notifications read"
+							aria-label={t("notify.markAllRead")}
 							className="mb-1 inline-flex h-control-sm items-center gap-1.5 rounded-md px-1.5 text-caption font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
 							disabled={unreadCount === 0 || markAllRead.isPending}
 							onClick={() => void markAll()}
 							type="button"
 						>
 							<CheckCheck className="size-icon-md" aria-hidden="true" />
-							Mark all read
+							{t("notify.markAllReadShort")}
 						</button>
 					</div>
 				</div>
@@ -236,18 +238,18 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 					<div className="border-b border-border bg-error/5 px-4 py-2 text-caption text-error">{actionError}</div>
 				) : null}
 				{notificationsQuery.isError && visibleNotifications.length === 0 ? (
-					<NotificationEmpty icon={CircleAlert} message="Could not load notifications." />
+					<NotificationEmpty icon={CircleAlert} message={t("notify.loadFailed")} />
 				) : notificationsQuery.isLoading && visibleNotifications.length === 0 ? (
-					<NotificationEmpty icon={Inbox} message="Loading notifications…" />
+					<NotificationEmpty icon={Inbox} message={t("notify.loading")} />
 				) : visibleNotifications.length === 0 ? (
 					<NotificationEmpty
 						icon={view === "unread" && unreadCount > 0 ? LoaderCircle : view === "unread" ? CheckCheck : Inbox}
 						message={
 							view === "unread" && unreadCount > 0
-								? "Loading unread notifications…"
+								? t("notify.loadingUnread")
 								: view === "unread"
-									? "You're all caught up."
-									: "No notifications yet."
+									? t("notify.emptyUnread")
+									: t("notify.emptyAll")
 						}
 					/>
 				) : (
@@ -272,13 +274,13 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 								aria-live="polite"
 								className="flex items-center justify-center gap-2 px-4 py-3 text-caption text-error"
 							>
-								Couldn’t load earlier notifications.
+								{t("notify.earlierLoadFailed")}
 								<button
 									className="font-medium underline underline-offset-2 hover:text-foreground"
 									onClick={() => void notificationsQuery.fetchNextPage()}
 									type="button"
 								>
-									Retry
+									{t("notify.retry")}
 								</button>
 							</div>
 						) : notificationsQuery.isFetchingNextPage ? (
@@ -287,7 +289,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 								className="flex items-center justify-center gap-2 px-4 py-3 text-caption text-passive"
 							>
 								<LoaderCircle className="size-icon-md animate-spin" aria-hidden="true" />
-								Loading earlier notifications…
+								{t("notify.loadingEarlier")}
 							</div>
 						) : null}
 					</div>
@@ -360,6 +362,7 @@ function NotificationItem({
 	onOpenPrimary: (notification: NotificationDTO) => void;
 	onOpenSession: (notification: NotificationDTO) => void;
 }) {
+	const { t } = useTranslation();
 	const Icon = notificationIcon(notification.type);
 	const isUnread = notification.status === "unread";
 	const isPR = notification.target.kind === "pr" && Boolean(notification.target.prUrl);
@@ -391,7 +394,7 @@ function NotificationItem({
 							}}
 							rel="noreferrer"
 							target="_blank"
-							title="Open pull request"
+							title={t("notify.openPR")}
 						>
 							<span className="break-words">{notification.title}</span>
 							<ExternalLink className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
@@ -400,7 +403,7 @@ function NotificationItem({
 						<button
 							className="min-w-0 break-words text-left text-control font-medium leading-snug text-foreground transition-colors hover:text-accent hover:underline"
 							onClick={() => onOpenPrimary(notification)}
-							title="Open session"
+							title={t("notify.openSessionTitle")}
 							type="button"
 						>
 							{notification.title}
@@ -419,10 +422,10 @@ function NotificationItem({
 			<div className="flex items-start gap-0.5">
 				{isPR && notification.sessionId ? (
 					<button
-						aria-label="Open related session"
+						aria-label={t("notify.openSession")}
 						className="grid size-control-md place-items-center rounded-md text-passive transition-colors hover:bg-interactive-active hover:text-foreground"
 						onClick={() => onOpenSession(notification)}
-						title="Open related session"
+						title={t("notify.openSession")}
 						type="button"
 					>
 						<SquareTerminal className="size-icon-md" aria-hidden="true" />
@@ -430,17 +433,17 @@ function NotificationItem({
 				) : null}
 				{isUnread ? (
 					<button
-						aria-label="Mark notification read"
+						aria-label={t("notify.markReadAria")}
 						className="grid size-control-md place-items-center rounded-md text-passive transition-colors hover:bg-interactive-active hover:text-success disabled:pointer-events-none disabled:opacity-40"
 						disabled={disabled}
 						onClick={() => void onMarkRead(notification.id)}
-						title="Mark as read"
+						title={t("notify.markRead")}
 						type="button"
 					>
 						<Check className="size-icon-md" aria-hidden="true" />
 					</button>
 				) : (
-					<span aria-label="Read" className="grid size-control-md place-items-center text-passive" title="Read">
+					<span aria-label={t("notify.read")} className="grid size-control-md place-items-center text-passive" title={t("notify.read")}>
 						<Check className="size-icon-md" aria-hidden="true" />
 					</span>
 				)}
