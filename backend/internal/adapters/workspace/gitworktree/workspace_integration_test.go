@@ -76,13 +76,8 @@ func TestWorkspaceIntegrationCreateRecoversInterruptedInitialization(t *testing.
 
 	runGit(t, git, repo, "worktree", "add", "--no-checkout", "-b", cfg.Branch, path, "origin/main")
 	runGit(t, git, repo, "worktree", "lock", "--reason", "initializing", path)
-	gitFile, err := os.ReadFile(filepath.Join(path, ".git"))
-	if err != nil {
-		t.Fatalf("read worktree gitfile: %v", err)
-	}
-	gitDir := strings.TrimSpace(strings.TrimPrefix(string(gitFile), "gitdir: "))
-	if err := os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/ao-interrupted-invalid\n"), 0o644); err != nil {
-		t.Fatalf("invalidate worktree HEAD: %v", err)
+	if err := exec.Command(git, "-C", path, "rev-parse", "--verify", "HEAD").Run(); err != nil {
+		t.Fatalf("interrupted worktree should have a valid HEAD: %v", err)
 	}
 
 	info, err := ws.Create(context.Background(), cfg)
@@ -116,13 +111,8 @@ func TestWorkspaceIntegrationCreatePreservesInterruptedInitializationWithUntrack
 
 	runGit(t, git, repo, "worktree", "add", "--no-checkout", "-b", cfg.Branch, path, "origin/main")
 	runGit(t, git, repo, "worktree", "lock", "--reason", "initializing", path)
-	gitFile, err := os.ReadFile(filepath.Join(path, ".git"))
-	if err != nil {
-		t.Fatalf("read worktree gitfile: %v", err)
-	}
-	gitDir := strings.TrimSpace(strings.TrimPrefix(string(gitFile), "gitdir: "))
-	if err := os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/ao-interrupted-invalid\n"), 0o644); err != nil {
-		t.Fatalf("invalidate worktree HEAD: %v", err)
+	if err := exec.Command(git, "-C", path, "rev-parse", "--verify", "HEAD").Run(); err != nil {
+		t.Fatalf("interrupted worktree should have a valid HEAD: %v", err)
 	}
 	untracked := filepath.Join(path, "notes.txt")
 	if err := os.WriteFile(untracked, []byte("preserve me\n"), 0o644); err != nil {
