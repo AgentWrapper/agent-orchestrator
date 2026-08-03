@@ -151,9 +151,11 @@ vi.mock("./CenterPane", () => ({
 		onCloseShellTerminal,
 		onSelectShellTerminal,
 		onSelectSessionTerminal,
+		onSelectReviewerTerminal,
 		onNewShellTerminal,
 		topbarActions,
 		reviewerTerminal,
+		terminalTarget,
 	}: {
 		terminalTarget?: { kind: string; handleId?: string };
 		session?: WorkspaceSession;
@@ -161,9 +163,11 @@ vi.mock("./CenterPane", () => ({
 		onCloseShellTerminal?: (handleId: string) => void;
 		onSelectShellTerminal?: (handleId: string) => void;
 		onSelectSessionTerminal?: () => void;
+		onSelectReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 		onNewShellTerminal?: () => void;
 		topbarActions?: ReactNode;
 		reviewerTerminal?: { handleId: string; harness: string };
+		terminalTarget?: { kind: string };
 	}) => (
 		<div>
 			terminal center
@@ -172,7 +176,13 @@ vi.mock("./CenterPane", () => ({
 				{terminalTarget?.kind === "shell" ? terminalTarget.handleId : "worker"}
 			</div>
 			<div data-testid="session-tab">{session?.title ?? ""}</div>
+			<div data-testid="terminal-target">{terminalTarget?.kind ?? "worker"}</div>
 			<div data-testid="reviewer-harness">{reviewerTerminal?.harness ?? ""}</div>
+			{reviewerTerminal ? (
+				<button type="button" onClick={() => onSelectReviewerTerminal?.(reviewerTerminal)}>
+					select reviewer tab
+				</button>
+			) : null}
 			<div data-testid="shell-tabs">{shellTerminals.map((s) => s.title).join(",")}</div>
 			{shellTerminals.map((s) => (
 				<button key={s.handleId} type="button" onClick={() => onSelectShellTerminal?.(s.handleId)}>
@@ -399,9 +409,12 @@ function render(ui: ReactNode) {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	});
-	return rtlRender(ui, {
-		wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
-	});
+	return {
+		...rtlRender(ui, {
+			wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+		}),
+		client,
+	};
 }
 
 describe("SessionView", () => {
@@ -656,6 +669,38 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-1" />);
 
 		await waitFor(() => expect(screen.getByTestId("reviewer-harness")).toHaveTextContent("codex"));
+	});
+
+	it("returns to the session terminal when restore clears the reviewer handle", async () => {
+		const worker = workerSession("sess-1");
+		worker.prs = [
+			{
+				url: "https://github.com/acme/repo/pull/7",
+				number: 7,
+				state: "open",
+				ci: "passing",
+				review: "none",
+				mergeability: "mergeable",
+				reviewComments: false,
+				updatedAt: "2026-06-15T00:00:00Z",
+			},
+		];
+		reviewGetMock.mockResolvedValueOnce({
+			data: { reviewerHandleId: "review-sess-1", reviewerHarness: "codex", reviews: [] },
+			error: undefined,
+		});
+
+		const view = render(<SessionView sessionId="sess-1" />);
+		await screen.findByRole("button", { name: "select reviewer tab" });
+		fireEvent.click(screen.getByRole("button", { name: "select reviewer tab" }));
+		expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
+
+		act(() => {
+			view.client.setQueryData(["session-reviews", "sess-1"], { reviewerHandleId: "", reviews: [] });
+		});
+
+		await waitFor(() => expect(screen.getByTestId("terminal-target")).toHaveTextContent("worker"));
+		expect(screen.queryByRole("button", { name: "select reviewer tab" })).not.toBeInTheDocument();
 	});
 
 	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS

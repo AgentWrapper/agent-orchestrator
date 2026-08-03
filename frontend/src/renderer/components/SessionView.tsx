@@ -270,6 +270,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				: current,
 		);
 	}, [shellTerminals]);
+	useEffect(() => {
+		setTerminalTarget((current) =>
+			current.kind === "reviewer" && (!reviewerTerminal || reviewerTerminal.handleId !== current.handleId)
+				? { kind: "worker" }
+				: current,
+		);
+	}, [reviewerTerminal]);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 	// Orchestrators get the full workspace width; only workers need the inspector rail.
 	const hasInspector = Boolean(session && !isOrchestrator);
