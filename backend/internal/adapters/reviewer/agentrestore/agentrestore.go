@@ -19,18 +19,19 @@ type Options struct {
 }
 
 // Command asks the wrapped agent adapter to resume the reviewer's native
-// conversation. ok=false means no native id has been captured yet, so callers
-// may fall back to a fresh idle launch for legacy review rows.
+// conversation. Adapters that can derive a legacy native id from Session.ID
+// still get the call when no hook-captured id is present.
 func Command(ctx context.Context, agent ports.Agent, inv ports.ReviewInvocation, opts Options) (ports.ReviewCommandSpec, bool, error) {
 	agentSessionID := strings.TrimSpace(inv.AgentSessionID)
-	if agentSessionID == "" {
-		return ports.ReviewCommandSpec{}, false, nil
+	metadata := map[string]string{}
+	if agentSessionID != "" {
+		metadata[ports.MetadataKeyAgentSessionID] = agentSessionID
 	}
 	argv, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{
 		Session: ports.SessionRef{
 			ID:            inv.ReviewerID,
 			WorkspacePath: inv.WorkspacePath,
-			Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: agentSessionID},
+			Metadata:      metadata,
 		},
 		Kind:             domain.KindWorker,
 		Permissions:      opts.Permissions,

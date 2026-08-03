@@ -29,6 +29,9 @@ type fakeStore struct {
 
 func (f *fakeStore) UpsertReview(_ context.Context, r domain.Review) error {
 	cp := r
+	if f.review != nil && f.review.SessionID == r.SessionID && cp.AgentSessionID == "" {
+		cp.AgentSessionID = f.review.AgentSessionID
+	}
 	f.review = &cp
 	return nil
 }
@@ -803,6 +806,22 @@ func TestTriggerSupersedesOlderRunningRunOnNewCommit(t *testing.T) {
 	}
 	if !launcher.spawned || launcher.notified {
 		t.Fatalf("expected reviewer process replaced for new commit: %+v", launcher)
+	}
+}
+
+func TestTriggerReusesRunningReviewerBeforeAgentSessionIDRecorded(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1"},
+		runs:   []domain.ReviewRun{{ID: "run-old", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha0", Status: domain.ReviewRunRunning}},
+	}
+	launcher := &fakeLauncher{alive: true, handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	if _, err := eng.Trigger(context.Background(), "mer-1"); err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if !launcher.notified || launcher.spawned {
+		t.Fatalf("expected running reviewer pane reused before native session id is recorded: %+v", launcher)
 	}
 }
 

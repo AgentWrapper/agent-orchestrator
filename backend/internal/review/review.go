@@ -235,6 +235,7 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override
 			return TriggerResult{}, err
 		}
 	}
+	hadRunningReviewer := reviewRunsContainRunning(runs)
 	reviews := Plan(prs, runs)
 
 	harness, err := e.reviewerHarness(ctx, worker)
@@ -321,7 +322,7 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override
 
 	queue := reviewQueue(created)
 	handleID := ""
-	if hasReview && reviewRow.ReviewerHandleID != "" && prevHarness == harness && strings.TrimSpace(reviewRow.AgentSessionID) != "" {
+	if hasReview && reviewRow.ReviewerHandleID != "" && prevHarness == harness && reviewerPaneReusable(reviewRow, hadRunningReviewer) {
 		alive, err := e.launcher.Alive(ctx, reviewRow.ReviewerHandleID)
 		if err != nil {
 			return TriggerResult{}, failRuns(0, err)
@@ -352,6 +353,22 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override
 		created[i].ReviewID = reviewRow.ID
 	}
 	return TriggerResult{Run: created[0], ReviewerHandleID: handleID, Created: true, Reviews: reviews, CreatedRuns: created}, nil
+}
+
+func reviewerPaneReusable(reviewRow domain.Review, hadRunningReviewer bool) bool {
+	if strings.TrimSpace(reviewRow.AgentSessionID) != "" {
+		return true
+	}
+	return hadRunningReviewer
+}
+
+func reviewRunsContainRunning(runs []domain.ReviewRun) bool {
+	for _, run := range runs {
+		if run.Status == domain.ReviewRunRunning {
+			return true
+		}
+	}
+	return false
 }
 
 // RestoreReviewer relaunches the reviewer terminal for a restored worker when

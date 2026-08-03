@@ -31,6 +31,9 @@ func (a *captureAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreCon
 	a.gotRestore = cfg
 	id := cfg.Session.Metadata[ports.MetadataKeyAgentSessionID]
 	if id == "" {
+		id = cfg.Session.ID
+	}
+	if id == "" {
 		return nil, false, nil
 	}
 	return []string{"claude", "--resume", id}, true, nil
@@ -145,6 +148,32 @@ func TestReviewRestoreCommandUsesNativeSessionIDAndReadOnlyPolicy(t *testing.T) 
 	}
 	if !contains(agent.gotRestore.AllowedTools, "Read") || !contains(agent.gotRestore.DisallowedTools, "Write") {
 		t.Fatalf("restore tool policy allowed=%#v disallowed=%#v", agent.gotRestore.AllowedTools, agent.gotRestore.DisallowedTools)
+	}
+}
+
+func TestReviewRestoreCommandAllowsAdapterFallbackWithoutNativeSessionID(t *testing.T) {
+	agent := &captureAgent{}
+	r := &Reviewer{agent: agent}
+
+	got, ok, err := r.ReviewRestoreCommand(context.Background(), ports.ReviewInvocation{
+		ReviewerID:       "review-w1",
+		WorkspacePath:    "/ws/w1",
+		SystemPromptFile: "/ao/prompts/reviewer/system.md",
+	})
+	if err != nil {
+		t.Fatalf("ReviewRestoreCommand: %v", err)
+	}
+	if !ok {
+		t.Fatal("ReviewRestoreCommand ok = false, want true")
+	}
+	if strings.Join(got.Argv, " ") != "claude --resume review-w1" {
+		t.Fatalf("argv = %#v", got.Argv)
+	}
+	if agent.gotRestore.Session.ID != "review-w1" {
+		t.Fatalf("restore session id = %q, want review-w1", agent.gotRestore.Session.ID)
+	}
+	if _, ok := agent.gotRestore.Session.Metadata[ports.MetadataKeyAgentSessionID]; ok {
+		t.Fatalf("restore metadata should not invent native id: %#v", agent.gotRestore.Session.Metadata)
 	}
 }
 

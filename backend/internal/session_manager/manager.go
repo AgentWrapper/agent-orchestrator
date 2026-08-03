@@ -3512,10 +3512,6 @@ func containsPathDir(parts []string, dir string) bool {
 	return false
 }
 
-func (m *Manager) nodeRuntimeDir(ctx context.Context) string {
-	return nodeRuntimeDir(ctx, m.lookPath)
-}
-
 func nodeRuntimeDir(ctx context.Context, lookPath func(string) (string, error)) string {
 	if err := ctx.Err(); err != nil || runtime.GOOS == "windows" {
 		return ""
