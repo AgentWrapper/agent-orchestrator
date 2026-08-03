@@ -424,6 +424,7 @@
 	/* Mock project accent swatches (sidebar dots) */
 	--color-project-accent-mint: #6ee7b7;
 	--color-project-accent-sky: #93c5fd;
+	--color-project-accent-violet: #c4b5fd;
 
 	/* Terminal ANSI palette. Keep this independent from product status colors:
 	   agent TUIs own the semantic meaning of these slots. */
