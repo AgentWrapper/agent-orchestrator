@@ -1,13 +1,31 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession } from "../types/workspace";
+import { isMacPlatform } from "../lib/platform";
 import { CenterPane } from "./CenterPane";
 import { TooltipProvider } from "./ui/tooltip";
 
+const shortcutMocks = vi.hoisted(() => ({ closeListener: undefined as (() => void) | undefined }));
+
+vi.mock("../lib/bridge", () => ({
+	aoBridge: {
+		app: {
+			onCloseShellTerminalShortcut: (listener: () => void) => {
+				shortcutMocks.closeListener = listener;
+				return () => {
+					if (shortcutMocks.closeListener === listener) shortcutMocks.closeListener = undefined;
+				};
+		},
+		},
+	},
+}));
+
 // The terminal body pulls in xterm/SSE machinery irrelevant to the header under test.
-vi.mock("./TerminalPane", () => ({ TerminalPane: () => <div>terminal body</div> }));
+vi.mock("./TerminalPane", () => ({
+	TerminalPane: () => <div>terminal body</div>,
+}));
 
 const worker = {
 	id: "sess-1",
@@ -31,6 +49,10 @@ function renderCenterPane(props: Partial<ComponentProps<typeof CenterPane>> = {}
 	);
 }
 
+beforeEach(() => {
+	shortcutMocks.closeListener = undefined;
+});
+
 describe("CenterPane toolbar session label", () => {
 	const makeShells = (count: number) =>
 		Array.from({ length: count }, (_, i) => ({
@@ -51,10 +73,68 @@ describe("CenterPane toolbar session label", () => {
 
 		const sessionTab = screen.getByRole("tab", { name: /^do the thing/ });
 		expect(sessionTab).toHaveAttribute("aria-selected", "true");
+		expect(sessionTab.parentElement).toHaveClass("self-stretch", "bg-overlay");
+		expect(sessionTab.parentElement).not.toHaveClass("session-primary-tab");
+		expect(sessionTab.parentElement).not.toHaveClass("rounded-md");
 		expect(sessionTab).toHaveAccessibleName("do the thing · Working");
 		expect(sessionTab.querySelector('[title="Working"]')).toBeInTheDocument();
 		expect(sessionTab.parentElement?.querySelector('img[aria-hidden="true"]')).toBeInTheDocument();
 		expect(screen.queryByRole("tab", { name: "review the change" })).not.toBeInTheDocument();
+	});
+
+	it("keeps the main agent tab permanent, prominent, and solely branded by the harness", () => {
+		const [shell] = makeShells(1);
+		renderCenterPane({
+			session: worker,
+			shellTerminals: [shell],
+			terminalTarget: {
+				kind: "shell",
+				handleId: shell.handleId,
+				title: shell.title,
+			},
+		});
+
+		const mainTab = screen.getByRole("tab", { name: /^do the thing/ });
+		const mainContainer = mainTab.parentElement;
+		expect(mainContainer).toHaveAttribute("data-terminal-role", "primary");
+		expect(mainContainer).toHaveClass("self-stretch", "bg-surface");
+		expect(mainContainer).not.toHaveClass("session-primary-tab");
+		expect(mainContainer).not.toHaveClass("rounded-md");
+		expect(mainContainer).not.toHaveClass("before:bg-accent");
+		expect(
+			within(mainContainer as HTMLElement).queryByRole("button", {
+				name: /close/i,
+			}),
+		).not.toBeInTheDocument();
+		expect(mainContainer?.querySelector('img[aria-hidden="true"]')).toBeInTheDocument();
+
+		const auxiliaryTab = screen.getByRole("tab", { name: shell.title });
+		expect(auxiliaryTab.parentElement?.querySelector("img")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: `Close terminal ${shell.title}` })).toBeInTheDocument();
+		expect(mainTab.querySelector('[title="Working"]')).toHaveClass("self-center");
+		expect(mainTab.querySelector('[title="Working"]')).not.toHaveClass("-translate-y-px");
+	});
+
+	it("closes only the selected auxiliary terminal from the application shortcut", () => {
+		const [shell] = makeShells(1);
+		const onCloseShellTerminal = vi.fn();
+		renderCenterPane({
+			session: worker,
+			shellTerminals: [shell],
+			terminalTarget: { kind: "shell", handleId: shell.handleId, title: shell.title },
+			onCloseShellTerminal,
+		});
+
+		act(() => shortcutMocks.closeListener?.());
+		expect(onCloseShellTerminal).toHaveBeenCalledWith(shell.handleId);
+	});
+
+	it("keeps the permanent main terminal open when the close shortcut fires", () => {
+		const onCloseShellTerminal = vi.fn();
+		renderCenterPane({ session: worker, onCloseShellTerminal });
+
+		act(() => shortcutMocks.closeListener?.());
+		expect(onCloseShellTerminal).not.toHaveBeenCalled();
 	});
 
 	// The button used to open a dropdown that also listed every session across
@@ -63,7 +143,10 @@ describe("CenterPane toolbar session label", () => {
 		const onNewShellTerminal = vi.fn();
 		renderCenterPane({ session: worker, onNewShellTerminal });
 
-		fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
+		const newTerminalButton = screen.getByRole("button", { name: "New terminal" });
+		expect(newTerminalButton).toHaveClass("size-control-md", "border", "border-border");
+		expect(screen.queryByText("New terminal")).not.toBeInTheDocument();
+		fireEvent.click(newTerminalButton);
 		expect(onNewShellTerminal).toHaveBeenCalledOnce();
 		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 	});
@@ -73,11 +156,15 @@ describe("CenterPane toolbar session label", () => {
 		renderCenterPane({ session: worker, onNewShellTerminal: vi.fn() });
 
 		await user.hover(screen.getByRole("button", { name: "New terminal" }));
-		expect(await screen.findByRole("tooltip")).toHaveTextContent("New terminal (Ctrl+Shift+`)");
+		expect(await screen.findByRole("tooltip")).toHaveTextContent(
+			isMacPlatform() ? "New terminal (⌘T)" : "New terminal (Ctrl+T)",
+		);
 	});
 
 	it("shows 'Orchestrator' for an orchestrator session", () => {
-		renderCenterPane({ session: { ...worker, id: "sess-orch", kind: "orchestrator" } });
+		renderCenterPane({
+			session: { ...worker, id: "sess-orch", kind: "orchestrator" },
+		});
 		expect(screen.getByText("Orchestrator")).toBeInTheDocument();
 	});
 
@@ -89,8 +176,54 @@ describe("CenterPane toolbar session label", () => {
 	it("uses the inspector tab height for the terminal header", () => {
 		renderCenterPane({ session: worker });
 
-		const header = screen.getByRole("tablist", { name: "Open terminals" }).closest(".h-inspector-tabs");
+		const tablist = screen.getByRole("tablist", { name: "Open terminals" });
+		const header = tablist.closest(".h-inspector-tabs");
 		expect(header).toHaveClass("h-inspector-tabs");
+		expect(tablist.parentElement).toHaveClass("h-full");
+	});
+
+	it("keeps terminal controls in the measured terminal region and session actions outside it", () => {
+		renderCenterPane({
+			session: worker,
+			onNewShellTerminal: vi.fn(),
+			topbarActions: <button type="button">Session action</button>,
+		});
+
+		const terminalRegion = screen.getByTestId("session-terminal-region");
+		const workspaceTopbar = screen.getByTestId("session-workspace-topbar");
+		expect(workspaceTopbar).toHaveClass("session-topbar-surface");
+		expect(workspaceTopbar).toContainElement(terminalRegion);
+		expect(terminalRegion).toContainElement(screen.getByRole("tablist", { name: "Open terminals" }));
+		expect(terminalRegion).toContainElement(screen.getByRole("button", { name: "New terminal" }));
+		expect(terminalRegion).toContainElement(screen.getByRole("toolbar", { name: "Terminal display controls" }));
+		expect(terminalRegion).not.toContainElement(screen.getByTestId("session-action-region"));
+		expect(screen.getByTestId("session-action-region")).toContainElement(
+			screen.getByRole("button", { name: "Session action" }),
+		);
+	});
+
+	it("hides session-level actions while the terminal is fullscreen", () => {
+		const view = renderCenterPane({
+			session: worker,
+			topbarActions: <button type="button">Session action</button>,
+		});
+		const pane = view.container.querySelector(".terminal-pane-frame");
+
+		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: pane });
+		act(() => document.dispatchEvent(new Event("fullscreenchange")));
+
+		expect(screen.queryByTestId("session-action-region")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Exit fullscreen" })).toBeInTheDocument();
+		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
+	});
+
+	it("does not reserve tab-strip space for unavailable overflow controls", () => {
+		renderCenterPane({ session: worker });
+
+		expect(screen.getByTestId("session-terminal-region")).not.toHaveClass("pl-0.5");
+		expect(screen.getByRole("tablist", { name: "Open terminals" })).not.toHaveClass("pt-1.5");
+		expect(screen.queryByRole("button", { name: "Scroll tabs left" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Scroll tabs right" })).not.toBeInTheDocument();
 	});
 
 	it("lets tabs shrink into a scrollable strip instead of overflowing onto the controls", () => {
@@ -100,18 +233,22 @@ describe("CenterPane toolbar session label", () => {
 		const scrollRegion = document.querySelector(".overflow-x-auto");
 		expect(scrollRegion).toHaveClass("scrollbar-none", "min-w-flex-min", "flex-1");
 		for (const tab of screen.getAllByTitle(/^\/tmp\/ws/)) {
-			expect(tab.parentElement).toHaveClass("min-w-shell-tab-min");
+			expect(tab.parentElement).toHaveClass(
+				"min-w-shell-tab-min",
+				"w-[calc(var(--spacing-shell-tab-max)+var(--spacing-control-sm)+2rem)]",
+			);
 			expect(tab.parentElement).not.toHaveClass("min-w-16", "shrink-0");
-			expect(tab).toHaveClass("min-w-flex-min");
-			expect(tab).not.toHaveClass("min-w-0");
+			expect(tab).toHaveClass("min-w-0", "w-full");
 		}
-		// jsdom reports no overflow, so the indicator stays mounted but disabled to preserve focus.
-		expect(screen.getByRole("button", { name: "Scroll tabs right" })).toBeDisabled();
+		// jsdom reports no overflow, so no unavailable control reserves header space.
+		expect(screen.queryByRole("button", { name: "Scroll tabs right" })).not.toBeInTheDocument();
 
 		// The display controls now complete the top bar, but stay outside the
 		// flexible scroll region so a long tab list cannot overlap them.
 		const tabList = screen.getByRole("tablist", { name: "Open terminals" });
-		const toolbar = screen.getByRole("toolbar", { name: "Terminal display controls" });
+		const toolbar = screen.getByRole("toolbar", {
+			name: "Terminal display controls",
+		});
 		expect(tabList.contains(toolbar)).toBe(false);
 		expect(toolbar).toContainElement(screen.getByRole("button", { name: "Fullscreen terminal" }));
 	});
@@ -121,17 +258,26 @@ describe("CenterPane toolbar session label", () => {
 		renderCenterPane({ session: worker, shellTerminals: shells });
 
 		const scrollRegion = document.querySelector(".overflow-x-auto") as HTMLElement;
-		Object.defineProperty(scrollRegion, "clientWidth", { value: 100, configurable: true });
-		Object.defineProperty(scrollRegion, "scrollWidth", { value: 500, configurable: true });
+		Object.defineProperty(scrollRegion, "clientWidth", {
+			value: 100,
+			configurable: true,
+		});
+		Object.defineProperty(scrollRegion, "scrollWidth", {
+			value: 500,
+			configurable: true,
+		});
 		fireEvent.scroll(scrollRegion);
 
 		expect(screen.getByRole("button", { name: "Scroll tabs right" })).toBeEnabled();
-		expect(screen.getByRole("button", { name: "Scroll tabs left" })).toBeDisabled();
+		expect(screen.queryByRole("button", { name: "Scroll tabs left" })).not.toBeInTheDocument();
 
-		Object.defineProperty(scrollRegion, "scrollLeft", { value: 400, configurable: true });
+		Object.defineProperty(scrollRegion, "scrollLeft", {
+			value: 400,
+			configurable: true,
+		});
 		fireEvent.scroll(scrollRegion);
 		expect(screen.getByRole("button", { name: "Scroll tabs left" })).toBeEnabled();
-		expect(screen.getByRole("button", { name: "Scroll tabs right" })).toBeDisabled();
+		expect(screen.queryByRole("button", { name: "Scroll tabs right" })).not.toBeInTheDocument();
 	});
 
 	it("scrolls the tab strip horizontally with the mouse wheel", () => {
@@ -139,10 +285,19 @@ describe("CenterPane toolbar session label", () => {
 		renderCenterPane({ session: worker, shellTerminals: shells });
 
 		const scrollRegion = document.querySelector(".overflow-x-auto") as HTMLElement;
-		Object.defineProperty(scrollRegion, "clientWidth", { value: 100, configurable: true });
-		Object.defineProperty(scrollRegion, "scrollWidth", { value: 500, configurable: true });
+		Object.defineProperty(scrollRegion, "clientWidth", {
+			value: 100,
+			configurable: true,
+		});
+		Object.defineProperty(scrollRegion, "scrollWidth", {
+			value: 500,
+			configurable: true,
+		});
 		const scrollBy = vi.fn();
-		Object.defineProperty(scrollRegion, "scrollBy", { value: scrollBy, configurable: true });
+		Object.defineProperty(scrollRegion, "scrollBy", {
+			value: scrollBy,
+			configurable: true,
+		});
 
 		fireEvent.wheel(scrollRegion, { deltaY: 80 });
 		expect(scrollBy).toHaveBeenCalledWith({ left: 80 });
@@ -157,10 +312,17 @@ describe("CenterPane toolbar session label", () => {
 		const shells = makeShells(2);
 		const onSelectShellTerminal = vi.fn();
 		const onSelectSessionTerminal = vi.fn();
-		renderCenterPane({ session: worker, shellTerminals: shells, onSelectSessionTerminal, onSelectShellTerminal });
+		renderCenterPane({
+			session: worker,
+			shellTerminals: shells,
+			onSelectSessionTerminal,
+			onSelectShellTerminal,
+		});
 
 		const sessionTab = screen.getByRole("tab", { name: /^do the thing/ });
-		const firstShellTab = screen.getByRole("tab", { name: "agent-orchestrator-0" });
+		const firstShellTab = screen.getByRole("tab", {
+			name: "agent-orchestrator-0",
+		});
 		expect(sessionTab).toHaveAttribute("tabindex", "0");
 		expect(firstShellTab).toHaveAttribute("tabindex", "-1");
 

@@ -64,6 +64,8 @@ export function ShellTerminalTab({
 	// two separate clicks that never synthesize a dblclick, so onDoubleClick would
 	// never fire. Two clicks within 500ms anywhere on the tab start the rename.
 	const handleClick = () => {
+		onSelect();
+		if (renameViaRightClick) return;
 		const now = Date.now();
 		const isDoubleClick = now - lastClickAtRef.current < 500;
 		lastClickAtRef.current = isDoubleClick ? 0 : now;
@@ -77,6 +79,7 @@ export function ShellTerminalTab({
 		? {}
 		: renameViaRightClick
 			? {
+					onClick: handleClick,
 					onContextMenu: (event: MouseEvent) => {
 						event.preventDefault();
 						beginEdit();
@@ -99,13 +102,13 @@ export function ShellTerminalTab({
 	return (
 		<span
 			className={cn(
-				"group inline-flex min-w-shell-tab-min items-center gap-1 px-2 transition-colors",
+				"group relative min-w-shell-tab-min items-center transition-colors",
 				appearance === "connected"
-					? "relative h-8 rounded-t-md border"
-					: "rounded-md py-1",
+					? "grid w-[calc(var(--spacing-shell-tab-max)+var(--spacing-control-sm)+2rem)] grid-cols-[auto_minmax(0,1fr)_auto] self-stretch border-x border-transparent pl-2 pr-0"
+					: "inline-flex gap-1 rounded-md px-2 py-1",
 				appearance === "connected"
 					? isActive
-						? "border-border border-b-terminal bg-terminal text-foreground before:absolute before:inset-x-2 before:top-0 before:h-px before:bg-accent"
+						? "border-border-strong bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-terminal"
 						: "border-transparent text-passive hover:bg-interactive-hover/60 hover:text-foreground"
 					: isActive
 						? "bg-interactive-active"
@@ -113,11 +116,16 @@ export function ShellTerminalTab({
 			)}
 			{...containerRenameHandlers}
 		>
-			{appearance === "connected" ? <SquareTerminal aria-hidden="true" className="size-icon-sm shrink-0" /> : null}
+			{appearance === "connected" ? (
+				<SquareTerminal aria-hidden="true" className="mr-1 size-icon-sm shrink-0 translate-y-px" />
+			) : null}
 			{isEditing ? (
 				<input
 					aria-label={t("terminal.rename", { title: shell.title })}
-					className="min-w-flex-min max-w-shell-tab-max rounded-sm border border-accent bg-background px-1 font-mono text-control font-semibold text-foreground shadow-sm outline-none ring-1 ring-accent"
+					className={cn(
+						"rounded-sm border border-accent bg-background px-1 font-mono text-control font-semibold text-foreground shadow-sm outline-none ring-1 ring-accent",
+						appearance === "connected" ? "min-w-0 w-full text-left" : "min-w-flex-min max-w-shell-tab-max",
+					)}
 					onBlur={commit}
 					onChange={(event) => setDraft(event.target.value)}
 					onKeyDown={(event) => {
@@ -138,11 +146,11 @@ export function ShellTerminalTab({
 					aria-current={isActive}
 					aria-selected={isActive}
 					className={cn(
-						"min-w-flex-min max-w-shell-tab-max select-none truncate text-control transition-colors",
+						"select-none truncate text-control transition-colors",
+						appearance === "connected" ? "min-w-0 w-full text-left" : "min-w-flex-min max-w-shell-tab-max",
 						appearance === "connected" ? "font-normal" : "font-mono font-semibold",
 						isActive ? "text-foreground" : "text-passive group-hover:text-foreground",
 					)}
-					onClick={onSelect}
 					role="tab"
 					tabIndex={isActive ? 0 : -1}
 					title={
@@ -160,10 +168,12 @@ export function ShellTerminalTab({
 			<button
 				aria-label={t("terminal.closeNamed", { title: shell.title })}
 				className={cn(
-					"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-passive transition-[background,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
-					appearance === "connected" && isActive
-						? "opacity-100"
-						: "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+					"inline-flex h-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm text-passive transition-[width,margin,background,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
+					appearance === "connected"
+						? isActive
+							? "ml-1 w-control-sm opacity-100"
+							: "ml-0 w-0 opacity-0 group-hover:ml-1 group-hover:w-control-sm group-hover:opacity-100 group-focus-within:ml-1 group-focus-within:w-control-sm group-focus-within:opacity-100"
+						: "w-control-sm opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
 				)}
 				onClick={(event) => {
 					event.stopPropagation();

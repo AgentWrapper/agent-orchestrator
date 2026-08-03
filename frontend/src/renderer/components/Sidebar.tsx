@@ -99,7 +99,7 @@ type SidebarProps = {
 	isOverlay?: boolean;
 	underTopbar?: boolean;
 	/** Chrome height to clear when underTopbar is set. Defaults to --size-toolbar. */
-	topbarOffset?: "toolbar" | "titlebar" | "trafficLights";
+	topbarOffset?: "toolbar" | "titlebar" | "trafficLights" | "session";
 	onPreviewLeave?: () => void;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];

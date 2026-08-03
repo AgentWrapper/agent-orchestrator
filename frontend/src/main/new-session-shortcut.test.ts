@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
+import { CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL, FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
 import { attachAppShortcuts } from "./app-shortcuts";
 
 type InputEvent = {
@@ -100,17 +100,31 @@ describe("attachAppShortcuts", () => {
 		expect(target.send).toHaveBeenCalledTimes(1);
 	});
 
-	it("forwards the new-shell-terminal chord using the physical code Ctrl+Shift+` reports", () => {
+	it.each([
+		["macOS", true, { key: "t", meta: true }],
+		["Windows/Linux", false, { key: "t", control: true }],
+	])("forwards the new-shell-terminal chord on %s", (_name, isMac, input) => {
 		const source = fakeSource();
 		const target = fakeTarget();
-		attachAppShortcuts(source, false, target);
+		attachAppShortcuts(source, isMac, target);
 
-		// Real Electron values for Ctrl+Shift+` on a US layout: Shift shifts the
-		// character to "~", so only the physical code "Backquote" identifies the
-		// chord. This pins app-shortcuts forwarding `code` into the matcher.
-		source.emit({ key: "~", code: "Backquote", control: true, shift: true, type: "keyDown" });
+		source.emit(input);
 
 		expect(target.send).toHaveBeenCalledWith(NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL);
+	});
+
+	it.each([
+		["macOS", true, { key: "w", meta: true }],
+		["Windows/Linux", false, { key: "w", control: true }],
+	])("forwards and consumes the close-shell-terminal chord on %s", (_name, isMac, input) => {
+		const source = fakeSource();
+		const target = fakeTarget();
+		attachAppShortcuts(source, isMac, target);
+
+		const event = source.emit(input);
+
+		expect(target.send).toHaveBeenCalledWith(CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL);
+		expect(event.preventDefault).toHaveBeenCalledOnce();
 	});
 
 	it("forwards keyboard-shortcut help on each platform", () => {

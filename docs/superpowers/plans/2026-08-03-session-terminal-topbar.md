@@ -185,7 +185,7 @@ Expected: FAIL on the blue active hairline, missing prominence/centering classes
 
 - [ ] **Step 3: Implement the approved tab styling**
 
-Remove the blue `before` hairline from both connected tab variants. Give the main tab a persistent restrained surface/border, medium label weight, and stronger active neutral fill so it remains the workspace anchor even when an auxiliary terminal is active. Keep `AgentAvatar` only in `SessionPaneTab`; never pass it into `ShellTerminalTab`. Keep the main tab free of an `onClose` callback. Use a `leading-none` label row and a one-pixel optical upward adjustment on the activity-dot wrapper so it centers with the visible glyphs.
+Remove the blue `before` hairline from both connected tab variants. Give the main tab a persistent restrained surface/border, medium label weight, and stronger active neutral fill so it remains the workspace anchor even when an auxiliary terminal is active. Keep `AgentAvatar` only in `SessionPaneTab`; never pass it into `ShellTerminalTab`. Keep the main tab free of an `onClose` callback. Use a `leading-none` label row and direct flex centering for the activity dot; give the auxiliary terminal glyph its own optical adjustment.
 
 - [ ] **Step 4: Run both tab test files and verify they pass**
 
@@ -197,7 +197,7 @@ Expected: PASS.
 
 **Files:**
 - Modify if test expectations require it: `frontend/src/renderer/components/SessionView.test.tsx`
-- Create: `frontend/src/renderer/__tests__/_shell-session-topbar.test.tsx`
+- Modify: `frontend/src/renderer/test/shell-new-session-shortcut.test.tsx`
 - Update: PR screenshots and PR description through GitHub CLI
 
 **Interfaces:**
@@ -205,13 +205,13 @@ Expected: PASS.
 
 - [ ] **Step 1: Run focused terminal/session regression tests**
 
-First add a shell integration test that mocks the route as a session route, renders `_shell.tsx`, and asserts the `SessionTopbarHost` precedes the body row containing the sidebar and `<main>`. Assert the host has `h-inspector-tabs` and the sidebar receives `data-topbar-offset="session"`.
+Add a shell integration case to the existing shell test that sets the route to a session, renders `_shell.tsx`, and asserts the `SessionTopbarHost` precedes the body row containing the sidebar and `<main>`. Assert the host has `h-inspector-tabs` and the sidebar receives `data-topbar-offset="session"`.
 
 Run:
 
 ```bash
 cd frontend && npx vitest run \
-  src/renderer/__tests__/_shell-session-topbar.test.tsx \
+  src/renderer/test/shell-new-session-shortcut.test.tsx \
   src/renderer/components/SessionTopbarPortal.test.tsx \
   src/renderer/components/CenterPane.test.tsx \
   src/renderer/components/ShellTerminalTab.test.tsx \
@@ -229,7 +229,7 @@ Run:
 
 ```bash
 npm run frontend:typecheck
-cd frontend && npm run build
+cd frontend && npx vite build --config vite.renderer.config.ts
 cd frontend && npx vitest run
 ```
 

@@ -596,6 +596,7 @@
 	"shortcut.couldNotReassign": "Could not reassign shortcut",
 	"shortcut.couldNotRecord": "Could not record shortcut",
 	"shortcut.couldNotUpdate": "Could not update shortcut",
+	"shortcut.close-shell-terminal": "Close terminal",
 	"shortcut.dialogDescription": "Move around Agent Orchestrator without leaving the keyboard.",
 	"shortcut.dialogDescriptionSettings": "Change application commands without affecting terminal or text-editing shortcuts.",
 	"shortcut.dialogTitle": "Keyboard shortcuts",

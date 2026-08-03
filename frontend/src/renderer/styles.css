@@ -438,6 +438,42 @@
 	border-radius: 0;
 }
 
+/* Session chrome is portaled above the sidebar/content row. Join that topbar
+ * to the center surface so the workspace reads as one continuous frame. */
+.session-topbar-surface {
+	overflow: hidden;
+	border: 1px solid var(--color-border-strong);
+	border-radius: var(--radius-center-panel) var(--radius-center-panel) 0 0;
+	background-color: var(--color-bg-primary);
+}
+
+/* When the sidebar is off-canvas, clear only the fixed navigation cluster.
+ * Native macOS fullscreen removes the traffic lights, so the cluster moves to
+ * the compact panel inset instead of retaining the windowed 79px reserve. */
+.session-topbar-titlebar-clearance-mac {
+	padding-left: var(--size-titlebar-content-offset);
+}
+
+.native-fullscreen .session-topbar-titlebar-clearance-mac {
+	padding-left: calc(
+		var(--size-center-panel-inset) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
+	);
+}
+
+.session-topbar-titlebar-clearance-linux {
+	padding-left: var(--size-titlebar-content-offset-linux);
+}
+
+.center-panel-shell.center-panel-shell--session {
+	padding-top: 0;
+}
+
+.center-panel-shell--session > .center-panel-surface {
+	border-top: 0;
+	border-top-left-radius: 0;
+	border-top-right-radius: 0;
+}
+
 .center-panel-titlebar {
 	padding-left: 1.125rem; /* matches former px-4.5 */
 }
@@ -457,6 +493,12 @@
 }
 [data-topbar-offset="trafficLights"] {
 	--sidebar-chrome-offset: var(--size-traffic-light-clearance);
+}
+[data-topbar-offset="session"] {
+	--sidebar-chrome-offset: var(--size-inspector-tabs);
+}
+.platform-windows [data-topbar-offset="session"] {
+	--sidebar-chrome-offset: calc(var(--size-window-titlebar) + var(--size-inspector-tabs));
 }
 
 /* On macOS the titlebar controls stay fixed when the sidebar is off-canvas.

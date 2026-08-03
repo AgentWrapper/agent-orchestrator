@@ -150,7 +150,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	}, [setActiveShellTerminal]);
 
 	// The shell layout owns opening (it is mounted on every route, so the button
-	// and Ctrl+Shift+` work everywhere); this view only follows the result. When a new
+	// and ⌘T / Ctrl+T work everywhere); this view only follows the result. When a new
 	// shell becomes active while a session is on screen, switch the pane to it —
 	// that is what makes the shortcut feel like it opened a terminal *here*.
 	useEffect(() => {

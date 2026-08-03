@@ -1,19 +1,23 @@
-import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Minus, Plus, Shield, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Minus, Plus, Shield } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode, type WheelEvent } from "react";
 import { useTranslation } from "react-i18next";
+import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
 import { useOverflowScroll } from "../hooks/useOverflowScroll";
 import { useTruncatedText } from "../hooks/useTruncatedText";
 import type { ShellTerminal } from "../hooks/useShellTerminals";
 import { TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from "../lib/design-tokens";
 import { getAgentActivityView } from "../lib/session-presentation";
+import { isLinuxPlatform, isMacPlatform } from "../lib/platform";
+import { aoBridge } from "../lib/bridge";
 import { handleTerminalTabListKeyDown } from "../lib/terminal-tabs";
 import { cn } from "../lib/utils";
-import type { Theme } from "../stores/ui-store";
+import { useUiStore, type Theme } from "../stores/ui-store";
 import type { TerminalTarget } from "../types/terminal";
 import { isOrchestratorSession, type WorkspaceSession } from "../types/workspace";
 import { ShellTerminalTab } from "./ShellTerminalTab";
 import { TerminalPane } from "./TerminalPane";
 import { AgentAvatar } from "./AgentAvatar";
+import { SessionTopbarPortal } from "./SessionTopbarPortal";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
@@ -38,6 +42,9 @@ type CenterPaneProps = {
 const terminalFontSizeStorageKey = "ao.terminal.fontSize";
 const WHEEL_ZOOM_THRESHOLD = 80;
 const WHEEL_ZOOM_RESET_MS = 250;
+const isMac = isMacPlatform();
+const isLinux = isLinuxPlatform();
+const newTerminalShortcutLabel = shortcutBindingLabel(defaultShortcutBindings("new-shell-terminal", isMac)[0], isMac);
 
 function clampTerminalFontSize(size: number): number {
 	return Math.min(TERMINAL_FONT_SIZE_MAX, Math.max(TERMINAL_FONT_SIZE_MIN, size));
@@ -71,6 +78,8 @@ export function CenterPane({
 	const lastWheelZoomAtRef = useRef(0);
 	const [fontSize, setFontSize] = useState(initialTerminalFontSize);
 	const [isFullscreen, setIsFullscreen] = useState(false);
+	const [terminalBounds, setTerminalBounds] = useState({ leftInset: 0, rightInset: 0, width: 0 });
+	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
 	const tabOverflowWatch = `${session?.id ?? ""}|${shellTerminals.map((terminal) => terminal.handleId).join("|")}`;
 	const tabsOverflow = useOverflowScroll<HTMLDivElement>(tabOverflowWatch);
 	const target = terminalTarget ?? { kind: "worker" };
@@ -90,6 +99,39 @@ export function CenterPane({
 		const handleFullscreenChange = () => setIsFullscreen(document.fullscreenElement === paneRef.current);
 		document.addEventListener("fullscreenchange", handleFullscreenChange);
 		return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+	}, []);
+
+	useEffect(
+		() =>
+			aoBridge.app.onCloseShellTerminalShortcut(() => {
+				if (target.kind === "shell") onCloseShellTerminal?.(target.handleId);
+			}),
+		[target, onCloseShellTerminal],
+	);
+
+	useEffect(() => {
+		const pane = paneRef.current;
+		if (!pane) return;
+		const workspaceSurface = pane.closest<HTMLElement>(".center-panel-surface");
+		const measure = () => {
+			const paneRect = pane.getBoundingClientRect();
+			const workspaceRect = workspaceSurface?.getBoundingClientRect() ?? paneRect;
+			const next = {
+				leftInset: workspaceRect.left,
+				rightInset: Math.max(0, window.innerWidth - workspaceRect.right),
+				width: paneRect.width,
+			};
+			setTerminalBounds((current) =>
+				current.leftInset === next.leftInset && current.rightInset === next.rightInset && current.width === next.width
+					? current
+					: next,
+			);
+		};
+		measure();
+		const observer = new ResizeObserver(measure);
+		observer.observe(pane);
+		if (workspaceSurface) observer.observe(workspaceSurface);
+		return () => observer.disconnect();
 	}, []);
 
 	const updateFontSize = useCallback((delta: number) => {
@@ -136,131 +178,154 @@ export function CenterPane({
 		[updateFontSize],
 	);
 
+	const terminalTopbar = (
+		<div
+			className="flex h-inspector-tabs w-full shrink-0 items-stretch bg-sidebar"
+			style={{
+				paddingLeft: isFullscreen ? 0 : terminalBounds.leftInset,
+				paddingRight: isFullscreen ? 0 : terminalBounds.rightInset,
+			}}
+		>
+			<div className="session-topbar-surface flex min-w-0 flex-1" data-testid="session-workspace-topbar">
+				<div
+					className={cn(
+						"flex min-w-0 shrink items-center pr-1.5",
+						!isFullscreen && !isSidebarOpen && isMac && "session-topbar-titlebar-clearance-mac",
+						!isFullscreen && !isSidebarOpen && isLinux && "session-topbar-titlebar-clearance-linux",
+					)}
+					data-testid="session-terminal-region"
+					style={{
+						width: terminalBounds.width > 0 ? terminalBounds.width : "100%",
+					}}
+				>
+					<div className="flex h-full min-w-flex-min flex-1 items-center">
+						{tabsOverflow.canScrollLeft ? (
+							<button
+								aria-label={t("terminal.scrollTabsLeft")}
+								className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+								onClick={() => tabsOverflow.scrollByDirection(-1)}
+								title={t("terminal.scrollTabsLeft")}
+								type="button"
+							>
+								<ChevronLeft aria-hidden="true" className="size-icon-md" />
+							</button>
+						) : null}
+						{/* The permanent agent tab plus shells opened in this session's worktree. */}
+						<div
+							ref={tabsOverflow.ref}
+							aria-label={t("terminal.tabsAria")}
+							className="scrollbar-none flex min-w-flex-min flex-1 self-stretch items-center overflow-x-auto"
+							onKeyDown={handleTerminalTabListKeyDown}
+							role="tablist"
+						>
+							{session ? (
+								<SessionPaneTab
+									isActive={target.kind !== "shell"}
+									label={sessionTabLabel}
+									onSelect={onSelectSessionTerminal}
+									session={session}
+								/>
+							) : (
+								<SessionPaneTab isActive={target.kind !== "shell"} label={sessionTabLabel} />
+							)}
+							{shellTerminals.map((shell) => (
+								<ShellTerminalTab
+									key={shell.handleId}
+									appearance="connected"
+									isActive={target.kind === "shell" && target.handleId === shell.handleId}
+									onClose={() => onCloseShellTerminal?.(shell.handleId)}
+									onRename={onRenameShellTerminal ? (title) => onRenameShellTerminal(shell.handleId, title) : undefined}
+									onSelect={() => onSelectShellTerminal?.(shell.handleId)}
+									shell={shell}
+								/>
+							))}
+						</div>
+						{tabsOverflow.canScrollRight ? (
+							<button
+								aria-label={t("terminal.scrollTabsRight")}
+								className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+								onClick={() => tabsOverflow.scrollByDirection(1)}
+								title={t("terminal.scrollTabsRight")}
+								type="button"
+							>
+								<ChevronRight aria-hidden="true" className="size-icon-md" />
+							</button>
+						) : null}
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<Button
+									aria-label={t("shortcut.new-shell-terminal")}
+									className="shrink-0 text-muted-foreground"
+									disabled={!onNewShellTerminal}
+									onClick={onNewShellTerminal}
+									size="icon-sm"
+									type="button"
+									variant="outline"
+								>
+									<Plus aria-hidden="true" className="size-icon-md" />
+								</Button>
+							</TooltipTrigger>
+							<TooltipContent>{t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}</TooltipContent>
+						</Tooltip>
+					</div>
+					<div
+						aria-label={t("terminal.controlsAria")}
+						className="ml-1.5 flex shrink-0 items-center gap-0.5 border-l border-border/70 pl-1.5"
+						role="toolbar"
+					>
+						<TerminalControl
+							disabled={fontSize <= TERMINAL_FONT_SIZE_MIN}
+							label={t("terminal.decreaseFontSize")}
+							onClick={() => updateFontSize(-1)}
+						>
+							<Minus aria-hidden="true" className="size-icon-sm" />
+						</TerminalControl>
+						<span
+							aria-label={t("terminal.fontSizeAria", { size: fontSize })}
+							className="w-font-size-label text-center font-mono text-micro tabular-nums text-muted-foreground"
+						>
+							{fontSize}px
+						</span>
+						<TerminalControl
+							disabled={fontSize >= TERMINAL_FONT_SIZE_MAX}
+							label={t("terminal.increaseFontSize")}
+							onClick={() => updateFontSize(1)}
+						>
+							<Plus aria-hidden="true" className="size-icon-sm" />
+						</TerminalControl>
+						<div aria-hidden="true" className="mx-1 h-4 w-px bg-border/70" />
+						<TerminalControl
+							isPressed={isFullscreen}
+							label={isFullscreen ? t("terminal.exitFullscreen") : t("terminal.fullscreen")}
+							onClick={() => void toggleFullscreen()}
+						>
+							{isFullscreen ? (
+								<Minimize2 aria-hidden="true" className="size-icon-md" />
+							) : (
+								<Maximize2 aria-hidden="true" className="size-icon-md" />
+							)}
+						</TerminalControl>
+					</div>
+				</div>
+				{isFullscreen ? null : (
+					<div
+						className="ml-auto flex shrink-0 items-center border-l border-border/70 px-3"
+						data-testid="session-action-region"
+					>
+						{topbarActions}
+					</div>
+				)}
+			</div>
+		</div>
+	);
+
 	return (
 		<div
 			ref={paneRef}
 			className="terminal-pane-frame flex h-full min-h-0 min-w-flex-min flex-col"
 			onWheelCapture={handleWheelZoom}
 		>
-			<div className="flex h-inspector-tabs shrink-0 items-stretch border-b border-border bg-background pl-4 pr-3">
-				<div className="flex min-w-flex-min flex-1 items-center">
-					<button
-						aria-label={t("terminal.scrollTabsLeft")}
-						className={cn(
-							"mr-1 inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
-							!tabsOverflow.canScrollLeft && "invisible",
-						)}
-						disabled={!tabsOverflow.canScrollLeft}
-						onClick={() => tabsOverflow.scrollByDirection(-1)}
-						title={t("terminal.scrollTabsLeft")}
-						type="button"
-					>
-						<ChevronLeft aria-hidden="true" className="size-icon-md" />
-					</button>
-					{/* The session's own pane plus the shells opened from this strip; the
-					    terminal button at the end adds a shell in the session's worktree. */}
-					<div
-						ref={tabsOverflow.ref}
-						aria-label={t("terminal.tabsAria")}
-						className="scrollbar-none flex min-w-flex-min flex-1 self-stretch items-end gap-1 overflow-x-auto pt-1.5"
-						onKeyDown={handleTerminalTabListKeyDown}
-						role="tablist"
-					>
-						{session ? (
-							<SessionPaneTab
-								isActive={target.kind !== "shell"}
-								label={sessionTabLabel}
-								onSelect={onSelectSessionTerminal}
-								session={session}
-							/>
-						) : (
-							<SessionPaneTab isActive={target.kind !== "shell"} label={sessionTabLabel} />
-						)}
-						{shellTerminals.map((shell) => (
-							<ShellTerminalTab
-								key={shell.handleId}
-								appearance="connected"
-								isActive={target.kind === "shell" && target.handleId === shell.handleId}
-								onClose={() => onCloseShellTerminal?.(shell.handleId)}
-								onRename={onRenameShellTerminal ? (title) => onRenameShellTerminal(shell.handleId, title) : undefined}
-								onSelect={() => onSelectShellTerminal?.(shell.handleId)}
-								shell={shell}
-							/>
-						))}
-					</div>
-					<button
-						aria-label={t("terminal.scrollTabsRight")}
-						className={cn(
-							"mx-1 inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
-							!tabsOverflow.canScrollRight && "invisible",
-						)}
-						disabled={!tabsOverflow.canScrollRight}
-						onClick={() => tabsOverflow.scrollByDirection(1)}
-						title={t("terminal.scrollTabsRight")}
-						type="button"
-					>
-						<ChevronRight aria-hidden="true" className="size-icon-md" />
-					</button>
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<Button
-								aria-label={t("shortcut.new-shell-terminal")}
-								className="h-control-md shrink-0 gap-1.5 px-2.5"
-								disabled={!onNewShellTerminal}
-								onClick={onNewShellTerminal}
-								size="sm"
-								type="button"
-								variant="ghost"
-							>
-								<Plus aria-hidden="true" className="size-icon-md" />
-								<span>{t("shortcut.new-shell-terminal")}</span>
-							</Button>
-						</TooltipTrigger>
-						<TooltipContent>{t("terminal.newWithShortcut", { shortcut: "Ctrl+Shift+`" })}</TooltipContent>
-					</Tooltip>
-				</div>
-				<div
-					aria-label={t("terminal.controlsAria")}
-					className="ml-2 flex shrink-0 items-center gap-0.5 border-l border-border/70 pl-2"
-					role="toolbar"
-				>
-					<TerminalControl
-						disabled={fontSize <= TERMINAL_FONT_SIZE_MIN}
-						label={t("terminal.decreaseFontSize")}
-						onClick={() => updateFontSize(-1)}
-					>
-						<Minus aria-hidden="true" className="size-icon-sm" />
-					</TerminalControl>
-					<span
-						aria-label={t("terminal.fontSizeAria", { size: fontSize })}
-						className="w-font-size-label text-center font-mono text-micro tabular-nums text-muted-foreground"
-					>
-						{fontSize}px
-					</span>
-					<TerminalControl
-						disabled={fontSize >= TERMINAL_FONT_SIZE_MAX}
-						label={t("terminal.increaseFontSize")}
-						onClick={() => updateFontSize(1)}
-					>
-						<Plus aria-hidden="true" className="size-icon-sm" />
-					</TerminalControl>
-					<div aria-hidden="true" className="mx-1 h-4 w-px bg-border/70" />
-					<TerminalControl
-						isPressed={isFullscreen}
-						label={isFullscreen ? t("terminal.exitFullscreen") : t("terminal.fullscreen")}
-						onClick={() => void toggleFullscreen()}
-					>
-						{isFullscreen ? (
-							<Minimize2 aria-hidden="true" className="size-icon-md" />
-						) : (
-							<Maximize2 aria-hidden="true" className="size-icon-md" />
-						)}
-					</TerminalControl>
-				</div>
-				{topbarActions ? (
-					<div className="ml-2 flex shrink-0 items-center border-l border-border/70 pl-2">{topbarActions}</div>
-				) : null}
-			</div>
+			{isFullscreen ? terminalTopbar : <SessionTopbarPortal>{terminalTopbar}</SessionTopbarPortal>}
 			{target.kind === "reviewer" ? (
 				<div className="flex h-toolbar shrink-0 items-center gap-3 border-b border-border px-4">
 					<button
@@ -300,23 +365,23 @@ type SessionPaneTabProps = {
 	label: string;
 	isActive: boolean;
 	onSelect?: () => void;
-	onClose?: () => void;
 	session?: WorkspaceSession;
 };
 
-// Connected terminal-tab chrome: the open tab visually joins the terminal
-// canvas, while the full label becomes a tooltip only when it is truncated.
-function SessionPaneTab({ label, isActive, onSelect, onClose, session }: SessionPaneTabProps) {
+// The session's permanent anchor tab. It is intentionally more substantial
+// than auxiliary shells and is the only terminal tab branded by the harness.
+function SessionPaneTab({ label, isActive, onSelect, session }: SessionPaneTabProps) {
 	const { t } = useTranslation();
 	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(label);
 	const activity = session ? getAgentActivityView(session.activity, t) : undefined;
 	return (
 		<span
+			data-terminal-role="primary"
 			className={cn(
-				"group relative inline-flex h-8 min-w-shell-tab-min items-center gap-1 rounded-t-md border px-2 transition-colors",
+				"group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border bg-surface px-3 text-foreground transition-colors",
 				isActive
-					? "border-border border-b-terminal bg-terminal text-foreground before:absolute before:inset-x-2 before:top-0 before:h-px before:bg-accent"
-					: "border-transparent text-passive hover:bg-interactive-hover/60 hover:text-foreground",
+					? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-terminal"
+					: "text-muted-foreground hover:bg-raised hover:text-foreground",
 			)}
 		>
 			{session ? <AgentAvatar className="size-icon-base" decorative provider={session.provider} /> : null}
@@ -326,7 +391,7 @@ function SessionPaneTab({ label, isActive, onSelect, onClose, session }: Session
 				aria-label={activity ? `${label} · ${activity.label}` : label}
 				aria-selected={isActive}
 				className={cn(
-					"inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-normal transition-colors",
+					"inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none transition-colors",
 					isActive ? "text-foreground" : "text-passive group-hover:text-foreground",
 				)}
 				onClick={onSelect}
@@ -339,7 +404,7 @@ function SessionPaneTab({ label, isActive, onSelect, onClose, session }: Session
 				{activity ? (
 					<span
 						aria-hidden="true"
-						className="inline-flex shrink-0 items-center"
+						className="inline-flex shrink-0 self-center items-center"
 						style={{ color: activity.tone }}
 						title={activity.label}
 					>
@@ -350,19 +415,6 @@ function SessionPaneTab({ label, isActive, onSelect, onClose, session }: Session
 					</span>
 				) : null}
 			</button>
-			{onClose ? (
-				<button
-					aria-label={t("terminal.closeSessionTab", { label })}
-					className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-passive opacity-0 transition-[background,color,opacity] group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
-					onClick={(event) => {
-						event.stopPropagation();
-						onClose();
-					}}
-					type="button"
-				>
-					<X aria-hidden="true" className="size-icon-sm" />
-				</button>
-			) : null}
 		</span>
 	);
 }

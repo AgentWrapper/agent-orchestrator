@@ -1,9 +1,12 @@
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { useEffect } from "react";
 import { Trans, useTranslation } from "react-i18next";
+import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
 import { useOverflowScroll } from "../hooks/useOverflowScroll";
 import { useCloseShellTerminal, useRenameShellTerminal, useShellTerminals } from "../hooks/useShellTerminals";
 import { useShell } from "../lib/shell-context";
+import { aoBridge } from "../lib/bridge";
+import { isMacPlatform } from "../lib/platform";
 import { cn } from "../lib/utils";
 import { handleTerminalTabListKeyDown } from "../lib/terminal-tabs";
 import { useResolvedTheme, useUiStore } from "../stores/ui-store";
@@ -11,12 +14,15 @@ import { ShellTerminalTab } from "./ShellTerminalTab";
 import { TerminalPane } from "./TerminalPane";
 
 // The standalone terminals screen: shells with no agent session behind them,
-// reachable from anywhere via the + at the end of a tab strip or Ctrl+Shift+`.
+// reachable from anywhere via the + at the end of a tab strip or ⌘T / Ctrl+T.
 //
 // This exists because the session view cannot be the only home for shells - it
 // is unreachable in a project with no sessions, which is exactly when a user
 // most wants a plain terminal. Inside a session, shells still appear as tabs
 // beside that session's pane; this screen is where they live otherwise.
+const isMac = isMacPlatform();
+const newTerminalShortcutLabel = shortcutBindingLabel(defaultShortcutBindings("new-shell-terminal", isMac)[0], isMac);
+
 export function ShellTerminalsView() {
 	const { t } = useTranslation();
 	const { daemonStatus } = useShell();
@@ -42,6 +48,14 @@ export function ShellTerminalsView() {
 		}
 		if (!active) setActiveShellTerminal(shellTerminals[0].handleId);
 	}, [shellTerminals, active, activeHandleId, setActiveShellTerminal]);
+
+	useEffect(
+		() =>
+			aoBridge.app.onCloseShellTerminalShortcut(() => {
+				if (active) closeShellTerminal.mutate(active.handleId);
+			}),
+		[active, closeShellTerminal],
+	);
 
 	return (
 		<div className="flex h-full min-h-0 flex-col text-foreground">
@@ -102,7 +116,7 @@ export function ShellTerminalsView() {
 					aria-label={t("shortcut.new-shell-terminal")}
 					className="ml-auto inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
 					onClick={requestNewShellTerminal}
-					title={t("terminal.newWithShortcut", { shortcut: "Ctrl+Shift+`" })}
+					title={t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}
 					type="button"
 				>
 					<Plus aria-hidden="true" className="size-icon-md" />
@@ -124,7 +138,7 @@ export function ShellTerminalsView() {
 								<Trans
 									components={{ shortcut: <span className="text-terminal" /> }}
 									i18nKey="terminal.emptyHint"
-									values={{ shortcut: "Ctrl+Shift+`" }}
+									values={{ shortcut: newTerminalShortcutLabel }}
 								/>
 							</div>
 						</div>

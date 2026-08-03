@@ -83,10 +83,48 @@ describe("ShellTerminalTab rename", () => {
 		expect(onSelect).toHaveBeenCalled();
 	});
 
+	it("selects from the full connected pill, not only its title", () => {
+		const { onSelect } = renderTab({ appearance: "connected" });
+		fireEvent.click(screen.getByRole("tab", { name: "ao" }).parentElement as HTMLElement);
+		expect(onSelect).toHaveBeenCalledOnce();
+	});
+
 	it("keeps the close affordance visible on an active connected tab", () => {
 		renderTab({ appearance: "connected", isActive: true });
-		expect(screen.getByRole("button", { name: "Close terminal ao" })).toHaveClass("opacity-100");
+		expect(screen.getByRole("button", { name: "Close terminal ao" })).toHaveClass("w-control-sm", "opacity-100");
+		expect(screen.getByRole("button", { name: "Close terminal ao" })).not.toHaveClass("absolute");
 		expect(screen.getByRole("tab", { name: "ao" })).toHaveAttribute("aria-selected", "true");
+	});
+
+	it("shrinks the title column for a sibling close affordance without changing the tab width", () => {
+		renderTab({ appearance: "connected", isActive: false });
+
+		expect(screen.getByRole("button", { name: "Close terminal ao" })).toHaveClass(
+			"w-0",
+			"opacity-0",
+			"group-hover:w-control-sm",
+			"group-hover:opacity-100",
+		);
+		expect(screen.getByRole("button", { name: "Close terminal ao" })).not.toHaveClass("absolute");
+		expect(screen.getByRole("tab", { name: "ao" })).toHaveClass("w-full", "min-w-0", "text-left");
+		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass(
+			"grid",
+			"w-[calc(var(--spacing-shell-tab-max)+var(--spacing-control-sm)+2rem)]",
+		);
+	});
+
+	it("uses a neutral active surface without the blue selected hairline", () => {
+		renderTab({ appearance: "connected", isActive: true });
+
+		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass("self-stretch", "bg-overlay");
+		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass("rounded-md");
+		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass("before:bg-accent");
+	});
+
+	it("optically centers the auxiliary terminal glyph with its label", () => {
+		renderTab({ appearance: "connected" });
+
+		expect(screen.getByRole("tab", { name: "ao" }).parentElement?.querySelector("svg")).toHaveClass("translate-y-px");
 	});
 });
 

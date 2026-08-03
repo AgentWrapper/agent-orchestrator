@@ -596,6 +596,7 @@
 	"shortcut.couldNotReassign": "无法重新分配快捷键",
 	"shortcut.couldNotRecord": "无法录制快捷键",
 	"shortcut.couldNotUpdate": "无法更新快捷键",
+	"shortcut.close-shell-terminal": "关闭终端",
 	"shortcut.dialogDescription": "无需离开键盘即可在 Agent Orchestrator 中导航。",
 	"shortcut.dialogDescriptionSettings": "更改应用命令，不影响终端或文本编辑快捷键。",
 	"shortcut.dialogTitle": "键盘快捷键",
