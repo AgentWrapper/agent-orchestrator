@@ -137,5 +137,49 @@ func migrate(db *sql.DB) error {
 	if err := goose.Up(db, "migrations", goose.WithAllowMissing()); err != nil {
 		return fmt.Errorf("run migrations: %w", err)
 	}
+	return reconcileSchema(db)
+}
+
+// repairedColumns lists physical columns the generated queries depend on that
+// have been observed missing on real installs even though goose_db_version
+// claims the migration adding them ran. Issue #3475/#3476: profiles with a
+// foreign migration history (fork or branch builds burned versions 40+) make
+// goose skip the real 0040_add_session_diff_base.sql silently, and every
+// session list then 500s on "no such column: diff_base_sha" while /healthz
+// stays green. A versioned repair migration cannot fix this class — a burned
+// version number is exactly what caused it — so the physical schema is
+// verified on every startup instead of trusting goose_db_version.
+var repairedColumns = []struct {
+	table  string
+	column string
+	ddl    string
+}{
+	{"sessions", "diff_base_sha", `ALTER TABLE sessions ADD COLUMN diff_base_sha TEXT NOT NULL DEFAULT ''`},
+	{"sessions", "diff_base_ref", `ALTER TABLE sessions ADD COLUMN diff_base_ref TEXT NOT NULL DEFAULT ''`},
+}
+
+// reconcileSchema verifies that the columns in repairedColumns physically
+// exist and adds any that are missing. It is idempotent: a healthy database
+// (0040 applied normally, or one already repaired by hand) is left untouched.
+// Failures surface as a specific, actionable startup error instead of an
+// opaque INTERNAL_ERROR on the first session list.
+func reconcileSchema(db *sql.DB) error {
+	for _, rc := range repairedColumns {
+		var count int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, rc.table, rc.column,
+		).Scan(&count); err != nil {
+			return fmt.Errorf("schema verification: inspect %s.%s: %w", rc.table, rc.column, err)
+		}
+		if count > 0 {
+			continue
+		}
+		if _, err := db.Exec(rc.ddl); err != nil {
+			return fmt.Errorf(
+				"schema repair: %s.%s is missing (a burned goose version skipped the migration that adds it, see #3475) and could not be added: %w",
+				rc.table, rc.column, err,
+			)
+		}
+	}
 	return nil
 }
