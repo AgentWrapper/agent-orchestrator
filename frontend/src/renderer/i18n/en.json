@@ -798,7 +798,6 @@
 	"files.expandAll": "Expand all files",
 	"files.unifiedDiff": "Unified diff view",
 	"files.splitDiff": "Split diff view",
-	"files.refresh": "Refresh files",
 	"files.minimize": "Minimize files",
 	"files.maximize": "Maximize files",
 	"files.loading": "Loading files...",

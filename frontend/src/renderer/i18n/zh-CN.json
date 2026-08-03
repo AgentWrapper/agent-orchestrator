@@ -798,7 +798,6 @@
 	"files.expandAll": "展开所有文件",
 	"files.unifiedDiff": "统一差异视图",
 	"files.splitDiff": "拆分差异视图",
-	"files.refresh": "刷新文件",
 	"files.minimize": "最小化文件面板",
 	"files.maximize": "最大化文件面板",
 	"files.loading": "正在加载文件...",

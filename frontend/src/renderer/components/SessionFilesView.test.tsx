@@ -12,6 +12,9 @@ vi.mock("../lib/api-client", () => ({
 		GET: getMock,
 		POST: postMock,
 	},
+	getApiBaseUrl: () => "",
+	hasTrustedApiBaseUrl: () => false,
+	subscribeApiBaseUrl: () => () => undefined,
 	apiErrorMessage: (error: unknown, fallback = "Request failed") => {
 		if (error instanceof Error) return error.message;
 		if (typeof error === "object" && error !== null && "message" in error) {
@@ -180,6 +183,7 @@ describe("SessionFilesView", () => {
 		const firstFile = await screen.findByRole("button", { name: "Expand src/App.tsx" });
 		expect(screen.getByPlaceholderText("Search 2 files")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Close files" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Refresh files" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /README\.md/ })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Download src/App.tsx" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Diff layout" })).not.toBeInTheDocument();

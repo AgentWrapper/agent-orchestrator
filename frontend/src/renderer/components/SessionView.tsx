@@ -452,15 +452,23 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					</>
 				) : null}
 			</ResizablePanelGroup>
-			{filesPoppedOut && session ? (
-				<div className="absolute inset-0 z-30 bg-background">
-					<SessionFilesView
-						isMaximized
-						onToggleMaximized={handleToggleFilesPopOut}
-						sessionId={session.id}
-					/>
-				</div>
-			) : null}
+			{filesPoppedOut && session
+				? createPortal(
+						<div
+							className={cn(
+								"files-popout-overlay",
+								shellTopbarHiddenByPlatform && !isNativeFullScreen && "files-popout-overlay--mac-windowed",
+							)}
+						>
+							<SessionFilesView
+								isMaximized
+								onToggleMaximized={handleToggleFilesPopOut}
+								sessionId={session.id}
+							/>
+						</div>,
+						document.body,
+					)
+				: null}
 			{/* Maximized browser: a fixed overlay across the app workspace,
           portaled to <body> so it escapes the shell layout (covering the
           sidebar + topbar, not just the session area) and sits outside any

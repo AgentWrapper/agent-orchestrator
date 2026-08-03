@@ -2293,8 +2293,8 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 		var(--elevation-sm);
 }
 
-/* Maximized browser overlay: a fixed layer over the app workspace (portaled to
-   <body>, so it covers the sidebar + topbar too, not just the session area).
+/* Maximized workspace overlays: fixed layers portaled to <body>, so they cover
+   the sidebar + topbar too, not just the session area.
    Electron's Window Controls Overlay owns the top-right titlebar region on
    Windows, so start below its reported safe-area height. macOS hides the shell
    topbar; windowed mode reserves the native traffic-light band below, while
@@ -2302,7 +2302,8 @@ body.is-resizing-x [data-slot="sidebar-container"] {
    the overlay must start below --size-toolbar; env(titlebar-area-height)
    resolves to 0 on Linux (no titleBarOverlay), so we override the top with a
    platform class. */
-.browser-popout-overlay {
+.browser-popout-overlay,
+.files-popout-overlay {
 	position: fixed;
 	inset: env(titlebar-area-height, 0px) 0 0;
 	z-index: 40;
@@ -2314,9 +2315,9 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 }
 
 /* macOS keeps the native traffic lights visible while the window is not in
-   native fullscreen. The maximized browser is portaled to <body>, so reserve
-   that band here instead of allowing its toolbar to render beneath the lights. */
-.browser-popout-overlay--mac-windowed {
+   native fullscreen. Reserve that band instead of rendering beneath them. */
+.browser-popout-overlay--mac-windowed,
+.files-popout-overlay--mac-windowed {
 	top: var(--size-traffic-light-clearance);
 }
 
@@ -2325,7 +2326,8 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	-webkit-app-region: no-drag;
 }
 
-.platform-linux .browser-popout-overlay {
+.platform-linux .browser-popout-overlay,
+.platform-linux .files-popout-overlay {
 	top: var(--size-shell-topbar);
 }
 

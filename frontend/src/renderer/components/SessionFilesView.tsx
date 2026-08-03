@@ -8,7 +8,7 @@ import {
 	type MouseEvent,
 	type ReactNode,
 } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import {
@@ -32,6 +32,7 @@ import {
 import { cn } from "../lib/utils";
 import type { DiffSelectionLine } from "../../shared/diff-selection";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./ui/accordion";
+import { subscribeWorkspaceFileChanges } from "../lib/workspace-file-events";
 import { Button } from "./ui/button";
 import { DiffSelectionMenu } from "./DiffSelectionMenu";
 import { Input } from "./ui/input";
@@ -80,12 +81,14 @@ export function SessionFilesView({
 	onToggleMaximized,
 }: SessionFilesViewProps) {
 	const { t } = useTranslation();
+	const queryClient = useQueryClient();
 	const [filter, setFilter] = useState("");
 	const [split, setSplit] = useState(false);
 	const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
 	const rootRef = useRef<HTMLElement>(null);
 
 	const filesQuery = useQuery(sessionWorkspaceFilesQueryOptions(sessionId, t("files.error.loadWorkspace")));
+	useEffect(() => subscribeWorkspaceFileChanges(sessionId, queryClient), [queryClient, sessionId]);
 	const files = filesQuery.data?.files ?? emptyFiles;
 	const changedFiles = useMemo(() => files.filter(isChangedWorkspaceFile), [files]);
 
@@ -297,8 +300,7 @@ function ReviewFileCard({
 	const [selectionOrMenuActive, setSelectionOrMenuActive] = useState(false);
 	const detailQuery = useQuery({
 		queryKey: ["session-workspace-file", sessionId, file.path],
-		enabled: expanded,
-		refetchInterval: expanded && !selectionOrMenuActive ? 3500 : false,
+		enabled: expanded && !selectionOrMenuActive,
 		queryFn: () => loadWorkspaceFile(sessionId, file.path, t),
 	});
 

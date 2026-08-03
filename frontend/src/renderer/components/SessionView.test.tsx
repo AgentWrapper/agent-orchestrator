@@ -716,7 +716,7 @@ describe("SessionView", () => {
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
 	});
 
-	it("lets the user maximize and minimize the files view explicitly", () => {
+	it("maximizes files over the whole app window and returns to the rail", () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
 
@@ -724,6 +724,9 @@ describe("SessionView", () => {
 		fireEvent.click(within(screen.getByTestId("panel-inspector")).getByRole("button", { name: "files rail" }));
 
 		expect(screen.getByRole("button", { name: "files center" })).toBeInTheDocument();
+		const overlay = document.querySelector(".files-popout-overlay");
+		expect(overlay).toHaveClass("files-popout-overlay--mac-windowed");
+		expect(overlay?.parentElement).toBe(document.body);
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
 
 		fireEvent.click(screen.getByRole("button", { name: "files center" }));
@@ -732,6 +735,17 @@ describe("SessionView", () => {
 			within(screen.getByTestId("panel-inspector")).getByRole("button", { name: "files rail" }),
 		).toBeInTheDocument();
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
+	});
+
+	it("does not reserve the traffic-light band for maximized files during native macOS fullscreen", () => {
+		nativeFullScreenMock.mockReturnValue(true);
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "open files" }));
+		fireEvent.click(within(screen.getByTestId("panel-inspector")).getByRole("button", { name: "files rail" }));
+
+		expect(document.querySelector(".files-popout-overlay")).not.toHaveClass("files-popout-overlay--mac-windowed");
 	});
 
 	it("badges the Browser tab on an `ao preview` URL without opening it or leaving the terminal", () => {
