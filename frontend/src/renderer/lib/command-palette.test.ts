@@ -9,6 +9,7 @@ import {
 	type CommandItem,
 } from "./command-palette";
 import type { PullRequestFacts, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
+import { appI18n } from "../i18n";
 
 function session(overrides: Partial<WorkspaceSession> & { id: string }): WorkspaceSession {
 	return {
@@ -58,6 +59,14 @@ function workspaces(): WorkspaceSummary[] {
 const byId = (items: CommandItem[]) => new Map(items.map((item) => [item.id, item]));
 
 describe("buildCommands grouping", () => {
+	it("uses the translator supplied by the reactive caller", () => {
+		const items = buildCommands(
+			{ workspaces: workspaces(), currentProjectId: "proj-1" },
+			appI18n.getFixedT("zh-CN"),
+		);
+		expect(byId(items).get("current-new-task")?.title).toBe("新建任务");
+	});
+
 	it("puts current-scoped actions in the Current group when the project is valid", () => {
 		const items = buildCommands({ workspaces: workspaces(), currentProjectId: "proj-1", currentSessionId: "w-pr" });
 		const map = byId(items);
@@ -213,14 +222,15 @@ describe("result caps", () => {
 		expect(grouped.find((g) => g.id === "global")?.items.length).toBeGreaterThan(0);
 	});
 
-	it("renders a typed search as one flat Results group capped to MAX_SEARCH_RESULTS", () => {
+	it("renders a typed search under category headings, capped to MAX_SEARCH_RESULTS overall", () => {
 		const groups = displayGroups(buildCommands({ workspaces: manyProjects(50) }), "project");
-		expect(groups).toHaveLength(1);
-		expect(groups[0]?.id).toBe("results");
-		expect(groups[0]?.items.length).toBe(MAX_SEARCH_RESULTS);
+		expect(groups.every((g) => g.id !== "results")).toBe(true);
+		expect(groups.some((g) => g.id === "projects")).toBe(true);
+		const total = groups.reduce((sum, g) => sum + g.items.length, 0);
+		expect(total).toBe(MAX_SEARCH_RESULTS);
 	});
 
-	it("preserves global rank order across categories (higher score renders first, not by group)", () => {
+	it("keeps search hits under category headings, best-matching category first", () => {
 		const workspaces: WorkspaceSummary[] = [
 			{
 				id: "alpha",
@@ -231,11 +241,28 @@ describe("result caps", () => {
 			},
 		];
 		const groups = displayGroups(buildCommands({ workspaces }), "alpha");
-		expect(groups).toHaveLength(1);
-		const order = groups[0]?.items.map((item) => item.id) ?? [];
-		expect(order[0]).toBe("project:alpha");
-		expect(order).toContain("attention:s-attn");
-		expect(order.length).toBeLessThanOrEqual(MAX_SEARCH_RESULTS);
+		const ids = groups.map((g) => g.id);
+		expect(ids).toContain("attention");
+		expect(ids).toContain("projects");
+		// Projects outranks its default position ahead of Needs attention because
+		// "alpha" is an exact project title but only a fuzzy hit on the session.
+		expect(ids.indexOf("projects")).toBeLessThan(ids.indexOf("attention"));
+		expect(groups.find((g) => g.id === "attention")?.items.some((item) => item.id === "attention:s-attn")).toBe(
+			true,
+		);
+		// Enter targets the first item in render order, so that must be the top match.
+		const rendered = groups.flatMap((g) => g.items);
+		expect(rendered[0]?.id).toBe("project:alpha");
+		expect(rendered.length).toBeLessThanOrEqual(MAX_SEARCH_RESULTS);
+	});
+
+	it("falls back to the default category order when categories match equally well", () => {
+		// "app" is the project title (1000) and a keyword-only hit (500) on the
+		// attention, session and PR rows, so those three keep their declared order.
+		const ids = displayGroups(buildCommands({ workspaces: workspaces() }), "app").map((g) => g.id);
+		expect(ids[0]).toBe("projects");
+		expect(ids.indexOf("attention")).toBeLessThan(ids.indexOf("sessions"));
+		expect(ids.indexOf("sessions")).toBeLessThan(ids.indexOf("prs"));
 	});
 });
 

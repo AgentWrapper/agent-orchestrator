@@ -8,6 +8,7 @@
 		"jsx": "react-jsx",
 		"types": ["vite/client", "vitest/globals"],
 		"strict": true,
+		"resolveJsonModule": true,
 		"esModuleInterop": true,
 		"allowSyntheticDefaultImports": true,
 		"isolatedModules": true,
@@ -33,5 +34,5 @@
 		"vite.renderer.config.ts",
 		"playwright.config.ts"
 	],
-	"exclude": ["node_modules", "dist", "dist-electron", ".vite", "release", "out", "src/landing"]
+	"exclude": ["node_modules", "dist", "dist-electron", ".vite", "release", "out", "src/landing", "src/docs"]
 }

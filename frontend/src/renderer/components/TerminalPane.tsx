@@ -1,12 +1,14 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import type { TerminalTarget } from "../types/terminal";
-import type { WorkspaceSession } from "../types/workspace";
-import type { Theme } from "../stores/ui-store";
+import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
+import { useUiStore, type Theme } from "../stores/ui-store";
 import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
 import { apiClient } from "../lib/api-client";
-import { isLoopbackHostname } from "../lib/loopback";
+import { createUrlWatcher, type UrlWatcher } from "../lib/detect-urls";
 import { cn } from "../lib/utils";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { useRestoreSession } from "../hooks/useRestoreSession";
@@ -214,13 +216,14 @@ export function providerScrollsByKeyboard(provider?: string): boolean {
 	return provider ? KEYBOARD_SCROLL_PROVIDERS.has(provider) : false;
 }
 
-function bannerText(state: TerminalSessionState, error?: string): string | undefined {
-	if (state === "reattaching") return "Terminal disconnected — reattaching…";
-	if (state === "error") return `Terminal error: ${error ?? "connection failed"}`;
+function bannerText(state: TerminalSessionState, t: TFunction, error?: string): string | undefined {
+	if (state === "reattaching") return t("terminal.reattaching");
+	if (state === "error") return t("terminal.error", { error: error ?? t("terminal.connectionFailed") });
 	return undefined;
 }
 
 function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
+	const { t } = useTranslation();
 	const attachSession =
 		session && terminalTarget?.kind === "reviewer"
 			? { ...session, terminalHandleId: terminalTarget.handleId }
@@ -238,13 +241,42 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	// A shell pane has no session, so it hands the hook its handle directly
 	// instead of reading one off `attachSession`.
 	const shellTerminalHandleId = terminalTarget?.kind === "shell" ? terminalTarget.handleId : undefined;
-	const { attach, state, error } = useTerminalSession(attachSession, { daemonReady, shellTerminalHandleId });
+	// Glow the Browser tab when the agent prints a URL in this worker's terminal
+	// (e.g. a pushed-PR link). Detection only badges — the user still chooses to
+	// open it — and is skipped while they are already looking at the Browser tab.
+	const watchLinks = Boolean(session?.id && session.kind === "worker" && terminalTarget?.kind !== "shell");
+	const urlWatcherRef = useRef<UrlWatcher | null>(null);
+	const handleOutput = useCallback(
+		(text: string) => {
+			const sessionId = session?.id;
+			if (!sessionId) return;
+			if (!urlWatcherRef.current) {
+				urlWatcherRef.current = createUrlWatcher(() => {
+					const store = useUiStore.getState();
+					const current = store.inspectorSessions[sessionId];
+					const viewingBrowser = (current?.isOpen ?? true) && (current?.view ?? "summary") === "browser";
+					if (!viewingBrowser) store.setBrowserUnseen(sessionId, true);
+				});
+			}
+			urlWatcherRef.current.push(text);
+		},
+		[session?.id],
+	);
+	const { attach, state, error, replaySettled } = useTerminalSession(attachSession, {
+		daemonReady,
+		shellTerminalHandleId,
+		onOutput: watchLinks ? handleOutput : undefined,
+	});
 	const handleId = shellTerminalHandleId ?? attachSession?.terminalHandleId;
 	const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : session?.provider;
 	const hadAttachmentRef = useRef(false);
+	const isSessionActive = session ? sessionIsActive(session) : false;
 	// A standalone shell is never restorable: there is no session row to restore.
 	const canRestoreSession =
-		terminalTarget?.kind !== "reviewer" && terminalTarget?.kind !== "shell" && session?.status === "terminated";
+		terminalTarget?.kind !== "reviewer" &&
+		terminalTarget?.kind !== "shell" &&
+		session !== undefined &&
+		!isSessionActive;
 
 	const handleReady = useCallback((handle: AttachableTerminal) => {
 		setTerminal(handle);
@@ -253,19 +285,26 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 		console.error("xterm failed to initialize", err);
 		setInitFailed(true);
 	}, []);
+	const setInspectorViewForSession = useUiStore((state) => state.setInspectorView);
+	const setInspectorOpenForSession = useUiStore((state) => state.setInspectorOpen);
 	const handleLinkOpen = useCallback(
 		(uri: string) => {
-			if (!session?.id || session.kind !== "worker" || session.status === "terminated") return;
+			if (!session?.id || session.kind !== "worker" || !isSessionActive) return;
 			try {
 				const url = new URL(uri);
-				if ((url.protocol !== "http:" && url.protocol !== "https:") || !isLoopbackHostname(url.hostname)) return;
+				if (url.protocol !== "http:" && url.protocol !== "https:") return;
 			} catch {
 				return;
 			}
+			const linkSessionId = session.id;
+			// A left-click is an explicit request to view the link, so open the
+			// Browser tab now (unlike a passive `ao preview`, which only badges it).
+			setInspectorViewForSession(linkSessionId, "browser");
+			setInspectorOpenForSession(linkSessionId, true);
 			void (async () => {
 				try {
 					const { error: previewError } = await apiClient.POST("/api/v1/sessions/{sessionId}/preview", {
-						params: { path: { sessionId: session.id } },
+						params: { path: { sessionId: linkSessionId } },
 						body: { url: uri },
 					});
 					if (previewError) {
@@ -278,7 +317,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 				}
 			})();
 		},
-		[queryClient, session?.id, session?.kind, session?.status],
+		[isSessionActive, queryClient, session?.id, session?.kind, setInspectorOpenForSession, setInspectorViewForSession],
 	);
 	const restoreSession = useCallback(async () => {
 		if (!session?.id || !canRestoreSession || isRestoring) return;
@@ -294,11 +333,11 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 				setRestoreError(result.message);
 			}
 		} catch (err) {
-			setRestoreError(err instanceof Error ? err.message : "Unable to restore session");
+			setRestoreError(err instanceof Error ? err.message : t("terminal.unableRestore"));
 		} finally {
 			setIsRestoring(false);
 		}
-	}, [canRestoreSession, isRestoring, restoreSessionById, session?.id]);
+	}, [canRestoreSession, isRestoring, restoreSessionById, session?.id, t]);
 
 	useEffect(() => {
 		if (!terminal) return;
@@ -320,20 +359,32 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	if (initFailed) {
 		return (
 			<div className="grid h-full place-items-center bg-terminal p-4 font-mono text-xs text-muted-foreground">
-				Terminal failed to initialize on this GPU/driver. Restart the app to retry.
+				{t("terminal.initFailed")}
 			</div>
 		);
 	}
 
-	const banner = bannerText(state, error);
+	const banner = bannerText(state, t, error);
 	const showEmptyState = !handleId;
+	// Cover xterm while the attachment buffers the initial replay, so the pane
+	// appears already drawn at the tail instead of visibly scrolling down to it.
+	// Deliberately NOT the empty state above: that renders a centered "Starting
+	// session" card, and flashing it on every session switch would be worse than
+	// the scroll it replaces.
+	// Only while a replay is actually imminent. Gating on the state as well as
+	// the gate keeps the cover from reappearing over a pane that is visibly
+	// disconnected: an open timeout lifts it, the backoff reconnect would
+	// otherwise pull it straight back down, and the "reattaching" banner already
+	// explains that window better than a blank overlay does.
+	const showReplayCover =
+		Boolean(handleId) && !replaySettled && (state === "connecting" || state === "attached");
 	const showEndedState = state === "exited" || canRestoreSession;
-	const emptyStateTitle = session ? "Starting session" : "Agent Orchestrator";
+	const emptyStateTitle = session ? t("terminal.startingSession") : "Agent Orchestrator";
 	const emptyStateMessage = session
 		? session.kind === "orchestrator"
-			? "Preparing the orchestrator terminal. This can take a moment while AO creates the workspace and starts the agent."
-			: "Preparing the worker terminal. This can take a moment while AO creates the workspace and starts the agent."
-		: "No session selected. Pick a worker to attach its terminal.";
+			? t("terminal.preparingOrchestrator")
+			: t("terminal.preparingWorker")
+		: t("terminal.noSessionSelected");
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-terminal" data-testid="session-terminal">
@@ -354,7 +405,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 			    full padding box. */}
 			<div className="relative min-h-0 flex-1 p-2">
 				<XtermTerminal
-					ariaLabel={terminalTarget?.kind === "shell" ? "Shell terminal" : "Session terminal"}
+					ariaLabel={terminalTarget?.kind === "shell" ? t("terminal.shellAria") : t("terminal.sessionAria")}
 					fontSize={fontSize}
 					onError={handleInitError}
 					onLinkOpen={handleLinkOpen}
@@ -370,6 +421,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 						</div>
 					</div>
 				)}
+				{showReplayCover && <ReplayCover />}
 				{banner && (
 					<div className="absolute inset-x-3 top-2 rounded-md border border-border bg-surface/95 px-3 py-1.5 font-mono text-caption text-muted-foreground">
 						{banner}
@@ -390,6 +442,32 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	);
 }
 
+// Blank terminal-coloured cover held over xterm while the initial replay is
+// buffered. A fast open (the common case) shows nothing at all — the label only
+// appears if the wait is long enough to read as a stall rather than a repaint,
+// so normal session switching never flashes a loader.
+const REPLAY_COVER_LABEL_MS = 120;
+
+function ReplayCover() {
+	const { t } = useTranslation();
+	const [showLabel, setShowLabel] = useState(false);
+	useEffect(() => {
+		const timer = window.setTimeout(() => setShowLabel(true), REPLAY_COVER_LABEL_MS);
+		return () => window.clearTimeout(timer);
+	}, []);
+	return (
+		// pointer-events-none: the cover is purely visual and xterm underneath is
+		// live the whole time, so clicks, selection and wheel must pass through
+		// rather than being swallowed for the length of the gate.
+		<div
+			className="pointer-events-none absolute inset-0 grid place-items-center bg-terminal"
+			data-testid="terminal-replay-cover"
+		>
+			{showLabel && <div className="font-mono text-caption text-terminal-dim">{t("terminal.loadingOutput")}</div>}
+		</div>
+	);
+}
+
 type TerminalEndedStripProps = {
 	canRestore: boolean;
 	error?: string;
@@ -399,20 +477,21 @@ type TerminalEndedStripProps = {
 };
 
 function TerminalEndedStrip({ canRestore, error, isRestoring, onRestore, variant }: TerminalEndedStripProps) {
+	const { t } = useTranslation();
 	const message = canRestore
-		? "Restore the session to attach a live terminal and continue writing."
+		? t("terminal.restoreToContinue")
 		: variant === "reviewer"
-			? "This reviewer terminal has ended. Re-run review from the summary panel, or switch back to the agent terminal."
+			? t("terminal.reviewerEnded")
 			: variant === "shell"
-				? "This shell exited. Close the tab, or open a new terminal."
-				: "This terminal process ended, but the session is not marked terminated yet.";
+				? t("terminal.shellExited")
+				: t("terminal.sessionEndedNotTerminated");
 
 	return (
 		<div className="shrink-0 border-b border-border bg-surface/80 px-4 py-2">
 			<div className="flex min-h-control-board items-center gap-3">
 				<div className="min-w-0 flex-1">
 					<div className="font-mono text-caption font-medium uppercase tracking-wide-md text-muted-foreground">
-						Terminal ended
+						{t("terminal.ended")}
 					</div>
 					<div className="mt-0.5 truncate text-xs text-muted-foreground">{message}</div>
 				</div>
@@ -420,8 +499,8 @@ function TerminalEndedStrip({ canRestore, error, isRestoring, onRestore, variant
 				{canRestore && (
 					<button
 						type="button"
-						aria-label="Restore session"
-						title="Restore session"
+						aria-label={t("terminal.restoreSession")}
+						title={t("terminal.restoreSession")}
 						className="inline-flex size-control-form shrink-0 items-center justify-center rounded-md border border-border bg-raised text-foreground transition hover:bg-interactive-hover disabled:cursor-not-allowed disabled:opacity-50"
 						disabled={isRestoring}
 						onClick={onRestore}

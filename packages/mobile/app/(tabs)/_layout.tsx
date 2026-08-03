@@ -2,20 +2,24 @@ import { Feather } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { haptics } from "../../lib/haptics";
-import { theme } from "../../lib/theme";
+import { useTheme } from "../../lib/ThemeProvider";
 
 export default function TabsLayout() {
+	const t = useTheme();
 	const insets = useSafeAreaInsets();
 	return (
 		<Tabs
 			screenListeners={{ tabPress: () => haptics.select() }}
 			screenOptions={{
 				headerShown: false,
-				tabBarActiveTintColor: theme.blue,
-				tabBarInactiveTintColor: theme.textTertiary,
+				// Slide the outgoing/incoming screen toward the tab you moved to,
+				// instead of swapping instantly.
+				animation: "shift",
+				tabBarActiveTintColor: t.blue,
+				tabBarInactiveTintColor: t.textTertiary,
 				tabBarStyle: {
-					backgroundColor: theme.bgSurface,
-					borderTopColor: theme.borderSubtle,
+					backgroundColor: t.bgSurface,
+					borderTopColor: t.borderSubtle,
 					borderTopWidth: 1,
 					// Drive height/padding from the real safe-area inset so the bar clears
 					// the Android gesture-nav bar (edge-to-edge is on by default in SDK 54)
@@ -31,15 +35,8 @@ export default function TabsLayout() {
 			<Tabs.Screen
 				name="index"
 				options={{
-					title: "Kanban",
-					tabBarIcon: ({ color, size }) => <Feather name="grid" size={size - 2} color={color} />,
-				}}
-			/>
-			<Tabs.Screen
-				name="prs"
-				options={{
-					title: "PRs",
-					tabBarIcon: ({ color, size }) => <Feather name="git-pull-request" size={size - 2} color={color} />,
+					title: "Agents",
+					tabBarIcon: ({ color, size }) => <Feather name="activity" size={size - 2} color={color} />,
 				}}
 			/>
 			<Tabs.Screen
@@ -47,6 +44,13 @@ export default function TabsLayout() {
 				options={{
 					title: "Orchestrator",
 					tabBarIcon: ({ color, size }) => <Feather name="share-2" size={size - 2} color={color} />,
+				}}
+			/>
+			<Tabs.Screen
+				name="prs"
+				options={{
+					title: "PRs",
+					tabBarIcon: ({ color, size }) => <Feather name="git-pull-request" size={size - 2} color={color} />,
 				}}
 			/>
 			<Tabs.Screen

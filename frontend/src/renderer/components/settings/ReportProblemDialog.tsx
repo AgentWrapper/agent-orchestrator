@@ -1,4 +1,5 @@
 import { RadioGroup } from "radix-ui";
+import { useTranslation } from "react-i18next";
 import { X } from "lucide-react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
@@ -9,7 +10,17 @@ import {
 	type ReportProblemOutput,
 } from "../../lib/report-problem";
 import { aoBridge } from "../../lib/bridge";
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "../ui/dialog";
+import {
+	Dialog,
+	DialogClose,
+	DialogContent,
+	DialogDescription,
+	DialogTitle,
+	settingsDialogBodyClass,
+	settingsDialogContentClass,
+	settingsDialogFooterClass,
+	settingsDialogHeaderClass,
+} from "../ui/dialog";
 
 type ReportProblemDialogProps = {
 	open: boolean;
@@ -53,18 +64,20 @@ const DEFAULT_DIAGNOSTICS: ReportProblemDiagnostics = {
 	routeSurface: "unknown",
 };
 
-const DESTINATIONS: {
+type DestinationOption = {
 	value: ReportProblemOutput;
 	label: string;
 	action: string;
 	icon: (props: DestinationIconProps) => ReactNode;
-}[] = [
-	{ value: "github", label: "GitHub", action: "Copy & Create GitHub Issue", icon: GithubIcon },
-	{ value: "discord", label: "Discord", action: "Copy & Open Discord", icon: DiscordIcon },
-	{ value: "email", label: "Email", action: "Copy & Open Email", icon: EmailIcon },
-];
+};
 
 export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogProps) {
+	const { t } = useTranslation();
+	const destinations: DestinationOption[] = [
+		{ value: "github", label: t("report.github"), action: t("report.githubAction"), icon: GithubIcon },
+		{ value: "discord", label: t("report.discord"), action: t("report.discordAction"), icon: DiscordIcon },
+		{ value: "email", label: t("report.email"), action: t("report.emailAction"), icon: EmailIcon },
+	];
 	const titleId = useId();
 	const detailsId = useId();
 	const titleRef = useRef<HTMLInputElement>(null);
@@ -75,7 +88,7 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 	const [copyError, setCopyError] = useState<string | null>(null);
 	const [diagnostics, setDiagnostics] = useState<ReportProblemDiagnostics>(DEFAULT_DIAGNOSTICS);
 
-	const copiedLabel = DESTINATIONS.find((option) => option.value === copiedOutput)?.label;
+	const copiedLabel = destinations.find((option) => option.value === copiedOutput)?.label;
 
 	useEffect(() => {
 		if (!open) {
@@ -97,8 +110,8 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 
 	const input = { summary, details };
 	const draft = formatReportProblemDraft(input, diagnostics, selectedOutput);
-	const destination = DESTINATIONS.find((option) => option.value === selectedOutput) ?? DESTINATIONS[0];
-	const canCopy = summary.trim().length > 0;
+	const destination = destinations.find((option) => option.value === selectedOutput) ?? destinations[0];
+	const canSubmit = summary.trim().length > 0 && details.trim().length > 0;
 
 	const clearStatus = () => {
 		setCopiedOutput(null);
@@ -106,7 +119,7 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 	};
 
 	const copyDraft = async () => {
-		if (!canCopy) return;
+		if (!canSubmit) return;
 		setCopyError(null);
 		const output = selectedOutput;
 		try {
@@ -120,7 +133,7 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 			setDetails("");
 			setSelectedOutput("github");
 		} catch (err) {
-			setCopyError(err instanceof Error ? err.message : "Could not copy report draft");
+			setCopyError(err instanceof Error ? err.message : t("report.copyFailed"));
 			setCopiedOutput(null);
 		}
 	};
@@ -129,7 +142,7 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent
 				showCloseButton={false}
-				className="z-overlay flex max-h-[min(680px,calc(100svh-32px))] w-[min(var(--size-settings-dialog),calc(100vw-32px))] max-w-none flex-col gap-0 overflow-hidden rounded-(--radius-settings-dialog-lg) border border-[var(--color-border-settings-dialog)] bg-settings-dialog p-0 text-settings-label shadow-[var(--shadow-settings-dialog)]"
+				className={settingsDialogContentClass}
 				onOpenAutoFocus={(event) => {
 					event.preventDefault();
 					titleRef.current?.focus();
@@ -147,24 +160,24 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 					<button
 						type="button"
 						className="settings-dialog-close-button settings-close-button"
-						aria-label="Close report dialog"
-						title="Close (Esc)"
+						aria-label={t("report.close")}
+						title={t("report.closeEsc")}
 					>
 						<X className="size-5" aria-hidden="true" />
 					</button>
 				</DialogClose>
 
-				<div className="flex shrink-0 flex-col gap-1 border-b border-(--color-border-settings-dialog-header) px-6 pt-5 pb-4">
-					<DialogTitle className="settings-dialog-title">Report a problem</DialogTitle>
+				<div className={settingsDialogHeaderClass}>
+					<DialogTitle className="settings-dialog-title">{t("report.title")}</DialogTitle>
 					<DialogDescription className="text-control leading-4 text-settings-muted">
-						Found an issue? Tell us what happened.
+						{t("report.subtitle")}
 					</DialogDescription>
 				</div>
 
-				<div className="flex min-h-0 flex-col gap-4 overflow-y-auto px-6 pt-4 pb-5">
+				<div className={settingsDialogBodyClass}>
 					<div className="flex flex-col gap-1.5">
 						<label className="settings-field-label" htmlFor={titleId}>
-							Title
+							{t("report.titleLabel")}
 						</label>
 						<input
 							ref={titleRef}
@@ -175,13 +188,13 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 								setSummary(event.target.value);
 								clearStatus();
 							}}
-							placeholder="Brief Title"
+							placeholder={t("report.titlePlaceholder")}
 						/>
 					</div>
 
 					<div className="flex flex-col gap-1.5">
 						<label className="settings-field-label" htmlFor={detailsId}>
-							What happened?
+							{t("report.whatHappened")}
 						</label>
 						<textarea
 							id={detailsId}
@@ -191,7 +204,7 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 								setDetails(event.target.value);
 								clearStatus();
 							}}
-							placeholder="Share what happened, what you expected, and how to reproduce it."
+							placeholder={t("report.detailsPlaceholder")}
 						/>
 					</div>
 
@@ -201,10 +214,10 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 							setSelectedOutput(value as ReportProblemOutput);
 							clearStatus();
 						}}
-						aria-label="Report destination"
+						aria-label={t("report.destination")}
 						className="settings-segment self-start"
 					>
-						{DESTINATIONS.map((option) => (
+						{destinations.map((option) => (
 							<RadioGroup.Item key={option.value} value={option.value} className="settings-segment-item">
 								<option.icon className="size-icon-sm" aria-hidden="true" />
 								{option.label}
@@ -218,21 +231,24 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 						</p>
 					)}
 					{copiedLabel && !copyError && (
-						<p className="text-caption leading-4 text-success">{copiedLabel} draft copied.</p>
+						<p className="text-caption leading-4 text-success">{t("report.draftCopied", { label: copiedLabel })}</p>
 					)}
 				</div>
 
-				<div className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-[var(--color-border-settings-dialog-header)] px-6 py-3.5">
+				<div className={settingsDialogFooterClass}>
 					<DialogClose asChild>
 						<button type="button" className="settings-footer-button">
-							Cancel
+							{t("report.cancel")}
 						</button>
 					</DialogClose>
 					<button
 						type="button"
-						className="settings-footer-button border-transparent bg-settings-accent text-white disabled:cursor-not-allowed disabled:opacity-50"
-						disabled={!canCopy}
-						onClick={() => void copyDraft()}
+						className="settings-footer-button border-transparent bg-settings-accent text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+						disabled={!canSubmit}
+						onClick={() => {
+							if (!canSubmit) return;
+							void copyDraft()
+						}}
 					>
 						{destination.action}
 					</button>

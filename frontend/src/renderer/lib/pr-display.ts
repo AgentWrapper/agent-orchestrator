@@ -1,5 +1,6 @@
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { sortedPRs, type PRState, type PullRequestFacts, type WorkspaceSession } from "../types/workspace";
+import { appI18n, type PluralMessageKey } from "../i18n";
 
 const prStateRank: Record<PRState, number> = { open: 0, draft: 1, merged: 2, closed: 3 };
 const ciStates = new Set<SessionPRSummary["ci"]["state"]>(["unknown", "pending", "passing", "failing"]);
@@ -28,6 +29,16 @@ export type PRStatusRow = {
 };
 
 export type PRSummaryPartKey = "ci" | "review" | "merge";
+export type PRNoun = "check" | "comment" | "file" | "line" | "reason" | "reviewer";
+
+export const prNounKeys: Record<PRNoun, PluralMessageKey> = {
+	check: "pr.noun.check",
+	comment: "pr.noun.comment",
+	file: "pr.noun.file",
+	line: "pr.noun.line",
+	reason: "pr.noun.reason",
+	reviewer: "pr.noun.reviewer",
+};
 
 export type PRSummaryLink = {
 	label: string;
@@ -43,7 +54,7 @@ export type PRSummaryPart = {
 	links: PRSummaryLink[];
 	linkTotal?: number;
 	overflowLabel?: string;
-	overflowNoun?: string;
+	overflowNoun?: PRNoun;
 	tone: PRDisplayTone;
 };
 
@@ -59,14 +70,145 @@ export function sessionPRDisplaySummaries(
 	session: WorkspaceSession,
 	summaries: SessionPRSummary[] = [],
 ): SessionPRSummary[] {
-	const summariesByNumber = new Map(summaries.map((summary) => [summary.number, summary]));
-	const seen = new Set<number>();
-	const fromFacts = sortedPRs(session).map((pr) => {
-		seen.add(pr.number);
-		return summariesByNumber.get(pr.number) ?? sessionPRFactToSummary(session, pr);
-	});
-	const summaryOnly = summaries.filter((summary) => !seen.has(summary.number));
+	const dedupedSummaries = deduplicateSummaries(summaries);
+	const summariesByIdentity = new Map<string, SessionPRSummary>();
+	const summaryNumberCounts = countPRNumbers(dedupedSummaries);
+	const summariesByUniqueNumber = new Map<number, SessionPRSummary>();
+	for (const summary of dedupedSummaries) {
+		for (const key of prDisplayIdentities(summary)) {
+			if (!summariesByIdentity.has(key)) {
+				summariesByIdentity.set(key, summary);
+			}
+		}
+		if (summaryNumberCounts.get(summary.number) === 1) {
+			summariesByUniqueNumber.set(summary.number, summary);
+		}
+	}
+	const facts = sortedPRs(session);
+	const factNumberCounts = countPRNumbers(facts);
+	const seen = new Set<string>();
+	const consumedSummaries = new Set<SessionPRSummary>();
+	const fromFacts: SessionPRSummary[] = [];
+	for (const pr of facts) {
+		const key = prDisplayIdentity(pr);
+		if (seen.has(key)) continue;
+		seen.add(key);
+		const summary = summariesByIdentity.get(key) ?? uniqueNumberSummary(pr, factNumberCounts, summariesByUniqueNumber);
+		if (summary) {
+			for (const summaryKey of prDisplayIdentities(summary)) {
+				seen.add(summaryKey);
+			}
+			consumedSummaries.add(summary);
+		}
+		fromFacts.push(summary ?? sessionPRFactToSummary(session, pr));
+	}
+	const summaryOnly: SessionPRSummary[] = [];
+	for (const summary of dedupedSummaries) {
+		const keys = prDisplayIdentities(summary);
+		if (keys.some((key) => seen.has(key))) continue;
+		if (consumedSummaries.has(summary)) continue;
+		for (const key of keys) {
+			seen.add(key);
+		}
+		summaryOnly.push(summary);
+	}
 	return [...fromFacts, ...summaryOnly].sort(comparePRDisplaySummaries);
+}
+
+function deduplicateSummaries(summaries: SessionPRSummary[]): SessionPRSummary[] {
+	const seen = new Set<string>();
+	const out: SessionPRSummary[] = [];
+	for (const summary of summaries) {
+		const keys = prDisplayIdentities(summary);
+		if (keys.some((key) => seen.has(key))) continue;
+		for (const key of keys) {
+			seen.add(key);
+		}
+		out.push(summary);
+	}
+	return out;
+}
+
+function countPRNumbers(prs: Array<Pick<SessionPRSummary, "number"> | PullRequestFacts>): Map<number, number> {
+	const counts = new Map<number, number>();
+	for (const pr of prs) {
+		counts.set(pr.number, (counts.get(pr.number) ?? 0) + 1);
+	}
+	return counts;
+}
+
+function uniqueNumberSummary(
+	pr: PullRequestFacts,
+	factNumberCounts: Map<number, number>,
+	summariesByUniqueNumber: Map<number, SessionPRSummary>,
+): SessionPRSummary | undefined {
+	if (factNumberCounts.get(pr.number) !== 1) return undefined;
+	return summariesByUniqueNumber.get(pr.number);
+}
+
+function prDisplayIdentity(pr: Pick<SessionPRSummary, "number" | "url" | "htmlUrl" | "repo"> | PullRequestFacts): string {
+	const url = "htmlUrl" in pr ? pr.htmlUrl || pr.url : pr.url;
+	const github = githubPRIdentity(url, pr.number);
+	if (github) return github;
+	const repo = "repo" in pr ? pr.repo.trim().toLowerCase() : "";
+	if (repo) return `repo:${repo}#${pr.number}`;
+	return `number:${pr.number}`;
+}
+
+function prDisplayIdentities(pr: SessionPRSummary): string[] {
+	const keys = [prDisplayIdentity(pr)];
+	const alias = prTransferAliasIdentity(pr);
+	if (alias) keys.push(alias);
+	return keys;
+}
+
+function githubPRIdentity(rawURL: string, expectedNumber: number): string | undefined {
+	try {
+		const url = new URL(rawURL);
+		const host = url.hostname.toLowerCase();
+		if (host !== "github.com" && !host.endsWith(".github.com")) return undefined;
+		const [, owner, repoName, kind, number] = url.pathname.split("/");
+		if ((kind !== "pull" && kind !== "issues") || !owner || !repoName || !number) return undefined;
+		if (Number(number) !== expectedNumber) return undefined;
+		return `github:${host}/${owner.toLowerCase()}/${repoName.toLowerCase()}#${number}`;
+	} catch {
+		return undefined;
+	}
+}
+
+function prTransferAliasIdentity(pr: SessionPRSummary): string | undefined {
+	const github = githubPRAliasParts(pr.htmlUrl || pr.url, pr.number);
+	if (!github) return undefined;
+	const sourceBranch = normalizedAliasPart(pr.sourceBranch);
+	const headSha = normalizedAliasPart(pr.headSha);
+	if (!sourceBranch || !headSha) return undefined;
+	return [
+		"github-transfer",
+		github.host,
+		github.repoName,
+		String(pr.number),
+		sourceBranch,
+		normalizedAliasPart(pr.targetBranch),
+		headSha,
+	].join("|");
+}
+
+function githubPRAliasParts(rawURL: string, expectedNumber: number): { host: string; repoName: string } | undefined {
+	try {
+		const url = new URL(rawURL);
+		const host = url.hostname.toLowerCase();
+		if (host !== "github.com" && !host.endsWith(".github.com")) return undefined;
+		const [, owner, repoName, kind, number] = url.pathname.split("/");
+		if ((kind !== "pull" && kind !== "issues") || !owner || !repoName || !number) return undefined;
+		if (Number(number) !== expectedNumber) return undefined;
+		return { host, repoName: repoName.toLowerCase() };
+	} catch {
+		return undefined;
+	}
+}
+
+function normalizedAliasPart(value: string): string {
+	return value.trim().toLowerCase();
 }
 
 function sessionPRFactToSummary(session: WorkspaceSession, pr: PullRequestFacts): SessionPRSummary {
@@ -121,7 +263,7 @@ export function prSummaryParts(pr: SessionPRSummary): PRSummaryPart[] {
 	return [
 		{
 			key: "ci",
-			label: "CI",
+			label: appI18n.t("pr.section.ci"),
 			status: ciLabel(pr.ci.state),
 			summary: ciSummary(pr),
 			links: ciLinks(pr),
@@ -132,7 +274,7 @@ export function prSummaryParts(pr: SessionPRSummary): PRSummaryPart[] {
 		},
 		{
 			key: "merge",
-			label: "Merge",
+			label: appI18n.t("pr.section.merge"),
 			status: mergeabilityLabel(pr.mergeability.state),
 			summary: mergeSummary(pr),
 			links: mergeLinks(pr),
@@ -143,7 +285,7 @@ export function prSummaryParts(pr: SessionPRSummary): PRSummaryPart[] {
 		},
 		{
 			key: "review",
-			label: "Review",
+			label: appI18n.t("pr.section.review"),
 			status: reviewLabel(pr.review.decision),
 			summary: reviewSummary(pr),
 			links: reviewLinks(pr),
@@ -172,7 +314,7 @@ export function prDiffSummary(pr: SessionPRSummary): string | undefined {
 
 function ciSummary(pr: SessionPRSummary): string | undefined {
 	if (pr.ci.state === "failing") {
-		return pr.ci.failingChecks.length === 0 ? "No failing check link observed" : undefined;
+		return pr.ci.failingChecks.length === 0 ? appI18n.t("pr.ci.noFailingLink") : undefined;
 	}
 	return undefined;
 }
@@ -193,13 +335,13 @@ function reviewSummary(pr: SessionPRSummary): string | undefined {
 		return undefined;
 	}
 	if (pr.state === "draft") {
-		return "Draft PR · Not ready for review";
+		return appI18n.t("pr.review.draftNotReady");
 	}
 	if (pr.review.decision === "changes_requested" || pr.review.hasUnresolvedHumanComments) {
-		return reviewLinks(pr).length === 0 ? "Requested changes still active" : undefined;
+		return reviewLinks(pr).length === 0 ? appI18n.t("pr.review.changesActive") : undefined;
 	}
 	if (pr.review.decision === "review_required") {
-		return "Required review not submitted";
+		return appI18n.t("pr.review.requiredNotSubmitted");
 	}
 	return undefined;
 }
@@ -213,7 +355,11 @@ function reviewLinks(pr: SessionPRSummary): PRSummaryLink[] {
 	}
 	const links = pr.review.unresolvedBy.slice(0, 3).map((reviewer) => reviewAttentionLink(pr, reviewer));
 	if (links.length === 0 && pr.review.decision === "changes_requested") {
-		links.push({ label: "PR", href: prBrowserUrl(pr), title: "Open pull request" });
+		links.push({
+			label: appI18n.t("pr.short"),
+			href: prBrowserUrl(pr),
+			title: appI18n.t("pr.review.openPR"),
+		});
 	}
 	return links;
 }
@@ -223,10 +369,10 @@ function mergeSummary(pr: SessionPRSummary): string | undefined {
 		return formatDiffSummary(pr);
 	}
 	if (pr.mergeability.state === "conflicting") {
-		return mergeLinks(pr).length === 0 ? "Conflicts with the base branch" : undefined;
+		return mergeLinks(pr).length === 0 ? appI18n.t("pr.merge.conflictsWithBase") : undefined;
 	}
 	if (pr.mergeability.state === "blocked" || pr.mergeability.state === "unstable") {
-		return mergeLinks(pr).length === 0 ? "Provider reports merge is blocked" : undefined;
+		return mergeLinks(pr).length === 0 ? appI18n.t("pr.merge.providerBlocked") : undefined;
 	}
 	return formatDiffSummary(pr);
 }
@@ -272,7 +418,7 @@ function mergeLinkTotal(pr: SessionPRSummary): number {
 	return 0;
 }
 
-function mergeOverflowNoun(pr: SessionPRSummary): string {
+function mergeOverflowNoun(pr: SessionPRSummary): PRNoun {
 	return (pr.mergeability.conflictFiles ?? []).length > 0 ? "file" : "reason";
 }
 
@@ -307,13 +453,13 @@ function toMergeabilityState(value: string): SessionPRSummary["mergeability"]["s
 function ciLabel(state: SessionPRSummary["ci"]["state"]): string {
 	switch (state) {
 		case "passing":
-			return "Passing";
+			return appI18n.t("pr.ci.passing");
 		case "failing":
-			return "Failing";
+			return appI18n.t("pr.ci.failing");
 		case "pending":
-			return "Pending";
+			return appI18n.t("pr.ci.pending");
 		case "unknown":
-			return "Checking";
+			return appI18n.t("pr.ci.checking");
 	}
 }
 
@@ -333,13 +479,13 @@ function ciTone(state: SessionPRSummary["ci"]["state"]): PRDisplayTone {
 function reviewLabel(decision: SessionPRSummary["review"]["decision"]): string {
 	switch (decision) {
 		case "approved":
-			return "Approved";
+			return appI18n.t("pr.review.approved");
 		case "changes_requested":
-			return "Changes requested";
+			return appI18n.t("pr.review.changesRequested");
 		case "review_required":
-			return "Pending";
+			return appI18n.t("pr.review.pending");
 		case "none":
-			return "None";
+			return appI18n.t("pr.review.none");
 	}
 }
 
@@ -362,15 +508,15 @@ function reviewTone(
 function mergeabilityLabel(state: SessionPRSummary["mergeability"]["state"]): string {
 	switch (state) {
 		case "mergeable":
-			return "Mergeable";
+			return appI18n.t("pr.merge.mergeable");
 		case "conflicting":
-			return "Conflict";
+			return appI18n.t("pr.merge.conflict");
 		case "blocked":
-			return "Blocked";
+			return appI18n.t("pr.merge.blocked");
 		case "unstable":
-			return "Unstable";
+			return appI18n.t("pr.merge.unstable");
 		case "unknown":
-			return "Checking";
+			return appI18n.t("pr.merge.checking");
 	}
 }
 
@@ -413,10 +559,11 @@ function formatLineDelta(additions: number, deletions: number): string | undefin
 function mergeAttentionLinks(pr: SessionPRSummary, kind: "merge_conflict" | "merge_blocked"): PRSummaryLink[] {
 	const href =
 		kind === "merge_conflict" ? mergeConflictUrl(pr) : pr.mergeability.prUrl || pr.htmlUrl || pr.url || undefined;
+	const openConflicts = appI18n.t("pr.merge.openConflicts");
 	const fileLinks = (pr.mergeability.conflictFiles ?? []).slice(0, 3).map((file) => ({
 		label: file.path,
 		href: file.url || href,
-		title: kind === "merge_conflict" ? "Open merge conflicts" : undefined,
+		title: kind === "merge_conflict" ? openConflicts : undefined,
 	}));
 	const reasonLinks =
 		fileLinks.length > 0 || kind === "merge_conflict"
@@ -426,7 +573,9 @@ function mergeAttentionLinks(pr: SessionPRSummary, kind: "merge_conflict" | "mer
 					href,
 				}));
 	const fallbackLink =
-		kind === "merge_conflict" && href ? [{ label: "conflicts", href, title: "Open merge conflicts" }] : [];
+		kind === "merge_conflict" && href
+			? [{ label: appI18n.t("pr.merge.conflicts"), href, title: openConflicts }]
+			: [];
 	return fileLinks.length > 0 ? fileLinks : reasonLinks.length > 0 ? reasonLinks : fallbackLink;
 }
 
@@ -472,63 +621,68 @@ function reviewerLabel(reviewer: SessionPRSummary["review"]["unresolvedBy"][numb
 }
 
 function reviewerDisplayName(reviewer: SessionPRSummary["review"]["unresolvedBy"][number]): string {
-	return reviewer.isBot ? `${reviewer.reviewerId} bot` : reviewer.reviewerId;
+	if (!reviewer.isBot) return reviewer.reviewerId;
+	return appI18n.t("pr.botSuffix", { name: reviewer.reviewerId });
 }
 
 function reviewAttentionLink(
 	pr: SessionPRSummary,
 	reviewer: SessionPRSummary["review"]["unresolvedBy"][number],
 ): PRSummaryLink {
+	const name = reviewerDisplayName(reviewer);
 	const inlineURL = reviewer.links.find((link) => link.url)?.url;
 	if (reviewer.reviewUrl) {
 		return {
 			label: reviewerLabel(reviewer),
 			href: reviewer.reviewUrl,
-			title: `Open requested-changes review from ${reviewerDisplayName(reviewer)}`,
+			title: appI18n.t("pr.openReviewFrom", { name }),
 		};
 	}
 	if (inlineURL) {
 		return {
 			label: reviewerLabel(reviewer),
 			href: inlineURL,
-			title:
-				reviewer.count > 0
-					? `${reviewer.count} unresolved ${pluralize("comment", reviewer.count)} from ${reviewerDisplayName(reviewer)}`
-					: `Open review comments from ${reviewerDisplayName(reviewer)}`,
+				title:
+					reviewer.count > 0
+						? appI18n.t("pr.unresolvedComments", {
+								count: reviewer.count,
+								name,
+							})
+					: appI18n.t("pr.openCommentsFrom", { name }),
 		};
 	}
 	return {
 		label: reviewerLabel(reviewer),
 		href: prBrowserUrl(pr),
-		title: `Open pull request for ${reviewerDisplayName(reviewer)}`,
+		title: appI18n.t("pr.openPRFor", { name }),
 	};
 }
 
 function mergeReasonLabel(reason: string): string {
 	switch (reason) {
 		case "behind_base":
-			return "branch behind base";
+			return appI18n.t("pr.reason.behindBase");
 		case "ci_failing":
-			return "CI failing";
+			return appI18n.t("pr.reason.ciFailing");
 		case "changes_requested":
-			return "changes requested";
+			return appI18n.t("pr.reason.changesRequested");
 		case "review_required":
-			return "review required";
+			return appI18n.t("pr.reason.reviewRequired");
 		case "blocked_by_provider":
-			return "provider blocked";
+			return appI18n.t("pr.reason.providerBlocked");
 		default:
 			return reason.replaceAll("_", " ");
 	}
 }
 
-function overflowLabel(total: number, shown: number, noun: string): string | undefined {
+function overflowLabel(total: number, shown: number, noun: PRNoun): string | undefined {
 	const extra = total - shown;
 	if (extra <= 0) {
 		return undefined;
 	}
-	return `+${extra} ${pluralize(noun, extra)}`;
+	return appI18n.t("pr.overflow", { n: extra, noun: pluralize(noun, extra) });
 }
 
-function pluralize(noun: string, count: number): string {
-	return count === 1 ? noun : `${noun}s`;
+function pluralize(noun: PRNoun, count: number): string {
+	return appI18n.t(prNounKeys[noun], { count });
 }

@@ -23,23 +23,28 @@ import {
 	quitAndInstallUpdate,
 	getUpdateStatus,
 	setUpdateSettings,
+	returnToHome,
 	type UpdateCheckOptions,
 } from "./main/auto-updater";
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
-import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { closeSync, existsSync, openSync } from "node:fs";
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { readKeybindingOverrides, writeKeybindingOverrides } from "./main/keybinding-settings";
+import { readUiSettings, writeUiSettings, type UiSettings } from "./main/ui-settings";
+import { spawn, type ChildProcess } from "node:child_process";
+import { randomBytes, randomUUID } from "node:crypto";
+import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { promisify } from "node:util";
 import { type DaemonLaunchSpec, resolveDaemonLaunch } from "./shared/daemon-launch";
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
 import { attachAppShortcuts } from "./main/app-shortcuts";
-import { KEYBOARD_SHORTCUTS_HELP_CHANNEL } from "./shared/shortcuts";
+import {
+	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
+	type KeybindingOverrides,
+} from "./shared/shortcuts";
 import {
 	type DaemonProbe,
 	expectedDaemonPort,
@@ -53,10 +58,13 @@ import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/post
 import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
 import { connectSupervisor, type SupervisorLinkHandle } from "./main/supervisor-link";
+import { connectBrowserRuntime, type BrowserRuntimeLinkHandle } from "./main/browser-runtime-link";
 import { keepDaemonAlive, shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
 import { shouldSignalAttention, shouldToast } from "./main/notification-signals";
+import { buildWindowsAppMenuTemplate } from "./main/menu";
+import { ancestorRepositorySetupWarning, scanImportFolder } from "./main/import-folder-scan";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -91,54 +99,31 @@ if (process.platform === "win32") {
 // inside ~/.ao alongside the daemon's data dir and running.json. sessionData and
 // crashDumps derive from userData, so this one override reparents them all.
 // Must run before app ready.
-app.setPath("userData", path.join(os.homedir(), ".ao", "electron"));
+// Dev runs get their own profile under the same ~/.ao root: the packaged app
+// keeps this directory open, and two Chromium instances sharing one profile
+// corrupt its LevelDB stores. Mirrors how dev already isolates running.json and
+// the daemon data dir into ~/.ao/dev.
+app.setPath(
+	"userData",
+	app.isPackaged ? path.join(os.homedir(), ".ao", "electron") : path.join(os.homedir(), ".ao", "dev", "electron"),
+);
 
 let mainWindow: BrowserWindow | null = null;
 let daemonProcess: ChildProcess | null = null;
 let daemonStoppingProcess: ChildProcess | null = null;
+let daemonRestartAfterExitProcess: ChildProcess | null = null;
 let daemonStartPromise: Promise<DaemonStatus> | null = null;
 let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
 let daemonOutput = "";
 let browserViewHost: BrowserViewHost | null = null;
+let browserRuntimeLink: BrowserRuntimeLinkHandle | null = null;
+let keybindingOverrides: KeybindingOverrides = {};
+let keybindingRecordingActive = false;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
 // Guard: prevents stacking multiple flashFrame(true) calls when notifications arrive rapidly.
 let isFlashing = false;
-
-const execFileAsync = promisify(execFile);
-
-type GitRepoScanResult = {
-	name: string;
-	path: string;
-	relativePath: string;
-	branch: string;
-	remote: string;
-	hasRemote: boolean;
-	status: "ok" | "error";
-	reason?: string;
-};
-
-type ImportFolderScanResult = {
-	path: string;
-	repos: GitRepoScanResult[];
-};
-
-const IMPORT_SCAN_CONCURRENCY = 8;
-const IMPORT_SCAN_MAX_ENTRIES = 200;
-const IMPORT_SCAN_SKIP_DIRS = new Set([
-	".git",
-	"node_modules",
-	"dist",
-	"build",
-	".cache",
-	".turbo",
-	"target",
-	"coverage",
-	"tmp",
-	"temp",
-	"Library",
-]);
 
 const isDev = !app.isPackaged;
 
@@ -149,10 +134,15 @@ const isDev = !app.isPackaged;
 const DEV_DAEMON_PORT = 3002;
 const DEV_STATE_SUBDIR = "dev"; // ~/.ao/dev/
 
-// Height (px) of the custom Windows title bar. Must stay in sync with the Window
-// Controls Overlay height passed to BrowserWindow and the .window-titlebar height
-// in styles.css, so the native min/max/close buttons line up with the app's bar.
+// Height (px) of the custom Windows title bar. Must stay in sync with
+// --size-window-titlebar (tokens.css) and .window-titlebar, plus the Window
+// Controls Overlay height passed to BrowserWindow, so the native min/max/close
+// buttons line up with the app's bar.
 const TITLEBAR_HEIGHT = 36;
+// Traffic lights stay fixed across sidebar expand/collapse. Y matches the
+// natural macOS titlebar band (TitlebarNav is h-traffic-light-clearance).
+const MAC_WINDOW_BUTTON_X = 14;
+const MAC_WINDOW_BUTTON_Y = 12;
 
 const RENDERER_SCHEME = "app";
 const RENDERER_HOST = "renderer";
@@ -239,6 +229,9 @@ function applyRuntimeAppIcon(): void {
 function setDaemonStatus(nextStatus: DaemonStatus): void {
 	daemonStatus = nextStatus;
 	mainWindow?.webContents.send("daemon:status", daemonStatus);
+	if (nextStatus.state === "ready" && browserViewHost) {
+		establishBrowserRuntimeLink();
+	}
 }
 
 const MAX_DAEMON_OUTPUT_CHARS = 12_000;
@@ -252,37 +245,7 @@ function appendDaemonOutput(text: string): void {
 // DevTools, zoom, full screen, edit commands) and each acts on the *focused*
 // webContents — including a BrowserView panel — matching native menu behaviour.
 function buildWindowsAppMenu(): Menu {
-	return Menu.buildFromTemplate([
-		{
-			label: "Edit",
-			submenu: [
-				{ role: "undo" },
-				{ role: "redo" },
-				{ type: "separator" },
-				{ role: "cut" },
-				{ role: "copy" },
-				{ role: "paste" },
-				{ role: "selectAll" },
-			],
-		},
-		{
-			label: "View",
-			submenu: [
-				{ role: "reload" },
-				{ role: "toggleDevTools" },
-				{ type: "separator" },
-				{ role: "resetZoom" },
-				{ role: "zoomIn" },
-				{ role: "zoomOut" },
-				{ type: "separator" },
-				{ role: "togglefullscreen" },
-			],
-		},
-		{
-			label: "Window",
-			submenu: [{ role: "minimize" }, { role: "close" }],
-		},
-	]);
+	return Menu.buildFromTemplate(buildWindowsAppMenuTemplate());
 }
 
 function createWindow(): void {
@@ -311,11 +274,8 @@ function createWindow(): void {
 				}
 			: {
 					titleBarStyle: "hiddenInset" as const,
-					// Lights visually centered at y=28 — the 56px topbar/.titlebar-nav
-					// center line — so lights + nav cluster + header content share one
-					// row. macOS draws the 12pt disc 2pt below the given y (measured:
-					// center = y + 8), hence 20, not 22.
-					trafficLightPosition: { x: 14, y: 20 },
+					// Fixed natural titlebar position — never moved on sidebar toggle.
+					trafficLightPosition: { x: MAC_WINDOW_BUTTON_X, y: MAC_WINDOW_BUTTON_Y },
 				}),
 		webPreferences: {
 			preload: preloadPath(),
@@ -355,7 +315,14 @@ function createWindow(): void {
 	// contents holds focus — the shell renderer, xterm's helper textarea, or a
 	// browser-preview view (wired per-view in the browser host).
 	const isMac = process.platform === "darwin";
-	attachAppShortcuts(mainWindow.webContents, isMac, mainWindow.webContents);
+	attachAppShortcuts(
+		mainWindow.webContents,
+		isMac,
+		mainWindow.webContents,
+		false,
+		() => keybindingOverrides,
+		() => keybindingRecordingActive,
+	);
 
 	browserViewHost = createBrowserViewHost({
 		mainWindow,
@@ -363,9 +330,12 @@ function createWindow(): void {
 		shell,
 		WebContentsView,
 		annotatePreloadPath: annotatePreloadPath(),
-		rendererOrigin: RENDERER_ORIGIN,
+		rendererOrigin: new URL(rendererUrl()).origin,
 		isMac,
+		getKeybindingOverrides: () => keybindingOverrides,
+		isKeybindingRecording: () => keybindingRecordingActive,
 	});
+	if (daemonStatus.state === "ready") establishBrowserRuntimeLink();
 
 	void mainWindow.loadURL(rendererUrl());
 
@@ -384,8 +354,17 @@ function createWindow(): void {
 	};
 	mainWindow.on("enter-full-screen", pushFullScreen);
 	mainWindow.on("leave-full-screen", pushFullScreen);
+	mainWindow.on("blur", () => {
+		keybindingRecordingActive = false;
+	});
+	mainWindow.webContents.on("render-process-gone", () => {
+		keybindingRecordingActive = false;
+	});
 
 	mainWindow.on("closed", () => {
+		browserRuntimeLink?.dispose();
+		browserRuntimeLink = null;
+		keybindingRecordingActive = false;
 		browserViewHost?.dispose();
 		browserViewHost = null;
 		mainWindow = null;
@@ -393,9 +372,11 @@ function createWindow(): void {
 }
 
 // How long the supervisor waits for the daemon to confirm its bound port (via
-// the listen log line or running.json) before reporting the configured port as
-// a best-effort fallback.
-const PORT_DISCOVERY_TIMEOUT_MS = 15_000;
+// the listen log line or running.json). A daemon that cannot confirm startup in
+// this window is reported with its captured output instead of being treated as
+// ready on an assumed port.
+const PORT_DISCOVERY_TIMEOUT_MS = 30_000;
+const DAEMON_RESTART_STOP_TIMEOUT_MS = 5_000;
 const RUN_FILE_POLL_MS = 300;
 // Accept run-files stamped slightly before our spawn timestamp: the daemon's
 // clock reading and ours race within normal scheduling jitter.
@@ -421,12 +402,25 @@ let shellEnvPromise: Promise<void> | null = null;
 
 // Telemetry defaults stamped on the daemon env on every platform; explicit env
 // always wins.
+//
+// Unpackaged builds keep local event recording but never export to PostHog: a
+// dev loop or a CI job driving the real app would otherwise bill production
+// events and inflate install/DAU counts. Set AO_TELEMETRY_REMOTE explicitly to
+// exercise the export path from a dev build.
 function telemetryOverrides(): Record<string, string> {
 	return {
 		AO_TELEMETRY_EVENTS: process.env.AO_TELEMETRY_EVENTS ?? "on",
-		AO_TELEMETRY_REMOTE: process.env.AO_TELEMETRY_REMOTE ?? "posthog",
+		AO_TELEMETRY_REMOTE: process.env.AO_TELEMETRY_REMOTE ?? (isDev ? "off" : "posthog"),
 		AO_TELEMETRY_POSTHOG_KEY: process.env.AO_TELEMETRY_POSTHOG_KEY ?? DEFAULT_POSTHOG_PROJECT_KEY,
 		AO_TELEMETRY_POSTHOG_HOST: process.env.AO_TELEMETRY_POSTHOG_HOST ?? DEFAULT_POSTHOG_HOST,
+		// The daemon binary has no version of its own that release tooling sets,
+		// so without this every daemon event lands unattributable to a release.
+		AO_TELEMETRY_APP_VERSION: process.env.AO_TELEMETRY_APP_VERSION ?? app.getVersion(),
+		// Kill switch: forwarded so a noisy stream can be silenced by env on an
+		// install that already exists, without shipping a new build.
+		...(process.env.AO_TELEMETRY_DISABLED_EVENTS
+			? { AO_TELEMETRY_DISABLED_EVENTS: process.env.AO_TELEMETRY_DISABLED_EVENTS }
+			: {}),
 	};
 }
 
@@ -488,6 +482,7 @@ function ensureShellEnv(): Promise<void> {
 // (including supervisor restarts) reports the same run. An explicit
 // AO_APP_RUN_ID in the environment wins, which lets a test or a wrapper pin it.
 const appRunId = process.env.AO_APP_RUN_ID ?? `apprun-${randomUUID()}`;
+const browserRuntimeToken = randomBytes(32).toString("base64url");
 
 function daemonEnv(): NodeJS.ProcessEnv {
 	// AO_OWNER is the daemon's durable spawn-mode record: the daemon writes it
@@ -503,7 +498,11 @@ function daemonEnv(): NodeJS.ProcessEnv {
 	// is how the daemon recognises the previous run's shells as orphans and
 	// destroys them (see internal/service/shellterm).
 	const AO_OWNER = keepDaemonAlive(process.env) ? "persistent" : "app";
-	const ownerTag = { AO_OWNER, AO_APP_RUN_ID: appRunId };
+	const ownerTag = {
+		AO_OWNER,
+		AO_APP_RUN_ID: appRunId,
+		AO_BROWSER_RUNTIME_TOKEN: browserRuntimeToken,
+	};
 	// In dev mode, inject isolation defaults so the dev daemon never collides with
 	// the installed app. User-set env vars take priority (checked first).
 	const devExtras: Record<string, string> = {};
@@ -603,6 +602,41 @@ function supervisorPipeFromRunFile(rfp: string | null): string {
 	const dir = path.basename(path.dirname(rfp));
 	if (dir === ".ao" || dir === "." || dir === "") return "\\\\.\\pipe\\ao-supervise";
 	return "\\\\.\\pipe\\ao-supervise-" + dir.replace(/[^a-zA-Z0-9-]/g, "-");
+}
+
+function establishBrowserRuntimeLink(): void {
+	if (!browserViewHost || browserRuntimeLink) return;
+	const rfp = runFilePath();
+	if (!rfp) {
+		console.warn("AO: browser runtime link skipped; run-file path unavailable");
+		return;
+	}
+	let runInfo: ReturnType<typeof parseRunFile> = null;
+	try {
+		runInfo = parseRunFile(readFileSync(rfp, "utf8"));
+	} catch {
+		// Daemon readiness will retry this after running.json becomes readable.
+	}
+	const address = runInfo?.browserRuntimeAddress;
+	if (!address) {
+		console.warn("AO: browser runtime link skipped; daemon did not publish an address");
+		return;
+	}
+	let token = browserRuntimeToken;
+	token = runInfo?.browserRuntimeToken ?? token;
+	browserRuntimeLink = connectBrowserRuntime(address, {
+		token,
+		execute: (command, signal) => {
+			const host = browserViewHost;
+			if (!host) {
+				throw Object.assign(new Error("Browser target owner is unavailable"), {
+					code: "BROWSER_TARGET_UNAVAILABLE",
+				});
+			}
+			return host.execute(command.sessionId, command.action, command.args, signal);
+		},
+		log: (message) => console.log(`AO: ${message}`),
+	});
 }
 
 function establishSupervisorLink(): void {
@@ -1014,16 +1048,29 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		}, RUN_FILE_POLL_MS);
 	}
 
-	// Last resort: neither source confirmed (e.g. an older daemon build). Report
-	// the configured port so the renderer is not stuck on "starting" forever.
+	// Neither source confirmed startup. Surface the captured process output so
+	// the renderer can explain why boot stalled instead of spinning forever or
+	// attempting workspace requests against an assumed port.
 	fallbackTimer = setTimeout(() => {
 		if (portConfirmed || daemonProcess !== child || daemonStoppingProcess === child) return;
-		stopDiscovery();
+		// Keep running.json polling alive after surfacing the timeout. In
+		// keep-daemon mode there are no stdout/stderr scanners, so the run file is
+		// the only way a slow-but-successful boot can still recover to ready.
+		fallbackTimer = undefined;
 		setDaemonStatus({
-			state: "ready",
-			port: resolvedDaemonPort(),
-			message: "Daemon port not confirmed from logs or running.json; assuming the configured port.",
-			code: "port_unconfirmed",
+			state: "error",
+			message: "AO daemon did not finish starting within 30 seconds.",
+			details:
+				daemonOutput.trim() ||
+				[
+					"No startup output was captured.",
+					`Executable: ${launch.command}`,
+					`Working directory: ${launch.cwd}`,
+					`Expected port confirmation from: ${handshakePath ?? "running.json"}`,
+				].join("\n"),
+			code: "not_ready",
+			executablePath: launch.command,
+			workingDirectory: launch.cwd,
 		});
 	}, PORT_DISCOVERY_TIMEOUT_MS);
 
@@ -1051,6 +1098,11 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		// failures. Preserve the clean stopped status instead.
 		if (daemonStoppingProcess === child) {
 			daemonStoppingProcess = null;
+			if (daemonRestartAfterExitProcess === child) {
+				daemonRestartAfterExitProcess = null;
+				void startDaemonForRestart();
+				return;
+			}
 			setDaemonStatus({ state: "stopped" });
 			return;
 		}
@@ -1083,6 +1135,9 @@ function killDaemon(child: ChildProcess): void {
 function stopDaemon(): DaemonStatus {
 	daemonStartEpoch += 1;
 	daemonStartPromise = null;
+	// An explicit stop (or a newer restart request) cancels any deferred restart
+	// left waiting for a previously slow child to exit.
+	daemonRestartAfterExitProcess = null;
 	if (!daemonProcess) {
 		setDaemonStatus({ state: "stopped" });
 		return daemonStatus;
@@ -1094,14 +1149,79 @@ function stopDaemon(): DaemonStatus {
 	// A later daemon:start re-establishes the link via reportBoundPort.
 	supervisorLink?.dispose();
 	supervisorLink = null;
+	browserRuntimeLink?.dispose();
+	browserRuntimeLink = null;
 	killDaemon(daemonProcess);
 	setDaemonStatus({ state: "stopped" });
 	return daemonStatus;
 }
 
+function reportDaemonRestartFailure(error: unknown): DaemonStatus {
+	setDaemonStatus({
+		state: "error",
+		message: `Could not restart the AO daemon: ${error instanceof Error ? error.message : String(error)}`,
+		details: daemonOutput.trim() || undefined,
+		code: "spawn_failed",
+	});
+	return daemonStatus;
+}
+
+async function startDaemonForRestart(): Promise<DaemonStatus> {
+	try {
+		return await startDaemon();
+	} catch (error) {
+		return reportDaemonRestartFailure(error);
+	}
+}
+
+async function restartDaemon(): Promise<DaemonStatus> {
+	const child = daemonProcess;
+	if (!child) return startDaemonForRestart();
+
+	const exited = new Promise<boolean>((resolve) => {
+		let settled = false;
+		const finish = (didExit: boolean) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			child.off("exit", onExit);
+			resolve(didExit);
+		};
+		const onExit = () => finish(true);
+		const timer = setTimeout(() => finish(false), DAEMON_RESTART_STOP_TIMEOUT_MS);
+		child.once("exit", onExit);
+	});
+
+	stopDaemon();
+	// Register the deferred intent immediately after signaling the child. The
+	// exit can race the five-second UI timeout, so waiting until after the
+	// timeout to set this would occasionally miss the only exit event.
+	daemonRestartAfterExitProcess = child;
+	if (!(await exited)) {
+		// The process may still honor SIGTERM after the UI timeout. Keep the
+		// restart intent attached to that exact child so its eventual exit starts
+		// a replacement instead of collapsing back to a code-less stopped state.
+		setDaemonStatus({
+			state: "error",
+			message: "AO daemon is still stopping. It will restart automatically when shutdown completes.",
+			details: daemonOutput.trim() || undefined,
+			code: "not_ready",
+		});
+		return daemonStatus;
+	}
+	return startDaemonForRestart();
+}
+
 ipcMain.handle("daemon:getStatus", () => refreshDaemonStatus());
 ipcMain.handle("daemon:start", () => startDaemon());
 ipcMain.handle("daemon:stop", () => stopDaemon());
+ipcMain.handle("daemon:restart", async () => {
+	try {
+		return await restartDaemon();
+	} catch (error) {
+		return reportDaemonRestartFailure(error);
+	}
+});
 ipcMain.handle("app:getVersion", () => app.getVersion());
 ipcMain.handle("app:openExternal", async (_event, url: string) => {
 	await openAllowedAppExternalURL(url, shell);
@@ -1192,7 +1312,7 @@ ipcMain.handle("menu:action", (_event, action: string) => {
 	}
 });
 ipcMain.handle("telemetry:getBootstrap", () =>
-	buildTelemetryBootstrap(process.env, app.getVersion(), process.platform),
+	buildTelemetryBootstrap(process.env, app.getVersion(), process.platform, os.homedir(), app.isPackaged),
 );
 async function chooseDirectory(title: string): Promise<string | null> {
 	const options: OpenDialogOptions = {
@@ -1209,156 +1329,16 @@ async function chooseDirectory(title: string): Promise<string | null> {
 	return result.filePaths[0] ?? null;
 }
 
-async function gitOutput(cwd: string, args: string[]): Promise<string> {
-	const { stdout } = await execFileAsync("git", args, { cwd, env: daemonEnv(), timeout: 5000 });
-	return String(stdout).trim();
-}
-
-async function isGitRepo(repoPath: string): Promise<boolean> {
-	try {
-		const gitInfo = await stat(path.join(repoPath, ".git"));
-		if (!gitInfo.isDirectory()) return false;
-		await gitOutput(repoPath, ["rev-parse", "--show-toplevel"]);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-async function resolveDefaultBranch(repoPath: string): Promise<string> {
-	try {
-		const ref = await gitOutput(repoPath, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
-		if (ref) return ref.replace(/^origin\//, "");
-	} catch {
-		// Fall back to the checked-out branch when origin/HEAD is unavailable.
-	}
-	try {
-		const branch = await gitOutput(repoPath, ["branch", "--show-current"]);
-		if (branch) return branch;
-	} catch {
-		// Detached or unreadable HEAD is represented below.
-	}
-	return "HEAD";
-}
-
-async function scanGitRepo(repoPath: string, rootPath: string): Promise<GitRepoScanResult | null> {
-	const relativePath = repoPath === rootPath ? "." : path.relative(rootPath, repoPath);
-	const name = path.basename(repoPath);
-	try {
-		const gitInfo = await stat(path.join(repoPath, ".git"));
-		if (!gitInfo.isDirectory()) {
-			return {
-				name,
-				path: repoPath,
-				relativePath,
-				branch: "HEAD",
-				remote: "",
-				hasRemote: false,
-				status: "error",
-				reason: "Linked worktree children cannot be imported.",
-			};
-		}
-	} catch {
-		try {
-			if ((await gitOutput(repoPath, ["rev-parse", "--is-bare-repository"])) === "true") {
-				return {
-					name,
-					path: repoPath,
-					relativePath,
-					branch: "HEAD",
-					remote: "",
-					hasRemote: false,
-					status: "error",
-					reason: "Bare repositories cannot be imported.",
-				};
-			}
-		} catch {
-			// Not a git repository.
-		}
-		return null;
-	}
-	if (!(await isGitRepo(repoPath))) return null;
-	const [branchResult, remoteResult, bareResult, headResult] = await Promise.allSettled([
-		resolveDefaultBranch(repoPath),
-		gitOutput(repoPath, ["remote", "get-url", "origin"]),
-		gitOutput(repoPath, ["rev-parse", "--is-bare-repository"]),
-		gitOutput(repoPath, ["rev-parse", "--verify", "HEAD"]),
-	]);
-	const validationReason = scanRepoValidationReason(
-		name,
-		branchResult.status === "fulfilled" && branchResult.value ? branchResult.value : "HEAD",
-		remoteResult.status === "fulfilled" && remoteResult.value.length > 0,
-		bareResult.status === "fulfilled" && bareResult.value === "true",
-		headResult.status === "fulfilled",
-	);
-	return {
-		name,
-		path: repoPath,
-		relativePath,
-		branch: branchResult.status === "fulfilled" && branchResult.value ? branchResult.value : "HEAD",
-		remote: remoteResult.status === "fulfilled" ? remoteResult.value : "",
-		hasRemote: remoteResult.status === "fulfilled" && remoteResult.value.length > 0,
-		status: validationReason ? "error" : "ok",
-		reason: validationReason,
-	};
-}
-
-function scanRepoValidationReason(
-	name: string,
-	branch: string,
-	hasRemote: boolean,
-	isBare: boolean,
-	hasHead: boolean,
-): string | undefined {
-	if (name === "__root__") return "Repository name is reserved by AO.";
-	if (isBare) return "Bare repositories cannot be imported.";
-	if (!hasHead) return "Repository must have at least one commit.";
-	if (branch === "HEAD") return "Repository must have a checked-out branch.";
-	if (!hasRemote) return "Origin remote is required.";
-	return undefined;
-}
-
-async function mapLimited<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-	const out = new Array<R>(items.length);
-	let next = 0;
-	await Promise.all(
-		Array.from({ length: Math.min(limit, items.length) }, async () => {
-			for (;;) {
-				const index = next++;
-				if (index >= items.length) return;
-				out[index] = await fn(items[index]);
-			}
-		}),
-	);
-	return out;
-}
-
-async function scanImportFolder(rootPath: string, mode: "project" | "workspace"): Promise<ImportFolderScanResult> {
-	if (mode === "project") {
-		const repo = await scanGitRepo(rootPath, rootPath);
-		return { path: rootPath, repos: repo ? [repo] : [] };
-	}
-
-	const entries = (await readdir(rootPath, { withFileTypes: true }))
-		.filter((entry) => entry.isDirectory() && !IMPORT_SCAN_SKIP_DIRS.has(entry.name))
-		.slice(0, IMPORT_SCAN_MAX_ENTRIES);
-	const repos = await mapLimited(entries, IMPORT_SCAN_CONCURRENCY, (entry) =>
-		scanGitRepo(path.join(rootPath, entry.name), rootPath),
-	);
-	return {
-		path: rootPath,
-		repos: repos
-			.filter((repo): repo is GitRepoScanResult => repo !== null)
-			.sort((a, b) => a.name.localeCompare(b.name)),
-	};
-}
-
 ipcMain.handle("app:chooseDirectory", async (_event, title?: string) => {
 	return chooseDirectory(typeof title === "string" && title.trim() ? title : "Choose a git repository");
 });
 ipcMain.handle("app:scanImportFolder", async (_event, input: { path: string; mode: "project" | "workspace" }) => {
 	await ensureShellEnv();
-	return scanImportFolder(input.path, input.mode);
+	return scanImportFolder(input.path, input.mode, { env: daemonEnv(), homeDir: os.homedir() });
+});
+ipcMain.handle("app:checkAncestorRepo", async (_event, path: string) => {
+	await ensureShellEnv();
+	return ancestorRepositorySetupWarning(path, { env: daemonEnv(), homeDir: os.homedir() });
 });
 ipcMain.handle("clipboard:writeText", (_event, text: string) => {
 	clipboard.writeText(text, "clipboard");
@@ -1404,6 +1384,29 @@ ipcMain.handle("updateSettings:set", async (_event, settings: UpdateSettings) =>
 	await setUpdateSettings(path.dirname(runFile), settings);
 });
 
+ipcMain.handle("uiSettings:get", async (): Promise<UiSettings> => {
+	const runFile = runFilePath();
+	if (!runFile) return { locale: "en" };
+	return readUiSettings(path.dirname(runFile));
+});
+ipcMain.handle("uiSettings:set", async (_event, settings: UiSettings): Promise<UiSettings> => {
+	const runFile = runFilePath();
+	if (!runFile) return { locale: settings?.locale === "zh-CN" ? "zh-CN" : "en" };
+	return writeUiSettings(path.dirname(runFile), settings);
+});
+
+ipcMain.handle("keybindings:get", (): KeybindingOverrides => keybindingOverrides);
+ipcMain.handle("keybindings:set", async (_event, overrides: KeybindingOverrides): Promise<KeybindingOverrides> => {
+	const runFile = runFilePath();
+	if (!runFile) return keybindingOverrides;
+	keybindingOverrides = await writeKeybindingOverrides(path.dirname(runFile), overrides);
+	return keybindingOverrides;
+});
+ipcMain.handle("keybindings:setRecording", (event, active: unknown): void => {
+	if (event.sender !== mainWindow?.webContents || typeof active !== "boolean") return;
+	keybindingRecordingActive = active;
+});
+
 ipcMain.handle("featureBuilds:list", () => listFeatureBuilds());
 ipcMain.handle("featureBuilds:getActive", () => getActiveFeatureBuild());
 
@@ -1412,6 +1415,11 @@ ipcMain.handle("updates:check", async (_event, options?: UpdateCheckOptions) => 
 	const runFile = runFilePath();
 	if (!runFile) return;
 	await checkForUpdatesNow(path.dirname(runFile), options);
+});
+ipcMain.handle("updates:returnHome", async (_event, requestId?: string) => {
+	const runFile = runFilePath();
+	if (!runFile) return;
+	await returnToHome(path.dirname(runFile), requestId);
 });
 ipcMain.handle("updates:download", async (_event, requestId?: string) => {
 	await downloadUpdateNow(requestId);
@@ -1607,6 +1615,11 @@ app.whenReady().then(async () => {
 		console.error("failed to write app-state marker:", err);
 	}
 
+	const keybindingRunFile = runFilePath();
+	if (keybindingRunFile) {
+		keybindingOverrides = await readKeybindingOverrides(path.dirname(keybindingRunFile));
+	}
+
 	registerRendererProtocol();
 	applyRuntimeAppIcon();
 	createWindow();
@@ -1625,6 +1638,8 @@ app.whenReady().then(async () => {
 // The supervisorLink fd is NOT explicitly closed on quit; the OS closes it when
 // the process exits for any reason (Cmd+Q, crash, SIGKILL). Sessions survive.
 app.on("before-quit", () => {
+	browserRuntimeLink?.dispose();
+	browserRuntimeLink = null;
 	browserViewHost?.dispose();
 	browserViewHost = null;
 });

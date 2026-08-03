@@ -21,7 +21,9 @@ const (
 // RuntimeFacts is what the reaper reports each probe of a session runtime.
 type RuntimeFacts struct {
 	ObservedAt time.Time
-	Probe      ProbeResult
+	Runtime    ProbeResult
+	Workload   ProbeResult
+	LaunchID   string
 }
 
 // ActivitySignal is pushed by the agent hooks. Only a Valid activity state is
@@ -37,11 +39,15 @@ type RuntimeFacts struct {
 // (old CLIs, adapters with no tool identity) keeps plain last-writer-wins
 // state semantics.
 type ActivitySignal struct {
-	Valid          bool
-	State          domain.ActivityState
-	Timestamp      time.Time
-	Event          string
-	ToolName       string
-	ToolUseID      string
-	AgentSessionID string
+	Valid             bool
+	State             domain.ActivityState
+	Timestamp         time.Time
+	ExpectedUpdatedAt time.Time
+	Event             string
+	ToolName          string
+	ToolUseID         string
+	AgentSessionID    string
+	// LaunchID is set by AO's process supervisor. Lifecycle rejects a signal
+	// from an older process generation of the same session.
+	LaunchID string
 }

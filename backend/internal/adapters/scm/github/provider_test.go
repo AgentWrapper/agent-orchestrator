@@ -106,6 +106,45 @@ func newProviderForTest(t *testing.T, f *fakeGH) *Provider {
 
 func ctx() context.Context { return context.Background() }
 
+func TestAuthenticatedIdentityCachesHumanUser(t *testing.T) {
+	f := newFakeGH(t)
+	f.on(http.MethodGet, "/user", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"login": "Alice", "type": "User"})
+	})
+	p := newProviderForTest(t, f)
+
+	first, err := p.AuthenticatedIdentity(ctx())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := p.AuthenticatedIdentity(ctx())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != (ports.SCMIdentity{Login: "Alice", Human: true}) || second != first {
+		t.Fatalf("identities = %#v, %#v", first, second)
+	}
+	if got := f.callsTo(http.MethodGet, "/user"); got != 1 {
+		t.Fatalf("GET /user calls = %d, want 1", got)
+	}
+}
+
+func TestAuthenticatedIdentityClassifiesBot(t *testing.T) {
+	f := newFakeGH(t)
+	f.on(http.MethodGet, "/user", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"login": "ao-bot", "type": "Bot"})
+	})
+	p := newProviderForTest(t, f)
+
+	got, err := p.AuthenticatedIdentity(ctx())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != (ports.SCMIdentity{Login: "ao-bot", Human: false}) {
+		t.Fatalf("identity = %#v", got)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Fixture builders. Each test composes a REST pull + GraphQL response so
 // it can pin the exact shape it cares about without sharing global state

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { KeyboardShortcutsDialog } from "./KeyboardShortcutsDialog";
 
@@ -39,5 +39,14 @@ describe("KeyboardShortcutsDialog", () => {
 		render(<KeyboardShortcutsDialog open onOpenChange={vi.fn()} isMac={false} />);
 
 		expect(screen.queryByText("Open command palette")).not.toBeInTheDocument();
+	});
+
+	it("offers a direct path to customize shortcuts", () => {
+		const onCustomize = vi.fn();
+		render(<KeyboardShortcutsDialog open onOpenChange={vi.fn()} onCustomize={onCustomize} isMac={false} />);
+
+		fireEvent.click(screen.getByRole("button", { name: "Customize" }));
+
+		expect(onCustomize).toHaveBeenCalledTimes(1);
 	});
 });

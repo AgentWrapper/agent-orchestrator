@@ -87,6 +87,8 @@ type Config struct {
 	Logger *slog.Logger
 	// CacheMax bounds each in-memory ETag/review cache. Zero uses DefaultCacheMax.
 	CacheMax int
+	// IdentityResolver resolves the active SCM account lazily. Nil preserves branch-based discovery.
+	IdentityResolver ports.SCMIdentityResolver
 }
 
 // ObserverCache stores provider ETags and review polling timestamps in memory.
@@ -152,6 +154,8 @@ type Observer struct {
 	credentialsChecked bool
 	// disabled is set after the credential gate reports unavailable credentials.
 	disabled bool
+	// identityResolver is the explicitly wired source of the active SCM account.
+	identityResolver ports.SCMIdentityResolver
 	// Cache holds bounded in-memory provider ETags and review poll timestamps.
 	Cache ObserverCache
 }
@@ -159,7 +163,7 @@ type Observer struct {
 // New constructs an Observer with default cadence/cache settings for zero
 // values in cfg.
 func New(provider Provider, store Store, lifecycle Lifecycle, cfg Config) *Observer {
-	o := &Observer{provider: provider, store: store, lifecycle: lifecycle, tick: cfg.Tick, reviewInterval: cfg.ReviewInterval, clock: cfg.Clock, logger: cfg.Logger, Cache: newCache(cfg.CacheMax)}
+	o := &Observer{provider: provider, store: store, lifecycle: lifecycle, tick: cfg.Tick, reviewInterval: cfg.ReviewInterval, clock: cfg.Clock, logger: cfg.Logger, identityResolver: cfg.IdentityResolver, Cache: newCache(cfg.CacheMax)}
 	if o.tick <= 0 {
 		o.tick = DefaultTickInterval
 	}
@@ -460,11 +464,12 @@ func (o *Observer) checkCredentials(ctx context.Context) (bool, error) {
 	return observe.CheckCredentialsOnce(ctx, probe, &o.credentialsChecked, &o.disabled, o.logger, "scm observer")
 }
 
-// discoverSubjects builds the per-PR refresh subjects (one per open tracked PR)
+// discoverSubjects builds the per-PR refresh subjects (normally one per open
+// tracked PR)
 // and the per-session repo list used for branch-prefix discovery of new PRs. A
-// session may own several PRs, so each open tracked PR becomes its own subject;
-// merged/closed PRs are not re-fetched since lifecycle already saw the terminal
-// transition and the completion rule reads them from the store.
+// session may own several PRs, so each open tracked PR becomes its own subject.
+// Terminal PRs stay eligible only for an opted-in live session, allowing an
+// unacknowledged teardown failure to be delivered again on a later poll.
 func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, []sessionRepo, error) {
 	sessions, err := o.store.ListAllSessions(ctx)
 	if err != nil {
@@ -530,7 +535,7 @@ func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, [
 		if err != nil {
 			return nil, nil, err
 		}
-		for _, pr := range openTrackedPRs(prs) {
+		for _, pr := range trackedPRsForSession(sess, prs) {
 			prRepo, ok := repoForTrackedPR(pr, repos)
 			if !ok {
 				o.logger.Warn("scm observer: tracked PR repo no longer belongs to project", "session", sess.ID, "pr", pr.URL, "repo", pr.Repo)
@@ -660,6 +665,22 @@ func openTrackedPRs(prs []domain.PullRequest) []domain.PullRequest {
 	return out
 }
 
+// trackedPRsForSession keeps terminal PRs discoverable only while an opted-in
+// session remains live. If merge-driven teardown fails, the observer has not
+// acknowledged the terminal semantic hash, so a later poll can redeliver it.
+func trackedPRsForSession(sess domain.SessionRecord, prs []domain.PullRequest) []domain.PullRequest {
+	if !sess.TerminateOnPRMerge {
+		return openTrackedPRs(prs)
+	}
+	out := make([]domain.PullRequest, 0, len(prs))
+	for _, pr := range prs {
+		if pr.Number > 0 {
+			out = append(out, pr)
+		}
+	}
+	return out
+}
+
 func (o *Observer) guardRepos(ctx context.Context, sessionRepos []sessionRepo) map[string]repoGuardState {
 	repos := map[string]ports.SCMRepo{}
 	for _, sr := range sessionRepos {
@@ -697,6 +718,7 @@ func pendingRepoRefreshes(guards map[string]repoGuardState) map[string]bool {
 // NotModified against a known ETag are skipped, since nothing new can have
 // appeared since the last poll.
 func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRepo, subjects map[string]*subject, guards map[string]repoGuardState, now time.Time, markRepoFailed func(ports.SCMRepo)) {
+	identity, identityKnown := o.authenticatedIdentity(ctx)
 	byRepo := map[string][]sessionRepo{}
 	repos := map[string]ports.SCMRepo{}
 	for _, sr := range sessionRepos {
@@ -722,6 +744,9 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 		}
 		for _, pr := range pulls {
 			if pr.Number <= 0 || pr.SourceBranch == "" {
+				continue
+			}
+			if identityKnown && !strings.EqualFold(strings.TrimSpace(pr.Author), identity.Login) {
 				continue
 			}
 			key := prKey(repo, pr.Number)
@@ -777,6 +802,23 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 	}
 }
 
+func (o *Observer) authenticatedIdentity(ctx context.Context) (ports.SCMIdentity, bool) {
+	if o.identityResolver == nil {
+		return ports.SCMIdentity{}, false
+	}
+	identity, err := o.identityResolver.AuthenticatedIdentity(ctx)
+	if err != nil {
+		o.logger.Debug("scm observer: authenticated identity unavailable; preserving branch-based discovery", "err", err)
+		return ports.SCMIdentity{}, false
+	}
+	identity.Login = strings.TrimSpace(identity.Login)
+	if !identity.Human || identity.Login == "" {
+		o.logger.Debug("scm observer: authenticated human identity unavailable; preserving branch-based discovery")
+		return ports.SCMIdentity{}, false
+	}
+	return identity, true
+}
+
 // matchSession picks the session that owns sourceBranch. A session owns the
 // branch when it is an exact match or a stacked descendant ("branch/..."). The
 // default worker branch is a leaf named "<namespace>/root"; for that shape the
@@ -804,6 +846,11 @@ func candidatesForHeadRepo(candidates []sessionRepo, headRepo string) []sessionR
 }
 
 func matchSession(candidates []sessionRepo, sourceBranch string) (sessionRepo, bool) {
+	for _, sr := range candidates {
+		if sr.branch != "" && sr.branch == sourceBranch {
+			return sr, true
+		}
+	}
 	var best sessionRepo
 	bestLen := -1
 	for _, sr := range candidates {
@@ -962,6 +1009,9 @@ func applyStoredFailedLogTails(obs *ports.SCMObservation, checks []domain.PullRe
 func (o *Observer) refreshReviews(ctx context.Context, subjects map[string]*subject, observations map[string]ports.SCMObservation, subjectsByPR map[string]*subject, reviewModes map[string]ports.ReviewWriteMode, localOnlyObservations, reviewStale map[string]bool, now time.Time) {
 	for _, s := range subjects {
 		if !s.hasPR || s.known.Number <= 0 {
+			continue
+		}
+		if s.known.Merged || s.known.Closed {
 			continue
 		}
 		pkey := prKey(s.repo, s.known.Number)

@@ -47,6 +47,7 @@ func TestBuildSystemPrompt_WorkerIncludesRulesAndOrchestrator(t *testing.T) {
 		"## Orchestrator Coordination",
 		`ao send --session mer-orchestrator --message "<your message>"`,
 		"## Pull Requests for This Session",
+		"## Docker Containers Started By This Session",
 		"## Project Rules",
 		"Always run focused tests.",
 		"Repository: https://github.com/acme/mercury",

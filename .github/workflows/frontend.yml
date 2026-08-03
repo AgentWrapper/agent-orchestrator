@@ -1,13 +1,8 @@
 name: Frontend
 
-# Runs the renderer vitest suite. This suite was silently dead for months
-# because no workflow executed it (vitest only auto-loads vite.config.ts /
-# vitest.config.ts, and the repo had neither until #171) — this job is the
-# guard against that happening again.
+# Runs the renderer vitest suite and typechecks the codebase.
 #
-# Typecheck is intentionally NOT run here yet: forge.config.ts and
-# update-electron-app carry pre-existing type errors. Add `npm run typecheck`
-# once those are fixed.
+# This job ensures both compiler/type checking passes and vitest tests succeed.
 
 on:
   push:
@@ -33,9 +28,20 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            frontend/package-lock.json
+            frontend/src/landing/package-lock.json
 
       - run: npm ci
+
+      - name: Install landing dependencies
+        run: npm ci --prefix src/landing
+
+      - name: Typecheck project
+        run: npm run typecheck
+
+      - name: Typecheck E2E suite
+        run: npm run typecheck:e2e
 
       - name: Run vitest suite
         run: npx vitest run

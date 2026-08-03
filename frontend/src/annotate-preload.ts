@@ -5,6 +5,7 @@ import {
 	type BrowserAnnotationContext,
 	type BrowserAnnotationPageSubmitPayload,
 } from "./shared/browser-annotations";
+import { promptPositionForRect } from "./shared/browser-annotation-overlay";
 
 let enabled = false;
 let selectedElement: Element | null = null;
@@ -57,7 +58,7 @@ function removeListeners(): void {
 }
 
 function handlePointerMove(event: PointerEvent): void {
-	if (!enabled || isOverlayEvent(event)) return;
+	if (!enabled || selectedContext || isOverlayEvent(event)) return;
 	const target = annotationTarget(event.target);
 	if (!target || target === selectedElement) return;
 	selectedElement = target;
@@ -67,6 +68,12 @@ function handlePointerMove(event: PointerEvent): void {
 
 function handleClick(event: MouseEvent): void {
 	if (!enabled || isOverlayEvent(event)) return;
+	if (selectedContext) {
+		event.preventDefault();
+		event.stopPropagation();
+		event.stopImmediatePropagation();
+		return;
+	}
 	const target = annotationTarget(event.target);
 	if (!target) return;
 	event.preventDefault();
@@ -117,38 +124,64 @@ function ensureOverlay(): ShadowRoot {
 				position: fixed;
 				box-sizing: border-box;
 				border: 2px solid #4d8dff;
-				border-radius: 6px;
-				background: rgba(77, 141, 255, 0.12);
-				box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.08);
+				border-radius: 8px;
+				background: rgba(77, 141, 255, 0.11);
+				box-shadow:
+					0 0 0 9999px rgba(0, 0, 0, 0.10),
+					0 0 0 1px rgba(255, 255, 255, 0.20),
+					0 12px 36px rgba(0, 0, 0, 0.24);
 				pointer-events: none;
+				transition:
+					left 120ms ease,
+					top 120ms ease,
+					width 120ms ease,
+					height 120ms ease,
+					border-color 120ms ease,
+					background 120ms ease;
 			}
 			.prompt {
 				position: fixed;
-				width: min(360px, calc(100vw - 24px));
+				width: min(380px, calc(100vw - 24px));
 				box-sizing: border-box;
 				border: 1px solid rgba(255, 255, 255, 0.14);
 				border-radius: 8px;
-				background: #15171b;
+				background: rgba(18, 20, 24, 0.98);
 				color: #f4f5f7;
-				box-shadow: 0 16px 40px rgba(0, 0, 0, 0.42);
-				padding: 10px;
+				box-shadow:
+					0 0 0 1px rgba(255, 255, 255, 0.06),
+					0 18px 52px rgba(0, 0, 0, 0.48);
+				padding: 12px;
 				font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 				pointer-events: auto;
+				animation: prompt-in 140ms ease-out;
+			}
+			.prompt__header {
+				margin-bottom: 9px;
+				color: rgba(244, 245, 247, 0.82);
+				font-size: 12px;
+				font-weight: 650;
 			}
 			.prompt textarea {
 				width: 100%;
-				min-height: 92px;
+				min-height: 102px;
 				box-sizing: border-box;
 				resize: vertical;
 				border: 1px solid rgba(255, 255, 255, 0.12);
 				border-radius: 6px;
-				background: #0a0b0d;
+				background: rgba(7, 8, 10, 0.92);
 				color: #f4f5f7;
-				padding: 8px;
+				padding: 9px 10px;
 				font: inherit;
 				outline: none;
+				transition:
+					border-color 120ms ease,
+					box-shadow 120ms ease,
+					background 120ms ease;
 			}
-			.prompt textarea:focus { border-color: #4d8dff; }
+			.prompt textarea:focus {
+				border-color: #4d8dff;
+				box-shadow: 0 0 0 3px rgba(77, 141, 255, 0.16);
+			}
 			.actions {
 				display: flex;
 				justify-content: flex-end;
@@ -163,6 +196,16 @@ function ensureOverlay(): ShadowRoot {
 				color: #f4f5f7;
 				padding: 0 10px;
 				font: inherit;
+				transition:
+					background 120ms ease,
+					border-color 120ms ease,
+					transform 120ms ease;
+			}
+			.actions button:hover {
+				background: #242830;
+			}
+			.actions button:active {
+				transform: translateY(1px);
 			}
 			.actions button[type="submit"] {
 				border-color: #4d8dff;
@@ -180,6 +223,22 @@ function ensureOverlay(): ShadowRoot {
 				font: 12px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 				box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 				pointer-events: none;
+				animation: prompt-in 140ms ease-out;
+			}
+			@keyframes prompt-in {
+				from { opacity: 0; transform: translateY(4px) scale(0.985); }
+				to { opacity: 1; transform: translateY(0) scale(1); }
+			}
+			@media (prefers-reduced-motion: reduce) {
+				.highlight,
+				.prompt textarea,
+				.actions button {
+					transition: none;
+				}
+				.prompt,
+				.hint {
+					animation: none;
+				}
 			}
 		</style>
 		<div class="highlight" hidden></div>
@@ -217,6 +276,7 @@ function renderPrompt(element: Element, context: BrowserAnnotationContext): void
 	const { left, top } = promptPosition(rect);
 	mount.innerHTML = `
 		<form class="prompt" style="left: ${left}px; top: ${top}px;">
+			<div class="prompt__header">Annotate selection</div>
 			<textarea aria-label="Annotation request" placeholder="Describe what to change"></textarea>
 			<div class="actions">
 				<button type="button" data-action="cancel">Cancel</button>
@@ -244,12 +304,14 @@ function renderPrompt(element: Element, context: BrowserAnnotationContext): void
 }
 
 function promptPosition(rect: DOMRect): { left: number; top: number } {
-	const width = Math.min(360, window.innerWidth - 24);
-	const height = 150;
-	const left = clamp(rect.left, 12, Math.max(12, window.innerWidth - width - 12));
-	const below = rect.bottom + 8;
-	const top = below + height <= window.innerHeight - 12 ? below : Math.max(12, rect.top - height - 8);
-	return { left, top };
+	return promptPositionForRect(rect, {
+		width: window.innerWidth,
+		height: window.innerHeight,
+		promptWidth: Math.min(380, window.innerWidth - 24),
+		promptHeight: 180,
+		gutter: 12,
+		gap: 8,
+	});
 }
 
 function cleanupOverlay(): void {
@@ -264,8 +326,4 @@ function sendCancel(reason: BrowserAnnotationCancelReason): void {
 
 function isOverlayEvent(event: Event): boolean {
 	return Boolean(host && event.composedPath().includes(host));
-}
-
-function clamp(value: number, min: number, max: number): number {
-	return Math.min(max, Math.max(min, value));
 }

@@ -1,11 +1,12 @@
-import { ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { useEffect } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { useOverflowScroll } from "../hooks/useOverflowScroll";
-import { useTruncatedText } from "../hooks/useTruncatedText";
-import { useCloseShellTerminal, useShellTerminals, type ShellTerminal } from "../hooks/useShellTerminals";
+import { useCloseShellTerminal, useRenameShellTerminal, useShellTerminals } from "../hooks/useShellTerminals";
 import { useShell } from "../lib/shell-context";
 import { cn } from "../lib/utils";
 import { useResolvedTheme, useUiStore } from "../stores/ui-store";
+import { ShellTerminalTab } from "./ShellTerminalTab";
 import { TerminalPane } from "./TerminalPane";
 
 // The standalone terminals screen: shells with no agent session behind them,
@@ -16,10 +17,14 @@ import { TerminalPane } from "./TerminalPane";
 // most wants a plain terminal. Inside a session, shells still appear as tabs
 // beside that session's pane; this screen is where they live otherwise.
 export function ShellTerminalsView() {
+	const { t } = useTranslation();
 	const { daemonStatus } = useShell();
 	const theme = useResolvedTheme();
-	const shellTerminals = useShellTerminals().data ?? [];
+	// The standalone screen shows only session-less shells; a session's own
+	// shells belong to that session's tab strip, not this global list.
+	const shellTerminals = (useShellTerminals().data ?? []).filter((s) => !s.sessionId);
 	const closeShellTerminal = useCloseShellTerminal();
+	const renameShellTerminal = useRenameShellTerminal();
 	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
 	const activeHandleId = useUiStore((state) => state.activeShellTerminalHandleId);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
@@ -41,17 +46,17 @@ export function ShellTerminalsView() {
 		<div className="flex h-full min-h-0 flex-col text-foreground">
 			<div className="flex h-inspector-tabs shrink-0 items-center gap-3 border-b border-border px-5">
 				<span className="shrink-0 font-mono text-caption font-semibold uppercase tracking-wide-lg text-muted-foreground">
-					TERMINALS
+					{t("workbench.terminals")}
 				</span>
 				<button
-					aria-label="Scroll tabs left"
+					aria-label={t("terminal.scrollTabsLeft")}
 					className={cn(
 						"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
 						!tabsOverflow.canScrollLeft && "invisible",
 					)}
 					disabled={!tabsOverflow.canScrollLeft}
 					onClick={() => tabsOverflow.scrollByDirection(-1)}
-					title="Scroll tabs left"
+					title={t("terminal.scrollTabsLeft")}
 					type="button"
 				>
 					<ChevronLeft aria-hidden="true" className="size-icon-md" />
@@ -65,10 +70,11 @@ export function ShellTerminalsView() {
 					{shellTerminals.map((shell) => {
 						const isActive = shell.handleId === active?.handleId;
 						return (
-							<ShellTab
+							<ShellTerminalTab
 								key={shell.handleId}
 								isActive={isActive}
 								onClose={() => closeShellTerminal.mutate(shell.handleId)}
+								onRename={(title) => renameShellTerminal.mutate({ handleId: shell.handleId, title })}
 								onSelect={() => setActiveShellTerminal(shell.handleId)}
 								shell={shell}
 							/>
@@ -76,23 +82,23 @@ export function ShellTerminalsView() {
 					})}
 				</div>
 				<button
-					aria-label="Scroll tabs right"
+					aria-label={t("terminal.scrollTabsRight")}
 					className={cn(
 						"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
 						!tabsOverflow.canScrollRight && "invisible",
 					)}
 					disabled={!tabsOverflow.canScrollRight}
 					onClick={() => tabsOverflow.scrollByDirection(1)}
-					title="Scroll tabs right"
+					title={t("terminal.scrollTabsRight")}
 					type="button"
 				>
 					<ChevronRight aria-hidden="true" className="size-icon-md" />
 				</button>
 				<button
-					aria-label="New terminal"
+					aria-label={t("shortcut.new-shell-terminal")}
 					className="ml-auto inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
 					onClick={requestNewShellTerminal}
-					title="New terminal (Ctrl+Shift+`)"
+					title={t("terminal.newWithShortcut", { shortcut: "Ctrl+Shift+`" })}
 					type="button"
 				>
 					<Plus aria-hidden="true" className="size-icon-md" />
@@ -109,64 +115,18 @@ export function ShellTerminalsView() {
 				) : (
 					<div className="grid h-full place-items-center bg-terminal font-mono text-control">
 						<div className="text-center">
-							<div className="text-terminal">No terminals open</div>
+							<div className="text-terminal">{t("terminal.emptyTitle")}</div>
 							<div className="mt-2 text-terminal-dim">
-								Press <span className="text-terminal">Ctrl+Shift+`</span> or use the + button to open one.
+								<Trans
+									components={{ shortcut: <span className="text-terminal" /> }}
+									i18nKey="terminal.emptyHint"
+									values={{ shortcut: "Ctrl+Shift+`" }}
+								/>
 							</div>
 						</div>
 					</div>
 				)}
 			</div>
 		</div>
-	);
-}
-
-// Same tab chrome as the session view's strip: the open tab gets the rounded
-// background highlight used by the inspector rail tabs, the full title only
-// becomes the hover tooltip when the strip truncates it, and the close
-// control appears on hover/focus (kept a sibling button - nesting interactive
-// elements is invalid HTML).
-function ShellTab({
-	shell,
-	isActive,
-	onSelect,
-	onClose,
-}: {
-	shell: ShellTerminal;
-	isActive: boolean;
-	onSelect: () => void;
-	onClose: () => void;
-}) {
-	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(shell.title);
-	return (
-		<span
-			className={cn(
-				"group inline-flex min-w-shell-tab-min items-center gap-1 rounded-md px-2 py-1 transition-colors",
-				isActive ? "bg-interactive-active" : "hover:bg-interactive-hover/60",
-			)}
-		>
-			<button
-				ref={ref}
-				aria-current={isActive}
-				className={cn(
-					"min-w-flex-min max-w-shell-tab-max truncate font-mono text-control font-semibold transition-colors",
-					isActive ? "text-foreground" : "text-passive hover:text-foreground",
-				)}
-				onClick={onSelect}
-				title={isTruncated ? shell.title : shell.workingDir}
-				type="button"
-			>
-				{shell.title}
-			</button>
-			<button
-				aria-label={`Close terminal ${shell.title}`}
-				className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-passive opacity-0 transition-[background,color,opacity] group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
-				onClick={onClose}
-				title="Close terminal"
-				type="button"
-			>
-				<X aria-hidden="true" className="size-icon-sm" />
-			</button>
-		</span>
 	);
 }

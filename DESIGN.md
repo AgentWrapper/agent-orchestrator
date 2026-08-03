@@ -5,21 +5,24 @@
 > - Radix/shadcn + xterm, in `frontend/src/renderer`). Read this before any visual
 >   or UI change. Created by `/design-consultation` on 2026-06-09.
 
-## ⚠️ Design direction — clone agent-orchestrator verbatim (SUPERSEDES emdash · 2026-06-10)
+## ⚠️ Design direction — clone agent-orchestrator verbatim (SUPERSEDES prior direction · 2026-06-10)
 
 By explicit user decision (2026-06-10), the renderer **clones the
 agent-orchestrator web app verbatim** in looks and design. This **supersedes the
-"match emdash" direction** documented in _Aesthetic Direction_ and the palette
+"match the reference" direction** documented in _Aesthetic Direction_ and the palette
 sections below — where they conflict, **agent-orchestrator wins**. Do not re-flag
-"this doesn't match emdash" in QA/review; flag divergence from **agent-orchestrator**.
+"this doesn't match the old reference" in QA/review; flag divergence from **agent-orchestrator**.
 
 - **Reference (the user's own app):** `~/Projects/agent-orchestrator/packages/web/src`
   — `app/globals.css`, `app/mc-board.css`, `app/mc-sidebar.css`,
   `components/{ProjectSidebar,Dashboard,SessionCard,SessionDetailHeader,SessionInspector,StatusBadge}.tsx`.
 - **Palette (live in `frontend/src/renderer/styles.css` `:root`):** `--bg #0a0b0d`,
   `--bg-1 #15171b`, `--fg #f4f5f7`, `--fg-muted #9ba1aa`, `--fg-passive #646a73`,
-  hairline white-alpha borders, accent `--accent #4d8dff`; status: working=orange
-  `#f59f4c`, needs-you=amber `#e8c14a`, mergeable=green `#74b98a`, fail=red `#ef6b6b`.
+  hairline white-alpha borders, accent `--accent #4d8dff`; status palette updated in
+  PR 3 (token layer): working=blue `#60a5fa` (`--color-status-working`), needs-you=orange
+  `#fb923c` (`--color-status-needs-you`), in-review=yellow `#facc15`
+  (`--color-status-in-review`), ready/mergeable=green `#4ade80` (`--color-status-ready`),
+  fail=red via `--destructive` (`--color-status-exited`).
   The sidebar rail is the cooler `#08090b`.
 - **Cloned surfaces:** the four-column gradient kanban board, the `ProjectSidebar`
   (brand + project disclosure + nested session rows + Settings menu footer), the
@@ -56,8 +59,7 @@ resizable`, react-resizable-panels v4 `collapsible` panel + imperative API,
   thin client over the same daemon.
 - **Who it's for:** professional software engineers running multiple coding agents at
   once who need to delegate, watch, intervene, and ship PRs.
-- **Space/peers:** agent orchestration / parallel-agent desktop tools. Closest peers:
-  **emdash** (the primary design reference), **PostHog Code**, Conductor.
+- **Space/peers:** agent orchestration / parallel-agent desktop tools.
 - **Project type:** dark-mode-primary desktop app; terminal-dense; keyboard-driven;
   runs all day.
 - **The one memorable thing:** leverage and speed — "I'm more in control here than
@@ -65,8 +67,8 @@ resizable`, react-resizable-panels v4 `collapsible` panel + imperative API,
 
 ### Product flow (what the UI must serve)
 
-ReverbCode is **orchestrator-led**, which is the one thing that differs from emdash
-(a flat list of independent sessions). Grounded in the daemon
+ReverbCode is **orchestrator-led**, which is the one thing that differs from a flat
+list of independent sessions. Grounded in the daemon
 (`backend/internal/session_manager/manager.go`, `docs/architecture.md`):
 
 - A **Project** is a registered git repo.
@@ -89,26 +91,25 @@ ReverbCode is **orchestrator-led**, which is the one thing that differs from emd
 ## Aesthetic Direction
 
 > **Superseded (2026-06-10):** see the _Design direction — clone agent-orchestrator
-> verbatim_ banner at the top. The emdash framing below is retained for history; the
-> live look tracks agent-orchestrator (same flat near-black / hairline family, so most
-> of this still reads true).
+> verbatim_ banner at the top. The earlier reference framing below is retained for
+> history; the live look tracks agent-orchestrator (same flat near-black / hairline
+> family, so most of this still reads true).
 
-- **Direction:** match **emdash** exactly — flat, near-black, hairline-bordered,
-  utilitarian. Industrial control surface, calm chrome, the terminal as the center of gravity.
+- **Direction:** flat, near-black, hairline-bordered, utilitarian. Industrial control
+  surface, calm chrome, the terminal as the center of gravity.
 - **Decoration level:** minimal. Type + 1px hairlines do all the work. No gradients,
   glow, blobs, or emoji.
 - **Mood:** low-glare, dense, keyboard-native; signal-over-noise.
-- **Reference:** [emdash](https://github.com/generalaction/emdash) (primary, visual +
-  structural), [PostHog Code](https://github.com/PostHog/code) (secondary). Tokens
-  below were extracted from emdash's `src/renderer/index.css`.
-- **Deliberate tradeoff:** to _be_ emdash, we use the **system font stack** (not a
-  custom typeface) and emdash's neutral palette. We diverge in exactly one place: the
-  accent is ReverbCode's **refined blue**, not emdash's jade green. The terminal keeps
-  green (it is the agent CLI).
+- **Reference:** a flat, hairline-bordered desktop control surface (primary, visual +
+  structural). Tokens below were derived from that reference's renderer CSS.
+- **Deliberate tradeoff:** to match that reference, we use the **system font stack** (not
+  a custom typeface) and its neutral palette. We diverge in exactly one place: the
+  accent is ReverbCode's **refined blue**, not the reference's jade green. The terminal
+  keeps green (it is the agent CLI).
 
 ## Typography
 
-System fonts only, like emdash — no custom/Google fonts, zero font payload.
+System fonts only — no custom/Google fonts, zero font payload.
 
 - **UI / body / display:** `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
 Oxygen, Ubuntu, Cantarell, "Fira Sans", "Helvetica Neue", sans-serif` (San Francisco
@@ -123,8 +124,8 @@ Oxygen, Ubuntu, Cantarell, "Fira Sans", "Helvetica Neue", sans-serif` (San Franc
 
 ## Color
 
-emdash's flat Radix-neutral near-black ramp carries the whole interface; color is rare
-and meaningful. Values are sRGB approximations of emdash's `color(display-p3 …)` tokens.
+A flat Radix-neutral near-black ramp carries the whole interface; color is rare
+and meaningful. Values are sRGB approximations of the reference's `color(display-p3 …)` tokens.
 
 ### Dark (primary)
 
@@ -193,7 +194,7 @@ left rail stay name-only — no glyph.)
 - **Rail (240px), top → bottom:**
   1. **Orchestrator anchor** — pinned, single, visually distinct (blue 2px left bar,
      `--bg-2` fill, hub/`waypoints` icon, name "Orchestrator", a `5 agents · 2 need you`
-     mono summary). This is ReverbCode's one addition over emdash. Default landing view.
+     mono summary). This is ReverbCode's one addition over the reference. Default landing view.
   2. `PROJECTS` eyebrow label + a `+`.
   3. Project rows (folder icon + name) with nested **worker rows beneath**. Each project
      row has a hover-revealed **`+`** that opens the New-worker modal pre-scoped to that
@@ -202,7 +203,7 @@ left rail stay name-only — no glyph.)
   5. **Account** row pinned at the very bottom.
 - **Worker rows are name-only.** Just the session name, truncated. Status, branch, diff,
   and PR live in the panes and topbar, never in the row. Selection = `--bg-2` fill + a
-  2px blue left bar. (emdash itself shows a faint trailing timestamp; we omit it by choice.)
+  2px blue left bar. (the reference itself shows a faint trailing timestamp; we omit it by choice.)
 - **Center = the conversation.** Orchestrator → its coordination terminal (delegate here;
   composer reads "tell the orchestrator what to build"). Worker → the agent CLI terminal
   (tabbed per agent, e.g. `claude-code (1)`), with a composer (model selector, worktree
@@ -225,11 +226,11 @@ left rail stay name-only — no glyph.)
   (rename, restart, kill, claim PR — the `ao session …` commands).
 - **Right — orchestrator:** **+ New worker** → Terminal toggle → **⋯ menu**. No diff toggles.
 
-### Spawn-worker modal (mirrors emdash's Create Task)
+### Spawn-worker modal (mirrors the reference's Create Task)
 
 You mostly let the orchestrator spawn workers from its conversation; the manual paths
 (the topbar `+ New worker`, a project row's hover `+`, or `ao spawn`) open a modal that
-mirrors emdash exactly. Launching from a project row pre-fills the Project field:
+mirrors the reference exactly. Launching from a project row pre-fills the Project field:
 
 - Centered dialog, **12px radius**, `max-w` ~512px, `bg` canvas, `ring-1` at 10% fg,
   fade + zoom-95 enter.
@@ -255,7 +256,7 @@ mirrors emdash exactly. Launching from a project row pre-fills the Project field
 
 - The renderer (`frontend/src/renderer/styles.css`) currently uses **Inter** and a
   grayscale-blue theme. Migrate to this system: drop the Inter `font-family`, adopt the
-  system stack, and replace the token values with the emdash neutral ramp + blue accent above.
+  system stack, and replace the token values with the neutral ramp + blue accent above.
 - Keep tokens as CSS custom properties under `:root` (dark) and `:root[data-theme="light"]`.
 - A faithful HTML reference of all of the above (both views + topbar + spawn modal,
   light/dark) is saved under
@@ -265,11 +266,11 @@ mirrors emdash exactly. Launching from a project row pre-fills the Project field
 
 | Date       | Decision                                                               | Rationale                                                                                          |
 | ---------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| 2026-06-09 | Match emdash's visual language exactly                                 | User direction; emdash is the demonstrated reference for this app's UI.                            |
-| 2026-06-09 | System font, not a custom typeface (e.g. Geist)                        | emdash uses the system stack; fidelity + native feel + zero font payload chosen over brand type.   |
-| 2026-06-09 | Refined **blue** accent, not emdash's jade green                       | User's explicit pick; blue for primary/active/focus, terminal stays green.                         |
-| 2026-06-09 | Single global **Orchestrator** anchor, orchestrator-first default view | The one real difference from emdash; orchestrator is the human-facing coordinator you delegate to. |
+| 2026-06-09 | Match the reference's visual language exactly                          | User direction; the reference is the demonstrated model for this app's UI.                         |
+| 2026-06-09 | System font, not a custom typeface (e.g. Geist)                        | The reference uses the system stack; fidelity + native feel + zero font payload over brand type.   |
+| 2026-06-09 | Refined **blue** accent, not the reference's jade green                | User's explicit pick; blue for primary/active/focus, terminal stays green.                         |
+| 2026-06-09 | Single global **Orchestrator** anchor, orchestrator-first default view | The one real difference from the reference; orchestrator is the human-facing coordinator.          |
 | 2026-06-09 | **Name-only** worker rows                                              | User direction; status/branch/diff live in panes + topbar, not the row.                            |
 | 2026-06-09 | Removed **Library** from the rail footer                               | User direction; footer is Search + Settings only.                                                  |
-| 2026-06-09 | Topbar right = PR/CI pill + view toggles + ⋯ menu (worker)             | Surfaces the actionable PR/CI state from the daemon; emdash/PostHog Code precedent.                |
-| 2026-06-09 | Spawn modal mirrors emdash's Create Task                               | Consistency with the reference; mapped to `ao spawn` params.                                       |
+| 2026-06-09 | Topbar right = PR/CI pill + view toggles + ⋯ menu (worker)             | Surfaces the actionable PR/CI state from the daemon; desktop-tool precedent.                       |
+| 2026-06-09 | Spawn modal mirrors the reference's Create Task                        | Consistency with the reference; mapped to `ao spawn` params.                                       |

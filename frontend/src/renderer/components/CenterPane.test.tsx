@@ -34,6 +34,24 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
 	});
 
+	it("renders only this session's own tab, never a sibling session", () => {
+		render(<CenterPane session={worker} theme="dark" daemonReady />);
+
+		expect(screen.getByRole("button", { name: "do the thing" })).toHaveAttribute("aria-current", "true");
+		expect(screen.queryByRole("button", { name: "review the change" })).not.toBeInTheDocument();
+	});
+
+	// The button used to open a dropdown that also listed every session across
+	// every project (#3208); it now only ever creates a terminal.
+	it("opens a new terminal straight from the tab-strip button", () => {
+		const onNewShellTerminal = vi.fn();
+		render(<CenterPane session={worker} onNewShellTerminal={onNewShellTerminal} theme="dark" daemonReady />);
+
+		fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
+		expect(onNewShellTerminal).toHaveBeenCalledOnce();
+		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+	});
+
 	it("shows 'Orchestrator' for an orchestrator session", () => {
 		render(<CenterPane session={{ ...worker, id: "sess-orch", kind: "orchestrator" }} theme="dark" daemonReady />);
 		expect(screen.getByText("Orchestrator")).toBeInTheDocument();
@@ -47,7 +65,7 @@ describe("CenterPane toolbar session label", () => {
 	it("uses the inspector tab height for the terminal header", () => {
 		render(<CenterPane session={worker} theme="dark" daemonReady />);
 
-		const header = screen.getByText("TERMINAL").parentElement?.parentElement;
+		const header = screen.getByText("Terminal").parentElement?.parentElement;
 		expect(header).toHaveClass("h-inspector-tabs");
 	});
 
@@ -57,7 +75,7 @@ describe("CenterPane toolbar session label", () => {
 
 		const scrollRegion = document.querySelector(".overflow-x-auto");
 		expect(scrollRegion).toHaveClass("scrollbar-none", "min-w-flex-min", "flex-1");
-		for (const tab of screen.getAllByTitle("/tmp/ws")) {
+		for (const tab of screen.getAllByTitle(/^\/tmp\/ws/)) {
 			expect(tab.parentElement).toHaveClass("min-w-shell-tab-min");
 			expect(tab.parentElement).not.toHaveClass("min-w-16", "shrink-0");
 			expect(tab).toHaveClass("min-w-flex-min");
@@ -68,7 +86,7 @@ describe("CenterPane toolbar session label", () => {
 
 		// The display controls float over the terminal body, not the tab bar,
 		// so tabs and controls can never overlap.
-		const tabBarRow = screen.getByText("TERMINAL").closest("div")?.parentElement;
+		const tabBarRow = screen.getByText("Terminal").closest("div")?.parentElement;
 		expect(tabBarRow).not.toBeNull();
 		expect(tabBarRow?.contains(screen.getByRole("button", { name: /fullscreen/i }))).toBe(false);
 	});

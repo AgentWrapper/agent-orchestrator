@@ -5,20 +5,22 @@ import (
 	"database/sql"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 
 	_ "modernc.org/sqlite" // register sqlite driver for KiloCode auth database probes
 )
 
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
 
-// AuthStatus returns the plugin's local authentication status.
+// AuthStatus returns the plugin's local authentication status. Missing
+// credentials remain unknown because Kilo can still run eligible public free
+// models without a provider login.
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
 	binary, err := p.ResolveBinary(ctx)
 	if err != nil {
@@ -32,7 +34,7 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 
 	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(probeCtx, binary, "auth", "list").CombinedOutput()
+	out, err := aoprocess.CommandContext(probeCtx, binary, "auth", "list").CombinedOutput()
 	if probeCtx.Err() != nil {
 		return ports.AgentAuthStatusUnknown, probeCtx.Err()
 	}
@@ -188,7 +190,7 @@ func kilocodeAuthListStatus(output string) (ports.AgentAuthStatus, bool) {
 		return ports.AgentAuthStatusAuthorized, true
 	}
 	if strings.Contains(text, "0 credentials") && strings.Contains(text, "0 environment variable") {
-		return ports.AgentAuthStatusUnauthorized, true
+		return ports.AgentAuthStatusUnknown, true
 	}
 	return ports.AgentAuthStatusUnknown, false
 }

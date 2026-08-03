@@ -17,6 +17,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemon"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 	"github.com/aoagents/agent-orchestrator/backend/internal/processalive"
+	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
 )
 
 // Execute runs the ao CLI with process stdio.
@@ -188,7 +189,9 @@ func NewRootCommand(deps Deps) *cobra.Command {
 	root.AddCommand(newSpawnCommand(ctx))
 	root.AddCommand(newSendCommand(ctx))
 	root.AddCommand(newPreviewCommand(ctx))
+	root.AddCommand(newBrowserCommand(ctx))
 	root.AddCommand(newHooksCommand(ctx))
+	root.AddCommand(newAgentProcessCommand(ctx))
 	root.AddCommand(newLaunchCommand(ctx))
 	root.AddCommand(newPtyHostCommand())
 	root.AddCommand(newImportCommand(ctx))
@@ -209,15 +212,16 @@ type commandContext struct {
 }
 
 func shouldEmitCLIInvocation(cmd *cobra.Command) bool {
-	switch strings.TrimSpace(cmd.CommandPath()) {
+	commandPath := telemetrymeta.NormalizeCommandPath(cmd.CommandPath())
+	if telemetrymeta.IsRoutineInternalCLICommand(commandPath) {
+		return false
+	}
+	switch commandPath {
 	// "ao daemon"/"ao start" are supervisor-driven bootstrapping, and
-	// "ao completion"/"ao help" are shell setup and self-documentation, none
-	// of which reflect a human doing something with AO. "ao hooks" and
-	// "ao pty-host" ARE real usage signal (an agent session is doing
-	// something) even though a machine invokes them, so they are allowed
-	// through here; the per-command-path daily cap in httpd/router.go is what
-	// keeps their invocation frequency from reaching PostHog uncapped.
-	case "ao daemon", "ao start", "ao completion", "ao help":
+	// "ao completion"/"ao help" are shell setup and self-documentation.
+	// "ao pty-host" and "ao agent-process" are internal runtime processes.
+	// None reflect user activity.
+	case "ao daemon", "ao start", "ao completion", "ao help", "ao pty-host", "ao agent-process", "ao agent-process supervise":
 		return false
 	default:
 		return true
@@ -230,7 +234,18 @@ func (c *commandContext) emitCLIInvoked(ctx context.Context, cmd *cobra.Command)
 	_ = c.postLoopbackJSON(reqCtx, "/internal/telemetry/cli-invoked", map[string]string{
 		"command":     cmd.Name(),
 		"commandPath": cmd.CommandPath(),
+		"actorType":   cliInvocationActorType(cmd),
 	})
+}
+
+func cliInvocationActorType(cmd *cobra.Command) string {
+	if strings.TrimSpace(cmd.CommandPath()) == "ao hooks" {
+		return "agent"
+	}
+	if sessionIDPattern.MatchString(strings.TrimSpace(os.Getenv("AO_SESSION_ID"))) {
+		return "agent"
+	}
+	return "user"
 }
 
 func (c *commandContext) emitCLIUsageError(ctx context.Context, args []string, err error) {
