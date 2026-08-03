@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useParams } from "@tanstack/react-router";
 import {
 	Bell,
 	BellRing,
@@ -29,6 +29,7 @@ import {
 	unresolvedNotificationsQueryKey,
 } from "../lib/notifications";
 import { useUiStore } from "../stores/ui-store";
+import { useNavigateToSession } from "../lib/navigate-to-session";
 import { captureRendererEvent } from "../lib/telemetry";
 import { cn } from "../lib/utils";
 import { TopbarButton } from "./TopbarButton";
@@ -39,22 +40,15 @@ type NotificationCenterProps = {
 };
 
 function useNotificationTargetNavigation() {
-	const navigate = useNavigate();
+	const navigateToSession = useNavigateToSession();
 	const openSession = useCallback(
 		(notification: NotificationDTO) => {
 			const sessionId = notification.target.sessionId || notification.sessionId;
 			if (!sessionId) return;
 			void captureRendererEvent("ao.renderer.notification_opened", { target: "session" });
-			if (notification.projectId) {
-				void navigate({
-					to: "/projects/$projectId/sessions/$sessionId",
-					params: { projectId: notification.projectId, sessionId },
-				});
-				return;
-			}
-			void navigate({ to: "/sessions/$sessionId", params: { sessionId } });
+			navigateToSession(notification.projectId, sessionId);
 		},
-		[navigate],
+		[navigateToSession],
 	);
 
 	const openPrimary = useCallback(
