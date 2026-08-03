@@ -14,7 +14,9 @@ import { appI18n, type MessageKey } from "../i18n";
 export type CommandGroupId = "current" | "attention" | "projects" | "sessions" | "prs" | "global";
 
 export type NavigateTarget =
+	| { to: "/settings" }
 	| { to: "/projects/$projectId"; params: { projectId: string } }
+	| { to: "/projects/$projectId/settings"; params: { projectId: string } }
 	| { to: "/projects/$projectId/sessions/$sessionId"; params: { projectId: string; sessionId: string } };
 
 export type CommandAction =

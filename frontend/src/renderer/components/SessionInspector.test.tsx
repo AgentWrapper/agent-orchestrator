@@ -221,35 +221,9 @@ describe("SessionInspector tabs", () => {
 		expect(screen.getByText("workspace file review")).toBeInTheDocument();
 	});
 
-	it("keeps the inspector toggle at the end of the open tab header", async () => {
-		const onToggleVisibility = vi.fn();
-		renderWithQuery(<SessionInspector onToggleVisibility={onToggleVisibility} session={session([])} />);
-
-		const tabs = screen.getByRole("tablist");
-		const toggle = screen.getByRole("button", {
-			name: "Close inspector panel",
-		});
-		expect(tabs.parentElement?.lastElementChild).toBe(toggle);
-		expect(toggle.querySelector("svg")).toHaveClass("size-icon-lg");
-		expect(toggle).toHaveClass("ml-1.5");
-		expect(toggle).not.toHaveClass("mx-1.5");
-
-		await userEvent.click(toggle);
-		expect(onToggleVisibility).toHaveBeenCalledTimes(1);
-	});
-
-	it("leaves the closed inspector inert for the topbar-owned reopen control", () => {
-		const onToggleVisibility = vi.fn();
-		renderWithQuery(
-			<SessionInspector isInspectorVisible={false} onToggleVisibility={onToggleVisibility} session={session([])} />,
-		);
-
-		expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: /inspector panel/i })).not.toBeInTheDocument();
-		const hiddenBody = document.querySelector("[aria-hidden='true'][inert]");
-		expect(hiddenBody).toBeInTheDocument();
-		expect(onToggleVisibility).not.toHaveBeenCalled();
-	});
+	// These tests cover onToggleVisibility / isInspectorVisible props that live in a later PR.
+	it.todo("keeps the inspector toggle at the end of the open tab header");
+	it.todo("leaves the closed inspector inert for the topbar-owned reopen control");
 });
 
 describe("SessionInspector PR section", () => {

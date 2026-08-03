@@ -46,7 +46,7 @@ function nextUpdateRequestId(): string {
 	return `feature-update-${updateRequestSequence}`;
 }
 
-export function UpdatesSection() {
+export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const query = useQuery({
@@ -191,7 +191,7 @@ export function UpdatesSection() {
 
 	return (
 		<>
-			<SettingsSection title={t("settings.updates")} sectionId="updates">
+			<SettingsSection title={t("settings.updates")} sectionId="updates" titleHidden={titleHidden}>
 				{featurePr != null && (
 					<div className="flex flex-col gap-2">
 						<div className="settings-row-bar h-auto min-h-(--size-settings-row) flex-wrap gap-2">

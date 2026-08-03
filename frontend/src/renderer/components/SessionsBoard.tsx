@@ -440,7 +440,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				busy={terminateSession.isPending}
 				error={terminateSession.error instanceof Error ? terminateSession.error.message : null}
 				onConfirm={() => terminationSession && terminateSession.mutate(terminationSession)}
-				onOpenChange={(open) => {
+				onOpenChange={(open: boolean) => {
 					if (!open && !terminateSession.isPending) setTerminationSession(undefined);
 				}}
 				open={terminationSession !== undefined}
