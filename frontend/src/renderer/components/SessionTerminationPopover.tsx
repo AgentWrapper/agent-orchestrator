@@ -30,7 +30,7 @@ export function SessionTerminationPopover({
 			>
 				<p className="text-control font-semibold text-foreground">Terminate session?</p>
 				<p className="mt-1 text-caption leading-4 text-muted-foreground">
-					Moves {session?.title ?? "this session"} to Archive. Changes are preserved.
+					Stops the agent, discards its workspace, and moves {session?.title ?? "this session"} to Archive. It can be relaunched later.
 				</p>
 				<div className="mt-3 flex justify-end gap-1.5">
 					<button

@@ -338,6 +338,7 @@ describe("TopbarKillButton", () => {
 		const confirmation = screen.getByRole("dialog", { name: "Terminate do the thing?" });
 		expect(confirmation).toHaveClass("w-64", "bg-popover", "p-3");
 		expect(confirmation).toHaveAttribute("data-side", "bottom");
+		expect(confirmation).toHaveTextContent("Stops the agent, discards its workspace, and moves do the thing to Archive. It can be relaunched later.");
 		expect(within(confirmation).getByRole("button", { name: "No" })).toBeInTheDocument();
 		expect(within(confirmation).getByRole("button", { name: "Yes, terminate session" })).toHaveTextContent("Yes");
 

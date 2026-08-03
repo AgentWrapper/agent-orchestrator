@@ -207,7 +207,47 @@ export function CenterPane({
 					<span className="ml-auto truncate font-mono text-xs text-passive">{target.harness}</span>
 				</div>
 			) : null}
-			<div className="relative min-h-0 flex-1">
+			<div
+				aria-label="Terminal display controls"
+				className="flex h-control-sm shrink-0 items-center justify-end gap-1 border-b border-border/50 bg-terminal px-2 font-mono text-passive/70"
+			>
+				<button
+					aria-label="Decrease terminal font size"
+					className="inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-caption leading-none transition-[background,color,opacity] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-passive"
+					disabled={fontSize <= TERMINAL_FONT_SIZE_MIN}
+					onClick={() => updateFontSize(-1)}
+					title="Decrease terminal font size"
+					type="button"
+				>
+					-
+				</button>
+				<span className="w-font-size-label text-center text-caption font-semibold text-muted-foreground">{fontSize}px</span>
+				<button
+					aria-label="Increase terminal font size"
+					className="inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-caption leading-none transition-[background,color,opacity] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-passive"
+					disabled={fontSize >= TERMINAL_FONT_SIZE_MAX}
+					onClick={() => updateFontSize(1)}
+					title="Increase terminal font size"
+					type="button"
+				>
+					+
+				</button>
+				<button
+					aria-label={isFullscreen ? "Exit terminal fullscreen" : "Open terminal fullscreen"}
+					aria-pressed={isFullscreen}
+					className="ml-0.5 inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-caption leading-none transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+					onClick={() => void toggleFullscreen()}
+					title={isFullscreen ? "Exit fullscreen" : "Fullscreen terminal"}
+					type="button"
+				>
+					{isFullscreen ? (
+						<Minimize2 className="size-icon-sm" aria-hidden="true" />
+					) : (
+						<Maximize2 className="size-icon-sm" aria-hidden="true" />
+					)}
+				</button>
+			</div>
+			<div className="min-h-0 flex-1">
 				<TerminalPane
 					daemonReady={daemonReady}
 					fontSize={fontSize}
@@ -215,47 +255,6 @@ export function CenterPane({
 					terminalTarget={target}
 					theme={theme}
 				/>
-				{/* Display controls float over the terminal's top-right corner with no
-				    chrome of their own, so they read as part of the terminal itself. */}
-				<div className="absolute right-3 top-2 z-10 flex shrink-0 items-center gap-3 font-mono text-passive/70">
-					<button
-						aria-label="Decrease terminal font size"
-						className="inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color,opacity] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-passive"
-						disabled={fontSize <= TERMINAL_FONT_SIZE_MIN}
-						onClick={() => updateFontSize(-1)}
-						title="Decrease terminal font size"
-						type="button"
-					>
-						-
-					</button>
-					<span className="w-font-size-label text-center text-xs font-semibold text-muted-foreground">
-						{fontSize}px
-					</span>
-					<button
-						aria-label="Increase terminal font size"
-						className="inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color,opacity] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-passive"
-						disabled={fontSize >= TERMINAL_FONT_SIZE_MAX}
-						onClick={() => updateFontSize(1)}
-						title="Increase terminal font size"
-						type="button"
-					>
-						+
-					</button>
-					<button
-						aria-label={isFullscreen ? "Exit terminal fullscreen" : "Open terminal fullscreen"}
-						aria-pressed={isFullscreen}
-						className="ml-1.5 inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
-						onClick={() => void toggleFullscreen()}
-						title={isFullscreen ? "Exit fullscreen" : "Fullscreen terminal"}
-						type="button"
-					>
-						{isFullscreen ? (
-							<Minimize2 className="size-icon-md" aria-hidden="true" />
-						) : (
-							<Maximize2 className="size-icon-md" aria-hidden="true" />
-						)}
-					</button>
-				</div>
 			</div>
 		</div>
 	);

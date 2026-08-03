@@ -84,11 +84,22 @@ describe("CenterPane toolbar session label", () => {
 		// jsdom reports no overflow, so the indicator stays mounted but disabled to preserve focus.
 		expect(screen.getByRole("button", { name: "Scroll tabs right" })).toBeDisabled();
 
-		// The display controls float over the terminal body, not the tab bar,
-		// so tabs and controls can never overlap.
+		// The display controls sit outside the tab bar, so tabs and controls can never overlap.
 		const tabBarRow = screen.getByText("TERMINAL").closest("div")?.parentElement;
 		expect(tabBarRow).not.toBeNull();
 		expect(tabBarRow?.contains(screen.getByRole("button", { name: /fullscreen/i }))).toBe(false);
+	});
+
+	it("renders terminal display controls in a bordered strip above the terminal body", () => {
+		render(<CenterPane session={worker} theme="dark" daemonReady />);
+
+		const controls = screen.getByLabelText("Terminal display controls");
+		const terminalBody = screen.getByText("terminal body");
+
+		expect(controls).toHaveClass("border-b", "justify-end");
+		expect(controls.compareDocumentPosition(terminalBody) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(controls).toContainElement(screen.getByRole("button", { name: "Decrease terminal font size" }));
+		expect(controls).toContainElement(screen.getByText("12px"));
 	});
 
 	it("reveals scroll chevrons only when the tab strip actually overflows", () => {

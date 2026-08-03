@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Trash2 } from "lucide-react";
+import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Trash } from "lucide-react";
 import { useState } from "react";
 import { NotificationCenter } from "./NotificationCenter";
 import {
@@ -329,7 +329,7 @@ export function TopbarKillButton({
 						title="Kill session"
 						variant="kill"
 					>
-						<Trash2 className="size-icon-lg" aria-hidden="true" />
+						<Trash className="size-icon-lg" aria-hidden="true" />
 						{isPending ? "Killing..." : "Kill"}
 					</TopbarButton>
 				}
