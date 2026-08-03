@@ -24,7 +24,7 @@ func TestAiderLocalAuthStatusAuthorizedWithProviderEnv(t *testing.T) {
 
 func TestAiderLocalAuthStatusAuthorizedWithNVIDIAEnv(t *testing.T) {
 	clearAiderAuthEnv(t)
-	t.Setenv("NVIDIA_NIM_API_KEY", "nvapi-test")
+	t.Setenv("NVIDIA_NIM_API_KEY", "test-only-placeholder")
 
 	status, ok, err := aiderLocalAuthStatus(context.Background())
 	if err != nil {

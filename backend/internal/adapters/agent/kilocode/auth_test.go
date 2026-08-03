@@ -26,7 +26,7 @@ func TestKilocodeLocalAuthStatusAuthorizedWithNVIDIAEnv(t *testing.T) {
 	for _, name := range kilocodeAPIKeyEnvVars {
 		t.Setenv(name, "")
 	}
-	t.Setenv("NVIDIA_API_KEY", "nvapi-test")
+	t.Setenv("NVIDIA_API_KEY", "test-only-placeholder")
 
 	status, ok, err := kilocodeLocalAuthStatus(context.Background())
 	if err != nil {

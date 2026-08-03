@@ -31,7 +31,7 @@ func TestOpenCodeLocalAuthStatusAuthorizedWithEnv(t *testing.T) {
 
 func TestOpenCodeLocalAuthStatusAuthorizedWithNVIDIAEnv(t *testing.T) {
 	clearOpenCodeAuthEnv(t)
-	t.Setenv("NVIDIA_API_KEY", "nvapi-test")
+	t.Setenv("NVIDIA_API_KEY", "test-only-placeholder")
 
 	status, ok, err := opencodeLocalAuthStatus(context.Background())
 	if err != nil {
