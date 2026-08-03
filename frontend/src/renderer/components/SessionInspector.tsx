@@ -1367,41 +1367,99 @@ function ReviewerRuns({
 function ReviewRunList({ reviewState, runs }: { reviewState: PRReviewState; runs: ReviewRunFacts[] }) {
 	return (
 		<div className={cn("flex min-w-0 flex-col gap-3", reviewState.status === "ineligible" && "opacity-70")}>
-			{runs.map((run, index) => {
-				const verdict = runReviewVerdict(run);
-				// A terminated run's body is the reason it stopped, not findings.
-				const body = run.status === "cancelled" || run.status === "failed" ? "" : run.body?.trim();
-				const url = aoReviewCommentUrl(run);
-				return (
-					<div className="flex min-w-0 flex-col gap-1.5" key={run.id}>
-						<span className="inline-flex min-w-0 items-center gap-2">
-							<span className="inline-flex min-w-0 items-center gap-1 text-micro font-medium text-muted-foreground">
-								<AgentAvatar className="size-icon-sm shrink-0" decorative provider={run.harness || "reviewer"} />
-								<span className="truncate">{run.harness || "reviewer"}</span>
-							</span>
-							<VerdictBadge label={verdict.label} tone={verdict.tone} />
-							<span className="shrink-0 font-mono text-micro text-passive">{formatTimeCompact(run.createdAt)}</span>
-							{index > 0 ? <span className="shrink-0 text-micro text-passive">earlier pass</span> : null}
-						</span>
-						{body ? (
-							<p className="m-0 whitespace-pre-wrap break-words text-2xs leading-relaxed text-muted-foreground">
-								{body}
-							</p>
-						) : null}
-						{url ? (
-							<a
-								className="inline-flex items-center gap-0.5 self-start text-2xs font-medium text-passive no-underline transition-colors hover:text-foreground"
-								href={url}
-								target="_blank"
-								rel="noopener noreferrer"
-							>
-								View review
-								<ArrowUpRight aria-hidden="true" className="size-3 shrink-0" />
-							</a>
-						) : null}
-					</div>
-				);
-			})}
+			{runs.map((run, index) => (
+				<ReviewRunRow isEarlier={index > 0} key={run.id} prUrl={reviewState.prUrl} run={run} />
+			))}
+		</div>
+	);
+}
+
+
+// A review body is a full write-up, several paragraphs long. Rendered whole it
+// buries the verdict and every other pass below it, which defeats reading the
+// history in one place. Clamp to the opening lines — reviewers lead with the
+// conclusion — and let the row expand in place for the rest.
+const REVIEW_SUMMARY_CLAMP_LINES = 4;
+
+// Whether the clamp will actually hide anything. Cheaper and steadier than
+// measuring scrollHeight, which needs a layout pass and reflows on resize; the
+// cost of being slightly off is an expander that reveals a line or two.
+function isClampedSummary(body: string): boolean {
+	return body.split("\n").length > REVIEW_SUMMARY_CLAMP_LINES || body.length > 260;
+}
+
+function ReviewRunRow({ run, prUrl, isEarlier }: { run: ReviewRunFacts; prUrl: string; isEarlier: boolean }) {
+	const { t } = useTranslation();
+	const [expanded, setExpanded] = useState(false);
+	// A terminated run's body is the reason it stopped, not findings.
+	const raw = run.status === "cancelled" || run.status === "failed" ? "" : run.body?.trim();
+	// Runs of blank lines cost the clamp its budget without carrying anything: a
+	// two-line gap between paragraphs eats half a four-line preview. Collapsed to
+	// a single blank line, which still separates paragraphs when expanded.
+	const body = raw ? raw.replace(/\n{3,}/g, "\n\n") : raw;
+	// Falls back to the PR itself: an AO pass only has a review-comment anchor
+	// once it has been submitted to GitHub, and a row with no way out at all is
+	// a dead end.
+	const reviewUrl = aoReviewCommentUrl(run);
+	const url = reviewUrl ?? (prUrl || null);
+	const clamped = Boolean(body) && isClampedSummary(body!);
+
+	return (
+		// Earlier passes get a hairline and breathing room above them. Without it
+		// two write-ups butt together and read as one long review by one agent,
+		// which is exactly the distinction this list exists to make.
+		<div className={cn("flex min-w-0 flex-col gap-1", isEarlier && "border-t border-border/60 pt-3")}>
+			{/* Who reviewed and what they concluded lead; when it ran and whether it
+			    is superseded are provenance, so they sit right and recede. */}
+			<span className="flex min-w-0 items-center gap-2">
+				<span className="inline-flex min-w-0 items-center gap-1 text-micro font-medium text-muted-foreground">
+					<AgentAvatar className="size-icon-sm shrink-0" decorative provider={run.harness || "reviewer"} />
+					<span className="truncate">{run.harness || "reviewer"}</span>
+				</span>
+				<span className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-micro text-passive">
+					{isEarlier ? <span>{t("inspector.earlierPass")}</span> : null}
+					<span className="font-mono">{formatTimeCompact(run.createdAt)}</span>
+				</span>
+			</span>
+			{body ? (
+				<p
+					className={cn(
+						"m-0 whitespace-pre-wrap break-words text-2xs leading-relaxed text-muted-foreground",
+						clamped && !expanded && "line-clamp-4",
+					)}
+					data-testid="review-run-summary"
+				>
+					{body}
+				</p>
+			) : null}
+			{/* One tertiary group, not two competing labels. Below the body's size so
+			    they read as controls rather than sitting in the reading flow, and
+			    middot-separated so they scan as a pair. */}
+			{clamped || url ? (
+				<span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-micro text-passive">
+					{clamped ? (
+						<button
+							className="font-medium transition-colors hover:text-foreground"
+							onClick={() => setExpanded((open) => !open)}
+							type="button"
+						>
+							{expanded ? t("inspector.showLess") : t("inspector.showMore")}
+						</button>
+					) : null}
+					{clamped && url ? <span aria-hidden="true">·</span> : null}
+					{url ? (
+						<a
+							className="inline-flex items-center gap-0.5 font-medium no-underline transition-colors hover:text-foreground"
+							href={url}
+							target="_blank"
+							rel="noopener noreferrer"
+						>
+							{reviewUrl ? t("inspector.viewReview") : t("inspector.viewOnPR")}
+							<ArrowUpRight aria-hidden="true" className="size-2.5 shrink-0" />
+						</a>
+					) : null}
+				</span>
+			) : null}
 		</div>
 	);
 }

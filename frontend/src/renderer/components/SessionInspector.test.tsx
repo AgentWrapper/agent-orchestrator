@@ -815,6 +815,66 @@ describe("SessionInspector reviews tab", () => {
 		expect(screen.queryByRole("button", { name: "Re-run" })).not.toBeInTheDocument();
 	});
 
+	// A review body is a multi-paragraph write-up. Rendered whole it buries the
+	// verdict and every earlier pass below it, which is the opposite of reading
+	// the history in one place.
+	it("clamps a long review summary and expands it in place", async () => {
+		const longBody = Array.from({ length: 12 }, (_, i) => `Finding ${i + 1}: something worth reading.`).join("\n");
+		mockCommonGets([], "reviewer-pane", [
+			{ ...reviewState(3, "up_to_date", "abc123"), latestRun: { ...approvedReview, body: longBody } },
+		]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+
+		const summary = await screen.findByTestId("review-run-summary");
+		expect(summary).toHaveClass("line-clamp-4");
+
+		await userEvent.click(screen.getByRole("button", { name: "Show more" }));
+		expect(screen.getByTestId("review-run-summary")).not.toHaveClass("line-clamp-4");
+
+		await userEvent.click(screen.getByRole("button", { name: "Show less" }));
+		expect(screen.getByTestId("review-run-summary")).toHaveClass("line-clamp-4");
+	});
+
+	// Nothing to hide, so offering to expand would be noise.
+	it("does not offer to expand a short review summary", async () => {
+		mockCommonGets([], "reviewer-pane", [
+			{ ...reviewState(3, "up_to_date", "abc123"), latestRun: { ...approvedReview, body: "Looks good." } },
+		]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+
+		expect(await screen.findByTestId("review-run-summary")).not.toHaveClass("line-clamp-4");
+		expect(screen.queryByRole("button", { name: "Show more" })).not.toBeInTheDocument();
+	});
+
+	// An AO pass only gets a review-comment anchor once it is submitted to
+	// GitHub, so without a fallback an unsubmitted pass is a dead end.
+	it("links a run to its GitHub review, falling back to the PR when it has none", async () => {
+		mockCommonGets([], "reviewer-pane", [
+			{
+				...reviewState(3, "up_to_date", "abc123"),
+				latestRun: { ...approvedReview, githubReviewId: "98765" },
+			},
+		]);
+		const { unmount } = renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+		expect(await screen.findByRole("link", { name: /View review/ })).toHaveAttribute(
+			"href",
+			"https://example.com/pr/3#pullrequestreview-98765",
+		);
+		unmount();
+
+		mockCommonGets([], "reviewer-pane", [
+			{ ...reviewState(3, "up_to_date", "abc123"), latestRun: { ...approvedReview, githubReviewId: "" } },
+		]);
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+		expect(await screen.findByRole("link", { name: /View on PR/ })).toBeInTheDocument();
+	});
+
 	it.each([
 		["needs_review", "changes_requested", "Not run on this commit", "Run review", true],
 		["running", "approved", "Reviewing...", "Cancel review", true],
