@@ -40,13 +40,25 @@ func (q *Queries) ClearReviewerHandle(ctx context.Context, sessionID domain.Sess
 }
 
 const getReviewBySession = `-- name: GetReviewBySession :one
-SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, created_at, updated_at
+SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, agent_session_id, created_at, updated_at
 FROM review WHERE session_id = ?
 `
 
-func (q *Queries) GetReviewBySession(ctx context.Context, sessionID domain.SessionID) (Review, error) {
+type GetReviewBySessionRow struct {
+	ID               string
+	SessionID        domain.SessionID
+	ProjectID        domain.ProjectID
+	Harness          domain.ReviewerHarness
+	PRURL            string
+	ReviewerHandleID string
+	AgentSessionID   string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+func (q *Queries) GetReviewBySession(ctx context.Context, sessionID domain.SessionID) (GetReviewBySessionRow, error) {
 	row := q.db.QueryRowContext(ctx, getReviewBySession, sessionID)
-	var i Review
+	var i GetReviewBySessionRow
 	err := row.Scan(
 		&i.ID,
 		&i.SessionID,
@@ -54,6 +66,7 @@ func (q *Queries) GetReviewBySession(ctx context.Context, sessionID domain.Sessi
 		&i.Harness,
 		&i.PRURL,
 		&i.ReviewerHandleID,
+		&i.AgentSessionID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -366,6 +379,23 @@ func (q *Queries) SupersedeStaleRunningReviewRuns(ctx context.Context, arg Super
 	return result.RowsAffected()
 }
 
+const updateReviewAgentSessionID = `-- name: UpdateReviewAgentSessionID :execrows
+UPDATE review SET agent_session_id = ?, updated_at = CURRENT_TIMESTAMP WHERE session_id = ?
+`
+
+type UpdateReviewAgentSessionIDParams struct {
+	AgentSessionID string
+	SessionID      domain.SessionID
+}
+
+func (q *Queries) UpdateReviewAgentSessionID(ctx context.Context, arg UpdateReviewAgentSessionIDParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateReviewAgentSessionID, arg.AgentSessionID, arg.SessionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateReviewRunResult = `-- name: UpdateReviewRunResult :execrows
 UPDATE review_run SET status = ?, verdict = ?, body = ?, github_review_id = ? WHERE id = ? AND status = 'running'
 `
@@ -393,12 +423,13 @@ func (q *Queries) UpdateReviewRunResult(ctx context.Context, arg UpdateReviewRun
 }
 
 const upsertReview = `-- name: UpsertReview :exec
-INSERT INTO review (id, session_id, project_id, harness, pr_url, reviewer_handle_id, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO review (id, session_id, project_id, harness, pr_url, reviewer_handle_id, agent_session_id, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (session_id) DO UPDATE SET
     harness = excluded.harness,
     pr_url = excluded.pr_url,
     reviewer_handle_id = excluded.reviewer_handle_id,
+    agent_session_id = CASE WHEN excluded.agent_session_id != '' THEN excluded.agent_session_id ELSE review.agent_session_id END,
     updated_at = excluded.updated_at
 `
 
@@ -409,6 +440,7 @@ type UpsertReviewParams struct {
 	Harness          domain.ReviewerHarness
 	PRURL            string
 	ReviewerHandleID string
+	AgentSessionID   string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 }
@@ -421,6 +453,7 @@ func (q *Queries) UpsertReview(ctx context.Context, arg UpsertReviewParams) erro
 		arg.Harness,
 		arg.PRURL,
 		arg.ReviewerHandleID,
+		arg.AgentSessionID,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)

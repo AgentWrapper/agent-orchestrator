@@ -271,6 +271,7 @@ type Review struct {
 	ReviewerHandleID string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+	AgentSessionID   string
 }
 
 type ReviewRun struct {

@@ -3441,6 +3441,14 @@ func launchBinary(argv []string) (string, bool) {
 }
 
 func (m *Manager) augmentRuntimePATHForLaunchBinary(ctx context.Context, env map[string]string, argv []string) {
+	AugmentRuntimePATHForLaunchBinary(ctx, env, argv, m.lookPath)
+}
+
+// AugmentRuntimePATHForLaunchBinary prepends the resolved launch binary
+// directory to the runtime PATH. For Node-backed CLI shims, it also prepends a
+// concrete Node runtime directory so shebangs like `#!/usr/bin/env node` work
+// in GUI-launched terminals whose PATH may not include shell manager setup.
+func AugmentRuntimePATHForLaunchBinary(ctx context.Context, env map[string]string, argv []string, lookPath func(string) (string, error)) {
 	bin, ok := launchBinary(argv)
 	if !ok || !filepath.IsAbs(bin) {
 		return
@@ -3451,7 +3459,7 @@ func (m *Manager) augmentRuntimePATHForLaunchBinary(ctx context.Context, env map
 	}
 	dirs := []string{launchDir}
 	if isNodeLaunchBinary(bin) {
-		if nodeDir := m.nodeRuntimeDir(ctx); nodeDir != "" && nodeDir != launchDir {
+		if nodeDir := nodeRuntimeDir(ctx, lookPath); nodeDir != "" && nodeDir != launchDir {
 			dirs = append(dirs, nodeDir)
 		}
 	}
@@ -3505,10 +3513,17 @@ func containsPathDir(parts []string, dir string) bool {
 }
 
 func (m *Manager) nodeRuntimeDir(ctx context.Context) string {
+	return nodeRuntimeDir(ctx, m.lookPath)
+}
+
+func nodeRuntimeDir(ctx context.Context, lookPath func(string) (string, error)) string {
 	if err := ctx.Err(); err != nil || runtime.GOOS == "windows" {
 		return ""
 	}
-	if node, err := m.lookPath("node"); err == nil && node != "" {
+	if lookPath == nil {
+		lookPath = exec.LookPath
+	}
+	if node, err := lookPath("node"); err == nil && node != "" {
 		return filepath.Dir(node)
 	}
 	home, err := os.UserHomeDir()

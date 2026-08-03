@@ -23,6 +23,7 @@ func (s *Store) UpsertReview(ctx context.Context, r domain.Review) error {
 		Harness:          r.Harness,
 		PRURL:            r.PRURL,
 		ReviewerHandleID: r.ReviewerHandleID,
+		AgentSessionID:   r.AgentSessionID,
 		CreatedAt:        r.CreatedAt,
 		UpdatedAt:        r.UpdatedAt,
 	})
@@ -37,7 +38,7 @@ func (s *Store) GetReviewBySession(ctx context.Context, id domain.SessionID) (do
 	if err != nil {
 		return domain.Review{}, false, fmt.Errorf("get review by session %s: %w", id, err)
 	}
-	return reviewFromRow(row), true, nil
+	return reviewFromGetReviewBySessionRow(row), true, nil
 }
 
 // ClearReviewerHandle removes the persisted terminal handle after a hard
@@ -46,6 +47,20 @@ func (s *Store) ClearReviewerHandle(ctx context.Context, id domain.SessionID) er
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return s.qw.ClearReviewerHandle(ctx, id)
+}
+
+// UpdateReviewAgentSessionID records the reviewer's native resumable session id.
+func (s *Store) UpdateReviewAgentSessionID(ctx context.Context, id domain.SessionID, agentSessionID string) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	n, err := s.qw.UpdateReviewAgentSessionID(ctx, gen.UpdateReviewAgentSessionIDParams{
+		SessionID:      id,
+		AgentSessionID: agentSessionID,
+	})
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // InsertReviewRun records a new review pass. A unique-constraint hit on the
@@ -219,6 +234,21 @@ func reviewFromRow(r gen.Review) domain.Review {
 		Harness:          r.Harness,
 		PRURL:            r.PRURL,
 		ReviewerHandleID: r.ReviewerHandleID,
+		AgentSessionID:   r.AgentSessionID,
+		CreatedAt:        r.CreatedAt,
+		UpdatedAt:        r.UpdatedAt,
+	}
+}
+
+func reviewFromGetReviewBySessionRow(r gen.GetReviewBySessionRow) domain.Review {
+	return domain.Review{
+		ID:               r.ID,
+		SessionID:        r.SessionID,
+		ProjectID:        r.ProjectID,
+		Harness:          r.Harness,
+		PRURL:            r.PRURL,
+		ReviewerHandleID: r.ReviewerHandleID,
+		AgentSessionID:   r.AgentSessionID,
 		CreatedAt:        r.CreatedAt,
 		UpdatedAt:        r.UpdatedAt,
 	}

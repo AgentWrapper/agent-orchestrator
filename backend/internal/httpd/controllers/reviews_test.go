@@ -27,6 +27,9 @@ type fakeReviewService struct {
 	cancel           reviewcore.CancelResult
 	list             reviewcore.SessionReviews
 	submitted        []reviewsvc.SubmittedReview
+	agentID          string
+	killed           bool
+	restored         bool
 }
 
 func (f *fakeReviewService) Trigger(
@@ -56,10 +59,21 @@ func (f *fakeReviewService) Cancel(context.Context, domain.SessionID) (reviewcor
 }
 
 func (f *fakeReviewService) TerminateReviewer(context.Context, domain.SessionID, string) error {
+	f.killed = true
+	f.list.ReviewerHandleID = ""
 	return nil
 }
 
 func (f *fakeReviewService) RestoreReviewer(context.Context, domain.SessionID) error {
+	f.restored = true
+	if f.list.ReviewerHandleID == "" {
+		f.list.ReviewerHandleID = "review-mer-1"
+	}
+	return nil
+}
+
+func (f *fakeReviewService) RecordReviewerAgentSession(_ context.Context, _ domain.SessionID, agentSessionID string) error {
+	f.agentID = agentSessionID
 	return nil
 }
 
@@ -171,6 +185,47 @@ func TestReviewsCancelIncludesReviewStates(t *testing.T) {
 	}
 }
 
+func TestReviewsKillClearsReviewerHandle(t *testing.T) {
+	svc := &fakeReviewService{list: reviewcore.SessionReviews{
+		ReviewerHandleID: "review-mer-1",
+		ReviewerHarness:  domain.ReviewerCodex,
+		Reviews:          []reviewcore.PRReviewState{{PRURL: "https://github.com/o/r/pull/1", PRNumber: 1, TargetSHA: "sha1", Status: reviewcore.ReviewStateNeedsReview}},
+	}}
+	srv := newReviewTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/sessions/mer-1/reviews/kill", "")
+	assertJSON(t, headers)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d body=%s", status, body)
+	}
+	if !svc.killed {
+		t.Fatal("TerminateReviewer was not called")
+	}
+	if !strings.Contains(string(body), `"reviewerHandleId":""`) || !strings.Contains(string(body), `"reviews"`) {
+		t.Fatalf("body missing cleared handle/reviews: %s", body)
+	}
+}
+
+func TestReviewsRestoreReturnsReviewerHandle(t *testing.T) {
+	svc := &fakeReviewService{list: reviewcore.SessionReviews{
+		ReviewerHarness: domain.ReviewerCodex,
+		Reviews:         []reviewcore.PRReviewState{{PRURL: "https://github.com/o/r/pull/1", PRNumber: 1, TargetSHA: "sha1", Status: reviewcore.ReviewStateNeedsReview}},
+	}}
+	srv := newReviewTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/sessions/mer-1/reviews/restore", "")
+	assertJSON(t, headers)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d body=%s", status, body)
+	}
+	if !svc.restored {
+		t.Fatal("RestoreReviewer was not called")
+	}
+	if !strings.Contains(string(body), `"reviewerHandleId":"review-mer-1"`) || !strings.Contains(string(body), `"reviews"`) {
+		t.Fatalf("body missing restored handle/reviews: %s", body)
+	}
+}
+
 func TestReviewsSubmitAcceptsBatchedReviews(t *testing.T) {
 	svc := &fakeReviewService{}
 	srv := newReviewTestServer(t, svc)
@@ -187,5 +242,18 @@ func TestReviewsSubmitAcceptsBatchedReviews(t *testing.T) {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("body missing %s: %s", want, body)
 		}
+	}
+}
+
+func TestReviewsActivityRecordsReviewerAgentSessionID(t *testing.T) {
+	svc := &fakeReviewService{}
+	srv := newReviewTestServer(t, svc)
+
+	_, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/mer-1/reviews/activity", `{"agentSessionId":"reviewer-native-1"}`)
+	if status != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", status)
+	}
+	if svc.agentID != "reviewer-native-1" {
+		t.Fatalf("agent session id = %q, want reviewer-native-1", svc.agentID)
 	}
 }

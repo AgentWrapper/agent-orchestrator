@@ -3344,6 +3344,57 @@ paths:
       summary: List a worker's code-review runs
       tags:
       - reviews
+  /api/v1/sessions/{sessionId}/reviews/activity:
+    post:
+      operationId: recordReviewerActivity
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewerActivityInput'
+        required: true
+      responses:
+        "204":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Record reviewer agent metadata from a hook
+      tags:
+      - reviews
   /api/v1/sessions/{sessionId}/reviews/cancel:
     post:
       operationId: cancelReview
@@ -3381,6 +3432,84 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Cancel a running code review
+      tags:
+      - reviews
+  /api/v1/sessions/{sessionId}/reviews/kill:
+    post:
+      operationId: killReviewSession
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KillReviewResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Kill a worker's reviewer terminal session
+      tags:
+      - reviews
+  /api/v1/sessions/{sessionId}/reviews/restore:
+    post:
+      operationId: restoreReviewSession
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestoreReviewResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Restore a worker's reviewer terminal session
       tags:
       - reviews
   /api/v1/sessions/{sessionId}/reviews/submit:
@@ -5181,6 +5310,20 @@ components:
       required:
       - path
       type: object
+    KillReviewResponse:
+      properties:
+        reviewerHandleId:
+          type: string
+        reviewerHarness:
+          type: string
+        reviews:
+          items:
+            $ref: '#/components/schemas/PRReviewState'
+          type: array
+      required:
+      - reviewerHandleId
+      - reviews
+      type: object
     KillSessionResponse:
       properties:
         freed:
@@ -5819,6 +5962,20 @@ components:
       required:
       - action
       type: object
+    RestoreReviewResponse:
+      properties:
+        reviewerHandleId:
+          type: string
+        reviewerHarness:
+          type: string
+        reviews:
+          items:
+            $ref: '#/components/schemas/PRReviewState'
+          type: array
+      required:
+      - reviewerHandleId
+      - reviews
+      type: object
     RestoreSessionResponse:
       properties:
         ok:
@@ -5919,6 +6076,12 @@ components:
       - review
       - reviews
       - reviewerHandleId
+      type: object
+    ReviewerActivityInput:
+      properties:
+        agentSessionId:
+          description: Native reviewer agent conversation id used for restore/resume.
+          type: string
       type: object
     RoleOverride:
       properties:

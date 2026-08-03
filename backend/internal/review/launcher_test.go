@@ -56,6 +56,62 @@ func TestLauncherSpawnEnvCannotOverrideWorkerContext(t *testing.T) {
 	}
 }
 
+func TestLauncherSpawnPrependsNodeRuntimeForNodeShimReviewer(t *testing.T) {
+	emptyPath := t.TempDir()
+	home := t.TempDir()
+	binDir := filepath.Join(home, "reviewer", "bin")
+	nodeDir := filepath.Join(home, ".nvm", "versions", "node", "v24.12.0", "bin")
+	reviewerBin := filepath.Join(binDir, "codex")
+	nodeBin := filepath.Join(nodeDir, "node")
+	for _, path := range []string{reviewerBin, nodeBin} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		contents := "#!/bin/sh\n"
+		if path == reviewerBin {
+			contents = "#!/usr/bin/env node\n"
+		}
+		if err := os.WriteFile(path, []byte(contents), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", emptyPath)
+	t.Setenv("VOLTA_HOME", filepath.Join(home, ".volta"))
+	t.Setenv("FNM_DIR", filepath.Join(home, ".fnm"))
+
+	reviewer := &fakeReviewer{}
+	reviewer.env = map[string]string{"PATH": emptyPath}
+	reviewerCommand := func(_ context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
+		reviewer.gotInv = inv
+		return ports.ReviewCommandSpec{Argv: []string{reviewerBin, "--review"}, Env: reviewer.env}, nil
+	}
+	reviewerWithCommand := reviewerCommandFunc{reviewer: reviewer, reviewCommand: reviewerCommand}
+	rt := &fakeRuntime{}
+	l := newTestLauncher(t, reviewerWithCommand, rt)
+
+	if _, err := l.Spawn(context.Background(), launchSpec()); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	parts := strings.Split(rt.createCfg.Env["PATH"], string(os.PathListSeparator))
+	if len(parts) < 2 || parts[0] != binDir || parts[1] != nodeDir {
+		t.Fatalf("runtime PATH = %q, want reviewer bin then node dir first", rt.createCfg.Env["PATH"])
+	}
+}
+
+type reviewerCommandFunc struct {
+	reviewer      *fakeReviewer
+	reviewCommand func(context.Context, ports.ReviewInvocation) (ports.ReviewCommandSpec, error)
+}
+
+func (f reviewerCommandFunc) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
+	return f.reviewCommand(ctx, inv)
+}
+
+func (f reviewerCommandFunc) ReviewMessage(ctx context.Context, inv ports.ReviewInvocation) (string, error) {
+	return f.reviewer.ReviewMessage(ctx, inv)
+}
+
 type fakePreLaunchReviewer struct {
 	fakeReviewer
 	prelaunched bool
@@ -74,6 +130,22 @@ type fakeCancellableReviewer struct {
 	cancelErr  error
 	mode       ports.ReviewCancelMode
 	interrupts int
+}
+
+type fakeRestoringReviewer struct {
+	fakeReviewer
+	restored   bool
+	gotRestore ports.ReviewInvocation
+	restoreOK  bool
+}
+
+func (f *fakeRestoringReviewer) ReviewRestoreCommand(_ context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
+	f.restored = true
+	f.gotRestore = inv
+	if !f.restoreOK {
+		return ports.ReviewCommandSpec{}, false, nil
+	}
+	return ports.ReviewCommandSpec{Argv: []string{"agent", "resume", inv.AgentSessionID}}, true, nil
 }
 
 func (f *fakeCancellableReviewer) ReviewCancel(context.Context) (ports.ReviewCancelSpec, error) {
@@ -257,6 +329,34 @@ func TestLauncherRestoreTerminalStartsIdlePane(t *testing.T) {
 	}
 	if reviewer.gotInv.RunID != "" || reviewer.gotInv.PRURL != "" || reviewer.gotInv.TargetSHA != "" {
 		t.Fatalf("restore invocation should not start review work: %+v", reviewer.gotInv)
+	}
+}
+
+func TestLauncherRestoreTerminalUsesReviewerRestoreCommandWhenAvailable(t *testing.T) {
+	reviewer := &fakeRestoringReviewer{restoreOK: true}
+	rt := &fakeRuntime{}
+	l := newTestLauncher(t, reviewer, rt)
+	spec := launchSpec()
+	spec.AgentSessionID = "native-reviewer-1"
+
+	handle, err := l.RestoreTerminal(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("RestoreTerminal: %v", err)
+	}
+	if handle != "review-mer-1" {
+		t.Fatalf("handle = %q, want review-mer-1", handle)
+	}
+	if !reviewer.restored {
+		t.Fatal("restore command was not used")
+	}
+	if reviewer.gotRestore.AgentSessionID != "native-reviewer-1" {
+		t.Fatalf("restore invocation agent session id = %q", reviewer.gotRestore.AgentSessionID)
+	}
+	if strings.Join(rt.createCfg.Argv, " ") != "agent resume native-reviewer-1" {
+		t.Fatalf("runtime argv = %#v", rt.createCfg.Argv)
+	}
+	if rt.createCfg.Env["AO_REVIEWER_WORKER_SESSION_ID"] != "mer-1" {
+		t.Fatalf("reviewer env missing worker id: %#v", rt.createCfg.Env)
 	}
 }
 

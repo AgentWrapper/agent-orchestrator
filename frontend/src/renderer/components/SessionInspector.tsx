@@ -13,6 +13,7 @@ import {
 	GitPullRequest,
 	GitMerge,
 	Play,
+	RotateCcw,
 	Trash2,
 	Loader2,
 	X,
@@ -1215,7 +1216,40 @@ function ReviewsSection({
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		},
 	});
+	const killReview = useMutation({
+		mutationFn: async () => {
+			const { data, error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/kill", {
+				params: { path: { sessionId: session.id } },
+			});
+			if (error) throw new Error(apiErrorMessage(error, t("inspector.unableKillReviewSession")));
+			return data;
+		},
+		onSuccess: (data) => {
+			setReviewNotice(null);
+			if (data) {
+				queryClient.setQueryData(["session-reviews", session.id], data);
+			}
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		},
+	});
+	const restoreReview = useMutation({
+		mutationFn: async () => {
+			const { data, error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/restore", {
+				params: { path: { sessionId: session.id } },
+			});
+			if (error) throw new Error(apiErrorMessage(error, t("inspector.unableRestoreReviewSession")));
+			return data;
+		},
+		onSuccess: (data) => {
+			setReviewNotice(null);
+			if (data) {
+				queryClient.setQueryData(["session-reviews", session.id], data);
+			}
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		},
+	});
 	const reviewStates = reviewsQuery.data?.reviews ?? [];
+	const reviewerHandleId = reviewsQuery.data?.reviewerHandleId?.trim() ?? "";
 	const scmSummary = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, scmSummary.data);
 	const githubReviews = prSummaries.filter(
@@ -1233,25 +1267,30 @@ function ReviewsSection({
 			{/* One panel, two sources, in the order they happen: AO's own reviewer runs
 			    first, then whatever humans and bots leave on the PR. Tabs hid one
 			    behind the other when the point is to read them together. */}
-				<ReviewPanel
-					config={projectConfigQuery.data}
-					error={reviewsQuery.error ?? triggerReview.error ?? cancelReview.error ?? saveReviewer.error}
+			<ReviewPanel
+				config={projectConfigQuery.data}
+				error={reviewsQuery.error ?? triggerReview.error ?? cancelReview.error ?? killReview.error ?? restoreReview.error ?? saveReviewer.error}
 				isLoading={reviewsQuery.isLoading}
 				isCancelling={cancelReview.isPending}
+				isKilling={killReview.isPending}
+				isRestoring={restoreReview.isPending}
 				isTriggering={triggerReview.isPending}
 				onCancel={() => cancelReview.mutate()}
+				onKill={() => killReview.mutate()}
+				onRestore={() => restoreReview.mutate()}
 				onTrigger={() => triggerReview.mutate()}
+				reviewerHandleId={reviewerHandleId}
 				reviewStates={reviewStates}
 				runs={reviewsQuery.data?.runs ?? []}
-					notice={reviewNotice}
-					agentCatalog={agentsQuery.data}
-					reviewerOverride={reviewerOverride}
-					onReviewerOverrideChange={(next) => {
-						setReviewerOverride(next);
-						saveReviewer.mutate(next);
-					}}
-					session={session}
-				/>
+				notice={reviewNotice}
+				agentCatalog={agentsQuery.data}
+				reviewerOverride={reviewerOverride}
+				onReviewerOverrideChange={(next) => {
+					setReviewerOverride(next);
+					saveReviewer.mutate(next);
+				}}
+				session={session}
+			/>
 			{scmSummary.isLoading || githubReviewCount > 0 || unresolvedTotal > 0 ? (
 				<Section
 					surface
@@ -1495,13 +1534,18 @@ function ReviewPanel({
 	isLoading,
 	isTriggering,
 	isCancelling,
+	isKilling,
+	isRestoring,
 	error,
 	notice,
 	agentCatalog,
 	reviewerOverride,
 	onReviewerOverrideChange,
+	reviewerHandleId,
 	onTrigger,
 	onCancel,
+	onKill,
+	onRestore,
 }: {
 	session: WorkspaceSession;
 	config?: ProjectConfig;
@@ -1510,13 +1554,18 @@ function ReviewPanel({
 	isLoading: boolean;
 	isTriggering: boolean;
 	isCancelling: boolean;
+	isKilling: boolean;
+	isRestoring: boolean;
 	error: unknown;
 	notice: string | null;
 	agentCatalog?: AgentCatalog;
 	reviewerOverride: ReviewerHarness | "";
 	onReviewerOverrideChange: (next: ReviewerHarness | "") => void;
+	reviewerHandleId: string;
 	onTrigger: () => void;
 	onCancel: () => void;
+	onKill: () => void;
+	onRestore: () => void;
 }) {
 	const { t } = useTranslation();
 	if (sortedPRs(session).length === 0) {
@@ -1546,6 +1595,9 @@ function ReviewPanel({
 	const projectDefaultLabel = t("newTask.projectDefault");
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
 	const reviewHasRun = reviewRunning || Boolean(latest);
+	const hasReviewerSession = reviewerHandleId.trim() !== "";
+	const hasReviewSessionHistory = openReviewStates.some((reviewState) => reviewState.latestRun || reviewState.previousRun);
+	const canRestoreReviewSession = !hasReviewerSession && hasReviewSessionHistory;
 	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
 	// Every recorded pass per PR, so each reviewer keeps its own tab. Falls back
 	// to the state's own runs against a daemon that predates the runs field.
@@ -1576,13 +1628,11 @@ function ReviewPanel({
 	);
 	const runDisabled =
 		isTriggering ||
+		isKilling ||
+		isRestoring ||
 		openReviewStates.length === 0 ||
 		openReviewStates.every((reviewState) => reviewState.status === "ineligible");
-	const primaryReviewActionLabel = reviewRunning
-		? isCancelling
-			? t("inspector.review.cancelling")
-			: t("inspector.review.cancel")
-		: runAction;
+	const killDisabled = isKilling || isTriggering || isRestoring || !hasReviewerSession;
 
 	return (
 		<div className="mb-2.5 flex flex-col">
@@ -1617,19 +1667,50 @@ function ReviewPanel({
 							value={reviewerOverride}
 						/>
 						<div className="review-run-actions ml-auto flex shrink-0 items-center gap-1.5">
-							<Button
-								aria-label={primaryReviewActionLabel}
-								className="shrink-0 gap-1 px-1.5 [&_svg]:size-icon-sm"
-								disabled={reviewRunning ? isCancelling : runDisabled}
-								onClick={reviewRunning ? onCancel : onTrigger}
-								size="sm"
-								title={primaryReviewActionLabel}
-								type="button"
-								variant={reviewRunning ? "ghost" : reviewHasRun ? "secondary" : "primary"}
-							>
-								{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
-								<span className="review-run-action-label">{primaryReviewActionLabel}</span>
-							</Button>
+							{canRestoreReviewSession ? (
+								<Button
+									className="shrink-0 gap-1 px-1.5 text-success [&_svg]:size-icon-sm"
+									disabled={isRestoring}
+									onClick={onRestore}
+									size="sm"
+									type="button"
+									variant="ghost"
+								>
+									<RotateCcw aria-hidden="true" />
+									{isRestoring ? t("inspector.review.restoringSession") : t("inspector.review.restoreSession")}
+								</Button>
+							) : (
+								<>
+									<Button
+										className="shrink-0 gap-1 px-1.5 [&_svg]:size-icon-sm"
+										disabled={reviewRunning ? isCancelling || isKilling || isRestoring : runDisabled}
+										onClick={reviewRunning ? onCancel : onTrigger}
+										size="sm"
+										type="button"
+										variant={reviewRunning ? "ghost" : reviewHasRun ? "secondary" : "primary"}
+									>
+										{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
+										{reviewRunning
+											? isCancelling
+												? t("inspector.review.cancelling")
+												: t("inspector.review.cancel")
+											: runAction}
+									</Button>
+									{hasReviewerSession ? (
+										<Button
+											className="shrink-0 gap-1 px-1.5 text-error [&_svg]:size-icon-sm"
+											disabled={killDisabled}
+											onClick={onKill}
+											size="sm"
+											type="button"
+											variant="ghost"
+										>
+											<Trash2 aria-hidden="true" />
+											{isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
+										</Button>
+									) : null}
+								</>
+							)}
 						</div>
 					</div>
 					</div>

@@ -10,6 +10,7 @@ import (
 	"context"
 
 	workeragent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/agentrestore"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -31,6 +32,7 @@ func (r *Reviewer) Harness() domain.ReviewerHarness {
 
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
+var _ ports.ReviewerRestorer = (*Reviewer)(nil)
 
 // reviewerAllowedTools is the read-only tool allowlist the reviewer launches
 // with. The reviewer runs headless (no human to approve prompts) but must stay
@@ -113,6 +115,16 @@ func (r *Reviewer) PreLaunch(ctx context.Context, inv ports.ReviewInvocation) er
 // review a new commit — AO's central review prompt.
 func (r *Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
 	return inv.Prompt, nil
+}
+
+// ReviewRestoreCommand resumes the reviewer Claude Code conversation captured
+// from hooks, reapplying the same read-only tool policy as a fresh review launch.
+func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
+	return agentrestore.Command(ctx, r.agent, inv, agentrestore.Options{
+		Permissions:     ports.PermissionModeAuto,
+		AllowedTools:    reviewerAllowedTools,
+		DisallowedTools: reviewerDisallowedTools,
+	})
 }
 
 // ReviewCancel stops the active Claude Code reviewer turn while preserving the

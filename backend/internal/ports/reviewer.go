@@ -43,6 +43,12 @@ type ReviewerCanceller interface {
 	ReviewCancel(ctx context.Context) (ReviewCancelSpec, error)
 }
 
+// ReviewerRestorer is implemented by prompt-driven reviewers that can resume a
+// native agent conversation after AO recreates the terminal pane.
+type ReviewerRestorer interface {
+	ReviewRestoreCommand(ctx context.Context, inv ReviewInvocation) (cmd ReviewCommandSpec, ok bool, err error)
+}
+
 // ReviewInvocation describes one review pass for a reviewer to act on. All ids
 // the reviewer needs are passed explicitly here (and embedded in the prompt /
 // message), never through environment variables.
@@ -55,6 +61,9 @@ type ReviewInvocation struct {
 	RunID string
 	// WorkerSessionID is the worker whose PR is under review.
 	WorkerSessionID domain.SessionID
+	// AgentSessionID is the reviewer's native agent conversation id, used only
+	// to resume a destroyed/recreated reviewer terminal.
+	AgentSessionID string
 	// PRURL is the pull request to review.
 	PRURL string
 	// TargetSHA is the PR head commit under review.

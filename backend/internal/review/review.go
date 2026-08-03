@@ -12,6 +12,7 @@ import (
 	stdctx "context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,6 +34,7 @@ type Store interface {
 	UpsertReview(ctx stdctx.Context, r domain.Review) error
 	GetReviewBySession(ctx stdctx.Context, id domain.SessionID) (domain.Review, bool, error)
 	ClearReviewerHandle(ctx stdctx.Context, id domain.SessionID) error
+	UpdateReviewAgentSessionID(ctx stdctx.Context, id domain.SessionID, agentSessionID string) (bool, error)
 	InsertReviewRun(ctx stdctx.Context, r domain.ReviewRun) error
 	UpdateReviewRunResult(ctx stdctx.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
 	SupersedeStaleRunningReviewRuns(ctx stdctx.Context, sessionID domain.SessionID, prURL, targetSHA, body string) (int64, error)
@@ -318,18 +320,29 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override
 	}
 
 	queue := reviewQueue(created)
-	// Each pass gets a fresh reviewer process on the same stable terminal
-	// handle. Runtime panes intentionally preserve a shell after their command
-	// exits, so pane liveness cannot prove the reviewer agent is still present;
-	// sending a task to such a pane executes it as shell input. Spawn replaces
-	// the old pane atomically and also applies the selected harness's current
-	// permissions and environment.
-	if err := e.launcher.Preflight(ctx, harness, worker.Metadata.WorkspacePath); err != nil {
-		return TriggerResult{}, failRuns(0, fmt.Errorf("reviewer preflight: %w", err))
+	handleID := ""
+	if hasReview && reviewRow.ReviewerHandleID != "" && prevHarness == harness && strings.TrimSpace(reviewRow.AgentSessionID) != "" {
+		alive, err := e.launcher.Alive(ctx, reviewRow.ReviewerHandleID)
+		if err != nil {
+			return TriggerResult{}, failRuns(0, err)
+		}
+		if alive {
+			handleID = reviewRow.ReviewerHandleID
+		}
 	}
-	handleID, err := e.launcher.Spawn(ctx, reviewLaunchSpec(worker, harness, created[0], queue, 0))
-	if err != nil {
-		return TriggerResult{}, failRuns(0, fmt.Errorf("launch reviewer: %w", err))
+	if handleID == "" {
+		// Each pass gets a fresh reviewer process on the same stable terminal
+		// handle when there is no resumable live agent session to notify.
+		if err := e.launcher.Preflight(ctx, harness, worker.Metadata.WorkspacePath); err != nil {
+			return TriggerResult{}, failRuns(0, fmt.Errorf("reviewer preflight: %w", err))
+		}
+		var err error
+		handleID, err = e.launcher.Spawn(ctx, reviewLaunchSpec(worker, harness, created[0], queue, 0))
+		if err != nil {
+			return TriggerResult{}, failRuns(0, fmt.Errorf("launch reviewer: %w", err))
+		}
+	} else if err := e.launcher.Notify(ctx, handleID, reviewLaunchSpec(worker, harness, created[0], queue, 0)); err != nil {
+		return TriggerResult{}, failRuns(0, fmt.Errorf("notify reviewer: %w", err))
 	}
 	reviewRow, err = e.upsertReview(ctx, worker, harness, handleID, now)
 	if err != nil {
@@ -387,10 +400,11 @@ func (e *Engine) RestoreReviewer(ctx stdctx.Context, workerID domain.SessionID) 
 		}
 	}
 	handleID, err := e.launcher.RestoreTerminal(ctx, LaunchSpec{
-		WorkerID:      worker.ID,
-		ProjectID:     worker.ProjectID,
-		Harness:       harness,
-		WorkspacePath: worker.Metadata.WorkspacePath,
+		WorkerID:       worker.ID,
+		ProjectID:      worker.ProjectID,
+		Harness:        harness,
+		WorkspacePath:  worker.Metadata.WorkspacePath,
+		AgentSessionID: reviewRow.AgentSessionID,
 	})
 	if err != nil {
 		return RestoreReviewerResult{}, fmt.Errorf("restore reviewer: %w", err)
@@ -400,6 +414,26 @@ func (e *Engine) RestoreReviewer(ctx stdctx.Context, workerID domain.SessionID) 
 		return RestoreReviewerResult{}, err
 	}
 	return RestoreReviewerResult{ReviewerHandleID: handleID, Restored: true}, nil
+}
+
+// RecordReviewerAgentSession records the native resumable conversation id
+// emitted by a reviewer agent hook.
+func (e *Engine) RecordReviewerAgentSession(ctx stdctx.Context, workerID domain.SessionID, agentSessionID string) error {
+	if workerID == "" {
+		return fmt.Errorf("%w: worker session id is required", ErrInvalid)
+	}
+	agentSessionID = strings.TrimSpace(agentSessionID)
+	if agentSessionID == "" {
+		return fmt.Errorf("%w: agent session id is required", ErrInvalid)
+	}
+	ok, err := e.store.UpdateReviewAgentSessionID(ctx, workerID, agentSessionID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("%w: review for worker session %q", ErrNotFound, workerID)
+	}
+	return nil
 }
 
 func (e *Engine) cancelStaleRunningRuns(ctx stdctx.Context, workerID domain.SessionID, reviewRow domain.Review, hasReview bool, runs []domain.ReviewRun) (bool, error) {
@@ -641,6 +675,7 @@ func (e *Engine) upsertReview(ctx stdctx.Context, worker domain.SessionRecord, h
 		Harness:          harness,
 		PRURL:            "",
 		ReviewerHandleID: handleID,
+		AgentSessionID:   existing.AgentSessionID,
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}

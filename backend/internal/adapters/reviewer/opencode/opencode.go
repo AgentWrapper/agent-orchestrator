@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	workeragent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/opencode"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/agentrestore"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -30,6 +31,7 @@ func (r *Reviewer) Harness() domain.ReviewerHarness {
 
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
+var _ ports.ReviewerRestorer = (*Reviewer)(nil)
 
 // ReviewCommand launches the reviewer with an inline permission policy that
 // permits inspection and the two reporting commands while denying edits and
@@ -96,6 +98,21 @@ func buildReviewerConfig(taskPromptRoot string) (string, error) {
 // ReviewMessage returns the centrally-authored task for an existing pane.
 func (r *Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
 	return inv.Prompt, nil
+}
+
+// ReviewRestoreCommand resumes the reviewer OpenCode conversation captured
+// from hooks, reapplying the same read-only reviewer config as a fresh launch.
+func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
+	cmd, ok, err := agentrestore.Command(ctx, r.agent, inv, agentrestore.Options{Permissions: ports.PermissionModeAuto})
+	if err != nil || !ok {
+		return cmd, ok, err
+	}
+	config, err := buildReviewerConfig(inv.TaskPromptRoot)
+	if err != nil {
+		return ports.ReviewCommandSpec{}, false, err
+	}
+	cmd.Env = map[string]string{"OPENCODE_CONFIG_CONTENT": config}
+	return cmd, true, nil
 }
 
 // ReviewCancel stops the active OpenCode reviewer turn while preserving the

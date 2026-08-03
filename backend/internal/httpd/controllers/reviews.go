@@ -53,6 +53,20 @@ type CancelReviewResponse struct {
 	Reviews          []reviewcore.PRReviewState `json:"reviews"`
 }
 
+// RestoreReviewResponse is the body of reviewer session restore (200).
+type RestoreReviewResponse struct {
+	ReviewerHandleID string                     `json:"reviewerHandleId"`
+	ReviewerHarness  domain.ReviewerHarness     `json:"reviewerHarness,omitempty"`
+	Reviews          []reviewcore.PRReviewState `json:"reviews"`
+}
+
+// KillReviewResponse is the body of reviewer session kill (200).
+type KillReviewResponse struct {
+	ReviewerHandleID string                     `json:"reviewerHandleId"`
+	ReviewerHarness  domain.ReviewerHarness     `json:"reviewerHarness,omitempty"`
+	Reviews          []reviewcore.PRReviewState `json:"reviews"`
+}
+
 // SubmitReviewItem is one review result in a batched submit request.
 type SubmitReviewItem struct {
 	RunID          string `json:"runId" description:"Review run id being completed."`
@@ -70,6 +84,11 @@ type SubmitReviewInput struct {
 	Reviews        []SubmitReviewItem `json:"reviews,omitempty" description:"Batched review results recorded by one reviewer CLI command."`
 }
 
+// ReviewerActivityInput is the body of POST /api/v1/sessions/{sessionId}/reviews/activity.
+type ReviewerActivityInput struct {
+	AgentSessionID string `json:"agentSessionId,omitempty" description:"Native reviewer agent conversation id used for restore/resume."`
+}
+
 // ReviewsController owns the session-scoped /reviews routes. A nil Svc returns 501.
 type ReviewsController struct {
 	Svc reviewsvc.Manager
@@ -80,7 +99,10 @@ func (c *ReviewsController) Register(r chi.Router) {
 	r.Get("/sessions/{sessionId}/reviews", c.list)
 	r.Post("/sessions/{sessionId}/reviews/trigger", c.trigger)
 	r.Post("/sessions/{sessionId}/reviews/cancel", c.cancel)
+	r.Post("/sessions/{sessionId}/reviews/kill", c.kill)
+	r.Post("/sessions/{sessionId}/reviews/restore", c.restore)
 	r.Post("/sessions/{sessionId}/reviews/submit", c.submit)
+	r.Post("/sessions/{sessionId}/reviews/activity", c.activity)
 }
 
 func (c *ReviewsController) list(w http.ResponseWriter, r *http.Request) {
@@ -162,6 +184,50 @@ func (c *ReviewsController) cancel(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (c *ReviewsController) kill(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/reviews/kill")
+		return
+	}
+	workerID := sessionID(r)
+	if err := c.Svc.TerminateReviewer(r.Context(), workerID, "cancelled because reviewer session was killed"); err != nil {
+		writeReviewError(w, r, err)
+		return
+	}
+	res, err := c.Svc.List(r.Context(), workerID)
+	if err != nil {
+		writeReviewError(w, r, err)
+		return
+	}
+	reviews := res.Reviews
+	if reviews == nil {
+		reviews = []reviewcore.PRReviewState{}
+	}
+	envelope.WriteJSON(w, http.StatusOK, KillReviewResponse{ReviewerHandleID: res.ReviewerHandleID, ReviewerHarness: res.ReviewerHarness, Reviews: reviews})
+}
+
+func (c *ReviewsController) restore(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/reviews/restore")
+		return
+	}
+	workerID := sessionID(r)
+	if err := c.Svc.RestoreReviewer(r.Context(), workerID); err != nil {
+		writeReviewError(w, r, err)
+		return
+	}
+	res, err := c.Svc.List(r.Context(), workerID)
+	if err != nil {
+		writeReviewError(w, r, err)
+		return
+	}
+	reviews := res.Reviews
+	if reviews == nil {
+		reviews = []reviewcore.PRReviewState{}
+	}
+	envelope.WriteJSON(w, http.StatusOK, RestoreReviewResponse{ReviewerHandleID: res.ReviewerHandleID, ReviewerHarness: res.ReviewerHarness, Reviews: reviews})
+}
+
 func (c *ReviewsController) submit(w http.ResponseWriter, r *http.Request) {
 	if c.Svc == nil {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/reviews/submit")
@@ -200,6 +266,23 @@ func (c *ReviewsController) submit(w http.ResponseWriter, r *http.Request) {
 		first = runs[0]
 	}
 	envelope.WriteJSON(w, http.StatusOK, ReviewRunResponse{Review: first, Reviews: runs})
+}
+
+func (c *ReviewsController) activity(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/reviews/activity")
+		return
+	}
+	var in ReviewerActivityInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_BODY", "Invalid request body", nil)
+		return
+	}
+	if err := c.Svc.RecordReviewerAgentSession(r.Context(), sessionID(r), in.AgentSessionID); err != nil {
+		writeReviewError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func writeReviewError(w http.ResponseWriter, r *http.Request, err error) {

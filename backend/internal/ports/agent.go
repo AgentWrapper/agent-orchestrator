@@ -346,11 +346,13 @@ type WorkspaceHookConfig struct {
 
 // RestoreConfig carries inputs needed to continue an existing native agent session.
 type RestoreConfig struct {
-	Config      AgentConfig
-	DataDir     string
-	Kind        domain.SessionKind
-	Permissions PermissionMode
-	Session     SessionRef
+	Config          AgentConfig
+	DataDir         string
+	Kind            domain.SessionKind
+	Permissions     PermissionMode
+	AllowedTools    []string
+	DisallowedTools []string
+	Session         SessionRef
 	// SystemPrompt carries the session's standing instructions (e.g. the
 	// orchestrator role). Agent CLIs rebuild their system prompt from flags on
 	// resume — it is not part of the transcript — so adapters whose CLI has a

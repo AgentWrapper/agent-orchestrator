@@ -14,7 +14,8 @@ import (
 )
 
 type captureAgent struct {
-	got ports.LaunchConfig
+	got        ports.LaunchConfig
+	gotRestore ports.RestoreConfig
 }
 
 func (a *captureAgent) GetConfigSpec(context.Context) (ports.ConfigSpec, error) {
@@ -28,8 +29,13 @@ func (a *captureAgent) GetPromptDeliveryStrategy(context.Context, ports.LaunchCo
 	return ports.PromptDeliveryInCommand, nil
 }
 func (a *captureAgent) GetAgentHooks(context.Context, ports.WorkspaceHookConfig) error { return nil }
-func (a *captureAgent) GetRestoreCommand(context.Context, ports.RestoreConfig) ([]string, bool, error) {
-	return nil, false, nil
+func (a *captureAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreConfig) ([]string, bool, error) {
+	a.gotRestore = cfg
+	id := cfg.Session.Metadata[ports.MetadataKeyAgentSessionID]
+	if id == "" {
+		return nil, false, nil
+	}
+	return []string{"agent", "--session", id}, true, nil
 }
 func (a *captureAgent) SessionInfo(context.Context, ports.SessionRef) (ports.SessionInfo, bool, error) {
 	return ports.SessionInfo{}, false, nil
@@ -98,6 +104,42 @@ func TestReviewCommandKeepsSystemPromptFileOutOfVisiblePrompt(t *testing.T) {
 	wantPattern := filepath.ToSlash(taskPromptRoot) + "/**"
 	if len(config.Permission.ExternalDirectory) != 1 || config.Permission.ExternalDirectory[wantPattern] != "allow" {
 		t.Fatalf("external directory policy = %#v, want only %q allowed", config.Permission.ExternalDirectory, wantPattern)
+	}
+}
+
+func TestReviewRestoreCommandUsesNativeSessionIDAndReadOnlyPolicy(t *testing.T) {
+	agent := &captureAgent{}
+	r := &Reviewer{agent: agent}
+
+	got, ok, err := r.ReviewRestoreCommand(context.Background(), ports.ReviewInvocation{
+		ReviewerID:       "review-w1",
+		AgentSessionID:   "opencode-native-1",
+		WorkspacePath:    "/ws/w1",
+		TaskPromptRoot:   filepath.Join("ao", "prompts", "reviewer"),
+		SystemPromptFile: "/ao/prompts/reviewer/system.md",
+	})
+	if err != nil {
+		t.Fatalf("ReviewRestoreCommand: %v", err)
+	}
+	if !ok {
+		t.Fatal("ReviewRestoreCommand ok = false, want true")
+	}
+	if strings.Join(got.Argv, " ") != "agent --session opencode-native-1" {
+		t.Fatalf("argv = %#v", got.Argv)
+	}
+	if agent.gotRestore.Session.Metadata[ports.MetadataKeyAgentSessionID] != "opencode-native-1" {
+		t.Fatalf("restore metadata = %#v", agent.gotRestore.Session.Metadata)
+	}
+	if agent.gotRestore.Permissions != ports.PermissionModeAuto {
+		t.Fatalf("restore permissions = %q, want auto", agent.gotRestore.Permissions)
+	}
+	var config map[string]any
+	if err := json.Unmarshal([]byte(got.Env["OPENCODE_CONFIG_CONTENT"]), &config); err != nil {
+		t.Fatalf("reviewer config: %v", err)
+	}
+	permission := config["permission"].(map[string]any)
+	if permission["*"] != "deny" || permission["read"] != "allow" {
+		t.Fatalf("permission policy = %#v", permission)
 	}
 }
 

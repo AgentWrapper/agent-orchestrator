@@ -23,6 +23,7 @@ type Review struct {
 	// ReviewerHandleID is the runtime handle of the live reviewer pane, reused
 	// across passes and exposed so the UI can attach its terminal.
 	ReviewerHandleID string    `json:"reviewerHandleId"`
+	AgentSessionID   string    `json:"agentSessionId"`
 	CreatedAt        time.Time `json:"createdAt"`
 	UpdatedAt        time.Time `json:"updatedAt"`
 }

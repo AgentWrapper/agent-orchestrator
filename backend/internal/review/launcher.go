@@ -47,16 +47,17 @@ type Launcher interface {
 
 // LaunchSpec is the engine's request to (re)launch a reviewer for one pass.
 type LaunchSpec struct {
-	RunID         string
-	BatchID       string
-	WorkerID      domain.SessionID
-	ProjectID     domain.ProjectID
-	Harness       domain.ReviewerHarness
-	WorkspacePath string
-	PRURL         string
-	TargetSHA     string
-	ReviewQueue   []ports.ReviewTask
-	ReviewIndex   int
+	RunID          string
+	BatchID        string
+	WorkerID       domain.SessionID
+	ProjectID      domain.ProjectID
+	Harness        domain.ReviewerHarness
+	WorkspacePath  string
+	AgentSessionID string
+	PRURL          string
+	TargetSHA      string
+	ReviewQueue    []ports.ReviewTask
+	ReviewIndex    int
 }
 
 // reviewerRuntime is the runtime surface the launcher needs: create a pane,
@@ -135,6 +136,7 @@ func (l *agentLauncher) invocation(spec LaunchSpec) ports.ReviewInvocation {
 		ReviewerID:      reviewerHandleID(spec.WorkerID),
 		RunID:           spec.RunID,
 		WorkerSessionID: spec.WorkerID,
+		AgentSessionID:  spec.AgentSessionID,
 		PRURL:           spec.PRURL,
 		TargetSHA:       spec.TargetSHA,
 		ReviewQueue:     spec.ReviewQueue,
@@ -197,6 +199,7 @@ func (l *agentLauncher) prepareIdleInvocation(spec LaunchSpec) (ports.ReviewInvo
 	return ports.ReviewInvocation{
 		ReviewerID:       reviewerHandleID(spec.WorkerID),
 		WorkerSessionID:  spec.WorkerID,
+		AgentSessionID:   spec.AgentSessionID,
 		WorkspacePath:    spec.WorkspacePath,
 		Prompt:           fmt.Sprintf("Reviewer terminal restored for worker session %s. Wait for AO to send the next review task before submitting a review.", spec.WorkerID),
 		SystemPrompt:     "",
@@ -218,10 +221,14 @@ func (l *agentLauncher) RestoreTerminal(ctx context.Context, spec LaunchSpec) (s
 	if err != nil {
 		return "", err
 	}
-	return l.launchReviewerTerminal(ctx, spec, inv)
+	return l.launchReviewerTerminalWithMode(ctx, spec, inv, true)
 }
 
 func (l *agentLauncher) launchReviewerTerminal(ctx context.Context, spec LaunchSpec, inv ports.ReviewInvocation) (string, error) {
+	return l.launchReviewerTerminalWithMode(ctx, spec, inv, false)
+}
+
+func (l *agentLauncher) launchReviewerTerminalWithMode(ctx context.Context, spec LaunchSpec, inv ports.ReviewInvocation, restoring bool) (string, error) {
 	reviewer, ok := l.reviewers.Reviewer(spec.Harness)
 	if !ok {
 		return "", fmt.Errorf("no reviewer adapter for harness %q", spec.Harness)
@@ -231,9 +238,24 @@ func (l *agentLauncher) launchReviewerTerminal(ctx context.Context, spec LaunchS
 			return "", fmt.Errorf("reviewer pre-launch: %w", err)
 		}
 	}
-	cmd, err := reviewer.ReviewCommand(ctx, inv)
-	if err != nil {
-		return "", fmt.Errorf("reviewer command: %w", err)
+	var cmd ports.ReviewCommandSpec
+	if restoring {
+		if restorer, ok := reviewer.(ports.ReviewerRestorer); ok {
+			restoreCmd, restoreOK, err := restorer.ReviewRestoreCommand(ctx, inv)
+			if err != nil {
+				return "", fmt.Errorf("reviewer restore command: %w", err)
+			}
+			if restoreOK {
+				cmd = restoreCmd
+			}
+		}
+	}
+	if len(cmd.Argv) == 0 {
+		var err error
+		cmd, err = reviewer.ReviewCommand(ctx, inv)
+		if err != nil {
+			return "", fmt.Errorf("reviewer command: %w", err)
+		}
 	}
 	handleID := reviewerHandleID(spec.WorkerID)
 	// The reviewer handle is stable per worker, so a still-live pane from a
@@ -249,7 +271,7 @@ func (l *agentLauncher) launchReviewerTerminal(ctx context.Context, spec LaunchS
 		SessionID:     domain.SessionID(handleID),
 		WorkspacePath: spec.WorkspacePath,
 		Argv:          cmd.Argv,
-		Env:           l.runtimeEnv(spec, cmd.Env),
+		Env:           l.runtimeEnv(ctx, spec, cmd.Argv, cmd.Env),
 	})
 	if err != nil {
 		return "", fmt.Errorf("reviewer runtime: %w", err)
@@ -257,18 +279,20 @@ func (l *agentLauncher) launchReviewerTerminal(ctx context.Context, spec LaunchS
 	return handle.ID, nil
 }
 
-func (l *agentLauncher) runtimeEnv(spec LaunchSpec, base map[string]string) map[string]string {
+func (l *agentLauncher) runtimeEnv(ctx context.Context, spec LaunchSpec, argv []string, base map[string]string) map[string]string {
 	env := make(map[string]string, len(base)+3)
 	for k, v := range base {
 		env[k] = v
 	}
 	env[sessionmanager.EnvSessionID] = string(spec.WorkerID)
+	env["AO_REVIEWER_WORKER_SESSION_ID"] = string(spec.WorkerID)
 	env[sessionmanager.EnvProjectID] = string(spec.ProjectID)
 	env[sessionmanager.EnvDataDir] = l.dataDir
 	path, err := sessionmanager.HookPATH(os.Executable, os.Getenv, env)
 	if err == nil {
 		env["PATH"] = path
 	}
+	sessionmanager.AugmentRuntimePATHForLaunchBinary(ctx, env, argv, exec.LookPath)
 	return env
 }
 

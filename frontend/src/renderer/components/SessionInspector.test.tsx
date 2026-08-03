@@ -1208,6 +1208,74 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.queryByRole("button", { name: "Open terminal" })).not.toBeInTheDocument();
 	});
 
+	it("shows kill review session beside run review when a reviewer terminal exists", async () => {
+		mockCommonGets([approvedReview], "reviewer-pane", [reviewState(3, "up_to_date")]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
+
+		expect(await screen.findByRole("button", { name: "Re-run review" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Kill review session" })).toBeInTheDocument();
+	});
+
+	it("kills the reviewer session and replaces actions with restore", async () => {
+		mockCommonGets([approvedReview], "reviewer-pane", [reviewState(3, "up_to_date")]);
+		postMock.mockResolvedValue({
+			data: {
+				reviewerHandleId: "",
+				reviewerHarness: "codex",
+				reviews: [reviewState(3, "up_to_date")],
+			},
+		});
+
+		const view = renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
+		await userEvent.click(await screen.findByRole("button", { name: "Kill review session" }));
+
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/kill", {
+				params: { path: { sessionId: "sess-1" } },
+			}),
+		);
+		await waitFor(() =>
+			expect(view.client.getQueryData(["session-reviews", "sess-1"])).toMatchObject({
+				reviewerHandleId: "",
+			}),
+		);
+		expect(screen.getByRole("button", { name: "Restore review session" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Re-run review" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Kill review session" })).not.toBeInTheDocument();
+	});
+
+	it("restores a killed reviewer session and returns to review actions", async () => {
+		mockCommonGets([approvedReview], "", [reviewState(3, "up_to_date")]);
+		postMock.mockResolvedValue({
+			data: {
+				reviewerHandleId: "reviewer-pane",
+				reviewerHarness: "codex",
+				reviews: [reviewState(3, "up_to_date")],
+			},
+		});
+
+		const view = renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
+		await userEvent.click(await screen.findByRole("button", { name: "Restore review session" }));
+
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/restore", {
+				params: { path: { sessionId: "sess-1" } },
+			}),
+		);
+		await waitFor(() =>
+			expect(view.client.getQueryData(["session-reviews", "sess-1"])).toMatchObject({
+				reviewerHandleId: "reviewer-pane",
+			}),
+		);
+		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Kill review session" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Restore review session" })).not.toBeInTheDocument();
+	});
+
 	it("shows codex as the default reviewer for a codex worker before a run exists", async () => {
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/sessions/{sessionId}/reviews") {

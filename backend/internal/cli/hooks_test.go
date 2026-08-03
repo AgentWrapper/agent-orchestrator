@@ -214,6 +214,32 @@ func TestHooks_SessionStartReportsNativeSessionIDWithoutActivity(t *testing.T) {
 	}
 }
 
+func TestHooks_ReviewerSessionStartReportsNativeSessionIDToReviewActivity(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "mer-1")
+	t.Setenv("AO_REVIEWER_WORKER_SESSION_ID", "mer-1")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, "")
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"session_id":"reviewer-native-1"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "codex", "session-start")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capture.path != "/api/v1/sessions/mer-1/reviews/activity" {
+		t.Fatalf("path = %q, want reviewer activity route", capture.path)
+	}
+	var req reviewerActivityAPIRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
+	}
+	if req.AgentSessionID != "reviewer-native-1" {
+		t.Fatalf("agent session id = %q, want reviewer-native-1", req.AgentSessionID)
+	}
+}
+
 func TestHooks_ActivityAlsoReportsNativeSessionID(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-7")
 	cfg := setConfigEnv(t)

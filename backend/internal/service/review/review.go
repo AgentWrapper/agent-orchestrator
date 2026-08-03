@@ -53,6 +53,7 @@ type Manager interface {
 	Cancel(ctx context.Context, workerID domain.SessionID) (reviewcore.CancelResult, error)
 	TerminateReviewer(ctx context.Context, workerID domain.SessionID, body string) error
 	RestoreReviewer(ctx context.Context, workerID domain.SessionID) error
+	RecordReviewerAgentSession(ctx context.Context, workerID domain.SessionID, agentSessionID string) error
 	Submit(ctx context.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body, githubReviewID string) (domain.ReviewRun, error)
 	SubmitMany(ctx context.Context, workerID domain.SessionID, reviews []SubmittedReview) ([]domain.ReviewRun, error)
 	List(ctx context.Context, workerID domain.SessionID) (reviewcore.SessionReviews, error)
@@ -191,6 +192,12 @@ func (s *Service) TerminateReviewer(ctx context.Context, workerID domain.Session
 func (s *Service) RestoreReviewer(ctx context.Context, workerID domain.SessionID) error {
 	_, err := s.engine.RestoreReviewer(ctx, workerID)
 	return err
+}
+
+// RecordReviewerAgentSession records the reviewer's native resumable
+// conversation id from an agent hook.
+func (s *Service) RecordReviewerAgentSession(ctx context.Context, workerID domain.SessionID, agentSessionID string) error {
+	return s.engine.RecordReviewerAgentSession(ctx, workerID, agentSessionID)
 }
 
 // SubmittedReview is one review result supplied by the reviewer CLI.
