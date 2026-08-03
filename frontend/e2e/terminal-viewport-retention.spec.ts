@@ -194,7 +194,7 @@ async function installHarness(page: Page): Promise<void> {
 	await expect(page.getByTestId("terminal-replay-cover")).toHaveCount(0);
 }
 
-test.describe("@P0 retained terminal viewport", () => {
+test.describe("retained terminal viewport", () => {
 	test("retains the first of six live sessions with zero reopen and reveals its latest output", async ({
 		page,
 	}) => {

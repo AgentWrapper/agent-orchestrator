@@ -51,8 +51,8 @@ type SessionViewProps = {
 // (macOS), the same topbar mounts here so the outer panel stays full-height.
 // Rendered by both the project-scoped and cross-project session routes.
 // The persistent shell cache owns terminal lifetime by logical session + handle:
-// route switches retain an exact viewport, while a replacement handle gets a
-// clean xterm/mux binding.
+// route switches retain the xterm instance and latest output, while a replacement
+// handle gets a clean xterm/mux binding.
 //
 // The split is shadcn's resizable (react-resizable-panels v4) with a fully
 // collapsible inspector: the panel is `collapsible` and driven to 0% via the
