@@ -129,30 +129,58 @@ const columns = [
 		count: 9,
 		cards: [
 			{
-				title: "Port Figma board mock into the hero preview",
-				branch: "ao/dev/agent-orchestrator-12/root",
-				agent: previewAgents.gemini.agent,
-				icon: previewAgents.gemini.icon,
+				title: "Tighten hero window border alignment",
+				branch: "landing/window-border-pass",
+				agent: previewAgents.claude.agent,
+				icon: previewAgents.claude.icon,
 				activity: "Editing file",
 				activityState: "running",
 				pr: "draft",
-				checks: "checks running",
-				files: "7 files",
-				time: "12m ago",
+				checks: "editing",
+				files: "1 file",
+				time: "3m ago",
 				badge: null,
 				tone: "default",
 			},
 			{
-				title: "Polish the landing preview app chrome",
-				branch: "landing/preview-chrome",
-				agent: previewAgents.codex.agent,
-				icon: previewAgents.codex.icon,
-				activity: "Writing implementation",
+				title: "Remove stale generated icon imports",
+				branch: "cleanup/stale-icon-imports",
+				agent: previewAgents.opencode.agent,
+				icon: previewAgents.opencode.icon,
+				activity: "Deleting file",
 				activityState: "running",
 				pr: "draft",
-				checks: "unit tests queued",
-				files: "5 files",
+				checks: "cleanup",
+				files: "2 files",
+				time: "14m ago",
+				badge: null,
+				tone: "default",
+			},
+			{
+				title: "Document preview alias ownership",
+				branch: "deploy/alias-ownership",
+				agent: previewAgents.gemini.agent,
+				icon: previewAgents.gemini.icon,
+				activity: "Writing deployment notes",
+				activityState: "running",
+				pr: "draft",
+				checks: "editing",
+				files: "1 file",
 				time: "18m ago",
+				badge: null,
+				tone: "default",
+			},
+			{
+				title: "Confirm whether download labels stay platform-aware",
+				branch: "landing/platform-download-copy",
+				agent: previewAgents.cursor.agent,
+				icon: previewAgents.cursor.icon,
+				activity: "Editing copy",
+				activityState: "running",
+				pr: "draft",
+				checks: "editing",
+				files: "3 files",
+				time: "1h ago",
 				badge: null,
 				tone: "default",
 			},
@@ -164,10 +192,24 @@ const columns = [
 		count: 4,
 		cards: [
 			{
+				title: "Choose production region failover",
+				branch: "deploy/region-failover",
+				agent: previewAgents.grok.agent,
+				icon: previewAgents.grok.icon,
+				activity: "Waiting for infra decision",
+				activityState: "waiting",
+				pr: "PR #414",
+				checks: "blocked",
+				files: "2 files",
+				time: "18m ago",
+				badge: "Needs input",
+				tone: "blocked",
+			},
+			{
 				title: "Pick final titlebar metrics for the preview",
-				branch: "ao/dev/agent-orchestrator-18/root",
-				agent: previewAgents.copilot.agent,
-				icon: previewAgents.copilot.icon,
+				branch: "landing/titlebar-metrics",
+				agent: previewAgents.claude.agent,
+				icon: previewAgents.claude.icon,
 				activity: "27/44 passed",
 				activityState: "running",
 				pr: "PR #322",
@@ -178,21 +220,6 @@ const columns = [
 				tone: "default",
 				testResults: { pass: 27, total: 44 },
 			},
-			{
-				title: "Confirm whether download labels stay platform-aware",
-				branch: "ao/dev/solkit-ui-6/root",
-				agent: previewAgents.cursor.agent,
-				icon: previewAgents.cursor.icon,
-				activity: "Linting codebase",
-				activityState: "running",
-				pr: "PR #323",
-				checks: "checks running",
-				files: "3 files",
-				time: "1h ago",
-				badge: null,
-				tone: "default",
-				testResults: { pass: 14, total: 28 },
-			},
 		],
 	},
 	{
@@ -201,36 +228,35 @@ const columns = [
 		count: 5,
 		cards: [
 			{
-				title: "Preload GitHub stars before hydration",
-				branch: "ao/dev/agent-orchestrator-21/root",
-				agent: previewAgents.aider.agent,
-				icon: previewAgents.aider.icon,
-				activity: "Review in progress",
+				title: "Verify preview environment variables",
+				branch: "deploy/preview-env",
+				agent: previewAgents.opencode.agent,
+				icon: previewAgents.opencode.icon,
+				activity: "Deployment checks running",
 				activityState: "reviewing",
+				pr: "PR #415",
+				checks: "checks running",
+				files: "2 files",
+				time: "18m ago",
+				badge: "Awaiting review",
+				tone: "review",
+			},
+			{
+				title: "Preload GitHub stars before hydration",
+				branch: "landing/preload-stars",
+				agent: previewAgents.claude.agent,
+				icon: previewAgents.claude.icon,
+				activity: "Checks passed",
+				activityState: "passed",
 				pr: "PR #324",
 				checks: "checks passed",
 				files: "2 files",
 				time: "1h ago",
 				badge: "Awaiting review",
 				tone: "review",
+				testResults: { pass: 38, total: 60 },
 				prComments: 3,
 				reviewers: [REVIEWERS.harshit, REVIEWERS.suraj],
-			},
-			{
-				title: "Ignore local reference snapshots in deploy payloads",
-				branch: "ao/dev/agent-orchestrator-22/root",
-				agent: previewAgents.opencode.agent,
-				icon: previewAgents.opencode.icon,
-				activity: "Changes requested",
-				activityState: "waiting",
-				pr: "PR #325",
-				checks: "review pending",
-				files: "2 files",
-				time: "2h ago",
-				badge: "Changes requested",
-				tone: "review",
-				prComments: 2,
-				reviewers: [REVIEWERS.ashish, REVIEWERS.harsh2, REVIEWERS.illegal],
 			},
 		],
 	},
@@ -241,35 +267,19 @@ const columns = [
 		cards: [
 			{
 				title: "Ship AO logo in top navigation",
-				branch: "ao/dev/agent-orchestrator-8/root",
-				agent: previewAgents.devin.agent,
-				icon: previewAgents.devin.icon,
-				activity: "Ready to land",
+				branch: "landing/topbar-ao-logo",
+				agent: previewAgents.claude.agent,
+				icon: previewAgents.claude.icon,
+				activity: "Approved",
 				activityState: "passed",
 				pr: "PR #326",
 				checks: "approved",
 				files: "2 files",
 				time: "3h ago",
-				badge: "Ready",
+				badge: null,
 				tone: "ready",
 				prComments: 0,
 				reviewers: [REVIEWERS.harshit, REVIEWERS.agent],
-			},
-			{
-				title: "Stabilize Vercel framework detection",
-				branch: "ao/dev/agent-orchestrator-9/root",
-				agent: previewAgents.kimi.agent,
-				icon: previewAgents.kimi.icon,
-				activity: "LGTM",
-				activityState: "passed",
-				pr: "PR #327",
-				checks: "merge queue",
-				files: "3 files",
-				time: "4h ago",
-				badge: "Ready",
-				tone: "ready",
-				prComments: 2,
-				reviewers: [REVIEWERS.suraj, REVIEWERS.whoisasx],
 			},
 		],
 	},
@@ -337,12 +347,13 @@ const trackCardTemplates: Record<TrackId, StaticPreviewCard[]> = {
 	),
 	deploy: [
 		previewCard({
-			title: "Pin the Vercel monorepo root",
-			branch: "deploy/vercel-root",
-			activity: "Updating project config",
+			title: "Document preview alias ownership",
+			branch: "deploy/alias-ownership",
+			activity: "Writing deployment notes",
 			activityState: "running",
-			pr: "PR #411",
-			agentKey: "codex",
+			pr: "draft",
+			agentKey: "gemini",
+			time: "18m ago",
 		}),
 		previewCard({
 			title: "Choose production region failover",
@@ -353,6 +364,7 @@ const trackCardTemplates: Record<TrackId, StaticPreviewCard[]> = {
 			agentKey: "grok",
 			badge: "Needs input",
 			tone: "blocked",
+			time: "18m ago",
 		}),
 		previewCard({
 			title: "Verify preview environment variables",
@@ -363,6 +375,9 @@ const trackCardTemplates: Record<TrackId, StaticPreviewCard[]> = {
 			agentKey: "opencode",
 			badge: "Awaiting review",
 			tone: "review",
+			time: "18m ago",
+			prComments: 0,
+			reviewers: [REVIEWERS.itry, REVIEWERS.agent],
 		}),
 		previewCard({
 			title: "Cache workspace dependencies in builds",
@@ -371,8 +386,10 @@ const trackCardTemplates: Record<TrackId, StaticPreviewCard[]> = {
 			activityState: "passed",
 			pr: "PR #409",
 			agentKey: "gemini",
-			badge: "Ready",
+			badge: null,
 			tone: "ready",
+			prComments: 0,
+			reviewers: [REVIEWERS.harshit, REVIEWERS.suraj],
 		}),
 	],
 	stars: [
@@ -387,32 +404,36 @@ const trackCardTemplates: Record<TrackId, StaticPreviewCard[]> = {
 		previewCard({
 			title: "Set the stale count fallback",
 			branch: "metrics/star-fallback",
-			activity: "Waiting on product copy",
-			activityState: "waiting",
+			activity: "19/42 passed",
+			activityState: "running",
 			pr: "PR #430",
 			agentKey: "cursor",
-			badge: "Needs input",
-			tone: "blocked",
+			testResults: { pass: 19, total: 42 },
 		}),
 		previewCard({
 			title: "Prevent hero metrics hydration shift",
 			branch: "metrics/hydration-layout",
-			activity: "Visual regression review",
-			activityState: "reviewing",
+			activity: "Checks passed",
+			activityState: "passed",
 			pr: "PR #432",
 			agentKey: "continue",
 			badge: "Awaiting review",
 			tone: "review",
+			testResults: { pass: 38, total: 60 },
+			prComments: 3,
+			reviewers: [REVIEWERS.harshit, REVIEWERS.suraj],
 		}),
 		previewCard({
 			title: "Preload the repository avatar",
 			branch: "metrics/avatar-preload",
-			activity: "Performance checks passed",
+			activity: "Approved",
 			activityState: "passed",
 			pr: "PR #426",
 			agentKey: "kimi",
-			badge: "Ready",
+			badge: null,
 			tone: "ready",
+			prComments: 0,
+			reviewers: [REVIEWERS.harshit, REVIEWERS.agent],
 		}),
 	],
 	icons: [
@@ -427,32 +448,35 @@ const trackCardTemplates: Record<TrackId, StaticPreviewCard[]> = {
 		previewCard({
 			title: "Pick a fallback for unknown agents",
 			branch: "icons/agent-fallback",
-			activity: "Waiting for design input",
-			activityState: "waiting",
+			activity: "9/42 passed",
+			activityState: "running",
 			pr: "PR #450",
 			agentKey: "cline",
-			badge: "Needs input",
-			tone: "blocked",
+			testResults: { pass: 9, total: 42 },
 		}),
 		previewCard({
 			title: "Audit dark-mode logo contrast",
 			branch: "icons/dark-contrast",
-			activity: "Design review in progress",
+			activity: "Awaiting review",
 			activityState: "reviewing",
 			pr: "PR #452",
 			agentKey: "cursor",
 			badge: "Awaiting review",
 			tone: "review",
+			prComments: 0,
+			reviewers: [REVIEWERS.itry, REVIEWERS.agent],
 		}),
 		previewCard({
 			title: "Remove stale generated icon imports",
 			branch: "icons/remove-stale-imports",
-			activity: "Asset checks passed",
+			activity: "Approved",
 			activityState: "passed",
 			pr: "PR #444",
 			agentKey: "kilocode",
-			badge: "Ready",
+			badge: null,
 			tone: "ready",
+			prComments: 0,
+			reviewers: [REVIEWERS.suraj, REVIEWERS.whoisasx],
 		}),
 	],
 	footer: [
@@ -467,32 +491,35 @@ const trackCardTemplates: Record<TrackId, StaticPreviewCard[]> = {
 		previewCard({
 			title: "Confirm final demo video caption",
 			branch: "qa/video-caption",
-			activity: "Waiting for copy approval",
-			activityState: "waiting",
+			activity: "16/28 passed",
+			activityState: "running",
 			pr: "PR #471",
 			agentKey: "pi",
-			badge: "Needs input",
-			tone: "blocked",
+			testResults: { pass: 16, total: 28 },
 		}),
 		previewCard({
 			title: "Check section order across routes",
 			branch: "qa/section-order",
-			activity: "Cross-browser review",
+			activity: "Review in progress",
 			activityState: "reviewing",
 			pr: "PR #473",
 			agentKey: "goose",
 			badge: "Awaiting review",
 			tone: "review",
+			prComments: 1,
+			reviewers: [REVIEWERS.ashish, REVIEWERS.harsh2],
 		}),
 		previewCard({
 			title: "Fix footer placeholder row spacing",
 			branch: "qa/footer-spacing",
-			activity: "Responsive checks passed",
+			activity: "LGTM",
 			activityState: "passed",
 			pr: "PR #465",
 			agentKey: "copilot",
-			badge: "Ready",
+			badge: null,
 			tone: "ready",
+			prComments: 2,
+			reviewers: [REVIEWERS.suraj, REVIEWERS.whoisasx],
 		}),
 	],
 };
@@ -501,26 +528,13 @@ const landingIncomingCards: StaticPreviewCard[] = [
 	{
 		title: "Tighten hero window border alignment",
 		branch: "landing/window-border-pass",
-		...previewAgents.gemini,
+		...previewAgents.claude,
 		activity: "Editing file",
 		activityState: "running",
 		pr: "draft",
 		checks: "editing",
 		files: "1 file",
-		time: "now",
-		badge: null,
-		tone: "default",
-	},
-	{
-		title: "Repair mobile overflow on landing preview",
-		branch: "landing/mobile-preview-overflow",
-		...previewAgents.codex,
-		activity: "Debugging issue",
-		activityState: "running",
-		pr: "draft",
-		checks: "debugging",
-		files: "4 files",
-		time: "now",
+		time: "3m ago",
 		badge: null,
 		tone: "default",
 	},
@@ -533,19 +547,32 @@ const landingIncomingCards: StaticPreviewCard[] = [
 		pr: "draft",
 		checks: "cleanup",
 		files: "2 files",
-		time: "now",
+		time: "14m ago",
 		badge: null,
 		tone: "default",
 	},
 	{
-		title: "Make the kanban loop feel less mechanical",
-		branch: "landing/random-kanban-loop",
-		...previewAgents.devin,
-		activity: "Tuning animation",
+		title: "Document preview alias ownership",
+		branch: "deploy/alias-ownership",
+		...previewAgents.gemini,
+		activity: "Writing deployment notes",
 		activityState: "running",
 		pr: "draft",
-		checks: "animation pass",
+		checks: "editing",
 		files: "1 file",
+		time: "18m ago",
+		badge: null,
+		tone: "default",
+	},
+	{
+		title: "Repair mobile overflow on landing preview",
+		branch: "landing/mobile-preview-overflow",
+		...previewAgents.codex,
+		activity: "Debugging issue",
+		activityState: "running",
+		pr: "draft",
+		checks: "debugging",
+		files: "4 files",
 		time: "now",
 		badge: null,
 		tone: "default",
@@ -572,19 +599,6 @@ const landingIncomingCards: StaticPreviewCard[] = [
 		pr: "draft",
 		checks: "tests",
 		files: "2 files",
-		time: "now",
-		badge: null,
-		tone: "default",
-	},
-	{
-		title: "Tune titlebar action spacing against Figma",
-		branch: "landing/titlebar-actions",
-		...previewAgents.copilot,
-		activity: "Measuring layout",
-		activityState: "running",
-		pr: "draft",
-		checks: "layout pass",
-		files: "1 file",
 		time: "now",
 		badge: null,
 		tone: "default",
@@ -621,12 +635,26 @@ const incomingCardsByTrack: Record<TrackId, StaticPreviewCard[]> = {
 	landing: landingIncomingCards,
 	deploy: [
 		previewCard({
-			title: "Add deploy health-check retries",
-			branch: "deploy/health-retries",
-			activity: "Editing deployment workflow",
-			activityState: "running",
-			pr: "draft",
-			agentKey: "amp",
+			title: "Verify preview environment variables",
+			branch: "deploy/preview-env",
+			activity: "Deployment checks running",
+			activityState: "reviewing",
+			pr: "PR #415",
+			agentKey: "opencode",
+			badge: "Awaiting review",
+			tone: "review",
+			time: "18m ago",
+		}),
+		previewCard({
+			title: "Choose production region failover",
+			branch: "deploy/region-failover",
+			activity: "Waiting for infra decision",
+			activityState: "waiting",
+			pr: "PR #414",
+			agentKey: "grok",
+			badge: "Needs input",
+			tone: "blocked",
+			time: "18m ago",
 		}),
 		previewCard({
 			title: "Document preview alias ownership",
@@ -635,6 +663,7 @@ const incomingCardsByTrack: Record<TrackId, StaticPreviewCard[]> = {
 			activityState: "running",
 			pr: "draft",
 			agentKey: "gemini",
+			time: "18m ago",
 		}),
 	],
 	stars: [
@@ -778,6 +807,16 @@ function useFloatingWindow(
 }
 
 function createInitialCards(trackId: TrackId): PreviewCard[] {
+	if (trackId === "landing") {
+		return columns.flatMap((column) =>
+			column.cards.map((card, index) => ({
+				...card,
+				column: column.id,
+				id: `${trackId}-${column.id}-${index}`,
+			})),
+		);
+	}
+
 	return columns.flatMap((column, index) => {
 		const card = trackCardTemplates[trackId][index];
 		return card
@@ -796,39 +835,98 @@ function createInitialCardsByTrack(): Record<TrackId, PreviewCard[]> {
 	) as Record<TrackId, PreviewCard[]>;
 }
 
+const REVIEWER_LIST = Object.values(REVIEWERS);
+
+function pickRandom<T>(items: T[]): T {
+	return items[Math.floor(Math.random() * items.length)] as T;
+}
+
+function pickStagingActivity(): { activity: string; testResults?: { pass: number; total: number } } {
+	const total = pickRandom([28, 42, 44, 50, 54, 60]);
+	const pass = Math.floor(total * (0.3 + Math.random() * 0.4));
+	const labels: Array<{ activity: string; testResults?: { pass: number; total: number } }> = [
+		{ activity: `${pass}/${total} passed`, testResults: { pass, total } },
+		{ activity: `${pass}/${total} passed`, testResults: { pass, total } },
+		{ activity: "Building...", testResults: undefined },
+		{ activity: "Linting codebase", testResults: undefined },
+		{ activity: "Running CI pipeline", testResults: { pass, total } },
+	];
+	return pickRandom(labels);
+}
+
+function pickReviewers(): string[] {
+	const shuffled = [...REVIEWER_LIST].sort(() => Math.random() - 0.5);
+	return shuffled.slice(0, 1 + Math.floor(Math.random() * 3));
+}
+
+const IN_REVIEW_STATES: Array<{
+	activity: string;
+	activityState: ActivityState;
+	testResults?: { pass: number; total: number };
+}> = [
+	{ activity: "Checks passed", activityState: "passed", testResults: { pass: 38, total: 60 } },
+	{ activity: "Awaiting review", activityState: "reviewing" },
+	{ activity: "Review in progress", activityState: "reviewing", testResults: { pass: 28, total: 28 } },
+	{ activity: "Checks passed", activityState: "passed", testResults: { pass: 16, total: 28 } },
+];
+
+const MERGE_ACTIVITIES = [
+	"Approved",
+	"Ready to land",
+	"LGTM",
+	"All checks passed",
+];
+
+const RELATIVE_TIMES = ["2m ago", "4m ago", "7m ago", "11m ago", "18m ago", "24m ago", "31m ago", "46m ago", "1h ago"];
+
+function randomTime() {
+	return pickRandom(RELATIVE_TIMES);
+}
+
 function advanceCard(card: PreviewCard): PreviewCard {
 	if (card.column === "working") {
+		const { activity, testResults } = pickStagingActivity();
 		return {
 			...card,
 			column: "action",
-			activity: "Input needed",
-			activityState: "waiting",
-			badge: "Needs input",
-			tone: "blocked",
-			time: "just now",
+			activity,
+			activityState: "running",
+			badge: null,
+			tone: "default",
+			time: randomTime(),
+			testResults,
+			pr: card.pr === "draft" ? `PR #${320 + Math.floor(Math.random() * 20)}` : card.pr,
 		};
 	}
 
 	if (card.column === "action") {
+		const review = pickRandom(IN_REVIEW_STATES);
 		return {
 			...card,
 			column: "pending",
-			activity: "Review pending",
-			activityState: "reviewing",
+			activity: review.activity,
+			activityState: review.activityState,
 			badge: "Awaiting review",
 			tone: "review",
-			time: "just now",
+			time: randomTime(),
+			reviewers: pickReviewers(),
+			prComments: Math.floor(Math.random() * 4),
+			testResults: review.testResults,
+			pr: card.pr === "draft" ? `PR #${320 + Math.floor(Math.random() * 20)}` : card.pr,
 		};
 	}
 
 	return {
 		...card,
 		column: "merge",
-		activity: "Ready",
+		activity: pickRandom(MERGE_ACTIVITIES),
 		activityState: "passed",
-		badge: "Ready",
+		badge: null,
 		tone: "ready",
-		time: "just now",
+		time: randomTime(),
+		reviewers: card.reviewers ?? pickReviewers(),
+		prComments: card.prComments ?? 0,
+		testResults: undefined,
 	};
 }
 
@@ -868,7 +966,7 @@ function isIdleCard(card: PreviewCard): boolean {
 }
 
 function randomDelay() {
-	return 1000 + Math.random() * 2000;
+	return 5000 + Math.random() * 5000;
 }
 
 function randomItem<T>(items: T[]): T | null {
@@ -1329,10 +1427,7 @@ function Sidebar({
 function ArchiveBar({ count }: { count: number }) {
 	return (
 		<div className="flex h-13 shrink-0 items-center border-t border-[var(--preview-divider)] px-3">
-			<button
-				type="button"
-				className="group inline-flex h-full w-full items-center gap-2 text-[11px] text-[var(--preview-muted-foreground)] transition-colors hover:text-[var(--preview-foreground)]"
-			>
+			<div className="inline-flex h-full w-full items-center gap-2 text-[11px] text-[var(--preview-muted-foreground)] outline-none">
 				<svg
 					aria-hidden="true"
 					className="h-3 w-3 shrink-0 text-[var(--preview-passive)]"
@@ -1349,7 +1444,7 @@ function ArchiveBar({ count }: { count: number }) {
 				</svg>
 				<span className="font-mono text-[10px] font-medium uppercase tracking-[0.04em]">Archive</span>
 				<span className="font-mono tabular-nums text-[var(--preview-passive)]">{count}</span>
-			</button>
+			</div>
 		</div>
 	);
 }
@@ -1573,36 +1668,35 @@ function BoardCard({
 					</div>
 				) : null}
 			</div>
-			{(card.column === "pending" || card.column === "merge") ? (
-				<div className="flex items-center justify-between px-3.5 pb-2">
-					<div className="flex items-center gap-1.5">
-						{card.reviewers && card.reviewers.length > 0 ? (
-							<div className="flex -space-x-1.5">
-								{card.reviewers.slice(0, 3).map((src) => (
-									<img
-										key={src}
-										src={src}
-										alt=""
-										width={18}
-										height={18}
-										aria-hidden="true"
-										draggable="false"
-										className="h-[18px] w-[18px] rounded-full ring-1 ring-[var(--preview-card)]"
-									/>
-								))}
-							</div>
-						) : null}
-						{card.column === "pending" && card.testResults ? (
-							<span
-								className={`text-[10px] ${card.testResults.pass < card.testResults.total ? "text-[#fb923c]" : "text-[var(--preview-muted-foreground)]"}`}
-							>
-								{card.testResults.pass}/{card.testResults.total} tests
-							</span>
-						) : null}
-					</div>
+			{(card.column === "pending" || card.column === "merge") &&
+			(card.reviewers?.length || card.prComments !== undefined || card.testResults) ? (
+				<div className="flex items-center gap-1.5 px-3.5 pb-2">
+					{card.reviewers && card.reviewers.length > 0 ? (
+						<div className="flex shrink-0 -space-x-1.5">
+							{card.reviewers.slice(0, 3).map((src) => (
+								<img
+									key={src}
+									src={src}
+									alt=""
+									width={18}
+									height={18}
+									aria-hidden="true"
+									draggable="false"
+									className="h-[18px] w-[18px] rounded-full ring-1 ring-[var(--preview-card)]"
+								/>
+							))}
+						</div>
+					) : null}
+					{card.column === "pending" && card.testResults ? (
+						<span
+							className={`text-[10px] ${card.testResults.pass < card.testResults.total ? "text-[#fb923c]" : "text-[var(--preview-muted-foreground)]"}`}
+						>
+							{card.testResults.pass}/{card.testResults.total} tests
+						</span>
+					) : null}
 					{card.prComments !== undefined ? (
 						<span
-							className={`text-[10px] ${card.prComments > 0 ? "text-[#fb923c]" : "text-[var(--preview-muted-foreground)]"}`}
+							className={`ml-auto text-[10px] ${card.prComments > 0 ? "text-[#fb923c]" : "text-[var(--preview-muted-foreground)]"}`}
 						>
 							{card.prComments === 0
 								? "no comments"
@@ -1616,7 +1710,7 @@ function BoardCard({
 					<span className="inline-flex h-6 items-center justify-center whitespace-nowrap rounded-md bg-white px-2.5 text-[10.5px] font-semibold text-black">
 						Merge PR
 					</span>
-					<span className="shrink-0 font-mono text-[10.5px] text-[var(--preview-muted-foreground)]">
+					<span className="shrink-0 text-[10.5px] text-[var(--preview-muted-foreground)]">
 						{card.time}
 					</span>
 				</div>
@@ -1629,7 +1723,7 @@ function BoardCard({
 						/>
 						{isTestCard ? `${animatedPass}/${testTotal} passed` : card.activity}
 					</span>
-					<span className="font-mono text-[10.5px] text-[var(--preview-muted-foreground)]">
+					<span className="text-[10.5px] text-[var(--preview-muted-foreground)]">
 						{card.time}
 					</span>
 				</div>
@@ -1898,9 +1992,8 @@ export function AppMockup() {
 			return [
 				{
 					...template,
-					badge: "New task",
+					badge: null,
 					column: "working",
-					activity: "Working",
 					activityState: "running",
 					id: `${trackId}-manual-${Date.now()}-${incomingIndexes.current[trackId]}`,
 					time: "now",
@@ -1957,7 +2050,6 @@ export function AppMockup() {
 								{
 									...template,
 									column: "working",
-									activity: "Working",
 									activityState: "running",
 									id: `${trackId}-incoming-${incomingIndexes.current[trackId]}`,
 								},
