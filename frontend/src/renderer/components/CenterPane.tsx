@@ -251,22 +251,24 @@ export function CenterPane({
 								<ChevronRight aria-hidden="true" className="size-icon-md" />
 							</button>
 						) : null}
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<Button
-									aria-label={t("shortcut.new-shell-terminal")}
-									className="shrink-0 text-muted-foreground"
-									disabled={!onNewShellTerminal}
-									onClick={onNewShellTerminal}
-									size="icon-sm"
-									type="button"
-									variant="outline"
-								>
-									<Plus aria-hidden="true" className="size-icon-md" />
-								</Button>
-							</TooltipTrigger>
-							<TooltipContent>{t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}</TooltipContent>
-						</Tooltip>
+						{!session || !isOrchestratorSession(session) ? (
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<Button
+										aria-label={t("shortcut.new-shell-terminal")}
+										className="shrink-0 text-muted-foreground"
+										disabled={!onNewShellTerminal}
+										onClick={onNewShellTerminal}
+										size="icon-sm"
+										type="button"
+										variant="outline"
+									>
+										<Plus aria-hidden="true" className="size-icon-md" />
+									</Button>
+								</TooltipTrigger>
+								<TooltipContent>{t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}</TooltipContent>
+							</Tooltip>
+						) : null}
 					</div>
 					<div
 						aria-label={t("terminal.controlsAria")}

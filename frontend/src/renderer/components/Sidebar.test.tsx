@@ -12,7 +12,7 @@ const { getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateS
 	() => ({
 		getMock: vi.fn(),
 		navigateMock: vi.fn(),
-		mockParams: { projectId: undefined as string | undefined },
+		mockParams: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
 		renameSessionMock: vi.fn().mockResolvedValue(undefined),
 		spawnMock: vi.fn(),
 		updateStatusMock: vi.fn(),
@@ -32,7 +32,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 	return {
 		...actual,
 		useNavigate: () => navigateMock,
-		useParams: () => ({}),
+		useParams: () => mockParams,
 		useRouterState: ({ select }: { select: (state: { location: { pathname: string } }) => unknown }) =>
 			select({ location: { pathname: "/" } }),
 	};
@@ -223,6 +223,7 @@ beforeEach(() => {
 	spawnMock.mockReset();
 	updateStatusMock.mockReset().mockResolvedValue({ state: "idle" });
 	mockParams.projectId = undefined;
+	mockParams.sessionId = undefined;
 });
 
 afterEach(() => {
@@ -398,6 +399,16 @@ describe("Sidebar", () => {
 		expect(screen.getByLabelText("Open Project One dashboard")).toBeInTheDocument();
 		expect(screen.getByLabelText("Spawn Project One orchestrator")).toBeInTheDocument();
 		expect(screen.getByLabelText("Project actions for Project One")).toBeInTheDocument();
+	});
+
+	it("keeps the project pill active while its orchestrator session is open", () => {
+		const orchestrator = { ...session, id: "orch-1", kind: "orchestrator" as const, title: "orchestrator" };
+		mockParams.projectId = workspace.id;
+		mockParams.sessionId = orchestrator.id;
+
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [orchestrator] }] });
+
+		expect(screen.getByText("Project One").closest("button")).toHaveAttribute("data-active", "true");
 	});
 
 	it("toggles project sessions from the folder icon without selecting the project first", async () => {

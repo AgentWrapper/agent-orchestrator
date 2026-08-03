@@ -709,18 +709,13 @@ describe("SessionInspector tabs", () => {
 		expect(tabs).toEqual(["Summary", "Reviews", "Browser", "Files"]);
 	});
 
-	it("shows the intake issue id in the summary overview when present", () => {
+	it("does not render the overview card in the summary", () => {
 		renderWithQuery(<SessionInspector session={{ ...session([]), issueId: "github:acme/project-one#42" }} />);
 
-		expect(screen.getByText("Issue")).toBeInTheDocument();
-		expect(screen.getByText("github:acme/project-one#42")).toBeInTheDocument();
-	});
-
-	it("omits the branch overview row when the session has no branch", () => {
-		renderWithQuery(<SessionInspector session={session([], { branch: undefined })} />);
-
+		expect(screen.queryByText("Overview")).not.toBeInTheDocument();
+		expect(screen.queryByText("Issue")).not.toBeInTheDocument();
+		expect(screen.queryByText("github:acme/project-one#42")).not.toBeInTheDocument();
 		expect(screen.queryByText("Branch")).not.toBeInTheDocument();
-		expect(screen.queryByText("session/sess-1")).not.toBeInTheDocument();
 	});
 });
 

@@ -168,6 +168,15 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.getByText("Orchestrator")).toBeInTheDocument();
 	});
 
+	it("does not offer a new terminal for an orchestrator session", () => {
+		renderCenterPane({
+			session: { ...worker, id: "sess-orch", kind: "orchestrator" },
+			onNewShellTerminal: vi.fn(),
+		});
+
+		expect(screen.queryByRole("button", { name: "New terminal" })).not.toBeInTheDocument();
+	});
+
 	it("shows 'No session' when there is no session", () => {
 		renderCenterPane();
 		expect(screen.getByText("No session")).toBeInTheDocument();

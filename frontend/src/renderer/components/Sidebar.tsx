@@ -459,7 +459,12 @@ function ProjectItem({
 	onRemoveProject: (projectId: string) => Promise<void>;
 }) {
 	const { t } = useTranslation();
-	const projectActive = selection.activeProjectId === workspace.id && !selection.activeSessionId;
+	const projectActive =
+		selection.activeProjectId === workspace.id &&
+		(!selection.activeSessionId ||
+			workspace.sessions.some(
+				(session) => session.id === selection.activeSessionId && session.kind === "orchestrator",
+			));
 	const queryClient = useQueryClient();
 	const [removeError, setRemoveError] = useState<string | null>(null);
 	const [isRemoving, setIsRemoving] = useState(false);
