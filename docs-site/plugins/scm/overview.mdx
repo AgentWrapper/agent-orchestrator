@@ -1,0 +1,57 @@
+---
+title: "Source Control Management: GitHub and GitLab Integration"
+sidebarTitle: "Overview"
+description: "The AO SCM plugin manages the PR lifecycle — reviews, CI checks, and merge readiness. Works independently of your issue tracker plugin."
+---
+
+The SCM (Source Control Management) plugin handles everything on the pull-request side of an agent's work: opening PRs, monitoring review decisions, reading inline code comments, and tracking CI check results. Two SCM plugins ship with Agent Orchestrator — one for GitHub and one for GitLab.
+
+## What the SCM plugin does
+
+While the tracker plugin deals with issues, the SCM plugin watches what happens after an agent pushes code. On each poll cycle, AO checks:
+
+- **PR state** — whether the pull request is open, closed, or merged.
+- **Review decisions** — approved, changes requested, or awaiting review.
+- **Inline comments** — unresolved review threads that the agent may need to address.
+- **CI checks** — which checks are passing, failing, or still running, and whether they are required for merge.
+
+This information drives two key agent behaviors: the [review loop](/guides/review-loop) (where the agent responds to reviewer feedback) and the [CI recovery loop](/guides/ci-recovery) (where the agent attempts to fix failing checks automatically).
+
+## SCM is independent of your tracker
+
+You can use any tracker with any SCM provider. For example, if your team tracks issues in Linear but hosts code on GitHub:
+
+```yaml
+tracker: linear
+scm: github
+```
+
+Or GitLab for both:
+
+```yaml
+tracker: gitlab
+scm: gitlab
+```
+
+## Setting your SCM provider
+
+Add an `scm` key to your AO config:
+
+```yaml
+scm: github
+
+projects:
+  my-app:
+    repo: owner/my-app
+```
+
+## Available SCM plugins
+
+<CardGroup cols={2}>
+  <Card title="GitHub" icon="github" href="/plugins/scm/github">
+    PRs, reviews, and CI status via the `gh` CLI. Includes optional webhook support and batch GraphQL enrichment.
+  </Card>
+  <Card title="GitLab" icon="gitlab" href="/plugins/scm/gitlab">
+    MRs, discussions, and pipeline status via the `glab` CLI. Supports self-hosted instances and webhook events.
+  </Card>
+</CardGroup>

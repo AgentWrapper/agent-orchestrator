@@ -1,0 +1,38 @@
+---
+title: "Workspace Isolation: Worktree vs Clone in Agent Orchestrator"
+sidebarTitle: "Overview"
+description: "Compare worktree and clone workspace modes in AO. Worktree is fast and disk-efficient; clone gives every agent a fully independent copy of the repo."
+---
+
+Every agent session needs its own isolated slice of your repository so parallel agents don't overwrite each other's work. AO handles this through a workspace plugin that creates and cleans up the working directory for each session automatically. Two workspace modes ship out of the box, and you can build your own for specialized setups.
+
+## Comparing workspace modes
+
+| Feature | worktree | clone |
+|---|---|---|
+| Disk usage | Low (shared `.git` object database) | High (full copy per session) |
+| Session creation speed | Fast | Slower (initial clone overhead) |
+| Build tooling compatibility | Most tools | All tools |
+| Fresh `node_modules` per session | No | Yes |
+| Supported platforms | macOS, Linux, Windows | macOS, Linux, Windows |
+
+## Choosing a workspace mode
+
+**Default: `worktree`.** Git worktrees share the underlying `.git` object database, so even dozens of parallel agents use minimal extra disk space. This is the right choice for nearly everyone.
+
+**Choose `clone`** in these situations:
+
+- Your build tooling walks the `.git` directory and gets confused by the worktree layout (rare, but it happens with some language toolchains).
+- You want every agent to start with a completely fresh `node_modules`, `cargo/target`, or similar dependency directory.
+- You're deliberately pointing different agent sessions at different remotes for experimentation.
+
+## Workspace pages
+
+<CardGroup cols={2}>
+  <Card title="Worktree Workspace" icon="code-branch" href="/plugins/workspaces/worktree">
+    Default mode. Fast, disk-efficient isolation using git worktrees.
+  </Card>
+  <Card title="Clone Workspace" icon="copy" href="/plugins/workspaces/clone">
+    Full per-session repo copy for tooling that doesn't work with worktrees.
+  </Card>
+</CardGroup>

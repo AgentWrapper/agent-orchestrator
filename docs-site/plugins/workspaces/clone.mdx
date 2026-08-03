@@ -1,0 +1,61 @@
+---
+title: "Clone Workspace: Full Repo Copies for Agent Sessions"
+sidebarTitle: "Clone"
+description: "Use full git clones for each AO agent session when build tooling breaks on worktrees or when you need completely independent dependency directories."
+---
+
+The clone workspace gives every agent session a full, independent copy of the repository. It's heavier on disk than the worktree mode, but it removes all sharing between sessions — each agent gets its own `.git` directory, its own working tree, and a clean slate for dependency installation.
+
+## Configuration
+
+```yaml
+workspace: clone
+workspaceConfig:
+  cloneDir: ~/.ao-clones   # default
+```
+
+| Config key | Default | What it does |
+|---|---|---|
+| `cloneDir` | `~/.ao-clones` | Base directory where all per-session clones are created |
+
+## How it works
+
+When a session starts, AO runs:
+
+```bash
+git clone --reference <source> <cloneDir>/<sessionId>
+```
+
+The `--reference` flag means the new clone borrows Git objects from your existing local checkout instead of downloading everything from the remote. This makes clone creation much faster than a cold clone, even though each session gets a fully independent `.git` directory.
+
+When the session is cleaned up, the entire clone directory is removed outright.
+
+<Note>
+Session creation is still slower than worktree mode because even a reference clone involves more filesystem work. For most projects the difference is a few seconds, but it can add up with very large repositories.
+</Note>
+
+## When to choose clone over worktree
+
+- **Your build tooling breaks on worktrees.** Some language toolchains walk the `.git` directory and get confused when they find a worktree layout rather than a standard repo. A full clone sidesteps this entirely.
+- **You need fresh dependencies per session.** Each clone starts without a `node_modules` directory, so every agent installs dependencies independently with no shared state.
+- **You're experimenting with different remotes.** Each clone is independent, so you can point different agents at different upstream remotes without them interfering.
+
+## Per-project `postCreate`
+
+The clone workspace supports the same `postCreate` hook as the worktree workspace. Commands run inside the new clone after it's ready, before the agent starts:
+
+```yaml
+projects:
+  web:
+    workspace: clone
+    postCreate:
+      - pnpm install --frozen-lockfile
+```
+
+<Tip>
+Running your install command in `postCreate` ensures the agent never has to wait for dependency installation. The first impression matters — an agent that starts in a ready environment produces better results.
+</Tip>
+
+<Warning>
+Clone workspaces use significantly more disk space than worktree workspaces, especially with many parallel sessions or large repositories. Monitor your available disk if you run more than a handful of simultaneous agents.
+</Warning>

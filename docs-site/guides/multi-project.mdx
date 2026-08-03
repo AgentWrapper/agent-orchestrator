@@ -1,0 +1,145 @@
+---
+title: "Run Agent Orchestrator Across Multiple Repositories"
+sidebarTitle: "Multi-Project"
+description: "One agent-orchestrator.yaml can drive many repos. Each project gets its own agent, tracker, notifier, and dashboard lane — mix and match freely."
+---
+
+A single Agent Orchestrator instance can manage as many repositories as you like. Each project is independently configured with its own agent, issue tracker, notifier, and workspace settings. The dashboard shows all projects as swim lanes, and every `ao` command accepts a `-p` flag to target a specific project. You don't need separate config files or separate daemon processes — one `agent-orchestrator.yaml` drives everything.
+
+## Config shape
+
+```yaml
+projects:
+  frontend:
+    path: ~/code/frontend
+    agent: claude-code
+    tracker: github
+    scm: github
+
+  api:
+    path: ~/code/api
+    agent: codex
+    tracker: linear
+    scm: github
+```
+
+The keys under `projects:` — `frontend`, `api`, etc. — are your **project IDs**. These are what you pass to `--project` / `-p` in every CLI command.
+
+## Adding a project
+
+<Tabs>
+  <Tab title="By path">
+    Point AO at a local directory you already have cloned:
+
+    ```bash
+    ao start ~/code/new-repo
+    ```
+
+    AO infers a project ID from the directory name and appends the project to `agent-orchestrator.yaml`.
+  </Tab>
+  <Tab title="By URL">
+    Give AO a GitHub URL and it will clone the repo automatically:
+
+    ```bash
+    ao start https://github.com/org/repo
+    ```
+
+    The repo is cloned under `~/.agent-orchestrator/` and registered as a project.
+  </Tab>
+  <Tab title="Desktop app">
+    Click the **Add project** button in the project sidebar. AO prompts for the repo path or URL and handles registration.
+  </Tab>
+</Tabs>
+
+Both `ao start` variants update `agent-orchestrator.yaml` in place.
+
+## Spawning in the right project
+
+When you're inside a worktree that belongs to a project, `ao spawn` auto-detects it. From anywhere else, name the project explicitly:
+
+```bash
+ao spawn 42 -p api
+ao batch-spawn 10 11 12 -p frontend
+```
+
+If you omit `-p` and AO can't infer the project from your current directory, it will prompt you to choose.
+
+## Per-project plugin overrides
+
+Anything defined at the top level of your config is a default that all projects inherit. Override on a per-project basis as needed:
+
+```yaml
+tracker: github          # global default
+notifier:
+  - type: slack
+    webhookUrl: ${SLACK_GLOBAL}
+
+projects:
+  api:
+    path: ~/code/api
+    tracker: linear      # this project uses Linear instead of GitHub Issues
+    notifier:
+      - type: discord
+        webhookUrl: ${DISCORD_INTERNAL}   # and Discord instead of Slack
+```
+
+The `api` project uses Linear and Discord. Every other project inherits GitHub Issues and Slack.
+
+You can also override the agent, workspace type, and reactions on a per-project basis:
+
+```yaml
+projects:
+  marketing:
+    repo: myorg/site
+    agent: cursor
+    workspace: clone     # full clone instead of a worktree
+    reactions:
+      ci-failed:
+        retries: 5
+```
+
+## Monitoring all projects
+
+<CardGroup cols={2}>
+  <Card title="ao status" icon="list">
+    Shows all projects and their active sessions in a single table.
+  </Card>
+  <Card title="ao status -p api" icon="filter">
+    Scopes the output to a single named project.
+  </Card>
+  <Card title="ao status --json | jq" icon="brackets-curly">
+    Machine-readable output for scripting and automation.
+  </Card>
+  <Card title="ao status --watch" icon="rotate">
+    Live-updating table — useful for keeping an eye on a long run.
+  </Card>
+</CardGroup>
+
+The dashboard shows all projects as swim lanes that update automatically as session states change.
+
+## Stopping projects
+
+```bash
+ao stop api      # stop one project's orchestrator and dashboard
+ao stop --all    # stop everything on this machine
+```
+
+## Notification routing
+
+If different teams own different projects, you can route notifications to different channels using a `notificationRouting` block:
+
+```yaml
+notificationRouting:
+  frontend:
+    notifier:
+      - type: slack
+        webhookUrl: ${SLACK_FRONTEND_TEAM}
+  api:
+    notifier:
+      - type: discord
+        webhookUrl: ${DISCORD_API_TEAM}
+```
+
+<Tip>
+  Don't force uniformity across projects. The whole point of the plugin system is that each project can use whatever agent, tracker, and notifier fits the team that owns it.
+</Tip>

@@ -1,0 +1,98 @@
+---
+title: "Notification Integrations for Agent Orchestrator Alerts"
+sidebarTitle: "Overview"
+description: "AO supports 7 notifiers — Slack, Discord, webhook, desktop, dashboard, Composio, and OpenClaw. Stack multiple notifiers and route by priority."
+---
+
+Notifiers deliver Agent Orchestrator events — a session getting stuck, a PR opening, a review being requested, or CI failing — to wherever you actually pay attention. AO supports seven notifier plugins that you can stack together and route by event priority, so urgent alerts go to the right place without flooding low-priority channels.
+
+## Available notifiers
+
+| Notifier | Best for |
+|----------|----------|
+| **Dashboard** | Retained notifications inside the AO dashboard UI |
+| **Desktop** | OS-native notifications on macOS and Linux |
+| **Slack** | Slack channels via incoming webhook |
+| **Discord** | Discord channels via webhook with rich embeds |
+| **Webhook** | Any HTTPS endpoint — custom dashboards, PagerDuty, Datadog, etc. |
+| **Composio** | Route through Composio to Slack, Discord, or Gmail |
+| **OpenClaw** | Local OpenClaw gateway for personal alerts |
+
+## Stacking notifiers
+
+You can add as many notifiers as you want and control which events each one receives using `notificationRouting`. AO does not deduplicate across channels, so configure routing carefully to avoid redundant alerts.
+
+```yaml
+notifiers:
+  desktop:
+    plugin: desktop
+  discord:
+    plugin: discord
+    webhookUrl: ${DISCORD_URL}
+  slack:
+    plugin: slack
+    webhookUrl: ${SLACK_URL}
+
+notificationRouting:
+  urgent: [desktop, discord, slack]
+  action: [discord, slack]
+  warning: [slack]
+  info: []
+```
+
+## Routing presets
+
+When running a setup command, AO asks which priority level the notifier should receive. Three presets are available:
+
+| Preset | What it routes |
+|--------|---------------|
+| `urgent-only` | Only urgent events (agent stuck, unrecoverable errors) |
+| `urgent-action` | Urgent events plus action events (merge ready, PR approved) |
+| `all` | Every event including informational ones |
+
+For scriptable setup, pass `--routing-preset <preset>` to skip the interactive prompt.
+
+## Testing notifications
+
+Before relying on a notifier in production, verify it's working with the `ao notify test` command:
+
+```bash
+# Send a test to one specific notifier
+ao notify test --to slack --template basic
+
+# Send a test to all notifiers on the urgent route
+ao notify test --route urgent
+
+# Preview what would be sent without actually sending
+ao notify test --all --dry-run
+```
+
+Without `--dry-run`, real providers receive a real test message.
+
+## Quick setup
+
+Each notifier has an interactive setup command that walks you through configuration and sends a test message before saving:
+
+```bash
+ao setup slack
+ao setup discord
+ao setup webhook
+ao setup desktop
+```
+
+## Notifier pages
+
+<CardGroup cols={2}>
+  <Card title="Slack" icon="slack" href="/plugins/notifiers/slack">
+    Incoming webhook with Block Kit message formatting.
+  </Card>
+  <Card title="Discord" icon="discord" href="/plugins/notifiers/discord">
+    Rich embeds with color-coded event types and retry handling.
+  </Card>
+  <Card title="Webhook" icon="webhook" href="/plugins/notifiers/webhook">
+    Generic HTTPS POST to any endpoint, with retries and env var expansion.
+  </Card>
+  <Card title="Desktop" icon="bell" href="/plugins/notifiers/desktop">
+    OS-native notifications on macOS and Linux.
+  </Card>
+</CardGroup>

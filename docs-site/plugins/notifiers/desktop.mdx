@@ -1,0 +1,81 @@
+---
+title: "Desktop Push Notifications for Agent Orchestrator Sessions"
+sidebarTitle: "Desktop"
+description: "Get OS-native AO alerts on macOS (Notification Center) and Linux (notify-send). Windows is unsupported — use Slack, Discord, or webhook instead."
+---
+
+The desktop notifier delivers Agent Orchestrator events as native OS notifications — Notification Center on macOS, `notify-send` on Linux. It requires no external service or API key. On Windows, the notifier is a no-op: it logs a warning and does nothing, so Windows users should use the Slack, Discord, or webhook notifier instead.
+
+## Platform support
+
+| Platform | Behavior |
+|----------|----------|
+| macOS | Uses `osascript` to display a notification in Notification Center |
+| Linux | Uses `notify-send` from `libnotify` |
+| Windows | Logs a warning and does nothing — no toast support |
+
+## Setup
+
+Run the interactive setup command:
+
+```bash
+ao setup desktop
+```
+
+AO asks which desktop backend to use and which notification priorities desktop should receive: `urgent-only`, `urgent-action`, or `all`. Pass `--routing-preset <preset>` to skip the interactive prompt in scripts.
+
+## Configuration
+
+```yaml
+notifiers:
+  desktop:
+    plugin: desktop
+    backend: auto
+    dashboardUrl: http://localhost:3000
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `backend` | `auto` | Which notification method to use: `ao-app`, `terminal-notifier`, `osascript`, or `auto` |
+| `dashboardUrl` | Dashboard port | URL opened when you click a notification action |
+| `appPath` | macOS install path | Custom path to the AO Notifier.app (macOS only) |
+
+### Backend options
+
+- **`auto`** — AO selects the best available method for your OS. Recommended for most users.
+- **`ao-app`** — Uses the AO Notifier.app on macOS for richer notification actions.
+- **`terminal-notifier`** — Uses the `terminal-notifier` command-line tool on macOS.
+- **`osascript`** — Uses AppleScript directly via `osascript`. Works on any macOS version.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="macOS: notifications not appearing (macOS 14+)">
+    macOS 14 Sonoma and later may silence notifications from terminal apps by default. Go to **System Settings → Notifications → Terminal** (or your terminal app name) and make sure **Allow Notifications** is turned on.
+  </Accordion>
+
+  <Accordion title="Linux: notify-send not found">
+    Install the `libnotify` package for your distribution:
+
+    ```bash
+    # Debian / Ubuntu
+    sudo apt install libnotify-bin
+
+    # Fedora
+    sudo dnf install libnotify
+
+    # Arch
+    sudo pacman -S libnotify
+    ```
+  </Accordion>
+
+  <Accordion title="Windows: no notifications appearing">
+    This is expected behavior. The desktop notifier is a no-op on Windows. Add a Slack, Discord, or webhook notifier to your config to receive alerts on Windows:
+
+    ```bash
+    ao setup slack
+    # or
+    ao setup discord
+    ```
+  </Accordion>
+</AccordionGroup>

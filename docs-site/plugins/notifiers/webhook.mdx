@@ -1,0 +1,155 @@
+---
+title: "Generic Webhook Notifier for Agent Orchestrator Events"
+sidebarTitle: "Webhook"
+description: "POST AO events as structured JSON to any HTTPS endpoint. Supports custom headers, env var expansion, exponential backoff retries, and ~30 event types."
+---
+
+The generic webhook notifier sends Agent Orchestrator events as structured JSON to any HTTPS endpoint you control. Use it to integrate AO with PagerDuty, Datadog, Honeycomb, custom internal dashboards, or any other tool that can receive an HTTP POST. Unlike the Slack and Discord notifiers, the webhook notifier is completely destination-agnostic — your endpoint decides what to do with the payload.
+
+## Setup
+
+Run the interactive setup command:
+
+```bash
+ao setup webhook
+```
+
+If a webhook notifier is already configured, you can choose to use the existing URL, add a new one, or cancel. Before saving, AO asks which notification priorities the webhook should receive: `urgent-only`, `urgent-action`, or `all`. Pass `--routing-preset <preset>` to skip this prompt in scripts.
+
+## Configuration
+
+```yaml
+notifiers:
+  webhook:
+    plugin: webhook
+    url: https://example.com/hooks/ao
+    headers:
+      Authorization: "Bearer ${WEBHOOK_TOKEN}"
+      X-Source: "agent-orchestrator"
+    retries: 3
+    retryDelayMs: 1000
+```
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `url` | ✓ | — | HTTPS endpoint that accepts POST requests |
+| `headers` | Optional | `{}` | Custom headers to include on every request |
+| `retries` | Optional | `3` | Retry count on 429, 5xx, or network errors |
+| `retryDelayMs` | Optional | `1000` | Base retry delay in milliseconds (exponential backoff) |
+
+### Environment variable expansion in headers
+
+Header values support `${ENV_VAR}` interpolation. This lets you store secrets in environment variables rather than in your config file:
+
+```yaml
+headers:
+  Authorization: "Bearer ${WEBHOOK_TOKEN}"
+  X-Api-Key: "${MY_API_KEY}"
+```
+
+## Payload format
+
+Every POST body is a JSON object with a `type` discriminant field.
+
+### Standard notification
+
+Most events arrive as `notification` payloads:
+
+```json
+{
+  "type": "notification",
+  "event": {
+    "id": "3f6a1b2c-...",
+    "type": "pr.created",
+    "priority": "info",
+    "sessionId": "sess_01HXY...",
+    "projectId": "myproject",
+    "timestamp": "2026-04-17T15:00:00.000Z",
+    "message": "PR opened: fix(auth): handle token expiry",
+    "data": {}
+  }
+}
+```
+
+### Notification with actions
+
+When AO attaches action URLs (e.g. links to approve or retry):
+
+```json
+{
+  "type": "notification_with_actions",
+  "event": { "...": "same fields as above" },
+  "actions": [
+    { "label": "View PR", "url": "https://github.com/owner/repo/pull/123" }
+  ]
+}
+```
+
+### Free-form message
+
+Messages sent via `ao send` arrive as:
+
+```json
+{
+  "type": "message",
+  "message": "Hello from AO",
+  "context": {}
+}
+```
+
+## Event types
+
+AO emits approximately 30 distinct event types across the agent lifecycle:
+
+| Event type | Default priority | When emitted |
+|-----------|-----------------|--------------|
+| `session.spawned` | `info` | Session created via `ao spawn` |
+| `session.working` | `info` | Agent begins editing code |
+| `session.exited` | `info` | Agent process exited cleanly |
+| `session.killed` | `info` | Session was manually killed |
+| `session.idle` | `info` | Agent has been idle for a while |
+| `session.stuck` | `urgent` | Agent appears stuck — human intervention needed |
+| `session.needs_input` | `urgent` | Agent is blocked waiting for user input |
+| `session.errored` | `urgent` | Agent hit an unrecoverable error |
+| `pr.created` | `info` | Agent pushed a branch and opened a PR |
+| `pr.updated` | `info` | PR updated with new commits |
+| `pr.merged` | `action` | PR was merged |
+| `pr.closed` | `info` | PR closed without merging |
+| `ci.passing` | `info` | All required CI checks passed |
+| `ci.failing` | `warning` | A required CI check failed |
+| `ci.fix_sent` | `info` | Agent sent a CI fix to itself |
+| `ci.fix_failed` | `warning` | Agent's CI fix attempt failed |
+| `review.pending` | `info` | PR review has been requested |
+| `review.approved` | `action` | PR approved by a reviewer |
+| `review.changes_requested` | `warning` | Reviewer requested changes |
+| `review.comments_sent` | `info` | Review comments sent to the agent |
+| `review.comments_unresolved` | `info` | Agent left unresolved review threads |
+| `automated_review.found` | `warning` | Automated tool (e.g. BugBot) left comments |
+| `automated_review.fix_sent` | `info` | Agent sent fixes for automated review comments |
+| `merge.ready` | `action` | PR is approved and CI is green — ready to merge |
+| `merge.conflicts` | `warning` | Merge conflicts detected |
+| `merge.completed` | `action` | PR was successfully merged |
+| `reaction.triggered` | `info` | A configured reaction was triggered |
+| `reaction.escalated` | `urgent` | A reaction was escalated to a human notifier |
+| `summary.all_complete` | `info` | All sessions in the project have completed |
+
+## Security
+
+The webhook notifier does **not** add an outgoing signature header to requests. To secure your endpoint:
+
+- Use a secret `Authorization` header (set via `headers.Authorization`, stored as `${MY_TOKEN}`).
+- Restrict inbound traffic to your AO host via IP allowlist or VPN.
+- Use a reverse proxy with mutual TLS if needed.
+
+<Tip>
+If you need a signed outbound payload, process the incoming JSON on your endpoint and verify the `Authorization` header value you configured. This gives you a shared-secret check without HMAC overhead.
+</Tip>
+
+## When to use the webhook notifier
+
+The generic webhook notifier is a good fit when:
+
+- You want a single endpoint that fans out to Slack, Discord, email, or PagerDuty downstream.
+- You're building an internal AO dashboard or observability integration.
+- You need structured event data for tools like Datadog or Honeycomb.
+- You require retry guarantees that the Slack notifier doesn't provide.

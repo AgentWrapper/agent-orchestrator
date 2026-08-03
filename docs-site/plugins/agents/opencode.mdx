@@ -1,0 +1,107 @@
+---
+title: "Using OpenCode as Your Agent in Agent Orchestrator"
+sidebarTitle: "OpenCode"
+description: "Set up OpenCode as your AO agent. Covers install, AO session naming, JSON session discovery, resume, dual-tier activity tracking, and model configuration."
+---
+
+OpenCode is an open-source terminal coding agent with a structured session API, which makes it one of the most reliably integrated agents in AO. Because OpenCode exposes a `session list` command with JSON output, AO can discover, resume, and track its sessions without relying on file path heuristics or terminal output parsing alone — giving you accurate activity states and dependable resume behavior after a daemon restart.
+
+- **Slot:** `agent`
+- **Config name:** `opencode`
+- **Binary:** `opencode`
+- **Platforms:** macOS · Linux · Windows
+
+## Install
+
+```bash
+npm install -g opencode-ai
+```
+
+## Configure
+
+```yaml
+agent: opencode
+```
+
+To configure the model OpenCode uses, add a `model` key under `agentConfig`:
+
+```yaml
+agentConfig:
+  model: gpt-4o
+```
+
+No other plugin-level config keys are required.
+
+## How AO Integrates with OpenCode
+
+<Accordion title="Launch and session naming">
+  AO starts `opencode` inside the worktree and sets the session title to `AO:<sessionId>`. This naming convention is how AO finds the session back later — the prefix is unique enough to avoid collisions with sessions you've started manually.
+
+  The following environment variables are injected automatically:
+
+  | Variable | Set by AO | Purpose |
+  |---|---|---|
+  | `AO_SESSION_ID` | ✓ | Unique AO session identifier |
+  | `AO_ISSUE_ID` | ✓ | Issue identifier (when spawned from an issue) |
+  | `PATH` | ✓ | Prepends `~/.ao/bin` so wrappers take priority |
+  | `GH_PATH` | ✓ | Absolute path to the real `gh` binary |
+</Accordion>
+
+<Accordion title="Session discovery">
+  AO discovers OpenCode sessions using the structured session API:
+
+  ```bash
+  opencode session list --format json
+  ```
+
+  AO scans the returned list for a session whose title starts with `AO:<sessionId>` and stores the mapping for future resume operations. If the API doesn't respond, AO falls back to its own activity JSONL.
+</Accordion>
+
+<Accordion title="Session resume">
+  Once AO has discovered the OpenCode session ID, it resumes with:
+
+  ```bash
+  opencode --session <id>
+  ```
+
+  This rehydrates the full session state — conversation history, file context, and tool usage — so the agent continues exactly where it left off after a daemon restart.
+</Accordion>
+
+<Accordion title="Activity tracking">
+  AO uses a two-tier approach:
+
+  1. **Primary:** The OpenCode session API returns an `updatedAt` timestamp. AO reads this on each poll cycle to determine whether the session is still active.
+  2. **Fallback:** If the session API doesn't answer, AO reads its own `{workspace}/.ao/activity.jsonl`, which uses age-based decay to estimate state.
+
+  Both signals drive the `active / ready / idle / waiting_input` states on the dashboard.
+</Accordion>
+
+<Accordion title="PR and git tracking">
+  PATH wrappers at `~/.ao/bin/gh` and `~/.ao/bin/git` intercept PR creation and commit commands. When OpenCode runs `gh pr create`, the wrapper captures the PR number and branch before forwarding to the real `gh` binary.
+</Accordion>
+
+## Troubleshooting
+
+<Accordion title="Session can't be found when resuming">
+  If the session mapping has gone stale — for example after a machine restart or if the OpenCode session was cleared manually — run:
+
+  ```bash
+  ao session remap <sessionId>
+  ```
+
+  This re-runs session discovery and saves the new mapping. If AO has already cached an incorrect mapping, add `--force` to override it:
+
+  ```bash
+  ao session remap <sessionId> --force
+  ```
+</Accordion>
+
+<Accordion title="Activity stuck on `idle`">
+  If `opencode session list` isn't returning data, AO falls back to the activity JSONL with age-based decay — which can eventually settle on `idle` if no new output has arrived. First, check that the session API works on its own:
+
+  ```bash
+  opencode session list
+  ```
+
+  If this command hangs or errors, the issue is with the OpenCode process itself rather than AO's integration.
+</Accordion>

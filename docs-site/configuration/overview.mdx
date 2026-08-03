@@ -1,0 +1,172 @@
+---
+title: "Configuring Agent Orchestrator Projects and Globals"
+sidebarTitle: "Overview"
+description: "AO uses two config layers: a global registry for project identity and a local YAML file per repo for runtime behavior like agents, rules, and reactions."
+---
+
+Agent Orchestrator (AO) splits configuration into two distinct layers so that durable project identity is kept separate from the day-to-day behavioral settings you'll tune most often. The global registry remembers which repositories AO knows about, while the local project config inside each repo controls how sessions actually run — which agent to use, what setup commands to execute, and how to respond to CI results and reviews.
+
+## Two Config Layers
+
+<CardGroup cols={2}>
+  <Card title="Global Registry" icon="database">
+    **`~/.agent-orchestrator/config.yaml`**
+
+    AO owns this file. It stores durable project identity: project IDs, repository paths, storage keys, SCM coordinates, default branches, and session prefixes. Do not hand-edit `storageKey`, `path`, or `originUrl` unless you are repairing a broken entry.
+  </Card>
+  <Card title="Local Project Config" icon="file-code">
+    **`agent-orchestrator.yaml` in your repo root**
+
+    You own this file. It controls behavior: which agent to run, the runtime, workspace isolation mode, symlinks, setup commands, agent rules, and reaction overrides. Commit it to your repository.
+  </Card>
+</CardGroup>
+
+### What AO Creates for You
+
+When you run `ao start` from inside a repository for the first time, AO registers the project in the global registry and can create a starter local config. A typical global registry entry looks like this:
+
+```yaml
+projects:
+  my-app:
+    projectId: my-app
+    path: /Users/me/code/my-app
+    storageKey: generated-by-ao
+    repo:
+      owner: acme
+      name: my-app
+      platform: github
+      originUrl: git@github.com:acme/my-app.git
+    defaultBranch: main
+    sessionPrefix: app
+```
+
+### Minimal Local Project Config
+
+Most projects only need a handful of fields to get started:
+
+```yaml
+agent: claude-code
+runtime: tmux
+workspace: worktree
+tracker: github
+scm: github
+```
+
+A more complete starter config includes setup steps and rules for the agent:
+
+```yaml
+agent: claude-code
+runtime: tmux
+workspace: worktree
+
+agentConfig:
+  permissions: permissionless
+  model: claude-sonnet-4-5
+
+symlinks:
+  - .env
+
+postCreate:
+  - pnpm install
+
+agentRules: |
+  Use pnpm, not npm.
+  Run pnpm test before opening a PR.
+```
+
+## What to Edit and Where
+
+| Goal | Edit |
+|---|---|
+| Change the default agent or model | Local `agent-orchestrator.yaml` |
+| Add `.env` or tool config files to each worktree | Local `symlinks` |
+| Run setup commands before the agent starts | Local `postCreate` |
+| Disable or tune automated recovery | Local or global `reactions` |
+| Change notification routing for all projects | Global registry |
+| Rename, remove, or relink a registered project | Use AO commands or the dashboard project settings |
+
+<Warning>
+  Do not manually edit `storageKey`, `path`, or `originUrl` in the global registry unless you are repairing a known broken entry. Incorrect values can cause AO to lose track of session data.
+</Warning>
+
+## Config Lookup Order
+
+AO resolves which config file to use by working through these steps in order:
+
+<Steps>
+  <Step title="AO_CONFIG_PATH environment variable">
+    If the `AO_CONFIG_PATH` env var is set, AO reads that file and stops looking.
+  </Step>
+  <Step title="Walk up from the current directory">
+    AO searches upward from your current working directory for `agent-orchestrator.yaml` or `agent-orchestrator.yml`.
+  </Step>
+  <Step title="Global registry path">
+    If no local file is found, AO falls back to the global registry at `~/.agent-orchestrator/config.yaml`.
+  </Step>
+  <Step title="Legacy home-directory fallbacks">
+    As a last resort, AO checks `~/.agent-orchestrator.yaml`, `~/.agent-orchestrator.yml`, and `~/.config/agent-orchestrator/config.yaml`.
+  </Step>
+</Steps>
+
+<Tip>
+  For day-to-day use, run AO from inside the repository and keep `agent-orchestrator.yaml` in the repo root. That's the path that requires the least configuration.
+</Tip>
+
+## Global Defaults
+
+You can set defaults that apply across all registered projects directly in the global registry. Project-local values always take precedence.
+
+```yaml
+defaults:
+  agent: claude-code
+  runtime: tmux
+  workspace: worktree
+  notifiers: [desktop]
+
+notificationRouting:
+  urgent: [desktop, composio]
+  action: [desktop]
+  warning: [composio]
+  info: [composio]
+```
+
+## Top-Level Global Config Keys
+
+| Key | Default | Purpose |
+|---|---|---|
+| `port` | `3000` | Dashboard HTTP port |
+| `terminalPort` | auto from `14800` | tmux terminal WebSocket port |
+| `directTerminalPort` | auto from `14801` | Direct PTY WebSocket port |
+| `readyThresholdMs` | `300000` | Time before a ready session is treated as idle |
+| `defaults` | built-ins | Cross-project defaults for agent, runtime, workspace, and notifiers |
+| `projects` | `{}` | Registered project identities |
+| `projectOrder` | unset | Optional sidebar/project ordering |
+| `notifiers` | `{}` | Named notifier instances |
+| `notificationRouting` | desktop/composio defaults | Priority-to-notifier routing |
+| `reactions` | built-in defaults | Global automation rules |
+
+## Where Session Data Lives
+
+AO stores runtime data — session files, archived sessions, feedback reports, and observability snapshots — under `~/.agent-orchestrator/` organized by each project's storage key. Everything is plain files you can inspect directly.
+
+```bash
+ls ~/.agent-orchestrator
+```
+
+<Note>
+  You generally do not need to configure or manage this directory. If you are debugging a misbehaving session, the observability snapshots here are your first stop.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Projects" icon="folder-open" href="/configuration/projects">
+    Full reference for per-project behavior: agents, workspaces, rules, setup commands, trackers, and SCM.
+  </Card>
+  <Card title="Reactions" icon="bolt" href="/configuration/reactions">
+    Control what AO does when CI fails, reviews arrive, or agents need attention.
+  </Card>
+  <Card title="Remote Access" icon="globe" href="/configuration/remote-access">
+    Access the dashboard from another machine without exposing it to the public internet.
+  </Card>
+</CardGroup>

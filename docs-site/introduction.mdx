@@ -1,0 +1,110 @@
+---
+title: "Agent Orchestrator: Run AI Coding Agents in Parallel"
+sidebarTitle: "Introduction"
+description: "Agent Orchestrator supervises parallel AI coding agents in isolated git worktrees, automating CI feedback loops so you can ship more, faster."
+---
+
+Agent Orchestrator (AO) is an orchestration layer that runs AI coding agents in parallel — each in its own isolated git worktree, terminal session, and branch — while keeping every PR, CI result, and review comment visible from a single dashboard. Instead of babysitting one agent at a time, you delegate a queue of well-scoped issues and AO keeps the fleet moving, routing CI failures and review feedback back to the session that owns the branch.
+
+## What AO Does for You
+
+AO handles the mechanical work of running and supervising agents so you can focus on what only a human can do: picking the right issues, reviewing the output, and deciding when to merge.
+
+| AO handles | You still handle |
+|---|---|
+| Creating isolated worktrees per session | Choosing well-scoped issues |
+| Launching and monitoring agent processes | Reviewing code and agent behavior |
+| Routing CI failures and review comments back to agents | Deciding when to merge |
+| Tracking PR, CI, and review status across all sessions | Setting repo-specific rules and expectations |
+| Cleaning up merged sessions and stale worktrees | Escalating edge cases AO can't resolve |
+
+## Core Value Props
+
+<CardGroup cols={2}>
+  <Card title="Parallel Sessions" icon="code-branch">
+    Run dozens of agents at the same time, each on its own branch and worktree, without conflicts.
+  </Card>
+  <Card title="Isolation by Default" icon="shield-check">
+    Every session gets its own git worktree and checkout — agents never step on each other's work.
+  </Card>
+  <Card title="Automated Feedback Loops" icon="arrows-rotate">
+    CI failures and review comments automatically route back to the agent that owns the branch.
+  </Card>
+  <Card title="23 Agent Harnesses" icon="robot">
+    Use the agent CLI you already trust. Switch per project or per role without changing your workflow.
+  </Card>
+</CardGroup>
+
+## When to Use AO
+
+AO works best when you have a backlog of issues that each have a clear finish line. Good candidates include:
+
+- **Failing tests** — a broken test suite with a clear expected outcome
+- **Small features** — narrowly scoped additions with obvious acceptance criteria
+- **Review follow-ups** — a reviewer requested changes; let an agent address the comments
+- **Migrations** — deterministic transformations across many files
+- **Documentation updates** — targeted rewrites or additions to docs pages
+- **Focused refactors** — rename, extract, or restructure with a well-defined scope
+
+Avoid vague tasks like "improve auth" or "clean up the app." Every worker session needs a task with a visible finish line.
+
+## How a Session Moves
+
+AO turns a GitHub issue into a merged pull request through a supervised lifecycle:
+
+```
+issue → ao spawn → worktree + agent → pull request → CI/review loop → merge → cleanup
+```
+
+The dashboard shows this as a Kanban board. Each session card carries the agent name, branch, PR link, CI status, and live activity state. You see what needs your attention and ignore the rest.
+
+## Supported Agents
+
+AO ships with 23 agent harnesses. You can use any of them out of the box, mix and match per project, or write your own.
+
+<Tip>
+  Start with the agent CLI you already have installed — Claude Code, Codex, or Aider are the most common first choices. You can add more agents later without changing your workflow.
+</Tip>
+
+**Claude Code · Codex · Cursor · OpenCode · Aider · Copilot · Grok · Kimi · Kiro · Kilo Code · Mistral Vibe · Pi · Amp · Cline · Antigravity · Auggie · Autohand · Goose · Continue · Devin · Droid · Crush · Qwen**
+
+## Plugin Architecture
+
+AO is built entirely from plugins. The default setup works out of the box for GitHub workflows. Every slot is swappable when your environment is different.
+
+| Plugin slot | What it controls | Default |
+|---|---|---|
+| Agent | Which AI coding tool writes changes | Claude Code |
+| Runtime | How agent processes run | tmux |
+| Workspace | Where code is checked out | git worktree |
+| Tracker | Where issues come from | GitHub |
+| SCM | How PRs, CI, and reviews are read | GitHub |
+| Notifier | Where AO sends updates | Desktop notifications |
+| Terminal | How you attach to running sessions | iTerm2 |
+
+## Platform Support
+
+AO runs on all major platforms. The desktop app is the recommended install for all platforms.
+
+| Platform | Support |
+|---|---|
+| macOS (Apple Silicon & Intel) | ✅ Supported |
+| Linux (AppImage & .deb) | ✅ Supported |
+| Windows (x64) | ✅ Supported |
+
+## Where to Go Next
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install AO, authenticate your tools, and get the daemon running in under five minutes.
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Spawn your first agent session, watch it open a PR, and clean up when it's done.
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/concepts/architecture">
+    Understand the plugin model, poll loop, event bus, and how sessions are managed.
+  </Card>
+  <Card title="Plugins" icon="puzzle-piece" href="/concepts/plugins">
+    Browse every available agent, runtime, tracker, SCM, notifier, and terminal plugin.
+  </Card>
+</CardGroup>

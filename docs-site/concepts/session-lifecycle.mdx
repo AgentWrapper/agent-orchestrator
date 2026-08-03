@@ -1,0 +1,183 @@
+---
+title: "AO Session Lifecycle: Statuses and State Transitions"
+sidebarTitle: "Session Lifecycle"
+description: "Every AO session moves through a defined state machine from spawning to merged. Learn each status, transition logic, and detection thresholds."
+---
+
+Every AO session moves through a well-defined set of statuses from the moment it is spawned to the moment it is cleaned up. Understanding this state machine helps you interpret the dashboard, diagnose stuck sessions, and configure reactions to automate responses at each stage. The lifecycle manager evaluates every active session on each poll cycle and determines its current status through a five-step cascade.
+
+## The Status State Machine
+
+Sessions always start at `spawning` and move forward. The primary path through the lifecycle looks like this:
+
+```
+spawning
+   │
+   ▼
+working ──────────────────────────────────────────► stuck
+   │
+   ▼
+pr_open
+   │
+   ├──► ci_failed
+   │
+   ├──► review_pending
+   │
+   ├──► changes_requested
+   │
+   └──► approved
+            │
+            ▼
+         mergeable
+            │
+            ▼
+          merged ──► cleanup ──► done
+```
+
+Sessions can also enter **terminal statuses** — states from which they will never transition again and will no longer be polled: `killed`, `terminated`, `done`, `cleanup`, `errored`, `merged`.
+
+---
+
+## Status Reference
+
+| Status | Description |
+|---|---|
+| `spawning` | Session is being created — worktree, branch, and runtime are initialising |
+| `working` | Agent is active; no PR has been opened yet |
+| `pr_open` | Agent has pushed a branch and opened a PR; CI and reviews are pending |
+| `ci_failed` | One or more CI checks on the PR are failing |
+| `review_pending` | PR has been submitted for review; waiting for a reviewer decision |
+| `changes_requested` | One or more reviewers have requested changes |
+| `approved` | PR is approved but not yet mergeable (e.g. still behind base branch) |
+| `mergeable` | PR is approved, CI is green, and it can be merged |
+| `merged` | PR has been merged *(terminal)* |
+| `cleanup` | Post-merge cleanup is in progress *(terminal)* |
+| `done` | Session completed cleanly *(terminal)* |
+| `needs_input` | Agent is waiting on a permission prompt or human input |
+| `stuck` | Agent has been idle beyond the configured `agent-stuck` threshold |
+| `idle` | Agent process is alive but has not produced activity for an extended period |
+| `errored` | An unexpected error occurred — session is dead *(terminal)* |
+| `killed` | Session was explicitly killed or the PR was closed without merging *(terminal)* |
+| `terminated` | Session was terminated externally *(terminal)* |
+
+<Warning>
+  Terminal statuses (`killed`, `terminated`, `done`, `cleanup`, `errored`, `merged`) are final. A session in one of these states will not be polled again. To restart work on the same issue, spawn a new session.
+</Warning>
+
+---
+
+## How Status Transitions Are Determined
+
+On every poll cycle, the lifecycle manager calls `determineStatus(session)` for each active session. The logic follows a strict cascade — each step is only reached if the previous step produced no definitive result.
+
+<Steps>
+  <Step title="Runtime liveness check">
+    The lifecycle manager asks the Runtime plugin whether the session process is still alive.
+
+    **If the runtime reports the session is dead:** return `killed` immediately. No further steps are evaluated.
+  </Step>
+  <Step title="Agent activity detection">
+    The lifecycle manager calls `getActivityState()` on the Agent plugin to get the current activity state of the process.
+
+    - `waiting_input` maps to `needs_input`
+    - `exited` maps to `killed`
+    - `idle` beyond the configured `agent-stuck` threshold maps to `stuck`
+
+    If any of these conditions are met, the status is returned immediately.
+  </Step>
+  <Step title="PR auto-detection">
+    If no PR URL is recorded for the session but the agent has created a branch, the lifecycle manager calls `scm.detectPR()` once per cycle to catch PRs that were created without triggering a metadata hook.
+
+    This is the fallback for agents that do not use PATH wrappers or PostToolUse hooks.
+  </Step>
+  <Step title="PR state evaluation">
+    If a PR exists for the session, the SCM plugin provides the current CI status, review decision, and merge readiness. The lifecycle manager uses this data to assign one of:
+
+    - `ci_failed` — one or more checks are failing
+    - `review_pending` — waiting for a reviewer decision
+    - `changes_requested` — reviewer(s) requested changes
+    - `approved` — approved but not yet fully mergeable
+    - `mergeable` — approved and CI is green
+    - `merged` — PR was merged
+  </Step>
+  <Step title="Default fallback">
+    If none of the above steps produced a definitive status, the lifecycle manager falls back to `working`.
+
+    Exception: sessions already in `stuck` or `needs_input` are preserved rather than overwritten — this prevents a healthy poll cycle from clearing a stuck flag that the human hasn't acted on yet.
+  </Step>
+</Steps>
+
+---
+
+## Activity States
+
+Activity state is distinct from session status. It reflects what the agent process is doing right now, and it feeds into status determination as well as the dashboard's live session cards.
+
+| Activity State | Meaning | Threshold |
+|---|---|---|
+| `active` | Agent is processing — writing code, running tools, thinking | Activity within the last **30 seconds** |
+| `ready` | Agent finished its turn; alive and waiting for the next instruction | **30 seconds to 5 minutes** since last activity |
+| `idle` | Agent has been quiet for an extended period | More than **5 minutes** since last activity (default) |
+| `waiting_input` | Agent is at a permission prompt or asking the human a question | Detected from agent output pattern |
+| `blocked` | Agent hit an error it cannot recover from independently | Error state detected in agent output |
+| `exited` | Agent process is no longer running | Process check returns false |
+
+### Key thresholds
+
+| Threshold | Value | Effect |
+|---|---|---|
+| Active window | 30 seconds | Activity newer than this classifies as `active`; older is `ready` |
+| Ready threshold | 5 minutes | `ready` sessions older than this become `idle` |
+| Agent-stuck threshold | Configurable | `idle` sessions beyond this threshold transition to `stuck` status |
+
+---
+
+## Session Resume
+
+Most agent CLIs support resuming a session after the AO daemon restarts. AO stores the session's runtime identity (e.g. tmux session name, agent thread ID) in the session metadata under `~/.agent-orchestrator/` so it can reconnect to the existing agent process on restart rather than spawning a new one.
+
+<Accordion title="Resume support by agent">
+  | Agent | Resume mechanism |
+  |---|---|
+  | Claude Code | `--resume` flag with the previous session identifier |
+  | Codex | `codex resume <threadId>` |
+  | Cursor | One-shot per session — no resume |
+  | Aider | No native resume; PATH wrappers maintain PR tracking state |
+  | OpenCode | Session discovery and restore via the OpenCode session API |
+</Accordion>
+
+<Tip>
+  If you restart the AO daemon while sessions are active, check the dashboard — most sessions will reconnect automatically. For agents that don't support resume (Cursor, Aider), the session card will show `exited` and you may need to re-send the task.
+</Tip>
+
+---
+
+## Automated Reactions
+
+The lifecycle manager can be configured to react automatically to status transitions. Common reactions include:
+
+- **`ci_failed`** → send the failure log to the session's agent
+- **`changes_requested`** → forward the reviewer's comments to the agent
+- **`stuck`** → notify the human and pause polling
+- **`mergeable`** → notify the human that the PR is ready
+
+Reactions are configured in the `reactions` block of `agent-orchestrator.yaml`. See [Reactions](/configuration/reactions) for the full configuration reference.
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="sitemap" href="/concepts/architecture">
+    Understand the poll loop, event bus, and how status transitions are broadcast.
+  </Card>
+  <Card title="Plugins" icon="puzzle-piece" href="/concepts/plugins">
+    Learn which agent plugins support session resume and how activity detection works per agent.
+  </Card>
+  <Card title="Reactions" icon="bolt" href="/configuration/reactions">
+    Configure automated responses to CI failures, review comments, and stuck sessions.
+  </Card>
+  <Card title="Dashboard" icon="chart-kanban" href="/dashboard">
+    Understand session cards, activity states, and the attention zone in the dashboard.
+  </Card>
+</CardGroup>

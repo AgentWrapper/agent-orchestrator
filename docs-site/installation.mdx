@@ -1,0 +1,185 @@
+---
+title: "Install Agent Orchestrator on macOS, Linux, Windows"
+sidebarTitle: "Installation"
+description: "Install the AO desktop app or legacy CLI, authenticate Git and GitHub, and install an agent CLI to start running parallel coding sessions."
+---
+
+Agent Orchestrator ships as a native desktop application for macOS, Linux, and Windows. The desktop app is the recommended way to install AO — it manages the daemon, dashboard, and session lifecycle without requiring any global CLI tools. A legacy npm package (`@aoagents/ao`) is also available for existing users, but it is frozen at version 0.10.0 and will not receive further updates.
+
+## Prerequisites
+
+Before starting your first AO project, make sure the following tools are available on your machine. The desktop app itself does not require Node.js — that requirement only applies to the legacy CLI or source builds.
+
+| Tool | Required | Why |
+|---|---|---|
+| Git | Yes | Creates worktrees, branches, commits, and handles cleanup operations |
+| GitHub CLI `gh` | For GitHub projects | Reads issues, PRs, reviews, and CI status as your authenticated user |
+| tmux | Default macOS/Linux | Keeps long-running agent sessions attachable and recoverable across terminal restarts |
+| An agent CLI | Yes | The worker that writes code — e.g. Claude Code, Codex, Cursor, Aider, or OpenCode |
+| Node.js 20+ | Legacy/source installs only | Required only for the frozen npm CLI package or building AO from source |
+
+<Note>
+  If you plan to use GitLab or Linear instead of GitHub, install and authenticate their respective CLIs (`glab` for GitLab) as described on the relevant plugin pages. A GitHub-only setup only needs `gh`.
+</Note>
+
+## Install AO
+
+<Tabs>
+  <Tab title="Desktop App (Recommended)">
+    The desktop app is the primary install method. It bundles the daemon, dashboard, and all dependencies — no Node.js required.
+
+    Download the build for your platform from [aoagents.dev/download](https://aoagents.dev/download):
+
+    | Platform | Download |
+    |---|---|
+    | macOS — Apple Silicon | `.dmg` (arm64) |
+    | macOS — Intel | `.dmg` (x64) |
+    | Windows | `.exe` (x64) |
+    | Linux | AppImage (x64) or `.deb` (x64) |
+
+    After installing, open Agent Orchestrator and add a repository to start the daemon and dashboard.
+  </Tab>
+  <Tab title="Legacy npm CLI">
+    <Warning>
+      The npm package is frozen at version **0.10.0** and will not receive further updates. New setups should use the desktop app. These instructions remain for existing CLI users only.
+    </Warning>
+
+    Install the global CLI package:
+
+    ```bash
+    npm install -g @aoagents/ao
+    ```
+
+    Verify the install:
+
+    ```bash
+    ao --version
+    ```
+
+    Start AO in your repository:
+
+    ```bash
+    cd ~/code/my-repo
+    ao start
+    ```
+
+    You can also start from a path or clone from a URL:
+
+    ```bash
+    ao start ~/code/my-repo
+    ao start https://github.com/org/repo
+    ```
+
+    Run the built-in doctor check to verify your environment:
+
+    ```bash
+    ao doctor
+    ao doctor --fix
+    ```
+  </Tab>
+</Tabs>
+
+## Authenticate Your Tools
+
+### Set up GitHub CLI
+
+AO uses `gh` for issue lookup, PR discovery, review tracking, CI checks, and merge readiness. The authenticated account must be able to read the repository, push branches, open PRs, and read CI status.
+
+```bash
+gh auth login
+gh auth status
+```
+
+### Install and sign in to an agent CLI
+
+AO launches an agent CLI inside each worker session. Start with the one you already use — you can add more later for per-project or per-role configurations.
+
+<Tabs>
+  <Tab title="Claude Code">
+    ```bash
+    npm install -g @anthropic-ai/claude-code
+    claude
+    ```
+  </Tab>
+  <Tab title="Codex">
+    ```bash
+    npm install -g @openai/codex
+    codex
+    ```
+  </Tab>
+  <Tab title="Aider">
+    ```bash
+    pip install aider-chat
+    aider
+    ```
+  </Tab>
+  <Tab title="OpenCode">
+    ```bash
+    npm install -g opencode-ai
+    opencode
+    ```
+  </Tab>
+</Tabs>
+
+<Tip>
+  Run the agent CLI at least once outside of AO before your first session. Most agent CLIs need to complete their own sign-in or API key setup flow before they can be launched headlessly.
+</Tip>
+
+## Start AO in a Repository
+
+<Tabs>
+  <Tab title="Desktop App">
+    Open Agent Orchestrator and click **Add Repository**. The app starts the daemon, initialises the dashboard, and creates an orchestrator session for the project automatically.
+  </Tab>
+  <Tab title="Legacy CLI">
+    Navigate to the repository you want AO to manage and run:
+
+    ```bash
+    cd ~/code/my-repo
+    ao start
+    ```
+
+    On the first run, AO creates `agent-orchestrator.yaml`, starts the dashboard (usually at `http://localhost:3000`), and starts an orchestrator session for the project. Keep this terminal running — it owns the dashboard and lifecycle polling.
+  </Tab>
+</Tabs>
+
+## Common Install Issues
+
+<Accordion title="The `ao` command is not found">
+  The desktop app does not require a global `ao` command. If you intentionally installed the legacy CLI, check your package manager's global bin path and reopen your shell, then run `ao --version` again.
+</Accordion>
+
+<Accordion title="`gh` is not authenticated">
+  Run `gh auth login`, then `gh auth status`. AO cannot read GitHub issues, PRs, reviews, or CI checks until `gh` is authenticated with an account that has access to your repository.
+</Accordion>
+
+<Accordion title="tmux is missing">
+  Install tmux via your system package manager (`brew install tmux` on macOS, `apt install tmux` on Ubuntu/Debian). On Windows, use the `process` runtime instead — the Windows desktop installer does not require tmux.
+</Accordion>
+
+<Accordion title="No agent runtime is detected">
+  Install a supported agent CLI and run it once outside of AO so it can complete its own sign-in or configuration flow. AO cannot launch an agent that has never been initialised.
+</Accordion>
+
+<Accordion title="Port 3000 is already in use">
+  `ao start` scans for a free port and prints the final dashboard URL in the terminal output. Use the URL shown in the output — it may be a port other than 3000.
+</Accordion>
+
+<Accordion title="Dashboard fails to load after an update">
+  Run the following command to clear stale dashboard build artifacts and restart cleanly:
+
+  ```bash
+  ao dashboard --rebuild
+  ```
+</Accordion>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Spawn your first agent session on a real issue and watch it open a PR in minutes.
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/concepts/architecture">
+    Understand how the plugin system, poll loop, and session lifecycle fit together.
+  </Card>
+</CardGroup>

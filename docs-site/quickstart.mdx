@@ -1,0 +1,174 @@
+---
+title: "Agent Orchestrator Quickstart: Spawn Your First Agent"
+sidebarTitle: "Quickstart"
+description: "Spawn your first AO agent session, watch it work through a GitHub issue, review the PR, and clean up — all in under five minutes."
+---
+
+This quickstart walks you through the smallest useful AO loop: start the dashboard, spawn one worker session on a real issue, watch it open a pull request, and clean up after it merges. By the end you will have seen every stage of the session lifecycle and understand what AO created on your behalf.
+
+<Note>
+  Complete [Installation](/installation) before starting. You need AO running, Git configured, `gh` authenticated, and at least one agent CLI signed in.
+</Note>
+
+## Before You Start
+
+Use a repository where you can push a branch and open a pull request. For the first run, choose a task that is small and easy to review:
+
+- A failing test with a clear expected fix
+- A short documentation update
+- A narrow feature with obvious acceptance criteria
+- A small refactor with a defined scope
+
+Avoid broad tasks like "improve auth" or "clean up the app." AO can run many agents in parallel, but each worker session still needs a task with a visible finish line.
+
+---
+
+## Your First Session
+
+<Steps>
+  <Step title="Start AO in your repository">
+    **Desktop app:** open Agent Orchestrator and add the repository you want it to manage. The app starts the daemon, dashboard, and an orchestrator session automatically.
+
+    **Legacy CLI:** navigate to your repository and run:
+
+    ```bash
+    cd ~/code/my-repo
+    ao start
+    ```
+
+    On the first run, AO creates `agent-orchestrator.yaml` and starts the dashboard (usually at `http://localhost:3000`). Keep this terminal running — it owns the dashboard and lifecycle polling.
+
+    <Tip>
+      Open the dashboard URL in your browser now so you can watch the session appear in real time.
+    </Tip>
+  </Step>
+
+  <Step title="Pick a safe first task">
+    Browse your GitHub issues and find one with a clear outcome. A failing test, a small bug, or a focused docs update all work well.
+
+    Note the issue number — you will need it in the next step.
+  </Step>
+
+  <Step title="Spawn a worker session">
+    Open a second terminal in the same repository. Spawn a session for a GitHub issue by number:
+
+    ```bash
+    ao spawn 42
+    ```
+
+    Replace `42` with your issue number. AO fetches the issue through `gh`, creates a dedicated git worktree, starts the configured worker agent, and gives it the issue context as its initial prompt.
+
+    If you prefer to give the agent a freeform instruction instead of linking an issue:
+
+    ```bash
+    ao spawn --prompt "Fix the typo in docs/getting-started.md line 14"
+    ```
+
+    The command prints the session ID (e.g. `myrepo-1`) and the dashboard URL.
+  </Step>
+
+  <Step title="Watch the dashboard">
+    Open the session card in the dashboard. The board is organised into columns that reflect where each session is in its lifecycle:
+
+    | Column | Meaning |
+    |---|---|
+    | **Working** | Agent is actively writing code or running tools |
+    | **Pending** | Session is spawning or waiting to be picked up |
+    | **Review** | PR is open; awaiting CI results or reviewer decision |
+    | **Respond** | AO needs the agent to act — CI failed, changes requested |
+    | **Merge** | PR is approved and CI is green; ready to merge |
+
+    Inside the card you can see the live terminal output, activity state (active, ready, idle, waiting for input), the branch name, the worktree path, and the PR link once one is created.
+
+    You can also check status from the terminal at any time:
+
+    ```bash
+    ao status
+    ```
+  </Step>
+
+  <Step title="Intervene only when needed">
+    AO handles routine feedback automatically:
+
+    - **CI failure** — AO sends the failure context and relevant log lines back to the session.
+    - **Review requesting changes** — AO forwards the reviewer's comments to the agent.
+    - **Merge conflicts** — AO can ask the worker to rebase or resolve the conflict.
+    - **Agent stuck or waiting for input** — AO sends you a notification and flags the card.
+
+    If you want to give the worker a direct instruction, use `ao send` rather than typing directly in the terminal. This preserves AO's busy detection, retry handling, and message formatting:
+
+    ```bash
+    ao send myrepo-1 "Keep the fix smaller. Do not refactor the API layer."
+    ```
+  </Step>
+
+  <Step title="Review and merge the PR">
+    When the PR is green and the session card moves to the **Merge** column, review the pull request as you normally would. AO does not merge automatically — you make the final call.
+
+    Open the PR link from the session card, review the diff, and merge when you are satisfied.
+  </Step>
+
+  <Step title="Clean up completed sessions">
+    After the PR is merged or the issue is closed, clean up the completed sessions and their worktrees:
+
+    ```bash
+    # Preview what will be removed
+    ao session cleanup --dry-run
+
+    # Run the actual cleanup
+    ao session cleanup
+    ```
+
+    Cleanup removes the git worktree, the tmux session, and the local session metadata. The branch remains on GitHub until you delete it there.
+  </Step>
+</Steps>
+
+---
+
+## What AO Created
+
+When you ran `ao start` and `ao spawn`, AO created several things on your machine:
+
+| Item | What it is |
+|---|---|
+| `agent-orchestrator.yaml` | Project config: plugins, projects, reactions, runtime, and notifier settings |
+| Orchestrator session | A coordinating session started by `ao start` that supervises all worker sessions |
+| Worker session | The agent process that works on one issue or freeform prompt |
+| Git worktree | An isolated checkout for the worker's branch, separate from your main working tree |
+| Session metadata | Files under `~/.agent-orchestrator/` that let AO track branch, PR, status, and runtime state |
+
+<Info>
+  You can inspect the session metadata directory at `~/.agent-orchestrator/` to see what AO stores per session. These files are how the dashboard and lifecycle manager stay in sync even after a restart.
+</Info>
+
+---
+
+## Troubleshooting First-Run Issues
+
+| Symptom | What to check |
+|---|---|
+| Dashboard is not updating | Make sure the `ao start` terminal is still running — closing it stops the poll loop |
+| `ao spawn` warns that AO is not running | Run `ao start` in the repository before spawning |
+| GitHub issue or PR data is missing | Run `gh auth status` and check the `repo` field in `agent-orchestrator.yaml` |
+| Agent started but does nothing | Open the session card terminal and send a clear instruction with `ao send` |
+| Windows spawn fails with tmux errors | Set `defaults.runtime: process` in `agent-orchestrator.yaml` |
+| Session stuck in `spawning` | Check that your agent CLI is installed and has been run at least once outside AO |
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Parallel Issues" icon="code-branch" href="/guides/parallel-issues">
+    Spawn several worker sessions at once without duplicating active work.
+  </Card>
+  <Card title="CI Recovery" icon="rotate" href="/guides/ci-recovery">
+    See how AO reacts when checks fail and routes fixes back to the right session.
+  </Card>
+  <Card title="Session Lifecycle" icon="timeline" href="/concepts/session-lifecycle">
+    Understand every status state a session can be in and how transitions are determined.
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/overview">
+    Tune agents, runtimes, projects, reactions, and notifiers in `agent-orchestrator.yaml`.
+  </Card>
+</CardGroup>

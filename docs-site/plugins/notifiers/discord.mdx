@@ -1,0 +1,84 @@
+---
+title: "Discord Notifications from Agent Orchestrator Sessions"
+sidebarTitle: "Discord"
+description: "Send AO events to Discord as rich embeds with color-coded sidebars. Handles Retry-After rate limiting automatically. Setup via ao setup discord."
+---
+
+The Discord notifier delivers Agent Orchestrator events to a Discord channel using Discord's webhook integration. Messages are formatted as rich embeds with color-coded sidebars so you can distinguish event types at a glance. Discord rate limiting is handled automatically, including `Retry-After` backoff on 429 responses.
+
+## Setup
+
+Run the interactive setup command:
+
+```bash
+ao setup discord
+```
+
+<Steps>
+  <Step title="Create a Discord webhook">
+    If you don't already have a webhook URL, the command provides the Discord link and waits while you create one:
+
+    1. Open [discord.com/app](https://discord.com/app) and navigate to your server and target channel.
+    2. Open **Edit Channel → Integrations → Webhooks**.
+    3. Click **Create Webhook**, give it a name, and copy the webhook URL.
+  </Step>
+  <Step title="Paste the webhook URL">
+    Paste the URL when prompted. AO sends a test message to verify the webhook before saving your config.
+  </Step>
+  <Step title="Choose a routing preset">
+    Select which notification priorities Discord should receive: `urgent-only`, `urgent-action`, or `all`. Pass `--routing-preset <preset>` for scriptable setups.
+  </Step>
+</Steps>
+
+To check or refresh an existing Discord configuration:
+
+```bash
+ao setup discord --status
+ao setup discord --refresh
+```
+
+## Configuration
+
+```yaml
+notifiers:
+  discord:
+    plugin: discord
+    webhookUrl: https://discord.com/api/webhooks/...
+    username: "AO Bot"
+    avatarUrl: "https://example.com/avatar.png"   # optional
+    threadId: "123456789"                          # optional
+    retries: 2
+    retryDelayMs: 1000
+```
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `webhookUrl` | ✓ | — | Full `discord.com/api/webhooks/...` URL for your target channel |
+| `username` | Optional | `Agent Orchestrator` | Display name shown on each message |
+| `avatarUrl` | Optional | — | Override the webhook avatar with a custom image URL |
+| `threadId` | Optional | — | Post messages into a specific existing thread |
+| `retries` | Optional | `2` | Number of retry attempts on 429 or 5xx errors |
+| `retryDelayMs` | Optional | `1000` | Base delay in milliseconds between retries (exponential backoff) |
+
+## Message format
+
+AO sends Discord embeds rather than plain text. Each notification includes:
+
+- A **colored sidebar** indicating event severity — blue for informational, amber for review requested, red for CI failure, green for merged.
+- The **issue or PR title** as a clickable link.
+- The **session ID** as a labeled field.
+- A short **reason or description** as the embed description.
+
+## Rate limiting
+
+The Discord notifier handles Discord's `Retry-After` header on 429 responses — AO waits the requested interval before retrying. For 5xx server errors, it uses exponential backoff up to the configured `retries` limit.
+
+## Testing
+
+```bash
+# Send a basic test notification to Discord
+ao notify test --to discord --template basic
+
+# Test a merge-ready notification with action buttons
+ao notify test --to discord --template merge-ready --actions
+```

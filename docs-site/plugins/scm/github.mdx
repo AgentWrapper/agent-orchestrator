@@ -1,0 +1,93 @@
+---
+title: "GitHub SCM Integration: PRs, Reviews, and CI Checks"
+sidebarTitle: "GitHub"
+description: "Monitor PRs, CI checks, and code reviews on GitHub with AO. Includes batch GraphQL enrichment and optional real-time webhook support."
+---
+
+The GitHub SCM plugin is the default SCM provider for Agent Orchestrator. It uses the `gh` CLI to poll PR state, review decisions, inline comments, and CI check results for all active sessions. An optional webhook integration reduces polling latency to near-zero for teams that want faster feedback.
+
+## Prerequisites
+
+Authenticate the GitHub CLI before using this plugin:
+
+```bash
+gh auth login
+```
+
+## Configuration
+
+```yaml
+scm: github
+
+projects:
+  my-app:
+    repo: owner/my-app
+```
+
+## Batch GraphQL enrichment
+
+On every poll cycle, AO issues a **single batched GraphQL query** that fetches PR state, CI check results, review decisions, and merge readiness for all active sessions in a project at once. This replaces what would otherwise be N × 3 separate REST API calls with a single request, keeping AO well under GitHub's rate limits even with many concurrent sessions.
+
+<Tip>
+If you do hit rate limits, the batch enricher backs off and queues automatically. Check the AO logs or the [Troubleshooting](/troubleshooting) guide for diagnostic steps.
+</Tip>
+
+## Webhook integration (optional)
+
+By default, AO relies on polling. You can optionally configure a GitHub webhook so AO receives real-time push events — this reduces the delay between a CI result or review and the agent acting on it.
+
+AO receives webhook events at:
+
+```
+POST /api/webhooks
+```
+
+### Setting up the webhook in GitHub
+
+In your GitHub repository, go to **Settings → Webhooks → Add webhook** and fill in:
+
+- **Payload URL**: `https://<your-ao-host>/api/webhooks`
+- **Content type**: `application/json`
+- **Secret**: the value of the environment variable you'll reference as `secretEnvVar`
+- **Events to send**: Pull requests, Push, Workflow runs, Pull request reviews, Check suites
+
+<Note>
+To expose your local AO dashboard publicly for webhook delivery, see the [Remote access](/configuration/remote-access) guide.
+</Note>
+
+### Webhook config reference
+
+Add a `webhook` block to your project's `scm` config:
+
+```yaml
+scm: github
+
+projects:
+  my-app:
+    repo: owner/my-app
+    scm:
+      webhook:
+        enabled: true
+        path: /api/webhooks
+        secretEnvVar: GITHUB_WEBHOOK_SECRET
+        signatureHeader: X-Hub-Signature-256
+        eventHeader: X-GitHub-Event
+        deliveryHeader: X-GitHub-Delivery
+        maxBodyBytes: 1048576
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `enabled` | `true` | Enable or disable webhook processing |
+| `path` | `/api/webhooks` | Path AO listens on for incoming events |
+| `secretEnvVar` | — | Name of the environment variable holding your HMAC secret |
+| `signatureHeader` | `X-Hub-Signature-256` | Header carrying the HMAC-SHA256 signature |
+| `eventHeader` | `X-GitHub-Event` | Header carrying the event type |
+| `deliveryHeader` | `X-GitHub-Delivery` | Header carrying the delivery UUID |
+| `maxBodyBytes` | unlimited | Reject payloads larger than this (bytes) |
+
+**Signature verification:** AO computes an HMAC-SHA256 digest over the raw request body using the secret from `secretEnvVar`, then compares it against the incoming `X-Hub-Signature-256` header using a constant-time comparison.
+
+<Info>
+Polling remains active as a fallback even when webhooks are configured. Webhooks are a latency optimization, not a hard requirement.
+</Info>

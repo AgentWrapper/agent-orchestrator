@@ -1,0 +1,100 @@
+---
+title: "GitLab SCM Integration: MRs, Pipelines, and Reviews"
+sidebarTitle: "GitLab"
+description: "Monitor GitLab MRs, pipeline results, and review discussions with AO. Includes webhook support with token verification and smart bot detection."
+---
+
+The GitLab SCM plugin connects Agent Orchestrator to the merge-request side of your GitLab workflow. It maps GitLab's terminology — merge requests, discussions, and pipelines — to AO's internal PR lifecycle model, so the agent review loop and CI recovery loop work the same way regardless of whether you use GitHub or GitLab.
+
+## Prerequisites
+
+Authenticate the GitLab CLI before using this plugin:
+
+```bash
+glab auth login
+```
+
+## Configuration
+
+```yaml
+scm: gitlab
+
+scmConfig:
+  host: gitlab.com   # default; override for self-hosted instances
+```
+
+## Concept mapping
+
+AO normalizes GitLab and GitHub terminology internally. The dashboard and agent state machine use the same vocabulary regardless of which SCM you use:
+
+| AO / GitHub concept | GitLab equivalent |
+|---------------------|-------------------|
+| Pull request | Merge request |
+| Review | Discussion / note |
+| CI check run | Pipeline / job |
+
+## Webhook integration (optional)
+
+AO can receive real-time GitLab events at:
+
+```
+POST /api/webhooks
+```
+
+### Setting up the webhook in GitLab
+
+In your GitLab project, go to **Settings → Webhooks → Add new webhook** and fill in:
+
+- **URL**: `https://<your-ao-host>/api/webhooks`
+- **Secret token**: the value of the environment variable you'll reference as `secretEnvVar`
+- **Trigger events**: Merge request events, Pipeline events, Push events, Note events (for review comments)
+
+### Webhook config reference
+
+```yaml
+scm: gitlab
+
+projects:
+  my-app:
+    repo: group/project
+    scm:
+      webhook:
+        secretEnvVar: GITLAB_WEBHOOK_TOKEN
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `enabled` | `true` | Enable or disable webhook processing |
+| `path` | `/api/webhooks` | Path AO listens on for incoming events |
+| `secretEnvVar` | — | Name of the environment variable holding your token |
+| `signatureHeader` | `X-Gitlab-Token` | Header carrying the secret token |
+| `eventHeader` | `X-Gitlab-Event` | Header carrying the event type |
+| `deliveryHeader` | `X-Gitlab-Event-Uuid` | Header carrying the delivery UUID |
+| `maxBodyBytes` | unlimited | Reject payloads larger than this (bytes) |
+
+<Warning>
+GitLab's webhook verification works differently from GitHub's. GitLab sends the configured secret as a **literal string** in the `X-Gitlab-Token` header — there is no HMAC involved. AO compares the header value directly against the secret stored in your environment variable.
+</Warning>
+
+<Info>
+Polling remains active as a fallback even when webhooks are configured. Webhooks are a latency optimization, not a hard requirement.
+</Info>
+
+## Bot detection
+
+AO automatically ignores review comments from known bot accounts so they don't block the merge-readiness check. The following accounts are always treated as bots:
+
+| Username |
+|----------|
+| `gitlab-bot` |
+| `ghost` |
+| `dependabot[bot]` |
+| `renovate[bot]` |
+| `sast-bot` |
+| `codeclimate[bot]` |
+| `sonarcloud[bot]` |
+| `snyk-bot` |
+
+In addition to these hardcoded entries, AO also treats any username matching the pattern `project_\d+_bot` (GitLab project access tokens) or ending in `[bot]` as a bot account.
+
+This means automated tools like BugBot or Renovate will never block an agent session from transitioning to the mergeable state.

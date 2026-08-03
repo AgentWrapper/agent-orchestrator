@@ -1,0 +1,109 @@
+---
+title: "Automatic CI Failure Recovery with Agent Orchestrator"
+sidebarTitle: "CI Recovery"
+description: "AO detects failing CI checks, wakes the agent with full failure context, and notifies you. The loop repeats until CI is green or the retry budget runs out."
+---
+
+When your PR's CI goes red, AO notices before you do and immediately puts the agent to work on a fix. The agent inspects the failing logs, pushes a commit, CI re-runs, and the loop closes — all without you needing to copy-paste error output or nudge anything manually. No webhooks or CI integrations to install; AO uses the `gh` CLI you already authenticated with.
+
+## How it works
+
+<Steps>
+  <Step title="SCM plugin polls check runs">
+    AO polls the PR's check runs via `gh pr checks` (or `glab` for GitLab) on a regular cadence.
+  </Step>
+  <Step title="Lifecycle manager transitions to ci_failed">
+    When any required check returns `failure` or `error`, the session transitions to the `ci_failed` state.
+  </Step>
+  <Step title="Agent is woken with failure context">
+    AO injects a structured prompt into the agent with everything it needs to start investigating. See [What the agent sees](#what-the-agent-sees) below.
+  </Step>
+  <Step title="Notifier pings you">
+    Your configured notifier (desktop, Slack, Discord, etc.) fires so you know a recovery cycle has started.
+  </Step>
+</Steps>
+
+## What the agent sees
+
+When the session enters `ci_failed`, AO sends two messages in sequence:
+
+**First message — reaction nudge (poll cycle N):**
+The configured `message` (or the default: *"CI failed on PR #42…"*) is sent to the agent via `ao send`.
+
+**Second message — detailed follow-up (poll cycle N+1, ~30 seconds later):**
+AO calls `formatCIFailureMessage()` and sends a second structured message containing:
+- Each failing check's name and conclusion status
+- A direct link to the run log (the agent can fetch it with `gh run view`)
+- The PR number and branch name
+
+<Note>
+  The detailed follow-up is sent via `sessionManager.send()` directly and does **not** consume the `ci-failed` reaction's retry budget. It fires regardless of whether you've set a custom `message`. Your custom message is the first nudge; the structured check list is always the second.
+</Note>
+
+AO **fingerprints** the set of failing checks (name + status + conclusion). If the exact same failure set is still present on the next poll cycle, AO skips re-sending to avoid spamming the agent. When the failure set changes — for example, one check is fixed and a new one appears — the fingerprint changes and both messages are sent again.
+
+## Configurable behavior
+
+```yaml
+reactions:
+  ci-failed:
+    auto: true
+    retries: 3
+    message: "These CI checks are failing. Please fix them."
+```
+
+| Field | Default | Description |
+|---|---|---|
+| `auto` | `true` | Whether AO sends recovery messages automatically |
+| `retries` | unlimited | Number of automatic recovery attempts before escalating |
+| `message` | (built-in) | Custom text for the first-pass nudge |
+
+## Manual retry
+
+Trigger an immediate check outside the normal polling cadence:
+
+```bash
+ao review-check             # check every tracked project
+ao review-check myproject   # one project only
+ao review-check --dry-run   # show what would be sent, don't send
+```
+
+## When CI recovery doesn't kick in
+
+<AccordionGroup>
+  <Accordion title="PR not linked to a session">
+    If you created the PR manually without running `ao spawn`, AO doesn't know about it and won't track its CI. Claim it retroactively:
+
+    ```bash
+    ao spawn --claim-pr 123 --assign-on-github
+    ```
+
+    This creates a session, points it at PR #123, and (with `--assign-on-github`) assigns the PR to you so it shows up in your GitHub filters.
+  </Accordion>
+  <Accordion title="Check status is neutral or skipped">
+    AO only reacts to `failure` and `error` conclusions. `neutral` and `skipped` are ignored.
+  </Accordion>
+  <Accordion title="PR is in draft">
+    AO waits for the PR to be marked ready for review before treating CI results as binding.
+  </Accordion>
+  <Accordion title="auto: false in config">
+    If you've set `reactions.ci-failed.auto: false`, AO notifies you but does not send any message to the agent.
+  </Accordion>
+</AccordionGroup>
+
+## Escalation
+
+When an agent can't fix CI after several attempts, AO stops nudging and escalates to you instead.
+
+```yaml
+reactions:
+  ci-failed:
+    retries: 3          # escalate after 3 failed recovery attempts
+    escalateAfter: "1h" # …or after 1 hour wall-clock time, whichever comes first
+```
+
+`escalateAfter` accepts a duration string (e.g. `"30m"`, `"1h"`) or an integer attempt count. When either threshold is crossed, AO emits a `reaction.escalated` event and notifies you via your configured notifier rather than sending another message to the agent.
+
+<Tip>
+  For urgent projects where you want fast human handoff, try `retries: 1` combined with `escalateAfter: "5m"`.
+</Tip>

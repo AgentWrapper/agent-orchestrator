@@ -1,0 +1,170 @@
+---
+title: "Agent Orchestrator: Frequently Asked Questions Guide"
+sidebarTitle: "FAQ"
+description: "Common questions about AO: how it works, which agents are supported, privacy, cost, platform support, plugins, and how to uninstall."
+---
+
+This page answers the most common questions about how Agent Orchestrator works, what it costs, where your data goes, and what's supported on different platforms.
+
+<AccordionGroup>
+  <Accordion title="How is AO different from just having multiple terminal tabs?">
+    Terminal tabs work fine for one or two agents. Once you have more, the bookkeeping becomes the job: tracking which branch each agent is on, which PR it opened, whether CI is passing, whether a reviewer left feedback. AO handles all of that automatically.
+
+    Specifically, AO gives you:
+    - Per-session git worktrees and branches — agents can't step on each other's changes
+    - A single dashboard showing every agent's state, activity, and PR status at a glance
+    - Automatic reactions to CI failures, review comments, merge conflicts, and stuck agents
+    - Per-session cost tracking (for agents that report it, like Claude Code)
+
+    For a single agent doing one task, a terminal tab is fine. For anything beyond that, AO saves significant mental overhead.
+  </Accordion>
+
+  <Accordion title="Which agents are supported?">
+    AO ships with built-in support for:
+
+    | Agent | Notes |
+    |---|---|
+    | **Claude Code** | Default and most tested path |
+    | **Codex** | OpenAI Codex CLI sessions |
+    | **Aider** | For teams already using Aider workflows |
+    | **OpenCode** | Includes session discovery and resume support |
+    | **Cursor** | Cursor-based sessions |
+
+    Set the agent per project in `agent-orchestrator.yaml`:
+
+    ```yaml
+    agent: claude-code
+    ```
+
+    Or override it at spawn time:
+
+    ```bash
+    ao spawn --agent codex
+    ```
+
+    Community plugins can add support for additional agents. See the plugin docs for details.
+  </Accordion>
+
+  <Accordion title="How does parallel work avoid conflicts between sessions?">
+    Each session gets its own isolated git worktree (or full clone, depending on your `workspace` setting) and its own branch. Agents write to their own directory on disk and push to their own branch — they cannot touch another session's files or history.
+
+    The orchestrator session coordinates work by breaking issues into tasks and assigning them to workers, each in a separate worktree. When all workers finish, the orchestrator (or a human) reviews and merges the PRs in sequence.
+  </Accordion>
+
+  <Accordion title="Does AO auto-merge PRs?">
+    No — intentionally. AO will get a PR to a mergeable state: CI green, approvals satisfied, conflicts resolved. Then it stops. The merge is always your decision.
+
+    The `approved-and-green` reaction notifies you when a PR is ready. If you configure `action: auto-merge`, AO queues the merge intent, but it still respects all branch protection rules, required review counts, and failing checks. It is not a bypass.
+  </Accordion>
+
+  <Accordion title="Do I need webhooks?">
+    No. AO polls `gh` (GitHub CLI) or `glab` (GitLab CLI) for PR state by default — webhooks are optional.
+
+    Webhooks are a latency optimization for the review loop. If you want near-instant reactions when a review comment arrives (rather than waiting for the next poll cycle), wire up a webhook. Otherwise the polling approach works fine for most teams.
+  </Accordion>
+
+  <Accordion title="Does AO work with GitHub Enterprise or self-hosted GitLab?">
+    Yes. Both `gh` and `glab` support enterprise and self-hosted instances — configure them through their own tools (the `gh` and `glab` CLIs).
+
+    For self-hosted GitLab, also set `trackerConfig.host` and `scmConfig.host` in your AO project config so AO knows where to point its API calls.
+  </Accordion>
+
+  <Accordion title="Does AO work on Windows?">
+    Partially. The main limitation is tmux, which is not available on Windows. Use `runtime: process` in your config instead:
+
+    ```yaml
+    runtime: process
+    ```
+
+    Everything else — spawning agents, the PR flow, the review loop, CI recovery — works the same. Desktop notifications are a no-op on Windows; use a Slack, Discord, or webhook notifier instead.
+
+    See the [Troubleshooting](/troubleshooting) page for Windows-specific issues.
+  </Accordion>
+
+  <Accordion title="Where is session state stored?">
+    All session state lives locally on your machine at:
+
+    ```
+    ~/.agent-orchestrator/{hash}-{projectId}/
+    ```
+
+    There is no database. Everything is flat files you can inspect directly — session records, archived sessions, feedback reports, and observability snapshots are all plain JSON or YAML.
+  </Accordion>
+
+  <Accordion title="Can I run AO on a remote server?">
+    Yes. The dashboard is a standard Next.js app. You can port-forward it, put it behind a reverse proxy, or access it over Tailscale from another device.
+
+    AO has no built-in authentication, so use your own SSO or HTTP Basic Auth layer if the server is accessible to others. In containers, use `runtime: process` since tmux is usually not available.
+
+    See [Remote Access](/configuration/remote-access) for step-by-step setup.
+  </Accordion>
+
+  <Accordion title="What does AO cost?">
+    AO itself is free and MIT-licensed.
+
+    The underlying coding agents have their own costs:
+    - **Claude Code** — billed by Anthropic based on token usage; AO shows per-session cost on the dashboard
+    - **Codex** — billed by OpenAI
+    - **Aider / OpenCode** — depends on the model they're configured to use
+    - **Cursor** — uses your existing Cursor subscription
+
+    AO does not add any markup or take a percentage of API costs.
+  </Accordion>
+
+  <Accordion title="Does AO send my code to any server?">
+    No. Your code stays in your git worktrees on your own machine. AO does not upload your source code anywhere.
+
+    What AO does send externally:
+    - GitHub or GitLab API calls, through your authenticated `gh` or `glab` CLI — the same calls you'd make manually
+    - Agent API calls (to Anthropic, OpenAI, etc.) — made by the agent process directly, not routed through AO
+
+    AO itself is a local process coordinator. It has no backend server and no telemetry collection.
+  </Accordion>
+
+  <Accordion title="How do I write a custom plugin?">
+    Scaffold a new plugin with the CLI:
+
+    ```bash
+    ao plugin create --slot <slot> --name <name>
+    ```
+
+    Slots include `agent`, `tracker`, `scm`, `notifier`, `runtime`, `terminal`, and `workspace`. Plugins are small Node packages that export a manifest and a `create()` function. Reference the plugin docs for the interface each slot expects.
+
+    Once built, reference your plugin in config by package name or local path:
+
+    ```yaml
+    tracker:
+      package: "@acme/ao-plugin-tracker-jira"
+      projectKey: APP
+    ```
+  </Accordion>
+
+  <Accordion title="The npm package is outdated — how do I get the latest version?">
+    The `@aoagents/ao` npm package is frozen at version `0.10.0` and will not receive further updates. The recommended way to install and update AO is through the [desktop download](/installation).
+
+    If you're already on the npm version, run `ao start` — it will fetch and open the desktop build automatically.
+
+    Existing npm installations continue to work; you just won't receive new features or bug fixes through that channel.
+  </Accordion>
+
+  <Accordion title="Why is everything a plugin?">
+    Because the right answer to "should AO support Linear?" (or Discord, or Codex, or any other tool) is always yes — but bundling every integration into core makes the CLI heavy for everyone. Plugins let you install exactly what your workflow needs and nothing else.
+  </Accordion>
+
+  <Accordion title="Does AO modify my repository's files?">
+    The agent modifies files in its worktree — that's the whole point. AO itself does not touch `main`, does not force-push, and does not merge. Each session works on its own branch in an isolated worktree, leaving your main branch untouched until you decide to merge.
+  </Accordion>
+
+  <Accordion title="How do I completely uninstall AO?">
+    Remove the npm package and wipe session data:
+
+    ```bash
+    npm uninstall -g @aoagents/ao
+    rm -rf ~/.agent-orchestrator
+    ```
+
+    The `rm -rf ~/.agent-orchestrator` step deletes all session history, project registrations, and stored state. Skip it if you want to preserve that data.
+
+    If you installed via the desktop app, uninstall it through your system's normal application removal process, then remove `~/.agent-orchestrator` if desired.
+  </Accordion>
+</AccordionGroup>

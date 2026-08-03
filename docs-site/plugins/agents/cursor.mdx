@@ -1,0 +1,88 @@
+---
+title: "Cursor Agent CLI Integration in Agent Orchestrator"
+sidebarTitle: "Cursor"
+description: "Set up Cursor Agent CLI in Agent Orchestrator. AO detects the binary, tracks activity via terminal output, and captures PRs via PATH wrappers. No resume."
+---
+
+Cursor Agent CLI brings Cursor's editing model to a headless terminal session. AO spawns it per session, wraps the `gh` and `git` binaries for PR tracking, and classifies activity from terminal output. One thing to be aware of upfront: Cursor does not support session resume — every spawn starts a fresh conversation with no memory of the previous one.
+
+- **Slot:** `agent`
+- **Config name:** `cursor`
+- **Binary:** `agent`
+- **Platforms:** macOS · Linux · Windows
+
+## Install
+
+```bash
+curl https://cursor.com/install -fsS | bash
+```
+
+Verify the correct binary is in your PATH:
+
+```bash
+agent --help
+```
+
+You should see **"Cursor Agent"** in the output. If you see help text from a different tool, another binary named `agent` is taking priority — reorder your `PATH` so the Cursor one wins, or use a shell alias.
+
+## Configure
+
+```yaml
+agent: cursor
+```
+
+No additional plugin-level config keys are available for Cursor.
+
+## How AO Integrates with Cursor
+
+<Accordion title="Launch">
+  AO runs `agent` inside the worktree. The following environment variables are injected automatically:
+
+  | Variable | Set by AO | Purpose |
+  |---|---|---|
+  | `AO_SESSION_ID` | ✓ | Unique AO session identifier |
+  | `AO_ISSUE_ID` | ✓ | Issue identifier (when spawned from an issue) |
+  | `PATH` | ✓ | Prepends `~/.ao/bin` so wrappers take priority |
+  | `GH_PATH` | ✓ | Absolute path to the real `gh` binary |
+</Accordion>
+
+<Accordion title="Agent detection">
+  Because the binary is simply named `agent` — a name that collides with many other tools — AO's plugin runs a detection check before treating it as Cursor. It calls `agent --help` and looks for two specific strings in the output:
+
+  - `Cursor Agent`
+  - `--approve-mcps`
+
+  Both must be present for the plugin to activate. If either is missing, AO will warn that the Cursor agent wasn't detected and skip loading the plugin.
+</Accordion>
+
+<Accordion title="Activity tracking">
+  Cursor Agent CLI doesn't write a structured event log. AO classifies agent state by analyzing terminal output on each poll cycle, writing results to:
+
+  ```
+  {workspace}/.ao/activity.jsonl
+  ```
+
+  The classifier recognises Cursor's common output patterns to determine `active`, `ready`, `idle`, and `waiting_input` states. The dashboard reads from this file.
+</Accordion>
+
+<Accordion title="PR and git tracking">
+  PATH wrappers at `~/.ao/bin/gh` and `~/.ao/bin/git` intercept PR creation and commit commands. When Cursor runs `gh pr create`, the wrapper captures the PR number and branch before passing the call through to the real binary.
+</Accordion>
+
+<Accordion title="Session resume">
+  Session resume is **not supported** for Cursor Agent CLI. Every `ao spawn` starts a fresh Cursor session with no memory of previous conversations or file context from prior runs.
+</Accordion>
+
+<Warning>
+  Because Cursor doesn't support session resume, restarting the AO daemon or the session will lose all conversation context. For long-running tasks that need continuity, consider using **Claude Code**, **Codex**, or **OpenCode** instead.
+</Warning>
+
+## Troubleshooting
+
+<Accordion title="AO says Cursor Agent isn't detected">
+  Run `agent --help` directly in your terminal. If the output doesn't contain both `Cursor Agent` and `--approve-mcps`, the binary in your PATH is not the Cursor one. Reinstall Cursor Agent CLI with the install command above, then check `which agent` to confirm the right binary is first in your PATH.
+</Accordion>
+
+<Accordion title="Dashboard never leaves `active`">
+  Cursor doesn't emit a structured session log, so AO relies on terminal output classification. If another tool is capturing or buffering the terminal output before AO can read it, the classifier can get stuck. Run `ao doctor` — it will flag any terminal capture conflicts and suggest a fix.
+</Accordion>

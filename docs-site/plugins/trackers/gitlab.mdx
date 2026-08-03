@@ -1,0 +1,59 @@
+---
+title: "GitLab Issues Tracker Integration for Agent Orchestrator"
+sidebarTitle: "GitLab"
+description: "Use GitLab Issues as your AO tracker via the glab CLI. Supports gitlab.com and self-hosted GitLab instances with a single host config key."
+---
+
+The GitLab tracker plugin works the same way as the GitHub tracker, but targets GitLab Issues using the [`glab` CLI](https://gitlab.com/gitlab-org/cli). It supports both `gitlab.com` and self-hosted GitLab instances, making it a good fit for teams running GitLab on their own infrastructure.
+
+## Prerequisites
+
+Install and authenticate the GitLab CLI before using this tracker:
+
+```bash
+glab auth login
+```
+
+For self-hosted instances, make sure `glab` is configured to point at your server. The `glab` CLI stores its hostname config at `~/.config/glab-cli/` — ensure the hostname there matches the `host` value you set in AO.
+
+## Configuration
+
+### gitlab.com (default)
+
+```yaml
+tracker: gitlab
+
+projects:
+  my-app:
+    repo: group/project
+```
+
+### Self-hosted GitLab
+
+To connect to a self-hosted instance, add a `host` key at the **tracker plugin level** — not inside `trackerConfig`:
+
+```yaml
+tracker:
+  name: gitlab
+  host: gitlab.mycompany.com
+
+projects:
+  my-app:
+    repo: group/project
+```
+
+<Warning>
+`host` must be on the `tracker` block, not inside `trackerConfig`. The `trackerConfig` block is reserved for per-project passthrough fields like labels, assignees, and milestones. Placing `host` inside `trackerConfig` will have no effect.
+</Warning>
+
+## Config reference
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `host` | `gitlab.com` | GitLab hostname — override for self-hosted instances |
+
+## Notes
+
+- Issue field coverage maps 1:1 with the GitHub tracker's equivalents.
+- Label and milestone filtering work via `glab issue list --label <name>`.
+- All operations (fetch, create, comment, close, list) go through the `glab` CLI — no separate API token is needed in AO.

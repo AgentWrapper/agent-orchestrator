@@ -1,0 +1,113 @@
+---
+title: "Using Claude Code as Your Agent in Agent Orchestrator"
+sidebarTitle: "Claude Code"
+description: "Set up Claude Code as your AO agent. Covers install, PostToolUse hook activity tracking, session resume, per-message cost reporting, and permission modes."
+---
+
+Claude Code is Anthropic's CLI coding agent and the default agent in Agent Orchestrator. It earns that default status through a combination of first-class session resume, rich per-message JSONL event logs, and a native hook system that AO registers against — giving you accurate dashboard states and cost visibility without any extra configuration on your part.
+
+- **Slot:** `agent`
+- **Config name:** `claude-code`
+- **Binary:** `claude`
+- **Platforms:** macOS · Linux · Windows
+
+## Install
+
+<Steps>
+  <Step title="Install the Claude Code package">
+    ```bash
+    npm install -g @anthropic-ai/claude-code
+    ```
+  </Step>
+  <Step title="Authenticate on first run">
+    ```bash
+    claude
+    ```
+
+    Claude Code will walk you through signing in to your Anthropic account. This only needs to happen once — credentials are stored in `~/.claude/` and reused by every AO session automatically.
+  </Step>
+</Steps>
+
+## Configure
+
+Add a single line to your project or global config to tell AO to use Claude Code:
+
+```yaml
+agent: claude-code
+```
+
+That's all that's required at the plugin level. No additional keys are needed.
+
+## How AO Integrates with Claude Code
+
+AO uses Claude Code's native hook system rather than PATH wrappers, which gives it deeper visibility into what the agent is doing.
+
+<Accordion title="Launch">
+  AO runs `claude` inside the worktree and injects three environment variables automatically:
+
+  | Variable | Purpose |
+  |---|---|
+  | `AO_SESSION_ID` | Unique AO session identifier passed to the hook |
+  | `AO_ISSUE_ID` | Issue identifier (set when spawned from an issue) |
+  | `CLAUDECODE` | Signals to Claude Code that it's running under a harness |
+
+  Your Anthropic API key is read from wherever `claude` normally finds it (`~/.claude/`, environment, etc.). AO doesn't touch it.
+</Accordion>
+
+<Accordion title="Activity tracking">
+  During workspace setup, AO writes a **PostToolUse hook** to `.claude/settings.json`. Every time Claude Code calls a tool — reading a file, running a command, writing code — the hook fires and records an activity entry in AO's JSONL. This is what drives the `active / ready / idle` states on the dashboard.
+
+  The hook is installed idempotently on every `ao spawn`, so it self-heals if removed.
+</Accordion>
+
+<Accordion title="Session resume">
+  Claude Code writes a JSONL file for each session under `~/.claude/projects/<project-slug>/<sessionId>.jsonl`. AO maps its own session ID to Claude's session ID via this file, and resumes with:
+
+  ```bash
+  claude --resume <sessionId>
+  ```
+
+  When the daemon restarts, AO replays the stored session ID so the agent picks up the same conversation context automatically.
+</Accordion>
+
+<Accordion title="Cost reporting">
+  Claude Code includes a per-message cost field in its JSONL event log. AO reads this field and surfaces cumulative cost on the dashboard session card — no separate billing configuration required.
+</Accordion>
+
+## Permission Modes
+
+You can control how much autonomy Claude Code has over file edits and shell commands using the `permissions` key under `agentConfig`:
+
+```yaml
+agentConfig:
+  permissions: permissionless
+```
+
+| Mode | Behaviour |
+|---|---|
+| `permissionless` | Claude acts without asking for approval on any operation |
+| `default` | Claude uses its built-in permission defaults |
+| `auto-edit` | Claude edits files without prompting but asks before running shell commands |
+| `suggest` | Claude proposes changes but waits for your approval before applying them |
+
+<Note>
+  `permissionless` is the recommended mode for fully autonomous AO sessions. In interactive review sessions, `suggest` gives you a chance to approve each change before it lands.
+</Note>
+
+## Default Reviewer
+
+When you run `ao review`, Claude Code is the default reviewer agent. It reads the diff, applies AO's review prompt, and posts structured feedback. You can override the reviewer per session, but Claude Code is used unless you specify otherwise.
+
+## Troubleshooting
+
+<Accordion title="`claude` not found after install">
+  Run `npm install -g @anthropic-ai/claude-code`, then open a new terminal window so the updated `PATH` is loaded. You can confirm the binary location with `which claude`.
+</Accordion>
+
+<Accordion title="Dashboard shows no activity state">
+  AO registers the PostToolUse hook in `.claude/settings.json` at spawn time. If the file was edited or the hook was removed, run `ao spawn` again — AO re-installs the hook idempotently and activity tracking resumes immediately.
+</Accordion>
+
+<Accordion title="Session won't resume">
+  Claude's session JSONL lives at `~/.claude/projects/<project-slug>/<sessionId>.jsonl`. If that file has been deleted, moved, or cleaned up, the session ID is no longer valid and resume won't work. Spawn a fresh session instead — AO will create a new mapping automatically.
+</Accordion>

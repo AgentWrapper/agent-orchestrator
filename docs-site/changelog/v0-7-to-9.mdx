@@ -1,0 +1,181 @@
+---
+title: "Agent Orchestrator v0.7–v0.9: Changelog and Release Notes"
+sidebarTitle: "v0.7–v0.9"
+description: "v0.7–v0.9 release notes — parallel orchestrators, full Windows support, Linear tracker, Slack and Discord notifiers, CLI hardening, and early history."
+---
+
+This page covers everything from the early v0.2 and v0.3 releases through the v0.7–v0.9 cycle that ran through May 2026. The v0.7.0 release was the largest single-version drop in AO history: mobile app, `ao start <url>`, PR claim, the lifecycle manager, Windows, Linear, Slack, parallel orchestrators, and zero-friction onboarding all landed in one go.
+
+<AccordionGroup>
+
+  <Accordion title="v0.9.2 — May 23, 2026">
+
+    A targeted polish release focused on first-run experience, theme consistency, and documentation accuracy.
+
+    **Changes**
+    - Fixed `ao update` workspace rebuild (#2033)
+    - Session terminal now follows the dashboard theme (light/dark mode) (#1836)
+    - Fixed Grok agent manifest metadata loading via JSON import (#2040)
+    - Fixed first-run project identity alignment (#2039)
+    - Clarified the one-orchestrator-per-project model in documentation; pruned superseded docs (#2012)
+
+    **Full changelog:** [v0.9.1...v0.9.2](https://github.com/ComposioHQ/agent-orchestrator/compare/v0.9.1...v0.9.2)
+
+  </Accordion>
+
+  <Accordion title="v0.9.1 — May 22, 2026">
+
+    A targeted hotfix release correcting session enrichment and package publishing issues.
+
+    **Bug fixes**
+    - Fixed session enrichment using the wrong agent (now correctly uses the persisted session agent) (#1996)
+    - Simplified the orchestrator session header (#1981)
+    - Fixed canary publish to include all publishable packages (#1997)
+
+    **Full changelog:** [v0.9.0...v0.9.1](https://github.com/ComposioHQ/agent-orchestrator/compare/v0.9.0...v0.9.1)
+
+  </Accordion>
+
+  <Accordion title="v0.8.0 — May 14, 2026">
+
+    A single-fix release addressing a critical lifecycle bug introduced in v0.7.0.
+
+    **Bug fix**
+    - Fixed agent plugins and lifecycle manager incorrectly treating an indeterminate process probe as "not found". Also bumped the `ps` subprocess timeout. This was causing healthy sessions to appear dead in the dashboard. (#1839)
+
+    **Full changelog:** [v0.7.0...v0.8.0](https://github.com/ComposioHQ/agent-orchestrator/compare/v0.7.0...v0.8.0)
+
+  </Accordion>
+
+  <Accordion title="v0.7.0 — May 12, 2026">
+
+    The largest single release in AO's history. v0.7.0 shipped the mobile app, `ao start <url>` one-command onboarding, PR claim, the lifecycle manager, full Windows support, Linear tracker, Slack and Discord notifiers, multiple concurrent orchestrators, the multi-project dashboard, webhooks, `ao doctor`/`ao update`, and a comprehensive design system — all in one drop.
+
+    ### Mobile and onboarding
+
+    - **React Native mobile app** for monitoring AO sessions from your phone (#266)
+    - **`ao start <url>`** — one command to clone a repo, generate config, auto-detect a free port, start the daemon, and open the dashboard. Works for private repos with auth-aware clone (#267, #272, #273, #275)
+    - **Zero-friction onboarding** — `ao start` does everything: auto-init, add-project, dashboard publishing, and error hardening (#463, #537)
+    - **Light/dark mode theme toggle** in the dashboard (#528)
+
+    ### PR and lifecycle management
+
+    - **PR claim flow** — agent sessions can claim open PRs (#326)
+    - **Lifecycle manager** with backlog auto-claim, task decomposition, and a verification gate (#365)
+    - **Orchestrator recovery automation** — orchestrators restart themselves after failure (#362)
+    - **Multiple concurrent orchestrators** with isolated worktrees per project (#870)
+    - **Distinct worker and orchestrator agent types** — configure different agent plugins for each role (#439)
+    - **SCM webhook lifecycle triggers** — PR and CI events drive session transitions (#394)
+    - CI failure detail notifications delivered through the lifecycle manager (#850)
+    - Auto-terminate sessions on PR merge (#1311)
+
+    ### Integrations
+
+    - **Linear tracker** — honor Linear's `branchName` as the single source of truth for spawn worktree branches (#882)
+    - **Discord notifier** shipped alongside OpenClaw and a setup wizard (#631)
+    - **OpenClaw notifier** for AO escalations (#372)
+    - **Slack notifier** (via OpenClaw plugin)
+    - External tracker, SCM, and notifier plugins loadable from config (#873)
+    - Plugin marketplace and plugin config infrastructure (#831, #833)
+
+    ### Platform and Windows
+
+    - **Complete Windows support** — cross-platform shell resolution, PID checks, process management, and symlink handling (#1025)
+    - tmux runtime long command fix: commands longer than 200 chars are written to a temp script to avoid send-keys truncation (#759)
+    - macOS idle sleep prevention while AO is running (#1119)
+
+    ### Dashboard and CLI
+
+    - **Project-scoped multi-project dashboard** with sidebar navigation (#381, #381)
+    - **`ao doctor`** for checking plugin resolution, binary availability, and version consistency (#437, #844)
+    - **`ao update`** with install-method awareness and startup update notifications (#1156)
+    - **`ao status --watch`** for live polling (#836)
+    - **`ao session ls --json`** for machine-readable output (#969)
+    - Single multiplexed WebSocket for terminals + session events — reduced connection churn (#887)
+    - Dashboard JS bundle reduced from 1.7 MB to 170 KB (#928)
+    - Event-driven live tab titles and favicons via SSE (#848)
+    - Worker→orchestrator dialogue via `ao send` with auto-sender prefix (#1787)
+    - Session display names renamed in the sidebar (#1748)
+    - Stable session titles via pinned summary metadata (#946)
+    - Prompt-driven spawn: `ao spawn` without a tracker issue (#1069)
+    - Interactive agent runtime selection prompt in the CLI (#786)
+
+    ### Reliability and infrastructure
+
+    - Renamed all packages from `@composio` to `@aoagents` (#983)
+    - Resolved critical SSRF vulnerability in Axios dependency (#1092)
+    - Standardized agent plugins with shared hooks and activity JSONL (#755)
+    - Comprehensive `DESIGN.md` design system (#775)
+    - Weekly release train with stable and nightly channels (#1781)
+    - GraphQL batch PR enrichment for orchestrator polling (#637)
+    - Parallelized PR enrichment in `GET /api/sessions` (#730)
+
+    **New contributors:** @andykamin3, @sigvardt, @Deepak7704, @illegalcall, @harshitsinghbhandari, @ruskaruma, @i-trytoohard, @gautamtayal1, @fireddd, @ChiragArora31, @TanujaNair03, @yyovil, @whoisasx, @fastestdevalive, @DNX, @prod-blip, @Pritom14, @rogdex24, @miniMaddy, @iamasx, @Copilot, @Laraib-1629
+
+    **Full changelog:** [v0.3.0...v0.7.0](https://github.com/ComposioHQ/agent-orchestrator/compare/v0.3.0...v0.7.0)
+
+  </Accordion>
+
+  <Accordion title="v0.3.0 'The Rebuild' — April 25, 2026">
+
+    A complete ground-up rebuild of the dashboard, shipped alongside multi-project support, the `aoagents.dev` site and docs, Cursor support, and Windows promotion to first-class.
+
+    - **Dashboard rebuilt** from the ground up with the Warm Terminal design system, a 10× JavaScript bundle reduction, loading and not-found pages, a terminal layout overhaul, mobile-responsive UX, sidebar navigation, and instant session switching
+    - **Multi-project dashboard** — one unified view across all configured projects, with portfolio registration, migration flows, project settings, and CLI alignment with the multi-project registry
+    - **[aoagents.dev](https://aoagents.dev) launched** with setup guides, API reference, and plugin documentation
+    - **Cursor** added as a first-class agent alongside Claude Code, Codex, Aider, OpenCode, and Hermes, using the same worktrees and PR workflow
+    - **Session lifecycle reporting** redesigned — stable session titles via pinned summary metadata, display names from task context, auto-terminate after PR merge
+    - **Windows** promoted to first-class support — cross-platform shell resolution, PID checks, process management, and symlink handling
+    - **CLI hardening** — install-aware `ao update`, startup update notifications, doctor version checks, JSON output for `ao session ls`, config error handling, version mismatch fixes, default filtering for terminated sessions
+    - Terminals and sessions moved onto a single multiplexed WebSocket connection
+    - Prompt-driven spawn: `ao spawn` without a tracker issue
+    - macOS idle sleep prevention while agents are running
+    - Resolved critical SSRF vulnerability (Axios `>=1.15.0`)
+    - Renamed all packages from `@composio` to `@aoagents`
+
+  </Accordion>
+
+  <Accordion title="v0.2.0 — March 2026">
+
+    The release that transformed the dashboard from a static snapshot into a live monitoring surface, and cut the API response time by 9×.
+
+    ### Live dashboard updates
+
+    The dashboard now subscribes to the existing SSE endpoint for real-time session updates. Status, activity state, and attention levels refresh every 5 seconds automatically — no more manual page reloads.
+
+    - New `useSessionEvents` hook connects to `/api/events` via `EventSource`
+    - Merges lightweight SSE patches into full session objects with referential stability
+    - Auto-reconnects on connection drops
+
+    ### 9× faster dashboard load
+
+    Dashboard API response time dropped from **51 seconds to ~6 seconds**.
+
+    **Root cause:** `findClaudeProcess()` called `ps -eo pid,tty,args` once per session. On machines with 1,000+ processes, each `ps` call took 30–35 seconds. With 18 sessions running, that meant 18 concurrent `ps` processes competing for resources.
+
+    **Fix:** A module-level TTL cache with in-flight promise deduplication — `ps` is now called once across all sessions. Subprocess timeouts reduced from 30 s to 5 s.
+
+    | Metric | Before | After |
+    |---|---|---|
+    | `/api/sessions` response time | 51 s | ~6 s |
+    | Dashboard refresh | Manual page reload | Auto every 5 s via SSE |
+    | Terminal after network drop | Permanently dead | Auto-reconnects |
+    | Lifecycle activity detection | tmux-only (terminal regex) | Runtime-agnostic (JSONL) |
+
+    ### WebSocket terminal reconnection
+
+    A single network hiccup (Wi-Fi switch, laptop sleep/wake, server restart) no longer permanently kills the web terminal.
+
+    - Exponential backoff reconnection (1 s → 2 s → 4 s → ... → 15 s max)
+    - Distinguishes permanent errors (auth failure, session not found) from transient disconnects
+    - Resets reconnection state on session change to prevent stale backoff
+
+    ### Runtime-agnostic lifecycle detection
+
+    The lifecycle manager now uses JSONL-based activity detection (`getActivityState()`) instead of the deprecated terminal-text parser (`detectActivity()`). Reads Claude's structured session files directly — works with any runtime, not just tmux. Falls back to terminal-based detection for plugins that haven't implemented `getActivityState()` yet. Passes the user-configured `readyThresholdMs` (previously silently ignored).
+
+    **Merged PRs:** #244, #247, #248, #249
+
+  </Accordion>
+
+</AccordionGroup>

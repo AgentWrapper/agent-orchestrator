@@ -1,0 +1,91 @@
+---
+title: "Linear Issue Tracker Integration for Agent Orchestrator"
+sidebarTitle: "Linear"
+description: "Use Linear as your AO issue tracker. Supports direct API key auth or Composio-mediated transport. Team ID required for issue creation."
+---
+
+The Linear tracker plugin connects Agent Orchestrator to your Linear workspace. It supports two transport options — a direct Linear API key, or routing through Composio if you already use that toolkit. AO automatically picks the right transport based on which environment variables are present.
+
+## Transport options
+
+AO checks for environment variables at startup and selects the transport in the following order:
+
+1. **Composio-mediated** — used when `COMPOSIO_API_KEY` is set. Takes priority over the direct API.
+2. **Direct Linear API** — used when `LINEAR_API_KEY` is set. Recommended for most teams.
+
+### Option 1: Direct Linear API (recommended)
+
+<Steps>
+  <Step title="Create an API key">
+    Go to [linear.app/settings/api](https://linear.app/settings/api) and create a personal API key.
+  </Step>
+  <Step title="Export the key">
+    ```bash
+    export LINEAR_API_KEY=lin_api_...
+    ```
+  </Step>
+  <Step title="Configure AO">
+    ```yaml
+    tracker: linear
+
+    projects:
+      my-app:
+        tracker: linear
+        trackerConfig:
+          teamId: TEAM          # required for createIssue
+          workspaceSlug: myorg  # optional, for URL rendering
+    ```
+  </Step>
+</Steps>
+
+### Option 2: Composio-mediated
+
+If you already use the [Composio toolkit](https://composio.dev), you can route Linear calls through it without a separate Linear token:
+
+```bash
+export COMPOSIO_API_KEY=...
+export COMPOSIO_ENTITY_ID=...   # optional; defaults to "default"
+```
+
+When `COMPOSIO_API_KEY` is present, AO uses Composio automatically. You do not need to set `LINEAR_API_KEY` in this case.
+
+## Per-project config
+
+The `trackerConfig` block passes Linear-specific settings for each project:
+
+| Key | Required | Description |
+|-----|----------|-------------|
+| `teamId` | ✓ (for issue creation) | The Linear team the issue belongs to |
+| `workspaceSlug` | Optional | Used to render `https://linear.app/{slug}/issue/{id}` URLs in the dashboard |
+
+```yaml
+projects:
+  my-app:
+    tracker: linear
+    trackerConfig:
+      teamId: TEAM
+      workspaceSlug: myorg
+```
+
+## Branch names
+
+Linear exposes a `branchName` field on each issue — the same string shown in Linear's **Copy git branch name** button, formatted according to your workspace's branch format settings (**Settings → Integrations → GitHub → Branch format**).
+
+When AO spawns an agent for a Linear issue, it:
+
+1. Reads the issue's `branchName` field from the Linear API (if present and git-safe).
+2. Falls back to `feat/<issue-id>` if `branchName` is absent or contains characters that are invalid in a git branch name.
+
+You can customize the format globally in Linear's settings — AO picks up whatever Linear generates automatically.
+
+## Issue identifiers
+
+Linear uses `TEAM-42`-style identifiers rather than plain numbers. Use this format when spawning sessions:
+
+```bash
+ao spawn TEAM-42
+```
+
+<Tip>
+You can find your team identifier in Linear under **Settings → Teams**. It's the short uppercase prefix shown before every issue number.
+</Tip>

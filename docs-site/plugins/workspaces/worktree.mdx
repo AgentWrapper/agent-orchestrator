@@ -1,0 +1,95 @@
+---
+title: "Git Worktree Workspace: Default Isolation for AO Sessions"
+sidebarTitle: "Worktree"
+description: "AO's default workspace mode uses git worktrees for fast, low-disk-usage session isolation. Configure symlinks and postCreate commands per project."
+---
+
+The worktree workspace is AO's default. Each agent session gets its own `git worktree` with a dedicated branch, but all worktrees share the same underlying `.git` object database — so even with dozens of parallel agents, the disk footprint stays small. There's no cloning involved, which makes session startup fast.
+
+## Configuration
+
+```yaml
+workspace: worktree
+workspaceConfig:
+  worktreeDir: ~/.worktrees   # default
+```
+
+| Config key | Default | What it does |
+|---|---|---|
+| `worktreeDir` | `~/.worktrees` | Base directory where all worktrees are created |
+
+You can omit the `workspace: worktree` line entirely since it's the default.
+
+## How it works
+
+When a session starts, AO runs:
+
+```bash
+git worktree add <worktreeDir>/<sessionId> -b <branch>
+```
+
+The agent works inside that worktree. Any commits land on its dedicated branch. When the session is cleaned up, AO runs `git worktree remove` and prunes the branch if it was never pushed to a remote.
+
+## Per-project configuration knobs
+
+You can tune workspace behavior at the project level inside `agent-orchestrator.yaml`:
+
+```yaml
+projects:
+  api:
+    repo: myorg/api
+    workspace: worktree
+    symlinks:
+      - source: .env
+        target: .env
+      - source: node_modules
+        target: node_modules
+    postCreate:
+      - npm install
+      - cp .env.example .env
+```
+
+### `symlinks`
+
+Links files or directories from the source repository into each new worktree. This is the recommended way to share a `.env` file, a local credentials file, or a large shared cache directory without duplicating it for every session.
+
+```yaml
+symlinks:
+  - source: .env.local
+    target: .env.local
+```
+
+### `postCreate`
+
+Shell commands to run inside the new worktree immediately after it's created, before the agent starts. Use this to install dependencies or copy config files so the agent wakes up in a ready state.
+
+```yaml
+postCreate:
+  - pnpm install
+  - cp .env.example .env
+```
+
+<Tip>
+Running `pnpm install` in `postCreate` ensures the agent never has to wait for dependencies on its first action. This makes a noticeable difference for agents working on JavaScript projects.
+</Tip>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title='"fatal: working tree already exists"'>
+    A previous session didn't clean up its worktree. Fix it with either:
+
+    ```bash
+    ao session cleanup
+    ```
+
+    Or manually:
+
+    ```bash
+    git worktree remove --force <path>
+    ```
+  </Accordion>
+  <Accordion title="Branch protection rejects the agent's push">
+    This is expected behavior. Agents push to their own dedicated branches, not to your protected `main` branch. Review and merge via pull request as normal.
+  </Accordion>
+</AccordionGroup>

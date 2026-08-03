@@ -1,0 +1,222 @@
+---
+title: "Automated Reactions: CI, Reviews, and Agent Events"
+sidebarTitle: "Reactions"
+description: "Reactions are event-driven rules that message agents, send notifications, or flag merge-readiness when CI fails, reviews arrive, or agent state changes."
+---
+
+Reactions are AO's event-driven automation layer. When something notable happens — CI fails, a reviewer requests changes, an agent goes quiet — AO consults its reaction config to decide what to do next: send a recovery prompt to the agent, route a notification to you, or flag a PR as merge-ready. You do not need to configure reactions to get started. AO ships with sensible defaults that cover the most common situations.
+
+## Default Reactions
+
+| Key | When it fires | Default action | Notes |
+|---|---|---|---|
+| `ci-failed` | A CI check fails | `send-to-agent` | Sends the agent a recovery prompt |
+| `changes-requested` | A human reviewer requests changes | `send-to-agent` | Forwards review feedback to the agent |
+| `bugbot-comments` | Known automation leaves actionable feedback | `send-to-agent` | Keeps bot feedback separate from human reviews |
+| `merge-conflicts` | PR has merge conflicts | `send-to-agent` | Asks the agent to resolve conflicts |
+| `approved-and-green` | PR is approved and all checks pass | `notify` | Does not merge automatically by default |
+| `agent-stuck` | Agent inactive past the threshold | `notify` (urgent) | Threshold defaults to 30 minutes |
+| `agent-needs-input` | Agent is waiting for human input | `notify` (urgent) | |
+| `agent-exited` | Session exits unexpectedly or is killed | `notify` (urgent) | |
+| `all-complete` | Session finishes cleanly | `notify` | Includes a session summary by default |
+| `agent-idle` | Reserved for future idle handling | `send-to-agent` | Not active by default |
+
+## Action Types
+
+| Action | What it does |
+|---|---|
+| `send-to-agent` | Sends the configured `message` into the running agent session |
+| `notify` | Routes an event to your configured notifiers (desktop, Slack, etc.) |
+| `auto-merge` | Reserved merge intent flag — currently routes like a notification |
+
+`send-to-agent` is the autonomous recovery path. `notify` is the human awareness path.
+
+## Config Fields
+
+Each reaction accepts these fields:
+
+| Field | Type | Purpose |
+|---|---|---|
+| `auto` | `boolean` | Whether AO should perform the automated action |
+| `action` | `string` | `send-to-agent`, `notify`, or `auto-merge` |
+| `message` | `string` | Message sent to the agent or included in notification text |
+| `priority` | `string` | `urgent`, `action`, `warning`, or `info` — controls notification routing |
+| `retries` | `number` | Max repeated agent messages before escalation |
+| `escalateAfter` | `number` or duration string | Escalate after N attempts or a duration, whichever applies |
+| `threshold` | duration string | Inactivity threshold for stuck/idle-style reactions (e.g. `"30m"`) |
+| `includeSummary` | `boolean` | Include a session summary in the notification |
+
+A full example:
+
+```yaml
+reactions:
+  changes-requested:
+    action: send-to-agent
+    retries: 2
+    escalateAfter: "30m"
+    message: |
+      Reviewers requested changes. Read the unresolved comments,
+      make the requested fixes, and push an update.
+```
+
+## Common Recipes
+
+<Tabs>
+  <Tab title="Watch-only mode">
+    Disable all automatic recovery prompts while you're onboarding AO to a sensitive repo. You still receive notifications, but AO stops sending messages to agents on its own.
+
+    ```yaml
+    reactions:
+      ci-failed:
+        auto: false
+      changes-requested:
+        auto: false
+      bugbot-comments:
+        auto: false
+      merge-conflicts:
+        auto: false
+    ```
+  </Tab>
+  <Tab title="More CI retries">
+    Give the agent more chances to recover from flaky CI before escalating:
+
+    ```yaml
+    reactions:
+      ci-failed:
+        retries: 3
+        message: |
+          CI is failing. Read the failing check logs, reproduce locally when possible,
+          fix the smallest cause, and push the correction.
+    ```
+  </Tab>
+  <Tab title="Faster stuck alerts">
+    Get notified sooner when an agent goes quiet:
+
+    ```yaml
+    reactions:
+      agent-stuck:
+        priority: urgent
+        threshold: "7m"
+    ```
+  </Tab>
+  <Tab title="Auto-merge on green">
+    Flag that a PR is ready for the auto-merge queue when approved and CI is green:
+
+    ```yaml
+    reactions:
+      approved-and-green:
+        action: auto-merge
+        auto: true
+    ```
+
+    <Note>
+      `auto-merge` is currently an intent flag, not a bypass. AO does not ignore branch protection rules, required reviews, or failing checks.
+    </Note>
+  </Tab>
+  <Tab title="Ignore bugbot noise">
+    Disable automatic responses to bot-generated PR comments:
+
+    ```yaml
+    reactions:
+      bugbot-comments:
+        auto: false
+    ```
+  </Tab>
+  <Tab title="Custom CI message">
+    Replace the default CI failure message with project-specific instructions:
+
+    ```yaml
+    reactions:
+      ci-failed:
+        message: |
+          The CI pipeline failed. Check the Actions tab, find the failing step,
+          reproduce it locally with `pnpm test`, fix the issue, and push.
+    ```
+  </Tab>
+</Tabs>
+
+## Per-Project Overrides
+
+Reaction overrides in a local project config affect only that project. They override global values for the same reaction key without replacing unmentioned reactions.
+
+```yaml
+# agent-orchestrator.yaml (local project config)
+reactions:
+  ci-failed:
+    retries: 4
+  approved-and-green:
+    priority: info
+```
+
+## Notification Routing
+
+Reaction `priority` maps to notifiers via `notificationRouting` in the global config. This lets you send urgent alerts to multiple channels and lower-priority events only where you want them.
+
+```yaml
+notificationRouting:
+  urgent: [desktop, composio]
+  action: [desktop]
+  warning: [composio]
+  info: [composio]
+```
+
+Named notifier instances are configured separately:
+
+```yaml
+notifiers:
+  desktop:
+    plugin: desktop
+  slack:
+    plugin: slack
+    webhookUrl: ${SLACK_WEBHOOK_URL}
+```
+
+## CI Failure Two-Pass Flow
+
+CI failure handling happens in two sequential passes:
+
+<Steps>
+  <Step title="Pass 1 — Recovery prompt">
+    When AO first detects a failed CI state, it sends the configured `ci-failed.message` to the agent with a general instruction to investigate and fix.
+  </Step>
+  <Step title="Pass 2 — Specific check details (~30 seconds later)">
+    On the next poll, AO sends a structured follow-up containing the names, conclusions, and log links for the specific failing checks.
+
+    This second message **does not** consume a retry from the `ci-failed` retry budget. It exists so the agent receives both the instruction and the concrete failure details.
+  </Step>
+</Steps>
+
+## Review Backlog Throttle
+
+To avoid hammering GitHub or GitLab with repeated requests, AO fetches pending human comments and known automation comments at most once every two minutes per session.
+
+If you need to trigger a review check immediately:
+
+```bash
+ao review-check <session-id>
+```
+
+## Event Reference
+
+| Internal event | Reaction key |
+|---|---|
+| `ci.failing` | `ci-failed` |
+| `review.changes_requested` | `changes-requested` |
+| `automated_review.found` | `bugbot-comments` |
+| `merge.conflicts` | `merge-conflicts` |
+| `merge.ready` | `approved-and-green` |
+| `session.stuck` | `agent-stuck` |
+| `session.needs_input` | `agent-needs-input` |
+| `session.killed` | `agent-exited` |
+| `summary.all_complete` | `all-complete` |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Projects" icon="folder-open" href="/configuration/projects">
+    Apply reaction overrides to a single project.
+  </Card>
+  <Card title="Configuration Overview" icon="gear" href="/configuration/overview">
+    Understand global registry vs local project config.
+  </Card>
+</CardGroup>

@@ -1,0 +1,55 @@
+---
+title: "Process Runtime: Cross-Platform Agent Sessions in AO"
+sidebarTitle: "Process"
+description: "Use Node.js child processes to run AO agents on Windows, Docker, and CI. No tmux required — output streams directly to the dashboard terminal."
+---
+
+The process runtime spawns each agent as a plain Node.js child process. There are no external dependencies, no tmux to install, and no platform restrictions — it works everywhere Node.js runs, including Windows, Docker containers, and headless CI environments.
+
+## Configuration
+
+Add the following to your `agent-orchestrator.yaml`:
+
+```yaml
+runtime: process
+```
+
+No further plugin-level configuration is required. On Windows, AO automatically falls back to the process runtime if no runtime is specified.
+
+## How it works
+
+- AO spawns agents via Node's `child_process.spawn` with `shell: true`.
+- Stdout and stderr are captured in a rolling **1,000-line buffer** that the dashboard reads over WebSocket — the same connection used by the tmux runtime.
+- Process liveness is checked using a PID-based signal-0 probe (`isProcessRunning`).
+- Default terminal port: **14801**.
+
+<Note>
+The dashboard terminal experience is identical to the tmux runtime. You can monitor output, scroll through history, and send input — you just can't attach a separate terminal session outside the dashboard.
+</Note>
+
+## Limitations compared to tmux
+
+| Capability | tmux | process |
+|---|---|---|
+| `ao session attach` | ✅ Yes | ❌ No |
+| Reconnect agent TTY after `ao stop` | ✅ Yes | ❌ No |
+| Session recovery | ✅ Yes | ❌ No |
+
+If you run `ao stop` while using the process runtime, the child process is terminated along with the daemon. Agents that support their own session-resume features (such as Claude `--resume` or Codex `resume`) will still resume their conversation context on next launch — that recovery is a separate layer handled by the agent, not the runtime.
+
+## When to use this runtime
+
+<CardGroup cols={2}>
+  <Card title="Windows" icon="windows">
+    The process runtime is the only option on Windows. tmux is not supported.
+  </Card>
+  <Card title="Docker / CI" icon="docker">
+    Fewer moving parts in containerized or headless environments with no tmux available.
+  </Card>
+  <Card title="Headless servers" icon="server">
+    Any remote server where installing and managing tmux adds unnecessary complexity.
+  </Card>
+  <Card title="Dashboard-only workflows" icon="display">
+    When you never need to attach interactively outside the dashboard, process is simpler.
+  </Card>
+</CardGroup>

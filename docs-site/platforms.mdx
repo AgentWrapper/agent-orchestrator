@@ -1,0 +1,172 @@
+---
+title: "Agent Orchestrator Platform Support: macOS, Linux, Windows"
+sidebarTitle: "Platforms"
+description: "Learn what works on macOS, Linux, Windows, and containers — including runtime support, terminal integration, and notification options for each platform."
+---
+
+Agent Orchestrator runs on macOS, Linux, Windows, and containerized environments. The core workflow is identical everywhere: AO creates an isolated workspace, runs an agent, tracks the PR, reacts to CI and review events, and shows progress in the dashboard. What differs between platforms is which runtime and terminal features are available, since those rely on tools like tmux that aren't available everywhere.
+
+## Platform Support Matrix
+
+| Platform | Recommended runtime | Available notifications |
+|---|---|---|
+| macOS | `tmux` | Desktop, Slack, Discord, webhook |
+| Linux | `tmux` | Desktop (requires `notify-send`), Slack, Discord, webhook |
+| Windows | `process` | Slack, Discord, webhook |
+| Container or remote VM | `process` or `tmux` | Slack, Discord, webhook |
+
+## macOS
+
+macOS is the default local development target and offers the fullest feature set, including native terminal integration and desktop notifications.
+
+Before you start, install tmux with Homebrew:
+
+```bash
+brew install tmux
+```
+
+Recommended project config:
+
+```yaml
+defaults:
+  runtime: tmux
+  notifiers:
+    - desktop
+```
+
+<CardGroup cols={2}>
+  <Card title="tmux-backed worker sessions" icon="check">
+    Fully supported. Sessions run as durable tmux windows you can attach to.
+  </Card>
+  <Card title="Browser dashboard terminal" icon="check">
+    Fully supported via the built-in WebSocket terminal.
+  </Card>
+  <Card title="iTerm2 attach and open helpers" icon="check">
+    Fully supported. `ao open` opens sessions directly in iTerm2 tabs or windows.
+  </Card>
+  <Card title="Desktop notifications" icon="check">
+    Fully supported. AO posts native macOS notifications when sessions need attention.
+  </Card>
+</CardGroup>
+
+<Note>
+AO can prevent **idle** sleep on macOS while agents are running (using `caffeinate`). However, it cannot override hardware lid-close sleep. If you need your machine available while the lid is closed, adjust your Energy Saver settings or use an external display.
+</Note>
+
+## Linux
+
+Linux is a great fit for local workstations, remote development machines, and always-on hosts. It supports the same tmux runtime as macOS with a few differences around terminal and desktop notification tooling.
+
+Install tmux with your distribution's package manager:
+
+<Tabs>
+  <Tab title="Debian / Ubuntu">
+    ```bash
+    sudo apt install tmux
+    ```
+  </Tab>
+  <Tab title="Fedora / RHEL">
+    ```bash
+    sudo dnf install tmux
+    ```
+  </Tab>
+  <Tab title="Arch">
+    ```bash
+    sudo pacman -S tmux
+    ```
+  </Tab>
+</Tabs>
+
+Recommended project config:
+
+```yaml
+defaults:
+  runtime: tmux
+  notifiers:
+    - desktop
+```
+
+| Capability | Status |
+|---|---|
+| tmux-backed worker sessions | Supported |
+| Browser dashboard terminal | Supported |
+| iTerm2 attach/open helpers | Not available — use the browser terminal |
+| Desktop notifications | Supported when `notify-send` is installed |
+| Remote dashboard access | Supported via port forwarding, Tailscale, or your own proxy |
+
+<Tip>
+On a headless Linux host, skip the `desktop` notifier and use Slack, Discord, or a webhook instead — `notify-send` requires a desktop session to work.
+</Tip>
+
+## Windows
+
+Windows uses the `process` runtime because native tmux is not available. The core spawn and PR workflow, browser dashboard, and all network-based notifiers work as expected.
+
+Set your runtime in the project config:
+
+```yaml
+defaults:
+  runtime: process
+  notifiers:
+    - slack
+```
+
+**What works on Windows:**
+
+| Capability | Status |
+|---|---|
+| `ao start`, `ao stop`, `ao dashboard` | Supported |
+| `ao spawn` and `ao spawn --prompt` | Supported via the process runtime |
+| GitHub, GitLab, and Linear integrations | Supported when credentials are configured |
+| Browser dashboard terminal | Supported via the direct PTY WebSocket server |
+| Slack, Discord, webhook, Composio, OpenClaw notifiers | Supported |
+
+**What is limited on Windows:**
+
+| Capability | Status | Use instead |
+|---|---|---|
+| `runtime: tmux` | Not available natively | `runtime: process` |
+| iTerm2 terminal integration | Not available | Browser dashboard terminal |
+| Desktop notifier | No-op on Windows | Slack, Discord, webhook, or Composio |
+| tmux attach commands | Not available | Dashboard terminal and `ao session` commands |
+
+<Tip>
+Use PowerShell or Git Bash for AO CLI commands. If a command behaves differently due to shell quoting, put longer instructions in a file and send them with `ao send --file`.
+</Tip>
+
+## Containers and Remote Hosts
+
+AO can run inside a Docker container or on a remote VM. Because the dashboard has no built-in authentication, you must place it behind your own access control layer before exposing it beyond localhost.
+
+Recommended config for container environments:
+
+```yaml
+defaults:
+  runtime: process
+  notifiers:
+    - webhook
+```
+
+<Steps>
+  <Step title="Persist the data directory">
+    Mount or bind `~/.agent-orchestrator/` so session metadata survives container restarts and redeployments.
+  </Step>
+  <Step title="Restrict dashboard access">
+    Forward port 3000 (or your configured port) only to trusted networks. Use Tailscale, an SSH tunnel, or an authenticated reverse proxy.
+  </Step>
+  <Step title="Choose network notifiers">
+    Prefer Slack, Discord, or webhook notifications over desktop notifications in headless environments.
+  </Step>
+  <Step title="Decide on tmux">
+    Use `runtime: tmux` only if tmux is installed in the container and you want attachable terminal sessions. Otherwise, `runtime: process` is simpler and more portable.
+  </Step>
+</Steps>
+
+## Choosing a Runtime
+
+If you're unsure which runtime to use, start with the recommendation for your OS. The short version: use `tmux` on macOS and Linux, and `process` everywhere else.
+
+| Runtime | Best for | Trade-off |
+|---|---|---|
+| `tmux` | macOS and Linux where you want durable, attachable terminal sessions | Requires tmux; doesn't work natively on Windows |
+| `process` | Windows, containers, and simpler managed environments | Sessions aren't tmux-attachable, but the browser terminal still works |

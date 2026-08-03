@@ -1,0 +1,121 @@
+---
+title: "Run Multiple AI Agents in Parallel on the Same Project"
+sidebarTitle: "Parallel Issues"
+description: "Spawn independent agent sessions for several issues at once. Each session gets its own worktree and branch so agents never overwrite each other's work."
+---
+
+Agent Orchestrator is built around the idea of running many agents at the same time. Because every session lives in its own git worktree, agents work on separate branches and never step on each other's files — you can have a dozen sessions in flight on the same repo without any conflicts.
+
+## Batch-spawning multiple sessions
+
+Use `ao batch-spawn` to kick off several issues in a single command:
+
+```bash
+ao batch-spawn 42 43 44
+```
+
+AO handles the bookkeeping for you automatically:
+
+- Skips any issue that already has an active session
+- Removes duplicates within the same batch
+- Creates a dedicated worktree for each new session
+- Prints a summary once all sessions are spawned
+
+For one-off spawning, `ao spawn` works just as well — `batch-spawn` simply adds the duplicate-detection layer on top.
+
+## Running two agents on the same issue
+
+Sometimes you want to compare approaches: put Claude Code and Codex to work on the same issue simultaneously and review the resulting PRs side by side. Pass `--agent` to each spawn:
+
+```bash
+ao spawn 42 --agent claude-code
+ao spawn 42 --agent codex
+```
+
+AO creates two completely independent sessions. Each gets its own worktree, its own branch, and its own PR when the agent pushes.
+
+## What is and isn't isolated
+
+Understanding isolation boundaries helps you reason about what can and can't go wrong when agents run in parallel.
+
+### Isolation guarantees
+
+| What | How it's isolated |
+|---|---|
+| **File edits** | Each session has its own worktree under `~/.worktrees/{projectId}/{sessionId}/` — agents never share a working directory |
+| **Branch name** | AO names branches after the session ID, so they can never collide |
+| **Agent state** | Each agent's native session files (Claude JSONL, Codex session, etc.) are scoped to their session |
+| **Terminal** | Each session owns its own tmux window or child process |
+
+### What isn't isolated
+
+<Warning>
+  Two things cross session boundaries and are worth keeping in mind:
+
+  - **Shared package stores.** If an agent runs `pnpm install` and your setup uses a shared store, that store is shared across all worktrees on the machine.
+  - **External side effects.** PR creation, CI triggers, database writes, and notifier pings are immediately visible outside the session. There is no "sandbox mode" for network or storage effects.
+</Warning>
+
+## Monitoring parallel sessions
+
+### Dashboard
+
+The Kanban view gives you a live overview of every session in flight. Each card shows:
+
+- Issue title and number
+- Current lifecycle state (`spawning` → `working` → `pr_open` → `ci_failed` / `review_pending` / `mergeable` / `merged`)
+- Activity status (`active`, `ready`, `idle`, `waiting_input`, `blocked`)
+- Agent-reported cost (when available)
+
+Columns update automatically as state changes — no page refresh needed.
+
+### CLI
+
+<Tabs>
+  <Tab title="Quick overview">
+    ```bash
+    ao status
+    ```
+  </Tab>
+  <Tab title="Live updates">
+    ```bash
+    ao status --watch
+    ```
+  </Tab>
+  <Tab title="Filter by project">
+    ```bash
+    ao status -p my-repo --json
+    ```
+  </Tab>
+</Tabs>
+
+## Cleaning up sessions
+
+When you're done — or when a run goes sideways — you have several options:
+
+<Steps>
+  <Step title="Kill a single session">
+    ```bash
+    ao session kill <sessionId>
+    ```
+    Terminates the session and its agent process immediately.
+  </Step>
+  <Step title="Preview what cleanup would do">
+    ```bash
+    ao session cleanup --dry-run
+    ```
+    Lists sessions whose PRs have merged or issues have closed, without removing anything yet.
+  </Step>
+  <Step title="Run safe cleanup">
+    ```bash
+    ao session cleanup
+    ```
+    Archives metadata for merged/closed sessions. Safe to run at any time.
+  </Step>
+  <Step title="Stop everything">
+    ```bash
+    ao stop --all
+    ```
+    Halts every running AO instance on this machine. Use when you want a clean slate.
+  </Step>
+</Steps>

@@ -1,0 +1,225 @@
+---
+title: "Agent Orchestrator Architecture: Plugins and Sessions"
+sidebarTitle: "Architecture"
+description: "AO is a Node.js orchestrator with 8 plugin slots, a 30s poll loop, SSE dashboard, typed event bus, and activity detection for every session."
+---
+
+Agent Orchestrator is a Node.js process that spawns and manages parallel AI coding agents across isolated git worktrees. Every moving part — the agent that writes code, the runtime it runs in, the workspace it edits, the tracker it reads issues from — is a plugin. The core provides the state machine, event bus, and prompt assembly that connects everything together. Understanding this model helps you configure AO correctly, troubleshoot unexpected behavior, and extend it when the defaults don't fit.
+
+## The 8 Plugin Slots
+
+AO defines eight named plugin interfaces. Seven are pluggable at runtime; the eighth (Lifecycle) is built into core and cannot be replaced. You configure its behavior through `agent-orchestrator.yaml` rather than by swapping the implementation.
+
+| Slot | Default | Purpose |
+|---|---|---|
+| **Runtime** | `tmux` | Where agent sessions execute — tmux windows, child processes, or containers |
+| **Agent** | `claude-code` | Which AI coding tool is launched inside the runtime |
+| **Workspace** | `worktree` | Code isolation — each session gets its own git worktree or full clone |
+| **Tracker** | `github` | Issue tracking — where AO fetches issue titles, bodies, and metadata |
+| **SCM** | `github` | PR lifecycle — CI checks, review decisions, and merge readiness |
+| **Notifier** | `desktop` | Push notifications to the human when sessions need attention |
+| **Terminal** | `iterm2` | How humans attach to and view running sessions |
+| **Lifecycle** | core (non-pluggable) | State machine, poll loop, and reaction engine |
+
+<Note>
+  The Lifecycle slot is the only slot that cannot be replaced. It is instantiated by core and wired to all other plugins automatically. You tune its behavior — poll interval, stuck thresholds, reactions — in `agent-orchestrator.yaml`.
+</Note>
+
+---
+
+## The Poll Loop
+
+The lifecycle manager runs a recurring poll loop every **30 seconds** by default. Each cycle does exactly five things in order:
+
+<Steps>
+  <Step title="List active sessions">
+    Calls `sessionManager.list()` to get the current set of active sessions.
+  </Step>
+  <Step title="Batch-fetch PR enrichment">
+    Runs a single GraphQL query to retrieve CI status, review decision, and merge readiness for all open PRs at once — replacing N×3 individual REST calls with one request per cycle.
+  </Step>
+  <Step title="Check each session concurrently">
+    Calls `checkSession(session)` for every session in parallel. Each check calls `determineStatus()`, detects any status transition, fires events, and evaluates configured reactions.
+  </Step>
+  <Step title="Prune stale tracker entries">
+    Removes tracker metadata entries for sessions that no longer exist in the session manager.
+  </Step>
+  <Step title="Check for completion">
+    If all sessions have reached terminal statuses, fires the `summary.all_complete` event once (not repeatedly on subsequent cycles).
+  </Step>
+</Steps>
+
+### Dashboard SSE cadence
+
+The dashboard receives state changes via Server-Sent Events (SSE) at a **5-second cadence**, independent from the poll loop. The dashboard may show state that is up to 5 seconds behind the last poll cycle. This is by design — the SSE stream is lightweight and does not re-run the full poll logic.
+
+---
+
+## Event Bus
+
+After each status transition, the lifecycle manager constructs a typed `OrchestratorEvent` and fans it out to all configured notifiers and reaction handlers. Events carry a priority level so notifiers and reactions can decide how urgently to act.
+
+### Priority levels
+
+| Priority | When assigned |
+|---|---|
+| `urgent` | Events containing `stuck`, `needs_input`, or `errored` |
+| `action` | Events containing `approved`, `ready`, `merged`, or `completed` |
+| `warning` | Events containing `fail`, `changes_requested`, or `conflicts` |
+| `info` | Everything else, including all `summary.*` events |
+
+### Common event types
+
+<Accordion title="Session events">
+  | Event | Priority | When emitted |
+  |---|---|---|
+  | `session.spawned` | info | Session transitions out of `spawning` |
+  | `session.working` | info | Session enters `working` |
+  | `session.stuck` | urgent | Session exceeds the configured `agent-stuck` threshold |
+  | `session.needs_input` | urgent | Agent is waiting on a permission prompt |
+  | `session.errored` | urgent | Session enters `errored` |
+  | `session.killed` | info | Session is explicitly killed |
+  | `session.idle` | info | Session enters `idle` |
+</Accordion>
+
+<Accordion title="PR and CI events">
+  | Event | Priority | When emitted |
+  |---|---|---|
+  | `pr.created` | info | Session transitions to `pr_open` |
+  | `pr.merged` | action | PR is merged |
+  | `ci.failing` | warning | Session enters `ci_failed` |
+  | `ci.passing` | action | CI checks recover from failing to passing |
+  | `ci.fix_sent` | info | CI failure context sent to the agent |
+  | `merge.ready` | action | Session enters `mergeable` |
+  | `merge.conflicts` | warning | PR has merge conflicts |
+</Accordion>
+
+<Accordion title="Review events">
+  | Event | Priority | When emitted |
+  |---|---|---|
+  | `review.pending` | info | Session enters `review_pending` |
+  | `review.approved` | action | Session enters `approved` |
+  | `review.changes_requested` | warning | Session enters `changes_requested` |
+  | `review.comments_sent` | info | Review comments forwarded to the agent |
+  | `automated_review.found` | warning | Bot or automated review comments detected |
+</Accordion>
+
+---
+
+## Prompt Assembly
+
+Every agent session is launched with a composed prompt built from three layers, always concatenated in this order:
+
+<Steps>
+  <Step title="Layer 1 — Base prompt (fixed)">
+    Provides identity, session lifecycle rules, git workflow guidance, and PR best practices. It is identical across all sessions. Projects without a remote repository receive a trimmed variant that omits PR and CI instructions.
+  </Step>
+  <Step title="Layer 2 — Config context (per-project)">
+    Built from the project configuration. Includes the project name and ID, repository (`owner/repo`), default branch, tracker plugin name, issue ID and body (when spawning from a tracker issue), and reaction hints that list which events will auto-send instructions back to the agent.
+  </Step>
+  <Step title="Layer 3 — User rules (per-project)">
+    Loaded from `agentRules` (inline string in `agent-orchestrator.yaml`) and/or `agentRulesFile` (path to a file relative to the project root). Both are concatenated when present. An explicit `userPrompt` is appended after this layer as "Additional Instructions" — it has the highest precedence and overrides anything above it.
+  </Step>
+</Steps>
+
+<Info>
+  Orchestrator sessions do not use the three-layer prompt. They receive a completely separate prompt that includes role rules, project info, available `ao` commands, session management workflows, and project-specific orchestrator rules.
+</Info>
+
+---
+
+## Activity Detection
+
+Every agent plugin implements `getActivityState()`, which the dashboard, lifecycle manager, and stuck-detection all depend on. It returns one of six states.
+
+### The 6 activity states
+
+| State | Meaning | When |
+|---|---|---|
+| `active` | Agent is processing — thinking, writing code, running tools | Activity within the last **30 seconds** |
+| `ready` | Agent finished its turn and is waiting for input | **30 seconds – 5 minutes** since last activity |
+| `idle` | Agent has been quiet for an extended period | More than **5 minutes** since last activity |
+| `waiting_input` | Agent is at a permission prompt or asking a question | Permission request detected in output |
+| `blocked` | Agent hit an error it cannot recover from on its own | Error state detected |
+| `exited` | Agent process is no longer running | Process check returns false |
+
+### Detection cascade
+
+Each agent plugin checks activity in this order, stopping at the first definitive result:
+
+1. **Process check** — if the process is not running, return `exited` immediately.
+2. **Actionable states** — check the activity log for `waiting_input` or `blocked`; return immediately if found.
+3. **Native signal** — use the agent's own native API (session list, JSONL timestamp) and classify by age: `active` (under 30s), `ready` (30s–5min), `idle` (over 5min).
+4. **JSONL fallback** — if no native signal is available, fall back to the AO activity JSONL file at `{workspacePath}/.ao/activity.jsonl` and apply the same age-based decay.
+
+---
+
+## PATH Wrappers
+
+When an agent creates a PR or switches branches, AO needs to update the session metadata so the dashboard and lifecycle manager stay in sync. AO uses two mechanisms depending on the agent:
+
+<Tabs>
+  <Tab title="Claude Code (PostToolUse hooks)">
+    Claude Code writes `.claude/settings.json` with a `PostToolUse` hook that fires after every `gh pr create` or `git checkout` command. The hook calls `update_ao_metadata` directly, keeping session state up to date without any interception.
+  </Tab>
+  <Tab title="All other agents (PATH wrappers)">
+    Agents without a native hook system — Codex, Aider, OpenCode, and custom agents — use shell wrapper scripts installed at `~/.ao/bin/gh` and `~/.ao/bin/git`.
+
+    The wrappers intercept four commands:
+
+    | Command intercepted | What AO records |
+    |---|---|
+    | `gh pr create` | Captures PR URL from stdout; writes `pr=<url>` and `status=pr_open` |
+    | `gh pr merge` | Writes `status=merged` |
+    | `git checkout -b <branch>` | Writes `branch=<name>` |
+    | `git switch -c <branch>` | Writes `branch=<name>` |
+
+    All other `gh` and `git` commands pass through to the real binary transparently.
+  </Tab>
+</Tabs>
+
+---
+
+## Data Flow
+
+```
+agent-orchestrator.yaml ──► Config Loader ──► Plugin Registry
+                                                    │
+                                    ┌───────────────┘
+                                    ▼
+                              Session Manager ◄─── ao spawn / ao session
+                                    │
+                                    ▼
+                            Lifecycle Manager ────► Events ────► Notifiers
+                                    │                 │
+                                    │           Reactions
+                                    │
+                                    ▼
+                              Dashboard API
+                                    │
+                        ┌───────────┴──────────────┐
+                        ▼                           ▼
+                     SSE (5s)              WebSocket (terminal)
+                        │                           │
+                        ▼                           ▼
+                    React UI                   xterm.js
+```
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Session Lifecycle" icon="timeline" href="/concepts/session-lifecycle">
+    Understand every status state and the cascade logic that determines transitions.
+  </Card>
+  <Card title="Plugins" icon="puzzle-piece" href="/concepts/plugins">
+    Browse all available plugins and learn how to install or author your own.
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/overview">
+    Configure projects, agents, trackers, and reactions in `agent-orchestrator.yaml`.
+  </Card>
+  <Card title="Authoring Plugins" icon="code" href="/plugins/authoring">
+    Build a custom runtime, agent, notifier, or any other plugin slot from scratch.
+  </Card>
+</CardGroup>

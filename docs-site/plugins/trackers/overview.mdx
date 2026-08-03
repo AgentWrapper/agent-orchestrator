@@ -1,0 +1,53 @@
+---
+title: "Issue Tracker Integrations: GitHub, GitLab, Linear"
+sidebarTitle: "Overview"
+description: "Connect AO to your issue tracker — GitHub, GitLab, or Linear — to fetch issues, create branches, link sessions, and auto-generate agent prompts."
+---
+
+The tracker plugin is how Agent Orchestrator connects to your issue management system. When you run `ao spawn 42`, AO fetches the issue from your tracker, builds a prompt for the agent, and links the resulting session back to that issue. Three tracker plugins ship out of the box: **GitHub Issues**, **GitLab Issues**, and **Linear**.
+
+## What a tracker does
+
+A tracker plugin is responsible for the issue side of an agent's lifecycle — not the code review side. Specifically, it:
+
+1. **Fetches an issue** by ID to build the agent's starting prompt (used by `ao spawn <id>`).
+2. **Creates issues** when helper workflows need them (for example, CI self-healing can file a follow-up issue).
+3. **Comments and closes** issues as the agent wraps up work.
+4. **Returns the issue URL** so the AO dashboard can link directly to it.
+
+## Tracker vs. SCM: what's the difference?
+
+Tracker and SCM are **independent plugin slots**. The tracker handles issue management; the SCM plugin handles the pull-request lifecycle — opening PRs, polling review decisions, and monitoring CI checks. Because they are separate, you can freely mix and match:
+
+```yaml
+tracker: linear
+scm: github
+```
+
+This configuration fetches issues from Linear while opening and tracking pull requests on GitHub. You are not locked into a single platform for both concerns.
+
+## Setting your tracker
+
+Set the `tracker` key at the project level in your AO config file:
+
+```yaml
+tracker: github
+
+projects:
+  my-app:
+    repo: owner/my-app
+```
+
+## Available trackers
+
+<CardGroup cols={3}>
+  <Card title="GitHub" icon="github" href="/plugins/trackers/github">
+    GitHub Issues via the `gh` CLI. The default tracker — no API token required.
+  </Card>
+  <Card title="GitLab" icon="gitlab" href="/plugins/trackers/gitlab">
+    GitLab Issues via the `glab` CLI. Supports self-hosted instances.
+  </Card>
+  <Card title="Linear" icon="bolt" href="/plugins/trackers/linear">
+    Linear issues via direct API key or Composio-mediated transport.
+  </Card>
+</CardGroup>
