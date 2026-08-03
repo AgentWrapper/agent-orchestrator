@@ -253,9 +253,19 @@
 	--color-interactive-hover: var(--bridge-interactive-hover);
 	--color-interactive-active: var(--bridge-interactive-active);
 
+	/* Strong easing tokens */
+	--ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+	--ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+
 	--animate-status-pulse: status-pulse 1.8s ease-in-out infinite;
 	--animate-overlay-in: overlay-in 150ms ease-out;
 	--animate-modal-in: modal-in 150ms ease-out;
+	/* Exits are shorter than entries: the system is responding, not deciding. */
+	--animate-overlay-out: overlay-out 90ms ease-in;
+	--animate-modal-out: modal-out 100ms cubic-bezier(0.4, 0, 1, 1);
+	/* Popovers, dropdowns, tooltips — scale from trigger origin, no blur */
+	--animate-popover-in: popover-in 120ms var(--ease-out);
+	--animate-popover-out: popover-out 80ms ease-in;
 }
 
 /* Full-viewport modal/sheet scrim — dim + blur everything behind pop panels. */
@@ -1149,6 +1159,29 @@ textarea,
 	to {
 		opacity: 1;
 		scale: 1;
+	}
+}
+
+/* Lightweight popover/dropdown appear — no blur, just scale + fade from origin */
+@keyframes popover-in {
+	from {
+		opacity: 0;
+		scale: 0.96;
+	}
+	to {
+		opacity: 1;
+		scale: 1;
+	}
+}
+
+@keyframes popover-out {
+	from {
+		opacity: 1;
+		scale: 1;
+	}
+	to {
+		opacity: 0;
+		scale: 0.95;
 	}
 }
 

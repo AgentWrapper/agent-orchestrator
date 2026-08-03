@@ -1,12 +1,10 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import {
 	Bell,
-	BellRing,
+	Check,
 	CheckCheck,
 	CircleAlert,
-	ExternalLink,
 	GitMerge,
 	GitPullRequest,
 	Inbox,
@@ -14,7 +12,11 @@ import {
 	XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useMarkAllNotificationsReadMutation, useNotificationsQuery } from "../hooks/useNotificationsQuery";
+import {
+	useMarkAllNotificationsReadMutation,
+	useMarkNotificationReadMutation,
+	useNotificationsQuery,
+} from "../hooks/useNotificationsQuery";
 import { aoBridge } from "../lib/bridge";
 import { formatTimeCompact } from "../lib/format-time";
 import {
@@ -26,7 +28,6 @@ import {
 	type NotificationsCache,
 	recentNotificationsQueryKey,
 	unreadNotificationsQueryKey,
-	unresolvedNotificationsQueryKey,
 } from "../lib/notifications";
 import { useUiStore } from "../stores/ui-store";
 import { captureRendererEvent } from "../lib/telemetry";
@@ -34,9 +35,12 @@ import { cn } from "../lib/utils";
 import { TopbarButton } from "./TopbarButton";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 
+
 type NotificationCenterProps = {
 	style?: React.CSSProperties;
 };
+
+type NotificationView = "unread" | "all";
 
 function useNotificationTargetNavigation() {
 	const navigate = useNavigate();
@@ -69,8 +73,61 @@ function useNotificationTargetNavigation() {
 		[openSession],
 	);
 
-	return { openPrimary, openSession };
+	return { openPrimary };
 }
+
+const DEV_NOTIFICATIONS: NotificationDTO[] = import.meta.env.DEV
+	? [
+			{
+				id: "dev-1",
+				type: "needs_input",
+				status: "unread",
+				title: "Agent needs your input",
+				body: "Claude is blocked on a decision in the auth refactor task.",
+				createdAt: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+				projectId: "example/project-1",
+				sessionId: "dev-session-1",
+				prUrl: "",
+				target: { kind: "session", sessionId: "dev-session-1" },
+			},
+			{
+				id: "dev-2",
+				type: "ready_to_merge",
+				status: "unread",
+				title: "PR ready to merge",
+				body: "feat: add dark mode support — all checks passed.",
+				createdAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+				projectId: "example/project-2",
+				sessionId: "dev-session-2",
+				prUrl: "https://github.com/example/project-2/pull/42",
+				target: { kind: "pr", prUrl: "https://github.com/example/project-2/pull/42", sessionId: "dev-session-2" },
+			},
+			{
+				id: "dev-3",
+				type: "pr_merged",
+				status: "read",
+				title: "PR merged",
+				body: "fix: resolve race condition in session cleanup.",
+				createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+				projectId: "example/project-1",
+				sessionId: "dev-session-3",
+				prUrl: "https://github.com/example/project-1/pull/37",
+				target: { kind: "pr", prUrl: "https://github.com/example/project-1/pull/37", sessionId: "dev-session-3" },
+			},
+			{
+				id: "dev-4",
+				type: "pr_closed_unmerged",
+				status: "read",
+				title: "PR closed without merging",
+				body: "chore: bump deps — superseded by a newer automated PR.",
+				createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(),
+				projectId: "example/project-3",
+				sessionId: "dev-session-4",
+				prUrl: "https://github.com/example/project-3/pull/11",
+				target: { kind: "pr", prUrl: "https://github.com/example/project-3/pull/11", sessionId: "dev-session-4" },
+			},
+	  ]
+	: [];
 
 export function NotificationRuntime() {
 	const queryClient = useQueryClient();
@@ -95,6 +152,17 @@ export function NotificationRuntime() {
 		[getVisibleAgentSessionId, queryClient],
 	);
 
+	// Seed dummy notifications for local dev so the panel is always testable.
+	useEffect(() => {
+		if (!DEV_NOTIFICATIONS.length) return;
+		const makePage = (items: NotificationDTO[]) => ({
+			pages: [{ notifications: items, nextCursor: null }],
+			pageParams: [undefined],
+		});
+		queryClient.setQueryData(unreadNotificationsQueryKey, makePage(DEV_NOTIFICATIONS.filter((n) => n.status === "unread")));
+		queryClient.setQueryData(recentNotificationsQueryKey, makePage(DEV_NOTIFICATIONS));
+	}, [queryClient]);
+
 	useEffect(() => {
 		return aoBridge.notifications.onClick((id) => {
 			const unread = queryClient.getQueryData<NotificationsCache>(unreadNotificationsQueryKey);
@@ -110,210 +178,172 @@ export function NotificationRuntime() {
 }
 
 export function NotificationCenter({ style }: NotificationCenterProps) {
-	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [actionError, setActionError] = useState<string | null>(null);
+	const [view, setView] = useState<NotificationView>("unread");
 	const [open, setOpen] = useState(false);
-	// Opening the panel IS the acknowledgement, so the unread cache empties out
-	// from under the render. Freeze what was unseen at open time and show that
-	// for as long as the panel stays open, or rows would vanish mid-read.
-	const [unseen, setUnseen] = useState<NotificationDTO[]>([]);
 	const unreadQuery = useNotificationsQuery("unread");
-	const unresolvedQuery = useNotificationsQuery("unresolved", open);
+	const allQuery = useNotificationsQuery("all", open && view === "all");
+	const notificationsQuery = view === "unread" ? unreadQuery : allQuery;
+	const markRead = useMarkNotificationReadMutation();
 	const markAllRead = useMarkAllNotificationsReadMutation();
 	const unread = useMemo(() => getCachedNotifications(unreadQuery.data), [unreadQuery.data]);
-	// A brand-new needs-input row is both unseen and unresolved. Show it once,
-	// under Unseen: that is the section the user is here for.
-	const unresolved = useMemo(() => {
-		const shownAsUnseen = new Set(unseen.map((item) => item.id));
-		return getCachedNotifications(unresolvedQuery.data).filter((item) => !shownAsUnseen.has(item.id));
-	}, [unresolvedQuery.data, unseen]);
+	const all = useMemo(() => getCachedNotifications(allQuery.data), [allQuery.data]);
 	const unreadCount = getCachedUnreadCount(unreadQuery.data);
-	const { openPrimary, openSession } = useNotificationTargetNavigation();
-	const markAllMutate = markAllRead.mutateAsync;
-
-	// Capture what is unseen, then acknowledge it. The captured list only grows
-	// while the panel is open — acknowledging empties the unread cache, and a row
-	// must not disappear out from under the cursor.
-	//
-	// Acknowledge only what is still unread, and only by id. Scrolling loads the
-	// next page, which lands here and gets acknowledged in turn — so nothing is
-	// cleared on the server that the panel has not actually shown.
-	//
-	// Keyed on the ids rather than the array: the query hands back a fresh array
-	// on every render, which as a dependency would re-acknowledge forever.
-	const pending = useMemo(() => unread.filter((item) => item.status === "unread"), [unread]);
-	const pendingRef = useRef(pending);
-	pendingRef.current = pending;
-	const pendingKey = pending.map((item) => item.id).join("|");
-	const acknowledgedKeyRef = useRef("");
-	useEffect(() => {
-		if (!open) {
-			setUnseen([]);
-			acknowledgedKeyRef.current = "";
-			return;
+	const visibleNotifications = view === "unread" ? unread : all;
+	const { openPrimary } = useNotificationTargetNavigation();
+	const markOneRead = async (id: string) => {
+		setActionError(null);
+		void captureRendererEvent("ao.renderer.notification_mark_read_requested", { scope: "single" });
+		try {
+			await markRead.mutateAsync(id);
+			void captureRendererEvent("ao.renderer.notification_mark_read_succeeded", { scope: "single" });
+		} catch (error) {
+			void captureRendererEvent("ao.renderer.notification_mark_read_failed", { scope: "single" });
+			setActionError(error instanceof Error ? error.message : "Could not mark notification read");
 		}
-		if (pendingKey === "" || acknowledgedKeyRef.current === pendingKey) return;
-		acknowledgedKeyRef.current = pendingKey;
-		const acknowledging = pendingRef.current;
-		setUnseen((current) => {
-			const known = new Set(current.map((item) => item.id));
-			const added = acknowledging.filter((item) => !known.has(item.id));
-			return added.length === 0 ? current : [...added, ...current];
-		});
+	};
+
+	const markAll = async () => {
 		setActionError(null);
 		void captureRendererEvent("ao.renderer.notification_mark_read_requested", { scope: "all" });
-		void markAllMutate(acknowledging.map((item) => item.id))
-			.then(() => captureRendererEvent("ao.renderer.notification_mark_read_succeeded", { scope: "all" }))
-			.catch((error: unknown) => {
-				void captureRendererEvent("ao.renderer.notification_mark_read_failed", { scope: "all" });
-				setActionError(error instanceof Error ? error.message : t("notify.couldNotMarkAllRead"));
-			});
-	}, [markAllMutate, open, pendingKey, t]);
+		try {
+			await markAllRead.mutateAsync();
+			void captureRendererEvent("ao.renderer.notification_mark_read_succeeded", { scope: "all" });
+		} catch (error) {
+			void captureRendererEvent("ao.renderer.notification_mark_read_failed", { scope: "all" });
+			setActionError(error instanceof Error ? error.message : "Could not mark notifications read");
+		}
+	};
 
 	const setPanelOpen = (nextOpen: boolean) => {
 		setOpen(nextOpen);
 		if (!nextOpen) {
 			keepLatestNotificationsPage(queryClient, unreadNotificationsQueryKey);
 			keepLatestNotificationsPage(queryClient, recentNotificationsQueryKey);
-			keepLatestNotificationsPage(queryClient, unresolvedNotificationsQueryKey);
 		}
 	};
 
 	const openAndDismiss = (notification: NotificationDTO) => {
+		// Start acknowledgement while the click still owns the user gesture so PR
+		// targets can open synchronously without being blocked as a popup.
+		if (notification.status === "unread") void markOneRead(notification.id);
 		openPrimary(notification);
 		setPanelOpen(false);
 	};
 
-	const openSessionAndDismiss = (notification: NotificationDTO) => {
-		openSession(notification);
-		setPanelOpen(false);
-	};
-
-	// One viewport over both sections. Unseen renders first, so its older pages
-	// are what "more" means until it runs out; then unresolved keeps going.
-	const pagingQuery = unreadQuery.hasNextPage ? unreadQuery : unresolvedQuery;
-	const isLoading =
-		(unreadQuery.isLoading && unseen.length === 0) || (unresolvedQuery.isLoading && unresolved.length === 0);
-	// Each section owns its own failure. Collapsing both into one verdict let a
-	// failed query hide behind the other's success and render "all caught up"
-	// for data that was never loaded.
-	const unseenFailed = unreadQuery.isError;
-	const unresolvedFailed = unresolvedQuery.isError;
-	const isError = unseenFailed && unresolvedFailed;
-	const isEmpty = unseen.length === 0 && unresolved.length === 0 && !unseenFailed && !unresolvedFailed;
-
 	const loadEarlierOnScroll = (event: React.UIEvent<HTMLDivElement>) => {
 		const list = event.currentTarget;
 		const remaining = list.scrollHeight - list.scrollTop - list.clientHeight;
-		if (remaining > 80 || !pagingQuery.hasNextPage || pagingQuery.isFetchingNextPage) return;
-		void pagingQuery.fetchNextPage();
+		if (remaining > 80 || !notificationsQuery.hasNextPage || notificationsQuery.isFetchingNextPage) return;
+		void notificationsQuery.fetchNextPage();
 	};
+
+	const trigger = (
+		<TopbarButton
+			aria-label={unreadCount > 0 ? `${unreadCount} unread notifications` : "Notifications"}
+			className="relative mr-1"
+			style={style}
+			variant="icon"
+		>
+			<Bell className="size-icon-lg" aria-hidden="true" />
+			{unreadCount > 0 ? (
+				<span className="pointer-events-none absolute right-0 top-0 grid h-3.5 min-w-3.5 place-items-center rounded-full bg-red-500 px-0.5 text-[8px] font-bold leading-none text-white shadow-sm ring-1 ring-background">
+					{unreadCount > 99 ? "99+" : unreadCount}
+				</span>
+			) : null}
+		</TopbarButton>
+	);
 
 	return (
 		<Popover onOpenChange={setPanelOpen} open={open}>
-			<PopoverTrigger asChild>
-				<TopbarButton
-					aria-label={unreadCount > 0 ? t("notify.unreadCount", { count: unreadCount }) : t("notify.bell")}
-					className="relative"
-					style={style}
-					variant="icon"
-				>
-					{unreadCount > 0 ? (
-						<BellRing className="size-5 fill-current text-foreground" aria-hidden="true" />
-					) : (
-						<Bell className="size-5" aria-hidden="true" />
-					)}
-					{unreadCount > 0 ? (
-						<span className="pointer-events-none absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-foreground px-1 font-mono text-[9px] font-semibold leading-4 text-background shadow-sm">
-							{unreadCount > 99 ? "99+" : unreadCount}
-						</span>
-					) : null}
-				</TopbarButton>
-			</PopoverTrigger>
+			<PopoverTrigger asChild>{trigger}</PopoverTrigger>
 			<PopoverContent
 				align="end"
-				aria-label={t("notify.title")}
+				aria-label="Notifications"
 				className="w-notification-width max-w-[calc(100vw-1rem)] overflow-hidden rounded-panel border-border-strong p-0 shadow-xl"
 				sideOffset={8}
 			>
-				<div className="border-b border-border bg-[var(--color-overlay-subtle)] px-4 py-3.5">
-					<p className="text-subtitle font-semibold tracking-tight text-foreground">{t("notify.title")}</p>
+				<div className="border-b border-border bg-[var(--color-overlay-subtle)] px-4 pt-2.5">
+					<p className="text-subtitle font-semibold tracking-tight text-foreground">Notifications</p>
+					<div className="mt-1 flex items-end justify-between gap-4">
+						<div aria-label="Notification filters" className="flex items-end gap-5" role="tablist">
+							<NotificationTab
+								active={view === "unread"}
+								count={unreadCount}
+								label="Unread"
+								onClick={() => setView("unread")}
+							/>
+							<NotificationTab active={view === "all"} label="All" onClick={() => setView("all")} />
+						</div>
+						<button
+							aria-label="Mark all notifications read"
+							className="mb-0.5 inline-flex h-control-sm items-center gap-1.5 rounded-md px-1.5 text-caption font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+							disabled={unreadCount === 0 || markAllRead.isPending}
+							onClick={() => void markAll()}
+							type="button"
+						>
+							<CheckCheck className="size-icon-md" aria-hidden="true" />
+							Mark all read
+						</button>
+					</div>
 				</div>
 
 				{actionError ? (
 					<div className="border-b border-border bg-error/5 px-4 py-2 text-caption text-error">{actionError}</div>
 				) : null}
-				{isError && isEmpty ? (
-					<NotificationEmpty icon={CircleAlert} message={t("notify.loadFailed")} />
-				) : isLoading && isEmpty ? (
-					<NotificationEmpty icon={Inbox} message={t("notify.loading")} />
-				) : isEmpty ? (
-					<NotificationEmpty icon={CheckCheck} message={t("notify.emptyUnread")} />
+				{notificationsQuery.isError && visibleNotifications.length === 0 ? (
+					<NotificationEmpty icon={CircleAlert} message="Could not load notifications." />
+				) : notificationsQuery.isLoading && visibleNotifications.length === 0 ? (
+					<NotificationEmpty icon={Inbox} message="Loading notifications…" />
+				) : visibleNotifications.length === 0 ? (
+					<NotificationEmpty
+						icon={view === "unread" && unreadCount > 0 ? LoaderCircle : view === "unread" ? CheckCheck : Inbox}
+						message={
+							view === "unread" && unreadCount > 0
+								? "Loading unread notifications…"
+								: view === "unread"
+									? "You're all caught up."
+									: "No notifications yet."
+						}
+					/>
 				) : (
 					<div
-						aria-busy={pagingQuery.isFetchingNextPage}
+						aria-busy={notificationsQuery.isFetchingNextPage}
 						className="max-h-notification-max-height overflow-y-auto overscroll-contain py-1.5"
 						onScroll={loadEarlierOnScroll}
 						role="list"
 					>
-						{unseen.length > 0 || unseenFailed ? (
-							<NotificationSectionHeading count={unseen.length} label={t("notify.unseen")} />
-						) : null}
-						{unseenFailed ? (
-							<NotificationSectionError
-									message={t("notify.unseenLoadFailed")}
-									onRetry={() => void unreadQuery.refetch()}
-									retryLabel={t("notify.retryUnseen")}
-								/>
-						) : null}
-						{unseen.map((notification) => (
+						{visibleNotifications.map((notification) => (
 							<NotificationItem
+								disabled={markRead.isPending}
 								key={notification.id}
 								notification={notification}
+								onMarkRead={markOneRead}
 								onOpenPrimary={openAndDismiss}
-								onOpenSession={openSessionAndDismiss}
 							/>
 						))}
-						{unresolved.length > 0 || unresolvedFailed ? (
-							<NotificationSectionHeading count={unresolved.length} label={t("notify.unresolved")} />
-						) : null}
-						{unresolvedFailed ? (
-							<NotificationSectionError
-								message={t("notify.unresolvedLoadFailed")}
-								onRetry={() => void unresolvedQuery.refetch()}
-								retryLabel={t("notify.retryUnresolved")}
-							/>
-						) : null}
-						{unresolved.map((notification) => (
-							<NotificationItem
-								key={notification.id}
-								notification={notification}
-								onOpenPrimary={openAndDismiss}
-								onOpenSession={openSessionAndDismiss}
-							/>
-						))}
-						{pagingQuery.isFetchNextPageError ? (
+						{notificationsQuery.isFetchNextPageError ? (
 							<div
 								aria-live="polite"
 								className="flex items-center justify-center gap-2 px-4 py-3 text-caption text-error"
 							>
-								{t("notify.earlierLoadFailed")}
+								Couldn’t load earlier notifications.
 								<button
 									className="font-medium underline underline-offset-2 hover:text-foreground"
-									onClick={() => void pagingQuery.fetchNextPage()}
+									onClick={() => void notificationsQuery.fetchNextPage()}
 									type="button"
 								>
-									{t("notify.retry")}
+									Retry
 								</button>
 							</div>
-						) : pagingQuery.isFetchingNextPage ? (
+						) : notificationsQuery.isFetchingNextPage ? (
 							<div
 								aria-live="polite"
 								className="flex items-center justify-center gap-2 px-4 py-3 text-caption text-passive"
 							>
 								<LoaderCircle className="size-icon-md animate-spin" aria-hidden="true" />
-								{t("notify.loadingEarlier")}
+								Loading earlier notifications…
 							</div>
 						) : null}
 					</div>
@@ -323,44 +353,40 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 	);
 }
 
-/**
- * One section failed while the other loaded. Say so in place rather than
- * letting the panel imply the missing data is simply absent.
- */
-function NotificationSectionError({
-	message,
-	onRetry,
-	retryLabel,
+function NotificationTab({
+	active,
+	count,
+	label,
+	onClick,
 }: {
-	message: string;
-	onRetry: () => void;
-	retryLabel: string;
+	active: boolean;
+	count?: number;
+	label: string;
+	onClick: () => void;
 }) {
-	const { t } = useTranslation();
 	return (
-		<div aria-live="polite" className="flex items-center gap-2 px-4 py-2 text-caption text-error" role="alert">
-			<CircleAlert className="size-icon-md shrink-0" aria-hidden="true" />
-			{message}
-			<button
-				aria-label={retryLabel}
-				className="font-medium underline underline-offset-2 hover:text-foreground"
-				onClick={onRetry}
-				type="button"
-			>
-				{t("notify.retry")}
-			</button>
-		</div>
-	);
-}
-
-function NotificationSectionHeading({ count, label }: { count: number; label: string }) {
-	return (
-		<div className="flex items-center gap-1.5 px-4 pb-1 pt-2 text-caption font-medium uppercase tracking-wide text-passive">
+		<button
+			aria-selected={active}
+			className={cn(
+				"relative inline-flex h-control-md items-center gap-0.5 border-b-2 px-0.5 text-control font-medium transition-colors",
+				active ? "border-foreground text-foreground" : "border-transparent text-passive hover:text-muted-foreground",
+			)}
+			onClick={onClick}
+			role="tab"
+			type="button"
+		>
 			{label}
-			<span className="grid min-w-4 place-items-center rounded-full bg-surface px-1 font-mono text-[9px] normal-case leading-4 text-muted-foreground">
-				{count > 99 ? "99+" : count}
-			</span>
-		</div>
+			{typeof count === "number" && count > 0 ? (
+				<span
+					className={cn(
+						"relative -top-1 grid min-w-4 place-items-center rounded-full px-1 text-[9px] leading-4",
+						active ? "bg-foreground text-background" : "bg-surface text-muted-foreground",
+					)}
+				>
+					{count > 99 ? "99+" : count}
+				</span>
+			) : null}
+		</button>
 	);
 }
 
@@ -377,87 +403,76 @@ function NotificationEmpty({ icon: Icon, message }: { icon: typeof Bell; message
 	);
 }
 
-/**
- * The whole row is the click target — the hover highlight has always implied
- * that, and precision-clicking the title was the actual bug. It navigates to the
- * session for every notification type; the PR title stays a real link on top of
- * it, so a PR row offers both destinations without a separate icon button.
- */
 function NotificationItem({
+	disabled,
 	notification,
+	onMarkRead,
 	onOpenPrimary,
-	onOpenSession,
 }: {
+	disabled: boolean;
 	notification: NotificationDTO;
+	onMarkRead: (id: string) => Promise<void>;
 	onOpenPrimary: (notification: NotificationDTO) => void;
-	onOpenSession: (notification: NotificationDTO) => void;
 }) {
-	const { t } = useTranslation();
 	const Icon = notificationIcon(notification.type);
+	const isUnread = notification.status === "unread";
 	const isPR = notification.target.kind === "pr" && Boolean(notification.target.prUrl);
-	const sessionId = notification.target.sessionId || notification.sessionId;
-	const openRow = () => {
-		if (sessionId) onOpenSession(notification);
-	};
 	return (
-		<div role="listitem">
-			<div
-				className={cn(
-					"group grid grid-cols-notification gap-3 px-4 py-3 text-left transition-[background-color] duration-fast",
-					sessionId ? "cursor-pointer hover:bg-interactive-hover" : "cursor-default",
-				)}
-				onClick={openRow}
-				onKeyDown={(event) => {
-					if (event.key !== "Enter" && event.key !== " ") return;
-					event.preventDefault();
-					openRow();
-				}}
-				role={sessionId ? "button" : undefined}
-				tabIndex={sessionId ? 0 : undefined}
-				title={sessionId ? t("notify.openSessionTitle") : undefined}
+		<div
+			className={cn(
+				"group flex min-w-0 transition-[background-color,opacity] duration-fast hover:bg-interactive-hover",
+				!isUnread && "opacity-55 hover:opacity-80",
+			)}
+			role="listitem"
+		>
+			<button
+				aria-label={`${notification.title} — ${isPR ? "Open pull request" : "Open session"}`}
+				className="flex min-w-0 flex-1 items-start gap-3 px-4 py-3 text-left focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent/60"
+				onClick={() => onOpenPrimary(notification)}
+				title={isPR ? "Open pull request" : "Open session"}
+				type="button"
 			>
-				<div
+				<span
 					className={cn(
-						"mt-0.5 grid size-notification-icon place-items-center rounded-md bg-surface",
+						"mt-0.5 grid size-notification-icon shrink-0 place-items-center rounded-md bg-surface",
 						notificationIconClass(notification.type),
 					)}
 				>
 					<Icon className="size-icon-base" aria-hidden="true" />
-				</div>
-				<div className="min-w-0">
-					<div className="flex min-w-0 items-start gap-2">
-						{isPR ? (
-							<a
-								className="inline-flex min-w-0 items-start gap-1 text-left text-control font-medium leading-snug text-foreground underline decoration-border-strong underline-offset-3 transition-colors hover:text-accent hover:decoration-accent/60"
-								href={notification.target.prUrl}
-								onClick={(event) => {
-									// The row owns the session; the link owns the PR.
-									event.preventDefault();
-									event.stopPropagation();
-									onOpenPrimary(notification);
-								}}
-								rel="noreferrer"
-								target="_blank"
-								title={t("notify.openPR")}
-							>
-								<span className="break-words">{notification.title}</span>
-								<ExternalLink className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
-							</a>
-						) : (
-							<span className="min-w-0 break-words text-control font-medium leading-snug text-foreground">
-								{notification.title}
-							</span>
-						)}
-						<time className="ml-auto shrink-0 font-mono text-[9px] text-passive" dateTime={notification.createdAt}>
+				</span>
+				<span className="min-w-0 flex-1">
+					<span className="flex min-w-0 items-start gap-2">
+						<span className="min-w-0 flex-1 break-words text-control font-medium leading-snug text-foreground transition-colors group-hover:text-accent">
+							{notification.title}
+						</span>
+						<time className="shrink-0 text-[9px] text-passive" dateTime={notification.createdAt}>
 							{formatTimeCompact(notification.createdAt)}
 						</time>
-					</div>
+					</span>
 					{notification.body ? (
-						<p className="mt-0.5 whitespace-pre-wrap break-words text-caption leading-snug text-muted-foreground">
+						<span className="mt-0.5 block whitespace-pre-wrap break-words text-caption leading-snug text-muted-foreground">
 							{notification.body}
-						</p>
+						</span>
 					) : null}
-				</div>
+				</span>
+			</button>
+			<div className="flex shrink-0 items-start py-3 pr-4">
+				{isUnread ? (
+					<button
+						aria-label="Mark notification read"
+						className="grid size-control-md place-items-center rounded-md text-passive transition-colors hover:bg-interactive-active hover:text-success disabled:pointer-events-none disabled:opacity-40"
+						disabled={disabled}
+						onClick={() => void onMarkRead(notification.id)}
+						title="Mark as read"
+						type="button"
+					>
+						<Check className="size-icon-md" aria-hidden="true" />
+					</button>
+				) : (
+					<span aria-label="Read" className="grid size-control-md place-items-center text-passive" title="Read">
+						<Check className="size-icon-md" aria-hidden="true" />
+					</span>
+				)}
 			</div>
 		</div>
 	);

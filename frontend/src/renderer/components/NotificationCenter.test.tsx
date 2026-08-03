@@ -2,24 +2,35 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { NotificationDTO, NotificationListStatus } from "../lib/notifications";
+import type { NotificationDTO } from "../lib/notifications";
 import { useUiStore } from "../stores/ui-store";
 import { NotificationCenter, NotificationRuntime } from "./NotificationCenter";
+import { TooltipProvider } from "./ui/tooltip";
 
-const { connectMock, fetchNextPageMock, markAllMock, navigateMock, notificationQueryMock, paramsMock } = vi.hoisted(
-	() => ({
+const { connectMock, fetchNextPageMock, markAllMock, markReadMock, navigateMock, notificationQueryMock, paramsMock } =
+	vi.hoisted(() => ({
 		connectMock: vi.fn(),
 		fetchNextPageMock: vi.fn(),
 		markAllMock: vi.fn(),
+		markReadMock: vi.fn(),
 		navigateMock: vi.fn(),
 		notificationQueryMock: vi.fn(),
 		paramsMock: vi.fn(),
-	}),
-);
+	}));
 
-// Unseen (status unread) and unresolved (issue still open) are independent
-// axes: ntf_4 is the interesting case — already looked at, still waiting.
-const unseenNotifications: NotificationDTO[] = [
+const notifications: NotificationDTO[] = [
+	{
+		id: "ntf_1",
+		sessionId: "sess-1",
+		projectId: "proj-1",
+		prUrl: "",
+		type: "needs_input",
+		title: "Checkout flow needs input",
+		body: "The agent is waiting for your response.",
+		status: "unread",
+		createdAt: "2026-07-21T10:00:00Z",
+		target: { kind: "session", sessionId: "sess-1" },
+	},
 	{
 		id: "ntf_2",
 		sessionId: "sess-2",
@@ -33,32 +44,16 @@ const unseenNotifications: NotificationDTO[] = [
 		target: { kind: "pr", sessionId: "sess-2", prUrl: "https://github.com/acme/app/pull/67" },
 	},
 	{
-		id: "ntf_1",
-		sessionId: "sess-1",
+		id: "ntf_3",
+		sessionId: "sess-3",
 		projectId: "proj-1",
-		prUrl: "",
-		type: "needs_input",
-		title: "Checkout flow needs input",
-		body: "The agent is waiting for your response.",
-		status: "unread",
-		createdAt: "2026-07-21T10:00:00Z",
-		target: { kind: "session", sessionId: "sess-1" },
-	},
-];
-
-const unresolvedNotifications: NotificationDTO[] = [
-	...unseenNotifications,
-	{
-		id: "ntf_4",
-		sessionId: "sess-4",
-		projectId: "proj-1",
-		prUrl: "",
-		type: "needs_input",
-		title: "Docs sweep needs input",
-		body: "The agent is still waiting for your response.",
+		prUrl: "https://github.com/acme/app/pull/42",
+		type: "pr_closed_unmerged",
+		title: "PR #42 was closed without merging",
+		body: "Visual smoke target was closed without merging.",
 		status: "read",
-		createdAt: "2026-07-20T09:00:00Z",
-		target: { kind: "session", sessionId: "sess-4" },
+		createdAt: "2026-07-21T12:00:00Z",
+		target: { kind: "pr", sessionId: "sess-3", prUrl: "https://github.com/acme/app/pull/42" },
 	},
 ];
 
@@ -66,7 +61,8 @@ vi.mock("@tanstack/react-router", () => ({ useNavigate: () => navigateMock, useP
 
 vi.mock("../hooks/useNotificationsQuery", () => ({
 	useMarkAllNotificationsReadMutation: () => ({ isPending: false, mutateAsync: markAllMock }),
-	useNotificationsQuery: (status: NotificationListStatus, enabled?: boolean) => notificationQueryMock(status, enabled),
+	useMarkNotificationReadMutation: () => ({ isPending: false, mutateAsync: markReadMock }),
+	useNotificationsQuery: (status: "unread" | "all", enabled?: boolean) => notificationQueryMock(status, enabled),
 }));
 
 vi.mock("../lib/notifications", async (importOriginal) => ({
@@ -81,7 +77,9 @@ function renderNotificationCenter() {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	return render(
 		<QueryClientProvider client={queryClient}>
-			<NotificationCenter />
+			<TooltipProvider delayDuration={0}>
+				<NotificationCenter />
+			</TooltipProvider>
 		</QueryClientProvider>,
 	);
 }
@@ -89,30 +87,32 @@ function renderNotificationCenter() {
 async function clickOpen() {
 	const trigger = screen.getByRole("button", { name: /unread notifications/ });
 	await userEvent.click(trigger);
-	await screen.findByText("Unseen");
+	await screen.findByText("Mark all read");
 	return trigger;
 }
 
 function notificationQueryResult(
-	status: NotificationListStatus,
+	status: "unread" | "all",
 	overrides: Partial<{
 		hasNextPage: boolean;
 		isError: boolean;
 		isFetchNextPageError: boolean;
 		isFetchingNextPage: boolean;
 		isLoading: boolean;
+		items: NotificationDTO[];
+		unreadCount: number;
 	}> = {},
 ) {
+	const { items = notifications, unreadCount = 2, ...queryOverrides } = overrides;
 	const hasNextPage = overrides.hasNextPage ?? false;
 	return {
 		data: {
 			pageParams: [""],
 			pages: [
 				{
-					notifications: status === "unresolved" ? unresolvedNotifications : unseenNotifications,
+					notifications: status === "unread" ? items.filter((item) => item.status === "unread") : items,
 					nextCursor: hasNextPage ? "older" : undefined,
-					unreadCount: 2,
-					unresolvedCount: 3,
+					unreadCount,
 				},
 			],
 		},
@@ -122,7 +122,7 @@ function notificationQueryResult(
 		isFetchNextPageError: false,
 		isFetchingNextPage: false,
 		isLoading: false,
-		...overrides,
+		...queryOverrides,
 	};
 }
 
@@ -132,6 +132,7 @@ beforeEach(() => {
 	useUiStore.setState({ visibleTerminalKindBySession: {} });
 	fetchNextPageMock.mockReset().mockResolvedValue(undefined);
 	markAllMock.mockReset().mockResolvedValue(0);
+	markReadMock.mockReset().mockResolvedValue(notifications[0]);
 	navigateMock.mockReset();
 	notificationQueryMock.mockReset().mockImplementation(notificationQueryResult);
 	vi.spyOn(window, "open").mockImplementation(() => null);
@@ -192,15 +193,46 @@ describe("NotificationCenter", () => {
 	it("opens once on click without a hover/focus remount and dismisses outside", async () => {
 		renderNotificationCenter();
 		const trigger = screen.getByRole("button", { name: /unread notifications/ });
+		// TopbarButton variant="icon" uses utility classes, not BEM
+		expect(trigger).toHaveClass("grid", "size-control-lg");
+		expect(trigger).toHaveClass("relative");
+		expect(trigger.querySelector("svg")).toHaveClass("size-icon-lg");
+		expect(screen.getByText("2")).toHaveClass("right-0", "top-0", "h-3.5", "min-w-3.5", "text-[8px]");
 		fireEvent.mouseEnter(trigger);
 		fireEvent.focus(trigger);
-		expect(screen.queryByText("Unseen")).not.toBeInTheDocument();
+		expect(screen.queryByText("Mark all read")).not.toBeInTheDocument();
 
 		await clickOpen();
 
+		expect(screen.getByRole("tab", { name: /Unread/ })).toHaveAttribute("aria-selected", "true");
 		expect(screen.queryByText(/last 7 days/i)).not.toBeInTheDocument();
 		fireEvent.pointerDown(document.body);
-		await waitFor(() => expect(screen.queryByText("Unseen")).not.toBeInTheDocument());
+		await waitFor(() => expect(screen.queryByText("Mark all read")).not.toBeInTheDocument());
+	});
+
+	it("keeps large unread counts compact and inside the notification control", () => {
+		notificationQueryMock.mockImplementation((status: "unread" | "all") =>
+			notificationQueryResult(status, { unreadCount: 101 }),
+		);
+		renderNotificationCenter();
+
+		const badge = screen.getByText("99+");
+		expect(badge).toHaveClass("right-0", "top-0", "h-3.5", "min-w-3.5", "text-[8px]", "leading-none");
+		expect(badge).not.toHaveClass("-right-0.5", "-top-0.5", "min-w-4");
+	});
+
+	it("shows the all-caught-up message when there are no notifications", async () => {
+		notificationQueryMock.mockImplementation((status: "unread" | "all") =>
+			notificationQueryResult(status, { items: [], unreadCount: 0 }),
+		);
+		renderNotificationCenter();
+
+		const trigger = screen.getByRole("button", { name: "Notifications" });
+		expect(trigger).toBeInTheDocument();
+
+		await userEvent.click(trigger);
+		expect(await screen.findByRole("dialog", { name: "Notifications" })).toBeInTheDocument();
+		expect(screen.getByText("You're all caught up.")).toBeInTheDocument();
 	});
 
 	it("supports tab navigation inside the panel and restores focus to the bell", async () => {
@@ -215,124 +247,71 @@ describe("NotificationCenter", () => {
 		await waitFor(() => expect(trigger).toHaveFocus());
 	});
 
-	// Two sections, one list. A notification that is both unseen and unresolved
-	// belongs under Unseen only — never rendered twice.
-	it("splits notifications into Unseen and Unresolved without repeating a row", async () => {
+	it("keeps the popover header compact without changing its controls", async () => {
 		renderNotificationCenter();
 		await clickOpen();
 
-		const panel = within(screen.getByRole("dialog", { name: "Notifications" }));
-		expect(panel.getByText("Unseen")).toBeInTheDocument();
-		expect(panel.getByText("Unresolved")).toBeInTheDocument();
-
-		const rows = panel.getAllByRole("listitem");
-		expect(rows.map((row) => row.textContent)).toEqual([
-			expect.stringContaining("PR #67 is ready to merge"),
-			expect.stringContaining("Checkout flow needs input"),
-			expect.stringContaining("Docs sweep needs input"),
-		]);
-		expect(panel.getAllByText("Checkout flow needs input")).toHaveLength(1);
+		const title = screen.getByText("Notifications");
+		const header = title.parentElement;
+		const controls = title.nextElementSibling;
+		expect(header).toHaveClass("pt-2.5");
+		expect(controls).toHaveClass("mt-1");
+		expect(screen.getByRole("tab", { name: /Unread/ })).toHaveClass("h-control-md");
+		expect(screen.getByRole("tab", { name: "All" })).toHaveClass("h-control-md");
+		expect(screen.getByRole("button", { name: "Mark all notifications read" })).toHaveClass("h-control-sm", "mb-0.5");
 	});
 
-	// Opening the panel is the acknowledgement; there is no manual control.
-	it("acknowledges everything on open and keeps showing what was unseen", async () => {
+	it("keeps read notifications in chronological order in All while Unread stays focused", async () => {
 		renderNotificationCenter();
 		await clickOpen();
 
-		expect(markAllMock).toHaveBeenCalledTimes(1);
-		expect(screen.queryByRole("button", { name: "Mark all notifications read" })).not.toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "Mark notification read" })).not.toBeInTheDocument();
-		expect(screen.getByText("Checkout flow needs input")).toBeInTheDocument();
+		expect(screen.getByText("PR #67 is ready to merge")).toBeInTheDocument();
+		expect(screen.queryByText("PR #42 was closed without merging")).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("tab", { name: "All" }));
+		expect(screen.getByText("PR #42 was closed without merging")).toBeInTheDocument();
+		const rows = within(screen.getByRole("dialog", { name: "Notifications" })).getAllByRole("listitem");
+		expect(rows[0]).toHaveTextContent("PR #42 was closed without merging");
+		expect(rows[1]).toHaveTextContent("PR #67 is ready to merge");
 	});
 
-	// Acknowledging every server row would strand anything past the loaded page,
-	// so the panel names exactly the ids it rendered.
-	it("acknowledges only the ids it rendered", async () => {
+	it("opens the whole notification at its primary PR or session target", async () => {
 		renderNotificationCenter();
 		await clickOpen();
 
-		expect(markAllMock).toHaveBeenCalledWith(["ntf_2", "ntf_1"]);
-	});
+		expect(screen.queryByRole("link", { name: "PR #67 is ready to merge" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Open related session" })).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "PR #67 is ready to merge — Open pull request" }));
+		expect(markReadMock).toHaveBeenNthCalledWith(1, "ntf_2");
+		expect(window.open).toHaveBeenCalledWith("https://github.com/acme/app/pull/67", "_blank", "noopener,noreferrer");
+		expect(markReadMock.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(window.open).mock.invocationCallOrder[0]);
 
-	// A failed section must not hide behind the other one's success.
-	it.each([
-		{ failing: "unread" as const, label: "Could not load unseen notifications." },
-		{ failing: "unresolved" as const, label: "Could not load unresolved notifications." },
-	])("surfaces a failed $failing section instead of claiming success", async ({ failing, label }) => {
-		notificationQueryMock.mockImplementation((status: NotificationListStatus) =>
-			status === failing
-				? { ...notificationQueryResult(status, { isError: true }), data: undefined }
-				: notificationQueryResult(status),
-		);
-		renderNotificationCenter();
-		const trigger = screen.getByRole("button", { name: /notifications/i });
-		await userEvent.click(trigger);
-
-		expect(await screen.findByText(label)).toBeInTheDocument();
-		expect(screen.queryByText("You're all caught up.")).not.toBeInTheDocument();
-	});
-
-	// Both sections empty and healthy is the only case that is genuinely clear.
-	it("claims all caught up only when both sections loaded", async () => {
-		notificationQueryMock.mockImplementation((status: NotificationListStatus) => ({
-			...notificationQueryResult(status),
-			data: { pageParams: [""], pages: [{ notifications: [], unreadCount: 0, unresolvedCount: 0 }] },
-		}));
-		renderNotificationCenter();
-		await userEvent.click(screen.getByRole("button", { name: /notifications/i }));
-
-		expect(await screen.findByText("You're all caught up.")).toBeInTheDocument();
-	});
-
-	it("navigates to the session from anywhere on the row, including the body text", async () => {
-		renderNotificationCenter();
 		await clickOpen();
-
-		await userEvent.click(screen.getByText("The agent is waiting for your response."));
+		await userEvent.click(screen.getByRole("button", { name: "Checkout flow needs input — Open session" }));
+		expect(markReadMock).toHaveBeenNthCalledWith(2, "ntf_1");
 		expect(navigateMock).toHaveBeenCalledWith({
 			to: "/projects/$projectId/sessions/$sessionId",
 			params: { projectId: "proj-1", sessionId: "sess-1" },
 		});
+		expect(markReadMock.mock.invocationCallOrder[1]).toBeLessThan(navigateMock.mock.invocationCallOrder[0]);
 	});
 
-	// A PR row navigates to the session like any other, but its title stays a
-	// real link so the PR itself is still one click away.
-	it("opens the PR from its title and the session from the surrounding row", async () => {
+	it("marks one or every unread notification without removing history itself", async () => {
 		renderNotificationCenter();
 		await clickOpen();
+		vi.mocked(window.open).mockClear();
 
-		const titleLink = screen.getByRole("link", { name: "PR #67 is ready to merge" });
-		expect(titleLink).toHaveAttribute("href", "https://github.com/acme/app/pull/67");
-		await userEvent.click(titleLink);
-		expect(window.open).toHaveBeenCalledWith("https://github.com/acme/app/pull/67", "_blank", "noopener,noreferrer");
+		await userEvent.click(screen.getAllByRole("button", { name: "Mark notification read" })[0]);
+		expect(markReadMock).toHaveBeenCalledWith("ntf_2");
+		expect(window.open).not.toHaveBeenCalled();
 		expect(navigateMock).not.toHaveBeenCalled();
 
-		await clickOpen();
-		await userEvent.click(screen.getByText("Checkout flow has no known blocking CI or review feedback."));
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "sess-2" },
-		});
-	});
-
-	it("opens the session with the keyboard from a focused row", async () => {
-		renderNotificationCenter();
-		await clickOpen();
-
-		const row = within(screen.getByRole("dialog", { name: "Notifications" })).getAllByRole("button", {
-			name: /Checkout flow needs input/,
-		})[0];
-		row.focus();
-		await userEvent.keyboard("{Enter}");
-
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "sess-1" },
-		});
+		await userEvent.click(screen.getByRole("button", { name: "Mark all notifications read" }));
+		expect(markAllMock).toHaveBeenCalledTimes(1);
 	});
 
 	it("loads earlier history near the end of the scroll viewport", async () => {
-		notificationQueryMock.mockImplementation((status: NotificationListStatus) =>
+		notificationQueryMock.mockImplementation((status: "unread" | "all") =>
 			notificationQueryResult(status, { hasNextPage: true }),
 		);
 		renderNotificationCenter();
@@ -350,7 +329,7 @@ describe("NotificationCenter", () => {
 	});
 
 	it("offers a retry when loading earlier notifications fails", async () => {
-		notificationQueryMock.mockImplementation((status: NotificationListStatus) =>
+		notificationQueryMock.mockImplementation((status: "unread" | "all") =>
 			notificationQueryResult(status, {
 				hasNextPage: true,
 				isError: true,

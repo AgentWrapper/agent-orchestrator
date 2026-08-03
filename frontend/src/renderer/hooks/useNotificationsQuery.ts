@@ -2,10 +2,13 @@ import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-q
 import {
 	fetchNotificationsPage,
 	markAllCachedNotificationsRead,
+	markCachedNotificationRead,
 	markAllNotificationsRead,
+	markNotificationRead,
 	notificationsQueryKey,
 	recentNotificationsQueryKey,
 	type NotificationListStatus,
+	unreadNotificationsQueryKey,
 } from "../lib/notifications";
 
 export function useNotificationsQuery(status: NotificationListStatus, enabled = true) {
@@ -19,20 +22,24 @@ export function useNotificationsQuery(status: NotificationListStatus, enabled = 
 	});
 }
 
-/**
- * Opening the notification panel is the acknowledgement — there is no manual
- * "mark all read" control any more, so this mutation is fired on open.
- */
+export function useMarkNotificationReadMutation() {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: markNotificationRead,
+		onSuccess: (notification) => {
+			markCachedNotificationRead(queryClient, notification);
+		},
+	});
+}
+
 export function useMarkAllNotificationsReadMutation() {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationFn: markAllNotificationsRead,
-		onSuccess: (_updated, ids) => {
-			markAllCachedNotificationsRead(queryClient, ids);
-			// Deliberately no invalidate here: refetching would drop the loaded
-			// pages, and with them the cursor to unseen rows the panel has not
-			// reached yet. The cache is already correct for the ids we sent.
+		onSuccess: () => {
+			markAllCachedNotificationsRead(queryClient);
 			void queryClient.invalidateQueries({ queryKey: recentNotificationsQueryKey });
+			void queryClient.invalidateQueries({ queryKey: unreadNotificationsQueryKey });
 		},
 	});
 }
