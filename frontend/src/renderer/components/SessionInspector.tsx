@@ -574,8 +574,8 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 				{session.status === "no_signal" ? (
 					<span className="inline-flex align-middle">
 						<TimelinePill {...getSessionTimelinePillView("no_signal")} />
-					</span>
-				) : null}
+				</span>
+			) : null}
 				{scmTimelineStates(session).map((state) => (
 					<span key={state} className="inline-flex align-middle">
 						<InspectorScmPill state={state} />
