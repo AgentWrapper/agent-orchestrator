@@ -1,3 +1,4 @@
+import type { TFunction } from "i18next";
 import {
 	attentionZone,
 	attentionZoneOrder,
@@ -8,6 +9,7 @@ import {
 	type WorkspaceSession,
 	type WorkspaceSummary,
 } from "../types/workspace";
+import { appI18n, type MessageKey } from "../i18n";
 
 export type CommandGroupId = "current" | "attention" | "projects" | "sessions" | "prs" | "global";
 
@@ -46,13 +48,35 @@ export type CommandPaletteContext = {
 
 export const commandGroupOrder: CommandGroupId[] = ["current", "attention", "projects", "sessions", "prs", "global"];
 
+const commandGroupLabelKeys: Record<CommandGroupId, MessageKey> = {
+	current: "command.group.current",
+	attention: "command.group.attention",
+	projects: "command.group.projects",
+	sessions: "command.group.sessions",
+	prs: "command.group.prs",
+	global: "command.group.global",
+};
+
+/** Live labels for the current locale. */
 export const commandGroupLabel: Record<CommandGroupId, string> = {
-	current: "Current",
-	attention: "Needs attention",
-	projects: "Projects",
-	sessions: "Sessions",
-	prs: "Pull requests",
-	global: "Global",
+	get current() {
+		return appI18n.t(commandGroupLabelKeys.current);
+	},
+	get attention() {
+		return appI18n.t(commandGroupLabelKeys.attention);
+	},
+	get projects() {
+		return appI18n.t(commandGroupLabelKeys.projects);
+	},
+	get sessions() {
+		return appI18n.t(commandGroupLabelKeys.sessions);
+	},
+	get prs() {
+		return appI18n.t(commandGroupLabelKeys.prs);
+	},
+	get global() {
+		return appI18n.t(commandGroupLabelKeys.global);
+	},
 };
 
 function isSyntheticBranch(session: WorkspaceSession): boolean {
@@ -92,7 +116,7 @@ function findSession(workspaces: WorkspaceSummary[], sessionId: string): Workspa
 	return undefined;
 }
 
-export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
+export function buildCommands(ctx: CommandPaletteContext, t: TFunction = appI18n.t): CommandItem[] {
 	const { workspaces, currentProjectId, currentSessionId, restartingProjectIds } = ctx;
 	const items: CommandItem[] = [];
 
@@ -105,14 +129,14 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 	items.push({
 		id: "current-new-task",
 		group: "current",
-		title: "New task",
+		title: t("command.newTask"),
 		subtitle: currentProject?.name,
 		keywords: ["worker", "chat", "start"],
 		disabled: !currentProject || isProjectRestarting,
 		disabledReason: !currentProject
-			? "No current project"
+			? t("command.noCurrentProject")
 			: isProjectRestarting
-				? "Orchestrator restarting"
+				? t("command.orchestratorRestarting")
 				: undefined,
 		...(currentProject ? { action: { kind: "open-new-task" as const, projectId: currentProject.id } } : {}),
 	});
@@ -121,17 +145,17 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 		items.push({
 			id: "current-open-orchestrator",
 			group: "current",
-			title: "Open orchestrator",
+			title: t("command.openOrchestrator"),
 			subtitle: currentProject.name,
 			keywords: ["orchestrator", "spawn", currentProject.name],
 			disabled: isProjectRestarting,
-			disabledReason: isProjectRestarting ? "Orchestrator restarting" : undefined,
+			disabledReason: isProjectRestarting ? t("command.orchestratorRestarting") : undefined,
 			action: { kind: "open-orchestrator", projectId: currentProject.id },
 		});
 		items.push({
 			id: "current-project-settings",
 			group: "current",
-			title: "Project settings",
+			title: t("command.projectSettings"),
 			subtitle: currentProject.name,
 			keywords: ["settings", "config", currentProject.name],
 			action: {
@@ -146,7 +170,7 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 		items.push({
 			id: "current-copy-branch",
 			group: "current",
-			title: "Copy branch name",
+			title: t("command.copyBranch"),
 			subtitle: currentBranch,
 			keywords: ["branch", "git", currentBranch, currentSession.title],
 			action: { kind: "copy-branch", branch: currentBranch },
@@ -220,21 +244,21 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 	items.push({
 		id: "global-new-project",
 		group: "global",
-		title: "New project",
+		title: t("command.newProject"),
 		keywords: ["add", "import", "repo", "workspace"],
 		action: { kind: "open-new-project" },
 	});
 	items.push({
 		id: "global-settings",
 		group: "global",
-		title: "Global settings",
+		title: t("command.globalSettings"),
 		keywords: ["settings", "preferences", "config"],
 		action: { kind: "navigate", target: { to: "/settings" } },
 	});
 	items.push({
 		id: "global-theme",
 		group: "global",
-		title: "Toggle theme",
+		title: t("command.toggleTheme"),
 		keywords: ["dark", "light", "appearance"],
 		action: { kind: "toggle-theme" },
 	});
@@ -278,11 +302,14 @@ export const MAX_ITEMS_PER_GROUP = 20;
 
 export const MAX_SEARCH_RESULTS = 20;
 
-export function groupCommands(items: CommandItem[]): { id: CommandGroupId; label: string; items: CommandItem[] }[] {
+export function groupCommands(
+	items: CommandItem[],
+	t: TFunction = appI18n.t,
+): { id: CommandGroupId; label: string; items: CommandItem[] }[] {
 	return commandGroupOrder
 		.map((id) => ({
 			id,
-			label: commandGroupLabel[id],
+			label: t(commandGroupLabelKeys[id]),
 			items: items.filter((item) => item.group === id).slice(0, MAX_ITEMS_PER_GROUP),
 		}))
 		.filter((group) => group.items.length > 0);
@@ -295,9 +322,9 @@ export function visibleForQuery(items: CommandItem[], query: string): CommandIte
 
 export type DisplayGroup = { id: string; label: string; items: CommandItem[] };
 
-export function displayGroups(items: CommandItem[], query: string): DisplayGroup[] {
+export function displayGroups(items: CommandItem[], query: string, t: TFunction = appI18n.t): DisplayGroup[] {
 	// Keep matches under their category headings (Cursor-style), including while typing.
-	const groups = groupCommands(visibleForQuery(items, query));
+	const groups = groupCommands(visibleForQuery(items, query), t);
 	if (!query.trim()) return groups;
 	// The palette runs cmdk with shouldFilter:false and selects the first item in DOM
 	// order, so Enter follows category order. Rank categories by their best match to
