@@ -838,12 +838,14 @@ function ReviewsSection({
 function ReviewDisclosure({
 	title,
 	meta,
+	verdict,
 	defaultOpen,
 	collapsible = true,
 	children,
 }: {
 	title: string;
 	meta: string;
+	verdict?: ReturnType<typeof reviewVerdict>;
 	defaultOpen: boolean;
 	/** A lone PR is always open: there is nothing to choose between, so a
 	    chevron would only offer the user a way to hide the one thing here. */
@@ -855,9 +857,12 @@ function ReviewDisclosure({
 		return (
 			<div className="py-2 first:pt-0.5 last:pb-0.5">
 				<div className="flex min-w-0 flex-col gap-1 px-1.5 py-1">
+				<span className="flex min-w-0 items-center justify-between gap-2">
 					<span className="line-clamp-2 text-sm-md font-semibold leading-snug text-foreground" title={title}>
 						{title}
 					</span>
+					{verdict ? <VerdictBadge label={verdict.label} tone={verdict.tone} /> : null}
+				</span>
 					<span className="truncate font-mono text-micro text-passive" title={meta}>
 						{meta}
 					</span>
@@ -888,6 +893,7 @@ function ReviewDisclosure({
 						{meta}
 					</span>
 				</span>
+				{verdict ? <VerdictBadge label={verdict.label} tone={verdict.tone} /> : null}
 			</button>
 			{open ? <div className="mt-2 flex flex-col gap-3 pl-1.5">{children}</div> : null}
 		</div>
@@ -1215,7 +1221,8 @@ function ReviewPanel({
 							key={`${reviewState.prUrl}:${reviewState.targetSha}`}
 							collapsible
 							defaultOpen={false}
-							meta={aoReviewMeta(reviewState)}
+								meta={aoReviewMeta(reviewState)}
+								verdict={reviewVerdict(reviewState)}
 							title={reviewState.title?.trim() || `PR #${reviewState.prNumber}`}
 							>
 								<ReviewerRuns

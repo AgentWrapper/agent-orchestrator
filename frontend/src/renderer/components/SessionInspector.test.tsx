@@ -790,7 +790,7 @@ describe("SessionInspector reviews tab", () => {
 
 		expect(await screen.findByText("Reviewable change 3")).toBeInTheDocument();
 		expect(screen.getByText("#3 · Not run")).toBeInTheDocument();
-		expect(screen.getAllByText("Not run")).toHaveLength(1);
+		expect(screen.getAllByText("Not run")).toHaveLength(2);
 	});
 
 	it("shows eligible and up-to-date open PR review rows", async () => {
@@ -807,6 +807,11 @@ describe("SessionInspector reviews tab", () => {
 		expect(await screen.findByText("Reviewable change 3")).toBeInTheDocument();
 		expect(screen.getByText("#3 · Not run")).toBeInTheDocument();
 		expect(screen.getByText("Reviewable change 4")).toBeInTheDocument();
+		expect(
+			within(screen.getByText("Reviewable change 4").closest("[data-testid='review-pr-row']") as HTMLElement).getByText(
+				"Approved",
+			),
+		).toBeInTheDocument();
 		expect(screen.queryByText("Reviewable change 5")).not.toBeInTheDocument();
 		expect(screen.getAllByText("Not run")).not.toHaveLength(0);
 		expect(screen.getAllByText("Approved")).not.toHaveLength(0);
@@ -907,7 +912,7 @@ describe("SessionInspector reviews tab", () => {
 			renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 			await openReviewsTab();
 
-			expect(await screen.findByText(runLabel)).toBeInTheDocument();
+			expect(await screen.findAllByText(runLabel)).not.toHaveLength(0);
 			if (showsPreviousRun) {
 				expect(screen.getByText("Previous review summary with actionable detail.")).toBeInTheDocument();
 				if (status === "needs_review") {
@@ -1173,7 +1178,7 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsTab();
 
-		expect(await screen.findAllByText("Cancelled")).toHaveLength(1);
+		expect(await screen.findAllByText("Cancelled")).toHaveLength(2);
 		expect(screen.queryByText("Failed")).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeEnabled();
 	});
