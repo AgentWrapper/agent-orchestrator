@@ -45,13 +45,6 @@ export type AttachableTerminal = {
 	 * without exposing an intermediate row.
 	 */
 	prepareForActivation: () => Promise<void>;
-	/**
-	 * Erase screen + scrollback and home the cursor, preserving terminal modes.
-	 * Never a full reset (RIS): that would drop zellij's mouse-tracking mode
-	 * for the gap until the fresh attach's handshake re-asserts it — a window
-	 * with wheel scroll dead (see XtermTerminal's CLEAR_SEQUENCE).
-	 */
-	clear: () => void;
 	onUserInput: (listener: (data: string, source: TerminalUserInputSource) => void) => { dispose: () => void };
 	onResize: (listener: (size: { cols: number; rows: number }) => void) => { dispose: () => void };
 };

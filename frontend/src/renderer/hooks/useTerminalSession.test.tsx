@@ -90,7 +90,6 @@ type FakeTerminal = AttachableTerminal & {
 	autoCompleteWrites: boolean;
 	lines: string[];
 	pendingWriteCallbacks: Array<() => void>;
-	clears: number;
 	latestOutputRequests: number;
 	typeKeys(data: string): void;
 	paste(data: string): void;
@@ -110,7 +109,6 @@ function createFakeTerminal(): FakeTerminal {
 		autoCompleteWrites: true,
 		lines: [],
 		pendingWriteCallbacks: [],
-		clears: 0,
 		latestOutputRequests: 0,
 		// Mirrors xterm: the callback fires once the chunk has been parsed.
 		write: (bytes, done) => {
@@ -125,9 +123,6 @@ function createFakeTerminal(): FakeTerminal {
 			terminal.latestOutputRequests += 1;
 		},
 		prepareForActivation: async () => undefined,
-		clear: () => {
-			terminal.clears += 1;
-		},
 		onUserInput: (listener) => {
 			inputListeners.add(listener);
 			return { dispose: () => inputListeners.delete(listener) };
@@ -892,15 +887,14 @@ describe("useTerminalSession", () => {
 		expect(muxes).toHaveLength(1);
 	});
 
-	it("reattaches with a fresh mux after a socket drop without clearing retained state", () => {
-		const { view, terminal, muxes } = setup();
+	it("reattaches with a fresh mux after a socket drop", () => {
+		const { view, muxes } = setup();
 		act(() => muxes[0].emitOpened("handle-1"));
 		act(() => muxes[0].emitConnection("closed"));
 		expect(view.result.current.state).toBe("reattaching");
 		act(() => void vi.advanceTimersByTime(500));
 		expect(muxes).toHaveLength(2);
 		expect(muxes[0].disposed).toBe(true);
-		expect(terminal.clears).toBe(0);
 		expect(muxes[1].opens).toEqual([["handle-1", 80, 24]]);
 		act(() => muxes[1].emitOpened("handle-1"));
 		expect(view.result.current.state).toBe("attached");

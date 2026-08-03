@@ -130,8 +130,8 @@ function cacheDescriptor(
 		};
 	}
 
-	// Reviewer terminals still use AttachedTerminal's replay cover and bulk-write
-	// handling, but mount fresh instead of entering the retained cache.
+	// Reviewer terminals stream directly into a fresh mount and are intentionally
+	// outside the retained worker/shell cache.
 	if (terminalTarget?.kind === "reviewer") return null;
 	const handleId = session?.terminalHandleId;
 	if (!session?.id || !handleId) return null;

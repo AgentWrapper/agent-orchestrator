@@ -94,12 +94,6 @@ function loadRenderer(term: Terminal): void {
 // xterm palette tracks the app theme (see lib/terminal-themes.ts + tokens.css).
 const SUPPRESS_NATIVE_PASTE_MS = 100;
 
-// Erase scrollback (3J) + display (2J) and home the cursor. Deliberately NOT
-// term.reset(): every pane PTY is a fresh per-client attach whose handshake
-// re-asserts terminal modes anyway, but a full RIS would drop them until that
-// handshake arrives. The clear only wipes pixels; modes stay up.
-const CLEAR_SEQUENCE = "\x1b[3J\x1b[2J\x1b[H";
-
 function preparePastedText(text: string): string {
 	return text.replace(/\r?\n/g, "\r");
 }
@@ -823,7 +817,6 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			writeln: (line) => term.writeln(line),
 			showLatestOutput,
 			prepareForActivation,
-			clear: () => term.write(CLEAR_SEQUENCE),
 			onUserInput: (listener) => {
 				userInputListeners.add(listener);
 				return { dispose: () => userInputListeners.delete(listener) };

@@ -22,7 +22,6 @@ const {
 	terminalError,
 	terminalState,
 	replaySettled,
-	terminalPreparations,
 	terminalOutputHandlers,
 	terminalSessionOptions,
 	xtermMounts,
@@ -35,7 +34,6 @@ const {
 		terminalError: { value: undefined as string | undefined },
 		terminalState: { value: "idle" },
 		replaySettled: { value: true },
-		terminalPreparations: { value: 0 },
 		terminalOutputHandlers: new Map<string, (text: string) => void>(),
 		terminalSessionOptions: [] as Array<{ coverInitialReplay?: boolean }>,
 		xtermMounts: { value: 0 },
@@ -74,10 +72,7 @@ vi.mock("./XtermTerminal", () => ({
 				write: vi.fn((_data, done) => done?.()),
 				writeln: vi.fn(),
 				showLatestOutput: vi.fn(),
-				prepareForActivation: vi.fn(async () => {
-					terminalPreparations.value += 1;
-				}),
-				clear: vi.fn(),
+				prepareForActivation: vi.fn(async () => undefined),
 				onUserInput: vi.fn(() => disposable),
 				onResize: vi.fn(() => disposable),
 			});
@@ -132,7 +127,6 @@ beforeEach(() => {
 	terminalError.value = undefined;
 	terminalState.value = "idle";
 	replaySettled.value = true;
-	terminalPreparations.value = 0;
 	terminalLinkHandler = undefined;
 	terminalOutputHandlers.clear();
 	terminalSessionOptions.length = 0;
