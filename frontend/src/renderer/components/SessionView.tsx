@@ -18,7 +18,9 @@ import {
 	useShellTerminals,
 } from "../hooks/useShellTerminals";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
+import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { hidesShellTopbar } from "../lib/platform";
+import { cn } from "../lib/utils";
 import { isOrchestratorSession, sessionIsActive } from "../types/workspace";
 import type { TerminalTarget } from "../types/terminal";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
@@ -80,6 +82,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
 	const [browserPoppedOut, setBrowserPoppedOut] = useState(false);
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
+	const isNativeFullScreen = useWindowFullScreen();
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
 
@@ -473,7 +476,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
           and fills the window below any native titlebar overlay. */}
 			{browserPoppedOut && session
 				? createPortal(
-						<div className="browser-popout-overlay">
+						<div
+							className={cn(
+								"browser-popout-overlay",
+								shellTopbarHiddenByPlatform && !isNativeFullScreen && "browser-popout-overlay--mac-windowed",
+							)}
+						>
 							<BrowserPanelView
 								active
 								annotationQueue={browserAnnotationQueue}

@@ -2305,6 +2305,22 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	inset: env(titlebar-area-height, 0px) 0 0;
 	z-index: 40;
 	background: color-mix(in srgb, var(--bg) 94%, black);
+	/* The macOS shell has a separate traffic-light drag strip. Keep the
+	   maximized browser surface interactive even if those regions overlap while
+	   the window is transitioning between layouts. */
+	-webkit-app-region: no-drag;
+}
+
+/* macOS keeps the native traffic lights visible while the window is not in
+   native fullscreen. The maximized browser is portaled to <body>, so reserve
+   that band here instead of allowing its toolbar to render beneath the lights. */
+.browser-popout-overlay--mac-windowed {
+	top: var(--size-traffic-light-clearance);
+}
+
+.browser-popout-overlay .browser-panel__toolbar,
+.browser-popout-overlay .browser-panel__toolbar * {
+	-webkit-app-region: no-drag;
 }
 
 .platform-linux .browser-popout-overlay {

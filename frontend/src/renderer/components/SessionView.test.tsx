@@ -7,9 +7,20 @@ import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
 const navigateMock = vi.hoisted(() => vi.fn());
 const openShellTerminalMock = vi.hoisted(() => vi.fn());
+const nativeFullScreenMock = vi.hoisted(() => vi.fn(() => false));
 
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigateMock,
+}));
+
+vi.mock("../lib/platform", () => ({
+	// Exercise the macOS shell layout without changing the existing Ctrl-based
+	// shortcut assertions in this suite.
+	hidesShellTopbar: () => true,
+	isMacPlatform: () => false,
+}));
+vi.mock("../hooks/useWindowFullScreen", () => ({
+	useWindowFullScreen: () => nativeFullScreenMock(),
 }));
 
 type FakePanelHandle = {
@@ -321,6 +332,7 @@ function inspectorButton(): HTMLElement {
 
 describe("SessionView", () => {
 	beforeEach(() => {
+		nativeFullScreenMock.mockReturnValue(false);
 		window.localStorage.clear();
 		for (const session of workspaces.flatMap((workspace) => workspace.sessions)) {
 			delete session.previewUrl;
@@ -660,12 +672,23 @@ describe("SessionView", () => {
 
 		// The maximized overlay appears; the terminal stays mounted behind it.
 		expect(screen.getByRole("button", { name: "browser center" })).toBeInTheDocument();
+		expect(document.querySelector(".browser-popout-overlay")).toHaveClass("browser-popout-overlay--mac-windowed");
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
 
 		fireEvent.click(screen.getByRole("button", { name: "browser center" }));
 		expect(screen.queryByRole("button", { name: "browser center" })).not.toBeInTheDocument();
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
 		expect(browserDestroy).not.toHaveBeenCalled();
+	});
+
+	it("does not reserve the traffic-light band during native macOS fullscreen", () => {
+		nativeFullScreenMock.mockReturnValue(true);
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "pop browser" }));
+
+		expect(document.querySelector(".browser-popout-overlay")).not.toHaveClass("browser-popout-overlay--mac-windowed");
 	});
 
 	it("does not carry popped-out browser visibility into the next session", () => {
