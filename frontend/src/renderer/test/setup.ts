@@ -66,6 +66,7 @@ if (typeof window !== "undefined") {
 			onKeyboardShortcutsHelp: () => () => undefined,
 			onNewShellTerminalShortcut: () => () => undefined,
 			onCloseShellTerminalShortcut: () => () => undefined,
+			setCloseShellTerminalShortcutEnabled: () => undefined,
 			onOpenSettingsShortcut: () => () => undefined,
 			onPreviousSessionShortcut: () => () => undefined,
 			onNextSessionShortcut: () => () => undefined,

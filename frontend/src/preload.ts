@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL, FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL, type KeybindingOverrides } from "./shared/shortcuts";
+import { CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL, FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL, SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, type KeybindingOverrides } from "./shared/shortcuts";
 import type {
 	BrowserAgentActivityState,
 	BrowserNavState,
@@ -91,6 +91,9 @@ const api = {
 			return () => {
 				ipcRenderer.off(CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL, wrapped);
 			};
+		},
+		setCloseShellTerminalShortcutEnabled: (enabled: boolean) => {
+			ipcRenderer.send(SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, enabled);
 		},
 		onOpenSettingsShortcut: (listener: () => void) => {
 			const wrapped = () => listener();

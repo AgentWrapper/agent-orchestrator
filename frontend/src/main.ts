@@ -43,6 +43,7 @@ import type { DaemonStatus } from "./shared/daemon-status";
 import { attachAppShortcuts } from "./main/app-shortcuts";
 import {
 	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
+	SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL,
 	type KeybindingOverrides,
 } from "./shared/shortcuts";
 import {
@@ -119,6 +120,7 @@ let browserViewHost: BrowserViewHost | null = null;
 let browserRuntimeLink: BrowserRuntimeLinkHandle | null = null;
 let keybindingOverrides: KeybindingOverrides = {};
 let keybindingRecordingActive = false;
+let closeShellTerminalShortcutEnabled = false;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
 
@@ -319,6 +321,7 @@ function createWindow(): void {
 		false,
 		() => keybindingOverrides,
 		() => keybindingRecordingActive,
+		(id) => id !== "close-shell-terminal" || closeShellTerminalShortcutEnabled,
 	);
 
 	browserViewHost = createBrowserViewHost({
@@ -331,6 +334,7 @@ function createWindow(): void {
 		isMac,
 		getKeybindingOverrides: () => keybindingOverrides,
 		isKeybindingRecording: () => keybindingRecordingActive,
+		isCloseShellTerminalShortcutEnabled: () => closeShellTerminalShortcutEnabled,
 	});
 	if (daemonStatus.state === "ready") establishBrowserRuntimeLink();
 
@@ -1250,6 +1254,10 @@ ipcMain.handle("theme:set", (_event, preference: "light" | "dark" | "system") =>
 
 // Renderer calls this when focus lands on real shell UI (not the titlebar menu), so menu:action's panel fallback below doesn't go stale.
 ipcMain.on("shell:focus", () => browserViewHost?.forgetLastFocusedPanel());
+
+ipcMain.on(SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, (_event, enabled: unknown) => {
+	closeShellTerminalShortcutEnabled = enabled === true;
+});
 
 // Backs the custom title-bar menu (WindowTitlebar). Each item maps to the same
 // action the native default menu would have performed.

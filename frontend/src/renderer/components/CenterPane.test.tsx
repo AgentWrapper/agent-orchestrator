@@ -7,11 +7,15 @@ import { isMacPlatform } from "../lib/platform";
 import { CenterPane } from "./CenterPane";
 import { TooltipProvider } from "./ui/tooltip";
 
-const shortcutMocks = vi.hoisted(() => ({ closeListener: undefined as (() => void) | undefined }));
+const shortcutMocks = vi.hoisted(() => ({
+	closeListener: undefined as (() => void) | undefined,
+	closeableStates: [] as boolean[],
+}));
 
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
 		app: {
+			setCloseShellTerminalShortcutEnabled: (enabled: boolean) => shortcutMocks.closeableStates.push(enabled),
 			onCloseShellTerminalShortcut: (listener: () => void) => {
 				shortcutMocks.closeListener = listener;
 				return () => {
@@ -51,6 +55,7 @@ function renderCenterPane(props: Partial<ComponentProps<typeof CenterPane>> = {}
 
 beforeEach(() => {
 	shortcutMocks.closeListener = undefined;
+	shortcutMocks.closeableStates.length = 0;
 });
 
 describe("CenterPane toolbar session label", () => {
@@ -135,6 +140,20 @@ describe("CenterPane toolbar session label", () => {
 
 		act(() => shortcutMocks.closeListener?.());
 		expect(onCloseShellTerminal).not.toHaveBeenCalled();
+	});
+
+	it("enables the global close shortcut only while a closeable shell is active", () => {
+		const [shell] = makeShells(1);
+		const view = renderCenterPane({
+			session: worker,
+			shellTerminals: [shell],
+			terminalTarget: { kind: "shell", handleId: shell.handleId, title: shell.title },
+			onCloseShellTerminal: vi.fn(),
+		});
+
+		expect(shortcutMocks.closeableStates.at(-1)).toBe(true);
+		view.unmount();
+		expect(shortcutMocks.closeableStates.at(-1)).toBe(false);
 	});
 
 	// The button used to open a dropdown that also listed every session across
@@ -321,11 +340,13 @@ describe("CenterPane toolbar session label", () => {
 		const shells = makeShells(2);
 		const onSelectShellTerminal = vi.fn();
 		const onSelectSessionTerminal = vi.fn();
+		const onRenameShellTerminal = vi.fn();
 		renderCenterPane({
 			session: worker,
 			shellTerminals: shells,
 			onSelectSessionTerminal,
 			onSelectShellTerminal,
+			onRenameShellTerminal,
 		});
 
 		const sessionTab = screen.getByRole("tab", { name: /^do the thing/ });
@@ -343,5 +364,11 @@ describe("CenterPane toolbar session label", () => {
 		fireEvent.keyDown(firstShellTab, { key: "Home" });
 		expect(sessionTab).toHaveFocus();
 		expect(onSelectSessionTerminal).toHaveBeenCalledOnce();
+
+		// Revisiting a tab quickly by keyboard must not count as a double-click
+		// and enter rename mode.
+		fireEvent.keyDown(sessionTab, { key: "ArrowRight" });
+		expect(firstShellTab).toHaveFocus();
+		expect(screen.queryByRole("textbox", { name: /rename terminal/i })).not.toBeInTheDocument();
 	});
 });

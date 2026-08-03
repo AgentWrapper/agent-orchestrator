@@ -16,6 +16,7 @@ export const aoBridge: AoBridge =
 			onKeyboardShortcutsHelp: () => () => undefined,
 			onNewShellTerminalShortcut: () => () => undefined,
 			onCloseShellTerminalShortcut: () => () => undefined,
+			setCloseShellTerminalShortcutEnabled: () => undefined,
 			onOpenSettingsShortcut: () => () => undefined,
 			onPreviousSessionShortcut: () => () => undefined,
 			onNextSessionShortcut: () => () => undefined,

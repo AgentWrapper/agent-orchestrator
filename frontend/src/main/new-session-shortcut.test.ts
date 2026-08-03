@@ -127,6 +127,17 @@ describe("attachAppShortcuts", () => {
 		expect(event.preventDefault).toHaveBeenCalledOnce();
 	});
 
+	it("preserves the close chord when no shell terminal is closeable", () => {
+		const source = fakeSource();
+		const target = fakeTarget();
+		attachAppShortcuts(source, false, target, false, () => ({}), () => false, (id) => id !== "close-shell-terminal");
+
+		const event = source.emit({ key: "w", control: true });
+
+		expect(target.send).not.toHaveBeenCalled();
+		expect(event.preventDefault).not.toHaveBeenCalled();
+	});
+
 	it("forwards keyboard-shortcut help on each platform", () => {
 		const windowsSource = fakeSource();
 		const windowsTarget = fakeTarget();

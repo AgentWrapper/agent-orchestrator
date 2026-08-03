@@ -143,9 +143,9 @@ describe("ShellTerminalTab rename gesture per platform", () => {
 		const tab = screen.getByRole("tab", { name: "ao" });
 		// Two plain clicks, no dblclick event — mimics a trackpad double-tap that
 		// the OS delivers as separate clicks.
-		fireEvent.click(tab);
+		fireEvent.click(tab, { detail: 1 });
 		expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-		fireEvent.click(tab);
+		fireEvent.click(tab, { detail: 1 });
 		expect(screen.getByRole("textbox", { name: /rename terminal/i })).toBeInTheDocument();
 	});
 

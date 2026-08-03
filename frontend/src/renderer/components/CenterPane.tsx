@@ -110,6 +110,13 @@ export function CenterPane({
 	);
 
 	useEffect(() => {
+		aoBridge.app.setCloseShellTerminalShortcutEnabled(
+			target.kind === "shell" && Boolean(onCloseShellTerminal),
+		);
+		return () => aoBridge.app.setCloseShellTerminalShortcutEnabled(false);
+	}, [target.kind, onCloseShellTerminal]);
+
+	useEffect(() => {
 		const pane = paneRef.current;
 		if (!pane) return;
 		const workspaceSurface = pane.closest<HTMLElement>(".center-panel-surface");

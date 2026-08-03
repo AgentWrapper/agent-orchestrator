@@ -57,6 +57,11 @@ export function ShellTerminalsView() {
 		[active, closeShellTerminal],
 	);
 
+	useEffect(() => {
+		aoBridge.app.setCloseShellTerminalShortcutEnabled(Boolean(active));
+		return () => aoBridge.app.setCloseShellTerminalShortcutEnabled(false);
+	}, [active]);
+
 	return (
 		<div className="flex h-full min-h-0 flex-col text-foreground">
 			<div className="flex h-inspector-tabs shrink-0 items-center gap-3 border-b border-border px-5">

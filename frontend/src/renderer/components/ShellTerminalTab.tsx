@@ -63,9 +63,12 @@ export function ShellTerminalTab({
 	// the native dblclick event: some trackpad configurations deliver two taps as
 	// two separate clicks that never synthesize a dblclick, so onDoubleClick would
 	// never fire. Two clicks within 500ms anywhere on the tab start the rename.
-	const handleClick = () => {
+	const handleClick = (event: MouseEvent) => {
 		onSelect();
-		if (renameViaRightClick) return;
+		// Roving tab navigation activates the focused tab with HTMLElement.click(),
+		// whose detail is 0. It should select, but must not participate in the
+		// pointer-only double-click rename gesture.
+		if (renameViaRightClick || event.detail === 0) return;
 		const now = Date.now();
 		const isDoubleClick = now - lastClickAtRef.current < 500;
 		lastClickAtRef.current = isDoubleClick ? 0 : now;

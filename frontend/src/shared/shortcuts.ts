@@ -14,6 +14,9 @@ export type ShortcutChord = {
 	alt: boolean;
 };
 
+export const SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL =
+	"app:set-close-shell-terminal-shortcut-enabled";
+
 export type AppShortcutId =
 	"new-session" | "new-shell-terminal" | "close-shell-terminal" | "keyboard-shortcuts" | "toggle-sidebar" | "open-project" | "toggle-inspector" | "command-palette" | "open-settings" | "previous-session" | "next-session" | "focus-terminal";
 
