@@ -362,11 +362,14 @@ test.describe("@P0 retained terminal viewport", () => {
 		const aResizesBeforeReturn = (await muxStats(page)).resizes[handleA]?.length ?? 0;
 
 		// Exercise the same rapid return seen in 04.30.04, including output in
-		// the return commit. There must still be one retained renderer/writer.
+		// the return commit. Activation publishes exactly one visible resize so
+		// the retained PTY catches up to the locally refitted parked grid.
 		await openSession(page, sessionA.title);
-		expect((await muxStats(page)).resizes[handleA]?.length ?? 0).toBe(
-			aResizesBeforeReturn,
-		);
+		await expect
+			.poll(async () => (await muxStats(page)).resizes[handleA]?.length ?? 0)
+			.toBe(aResizesBeforeReturn + 1);
+		const afterReturn = await muxStats(page);
+		expect(afterReturn.resizePhases[handleA]?.slice(aResizesBeforeReturn)).toEqual(["visible"]);
 		await page.evaluate((handleId) => {
 			window.__aoFakeTerminalMux!.emit(handleId, "\r\nA output during return");
 		}, handleA);
