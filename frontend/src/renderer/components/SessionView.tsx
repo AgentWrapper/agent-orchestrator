@@ -456,10 +456,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				<div className="absolute inset-0 z-30 bg-background">
 					<SessionFilesView
 						isMaximized
-						onClose={() => {
-							setFilesPoppedOut(false);
-							setInspectorViewForSession(sessionId, "summary");
-						}}
 						onToggleMaximized={handleToggleFilesPopOut}
 						sessionId={session.id}
 					/>

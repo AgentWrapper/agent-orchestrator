@@ -20,7 +20,6 @@ import {
 	Maximize2,
 	Minimize2,
 	Search,
-	X,
 } from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
@@ -45,9 +44,6 @@ type WorkspaceFileStatus = WorkspaceFileSummary["status"];
 
 type SessionFilesViewProps = {
 	sessionId: string;
-	/** Only rendered as a button when `isMaximized` — the embedded panel has
-	 *  the inspector's tab strip for that, right above the toolbar. */
-	onClose?: () => void;
 	isMaximized?: boolean;
 	onToggleMaximized?: (next: boolean) => void;
 };
@@ -63,11 +59,11 @@ const statusLabel: Record<WorkspaceFileStatus, string> = {
 };
 
 const statusTone: Record<WorkspaceFileStatus, string> = {
-	added: "border-success/40 bg-success/10 text-success",
-	deleted: "border-error/40 bg-error/10 text-error",
-	modified: "border-warning/40 bg-warning/10 text-warning",
-	renamed: "border-accent/40 bg-accent-weak text-accent",
-	unmodified: "border-border bg-raised text-passive",
+	added: "text-success",
+	deleted: "text-error",
+	modified: "text-warning",
+	renamed: "text-accent",
+	unmodified: "text-passive",
 };
 
 // Split (old | new) view only means something when both sides have content to
@@ -80,7 +76,6 @@ function canSplitCompare(status: WorkspaceFileStatus): boolean {
 
 export function SessionFilesView({
 	sessionId,
-	onClose,
 	isMaximized = false,
 	onToggleMaximized,
 }: SessionFilesViewProps) {
@@ -147,12 +142,13 @@ export function SessionFilesView({
 			aria-label={t("files.sessionFiles")}
 		>
 			<header className="flex h-10 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-2">
-				<label className="relative mr-auto min-w-0 max-w-[280px] flex-1">
+				<label className="relative mr-1 min-w-0 flex-1">
 					<Search className="pointer-events-none absolute left-2.5 top-1/2 size-icon-sm -translate-y-1/2 text-passive" />
 					<Input
+						aria-label={t("files.search")}
 						className="h-8 pl-8 font-mono text-xs"
 						onChange={(event) => setFilter(event.target.value)}
-						placeholder={t("files.searchPlaceholder")}
+						placeholder={t("files.searchCountPlaceholder", { count: changedCount })}
 						value={filter}
 					/>
 				</label>
@@ -196,18 +192,6 @@ export function SessionFilesView({
 						) : (
 							<Maximize2 className="size-icon-sm" aria-hidden="true" />
 						)}
-					</Button>
-				) : null}
-				{isMaximized && onClose ? (
-					<Button
-						aria-label={t("files.close")}
-						className="shrink-0"
-						onClick={onClose}
-						size="icon-sm"
-						type="button"
-						variant="ghost"
-					>
-						<X className="size-icon-sm" aria-hidden="true" />
 					</Button>
 				) : null}
 			</header>
@@ -939,7 +923,7 @@ function StatusMark({ status }: { status: WorkspaceFileStatus }) {
 	return (
 		<span
 			className={cn(
-				"inline-flex size-5 shrink-0 items-center justify-center rounded border font-mono text-micro font-semibold",
+				"inline-flex w-5 shrink-0 items-center justify-center font-mono text-caption font-medium",
 				statusTone[status],
 			)}
 			title={t(`files.status.${status}`)}
