@@ -247,7 +247,13 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override
 	var created []domain.ReviewRun
 	batchID := ""
 	for _, reviewState := range reviews {
-		if reviewState.Status != ReviewStateNeedsReview && reviewState.Status != ReviewStateChangesRequested {
+		// A PR that is already up to date has nothing due — unless the caller asked
+		// for a different reviewer than the one that produced that verdict. Picking
+		// another agent is precisely a request for a second opinion on this commit,
+		// so refusing it makes the reviewer choice inert exactly when it is most
+		// useful. Ineligible PRs stay excluded: nothing can review those.
+		eligible := reviewState.Status == ReviewStateNeedsReview || reviewState.Status == ReviewStateChangesRequested
+		if !eligible && !secondOpinionWanted(reviewState, override, harness) {
 			continue
 		}
 		if _, err := e.store.SupersedeStaleRunningReviewRuns(ctx, workerID, reviewState.PRURL, reviewState.TargetSHA, "superseded by a review trigger for a newer commit"); err != nil {
@@ -358,6 +364,20 @@ func reviewQueue(runs []domain.ReviewRun) []ports.ReviewTask {
 		})
 	}
 	return queue
+}
+
+// secondOpinionWanted reports whether an explicitly requested harness differs
+// from the one that already reviewed this commit, which makes an otherwise
+// up-to-date PR worth running again. Only an explicit override counts: falling
+// back to the project default must not re-review a commit on every trigger.
+func secondOpinionWanted(state PRReviewState, override, harness domain.ReviewerHarness) bool {
+	if override == "" || state.Status == ReviewStateIneligible || state.Status == ReviewStateRunning {
+		return false
+	}
+	if state.LatestRun == nil {
+		return false
+	}
+	return state.LatestRun.Harness != harness
 }
 
 func replaceReviewLatestRun(reviews []PRReviewState, prURL, targetSHA string, run domain.ReviewRun) []PRReviewState {

@@ -44,10 +44,13 @@ func (f *fakeStore) InsertReviewRun(_ context.Context, r domain.ReviewRun) error
 		f.runs = append(f.runs, winner)
 		return f.insertErr
 	}
+	// Mirrors idx_review_run_session_pr_sha_harness. Harness is part of the key so
+	// a second reviewer on the same commit is a distinct pass, not a duplicate.
 	for _, existing := range f.runs {
 		if existing.SessionID == r.SessionID &&
 			existing.PRURL == r.PRURL &&
 			existing.TargetSHA == r.TargetSHA &&
+			existing.Harness == r.Harness &&
 			existing.TargetSHA != "" &&
 			existing.Status != domain.ReviewRunFailed &&
 			existing.Status != domain.ReviewRunCancelled &&
@@ -420,6 +423,83 @@ func TestTriggerIsIdempotentForSameCommit(t *testing.T) {
 	}
 	if len(store.runs) != 1 {
 		t.Fatalf("should not insert another run: %+v", store.runs)
+	}
+}
+
+// Choosing a different reviewer is a request for a second opinion on this exact
+// commit. Before this, an approved commit was skipped before the harness was
+// even consulted, so the picker looked broken precisely when a user would reach
+// for it: pick another agent, nothing happens.
+func TestTriggerRunsAnotherHarnessOnAnAlreadyApprovedCommit(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1"},
+		runs: []domain.ReviewRun{{
+			ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
+			Harness: domain.ReviewerClaudeCode,
+			Status:  domain.ReviewRunComplete, Verdict: domain.VerdictApproved,
+		}},
+	}
+	launcher := &fakeLauncher{alive: true}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1", domain.ReviewerCodex)
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if !res.Created {
+		t.Fatalf("a different harness should start a new pass: %+v", res)
+	}
+	if len(store.runs) != 2 {
+		t.Fatalf("expected a second run for the other harness, got %d: %+v", len(store.runs), store.runs)
+	}
+	if res.Run.Harness != domain.ReviewerCodex {
+		t.Fatalf("new run should record the requested harness, got %q", res.Run.Harness)
+	}
+}
+
+// The project default must not re-review an approved commit on every trigger.
+// Only an explicit pick counts as asking for a second opinion.
+func TestTriggerWithoutOverrideStillSkipsAnApprovedCommit(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1"},
+		runs: []domain.ReviewRun{{
+			ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
+			Harness: domain.ReviewerClaudeCode,
+			Status:  domain.ReviewRunComplete, Verdict: domain.VerdictApproved,
+		}},
+	}
+	launcher := &fakeLauncher{alive: true}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1", "")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if res.Created || len(store.runs) != 1 {
+		t.Fatalf("no override should still reuse the existing pass: created=%v runs=%+v", res.Created, store.runs)
+	}
+}
+
+// Re-picking the harness that already reviewed this commit is not a second
+// opinion, so it must still reuse rather than run the same agent twice.
+func TestTriggerWithSameHarnessOverrideStillReuses(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1"},
+		runs: []domain.ReviewRun{{
+			ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
+			Harness: domain.ReviewerClaudeCode,
+			Status:  domain.ReviewRunComplete, Verdict: domain.VerdictApproved,
+		}},
+	}
+	launcher := &fakeLauncher{alive: true}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1", domain.ReviewerClaudeCode)
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if res.Created || len(store.runs) != 1 {
+		t.Fatalf("same harness should reuse: created=%v runs=%+v", res.Created, store.runs)
 	}
 }
 
