@@ -19,10 +19,13 @@ import {
 	Columns2,
 	Maximize2,
 	Minimize2,
+	Plus,
 	Rows3,
 	Search,
+	Send as SendIcon,
 } from "lucide-react";
 import type { components } from "../../api/schema";
+import { formatFileAnnotationMessage, type FileAnnotationTarget } from "../../shared/file-annotations";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import {
 	isChangedWorkspaceFile,
@@ -43,6 +46,19 @@ type WorkspaceFileDetail = components["schemas"]["WorkspaceFileResponse"] & {
 	compareMode?: WorkspaceCompareMode;
 };
 type WorkspaceFileStatus = WorkspaceFileSummary["status"];
+
+type ActiveFileAnnotationTarget = FileAnnotationTarget & { rowIndex?: number };
+type FileAnnotationStatus = "idle" | "sending" | "sent" | "error";
+type FileAnnotationModel = {
+	target: ActiveFileAnnotationTarget | null;
+	draft: string;
+	status: FileAnnotationStatus;
+	error: string;
+	begin: (target: ActiveFileAnnotationTarget) => void;
+	setDraft: (draft: string) => void;
+	cancel: () => void;
+	submit: () => Promise<void>;
+};
 
 type SessionFilesViewProps = {
 	sessionId: string;
@@ -86,6 +102,12 @@ export function SessionFilesView({
 	const [filter, setFilter] = useState("");
 	const [split, setSplit] = useState(false);
 	const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
+	const [annotationTarget, setAnnotationTarget] = useState<ActiveFileAnnotationTarget | null>(null);
+	const [annotationDraft, setAnnotationDraft] = useState("");
+	const [annotationStatus, setAnnotationStatus] = useState<FileAnnotationStatus>("idle");
+	const [annotationError, setAnnotationError] = useState("");
+	const annotationGenerationRef = useRef(0);
+	const annotationSentTimerRef = useRef<number | null>(null);
 	const rootRef = useRef<HTMLElement>(null);
 
 	const filesQuery = useQuery(sessionWorkspaceFilesQueryOptions(sessionId, t("files.error.loadWorkspace")));
@@ -94,9 +116,73 @@ export function SessionFilesView({
 	const changedFiles = useMemo(() => files.filter(isChangedWorkspaceFile), [files]);
 
 	useEffect(() => {
+		annotationGenerationRef.current += 1;
 		setExpandedPaths(new Set());
 		setFilter("");
+		setAnnotationTarget(null);
+		setAnnotationDraft("");
+		setAnnotationStatus("idle");
+		setAnnotationError("");
 	}, [sessionId]);
+
+	useEffect(
+		() => () => {
+			if (annotationSentTimerRef.current !== null) window.clearTimeout(annotationSentTimerRef.current);
+		},
+		[],
+	);
+
+	const beginAnnotation = (target: ActiveFileAnnotationTarget) => {
+		annotationGenerationRef.current += 1;
+		if (annotationSentTimerRef.current !== null) window.clearTimeout(annotationSentTimerRef.current);
+		annotationSentTimerRef.current = null;
+		setAnnotationTarget(target);
+		setAnnotationDraft("");
+		setAnnotationStatus("idle");
+		setAnnotationError("");
+	};
+	const cancelAnnotation = () => {
+		annotationGenerationRef.current += 1;
+		setAnnotationTarget(null);
+		setAnnotationDraft("");
+		setAnnotationStatus("idle");
+		setAnnotationError("");
+	};
+	const submitAnnotation = async () => {
+		if (!annotationTarget || !annotationDraft.trim() || annotationStatus === "sending") return;
+		const sendGeneration = annotationGenerationRef.current;
+		const sendTarget = annotationTarget;
+		const sendFeedback = annotationDraft;
+		setAnnotationStatus("sending");
+		setAnnotationError("");
+		try {
+			const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
+				params: { path: { sessionId } },
+				body: { message: formatFileAnnotationMessage(sendTarget, sendFeedback) },
+			});
+			if (sendGeneration !== annotationGenerationRef.current) return;
+			if (error) throw new Error(apiErrorMessage(error, t("files.feedbackError")));
+			setAnnotationStatus("sent");
+			annotationSentTimerRef.current = window.setTimeout(() => {
+				annotationSentTimerRef.current = null;
+				cancelAnnotation();
+			}, 1_200);
+		} catch (error) {
+			if (sendGeneration !== annotationGenerationRef.current) return;
+			setAnnotationStatus("error");
+			setAnnotationError(apiErrorMessage(error, t("files.feedbackError")));
+		}
+	};
+	const annotation: FileAnnotationModel = {
+		target: annotationTarget,
+		draft: annotationDraft,
+		status: annotationStatus,
+		error: annotationError,
+		begin: beginAnnotation,
+		setDraft: setAnnotationDraft,
+		cancel: cancelAnnotation,
+		submit: submitAnnotation,
+	};
 
 	const normalizedFilter = filter.trim().toLowerCase();
 	const visibleFiles = useMemo(
@@ -106,6 +192,7 @@ export function SessionFilesView({
 				: changedFiles,
 		[changedFiles, normalizedFilter],
 	);
+	const changedCount = changedFiles.length;
 	const expandedVisibleCount = visibleFiles.filter((file) => expandedPaths.has(file.path)).length;
 
 	const toggleVisibleFiles = () => {
@@ -210,6 +297,7 @@ export function SessionFilesView({
 			>
 				<div className={cn("flex w-full flex-col px-0", !isMaximized && "mx-auto max-w-[1200px]")}>
 					<ReviewFileList
+						annotation={annotation}
 						compareMode={filesQuery.data?.compareMode}
 						error={filesQuery.error}
 						expandedPaths={expandedPaths}
@@ -228,6 +316,7 @@ export function SessionFilesView({
 }
 
 function ReviewFileList({
+	annotation,
 	compareMode,
 	error,
 	expandedPaths,
@@ -239,6 +328,7 @@ function ReviewFileList({
 	split,
 	wrap,
 }: {
+	annotation: FileAnnotationModel;
 	compareMode?: WorkspaceCompareMode;
 	error: Error | null;
 	expandedPaths: Set<string>;
@@ -272,6 +362,7 @@ function ReviewFileList({
 			<ul className="session-files-review-list flex flex-col gap-0.5">
 				{files.map((file) => (
 					<ReviewFileCard
+						annotation={annotation}
 						expanded={expandedPaths.has(file.path)}
 						file={file}
 						key={file.path}
@@ -286,12 +377,14 @@ function ReviewFileList({
 }
 
 function ReviewFileCard({
+	annotation,
 	expanded,
 	file,
 	sessionId,
 	split,
 	wrap,
 }: {
+	annotation: FileAnnotationModel;
 	expanded: boolean;
 	file: WorkspaceFileSummary;
 	sessionId: string;
@@ -317,6 +410,13 @@ function ReviewFileCard({
 					className="gap-2 px-3 py-1.5"
 					data-file-toggle=""
 					headerClassName="min-h-10 hover:bg-interactive-hover/50 data-[state=open]:bg-interactive-active/45"
+					trailing={
+						<FileFeedbackButton
+							active={annotation.target?.path === file.path && annotation.target.side === "file"}
+							file={file}
+							onClick={() => annotation.begin({ path: file.path, previousPath: file.previousPath, side: "file" })}
+						/>
+					}
 				>
 					{expanded ? (
 						<ChevronDown className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
@@ -327,6 +427,9 @@ function ReviewFileCard({
 					<FilePathLabel file={file} />
 					<ChangeBadges additions={file.additions} deletions={file.deletions} />
 				</AccordionTrigger>
+				{annotation.target?.path === file.path && annotation.target.side === "file" ? (
+					<FileAnnotationComposer annotation={annotation} />
+				) : null}
 				<AccordionContent className="border-t border-border/60 bg-background/40">
 					{detailQuery.isPending ? <PanelMessage compact>{t("files.loadingDiff")}</PanelMessage> : null}
 					{!detailQuery.isPending && detailQuery.error ? (
@@ -336,6 +439,7 @@ function ReviewFileCard({
 					) : null}
 					{!detailQuery.isPending && !detailQuery.error && detailQuery.data ? (
 						<ReviewDiffBody
+							annotation={annotation}
 							detail={detailQuery.data}
 							filePath={file.path}
 							onActiveSelectionChange={setSelectionOrMenuActive}
@@ -350,6 +454,22 @@ function ReviewFileCard({
 	);
 }
 
+function FileFeedbackButton({ active, file, onClick }: { active: boolean; file: WorkspaceFileSummary; onClick: () => void }) {
+	const { t } = useTranslation();
+	if (active) return <span className="size-7 shrink-0" aria-hidden="true" />;
+	return (
+		<Button
+			aria-label={t("files.addFileFeedback", { file: file.path })}
+			className="size-7 shrink-0 opacity-0 transition-opacity focus-visible:opacity-100 group-hover/row:opacity-100"
+			onClick={onClick}
+			size={null}
+			type="button"
+			variant="ghost"
+		>
+			<Plus className="size-icon-sm" aria-hidden="true" />
+		</Button>
+	);
+}
 function FilePathLabel({ file }: { file: WorkspaceFileSummary }) {
 	if (!file.previousPath) {
 		return <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-foreground">{file.path}</span>;
@@ -391,6 +511,7 @@ async function loadWorkspaceFile(sessionId: string, path: string, t: TFunction) 
 }
 
 function ReviewDiffBody({
+	annotation,
 	detail,
 	filePath,
 	onActiveSelectionChange,
@@ -398,6 +519,7 @@ function ReviewDiffBody({
 	split,
 	wrap,
 }: {
+	annotation: FileAnnotationModel;
 	detail: WorkspaceFileDetail;
 	filePath: string;
 	onActiveSelectionChange: (active: boolean) => void;
@@ -415,8 +537,11 @@ function ReviewDiffBody({
 	}
 	return (
 		<DiffView
+			annotation={annotation}
 			filePath={filePath}
 			onActiveSelectionChange={onActiveSelectionChange}
+			path={detail.path}
+			previousPath={detail.previousPath}
 			rows={rows}
 			sessionId={sessionId}
 			split={split}
@@ -642,16 +767,22 @@ type DiffViewMenuState = {
 };
 
 function DiffView({
+	annotation,
 	filePath,
 	onActiveSelectionChange,
+	path,
+	previousPath,
 	rows,
 	sessionId,
 	split,
 	truncated,
 	wrap,
 }: {
+	annotation: FileAnnotationModel;
 	filePath: string;
 	onActiveSelectionChange: (active: boolean) => void;
+	path: string;
+	previousPath?: string;
 	rows: DiffRow[];
 	sessionId: string;
 	split: boolean;
@@ -726,41 +857,50 @@ function DiffView({
 				ref={containerRef}
 			>
 				{split ? (
-					<SplitDiff rows={rows} />
+					<SplitDiff annotation={annotation} path={path} previousPath={previousPath} rows={rows} />
 				) : (
 					<div className={cn(!wrap && "min-w-max")}>
 						{rows.map((row, index) =>
 							row.kind === "hunk" ? (
 								<HunkBand key={`h${index}`} row={row} />
 							) : (
-								<div
-									className={cn("flex", diffRowTone[row.kind])}
-									data-diff-row=""
-									data-kind={row.kind}
-									data-new-no={row.newNo ?? ""}
-									data-old-no={row.oldNo ?? ""}
-									data-row-index={index}
-									key={`r${index}`}
-								>
-									<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
-										{row.newNo ?? row.oldNo ?? ""}
-									</span>
-									<span
-										className={cn(
-											"w-4 shrink-0 select-none text-center",
-											row.kind === "add" && "text-success",
-											row.kind === "del" && "text-error",
-										)}
+								<div key={`r${index}`}>
+									<div
+										className={cn("group/line flex", diffRowTone[row.kind])}
+										data-diff-row=""
+										data-kind={row.kind}
+										data-new-no={row.newNo ?? ""}
+										data-old-no={row.oldNo ?? ""}
+										data-row-index={index}
 									>
-										{diffMarkerGlyph[row.kind]}
-									</span>
-									<span className={cn("pr-3", wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre")}>
-										{row.segments ? (
-											<DiffLineSegments add={row.kind === "add"} segments={row.segments} />
-										) : (
-											row.text || " "
-										)}
-									</span>
+										<LineFeedbackButton
+											active={isAnnotationRow(annotation.target, path, index)}
+											onClick={() => annotation.begin(lineAnnotationTarget(path, previousPath, row, index))}
+											target={lineAnnotationTarget(path, previousPath, row, index)}
+										/>
+										<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
+											{row.newNo ?? row.oldNo ?? ""}
+										</span>
+										<span
+											className={cn(
+												"w-4 shrink-0 select-none text-center",
+												row.kind === "add" && "text-success",
+												row.kind === "del" && "text-error",
+											)}
+										>
+											{diffMarkerGlyph[row.kind]}
+										</span>
+										<span className={cn("pr-3", wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre")}>
+											{row.segments ? (
+												<DiffLineSegments add={row.kind === "add"} segments={row.segments} />
+											) : (
+												row.text || " "
+											)}
+										</span>
+									</div>
+									{isAnnotationRow(annotation.target, path, index) ? (
+										<FileAnnotationComposer annotation={annotation} />
+									) : null}
 								</div>
 							),
 						)}
@@ -834,16 +974,46 @@ function toSplitRows(rows: DiffRow[]): SplitRow[] {
 	return out;
 }
 
-function SplitDiff({ rows }: { rows: DiffRow[] }) {
+function SplitDiff({
+	annotation,
+	path,
+	previousPath,
+	rows,
+}: {
+	annotation: FileAnnotationModel;
+	path: string;
+	previousPath?: string;
+	rows: DiffRow[];
+}) {
 	return (
 		<div>
 			{toSplitRows(rows).map((splitRow, index) =>
 				splitRow.kind === "hunk" ? (
 					<HunkBand key={`sh${index}`} row={splitRow.row} />
 				) : (
-					<div className="grid grid-cols-2 divide-x divide-border/40" key={`sp${index}`}>
-						<SplitSide row={splitRow.left} rowIndex={splitRow.leftIndex} side="old" />
-						<SplitSide row={splitRow.right} rowIndex={splitRow.rightIndex} side="new" />
+					<div key={`sp${index}`}>
+						<div className="grid grid-cols-2 divide-x divide-border/40">
+							<SplitSide
+								annotation={annotation}
+								path={path}
+								previousPath={previousPath}
+								row={splitRow.left}
+								rowIndex={splitRow.leftIndex}
+								side="old"
+							/>
+							<SplitSide
+								annotation={annotation}
+								path={path}
+								previousPath={previousPath}
+								row={splitRow.right}
+								rowIndex={splitRow.rightIndex}
+								side="new"
+							/>
+						</div>
+						{(splitRow.leftIndex !== null && isAnnotationRow(annotation.target, path, splitRow.leftIndex)) ||
+						(splitRow.rightIndex !== null && isAnnotationRow(annotation.target, path, splitRow.rightIndex)) ? (
+							<FileAnnotationComposer annotation={annotation} />
+						) : null}
 					</div>
 				),
 			)}
@@ -851,19 +1021,43 @@ function SplitDiff({ rows }: { rows: DiffRow[] }) {
 	);
 }
 
-function SplitSide({ row, rowIndex, side }: { row: DiffRow | null; rowIndex: number | null; side: "old" | "new" }) {
+function SplitSide({
+	annotation,
+	path,
+	previousPath,
+	row,
+	rowIndex,
+	side,
+}: {
+	annotation: FileAnnotationModel;
+	path: string;
+	previousPath?: string;
+	row: DiffRow | null;
+	rowIndex: number | null;
+	side: "old" | "new";
+}) {
 	if (!row || rowIndex === null) return <div className="bg-surface-faint/20" aria-hidden="true" />;
 	const lineNo = side === "old" ? row.oldNo : row.newNo;
 	const tone = row.kind === "hunk" ? "" : diffRowTone[row.kind];
+	const target = lineNo == null ? null : lineAnnotationTarget(path, previousPath, row, rowIndex, side);
 	return (
 		<div
-			className={cn("flex min-w-0", tone)}
+			className={cn("group/line flex min-w-0", tone)}
 			data-diff-row=""
 			data-kind={row.kind}
 			data-new-no={row.newNo ?? ""}
 			data-old-no={row.oldNo ?? ""}
 			data-row-index={rowIndex}
 		>
+			{target ? (
+				<LineFeedbackButton
+					active={isAnnotationRow(annotation.target, path, rowIndex)}
+					onClick={() => annotation.begin(target)}
+					target={target}
+				/>
+			) : (
+				<span className="w-6 shrink-0" />
+			)}
 			<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
 				{lineNo ?? ""}
 			</span>
@@ -871,6 +1065,132 @@ function SplitSide({ row, rowIndex, side }: { row: DiffRow | null; rowIndex: num
 				{row.segments ? <DiffLineSegments add={row.kind === "add"} segments={row.segments} /> : row.text || " "}
 			</span>
 		</div>
+	);
+}
+
+function lineAnnotationTarget(
+	path: string,
+	previousPath: string | undefined,
+	row: DiffRow,
+	rowIndex: number,
+	side: "old" | "new" = row.kind === "del" ? "old" : "new",
+): ActiveFileAnnotationTarget {
+	return {
+		path,
+		previousPath,
+		side,
+		line: side === "old" ? (row.oldNo ?? undefined) : (row.newNo ?? undefined),
+		oldLine: row.oldNo ?? undefined,
+		newLine: row.newNo ?? undefined,
+		lineKind: row.kind === "hunk" ? undefined : row.kind,
+		lineText: row.text,
+		rowIndex,
+	};
+}
+
+function isAnnotationRow(target: ActiveFileAnnotationTarget | null, path: string, rowIndex: number): boolean {
+	return target?.path === path && target.side !== "file" && target.rowIndex === rowIndex;
+}
+
+function LineFeedbackButton({
+	active,
+	onClick,
+	target,
+}: {
+	active: boolean;
+	onClick: () => void;
+	target: ActiveFileAnnotationTarget;
+}) {
+	const { t } = useTranslation();
+	if (active) return <span className="w-6 shrink-0" aria-hidden="true" />;
+	const side = t(target.side === "old" ? "files.oldSide" : "files.newSide");
+	const label = t("files.addLineFeedback", { file: target.path, line: target.line, side });
+	return (
+		<Button
+			aria-label={label}
+			className="m-0.5 size-5 shrink-0 rounded-sm opacity-0 transition-opacity focus-visible:opacity-100 group-hover/line:opacity-100"
+			onClick={onClick}
+			size={null}
+			type="button"
+			variant="ghost"
+		>
+			<Plus className="size-3.5" aria-hidden="true" />
+		</Button>
+	);
+}
+
+function FileAnnotationComposer({ annotation }: { annotation: FileAnnotationModel }) {
+	const { t } = useTranslation();
+	const target = annotation.target;
+	if (!target) return null;
+	const side = target.side === "file" ? "" : t(target.side === "old" ? "files.oldSide" : "files.newSide");
+	const targetLabel =
+		target.side === "file"
+			? t("files.fileFeedbackTarget", { file: target.path })
+			: t("files.lineFeedbackTarget", { file: target.path, line: target.line, side });
+	const submit = () => void annotation.submit();
+
+	return (
+		<form
+			className="border-y border-border/70 bg-surface px-3 py-2 font-sans"
+			onSubmit={(event) => {
+				event.preventDefault();
+				submit();
+			}}
+		>
+			<div className="mb-1.5 flex items-center justify-between gap-2">
+				<span className="min-w-0 truncate font-mono text-caption text-passive">{targetLabel}</span>
+				{annotation.status === "sent" ? (
+					<span className="inline-flex items-center gap-1 text-caption text-success" role="status">
+						<Check className="size-icon-sm" aria-hidden="true" />
+						{t("files.feedbackSent")}
+					</span>
+				) : null}
+			</div>
+			<textarea
+				aria-label={t("files.feedbackLabel", { target: targetLabel })}
+				autoFocus
+				className="min-h-20 w-full resize-y rounded-md border border-input bg-background px-2.5 py-2 text-sm text-foreground outline-none placeholder:text-passive focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 disabled:opacity-60"
+				disabled={annotation.status === "sending" || annotation.status === "sent"}
+				onChange={(event) => annotation.setDraft(event.target.value)}
+				onKeyDown={(event) => {
+					if (event.key === "Escape") {
+						event.preventDefault();
+						annotation.cancel();
+					} else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+						event.preventDefault();
+						submit();
+					}
+				}}
+				placeholder={t("files.feedbackPlaceholder")}
+				value={annotation.draft}
+			/>
+			{annotation.status === "error" ? (
+				<p className="mt-1.5 text-xs text-error" role="alert">
+					{annotation.error}
+				</p>
+			) : null}
+			<div className="mt-2 flex items-center justify-end gap-1.5">
+				<span className="mr-auto text-caption text-passive">{t("files.feedbackShortcut")}</span>
+				<Button
+					disabled={annotation.status === "sending" || annotation.status === "sent"}
+					onClick={annotation.cancel}
+					size="sm"
+					type="button"
+					variant="ghost"
+				>
+					{t("files.cancelFeedback")}
+				</Button>
+				<Button
+					disabled={!annotation.draft.trim() || annotation.status === "sending" || annotation.status === "sent"}
+					size="sm"
+					type="submit"
+				>
+					<SendIcon className="size-icon-sm" aria-hidden="true" />
+					{annotation.status === "sending" ? t("files.sendingFeedback") : t("files.sendFeedback")}
+				</Button>
+			</div>
+		</form>
 	);
 }
 

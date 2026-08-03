@@ -186,6 +186,7 @@ describe("SessionFilesView", () => {
 		expect(screen.queryByRole("button", { name: "Refresh files" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /README\.md/ })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Download src/App.tsx" })).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Add feedback for file src/App.tsx" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Diff layout" })).not.toBeInTheDocument();
 		expect(screen.queryByText("Stacked")).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Refresh files" })).not.toBeInTheDocument();
@@ -218,11 +219,9 @@ describe("SessionFilesView", () => {
 	});
 
 	it("keeps multiple files expanded at once", async () => {
-		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
 
-		// src/App.tsx is expanded by default; expanding a second file must not
-		// collapse it.
-		await screen.findByRole("button", { name: "Collapse src/App.tsx" });
+		await userEvent.click(await screen.findByRole("button", { name: "Expand src/App.tsx" }));
 		await userEvent.click(await screen.findByRole("button", { name: "Expand docs/guide.md" }));
 
 		expect(await screen.findByRole("button", { name: "Collapse docs/guide.md" })).toBeInTheDocument();
@@ -416,6 +415,11 @@ describe("SessionFilesView", () => {
 		// Old on the left, new on the right — both still rendered.
 		expect(screen.getByText(diffLine("const value = 0;"))).toBeInTheDocument();
 		expect(screen.getByText(diffLine("const value = 1;"))).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Add feedback on old line 1 in src/App.tsx" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Add feedback on new line 1 in src/App.tsx" })).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Add feedback on old line 1 in src/App.tsx" }));
+		expect(screen.getByRole("textbox", { name: "Feedback for src/App.tsx · old line 1" })).toBeInTheDocument();
+		await userEvent.keyboard("{Escape}");
 
 		const splitToggle = screen.getByRole("button", { name: "Unified diff view" });
 		expect(splitToggle).toHaveAttribute("aria-pressed", "true");
@@ -427,7 +431,8 @@ describe("SessionFilesView", () => {
 	});
 
 	it("ignores split view for an added file — there is no old side to compare", async () => {
-		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+		await userEvent.click(await screen.findByRole("button", { name: "Expand src/App.tsx" }));
 		await screen.findByText(diffLine("const value = 1;"));
 
 		// docs/guide.md is an added file in the shared mock data.
@@ -444,6 +449,42 @@ describe("SessionFilesView", () => {
 		const addedRow = screen.getByRole("button", { name: "Collapse docs/guide.md" }).closest("li");
 		expect(modifiedRow?.querySelector(".grid-cols-2")).not.toBeNull();
 		expect(addedRow?.querySelector(".grid-cols-2")).toBeNull();
+	});
+
+	it("sends inline line feedback to the session agent with precise diff context", async () => {
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+		await userEvent.click(await screen.findByRole("button", { name: "Expand src/App.tsx" }));
+		await screen.findByText(diffLine("const value = 1;"));
+
+		await userEvent.click(screen.getByRole("button", { name: "Add feedback on new line 1 in src/App.tsx" }));
+		const feedback = screen.getByRole("textbox", { name: "Feedback for src/App.tsx · new line 1" });
+		await userEvent.type(feedback, "Reuse the shared value instead.");
+		await userEvent.click(screen.getByRole("button", { name: "Send feedback" }));
+
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/send", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { message: expect.stringContaining("Reuse the shared value instead.") },
+			}),
+		);
+		const body = postMock.mock.calls[0][1].body as { message: string };
+		expect(body.message).toContain("- Path: src/App.tsx");
+		expect(body.message).toContain("- Location: New side, line 1");
+		expect(body.message).toContain("- Code: const value = 1;");
+		expect(await screen.findByText("Sent to agent")).toBeInTheDocument();
+	});
+
+	it("opens whole-file feedback and cancels it with Escape", async () => {
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+		await screen.findByRole("button", { name: "Expand src/App.tsx" });
+
+		await userEvent.click(screen.getByRole("button", { name: "Add feedback for file src/App.tsx" }));
+		const feedback = screen.getByRole("textbox", { name: "Feedback for src/App.tsx · whole file" });
+		expect(feedback).toHaveFocus();
+		await userEvent.keyboard("{Escape}");
+
+		expect(screen.queryByRole("textbox", { name: "Feedback for src/App.tsx · whole file" })).not.toBeInTheDocument();
+		expect(postMock).not.toHaveBeenCalled();
 	});
 
 	it("moves focus between file rows with j and k", async () => {
@@ -559,24 +600,17 @@ describe("SessionFilesView", () => {
 		expect(onToggleMaximized).toHaveBeenCalledWith(false);
 	});
 
-	it("hides the close button in the embedded (non-maximized) toolbar", async () => {
-		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+	it("does not render a redundant close button in the Files toolbar", async () => {
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
 
-		await screen.findByRole("button", { name: "Collapse src/App.tsx" });
+		await screen.findByRole("button", { name: "Expand src/App.tsx" });
 		expect(screen.queryByRole("button", { name: "Close files" })).not.toBeInTheDocument();
-	});
-
-	it("shows a close button that exits back to the panel while maximized", async () => {
-		const onClose = vi.fn();
-		renderWithQuery(<SessionFilesView isMaximized onClose={onClose} sessionId="sess-1" />);
-
-		await userEvent.click(await screen.findByRole("button", { name: "Close files" }));
-		expect(onClose).toHaveBeenCalledTimes(1);
 	});
 
 	describe("diff selection -> send to agent", () => {
 		it("removes the selectionchange listener when the diff view unmounts", async () => {
-			const { unmount } = renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+			const { unmount } = renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+			await userEvent.click(await screen.findByRole("button", { name: "Expand src/App.tsx" }));
 			await screen.findByText(diffLine("const value = 1;"));
 
 			const removeSpy = vi.spyOn(document, "removeEventListener");
@@ -587,7 +621,8 @@ describe("SessionFilesView", () => {
 		});
 
 		it("opens the custom menu for a real drag selection across diff rows and suppresses the native menu", async () => {
-			const { container } = renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+			const { container } = renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+			await userEvent.click(await screen.findByRole("button", { name: "Expand src/App.tsx" }));
 			await screen.findByText(diffLine("const value = 1;"));
 
 			const scrollPane = container.querySelector(".session-files-diff-scrollbar") as HTMLElement;
@@ -606,7 +641,8 @@ describe("SessionFilesView", () => {
 		});
 
 		it("leaves the native context menu untouched when there is no active selection", async () => {
-			renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+			renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+			await userEvent.click(await screen.findByRole("button", { name: "Expand src/App.tsx" }));
 			const contentSpan = await screen.findByText(diffLine("const value = 1;"));
 			window.getSelection()?.removeAllRanges();
 
@@ -646,7 +682,8 @@ describe("SessionFilesView", () => {
 				};
 			});
 
-			const { container } = renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+			const { container } = renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+			await userEvent.click(await screen.findByRole("button", { name: "Expand src/App.tsx" }));
 			await screen.findByText(diffLine("line twelve"));
 
 			const scrollPane = container.querySelector(".session-files-diff-scrollbar") as HTMLElement;
@@ -678,58 +715,9 @@ describe("SessionFilesView", () => {
 			expect(body.message).toContain("Selected lines 1-11:");
 		});
 
-		it("pauses the file's polling refetch while a selection is active, and resumes once it clears", async () => {
-			// Load with real timers first — react-query's refetchInterval uses a
-			// genuine setInterval, and switching to fake timers here would leave
-			// the initial files-list/file-detail fetch chain (which goes through
-			// several renders) stuck with no way to drive it forward.
-			const { container } = renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
-			await screen.findByText(diffLine("const value = 1;"));
-			const callsAfterLoad = getMock.mock.calls.length;
-			expect(callsAfterLoad).toBeGreaterThan(0);
-
-			// Now switch to fake timers so the 3500ms poll window itself is
-			// deterministic. Selecting flips `refetchInterval` from 3500 to
-			// `false`, so react-query tears down its interval; clearing the
-			// selection flips it back to 3500 and react-query schedules a fresh
-			// interval — using the (by-then) fake setInterval — for us to advance.
-			vi.useFakeTimers();
-
-			const scrollPane = container.querySelector(".session-files-diff-scrollbar") as HTMLElement;
-			const startRow = scrollPane.querySelector('[data-row-index="1"]') as HTMLElement;
-			const endRow = scrollPane.querySelector('[data-row-index="2"]') as HTMLElement;
-			const startText = findTextNode(startRow.querySelector("span:last-child")!, false)!;
-			const endText = findTextNode(endRow.querySelector("span:last-child")!, true)!;
-			const range = document.createRange();
-			range.setStart(startText, 0);
-			range.setEnd(endText, endText.textContent?.length ?? 0);
-			act(() => {
-				const selection = window.getSelection();
-				selection?.removeAllRanges();
-				selection?.addRange(range);
-				// Drive the listener directly instead of relying on jsdom's async,
-				// real-clock selectionchange dispatch, which fake timers don't control.
-				document.dispatchEvent(new Event("selectionchange"));
-			});
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(4_000);
-			});
-			expect(getMock).toHaveBeenCalledTimes(callsAfterLoad);
-
-			act(() => {
-				window.getSelection()?.removeAllRanges();
-				document.dispatchEvent(new Event("selectionchange"));
-			});
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(4_000);
-			});
-			expect(getMock.mock.calls.length).toBeGreaterThan(callsAfterLoad);
-		});
-
 		it("maps a single-side selection in split view to only that side's line", async () => {
-			renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+			renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+			await userEvent.click(await screen.findByRole("button", { name: "Expand src/App.tsx" }));
 			await screen.findByText(diffLine("const value = 1;"));
 
 			await userEvent.click(screen.getByRole("button", { name: "Split diff view" }));
