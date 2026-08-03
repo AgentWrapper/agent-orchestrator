@@ -35,20 +35,9 @@ SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, created_
 FROM review WHERE session_id = ?
 `
 
-type GetReviewBySessionRow struct {
-	ID               string
-	SessionID        domain.SessionID
-	ProjectID        domain.ProjectID
-	Harness          domain.ReviewerHarness
-	PRURL            string
-	ReviewerHandleID string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-}
-
-func (q *Queries) GetReviewBySession(ctx context.Context, sessionID domain.SessionID) (GetReviewBySessionRow, error) {
+func (q *Queries) GetReviewBySession(ctx context.Context, sessionID domain.SessionID) (Review, error) {
 	row := q.db.QueryRowContext(ctx, getReviewBySession, sessionID)
-	var i GetReviewBySessionRow
+	var i Review
 	err := row.Scan(
 		&i.ID,
 		&i.SessionID,
