@@ -188,6 +188,8 @@ type Session struct {
 	RuntimeLaunchID    string
 	WorkspaceRepoPath  string
 	TerminateOnPRMerge bool
+	DiffBaseSha        string
+	DiffBaseRef        string
 }
 
 type SessionCleanupFact struct {

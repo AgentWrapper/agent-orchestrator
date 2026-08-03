@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import {
 	Bell,
@@ -109,6 +110,7 @@ export function NotificationRuntime() {
 }
 
 export function NotificationCenter({ style }: NotificationCenterProps) {
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [actionError, setActionError] = useState<string | null>(null);
 	const [open, setOpen] = useState(false);
@@ -165,9 +167,9 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 			.then(() => captureRendererEvent("ao.renderer.notification_mark_read_succeeded", { scope: "all" }))
 			.catch((error: unknown) => {
 				void captureRendererEvent("ao.renderer.notification_mark_read_failed", { scope: "all" });
-				setActionError(error instanceof Error ? error.message : "Could not mark notifications read");
+				setActionError(error instanceof Error ? error.message : t("notify.couldNotMarkAllRead"));
 			});
-	}, [markAllMutate, open, pendingKey]);
+	}, [markAllMutate, open, pendingKey, t]);
 
 	const setPanelOpen = (nextOpen: boolean) => {
 		setOpen(nextOpen);
@@ -212,7 +214,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 		<Popover onOpenChange={setPanelOpen} open={open}>
 			<PopoverTrigger asChild>
 				<TopbarButton
-					aria-label={unreadCount > 0 ? `${unreadCount} unread notifications` : "Notifications"}
+					aria-label={unreadCount > 0 ? t("notify.unreadCount", { count: unreadCount }) : t("notify.bell")}
 					className="relative"
 					style={style}
 					variant="icon"
@@ -231,23 +233,23 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 			</PopoverTrigger>
 			<PopoverContent
 				align="end"
-				aria-label="Notifications"
+				aria-label={t("notify.title")}
 				className="w-notification-width max-w-[calc(100vw-1rem)] overflow-hidden rounded-panel border-border-strong p-0 shadow-xl"
 				sideOffset={8}
 			>
 				<div className="border-b border-border bg-[var(--color-overlay-subtle)] px-4 py-3.5">
-					<p className="text-subtitle font-semibold tracking-tight text-foreground">Notifications</p>
+					<p className="text-subtitle font-semibold tracking-tight text-foreground">{t("notify.title")}</p>
 				</div>
 
 				{actionError ? (
 					<div className="border-b border-border bg-error/5 px-4 py-2 text-caption text-error">{actionError}</div>
 				) : null}
 				{isError && isEmpty ? (
-					<NotificationEmpty icon={CircleAlert} message="Could not load notifications." />
+					<NotificationEmpty icon={CircleAlert} message={t("notify.loadFailed")} />
 				) : isLoading && isEmpty ? (
-					<NotificationEmpty icon={Inbox} message="Loading notifications…" />
+					<NotificationEmpty icon={Inbox} message={t("notify.loading")} />
 				) : isEmpty ? (
-					<NotificationEmpty icon={CheckCheck} message="You're all caught up." />
+					<NotificationEmpty icon={CheckCheck} message={t("notify.emptyUnread")} />
 				) : (
 					<div
 						aria-busy={pagingQuery.isFetchingNextPage}
@@ -291,13 +293,13 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 								aria-live="polite"
 								className="flex items-center justify-center gap-2 px-4 py-3 text-caption text-error"
 							>
-								Couldn’t load earlier notifications.
+								{t("notify.earlierLoadFailed")}
 								<button
 									className="font-medium underline underline-offset-2 hover:text-foreground"
 									onClick={() => void pagingQuery.fetchNextPage()}
 									type="button"
 								>
-									Retry
+									{t("notify.retry")}
 								</button>
 							</div>
 						) : pagingQuery.isFetchingNextPage ? (
@@ -306,7 +308,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 								className="flex items-center justify-center gap-2 px-4 py-3 text-caption text-passive"
 							>
 								<LoaderCircle className="size-icon-md animate-spin" aria-hidden="true" />
-								Loading earlier notifications…
+								{t("notify.loadingEarlier")}
 							</div>
 						) : null}
 					</div>
@@ -376,6 +378,7 @@ function NotificationItem({
 	onOpenPrimary: (notification: NotificationDTO) => void;
 	onOpenSession: (notification: NotificationDTO) => void;
 }) {
+	const { t } = useTranslation();
 	const Icon = notificationIcon(notification.type);
 	const isPR = notification.target.kind === "pr" && Boolean(notification.target.prUrl);
 	const sessionId = notification.target.sessionId || notification.sessionId;

@@ -1,7 +1,9 @@
 import { ArrowUpDown, ArrowUpRight } from "lucide-react";
 import { Fragment, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
-import { prSummaryParts, type PRDisplayTone, type PRSummaryLink } from "../lib/pr-display";
+import { prNounKeys, prSummaryParts, type PRDisplayTone, type PRNoun, type PRSummaryLink } from "../lib/pr-display";
 import { cn } from "../lib/utils";
 
 const toneClass: Record<PRDisplayTone, string> = {
@@ -36,12 +38,13 @@ export function PRSummaryMeta({
 }
 
 function PRDiffMeta({ pr }: { pr: SessionPRSummary }) {
+	const { t } = useTranslation();
 	const parts: ReactNode[] = [];
 	if (pr.changedFiles > 0) {
 		parts.push(
 			<span className="inline-flex items-center gap-0.5 text-warning" key="files">
 				<ArrowUpDown aria-hidden="true" className="h-2.5 w-2.5 shrink-0" strokeWidth={2.2} />
-				{pr.changedFiles} {pluralize("file", pr.changedFiles)}
+				{pr.changedFiles} {t("pr.noun.file", { count: pr.changedFiles })}
 			</span>,
 		);
 	}
@@ -84,6 +87,7 @@ export function PRSummaryParts({
 	pr: SessionPRSummary;
 	variant?: "compact" | "stacked";
 }) {
+	const { t } = useTranslation();
 	const parts = prSummaryParts(pr);
 	const stacked = variant === "stacked";
 	return (
@@ -100,6 +104,7 @@ export function PRSummaryParts({
 				const overflowLabel = overflowPartLabel(
 					(part.linkTotal ?? part.links.length) - links.length,
 					part.overflowNoun,
+					t,
 				);
 				return (
 					<div key={part.key} className={cn("min-w-0", stacked ? "flex flex-col" : "inline-flex flex-wrap gap-x-1")}>
@@ -123,11 +128,11 @@ export function PRSummaryParts({
 	);
 }
 
-function overflowPartLabel(extra: number, noun?: string): string | undefined {
+function overflowPartLabel(extra: number, noun: PRNoun | undefined, t: TFunction): string | undefined {
 	if (extra <= 0) {
 		return undefined;
 	}
-	return noun ? `+${extra} ${pluralize(noun, extra)}` : `+${extra}`;
+	return noun ? `+${extra} ${t(prNounKeys[noun], { count: extra })}` : `+${extra}`;
 }
 
 function SummaryLink({ interactive, link }: { interactive: boolean; link: PRSummaryLink }) {
@@ -168,8 +173,4 @@ function prBranchRange(pr: SessionPRSummary): string | undefined {
 
 function hasDiffMetadata(pr: SessionPRSummary): boolean {
 	return pr.changedFiles > 0 || pr.additions > 0 || pr.deletions > 0;
-}
-
-function pluralize(noun: string, count: number): string {
-	return count === 1 ? noun : `${noun}s`;
 }

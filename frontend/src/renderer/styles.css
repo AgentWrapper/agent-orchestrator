@@ -1,5 +1,9 @@
 @import "tailwindcss";
 @import "../styles/tokens.css";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+@custom-variant dark (&:is(.dark *, :root:not([data-theme="light"]) *));
 
 @custom-media --layout-narrow (width <= 680px); /* --breakpoint-layout-narrow */
 
@@ -95,11 +99,13 @@
 	--color-popover-foreground: var(--color-text-primary);
 	--color-input: var(--bridge-border);
 	--color-sidebar: var(--color-bg-sidebar);
-	--color-sidebar-foreground: var(--color-text-muted);
-	--color-sidebar-accent: var(--color-bg-tertiary);
-	--color-sidebar-accent-foreground: var(--color-text-primary);
-	--color-sidebar-border: var(--bridge-border);
-	--color-sidebar-ring: var(--bridge-accent);
+	--color-sidebar-foreground: var(--sidebar-foreground);
+	--color-sidebar-primary: var(--sidebar-primary);
+	--color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+	--color-sidebar-accent: var(--sidebar-accent);
+	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+	--color-sidebar-border: var(--sidebar-border);
+	--color-sidebar-ring: var(--sidebar-ring);
 	--color-terminal: var(--color-bg-terminal);
 	--color-terminal-dim: var(--color-text-terminal-dim);
 	--color-scrim: var(--bridge-scrim);
@@ -207,22 +213,23 @@
 	--spacing-kv-label: var(--size-kv-label);
 	--spacing-branch-chip: var(--size-branch-chip);
 
-	--color-muted: var(--color-bg-tertiary);
-	--color-muted-foreground: var(--color-text-muted);
+	--color-muted: var(--muted);
+	--color-muted-foreground: var(--muted-foreground);
 	--color-passive: var(--color-text-passive);
-	--color-secondary: var(--color-bg-tertiary);
+	--color-secondary: var(--secondary);
+	--color-secondary-foreground: var(--secondary-foreground);
 
-	--color-primary: var(--bridge-accent);
-	--color-primary-foreground: var(--bridge-accent-fg);
-	--color-accent: var(--bridge-accent);
-	--color-accent-foreground: var(--bridge-accent-fg);
+	--color-primary: var(--primary);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-accent: var(--accent);
+	--color-accent-foreground: var(--primary-foreground);
 	--color-accent-weak: var(--bridge-accent-weak);
 	--color-accent-dim: var(--bridge-accent-dim);
 	--color-accent-strong: var(--bridge-accent-strong);
 	--color-danger-strong: var(--bridge-danger-strong);
-	--color-ring: var(--bridge-accent);
+	--color-ring: var(--ring);
 
-	--color-border: var(--bridge-border);
+	--color-border: var(--border);
 	--color-border-strong: var(--bridge-border-strong);
 
 	--color-working: var(--bridge-working);
@@ -329,7 +336,7 @@
 
 @utility session-card-terminated {
 	border-color: color-mix(in srgb, var(--color-status-terminated) 32%, var(--color-border));
-	background-color: color-mix(in srgb, var(--color-status-terminated) 7%, var(--color-bg-secondary));
+	background-color: color-mix(in srgb, var(--color-status-terminated) 7%, var(--color-bg-primary));
 }
 
 @utility bg-surface-faint {
@@ -384,6 +391,8 @@
 	padding-right: var(--size-center-panel-inline-inset);
 	padding-bottom: var(--size-center-panel-bottom-inset);
 	padding-left: 0;
+	/* Match the sidebar spring settle time (~280ms). */
+	transition: padding 280ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
 @utility center-panel-surface {
@@ -395,6 +404,9 @@
 	border-radius: var(--radius-center-panel);
 	border: 1px solid var(--color-border-strong);
 	background-color: var(--color-bg-primary);
+	transition:
+		border-color 280ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
+		border-radius 280ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
 /* A fully hidden sidebar no longer contributes a left layout gutter. Restore
@@ -403,15 +415,27 @@
 	padding-left: var(--size-center-panel-inline-inset);
 }
 
-/* macOS + Linux: one uniform inset on every side (matches the near-flush top
- * that keeps Board/Terminal titles level with the fixed TitlebarNav). Two
- * classes so it also wins over the `.sidebar-hidden` left gutter above. */
+/* macOS + Linux: inset on all sides except left (flush with sidebar). */
 .center-panel-shell.center-panel-shell--mac {
-	padding: var(--size-center-panel-inset-mac);
+	padding-top: var(--size-center-panel-inset-mac);
+	padding-right: var(--size-center-panel-inset-mac);
+	padding-bottom: var(--size-center-panel-inset-mac);
+	padding-left: 0;
 }
 
 .center-panel-shell.center-panel-shell--mac.center-panel-shell--fullscreen {
 	padding: 0;
+}
+
+/* Sidebar closed on mac: content panel expands to fill the full window.
+ * Remove all padding and strip the surface border + radius so it's flush. */
+.sidebar-hidden .center-panel-shell.center-panel-shell--mac {
+	padding: 0;
+}
+
+.sidebar-hidden .center-panel-shell--mac .center-panel-surface {
+	border-color: transparent;
+	border-radius: 0;
 }
 
 .center-panel-titlebar {
@@ -442,11 +466,6 @@
 	padding-left: calc(var(--size-titlebar-content-offset) - var(--size-center-panel-inset-mac));
 }
 
-/* Linux clears the cluster from its own left edge (no traffic-light row). */
-.center-panel-shell--linux.center-panel-shell--titlebar-clearance .center-panel-titlebar {
-	padding-left: calc(var(--size-titlebar-content-offset-linux) - var(--size-center-panel-inset-mac));
-}
-
 /* Fullscreen: the shell is flush, so measure from the cluster's own left edge. */
 .center-panel-shell--titlebar-clearance-fullscreen .center-panel-titlebar {
 	padding-left: calc(
@@ -454,9 +473,11 @@
 	);
 }
 
-/* Windows: the frameless window's custom titlebar already supplies top chrome,
- * so drop the framed panel's top inset to give content more height. */
-.platform-windows .center-panel-shell {
+/* Windows / Linux: a ShellTopbar already supplies the top chrome, so the
+ * framed panel needs no additional top inset. Windows uses its custom
+ * frameless titlebar; Linux uses the standard ShellTopbar. */
+.platform-windows .center-panel-shell,
+.platform-linux .center-panel-shell {
 	padding-top: 0;
 }
 
@@ -1136,7 +1157,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
  * stops at the header instead of crossing the traffic-light strip. */
 .dashboard-app-header {
 	display: flex;
-	height: 56px;
+	height: var(--size-shell-topbar);
 	flex-shrink: 0;
 	align-items: center;
 	gap: 13px;
@@ -2275,14 +2296,19 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 /* Maximized browser overlay: a fixed layer over the app workspace (portaled to
    <body>, so it covers the sidebar + topbar too, not just the session area).
    Electron's Window Controls Overlay owns the top-right titlebar region on
-   Windows, so start below its reported safe-area height. Platforms without a
-   titleBarOverlay resolve the env() fallback to 0px and keep the existing
-   edge-to-edge layout. */
+   Windows, so start below its reported safe-area height. macOS hides the shell
+   topbar, so 0px is correct there. Linux now shows a ShellTopbar, so the overlay
+   must start below --size-toolbar; env(titlebar-area-height) resolves to 0 on
+   Linux (no titleBarOverlay), so we override the top with a platform class. */
 .browser-popout-overlay {
 	position: fixed;
 	inset: env(titlebar-area-height, 0px) 0 0;
 	z-index: 40;
 	background: color-mix(in srgb, var(--bg) 94%, black);
+}
+
+.platform-linux .browser-popout-overlay {
+	top: var(--size-shell-topbar);
 }
 
 .browser-popout-overlay .browser-panel {

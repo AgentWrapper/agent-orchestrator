@@ -18,6 +18,7 @@ type PRFacts struct {
 	ReviewComments bool // has unresolved review comments (any author) to address
 	SourceBranch   string
 	TargetBranch   string
+	HeadSHA        string
 	UpdatedAt      time.Time
 }
 

@@ -4,7 +4,6 @@ import dynamic from "next/dynamic";
 import {
   FAQPageJsonLd,
   HomeWebPageJsonLd,
-  OrganizationJsonLd,
 } from "@/components/JsonLd";
 import { getGitHubRepoStats } from "@/lib/github-stats";
 import { FAQ_ITEMS } from "./components/FAQSection/constants";
@@ -39,7 +38,6 @@ export default async function Home() {
     <main className="flex flex-col bg-background">
       <FAQPageJsonLd items={FAQ_ITEMS} />
       <HomeWebPageJsonLd />
-      <OrganizationJsonLd />
       <HeroSection initialStars={stats?.stars ?? null} />
       <TrustedBySection />
       <FeaturesSection />
