@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL } from "./shared/shortcuts";
+import { CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL, FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL, SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL } from "./shared/shortcuts";
 import type { AoBridge } from "./preload";
 
 const electronMocks = vi.hoisted(() => {
@@ -39,6 +39,7 @@ beforeEach(() => {
 	electronMocks.invoke.mockClear();
 	electronMocks.off.mockClear();
 	electronMocks.on.mockClear();
+	electronMocks.send.mockClear();
 });
 
 describe("preload new-session shortcut bridge", () => {
@@ -72,7 +73,15 @@ describe("preload keyboard-shortcuts help bridge", () => {
 });
 
 describe("preload application shortcut bridges", () => {
+	it("reports whether the active view has a closeable shell terminal", () => {
+		exposedBridge().app.setCloseShellTerminalShortcutEnabled(true);
+
+		expect(electronMocks.send).toHaveBeenCalledWith(SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, true);
+	});
+
 	it.each([
+		[NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, (listener: () => void) => exposedBridge().app.onNewShellTerminalShortcut(listener)],
+		[CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL, (listener: () => void) => exposedBridge().app.onCloseShellTerminalShortcut(listener)],
 		[OPEN_SETTINGS_SHORTCUT_CHANNEL, (listener: () => void) => exposedBridge().app.onOpenSettingsShortcut(listener)],
 		[
 			PREVIOUS_SESSION_SHORTCUT_CHANNEL,

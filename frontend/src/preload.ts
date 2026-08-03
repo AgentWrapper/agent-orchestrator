@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL, type KeybindingOverrides } from "./shared/shortcuts";
+import { CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL, FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL, SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, type KeybindingOverrides } from "./shared/shortcuts";
 import type {
 	BrowserAgentActivityState,
 	BrowserNavState,
@@ -76,7 +76,7 @@ const api = {
 				ipcRenderer.off(KEYBOARD_SHORTCUTS_HELP_CHANNEL, wrapped);
 			};
 		},
-		// Fired by the main process when Ctrl+Shift+` is pressed in any web contents,
+		// Fired by the main process when ⌘T / Ctrl+T is pressed in any web contents,
 		// including while focus is inside a terminal pane.
 		onNewShellTerminalShortcut: (listener: () => void) => {
 			const wrapped = () => listener();
@@ -84,6 +84,16 @@ const api = {
 			return () => {
 				ipcRenderer.off(NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, wrapped);
 			};
+		},
+		onCloseShellTerminalShortcut: (listener: () => void) => {
+			const wrapped = () => listener();
+			ipcRenderer.on(CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL, wrapped);
+			return () => {
+				ipcRenderer.off(CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL, wrapped);
+			};
+		},
+		setCloseShellTerminalShortcutEnabled: (enabled: boolean) => {
+			ipcRenderer.send(SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, enabled);
 		},
 		onOpenSettingsShortcut: (listener: () => void) => {
 			const wrapped = () => listener();
