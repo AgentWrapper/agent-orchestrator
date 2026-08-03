@@ -76,7 +76,7 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 	}
 	want = append(want,
 		"-c", `projects={`+codexTOMLConfigString(workspace)+`={trust_level="trusted"}}`,
-		"-c", "developer_instructions="+codexTOMLConfigString("inline wins"),
+		"-c", "model_instructions_file="+codexTOMLConfigString(filepath.Join("tmp", "prompt with spaces.md")),
 		"--", "-fix this",
 	)
 	if !reflect.DeepEqual(cmd, want) {
@@ -547,7 +547,7 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	}
 	want = append(want,
 		"-c", `projects={`+codexTOMLConfigString(workspace)+`={trust_level="trusted"}}`,
-		"-c", "developer_instructions="+codexTOMLConfigString("restore inline wins"),
+		"-c", "model_instructions_file="+codexTOMLConfigString(filepath.Join("tmp", "restore-system.md")),
 		"thread-123",
 	)
 	if !reflect.DeepEqual(cmd, want) {
