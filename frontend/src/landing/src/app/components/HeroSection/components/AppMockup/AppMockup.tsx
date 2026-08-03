@@ -1475,18 +1475,13 @@ function BoardChrome({ viewMode }: { viewMode: ViewMode }) {
 				className="inline-flex h-[34px] items-center gap-1.5 rounded-md bg-[var(--preview-primary)] px-3.5 text-sm font-semibold leading-none text-[var(--preview-primary-foreground)]"
 			>
 				<OrchestratorIcon className="h-4 w-4" />
-				<span
-					aria-hidden="true"
-					className="h-[7px] w-[7px] shrink-0 rounded-full"
-					style={{ backgroundColor: STATUS_COLORS.ready }}
-				/>
 				Orchestrator
 			</span>
 			<span
 				aria-hidden="true"
 				className="grid size-[34px] shrink-0 place-items-center rounded-md text-[var(--preview-muted-foreground)]"
 			>
-				<BellIcon className="h-[18px] w-[18px]" />
+				<BellIcon className="h-6 w-6 mb-2" />
 			</span>
 		</div>
 	);
