@@ -258,10 +258,14 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 						role="list"
 					>
 						{unseen.length > 0 || unseenFailed ? (
-							<NotificationSectionHeading count={unseen.length} label="Unseen" />
+							<NotificationSectionHeading count={unseen.length} label={t("notify.unseen")} />
 						) : null}
 						{unseenFailed ? (
-							<NotificationSectionError label="unseen notifications" onRetry={() => void unreadQuery.refetch()} />
+							<NotificationSectionError
+									message={t("notify.unseenLoadFailed")}
+									onRetry={() => void unreadQuery.refetch()}
+									retryLabel={t("notify.retryUnseen")}
+								/>
 						) : null}
 						{unseen.map((notification) => (
 							<NotificationItem
@@ -272,12 +276,13 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 							/>
 						))}
 						{unresolved.length > 0 || unresolvedFailed ? (
-							<NotificationSectionHeading count={unresolved.length} label="Unresolved" />
+							<NotificationSectionHeading count={unresolved.length} label={t("notify.unresolved")} />
 						) : null}
 						{unresolvedFailed ? (
 							<NotificationSectionError
-								label="unresolved notifications"
+								message={t("notify.unresolvedLoadFailed")}
 								onRetry={() => void unresolvedQuery.refetch()}
+								retryLabel={t("notify.retryUnresolved")}
 							/>
 						) : null}
 						{unresolved.map((notification) => (
@@ -322,18 +327,27 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
  * One section failed while the other loaded. Say so in place rather than
  * letting the panel imply the missing data is simply absent.
  */
-function NotificationSectionError({ label, onRetry }: { label: string; onRetry: () => void }) {
+function NotificationSectionError({
+	message,
+	onRetry,
+	retryLabel,
+}: {
+	message: string;
+	onRetry: () => void;
+	retryLabel: string;
+}) {
+	const { t } = useTranslation();
 	return (
 		<div aria-live="polite" className="flex items-center gap-2 px-4 py-2 text-caption text-error" role="alert">
 			<CircleAlert className="size-icon-md shrink-0" aria-hidden="true" />
-			Could not load {label}.
+			{message}
 			<button
-				aria-label={`Retry loading ${label}`}
+				aria-label={retryLabel}
 				className="font-medium underline underline-offset-2 hover:text-foreground"
 				onClick={onRetry}
 				type="button"
 			>
-				Retry
+				{t("notify.retry")}
 			</button>
 		</div>
 	);
@@ -400,7 +414,7 @@ function NotificationItem({
 				}}
 				role={sessionId ? "button" : undefined}
 				tabIndex={sessionId ? 0 : undefined}
-				title={sessionId ? "Open session" : undefined}
+				title={sessionId ? t("notify.openSessionTitle") : undefined}
 			>
 				<div
 					className={cn(
@@ -424,7 +438,7 @@ function NotificationItem({
 								}}
 								rel="noreferrer"
 								target="_blank"
-								title="Open pull request"
+								title={t("notify.openPR")}
 							>
 								<span className="break-words">{notification.title}</span>
 								<ExternalLink className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
