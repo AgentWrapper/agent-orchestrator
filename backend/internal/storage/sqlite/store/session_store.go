@@ -212,6 +212,7 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 		Kind:        row.Kind,
 		Harness:     row.Harness,
 		DisplayName: row.DisplayName,
+		Model:       row.Model,
 		Activity: domain.Activity{
 			State:          row.ActivityState,
 			LastActivityAt: row.ActivityLastAt,
@@ -248,6 +249,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		Kind:               rec.Kind,
 		Harness:            rec.Harness,
 		DisplayName:        rec.DisplayName,
+		Model:              rec.Model,
 		ActivityState:      activity.State,
 		ActivityLastAt:     activity.LastActivityAt,
 		FirstSignalAt:      timeToNullTime(rec.FirstSignalAt),
@@ -278,6 +280,7 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		Kind:               rec.Kind,
 		Harness:            rec.Harness,
 		DisplayName:        rec.DisplayName,
+		Model:              rec.Model,
 		ActivityState:      activity.State,
 		ActivityLastAt:     activity.LastActivityAt,
 		FirstSignalAt:      timeToNullTime(rec.FirstSignalAt),

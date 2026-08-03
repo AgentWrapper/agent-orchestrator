@@ -407,6 +407,12 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: %q", ErrUnknownHarness, cfg.Harness)
 	}
 
+	// Fold the per-session --model override into the effective agent config and
+	// pin the resolved model on the durable record so `ao session get` reports
+	// what the session actually launched with and a restore keeps the same model.
+	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config, cfg.Model)
+	cfg.Model = agentConfig.Model
+
 	if err := m.validateRuntimePrerequisites(); err != nil {
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
 	}
@@ -473,7 +479,6 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
-	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
 	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
@@ -774,8 +779,11 @@ func roleConfigName(kind domain.SessionKind) string {
 }
 
 // effectiveAgentConfig merges the role override's agent config over the
-// project's base agent config; set override fields win.
-func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig) ports.AgentConfig {
+// project's base agent config; set override fields win. spawnModel is a
+// per-session override (ao spawn --model) that wins over both, mirroring the
+// precedence chain spawn --model > role agentConfig.model > project
+// agentConfig.model.
+func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig, spawnModel string) ports.AgentConfig {
 	merged := cfg.AgentConfig
 	override := roleOverride(kind, cfg).AgentConfig
 	if override.Model != "" {
@@ -783,6 +791,9 @@ func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig) por
 	}
 	if override.Permissions != "" {
 		merged.Permissions = override.Permissions
+	}
+	if spawnModel != "" {
+		merged.Model = spawnModel
 	}
 	return merged
 }
@@ -1247,8 +1258,10 @@ func (m *Manager) relaunchSession(ctx context.Context, operation string, rec dom
 	}
 
 	// Restore re-applies the project's resolved agent config so a configured
-	// model/permissions carry across a restore, matching fresh spawn.
-	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
+	// model/permissions carry across a restore, matching fresh spawn. A model
+	// pinned on the session record (ao spawn --model) wins over the project
+	// config so a per-session override survives a relaunch.
+	agentConfig := effectiveAgentConfig(rec.Kind, project.Config, rec.Model)
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, rec.ID, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
@@ -2309,7 +2322,13 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 		UpdatedAt:   now,
 		Harness:     cfg.Harness,
 		DisplayName: cfg.DisplayName,
-		Activity:    domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+		// Model pins the resolved model on the durable record so `ao session get`
+		// can report what the session actually launched with, and a restore keeps
+		// the same model. cfg.Model already carries the final resolved value:
+		// the controller trims it and Spawn folds any project/role override in
+		// via effectiveAgentConfig before calling this.
+		Model:    cfg.Model,
+		Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
 	}
 }
 

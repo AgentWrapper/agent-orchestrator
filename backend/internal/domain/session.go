@@ -54,7 +54,13 @@ type SessionRecord struct {
 	Kind        SessionKind  `json:"kind"`
 	Harness     AgentHarness `json:"harness,omitempty"`
 	DisplayName string       `json:"displayName,omitempty"`
-	Activity    Activity     `json:"activity"`
+	// Model is the model the session resolved to at spawn (e.g. claude-opus-4-5).
+	// Set when `ao spawn --model` (or the spawn API's model field) overrides the
+	// project config, or when the project's resolved model is pinned at spawn so
+	// `ao session get` can report what the session actually launched with. Empty
+	// means the session used the agent's default model.
+	Model    string   `json:"model,omitempty"`
+	Activity Activity `json:"activity"`
 	// FirstSignalAt is when the FIRST agent hook callback arrived for the
 	// current spawn/restore: raw signal receipt, independent of the derived
 	// activity state. Zero means no hook has ever reported, which deriveStatus

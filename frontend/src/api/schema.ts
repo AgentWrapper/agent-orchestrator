@@ -941,6 +941,7 @@ export interface components {
             isTerminated: boolean;
             issueId?: string;
             kind: string;
+            model?: string;
             /** Format: int64 */
             previewRevision?: number;
             previewUrl?: string;
@@ -1469,6 +1470,7 @@ export interface components {
             issueId?: string;
             /** @enum {string} */
             kind?: "worker" | "orchestrator";
+            model?: string;
             projectId: string;
             prompt?: string;
         };

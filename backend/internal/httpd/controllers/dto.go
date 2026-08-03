@@ -158,6 +158,10 @@ type SpawnSessionRequest struct {
 	Harness   domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand,fake"`
 	Branch    string              `json:"branch,omitempty"`
 	Prompt    string              `json:"prompt,omitempty" maxLength:"4096"`
+	// Model is a per-session model override scoped to this spawn only. It wins
+	// over the project's resolved agent config model and has no effect on the
+	// project config.
+	Model string `json:"model,omitempty" maxLength:"256"`
 	// DisplayName is the sidebar label for the session, capped at 20 characters.
 	// `ao spawn --name` always sets it; other clients (e.g. the desktop new-task
 	// dialog) may omit it and fall back to the session id in the read model.
