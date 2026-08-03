@@ -316,6 +316,12 @@ const WORKERS: Worker[] = [
 
 const OTHER: { name: string; sessions: string[] }[] = [{ name: "sandbox", sessions: [] }];
 
+const MINI_BOARD_LANES = [
+	{ label: "Working", color: ST.working, id: "claude" },
+	{ label: "Needs you", color: ST.needs, id: "cursor" },
+	{ label: "In review", color: ST.review, id: "codex" },
+] as const;
+
 const byId = (id: string) => WORKERS.find((w) => w.id === id);
 
 function Dot({ color, breathe, size = 7 }: { color: string; breathe?: boolean; size?: number }) {
@@ -715,14 +721,9 @@ function AppTerminal({
 }
 
 function MiniBoard({ spawned, onSelect }: { spawned: string[]; onSelect: (id: string) => void }) {
-	const lanes = [
-		{ label: "Working", color: ST.working, id: "claude" },
-		{ label: "Needs you", color: ST.needs, id: "cursor" },
-		{ label: "In review", color: ST.review, id: "codex" },
-	];
 	return (
 		<div className="grid min-w-0 grid-cols-3" style={{ background: APP.bg }}>
-			{lanes.map((lane) => {
+			{MINI_BOARD_LANES.map((lane) => {
 				const worker = byId(lane.id);
 				return (
 					<div key={lane.id} className="border-r p-2 last:border-r-0" style={{ borderColor: APP.line }}>
