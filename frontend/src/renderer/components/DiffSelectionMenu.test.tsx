@@ -134,6 +134,38 @@ describe("DiffSelectionMenu", () => {
 		}
 	});
 
+	it("clears the pending sent auto-close timer and resets status when switching to Make changes", async () => {
+		vi.useFakeTimers();
+		try {
+			postMock.mockResolvedValue({ data: {} });
+			const onOpenChange = vi.fn();
+			renderMenu({ onOpenChange });
+
+			fireEvent.click(screen.getByRole("menuitem", { name: "Explain" }));
+
+			await act(async () => {
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(screen.getByText("Sent")).toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole("menuitem", { name: "Make changes" }));
+
+			expect(screen.getByRole("textbox", { name: "Describe the change" })).toBeInTheDocument();
+			expect(screen.queryByText("Sent")).not.toBeInTheDocument();
+
+			act(() => {
+				vi.advanceTimersByTime(2_000);
+			});
+
+			expect(onOpenChange).not.toHaveBeenCalledWith(false);
+			expect(screen.getByRole("textbox", { name: "Describe the change" })).toBeInTheDocument();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("swaps to an input on Make changes and sends the typed instruction on Enter", async () => {
 		renderMenu();
 
@@ -182,6 +214,30 @@ describe("DiffSelectionMenu", () => {
 
 		expect(await screen.findByText("AO daemon is not ready.")).toBeInTheDocument();
 		expect(onOpenChange).not.toHaveBeenCalledWith(false);
+	});
+
+	it("shows an error status when the send promise rejects", async () => {
+		postMock.mockRejectedValue({ message: "Network unreachable." });
+		const onOpenChange = vi.fn();
+		renderMenu({ onOpenChange });
+
+		await userEvent.click(screen.getByRole("menuitem", { name: "Explain" }));
+
+		expect(await screen.findByText("Network unreachable.")).toBeInTheDocument();
+		expect(onOpenChange).not.toHaveBeenCalledWith(false);
+	});
+
+	it("clears the stale error text when switching to Make changes after a failed send", async () => {
+		postMock.mockResolvedValue({ error: { message: "AO daemon is not ready." } });
+		renderMenu();
+
+		await userEvent.click(screen.getByRole("menuitem", { name: "Explain" }));
+		expect(await screen.findByText("AO daemon is not ready.")).toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("menuitem", { name: "Make changes" }));
+
+		expect(screen.getByRole("textbox", { name: "Describe the change" })).toBeInTheDocument();
+		expect(screen.queryByText("AO daemon is not ready.")).not.toBeInTheDocument();
 	});
 
 	it("resets to the action list when reopened after a prior error", async () => {

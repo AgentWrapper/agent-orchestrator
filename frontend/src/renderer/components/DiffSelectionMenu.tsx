@@ -181,6 +181,12 @@ export function DiffSelectionMenu({
 							disabled={selectedText.length === 0}
 							onSelect={(event) => {
 								event.preventDefault();
+								// Guards against a stale "sent" auto-close timer (armed by a
+								// prior Explain/Make changes send) firing after Copy has
+								// already closed the menu itself — see the same reset below.
+								clearSentTimer();
+								setStatus("idle");
+								setErrorMessage("");
 								handleCopy();
 							}}
 						>
@@ -200,6 +206,16 @@ export function DiffSelectionMenu({
 							disabled={status === "sending"}
 							onSelect={(event) => {
 								event.preventDefault();
+								// Unlike Explain/Enter-to-send, this path doesn't go through
+								// send(), so it must clear a still-armed "sent" auto-close
+								// timer (e.g. Explain succeeded, then the user immediately
+								// clicked Make changes) and reset the leftover status/error
+								// itself — otherwise the stale "Sent" label renders under the
+								// fresh input, and the old timer later closes the whole menu
+								// out from under the user's in-progress draft.
+								clearSentTimer();
+								setStatus("idle");
+								setErrorMessage("");
 								setMode("input");
 							}}
 						>
