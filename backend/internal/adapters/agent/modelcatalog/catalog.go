@@ -16,7 +16,18 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-const commandTimeout = 8 * time.Second
+const (
+	// Model-list commands may initialize provider registries or refresh remote
+	// metadata before printing their catalog. Kilo Code and OpenCode can exceed
+	// eight seconds on a normal warm installation, so keep one consistent,
+	// bounded allowance for every command-backed adapter.
+	commandTimeout = 20 * time.Second
+
+	// Some CLIs leave descendants holding stdout/stderr open after the parent is
+	// canceled. Bound that pipe-drain wait so a timed-out discovery request does
+	// not linger well beyond commandTimeout.
+	commandTerminationWait = 2 * time.Second
+)
 
 type commandSpec struct {
 	args   []string
@@ -135,7 +146,7 @@ func Discover(ctx context.Context, agentID, binary, workingDir string) (ports.Ag
 			base.Source = "config"
 			base.FetchedAt = time.Now().UTC()
 		}
-		return base, errors.Join(fmt.Errorf("%s model discovery: %w", agentID, err), configErr)
+		return base, errors.Join(modelDiscoveryError(agentID, runCtx, err), configErr)
 	}
 	models, err := spec.parser(output)
 	if err != nil {
@@ -163,10 +174,21 @@ func hasDiscoverySource(agentID string) bool {
 
 func modelCommand(ctx context.Context, binary string, args []string, workingDir string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, binary, args...) //nolint:gosec // binary is adapter-resolved, args are static
+	cmd.WaitDelay = commandTerminationWait
 	if strings.TrimSpace(workingDir) != "" {
 		cmd.Dir = workingDir
 	}
 	return cmd
+}
+
+func modelDiscoveryError(agentID string, runCtx context.Context, commandErr error) error {
+	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("%s model discovery timed out after %s", agentID, commandTimeout)
+	}
+	if errors.Is(runCtx.Err(), context.Canceled) {
+		return fmt.Errorf("%s model discovery canceled: %w", agentID, context.Canceled)
+	}
+	return fmt.Errorf("%s model discovery: %w", agentID, commandErr)
 }
 
 // BinaryVersion returns a short best-effort version string for cache

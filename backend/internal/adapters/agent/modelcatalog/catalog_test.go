@@ -2,7 +2,10 @@ package modelcatalog
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -11,6 +14,24 @@ func TestModelCommandUsesProjectWorkingDirectory(t *testing.T) {
 	cmd := modelCommand(context.Background(), "agent", []string{"models"}, "/work/project")
 	if cmd.Dir != "/work/project" {
 		t.Fatalf("Dir = %q, want /work/project", cmd.Dir)
+	}
+	if cmd.WaitDelay != commandTerminationWait {
+		t.Fatalf("WaitDelay = %s, want %s", cmd.WaitDelay, commandTerminationWait)
+	}
+}
+
+func TestCommandDiscoveryTimeoutAllowsSlowModelRegistries(t *testing.T) {
+	if commandTimeout < 20*time.Second {
+		t.Fatalf("commandTimeout = %s, want at least 20s", commandTimeout)
+	}
+}
+
+func TestModelDiscoveryErrorExplainsTimeout(t *testing.T) {
+	deadlineCtx, deadlineCancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer deadlineCancel()
+	err := modelDiscoveryError("kilocode", deadlineCtx, errors.New("signal: killed"))
+	if !strings.Contains(err.Error(), "kilocode model discovery timed out after 20s") {
+		t.Fatalf("error = %q, want clear timeout", err)
 	}
 }
 
