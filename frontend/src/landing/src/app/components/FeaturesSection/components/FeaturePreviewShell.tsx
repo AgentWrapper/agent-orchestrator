@@ -3,26 +3,27 @@
 import type { CSSProperties, ReactNode } from "react";
 
 export const featurePreviewTokens = {
-	"--preview-background": "#0a0b0d",
-	"--preview-foreground": "#f4f5f7",
-	"--preview-card": "#15171b",
-	"--preview-card-foreground": "#f4f5f7",
-	"--preview-primary": "#2e63b8",
-	"--preview-primary-foreground": "#ffffff",
-	"--preview-muted": "#1b1d22",
-	"--preview-muted-foreground": "#9ba1aa",
-	"--preview-accent": "#4d8dff",
-	"--preview-border": "rgb(255 255 255 / 0.06)",
-	"--preview-border-strong": "rgb(255 255 255 / 0.1)",
-	"--preview-ring": "#4d8dff",
+	// Exact dark-theme values from frontend/src/styles/tokens.css (:root).
+	"--preview-background": "oklch(0.185 0.006 285.885)",
+	"--preview-foreground": "oklch(0.985 0 0)",
+	"--preview-card": "oklch(0.24 0.008 285.885)",
+	"--preview-card-foreground": "oklch(0.985 0 0)",
+	"--preview-primary": "oklch(0.92 0.004 286.32)",
+	"--preview-primary-foreground": "oklch(0.21 0.006 285.885)",
+	"--preview-muted": "oklch(0.274 0.006 286.033)",
+	"--preview-muted-foreground": "oklch(0.705 0.015 286.067)",
+	"--preview-accent": "oklch(0.274 0.006 286.033)",
+	"--preview-border": "oklch(1 0 0 / 7%)",
+	"--preview-border-strong": "oklch(1 0 0 / 4%)",
+	"--preview-ring": "oklch(0.552 0.016 285.938)",
 } as CSSProperties;
 
 export const previewStatus = {
-	working: "#36c2b4",
-	warning: "#f2b84b",
-	success: "#9ad97a",
-	error: "#ee6a6a",
-	accent: "#4d8dff",
+	working: "#60a5fa", // --color-status-working
+	warning: "#fb923c", // --color-status-needs-you
+	success: "#4ade80", // --color-status-ready
+	error: "oklch(0.704 0.191 22.216)", // --destructive
+	accent: "#60a5fa",
 } as const;
 
 export function FeaturePreviewShell({

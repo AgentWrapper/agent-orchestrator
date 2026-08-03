@@ -54,37 +54,39 @@ const repoName = "Untrivial-ai/agent-orchestrator";
 const repoAvatar = "https://github.com/Untrivial-ai.png?size=64";
 
 const previewTokenStyle = {
-	"--preview-background": "#0a0b0d",
-	"--preview-foreground": "#f4f5f7",
-	"--preview-card": "#15171b",
-	"--preview-card-foreground": "#f4f5f7",
-	"--preview-primary": "#2e63b8",
-	"--preview-primary-foreground": "#ffffff",
-	"--preview-muted": "#1b1d22",
-	"--preview-muted-foreground": "#9ba1aa",
-	"--preview-accent": "#4d8dff",
-	"--preview-border": "rgb(255 255 255 / 0.06)",
-	"--preview-border-strong": "rgb(255 255 255 / 0.1)",
-	"--preview-divider": "rgb(255 255 255 / 0.15)",
-	"--preview-input": "rgb(255 255 255 / 0.15)",
-	"--preview-ring": "#4d8dff",
-	"--preview-sidebar": "#17181c",
-	"--preview-sidebar-foreground": "#f4f5f7",
-	"--preview-sidebar-accent": "rgb(255 255 255 / 0.07)",
-	"--preview-sidebar-hover": "rgb(255 255 255 / 0.04)",
-	"--preview-sidebar-border": "rgb(255 255 255 / 0.06)",
-	"--preview-passive": "#646a73",
-	"--preview-raised": "#212329",
+	// Exact dark-theme values from frontend/src/styles/tokens.css (:root).
+	"--preview-background": "oklch(0.185 0.006 285.885)", // --background
+	"--preview-foreground": "oklch(0.985 0 0)", // --foreground
+	"--preview-card": "oklch(0.24 0.008 285.885)", // --card / --surface
+	"--preview-card-foreground": "oklch(0.985 0 0)", // --card-foreground
+	"--preview-primary": "oklch(0.92 0.004 286.32)", // --primary / accent-strong
+	"--preview-primary-foreground": "oklch(0.21 0.006 285.885)", // --primary-foreground
+	"--preview-muted": "oklch(0.274 0.006 286.033)", // --muted / --raised
+	"--preview-muted-foreground": "oklch(0.705 0.015 286.067)", // --muted-foreground
+	"--preview-accent": "oklch(0.274 0.006 286.033)", // --accent / --sidebar-accent
+	"--preview-border": "oklch(1 0 0 / 7%)", // --border
+	"--preview-border-strong": "oklch(1 0 0 / 4%)", // --input / --color-border-strong
+	"--preview-divider": "oklch(1 0 0 / 4%)", // --input / --color-border-strong (column + topbar rules)
+	"--preview-input": "oklch(1 0 0 / 4%)", // --input
+	"--preview-ring": "oklch(0.552 0.016 285.938)", // --ring
+	"--preview-sidebar": "oklch(0.155 0.005 285.823)", // --sidebar
+	"--preview-sidebar-foreground": "oklch(0.985 0 0)", // --sidebar-foreground
+	"--preview-sidebar-accent": "oklch(0.274 0.006 286.033)", // --sidebar-accent
+	"--preview-sidebar-hover": "color-mix(in oklch, oklch(0.985 0 0) 4%, transparent)", // --color-interactive-hover
+	"--preview-sidebar-border": "oklch(1 0 0 / 7%)", // --sidebar-border → --border
+	"--preview-passive": "oklch(0.442 0.017 285.786)", // --chart-3 / --color-text-passive
+	"--preview-raised": "oklch(0.274 0.006 286.033)", // --color-raised → --muted
 } as CSSProperties;
 
+// From --color-status-* in frontend/src/styles/tokens.css
 const STATUS_COLORS = {
-	idle: "#8e96a3",
-	working: "#36c2b4",
-	needsYou: "#f2b84b",
-	inReview: "#5b8def",
-	ready: "#9ad97a",
-	merged: "#3e9b62",
-	unknown: "#a78bfa",
+	idle: "oklch(0.705 0.015 286.067)", // --muted-foreground
+	working: "#60a5fa",
+	needsYou: "#fb923c",
+	inReview: "#facc15",
+	ready: "#4ade80",
+	merged: "oklch(0.92 0.004 286.32)", // --primary
+	unknown: "oklch(0.37 0.013 285.805)", // --chart-4
 } as const;
 
 const SIDEBAR_DEFAULT_WIDTH = 218;
@@ -192,20 +194,6 @@ const columns = [
 		count: 4,
 		cards: [
 			{
-				title: "Choose production region failover",
-				branch: "deploy/region-failover",
-				agent: previewAgents.grok.agent,
-				icon: previewAgents.grok.icon,
-				activity: "Waiting for infra decision",
-				activityState: "waiting",
-				pr: "PR #414",
-				checks: "blocked",
-				files: "2 files",
-				time: "18m ago",
-				badge: "Needs input",
-				tone: "blocked",
-			},
-			{
 				title: "Pick final titlebar metrics for the preview",
 				branch: "landing/titlebar-metrics",
 				agent: previewAgents.claude.agent,
@@ -219,6 +207,20 @@ const columns = [
 				badge: null,
 				tone: "default",
 				testResults: { pass: 27, total: 44 },
+			},
+			{
+				title: "Wire hero mockup progression delays",
+				branch: "landing/progression-timing",
+				agent: previewAgents.codex.agent,
+				icon: previewAgents.codex.icon,
+				activity: "Tuning interval jitter",
+				activityState: "running",
+				pr: "PR #331",
+				checks: "checks running",
+				files: "1 file",
+				time: "22m ago",
+				badge: null,
+				tone: "default",
 			},
 		],
 	},
@@ -286,10 +288,10 @@ const columns = [
 ] satisfies PreviewColumn[];
 
 const COLUMN_COLORS: Record<BoardColumnId, string> = {
-	working: "#60a5fa",
-	action: "#a78bfa",
-	pending: "#facc15",
-	merge: "#4ade80",
+	working: "#60a5fa", // --color-status-working
+	action: "#fb923c", // --color-status-needs-you
+	pending: "#facc15", // --color-status-in-review
+	merge: "#4ade80", // --color-status-ready
 };
 
 const projectItems: TrackItem[] = [
@@ -396,19 +398,18 @@ const trackCardTemplates: Record<TrackId, StaticPreviewCard[]> = {
 		previewCard({
 			title: "Fetch GitHub stars during revalidation",
 			branch: "metrics/server-stars",
-			activity: "Adding cached fetch",
-			activityState: "running",
-			pr: "PR #428",
+			activity: "Queued",
+			activityState: "passed",
+			pr: "draft",
 			agentKey: "amp",
 		}),
 		previewCard({
 			title: "Set the stale count fallback",
 			branch: "metrics/star-fallback",
-			activity: "19/42 passed",
-			activityState: "running",
+			activity: "Queued behind review",
+			activityState: "passed",
 			pr: "PR #430",
 			agentKey: "cursor",
-			testResults: { pass: 19, total: 42 },
 		}),
 		previewCard({
 			title: "Prevent hero metrics hydration shift",
@@ -440,31 +441,26 @@ const trackCardTemplates: Record<TrackId, StaticPreviewCard[]> = {
 		previewCard({
 			title: "Replace placeholder harness marks",
 			branch: "icons/harness-marks",
-			activity: "Updating icon assets",
-			activityState: "running",
-			pr: "PR #447",
+			activity: "Queued",
+			activityState: "passed",
+			pr: "draft",
 			agentKey: "opencode",
 		}),
 		previewCard({
 			title: "Pick a fallback for unknown agents",
 			branch: "icons/agent-fallback",
-			activity: "9/42 passed",
-			activityState: "running",
+			activity: "Parked",
+			activityState: "passed",
 			pr: "PR #450",
 			agentKey: "cline",
-			testResults: { pass: 9, total: 42 },
 		}),
 		previewCard({
 			title: "Audit dark-mode logo contrast",
 			branch: "icons/dark-contrast",
-			activity: "Awaiting review",
-			activityState: "reviewing",
+			activity: "Parked",
+			activityState: "passed",
 			pr: "PR #452",
 			agentKey: "cursor",
-			badge: "Awaiting review",
-			tone: "review",
-			prComments: 0,
-			reviewers: [REVIEWERS.itry, REVIEWERS.agent],
 		}),
 		previewCard({
 			title: "Remove stale generated icon imports",
@@ -483,43 +479,34 @@ const trackCardTemplates: Record<TrackId, StaticPreviewCard[]> = {
 		previewCard({
 			title: "Test footer columns at mobile widths",
 			branch: "qa/footer-mobile",
-			activity: "Running viewport checks",
-			activityState: "running",
-			pr: "PR #468",
+			activity: "Queued",
+			activityState: "passed",
+			pr: "draft",
 			agentKey: "codex",
 		}),
 		previewCard({
 			title: "Confirm final demo video caption",
 			branch: "qa/video-caption",
-			activity: "16/28 passed",
-			activityState: "running",
+			activity: "Parked",
+			activityState: "passed",
 			pr: "PR #471",
 			agentKey: "pi",
-			testResults: { pass: 16, total: 28 },
 		}),
 		previewCard({
 			title: "Check section order across routes",
 			branch: "qa/section-order",
-			activity: "Review in progress",
-			activityState: "reviewing",
+			activity: "Parked",
+			activityState: "passed",
 			pr: "PR #473",
 			agentKey: "goose",
-			badge: "Awaiting review",
-			tone: "review",
-			prComments: 1,
-			reviewers: [REVIEWERS.ashish, REVIEWERS.harsh2],
 		}),
 		previewCard({
 			title: "Fix footer placeholder row spacing",
 			branch: "qa/footer-spacing",
-			activity: "LGTM",
+			activity: "Done",
 			activityState: "passed",
 			pr: "PR #465",
 			agentKey: "copilot",
-			badge: null,
-			tone: "ready",
-			prComments: 2,
-			reviewers: [REVIEWERS.suraj, REVIEWERS.whoisasx],
 		}),
 	],
 };
@@ -931,9 +918,9 @@ function advanceCard(card: PreviewCard): PreviewCard {
 }
 
 function cardStatusColor(card: PreviewCard): string {
-	if (card.column === "action" || card.tone === "blocked") return STATUS_COLORS.needsYou;
-	if (card.column === "pending" || card.tone === "review") return STATUS_COLORS.inReview;
-	if (card.column === "merge" || card.tone === "ready") return STATUS_COLORS.ready;
+	if (card.tone === "blocked" || card.activityState === "waiting") return STATUS_COLORS.needsYou;
+	if (card.tone === "review" || card.activityState === "reviewing") return STATUS_COLORS.inReview;
+	if (card.tone === "ready") return STATUS_COLORS.ready;
 	if (card.activityState === "running") return STATUS_COLORS.working;
 	return STATUS_COLORS.idle;
 }
@@ -954,10 +941,10 @@ function trackDotColor(cards: PreviewCard[]): string {
 }
 
 function cardAttentionRank(card: PreviewCard): number {
-	if (card.column === "action" || card.tone === "blocked") return 0;
+	if (card.tone === "blocked" || card.activityState === "waiting") return 0;
 	if (card.activityState === "running") return 1;
-	if (card.column === "pending" || card.tone === "review") return 2;
-	if (card.column === "merge" || card.tone === "ready") return 3;
+	if (card.tone === "review" || card.activityState === "reviewing") return 2;
+	if (card.tone === "ready") return 3;
 	return 4;
 }
 
@@ -1058,25 +1045,27 @@ function BranchIcon({ className = "" }: { className?: string }) {
 	);
 }
 
+/** Lucide LayoutDashboard — bento tiles used on the real project row. */
 function LayoutGridIcon({ className = "" }: { className?: string }) {
 	return (
 		<svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-			<rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1" stroke="currentColor" strokeWidth="1.2" />
-			<rect x="9" y="2.5" width="4.5" height="4.5" rx="1" stroke="currentColor" strokeWidth="1.2" />
-			<rect x="2.5" y="9" width="4.5" height="4.5" rx="1" stroke="currentColor" strokeWidth="1.2" />
-			<rect x="9" y="9" width="4.5" height="4.5" rx="1" stroke="currentColor" strokeWidth="1.2" />
+			<rect x="2" y="2" width="5" height="6.5" rx="1" stroke="currentColor" strokeWidth="1.25" />
+			<rect x="9" y="2" width="5" height="3.5" rx="1" stroke="currentColor" strokeWidth="1.25" />
+			<rect x="9" y="7.5" width="5" height="6.5" rx="1" stroke="currentColor" strokeWidth="1.25" />
+			<rect x="2" y="10.5" width="5" height="3.5" rx="1" stroke="currentColor" strokeWidth="1.25" />
 		</svg>
 	);
 }
 
+/** Matches frontend/src/renderer/components/icons.tsx OrchestratorIcon. */
 function OrchestratorIcon({ className = "" }: { className?: string }) {
 	return (
-		<svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-			<circle cx="8" cy="3" r="1.4" stroke="currentColor" strokeWidth="1.2" />
-			<circle cx="3.5" cy="13" r="1.4" stroke="currentColor" strokeWidth="1.2" />
-			<circle cx="8" cy="13" r="1.4" stroke="currentColor" strokeWidth="1.2" />
-			<circle cx="12.5" cy="13" r="1.4" stroke="currentColor" strokeWidth="1.2" />
-			<path d="M8 4.4v7.2M3.5 7.5h9M3.5 7.5v4.1M12.5 7.5v4.1" stroke="currentColor" strokeLinecap="round" strokeWidth="1.2" />
+		<svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+			<circle cx="12" cy="4" r="2" stroke="currentColor" strokeWidth="2" />
+			<circle cx="5" cy="20" r="2" stroke="currentColor" strokeWidth="2" />
+			<circle cx="12" cy="20" r="2" stroke="currentColor" strokeWidth="2" />
+			<circle cx="19" cy="20" r="2" stroke="currentColor" strokeWidth="2" />
+			<path d="M12 6v12M5 11h14M5 11v7M19 11v7" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
 		</svg>
 	);
 }
@@ -1252,7 +1241,8 @@ function ProjectActionIcon({
 }) {
 	return (
 		<span
-			className={`relative z-20 grid size-4 shrink-0 place-items-center text-[var(--preview-passive)] ${className}`}
+			aria-hidden="true"
+			className={`grid size-5 shrink-0 place-items-center text-[var(--preview-passive)] ${className}`}
 		>
 			{children}
 		</span>
@@ -1389,13 +1379,13 @@ function Sidebar({
 					</div>
 					<div className="absolute inset-y-0 right-1.5 z-30 flex items-center gap-px">
 						<ProjectActionIcon>
-							<LayoutGridIcon className="h-3 w-3" />
+							<LayoutGridIcon className="h-3.5 w-3.5" />
 						</ProjectActionIcon>
 						<ProjectActionIcon>
-							<OrchestratorIcon className="h-3 w-3" />
+							<OrchestratorIcon className="h-3.5 w-3.5" />
 						</ProjectActionIcon>
 						<ProjectActionIcon>
-							<MoreVerticalIcon className="h-3 w-3" />
+							<MoreVerticalIcon className="h-3.5 w-3.5" />
 						</ProjectActionIcon>
 					</div>
 				</div>
@@ -1449,41 +1439,34 @@ function ArchiveBar({ count }: { count: number }) {
 	);
 }
 
-function BoardChrome({
-	onNewTask,
-	viewMode,
-}: {
-	onNewTask: () => void;
-	viewMode: ViewMode;
-}) {
+function BoardChrome({ viewMode }: { viewMode: ViewMode }) {
 	return (
-		<div className="flex h-12 shrink-0 items-center gap-2 px-4">
-			<div className="min-w-0 truncate text-[13px] font-semibold tracking-tight text-[var(--preview-foreground)]">
+		<div className="flex h-10 shrink-0 items-center gap-2 border-b border-[var(--preview-border-strong)] px-4">
+			<div className="min-w-0 truncate text-[16px] font-semibold tracking-tight leading-none text-[var(--preview-foreground)]">
 				{viewMode === "orchestrator" ? "Orchestrator" : "agent-orchestrator"}
 			</div>
 			<div className="min-w-0 flex-1" />
-			<button
-				type="button"
-				onClick={onNewTask}
-				className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--preview-border)] bg-[var(--preview-raised)] px-3 text-[12px] font-semibold text-[var(--preview-muted-foreground)] transition-colors hover:bg-[var(--preview-card)] hover:text-[var(--preview-foreground)] active:scale-[0.98]"
+			{/* Static chrome — matches TopbarButton accent / primary / icon, non-interactive. */}
+			<span
+				aria-hidden="true"
+				className="inline-flex h-[34px] items-center gap-1.5 rounded-md border border-[var(--preview-border)] bg-[var(--preview-raised)] px-3.5 text-[13px] font-semibold leading-none text-[var(--preview-muted-foreground)]"
 			>
 				<PlusIcon className="h-3.5 w-3.5" />
 				<span>New task</span>
-			</button>
-			<button
-				type="button"
-				className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[var(--preview-primary)] px-3 text-[12px] font-semibold text-[var(--preview-primary-foreground)] transition-[filter,transform] hover:brightness-110 active:scale-[0.98]"
+			</span>
+			<span
+				aria-hidden="true"
+				className="inline-flex h-[34px] items-center gap-1.5 rounded-md bg-[var(--preview-primary)] px-3.5 text-[13px] font-semibold leading-none text-[var(--preview-primary-foreground)]"
 			>
 				<OrchestratorIcon className="h-3.5 w-3.5" />
 				Orchestrator
-			</button>
-			<button
-				type="button"
-				className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-[rgb(255_255_255/0.18)] text-[var(--preview-muted-foreground)] transition-colors hover:bg-[var(--preview-sidebar-hover)] hover:text-[var(--preview-foreground)]"
-				aria-label="Notifications"
+			</span>
+			<span
+				aria-hidden="true"
+				className="grid size-[34px] shrink-0 place-items-center rounded-md text-[var(--preview-muted-foreground)]"
 			>
 				<BellIcon className="h-4 w-4" />
-			</button>
+			</span>
 		</div>
 	);
 }
@@ -1707,7 +1690,7 @@ function BoardCard({
 			) : null}
 			{card.tone === "ready" ? (
 				<div className="flex items-center justify-between gap-2 border-t border-[var(--preview-border)] px-3.5 py-2.5">
-					<span className="inline-flex h-6 items-center justify-center whitespace-nowrap rounded-md bg-white px-2.5 text-[10.5px] font-semibold text-black">
+					<span className="inline-flex h-6 items-center justify-center whitespace-nowrap rounded-md bg-[var(--preview-primary)] px-2.5 text-[10.5px] font-semibold text-[var(--preview-primary-foreground)]">
 						Merge PR
 					</span>
 					<span className="shrink-0 text-[10.5px] text-[var(--preview-muted-foreground)]">
@@ -1752,7 +1735,7 @@ function BoardColumn({
 
 	return (
 		<section className="flex min-h-0 min-w-0 snap-start flex-col border-r border-[var(--preview-divider)] last:border-r-0">
-			<div className="flex h-12 shrink-0 items-center gap-2.5 border-b border-[var(--preview-divider)] px-4">
+			<div className="flex h-10 shrink-0 items-center gap-2.5 border-b border-[var(--preview-divider)] px-4">
 				<span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
 				<div className="text-[10.5px] font-medium tracking-tight text-[var(--preview-muted-foreground)]">
 					{title}
@@ -2119,7 +2102,7 @@ export function AppMockup() {
 									/>
 								) : (
 									<>
-										<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden border-t border-[var(--preview-divider)]">
+										<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
 											<LayoutGroup key={selectedTrack.id}>
 												<div className="grid min-h-0 flex-1 grid-cols-4 overflow-hidden">
 													{boardColumns.map((column) => (

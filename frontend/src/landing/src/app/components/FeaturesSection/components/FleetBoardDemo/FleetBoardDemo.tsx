@@ -7,13 +7,13 @@ import { useEffect, useState } from "react";
 import { featurePreviewTokens } from "../FeaturePreviewShell";
 
 const STATUS = {
-	idle: "#8e96a3",
-	working: "#36c2b4",
-	needsYou: "#f2b84b",
-	inReview: "#5b8def",
-	ready: "#9ad97a",
-	merged: "#3e9b62",
-	unknown: "#a78bfa",
+	idle: "oklch(0.705 0.015 286.067)", // --muted-foreground
+	working: "#60a5fa", // --color-status-working
+	needsYou: "#fb923c", // --color-status-needs-you
+	inReview: "#facc15", // --color-status-in-review
+	ready: "#4ade80", // --color-status-ready
+	merged: "oklch(0.92 0.004 286.32)", // --primary
+	unknown: "oklch(0.37 0.013 285.805)", // --chart-4
 } as const;
 
 const columns = [
