@@ -112,6 +112,12 @@ func TestReviewMessageReusesPaneInjectionWithoutAddingAuthority(t *testing.T) {
 	}
 }
 
+func TestReviewProcessIsNotReusableBecauseManifestIsLaunchScoped(t *testing.T) {
+	if New().ReviewProcessReusable() {
+		t.Fatal("Qwen reviewer must launch a fresh process for each task so AO_REVIEW_GATEWAY_MANIFEST cannot go stale")
+	}
+}
+
 func TestReviewCancelUsesOneEscapeAndNeverCtrlC(t *testing.T) {
 	spec, err := New().ReviewCancel(context.Background())
 	if err != nil {

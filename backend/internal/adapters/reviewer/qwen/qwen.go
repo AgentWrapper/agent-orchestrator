@@ -38,6 +38,7 @@ func (r *Reviewer) Harness() domain.ReviewerHarness { return domain.ReviewerQwen
 
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
+var _ ports.ReviewerReusePolicy = (*Reviewer)(nil)
 
 // ReviewCommand launches only Qwen's permanent interactive TUI. The task
 // reference is injected after runtime creation so neither prompts nor prompt
@@ -78,6 +79,11 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 func (*Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
 	return inv.Prompt, nil
 }
+
+// ReviewProcessReusable returns false because Qwen's gateway manifest is fixed
+// in the launch environment. A new review task needs a fresh process with a
+// fresh AO_REVIEW_GATEWAY_MANIFEST value.
+func (*Reviewer) ReviewProcessReusable() bool { return false }
 
 // ReviewCancel matches the pinned Qwen TUI behavior: one Escape aborts the
 // active turn without exiting the long-lived process. Ctrl-C is a quit action.
