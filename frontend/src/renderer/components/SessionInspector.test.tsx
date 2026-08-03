@@ -103,36 +103,36 @@ const usageTelemetry = (overrides: Partial<SessionUsage> = {}): SessionUsage => 
 	lastObservedAt: "2026-06-15T12:00:00Z",
 	warnings: [],
 	totals: {
-		inputTokens: { value: 1000, coverage: "partial" },
-		uncachedInputTokens: { value: 600, coverage: "partial" },
-		cacheReadTokens: { value: 400, coverage: "partial" },
-		cacheWriteTokens: { value: 0, coverage: "partial" },
-		outputTokens: { value: 200, coverage: "partial" },
-		reasoningTokens: { value: 40, coverage: "partial" },
+		inputTokens: { value: 1000, coverage: "complete" },
+		uncachedInputTokens: { value: 600, coverage: "complete" },
+		cacheReadTokens: { value: 400, coverage: "complete" },
+		cacheWriteTokens: { value: 0, coverage: "complete" },
+		outputTokens: { value: 200, coverage: "complete" },
+		reasoningTokens: { value: 40, coverage: "complete" },
 	},
 	harnesses: [
 		{
 			harness: "codex",
 			provider: "openai",
 			totals: {
-				inputTokens: { value: 1000, coverage: "partial" },
-				uncachedInputTokens: { value: 600, coverage: "partial" },
-				cacheReadTokens: { value: 400, coverage: "partial" },
-				cacheWriteTokens: { value: 0, coverage: "partial" },
-				outputTokens: { value: 200, coverage: "partial" },
-				reasoningTokens: { value: 40, coverage: "partial" },
+				inputTokens: { value: 1000, coverage: "complete" },
+				uncachedInputTokens: { value: 600, coverage: "complete" },
+				cacheReadTokens: { value: 400, coverage: "complete" },
+				cacheWriteTokens: { value: 0, coverage: "complete" },
+				outputTokens: { value: 200, coverage: "complete" },
+				reasoningTokens: { value: 40, coverage: "complete" },
 			},
 			models: [
 				{
 					modelId: "gpt-5.6",
 					provider: "openai",
 					totals: {
-						inputTokens: { value: 1000, coverage: "partial" },
-						uncachedInputTokens: { value: 600, coverage: "partial" },
-						cacheReadTokens: { value: 400, coverage: "partial" },
-						cacheWriteTokens: { value: 0, coverage: "partial" },
-						outputTokens: { value: 200, coverage: "partial" },
-						reasoningTokens: { value: 40, coverage: "partial" },
+						inputTokens: { value: 1000, coverage: "complete" },
+						uncachedInputTokens: { value: 600, coverage: "complete" },
+						cacheReadTokens: { value: 400, coverage: "complete" },
+						cacheWriteTokens: { value: 0, coverage: "complete" },
+						outputTokens: { value: 200, coverage: "complete" },
+						reasoningTokens: { value: 40, coverage: "complete" },
 					},
 				},
 			],
@@ -869,9 +869,8 @@ describe("SessionInspector Usage & cost section", () => {
 		);
 		expect(within(usageSection).getByText("Codex")).toBeInTheDocument();
 		expect(within(usageSection).getByText("OpenAI")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Partial coverage · Collecting")).toBeInTheDocument();
-		expect(within(usageSection).getByLabelText(/Usage coverage: Partial coverage/)).toBeInTheDocument();
-		expect(within(usageSection).getByLabelText("Input tokens: 1,000 tokens. Partial coverage")).toBeInTheDocument();
+		expect(within(usageSection).queryByText(/coverage|collecting/i)).not.toBeInTheDocument();
+		expect(within(usageSection).getByLabelText("Input tokens: 1,000 tokens")).toBeInTheDocument();
 		expect(within(usageSection).queryByText("gpt-5.6")).not.toBeInTheDocument();
 		expect(within(usageSection).getByTitle("Cost coming soon")).toBeInTheDocument();
 
@@ -904,15 +903,15 @@ describe("SessionInspector Usage & cost section", () => {
 		});
 	});
 
-	it("qualifies complete collection when any shown metric is partial and surfaces warnings", async () => {
+	it("shows one generic warning for confirmed incomplete usage", async () => {
 		const usage = usageTelemetry();
-		const completeTotals: SessionUsage["totals"] = {
-			inputTokens: { value: 1000, coverage: "complete" },
+		const incompleteTotals: SessionUsage["totals"] = {
+			inputTokens: { value: 1000, coverage: "partial" },
 			uncachedInputTokens: { value: 600, coverage: "complete" },
 			cacheReadTokens: { value: 400, coverage: "complete" },
 			cacheWriteTokens: { value: 0, coverage: "complete" },
-			outputTokens: { value: 200, coverage: "complete" },
-			reasoningTokens: { value: 40, coverage: "complete" },
+			outputTokens: { value: 200, coverage: "partial" },
+			reasoningTokens: { value: 40, coverage: "partial" },
 		};
 		const harness = usage.harnesses[0];
 		const model = harness?.models[0];
@@ -922,17 +921,14 @@ describe("SessionInspector Usage & cost section", () => {
 				return {
 					data: usageTelemetry({
 						collectionState: "complete",
-						warnings: ["partial_reasoning_coverage"],
-						totals: completeTotals,
+						warnings: ["source_event_conflict"],
+						totals: incompleteTotals,
 						harnesses: [{
 							...harness,
-							totals: completeTotals,
+							totals: incompleteTotals,
 							models: [{
 								...model,
-								totals: {
-									...completeTotals,
-									reasoningTokens: { value: 40, coverage: "partial" },
-								},
+								totals: incompleteTotals,
 							}],
 						}],
 					}),
@@ -946,17 +942,45 @@ describe("SessionInspector Usage & cost section", () => {
 		const usageTitle = await screen.findByText("Usage & cost");
 		const usageSection = usageTitle.closest("[data-testid='inspector-section']") as HTMLElement;
 
-		expect(within(usageSection).getByText("Partial coverage · Collection complete")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Partial reasoning coverage")).toBeInTheDocument();
-		expect(within(usageSection).getByLabelText(/Warnings: Partial reasoning coverage/)).toBeInTheDocument();
-		expect(within(usageSection).queryByText("Complete")).not.toBeInTheDocument();
+		expect(within(usageSection).getByText("Usage may be incomplete")).toBeInTheDocument();
+		expect(
+			within(usageSection).getByLabelText("Usage may be incomplete. Details: Source event conflict."),
+		).toBeInTheDocument();
+		expect(within(usageSection).queryByText(/source event conflict/i)).not.toBeInTheDocument();
+		expect(within(usageSection).queryByText(/partial coverage|collection complete/i)).not.toBeInTheDocument();
+	});
+
+	it("does not mark the session incomplete for reasoning-only coverage", async () => {
+		const usage = usageTelemetry();
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/usage/sessions/{sessionId}") {
+				return {
+					data: usageTelemetry({
+						warnings: ["partial_reasoning_coverage"],
+						totals: {
+							...usage.totals,
+							reasoningTokens: { value: 40, coverage: "partial" },
+						},
+					}),
+					error: undefined,
+				};
+			}
+			return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={session([])} />);
+		const usageTitle = await screen.findByText("Usage & cost");
+		const usageSection = usageTitle.closest("[data-testid='inspector-section']") as HTMLElement;
+
+		expect(within(usageSection).queryByText("Usage may be incomplete")).not.toBeInTheDocument();
+		expect(within(usageSection).getByLabelText("Reasoning tokens: 40 tokens")).toBeInTheDocument();
 	});
 
 	it("preserves moved focus when pointer-opened provider detail closes", async () => {
 		renderWithQuery(<SessionInspector session={session([])} />);
 
 		const providerTrigger = await screen.findByRole("button", {
-			name: /Codex usage details, Partial coverage/,
+			name: "Codex usage details",
 		});
 		vi.useFakeTimers();
 		fireEvent.pointerEnter(providerTrigger);
@@ -981,14 +1005,14 @@ describe("SessionInspector Usage & cost section", () => {
 		renderWithQuery(<SessionInspector session={session([])} />);
 
 		const providerTrigger = await screen.findByRole("button", {
-			name: /Codex usage details, Partial coverage/,
+			name: "Codex usage details",
 		});
 		providerTrigger.focus();
 		await user.keyboard("{Enter}");
 
 		const providerPeek = await screen.findByRole("region", { name: "Codex usage peek" });
 		const modelTrigger = within(providerPeek).getByRole("button", {
-			name: /gpt-5.6 usage details, Partial coverage/,
+			name: "gpt-5.6 usage details",
 		});
 		await waitFor(() => expect(modelTrigger).toHaveFocus());
 		expect(await screen.findByRole("region", { name: "gpt-5.6 usage peek" })).toBeInTheDocument();

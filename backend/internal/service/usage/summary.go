@@ -41,11 +41,12 @@ func (r *SummaryReader) ListCompact(ctx context.Context, projectID domain.Projec
 	out := make([]domain.CompactSessionUsage, 0, len(rows))
 	for _, row := range rows {
 		state := collectionState(row)
+		incomplete := usageIsIncomplete(row)
 		out = append(out, domain.CompactSessionUsage{
 			SessionID:       row.SessionID,
 			TotalTokens:     row.TotalTokens,
 			CollectionState: state,
-			Coverage:        tokenCoverage(row.EventCount, state),
+			Coverage:        tokenCoverage(row.EventCount, state, incomplete),
 		})
 	}
 	return out, nil
@@ -71,12 +72,10 @@ func (r *SummaryReader) Get(ctx context.Context, sessionID domain.SessionID) (do
 	warnings := make(map[string]struct{})
 	for _, binding := range bindings {
 		aggregate.BindingCount++
-		if binding.State == domain.UsageBindingComplete ||
-			(binding.State == domain.UsageBindingPartial && binding.LastErrorCode == "") {
+		if binding.State == domain.UsageBindingComplete {
 			aggregate.CompleteBindingCount++
 		}
-		if (binding.State == domain.UsageBindingPartial && binding.LastErrorCode != "") ||
-			binding.LastErrorCode == domain.UsageErrorCodexSourceBudgetExceeded {
+		if binding.State == domain.UsageBindingPartial || isUsageIntegrityWarning(binding.LastErrorCode) {
 			aggregate.PartialBindingCount++
 		}
 		addUsageWarning(warnings, binding.LastErrorCode)
@@ -96,7 +95,7 @@ func (r *SummaryReader) Get(ctx context.Context, sessionID domain.SessionID) (do
 		if source.State == domain.UsageSourceError {
 			aggregate.ErrorSourceCount++
 		}
-		if source.AnomalyCount > 0 || source.LastErrorCode != "" {
+		if source.AnomalyCount > 0 || isUsageIntegrityWarning(source.LastErrorCode) {
 			aggregate.AnomalousSourceCount++
 		}
 		addUsageWarning(warnings, source.LastErrorCode)
@@ -115,9 +114,7 @@ func (r *SummaryReader) Get(ctx context.Context, sessionID domain.SessionID) (do
 		}
 	}
 	state := collectionState(aggregate)
-	if partialReasoningCoverage(models) {
-		addUsageWarning(warnings, domain.UsageErrorPartialReasoningCoverage)
-	}
+	incomplete := usageIsIncomplete(aggregate)
 	return domain.SessionUsageSummary{
 		SessionID: sessionID,
 		Collection: domain.UsageCollectionSummary{
@@ -125,8 +122,8 @@ func (r *SummaryReader) Get(ctx context.Context, sessionID domain.SessionID) (do
 			LastObservedAt: lastObservedAt,
 			Warnings:       sortedUsageWarnings(warnings),
 		},
-		Totals:    usageTotals(models, state),
-		Harnesses: harnessUsageSummaries(models, state),
+		Totals:    usageTotals(models, state, incomplete),
+		Harnesses: harnessUsageSummaries(models, state, incomplete),
 	}, nil
 }
 
@@ -134,7 +131,7 @@ func collectionState(row domain.UsageSessionAggregate) domain.UsageCollectionSta
 	if !SupportedHarness(row.Harness) {
 		return domain.UsageCollectionUnavailable
 	}
-	if row.PartialBindingCount > 0 || row.ErrorSourceCount > 0 || row.AnomalousSourceCount > 0 {
+	if row.PartialBindingCount > 0 {
 		return domain.UsageCollectionPartial
 	}
 	if row.BindingCount == 0 || row.SourceCount == 0 {
@@ -146,17 +143,25 @@ func collectionState(row domain.UsageSessionAggregate) domain.UsageCollectionSta
 	return domain.UsageCollectionCollecting
 }
 
-func tokenCoverage(eventCount int64, state domain.UsageCollectionState) domain.UsageCoverage {
+func tokenCoverage(
+	eventCount int64,
+	state domain.UsageCollectionState,
+	incomplete bool,
+) domain.UsageCoverage {
 	if eventCount == 0 || state == domain.UsageCollectionUnavailable {
 		return domain.UsageCoverageUnavailable
 	}
-	if state == domain.UsageCollectionComplete {
-		return domain.UsageCoverageComplete
+	if incomplete {
+		return domain.UsageCoveragePartial
 	}
-	return domain.UsageCoveragePartial
+	return domain.UsageCoverageComplete
 }
 
-func usageTotals(models []domain.UsageModelAggregate, state domain.UsageCollectionState) domain.UsageMetricTotals {
+func usageTotals(
+	models []domain.UsageModelAggregate,
+	state domain.UsageCollectionState,
+	incomplete bool,
+) domain.UsageMetricTotals {
 	var input, uncached, cacheRead, cacheWrite, output, reasoning int64
 	var events, reasoningEvents int64
 	for _, model := range models {
@@ -175,11 +180,13 @@ func usageTotals(models []domain.UsageModelAggregate, state domain.UsageCollecti
 		if events == 0 {
 			return domain.UsageMetricCoverage{Coverage: domain.UsageCoverageUnavailable}
 		}
-		return domain.UsageMetricCoverage{Value: int64Pointer(value), Coverage: tokenCoverage(events, state)}
+		return domain.UsageMetricCoverage{
+			Value: int64Pointer(value), Coverage: tokenCoverage(events, state, incomplete),
+		}
 	}
 	reasoningMetric := domain.UsageMetricCoverage{Coverage: domain.UsageCoverageUnavailable}
 	if reasoningEvents > 0 {
-		coverage := tokenCoverage(events, state)
+		coverage := tokenCoverage(events, state, incomplete)
 		if reasoningEvents < events {
 			coverage = domain.UsageCoveragePartial
 		}
@@ -198,6 +205,7 @@ func usageTotals(models []domain.UsageModelAggregate, state domain.UsageCollecti
 func harnessUsageSummaries(
 	models []domain.UsageModelAggregate,
 	state domain.UsageCollectionState,
+	incomplete bool,
 ) []domain.HarnessUsageSummary {
 	type harnessKey struct {
 		harness  domain.AgentHarness
@@ -218,14 +226,14 @@ func harnessUsageSummaries(
 		summary := domain.HarnessUsageSummary{
 			Harness:  key.harness,
 			Provider: key.provider,
-			Totals:   usageTotals(rows, state),
+			Totals:   usageTotals(rows, state, incomplete),
 			Models:   make([]domain.ModelUsageSummary, 0, len(rows)),
 		}
 		for _, row := range rows {
 			summary.Models = append(summary.Models, domain.ModelUsageSummary{
 				ModelID:  row.ModelID,
 				Provider: row.Provider,
-				Totals:   usageTotals([]domain.UsageModelAggregate{row}, state),
+				Totals:   usageTotals([]domain.UsageModelAggregate{row}, state, incomplete),
 			})
 		}
 		out = append(out, summary)
@@ -233,18 +241,30 @@ func harnessUsageSummaries(
 	return out
 }
 
-func partialReasoningCoverage(models []domain.UsageModelAggregate) bool {
-	var events, reasoningEvents int64
-	for _, model := range models {
-		events += model.EventCount
-		reasoningEvents += model.ReasoningEventCount
-	}
-	return reasoningEvents > 0 && reasoningEvents < events
+func usageIsIncomplete(row domain.UsageSessionAggregate) bool {
+	return row.PartialBindingCount > 0 || row.AnomalousSourceCount > 0
 }
 
 func addUsageWarning(warnings map[string]struct{}, warning string) {
-	if warning != "" && warning != domain.UsageErrorArtifactReplaced {
+	if isUsageIntegrityWarning(warning) {
 		warnings[warning] = struct{}{}
+	}
+}
+
+func isUsageIntegrityWarning(warning string) bool {
+	switch warning {
+	case domain.UsageErrorArtifactPathRejected,
+		domain.UsageErrorRecordTooLarge,
+		domain.UsageErrorMalformedJSONL,
+		domain.UsageErrorUnsupportedSourceFormat,
+		domain.UsageErrorSourceEventConflict,
+		domain.UsageErrorNonMonotonicCumulativeUsage,
+		domain.UsageErrorInvalidParserState,
+		domain.UsageErrorUnresolvedSpawnCall,
+		domain.UsageErrorCodexSourceBudgetExceeded:
+		return true
+	default:
+		return false
 	}
 }
 

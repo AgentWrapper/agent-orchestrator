@@ -120,65 +120,16 @@ WHERE id = ?1
 	AND (
 	    usage_bindings.last_error_code = 'codex_source_budget_exceeded'
 	    OR NOT EXISTS (
-	    SELECT 1
-	    FROM usage_sources spawning
-	    JOIN json_each(
-	        CASE
-	            WHEN json_valid(spawning.parser_state_json) THEN
-	                CASE
-	                    WHEN json_type(spawning.parser_state_json, '$') = 'object'
-	                     AND json_type(spawning.parser_state_json, '$.version') = 'integer'
-	                     AND json_extract(spawning.parser_state_json, '$.version') = 1
-	                     AND json_type(spawning.parser_state_json, '$.source_kind') = 'text'
-	                     AND json_extract(spawning.parser_state_json, '$.source_kind') = 'codex_rollout'
-	                     AND json_type(spawning.parser_state_json, '$.codex') = 'object'
-	                     AND json_type(spawning.parser_state_json, '$.codex.discovered_child_ids') = 'array'
-	                     AND NOT EXISTS (
-	                         SELECT 1
-	                         FROM json_each(spawning.parser_state_json, '$.codex.discovered_child_ids') element
-	                         WHERE element.type <> 'text'
-	                     )
-	                    THEN json_extract(spawning.parser_state_json, '$.codex.discovered_child_ids')
-	                    ELSE '[]'
-	                END
-	            ELSE '[]'
-	        END
-	    ) discovered
-	    WHERE spawning.binding_id = ?1
-	      AND spawning.kind = 'codex_rollout'
-	      AND discovered.type = 'text'
-	      AND length(discovered.value) = 36
-	      AND substr(discovered.value, 9, 1) = '-'
-	      AND substr(discovered.value, 14, 1) = '-'
-	      AND substr(discovered.value, 19, 1) = '-'
-	      AND substr(discovered.value, 24, 1) = '-'
-	      AND lower(discovered.value) = discovered.value
-	      AND length(replace(discovered.value, '-', '')) = 32
-	      AND replace(discovered.value, '-', '') NOT GLOB '*[^0-9a-f]*'
-	      AND spawning.id = (
-	          SELECT latest.id
-	          FROM usage_sources latest
-	          WHERE latest.binding_id = spawning.binding_id
-	            AND latest.kind = 'codex_rollout'
-	            AND latest.native_session_id = spawning.native_session_id
-	          ORDER BY latest.generation DESC, latest.id DESC
-	          LIMIT 1
-	      )
-	      AND NOT EXISTS (
-	          SELECT 1
-	          FROM usage_sources registered
-	          WHERE registered.binding_id = ?1
-	            AND registered.kind = 'codex_rollout'
-	            AND registered.native_session_id = CAST(discovered.value AS TEXT)
-	      )
+	        SELECT 1
+	        FROM usage_codex_pending_children
+	        WHERE binding_id = ?1
 	    )
 	)
 	AND NOT EXISTS (
 	    SELECT 1
-	    FROM usage_sources malformed
+	    FROM usage_codex_source_discovery malformed
 	    WHERE malformed.binding_id = ?1
-	      AND malformed.kind = 'codex_rollout'
-	      AND malformed.id = (
+	      AND malformed.source_id = (
 	          SELECT latest.id
 	          FROM usage_sources latest
 	          WHERE latest.binding_id = malformed.binding_id
@@ -187,22 +138,7 @@ WHERE id = ?1
 	          ORDER BY latest.generation DESC, latest.id DESC
 	          LIMIT 1
 	      )
-	      AND CASE
-	          WHEN json_valid(malformed.parser_state_json) THEN
-	              json_type(malformed.parser_state_json, '$') = 'object'
-	              AND json_type(malformed.parser_state_json, '$.version') = 'integer'
-	              AND json_extract(malformed.parser_state_json, '$.version') = 1
-	              AND json_type(malformed.parser_state_json, '$.source_kind') = 'text'
-	              AND json_extract(malformed.parser_state_json, '$.source_kind') = 'codex_rollout'
-	              AND json_type(malformed.parser_state_json, '$.codex') = 'object'
-	              AND json_type(malformed.parser_state_json, '$.codex.discovered_child_ids') = 'array'
-	              AND EXISTS (
-	                  SELECT 1
-	                  FROM json_each(malformed.parser_state_json, '$.codex.discovered_child_ids') element
-	                  WHERE element.type <> 'text'
-	              )
-	          ELSE 0
-	      END
+	      AND malformed.has_mixed_child_types = 1
   )
 `
 
@@ -590,11 +526,21 @@ SELECT
     s.harness,
     COUNT(DISTINCT ub.id) AS binding_count,
     COUNT(DISTINCT CASE
-        WHEN ub.state = 'complete' OR (ub.state = 'partial' AND ub.last_error_code = '') THEN ub.id
+        WHEN ub.state = 'complete' THEN ub.id
     END) AS complete_binding_count,
     COUNT(DISTINCT CASE
-        WHEN (ub.state = 'partial' AND ub.last_error_code <> '')
-          OR ub.last_error_code = 'codex_source_budget_exceeded' THEN ub.id
+        WHEN ub.state = 'partial'
+          OR ub.last_error_code IN (
+              'artifact_path_rejected',
+              'record_too_large',
+              'malformed_jsonl',
+              'unsupported_source_format',
+              'source_event_conflict',
+              'non_monotonic_cumulative_usage',
+              'invalid_parser_state',
+              'unresolved_spawn_call',
+              'codex_source_budget_exceeded'
+          ) THEN ub.id
     END) AS partial_binding_count,
     COUNT(DISTINCT CASE WHEN us.last_error_code <> 'artifact_replaced' THEN us.id END) AS source_count,
     COUNT(DISTINCT CASE
@@ -605,7 +551,20 @@ SELECT
     END) AS error_source_count,
     COUNT(DISTINCT CASE
         WHEN us.last_error_code <> 'artifact_replaced'
-          AND (us.anomaly_count > 0 OR us.last_error_code <> '') THEN us.id
+          AND (
+              us.anomaly_count > 0
+              OR us.last_error_code IN (
+                  'artifact_path_rejected',
+                  'record_too_large',
+                  'malformed_jsonl',
+                  'unsupported_source_format',
+                  'source_event_conflict',
+                  'non_monotonic_cumulative_usage',
+                  'invalid_parser_state',
+                  'unresolved_spawn_call',
+                  'codex_source_budget_exceeded'
+              )
+          ) THEN us.id
     END) AS anomalous_source_count,
     COUNT(DISTINCT mue.id) AS event_count,
     CAST(COALESCE(SUM(mue.input_tokens + mue.output_tokens), 0) AS INTEGER) AS total_tokens
@@ -860,56 +819,8 @@ WHERE (s.is_terminated = 0 OR ub.state = 'finalizing')
       )
 	  OR EXISTS (
 	      SELECT 1
-	      FROM usage_sources spawning
-	      JOIN json_each(
-	          CASE
-	              WHEN json_valid(spawning.parser_state_json) THEN
-	                  CASE
-	                      WHEN json_type(spawning.parser_state_json, '$') = 'object'
-	                       AND json_type(spawning.parser_state_json, '$.version') = 'integer'
-	                       AND json_extract(spawning.parser_state_json, '$.version') = 1
-	                       AND json_type(spawning.parser_state_json, '$.source_kind') = 'text'
-	                       AND json_extract(spawning.parser_state_json, '$.source_kind') = 'codex_rollout'
-	                       AND json_type(spawning.parser_state_json, '$.codex') = 'object'
-	                       AND json_type(spawning.parser_state_json, '$.codex.discovered_child_ids') = 'array'
-	                       AND NOT EXISTS (
-	                           SELECT 1
-	                           FROM json_each(spawning.parser_state_json, '$.codex.discovered_child_ids') element
-	                           WHERE element.type <> 'text'
-	                       )
-	                      THEN json_extract(spawning.parser_state_json, '$.codex.discovered_child_ids')
-	                      ELSE '[]'
-	                  END
-	              ELSE '[]'
-	          END
-	      ) discovered
-	      WHERE spawning.binding_id = ub.id
-	        AND spawning.kind = 'codex_rollout'
-	        AND discovered.type = 'text'
-	        AND length(discovered.value) = 36
-	        AND substr(discovered.value, 9, 1) = '-'
-	        AND substr(discovered.value, 14, 1) = '-'
-	        AND substr(discovered.value, 19, 1) = '-'
-	        AND substr(discovered.value, 24, 1) = '-'
-	        AND lower(discovered.value) = discovered.value
-	        AND length(replace(discovered.value, '-', '')) = 32
-	        AND replace(discovered.value, '-', '') NOT GLOB '*[^0-9a-f]*'
-	        AND spawning.id = (
-	            SELECT latest.id
-	            FROM usage_sources latest
-	            WHERE latest.binding_id = spawning.binding_id
-	              AND latest.kind = 'codex_rollout'
-	              AND latest.native_session_id = spawning.native_session_id
-	            ORDER BY latest.generation DESC, latest.id DESC
-	            LIMIT 1
-	        )
-	        AND NOT EXISTS (
-	            SELECT 1
-	            FROM usage_sources registered
-	            WHERE registered.binding_id = ub.id
-	              AND registered.kind = 'codex_rollout'
-	              AND registered.native_session_id = CAST(discovered.value AS TEXT)
-	        )
+	      FROM usage_codex_pending_children
+	      WHERE binding_id = ub.id
 	  )
   )
 ORDER BY ub.updated_at, ub.id

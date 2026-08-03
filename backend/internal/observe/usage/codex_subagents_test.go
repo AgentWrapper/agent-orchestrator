@@ -947,28 +947,10 @@ func seedCodexRolloutSession(
 	activity domain.ActivityState,
 ) (*sqlite.Store, domain.SessionRecord, usagesvc.SourceRoots) {
 	t.Helper()
-	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
 	now := time.Now().UTC()
-	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "codex-subagents", Path: t.TempDir(), RegisteredAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	session, err := store.CreateSession(ctx, domain.SessionRecord{
-		ProjectID: "codex-subagents",
-		Kind:      domain.KindWorker,
-		Harness:   domain.HarnessCodex,
-		Activity:  domain.Activity{State: activity, LastActivityAt: now},
-		Metadata:  domain.SessionMetadata{AgentSessionID: testCodexParentID},
-		CreatedAt: now,
-		UpdatedAt: now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	store, session := seedUsageTestSession(
+		t, t.TempDir(), "codex-subagents", domain.HarnessCodex, activity, testCodexParentID, now,
+	)
 	base := t.TempDir()
 	return store, session, usagesvc.SourceRoots{
 		CodexSessions: filepath.Join(base, "sessions"),

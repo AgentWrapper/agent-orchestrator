@@ -69,6 +69,16 @@ func TestSummaryReaderListCompactDerivesStatesAndCoverageInOneRead(t *testing.T)
 			BindingCount: 1, SourceCount: 1, EventCount: 2, TotalTokens: 120,
 		},
 		{
+			SessionID: "retrying", Harness: domain.HarnessCodex,
+			BindingCount: 1, SourceCount: 1, ErrorSourceCount: 1,
+			EventCount: 1, TotalTokens: 80,
+		},
+		{
+			SessionID: "incomplete", Harness: domain.HarnessCodex,
+			BindingCount: 1, SourceCount: 1, AnomalousSourceCount: 1,
+			EventCount: 1, TotalTokens: 60,
+		},
+		{
 			SessionID: "complete", Harness: domain.HarnessCodex,
 			BindingCount: 1, CompleteBindingCount: 1,
 			SourceCount: 1, CompleteSourceCount: 1,
@@ -97,7 +107,9 @@ func TestSummaryReaderListCompactDerivesStatesAndCoverageInOneRead(t *testing.T)
 		tokens   int64
 	}{
 		{domain.UsageCollectionWaiting, domain.UsageCoverageUnavailable, 0},
-		{domain.UsageCollectionCollecting, domain.UsageCoveragePartial, 120},
+		{domain.UsageCollectionCollecting, domain.UsageCoverageComplete, 120},
+		{domain.UsageCollectionCollecting, domain.UsageCoverageComplete, 80},
+		{domain.UsageCollectionCollecting, domain.UsageCoveragePartial, 60},
 		{domain.UsageCollectionComplete, domain.UsageCoverageComplete, 240},
 		{domain.UsageCollectionPartial, domain.UsageCoveragePartial, 20},
 		{domain.UsageCollectionUnavailable, domain.UsageCoverageUnavailable, 99},
@@ -153,8 +165,8 @@ func TestSummaryReaderGetReturnsDetailedTokenTelemetry(t *testing.T) {
 		got.Totals.ReasoningTokens.Value == nil || *got.Totals.ReasoningTokens.Value != 40 {
 		t.Fatalf("totals = %+v", got.Totals)
 	}
-	if got.Totals.InputTokens.Coverage != domain.UsageCoveragePartial ||
-		got.Totals.OutputTokens.Coverage != domain.UsageCoveragePartial {
+	if got.Totals.InputTokens.Coverage != domain.UsageCoverageComplete ||
+		got.Totals.OutputTokens.Coverage != domain.UsageCoverageComplete {
 		t.Fatalf("coverage = %+v", got.Totals)
 	}
 	if len(got.Harnesses) != 1 || len(got.Harnesses[0].Models) != 1 ||
@@ -178,7 +190,7 @@ func TestSummaryReaderIgnoresRetiredGenerationHealth(t *testing.T) {
 		found:   true,
 		session: domain.SessionRecord{ID: "reverb-12", Harness: domain.HarnessCodex},
 		bindings: []domain.UsageBindingRecord{{
-			ID: 1, State: domain.UsageBindingPartial,
+			ID: 1, State: domain.UsageBindingComplete,
 		}},
 		sources: []domain.UsageSourceRecord{
 			{ID: 10, BindingID: 1, Generation: 0, State: domain.UsageSourceComplete, LastErrorCode: domain.UsageErrorArtifactReplaced},
@@ -204,4 +216,71 @@ func TestSummaryReaderIgnoresRetiredGenerationHealth(t *testing.T) {
 	if got.Totals.InputTokens.Value == nil || *got.Totals.InputTokens.Value != 100 {
 		t.Fatalf("totals = %+v, want retired generation events retained", got.Totals)
 	}
+}
+
+func TestSummaryReaderSeparatesRetryStateFromConfirmedIncompleteUsage(t *testing.T) {
+	reasoning := int64(12)
+	baseModels := []domain.UsageModelAggregate{{
+		Harness:             domain.HarnessCodex,
+		Provider:            "openai",
+		ModelID:             "gpt-5.6",
+		Tokens:              domain.UsageTokenMetrics{InputTokens: 100, UncachedInputTokens: 100, OutputTokens: 20, ReasoningTokens: &reasoning},
+		EventCount:          2,
+		ReasoningEventCount: 1,
+	}}
+
+	t.Run("retryable failures preserve complete token coverage", func(t *testing.T) {
+		store := &compactUsageStoreStub{
+			found:    true,
+			session:  domain.SessionRecord{ID: "reverb-12", Harness: domain.HarnessCodex},
+			bindings: []domain.UsageBindingRecord{{ID: 1, State: domain.UsageBindingActive, LastErrorCode: domain.UsageErrorSourceDiscoveryPending}},
+			sources: []domain.UsageSourceRecord{{
+				ID: 10, BindingID: 1, State: domain.UsageSourceError, LastErrorCode: domain.UsageErrorSourceReadFailed,
+			}},
+			models: baseModels,
+		}
+
+		got, err := NewSummaryReader(store).Get(context.Background(), "reverb-12")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Collection.State != domain.UsageCollectionCollecting || len(got.Collection.Warnings) != 0 {
+			t.Fatalf("collection = %+v, want collecting without integrity warnings", got.Collection)
+		}
+		if got.Totals.InputTokens.Coverage != domain.UsageCoverageComplete ||
+			got.Totals.OutputTokens.Coverage != domain.UsageCoverageComplete {
+			t.Fatalf("token coverage = %+v, want complete", got.Totals)
+		}
+		if got.Totals.ReasoningTokens.Coverage != domain.UsageCoveragePartial {
+			t.Fatalf("reasoning coverage = %s, want metric-specific partial", got.Totals.ReasoningTokens.Coverage)
+		}
+	})
+
+	t.Run("confirmed anomaly marks usage incomplete", func(t *testing.T) {
+		store := &compactUsageStoreStub{
+			found:    true,
+			session:  domain.SessionRecord{ID: "reverb-12", Harness: domain.HarnessCodex},
+			bindings: []domain.UsageBindingRecord{{ID: 1, State: domain.UsageBindingActive}},
+			sources: []domain.UsageSourceRecord{{
+				ID: 10, BindingID: 1, State: domain.UsageSourceActive, AnomalyCount: 1,
+				LastErrorCode: domain.UsageErrorSourceEventConflict,
+			}},
+			models: baseModels,
+		}
+
+		got, err := NewSummaryReader(store).Get(context.Background(), "reverb-12")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Collection.State != domain.UsageCollectionCollecting {
+			t.Fatalf("collection state = %s, want collecting", got.Collection.State)
+		}
+		if len(got.Collection.Warnings) != 1 || got.Collection.Warnings[0] != domain.UsageErrorSourceEventConflict {
+			t.Fatalf("warnings = %v, want source event conflict", got.Collection.Warnings)
+		}
+		if got.Totals.InputTokens.Coverage != domain.UsageCoveragePartial ||
+			got.Totals.OutputTokens.Coverage != domain.UsageCoveragePartial {
+			t.Fatalf("token coverage = %+v, want partial", got.Totals)
+		}
+	})
 }

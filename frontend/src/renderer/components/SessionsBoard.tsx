@@ -1009,24 +1009,16 @@ function ArchiveSessionItem({
 
 function SessionUsageMetric({ usage }: { usage?: SessionUsageSummary }) {
 	if (!usage || usage.totalTokens <= 0) return null;
-	const coverage =
-		usage.coverage === "partial"
-			? "Partial coverage"
-			: usage.coverage === "complete"
-				? "Complete coverage"
-				: "Coverage unavailable";
-	const collectionState =
-		usage.collectionState === "complete"
-			? "Collection complete"
-			: usage.collectionState.charAt(0).toUpperCase() + usage.collectionState.slice(1).replaceAll("_", " ");
-	const tooltip = `${usage.totalTokens.toLocaleString("en-US")} tokens · ${coverage} · ${collectionState}`;
+	const incomplete = usage.coverage === "partial";
+	const tooltip = `${usage.totalTokens.toLocaleString("en-US")} tokens${incomplete ? " · Usage may be incomplete" : ""}`;
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
 				<span
 					aria-label={tooltip}
-					className="shrink-0 whitespace-nowrap font-mono text-2xs text-muted-foreground"
+					className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap font-mono text-2xs text-muted-foreground"
 				>
+					{incomplete ? <AlertTriangle aria-hidden="true" className="size-3 text-warning" /> : null}
 					{formatTokenCount(usage.totalTokens)}
 				</span>
 			</TooltipTrigger>

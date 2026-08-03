@@ -20,22 +20,12 @@ func TestUsageBindingAndSourceIdempotency(t *testing.T) {
 	sess := seedUsageSession(t, s, domain.HarnessCodex)
 	now := time.Unix(1700000000, 0).UTC()
 
-	binding, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID:      sess.ID,
-		Harness:        sess.Harness,
+	binding := mustUpsertUsageBinding(t, s, sess, now, domain.UsageBindingRecord{
 		NativeRootID:   "root-thread",
 		InitialModelID: "gpt-5",
 		State:          domain.UsageBindingDiscovering,
-		FirstSeenAt:    now,
-		LastSeenAt:     now,
-		UpdatedAt:      now,
 	})
-	if err != nil {
-		t.Fatalf("upsert binding: %v", err)
-	}
-	again, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID:      sess.ID,
-		Harness:        sess.Harness,
+	again := mustUpsertUsageBinding(t, s, sess, now, domain.UsageBindingRecord{
 		NativeRootID:   "root-thread",
 		InitialModelID: "gpt-5.1",
 		State:          domain.UsageBindingActive,
@@ -43,9 +33,6 @@ func TestUsageBindingAndSourceIdempotency(t *testing.T) {
 		LastSeenAt:     now.Add(time.Hour),
 		UpdatedAt:      now.Add(time.Hour),
 	})
-	if err != nil {
-		t.Fatalf("upsert binding again: %v", err)
-	}
 	if again.ID != binding.ID || again.FirstSeenAt != binding.FirstSeenAt {
 		t.Fatalf("idempotent binding = %+v, want same id/first_seen as %+v", again, binding)
 	}
@@ -53,20 +40,15 @@ func TestUsageBindingAndSourceIdempotency(t *testing.T) {
 		t.Fatalf("refreshed binding = %+v", again)
 	}
 
-	src, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+	src := mustInsertUsageSource(t, s, now, domain.UsageSourceRecord{
 		BindingID:       binding.ID,
 		Kind:            domain.UsageSourceCodexRollout,
 		NativeSessionID: "child-thread",
 		ArtifactPath:    "/tmp/codex/rollout.jsonl",
 		FileIdentity:    "dev:ino",
 		State:           domain.UsageSourcePending,
-		CreatedAt:       now,
-		UpdatedAt:       now,
 	})
-	if err != nil {
-		t.Fatalf("insert source: %v", err)
-	}
-	srcAgain, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+	srcAgain := mustInsertUsageSource(t, s, now.Add(time.Hour), domain.UsageSourceRecord{
 		BindingID:       binding.ID,
 		Kind:            domain.UsageSourceCodexRollout,
 		NativeSessionID: "child-thread-updated",
@@ -74,12 +56,7 @@ func TestUsageBindingAndSourceIdempotency(t *testing.T) {
 		FileIdentity:    "dev:ino:updated",
 		ParserStateJSON: `{"version":1,"source_kind":"codex_rollout","codex":{}}`,
 		State:           domain.UsageSourcePending,
-		CreatedAt:       now.Add(time.Hour),
-		UpdatedAt:       now.Add(time.Hour),
 	})
-	if err != nil {
-		t.Fatalf("insert source again: %v", err)
-	}
 	if srcAgain.ID != src.ID || srcAgain.NativeSessionID != "child-thread-updated" ||
 		srcAgain.FileIdentity != "dev:ino" || srcAgain.ParserStateJSON != "{}" {
 		t.Fatalf("idempotent source = %+v", srcAgain)
@@ -135,7 +112,7 @@ func TestListLatestRetiredCodexReplacementClaimsByPath(t *testing.T) {
 			t.Fatalf("retired replacement claim remained watchable: %+v", source)
 		}
 	}
-	if _, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+	mustInsertUsageSource(t, s, now, domain.UsageSourceRecord{
 		BindingID:       target.BindingID,
 		Kind:            domain.UsageSourceCodexRollout,
 		NativeSessionID: "unrelated-thread",
@@ -143,11 +120,7 @@ func TestListLatestRetiredCodexReplacementClaimsByPath(t *testing.T) {
 		FileIdentity:    "dev:unrelated",
 		State:           domain.UsageSourceComplete,
 		LastErrorCode:   domain.UsageErrorArtifactReplaced,
-		CreatedAt:       now,
-		UpdatedAt:       now,
-	}); err != nil {
-		t.Fatalf("insert unrelated claim: %v", err)
-	}
+	})
 
 	assertClaims := func(wantIDs ...int64) {
 		t.Helper()
@@ -182,7 +155,7 @@ func TestListLatestRetiredCodexReplacementClaimsByPath(t *testing.T) {
 		t.Fatalf("finalize binding: %v", err)
 	}
 	assertClaims(target.ID)
-	if _, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+	mustInsertUsageSource(t, s, now.Add(2*time.Second), domain.UsageSourceRecord{
 		BindingID:       target.BindingID,
 		Kind:            domain.UsageSourceCodexRollout,
 		NativeSessionID: target.NativeSessionID,
@@ -190,44 +163,25 @@ func TestListLatestRetiredCodexReplacementClaimsByPath(t *testing.T) {
 		FileIdentity:    "dev:new",
 		Generation:      target.Generation + 1,
 		State:           domain.UsageSourcePending,
-		CreatedAt:       now.Add(2 * time.Second),
-		UpdatedAt:       now.Add(2 * time.Second),
-	}); err != nil {
-		t.Fatalf("insert newer generation: %v", err)
-	}
+	})
 	assertClaims()
 }
 
 func TestUsageBindingUpsertDoesNotRegressSettledLifecycle(t *testing.T) {
 	s := newTestStore(t)
-	ctx := context.Background()
 	sess := seedUsageSession(t, s, domain.HarnessCodex)
 	now := time.Unix(1700000000, 0).UTC()
-	binding, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID:     sess.ID,
-		Harness:       sess.Harness,
+	binding := mustUpsertUsageBinding(t, s, sess, now, domain.UsageBindingRecord{
 		NativeRootID:  "root-thread",
 		State:         domain.UsageBindingFinalizing,
 		LastErrorCode: "finalizing-warning",
-		FirstSeenAt:   now,
-		LastSeenAt:    now,
-		UpdatedAt:     now,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID:    sess.ID,
-		Harness:      sess.Harness,
+	got := mustUpsertUsageBinding(t, s, sess, now, domain.UsageBindingRecord{
 		NativeRootID: "root-thread",
 		State:        domain.UsageBindingActive,
-		FirstSeenAt:  now,
 		LastSeenAt:   now.Add(time.Second),
 		UpdatedAt:    now.Add(time.Second),
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	if got.ID != binding.ID || got.State != domain.UsageBindingFinalizing || got.LastErrorCode != "finalizing-warning" {
 		t.Fatalf("stale upsert regressed binding: %+v", got)
 	}
@@ -242,18 +196,10 @@ func TestFinalizeUsageBindingsForSessionLaunchIsGenerationAndRevisionFenced(t *t
 		t.Fatal(err)
 	}
 	now := time.Unix(1700000000, 0).UTC()
-	binding, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID:    sess.ID,
-		Harness:      sess.Harness,
+	binding := mustUpsertUsageBinding(t, s, sess, now, domain.UsageBindingRecord{
 		NativeRootID: "root-thread",
 		State:        domain.UsageBindingActive,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	expectedRevision := sess.UpdatedAt
 
 	finalized, err := s.FinalizeUsageBindingsForSessionLaunch(
@@ -348,19 +294,11 @@ func TestInsertUsageSourceRejectsNonObjectParserState(t *testing.T) {
 	ctx := context.Background()
 	sess := seedUsageSession(t, s, domain.HarnessCodex)
 	now := time.Unix(1700000000, 0).UTC()
-	binding, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID:    sess.ID,
-		Harness:      sess.Harness,
+	binding := mustUpsertUsageBinding(t, s, sess, now, domain.UsageBindingRecord{
 		NativeRootID: "root-thread",
 		State:        domain.UsageBindingActive,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+	_, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
 		BindingID:       binding.ID,
 		Kind:            domain.UsageSourceCodexRollout,
 		ArtifactPath:    "/tmp/codex/rollout.jsonl",
@@ -418,37 +356,24 @@ func TestUsageMutationsEmitSessionUpdatedCDC(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	binding, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID:    sess.ID,
-		Harness:      sess.Harness,
+	binding := mustUpsertUsageBinding(t, s, sess, now, domain.UsageBindingRecord{
 		NativeRootID: "root-thread",
 		State:        domain.UsageBindingActive,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	assertUsageSessionUpdatedEvents(t, s, base, sess, 1)
 
 	base, err = s.LatestSeq(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+	source := mustInsertUsageSource(t, s, now, domain.UsageSourceRecord{
 		BindingID:       binding.ID,
 		Kind:            domain.UsageSourceCodexRollout,
 		NativeSessionID: "child-thread",
 		ArtifactPath:    "/tmp/codex/rollout.jsonl",
 		FileIdentity:    "dev:ino",
 		State:           domain.UsageSourcePending,
-		CreatedAt:       now,
-		UpdatedAt:       now,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	assertUsageSessionUpdatedEvents(t, s, base, sess, 1)
 
 	base, err = s.LatestSeq(ctx)
@@ -596,36 +521,69 @@ func TestApplyUsageChunkRejectsChangedProviderTimestampForStableKey(t *testing.T
 	assertUsageSourceOffset(t, s, source.ID, 10)
 }
 
-func TestApplyUsageChunkCanonicalizesOnlyUnknownClaudeProviders(t *testing.T) {
+func TestApplyUsageChunkDeduplicatesClaudeReplayWithChangedTimestamp(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	sess := seedUsageSession(t, s, domain.HarnessClaudeCode)
 	now := time.Unix(1700000000, 0).UTC()
-	binding, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID:    sess.ID,
-		Harness:      sess.Harness,
+	binding := mustUpsertUsageBinding(t, s, sess, now, domain.UsageBindingRecord{
 		NativeRootID: "claude-root",
 		State:        domain.UsageBindingActive,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	source, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+	source := mustInsertUsageSource(t, s, now, domain.UsageSourceRecord{
 		BindingID:       binding.ID,
 		Kind:            domain.UsageSourceClaudeMain,
 		NativeSessionID: "claude-root",
 		ArtifactPath:    "/tmp/claude/claude-root.jsonl",
 		FileIdentity:    "dev:ino",
 		State:           domain.UsageSourcePending,
-		CreatedAt:       now,
-		UpdatedAt:       now,
 	})
+	tokens := domain.UsageTokenMetrics{InputTokens: 10, UncachedInputTokens: 10, OutputTokens: 1}
+	if err := s.ApplyUsageChunk(ctx, source.ID, 0, domain.SourceCursorState{
+		ByteOffset: 10,
+		State:      domain.UsageSourceActive,
+		UpdatedAt:  now,
+	}, []domain.ModelUsageEvent{usageEvent("event-1", now, tokens)}); err != nil {
+		t.Fatalf("seed event: %v", err)
+	}
+
+	replayed := usageEvent("event-1", now.Add(time.Minute), tokens)
+	if err := s.ApplyUsageChunk(ctx, source.ID, 10, domain.SourceCursorState{
+		ByteOffset: 20,
+		State:      domain.UsageSourceActive,
+		UpdatedAt:  now.Add(time.Minute),
+	}, []domain.ModelUsageEvent{replayed}); err != nil {
+		t.Fatalf("replay Claude event with changed transcript timestamp: %v", err)
+	}
+	assertUsageSourceOffset(t, s, source.ID, 20)
+
+	aggregates, err := s.ListUsageModelAggregates(ctx, sess.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(aggregates) != 1 || aggregates[0].EventCount != 1 ||
+		aggregates[0].Tokens.InputTokens != 10 || aggregates[0].Tokens.OutputTokens != 1 {
+		t.Fatalf("Claude replay aggregates = %+v, want one event", aggregates)
+	}
+}
+
+func TestApplyUsageChunkCanonicalizesOnlyUnknownClaudeProviders(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	sess := seedUsageSession(t, s, domain.HarnessClaudeCode)
+	now := time.Unix(1700000000, 0).UTC()
+	binding := mustUpsertUsageBinding(t, s, sess, now, domain.UsageBindingRecord{
+		NativeRootID: "claude-root",
+		State:        domain.UsageBindingActive,
+	})
+	source := mustInsertUsageSource(t, s, now, domain.UsageSourceRecord{
+		BindingID:       binding.ID,
+		Kind:            domain.UsageSourceClaudeMain,
+		NativeSessionID: "claude-root",
+		ArtifactPath:    "/tmp/claude/claude-root.jsonl",
+		FileIdentity:    "dev:ino",
+		State:           domain.UsageSourcePending,
+	})
 	event := usageEvent("event-1", now, domain.UsageTokenMetrics{
 		InputTokens:         10,
 		UncachedInputTokens: 10,
@@ -716,19 +674,11 @@ func TestUsageBindingWaitsForPersistedCodexChildren(t *testing.T) {
 	sess := seedUsageSession(t, s, domain.HarnessCodex)
 	now := time.Unix(1700000000, 0).UTC()
 	const childID = "22222222-2222-4222-8222-222222222222"
-	binding, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID:    sess.ID,
-		Harness:      sess.Harness,
+	binding := mustUpsertUsageBinding(t, s, sess, now, domain.UsageBindingRecord{
 		NativeRootID: "11111111-1111-4111-8111-111111111111",
 		State:        domain.UsageBindingActive,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+	mustInsertUsageSource(t, s, now, domain.UsageSourceRecord{
 		BindingID:       binding.ID,
 		Kind:            domain.UsageSourceCodexRollout,
 		NativeSessionID: binding.NativeRootID,
@@ -736,12 +686,7 @@ func TestUsageBindingWaitsForPersistedCodexChildren(t *testing.T) {
 		FileIdentity:    "parent",
 		ParserStateJSON: `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":["` + childID + `"]}}`,
 		State:           domain.UsageSourceComplete,
-		CreatedAt:       now,
-		UpdatedAt:       now,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	discovery, err := s.ListUsageDiscoveryBindings(ctx, 8)
 	if err != nil || len(discovery) != 1 || discovery[0].ID != binding.ID {
@@ -762,7 +707,7 @@ func TestUsageBindingWaitsForPersistedCodexChildren(t *testing.T) {
 		t.Fatalf("binding while child missing = %+v, ok=%v err=%v", got, ok, err)
 	}
 
-	if _, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+	mustInsertUsageSource(t, s, now, domain.UsageSourceRecord{
 		BindingID:       binding.ID,
 		Kind:            domain.UsageSourceCodexRollout,
 		NativeSessionID: childID,
@@ -770,11 +715,7 @@ func TestUsageBindingWaitsForPersistedCodexChildren(t *testing.T) {
 		ArtifactPath:    "/tmp/codex/child.jsonl",
 		FileIdentity:    "child",
 		State:           domain.UsageSourceComplete,
-		CreatedAt:       now,
-		UpdatedAt:       now,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
 	completed, err = s.CompleteUsageBindingIfSettled(ctx, binding.ID, now)
 	if err != nil || !completed {
 		t.Fatalf("complete after child registration = %v, err=%v", completed, err)
@@ -790,22 +731,14 @@ func TestUsageBindingIgnoresChildrenFromSupersededCodexGeneration(t *testing.T) 
 		rootID  = "11111111-1111-4111-8111-111111111111"
 		childID = "22222222-2222-4222-8222-222222222222"
 	)
-	binding, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID:    sess.ID,
-		Harness:      sess.Harness,
+	binding := mustUpsertUsageBinding(t, s, sess, now, domain.UsageBindingRecord{
 		NativeRootID: rootID,
 		State:        domain.UsageBindingFinalizing,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	oldState := `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":["` + childID + `"]}}`
 	emptyState := `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":[]}}`
 	for generation, state := range []string{oldState, emptyState} {
-		if _, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+		mustInsertUsageSource(t, s, now, domain.UsageSourceRecord{
 			BindingID:       binding.ID,
 			Kind:            domain.UsageSourceCodexRollout,
 			NativeSessionID: rootID,
@@ -814,11 +747,7 @@ func TestUsageBindingIgnoresChildrenFromSupersededCodexGeneration(t *testing.T) 
 			Generation:      int64(generation),
 			ParserStateJSON: state,
 			State:           domain.UsageSourceComplete,
-			CreatedAt:       now,
-			UpdatedAt:       now,
-		}); err != nil {
-			t.Fatal(err)
-		}
+		})
 	}
 
 	completed, err := s.CompleteUsageBindingIfSettled(ctx, binding.ID, now)
@@ -848,19 +777,11 @@ func TestUsageBindingIgnoresInvalidCodexDiscoveryStateShapes(t *testing.T) {
 			ctx := context.Background()
 			sess := seedUsageSession(t, s, domain.HarnessCodex)
 			now := time.Unix(1700000000, 0).UTC()
-			binding, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-				SessionID:    sess.ID,
-				Harness:      sess.Harness,
+			binding := mustUpsertUsageBinding(t, s, sess, now, domain.UsageBindingRecord{
 				NativeRootID: "11111111-1111-4111-8111-111111111111",
 				State:        domain.UsageBindingActive,
-				FirstSeenAt:  now,
-				LastSeenAt:   now,
-				UpdatedAt:    now,
 			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+			mustInsertUsageSource(t, s, now, domain.UsageSourceRecord{
 				BindingID:       binding.ID,
 				Kind:            domain.UsageSourceCodexRollout,
 				NativeSessionID: binding.NativeRootID,
@@ -868,11 +789,7 @@ func TestUsageBindingIgnoresInvalidCodexDiscoveryStateShapes(t *testing.T) {
 				FileIdentity:    "root",
 				ParserStateJSON: tt.state,
 				State:           domain.UsageSourceComplete,
-				CreatedAt:       now,
-				UpdatedAt:       now,
-			}); err != nil {
-				t.Fatal(err)
-			}
+			})
 
 			discovery, err := s.ListUsageDiscoveryBindings(ctx, 8)
 			if err != nil {
@@ -901,20 +818,12 @@ func TestUsageBindingRejectsMixedTypeCodexDiscoveryArray(t *testing.T) {
 		rootID  = "11111111-1111-4111-8111-111111111111"
 		childID = "22222222-2222-4222-8222-222222222222"
 	)
-	binding, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID:    sess.ID,
-		Harness:      sess.Harness,
+	binding := mustUpsertUsageBinding(t, s, sess, now, domain.UsageBindingRecord{
 		NativeRootID: rootID,
 		State:        domain.UsageBindingActive,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	state := `{"version":1,"source_kind":"codex_rollout","codex":{"discovered_child_ids":["` + childID + `",7]}}`
-	if _, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+	mustInsertUsageSource(t, s, now, domain.UsageSourceRecord{
 		BindingID:       binding.ID,
 		Kind:            domain.UsageSourceCodexRollout,
 		NativeSessionID: rootID,
@@ -922,11 +831,7 @@ func TestUsageBindingRejectsMixedTypeCodexDiscoveryArray(t *testing.T) {
 		FileIdentity:    "root",
 		ParserStateJSON: state,
 		State:           domain.UsageSourceComplete,
-		CreatedAt:       now,
-		UpdatedAt:       now,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
 
 	discovery, err := s.ListUsageDiscoveryBindings(ctx, 8)
 	if err != nil {
@@ -1023,7 +928,7 @@ func TestListCompactSessionUsageAggregatesAndFiltersByProject(t *testing.T) {
 	if _, err := s.MarkUsageSourceState(ctx, source.ID, domain.UsageSourceComplete, domain.UsageErrorArtifactReplaced, nil, now); err != nil {
 		t.Fatalf("retire original source: %v", err)
 	}
-	if _, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+	mustInsertUsageSource(t, s, now, domain.UsageSourceRecord{
 		BindingID:       source.BindingID,
 		Kind:            source.Kind,
 		NativeSessionID: source.NativeSessionID,
@@ -1031,13 +936,9 @@ func TestListCompactSessionUsageAggregatesAndFiltersByProject(t *testing.T) {
 		FileIdentity:    "replacement",
 		Generation:      1,
 		State:           domain.UsageSourceComplete,
-		CreatedAt:       now,
-		UpdatedAt:       now,
-	}); err != nil {
-		t.Fatalf("insert replacement source: %v", err)
-	}
-	if _, err := s.UpdateUsageBindingState(ctx, source.BindingID, domain.UsageBindingPartial, "", now); err != nil {
-		t.Fatalf("persist legacy partial binding: %v", err)
+	})
+	if _, err := s.UpdateUsageBindingState(ctx, source.BindingID, domain.UsageBindingComplete, "", now); err != nil {
+		t.Fatalf("complete replacement binding: %v", err)
 	}
 
 	got, err := s.ListCompactSessionUsage(ctx, "usage")
@@ -1062,6 +963,52 @@ func TestListCompactSessionUsageAggregatesAndFiltersByProject(t *testing.T) {
 	}
 }
 
+func TestListCompactSessionUsageSeparatesRetriesFromIntegrityFailures(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	now := time.Unix(1700000000, 0).UTC()
+	transientSession := seedUsageSession(t, s, domain.HarnessCodex)
+	transientSource := seedUsageSource(t, s, transientSession, now)
+	if _, err := s.MarkUsageSourceState(
+		ctx,
+		transientSource.ID,
+		domain.UsageSourceError,
+		domain.UsageErrorSourceReadFailed,
+		nil,
+		now,
+	); err != nil {
+		t.Fatalf("mark transient failure: %v", err)
+	}
+
+	incompleteSession := seedUsageSession(t, s, domain.HarnessCodex)
+	incompleteSource := seedUsageSource(t, s, incompleteSession, now)
+	if _, err := s.MarkUsageSourceState(
+		ctx,
+		incompleteSource.ID,
+		domain.UsageSourceComplete,
+		domain.UsageErrorSourceEventConflict,
+		nil,
+		now,
+	); err != nil {
+		t.Fatalf("mark integrity failure: %v", err)
+	}
+
+	rows, err := s.ListCompactSessionUsage(ctx, transientSession.ProjectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bySession := make(map[domain.SessionID]domain.UsageSessionAggregate, len(rows))
+	for _, row := range rows {
+		bySession[row.SessionID] = row
+	}
+	if got := bySession[transientSession.ID]; got.ErrorSourceCount != 1 || got.AnomalousSourceCount != 0 {
+		t.Fatalf("transient aggregate = %+v, want retry error without integrity anomaly", got)
+	}
+	if got := bySession[incompleteSession.ID]; got.AnomalousSourceCount != 1 {
+		t.Fatalf("incomplete aggregate = %+v, want one integrity anomaly", got)
+	}
+}
+
 func TestUsageSessionAggregatesParentChildAndMultipleBindingsExactlyOnce(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -1070,24 +1017,15 @@ func TestUsageSessionAggregatesParentChildAndMultipleBindingsExactlyOnce(t *test
 
 	newBinding := func(nativeRootID string) domain.UsageBindingRecord {
 		t.Helper()
-		binding, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-			SessionID:      sess.ID,
-			Harness:        sess.Harness,
+		return mustUpsertUsageBinding(t, s, sess, now, domain.UsageBindingRecord{
 			NativeRootID:   nativeRootID,
 			InitialModelID: "gpt-5",
 			State:          domain.UsageBindingActive,
-			FirstSeenAt:    now,
-			LastSeenAt:     now,
-			UpdatedAt:      now,
 		})
-		if err != nil {
-			t.Fatalf("upsert binding %s: %v", nativeRootID, err)
-		}
-		return binding
 	}
 	newSource := func(binding domain.UsageBindingRecord, nativeID, subagentID, path string) domain.UsageSourceRecord {
 		t.Helper()
-		source, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+		return mustInsertUsageSource(t, s, now, domain.UsageSourceRecord{
 			BindingID:       binding.ID,
 			Kind:            domain.UsageSourceCodexRollout,
 			NativeSessionID: nativeID,
@@ -1095,13 +1033,7 @@ func TestUsageSessionAggregatesParentChildAndMultipleBindingsExactlyOnce(t *test
 			ArtifactPath:    path,
 			FileIdentity:    nativeID,
 			State:           domain.UsageSourceActive,
-			CreatedAt:       now,
-			UpdatedAt:       now,
 		})
-		if err != nil {
-			t.Fatalf("insert source %s: %v", nativeID, err)
-		}
-		return source
 	}
 	apply := func(source domain.UsageSourceRecord, key string, input, output int64, observedAt time.Time) {
 		t.Helper()
@@ -1181,32 +1113,63 @@ func seedUsageSession(t *testing.T, s *sqlite.Store, harness domain.AgentHarness
 
 func seedUsageSource(t *testing.T, s *sqlite.Store, sess domain.SessionRecord, now time.Time) domain.UsageSourceRecord {
 	t.Helper()
-	ctx := context.Background()
-	binding, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID:      sess.ID,
-		Harness:        sess.Harness,
+	binding := mustUpsertUsageBinding(t, s, sess, now, domain.UsageBindingRecord{
 		NativeRootID:   "root-thread",
 		InitialModelID: "gpt-5",
 		State:          domain.UsageBindingActive,
-		FirstSeenAt:    now,
-		LastSeenAt:     now,
-		UpdatedAt:      now,
 	})
-	if err != nil {
-		t.Fatalf("upsert usage binding: %v", err)
-	}
-	source, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+	return mustInsertUsageSource(t, s, now, domain.UsageSourceRecord{
 		BindingID:       binding.ID,
 		Kind:            domain.UsageSourceCodexRollout,
 		NativeSessionID: "child-thread",
 		ArtifactPath:    "/tmp/codex/rollout.jsonl",
 		FileIdentity:    "dev:ino",
 		State:           domain.UsageSourcePending,
-		CreatedAt:       now,
-		UpdatedAt:       now,
 	})
+}
+
+func mustUpsertUsageBinding(
+	t *testing.T,
+	s *sqlite.Store,
+	session domain.SessionRecord,
+	now time.Time,
+	record domain.UsageBindingRecord,
+) domain.UsageBindingRecord {
+	t.Helper()
+	record.SessionID = session.ID
+	record.Harness = session.Harness
+	if record.FirstSeenAt.IsZero() {
+		record.FirstSeenAt = now
+	}
+	if record.LastSeenAt.IsZero() {
+		record.LastSeenAt = now
+	}
+	if record.UpdatedAt.IsZero() {
+		record.UpdatedAt = now
+	}
+	binding, err := s.UpsertUsageBinding(context.Background(), record)
 	if err != nil {
-		t.Fatalf("insert usage source: %v", err)
+		t.Fatal(err)
+	}
+	return binding
+}
+
+func mustInsertUsageSource(
+	t *testing.T,
+	s *sqlite.Store,
+	now time.Time,
+	record domain.UsageSourceRecord,
+) domain.UsageSourceRecord {
+	t.Helper()
+	if record.CreatedAt.IsZero() {
+		record.CreatedAt = now
+	}
+	if record.UpdatedAt.IsZero() {
+		record.UpdatedAt = now
+	}
+	source, err := s.InsertUsageSource(context.Background(), record)
+	if err != nil {
+		t.Fatal(err)
 	}
 	return source
 }

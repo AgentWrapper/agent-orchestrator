@@ -1,95 +1,35 @@
 package sqlite
 
 import (
-	"database/sql"
-	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 )
 
-func TestModelUsageEventsHasUsageSourceIndex(t *testing.T) {
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if err := migrate(db); err != nil {
-		t.Fatal(err)
-	}
-
-	indexColumns, err := db.Query(`PRAGMA index_info('idx_model_usage_events_usage_source')`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer indexColumns.Close()
-	if !indexColumns.Next() {
-		t.Fatal("idx_model_usage_events_usage_source has no columns")
-	}
-	var (
-		sequence int
-		columnID int
-		column   string
-	)
-	if err := indexColumns.Scan(&sequence, &columnID, &column); err != nil {
-		t.Fatal(err)
-	}
-	if column != "usage_source_id" {
-		t.Fatalf("indexed column = %q, want usage_source_id", column)
-	}
-	if indexColumns.Next() {
-		t.Fatal("idx_model_usage_events_usage_source has unexpected extra columns")
-	}
-	if err := indexColumns.Err(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestUsageSourcesHasLatestCodexNativeIndex(t *testing.T) {
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if err := migrate(db); err != nil {
-		t.Fatal(err)
+func TestUsageIndexes(t *testing.T) {
+	db := openMigratedTestDB(t)
+	for _, test := range []struct {
+		name   string
+		layout string
+	}{
+		{"idx_model_usage_events_usage_source", "usage_source_id:0"},
+		{"idx_usage_sources_codex_native_latest", "kind:0,native_session_id:0,binding_id:0,generation:1,id:1"},
+	} {
+		var layout string
+		err := db.QueryRow(`
+			SELECT group_concat(name || ':' || desc, ',')
+			FROM (
+				SELECT name, desc
+				FROM pragma_index_xinfo(?)
+				WHERE key = 1
+				ORDER BY seqno
+			)
+		`, test.name).Scan(&layout)
+		if err != nil || layout != test.layout {
+			t.Errorf("%s layout = %q, %v; want %q", test.name, layout, err, test.layout)
+		}
 	}
 
 	const indexName = "idx_usage_sources_codex_native_latest"
-	rows, err := db.Query(`PRAGMA index_xinfo('` + indexName + `')`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = rows.Close() }()
-	var columns []string
-	var descending []int
-	for rows.Next() {
-		var (
-			sequence int
-			columnID int
-			column   *string
-			desc     int
-			coll     string
-			key      int
-		)
-		if err := rows.Scan(&sequence, &columnID, &column, &desc, &coll, &key); err != nil {
-			t.Fatal(err)
-		}
-		if key == 1 && column != nil {
-			columns = append(columns, *column)
-			descending = append(descending, desc)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"kind", "native_session_id", "binding_id", "generation", "id"}; !reflect.DeepEqual(columns, want) {
-		t.Fatalf("index columns = %v, want %v", columns, want)
-	}
-	if want := []int{0, 0, 0, 1, 1}; !reflect.DeepEqual(descending, want) {
-		t.Fatalf("index descending flags = %v, want %v", descending, want)
-	}
-
 	planRows, err := db.Query(`
 		EXPLAIN QUERY PLAN
 		SELECT latest.id

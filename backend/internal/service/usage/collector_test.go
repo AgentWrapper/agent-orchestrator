@@ -217,18 +217,7 @@ func TestCollectorFinalizationSkipsRelaunchCommittedBeforeStorageFence(t *testin
 		t.Fatal(err)
 	}
 	now := time.Unix(1700000000, 0).UTC()
-	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
-		SessionID:    session.ID,
-		Harness:      session.Harness,
-		NativeRootID: "native-relaunched",
-		State:        domain.UsageBindingActive,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	binding := seedCollectorUsageBinding(t, store, session, "native-relaunched", domain.UsageBindingActive, now, "")
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	collector := NewCollector(&delayedFinalizeStore{
@@ -271,18 +260,9 @@ func TestCollectorFinalizationSkipsActivityCommittedBeforeStorageFence(t *testin
 	if err := store.UpdateSession(context.Background(), session); err != nil {
 		t.Fatal(err)
 	}
-	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
-		SessionID:    session.ID,
-		Harness:      session.Harness,
-		NativeRootID: "native-before-fence",
-		State:        domain.UsageBindingActive,
-		FirstSeenAt:  session.UpdatedAt,
-		LastSeenAt:   session.UpdatedAt,
-		UpdatedAt:    session.UpdatedAt,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	binding := seedCollectorUsageBinding(
+		t, store, session, "native-before-fence", domain.UsageBindingActive, session.UpdatedAt, "",
+	)
 
 	collector := NewCollector(store, SourceRoots{}, nil)
 	entered := make(chan struct{})
@@ -420,18 +400,7 @@ func TestCollectorCurrentLaunchActivityReactivatesFinalizingBindingAndSources(t 
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
-		SessionID:    session.ID,
-		Harness:      session.Harness,
-		NativeRootID: "native-current",
-		State:        domain.UsageBindingFinalizing,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	binding := seedCollectorUsageBinding(t, store, session, "native-current", domain.UsageBindingFinalizing, now, "")
 	source, err := store.InsertUsageSource(context.Background(), domain.UsageSourceRecord{
 		BindingID:       binding.ID,
 		Kind:            domain.UsageSourceClaudeMain,
@@ -476,18 +445,7 @@ func TestCollectorCurrentLaunchTerminalEventRemainsFinalizing(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
-		SessionID:    session.ID,
-		Harness:      session.Harness,
-		NativeRootID: "native-terminal",
-		State:        domain.UsageBindingActive,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	binding := seedCollectorUsageBinding(t, store, session, "native-terminal", domain.UsageBindingActive, now, "")
 	if _, err := store.InsertUsageSource(context.Background(), domain.UsageSourceRecord{
 		BindingID:       binding.ID,
 		Kind:            domain.UsageSourceClaudeMain,
@@ -534,18 +492,7 @@ func TestCollectorOrdinaryActivityDoesNotReactivateExitedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
-		SessionID:    session.ID,
-		Harness:      session.Harness,
-		NativeRootID: "native-exited",
-		State:        domain.UsageBindingFinalizing,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	binding := seedCollectorUsageBinding(t, store, session, "native-exited", domain.UsageBindingFinalizing, now, "")
 	source, err := store.InsertUsageSource(context.Background(), domain.UsageSourceRecord{
 		BindingID:       binding.ID,
 		Kind:            domain.UsageSourceClaudeMain,
@@ -704,18 +651,7 @@ func TestCollectorStaleLaunchActivityDoesNotReactivateFinalizingBinding(t *testi
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
-		SessionID:    session.ID,
-		Harness:      session.Harness,
-		NativeRootID: "native-stale",
-		State:        domain.UsageBindingFinalizing,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	binding := seedCollectorUsageBinding(t, store, session, "native-stale", domain.UsageBindingFinalizing, now, "")
 
 	collector := NewCollector(store, SourceRoots{}, nil)
 	if err := collector.RecordHook(context.Background(), session.ID, HookSignal{
@@ -769,18 +705,7 @@ func TestCollectorCurrentActivityReactivatesBindingDuringReaperFinalization(t *t
 	if err := store.UpdateSession(context.Background(), session); err != nil {
 		t.Fatal(err)
 	}
-	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
-		SessionID:    session.ID,
-		Harness:      session.Harness,
-		NativeRootID: "native-race",
-		State:        domain.UsageBindingActive,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	binding := seedCollectorUsageBinding(t, store, session, "native-race", domain.UsageBindingActive, now, "")
 
 	finalized := make(chan struct{})
 	release := make(chan struct{})
@@ -1045,18 +970,7 @@ func TestCollectorRejectsCodexChildPathWithWrongParent(t *testing.T) {
 	store := collectorTestStore(t)
 	session := collectorTestSession(t, store, domain.HarnessCodex, "codex-root", false)
 	now := time.Unix(1700000000, 0).UTC()
-	binding, err := store.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID:    session.ID,
-		Harness:      session.Harness,
-		NativeRootID: "codex-root",
-		State:        domain.UsageBindingActive,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	binding := seedCollectorUsageBinding(t, store, session, "codex-root", domain.UsageBindingActive, now, "")
 	root := filepath.Join(t.TempDir(), "sessions")
 	path := filepath.Join(root, "2026", "08", "02", "child.jsonl")
 	writeUsageFixture(t, path, codexSessionMetaFixture(t, "codex-child", "codex-wrong-parent"))
@@ -1086,18 +1000,7 @@ func TestCollectorPersistsCodexChildDirectParent(t *testing.T) {
 	store := collectorTestStore(t)
 	session := collectorTestSession(t, store, domain.HarnessCodex, parentID, false)
 	now := time.Unix(1700000000, 0).UTC()
-	binding, err := store.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID:    session.ID,
-		Harness:      session.Harness,
-		NativeRootID: parentID,
-		State:        domain.UsageBindingActive,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	binding := seedCollectorUsageBinding(t, store, session, parentID, domain.UsageBindingActive, now, "")
 	root := filepath.Join(t.TempDir(), "sessions")
 	path := filepath.Join(root, "2026", "08", "02", "child.jsonl")
 	writeUsageFixture(t, path, codexSessionMetaFixture(t, childID, parentID))
@@ -1146,18 +1049,9 @@ func TestCollectorDoesNotDoubleAttributeCodexChildAsRoot(t *testing.T) {
 	writeUsageFixture(t, childPath, codexSessionMetaFixture(t, "codex-child", "codex-parent"))
 	collector := NewCollector(store, SourceRoots{CodexSessions: root}, nil)
 	now := time.Unix(1700000000, 0).UTC()
-	parentBinding, err := store.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID:    parentSession.ID,
-		Harness:      domain.HarnessCodex,
-		NativeRootID: "codex-parent",
-		State:        domain.UsageBindingActive,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	parentBinding := seedCollectorUsageBinding(
+		t, store, parentSession, "codex-parent", domain.UsageBindingActive, now, "",
+	)
 	if _, err := collector.registerSource(
 		ctx,
 		parentBinding,
@@ -1347,18 +1241,7 @@ func TestCollectorBackfillPreservesCompletedExitedBinding(t *testing.T) {
 	path := filepath.Join(root, "2026", "07", "28", "rollout-native-complete.jsonl")
 	writeUsageFixture(t, path, `{"type":"session_meta"}`+"\n")
 	now := time.Now().UTC()
-	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
-		SessionID:    session.ID,
-		Harness:      session.Harness,
-		NativeRootID: "native-complete",
-		State:        domain.UsageBindingComplete,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	binding := seedCollectorUsageBinding(t, store, session, "native-complete", domain.UsageBindingComplete, now, "")
 	identity, err := SourceIdentity(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
@@ -1460,18 +1343,7 @@ func TestCollectorSubagentStopReactivatesCompletedSource(t *testing.T) {
 	initial := []byte(`{"type":"assistant"}` + "\n")
 	writeUsageFixture(t, subagentPath, string(initial))
 	now := time.Now().UTC()
-	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
-		SessionID:    session.ID,
-		Harness:      session.Harness,
-		NativeRootID: "claude-late",
-		State:        domain.UsageBindingComplete,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	binding := seedCollectorUsageBinding(t, store, session, "claude-late", domain.UsageBindingComplete, now, "")
 	identity, err := SourceIdentity(context.Background(), subagentPath)
 	if err != nil {
 		t.Fatal(err)
@@ -1584,18 +1456,7 @@ func TestCollectorResumeReactivatesAllLatestCodexSources(t *testing.T) {
 	store := collectorTestStore(t)
 	session := collectorTestSession(t, store, domain.HarnessCodex, "native-resume", false)
 	now := time.Now().UTC()
-	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
-		SessionID:    session.ID,
-		Harness:      session.Harness,
-		NativeRootID: "native-resume",
-		State:        domain.UsageBindingComplete,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	binding := seedCollectorUsageBinding(t, store, session, "native-resume", domain.UsageBindingComplete, now, "")
 	oldSource, err := store.InsertUsageSource(context.Background(), domain.UsageSourceRecord{
 		BindingID:       binding.ID,
 		Kind:            domain.UsageSourceCodexRollout,
@@ -1758,18 +1619,7 @@ func TestCollectorIgnoresChildrenFromSupersededCodexGeneration(t *testing.T) {
 	)
 	session := collectorTestSession(t, store, domain.HarnessCodex, rootID, false)
 	now := time.Now().UTC()
-	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
-		SessionID:    session.ID,
-		Harness:      domain.HarnessCodex,
-		NativeRootID: rootID,
-		State:        domain.UsageBindingActive,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	binding := seedCollectorUsageBinding(t, store, session, rootID, domain.UsageBindingActive, now, "")
 	root := filepath.Join(t.TempDir(), "sessions")
 	childPath := filepath.Join(root, "2026", "07", "28", "rollout-"+childID+".jsonl")
 	writeUsageFixture(t, childPath, codexSessionMetaFixture(t, childID, rootID))
@@ -1816,18 +1666,7 @@ func TestCollectorResumeKeepsDiscoveringAfterOnlyArchivedRolloutMatches(t *testi
 	content := codexSessionMetaFixture(t, "native-resume-late", "")
 	writeUsageFixture(t, archivedPath, content)
 	now := time.Now().UTC()
-	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
-		SessionID:    session.ID,
-		Harness:      session.Harness,
-		NativeRootID: "native-resume-late",
-		State:        domain.UsageBindingComplete,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	binding := seedCollectorUsageBinding(t, store, session, "native-resume-late", domain.UsageBindingComplete, now, "")
 	identity, err := SourceIdentity(context.Background(), archivedPath)
 	if err != nil {
 		t.Fatal(err)
@@ -1885,18 +1724,7 @@ func TestCollectorDoesNotTransferCursorAcrossNativeSessions(t *testing.T) {
 	store := collectorTestStore(t)
 	session := collectorTestSession(t, store, domain.HarnessCodex, "root-native", false)
 	now := time.Unix(1700000000, 0).UTC()
-	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
-		SessionID:    session.ID,
-		Harness:      session.Harness,
-		NativeRootID: "root-native",
-		State:        domain.UsageBindingActive,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	binding := seedCollectorUsageBinding(t, store, session, "root-native", domain.UsageBindingActive, now, "")
 	root := t.TempDir()
 	firstPath := filepath.Join(root, "first.jsonl")
 	secondPath := filepath.Join(root, "second.jsonl")
@@ -1960,18 +1788,7 @@ func TestCollectorFinalizationReactivatesOnlyLatestCodexGenerationPerNativeSessi
 	store := collectorTestStore(t)
 	session := collectorTestSession(t, store, domain.HarnessCodex, "native-relocated", false)
 	now := time.Now().UTC()
-	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
-		SessionID:    session.ID,
-		Harness:      session.Harness,
-		NativeRootID: "native-relocated",
-		State:        domain.UsageBindingComplete,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	binding := seedCollectorUsageBinding(t, store, session, "native-relocated", domain.UsageBindingComplete, now, "")
 	oldSource, err := store.InsertUsageSource(context.Background(), domain.UsageSourceRecord{
 		BindingID:       binding.ID,
 		Kind:            domain.UsageSourceCodexRollout,
@@ -2050,19 +1867,9 @@ func TestReconcileCodexRootAcceptsScalarSourceMetadata(t *testing.T) {
 	path := filepath.Join(root, "2026", "08", "02", "rollout-"+nativeID+".jsonl")
 	writeUsageFixture(t, path, `{"type":"session_meta","payload":{"id":"`+nativeID+`","source":"cli"}}`+"\n")
 	now := time.Now().UTC()
-	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
-		SessionID:     session.ID,
-		Harness:       session.Harness,
-		NativeRootID:  nativeID,
-		State:         domain.UsageBindingActive,
-		LastErrorCode: domain.UsageErrorSourceDiscoveryPending,
-		FirstSeenAt:   now,
-		LastSeenAt:    now,
-		UpdatedAt:     now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	binding := seedCollectorUsageBinding(
+		t, store, session, nativeID, domain.UsageBindingActive, now, domain.UsageErrorSourceDiscoveryPending,
+	)
 
 	collector := NewCollector(store, SourceRoots{CodexSessions: root}, nil)
 	if err := collector.ReconcileSources(context.Background(), 8); err != nil {
@@ -2162,6 +1969,32 @@ func collectorTestStore(t *testing.T) *sqlite.Store {
 		t.Fatal(err)
 	}
 	return store
+}
+
+func seedCollectorUsageBinding(
+	t *testing.T,
+	store *sqlite.Store,
+	session domain.SessionRecord,
+	nativeRootID string,
+	state domain.UsageBindingState,
+	at time.Time,
+	lastErrorCode string,
+) domain.UsageBindingRecord {
+	t.Helper()
+	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
+		SessionID:     session.ID,
+		Harness:       session.Harness,
+		NativeRootID:  nativeRootID,
+		State:         state,
+		LastErrorCode: lastErrorCode,
+		FirstSeenAt:   at,
+		LastSeenAt:    at,
+		UpdatedAt:     at,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return binding
 }
 
 func assertNoUsageSourcesForSession(t *testing.T, store *sqlite.Store, sessionID domain.SessionID) {

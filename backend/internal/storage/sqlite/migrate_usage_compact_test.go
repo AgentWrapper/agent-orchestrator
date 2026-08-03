@@ -1,23 +1,13 @@
 package sqlite
 
 import (
-	"database/sql"
-	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 )
 
 func TestMigrateCompactsLegacyUsageTablesWithoutLosingEvents(t *testing.T) {
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
-	if err != nil {
-		t.Fatal(err)
-	}
-	db.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = db.Close() })
-	if err := migrate(db); err != nil {
-		t.Fatal(err)
-	}
+	db := openMigratedTestDB(t)
 
 	now := time.Unix(1_700_000_000, 0).UTC()
 	if _, err := db.Exec(`
@@ -66,32 +56,18 @@ func TestMigrateCompactsLegacyUsageTablesWithoutLosingEvents(t *testing.T) {
 		t.Fatalf("seed widened usage schema: %v", err)
 	}
 
-	if _, err := db.Exec(`DELETE FROM goose_db_version WHERE version_id = 43`); err != nil {
+	if _, err := db.Exec(`
+		DROP VIEW usage_codex_pending_children;
+		DROP VIEW usage_codex_source_discovery;
+		DELETE FROM goose_db_version WHERE version_id IN (43, 44);
+	`); err != nil {
 		t.Fatalf("rewind compaction migration: %v", err)
 	}
 	if err := migrate(db); err != nil {
 		t.Fatalf("migrate legacy usage schema: %v", err)
 	}
 
-	wantColumns := map[string][]string{
-		"usage_bindings": {
-			"id", "session_id", "harness", "native_root_id", "initial_model_id",
-			"state", "last_error_code", "first_seen_at", "last_seen_at", "updated_at",
-		},
-		"usage_sources": {
-			"id", "binding_id", "kind", "native_session_id", "subagent_id", "artifact_path",
-			"file_identity", "generation", "byte_offset", "parser_state_json", "state",
-			"failure_count", "anomaly_count", "next_retry_at", "last_error_code",
-			"last_observed_at", "created_at", "updated_at",
-		},
-		"model_usage_events": {
-			"id", "binding_id", "usage_source_id", "project_id", "session_id", "harness",
-			"provider", "model_id", "observed_at", "input_tokens", "uncached_input_tokens",
-			"cache_read_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens",
-			"source_event_key", "created_at",
-		},
-	}
-	for table, want := range wantColumns {
+	for table, want := range expectedUsageTableColumns {
 		if got := tableColumns(t, db, table); !reflect.DeepEqual(got, want) {
 			t.Errorf("%s columns = %v, want %v", table, got, want)
 		}

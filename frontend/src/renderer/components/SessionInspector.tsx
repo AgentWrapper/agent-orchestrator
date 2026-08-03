@@ -341,16 +341,12 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 
 function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
 	const totalTokens = usageTokenTotal(usage.totals);
-	const coverageLabel = formatUsageCoverage(sessionUsageCoverage(usage));
-	const collectionLabel = usageCollectionLabel(usage.collectionState);
-	const warnings = usage.warnings.map(formatUsageWarning);
-	const statusText = `${coverageLabel} · ${collectionLabel}`;
-	const statusLabel = [
-		`Usage coverage: ${coverageLabel}. Collection status: ${collectionLabel}.`,
-		warnings.length > 0 ? `Warnings: ${warnings.join("; ")}.` : "",
-	]
-		.filter(Boolean)
-		.join(" ");
+	const warnings = usage.warnings.filter(isUsageIntegrityWarning).map(formatUsageWarning);
+	const incomplete = usageHasConfirmedIncomplete(usage, warnings.length > 0);
+	const warningLabel =
+		warnings.length > 0
+			? `Usage may be incomplete. Details: ${warnings.join("; ")}.`
+			: "Usage may be incomplete.";
 
 	return (
 		<div>
@@ -361,14 +357,10 @@ function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
 						aria-label={
 							totalTokens === null
 								? "Total tokens unavailable"
-								: `${totalTokens.toLocaleString("en-US")} total tokens. ${coverageLabel}`
+								: `${totalTokens.toLocaleString("en-US")} total tokens${incomplete ? ". Usage may be incomplete" : ""}`
 						}
 						className="mt-0.5 truncate font-mono text-md-sm font-medium text-settings-label"
-						title={
-							totalTokens === null
-								? undefined
-								: `${totalTokens.toLocaleString("en-US")} tokens · ${coverageLabel}`
-						}
+						title={totalTokens === null ? undefined : `${totalTokens.toLocaleString("en-US")} tokens`}
 					>
 						{totalTokens === null ? "No usage yet" : formatTelemetryTokenValue(totalTokens)}
 					</p>
@@ -410,24 +402,17 @@ function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
 				</div>
 			) : null}
 
-			{warnings.length > 0 ? (
+			{incomplete ? (
 				<div
-					aria-label={`Usage warnings: ${warnings.join("; ")}`}
+					aria-label={warningLabel}
 					className="mt-2 flex items-start gap-1.5 border-t border-(--color-border-settings-input) pt-2 text-2xs text-settings-muted"
 					role="status"
+					title={warnings.length > 0 ? warnings.join("; ") : undefined}
 				>
 					<AlertTriangle aria-hidden="true" className="mt-px size-3 shrink-0 text-warning" />
-					<span>{warnings.join("; ")}</span>
+					<span>Usage may be incomplete</span>
 				</div>
 			) : null}
-
-			<p
-				aria-label={statusLabel}
-				className="mt-2 border-t border-(--color-border-settings-input) pt-2 text-right text-2xs text-settings-muted"
-			>
-				<span>{statusText}</span>
-				{usage.lastObservedAt ? <span>{` · Updated ${formatTimeCompact(usage.lastObservedAt)}`}</span> : null}
-			</p>
 		</div>
 	);
 }
@@ -487,14 +472,13 @@ function useHoverableUsagePopover() {
 function UsageProviderRow({ harness }: { harness: SessionUsage["harnesses"][number] }) {
 	const harnessName = formatHarnessName(harness.harness);
 	const totalTokens = usageTokenTotal(harness.totals);
-	const coverageLabel = formatUsageCoverage(usageTotalsCoverage(harness.totals));
 	const peek = useHoverableUsagePopover();
 
 	return (
 		<Popover onOpenChange={peek.onOpenChange} open={peek.open}>
 			<PopoverTrigger asChild>
 				<button
-					aria-label={`${harnessName} usage details, ${coverageLabel}`}
+					aria-label={`${harnessName} usage details`}
 					className="grid w-full cursor-default grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 rounded-md px-1 py-2 text-left outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
 					onKeyDown={peek.markKeyboardOpen}
 					onPointerDown={peek.markPointerOpen}
@@ -508,11 +492,7 @@ function UsageProviderRow({ harness }: { harness: SessionUsage["harnesses"][numb
 					</span>
 					<span
 						className="text-right font-mono text-2xs text-settings-label"
-						title={
-							totalTokens === null
-								? undefined
-								: `${totalTokens.toLocaleString("en-US")} tokens · ${coverageLabel}`
-						}
+						title={totalTokens === null ? undefined : `${totalTokens.toLocaleString("en-US")} tokens`}
 					>
 						{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
 					</span>
@@ -555,7 +535,6 @@ function ProviderUsagePeek({
 }) {
 	const harnessName = formatHarnessName(harness.harness);
 	const totalTokens = usageTokenTotal(harness.totals);
-	const coverageLabel = formatUsageCoverage(usageTotalsCoverage(harness.totals));
 	const [activeModelKey, setActiveModelKey] = useState<string | null>(null);
 
 	return (
@@ -570,7 +549,6 @@ function ProviderUsagePeek({
 						{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
 					</p>
 					<p className="text-settings-muted">Coming soon</p>
-					<p className="text-settings-muted">{coverageLabel}</p>
 				</div>
 			</div>
 
@@ -618,7 +596,6 @@ function UsageModelRow({
 }) {
 	const modelName = model.modelId || formatProviderName(model.provider);
 	const totalTokens = usageTokenTotal(model.totals);
-	const coverageLabel = formatUsageCoverage(usageTotalsCoverage(model.totals));
 	const detailID = useId();
 
 	return (
@@ -627,18 +604,14 @@ function UsageModelRow({
 				<button
 					aria-controls={detailID}
 					aria-expanded={active}
-					aria-label={`${modelName} usage details, ${coverageLabel}`}
+					aria-label={`${modelName} usage details`}
 					className="grid w-full cursor-default grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 rounded-md px-1 py-2 text-left outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
 					type="button"
 				>
 					<span className="min-w-0 truncate font-mono text-2xs text-settings-label">{modelName}</span>
 					<span
 						className="text-right font-mono text-2xs text-settings-label"
-						title={
-							totalTokens === null
-								? undefined
-								: `${totalTokens.toLocaleString("en-US")} tokens · ${coverageLabel}`
-						}
+						title={totalTokens === null ? undefined : `${totalTokens.toLocaleString("en-US")} tokens`}
 					>
 						{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
 					</span>
@@ -674,7 +647,6 @@ function UsageModelRow({
 								{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
 							</p>
 							<p className="text-settings-muted">Coming soon</p>
-							<p className="text-settings-muted">{coverageLabel}</p>
 						</div>
 					</div>
 					<div className="border-t border-border pt-3">
@@ -706,11 +678,10 @@ function UsageMetric({
 	label: string;
 	metric: SessionUsage["totals"]["inputTokens"];
 }) {
-	const coverageLabel = formatUsageCoverage(metric.coverage);
 	const accessibleLabel =
 		metric.value === null
 			? `${label}: telemetry unavailable`
-			: `${label}: ${metric.value.toLocaleString("en-US")} tokens. ${coverageLabel}`;
+			: `${label}: ${metric.value.toLocaleString("en-US")} tokens`;
 	return (
 		<div className="min-w-0">
 			<dt className="truncate text-2xs text-settings-muted">{label}</dt>
@@ -720,7 +691,7 @@ function UsageMetric({
 				title={
 					metric.value === null
 						? `${label} telemetry unavailable`
-						: `${metric.value.toLocaleString("en-US")} tokens · ${coverageLabel}`
+						: `${metric.value.toLocaleString("en-US")} tokens`
 				}
 			>
 				{metric.value === null ? "—" : formatTelemetryTokenValue(metric.value)}
@@ -737,8 +708,6 @@ const usageMetricKeys = [
 	"outputTokens",
 	"reasoningTokens",
 ] as const;
-
-type UsageCoverage = SessionUsage["totals"]["inputTokens"]["coverage"];
 
 function usageScopes(usage: SessionUsage): SessionUsage["totals"][] {
 	return [
@@ -757,37 +726,22 @@ function hasMeaningfulSessionUsage(usage?: SessionUsage): usage is SessionUsage 
 	);
 }
 
-function usageTotalsCoverage(totals: SessionUsage["totals"]): UsageCoverage {
-	const metrics = usageMetricKeys.map((key) => totals[key]);
-	if (metrics.some((metric) => metric.coverage === "partial")) return "partial";
-	const available = metrics.filter((metric) => metric.value !== null);
-	if (available.length === 0) return "unavailable";
-	return available.every((metric) => metric.coverage === "complete") ? "complete" : "partial";
+function usageHasConfirmedIncomplete(usage: SessionUsage, hasWarnings: boolean): boolean {
+	return (
+		hasWarnings ||
+		usage.totals.inputTokens.coverage === "partial" ||
+		usage.totals.outputTokens.coverage === "partial"
+	);
 }
 
-function sessionUsageCoverage(usage: SessionUsage): UsageCoverage {
-	const scopeCoverage = usageScopes(usage).map(usageTotalsCoverage);
-	if (
-		usage.warnings.length > 0 ||
-		usage.collectionState === "collecting" ||
-		usage.collectionState === "partial" ||
-		scopeCoverage.includes("partial")
-	) {
-		return "partial";
-	}
-	if (scopeCoverage.includes("complete")) return "complete";
-	return "unavailable";
-}
-
-function formatUsageCoverage(coverage: UsageCoverage): string {
-	switch (coverage) {
-		case "complete":
-			return "Complete coverage";
-		case "partial":
-			return "Partial coverage";
-		default:
-			return "Coverage unavailable";
-	}
+function isUsageIntegrityWarning(warning: string): boolean {
+	return ![
+		"source_discovery_pending",
+		"artifact_missing",
+		"artifact_replaced",
+		"source_read_failed",
+		"partial_reasoning_coverage",
+	].includes(warning);
 }
 
 function formatUsageWarning(warning: string): string {
@@ -833,21 +787,6 @@ function formatProviderName(provider: string): string {
 	if (!provider) return "Unknown provider";
 	if (knownNames[provider]) return knownNames[provider];
 	return formatHarnessName(provider);
-}
-
-function usageCollectionLabel(state: SessionUsage["collectionState"]): string {
-	switch (state) {
-		case "waiting":
-			return "Waiting";
-		case "collecting":
-			return "Collecting";
-		case "complete":
-			return "Collection complete";
-		case "partial":
-			return "Collection partial";
-		default:
-			return "Unavailable";
-	}
 }
 
 function ResumeAgentControl({ session }: { session: WorkspaceSession }) {

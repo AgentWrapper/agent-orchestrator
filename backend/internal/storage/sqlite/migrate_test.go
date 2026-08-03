@@ -13,40 +13,47 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-func TestUsageTablesKeepOnlyDurableCollectionState(t *testing.T) {
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if err := migrate(db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+var expectedUsageTableColumns = map[string][]string{
+	"usage_bindings": {
+		"id", "session_id", "harness", "native_root_id", "initial_model_id",
+		"state", "last_error_code", "first_seen_at", "last_seen_at", "updated_at",
+	},
+	"usage_sources": {
+		"id", "binding_id", "kind", "native_session_id", "subagent_id", "artifact_path",
+		"file_identity", "generation", "byte_offset", "parser_state_json", "state",
+		"failure_count", "anomaly_count", "next_retry_at", "last_error_code",
+		"last_observed_at", "created_at", "updated_at",
+	},
+	"model_usage_events": {
+		"id", "binding_id", "usage_source_id", "project_id", "session_id", "harness",
+		"provider", "model_id", "observed_at", "input_tokens", "uncached_input_tokens",
+		"cache_read_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens",
+		"source_event_key", "created_at",
+	},
+}
 
-	want := map[string][]string{
-		"usage_bindings": {
-			"id", "session_id", "harness", "native_root_id", "initial_model_id",
-			"state", "last_error_code", "first_seen_at", "last_seen_at", "updated_at",
-		},
-		"usage_sources": {
-			"id", "binding_id", "kind", "native_session_id", "subagent_id", "artifact_path",
-			"file_identity", "generation", "byte_offset", "parser_state_json", "state",
-			"failure_count", "anomaly_count", "next_retry_at", "last_error_code",
-			"last_observed_at", "created_at", "updated_at",
-		},
-		"model_usage_events": {
-			"id", "binding_id", "usage_source_id", "project_id", "session_id", "harness",
-			"provider", "model_id", "observed_at", "input_tokens", "uncached_input_tokens",
-			"cache_read_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens",
-			"source_event_key", "created_at",
-		},
-	}
-	for table, wantColumns := range want {
+func TestUsageTablesKeepOnlyDurableCollectionState(t *testing.T) {
+	db := openMigratedTestDB(t)
+	for table, wantColumns := range expectedUsageTableColumns {
 		got := tableColumns(t, db, table)
 		if !reflect.DeepEqual(got, wantColumns) {
 			t.Errorf("%s columns = %v, want %v", table, got, wantColumns)
 		}
 	}
+}
+
+func openMigratedTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	return db
 }
 
 func tableColumns(t *testing.T, db *sql.DB, table string) []string {
@@ -80,15 +87,7 @@ func tableColumns(t *testing.T, db *sql.DB, table string) []string {
 // live sessions schema admits every harness the domain ships, building the
 // expected set from the domain constants so it can't silently drift.
 func TestMigrateAllowsEveryShippedHarness(t *testing.T) {
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	if err := migrate(db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	db := openMigratedTestDB(t)
 
 	var schema string
 	if err := db.QueryRow(

@@ -249,7 +249,7 @@ describe("SessionsBoard", () => {
 						sessionId: "s-active",
 						totalTokens: 12_400,
 						collectionState: "collecting",
-						coverage: "partial",
+						coverage: "complete",
 					},
 				],
 				[
@@ -267,7 +267,7 @@ describe("SessionsBoard", () => {
 						sessionId: "s-dead",
 						totalTokens: 2_000,
 						collectionState: "complete",
-						coverage: "complete",
+						coverage: "partial",
 					},
 				],
 			]),
@@ -276,20 +276,16 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		const activeUsage = screen.getByText("12.4K tok");
-		expect(activeUsage).toHaveAttribute(
-			"aria-label",
-			"12,400 tokens · Partial coverage · Collecting",
-		);
+		expect(activeUsage).toHaveAttribute("aria-label", "12,400 tokens");
 		expect(screen.queryByText("0 tok")).not.toBeInTheDocument();
 		expect(usageQueryMock).toHaveBeenCalledWith("p1");
 		await userEvent.hover(activeUsage);
-		expect(
-			(await screen.findAllByText("12,400 tokens · Partial coverage · Collecting")).length,
-		).toBeGreaterThan(0);
+		expect((await screen.findAllByText("12,400 tokens")).length).toBeGreaterThan(0);
 
 		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
 		const archive = screen.getByRole("list", { name: "Archived sessions" });
-		expect(within(archive).getByText("2K tok")).toBeInTheDocument();
+		const archivedUsage = within(archive).getByText("2K tok");
+		expect(archivedUsage).toHaveAttribute("aria-label", "2,000 tokens · Usage may be incomplete");
 	});
 
 	it("uses distinct card badge tones for idle, no signal, and draft PR sessions", () => {

@@ -558,9 +558,13 @@ func usageEventInsertParams(source gen.GetUsageSourceWithBindingAndSessionRow, e
 
 func usageEventMatches(sourceKind domain.UsageSourceKind, existing gen.GetModelUsageEventByKeyRow, event domain.ModelUsageEvent) bool {
 	reasoning := ptrInt64ToNull(event.Tokens.ReasoningTokens)
+	observedAtMatches := existing.ObservedAt.Equal(event.ObservedAt)
+	if sourceKind == domain.UsageSourceClaudeMain || sourceKind == domain.UsageSourceClaudeSubagent {
+		observedAtMatches = true
+	}
 	return usageProviderMatches(sourceKind, existing.Provider, event.Provider) &&
 		existing.ModelID == event.ModelID &&
-		existing.ObservedAt.Equal(event.ObservedAt) &&
+		observedAtMatches &&
 		existing.InputTokens == event.Tokens.InputTokens &&
 		existing.UncachedInputTokens == event.Tokens.UncachedInputTokens &&
 		existing.CacheReadTokens == event.Tokens.CacheReadTokens &&

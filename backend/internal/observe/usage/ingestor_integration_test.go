@@ -177,38 +177,11 @@ func TestIngestorReplaysReplacementWithUnknownProviderTimestampAcrossClocks(t *t
 func TestIngestorReplaysClaudeReplacementAgainstLegacyProviderState(t *testing.T) {
 	ctx := context.Background()
 	dataDir := t.TempDir()
-	store, err := sqlite.Open(dataDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
 	now := time.Unix(1700000000, 0).UTC()
-	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "usage", Path: t.TempDir(), RegisteredAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	session, err := store.CreateSession(ctx, domain.SessionRecord{
-		ProjectID: "usage",
-		Kind:      domain.KindWorker,
-		Harness:   domain.HarnessClaudeCode,
-		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
-		CreatedAt: now,
-		UpdatedAt: now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	binding, err := store.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID:    session.ID,
-		Harness:      domain.HarnessClaudeCode,
-		NativeRootID: "claude-root",
-		State:        domain.UsageBindingActive,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	store, session := seedUsageTestSession(
+		t, dataDir, "usage", domain.HarnessClaudeCode, domain.ActivityIdle, "", now,
+	)
+	binding := seedUsageTestBinding(t, store, session, "claude-root", domain.UsageBindingActive, now)
 	path := filepath.Join(t.TempDir(), "claude-root.jsonl")
 	line := `{"timestamp":"2026-07-28T10:00:00Z","type":"assistant","uuid":"native-message","message":{"id":"msg-1","model":"claude-x","stop_reason":"end_turn","usage":{"input_tokens":8,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2}}}` + "\n"
 	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
@@ -516,26 +489,10 @@ func TestIngestorReplaysCompletedLegacyCursorWithoutCheckpoint(t *testing.T) {
 func seedCodexIngestionSource(t *testing.T, dataDir string) (*sqlite.Store, domain.UsageSourceRecord, string, time.Time) {
 	t.Helper()
 	ctx := context.Background()
-	store, err := sqlite.Open(dataDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
 	now := time.Unix(1700000000, 0).UTC()
-	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "usage", Path: t.TempDir(), RegisteredAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	session, err := store.CreateSession(ctx, domain.SessionRecord{
-		ProjectID: "usage",
-		Kind:      domain.KindWorker,
-		Harness:   domain.HarnessCodex,
-		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
-		CreatedAt: now,
-		UpdatedAt: now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	store, session := seedUsageTestSession(
+		t, dataDir, "usage", domain.HarnessCodex, domain.ActivityIdle, "", now,
+	)
 	binding, err := store.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
 		SessionID:      session.ID,
 		Harness:        domain.HarnessCodex,
@@ -694,27 +651,10 @@ func reconcileCodexRootReplacement(
 
 func TestIngestorCollectsCodexSourceDiscoveredAfterStartup(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
 	now := time.Unix(1700000000, 0).UTC()
-	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "usage", Path: t.TempDir(), RegisteredAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	session, err := store.CreateSession(ctx, domain.SessionRecord{
-		ProjectID: "usage",
-		Kind:      domain.KindWorker,
-		Harness:   domain.HarnessCodex,
-		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
-		Metadata:  domain.SessionMetadata{AgentSessionID: "native-late"},
-		CreatedAt: now,
-		UpdatedAt: now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	store, session := seedUsageTestSession(
+		t, t.TempDir(), "usage", domain.HarnessCodex, domain.ActivityIdle, "native-late", now,
+	)
 	root := filepath.Join(t.TempDir(), "sessions")
 	collector := usagesvc.NewCollector(store, usagesvc.SourceRoots{CodexSessions: root}, nil)
 	if err := collector.BackfillActive(ctx); err != nil {
@@ -742,27 +682,10 @@ func TestIngestorCollectsCodexSourceDiscoveredAfterStartup(t *testing.T) {
 
 func TestIngestorCompletesCodexExitWhoseSourceAppearsLate(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
 	now := time.Unix(1700000000, 0).UTC()
-	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "usage", Path: t.TempDir(), RegisteredAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	session, err := store.CreateSession(ctx, domain.SessionRecord{
-		ProjectID: "usage",
-		Kind:      domain.KindWorker,
-		Harness:   domain.HarnessCodex,
-		Activity:  domain.Activity{State: domain.ActivityExited, LastActivityAt: now},
-		Metadata:  domain.SessionMetadata{AgentSessionID: "native-final"},
-		CreatedAt: now,
-		UpdatedAt: now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	store, session := seedUsageTestSession(
+		t, t.TempDir(), "usage", domain.HarnessCodex, domain.ActivityExited, "native-final", now,
+	)
 	root := filepath.Join(t.TempDir(), "sessions")
 	collector := usagesvc.NewCollector(store, usagesvc.SourceRoots{CodexSessions: root}, nil)
 	if err := collector.BackfillActive(ctx); err != nil {
@@ -800,27 +723,10 @@ func TestIngestorCompletesCodexExitWhoseSourceAppearsLate(t *testing.T) {
 
 func TestIngestorPreservesCursorWhenCodexRolloutMovesToArchive(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
 	now := time.Unix(1700000000, 0).UTC()
-	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "usage", Path: t.TempDir(), RegisteredAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	session, err := store.CreateSession(ctx, domain.SessionRecord{
-		ProjectID: "usage",
-		Kind:      domain.KindWorker,
-		Harness:   domain.HarnessCodex,
-		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
-		Metadata:  domain.SessionMetadata{AgentSessionID: "native-move"},
-		CreatedAt: now,
-		UpdatedAt: now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	store, session := seedUsageTestSession(
+		t, t.TempDir(), "usage", domain.HarnessCodex, domain.ActivityIdle, "native-move", now,
+	)
 	sessionsRoot := filepath.Join(t.TempDir(), "sessions")
 	archiveRoot := filepath.Join(t.TempDir(), "archived_sessions")
 	activePath := filepath.Join(sessionsRoot, "2026", "07", "28", "rollout-native-move.jsonl")
@@ -885,27 +791,10 @@ func TestIngestorPreservesCursorWhenCodexRolloutMovesToArchive(t *testing.T) {
 func TestCoordinatorCollectsCodexUsageFromFilesystemEvents(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	store, err := sqlite.Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
 	now := time.Now().UTC()
-	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "usage", Path: t.TempDir(), RegisteredAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	session, err := store.CreateSession(ctx, domain.SessionRecord{
-		ProjectID: "usage",
-		Kind:      domain.KindWorker,
-		Harness:   domain.HarnessCodex,
-		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
-		Metadata:  domain.SessionMetadata{AgentSessionID: "native-watch"},
-		CreatedAt: now,
-		UpdatedAt: now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	store, session := seedUsageTestSession(
+		t, t.TempDir(), "usage", domain.HarnessCodex, domain.ActivityIdle, "native-watch", now,
+	)
 
 	base := t.TempDir()
 	sessionsRoot := filepath.Join(base, "sessions")
@@ -956,38 +845,11 @@ func TestCoordinatorCollectsCodexUsageFromFilesystemEvents(t *testing.T) {
 
 func TestIngestorPersistsAppendOnlyUsageAcrossRestartAndFinalization(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
 	now := time.Unix(1700000000, 0).UTC()
-	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "usage", Path: t.TempDir(), RegisteredAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	session, err := store.CreateSession(ctx, domain.SessionRecord{
-		ProjectID: "usage",
-		Kind:      domain.KindWorker,
-		Harness:   domain.HarnessCodex,
-		Activity:  domain.Activity{State: domain.ActivityActive, LastActivityAt: now},
-		CreatedAt: now,
-		UpdatedAt: now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	binding, err := store.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID:    session.ID,
-		Harness:      domain.HarnessCodex,
-		NativeRootID: "native-1",
-		State:        domain.UsageBindingActive,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	store, session := seedUsageTestSession(
+		t, t.TempDir(), "usage", domain.HarnessCodex, domain.ActivityActive, "", now,
+	)
+	binding := seedUsageTestBinding(t, store, session, "native-1", domain.UsageBindingActive, now)
 	path := t.TempDir() + "/rollout.jsonl"
 	initial := `{"type":"session_meta","payload":{"id":"native-1","model_provider":"openai","source":"cli"}}` + "\n" +
 		`{"type":"turn_context","payload":{"model":"gpt-5.6"}}` + "\n" +
@@ -1210,38 +1072,11 @@ func TestIngestorDropsMalformedFinalTailOnlyAfterTwoQuietObservations(t *testing
 
 func TestIngestorLateAppendReturnsCompletedBindingToFinalizing(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
 	now := time.Unix(1700000000, 0).UTC()
-	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "usage", Path: t.TempDir(), RegisteredAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	session, err := store.CreateSession(ctx, domain.SessionRecord{
-		ProjectID: "usage",
-		Kind:      domain.KindWorker,
-		Harness:   domain.HarnessCodex,
-		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
-		CreatedAt: now,
-		UpdatedAt: now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	binding, err := store.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID:    session.ID,
-		Harness:      session.Harness,
-		NativeRootID: "native-late-append",
-		State:        domain.UsageBindingActive,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	store, session := seedUsageTestSession(
+		t, t.TempDir(), "usage", domain.HarnessCodex, domain.ActivityIdle, "", now,
+	)
+	binding := seedUsageTestBinding(t, store, session, "native-late-append", domain.UsageBindingActive, now)
 	path := filepath.Join(t.TempDir(), "rollout.jsonl")
 	content := `{"type":"turn_context","payload":{"model":"gpt-5.6"}}` + "\n" +
 		string(codexTokenLine("2026-07-01T10:00:00Z", 100, 60, 0, 20, 5)) + "\n"
@@ -1302,38 +1137,11 @@ func TestIngestorLateAppendReturnsCompletedBindingToFinalizing(t *testing.T) {
 
 func TestIngestorStopsRetryingConflictingNativeEvent(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
 	now := time.Unix(1700000000, 0).UTC()
-	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "usage", Path: t.TempDir(), RegisteredAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	session, err := store.CreateSession(ctx, domain.SessionRecord{
-		ProjectID: "usage",
-		Kind:      domain.KindWorker,
-		Harness:   domain.HarnessClaudeCode,
-		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
-		CreatedAt: now,
-		UpdatedAt: now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	binding, err := store.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID:    session.ID,
-		Harness:      domain.HarnessClaudeCode,
-		NativeRootID: "claude-root",
-		State:        domain.UsageBindingActive,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
-		UpdatedAt:    now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	store, session := seedUsageTestSession(
+		t, t.TempDir(), "usage", domain.HarnessClaudeCode, domain.ActivityIdle, "", now,
+	)
+	binding := seedUsageTestBinding(t, store, session, "claude-root", domain.UsageBindingActive, now)
 	path := filepath.Join(t.TempDir(), "claude-root.jsonl")
 	line := `{"type":"assistant","uuid":"native-message","message":{"id":"msg-1","model":"claude-x","stop_reason":"end_turn","usage":{"input_tokens":8,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2}}}` + "\n"
 	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {

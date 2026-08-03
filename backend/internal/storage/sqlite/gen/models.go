@@ -267,6 +267,19 @@ type UsageBinding struct {
 	UpdatedAt      time.Time
 }
 
+type UsageCodexPendingChild struct {
+	BindingID       int64
+	NativeSessionID string
+}
+
+type UsageCodexSourceDiscovery struct {
+	SourceID               int64
+	BindingID              int64
+	NativeSessionID        string
+	DiscoveredChildIdsJson string
+	HasMixedChildTypes     int64
+}
+
 type UsageSource struct {
 	ID              int64
 	BindingID       int64
