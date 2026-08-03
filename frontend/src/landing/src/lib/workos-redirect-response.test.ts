@@ -16,6 +16,9 @@ it("commits the PKCE cookie response before navigating to WorkOS", async () => {
     "https://api.workos.com/user_management/authorize?state=sealed&amp;screen_hint=sign-up",
   );
   expect(body).toContain('meta http-equiv="refresh"');
+  expect(body).toContain('background: #08090b');
+  expect(body).toContain('src="/ao-logo.svg"');
+  expect(body).toContain("Opening secure sign-in…");
 });
 
 it("escapes an authorization URL before writing HTML", async () => {
