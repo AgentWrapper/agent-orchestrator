@@ -19,6 +19,7 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { useSessionWorkspaceFilesChangedCount } from "../hooks/useSessionWorkspaceFiles";
 import { clearTerminateSessionState, useTerminateSession } from "../hooks/useTerminateSession";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
@@ -185,6 +186,7 @@ export function SessionInspector({
 	const browserUnseen = useUiStore((state) =>
 		session ? Boolean(state.inspectorSessions[session.id]?.browserUnseen) : false,
 	);
+	const filesChangedCount = useSessionWorkspaceFilesChangedCount(session?.id);
 	const setView = (next: InspectorView) => {
 		setInternalView(next);
 		onViewChange?.(next);
@@ -230,7 +232,11 @@ export function SessionInspector({
 								</span>
 							) : null}
 						</span>
-						<span className="truncate @max-[350px]/inspector:hidden">{entry.label}</span>
+						<span className="truncate @max-[350px]/inspector:hidden">
+							{entry.id === "files" && filesChangedCount !== undefined
+								? t("files.tabCount", { count: filesChangedCount })
+								: entry.label}
+						</span>
 					</button>
 				))}
 			</div>

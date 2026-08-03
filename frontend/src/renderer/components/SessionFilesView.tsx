@@ -1,5 +1,14 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+	type KeyboardEvent,
+	type MouseEvent,
+	type ReactNode,
+} from "react";
+import { useQuery } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import {
@@ -12,32 +21,35 @@ import {
 	Copy,
 	Maximize2,
 	Minimize2,
-	RefreshCw,
 	Search,
 	X,
 } from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import {
+	isChangedWorkspaceFile,
+	sessionWorkspaceFilesQueryOptions,
+	type WorkspaceCompareMode,
+	type WorkspaceFileSummary,
+} from "../hooks/useSessionWorkspaceFiles";
 import { cn } from "../lib/utils";
+import type { DiffSelectionLine } from "../../shared/diff-selection";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./ui/accordion";
 import { Button } from "./ui/button";
+import { DiffSelectionMenu } from "./DiffSelectionMenu";
 import { Input } from "./ui/input";
 
-type WorkspaceCompareMode = "base" | "head_fallback";
-type WorkspaceFileSummary = components["schemas"]["WorkspaceFileSummary"] & {
-	previousPath?: string;
-};
 type WorkspaceFileDetail = components["schemas"]["WorkspaceFileResponse"] & {
 	previousPath?: string;
-	compareMode?: WorkspaceCompareMode;
-};
-type WorkspaceFilesResponse = components["schemas"]["ListWorkspaceFilesResponse"] & {
 	compareMode?: WorkspaceCompareMode;
 };
 type WorkspaceFileStatus = WorkspaceFileSummary["status"];
 
 type SessionFilesViewProps = {
 	sessionId: string;
-	onClose: () => void;
+	/** Only rendered as a button when `isMaximized` — the embedded panel has
+	 *  the inspector's tab strip for that, right above the toolbar. */
+	onClose?: () => void;
 	isMaximized?: boolean;
 	onToggleMaximized?: (next: boolean) => void;
 };
@@ -60,6 +72,14 @@ const statusTone: Record<WorkspaceFileStatus, string> = {
 	unmodified: "border-border bg-raised text-passive",
 };
 
+// Split (old | new) view only means something when both sides have content to
+// compare. Added files have nothing on the old side; deleted files have
+// nothing on the new side — splitting them just wastes half the pane on an
+// empty column, so those always render unified regardless of the toggle.
+function canSplitCompare(status: WorkspaceFileStatus): boolean {
+	return status === "modified" || status === "renamed";
+}
+
 export function SessionFilesView({
 	sessionId,
 	onClose,
@@ -67,27 +87,15 @@ export function SessionFilesView({
 	onToggleMaximized,
 }: SessionFilesViewProps) {
 	const { t } = useTranslation();
-	const queryClient = useQueryClient();
 	const [filter, setFilter] = useState("");
-	const [searchOpen, setSearchOpen] = useState(false);
 	const [split, setSplit] = useState(false);
 	const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
 	const initializedExpansionFor = useRef<string | null>(null);
 	const rootRef = useRef<HTMLElement>(null);
 
-	const filesQuery = useQuery({
-		queryKey: ["session-workspace-files", sessionId],
-		refetchInterval: 3500,
-		queryFn: async () => {
-			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/workspace/files", {
-				params: { path: { sessionId } },
-			});
-			if (error) throw new Error(apiErrorMessage(error, t("files.error.loadWorkspace")));
-			return (data ?? { sessionId, files: [], truncated: false }) as WorkspaceFilesResponse;
-		},
-	});
+	const filesQuery = useQuery(sessionWorkspaceFilesQueryOptions(sessionId, t("files.error.loadWorkspace")));
 	const files = filesQuery.data?.files ?? emptyFiles;
-	const changedFiles = useMemo(() => files.filter(isChanged), [files]);
+	const changedFiles = useMemo(() => files.filter(isChangedWorkspaceFile), [files]);
 
 	useEffect(() => {
 		initializedExpansionFor.current = null;
@@ -110,25 +118,7 @@ export function SessionFilesView({
 				: changedFiles,
 		[changedFiles, normalizedFilter],
 	);
-	const changedCount = changedFiles.length;
 	const expandedVisibleCount = visibleFiles.filter((file) => expandedPaths.has(file.path)).length;
-
-	const refresh = () => {
-		void filesQuery.refetch();
-		void queryClient.invalidateQueries({ queryKey: ["session-workspace-file", sessionId] });
-	};
-
-	const toggleFile = (path: string) => {
-		setExpandedPaths((current) => {
-			const next = new Set(current);
-			if (next.has(path)) {
-				next.delete(path);
-			} else {
-				next.add(path);
-			}
-			return next;
-		});
-	};
 
 	const toggleVisibleFiles = () => {
 		setExpandedPaths((current) => {
@@ -168,38 +158,15 @@ export function SessionFilesView({
 			aria-label={t("files.sessionFiles")}
 		>
 			<header className="flex h-11 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-1.5">
-				{searchOpen ? (
-					<label className="relative mr-auto min-w-0 flex-1 max-w-[280px]">
-						<Search className="pointer-events-none absolute left-2.5 top-1/2 size-icon-sm -translate-y-1/2 text-passive" />
-						<Input
-							autoFocus
-							className="h-8 pl-8 font-mono text-xs"
-							onChange={(event) => setFilter(event.target.value)}
-							placeholder={t("files.searchPlaceholder")}
-							value={filter}
-						/>
-					</label>
-				) : (
-					<span className="mr-auto min-w-0 truncate pl-1.5 font-mono text-caption text-passive">
-							{t("files.count", { count: changedCount })}
-					</span>
-				)}
-				<Button
-					aria-label={searchOpen ? t("files.closeSearch") : t("files.search")}
-					aria-pressed={searchOpen}
-					className={cn("shrink-0", searchOpen && "text-accent")}
-					onClick={() => {
-						setSearchOpen((open) => {
-							if (open) setFilter("");
-							return !open;
-						});
-					}}
-					size="icon-sm"
-					type="button"
-					variant="ghost"
-				>
-					<Search className="size-icon-sm" aria-hidden="true" />
-				</Button>
+				<label className="relative mr-auto min-w-0 max-w-[280px] flex-1">
+					<Search className="pointer-events-none absolute left-2.5 top-1/2 size-icon-sm -translate-y-1/2 text-passive" />
+					<Input
+						className="h-8 pl-8 font-mono text-xs"
+						onChange={(event) => setFilter(event.target.value)}
+						placeholder={t("files.searchPlaceholder")}
+						value={filter}
+					/>
+				</label>
 				<Button
 					aria-label={expandedVisibleCount > 0 ? t("files.collapseAll") : t("files.expandAll")}
 					className="shrink-0"
@@ -218,7 +185,7 @@ export function SessionFilesView({
 				<Button
 					aria-label={split ? t("files.unifiedDiff") : t("files.splitDiff")}
 					aria-pressed={split}
-					className={cn("shrink-0", split && "text-accent")}
+					className={cn("shrink-0 text-foreground", split && "bg-interactive-active")}
 					onClick={() => setSplit((current) => !current)}
 					size="icon-sm"
 					type="button"
@@ -226,20 +193,9 @@ export function SessionFilesView({
 				>
 					<Columns2 className="size-icon-sm" aria-hidden="true" />
 				</Button>
-				<Button
-					aria-label={t("files.refresh")}
-					className="shrink-0"
-					disabled={filesQuery.isFetching}
-					onClick={refresh}
-					size="icon-sm"
-					type="button"
-					variant="ghost"
-				>
-					<RefreshCw className={cn("size-icon-sm", filesQuery.isFetching && "animate-spin")} aria-hidden="true" />
-				</Button>
 				{onToggleMaximized ? (
 					<Button
-							aria-label={isMaximized ? t("files.minimize") : t("files.maximize")}
+						aria-label={isMaximized ? t("files.minimize") : t("files.maximize")}
 						className="shrink-0"
 						onClick={() => onToggleMaximized(!isMaximized)}
 						size="icon-sm"
@@ -253,16 +209,18 @@ export function SessionFilesView({
 						)}
 					</Button>
 				) : null}
-				<Button
-					aria-label={t("files.close")}
-					className="shrink-0"
-					onClick={onClose}
-					size="icon-sm"
-					type="button"
-					variant="ghost"
-				>
-					<X className="size-icon-sm" aria-hidden="true" />
-				</Button>
+				{isMaximized && onClose ? (
+					<Button
+						aria-label={t("files.close")}
+						className="shrink-0"
+						onClick={onClose}
+						size="icon-sm"
+						type="button"
+						variant="ghost"
+					>
+						<X className="size-icon-sm" aria-hidden="true" />
+					</Button>
+				) : null}
 			</header>
 
 			<div className="min-h-0 flex-1 overflow-auto bg-background">
@@ -273,8 +231,8 @@ export function SessionFilesView({
 						expandedPaths={expandedPaths}
 						files={visibleFiles}
 						isLoading={filesQuery.isPending}
+						onExpandedPathsChange={setExpandedPaths}
 						onRetry={() => void filesQuery.refetch()}
-						onToggle={toggleFile}
 						sessionId={sessionId}
 						split={split}
 						wrap={true}
@@ -291,8 +249,8 @@ function ReviewFileList({
 	expandedPaths,
 	files,
 	isLoading,
+	onExpandedPathsChange,
 	onRetry,
-	onToggle,
 	sessionId,
 	split,
 	wrap,
@@ -302,8 +260,8 @@ function ReviewFileList({
 	expandedPaths: Set<string>;
 	files: WorkspaceFileSummary[];
 	isLoading: boolean;
+	onExpandedPathsChange: (next: Set<string>) => void;
 	onRetry: () => void;
-	onToggle: (path: string) => void;
 	sessionId: string;
 	split: boolean;
 	wrap: boolean;
@@ -321,62 +279,62 @@ function ReviewFileList({
 		return <PanelMessage>{emptyFilesMessage(compareMode, t)}</PanelMessage>;
 	}
 	return (
-		<ul className="session-files-review-list overflow-hidden border-y border-border/70">
-			{files.map((file) => (
-				<li className="border-b border-border/60 last:border-b-0" key={file.path}>
+		<Accordion
+			asChild
+			onValueChange={(next: string[]) => onExpandedPathsChange(new Set(next))}
+			type="multiple"
+			value={Array.from(expandedPaths)}
+		>
+			<ul className="session-files-review-list flex flex-col gap-0.5">
+				{files.map((file) => (
 					<ReviewFileCard
 						expanded={expandedPaths.has(file.path)}
 						file={file}
-						onToggle={() => onToggle(file.path)}
+						key={file.path}
 						sessionId={sessionId}
 						split={split}
 						wrap={wrap}
 					/>
-				</li>
-			))}
-		</ul>
+				))}
+			</ul>
+		</Accordion>
 	);
 }
 
 function ReviewFileCard({
 	expanded,
 	file,
-	onToggle,
 	sessionId,
 	split,
 	wrap,
 }: {
 	expanded: boolean;
 	file: WorkspaceFileSummary;
-	onToggle: () => void;
 	sessionId: string;
 	split: boolean;
 	wrap: boolean;
 }) {
 	const { t } = useTranslation();
+	// While the user has an active text selection (or the context menu it opens)
+	// in this file's diff, a background refetch would re-render the diff body
+	// out from under them and blow away the browser's native selection.
+	const [selectionOrMenuActive, setSelectionOrMenuActive] = useState(false);
 	const detailQuery = useQuery({
 		queryKey: ["session-workspace-file", sessionId, file.path],
 		enabled: expanded,
-		refetchInterval: expanded ? 3500 : false,
+		refetchInterval: expanded && !selectionOrMenuActive ? 3500 : false,
 		queryFn: () => loadWorkspaceFile(sessionId, file.path, t),
 	});
 
 	return (
-		<article className="session-files-review-row overflow-hidden bg-transparent">
-			<div
-				className={cn(
-					"group/row flex min-h-10 items-center transition-colors",
-					expanded ? "bg-interactive-active/45" : "hover:bg-interactive-hover/50",
-				)}
-			>
-				<button
-					aria-controls={`workspace-diff-${file.path}`}
-					aria-expanded={expanded}
+		<AccordionItem asChild value={file.path}>
+			<li className="session-files-review-row overflow-hidden bg-transparent">
+				<AccordionTrigger
 					aria-label={t(expanded ? "files.collapseFile" : "files.expandFile", { file: fileLabel(file) })}
-					className="flex min-w-0 flex-1 items-center gap-2 px-3 py-1.5 text-left"
+					className="gap-2 px-3 py-1.5"
 					data-file-toggle=""
-					onClick={onToggle}
-					type="button"
+					headerClassName="min-h-10 hover:bg-interactive-hover/50 data-[state=open]:bg-interactive-active/45"
+					trailing={<CopyPathButton path={file.path} />}
 				>
 					{expanded ? (
 						<ChevronDown className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
@@ -386,23 +344,27 @@ function ReviewFileCard({
 					<StatusMark status={file.status} />
 					<FilePathLabel file={file} />
 					<ChangeBadges additions={file.additions} deletions={file.deletions} />
-				</button>
-				<CopyPathButton path={file.path} />
-			</div>
-			{expanded ? (
-				<div id={`workspace-diff-${file.path}`} className="border-t border-border/60 bg-background/40">
-						{detailQuery.isPending ? <PanelMessage>{t("files.loadingDiff")}</PanelMessage> : null}
+				</AccordionTrigger>
+				<AccordionContent className="border-t border-border/60 bg-background/40">
+					{detailQuery.isPending ? <PanelMessage>{t("files.loadingDiff")}</PanelMessage> : null}
 					{!detailQuery.isPending && detailQuery.error ? (
 						<PanelMessage action={<RetryButton onClick={() => void detailQuery.refetch()} />}>
-								{detailQuery.error.message || t("files.error.loadFile")}
+							{detailQuery.error.message || t("files.error.loadFile")}
 						</PanelMessage>
 					) : null}
 					{!detailQuery.isPending && !detailQuery.error && detailQuery.data ? (
-						<ReviewDiffBody detail={detailQuery.data} split={split} wrap={wrap} />
+						<ReviewDiffBody
+							detail={detailQuery.data}
+							filePath={file.path}
+							onActiveSelectionChange={setSelectionOrMenuActive}
+							sessionId={sessionId}
+							split={split && canSplitCompare(file.status)}
+							wrap={wrap}
+						/>
 					) : null}
-				</div>
-			) : null}
-		</article>
+				</AccordionContent>
+			</li>
+		</AccordionItem>
 	);
 }
 
@@ -471,7 +433,21 @@ async function loadWorkspaceFile(sessionId: string, path: string, t: TFunction) 
 	return data;
 }
 
-function ReviewDiffBody({ detail, split, wrap }: { detail: WorkspaceFileDetail; split: boolean; wrap: boolean }) {
+function ReviewDiffBody({
+	detail,
+	filePath,
+	onActiveSelectionChange,
+	sessionId,
+	split,
+	wrap,
+}: {
+	detail: WorkspaceFileDetail;
+	filePath: string;
+	onActiveSelectionChange: (active: boolean) => void;
+	sessionId: string;
+	split: boolean;
+	wrap: boolean;
+}) {
 	const { t } = useTranslation();
 	if (detail.binary) {
 		return <PanelMessage>{t("files.binaryUnavailable")}</PanelMessage>;
@@ -480,7 +456,17 @@ function ReviewDiffBody({ detail, split, wrap }: { detail: WorkspaceFileDetail; 
 	if (rows.length === 0) {
 		return <PanelMessage>{emptyDiffMessage(detail.compareMode, t)}</PanelMessage>;
 	}
-	return <DiffView rows={rows} split={split} truncated={detail.diffTruncated} wrap={wrap} />;
+	return (
+		<DiffView
+			filePath={filePath}
+			onActiveSelectionChange={onActiveSelectionChange}
+			rows={rows}
+			sessionId={sessionId}
+			split={split}
+			truncated={detail.diffTruncated}
+			wrap={wrap}
+		/>
+	);
 }
 
 type DiffRowKind = "context" | "add" | "del" | "hunk";
@@ -659,18 +645,117 @@ const diffMarkerGlyph: Record<Exclude<DiffRowKind, "hunk">, string> = {
 	context: " ",
 };
 
+// isSelectionActiveIn is the shared check used both by the live selectionchange
+// listener and the context-menu handler: a real (non-collapsed) selection whose
+// anchor lives inside this DiffView's scroll container.
+function isSelectionActiveIn(selection: Selection | null, container: HTMLElement | null): boolean {
+	if (!selection || !container || selection.isCollapsed) return false;
+	return selection.anchorNode !== null && container.contains(selection.anchorNode);
+}
+
+// closestDiffRowElement climbs from a Range boundary (which for a text
+// selection is almost always a text node, and text nodes have no `.closest`)
+// up to the nearest `[data-diff-row]` element, or null if the boundary isn't
+// inside a real diff row (e.g. it landed on a hunk band or an empty
+// split-view placeholder).
+function closestDiffRowElement(node: Node | null): Element | null {
+	if (!node) return null;
+	const element = node instanceof Element ? node : node.parentElement;
+	return element?.closest?.("[data-diff-row]") ?? null;
+}
+
+// toDiffSelectionLine maps a DiffRow to the shared DiffSelectionLine shape.
+// Hunk rows never carry data-row-index themselves, but a multi-hunk selection
+// range can still include one in the middle of the sliced rows[min..max] —
+// this drops it defensively rather than emitting a bogus "hunk" line.
+function toDiffSelectionLine(row: DiffRow): DiffSelectionLine | null {
+	if (row.kind === "hunk") return null;
+	return { kind: row.kind, oldNo: row.oldNo, newNo: row.newNo, text: row.text };
+}
+
+function isNotNull<T>(value: T | null): value is T {
+	return value !== null;
+}
+
+type DiffViewMenuState = {
+	open: boolean;
+	position: { x: number; y: number };
+	lines: DiffSelectionLine[];
+	selectedText: string;
+};
+
 function DiffView({
+	filePath,
+	onActiveSelectionChange,
 	rows,
+	sessionId,
 	split,
 	truncated,
 	wrap,
 }: {
+	filePath: string;
+	onActiveSelectionChange: (active: boolean) => void;
 	rows: DiffRow[];
+	sessionId: string;
 	split: boolean;
 	truncated?: boolean;
 	wrap: boolean;
 }) {
 	const { t } = useTranslation();
+	const containerRef = useRef<HTMLDivElement>(null);
+	const [hasSelection, setHasSelection] = useState(false);
+	const [menuState, setMenuState] = useState<DiffViewMenuState | null>(null);
+
+	useEffect(() => {
+		const onSelectionChange = () => {
+			setHasSelection(isSelectionActiveIn(window.getSelection(), containerRef.current));
+		};
+		document.addEventListener("selectionchange", onSelectionChange);
+		return () => document.removeEventListener("selectionchange", onSelectionChange);
+	}, []);
+
+	const menuOpen = menuState?.open ?? false;
+	useEffect(() => {
+		onActiveSelectionChange(hasSelection || menuOpen);
+	}, [hasSelection, menuOpen, onActiveSelectionChange]);
+
+	const onContextMenu = useCallback(
+		(event: MouseEvent<HTMLDivElement>) => {
+			const container = containerRef.current;
+			const selection = window.getSelection();
+			if (!isSelectionActiveIn(selection, container) || !selection) return;
+
+			// Only past this point do we know we're overriding a real selection —
+			// the native context menu must stay untouched for a collapsed selection
+			// or one outside this container.
+			event.preventDefault();
+
+			const range = selection.getRangeAt(0);
+			const startRow = closestDiffRowElement(range.startContainer);
+			const endRow = closestDiffRowElement(range.endContainer);
+			if (!startRow || !endRow) return;
+
+			const startIndex = Number(startRow.getAttribute("data-row-index"));
+			const endIndex = Number(endRow.getAttribute("data-row-index"));
+			if (!Number.isFinite(startIndex) || !Number.isFinite(endIndex)) return;
+
+			const min = Math.min(startIndex, endIndex);
+			const max = Math.max(startIndex, endIndex);
+			const lines = rows
+				.slice(min, max + 1)
+				.map(toDiffSelectionLine)
+				.filter(isNotNull);
+
+			setMenuState({
+				open: true,
+				position: { x: event.clientX, y: event.clientY },
+				lines,
+				selectedText: selection.toString(),
+			});
+		},
+		[rows],
+	);
+
 	return (
 		<div className="flex min-h-[180px] max-h-[min(620px,calc(100vh-18rem))] flex-col">
 			{truncated ? (
@@ -678,7 +763,11 @@ function DiffView({
 					{t("files.diffTruncated")}
 				</div>
 			) : null}
-			<div className="session-files-diff-scrollbar min-h-0 flex-1 overflow-auto bg-terminal font-mono text-xs leading-row text-terminal-foreground">
+			<div
+				className="session-files-diff-scrollbar min-h-0 flex-1 overflow-auto bg-terminal font-mono text-xs leading-row text-terminal-foreground"
+				onContextMenu={onContextMenu}
+				ref={containerRef}
+			>
 				{split ? (
 					<SplitDiff rows={rows} />
 				) : (
@@ -687,7 +776,15 @@ function DiffView({
 							row.kind === "hunk" ? (
 								<HunkBand key={`h${index}`} row={row} />
 							) : (
-								<div className={cn("flex", diffRowTone[row.kind])} key={`r${index}`}>
+								<div
+									className={cn("flex", diffRowTone[row.kind])}
+									data-diff-row=""
+									data-kind={row.kind}
+									data-new-no={row.newNo ?? ""}
+									data-old-no={row.oldNo ?? ""}
+									data-row-index={index}
+									key={`r${index}`}
+								>
 									<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
 										{row.newNo ?? row.oldNo ?? ""}
 									</span>
@@ -713,6 +810,15 @@ function DiffView({
 					</div>
 				)}
 			</div>
+			<DiffSelectionMenu
+				filePath={filePath}
+				lines={menuState?.lines ?? []}
+				onOpenChange={(open) => setMenuState((current) => (current ? { ...current, open } : current))}
+				open={menuOpen}
+				position={menuState?.position ?? { x: 0, y: 0 }}
+				selectedText={menuState?.selectedText ?? ""}
+				sessionId={sessionId}
+			/>
 		</div>
 	);
 }
@@ -726,34 +832,47 @@ function HunkBand({ row }: { row: DiffRow }) {
 	);
 }
 
-type SplitRow = { kind: "hunk"; row: DiffRow } | { kind: "pair"; left: DiffRow | null; right: DiffRow | null };
+type SplitRow =
+	| { kind: "hunk"; row: DiffRow }
+	| { kind: "pair"; left: DiffRow | null; leftIndex: number | null; right: DiffRow | null; rightIndex: number | null };
 
 // toSplitRows aligns the unified rows into left (old) / right (new) pairs: each
 // run of deletions lines up index-for-index with the additions that follow it,
-// context appears on both sides, and hunk headers span the full width.
+// context appears on both sides, and hunk headers span the full width. Each
+// side also carries its original index into the flat `rows` array (leftIndex /
+// rightIndex) so SplitSide can stamp the same data-row-index the unified view
+// uses, without SplitSide re-deriving it via `rows.indexOf`.
 function toSplitRows(rows: DiffRow[]): SplitRow[] {
 	const out: SplitRow[] = [];
-	let dels: DiffRow[] = [];
-	let adds: DiffRow[] = [];
+	let dels: Array<{ row: DiffRow; index: number }> = [];
+	let adds: Array<{ row: DiffRow; index: number }> = [];
 	const flush = () => {
 		const count = Math.max(dels.length, adds.length);
-		for (let i = 0; i < count; i += 1) out.push({ kind: "pair", left: dels[i] ?? null, right: adds[i] ?? null });
+		for (let i = 0; i < count; i += 1) {
+			out.push({
+				kind: "pair",
+				left: dels[i]?.row ?? null,
+				leftIndex: dels[i]?.index ?? null,
+				right: adds[i]?.row ?? null,
+				rightIndex: adds[i]?.index ?? null,
+			});
+		}
 		dels = [];
 		adds = [];
 	};
-	for (const row of rows) {
+	rows.forEach((row, index) => {
 		if (row.kind === "del") {
-			dels.push(row);
-			continue;
+			dels.push({ row, index });
+			return;
 		}
 		if (row.kind === "add") {
-			adds.push(row);
-			continue;
+			adds.push({ row, index });
+			return;
 		}
 		flush();
 		if (row.kind === "hunk") out.push({ kind: "hunk", row });
-		else out.push({ kind: "pair", left: row, right: row });
-	}
+		else out.push({ kind: "pair", left: row, leftIndex: index, right: row, rightIndex: index });
+	});
 	flush();
 	return out;
 }
@@ -766,8 +885,8 @@ function SplitDiff({ rows }: { rows: DiffRow[] }) {
 					<HunkBand key={`sh${index}`} row={splitRow.row} />
 				) : (
 					<div className="grid grid-cols-2 divide-x divide-border/40" key={`sp${index}`}>
-						<SplitSide row={splitRow.left} side="old" />
-						<SplitSide row={splitRow.right} side="new" />
+						<SplitSide row={splitRow.left} rowIndex={splitRow.leftIndex} side="old" />
+						<SplitSide row={splitRow.right} rowIndex={splitRow.rightIndex} side="new" />
 					</div>
 				),
 			)}
@@ -775,12 +894,19 @@ function SplitDiff({ rows }: { rows: DiffRow[] }) {
 	);
 }
 
-function SplitSide({ row, side }: { row: DiffRow | null; side: "old" | "new" }) {
-	if (!row) return <div className="bg-surface-faint/20" aria-hidden="true" />;
+function SplitSide({ row, rowIndex, side }: { row: DiffRow | null; rowIndex: number | null; side: "old" | "new" }) {
+	if (!row || rowIndex === null) return <div className="bg-surface-faint/20" aria-hidden="true" />;
 	const lineNo = side === "old" ? row.oldNo : row.newNo;
 	const tone = row.kind === "hunk" ? "" : diffRowTone[row.kind];
 	return (
-		<div className={cn("flex min-w-0", tone)}>
+		<div
+			className={cn("flex min-w-0", tone)}
+			data-diff-row=""
+			data-kind={row.kind}
+			data-new-no={row.newNo ?? ""}
+			data-old-no={row.oldNo ?? ""}
+			data-row-index={rowIndex}
+		>
 			<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
 				{lineNo ?? ""}
 			</span>
@@ -850,8 +976,4 @@ function StatusMark({ status }: { status: WorkspaceFileStatus }) {
 			{label}
 		</span>
 	);
-}
-
-function isChanged(file: WorkspaceFileSummary) {
-	return file.status !== "unmodified";
 }

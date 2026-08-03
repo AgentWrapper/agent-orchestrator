@@ -433,11 +433,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									browserPoppedOut={browserPoppedOut}
 									filesView={
 										session ? (
-											<SessionFilesView
-												onClose={() => setInspectorViewForSession(sessionId, "summary")}
-												onToggleMaximized={handleToggleFilesPopOut}
-												sessionId={session.id}
-											/>
+											<SessionFilesView onToggleMaximized={handleToggleFilesPopOut} sessionId={session.id} />
 										) : null
 									}
 									isInspectorVisible={isInspectorOpen}
