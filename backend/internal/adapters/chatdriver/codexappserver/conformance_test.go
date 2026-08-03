@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -213,6 +214,18 @@ func TestGeneratedProtocolMatchesTheInstalledProvider(t *testing.T) {
 func methodsFromSchema(t *testing.T, dir string) map[string]bool {
 	t.Helper()
 	found := map[string]bool{}
+	for name := range methodDirectionsFromSchema(t, dir) {
+		found[name] = true
+	}
+	return found
+}
+
+// methodDirectionsFromSchema maps each method the installed provider declares onto
+// the direction that declares it. Direction is what says whether a client can
+// initiate something or only observe it.
+func methodDirectionsFromSchema(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	found := map[string]string{}
 	for _, file := range []string{
 		"ClientRequest.json", "ClientNotification.json",
 		"ServerRequest.json", "ServerNotification.json",
@@ -233,9 +246,10 @@ func methodsFromSchema(t *testing.T, dir string) map[string]bool {
 		if err := json.Unmarshal(raw, &doc); err != nil {
 			t.Fatalf("parse %s: %v", file, err)
 		}
+		direction := strings.TrimSuffix(file, ".json")
 		for _, arm := range doc.OneOf {
 			for _, name := range arm.Properties.Method.Enum {
-				found[name] = true
+				found[name] = direction
 			}
 		}
 	}
@@ -251,4 +265,55 @@ func truncate(names []string) []string {
 		return names
 	}
 	return append(names[:limit:limit], "…")
+}
+
+// Voice is deferred, and this is what makes deferring safe rather than forgetful.
+//
+// The provider declares eight `thread/realtime/*` methods — audio deltas, SDP,
+// live transcript — but every one is a ServerNotification. There is NO
+// ClientRequest that starts a realtime session, so no client can reach any of
+// them, and the supporting types (ThreadRealtimeStartTransport,
+// RealtimeOutputModality, RealtimeVoicesList, ThreadRealtimeInitialItem) are
+// referenced by nothing at all. The feature is half-landed upstream with its door
+// not yet published.
+//
+// So AO handling none of it costs nothing today: there is no reachable behaviour
+// to be missing. What WOULD cost something is discovering the entry point exists
+// months after it shipped, which is what happens when "check again later" lives in
+// someone's memory instead of in the suite.
+//
+// When this test fails, voice became buildable. The failure is the feature
+// request: wire the start request, then the eight notifications (their generated
+// types already exist), then the product work — capture, playback, transport, and
+// a transcript surface.
+func TestRealtimeStaysUnreachableUntilTheProviderPublishesAnEntryPoint(t *testing.T) {
+	bin, err := exec.LookPath("codex")
+	if err != nil {
+		t.Skip("codex not installed; nothing to check the realtime surface against")
+	}
+
+	dir := t.TempDir()
+	if out, err := exec.Command(bin, "app-server", "generate-json-schema", "--out", dir).CombinedOutput(); err != nil {
+		t.Skipf("provider declined to emit its schema (%v): %s", err, out)
+	}
+
+	var startable []string
+	for method, direction := range methodDirectionsFromSchema(t, dir) {
+		if !strings.Contains(method, "realtime") {
+			continue
+		}
+		// A ClientRequest or ClientNotification is something AO can send. Either one
+		// means a session can now be initiated.
+		if strings.HasPrefix(direction, "Client") {
+			startable = append(startable, method+" ("+direction+")")
+		}
+	}
+	sort.Strings(startable)
+
+	if len(startable) > 0 {
+		t.Errorf("the provider now lets a client start a realtime session: %v\n"+
+			"Voice is buildable — see this test's comment for what that entails. "+
+			"Regenerate the protocol and decide whether to take it on; if not, "+
+			"record the decision here so this stops reporting it.", startable)
+	}
 }
