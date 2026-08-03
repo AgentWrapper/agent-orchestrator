@@ -866,7 +866,7 @@ function DiffView({
 							) : (
 								<div key={`r${index}`}>
 									<div
-										className={cn("group/line flex", diffRowTone[row.kind])}
+										className={cn("group/line relative flex", diffRowTone[row.kind])}
 										data-diff-row=""
 										data-kind={row.kind}
 										data-new-no={row.newNo ?? ""}
@@ -1042,7 +1042,7 @@ function SplitSide({
 	const target = lineNo == null ? null : lineAnnotationTarget(path, previousPath, row, rowIndex, side);
 	return (
 		<div
-			className={cn("group/line flex min-w-0", tone)}
+			className={cn("group/line relative flex min-w-0", tone)}
 			data-diff-row=""
 			data-kind={row.kind}
 			data-new-no={row.newNo ?? ""}
@@ -1055,9 +1055,7 @@ function SplitSide({
 					onClick={() => annotation.begin(target)}
 					target={target}
 				/>
-			) : (
-				<span className="w-6 shrink-0" />
-			)}
+			) : null}
 			<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
 				{lineNo ?? ""}
 			</span>
@@ -1102,13 +1100,13 @@ function LineFeedbackButton({
 	target: ActiveFileAnnotationTarget;
 }) {
 	const { t } = useTranslation();
-	if (active) return <span className="w-6 shrink-0" aria-hidden="true" />;
+	if (active) return null;
 	const side = t(target.side === "old" ? "files.oldSide" : "files.newSide");
 	const label = t("files.addLineFeedback", { file: target.path, line: target.line, side });
 	return (
 		<Button
 			aria-label={label}
-			className="m-0.5 size-5 shrink-0 rounded-sm opacity-0 transition-opacity focus-visible:opacity-100 group-hover/line:opacity-100"
+			className="absolute left-[26px] top-1/2 z-10 size-5 -translate-y-1/2 rounded-sm opacity-0 shadow-sm transition-opacity focus-visible:opacity-100 group-hover/line:opacity-100"
 			onClick={onClick}
 			size={null}
 			type="button"
