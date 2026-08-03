@@ -1341,9 +1341,6 @@ func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (Res
 	if meta.WorkspacePath == "" || (meta.Branch == "" && project.Kind.WithDefault() != domain.ProjectKindScratch) {
 		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, ErrIncompleteHandle)
 	}
-	if err := m.terminateReviewer(ctx, id, "cancelled by worker session restore"); err != nil {
-		return RestoreResult{}, fmt.Errorf("restore %s: reviewer: %w", id, err)
-	}
 	// Resumability is decided inside restoreArgv, not here. A promptless session
 	// can still be fully resumable when the harness pins a deterministic session id
 	// (Claude Code). restoreArgv returns ErrNotResumable only for a promptless,

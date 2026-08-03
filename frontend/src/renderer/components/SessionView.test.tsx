@@ -671,7 +671,7 @@ describe("SessionView", () => {
 		await waitFor(() => expect(screen.getByTestId("reviewer-harness")).toHaveTextContent("codex"));
 	});
 
-	it("returns to the session terminal when restore clears the reviewer handle", async () => {
+	it("returns to the session terminal when the reviewer handle is cleared", async () => {
 		const worker = workerSession("sess-1");
 		worker.prs = [
 			{
@@ -701,6 +701,44 @@ describe("SessionView", () => {
 
 		await waitFor(() => expect(screen.getByTestId("terminal-target")).toHaveTextContent("worker"));
 		expect(screen.queryByRole("button", { name: "select reviewer tab" })).not.toBeInTheDocument();
+	});
+
+	it("restores the selected reviewer terminal when the session becomes active again", async () => {
+		const worker = workerSession("sess-1");
+		worker.prs = [
+			{
+				url: "https://github.com/acme/repo/pull/7",
+				number: 7,
+				state: "open",
+				ci: "passing",
+				review: "none",
+				mergeability: "mergeable",
+				reviewComments: false,
+				updatedAt: "2026-06-15T00:00:00Z",
+			},
+		];
+		reviewGetMock.mockResolvedValueOnce({
+			data: { reviewerHandleId: "review-sess-1", reviewerHarness: "codex", reviews: [] },
+			error: undefined,
+		});
+
+		const view = render(<SessionView sessionId="sess-1" />);
+		await screen.findByRole("button", { name: "select reviewer tab" });
+		fireEvent.click(screen.getByRole("button", { name: "select reviewer tab" }));
+		expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
+
+		worker.status = "terminated";
+		worker.isTerminated = true;
+		view.rerender(<SessionView sessionId="sess-1" />);
+		expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
+		expect(screen.queryByRole("button", { name: "select reviewer tab" })).not.toBeInTheDocument();
+
+		worker.status = "working";
+		worker.isTerminated = false;
+		view.rerender(<SessionView sessionId="sess-1" />);
+
+		await screen.findByRole("button", { name: "select reviewer tab" });
+		expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
 	});
 
 	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS

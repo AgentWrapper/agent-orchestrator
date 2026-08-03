@@ -2237,8 +2237,6 @@ func TestKill_RuntimeDestroyFailureLeavesSessionActive(t *testing.T) {
 
 func TestRestore_ReopensTerminal(t *testing.T) {
 	m, st, rt, _ := newManager()
-	reviewer := &fakeReviewerTerminator{}
-	m.SetReviewerTerminator(reviewer)
 	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})
 	s, err := m.RestoreWithMode(ctx, "mer-1")
 	if err != nil {
@@ -2250,27 +2248,22 @@ func TestRestore_ReopensTerminal(t *testing.T) {
 	if rt.created != 1 {
 		t.Fatal("restore should relaunch")
 	}
-	if !reflect.DeepEqual(reviewer.calls, []domain.SessionID{"mer-1"}) {
-		t.Fatalf("reviewer terminates = %v, want [mer-1]", reviewer.calls)
-	}
-	if len(reviewer.bodies) != 1 || !strings.Contains(reviewer.bodies[0], "restore") {
-		t.Fatalf("reviewer terminate bodies = %v", reviewer.bodies)
-	}
 }
 
-func TestRestore_ReviewerTeardownFailureDoesNotRelaunch(t *testing.T) {
+func TestRestore_DoesNotTerminateReviewer(t *testing.T) {
 	m, st, rt, _ := newManager()
-	m.SetReviewerTerminator(&fakeReviewerTerminator{err: errors.New("reviewer still alive")})
+	reviewer := &fakeReviewerTerminator{err: errors.New("reviewer still alive")}
+	m.SetReviewerTerminator(reviewer)
 	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})
 
-	if _, err := m.RestoreWithMode(ctx, "mer-1"); err == nil || !strings.Contains(err.Error(), "reviewer still alive") {
-		t.Fatalf("RestoreWithMode err = %v, want reviewer teardown error", err)
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
+		t.Fatalf("RestoreWithMode: %v", err)
 	}
-	if rt.created != 0 {
-		t.Fatalf("runtime created = %d, want 0", rt.created)
+	if rt.created != 1 {
+		t.Fatalf("runtime created = %d, want 1", rt.created)
 	}
-	if !st.sessions["mer-1"].IsTerminated {
-		t.Fatal("session must remain terminated when restore fails before relaunch")
+	if len(reviewer.calls) != 0 {
+		t.Fatalf("reviewer terminates = %v, want none", reviewer.calls)
 	}
 }
 

@@ -130,7 +130,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			return data ?? ({ reviewerHandleId: "", reviews: [] } satisfies ReviewsResponse);
 		},
 	});
-	const reviewerTerminal = session && sessionIsActive(session) ? reviewerTerminalFromReviews(reviewerQuery.data) : undefined;
+	const availableReviewerTerminal = reviewerTerminalFromReviews(reviewerQuery.data);
+	const reviewerTerminal = session && sessionIsActive(session) ? availableReviewerTerminal : undefined;
 
 	// Shell terminals opened inside a session live beside its pane as extra tabs,
 	// scoped to the session on screen so each session has its own shell set.
@@ -272,11 +273,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	}, [shellTerminals]);
 	useEffect(() => {
 		setTerminalTarget((current) =>
-			current.kind === "reviewer" && (!reviewerTerminal || reviewerTerminal.handleId !== current.handleId)
+			current.kind === "reviewer" &&
+			(!availableReviewerTerminal || availableReviewerTerminal.handleId !== current.handleId)
 				? { kind: "worker" }
 				: current,
 		);
-	}, [reviewerTerminal]);
+	}, [availableReviewerTerminal]);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 	// Orchestrators get the full workspace width; only workers need the inspector rail.
 	const hasInspector = Boolean(session && !isOrchestrator);
