@@ -35,15 +35,23 @@ replacing them.
 
 ## GitHub App and repository grants
 
-- Replace local `gh auth token` with an AO GitHub App in hosted deployments.
-- Let each user or organization connect a GitHub App installation.
-- Add durable GitHub App installation and repository-grant tables.
-- Store installation metadata and short-lived token exchange state in the CP;
-  never bake or pass broad GitHub credentials into worker images.
-- Verify repository grants when listing repositories, creating projects,
-  observing SCM, claiming PRs, merging PRs, resolving review comments, and
-  proxying Git operations.
-- Keep local `gh` token support limited to explicit local development.
+The GitHub App integration is implemented: owner/admin installation and
+confirmation, durable installation/repository grants, signed webhook ingestion
+and reconciliation, grant enforcement, project selection, configure/sync/
+disconnect controls, and a control-plane credential broker for short-lived,
+single-repository operation tokens. Explicit local development still uses the
+host `gh` credential.
+
+Remaining hosted work is live verification and operations:
+
+- Configure the production GitHub App values, HTTPS Setup/Webhook URLs, private
+  key, and independent stable secrets; do not use local test defaults or a
+  Cloudflare Quick Tunnel.
+- Run the connect, callback, repository sync/configure, project-grant,
+  disconnect, SCM read/write, and Git proxy flows through production DNS/TLS.
+- Establish private-key and webhook-secret rotation procedures, webhook
+  delivery monitoring/replay operations, and alerts for failed or exhausted
+  delivery processing.
 
 ## Hosted deployment configuration
 
@@ -51,8 +59,9 @@ replacing them.
 - Wire hosted frontend, CP, preview, terminal websocket, and callback URLs from
   environment-specific config.
 - Run Postgres migrations as part of the hosted deploy path.
-- Configure hosted secrets for WorkOS, GitHub App, sandbox provider, coding
-  agent credential encryption, and any OAuth callbacks.
+- Configure hosted secrets for WorkOS, GitHub App, sandbox provider, and coding
+  agent credential encryption, plus the WorkOS callback and GitHub App
+  Setup/Webhook URLs.
 - Verify browser -> CP -> worker -> CP flows end-to-end with hosted URLs:
   sign in, org switch, invite accept/decline, role update, project create,
   orchestrator start, worker spawn, terminal attach, workspace inspector,
@@ -154,3 +163,28 @@ replacing them.
 - Add a capability matrix documenting intentional local/cloud
   differences: local worktrees/tmux/filesystem access versus cloud
   organizations, sandboxes, tickets, quotas, and hosted auth.
+
+## Post-GitHub hosted launch gates
+
+- Implement a coding-agent credential broker so workers can use narrowly
+  scoped, short-lived agent credentials without receiving permanent provider
+  credentials in their environment or filesystem. The GitHub credential broker
+  is implemented.
+- Build and publish an immutable Daytona production snapshot from the same
+  release commit as the CP. Verify bootstrap, agent dependencies, workspace
+  persistence, terminal attachment, preview, and teardown against that exact
+  snapshot.
+- Add signup, API, command, and sandbox-creation rate limits. Enforce durable
+  per-user, per-organization, and deployment-wide quotas for active and
+  provisioning sandboxes before enabling unrestricted public enrollment.
+- Configure automated Postgres backups, off-host retention, restore drills,
+  least-privilege application credentials, forced tenant RLS policies, and
+  tenant-safe foreign-key constraints.
+- Run the complete hosted flow through production DNS and TLS: WorkOS callback,
+  browser-to-CP CORS, GitHub installation and webhooks, project creation,
+  worker bootstrap, terminal and preview connections, SCM actions, deletion,
+  and reconnect after deployment.
+- Add production health checks, structured logs, error reporting, audit events,
+  metrics, alerts, and dashboards for CP availability, authentication
+  failures, webhook delivery, sandbox provisioning, worker connectivity,
+  database health, and quota enforcement.

@@ -7,8 +7,10 @@ import {
   Check,
   ChevronsUpDown,
   Cloud,
+  ExternalLink,
   FolderGit2,
   GitBranch,
+  Github,
   GitPullRequest,
   KeyRound,
   LayoutDashboard,
@@ -19,6 +21,7 @@ import {
   PanelRightOpen,
   Play,
   Plus,
+  RefreshCw,
   Settings,
   Square,
   Trash2,
@@ -38,6 +41,9 @@ import {
   CloudAPI,
   type AgentCredentialType,
   type CloudAgent,
+  type CloudGitHubConnection,
+  type CloudGitHubGrantedRepository,
+  type CloudGitHubInstallation,
   type CloudOrgMember,
   type CloudOrgMembership,
   type CloudOrgInvitation,
@@ -190,6 +196,8 @@ export default function CloudAppPage() {
   const [repositoriesError, setRepositoriesError] = useState<string | null>(
     null,
   );
+  const [githubConnection, setGitHubConnection] =
+    useState<CloudGitHubConnection | null>(null);
   const [connections, setConnections] = useState<ProviderConnection[]>([]);
   const [sandboxProvider, setSandboxProvider] = useState<"daytona" | "fly">(
     "daytona",
@@ -282,7 +290,7 @@ export default function CloudAppPage() {
     try {
       const savedSelection = JSON.parse(
         window.localStorage.getItem(cloudSelectionKey) ?? "{}",
-      ) as { projectId?: string; sessionId?: string };
+      ) as { orgId?: string; projectId?: string; sessionId?: string };
       const savedWidthValue = window.localStorage.getItem(cloudSidebarWidthKey);
       const savedCollapsed =
         window.localStorage.getItem(cloudSidebarCollapsedKey) === "true";
@@ -301,7 +309,15 @@ export default function CloudAppPage() {
       };
       setSelectedProjectId(null);
       setSelectedSessionId(null);
-      setView("board");
+      if (savedSelection.orgId) {
+        selectedOrgIdRef.current = savedSelection.orgId;
+        setSelectedOrgId(savedSelection.orgId);
+      }
+      setView(
+        new URLSearchParams(window.location.search).has("settings")
+          ? "settings"
+          : "board",
+      );
       if (Number.isFinite(savedWidth)) {
         setSidebarWidth(
           Math.min(
@@ -367,11 +383,12 @@ export default function CloudAppPage() {
     window.localStorage.setItem(
       cloudSelectionKey,
       JSON.stringify({
+        orgId: selectedOrgId,
         projectId: selectedProjectId,
         sessionId: selectedSessionId,
       }),
     );
-  }, [selectedProjectId, selectedSessionId, selectionRestored]);
+  }, [selectedOrgId, selectedProjectId, selectedSessionId, selectionRestored]);
 
   useEffect(() => {
     if (!selectionRestored) return;
@@ -515,6 +532,7 @@ export default function CloudAppPage() {
           setProjects([]);
           setSessions([]);
           setConnections([]);
+          setGitHubConnection(null);
           setOrgInvitations([]);
           setOrgMembers([]);
           setError(null);
@@ -530,12 +548,14 @@ export default function CloudAppPage() {
           projectData,
           sessionData,
           connectionData,
+          githubData,
           orgMemberData,
           orgInvitationData,
         ] = await Promise.all([
           api.projects(nextOrgId),
           api.sessions(nextOrgId),
           api.providerConnections(nextOrgId),
+          api.githubConnection(nextOrgId),
           api.orgMembers(nextOrgId),
           canLoadOrgInvitations
             ? api.orgInvitations(nextOrgId)
@@ -554,6 +574,7 @@ export default function CloudAppPage() {
         );
         setActiveChatSessionIds(authoritativeActive);
         setConnections(connectionData.providerConnections);
+        setGitHubConnection(githubData);
         setOrgMembers(orgMemberData.members);
         setOrgInvitations(orgInvitationData.invitations);
         setSandboxProvider(runtimeData.sandboxProvider);
@@ -754,6 +775,7 @@ export default function CloudAppPage() {
     displayName: string;
     repositoryUrl: string;
     defaultBranch: string;
+    githubRepositoryId?: number;
   }) => {
     if (!api || !selectedOrgId || !defaultAgent || !canEditOrg) {
       setError("Connect a coding agent before creating a cloud project.");
@@ -1425,6 +1447,7 @@ export default function CloudAppPage() {
                 orgInvitations={orgInvitations}
                 orgMembers={orgMembers}
                 connections={connections}
+                githubConnection={githubConnection}
                 sandboxProvider={sandboxProvider}
                 run={run}
                 loading={loading}
@@ -1493,7 +1516,13 @@ export default function CloudAppPage() {
           repositories={repositories}
           repositoriesLoading={repositoriesLoading}
           repositoriesError={repositoriesError}
+          githubConnection={githubConnection}
           loading={loading}
+          onOpenGitHubSettings={() => {
+            setShowProjectForm(false);
+            window.history.replaceState({}, "", "/app?settings=github");
+            setView("settings");
+          }}
           onClose={() => setShowProjectForm(false)}
           onSubmit={createProjectAndPrewarmOrchestrator}
         />
@@ -1972,6 +2001,7 @@ function CloudSettings({
   orgInvitations,
   orgMembers,
   connections,
+  githubConnection,
   sandboxProvider,
   run,
   loading,
@@ -1987,6 +2017,7 @@ function CloudSettings({
   orgInvitations: CloudOrgInvitation[];
   orgMembers: CloudOrgMember[];
   connections: ProviderConnection[];
+  githubConnection: CloudGitHubConnection | null;
   sandboxProvider: "daytona" | "fly";
   run: (operation: () => Promise<unknown>) => Promise<unknown>;
   loading: boolean;
@@ -2001,7 +2032,12 @@ function CloudSettings({
   );
   const [settingsPanel, setSettingsPanel] = useState<
     "profile" | "notifications" | "createOrg" | "org" | "agents" | "sandbox"
-  >("org");
+  >(() =>
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("settings") === "github"
+      ? "agents"
+      : "org",
+  );
   const [orgName, setOrgName] = useState(
     selectedOrg?.organization.displayName ?? "",
   );
@@ -2466,37 +2502,47 @@ function CloudSettings({
           </SettingsPanel>
           ) : null}
           {settingsPanel === "agents" ? (
-          <SettingsPanel
-            title="Provider connections"
-            description="Credentials are encrypted in AO Cloud and delivered only to authenticated workers during bootstrap."
-          >
-            {canAdminOrg && selectedOrgId ? (
-              <div className="divide-y divide-white/10 border-y border-white/10">
-                {CLOUD_AGENTS.map((agent) => (
-                  <AgentConnectionRow
-                    key={agent.id}
-                    agent={agent}
-                    connection={connectedAgents.get(agent.id)}
-                    run={run}
-                    validating={loading}
-                    connect={(credentialType, secret) =>
-                      api.connectAgent(selectedOrgId, agent.id, {
-                        credentialType,
-                        secret,
-                      })
-                    }
-                    disconnect={() =>
-                      api.disconnectAgent(selectedOrgId, agent.id)
-                    }
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="rounded-lg border border-white/10 bg-[#15171b] px-3 py-2 text-sm text-white/45">
-                Ask an organization admin to manage coding-agent connections.
-              </div>
-            )}
-          </SettingsPanel>
+          <div className="space-y-8">
+            <GitHubConnectionSettings
+              api={api}
+              connection={githubConnection}
+              orgId={selectedOrgId}
+              canAdmin={canAdminOrg}
+              loading={loading}
+              run={run}
+            />
+            <SettingsPanel
+              title="Coding agents"
+              description="Credentials are encrypted in AO Cloud and delivered only to authenticated workers during bootstrap."
+            >
+              {canAdminOrg && selectedOrgId ? (
+                <div className="divide-y divide-white/10 border-y border-white/10">
+                  {CLOUD_AGENTS.map((agent) => (
+                    <AgentConnectionRow
+                      key={agent.id}
+                      agent={agent}
+                      connection={connectedAgents.get(agent.id)}
+                      run={run}
+                      validating={loading}
+                      connect={(credentialType, secret) =>
+                        api.connectAgent(selectedOrgId, agent.id, {
+                          credentialType,
+                          secret,
+                        })
+                      }
+                      disconnect={() =>
+                        api.disconnectAgent(selectedOrgId, agent.id)
+                      }
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-white/10 bg-[#15171b] px-3 py-2 text-sm text-white/45">
+                  Coding-agent connections are read-only for your organization role.
+                </div>
+              )}
+            </SettingsPanel>
+          </div>
           ) : null}
           {settingsPanel === "sandbox" ? (
           <SettingsPanel
@@ -2574,6 +2620,245 @@ function CloudSettings({
           ) : null}
         </div>
       </div>
+    </div>
+  );
+}
+
+function gitHubInstallationSettingsURL(
+  installation: CloudGitHubInstallation,
+) {
+  const id = encodeURIComponent(installation.githubInstallationId);
+  if (installation.accountType.toLowerCase() === "organization") {
+    return `https://github.com/organizations/${encodeURIComponent(installation.accountLogin)}/settings/installations/${id}`;
+  }
+  return `https://github.com/settings/installations/${id}`;
+}
+
+export function GitHubConnectionSettings({
+  api,
+  connection,
+  orgId,
+  canAdmin,
+  loading,
+  run,
+}: {
+  api: CloudAPI;
+  connection: CloudGitHubConnection | null;
+  orgId: string | null;
+  canAdmin: boolean;
+  loading: boolean;
+  run: (operation: () => Promise<unknown>) => Promise<unknown>;
+}) {
+  const activeInstallations =
+    connection?.installations.filter(
+      (installation) => installation.status === "active",
+    ) ?? [];
+  const repositoryCount = connection?.repositories.length ?? 0;
+
+  return (
+    <SettingsPanel
+      title="GitHub"
+      description="Controls which repositories this organization can use for cloud projects."
+    >
+      {!connection ? (
+        <div className="flex items-center gap-2 text-sm text-white/45" role="status">
+          <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" />
+          Loading GitHub connection…
+        </div>
+      ) : connection.mode === "local-gh" ? (
+        <div className="space-y-4">
+          <div className="flex items-start gap-3">
+            <Github className="mt-0.5 size-4 shrink-0 text-white/70" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm text-white/85">Host GitHub CLI</p>
+              <p className="mt-0.5 text-xs leading-5 text-white/40">
+                Authentication is managed locally with <code>gh auth</code>. GitHub App
+                installation controls are unavailable in this mode.
+              </p>
+            </div>
+            <span className="font-mono text-[10px] uppercase text-[#74b98a]">
+              Managed locally
+            </span>
+          </div>
+          <RepositoryGrants repositories={connection.repositories} />
+        </div>
+      ) : connection.mode === "disabled" ? (
+        <div className="flex items-start gap-3">
+          <Github className="mt-0.5 size-4 shrink-0 text-white/35" />
+          <div>
+            <p className="text-sm text-white/70">GitHub is disabled</p>
+            <p className="mt-1 text-xs leading-5 text-white/40">
+              This AO Cloud deployment has no GitHub connection configured.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-2 border-b border-white/[0.08] pb-4">
+            <div className="flex min-w-0 flex-1 items-center gap-3">
+              <Github className="size-4 shrink-0 text-white/70" />
+              <div className="min-w-0">
+                <p className="truncate text-sm text-white/85">
+                  {activeInstallations.length > 0
+                    ? `${activeInstallations.length} connected account${activeInstallations.length === 1 ? "" : "s"}`
+                    : "GitHub App not connected"}
+                </p>
+                <p className="mt-0.5 text-xs text-white/40">
+                  {repositoryCount} granted repositor{repositoryCount === 1 ? "y" : "ies"}
+                  {connection.appSlug ? ` · ${connection.appSlug}` : ""}
+                </p>
+              </div>
+            </div>
+            {canAdmin && orgId ? (
+              <button
+                type="button"
+                className={activeInstallations.length > 0 ? button : primaryButton}
+                disabled={loading}
+                onClick={() =>
+                  void run(async () => {
+                    const { installUrl } = await api.startGitHubInstall(orgId);
+                    window.location.assign(installUrl);
+                  })
+                }
+              >
+                {activeInstallations.length > 0 ? "Connect another" : "Connect GitHub"}
+              </button>
+            ) : (
+              <span className="font-mono text-[10px] uppercase text-white/35">
+                Read only
+              </span>
+            )}
+          </div>
+
+          {connection.installations.length > 0 ? (
+            <div className="divide-y divide-white/[0.06] rounded-lg border border-white/[0.08] bg-[#111317]">
+              {connection.installations.map((installation) => (
+                <div
+                  key={installation.id}
+                  className="flex flex-wrap items-center gap-3 px-3 py-2.5"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm text-white/80">
+                      {installation.accountLogin}
+                    </p>
+                    <p className="mt-0.5 text-xs text-white/35">
+                      {installation.accountType} · {installation.repositorySelection} access
+                    </p>
+                  </div>
+                  <span
+                    className={`font-mono text-[10px] uppercase ${
+                      installation.status === "active"
+                        ? "text-[#74b98a]"
+                        : "text-white/35"
+                    }`}
+                  >
+                    {installation.status}
+                  </span>
+                  {canAdmin && orgId && installation.status === "active" ? (
+                    <div className="flex items-center gap-1">
+                      <a
+                        className={button}
+                        href={gitHubInstallationSettingsURL(installation)}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Configure
+                        <ExternalLink className="size-3" />
+                      </a>
+                      <button
+                        type="button"
+                        className={button}
+                        disabled={loading}
+                        onClick={() =>
+                          void run(() => api.syncGitHub(orgId))
+                        }
+                      >
+                        <RefreshCw className="size-3" />
+                        Sync
+                      </button>
+                      <button
+                        type="button"
+                        className={`${button} text-[#ef9b9b] hover:bg-[#ef6b6b]/10`}
+                        disabled={loading}
+                        onClick={() => {
+                          if (
+                            !window.confirm(
+                              `Disconnect GitHub account ${installation.accountLogin}? Cloud projects will no longer be able to use its repository grants.`,
+                            )
+                          ) {
+                            return;
+                          }
+                          void run(() =>
+                            api.disconnectGitHubInstallation(
+                              orgId,
+                              installation.githubInstallationId,
+                            ),
+                          );
+                        }}
+                      >
+                        Disconnect
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm leading-6 text-white/40">
+              {canAdmin
+                ? "Connect the GitHub App to grant this organization access to repositories."
+                : "An organization owner or admin must connect the GitHub App."}
+            </p>
+          )}
+
+          <RepositoryGrants repositories={connection.repositories} />
+        </div>
+      )}
+    </SettingsPanel>
+  );
+}
+
+function RepositoryGrants({
+  repositories,
+}: {
+  repositories: CloudGitHubGrantedRepository[];
+}) {
+  return (
+    <div>
+      <div className="mb-2 flex items-center gap-2">
+        <p className="text-xs text-white/55">Repository grants</p>
+        <span className="ml-auto font-mono text-[10px] uppercase text-white/30">
+          {repositories.length}
+        </span>
+      </div>
+      {repositories.length > 0 ? (
+        <div className="divide-y divide-white/[0.06] rounded-lg border border-white/[0.08] bg-[#111317]">
+          {repositories.map((repository) => (
+            <a
+              key={repository.repository.id}
+              href={repository.repository.htmlUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-2 px-3 py-2 text-sm text-white/70 transition-colors hover:bg-white/[0.03] hover:text-white"
+            >
+              <FolderGit2 className="size-3.5 shrink-0 text-white/40" />
+              <span className="min-w-0 flex-1 truncate">
+                {repository.repository.fullName}
+              </span>
+              {repository.repository.private ? (
+                <span className="font-mono text-[9px] uppercase text-white/30">
+                  Private
+                </span>
+              ) : null}
+              <ExternalLink className="size-3 shrink-0 text-white/25" />
+            </a>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs leading-5 text-white/35">
+          No repositories are currently granted.
+        </p>
+      )}
     </div>
   );
 }
@@ -2830,19 +3115,24 @@ function ProjectForm({
   repositories,
   repositoriesLoading,
   repositoriesError,
+  githubConnection,
   loading,
+  onOpenGitHubSettings,
   onClose,
   onSubmit,
 }: {
   repositories: CloudRepository[];
   repositoriesLoading: boolean;
   repositoriesError: string | null;
+  githubConnection: CloudGitHubConnection | null;
   loading: boolean;
+  onOpenGitHubSettings: () => void;
   onClose: () => void;
   onSubmit: (input: {
     displayName: string;
     repositoryUrl: string;
     defaultBranch: string;
+    githubRepositoryId?: number;
   }) => Promise<void>;
 }) {
   const [repositoryURL, setRepositoryURL] = useState(
@@ -2868,6 +3158,7 @@ function ProjectForm({
               selected.fullName.split("/").at(-1) ?? selected.fullName,
             repositoryUrl: selected.url,
             defaultBranch: selected.defaultBranch,
+            githubRepositoryId: selected.id,
           });
         }}
       >
@@ -2893,10 +3184,25 @@ function ProjectForm({
           </p>
         ) : repositoriesError ? (
           <p className="text-sm text-destructive">{repositoriesError}</p>
-        ) : repositories.length === 0 ? (
-          <p className="text-sm text-[#e8c14a]">
-            No repositories were returned by the configured GitHub connection.
-          </p>
+        ) : null}
+        {!repositoriesLoading && repositories.length === 0 ? (
+          <div className="rounded-lg border border-[#e8c14a]/20 bg-[#e8c14a]/[0.06] px-3 py-2.5">
+            <p className="text-sm text-[#e8c14a]">
+              {githubConnection?.mode === "github-app" &&
+              githubConnection.installations.some(
+                (installation) => installation.status === "active",
+              )
+                ? "No repositories are granted to this organization."
+                : "GitHub is not connected for this organization."}
+            </p>
+            <button
+              type="button"
+              className="mt-1.5 text-xs text-[#8eb6ff] hover:underline"
+              onClick={onOpenGitHubSettings}
+            >
+              Manage GitHub connection in Settings
+            </button>
+          </div>
         ) : null}
         <div className="flex justify-end gap-2">
           <button

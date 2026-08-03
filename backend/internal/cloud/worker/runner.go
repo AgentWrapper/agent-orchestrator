@@ -33,6 +33,9 @@ const (
 	terminalOutputAttemptTTL  = 5 * time.Second
 )
 
+// GitProxyUsername is the fixed username paired with a worker token for Git.
+const GitProxyUsername = "ao-worker"
+
 var errTerminalOutputQueueFull = errors.New("terminal output delivery queue is full")
 
 // Runner prepares a cloud workspace and runs its configured agent.
@@ -66,6 +69,10 @@ func (r *Runner) Run(ctx context.Context) error {
 	if err := os.MkdirAll(r.dataDir, 0o700); err != nil {
 		return fmt.Errorf("create worker data dir: %w", err)
 	}
+	if err := os.Setenv("AO_DATA_DIR", r.dataDir); err != nil {
+		return fmt.Errorf("set worker data dir: %w", err)
+	}
+	r.client.acceptToken(r.client.getToken())
 	if err := prepareWorkerHome(); err != nil {
 		return err
 	}
@@ -495,11 +502,20 @@ func (r *Runner) prepareRepository(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	workerGitHelperPath := ""
+	if localGitHubTokenPath == "" {
+		workerGitHelperPath, err = r.prepareWorkerGitCredentialHelper()
+		if err != nil {
+			return err
+		}
+	}
 	if info, err := os.Stat(filepath.Join(r.workspaceDir, ".git")); err == nil && info.IsDir() {
 		if localGitHubTokenPath != "" {
 			if err := r.configureLocalGitHubCredential(ctx, localGitHubTokenPath); err != nil {
 				return err
 			}
+		} else if err := r.configureWorkerGitCredential(ctx, workerGitHelperPath); err != nil {
+			return err
 		}
 		if err := r.checkoutBranch(ctx); err != nil {
 			return err
@@ -520,9 +536,13 @@ func (r *Runner) prepareRepository(ctx context.Context) error {
 			return err
 		}
 		commandEnvironment = append(commandEnvironment,
-			"GIT_CONFIG_COUNT=1",
-			"GIT_CONFIG_KEY_0=http.extraHeader",
-			"GIT_CONFIG_VALUE_0=Authorization: Worker "+r.client.getToken(),
+			"GIT_CONFIG_COUNT=3",
+			"GIT_CONFIG_KEY_0=credential.helper",
+			"GIT_CONFIG_VALUE_0=",
+			"GIT_CONFIG_KEY_1=credential.helper",
+			"GIT_CONFIG_VALUE_1="+workerGitHelperPath,
+			"GIT_CONFIG_KEY_2=credential.useHttpPath",
+			"GIT_CONFIG_VALUE_2=true",
 		)
 	} else {
 		credential := base64.StdEncoding.EncodeToString(
@@ -553,6 +573,8 @@ func (r *Runner) prepareRepository(ctx context.Context) error {
 		if err := r.configureLocalGitHubCredential(ctx, localGitHubTokenPath); err != nil {
 			return err
 		}
+	} else if err := r.configureWorkerGitCredential(ctx, workerGitHelperPath); err != nil {
+		return err
 	}
 	if err := r.checkoutBranch(ctx); err != nil {
 		return err
@@ -597,6 +619,79 @@ func (r *Runner) persistLocalGitHubToken() (string, error) {
 		return "", fmt.Errorf("persist local GitHub credential: %w", err)
 	}
 	return path, nil
+}
+
+func (r *Runner) prepareWorkerGitCredentialHelper() (string, error) {
+	if err := os.MkdirAll(r.dataDir, 0o700); err != nil {
+		return "", fmt.Errorf("create worker Git credential directory: %w", err)
+	}
+	tokenPath := filepath.Join(r.dataDir, "worker-token")
+	tokenInfo, err := os.Lstat(tokenPath)
+	if err != nil {
+		return "", fmt.Errorf("inspect worker token for Git credential helper: %w", err)
+	}
+	if !tokenInfo.Mode().IsRegular() {
+		return "", errors.New("worker token for Git credential helper is not a regular file")
+	}
+	if err := os.Chmod(tokenPath, 0o600); err != nil {
+		return "", fmt.Errorf("secure worker token for Git credential helper: %w", err)
+	}
+	helper := fmt.Sprintf(`#!/bin/sh
+if [ "$1" != "get" ]; then
+  exit 0
+fi
+token="$(cat %s)" || exit 1
+printf 'username=%s\npassword=%%s\n' "$token"
+`, shellQuote(tokenPath), GitProxyUsername)
+	temporary, err := os.CreateTemp(r.dataDir, ".git-credential-worker-*")
+	if err != nil {
+		return "", fmt.Errorf("create worker Git credential helper: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer func() { _ = os.Remove(temporaryPath) }()
+	if err := temporary.Chmod(0o700); err != nil {
+		_ = temporary.Close()
+		return "", fmt.Errorf("secure worker Git credential helper: %w", err)
+	}
+	if _, err := temporary.WriteString(helper); err != nil {
+		_ = temporary.Close()
+		return "", fmt.Errorf("write worker Git credential helper: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return "", fmt.Errorf("close worker Git credential helper: %w", err)
+	}
+	path := filepath.Join(r.dataDir, "git-credential-worker")
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return "", fmt.Errorf("persist worker Git credential helper: %w", err)
+	}
+	return path, nil
+}
+
+func (r *Runner) configureWorkerGitCredential(ctx context.Context, helperPath string) error {
+	proxyURL, err := cloudlocalgh.ProxyURL(
+		os.Getenv("AO_CLOUD_PUBLIC_URL"),
+		r.bootstrap.Launch.RepositoryURL,
+	)
+	if err != nil {
+		return err
+	}
+	commands := [][]string{
+		{"remote", "set-url", "origin", proxyURL},
+		{"config", "--local", "credential.helper", ""},
+		{"config", "--local", "--add", "credential.helper", helperPath},
+		{"config", "--local", "credential.useHttpPath", "true"},
+	}
+	for _, arguments := range commands {
+		command := exec.CommandContext(ctx, "git", append([]string{"-C", r.workspaceDir}, arguments...)...)
+		if output, err := command.CombinedOutput(); err != nil {
+			return fmt.Errorf(
+				"configure worker Git credential: %w: %s",
+				err,
+				strings.TrimSpace(string(output)),
+			)
+		}
+	}
+	return nil
 }
 
 func (r *Runner) configureLocalGitHubCredential(ctx context.Context, tokenPath string) error {

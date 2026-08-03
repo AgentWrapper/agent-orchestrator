@@ -4,41 +4,58 @@
 package config
 
 import (
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
 
+const (
+	maxGitHubPrivateKeyBytes int64 = 64 << 10
+)
+
 // Config contains the AO Cloud process configuration.
 type Config struct {
-	ListenAddr            string
-	PublicURL             string
-	WebPublicURL          string
-	AuthMode              string
-	AuthProvider          string
-	AuthIssuer            string
-	AuthAudience          string
-	AuthJWKSURL           string
-	WorkOSAPIKey          string
-	AllowExternalSignup   bool
-	DatabaseURL           string
-	DatabaseDirectURL     string
-	SandboxProvider       string
-	DaytonaAPIURL         string
-	DaytonaAPIKey         string
-	DaytonaTarget         string
-	DaytonaWorkerSnapshot string
-	DockerWorkerImage     string
-	EncryptionKey         []byte
-	WorkerSigningKey      []byte
-	ReconcileInterval     time.Duration
-	ShutdownTimeout       time.Duration
-	AllowLocalGitHub      bool
-	GitHubToken           string
-	WorkerBinaryPath      string
+	ListenAddr             string
+	PublicURL              string
+	WebPublicURL           string
+	AuthMode               string
+	AuthProvider           string
+	AuthIssuer             string
+	AuthAudience           string
+	AuthJWKSURL            string
+	WorkOSAPIKey           string
+	AllowExternalSignup    bool
+	DatabaseURL            string
+	DatabaseDirectURL      string
+	SandboxProvider        string
+	DaytonaAPIURL          string
+	DaytonaAPIKey          string
+	DaytonaTarget          string
+	DaytonaWorkerSnapshot  string
+	DockerWorkerImage      string
+	EncryptionKey          []byte
+	WorkerSigningKey       []byte
+	ReconcileInterval      time.Duration
+	ShutdownTimeout        time.Duration
+	AllowLocalGitHub       bool
+	GitHubToken            string
+	GitHubAuthMode         string
+	GitHubAppID            int64
+	GitHubAppClientID      string
+	GitHubAppSlug          string
+	GitHubAppPrivateKeyPEM []byte
+	GitHubAppWebhookSecret string
+	GitHubAppStateSecret   string
+	WorkerBinaryPath       string
 }
 
 // Load reads, defaults, and validates AO Cloud configuration from the environment.
@@ -51,33 +68,54 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	gitHubAuthMode := strings.TrimSpace(os.Getenv("AO_GITHUB_AUTH_MODE"))
+	gitHubAppID, err := parseOptionalInt64("AO_GITHUB_APP_ID")
+	if err != nil {
+		return Config{}, err
+	}
+	var gitHubAppPrivateKey []byte
+	if gitHubAuthMode == "github-app" {
+		gitHubAppPrivateKey, err = readPrivateKeyFile(
+			strings.TrimSpace(os.Getenv("AO_GITHUB_APP_PRIVATE_KEY_PATH")),
+		)
+		if err != nil {
+			return Config{}, err
+		}
+	}
 
 	cfg := Config{
-		ListenAddr:            envOr("AO_CLOUD_LISTEN_ADDR", "127.0.0.1:3010"),
-		PublicURL:             strings.TrimRight(envOr("AO_CLOUD_PUBLIC_URL", "http://127.0.0.1:3010"), "/"),
-		WebPublicURL:          strings.TrimRight(envOr("AO_WEB_PUBLIC_URL", "http://127.0.0.1:5174"), "/"),
-		AuthMode:              envOr("AO_CLOUD_AUTH_MODE", "local"),
-		AuthProvider:          strings.TrimSpace(os.Getenv("AO_CLOUD_AUTH_PROVIDER")),
-		AuthIssuer:            strings.TrimRight(strings.TrimSpace(os.Getenv("AO_CLOUD_AUTH_ISSUER")), "/"),
-		AuthAudience:          strings.TrimSpace(os.Getenv("AO_CLOUD_AUTH_AUDIENCE")),
-		AuthJWKSURL:           strings.TrimSpace(os.Getenv("AO_CLOUD_AUTH_JWKS_URL")),
-		WorkOSAPIKey:          strings.TrimSpace(os.Getenv("WORKOS_API_KEY")),
-		AllowExternalSignup:   envBool("AO_CLOUD_ALLOW_PUBLIC_SIGNUP", false),
-		DatabaseURL:           os.Getenv("AO_DATABASE_URL"),
-		DatabaseDirectURL:     strings.TrimSpace(os.Getenv("AO_DATABASE_DIRECT_URL")),
-		SandboxProvider:       envOr("AO_SANDBOX_PROVIDER", "docker"),
-		DaytonaAPIURL:         strings.TrimRight(envOr("AO_DAYTONA_API_URL", "https://app.daytona.io/api"), "/"),
-		DaytonaAPIKey:         os.Getenv("AO_DAYTONA_API_KEY"),
-		DaytonaTarget:         envOr("AO_DAYTONA_TARGET", "us"),
-		DaytonaWorkerSnapshot: strings.TrimSpace(os.Getenv("AO_DAYTONA_WORKER_SNAPSHOT")),
-		DockerWorkerImage:     envOr("AO_DOCKER_WORKER_IMAGE", "ao-cloud-worker:local"),
-		EncryptionKey:         encryptionKey,
-		WorkerSigningKey:      workerSigningKey,
-		ReconcileInterval:     2 * time.Second,
-		ShutdownTimeout:       15 * time.Second,
-		AllowLocalGitHub:      os.Getenv("AO_GITHUB_AUTH_MODE") == "local-gh",
-		GitHubToken:           strings.TrimSpace(os.Getenv("AO_LOCAL_GITHUB_TOKEN")),
-		WorkerBinaryPath:      strings.TrimSpace(os.Getenv("AO_WORKER_BINARY_PATH")),
+		ListenAddr:             envOr("AO_CLOUD_LISTEN_ADDR", "127.0.0.1:3010"),
+		PublicURL:              strings.TrimRight(envOr("AO_CLOUD_PUBLIC_URL", "http://127.0.0.1:3010"), "/"),
+		WebPublicURL:           strings.TrimRight(envOr("AO_WEB_PUBLIC_URL", "http://127.0.0.1:5174"), "/"),
+		AuthMode:               envOr("AO_CLOUD_AUTH_MODE", "local"),
+		AuthProvider:           strings.TrimSpace(os.Getenv("AO_CLOUD_AUTH_PROVIDER")),
+		AuthIssuer:             strings.TrimRight(strings.TrimSpace(os.Getenv("AO_CLOUD_AUTH_ISSUER")), "/"),
+		AuthAudience:           strings.TrimSpace(os.Getenv("AO_CLOUD_AUTH_AUDIENCE")),
+		AuthJWKSURL:            strings.TrimSpace(os.Getenv("AO_CLOUD_AUTH_JWKS_URL")),
+		WorkOSAPIKey:           strings.TrimSpace(os.Getenv("WORKOS_API_KEY")),
+		AllowExternalSignup:    envBool("AO_CLOUD_ALLOW_PUBLIC_SIGNUP", false),
+		DatabaseURL:            os.Getenv("AO_DATABASE_URL"),
+		DatabaseDirectURL:      strings.TrimSpace(os.Getenv("AO_DATABASE_DIRECT_URL")),
+		SandboxProvider:        envOr("AO_SANDBOX_PROVIDER", "docker"),
+		DaytonaAPIURL:          strings.TrimRight(envOr("AO_DAYTONA_API_URL", "https://app.daytona.io/api"), "/"),
+		DaytonaAPIKey:          os.Getenv("AO_DAYTONA_API_KEY"),
+		DaytonaTarget:          envOr("AO_DAYTONA_TARGET", "us"),
+		DaytonaWorkerSnapshot:  strings.TrimSpace(os.Getenv("AO_DAYTONA_WORKER_SNAPSHOT")),
+		DockerWorkerImage:      envOr("AO_DOCKER_WORKER_IMAGE", "ao-cloud-worker:local"),
+		EncryptionKey:          encryptionKey,
+		WorkerSigningKey:       workerSigningKey,
+		ReconcileInterval:      2 * time.Second,
+		ShutdownTimeout:        15 * time.Second,
+		AllowLocalGitHub:       gitHubAuthMode == "local-gh",
+		GitHubToken:            strings.TrimSpace(os.Getenv("AO_LOCAL_GITHUB_TOKEN")),
+		GitHubAuthMode:         gitHubAuthMode,
+		GitHubAppID:            gitHubAppID,
+		GitHubAppClientID:      strings.TrimSpace(os.Getenv("AO_GITHUB_APP_CLIENT_ID")),
+		GitHubAppSlug:          strings.TrimSpace(os.Getenv("AO_GITHUB_APP_SLUG")),
+		GitHubAppPrivateKeyPEM: gitHubAppPrivateKey,
+		GitHubAppWebhookSecret: strings.TrimSpace(os.Getenv("AO_GITHUB_APP_WEBHOOK_SECRET")),
+		GitHubAppStateSecret:   strings.TrimSpace(os.Getenv("AO_GITHUB_APP_STATE_SECRET")),
+		WorkerBinaryPath:       strings.TrimSpace(os.Getenv("AO_WORKER_BINARY_PATH")),
 	}
 	if cfg.AuthMode == "workos" {
 		workOSClientID := strings.TrimSpace(os.Getenv("WORKOS_CLIENT_ID"))
@@ -147,6 +185,43 @@ func (c Config) Validate() error {
 	default:
 		return fmt.Errorf("AO_CLOUD_AUTH_MODE must be local, workos, or external, got %q", c.AuthMode)
 	}
+	switch c.GitHubAuthMode {
+	case "":
+		if c.AuthMode == "workos" {
+			return errors.New("AO_GITHUB_AUTH_MODE must be github-app when AO_CLOUD_AUTH_MODE is workos")
+		}
+	case "local-gh":
+		if c.AuthMode != "local" {
+			return errors.New("AO_GITHUB_AUTH_MODE=local-gh is allowed only when AO_CLOUD_AUTH_MODE=local")
+		}
+	case "github-app":
+		if c.GitHubAppID <= 0 {
+			return errors.New("AO_GITHUB_APP_ID must be a positive integer")
+		}
+		if strings.TrimSpace(c.GitHubAppClientID) == "" {
+			return errors.New("AO_GITHUB_APP_CLIENT_ID is required")
+		}
+		if strings.TrimSpace(c.GitHubAppSlug) == "" {
+			return errors.New("AO_GITHUB_APP_SLUG is required")
+		}
+		if err := validateGitHubPrivateKeyPEM(c.GitHubAppPrivateKeyPEM); err != nil {
+			return err
+		}
+		if len(c.GitHubAppWebhookSecret) < 32 {
+			return errors.New("AO_GITHUB_APP_WEBHOOK_SECRET must be at least 32 characters")
+		}
+		if len(c.GitHubAppStateSecret) < 32 {
+			return errors.New("AO_GITHUB_APP_STATE_SECRET must be at least 32 characters")
+		}
+		if c.GitHubAppWebhookSecret == c.GitHubAppStateSecret {
+			return errors.New("AO_GITHUB_APP_WEBHOOK_SECRET and AO_GITHUB_APP_STATE_SECRET must be independent")
+		}
+		if c.GitHubToken != "" {
+			return errors.New("AO_LOCAL_GITHUB_TOKEN must not be set when AO_GITHUB_AUTH_MODE=github-app")
+		}
+	default:
+		return fmt.Errorf("AO_GITHUB_AUTH_MODE must be empty, local-gh, or github-app, got %q", c.GitHubAuthMode)
+	}
 	switch c.SandboxProvider {
 	case "docker":
 		if strings.TrimSpace(c.DockerWorkerImage) == "" {
@@ -198,4 +273,81 @@ func decodeKey(name string) ([]byte, error) {
 		return nil, fmt.Errorf("%s must be hexadecimal: %w", name, err)
 	}
 	return key, nil
+}
+
+func parseOptionalInt64(name string) (int64, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("%s must be a positive base-10 integer", name)
+	}
+	return value, nil
+}
+
+func readPrivateKeyFile(path string) ([]byte, error) {
+	if path == "" {
+		return nil, errors.New("AO_GITHUB_APP_PRIVATE_KEY_PATH is required when AO_GITHUB_AUTH_MODE=github-app")
+	}
+	if !filepath.IsAbs(path) {
+		return nil, errors.New("AO_GITHUB_APP_PRIVATE_KEY_PATH must be an absolute path")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("read AO_GITHUB_APP_PRIVATE_KEY_PATH: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("AO_GITHUB_APP_PRIVATE_KEY_PATH must not be a symbolic link")
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("AO_GITHUB_APP_PRIVATE_KEY_PATH must be a regular file")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return nil, errors.New("AO_GITHUB_APP_PRIVATE_KEY_PATH must not be readable or writable by group or others")
+	}
+	if info.Size() == 0 || info.Size() > maxGitHubPrivateKeyBytes {
+		return nil, fmt.Errorf("AO_GITHUB_APP_PRIVATE_KEY_PATH must be between 1 and %d bytes", maxGitHubPrivateKeyBytes)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open AO_GITHUB_APP_PRIVATE_KEY_PATH: %w", err)
+	}
+	defer file.Close()
+	privateKey, err := io.ReadAll(io.LimitReader(file, maxGitHubPrivateKeyBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read AO_GITHUB_APP_PRIVATE_KEY_PATH: %w", err)
+	}
+	if int64(len(privateKey)) > maxGitHubPrivateKeyBytes {
+		return nil, fmt.Errorf("AO_GITHUB_APP_PRIVATE_KEY_PATH must be at most %d bytes", maxGitHubPrivateKeyBytes)
+	}
+	return privateKey, nil
+}
+
+func validateGitHubPrivateKeyPEM(privateKeyPEM []byte) error {
+	block, rest := pem.Decode(privateKeyPEM)
+	if block == nil || len(strings.TrimSpace(string(rest))) != 0 {
+		return errors.New("AO_GITHUB_APP_PRIVATE_KEY_PATH must contain exactly one PEM private key")
+	}
+	if x509.IsEncryptedPEMBlock(block) {
+		return errors.New("AO_GITHUB_APP_PRIVATE_KEY_PATH must contain an unencrypted RSA private key")
+	}
+	var key any
+	var err error
+	switch block.Type {
+	case "RSA PRIVATE KEY":
+		key, err = x509.ParsePKCS1PrivateKey(block.Bytes)
+	case "PRIVATE KEY":
+		key, err = x509.ParsePKCS8PrivateKey(block.Bytes)
+	default:
+		return errors.New("AO_GITHUB_APP_PRIVATE_KEY_PATH must contain an RSA private key")
+	}
+	if err != nil {
+		return fmt.Errorf("AO_GITHUB_APP_PRIVATE_KEY_PATH contains an invalid private key: %w", err)
+	}
+	if _, ok := key.(*rsa.PrivateKey); !ok {
+		return errors.New("AO_GITHUB_APP_PRIVATE_KEY_PATH must contain an RSA private key")
+	}
+	return nil
 }

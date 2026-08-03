@@ -21,6 +21,7 @@ import (
 	clouddocker "github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandbox/docker"
 	cloudsandboxresolve "github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandboxresolve"
 	cloudscm "github.com/aoagents/agent-orchestrator/backend/internal/cloud/scm"
+	cloudgithubapp "github.com/aoagents/agent-orchestrator/backend/internal/cloud/scm/githubapp"
 	cloudlocalgh "github.com/aoagents/agent-orchestrator/backend/internal/cloud/scm/localgh"
 	cloudsecrets "github.com/aoagents/agent-orchestrator/backend/internal/cloud/secrets"
 	cloudworker "github.com/aoagents/agent-orchestrator/backend/internal/cloud/worker"
@@ -78,18 +79,48 @@ func run(log *slog.Logger) error {
 	}
 	workerTokens := cloudworker.NewTokenManager(cfg.WorkerSigningKey)
 	workerHub := cloudworkerhub.New()
+	var githubAppClient *cloudgithubapp.Client
+	if cfg.GitHubAuthMode == "github-app" {
+		githubAppClient, err = cloudgithubapp.New(cloudgithubapp.Config{
+			ClientID:      cfg.GitHubAppClientID,
+			PrivateKeyPEM: cfg.GitHubAppPrivateKeyPEM,
+		})
+		if err != nil {
+			return err
+		}
+	}
 	var localGitHub *cloudlocalgh.Client
-	switch {
-	case cfg.GitHubToken != "":
+	switch cfg.GitHubAuthMode {
+	case "github-app":
 		localGitHub = cloudlocalgh.NewWithTokenSource(
-			cloudlocalgh.StaticTokenSource(cfg.GitHubToken),
+			cloudlocalgh.NewCredentialBroker(store, githubAppClient),
 			nil,
 		)
-	case cfg.AllowLocalGitHub:
-		localGitHub = cloudlocalgh.New(nil)
+	case "local-gh":
+		if cfg.GitHubToken != "" {
+			localGitHub = cloudlocalgh.NewWithTokenSource(
+				cloudlocalgh.StaticTokenSource(cfg.GitHubToken),
+				nil,
+			)
+		} else if cfg.AllowLocalGitHub {
+			localGitHub = cloudlocalgh.New(nil)
+		}
 	}
+	var repositoryRefresh cloudhttp.RepositoryRefresh
 	if localGitHub != nil {
-		scmObserver := cloudscm.New(store, localGitHub, eventService, 30*time.Second, log)
+		observerOptions := make([]cloudscm.ObserverOption, 0, 1)
+		if cfg.GitHubAuthMode == "github-app" {
+			observerOptions = append(observerOptions, cloudscm.WithGitHubAppMode())
+		}
+		scmObserver := cloudscm.New(
+			store,
+			localGitHub,
+			eventService,
+			30*time.Second,
+			log,
+			observerOptions...,
+		)
+		repositoryRefresh = scmObserver.RefreshRepository
 		go func() {
 			if err := scmObserver.Run(ctx); err != nil {
 				log.Error("cloud SCM observer stopped", "err", err)
@@ -155,7 +186,25 @@ func run(log *slog.Logger) error {
 		cfg.WebPublicURL,
 		cfg.AllowExternalSignup,
 		log,
+		cloudhttp.WithGitHubApp(cloudhttp.GitHubAppConfig{
+			Mode:              cfg.GitHubAuthMode,
+			AppID:             cfg.GitHubAppID,
+			ClientID:          cfg.GitHubAppClientID,
+			AppSlug:           cfg.GitHubAppSlug,
+			StateSecret:       []byte(cfg.GitHubAppStateSecret),
+			WebhookSecret:     []byte(cfg.GitHubAppWebhookSecret),
+			Client:            githubAppClient,
+			RepositoryRefresh: repositoryRefresh,
+		}),
 	)
+	if cfg.GitHubAuthMode == "github-app" {
+		go func() {
+			if err := api.RunGitHubWebhookProcessor(ctx); err != nil {
+				log.Error("GitHub webhook processor stopped", "err", err)
+				stop()
+			}
+		}()
+	}
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           api.Handler(),

@@ -79,6 +79,11 @@ tables, linked with foreign keys:
 | `ao_audit_events` | Audit-log foundation: actor, action, resource, metadata, and time. |
 | `ao_pull_requests` | Normalized pull-request facts observed for a session. |
 | `ao_pr_checks` | CI/check facts belonging to a normalized pull request. |
+| `ao_github_install_attempts` | Signed, expiring, single-use AO user/org installation attempts. |
+| `ao_github_installations` | Organization-bound GitHub App installations, permissions, events, and lifecycle status. |
+| `ao_github_repositories` | Canonical GitHub repository identity and metadata. |
+| `ao_github_repository_grants` | Durable intervals in which an installation grants an AO organization access to a repository. |
+| `ao_github_webhook_deliveries` | Signed, deduplicated, retryable GitHub webhook inbox. |
 
 The main relationships are:
 
@@ -87,6 +92,8 @@ account → projects → sessions
 session → commands, events, turns, sandbox, worker connection, access tickets
 sandbox → provider connection
 session → pull requests → PR checks
+organization → GitHub installations → repository grants → GitHub repositories
+GitHub webhook deliveries → installation/repository reconciliation
 ```
 
 The rebuild must replace the single-user `account_id` ownership model with
@@ -150,7 +157,34 @@ WorkOS proves identity; AO owns authorization and resource ownership.
   project, repository, session, spending, and audit permissions. This model is
   where cloud resources become distinct from all local resources.
 
-### 4. Control-plane API service (grows substantially)
+### 4. GitHub App installation and credential boundary
+
+The GitHub App is AO Cloud's hosted repository authority. Local email/password
+development remains a separate explicit mode that uses the host `gh`
+credential.
+
+- An AO organization owner/admin starts an expiring, signed, single-use install
+  attempt. The control plane validates the returned App installation, binds it
+  to the organization, and synchronizes the selected repositories into durable
+  grants.
+- Webhooks are signature-verified, deduplicated by GitHub delivery ID, stored
+  before processing, and retried with bounded backoff. Installation and
+  repository-selection changes reconcile the durable grants.
+- Project creation and every SCM/Git operation require an active
+  organization/repository grant.
+- The credential broker mints a short-lived installation token for exactly one
+  repository and one allowed operation/permission set. Tokens are retained only
+  in control-plane memory and are not included in worker bootstrap data,
+  persisted in sandboxes, or logged. The App private key remains
+  control-plane-only.
+- The chosen installation flow does not use GitHub user OAuth or request user
+  authorization. AO proves which AO owner/admin initiated and confirmed the
+  signed attempt and that the installation belongs to the configured App, but
+  cannot cryptographically prove the same GitHub human clicked Install. The AO
+  initiator is responsible for confirming the GitHub account and repository
+  selection.
+
+### 5. Control-plane API service (grows substantially)
 
 The trusted, long-running server-side authority that replaces the
 local daemon's role for cloud projects.
@@ -174,7 +208,7 @@ local daemon's role for cloud projects.
   durable truth, routing, lifecycle intent, and recovery; neither the browser
   nor a disposable sandbox is allowed to become authoritative.
 
-### 5. Sandbox supervisor and provisioner (reuse and extend)
+### 6. Sandbox supervisor and provisioner (reuse and extend)
 
 The control-plane subsystem that manages cloud compute boxes, one
 isolated sandbox per active AO session.

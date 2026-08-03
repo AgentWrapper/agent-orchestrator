@@ -213,3 +213,113 @@ it("loads session SCM through org-scoped routes", async () => {
     expect.any(Object),
   );
 });
+
+it("uses the fixed GitHub App connection routes and payloads", async () => {
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          mode: "github-app",
+          appSlug: "ao-cloud",
+          installations: [],
+          repositories: [],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    )
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ installUrl: "https://github.com/apps/ao-cloud/installations/new" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    )
+    .mockResolvedValue(
+      new Response(null, { status: 204 }),
+    );
+  vi.stubGlobal("fetch", fetchMock);
+  const api = Object.assign(Object.create(CloudAPI.prototype) as CloudAPI, {
+    baseURL: "https://cloud.example.com",
+    accessToken: "access-token",
+  });
+
+  await api.githubConnection("org one");
+  await api.startGitHubInstall("org one");
+  await api.pendingGitHubInstall("org one", "opaque-state");
+  await api.confirmGitHubInstall("org one", {
+    state: "opaque-state",
+  });
+  await api.syncGitHub("org one");
+  await api.disconnectGitHubInstallation("org one", 42);
+
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    1,
+    "https://cloud.example.com/api/cloud/v1/orgs/org%20one/github",
+    expect.any(Object),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "https://cloud.example.com/api/cloud/v1/orgs/org%20one/github/install",
+    expect.objectContaining({ method: "POST", body: "{}" }),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    3,
+    "https://cloud.example.com/api/cloud/v1/orgs/org%20one/github/install/pending",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ state: "opaque-state" }),
+    }),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    4,
+    "https://cloud.example.com/api/cloud/v1/orgs/org%20one/github/install/confirm",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ state: "opaque-state" }),
+    }),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    5,
+    "https://cloud.example.com/api/cloud/v1/orgs/org%20one/github/sync",
+    expect.objectContaining({ method: "POST" }),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    6,
+    "https://cloud.example.com/api/cloud/v1/orgs/org%20one/github/installations/42",
+    expect.objectContaining({ method: "DELETE" }),
+  );
+});
+
+it("links project creation to the selected GitHub repository grant", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ project: {} }), {
+      status: 201,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  const api = Object.assign(Object.create(CloudAPI.prototype) as CloudAPI, {
+    baseURL: "https://cloud.example.com",
+    accessToken: "access-token",
+  });
+
+  await api.createProject("org one", {
+    displayName: "agent-orchestrator",
+    repositoryUrl: "https://github.com/aoagents/agent-orchestrator",
+    defaultBranch: "main",
+    githubRepositoryId: 991,
+  });
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "https://cloud.example.com/api/cloud/v1/orgs/org%20one/projects",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        displayName: "agent-orchestrator",
+        repositoryUrl: "https://github.com/aoagents/agent-orchestrator",
+        defaultBranch: "main",
+        githubRepositoryId: 991,
+      }),
+    }),
+  );
+});

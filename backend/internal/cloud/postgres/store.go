@@ -352,10 +352,11 @@ func ensureUserOrgTx(ctx context.Context, tx pgx.Tx, account clouddomain.Account
 
 // CreateProjectInput contains the writable fields of a new project.
 type CreateProjectInput struct {
-	DisplayName   string
-	RepositoryURL string
-	DefaultBranch string
-	Config        json.RawMessage
+	DisplayName        string
+	RepositoryURL      string
+	DefaultBranch      string
+	GitHubRepositoryID *int64
+	Config             json.RawMessage
 }
 
 // CreateProject creates a repository-backed project in an account.
@@ -370,18 +371,35 @@ func (s *Store) CreateProject(
 	var project clouddomain.Project
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO ao_projects (
-			account_id, org_id, display_name, repository_url, default_branch, config
+			account_id, org_id, display_name, repository_url, default_branch,
+			github_repository_id, github_repository_grant_id, config
 		)
-		VALUES ($1, $1, $2, $3, $4, $5)
+		VALUES (
+			$1, $1, $2, $3, $4, $5,
+			CASE WHEN $5::bigint IS NULL THEN NULL ELSE (
+				SELECT repository_grant.id
+				FROM ao_github_repository_grants repository_grant
+				JOIN ao_github_installations installation
+					ON installation.org_id = repository_grant.org_id
+					AND installation.id = repository_grant.installation_id
+				WHERE repository_grant.org_id = $1
+					AND repository_grant.github_repository_id = $5
+					AND repository_grant.revoked_at IS NULL
+					AND installation.status = 'active'
+			) END,
+			$6
+		)
 		RETURNING id, account_id, org_id, display_name, repository_url, default_branch,
-			config, created_at, updated_at
-	`, accountID, input.DisplayName, input.RepositoryURL, input.DefaultBranch, input.Config).Scan(
+			github_repository_id, config, created_at, updated_at
+	`, accountID, input.DisplayName, input.RepositoryURL, input.DefaultBranch,
+		input.GitHubRepositoryID, input.Config).Scan(
 		&project.ID,
 		&project.AccountID,
 		&project.OrgID,
 		&project.DisplayName,
 		&project.RepositoryURL,
 		&project.DefaultBranch,
+		&project.GitHubRepositoryID,
 		&project.Config,
 		&project.CreatedAt,
 		&project.UpdatedAt,
@@ -405,7 +423,7 @@ func (s *Store) ListProjects(
 ) ([]clouddomain.Project, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, account_id, org_id, display_name, repository_url, default_branch,
-			config, created_at, updated_at
+			github_repository_id, config, created_at, updated_at
 		FROM ao_projects
 		WHERE org_id = $1
 		ORDER BY created_at
@@ -424,6 +442,7 @@ func (s *Store) ListProjects(
 			&project.DisplayName,
 			&project.RepositoryURL,
 			&project.DefaultBranch,
+			&project.GitHubRepositoryID,
 			&project.Config,
 			&project.CreatedAt,
 			&project.UpdatedAt,
@@ -444,7 +463,7 @@ func (s *Store) GetProject(
 	var project clouddomain.Project
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, account_id, org_id, display_name, repository_url, default_branch,
-			config, created_at, updated_at
+			github_repository_id, config, created_at, updated_at
 		FROM ao_projects
 		WHERE org_id = $1 AND id = $2
 	`, accountID, projectID).Scan(
@@ -454,6 +473,7 @@ func (s *Store) GetProject(
 		&project.DisplayName,
 		&project.RepositoryURL,
 		&project.DefaultBranch,
+		&project.GitHubRepositoryID,
 		&project.Config,
 		&project.CreatedAt,
 		&project.UpdatedAt,

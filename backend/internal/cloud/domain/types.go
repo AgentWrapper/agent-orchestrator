@@ -115,15 +115,16 @@ type LocalUser struct {
 
 // Project describes a repository-backed cloud project.
 type Project struct {
-	ID            ProjectID       `json:"id"`
-	AccountID     AccountID       `json:"accountId"`
-	OrgID         OrgID           `json:"orgId"`
-	DisplayName   string          `json:"displayName"`
-	RepositoryURL string          `json:"repositoryUrl"`
-	DefaultBranch string          `json:"defaultBranch"`
-	Config        json.RawMessage `json:"config"`
-	CreatedAt     time.Time       `json:"createdAt"`
-	UpdatedAt     time.Time       `json:"updatedAt"`
+	ID                 ProjectID       `json:"id"`
+	AccountID          AccountID       `json:"accountId"`
+	OrgID              OrgID           `json:"orgId"`
+	DisplayName        string          `json:"displayName"`
+	RepositoryURL      string          `json:"repositoryUrl"`
+	DefaultBranch      string          `json:"defaultBranch"`
+	GitHubRepositoryID *int64          `json:"githubRepositoryId,omitempty"`
+	Config             json.RawMessage `json:"config"`
+	CreatedAt          time.Time       `json:"createdAt"`
+	UpdatedAt          time.Time       `json:"updatedAt"`
 }
 
 // Issue is the repository-scoped task snapshot attached to a Cloud session.

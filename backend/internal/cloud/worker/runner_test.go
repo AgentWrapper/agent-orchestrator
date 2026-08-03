@@ -325,6 +325,180 @@ func TestLocalGitHubCredentialPersistsAndConfiguresGit(t *testing.T) {
 	}
 }
 
+func TestWorkerGitCredentialHelperUsesCurrentTokenWithoutEmbeddingIt(t *testing.T) {
+	dataDir := t.TempDir()
+	tokenPath := filepath.Join(dataDir, "worker-token")
+	if err := os.WriteFile(tokenPath, []byte("initial-worker-token"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &Runner{dataDir: dataDir}
+	helperPath, err := runner.prepareWorkerGitCredentialHelper()
+	if err != nil {
+		t.Fatalf("prepareWorkerGitCredentialHelper() error = %v", err)
+	}
+
+	helperInfo, err := os.Stat(helperPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if helperInfo.Mode().Perm() != 0o700 {
+		t.Fatalf("helper mode = %o, want 700", helperInfo.Mode().Perm())
+	}
+	tokenInfo, err := os.Stat(tokenPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tokenInfo.Mode().Perm() != 0o600 {
+		t.Fatalf("token mode = %o, want 600", tokenInfo.Mode().Perm())
+	}
+	helperContents, err := os.ReadFile(helperPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(helperContents), "initial-worker-token") {
+		t.Fatal("credential helper embedded the worker token")
+	}
+	assertWorkerGitCredential(t, helperPath, "initial-worker-token")
+
+	if err := os.WriteFile(tokenPath, []byte("heartbeat-refreshed-token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	assertWorkerGitCredential(t, helperPath, "heartbeat-refreshed-token")
+	if strings.Contains(string(helperContents), "heartbeat-refreshed-token") {
+		t.Fatal("credential helper embedded the refreshed worker token")
+	}
+}
+
+func TestPrepareRepositoryConfiguresWorkerCredentialForNewAndResumedWorkspace(t *testing.T) {
+	root := t.TempDir()
+	sourceDir := filepath.Join(root, "source")
+	remoteDir := filepath.Join(
+		root,
+		"api",
+		"cloud",
+		"v1",
+		"git",
+		"example",
+		"repository.git",
+	)
+	if err := os.MkdirAll(sourceDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runGitTestCommand(t, sourceDir, nil, "init", "-b", "main")
+	runGitTestCommand(t, sourceDir, nil, "config", "user.email", "worker@example.test")
+	runGitTestCommand(t, sourceDir, nil, "config", "user.name", "AO Worker")
+	if err := os.WriteFile(filepath.Join(sourceDir, "README.md"), []byte("fixture\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGitTestCommand(t, sourceDir, nil, "add", "README.md")
+	runGitTestCommand(t, sourceDir, nil, "commit", "-m", "fixture")
+	if err := os.MkdirAll(filepath.Dir(remoteDir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runGitTestCommand(t, root, nil, "clone", "--bare", sourceDir, remoteDir)
+
+	dataDir := filepath.Join(root, "worker-data")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "worker-token"), []byte("worker-token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AO_CLOUD_PUBLIC_URL", "file://"+root)
+	workspaceDir := filepath.Join(root, "workspace")
+	client := NewClient("http://127.0.0.1:1", nil)
+	client.SetToken("worker-token")
+	runner := &Runner{
+		client:       client,
+		workspaceDir: workspaceDir,
+		dataDir:      dataDir,
+		bootstrap: BootstrapResponse{
+			Launch: cloudpostgres.WorkerLaunchSpec{
+				RepositoryURL: "https://github.com/example/repository",
+				DefaultBranch: "main",
+				Session: clouddomain.Session{
+					Branch: "ao/session",
+				},
+			},
+		},
+	}
+
+	if err := runner.prepareRepository(context.Background()); err != nil {
+		t.Fatalf("prepareRepository(new) error = %v", err)
+	}
+	assertWorkerGitRepositoryConfig(
+		t,
+		workspaceDir,
+		filepath.Join(dataDir, "git-credential-worker"),
+		"worker-token",
+	)
+
+	runGitTestCommand(t, workspaceDir, nil, "config", "--local", "--unset-all", "credential.helper")
+	runGitTestCommand(t, workspaceDir, nil, "config", "--local", "--unset-all", "credential.useHttpPath")
+	if err := runner.prepareRepository(context.Background()); err != nil {
+		t.Fatalf("prepareRepository(resumed) error = %v", err)
+	}
+	assertWorkerGitRepositoryConfig(
+		t,
+		workspaceDir,
+		filepath.Join(dataDir, "git-credential-worker"),
+		"worker-token",
+	)
+}
+
+func assertWorkerGitCredential(t *testing.T, helperPath, token string) {
+	t.Helper()
+	command := exec.Command(helperPath, "get")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run worker Git credential helper: %v: %s", err, output)
+	}
+	credential := string(output)
+	if !strings.Contains(credential, "username="+GitProxyUsername+"\n") ||
+		!strings.Contains(credential, "password="+token+"\n") {
+		t.Fatalf("credential output = %q", credential)
+	}
+}
+
+func assertWorkerGitRepositoryConfig(t *testing.T, workspaceDir, helperPath, token string) {
+	t.Helper()
+	helpers := string(runGitTestCommand(
+		t,
+		workspaceDir,
+		nil,
+		"config",
+		"--local",
+		"--get-all",
+		"credential.helper",
+	))
+	if !strings.Contains(helpers, helperPath) {
+		t.Fatalf("credential helpers = %q, want %q", helpers, helperPath)
+	}
+	useHTTPPath := strings.TrimSpace(string(runGitTestCommand(
+		t,
+		workspaceDir,
+		nil,
+		"config",
+		"--local",
+		"--get",
+		"credential.useHttpPath",
+	)))
+	if useHTTPPath != "true" {
+		t.Fatalf("credential.useHttpPath = %q, want true", useHTTPPath)
+	}
+	credential := string(runGitTestCommand(
+		t,
+		workspaceDir,
+		[]byte("protocol=https\nhost=cloud.example\npath=api/cloud/v1/git/example/repository.git\n\n"),
+		"credential",
+		"fill",
+	))
+	if !strings.Contains(credential, "username="+GitProxyUsername+"\n") ||
+		!strings.Contains(credential, "password="+token+"\n") {
+		t.Fatalf("repository credential output = %q", credential)
+	}
+}
+
 func runGitTestCommand(
 	t *testing.T,
 	dir string,

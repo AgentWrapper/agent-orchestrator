@@ -6,8 +6,29 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 	"strings"
 )
+
+// GitOperation validates a Git smart-HTTP request and returns the least
+// privilege credential operation needed to serve it.
+func GitOperation(method, suffix string, query url.Values) (CredentialOperation, error) {
+	suffix = strings.Trim(strings.TrimSpace(suffix), "/")
+	switch {
+	case method == http.MethodGet && suffix == "info/refs":
+		switch query.Get("service") {
+		case "git-upload-pack":
+			return OperationGitUploadPack, nil
+		case "git-receive-pack":
+			return OperationGitReceivePack, nil
+		}
+	case method == http.MethodPost && suffix == "git-upload-pack":
+		return OperationGitUploadPack, nil
+	case method == http.MethodPost && suffix == "git-receive-pack":
+		return OperationGitReceivePack, nil
+	}
+	return "", fmt.Errorf("unsupported Git smart HTTP request")
+}
 
 // ProxyRepository forwards an authenticated Git smart-HTTP request to GitHub.
 func (c *Client) ProxyRepository(
@@ -16,6 +37,9 @@ func (c *Client) ProxyRepository(
 	r *http.Request,
 	owner, repository, suffix string,
 ) error {
+	if _, err := GitOperation(r.Method, suffix, r.URL.Query()); err != nil {
+		return err
+	}
 	token, err := c.tokens.Token(ctx)
 	if err != nil {
 		return err
@@ -29,9 +53,29 @@ func (c *Client) ProxyRepository(
 			request.Out.URL.Scheme = "https"
 			request.Out.URL.Host = "github.com"
 			request.Out.URL.Path = targetPath
+			request.Out.URL.RawQuery = ""
+			if strings.Trim(strings.TrimSpace(suffix), "/") == "info/refs" {
+				request.Out.URL.RawQuery = url.Values{
+					"service": {r.URL.Query().Get("service")},
+				}.Encode()
+			}
 			request.Out.Host = "github.com"
+			request.Out.Header = make(http.Header)
+			copyGitRequestHeaders(request.Out.Header, request.In.Header)
 			request.Out.Header.Set("Authorization", githubGitAuthorization(token))
-			request.Out.Header.Set("User-Agent", "ao-cloud-local-git-proxy")
+			request.Out.Header.Set("User-Agent", "ao-cloud-git-proxy")
+		},
+		ModifyResponse: func(response *http.Response) error {
+			contentType := response.Header.Get("Content-Type")
+			cacheControl := response.Header.Get("Cache-Control")
+			response.Header = make(http.Header)
+			if contentType != "" {
+				response.Header.Set("Content-Type", contentType)
+			}
+			if cacheControl != "" {
+				response.Header.Set("Cache-Control", cacheControl)
+			}
+			return nil
 		},
 		ErrorHandler: func(writer http.ResponseWriter, _ *http.Request, proxyErr error) {
 			http.Error(writer, "GitHub proxy failed", http.StatusBadGateway)
@@ -39,6 +83,19 @@ func (c *Client) ProxyRepository(
 	}
 	proxy.ServeHTTP(w, r)
 	return nil
+}
+
+func copyGitRequestHeaders(destination, source http.Header) {
+	const maxGitHeaderBytes = 8 << 10
+	remaining := 16 << 10
+	for _, name := range []string{"Accept", "Content-Type", "Git-Protocol"} {
+		for _, value := range source.Values(name) {
+			if len(value) <= maxGitHeaderBytes && len(value) <= remaining {
+				destination.Add(name, value)
+				remaining -= len(value)
+			}
+		}
+	}
 }
 
 func githubGitAuthorization(token string) string {

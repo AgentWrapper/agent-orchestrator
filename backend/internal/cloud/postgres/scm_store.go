@@ -13,16 +13,32 @@ import (
 
 // SCMTarget identifies a session branch that requires provider observation.
 type SCMTarget struct {
-	AccountID     clouddomain.AccountID
-	SessionID     clouddomain.SessionID
-	RepositoryURL string
-	Branch        string
+	AccountID          clouddomain.AccountID
+	OrgID              clouddomain.OrgID
+	SessionID          clouddomain.SessionID
+	RepositoryURL      string
+	GitHubRepositoryID *int64
+	GitHubGrantActive  bool
+	Branch             string
 }
 
 // ListSCMTargets returns active session branches to observe.
 func (s *Store) ListSCMTargets(ctx context.Context) ([]SCMTarget, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT session.org_id, session.id, project.repository_url, session.branch
+		SELECT session.account_id, session.org_id, session.id,
+			project.repository_url, project.github_repository_id,
+			EXISTS (
+				SELECT 1
+				FROM ao_github_repository_grants repository_grant
+				JOIN ao_github_installations installation
+					ON installation.org_id = repository_grant.org_id
+					AND installation.id = repository_grant.installation_id
+				WHERE repository_grant.org_id = session.org_id
+					AND repository_grant.github_repository_id = project.github_repository_id
+					AND repository_grant.revoked_at IS NULL
+					AND installation.status = 'active'
+			),
+			session.branch
 		FROM ao_sessions session
 		JOIN ao_projects project ON project.id = session.project_id
 		WHERE session.is_terminated = false
@@ -37,8 +53,11 @@ func (s *Store) ListSCMTargets(ctx context.Context) ([]SCMTarget, error) {
 		var target SCMTarget
 		if err := rows.Scan(
 			&target.AccountID,
+			&target.OrgID,
 			&target.SessionID,
 			&target.RepositoryURL,
+			&target.GitHubRepositoryID,
+			&target.GitHubGrantActive,
 			&target.Branch,
 		); err != nil {
 			return nil, fmt.Errorf("scan cloud SCM target: %w", err)

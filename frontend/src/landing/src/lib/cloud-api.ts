@@ -1,10 +1,53 @@
 import { env } from "@/env";
 
 export interface CloudRepository {
+  id?: number;
   fullName: string;
   url: string;
   defaultBranch: string;
   private: boolean;
+}
+
+export interface CloudGitHubInstallation {
+  id: string;
+  githubInstallationId: number;
+  accountLogin: string;
+  accountType: string;
+  status: string;
+  repositorySelection: string;
+}
+
+export interface CloudGitHubGrantedRepository {
+  repository: {
+    id: number;
+    fullName: string;
+    htmlUrl: string;
+    defaultBranch: string;
+    private: boolean;
+    archived: boolean;
+    disabled: boolean;
+  };
+  grant: {
+    installationId: string;
+    githubInstallationId: number;
+    repositorySelection: string;
+    grantedAt: string;
+    lastSyncedAt: string;
+  };
+}
+
+export interface CloudGitHubConnection {
+  mode: "local-gh" | "github-app" | "disabled";
+  appSlug: string;
+  installations: CloudGitHubInstallation[];
+  repositories: CloudGitHubGrantedRepository[];
+}
+
+export interface CloudGitHubPendingInstallation {
+  accountLogin: string;
+  accountType: string;
+  repositorySelection: "all" | "selected";
+  repositoryCount: number;
 }
 
 export interface CloudProject {
@@ -364,6 +407,53 @@ export class CloudAPI {
     );
   }
 
+  async githubConnection(orgId: string) {
+    return this.request<CloudGitHubConnection>(
+      this.orgPath(orgId, "/github"),
+    );
+  }
+
+  async startGitHubInstall(orgId: string) {
+    return this.request<{ installUrl: string }>(
+      this.orgPath(orgId, "/github/install"),
+      { method: "POST", body: {} },
+    );
+  }
+
+  async pendingGitHubInstall(orgId: string, state: string) {
+    return this.request<CloudGitHubPendingInstallation>(
+      this.orgPath(orgId, "/github/install/pending"),
+      { method: "POST", body: { state } },
+    );
+  }
+
+  async confirmGitHubInstall(orgId: string, input: { state: string }) {
+    return this.request<void>(
+      this.orgPath(orgId, "/github/install/confirm"),
+      { method: "POST", body: input },
+    );
+  }
+
+  async syncGitHub(orgId: string) {
+    return this.request<void>(
+      this.orgPath(orgId, "/github/sync"),
+      { method: "POST", body: {} },
+    );
+  }
+
+  async disconnectGitHubInstallation(
+    orgId: string,
+    installationId: number,
+  ) {
+    return this.request<void>(
+      this.orgPath(
+        orgId,
+        `/github/installations/${encodeURIComponent(installationId)}`,
+      ),
+      { method: "DELETE" },
+    );
+  }
+
   async projects(orgId: string) {
     return this.request<{ projects: CloudProject[] }>(
       this.orgPath(orgId, "/projects"),
@@ -374,6 +464,7 @@ export class CloudAPI {
     displayName: string;
     repositoryUrl: string;
     defaultBranch: string;
+    githubRepositoryId?: number;
     config?: Record<string, unknown>;
   }) {
     return this.request<{ project: CloudProject }>(this.orgPath(orgId, "/projects"), {

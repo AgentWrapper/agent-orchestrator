@@ -48,6 +48,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    volumes:
+      - ${AO_GITHUB_APP_PRIVATE_KEY_PATH:?set AO_GITHUB_APP_PRIVATE_KEY_PATH in .env.hosted}:/run/secrets/github-app-private-key.pem:ro
     environment:
       AO_CLOUD_LISTEN_ADDR: 0.0.0.0:3010
       AO_DATABASE_URL: postgresql://${AO_POSTGRES_USER:-ao}:${AO_POSTGRES_PASSWORD}@postgres:5432/${AO_POSTGRES_DATABASE:-ao_cloud}?sslmode=disable
@@ -69,6 +71,13 @@ services:
       AO_DAYTONA_WORKER_SNAPSHOT: ${AO_DAYTONA_WORKER_SNAPSHOT:-}
       AO_ENCRYPTION_KEY: ${AO_ENCRYPTION_KEY:?set AO_ENCRYPTION_KEY in .env.hosted}
       AO_WORKER_SIGNING_KEY: ${AO_WORKER_SIGNING_KEY:?set AO_WORKER_SIGNING_KEY in .env.hosted}
+      AO_GITHUB_AUTH_MODE: ${AO_GITHUB_AUTH_MODE:-github-app}
+      AO_GITHUB_APP_ID: ${AO_GITHUB_APP_ID:-4475070}
+      AO_GITHUB_APP_CLIENT_ID: ${AO_GITHUB_APP_CLIENT_ID:-Iv23lIaAnXMSyGGzVI4}
+      AO_GITHUB_APP_SLUG: ${AO_GITHUB_APP_SLUG:-ao-cloud-test}
+      AO_GITHUB_APP_PRIVATE_KEY_PATH: /run/secrets/github-app-private-key.pem
+      AO_GITHUB_APP_WEBHOOK_SECRET: ${AO_GITHUB_APP_WEBHOOK_SECRET:?set AO_GITHUB_APP_WEBHOOK_SECRET in .env.hosted}
+      AO_GITHUB_APP_STATE_SECRET: ${AO_GITHUB_APP_STATE_SECRET:?set AO_GITHUB_APP_STATE_SECRET in .env.hosted}
     networks:
       - internal
 

@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 
 import type { CloudProject, CloudSession } from "@/lib/cloud-api";
@@ -10,6 +16,10 @@ const apiMocks = vi.hoisted(() => ({
   sessions: vi.fn(),
   sessionSCM: vi.fn(),
   repositories: vi.fn(),
+  githubConnection: vi.fn(),
+  startGitHubInstall: vi.fn(),
+  syncGitHub: vi.fn(),
+  disconnectGitHubInstallation: vi.fn(),
   providerConnections: vi.fn(),
   invitations: vi.fn(),
   orgInvitations: vi.fn(),
@@ -31,6 +41,10 @@ vi.mock("@/lib/cloud-api", () => ({
     sessions = apiMocks.sessions;
     sessionSCM = apiMocks.sessionSCM;
     repositories = apiMocks.repositories;
+    githubConnection = apiMocks.githubConnection;
+    startGitHubInstall = apiMocks.startGitHubInstall;
+    syncGitHub = apiMocks.syncGitHub;
+    disconnectGitHubInstallation = apiMocks.disconnectGitHubInstallation;
     providerConnections = apiMocks.providerConnections;
     invitations = apiMocks.invitations;
     orgInvitations = apiMocks.orgInvitations;
@@ -109,6 +123,7 @@ const ownerOrg = {
 
 beforeEach(() => {
   window.localStorage.clear();
+  window.history.replaceState({}, "", "/app");
   vi.clearAllMocks();
   apiMocks.me.mockResolvedValue({
     user: {
@@ -148,6 +163,17 @@ beforeEach(() => {
     ],
   });
   apiMocks.repositories.mockRejectedValue(new Error("GitHub unavailable"));
+  apiMocks.githubConnection.mockResolvedValue({
+    mode: "github-app",
+    appSlug: "ao-cloud",
+    installations: [],
+    repositories: [],
+  });
+  apiMocks.startGitHubInstall.mockResolvedValue({
+    installUrl: "https://github.com/apps/ao-cloud/installations/new",
+  });
+  apiMocks.syncGitHub.mockResolvedValue(undefined);
+  apiMocks.disconnectGitHubInstallation.mockResolvedValue(undefined);
 });
 
 function renderBoard(
@@ -274,7 +300,167 @@ it("loads GitHub repositories only when the project form opens", async () => {
 
   expect(await screen.findByText("GitHub unavailable")).toBeVisible();
   expect(apiMocks.repositories).toHaveBeenCalledTimes(1);
+  expect(
+    screen.getByRole("button", {
+      name: "Manage GitHub connection in Settings",
+    }),
+  ).toBeVisible();
   expect(screen.getByText(project.displayName)).toBeVisible();
+});
+
+it("shows GitHub App accounts, grants, and owner controls", async () => {
+  apiMocks.githubConnection.mockResolvedValue({
+    mode: "github-app",
+    appSlug: "ao-cloud",
+    installations: [
+      {
+        id: "installation-one",
+        githubInstallationId: 42,
+        accountLogin: "aoagents",
+        accountType: "Organization",
+        status: "active",
+        repositorySelection: "selected",
+      },
+    ],
+    repositories: [
+      {
+        repository: {
+          id: 7,
+          fullName: "aoagents/agent-orchestrator",
+          htmlUrl: "https://github.com/aoagents/agent-orchestrator",
+          defaultBranch: "main",
+          private: true,
+          archived: false,
+          disabled: false,
+        },
+        grant: {
+          installationId: "installation-one",
+          githubInstallationId: 42,
+          repositorySelection: "selected",
+          grantedAt: "2026-08-03T00:00:00Z",
+          lastSyncedAt: "2026-08-03T00:00:00Z",
+        },
+      },
+    ],
+  });
+  const confirmDisconnect = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+  render(<CloudAppPage />);
+
+  fireEvent.click(await screen.findByRole("button", { name: /Settings/ }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Provider connections" }),
+  );
+
+  const account = await screen.findByText("aoagents");
+  const gitHubSection = within(account.closest("section")!);
+  expect(account).toBeVisible();
+  expect(gitHubSection.getByText(/1 granted repositor/)).toBeVisible();
+  expect(gitHubSection.getByText("aoagents/agent-orchestrator")).toBeVisible();
+  expect(gitHubSection.getByRole("link", { name: /Configure/ })).toHaveAttribute(
+    "href",
+    "https://github.com/organizations/aoagents/settings/installations/42",
+  );
+
+  fireEvent.click(gitHubSection.getByRole("button", { name: /Sync/ }));
+  await waitFor(() =>
+    expect(apiMocks.syncGitHub).toHaveBeenCalledWith("org-one"),
+  );
+
+  fireEvent.click(gitHubSection.getByRole("button", { name: "Disconnect" }));
+  expect(confirmDisconnect).toHaveBeenCalledWith(
+    expect.stringContaining("Disconnect GitHub account aoagents?"),
+  );
+  await waitFor(() =>
+    expect(apiMocks.disconnectGitHubInstallation).toHaveBeenCalledWith(
+      "org-one",
+      42,
+    ),
+  );
+});
+
+it("shows local GitHub authentication as locally managed without app controls", async () => {
+  apiMocks.githubConnection.mockResolvedValue({
+    mode: "local-gh",
+    appSlug: "",
+    installations: [],
+    repositories: [],
+  });
+
+  render(<CloudAppPage />);
+
+  fireEvent.click(await screen.findByRole("button", { name: /Settings/ }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Provider connections" }),
+  );
+
+  const localHeading = await screen.findByText("Host GitHub CLI");
+  const gitHubSection = within(localHeading.closest("section")!);
+  expect(localHeading).toBeVisible();
+  expect(gitHubSection.getByText("Managed locally")).toBeVisible();
+  expect(
+    gitHubSection.queryByRole("button", { name: /Connect GitHub/ }),
+  ).not.toBeInTheDocument();
+  expect(
+    gitHubSection.queryByRole("button", { name: "Disconnect" }),
+  ).not.toBeInTheDocument();
+});
+
+it("keeps GitHub App connection status read-only for members", async () => {
+  apiMocks.me.mockResolvedValue({
+    user: {
+      id: "user-one",
+      email: "user@example.com",
+      displayName: "User",
+    },
+    sandboxProvider: "daytona",
+    organizations: [
+      {
+        ...ownerOrg,
+        membership: { ...ownerOrg.membership, role: "member" },
+      },
+    ],
+  });
+  apiMocks.githubConnection.mockResolvedValue({
+    mode: "github-app",
+    appSlug: "ao-cloud",
+    installations: [
+      {
+        id: "installation-one",
+        githubInstallationId: 42,
+        accountLogin: "aoagents",
+        accountType: "Organization",
+        status: "active",
+        repositorySelection: "all",
+      },
+    ],
+    repositories: [],
+  });
+
+  render(<CloudAppPage />);
+
+  fireEvent.click(await screen.findByRole("button", { name: /Settings/ }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Provider connections" }),
+  );
+
+  expect(await screen.findByText("aoagents")).toBeVisible();
+  expect(screen.getByText("Read only")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: /Connect/ }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Disconnect" }),
+  ).not.toBeInTheDocument();
+});
+
+it("opens provider settings when returning from the GitHub callback", async () => {
+  window.history.replaceState({}, "", "/app?settings=github");
+
+  render(<CloudAppPage />);
+
+  expect(await screen.findByText("GitHub App not connected")).toBeVisible();
+  expect(screen.getByText("Coding agents")).toBeVisible();
 });
 
 it("shows invitation status, inviter, and settings notification badge", async () => {

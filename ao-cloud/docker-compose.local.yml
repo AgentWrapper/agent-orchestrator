@@ -31,6 +31,7 @@ services:
       - "127.0.0.1:3010:3010"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ${AO_GITHUB_APP_PRIVATE_KEY_PATH:-/dev/null}:/run/secrets/github-app-private-key.pem:ro
     environment:
       AO_CLOUD_LISTEN_ADDR: 0.0.0.0:3010
       AO_CLOUD_PUBLIC_URL: http://127.0.0.1:3010
@@ -51,6 +52,12 @@ services:
       AO_WORKER_SIGNING_KEY: ${AO_WORKER_SIGNING_KEY:-}
       AO_GITHUB_AUTH_MODE: ${AO_GITHUB_AUTH_MODE:-}
       AO_LOCAL_GITHUB_TOKEN: ${AO_LOCAL_GITHUB_TOKEN:-}
+      AO_GITHUB_APP_ID: ${AO_GITHUB_APP_ID:-}
+      AO_GITHUB_APP_CLIENT_ID: ${AO_GITHUB_APP_CLIENT_ID:-}
+      AO_GITHUB_APP_SLUG: ${AO_GITHUB_APP_SLUG:-}
+      AO_GITHUB_APP_PRIVATE_KEY_PATH: /run/secrets/github-app-private-key.pem
+      AO_GITHUB_APP_WEBHOOK_SECRET: ${AO_GITHUB_APP_WEBHOOK_SECRET:-}
+      AO_GITHUB_APP_STATE_SECRET: ${AO_GITHUB_APP_STATE_SECRET:-}
 
 volumes:
   ao-cloud-postgres:

@@ -103,6 +103,8 @@ type Server struct {
 	workerReplayWait    time.Duration
 	workerWriteWait     time.Duration
 	localGitHub         *cloudlocalgh.Client
+	githubStore         githubStore
+	githubApp           *githubAppRuntime
 	webOrigin           string
 	webOriginHost       string
 	allowExternalSignup bool
@@ -124,6 +126,7 @@ func New(
 	webOrigin string,
 	allowExternalSignup bool,
 	log *slog.Logger,
+	options ...Option,
 ) *Server {
 	if log == nil {
 		log = slog.Default()
@@ -149,6 +152,12 @@ func New(
 		webOrigin:           strings.TrimRight(webOrigin, "/"),
 		allowExternalSignup: allowExternalSignup,
 		log:                 log,
+	}
+	server.githubStore, _ = store.(githubStore)
+	for _, option := range options {
+		if option != nil {
+			option(server)
+		}
 	}
 	if parsed, err := url.Parse(server.webOrigin); err == nil {
 		server.webOriginHost = parsed.Host
@@ -204,6 +213,8 @@ func (s *Server) routes() http.Handler {
 		api.Post("/worker/bootstrap", s.workerBootstrap)
 		api.Get("/terminal", s.terminalSocket)
 		api.HandleFunc("/preview/{token}/*", s.workspacePreviewProxy)
+		api.Get("/github/install/callback", s.githubInstallCallback)
+		api.Post("/github/webhooks", s.githubWebhook)
 		api.Group(func(worker chi.Router) {
 			worker.Use(s.workerAuth)
 			worker.Post("/worker/heartbeat", s.workerHeartbeat)
@@ -291,6 +302,12 @@ func (s *Server) routes() http.Handler {
 				org.With(s.requireOrgRole("admin")).Put("/provider-connections/agents/{agent}", s.putAgentConnection)
 				org.With(s.requireOrgRole("admin")).Delete("/provider-connections/agents/{agent}", s.deleteAgentConnection)
 				org.Get("/repositories", s.listRepositories)
+				org.Get("/github", s.getGitHub)
+				org.With(s.requireOrgRole("admin")).Post("/github/install", s.createGitHubInstall)
+				org.With(s.requireOrgRole("admin")).Post("/github/install/pending", s.pendingGitHubInstall)
+				org.With(s.requireOrgRole("admin")).Post("/github/install/confirm", s.confirmGitHubInstall)
+				org.With(s.requireOrgRole("admin")).Post("/github/sync", s.syncGitHub)
+				org.With(s.requireOrgRole("admin")).Delete("/github/installations/{installationId}", s.deleteGitHubInstallation)
 			})
 		})
 	})
@@ -858,10 +875,11 @@ func writeLocalAuthResponse(w http.ResponseWriter, status int, principal cloudau
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	account, _ := accountFromContext(r.Context())
 	var input struct {
-		DisplayName   string          `json:"displayName"`
-		RepositoryURL string          `json:"repositoryUrl"`
-		DefaultBranch string          `json:"defaultBranch"`
-		Config        json.RawMessage `json:"config"`
+		DisplayName        string          `json:"displayName"`
+		RepositoryURL      string          `json:"repositoryUrl"`
+		DefaultBranch      string          `json:"defaultBranch"`
+		GitHubRepositoryID *int64          `json:"githubRepositoryId"`
+		Config             json.RawMessage `json:"config"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -869,7 +887,37 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	input.DisplayName = strings.TrimSpace(input.DisplayName)
 	input.RepositoryURL = strings.TrimSpace(input.RepositoryURL)
 	input.DefaultBranch = strings.TrimSpace(input.DefaultBranch)
-	if input.DisplayName == "" || !validGitHubRepositoryURL(input.RepositoryURL) {
+	if input.DisplayName == "" {
+		writeError(w, r, http.StatusBadRequest, "INVALID_PROJECT", "A project name is required.")
+		return
+	}
+	if s.githubMode() == "github-app" {
+		if input.GitHubRepositoryID == nil || *input.GitHubRepositoryID <= 0 || s.githubStore == nil {
+			writeError(w, r, http.StatusBadRequest, "INVALID_PROJECT", "An authorized GitHub repository is required.")
+			return
+		}
+		repositories, err := s.githubStore.ListActiveGitHubRepositories(
+			r.Context(),
+			clouddomain.OrgID(account.ID),
+		)
+		if err != nil {
+			s.internalError(w, r, "load authorized GitHub repository", err)
+			return
+		}
+		var selected *clouddomain.GitHubGrantedRepository
+		for index := range repositories {
+			if repositories[index].Repository.ID == *input.GitHubRepositoryID {
+				selected = &repositories[index]
+				break
+			}
+		}
+		if selected == nil {
+			writeError(w, r, http.StatusForbidden, "REPOSITORY_NOT_AUTHORIZED", "The GitHub repository is not authorized for this organization.")
+			return
+		}
+		input.RepositoryURL = selected.Repository.HTMLURL
+		input.DefaultBranch = selected.Repository.DefaultBranch
+	} else if !validGitHubRepositoryURL(input.RepositoryURL) {
 		writeError(w, r, http.StatusBadRequest, "INVALID_PROJECT", "A name and HTTPS GitHub repository URL are required.")
 		return
 	}
@@ -892,10 +940,11 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	project, err := s.store.CreateProject(r.Context(), account.ID, cloudpostgres.CreateProjectInput{
-		DisplayName:   input.DisplayName,
-		RepositoryURL: input.RepositoryURL,
-		DefaultBranch: input.DefaultBranch,
-		Config:        input.Config,
+		DisplayName:        input.DisplayName,
+		RepositoryURL:      input.RepositoryURL,
+		DefaultBranch:      input.DefaultBranch,
+		GitHubRepositoryID: input.GitHubRepositoryID,
+		Config:             input.Config,
 	})
 	if errors.Is(err, cloudpostgres.ErrProjectExists) {
 		writeError(w, r, http.StatusConflict, "PROJECT_EXISTS", "This repository is already registered.")
@@ -1488,7 +1537,7 @@ func (s *Server) workerBootstrap(w http.ResponseWriter, r *http.Request) {
 		defer func() { agentCredential.Secret = "" }()
 	}
 	localGitHubToken := ""
-	if s.sandboxProvider == "docker" && s.localGitHub != nil {
+	if includeLocalGitHubToken(s.sandboxProvider, s.githubMode(), s.localGitHub != nil) {
 		localGitHubToken, err = s.localGitHub.Token(r.Context())
 		if err != nil {
 			s.internalError(w, r, "load local GitHub credential for worker", err)
@@ -1544,18 +1593,31 @@ func (s *Server) workerBootstrap(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func includeLocalGitHubToken(sandboxProvider, githubMode string, githubConfigured bool) bool {
+	return sandboxProvider == "docker" && githubMode == "local-gh" && githubConfigured
+}
+
 type workerContextKey struct{}
 
 func (s *Server) workerAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		scheme, token, ok := strings.Cut(strings.TrimSpace(r.Header.Get("Authorization")), " ")
-		if !ok || !strings.EqualFold(scheme, "Worker") {
-			writeError(w, r, http.StatusUnauthorized, "WORKER_AUTH_REQUIRED", "A valid worker credential is required.")
+		switch {
+		case ok && strings.EqualFold(scheme, "Worker"):
+		case ok && strings.EqualFold(scheme, "Basic") && isWorkerGitProxyRequest(r):
+			username, password, basicOK := r.BasicAuth()
+			if !basicOK || username != cloudworker.GitProxyUsername {
+				writeWorkerAuthError(w, r, "INVALID_WORKER_TOKEN", "Worker credential is invalid or expired.")
+				return
+			}
+			token = password
+		default:
+			writeWorkerAuthError(w, r, "WORKER_AUTH_REQUIRED", "A valid worker credential is required.")
 			return
 		}
 		claims, err := s.workerTokens.Verify(token)
 		if err != nil {
-			writeError(w, r, http.StatusUnauthorized, "INVALID_WORKER_TOKEN", "Worker credential is invalid or expired.")
+			writeWorkerAuthError(w, r, "INVALID_WORKER_TOKEN", "Worker credential is invalid or expired.")
 			return
 		}
 		current, err := s.store.WorkerConnectionCurrent(
@@ -1570,11 +1632,37 @@ func (s *Server) workerAuth(next http.Handler) http.Handler {
 			return
 		}
 		if !current {
-			writeError(w, r, http.StatusUnauthorized, "STALE_WORKER_TOKEN", "Worker credential has been replaced.")
+			writeWorkerAuthError(w, r, "STALE_WORKER_TOKEN", "Worker credential has been replaced.")
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), workerContextKey{}, claims)))
 	})
+}
+
+func writeWorkerAuthError(w http.ResponseWriter, r *http.Request, code, message string) {
+	if isWorkerGitProxyRequest(r) {
+		w.Header().Set("WWW-Authenticate", `Basic realm="ao-worker-git"`)
+	}
+	writeError(w, r, http.StatusUnauthorized, code, message)
+}
+
+func isWorkerGitProxyRequest(r *http.Request) bool {
+	const prefix = "/api/cloud/v1/git/"
+	path := strings.TrimPrefix(r.URL.Path, prefix)
+	if path == r.URL.Path {
+		return false
+	}
+	parts := strings.Split(path, "/")
+	if len(parts) < 3 ||
+		parts[0] == "" ||
+		parts[0] == "." ||
+		parts[0] == ".." ||
+		!strings.HasSuffix(parts[1], ".git") ||
+		strings.TrimSuffix(parts[1], ".git") == "" {
+		return false
+	}
+	_, err := cloudlocalgh.GitOperation(r.Method, strings.Join(parts[2:], "/"), r.URL.Query())
+	return err == nil
 }
 
 func workerFromContext(ctx context.Context) cloudworker.Claims {
@@ -1650,7 +1738,17 @@ func (s *Server) workerCreateSession(w http.ResponseWriter, r *http.Request) {
 			s.internalError(w, r, "load orchestrator project for issue", err)
 			return
 		}
-		resolved, err := s.localGitHub.GetIssue(r.Context(), project.RepositoryURL, input.IssueNumber)
+		githubCtx, ok := s.githubOperationContext(
+			w,
+			r,
+			project,
+			cloudlocalgh.OperationIssueRead,
+			"authorize GitHub issue lookup",
+		)
+		if !ok {
+			return
+		}
+		resolved, err := s.localGitHub.GetIssue(githubCtx, project.RepositoryURL, input.IssueNumber)
 		if err != nil {
 			writeError(w, r, http.StatusBadRequest, "INVALID_ISSUE", "The GitHub issue could not be found in this project.")
 			return
@@ -1808,7 +1906,17 @@ func (s *Server) workerClaimPullRequest(w http.ResponseWriter, r *http.Request) 
 		s.internalError(w, r, "load project for pull request claim", err)
 		return
 	}
-	pull, err := s.localGitHub.GetPullRequest(r.Context(), project.RepositoryURL, input.Reference)
+	githubCtx, ok := s.githubOperationContext(
+		w,
+		r,
+		project,
+		cloudlocalgh.OperationPullRequestRead,
+		"authorize GitHub pull request lookup",
+	)
+	if !ok {
+		return
+	}
+	pull, err := s.localGitHub.GetPullRequest(githubCtx, project.RepositoryURL, input.Reference)
 	if err != nil {
 		writeError(w, r, http.StatusBadRequest, "INVALID_PULL_REQUEST", "The pull request must belong to this project.")
 		return
@@ -1858,7 +1966,17 @@ func (s *Server) workerMergePullRequest(w http.ResponseWriter, r *http.Request) 
 		s.internalError(w, r, "load project for pull request merge", err)
 		return
 	}
-	pull, err := s.localGitHub.MergePullRequest(r.Context(), project.RepositoryURL, scm.PullRequest.Number)
+	githubCtx, ok := s.githubOperationContext(
+		w,
+		r,
+		project,
+		cloudlocalgh.OperationMerge,
+		"authorize GitHub pull request merge",
+	)
+	if !ok {
+		return
+	}
+	pull, err := s.localGitHub.MergePullRequest(githubCtx, project.RepositoryURL, scm.PullRequest.Number)
 	if err != nil {
 		writeError(w, r, http.StatusBadGateway, "PULL_REQUEST_MERGE_FAILED", err.Error())
 		return
@@ -1877,7 +1995,7 @@ func (s *Server) workerMergePullRequest(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) workerResolveReviewThread(w http.ResponseWriter, r *http.Request) {
-	claims, _, target, ok := s.authorizedProjectWorker(w, r, "authorize review thread resolution")
+	claims, parent, target, ok := s.authorizedProjectWorker(w, r, "authorize review thread resolution")
 	if !ok {
 		return
 	}
@@ -1899,7 +2017,22 @@ func (s *Server) workerResolveReviewThread(w http.ResponseWriter, r *http.Reques
 		writeError(w, r, http.StatusNotFound, "REVIEW_THREAD_NOT_FOUND", "The review thread does not belong to this worker.")
 		return
 	}
-	if err := s.localGitHub.ResolveReviewThread(r.Context(), threadID); err != nil {
+	project, err := s.store.GetProject(r.Context(), claims.AccountID, parent.ProjectID)
+	if err != nil {
+		s.internalError(w, r, "load project for review thread resolution", err)
+		return
+	}
+	githubCtx, ok := s.githubOperationContext(
+		w,
+		r,
+		project,
+		cloudlocalgh.OperationResolveReviewThread,
+		"authorize GitHub review thread resolution",
+	)
+	if !ok {
+		return
+	}
+	if err := s.localGitHub.ResolveReviewThread(githubCtx, threadID); err != nil {
 		writeError(w, r, http.StatusBadGateway, "REVIEW_THREAD_RESOLVE_FAILED", err.Error())
 		return
 	}
@@ -2206,7 +2339,17 @@ func (s *Server) workerClaimOwnPullRequest(w http.ResponseWriter, r *http.Reques
 		s.internalError(w, r, "load project for worker pull request claim", err)
 		return
 	}
-	pull, err := s.localGitHub.GetPullRequest(r.Context(), project.RepositoryURL, input.Reference)
+	githubCtx, ok := s.githubOperationContext(
+		w,
+		r,
+		project,
+		cloudlocalgh.OperationPullRequestRead,
+		"authorize GitHub pull request lookup",
+	)
+	if !ok {
+		return
+	}
+	pull, err := s.localGitHub.GetPullRequest(githubCtx, project.RepositoryURL, input.Reference)
 	if err != nil {
 		writeError(w, r, http.StatusBadRequest, "INVALID_PULL_REQUEST", "The pull request must belong to this project.")
 		return
@@ -3359,6 +3502,30 @@ var errAgentConnectionRequired = errors.New("coding-agent connection required")
 var errExternalSignupDisabled = errors.New("external account signup is disabled")
 
 func (s *Server) listRepositories(w http.ResponseWriter, r *http.Request) {
+	if s.githubApp != nil && s.githubApp.mode == "github-app" {
+		org, ok := orgFromContext(r.Context())
+		if !ok || s.githubStore == nil {
+			writeError(w, r, http.StatusNotImplemented, "GITHUB_CONNECTION_REQUIRED", "GitHub is not configured for this deployment.")
+			return
+		}
+		repositories, err := s.githubStore.ListActiveGitHubRepositories(r.Context(), org.Organization.ID)
+		if err != nil {
+			s.internalError(w, r, "list GitHub App repositories", err)
+			return
+		}
+		response := make([]map[string]any, 0, len(repositories))
+		for _, repository := range repositories {
+			response = append(response, map[string]any{
+				"id":            repository.Repository.ID,
+				"fullName":      repository.Repository.FullName,
+				"url":           repository.Repository.HTMLURL,
+				"defaultBranch": repository.Repository.DefaultBranch,
+				"private":       repository.Repository.Private,
+			})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"repositories": response})
+		return
+	}
 	if s.localGitHub == nil {
 		writeError(w, r, http.StatusNotImplemented, "GITHUB_CONNECTION_REQUIRED", "GitHub is not configured for this deployment.")
 		return
@@ -3371,6 +3538,46 @@ func (s *Server) listRepositories(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"repositories": repositories})
 }
 
+func (s *Server) githubOperationContext(
+	w http.ResponseWriter,
+	r *http.Request,
+	project clouddomain.Project,
+	operation cloudlocalgh.CredentialOperation,
+	action string,
+) (context.Context, bool) {
+	if s.githubMode() != "github-app" {
+		return r.Context(), true
+	}
+	if project.GitHubRepositoryID == nil || s.githubStore == nil {
+		writeError(w, r, http.StatusForbidden, "REPOSITORY_NOT_AUTHORIZED", "This project is not linked to an authorized GitHub repository.")
+		return nil, false
+	}
+	_, err := s.githubStore.FindActiveGitHubRepositoryGrant(
+		r.Context(),
+		project.OrgID,
+		*project.GitHubRepositoryID,
+	)
+	if errors.Is(err, cloudpostgres.ErrGitHubRepositoryGrantNotFound) {
+		writeError(w, r, http.StatusForbidden, "REPOSITORY_NOT_AUTHORIZED", "This project's GitHub repository grant is no longer active.")
+		return nil, false
+	}
+	if err != nil {
+		s.internalError(w, r, action, err)
+		return nil, false
+	}
+	scoped, err := cloudlocalgh.ContextWithCredentialScope(
+		r.Context(),
+		project.OrgID,
+		*project.GitHubRepositoryID,
+		operation,
+	)
+	if err != nil {
+		s.internalError(w, r, action, err)
+		return nil, false
+	}
+	return scoped, true
+}
+
 func (s *Server) gitProxy(w http.ResponseWriter, r *http.Request) {
 	claims := workerFromContext(r.Context())
 	if !cloudworker.HasScope(claims, "worker:git") {
@@ -3379,6 +3586,12 @@ func (s *Server) gitProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.localGitHub == nil {
 		writeError(w, r, http.StatusNotImplemented, "GITHUB_CONNECTION_REQUIRED", "GitHub is not configured for this deployment.")
+		return
+	}
+	suffix := chi.URLParam(r, "*")
+	operation, err := cloudlocalgh.GitOperation(r.Method, suffix, r.URL.Query())
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, "INVALID_GIT_REQUEST", "Only Git upload-pack and receive-pack requests are supported.")
 		return
 	}
 	launch, err := s.store.WorkerLaunchSpec(r.Context(), claims.AccountID, claims.SessionID)
@@ -3393,13 +3606,28 @@ func (s *Server) gitProxy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusForbidden, "REPOSITORY_NOT_AUTHORIZED", "Worker is not authorized for this repository.")
 		return
 	}
+	project, err := s.store.GetProject(r.Context(), claims.AccountID, launch.Session.ProjectID)
+	if err != nil {
+		s.internalError(w, r, "load project for Git proxy", err)
+		return
+	}
+	githubCtx, ok := s.githubOperationContext(
+		w,
+		r,
+		project,
+		operation,
+		"authorize GitHub repository proxy",
+	)
+	if !ok {
+		return
+	}
 	if err := s.localGitHub.ProxyRepository(
-		r.Context(),
+		githubCtx,
 		w,
 		r,
 		expectedOwner,
 		expectedRepository,
-		chi.URLParam(r, "*"),
+		suffix,
 	); err != nil {
 		s.internalError(w, r, "proxy GitHub repository", err)
 	}
