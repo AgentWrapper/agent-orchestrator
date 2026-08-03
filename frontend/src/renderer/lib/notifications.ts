@@ -62,12 +62,14 @@ export async function fetchNotificationsPage(status: NotificationListStatus, cur
 /**
  * Fired when the panel opens — seeing the notifications is the acknowledgement.
  *
- * Scoped to the ids actually rendered. Acknowledging every unread row on the
- * server would strand anything past the loaded page: the panel never held a
- * cursor for it, and terminal types are not reachable through Unresolved.
+ * Empty `ids` marks every unread row (the all-history panel still shows them).
+ * Non-empty `ids` marks exactly those rows so incremental clients can keep later
+ * unread pages reachable.
  */
 export async function markAllNotificationsRead(ids: string[]): Promise<number> {
-	const { data, error } = await apiClient.POST("/api/v1/notifications/read-all", { body: { ids } });
+	const { data, error } = await apiClient.POST("/api/v1/notifications/read-all", {
+		body: ids.length === 0 ? {} : { ids },
+	});
 	if (error) throw new Error(apiErrorMessage(error, "Could not mark notifications read"));
 	return data?.updatedCount ?? 0;
 }
@@ -170,17 +172,55 @@ function mergeNotificationIntoCache(
 }
 
 /**
- * Marks exactly the acknowledged ids read, in place.
+ * Marks notifications read in the React Query caches.
  *
- * Deliberately keeps the pages and their `nextCursor` intact. Resetting the
- * unread cache to a single empty page would throw away the cursor to rows the
- * panel had not loaded yet, and with the server having acknowledged only these
- * ids, those rows would be unreachable for the rest of the session.
+ * Empty `ids` means every unread row — matching `POST /read-all` with no body.
+ * That is safe for the all-history panel: read rows remain visible there.
+ *
+ * Non-empty `ids` marks exactly those rows and keeps unread pagination cursors
+ * intact so later pages stay reachable when a client acknowledges incrementally.
  */
 export function markAllCachedNotificationsRead(queryClient: QueryClient, ids: string[]): void {
+	if (ids.length === 0) {
+		queryClient.setQueryData<NotificationsCache>(unreadNotificationsQueryKey, (current) => {
+			if (!current) {
+				return { pageParams: [""], pages: [{ notifications: [], unreadCount: 0, unresolvedCount: 0 }] };
+			}
+			return {
+				pageParams: [""],
+				pages: [
+					{
+						notifications: [],
+						unreadCount: 0,
+						unresolvedCount: current.pages[0]?.unresolvedCount ?? 0,
+					},
+				],
+			};
+		});
+		for (const queryKey of [recentNotificationsQueryKey, unresolvedNotificationsQueryKey] as const) {
+			queryClient.setQueryData<NotificationsCache>(queryKey, (current) => {
+				if (!current) return current;
+				return {
+					...current,
+					pages: current.pages.map((page) => ({
+						...page,
+						notifications: page.notifications.map((item) =>
+							item.status === "read" ? item : { ...item, status: "read" as const },
+						),
+						unreadCount: 0,
+					})),
+				};
+			});
+		}
+		return;
+	}
+
 	const acknowledged = new Set(ids);
-	if (acknowledged.size === 0) return;
-	for (const queryKey of [unreadNotificationsQueryKey, recentNotificationsQueryKey] as const) {
+	for (const queryKey of [
+		unreadNotificationsQueryKey,
+		recentNotificationsQueryKey,
+		unresolvedNotificationsQueryKey,
+	] as const) {
 		queryClient.setQueryData<NotificationsCache>(queryKey, (current) => {
 			if (!current) return current;
 			return {
