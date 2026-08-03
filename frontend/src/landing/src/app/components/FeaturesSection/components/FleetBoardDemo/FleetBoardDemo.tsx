@@ -131,14 +131,14 @@ const INITIAL_CARDS: Card[] = [
 		branch: "webhooks/integration-tests", icon: "/app-icons/coverage-codex.svg",
 		column: "staging", activity: "Running tests", activityState: "running",
 		pr: "draft", time: "22m ago",
-		testResults: pickTestResults(),
+		testResults: { pass: 18, total: 50 },
 	},
 	{
 		id: "c4", title: "Migrate auth tokens to short-lived JWTs",
 		branch: "auth/jwt-rotation", icon: "/app-icons/coverage-codex.svg",
 		column: "staging", activity: "Building...", activityState: "running",
 		pr: "PR #331", time: "34m ago",
-		testResults: pickTestResults(),
+		testResults: { pass: 22, total: 60 },
 	},
 	{
 		id: "c5", title: "Preload GitHub stars before hydration",
@@ -241,7 +241,7 @@ function ActivityIcon({ state, testResults }: { state: ActivityState; testResult
 
 function AnimatedTestCount({ testResults }: { testResults: { pass: number; total: number } }) {
 	const total = testResults.total;
-	const [animPass, setAnimPass] = useState(() => Math.floor(total * 0.2));
+	const [animPass, setAnimPass] = useState(testResults.pass);
 
 	useEffect(() => {
 		let timeout: number;
