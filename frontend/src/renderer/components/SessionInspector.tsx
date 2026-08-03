@@ -1458,8 +1458,8 @@ function ReviewRunRow({ run, prUrl, isEarlier }: { run: ReviewRunFacts; prUrl: s
 							<ArrowUpRight aria-hidden="true" className="size-2.5 shrink-0" />
 						</a>
 					) : null}
-				</span>
-			) : null}
+					</span>
+				) : null}
 		</div>
 	);
 }
