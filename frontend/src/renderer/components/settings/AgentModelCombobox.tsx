@@ -20,7 +20,23 @@ type IndexedModel = {
 	id: string;
 	label: string;
 	provider: string;
+	normalizedID: string;
+	normalizedLabel: string;
+	normalizedProvider: string;
 	index: number;
+};
+
+type ModelSearchIndex = {
+	models: IndexedModel[];
+	byID: Map<string, IndexedModel>;
+	providerBuckets: Map<string, { models: IndexedModel[]; indexes: Set<number> }>;
+	trigramPostings: Map<string, Set<number>>;
+};
+
+export type ModelSearchResult = {
+	models: IndexedModel[];
+	candidateCount: number;
+	strategy: "direct" | "provider-index" | "text-index" | "fuzzy-fallback";
 };
 
 export function AgentModelCombobox({
@@ -44,38 +60,15 @@ export function AgentModelCombobox({
 }) {
 	const [search, setSearch] = useState("");
 	const normalizedSearch = normalizeSearch(search);
-	const indexedModels = useMemo(
-		() =>
-			models.map((model, index) => {
-				const label = model.label || model.id;
-				const provider = model.provider?.trim() || providerFromModelID(model.id) || "Other";
-				return {
-					model,
-					id: model.id,
-					label,
-					provider,
-					index,
-				};
-			}),
-		[models],
-	);
-	const modelByID = useMemo(() => new Map(indexedModels.map((item) => [item.id, item])), [indexedModels]);
-	const selected = modelByID.get(value);
+	const searchIndex = useMemo(() => buildModelSearchIndex(models), [models]);
+	const selected = searchIndex.byID.get(normalizeSearch(value));
 
 	const rankedModels = useMemo(() => {
 		if (!normalizedSearch) {
-			return [...indexedModels].sort((a, b) => {
-				const aRank = a.id === value ? 0 : a.model.isDefault ? 1 : 2;
-				const bRank = b.id === value ? 0 : b.model.isDefault ? 1 : 2;
-				return aRank - bRank || a.index - b.index;
-			});
+			return rankInitialModels(searchIndex.models, value);
 		}
-		return indexedModels
-			.map((item) => ({ item, score: modelMatchScore(item, normalizedSearch) }))
-			.filter((match) => match.score !== null)
-			.sort((a, b) => (a.score ?? 0) - (b.score ?? 0) || a.item.index - b.item.index)
-			.map((match) => match.item);
-	}, [indexedModels, normalizedSearch, value]);
+		return searchModelIndex(searchIndex, normalizedSearch).models;
+	}, [normalizedSearch, searchIndex, value]);
 
 	const visibleModels = rankedModels.slice(0, MAX_VISIBLE_MODELS);
 	const groups = useMemo(() => groupModels(visibleModels, normalizedSearch === "", value), [visibleModels, normalizedSearch, value]);
@@ -183,10 +176,140 @@ function providerFromModelID(modelID: string): string {
 	return slash > 0 ? modelID.slice(0, slash) : "";
 }
 
+export function buildModelSearchIndex(models: AgentModel[]): ModelSearchIndex {
+	const indexedModels = models.map((model, index) => {
+		const label = model.label || model.id;
+		const provider = model.provider?.trim() || providerFromModelID(model.id) || "Other";
+		return {
+			model,
+			id: model.id,
+			label,
+			provider,
+			normalizedID: normalizeSearch(model.id),
+			normalizedLabel: normalizeSearch(label),
+			normalizedProvider: normalizeSearch(provider),
+			index,
+		};
+	});
+	const byID = new Map(indexedModels.map((item) => [item.normalizedID, item]));
+	const providerBuckets = new Map<string, { models: IndexedModel[]; indexes: Set<number> }>();
+	const trigramPostings = new Map<string, Set<number>>();
+
+	for (const item of indexedModels) {
+		const providerKeys = new Set([
+			item.normalizedProvider,
+			normalizeSearch(providerFromModelID(item.id)),
+		]);
+		for (const providerKey of providerKeys) {
+			if (!providerKey) continue;
+			const bucket = providerBuckets.get(providerKey) ?? { models: [], indexes: new Set<number>() };
+			bucket.models.push(item);
+			bucket.indexes.add(item.index);
+			providerBuckets.set(providerKey, bucket);
+		}
+
+		const itemTrigrams = new Set([
+			...trigrams(item.normalizedID),
+			...trigrams(item.normalizedLabel),
+			...trigrams(item.normalizedProvider),
+		]);
+		for (const trigram of itemTrigrams) {
+			const posting = trigramPostings.get(trigram) ?? new Set<number>();
+			posting.add(item.index);
+			trigramPostings.set(trigram, posting);
+		}
+	}
+
+	return { models: indexedModels, byID, providerBuckets, trigramPostings };
+}
+
+export function searchModelIndex(index: ModelSearchIndex, query: string): ModelSearchResult {
+	const normalizedQuery = normalizeSearch(query);
+	const directMatch = index.byID.get(normalizedQuery);
+	if (directMatch) {
+		return { models: [directMatch], candidateCount: 1, strategy: "direct" };
+	}
+
+	const provider = providerQualifier(normalizedQuery);
+	const providerBucket = provider ? index.providerBuckets.get(provider) : undefined;
+	const universe = providerBucket?.models ?? index.models;
+	const indexedCandidates = trigramCandidates(index, normalizedQuery, providerBucket?.indexes);
+	if (indexedCandidates.length > 0) {
+		return {
+			models: rankMatches(indexedCandidates, normalizedQuery),
+			candidateCount: indexedCandidates.length,
+			strategy: providerBucket ? "provider-index" : "text-index",
+		};
+	}
+
+	return {
+		models: rankMatches(universe, normalizedQuery),
+		candidateCount: universe.length,
+		strategy: "fuzzy-fallback",
+	};
+}
+
+function rankInitialModels(models: IndexedModel[], selectedID: string): IndexedModel[] {
+	const selected: IndexedModel[] = [];
+	const defaults: IndexedModel[] = [];
+	const remaining: IndexedModel[] = [];
+	for (const item of models) {
+		if (item.id === selectedID) selected.push(item);
+		else if (item.model.isDefault) defaults.push(item);
+		else remaining.push(item);
+	}
+	return [...selected, ...defaults, ...remaining];
+}
+
+function providerQualifier(query: string): string {
+	const slash = query.indexOf("/");
+	return slash > 0 ? query.slice(0, slash) : "";
+}
+
+function trigrams(value: string): string[] {
+	if (value.length < 3) return [];
+	const result: string[] = [];
+	for (let index = 0; index <= value.length - 3; index += 1) {
+		result.push(value.slice(index, index + 3));
+	}
+	return result;
+}
+
+function trigramCandidates(
+	index: ModelSearchIndex,
+	query: string,
+	providerIndexes: Set<number> | undefined,
+): IndexedModel[] {
+	const queryTrigrams = [...new Set(trigrams(query))];
+	if (queryTrigrams.length === 0) return [];
+	const postings = queryTrigrams.map((trigram) => index.trigramPostings.get(trigram));
+	if (postings.some((posting) => !posting)) return [];
+	const completePostings = postings as Set<number>[];
+	const smallestPosting = completePostings.reduce((smallest, posting) =>
+		posting.size < smallest.size ? posting : smallest,
+	);
+	const matches: IndexedModel[] = [];
+	for (const modelIndex of smallestPosting) {
+		if (providerIndexes && !providerIndexes.has(modelIndex)) continue;
+		if (completePostings.every((posting) => posting.has(modelIndex))) {
+			matches.push(index.models[modelIndex]);
+		}
+	}
+	return matches;
+}
+
+function rankMatches(models: IndexedModel[], query: string): IndexedModel[] {
+	return models
+		.map((item) => ({ item, score: modelMatchScore(item, query) }))
+		.filter((match): match is { item: IndexedModel; score: number } => match.score !== null)
+		.sort((a, b) => a.score - b.score || a.item.index - b.item.index)
+		.map((match) => match.item);
+}
+
 function modelMatchScore(item: IndexedModel, query: string): number | null {
-	const id = normalizeSearch(item.id);
-	const label = normalizeSearch(item.label);
-	const provider = normalizeSearch(item.provider);
+	const id = item.normalizedID;
+	const label = item.normalizedLabel;
+	const provider = item.normalizedProvider;
 	if (id === query) return 0;
 	if (id.startsWith(query)) return 10;
 	if (label.startsWith(query)) return 20;

@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { AgentModelCombobox } from "./AgentModelCombobox";
+import { AgentModelCombobox, buildModelSearchIndex, searchModelIndex } from "./AgentModelCombobox";
 
 function renderCombobox(
 	models: Array<{ id: string; label: string; provider?: string; isDefault?: boolean }>,
@@ -24,6 +24,26 @@ function renderCombobox(
 }
 
 describe("AgentModelCombobox", () => {
+	it("uses direct lookup and provider buckets instead of scanning the complete catalog", () => {
+		const models = Array.from({ length: 1_400 }, (_, index) => ({
+			id: `provider-${index % 4}/model-${index}`,
+			label: `Model ${index}`,
+			provider: `provider-${index % 4}`,
+		}));
+		const index = buildModelSearchIndex(models);
+
+		const direct = searchModelIndex(index, "provider-3/model-1399");
+		expect(direct.strategy).toBe("direct");
+		expect(direct.candidateCount).toBe(1);
+		expect(direct.models.map((model) => model.id)).toEqual(["provider-3/model-1399"]);
+
+		const providerSearch = searchModelIndex(index, "provider-3/");
+		expect(providerSearch.strategy).toBe("provider-index");
+		expect(providerSearch.candidateCount).toBe(350);
+		expect(providerSearch.models).toHaveLength(350);
+		expect(providerSearch.models.every((model) => model.provider === "provider-3")).toBe(true);
+	});
+
 	it("renders only the first 50 models from a large cached catalog", async () => {
 		const models = Array.from({ length: 1_397 }, (_, index) => ({
 			id: `provider-${index % 4}/model-${index}`,
