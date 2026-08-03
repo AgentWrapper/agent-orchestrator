@@ -163,11 +163,16 @@ function sessionDisplayStatus(
 }
 
 export default function CloudAppPage() {
-  const { session, status, login, logout } = useAuth();
+  const { session, status, logout } = useAuth();
   const api = useMemo(
     () => (session?.accessToken ? new CloudAPI(session.accessToken) : null),
     [session?.accessToken],
   );
+  useEffect(() => {
+    if (status === "unauthenticated") {
+      window.location.replace("/auth");
+    }
+  }, [status]);
   const [projects, setProjects] = useState<CloudProject[]>([]);
   const [sessions, setSessions] = useState<CloudSession[]>([]);
   const [sessionSCM, setSessionSCM] = useState<Record<string, CloudSessionSCM | null>>({});
@@ -487,8 +492,12 @@ export default function CloudAppPage() {
     if (refreshInFlight.current) return refreshInFlight.current;
     const request = (async () => {
       try {
-        const runtimeData = await api.me();
+        const [runtimeData, incomingInvitationData] = await Promise.all([
+          api.me(),
+          api.invitations(),
+        ]);
         setCurrentUser(runtimeData.user ?? session?.user ?? null);
+        setIncomingInvitations(incomingInvitationData.invitations);
         const nextOrganizations = runtimeData.organizations ?? [];
         setOrganizations(nextOrganizations);
         const nextOrgId =
@@ -506,7 +515,6 @@ export default function CloudAppPage() {
           setProjects([]);
           setSessions([]);
           setConnections([]);
-          setIncomingInvitations([]);
           setOrgInvitations([]);
           setOrgMembers([]);
           setError(null);
@@ -522,14 +530,12 @@ export default function CloudAppPage() {
           projectData,
           sessionData,
           connectionData,
-          incomingInvitationData,
           orgMemberData,
           orgInvitationData,
         ] = await Promise.all([
           api.projects(nextOrgId),
           api.sessions(nextOrgId),
           api.providerConnections(nextOrgId),
-          api.invitations(),
           api.orgMembers(nextOrgId),
           canLoadOrgInvitations
             ? api.orgInvitations(nextOrgId)
@@ -548,7 +554,6 @@ export default function CloudAppPage() {
         );
         setActiveChatSessionIds(authoritativeActive);
         setConnections(connectionData.providerConnections);
-        setIncomingInvitations(incomingInvitationData.invitations);
         setOrgMembers(orgMemberData.members);
         setOrgInvitations(orgInvitationData.invitations);
         setSandboxProvider(runtimeData.sandboxProvider);
@@ -858,22 +863,10 @@ export default function CloudAppPage() {
 
   if (!api) {
     return (
-      <main className="grid min-h-dvh place-items-center bg-[#0a0b0d] px-4">
-        <section className="w-full max-w-sm border border-white/10 bg-[#15171b] p-6 text-center">
-          <Cloud className="mx-auto size-5 text-[#4d8dff]" />
-          <h1 className="mt-4 text-lg font-medium text-[#f4f5f7]">AO Cloud</h1>
-          <p className="mt-2 text-sm leading-6 text-[#9ba1aa]">
-            Sign in to run orchestrators and workers in isolated cloud
-            environments.
-          </p>
-          <button
-            className={`${primaryButton} mt-5`}
-            onClick={() => void login()}
-          >
-            Continue with email
-          </button>
-        </section>
-      </main>
+      <main
+        className="min-h-dvh bg-[#0a0b0d]"
+        aria-label="Redirecting to sign in"
+      />
     );
   }
 

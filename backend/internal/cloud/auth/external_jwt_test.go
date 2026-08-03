@@ -15,7 +15,7 @@ import (
 	"github.com/lestrrat-go/jwx/v3/jwt"
 )
 
-func TestExternalJWTAuthenticatorVerifiesJWKSJWT(t *testing.T) {
+func TestExternalJWTAuthenticatorVerifiesWorkOSJWTWithoutAudience(t *testing.T) {
 	t.Parallel()
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -48,11 +48,9 @@ func TestExternalJWTAuthenticatorVerifiesJWKSJWT(t *testing.T) {
 	token, err := jwt.NewBuilder().
 		Subject("workos-user-123").
 		Issuer(issuer).
-		Audience([]string{issuer}).
 		IssuedAt(time.Now()).
 		Expiration(time.Now().Add(time.Hour)).
-		Claim("email", "Person@Example.com").
-		Claim("name", "Person").
+		Claim("client_id", "client_123").
 		Build()
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -64,8 +62,14 @@ func TestExternalJWTAuthenticatorVerifiesJWKSJWT(t *testing.T) {
 	authenticator, err := NewExternalJWTAuthenticator(ExternalJWTConfig{
 		Provider: "workos",
 		Issuer:   issuer,
-		Audience: issuer,
+		ClientID: "client_123",
 		JWKSURL:  jwksServer.URL,
+		ProfileResolver: func(context.Context, string) (ExternalProfile, error) {
+			return ExternalProfile{
+				Email:       "Person@Example.com",
+				DisplayName: "Person",
+			}, nil
+		},
 	})
 	if err != nil {
 		t.Fatalf("NewExternalJWTAuthenticator() error = %v", err)
@@ -138,5 +142,64 @@ func TestExternalJWTAuthenticatorRejectsWrongAudience(t *testing.T) {
 
 	if _, err := authenticator.Verify(context.Background(), string(signed)); err == nil {
 		t.Fatal("Verify() error = nil, want invalid audience")
+	}
+}
+
+func TestExternalJWTAuthenticatorRejectsWrongWorkOSClientID(t *testing.T) {
+	t.Parallel()
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("GenerateKey() error = %v", err)
+	}
+	signingKey, err := jwk.Import(privateKey)
+	if err != nil {
+		t.Fatalf("jwk.Import(private) error = %v", err)
+	}
+	if err := signingKey.Set(jwk.KeyIDKey, "test-key"); err != nil {
+		t.Fatalf("Set(kid) error = %v", err)
+	}
+	if err := signingKey.Set(jwk.AlgorithmKey, jwa.RS256()); err != nil {
+		t.Fatalf("Set(alg) error = %v", err)
+	}
+	publicKey, err := jwk.PublicKeyOf(signingKey)
+	if err != nil {
+		t.Fatalf("PublicKeyOf() error = %v", err)
+	}
+	keySet := jwk.NewSet()
+	if err := keySet.AddKey(publicKey); err != nil {
+		t.Fatalf("AddKey() error = %v", err)
+	}
+	jwksServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(keySet)
+	}))
+	t.Cleanup(jwksServer.Close)
+
+	issuer := "https://api.workos.com"
+	token, err := jwt.NewBuilder().
+		Subject("workos-user-123").
+		Issuer(issuer).
+		IssuedAt(time.Now()).
+		Expiration(time.Now().Add(time.Hour)).
+		Claim("client_id", "client_wrong").
+		Build()
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	signed, err := jwt.Sign(token, jwt.WithKey(jwa.RS256(), signingKey))
+	if err != nil {
+		t.Fatalf("Sign() error = %v", err)
+	}
+	authenticator, err := NewExternalJWTAuthenticator(ExternalJWTConfig{
+		Provider: "workos",
+		Issuer:   issuer,
+		ClientID: "client_expected",
+		JWKSURL:  jwksServer.URL,
+	})
+	if err != nil {
+		t.Fatalf("NewExternalJWTAuthenticator() error = %v", err)
+	}
+
+	if _, err := authenticator.Verify(context.Background(), string(signed)); err == nil {
+		t.Fatal("Verify() error = nil, want invalid client ID")
 	}
 }

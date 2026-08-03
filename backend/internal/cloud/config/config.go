@@ -22,6 +22,8 @@ type Config struct {
 	AuthIssuer            string
 	AuthAudience          string
 	AuthJWKSURL           string
+	WorkOSAPIKey          string
+	AllowExternalSignup   bool
 	DatabaseURL           string
 	DatabaseDirectURL     string
 	SandboxProvider       string
@@ -59,6 +61,8 @@ func Load() (Config, error) {
 		AuthIssuer:            strings.TrimRight(strings.TrimSpace(os.Getenv("AO_CLOUD_AUTH_ISSUER")), "/"),
 		AuthAudience:          strings.TrimSpace(os.Getenv("AO_CLOUD_AUTH_AUDIENCE")),
 		AuthJWKSURL:           strings.TrimSpace(os.Getenv("AO_CLOUD_AUTH_JWKS_URL")),
+		WorkOSAPIKey:          strings.TrimSpace(os.Getenv("WORKOS_API_KEY")),
+		AllowExternalSignup:   envBool("AO_CLOUD_ALLOW_PUBLIC_SIGNUP", false),
 		DatabaseURL:           os.Getenv("AO_DATABASE_URL"),
 		DatabaseDirectURL:     strings.TrimSpace(os.Getenv("AO_DATABASE_DIRECT_URL")),
 		SandboxProvider:       envOr("AO_SANDBOX_PROVIDER", "docker"),
@@ -80,8 +84,8 @@ func Load() (Config, error) {
 		if cfg.AuthProvider == "" {
 			cfg.AuthProvider = "workos"
 		}
-		if cfg.AuthIssuer == "" {
-			cfg.AuthIssuer = "https://api.workos.com"
+		if cfg.AuthIssuer == "" && workOSClientID != "" {
+			cfg.AuthIssuer = "https://api.workos.com/user_management/" + workOSClientID
 		}
 		if cfg.AuthAudience == "" {
 			cfg.AuthAudience = workOSClientID
@@ -128,7 +132,12 @@ func (c Config) Validate() error {
 	}
 	switch c.AuthMode {
 	case "local":
-	case "workos", "external":
+	case "workos":
+		if strings.TrimSpace(c.WorkOSAPIKey) == "" {
+			return errors.New("WORKOS_API_KEY is required when AO_CLOUD_AUTH_MODE is workos")
+		}
+		fallthrough
+	case "external":
 		if strings.TrimSpace(c.AuthProvider) == "" ||
 			strings.TrimSpace(c.AuthIssuer) == "" ||
 			strings.TrimSpace(c.AuthAudience) == "" ||
@@ -166,6 +175,17 @@ func envOr(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envBool(name string, fallback bool) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
 }
 
 func decodeKey(name string) ([]byte, error) {

@@ -156,13 +156,44 @@ func (s *Store) EnsureAccount(ctx context.Context, ownerUserID, displayName stri
 	return account, nil
 }
 
-// EnsureExternalAccount maps an external auth user into AO's durable user/org model.
+// ExternalAccountCanSignIn reports whether an external identity may enter AO
+// when public self-serve signup is disabled.
+func (s *Store) ExternalAccountCanSignIn(
+	ctx context.Context,
+	authProvider string,
+	externalUserID string,
+	email string,
+) (bool, error) {
+	var allowed bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM ao_users cloud_user
+			JOIN ao_accounts account ON account.owner_user_id = cloud_user.id
+			WHERE cloud_user.auth_provider = $1
+				AND cloud_user.external_user_id = $2
+		) OR EXISTS (
+			SELECT 1
+			FROM ao_org_invitations invite
+			WHERE invite.status = 'pending'
+				AND invite.expires_at > now()
+				AND lower(invite.email) = lower($3)
+		)
+	`, strings.TrimSpace(authProvider), strings.TrimSpace(externalUserID), strings.ToLower(strings.TrimSpace(email))).Scan(&allowed)
+	if err != nil {
+		return false, fmt.Errorf("check external account signup gate: %w", err)
+	}
+	return allowed, nil
+}
+
+// EnsureExternalAccount maps an external auth user into AO's durable user/account model.
 func (s *Store) EnsureExternalAccount(
 	ctx context.Context,
 	authProvider string,
 	externalUserID string,
 	email string,
 	displayName string,
+	createPersonalOrg bool,
 ) (clouddomain.Account, error) {
 	authProvider = strings.TrimSpace(authProvider)
 	externalUserID = strings.TrimSpace(externalUserID)
@@ -190,7 +221,9 @@ func (s *Store) EnsureExternalAccount(
 				ELSE ao_users.email
 			END,
 			display_name = CASE
-				WHEN ao_users.display_name = '' THEN EXCLUDED.display_name
+				WHEN ao_users.display_name = ''
+					OR ao_users.display_name = ao_users.external_user_id
+				THEN EXCLUDED.display_name
 				ELSE ao_users.display_name
 			END,
 			updated_at = now()
@@ -206,6 +239,25 @@ func (s *Store) EnsureExternalAccount(
 	)
 	if err != nil {
 		return clouddomain.Account{}, fmt.Errorf("ensure external cloud user: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE ao_accounts
+		SET display_name = $2, updated_at = now()
+		WHERE owner_user_id = $1
+		  AND (display_name = '' OR display_name = $3)
+	`, user.ID, user.DisplayName, externalUserID); err != nil {
+		return clouddomain.Account{}, fmt.Errorf("repair external account display name: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE ao_organizations AS organization
+		SET display_name = $2, updated_at = now()
+		FROM ao_accounts AS account
+		WHERE organization.id = account.id
+		  AND account.owner_user_id = $1
+		  AND organization.kind = 'personal'
+		  AND (organization.display_name = '' OR organization.display_name = $3)
+	`, user.ID, user.DisplayName, externalUserID); err != nil {
+		return clouddomain.Account{}, fmt.Errorf("repair personal organization display name: %w", err)
 	}
 
 	var account clouddomain.Account
@@ -238,8 +290,10 @@ func (s *Store) EnsureExternalAccount(
 	if err != nil {
 		return clouddomain.Account{}, fmt.Errorf("ensure external account: %w", err)
 	}
-	if err := ensureUserOrgTx(ctx, tx, account, user.DisplayName); err != nil {
-		return clouddomain.Account{}, err
+	if createPersonalOrg {
+		if err := ensureUserOrgTx(ctx, tx, account, user.DisplayName); err != nil {
+			return clouddomain.Account{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return clouddomain.Account{}, fmt.Errorf("commit ensure external account: %w", err)

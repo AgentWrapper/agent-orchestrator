@@ -1,6 +1,7 @@
 import { getSignInUrl } from "@workos-inc/authkit-nextjs";
-import { redirect } from "next/navigation";
+
+import { workOSRedirectResponse } from "@/lib/workos-redirect-response";
 
 export const GET = async () => {
-  redirect(await getSignInUrl({ returnTo: "/app" }));
+  return workOSRedirectResponse(await getSignInUrl({ returnTo: "/app" }));
 };

@@ -171,6 +171,24 @@ function renderBoard(
   );
 }
 
+it("loads invitations for an invite-gated user without an organization", async () => {
+  apiMocks.me.mockResolvedValue({
+    user: {
+      id: "user-invited",
+      email: "invited@example.com",
+      displayName: "Invited User",
+    },
+    sandboxProvider: "daytona",
+    organizations: [],
+  });
+
+  render(<CloudAppPage />);
+
+  await waitFor(() => expect(apiMocks.invitations).toHaveBeenCalled());
+  expect(apiMocks.projects).not.toHaveBeenCalled();
+  expect(apiMocks.sessions).not.toHaveBeenCalled();
+});
+
 it("shows the Kanban board when the project already has an orchestrator", () => {
   renderBoard(orchestrator);
 

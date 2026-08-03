@@ -14,6 +14,8 @@
     "cloud:postgres": "docker compose -f ao-cloud/docker-compose.local.yml up -d postgres",
     "cloud:test": "sh -c 'cd backend && go test ./internal/cloud/...'",
     "cloud:local": "bash ao-cloud/scripts/local.sh",
+    "cloud:workos": "bash ao-cloud/scripts/local.sh workos",
+    "cloud:workos:gated": "bash ao-cloud/scripts/local.sh workos-gated",
     "cloud:local:stop": "bash ao-cloud/scripts/local.sh stop",
     "cloud:local:clear-db": "bash ao-cloud/scripts/local.sh clear-db",
     "cloud:local:reset-db": "bash ao-cloud/scripts/local.sh reset-db",

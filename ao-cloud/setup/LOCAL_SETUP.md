@@ -102,28 +102,50 @@ the harness's actual terminal.
 
 The default `npm run cloud:local` path remains CP-local auth because it has the
 fewest prerequisites for contributors. To emulate hosted external auth locally,
-create a WorkOS app and set:
+create a WorkOS app and configure its dashboard URLs:
+
+```text
+Redirect URI:       http://127.0.0.1:5174/callback
+App homepage URL:   http://127.0.0.1:5174
+Initiate login URI: http://127.0.0.1:5174/auth/workos/sign-in
+Sign-out URI:       http://127.0.0.1:5174/auth
+Allowed web origin: http://127.0.0.1:5174
+```
+
+Use `127.0.0.1` consistently. Do not open the app as `localhost`: browser
+cookies are scoped by hostname, while WorkOS returns to the configured
+`127.0.0.1` callback.
+
+Then add the WorkOS app values to `.env.cloud.local`:
 
 ```bash
-AO_CLOUD_AUTH_MODE=workos
 WORKOS_CLIENT_ID=client_...
 WORKOS_API_KEY=sk_...
 WORKOS_COOKIE_PASSWORD=<32+ character random secret>
+WORKOS_REDIRECT_URI=http://127.0.0.1:5174/callback
 NEXT_PUBLIC_WORKOS_REDIRECT_URI=http://127.0.0.1:5174/callback
 ```
 
-Configure the same redirect URI in the WorkOS dashboard.
-
-Then run:
+Then run one of these:
 
 ```bash
-npm run cloud:local
+npm run cloud:workos        # WorkOS with local self-serve signup enabled
+npm run cloud:workos:gated  # WorkOS with invite-gated signup, like hosted
 ```
+
+`npm run cloud:local` always runs the local email/password flow. The WorkOS
+commands force `AO_CLOUD_AUTH_MODE=workos` for the current run. The local runner
+generates `WORKOS_COOKIE_PASSWORD`, `WORKOS_REDIRECT_URI`, and
+`NEXT_PUBLIC_WORKOS_REDIRECT_URI` if they are blank; it cannot generate
+`WORKOS_CLIENT_ID` or `WORKOS_API_KEY` because those come from your WorkOS app.
 
 In this mode the CP no longer serves the local `/api/cloud/v1/auth/login` and
 `/signup` path. The UI uses WorkOS, and the CP accepts only signed WorkOS access
 tokens from the browser. AO authorization still comes from AO's own org and
-membership tables.
+membership tables. After validating a token, the CP uses the server-only
+`WORKOS_API_KEY` to retrieve the user's verified email/name from WorkOS; this
+keeps invitation matching and personal-workspace labels independent of opaque
+WorkOS user IDs.
 
 ## Verify the local stack
 

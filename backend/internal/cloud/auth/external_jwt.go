@@ -16,20 +16,33 @@ const externalJWKSCacheTTL = 5 * time.Minute
 
 // ExternalJWTConfig configures an external OIDC/JWKS-style auth provider.
 type ExternalJWTConfig struct {
-	Provider string
-	Issuer   string
-	Audience string
-	JWKSURL  string
-	Client   *http.Client
+	Provider        string
+	Issuer          string
+	Audience        string
+	ClientID        string
+	JWKSURL         string
+	Client          *http.Client
+	ProfileResolver ExternalProfileResolver
 }
+
+// ExternalProfile contains trusted profile attributes resolved by the identity provider.
+type ExternalProfile struct {
+	Email       string
+	DisplayName string
+}
+
+// ExternalProfileResolver resolves profile claims omitted from an access token.
+type ExternalProfileResolver func(context.Context, string) (ExternalProfile, error)
 
 // ExternalJWTAuthenticator validates signed external JWTs and returns AO principals.
 type ExternalJWTAuthenticator struct {
-	provider string
-	issuer   string
-	audience string
-	jwksURL  string
-	client   *http.Client
+	provider        string
+	issuer          string
+	audience        string
+	clientID        string
+	jwksURL         string
+	client          *http.Client
+	profileResolver ExternalProfileResolver
 
 	mu           sync.Mutex
 	cachedKeySet jwk.Set
@@ -44,23 +57,23 @@ func NewExternalJWTAuthenticator(cfg ExternalJWTConfig) (*ExternalJWTAuthenticat
 	}
 	issuer := strings.TrimRight(strings.TrimSpace(cfg.Issuer), "/")
 	audience := strings.TrimSpace(cfg.Audience)
-	if audience == "" {
-		audience = issuer
-	}
+	clientID := strings.TrimSpace(cfg.ClientID)
 	jwksURL := strings.TrimSpace(cfg.JWKSURL)
-	if issuer == "" || audience == "" || jwksURL == "" {
-		return nil, fmt.Errorf("external auth requires issuer, audience, and JWKS URL")
+	if issuer == "" || (audience == "" && clientID == "") || jwksURL == "" {
+		return nil, fmt.Errorf("external auth requires issuer, audience or client ID, and JWKS URL")
 	}
 	client := cfg.Client
 	if client == nil {
 		client = http.DefaultClient
 	}
 	return &ExternalJWTAuthenticator{
-		provider: provider,
-		issuer:   issuer,
-		audience: audience,
-		jwksURL:  jwksURL,
-		client:   client,
+		provider:        provider,
+		issuer:          issuer,
+		audience:        audience,
+		clientID:        clientID,
+		jwksURL:         jwksURL,
+		client:          client,
+		profileResolver: cfg.ProfileResolver,
 	}, nil
 }
 
@@ -77,12 +90,25 @@ func (a *ExternalJWTAuthenticator) Verify(ctx context.Context, token string) (Pr
 	if err != nil {
 		return Principal{}, ErrUnauthenticated
 	}
+	if a.clientID != "" && stringClaim(parsed, "client_id") != a.clientID {
+		return Principal{}, ErrUnauthenticated
+	}
 	subject, ok := parsed.Subject()
 	if !ok || strings.TrimSpace(subject) == "" {
 		return Principal{}, ErrUnauthenticated
 	}
 	email := stringClaim(parsed, "email")
+	resolvedDisplayName := ""
+	if a.profileResolver != nil {
+		profile, err := a.profileResolver(ctx, subject)
+		if err != nil {
+			return Principal{}, ErrUnauthenticated
+		}
+		email = firstNonEmpty(profile.Email, email)
+		resolvedDisplayName = profile.DisplayName
+	}
 	displayName := firstNonEmpty(
+		resolvedDisplayName,
 		stringClaim(parsed, "name"),
 		stringClaim(parsed, "displayName"),
 		email,
@@ -119,11 +145,16 @@ func (a *ExternalJWTAuthenticator) parse(ctx context.Context, token string) (jwt
 	if err != nil {
 		return nil, err
 	}
-	return jwt.Parse(
-		[]byte(token),
+	options := []jwt.ParseOption{
 		jwt.WithKeySet(keySet),
 		jwt.WithIssuer(a.issuer),
-		jwt.WithAudience(a.audience),
+	}
+	if a.audience != "" {
+		options = append(options, jwt.WithAudience(a.audience))
+	}
+	return jwt.Parse(
+		[]byte(token),
+		options...,
 	)
 }
 

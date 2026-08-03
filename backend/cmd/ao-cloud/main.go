@@ -55,12 +55,21 @@ func run(log *slog.Logger) error {
 	var authenticator cloudauth.Authenticator
 	switch cfg.AuthMode {
 	case "workos", "external":
-		authenticator, err = cloudauth.NewExternalJWTAuthenticator(cloudauth.ExternalJWTConfig{
+		authConfig := cloudauth.ExternalJWTConfig{
 			Provider: cfg.AuthProvider,
 			Issuer:   cfg.AuthIssuer,
 			Audience: cfg.AuthAudience,
 			JWKSURL:  cfg.AuthJWKSURL,
-		})
+		}
+		if cfg.AuthMode == "workos" {
+			authConfig.ClientID = cfg.AuthAudience
+			authConfig.Audience = ""
+			authConfig.ProfileResolver, err = cloudauth.NewWorkOSProfileResolver(cfg.WorkOSAPIKey, nil)
+			if err != nil {
+				return err
+			}
+		}
+		authenticator, err = cloudauth.NewExternalJWTAuthenticator(authConfig)
 		if err != nil {
 			return err
 		}
@@ -144,6 +153,7 @@ func run(log *slog.Logger) error {
 		workerHub,
 		localGitHub,
 		cfg.WebPublicURL,
+		cfg.AllowExternalSignup,
 		log,
 	)
 	server := &http.Server{

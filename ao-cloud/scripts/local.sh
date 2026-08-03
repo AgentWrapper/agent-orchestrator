@@ -11,11 +11,17 @@ mkdir -p "$log_dir" "$pid_dir"
 
 usage() {
   cat <<'EOF'
-Usage: npm run cloud:local [start|stop|clear-db|reset-db]
+Usage:
+  npm run cloud:local [start|stop|clear-db|reset-db]
+  npm run cloud:workos
+  npm run cloud:workos:gated
 
 start (default) installs dependencies, prepares local configuration, builds the
 worker and control-plane images, starts the Compose stack, then starts the web
 app.
+cloud:local forces local email/password auth. cloud:workos forces WorkOS auth
+with local self-serve signup enabled. cloud:workos:gated forces WorkOS auth with
+invite-gated signup, matching hosted defaults.
 It remains attached and streams logs until Ctrl-C, which stops the stack while
 preserving PostgreSQL data.
 stop gracefully stops local worker sandboxes, the control plane, web app, and
@@ -36,6 +42,15 @@ ensure_env() {
   if ! grep -q '^AO_WORKER_SIGNING_KEY=.\+' "$env_file"; then
     printf 'AO_WORKER_SIGNING_KEY=%s\n' "$(openssl rand -hex 32)" >>"$env_file"
   fi
+  if ! grep -q '^WORKOS_COOKIE_PASSWORD=.\+' "$env_file"; then
+    printf 'WORKOS_COOKIE_PASSWORD=%s\n' "$(openssl rand -hex 32)" >>"$env_file"
+  fi
+  if ! grep -q '^NEXT_PUBLIC_WORKOS_REDIRECT_URI=.\+' "$env_file"; then
+    printf 'NEXT_PUBLIC_WORKOS_REDIRECT_URI=http://127.0.0.1:5174/callback\n' >>"$env_file"
+  fi
+  if ! grep -q '^WORKOS_REDIRECT_URI=.\+' "$env_file"; then
+    printf 'WORKOS_REDIRECT_URI=http://127.0.0.1:5174/callback\n' >>"$env_file"
+  fi
 }
 
 ensure_web_env() {
@@ -51,6 +66,65 @@ load_local_env() {
   # shellcheck disable=SC1090
   . "$env_file"
   set +a
+}
+
+configure_auth_profile() {
+  local profile="${1:-local}"
+  case "$profile" in
+    local)
+      AO_CLOUD_AUTH_MODE="local"
+      AO_CLOUD_ALLOW_PUBLIC_SIGNUP="false"
+      ;;
+    workos)
+      AO_CLOUD_AUTH_MODE="workos"
+      AO_CLOUD_ALLOW_PUBLIC_SIGNUP="true"
+      require_workos_env
+      ;;
+    workos-gated)
+      AO_CLOUD_AUTH_MODE="workos"
+      AO_CLOUD_ALLOW_PUBLIC_SIGNUP="false"
+      require_workos_env
+      ;;
+    *)
+      echo "Unknown auth profile: $profile"
+      usage
+      exit 2
+      ;;
+  esac
+  WORKOS_REDIRECT_URI="${WORKOS_REDIRECT_URI:-http://127.0.0.1:5174/callback}"
+  NEXT_PUBLIC_WORKOS_REDIRECT_URI="${NEXT_PUBLIC_WORKOS_REDIRECT_URI:-http://127.0.0.1:5174/callback}"
+  export AO_CLOUD_AUTH_MODE
+  export AO_CLOUD_ALLOW_PUBLIC_SIGNUP
+  export WORKOS_REDIRECT_URI
+  export NEXT_PUBLIC_WORKOS_REDIRECT_URI
+}
+
+require_workos_env() {
+  local missing=()
+  [[ -n "${WORKOS_CLIENT_ID:-}" ]] || missing+=("WORKOS_CLIENT_ID")
+  [[ -n "${WORKOS_API_KEY:-}" ]] || missing+=("WORKOS_API_KEY")
+  [[ -n "${WORKOS_COOKIE_PASSWORD:-}" ]] || missing+=("WORKOS_COOKIE_PASSWORD")
+  if (( ${#missing[@]} > 0 )); then
+    cat <<EOF
+WorkOS local auth needs these values in $env_file:
+
+WORKOS_CLIENT_ID=client_...
+WORKOS_API_KEY=sk_...
+WORKOS_COOKIE_PASSWORD=$(openssl rand -hex 32)
+WORKOS_REDIRECT_URI=http://127.0.0.1:5174/callback
+NEXT_PUBLIC_WORKOS_REDIRECT_URI=http://127.0.0.1:5174/callback
+
+Configure these values in the WorkOS dashboard:
+Redirect URI:       http://127.0.0.1:5174/callback
+App homepage URL:   http://127.0.0.1:5174
+Initiate login URI: http://127.0.0.1:5174/auth/workos/sign-in
+Sign-out URI:       http://127.0.0.1:5174/auth
+Allowed web origin: http://127.0.0.1:5174
+
+Missing: ${missing[*]}
+EOF
+    exit 1
+  fi
 }
 
 configure_local_github() {
@@ -174,9 +248,11 @@ stream_logs() {
 }
 
 start() {
+  local auth_profile="${1:-local}"
   ensure_env
   ensure_web_env
   load_local_env
+  configure_auth_profile "$auth_profile"
   configure_local_github
   cd "$root"
   npm install
@@ -195,7 +271,7 @@ start() {
     tail -n 100 "$log_dir/control-plane.log"
     exit 1
   fi
-  start_process web "set -a; . '$env_file'; set +a; export NEXT_PUBLIC_API_URL=http://127.0.0.1:3010 NEXT_PUBLIC_WEB_URL=http://127.0.0.1:5174 NEXT_PUBLIC_AO_AUTH_MODE=\${AO_CLOUD_AUTH_MODE:-local} NEXT_PUBLIC_WORKOS_REDIRECT_URI=\${NEXT_PUBLIC_WORKOS_REDIRECT_URI:-http://127.0.0.1:5174/callback}; exec npm run cloud:web"
+  start_process web "set -a; . '$env_file'; set +a; export AO_CLOUD_AUTH_MODE='$AO_CLOUD_AUTH_MODE' AO_CLOUD_ALLOW_PUBLIC_SIGNUP='$AO_CLOUD_ALLOW_PUBLIC_SIGNUP' WORKOS_REDIRECT_URI='$WORKOS_REDIRECT_URI' NEXT_PUBLIC_API_URL=http://127.0.0.1:3010 NEXT_PUBLIC_WEB_URL=http://127.0.0.1:5174 NEXT_PUBLIC_AO_AUTH_MODE='$AO_CLOUD_AUTH_MODE' NEXT_PUBLIC_WORKOS_REDIRECT_URI='$NEXT_PUBLIC_WORKOS_REDIRECT_URI'; exec npm run cloud:web"
   start_process sandbox-events "exec docker events --filter label=ao.managed=true --format '{{.Time}} {{.Action}} {{.Actor.Attributes.name}}'"
   for _ in {1..30}; do
     if curl --fail --silent http://127.0.0.1:5174/ >/dev/null; then
@@ -216,7 +292,9 @@ start() {
 }
 
 case "${1:-start}" in
-  start) start ;;
+  start) start local ;;
+  workos) start workos ;;
+  workos-gated) start workos-gated ;;
   stop) stop_stack ;;
   clear-db|reset-db) clear_database ;;
   -h|--help|help) usage ;;

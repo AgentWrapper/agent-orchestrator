@@ -35,7 +35,8 @@ import (
 type store interface {
 	Ping(context.Context) error
 	EnsureAccount(context.Context, string, string) (clouddomain.Account, error)
-	EnsureExternalAccount(context.Context, string, string, string, string) (clouddomain.Account, error)
+	ExternalAccountCanSignIn(context.Context, string, string, string) (bool, error)
+	EnsureExternalAccount(context.Context, string, string, string, string, bool) (clouddomain.Account, error)
 	UpdateUserProfile(context.Context, string, cloudpostgres.UpdateUserProfileInput) (clouddomain.User, error)
 	CreateOrganization(context.Context, cloudpostgres.CreateOrganizationInput) (clouddomain.UserOrganization, error)
 	UpdateOrganization(context.Context, clouddomain.OrgID, cloudpostgres.UpdateOrganizationInput) (clouddomain.Organization, error)
@@ -86,26 +87,27 @@ type store interface {
 
 // Server serves the authenticated AO Cloud HTTP and WebSocket APIs.
 type Server struct {
-	store            store
-	events           *cloudevents.Service
-	auth             cloudauth.Authenticator
-	localAuth        *cloudauth.LocalAuthenticator
-	workerTokens     *cloudworker.TokenManager
-	secretCipher     *cloudsecrets.Cipher
-	agentCredentials *agentCredentialValidator
-	sandboxProvider  string
-	daytonaAPIURL    string
-	daytonaTarget    string
-	workerHub        *cloudworkerhub.Hub
-	workerRPC        *workerRPCBroker
-	previewTokens    *previewTokenStore
-	workerReplayWait time.Duration
-	workerWriteWait  time.Duration
-	localGitHub      *cloudlocalgh.Client
-	webOrigin        string
-	webOriginHost    string
-	log              *slog.Logger
-	handler          http.Handler
+	store               store
+	events              *cloudevents.Service
+	auth                cloudauth.Authenticator
+	localAuth           *cloudauth.LocalAuthenticator
+	workerTokens        *cloudworker.TokenManager
+	secretCipher        *cloudsecrets.Cipher
+	agentCredentials    *agentCredentialValidator
+	sandboxProvider     string
+	daytonaAPIURL       string
+	daytonaTarget       string
+	workerHub           *cloudworkerhub.Hub
+	workerRPC           *workerRPCBroker
+	previewTokens       *previewTokenStore
+	workerReplayWait    time.Duration
+	workerWriteWait     time.Duration
+	localGitHub         *cloudlocalgh.Client
+	webOrigin           string
+	webOriginHost       string
+	allowExternalSignup bool
+	log                 *slog.Logger
+	handler             http.Handler
 }
 
 // New creates an AO Cloud API server.
@@ -120,6 +122,7 @@ func New(
 	workerHub *cloudworkerhub.Hub,
 	localGitHub *cloudlocalgh.Client,
 	webOrigin string,
+	allowExternalSignup bool,
 	log *slog.Logger,
 ) *Server {
 	if log == nil {
@@ -127,24 +130,25 @@ func New(
 	}
 	localAuth, _ := auth.(*cloudauth.LocalAuthenticator)
 	server := &Server{
-		store:            store,
-		events:           events,
-		auth:             auth,
-		localAuth:        localAuth,
-		workerTokens:     workerTokens,
-		secretCipher:     secretCipher,
-		agentCredentials: newAgentCredentialValidator(nil),
-		sandboxProvider:  sandboxProvider,
-		daytonaAPIURL:    strings.TrimRight(daytonaAPIURL, "/"),
-		daytonaTarget:    daytonaTarget,
-		workerHub:        workerHub,
-		workerRPC:        newWorkerRPCBroker(),
-		previewTokens:    newPreviewTokenStore(),
-		workerReplayWait: 20 * time.Second,
-		workerWriteWait:  10 * time.Second,
-		localGitHub:      localGitHub,
-		webOrigin:        strings.TrimRight(webOrigin, "/"),
-		log:              log,
+		store:               store,
+		events:              events,
+		auth:                auth,
+		localAuth:           localAuth,
+		workerTokens:        workerTokens,
+		secretCipher:        secretCipher,
+		agentCredentials:    newAgentCredentialValidator(nil),
+		sandboxProvider:     sandboxProvider,
+		daytonaAPIURL:       strings.TrimRight(daytonaAPIURL, "/"),
+		daytonaTarget:       daytonaTarget,
+		workerHub:           workerHub,
+		workerRPC:           newWorkerRPCBroker(),
+		previewTokens:       newPreviewTokenStore(),
+		workerReplayWait:    20 * time.Second,
+		workerWriteWait:     10 * time.Second,
+		localGitHub:         localGitHub,
+		webOrigin:           strings.TrimRight(webOrigin, "/"),
+		allowExternalSignup: allowExternalSignup,
+		log:                 log,
 	}
 	if parsed, err := url.Parse(server.webOrigin); err == nil {
 		server.webOriginHost = parsed.Host
@@ -355,6 +359,10 @@ func (s *Server) ensureAccount(next http.Handler) http.Handler {
 			return
 		}
 		account, err := s.ensurePrincipalAccount(r.Context(), &principal)
+		if errors.Is(err, errExternalSignupDisabled) {
+			writeError(w, r, http.StatusForbidden, "INVITATION_REQUIRED", "AO Cloud access requires an existing account or organization invitation.")
+			return
+		}
 		if err != nil {
 			s.internalError(w, r, "ensure account", err)
 			return
@@ -370,12 +378,28 @@ func (s *Server) ensurePrincipalAccount(
 	principal *cloudauth.Principal,
 ) (clouddomain.Account, error) {
 	if principal.AuthProvider != "" && principal.AuthProvider != "local" {
+		createPersonalOrg := s.allowExternalSignup
+		if !s.allowExternalSignup {
+			canSignIn, err := s.store.ExternalAccountCanSignIn(
+				ctx,
+				principal.AuthProvider,
+				principal.ExternalUserID,
+				principal.Email,
+			)
+			if err != nil {
+				return clouddomain.Account{}, err
+			}
+			if !canSignIn {
+				return clouddomain.Account{}, errExternalSignupDisabled
+			}
+		}
 		account, err := s.store.EnsureExternalAccount(
 			ctx,
 			principal.AuthProvider,
 			principal.ExternalUserID,
 			principal.Email,
 			principal.DisplayName,
+			createPersonalOrg,
 		)
 		if err != nil {
 			return clouddomain.Account{}, err
@@ -453,6 +477,10 @@ func (s *Server) listOrgs(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createOrg(w http.ResponseWriter, r *http.Request) {
 	principal, _ := cloudauth.PrincipalFromContext(r.Context())
+	if !s.allowExternalSignup && principal.AuthProvider != "" && principal.AuthProvider != "local" {
+		writeError(w, r, http.StatusForbidden, "ORG_CREATION_DISABLED", "Organization creation is invite-only in this AO Cloud deployment.")
+		return
+	}
 	var input struct {
 		DisplayName string `json:"displayName"`
 		Kind        string `json:"kind"`
@@ -3328,6 +3356,7 @@ func clearBytes(value []byte) {
 }
 
 var errAgentConnectionRequired = errors.New("coding-agent connection required")
+var errExternalSignupDisabled = errors.New("external account signup is disabled")
 
 func (s *Server) listRepositories(w http.ResponseWriter, r *http.Request) {
 	if s.localGitHub == nil {

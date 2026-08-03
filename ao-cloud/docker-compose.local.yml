@@ -36,11 +36,13 @@ services:
       AO_CLOUD_PUBLIC_URL: http://127.0.0.1:3010
       AO_WEB_PUBLIC_URL: http://127.0.0.1:5174
       AO_CLOUD_AUTH_MODE: ${AO_CLOUD_AUTH_MODE:-local}
+      AO_CLOUD_ALLOW_PUBLIC_SIGNUP: ${AO_CLOUD_ALLOW_PUBLIC_SIGNUP:-false}
       AO_CLOUD_AUTH_PROVIDER: ${AO_CLOUD_AUTH_PROVIDER:-workos}
       AO_CLOUD_AUTH_ISSUER: ${AO_CLOUD_AUTH_ISSUER:-}
       AO_CLOUD_AUTH_AUDIENCE: ${AO_CLOUD_AUTH_AUDIENCE:-}
       AO_CLOUD_AUTH_JWKS_URL: ${AO_CLOUD_AUTH_JWKS_URL:-}
       WORKOS_CLIENT_ID: ${WORKOS_CLIENT_ID:-}
+      WORKOS_API_KEY: ${WORKOS_API_KEY:-}
       AO_DATABASE_URL: postgresql://ao:ao@postgres:5432/ao_cloud_dev?sslmode=disable
       AO_DATABASE_DIRECT_URL: postgresql://ao:ao@postgres:5432/ao_cloud_dev?sslmode=disable
       AO_SANDBOX_PROVIDER: docker

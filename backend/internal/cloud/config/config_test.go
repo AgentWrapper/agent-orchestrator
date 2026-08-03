@@ -72,6 +72,7 @@ func TestLoadAcceptsWorkOSMode(t *testing.T) {
 	t.Setenv("AO_WORKER_SIGNING_KEY", "1111111111111111111111111111111111111111111111111111111111111111")
 	t.Setenv("AO_CLOUD_AUTH_MODE", "workos")
 	t.Setenv("WORKOS_CLIENT_ID", "client_123")
+	t.Setenv("WORKOS_API_KEY", "sk_test")
 
 	cfg, err := Load()
 	if err != nil {
@@ -80,7 +81,7 @@ func TestLoadAcceptsWorkOSMode(t *testing.T) {
 	if cfg.AuthProvider != "workos" {
 		t.Fatalf("AuthProvider = %q", cfg.AuthProvider)
 	}
-	if cfg.AuthIssuer != "https://api.workos.com" {
+	if cfg.AuthIssuer != "https://api.workos.com/user_management/client_123" {
 		t.Fatalf("AuthIssuer = %q", cfg.AuthIssuer)
 	}
 	if cfg.AuthAudience != "client_123" {
@@ -88,6 +89,42 @@ func TestLoadAcceptsWorkOSMode(t *testing.T) {
 	}
 	if cfg.AuthJWKSURL != "https://api.workos.com/sso/jwks/client_123" {
 		t.Fatalf("AuthJWKSURL = %q", cfg.AuthJWKSURL)
+	}
+	if cfg.AllowExternalSignup {
+		t.Fatal("AllowExternalSignup = true, want hosted default false")
+	}
+}
+
+func TestLoadAllowsExplicitExternalSignup(t *testing.T) {
+	t.Setenv("AO_DATABASE_URL", "postgres://example")
+	t.Setenv("AO_SANDBOX_PROVIDER", "docker")
+	t.Setenv("AO_ENCRYPTION_KEY", "0000000000000000000000000000000000000000000000000000000000000000")
+	t.Setenv("AO_WORKER_SIGNING_KEY", "1111111111111111111111111111111111111111111111111111111111111111")
+	t.Setenv("AO_CLOUD_AUTH_MODE", "workos")
+	t.Setenv("WORKOS_CLIENT_ID", "client_123")
+	t.Setenv("WORKOS_API_KEY", "sk_test")
+	t.Setenv("AO_CLOUD_ALLOW_PUBLIC_SIGNUP", "true")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.AllowExternalSignup {
+		t.Fatal("AllowExternalSignup = false, want true")
+	}
+}
+
+func TestLoadRequiresWorkOSAPIKey(t *testing.T) {
+	t.Setenv("AO_DATABASE_URL", "postgres://example")
+	t.Setenv("AO_SANDBOX_PROVIDER", "docker")
+	t.Setenv("AO_ENCRYPTION_KEY", "0000000000000000000000000000000000000000000000000000000000000000")
+	t.Setenv("AO_WORKER_SIGNING_KEY", "1111111111111111111111111111111111111111111111111111111111111111")
+	t.Setenv("AO_CLOUD_AUTH_MODE", "workos")
+	t.Setenv("WORKOS_CLIENT_ID", "client_123")
+	t.Setenv("WORKOS_API_KEY", "")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() error = nil, want missing WorkOS API key")
 	}
 }
 

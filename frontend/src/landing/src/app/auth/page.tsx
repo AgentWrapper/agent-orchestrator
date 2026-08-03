@@ -6,10 +6,7 @@ import { useState } from "react";
 
 import { env } from "@/env";
 import { CloudAPI } from "@/lib/cloud-api";
-import {
-  redirectToWorkOSSignIn,
-  redirectToWorkOSSignUp,
-} from "@/lib/workos-cloud";
+import { redirectToWorkOSSignIn } from "@/lib/workos-cloud";
 
 import { AOLogo } from "../components/Header/components/AOLogo";
 import { PrismLogoGrid } from "./PrismLogoGrid";
@@ -91,15 +88,12 @@ export default function EmailAuthPage() {
                 className="inline-flex h-10 w-full items-center justify-center rounded-md bg-[#4d8dff] px-4 text-sm font-medium text-white transition-[background-color,transform,opacity] hover:bg-[#397df0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8bb5ff] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0a0b0d] active:scale-[0.99] motion-reduce:transform-none"
                 onClick={redirectToWorkOSSignIn}
               >
-                Continue with WorkOS
+                Continue to Cloud
               </button>
-              <button
-                type="button"
-                className="inline-flex h-10 w-full items-center justify-center rounded-md border border-white/10 bg-[#15171b] px-4 text-sm font-medium text-[#f4f5f7] transition-colors hover:border-white/15 hover:bg-[#1a1d22] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4d8dff]"
-                onClick={redirectToWorkOSSignUp}
-              >
-                Create account
-              </button>
+              <p className="text-xs leading-5 text-[#646a73]">
+                WorkOS handles sign-in and new-account creation using the
+                email, Google, or SSO providers enabled for this app.
+              </p>
             </div>
           ) : (
           <form className="mt-10 space-y-5" onSubmit={submit}>

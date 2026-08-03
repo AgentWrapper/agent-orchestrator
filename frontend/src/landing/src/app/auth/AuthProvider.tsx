@@ -30,16 +30,38 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 const cloudSessionKey = "ao-cloud-session";
 const authMode = env.NEXT_PUBLIC_AO_AUTH_MODE;
 
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Authentication failed.";
-}
-
-export function AuthProvider({ children }: { children: React.ReactNode }) {
+export function AuthProvider({
+  children,
+  workOSStatus,
+}: {
+  children: React.ReactNode;
+  workOSStatus?: AuthStatus;
+}) {
   const [session, setSession] = useState<CloudAuthSession | null>(null);
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (authMode === "workos" && env.NEXT_PUBLIC_WEB_URL) {
+      const canonicalOrigin = new URL(env.NEXT_PUBLIC_WEB_URL).origin;
+      if (window.location.origin !== canonicalOrigin) {
+        window.location.replace(
+          new URL(
+            `${window.location.pathname}${window.location.search}`,
+            canonicalOrigin,
+          ),
+        );
+        return;
+      }
+    }
+
+    if (authMode === "workos" && workOSStatus !== "authenticated") {
+      window.localStorage.removeItem(cloudSessionKey);
+      setSession(null);
+      setStatus(workOSStatus ?? "loading");
+      return;
+    }
+
     let active = true;
     const restore = async () => {
       try {
@@ -73,9 +95,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         window.localStorage.setItem(cloudSessionKey, JSON.stringify(hydrated));
         setSession(hydrated);
         setStatus("authenticated");
-      } catch (initializationError) {
+      } catch {
         if (!active) return;
-        setError(errorMessage(initializationError));
         window.localStorage.removeItem(cloudSessionKey);
         setSession(null);
         setStatus("unauthenticated");
@@ -83,14 +104,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
     try {
       void restore();
-    } catch (initializationError) {
-      setError(errorMessage(initializationError));
+    } catch {
       setStatus("unauthenticated");
     }
     return () => {
       active = false;
     };
-  }, []);
+  }, [workOSStatus]);
 
   const login = useCallback(async () => {
     setError(null);
@@ -102,8 +122,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       if (session?.authProvider === "workos") {
         window.localStorage.removeItem(cloudSessionKey);
-        setSession(null);
-        setStatus("unauthenticated");
         redirectToWorkOSLogout();
         return;
       } else if (session) {
