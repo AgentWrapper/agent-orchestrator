@@ -1274,7 +1274,7 @@ function SidebarSessionRow({
 	label: string;
 }) {
 	return (
-		<div className="pl-7">
+		<div className="pl-4">
 			<div
 				className={`flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] ${
 					active
@@ -1464,13 +1464,6 @@ function BoardChrome({
 			<div className="min-w-0 flex-1" />
 			<button
 				type="button"
-				className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-[rgb(255_255_255/0.18)] text-[var(--preview-muted-foreground)] transition-colors hover:bg-[var(--preview-sidebar-hover)] hover:text-[var(--preview-foreground)]"
-				aria-label="Notifications"
-			>
-				<BellIcon className="h-4 w-4" />
-			</button>
-			<button
-				type="button"
 				onClick={onNewTask}
 				className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--preview-border)] bg-[var(--preview-raised)] px-3 text-[12px] font-semibold text-[var(--preview-muted-foreground)] transition-colors hover:bg-[var(--preview-card)] hover:text-[var(--preview-foreground)] active:scale-[0.98]"
 			>
@@ -1483,6 +1476,13 @@ function BoardChrome({
 			>
 				<OrchestratorIcon className="h-3.5 w-3.5" />
 				Orchestrator
+			</button>
+			<button
+				type="button"
+				className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-[rgb(255_255_255/0.18)] text-[var(--preview-muted-foreground)] transition-colors hover:bg-[var(--preview-sidebar-hover)] hover:text-[var(--preview-foreground)]"
+				aria-label="Notifications"
+			>
+				<BellIcon className="h-4 w-4" />
 			</button>
 		</div>
 	);
@@ -1754,7 +1754,7 @@ function BoardColumn({
 		<section className="flex min-h-0 min-w-0 snap-start flex-col border-r border-[var(--preview-divider)] last:border-r-0">
 			<div className="flex h-12 shrink-0 items-center gap-2.5 border-b border-[var(--preview-divider)] px-4">
 				<span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
-				<div className="font-mono text-[10.5px] font-medium uppercase tracking-wide text-[var(--preview-muted-foreground)]">
+				<div className="text-[10.5px] font-medium tracking-tight text-[var(--preview-muted-foreground)]">
 					{title}
 				</div>
 				<div className="ml-auto font-mono text-[10.5px] leading-none text-[var(--preview-muted-foreground)] opacity-60">
