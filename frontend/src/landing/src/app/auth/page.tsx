@@ -4,7 +4,12 @@ import { ArrowLeft, LoaderCircle } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
+import { env } from "@/env";
 import { CloudAPI } from "@/lib/cloud-api";
+import {
+  redirectToWorkOSSignIn,
+  redirectToWorkOSSignUp,
+} from "@/lib/workos-cloud";
 
 import { AOLogo } from "../components/Header/components/AOLogo";
 import { PrismLogoGrid } from "./PrismLogoGrid";
@@ -13,11 +18,13 @@ type Mode = "login" | "signup";
 
 export default function EmailAuthPage() {
   const [mode, setMode] = useState<Mode>("login");
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const isWorkOS = env.NEXT_PUBLIC_AO_AUTH_MODE === "workos";
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -27,8 +34,12 @@ export default function EmailAuthPage() {
     try {
       const session =
         mode === "login"
-          ? await CloudAPI.login({ email: email.trim(), password })
-          : await CloudAPI.signUp({ email: email.trim(), password });
+            ? await CloudAPI.login({ email: email.trim(), password })
+            : await CloudAPI.signUp({
+                email: email.trim(),
+                password,
+                displayName: name.trim(),
+              });
       window.localStorage.setItem("ao-cloud-session", JSON.stringify(session));
       window.location.replace("/app");
     } catch (authError) {
@@ -73,7 +84,39 @@ export default function EmailAuthPage() {
               : "Start a cloud workspace for your agent fleet."}
           </p>
 
+          {isWorkOS ? (
+            <div className="mt-10 space-y-3">
+              <button
+                type="button"
+                className="inline-flex h-10 w-full items-center justify-center rounded-md bg-[#4d8dff] px-4 text-sm font-medium text-white transition-[background-color,transform,opacity] hover:bg-[#397df0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8bb5ff] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0a0b0d] active:scale-[0.99] motion-reduce:transform-none"
+                onClick={redirectToWorkOSSignIn}
+              >
+                Continue with WorkOS
+              </button>
+              <button
+                type="button"
+                className="inline-flex h-10 w-full items-center justify-center rounded-md border border-white/10 bg-[#15171b] px-4 text-sm font-medium text-[#f4f5f7] transition-colors hover:border-white/15 hover:bg-[#1a1d22] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4d8dff]"
+                onClick={redirectToWorkOSSignUp}
+              >
+                Create account
+              </button>
+            </div>
+          ) : (
           <form className="mt-10 space-y-5" onSubmit={submit}>
+            {mode === "signup" && (
+              <label className="block text-xs text-[#9ba1aa]">
+                Name
+                <input
+                  className="mt-2 h-10 w-full rounded-md border border-white/10 bg-[#15171b] px-3 text-sm text-[#f4f5f7] outline-none transition-colors placeholder:text-[#646a73] hover:border-white/15 focus:border-[#4d8dff] focus:ring-1 focus:ring-[#4d8dff]/30"
+                  type="text"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  autoComplete="name"
+                  placeholder="Ada Lovelace"
+                  maxLength={120}
+                />
+              </label>
+            )}
             <label className="block text-xs text-[#9ba1aa]">
               Email
               <input
@@ -137,7 +180,9 @@ export default function EmailAuthPage() {
               )}
             </button>
           </form>
+          )}
 
+          {!isWorkOS && (
           <p className="mt-6 text-sm text-[#646a73]">
             {mode === "login"
               ? "New to Agent Orchestrator?"
@@ -156,6 +201,7 @@ export default function EmailAuthPage() {
               {mode === "login" ? "Create an account" : "Sign in"}
             </button>
           </p>
+          )}
         </div>
 
         <p className="text-[11px] leading-5 text-[#646a73]">

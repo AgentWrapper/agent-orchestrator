@@ -35,6 +35,7 @@ import (
 type store interface {
 	Ping(context.Context) error
 	EnsureAccount(context.Context, string, string) (clouddomain.Account, error)
+	EnsureExternalAccount(context.Context, string, string, string, string) (clouddomain.Account, error)
 	UpdateUserProfile(context.Context, string, cloudpostgres.UpdateUserProfileInput) (clouddomain.User, error)
 	CreateOrganization(context.Context, cloudpostgres.CreateOrganizationInput) (clouddomain.UserOrganization, error)
 	UpdateOrganization(context.Context, clouddomain.OrgID, cloudpostgres.UpdateOrganizationInput) (clouddomain.Organization, error)
@@ -353,13 +354,36 @@ func (s *Server) ensureAccount(next http.Handler) http.Handler {
 			writeError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "A valid AO Cloud login is required.")
 			return
 		}
-		account, err := s.store.EnsureAccount(r.Context(), principal.UserID, principal.DisplayName)
+		account, err := s.ensurePrincipalAccount(r.Context(), &principal)
 		if err != nil {
 			s.internalError(w, r, "ensure account", err)
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), accountContextKey{}, account)))
+		ctx := cloudauth.ContextWithPrincipal(r.Context(), principal)
+		ctx = context.WithValue(ctx, accountContextKey{}, account)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func (s *Server) ensurePrincipalAccount(
+	ctx context.Context,
+	principal *cloudauth.Principal,
+) (clouddomain.Account, error) {
+	if principal.AuthProvider != "" && principal.AuthProvider != "local" {
+		account, err := s.store.EnsureExternalAccount(
+			ctx,
+			principal.AuthProvider,
+			principal.ExternalUserID,
+			principal.Email,
+			principal.DisplayName,
+		)
+		if err != nil {
+			return clouddomain.Account{}, err
+		}
+		principal.UserID = account.OwnerUserID
+		return account, nil
+	}
+	return s.store.EnsureAccount(ctx, principal.UserID, principal.DisplayName)
 }
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {

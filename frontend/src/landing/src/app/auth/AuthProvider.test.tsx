@@ -5,7 +5,13 @@ import { AuthProvider, useAuth } from "./AuthProvider";
 
 vi.mock("@/lib/cloud-api", () => ({
   CloudAPI: class {
-    me = vi.fn().mockResolvedValue({});
+    me = vi.fn().mockResolvedValue({
+      user: {
+        id: "user-one",
+        email: "developer@example.com",
+        displayName: "Developer",
+      },
+    });
   },
 }));
 

@@ -52,7 +52,21 @@ func run(log *slog.Logger) error {
 	defer store.Close()
 
 	eventService := cloudevents.New(store)
-	authenticator := cloudauth.NewLocalAuthenticator(store)
+	var authenticator cloudauth.Authenticator
+	switch cfg.AuthMode {
+	case "workos", "external":
+		authenticator, err = cloudauth.NewExternalJWTAuthenticator(cloudauth.ExternalJWTConfig{
+			Provider: cfg.AuthProvider,
+			Issuer:   cfg.AuthIssuer,
+			Audience: cfg.AuthAudience,
+			JWKSURL:  cfg.AuthJWKSURL,
+		})
+		if err != nil {
+			return err
+		}
+	default:
+		authenticator = cloudauth.NewLocalAuthenticator(store)
+	}
 	workerTokens := cloudworker.NewTokenManager(cfg.WorkerSigningKey)
 	workerHub := cloudworkerhub.New()
 	var localGitHub *cloudlocalgh.Client

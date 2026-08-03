@@ -195,6 +195,8 @@ export type AgentCredentialType = "oauth_token" | "api_key" | "access_token";
 
 export interface CloudAuthSession {
   accessToken: string;
+  authProvider?: "local" | "workos";
+  providerSessionToken?: string;
   user: {
     id: string;
     email: string;
@@ -221,6 +223,7 @@ export class CloudAPI {
   static async signUp(input: {
     email: string;
     password: string;
+    displayName?: string;
   }): Promise<CloudAuthSession> {
     return CloudAPI.authRequest("/api/cloud/v1/auth/signup", input);
   }

@@ -156,6 +156,97 @@ func (s *Store) EnsureAccount(ctx context.Context, ownerUserID, displayName stri
 	return account, nil
 }
 
+// EnsureExternalAccount maps an external auth user into AO's durable user/org model.
+func (s *Store) EnsureExternalAccount(
+	ctx context.Context,
+	authProvider string,
+	externalUserID string,
+	email string,
+	displayName string,
+) (clouddomain.Account, error) {
+	authProvider = strings.TrimSpace(authProvider)
+	externalUserID = strings.TrimSpace(externalUserID)
+	email = strings.ToLower(strings.TrimSpace(email))
+	displayName = strings.TrimSpace(displayName)
+	if authProvider == "" || externalUserID == "" {
+		return clouddomain.Account{}, fmt.Errorf("external auth provider and user ID are required")
+	}
+	if displayName == "" {
+		displayName = firstNonEmpty(email, externalUserID)
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return clouddomain.Account{}, fmt.Errorf("begin ensure external account: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var user clouddomain.User
+	err = tx.QueryRow(ctx, `
+		INSERT INTO ao_users (auth_provider, external_user_id, email, display_name)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (auth_provider, external_user_id) DO UPDATE
+		SET email = CASE
+				WHEN EXCLUDED.email <> '' THEN EXCLUDED.email
+				ELSE ao_users.email
+			END,
+			display_name = CASE
+				WHEN ao_users.display_name = '' THEN EXCLUDED.display_name
+				ELSE ao_users.display_name
+			END,
+			updated_at = now()
+		RETURNING id, auth_provider, external_user_id, email, display_name, created_at, updated_at
+	`, authProvider, externalUserID, email, displayName).Scan(
+		&user.ID,
+		&user.AuthProvider,
+		&user.ExternalUserID,
+		&user.Email,
+		&user.DisplayName,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+	if err != nil {
+		return clouddomain.Account{}, fmt.Errorf("ensure external cloud user: %w", err)
+	}
+
+	var account clouddomain.Account
+	err = tx.QueryRow(ctx, `
+		SELECT id, owner_user_id, display_name, created_at, updated_at
+		FROM ao_accounts
+		WHERE owner_user_id = $1
+		ORDER BY created_at
+		LIMIT 1
+	`, user.ID).Scan(
+		&account.ID,
+		&account.OwnerUserID,
+		&account.DisplayName,
+		&account.CreatedAt,
+		&account.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = tx.QueryRow(ctx, `
+			INSERT INTO ao_accounts (owner_user_id, display_name)
+			VALUES ($1, $2)
+			RETURNING id, owner_user_id, display_name, created_at, updated_at
+		`, user.ID, user.DisplayName).Scan(
+			&account.ID,
+			&account.OwnerUserID,
+			&account.DisplayName,
+			&account.CreatedAt,
+			&account.UpdatedAt,
+		)
+	}
+	if err != nil {
+		return clouddomain.Account{}, fmt.Errorf("ensure external account: %w", err)
+	}
+	if err := ensureUserOrgTx(ctx, tx, account, user.DisplayName); err != nil {
+		return clouddomain.Account{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return clouddomain.Account{}, fmt.Errorf("commit ensure external account: %w", err)
+	}
+	return account, nil
+}
+
 func ensureUserOrgTx(ctx context.Context, tx pgx.Tx, account clouddomain.Account, displayName string) error {
 	if strings.TrimSpace(displayName) == "" {
 		displayName = account.DisplayName
@@ -1388,6 +1479,15 @@ func intervalString(duration time.Duration) string {
 		duration = time.Minute
 	}
 	return fmt.Sprintf("%f seconds", duration.Seconds())
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func getSessionTx(

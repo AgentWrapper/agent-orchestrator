@@ -144,10 +144,12 @@ func (a *LocalAuthenticator) createSession(ctx context.Context, user clouddomain
 
 func principalForLocalUser(user clouddomain.LocalUser, token string) Principal {
 	return Principal{
-		UserID:      user.ID,
-		Email:       user.Email,
-		DisplayName: user.DisplayName,
-		AccessToken: token,
+		UserID:         user.ID,
+		AuthProvider:   "local",
+		ExternalUserID: user.ID,
+		Email:          user.Email,
+		DisplayName:    user.DisplayName,
+		AccessToken:    token,
 	}
 }
 

@@ -11,10 +11,12 @@ import (
 
 // Principal identifies an authenticated AO Cloud user.
 type Principal struct {
-	UserID      string
-	Email       string
-	DisplayName string
-	AccessToken string
+	UserID         string
+	AuthProvider   string
+	ExternalUserID string
+	Email          string
+	DisplayName    string
+	AccessToken    string
 }
 
 // Authenticator authenticates API requests and stores their principal in context.
@@ -28,6 +30,11 @@ type contextKey struct{}
 func PrincipalFromContext(ctx context.Context) (Principal, bool) {
 	principal, ok := ctx.Value(contextKey{}).(Principal)
 	return principal, ok
+}
+
+// ContextWithPrincipal stores principal on ctx.
+func ContextWithPrincipal(ctx context.Context, principal Principal) context.Context {
+	return context.WithValue(ctx, contextKey{}, principal)
 }
 
 func bearerToken(header string) (string, bool) {

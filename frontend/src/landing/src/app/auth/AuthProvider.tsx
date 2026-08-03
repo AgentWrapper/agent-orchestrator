@@ -9,6 +9,11 @@ import {
   useState,
 } from "react";
 
+import { env } from "@/env";
+import {
+  redirectToWorkOSLogout,
+  restoreWorkOSSession,
+} from "@/lib/workos-cloud";
 import { CloudAPI, type CloudAuthSession } from "@/lib/cloud-api";
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated";
@@ -23,6 +28,7 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 const cloudSessionKey = "ao-cloud-session";
+const authMode = env.NEXT_PUBLIC_AO_AUTH_MODE;
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Authentication failed.";
@@ -35,26 +41,48 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let active = true;
-    try {
-      const stored = window.localStorage.getItem(cloudSessionKey);
-      const restored = stored ? (JSON.parse(stored) as CloudAuthSession) : null;
-      if (!restored) {
-        setStatus("unauthenticated");
-        return;
-      }
-      void new CloudAPI(restored.accessToken)
-        .me()
-        .then(() => {
+    const restore = async () => {
+      try {
+        const stored = window.localStorage.getItem(cloudSessionKey);
+        const restored = stored ? (JSON.parse(stored) as CloudAuthSession) : null;
+        if (authMode === "workos") {
+          const workOSSession = await restoreWorkOSSession();
           if (!active) return;
-          setSession(restored);
+          if (!workOSSession) {
+            setStatus("unauthenticated");
+            return;
+          }
+          const profile = await new CloudAPI(workOSSession.accessToken).me();
+          if (!active) return;
+          workOSSession.user = profile.user;
+          window.localStorage.setItem(
+            cloudSessionKey,
+            JSON.stringify(workOSSession),
+          );
+          setSession(workOSSession);
           setStatus("authenticated");
-        })
-        .catch(() => {
-          if (!active) return;
-          window.localStorage.removeItem(cloudSessionKey);
-          setSession(null);
+          return;
+        }
+        if (!restored) {
           setStatus("unauthenticated");
-        });
+          return;
+        }
+        const profile = await new CloudAPI(restored.accessToken).me();
+        if (!active) return;
+        const hydrated = { ...restored, user: profile.user };
+        window.localStorage.setItem(cloudSessionKey, JSON.stringify(hydrated));
+        setSession(hydrated);
+        setStatus("authenticated");
+      } catch (initializationError) {
+        if (!active) return;
+        setError(errorMessage(initializationError));
+        window.localStorage.removeItem(cloudSessionKey);
+        setSession(null);
+        setStatus("unauthenticated");
+      }
+    };
+    try {
+      void restore();
     } catch (initializationError) {
       setError(errorMessage(initializationError));
       setStatus("unauthenticated");
@@ -72,7 +100,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(async () => {
     setError(null);
     try {
-      if (session) await CloudAPI.logout(session.accessToken);
+      if (session?.authProvider === "workos") {
+        window.localStorage.removeItem(cloudSessionKey);
+        setSession(null);
+        setStatus("unauthenticated");
+        redirectToWorkOSLogout();
+        return;
+      } else if (session) {
+        await CloudAPI.logout(session.accessToken);
+      }
     } catch (logoutError) {
       console.warn("AO Cloud logout failed", logoutError);
     }

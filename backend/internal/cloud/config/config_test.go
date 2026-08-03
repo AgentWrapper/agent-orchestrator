@@ -28,6 +28,9 @@ func TestLoadRequiresCloudSecrets(t *testing.T) {
 	if cfg.SandboxProvider != "daytona" {
 		t.Fatalf("SandboxProvider = %q", cfg.SandboxProvider)
 	}
+	if cfg.AuthMode != "local" {
+		t.Fatalf("AuthMode = %q", cfg.AuthMode)
+	}
 	if cfg.DatabaseDirectURL != cfg.DatabaseURL {
 		t.Fatalf("DatabaseDirectURL = %q, want runtime fallback", cfg.DatabaseDirectURL)
 	}
@@ -59,6 +62,44 @@ func TestLoadRejectsInvalidTarget(t *testing.T) {
 
 	if _, err := Load(); err == nil {
 		t.Fatal("Load() error = nil, want invalid target")
+	}
+}
+
+func TestLoadAcceptsWorkOSMode(t *testing.T) {
+	t.Setenv("AO_DATABASE_URL", "postgres://example")
+	t.Setenv("AO_SANDBOX_PROVIDER", "docker")
+	t.Setenv("AO_ENCRYPTION_KEY", "0000000000000000000000000000000000000000000000000000000000000000")
+	t.Setenv("AO_WORKER_SIGNING_KEY", "1111111111111111111111111111111111111111111111111111111111111111")
+	t.Setenv("AO_CLOUD_AUTH_MODE", "workos")
+	t.Setenv("WORKOS_CLIENT_ID", "client_123")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.AuthProvider != "workos" {
+		t.Fatalf("AuthProvider = %q", cfg.AuthProvider)
+	}
+	if cfg.AuthIssuer != "https://api.workos.com" {
+		t.Fatalf("AuthIssuer = %q", cfg.AuthIssuer)
+	}
+	if cfg.AuthAudience != "client_123" {
+		t.Fatalf("AuthAudience = %q", cfg.AuthAudience)
+	}
+	if cfg.AuthJWKSURL != "https://api.workos.com/sso/jwks/client_123" {
+		t.Fatalf("AuthJWKSURL = %q", cfg.AuthJWKSURL)
+	}
+}
+
+func TestLoadRejectsInvalidAuthMode(t *testing.T) {
+	t.Setenv("AO_DATABASE_URL", "postgres://example")
+	t.Setenv("AO_SANDBOX_PROVIDER", "docker")
+	t.Setenv("AO_CLOUD_AUTH_MODE", "magic")
+	t.Setenv("AO_ENCRYPTION_KEY", "0000000000000000000000000000000000000000000000000000000000000000")
+	t.Setenv("AO_WORKER_SIGNING_KEY", "1111111111111111111111111111111111111111111111111111111111111111")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() error = nil, want invalid auth mode")
 	}
 }
 

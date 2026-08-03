@@ -34,6 +34,11 @@ Local mode stores email/password credentials and sessions in the local
 PostgreSQL database. Passwords are stored only as bcrypt hashes. It makes no
 external authentication request.
 
+You can also opt into the hosted-style WorkOS flow locally. In that mode, the
+browser signs in through hosted WorkOS AuthKit, the web app reads the WorkOS
+access token, and the Go control plane verifies that token through WorkOS JWKS
+before syncing the user into AO's `ao_users` and organization tables.
+
 ## Start the stack
 
 From the repository root, run one command:
@@ -57,9 +62,9 @@ It runs these steps in order:
    current terminal until Ctrl-C.
 
 The runner overrides stale environment values so this path always uses local
-PostgreSQL, local auth, the loopback control plane, and Docker sandboxes. It
-does not invoke Daytona. Repository cloning and the selected coding agent can
-still make their normal external GitHub/provider API calls.
+PostgreSQL, the loopback control plane, and Docker sandboxes. By default it uses
+local CP auth. Repository cloning and the selected coding agent can still make
+their normal external GitHub/provider API calls.
 
 The generated local secrets are required by the control plane:
 
@@ -92,6 +97,33 @@ Open `http://127.0.0.1:5174`, create a local email/password account, connect a
 coding-agent credential in Cloud settings, create a project, and start an
 orchestrator or worker. Each session creates a local Docker sandbox and opens
 the harness's actual terminal.
+
+## Test WorkOS Locally
+
+The default `npm run cloud:local` path remains CP-local auth because it has the
+fewest prerequisites for contributors. To emulate hosted external auth locally,
+create a WorkOS app and set:
+
+```bash
+AO_CLOUD_AUTH_MODE=workos
+WORKOS_CLIENT_ID=client_...
+WORKOS_API_KEY=sk_...
+WORKOS_COOKIE_PASSWORD=<32+ character random secret>
+NEXT_PUBLIC_WORKOS_REDIRECT_URI=http://127.0.0.1:5174/callback
+```
+
+Configure the same redirect URI in the WorkOS dashboard.
+
+Then run:
+
+```bash
+npm run cloud:local
+```
+
+In this mode the CP no longer serves the local `/api/cloud/v1/auth/login` and
+`/signup` path. The UI uses WorkOS, and the CP accepts only signed WorkOS access
+tokens from the browser. AO authorization still comes from AO's own org and
+membership tables.
 
 ## Verify the local stack
 

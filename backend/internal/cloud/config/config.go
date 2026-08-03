@@ -17,6 +17,11 @@ type Config struct {
 	ListenAddr            string
 	PublicURL             string
 	WebPublicURL          string
+	AuthMode              string
+	AuthProvider          string
+	AuthIssuer            string
+	AuthAudience          string
+	AuthJWKSURL           string
 	DatabaseURL           string
 	DatabaseDirectURL     string
 	SandboxProvider       string
@@ -49,6 +54,11 @@ func Load() (Config, error) {
 		ListenAddr:            envOr("AO_CLOUD_LISTEN_ADDR", "127.0.0.1:3010"),
 		PublicURL:             strings.TrimRight(envOr("AO_CLOUD_PUBLIC_URL", "http://127.0.0.1:3010"), "/"),
 		WebPublicURL:          strings.TrimRight(envOr("AO_WEB_PUBLIC_URL", "http://127.0.0.1:5174"), "/"),
+		AuthMode:              envOr("AO_CLOUD_AUTH_MODE", "local"),
+		AuthProvider:          strings.TrimSpace(os.Getenv("AO_CLOUD_AUTH_PROVIDER")),
+		AuthIssuer:            strings.TrimRight(strings.TrimSpace(os.Getenv("AO_CLOUD_AUTH_ISSUER")), "/"),
+		AuthAudience:          strings.TrimSpace(os.Getenv("AO_CLOUD_AUTH_AUDIENCE")),
+		AuthJWKSURL:           strings.TrimSpace(os.Getenv("AO_CLOUD_AUTH_JWKS_URL")),
 		DatabaseURL:           os.Getenv("AO_DATABASE_URL"),
 		DatabaseDirectURL:     strings.TrimSpace(os.Getenv("AO_DATABASE_DIRECT_URL")),
 		SandboxProvider:       envOr("AO_SANDBOX_PROVIDER", "docker"),
@@ -64,6 +74,33 @@ func Load() (Config, error) {
 		AllowLocalGitHub:      os.Getenv("AO_GITHUB_AUTH_MODE") == "local-gh",
 		GitHubToken:           strings.TrimSpace(os.Getenv("AO_LOCAL_GITHUB_TOKEN")),
 		WorkerBinaryPath:      strings.TrimSpace(os.Getenv("AO_WORKER_BINARY_PATH")),
+	}
+	if cfg.AuthMode == "workos" {
+		workOSClientID := strings.TrimSpace(os.Getenv("WORKOS_CLIENT_ID"))
+		if cfg.AuthProvider == "" {
+			cfg.AuthProvider = "workos"
+		}
+		if cfg.AuthIssuer == "" {
+			cfg.AuthIssuer = "https://api.workos.com"
+		}
+		if cfg.AuthAudience == "" {
+			cfg.AuthAudience = workOSClientID
+		}
+		if cfg.AuthJWKSURL == "" && workOSClientID != "" {
+			cfg.AuthJWKSURL = "https://api.workos.com/sso/jwks/" + workOSClientID
+		}
+	}
+	if cfg.AuthProvider == "" {
+		cfg.AuthProvider = "external"
+	}
+	if cfg.AuthIssuer == "" {
+		cfg.AuthIssuer = cfg.WebPublicURL
+	}
+	if cfg.AuthAudience == "" {
+		cfg.AuthAudience = cfg.AuthIssuer
+	}
+	if cfg.AuthJWKSURL == "" {
+		cfg.AuthJWKSURL = cfg.AuthIssuer + "/api/auth/jwks"
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -88,6 +125,18 @@ func (c Config) Validate() error {
 	}
 	if len(c.WorkerSigningKey) < 32 {
 		return errors.New("AO_WORKER_SIGNING_KEY must decode to at least 32 bytes")
+	}
+	switch c.AuthMode {
+	case "local":
+	case "workos", "external":
+		if strings.TrimSpace(c.AuthProvider) == "" ||
+			strings.TrimSpace(c.AuthIssuer) == "" ||
+			strings.TrimSpace(c.AuthAudience) == "" ||
+			strings.TrimSpace(c.AuthJWKSURL) == "" {
+			return errors.New("AO_CLOUD_AUTH_PROVIDER, AO_CLOUD_AUTH_ISSUER, AO_CLOUD_AUTH_AUDIENCE, and AO_CLOUD_AUTH_JWKS_URL are required when AO_CLOUD_AUTH_MODE is workos or external")
+		}
+	default:
+		return fmt.Errorf("AO_CLOUD_AUTH_MODE must be local, workos, or external, got %q", c.AuthMode)
 	}
 	switch c.SandboxProvider {
 	case "docker":

@@ -41,7 +41,7 @@ ensure_env() {
 ensure_web_env() {
   local web_env="$root/frontend/src/landing/.env.local"
   if [[ ! -f "$web_env" ]]; then
-    printf 'NEXT_PUBLIC_API_URL=http://127.0.0.1:3010\n' >"$web_env"
+    printf 'NEXT_PUBLIC_API_URL=http://127.0.0.1:3010\nNEXT_PUBLIC_AO_AUTH_MODE=local\n' >"$web_env"
     echo "Created $web_env"
   fi
 }
@@ -195,7 +195,7 @@ start() {
     tail -n 100 "$log_dir/control-plane.log"
     exit 1
   fi
-  start_process web "export NEXT_PUBLIC_API_URL=http://127.0.0.1:3010; exec npm run cloud:web"
+  start_process web "set -a; . '$env_file'; set +a; export NEXT_PUBLIC_API_URL=http://127.0.0.1:3010 NEXT_PUBLIC_WEB_URL=http://127.0.0.1:5174 NEXT_PUBLIC_AO_AUTH_MODE=\${AO_CLOUD_AUTH_MODE:-local} NEXT_PUBLIC_WORKOS_REDIRECT_URI=\${NEXT_PUBLIC_WORKOS_REDIRECT_URI:-http://127.0.0.1:5174/callback}; exec npm run cloud:web"
   start_process sandbox-events "exec docker events --filter label=ao.managed=true --format '{{.Time}} {{.Action}} {{.Actor.Attributes.name}}'"
   for _ in {1..30}; do
     if curl --fail --silent http://127.0.0.1:5174/ >/dev/null; then

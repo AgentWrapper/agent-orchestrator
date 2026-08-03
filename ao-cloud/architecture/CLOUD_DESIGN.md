@@ -114,15 +114,15 @@ The zero-install browser product for every cloud project.
   client makes “cloud orchestrator plus cloud workers” a real standalone
   product rather than a remote mode of the desktop app.
 
-### 2. Ingress and authentication gateway — Clerk (grows)
+### 2. Ingress and authentication gateway — WorkOS (grows)
 
 The TLS front door and first multi-tenant enforcement point.
 
 - Runs at the public ingress for the control plane, initially on Azure
   Container Apps.
-- Verifies Clerk JWTs on every browser request and resolves the authenticated
-  user, active organization, role, and tenant scope before application
-  handlers run.
+- Verifies WorkOS access-token JWTs on every browser request and resolves the
+  authenticated AO user, active organization, role, and tenant scope before
+  application handlers run.
 - Enforces CORS, request limits, origin policy, and short-lived tickets for
   WebSocket/terminal/preview-capable flows.
 - Does not trust a browser-supplied user ID, organization ID, project ID, or
@@ -131,12 +131,12 @@ The TLS front door and first multi-tenant enforcement point.
   send a prompt, inspect a workspace, or reach a sandbox. This is the first
   boundary that prevents tenant crossover.
 
-### 3. Identity and organizations model — Clerk plus AO records (grows)
+### 3. Identity and organizations model — WorkOS plus AO records (grows)
 
-Clerk proves identity; AO owns authorization and resource ownership.
+WorkOS proves identity; AO owns authorization and resource ownership.
 
-- Clerk provides sign-in, sessions, organization selection, and identity
-  claims.
+- WorkOS provides hosted sign-in, sessions, SSO/SCIM/MFA paths, and identity
+  claims without replacing AO's authorization tables.
 - AO stores durable organization, membership, role, project ownership,
   repository grant, session access, audit, and quota facts in its own
   PostgreSQL tables.
@@ -200,7 +200,7 @@ isolated sandbox per active AO session.
 
 ```text
 Browser
-  → Clerk-authenticated TLS ingress
+  → WorkOS-authenticated TLS ingress
   → AO Cloud control-plane API
   → PostgreSQL durable command/session/turn state
   → sandbox supervisor
