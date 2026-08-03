@@ -58,6 +58,21 @@ func (s *Store) RenameSession(ctx context.Context, id domain.SessionID, displayN
 	return rows > 0, nil
 }
 
+func (s *Store) SetSessionPinned(ctx context.Context, id domain.SessionID, isPinned bool, pinnedAt *time.Time, updatedAt time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.SetSessionPinned(ctx, gen.SetSessionPinnedParams{
+		ID:        id,
+		IsPinned:  isPinned,
+		PinnedAt:  timePtrToNullTime(pinnedAt),
+		UpdatedAt: updatedAt,
+	})
+	if err != nil {
+		return false, fmt.Errorf("set session pinned %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
 // SetSessionPreviewURL updates only the browser preview URL for an existing
 // session. It returns ok=false when the session id does not exist. The
 // sessions_cdc_update trigger fans out a session_updated CDC event when the
@@ -218,6 +233,8 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 		},
 		FirstSignalAt:      nullTimeToTime(row.FirstSignalAt),
 		IsTerminated:       row.IsTerminated,
+		IsPinned:           row.IsPinned,
+		PinnedAt:           nullTimeToTimePtr(row.PinnedAt),
 		TerminateOnPRMerge: row.TerminateOnPRMerge,
 		Metadata: domain.SessionMetadata{
 			Branch:            row.Branch,
@@ -252,6 +269,8 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		ActivityLastAt:     activity.LastActivityAt,
 		FirstSignalAt:      timeToNullTime(rec.FirstSignalAt),
 		IsTerminated:       rec.IsTerminated,
+		IsPinned:           rec.IsPinned,
+		PinnedAt:           timePtrToNullTime(rec.PinnedAt),
 		Branch:             rec.Metadata.Branch,
 		WorkspacePath:      rec.Metadata.WorkspacePath,
 		WorkspaceRepoPath:  rec.Metadata.WorkspaceRepoPath,
@@ -282,6 +301,8 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		ActivityLastAt:     activity.LastActivityAt,
 		FirstSignalAt:      timeToNullTime(rec.FirstSignalAt),
 		IsTerminated:       rec.IsTerminated,
+		IsPinned:           rec.IsPinned,
+		PinnedAt:           timePtrToNullTime(rec.PinnedAt),
 		Branch:             rec.Metadata.Branch,
 		WorkspacePath:      rec.Metadata.WorkspacePath,
 		WorkspaceRepoPath:  rec.Metadata.WorkspaceRepoPath,
@@ -313,6 +334,20 @@ func timeToNullTime(t time.Time) sql.NullTime {
 		return sql.NullTime{}
 	}
 	return sql.NullTime{Time: t, Valid: true}
+}
+
+func nullTimeToTimePtr(t sql.NullTime) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	return &t.Time
+}
+
+func timePtrToNullTime(t *time.Time) sql.NullTime {
+	if t == nil {
+		return sql.NullTime{}
+	}
+	return sql.NullTime{Time: *t, Valid: true}
 }
 
 func normalActivity(a domain.Activity, fallback time.Time) domain.Activity {

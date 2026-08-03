@@ -541,6 +541,8 @@
 	"shell.orchestratorBoard": "Orchestrator board",
 	"shell.orchestratorWithActivity": "Orchestrator, {{activity}}",
 	"shell.pinned": "Pinned",
+	"shell.pinSession": "Pin session",
+	"shell.unpinSession": "Unpin session",
 	"shell.projects": "Projects",
 	"shell.projectActions": "Project actions for {{name}}",
 	"shell.projectSettings": "Project settings",

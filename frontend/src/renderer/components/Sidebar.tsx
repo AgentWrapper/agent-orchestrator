@@ -9,6 +9,7 @@ import {
 	MoreVertical,
 	Pencil,
 	Pin,
+	PinOff,
 	Plus,
 	RefreshCw,
 	Search,
@@ -28,6 +29,7 @@ import { getSessionDotView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { usePinSession, useUnpinSession } from "../hooks/usePinSession";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { renameSession } from "../lib/rename-session";
 import { useResizable } from "../hooks/useResizable";
@@ -223,6 +225,15 @@ export function Sidebar({
 		onExpand: () => setOpen(true),
 	});
 
+	const pinnedSessions = workspaces
+		.flatMap((w) => workerSessions(w.sessions))
+		.filter((s) => s.isPinned)
+		.sort((a, b) => {
+			const aTime = a.pinnedAt ? new Date(a.pinnedAt).getTime() : 0;
+			const bTime = b.pinnedAt ? new Date(b.pinnedAt).getTime() : 0;
+			return bTime - aTime;
+		});
+
 	return (
 		// Pinned sidebars start below shell chrome. Hover previews paint a
 		// full-height surface behind the titlebar while their content keeps the
@@ -300,16 +311,29 @@ export function Sidebar({
 				) : null}
 
 				{/* Pinned — collapsible; body empty until pin functionality lands. */}
-				<div className="sidebar-expanded-chrome flex shrink-0 flex-col group-data-[collapsible=icon]:hidden">
-					<SectionDisclosure
-						icon={<Pin strokeWidth={1.75} aria-hidden="true" />}
-						label={t("shell.pinned")}
-						open={pinnedOpen}
-						onToggle={() => setPinnedOpen((v) => !v)}
-						className="mb-1"
-					/>
-					{pinnedOpen ? <div className="pb-2" /> : null}
-				</div>
+				{pinnedSessions.length > 0 && (
+					<div className="sidebar-expanded-chrome flex shrink-0 flex-col group-data-[collapsible=icon]:hidden">
+						<SectionDisclosure
+							icon={<Pin strokeWidth={1.75} aria-hidden="true" />}
+							label={t("shell.pinned")}
+							open={pinnedOpen}
+							onToggle={() => setPinnedOpen((v) => !v)}
+							className="mb-1"
+						/>
+						{pinnedOpen ? (
+							<SidebarMenuSub className="sidebar-expanded-chrome mx-0 ml-2 translate-x-0 gap-0.5 border-l-0 px-0 py-0.5 mb-2">
+								{pinnedSessions.map((session) => (
+									<SessionRow
+										key={session.id}
+										session={session}
+										active={selection.activeSessionId === session.id}
+										onOpen={() => selection.goSession(session.workspaceId, session.id)}
+									/>
+								))}
+							</SidebarMenuSub>
+						) : null}
+					</div>
+				)}
 
 				{/* Projects — collapsible section; + sits inside the same hover pill. */}
 				<div className="sidebar-expanded-chrome flex shrink-0 pb-1.5 group-data-[collapsible=icon]:hidden">
@@ -709,6 +733,9 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 	// blurs the input, so it flags a cancel here for onBlur to honour.
 	const cancelledRef = useRef(false);
 
+	const { mutate: pinSession } = usePinSession();
+	const { mutate: unpinSession } = useUnpinSession();
+
 	const startEditing = () => {
 		setDraft(session.title);
 		setIsEditing(true);
@@ -767,7 +794,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 				aria-current={active ? "page" : undefined}
 					aria-label={t("shell.openSession", { title: session.title })}
 				className={cn(
-					"relative flex h-8 w-full items-center gap-2 rounded-lg px-2.5 py-0 pr-7 text-left text-sm outline-hidden transition-[background-color,color]",
+					"relative flex h-8 w-full items-center gap-2 rounded-lg px-2.5 py-0 pr-14 text-left text-sm outline-hidden transition-[background-color,color]",
 					"hover:bg-interactive-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
 					active && "bg-interactive-active text-foreground",
 				)}
@@ -781,20 +808,36 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 					</span>
 				</span>
 			</button>
-			{/* Pencil reveals on row hover/focus (named group on SidebarMenuSubItem);
-			it sits beside the row button rather than nested inside it. */}
-			<button
-					aria-label={t("shell.renameSession", { title: session.title })}
+			{/* Pin & Pencil reveal on row hover/focus (named group on SidebarMenuSubItem) */}
+			<div
 				className={cn(
-					HOVER_ACTION_CLASS,
-					"absolute top-1/2 right-1 -translate-y-1/2 opacity-0",
+					"absolute top-1/2 right-1 flex -translate-y-1/2 items-center gap-px opacity-0",
 					"group-focus-within/menu-sub-item:opacity-100 group-hover/menu-sub-item:opacity-100",
 				)}
-				onClick={startEditing}
-				type="button"
 			>
-				<Pencil aria-hidden="true" />
-			</button>
+				<button
+					aria-label={session.isPinned ? t("shell.unpinSession") : t("shell.pinSession")}
+					className={cn(HOVER_ACTION_CLASS, session.isPinned && "text-foreground")}
+					onClick={(e) => {
+						e.stopPropagation();
+						session.isPinned ? unpinSession(session) : pinSession(session);
+					}}
+					type="button"
+				>
+					{session.isPinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
+				</button>
+				<button
+					aria-label={t("shell.renameSession", { title: session.title })}
+					className={HOVER_ACTION_CLASS}
+					onClick={(e) => {
+						e.stopPropagation();
+						startEditing();
+					}}
+					type="button"
+				>
+					<Pencil aria-hidden="true" />
+				</button>
+			</div>
 		</SidebarMenuSubItem>
 	);
 }

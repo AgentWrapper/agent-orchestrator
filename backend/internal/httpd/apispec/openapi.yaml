@@ -1439,6 +1439,83 @@ paths:
       summary: Configure whether PR completion terminates the session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/pin:
+    delete:
+      operationId: unpinSession
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Unpin a session
+      tags:
+      - sessions
+    post:
+      operationId: pinSession
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Pin a session
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/pr:
     get:
       operationId: listSessionPRs
@@ -2734,12 +2811,19 @@ components:
           type: string
         id:
           type: string
+        isPinned:
+          type: boolean
         isTerminated:
           type: boolean
         issueId:
           type: string
         kind:
           type: string
+        pinnedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
         previewRevision:
           format: int64
           type: integer
@@ -2795,6 +2879,7 @@ components:
       - terminateOnPrMerge
       - createdAt
       - updatedAt
+      - isPinned
       - status
       - prs
       type: object

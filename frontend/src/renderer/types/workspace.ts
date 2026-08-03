@@ -139,6 +139,8 @@ export type WorkspaceSession = {
 	createdAt?: string;
 	/** ISO timestamp from the daemon. */
 	updatedAt: string;
+	isPinned?: boolean;
+	pinnedAt?: string;
 	/** Raw agent lifecycle activity from the daemon. */
 	activity?: SessionActivity;
 	/**

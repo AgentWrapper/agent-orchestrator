@@ -189,6 +189,8 @@ type Session struct {
 	TerminateOnPRMerge bool
 	DiffBaseSha        string
 	DiffBaseRef        string
+	IsPinned           bool
+	PinnedAt           sql.NullTime
 }
 
 type SessionCleanupFact struct {

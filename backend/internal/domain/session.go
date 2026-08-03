@@ -72,8 +72,10 @@ type SessionRecord struct {
 	// finalize started under an earlier terminal episode cannot satisfy a later
 	// one. Internal fact, not part of the API read model.
 	CleanupGeneration int64     `json:"-"`
-	CreatedAt         time.Time `json:"createdAt"`
-	UpdatedAt         time.Time `json:"updatedAt"`
+	CreatedAt         time.Time  `json:"createdAt"`
+	UpdatedAt         time.Time  `json:"updatedAt"`
+	IsPinned          bool       `json:"isPinned"`
+	PinnedAt          *time.Time `json:"pinnedAt,omitempty"`
 }
 
 // Session is the read-model returned across the API boundary: a SessionRecord

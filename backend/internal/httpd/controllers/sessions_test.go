@@ -178,6 +178,29 @@ func (f *fakeSessionService) SetTerminateOnPRMerge(_ context.Context, id domain.
 	return s, nil
 }
 
+func (f *fakeSessionService) Pin(_ context.Context, id domain.SessionID) (domain.Session, error) {
+	s, ok := f.sessions[id]
+	if !ok {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	s.IsPinned = true
+	now := time.Now().UTC()
+	s.PinnedAt = &now
+	f.sessions[id] = s
+	return s, nil
+}
+
+func (f *fakeSessionService) Unpin(_ context.Context, id domain.SessionID) (domain.Session, error) {
+	s, ok := f.sessions[id]
+	if !ok {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	s.IsPinned = false
+	s.PinnedAt = nil
+	f.sessions[id] = s
+	return s, nil
+}
+
 func (f *fakeSessionService) Restore(_ context.Context, id domain.SessionID) (sessionsvc.RestoreOutcome, error) {
 	s := f.sessions[id]
 	s.IsTerminated = false
