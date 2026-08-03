@@ -1,7 +1,9 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
-import { PRSummaryParts } from "./PRSummaryDisplay";
+import { appI18n } from "../i18n";
+import { useLocaleStore } from "../stores/locale-store";
+import { PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
 
 const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary => ({
 	url: "https://github.com/acme/repo/pull/7",
@@ -29,6 +31,15 @@ const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary =>
 });
 
 describe("PRSummaryParts", () => {
+	it("localizes changed-file plurals instead of rebuilding English nouns", async () => {
+		await appI18n.changeLanguage("zh-CN");
+		useLocaleStore.setState({ locale: "zh-CN" });
+		render(<PRSummaryMeta pr={summary({ changedFiles: 2 })} />);
+		expect(screen.getByText(/2 个文件/)).toBeInTheDocument();
+		await appI18n.changeLanguage("en");
+		useLocaleStore.setState({ locale: "en" });
+	});
+
 	it("counts overflow from the rendered maxLinks limit", () => {
 		render(
 			<PRSummaryParts
