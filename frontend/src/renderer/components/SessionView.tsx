@@ -54,10 +54,14 @@ type SessionViewProps = {
 // each session gets a clean xterm/mux binding.
 //
 // The split is shadcn's resizable (react-resizable-panels v4) with a fully
-// collapsible inspector: the panel is `collapsible` and driven to 0% via the
-// imperative API from the ui-store (topbar button / ⌘⇧B), animated by the
-// flex-grow transition in styles.css. Content keeps a stable min-width inside
-// the clipped panel so nothing reflows mid-animation; split width persists.
+// collapsible inspector driven to 0% via the imperative API from the ui-store
+// (topbar button / ⌘⇧B), animated by the flex-grow transition in styles.css.
+// The panel is `collapsible` only while closed: rrp snaps a collapsible panel
+// to 0% when a drag crosses minSize, so an always-collapsible inspector let a
+// drag vanish the rail. While open the panel is non-collapsible and a drag
+// hard-stops at INSPECTOR_MIN_PERCENT; only the explicit controls collapse it.
+// Content keeps a stable min-width inside the clipped panel so nothing reflows
+// mid-animation; split width persists.
 export function SessionView({ sessionId }: SessionViewProps) {
 	const { t } = useTranslation();
 	const workspaceQuery = useWorkspaceQuery();
@@ -271,7 +275,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// Computed when the inspector panel mounts and frozen while it stays
 	// mounted: rrp re-registers the panel (a layout effect keyed on defaultSize,
 	// among others) whenever this prop's identity changes, and the imperative
-	// collapse()/expand() below can race that re-registration within the same
+	// collapse()/resize() below can race that re-registration within the same
 	// commit — rrp then throws "Panel constraints not found for Panel
 	// inspector", which unwinds the whole route to the router's CatchBoundary
 	// (the toggle button looks dead and the session view is torn down).
@@ -300,7 +304,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	}, [hasInspector, sessionId, toggleInspector]);
 
 	// Drive the collapsible panel from the store so the topbar button, ⌘⇧B, and
-	// drag-to-collapse all stay in sync. When the inspector panel mounts into
+	// drag-to-reopen all stay in sync. When the inspector panel mounts into
 	// the already-live group (orchestrator/loading → worker), rrp only derives
 	// the new panel's constraints in the next commit. This effect intentionally
 	// runs before the readiness effect below, so mount and StrictMode's effect
@@ -312,13 +316,23 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		const panel = inspectorRef.current;
 		if (!panel) return;
 		if (isInspectorOpen) {
-			panel.expand();
-			// expand() restores the "most recent" size, which is 0 when the panel
-			// mounted collapsed — fall back to the persisted split.
-			if (panel.getSize().asPercentage === 0) panel.resize(`${initialSplitPercent()}%`);
-		} else {
-			panel.collapse();
+			// resize(), not expand(): by the time this effect runs the panel has
+			// re-registered as non-collapsible (open panels refuse drag-collapse),
+			// and rrp's expand() no-ops on a non-collapsible panel. resize() also
+			// restores the persisted split regardless of what "most recent size"
+			// rrp remembers, which is 0 when the panel mounted collapsed.
+			panel.resize(`${initialSplitPercent()}%`);
+			return;
 		}
+		// Closing flips `collapsible` back on in this same commit, but rrp only
+		// re-derives the group's constraints in the follow-up commit its
+		// registration effect schedules — so this first collapse() still sees the
+		// open panel's non-collapsible constraints and no-ops. Repeat it on the
+		// next frame, when the fresh constraints have landed; collapse() is
+		// idempotent, so the double call is safe wherever the derivation lands.
+		panel.collapse();
+		const frame = window.requestAnimationFrame(() => panel.collapse());
+		return () => window.cancelAnimationFrame(frame);
 	}, [hasInspector, isInspectorOpen]);
 	useEffect(() => {
 		if (!hasInspector || !inspectorRef.current) {
@@ -331,11 +345,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		};
 	}, [hasInspector]);
 
-	// Persist drags and mirror collapse state (dragging past minSize collapses)
-	// back into the store. Read the store imperatively to avoid a stale closure.
+	// Persist drags and mirror a drag-reopen (dragging the separator of a
+	// collapsed inspector past the snap point) back into the store. Dragging an
+	// open inspector can never collapse it — the panel is non-collapsible while
+	// open, so rrp clamps the drag at minSize instead of snapping to 0%.
+	// Read the store imperatively to avoid a stale closure.
 	// Gated on an actively dragged separator: rrp v4 derives sizes from the
 	// observed DOM layout, so the flex-grow transition that animates
-	// expand()/collapse() (styles.css) fires onResize with transient
+	// resize()/collapse() (styles.css) fires onResize with transient
 	// mid-animation sizes too. Writing those back turned the imperative
 	// collapse into a feedback loop — a mid-collapse size read as "dragged
 	// back open", re-toggled the store, and the panel bounced back (the
@@ -346,17 +363,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// Also wrapped in useCallback: rrp v4's panel registration useLayoutEffect
 	// includes onResize in its dep array, so an unstable reference would
 	// de-register/re-register the inspector panel on every render and race
-	// with the expand()/collapse() effect above.
+	// with the resize()/collapse() effect above.
 	const handleInspectorResize = useCallback(
 		(size: PanelSize) => {
 			if (inspectorSeparatorRef.current?.getAttribute("data-separator") !== "active") return;
+			if (size.asPercentage <= 0) return;
+			window.localStorage?.setItem(inspectorSplitStorageKey, String(size.asPercentage));
 			const currentOpen = useUiStore.getState().inspectorSessions[sessionId]?.isOpen ?? true;
-			if (size.asPercentage > 0) {
-				window.localStorage?.setItem(inspectorSplitStorageKey, String(size.asPercentage));
-				if (!currentOpen) toggleInspector(sessionId);
-			} else if (currentOpen) {
-				toggleInspector(sessionId);
-			}
+			if (!currentOpen) toggleInspector(sessionId);
 		},
 		[sessionId, toggleInspector],
 	);
@@ -398,7 +412,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						/>
 						<ResizablePanel
 							aria-hidden={!isInspectorOpen}
-							collapsible
+							collapsible={!isInspectorOpen}
 							defaultSize={inspectorDefaultSize}
 							id="inspector"
 							inert={!isInspectorOpen}

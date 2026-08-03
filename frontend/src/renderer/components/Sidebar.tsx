@@ -92,7 +92,6 @@ const MAX_DISPLAY_NAME_LEN = 20;
 export const SIDEBAR_DEFAULT_WIDTH = 240;
 export const SIDEBAR_MIN_WIDTH = 200;
 export const SIDEBAR_MAX_WIDTH = 420;
-export const SIDEBAR_COLLAPSE_THRESHOLD = SIDEBAR_MIN_WIDTH;
 
 type SidebarProps = {
 	/** Hide the sidebar's right edge stroke on the welcome board inset chrome. */
@@ -206,7 +205,9 @@ export function Sidebar({
 
 	// agent-orchestrator's sidebar resize: drag the right edge (200-420px,
 	// persisted), double-click to reset to 240px. Drives --ao-sidebar-w on :root,
-	// which the provider forwards into shadcn's --sidebar-width.
+	// which the provider forwards into shadcn's --sidebar-width. Dragging clamps
+	// at SIDEBAR_MIN_WIDTH — collapsing stays on the explicit toggle (⌘B /
+	// titlebar button), never on a drag.
 	const {
 		onPointerDown: onResizePointerDown,
 		onCollapsedPointerDown: onCollapsedResizePointerDown,
@@ -218,8 +219,6 @@ export function Sidebar({
 		min: SIDEBAR_MIN_WIDTH,
 		max: SIDEBAR_MAX_WIDTH,
 		edge: "right",
-		collapseBelow: SIDEBAR_COLLAPSE_THRESHOLD,
-		onCollapse: () => setOpen(false),
 		onExpand: () => setOpen(true),
 	});
 

@@ -437,7 +437,9 @@ describe("SessionView", () => {
 
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
 		expect(panelSizes("inspector")[0]).toBe("28%");
-		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("data-collapsible", "true");
+		// Open panels are non-collapsible so a drag clamps at minSize instead of
+		// snapping the rail away; only the closed panel is collapsible.
+		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("data-collapsible");
 		expect(screen.getByTestId("resize-handle")).toBeInTheDocument();
 		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("inert");
 		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
@@ -471,6 +473,9 @@ describe("SessionView", () => {
 		const pane = screen.getByTestId("panel-inspector");
 		expect(pane).toHaveAttribute("inert");
 		expect(pane).toHaveAttribute("aria-hidden", "true");
+		// Collapsed panels stay collapsible so the 0% size is a valid rrp state
+		// (and the separator can drag the rail back open).
+		expect(pane).toHaveAttribute("data-collapsible", "true");
 		expect(panels.get("inspector")!.handle.collapse).not.toHaveBeenCalled();
 	});
 
@@ -501,13 +506,16 @@ describe("SessionView", () => {
 		);
 		const handle = panels.get("inspector")!.handle;
 
-		expect(handle.expand).not.toHaveBeenCalled();
+		expect(handle.resize).not.toHaveBeenCalled();
 		expect(handle.collapse).not.toHaveBeenCalled();
 
 		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
 
 		expect(inspectorOpen("sess-1")).toBe(true);
-		expect(handle.expand).toHaveBeenCalledTimes(1);
+		// Opening resizes to the persisted split rather than expand(): the open
+		// panel re-registers as non-collapsible, and rrp's expand() no-ops on a
+		// non-collapsible panel.
+		expect(handle.resize).toHaveBeenCalledWith("28%");
 		expect(handle.collapse).not.toHaveBeenCalled();
 	});
 
@@ -522,38 +530,43 @@ describe("SessionView", () => {
 
 		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
 		expect(inspectorOpen("sess-1")).toBe(true);
-		expect(handle.expand).toHaveBeenCalled();
+		expect(handle.resize).toHaveBeenCalledWith("28%");
 
 		// Plain ⌘B belongs to the sidebar — the inspector must not react.
 		fireEvent.keyDown(window, { key: "b", metaKey: true });
 		expect(inspectorOpen("sess-1")).toBe(true);
 	});
 
-	it("syncs drag resizes back into the store and persists the split", () => {
+	it("persists drag resizes and never closes the store from a drag", () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
 		const entry = panels.get("inspector")!;
 		// rrp marks the separator active for the duration of a pointer drag.
 		screen.getByTestId("resize-handle").setAttribute("data-separator", "active");
 
-		// Dragging past minSize collapses the panel → store follows.
-		act(() => entry.onResize?.({ asPercentage: 0, inPixels: 0 }));
-		expect(inspectorOpen("sess-1")).toBe(false);
-
-		// Dragging it back open reopens + persists the width.
+		// Dragging persists the width.
 		act(() => entry.onResize?.({ asPercentage: 31.5, inPixels: 400 }));
+		expect(inspectorOpen("sess-1")).toBe(true);
+		expect(window.localStorage.getItem("ao.inspector.split")).toBe("31.5");
+
+		// A drag can never auto-collapse the rail: even if a 0-size frame arrives
+		// mid-drag, the store stays open — collapse belongs to the explicit
+		// controls (topbar button / ⌘⇧B) only.
+		act(() => entry.onResize?.({ asPercentage: 0, inPixels: 0 }));
 		expect(inspectorOpen("sess-1")).toBe(true);
 		expect(window.localStorage.getItem("ao.inspector.split")).toBe("31.5");
 	});
 
-	it("persists a drag collapse from the default-open inspector state", () => {
+	it("reopens the store when a drag pulls the collapsed rail back open", () => {
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
 		render(<SessionView sessionId="sess-1" />);
 		const entry = panels.get("inspector")!;
 		screen.getByTestId("resize-handle").setAttribute("data-separator", "active");
 
-		act(() => entry.onResize?.({ asPercentage: 0, inPixels: 0 }));
+		act(() => entry.onResize?.({ asPercentage: 25, inPixels: 320 }));
 
-		expect(useUiStore.getState().inspectorSessions["sess-1"]).toMatchObject({ isOpen: false, view: "summary" });
+		expect(useUiStore.getState().inspectorSessions["sess-1"]).toMatchObject({ isOpen: true });
+		expect(window.localStorage.getItem("ao.inspector.split")).toBe("25");
 	});
 
 	// Regression: rrp v4 reports observed DOM sizes, so the flex-grow
@@ -624,7 +637,7 @@ describe("SessionView", () => {
 		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
 
 		expect(inspectorOpen("sess-2")).toBe(true);
-		expect(handle.expand).toHaveBeenCalledTimes(1);
+		expect(handle.resize).toHaveBeenCalledWith("28%");
 	});
 
 	it("renders no inspector panel or handle for orchestrator sessions", () => {
