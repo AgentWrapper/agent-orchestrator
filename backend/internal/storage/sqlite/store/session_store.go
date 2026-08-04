@@ -58,6 +58,7 @@ func (s *Store) RenameSession(ctx context.Context, id domain.SessionID, displayN
 	return rows > 0, nil
 }
 
+// SetSessionPinned updates the pinned status of a session.
 func (s *Store) SetSessionPinned(ctx context.Context, id domain.SessionID, isPinned bool, pinnedAt *time.Time, updatedAt time.Time) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
