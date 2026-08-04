@@ -136,7 +136,7 @@ function SessionAgentMark({ session }: { session: WorkspaceSession }) {
 	return (
 		<span
 			aria-hidden="true"
-			className="inline-flex shrink-0 items-center gap-1"
+			className="inline-flex shrink-0 items-center gap-1.5"
 			data-session-agent={session.provider}
 			title={session.provider}
 		>
@@ -785,38 +785,50 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 
 	return (
 		<SidebarMenuSubItem className="pl-4.5">
-			<button
-				aria-current={active ? "page" : undefined}
-					aria-label={t("shell.openSession", { title: session.title })}
+			<div
 				className={cn(
-					"relative flex h-8 w-full items-center gap-1.5 rounded-lg px-2.5 py-0 pr-7 text-left text-sm outline-hidden transition-[background-color,color]",
-					"hover:bg-interactive-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+					"group/session-row flex h-8 w-full items-center rounded-lg transition-[background-color,color]",
+					"hover:bg-interactive-hover hover:text-foreground focus-within:bg-interactive-hover",
 					active && "bg-interactive-active text-foreground",
 				)}
-				onClick={onOpen}
-				type="button"
+				data-session-row=""
 			>
-				<SessionAgentMark session={session} />
-				<span className="min-w-0 flex-1">
-					<span className={cn("block truncate", active ? "text-foreground" : "text-muted-foreground")}>
-						{session.title}
+				<button
+					aria-current={active ? "page" : undefined}
+					aria-label={t("shell.openSession", { title: session.title })}
+					className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2.5 py-0 text-left text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+					onClick={onOpen}
+					type="button"
+				>
+					<SessionAgentMark session={session} />
+					<span className="min-w-0 flex-1">
+						<span
+							className={cn(
+								"block truncate transition-colors",
+								active ? "text-foreground" : "text-muted-foreground group-hover/session-row:text-foreground",
+							)}
+						>
+							{session.title}
+						</span>
 					</span>
-				</span>
-			</button>
-			{/* Pencil reveals on row hover/focus (named group on SidebarMenuSubItem);
-			it sits beside the row button rather than nested inside it. */}
-			<button
+				</button>
+				{/* Match terminal-tab close behavior: consume no width at rest, then
+				    expand beside the label on hover/focus so the text yields only when
+				    the action is useful. Keep it a sibling for valid interactive HTML. */}
+				<button
 					aria-label={t("shell.renameSession", { title: session.title })}
-				className={cn(
-					HOVER_ACTION_CLASS,
-					"absolute top-1/2 right-1 -translate-y-1/2 opacity-0",
-					"group-focus-within/menu-sub-item:opacity-100 group-hover/menu-sub-item:opacity-100",
-				)}
-				onClick={startEditing}
-				type="button"
-			>
-				<Pencil aria-hidden="true" />
-			</button>
+					className={cn(
+						"grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-passive opacity-0",
+						"transition-[width,margin,background-color,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 [&_svg]:size-3!",
+						"group-hover/session-row:mr-1 group-hover/session-row:w-5 group-hover/session-row:opacity-100",
+						"group-focus-within/session-row:mr-1 group-focus-within/session-row:w-5 group-focus-within/session-row:opacity-100",
+					)}
+					onClick={startEditing}
+					type="button"
+				>
+					<Pencil aria-hidden="true" />
+				</button>
+			</div>
 		</SidebarMenuSubItem>
 	);
 }

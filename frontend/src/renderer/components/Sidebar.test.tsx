@@ -983,10 +983,32 @@ describe("Sidebar", () => {
 		expect(sessionItem).toHaveClass("pl-4.5");
 		expect(sessionItem).not.toHaveClass("pl-7");
 		const agentMark = screen.getByLabelText("Open fix login").querySelector('[data-session-agent="claude-code"]');
-		expect(agentMark).toHaveClass("inline-flex", "gap-1");
+		expect(agentMark).toHaveClass("inline-flex", "gap-1.5");
 		expect(agentMark?.querySelector("img")).toHaveClass("size-3.5!");
 		expect(agentMark?.querySelector("img")).toHaveAttribute("aria-hidden", "true");
 		expect(agentMark?.querySelector("[data-session-status]")).toHaveClass("size-2");
+	});
+
+	it("gives session names the pencil width until the rename action is revealed", async () => {
+		const workspaceWithSession = { ...workspace, sessions: [session] };
+		renderSidebar({ workspaces: [workspaceWithSession] });
+
+		const openButton = screen.getByLabelText("Open fix login");
+		const renameButton = screen.getByLabelText("Rename fix login");
+		const row = openButton.closest("[data-session-row]");
+
+		expect(openButton).toHaveClass("min-w-0", "flex-1");
+		expect(openButton).not.toHaveClass("pr-7");
+		expect(row).toHaveClass("group/session-row", "rounded-lg");
+		expect(renameButton).toHaveClass(
+			"w-0",
+			"opacity-0",
+			"group-hover/session-row:w-5",
+			"group-hover/session-row:opacity-100",
+			"group-focus-within/session-row:w-5",
+		);
+		expect(renameButton).toHaveClass("[&_svg]:size-3!");
+		await waitFor(() => expect(updateStatusMock).toHaveBeenCalled());
 	});
 
 	it("caps the inline rename input at 20 characters", async () => {
