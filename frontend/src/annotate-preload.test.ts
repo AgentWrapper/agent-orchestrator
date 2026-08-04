@@ -19,6 +19,31 @@ vi.mock("electron", () => ({
 	},
 }));
 
+// jsdom implements neither FontFace nor document.fonts; stub both so
+// registerFonts() runs for real instead of short-circuiting on the
+// "not supported" guard, so tests exercise the actual loading path.
+const fontMocks = vi.hoisted(() => ({
+	families: [] as string[],
+	add: vi.fn(),
+}));
+
+class MockFontFace {
+	family: string;
+	constructor(family: string) {
+		this.family = family;
+		fontMocks.families.push(family);
+	}
+	load(): Promise<MockFontFace> {
+		return Promise.resolve(this);
+	}
+}
+
+vi.stubGlobal("FontFace", MockFontFace);
+Object.defineProperty(document, "fonts", {
+	configurable: true,
+	value: { add: fontMocks.add },
+});
+
 await import("./annotate-preload");
 
 type Bounds = {
@@ -90,6 +115,8 @@ describe("annotate preload", () => {
 	beforeEach(() => {
 		document.body.innerHTML = "";
 		electronMocks.send.mockClear();
+		fontMocks.add.mockClear();
+		fontMocks.families.length = 0;
 		setAnnotationMode(true);
 	});
 
@@ -141,17 +168,46 @@ describe("annotate preload", () => {
 		expect(payload.context.selector).toBe("button#first");
 	});
 
-	it("keeps prompt controls active for cancel and escape", () => {
+	it("renders the refined prompt affordances and submits from the primary action", () => {
 		const first = elementWithBounds("first", { left: 12, top: 24, width: 120, height: 40 });
 
 		dispatchPageEvent(first, "click");
-		overlayRoot().querySelector<HTMLButtonElement>('[data-action="cancel"]')?.click();
 
-		expect(electronMocks.send).toHaveBeenCalledWith("browser:annotation:cancel", { reason: "cancel" });
-		expect(document.querySelector("[data-ao-annotation-root]")).toBeNull();
+		const root = overlayRoot();
+		const header = root.querySelector<HTMLElement>(".prompt__header");
+		const promptMeta = root.querySelector(".prompt__meta");
+		const textarea = root.querySelector<HTMLTextAreaElement>("textarea");
+		const primaryAction = Array.from(root.querySelectorAll<HTMLButtonElement>("button")).find(
+			(button) => button.textContent?.trim() === "Send feedback" && button.type === "submit",
+		);
 
-		electronMocks.send.mockClear();
-		setAnnotationMode(true);
+		expect(header?.textContent).toBe("Annotate on selected components");
+		expect(header?.title).toBe("button#first");
+		expect(fontMocks.families).toContain("Geist Variable");
+		expect(fontMocks.families).toContain("Geist Mono Variable");
+		expect(fontMocks.add).toHaveBeenCalledTimes(2);
+		expect(promptMeta).not.toBeNull();
+		expect(promptMeta!.textContent).toContain("Ctrl + Enter to send");
+		expect(promptMeta!.textContent).toContain("Esc to cancel");
+		expect(root.querySelector('[data-action="cancel"]')).toBeNull();
+		expect(primaryAction).toBeTruthy();
+		expect(primaryAction?.disabled).toBe(true);
+		expect(textarea).not.toBeNull();
+
+		textarea!.value = "Make this button easier to notice.";
+		textarea!.dispatchEvent(
+			new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }),
+		);
+
+		expect(electronMocks.send).toHaveBeenCalledWith(
+			"browser:annotation:submit",
+			expect.objectContaining({ instruction: "Make this button easier to notice." }),
+		);
+	});
+
+	it("keeps prompt controls active for escape", () => {
+		const first = elementWithBounds("first", { left: 12, top: 24, width: 120, height: 40 });
+
 		dispatchPageEvent(first, "click");
 		document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
 

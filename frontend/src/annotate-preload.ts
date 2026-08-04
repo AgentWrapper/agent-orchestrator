@@ -1,6 +1,9 @@
 import { ipcRenderer } from "electron";
+import geistLatinWoff2 from "@fontsource-variable/geist/files/geist-latin-wght-normal.woff2?inline";
+import geistMonoLatinWoff2 from "@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2?inline";
 import {
 	createBrowserAnnotationContext,
+	elementSummary,
 	type BrowserAnnotationCancelReason,
 	type BrowserAnnotationContext,
 	type BrowserAnnotationPageSubmitPayload,
@@ -107,6 +110,37 @@ function annotationTarget(target: EventTarget | null): Element | null {
 	return element;
 }
 
+// Registered as FontFace objects from decoded bytes rather than an @font-face
+// `src: url(data:...)` rule: the annotated page's own CSP (font-src) can block
+// that url() fetch, silently falling the overlay back to a system font. A
+// FontFace built from an in-memory buffer does no fetch, so it is not subject
+// to the page's CSP and always loads.
+function decodeBase64Font(dataUri: string): ArrayBuffer {
+	const base64 = dataUri.slice(dataUri.indexOf(",") + 1);
+	const binary = atob(base64);
+	const buffer = new ArrayBuffer(binary.length);
+	const bytes = new Uint8Array(buffer);
+	for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+	return buffer;
+}
+
+function registerFonts(root: ShadowRoot): void {
+	if (typeof FontFace === "undefined") return;
+	const fontSet = (root as ShadowRoot & { fonts?: FontFaceSet }).fonts ?? document.fonts;
+	const sans = new FontFace("Geist Variable", decodeBase64Font(geistLatinWoff2), {
+		weight: "100 900",
+		style: "normal",
+	});
+	const mono = new FontFace("Geist Mono Variable", decodeBase64Font(geistMonoLatinWoff2), {
+		weight: "100 900",
+		style: "normal",
+	});
+	fontSet.add(sans);
+	fontSet.add(mono);
+	void sans.load();
+	void mono.load();
+}
+
 function ensureOverlay(): ShadowRoot {
 	if (shadow && host?.isConnected) return shadow;
 	host = document.createElement("div");
@@ -117,9 +151,28 @@ function ensureOverlay(): ShadowRoot {
 	host.style.pointerEvents = "none";
 	(document.documentElement ?? document.body).appendChild(host);
 	shadow = host.attachShadow({ mode: "open" });
+	registerFonts(shadow);
 	shadow.innerHTML = `
 		<style>
-			:host { all: initial; }
+			:host {
+				all: initial;
+				--ao-background: oklch(0.185 0.006 285.885);
+				--ao-foreground: oklch(0.985 0 0);
+				--ao-surface: oklch(0.24 0.008 285.885);
+				--ao-muted: oklch(0.274 0.006 286.033);
+				--ao-border: oklch(1 0 0 / 7%);
+				--ao-input: oklch(1 0 0 / 4%);
+				--ao-ring: oklch(0.552 0.016 285.938);
+				--ao-passive: oklch(0.442 0.017 285.786);
+				--ao-primary: oklch(0.92 0.004 286.32);
+				--ao-primary-foreground: oklch(0.21 0.006 285.885);
+				--ao-font-sans: "Geist Variable", "Geist", ui-sans-serif, system-ui, sans-serif;
+				--ao-font-mono: "Geist Mono Variable", "Geist Mono", "JetBrainsMono Nerd Font Mono", "JetBrainsMono Nerd Font", "FiraCode Nerd Font Mono", "FiraCode Nerd Font", "MesloLGS NF", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+				--ao-text-xs: 12px;
+				--ao-control-md: 28px;
+				--ao-icon-sm: 13px;
+				--ao-radius-md: 8px;
+			}
 			.highlight {
 				position: fixed;
 				box-sizing: border-box;
@@ -141,76 +194,145 @@ function ensureOverlay(): ShadowRoot {
 			}
 			.prompt {
 				position: fixed;
-				width: min(380px, calc(100vw - 24px));
+				width: min(440px, calc(100vw - 28px));
 				box-sizing: border-box;
-				border: 1px solid rgba(255, 255, 255, 0.14);
-				border-radius: 8px;
-				background: rgba(18, 20, 24, 0.98);
-				color: #f4f5f7;
-				box-shadow:
-					0 0 0 1px rgba(255, 255, 255, 0.06),
-					0 18px 52px rgba(0, 0, 0, 0.48);
-				padding: 12px;
-				font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+				border: 1px solid color-mix(in oklch, var(--ao-border) 70%, transparent);
+				border-radius: var(--ao-radius-md);
+				background: var(--ao-surface);
+				color: var(--ao-foreground);
+				box-shadow: 0 18px 52px rgba(0, 0, 0, 0.48);
+				padding: 8px 12px;
+				font: 13px/1.5 var(--ao-font-sans);
+				font-weight: 400;
 				pointer-events: auto;
 				animation: prompt-in 140ms ease-out;
 			}
 			.prompt__header {
-				margin-bottom: 9px;
-				color: rgba(244, 245, 247, 0.82);
-				font-size: 12px;
-				font-weight: 650;
+				display: block;
+				min-width: 0;
+				margin: 0 0 6px;
+				overflow: hidden;
+				color: var(--ao-passive);
+				font-family: var(--ao-font-sans);
+				font-size: var(--ao-text-xs);
+				line-height: 1.5;
+				font-weight: 400;
+				text-overflow: ellipsis;
+				white-space: nowrap;
 			}
 			.prompt textarea {
+				display: block;
 				width: 100%;
-				min-height: 102px;
+				min-height: 80px;
 				box-sizing: border-box;
 				resize: vertical;
-				border: 1px solid rgba(255, 255, 255, 0.12);
+				border: 1px solid var(--ao-input);
 				border-radius: 6px;
-				background: rgba(7, 8, 10, 0.92);
-				color: #f4f5f7;
-				padding: 9px 10px;
-				font: inherit;
+				background: var(--ao-background);
+				color: var(--ao-foreground);
+				caret-color: var(--ao-foreground);
+				padding: 8px 10px;
+				font-family: var(--ao-font-sans);
+				font-size: var(--ao-text-xs);
+				line-height: 1.5;
+				font-weight: 400;
 				outline: none;
 				transition:
 					border-color 120ms ease,
 					box-shadow 120ms ease,
 					background 120ms ease;
 			}
-			.prompt textarea:focus {
-				border-color: #4d8dff;
-				box-shadow: 0 0 0 3px rgba(77, 141, 255, 0.16);
+			.prompt textarea::placeholder {
+				color: var(--ao-passive);
+			}
+			.prompt textarea:focus,
+			.prompt textarea:focus-visible {
+				border-color: var(--ao-ring);
+				box-shadow: 0 0 0 3px color-mix(in oklch, var(--ao-ring) 30%, transparent);
+			}
+			.prompt__footer {
+				display: flex;
+				align-items: center;
+				justify-content: flex-end;
+				flex-wrap: nowrap;
+				gap: 6px;
+				margin-top: 8px;
+			}
+			.prompt__meta {
+				flex: 1 1 auto;
+				margin-right: auto;
+				min-width: 0;
+				overflow: hidden;
+				color: var(--ao-passive);
+				font-family: var(--ao-font-sans);
+				font-size: var(--ao-text-xs);
+				line-height: 1.5;
+				font-weight: 400;
+				white-space: nowrap;
+				text-overflow: ellipsis;
 			}
 			.actions {
 				display: flex;
+				flex: 0 0 auto;
+				align-items: center;
 				justify-content: flex-end;
-				gap: 8px;
-				margin-top: 8px;
+				gap: 6px;
+				margin: 0;
 			}
 			.actions button {
-				height: 30px;
+				display: inline-flex;
+				flex-shrink: 0;
+				height: var(--ao-control-md);
+				align-items: center;
+				justify-content: center;
+				gap: 6px;
 				border-radius: 6px;
-				border: 1px solid rgba(255, 255, 255, 0.12);
-				background: #1b1d22;
-				color: #f4f5f7;
+				border: 1px solid transparent;
+				background: transparent;
+				color: var(--ao-foreground);
 				padding: 0 10px;
-				font: inherit;
+				font-family: var(--ao-font-sans);
+				font-size: var(--ao-text-xs);
+				line-height: 1;
+				font-weight: 400;
+				white-space: nowrap;
 				transition:
 					background 120ms ease,
 					border-color 120ms ease,
 					transform 120ms ease;
 			}
 			.actions button:hover {
-				background: #242830;
+				background: color-mix(in oklch, var(--ao-muted) 50%, transparent);
 			}
 			.actions button:active {
 				transform: translateY(1px);
 			}
+			.actions button:focus-visible {
+				outline: none;
+				border-color: var(--ao-ring);
+				box-shadow: 0 0 0 3px color-mix(in oklch, var(--ao-ring) 30%, transparent);
+			}
+			.actions button:disabled {
+				opacity: 0.5;
+				pointer-events: none;
+			}
 			.actions button[type="submit"] {
-				border-color: #4d8dff;
-				background: #4d8dff;
-				color: #fff;
+				background: var(--ao-primary);
+				color: var(--ao-primary-foreground);
+			}
+			.actions button[type="submit"]:hover {
+				background: color-mix(in oklch, var(--ao-primary) 80%, transparent);
+				color: var(--ao-primary-foreground);
+			}
+			.actions svg {
+				width: var(--ao-icon-sm);
+				height: var(--ao-icon-sm);
+				flex-shrink: 0;
+				stroke: currentColor;
+				stroke-width: 2;
+				stroke-linecap: round;
+				stroke-linejoin: round;
+				fill: none;
 			}
 			.hint {
 				position: fixed;
@@ -218,9 +340,9 @@ function ensureOverlay(): ShadowRoot {
 				bottom: 12px;
 				border-radius: 6px;
 				background: #15171b;
-				color: #f4f5f7;
+				color: #c9d1d9;
 				padding: 7px 9px;
-				font: 12px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+				font: 12px/1.3 var(--ao-font-sans);
 				box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 				pointer-events: none;
 				animation: prompt-in 140ms ease-out;
@@ -240,7 +362,24 @@ function ensureOverlay(): ShadowRoot {
 					animation: none;
 				}
 			}
-		</style>
+			@media (max-width: 360px) {
+				.prompt__footer {
+					align-items: stretch;
+					flex-direction: column;
+				}
+				.actions {
+					order: 1;
+					width: 100%;
+				}
+				.prompt__meta {
+					order: 2;
+					margin-right: 0;
+					overflow: visible;
+					white-space: normal;
+					text-overflow: clip;
+				}
+			}
+			</style>
 		<div class="highlight" hidden></div>
 		<div class="mount"></div>
 	`;
@@ -276,29 +415,54 @@ function renderPrompt(element: Element, context: BrowserAnnotationContext): void
 	const { left, top } = promptPosition(rect);
 	mount.innerHTML = `
 		<form class="prompt" style="left: ${left}px; top: ${top}px;">
-			<div class="prompt__header">Annotate selection</div>
-			<textarea aria-label="Annotation request" placeholder="Describe what to change"></textarea>
-			<div class="actions">
-				<button type="button" data-action="cancel">Cancel</button>
-				<button type="submit">Send</button>
+			<div class="prompt__header">Annotate on selected components</div>
+			<textarea aria-label="Annotation request" placeholder="Describe to agent what you want to change..."></textarea>
+			<div class="prompt__footer">
+				<div class="prompt__meta">⌘/Ctrl + Enter to send · Esc to cancel</div>
+				<div class="actions">
+					<button disabled type="submit">
+						<svg viewBox="0 0 24 24" aria-hidden="true">
+							<path d="m22 2-7 20-4-9-9-4Z"></path>
+							<path d="M22 2 11 13"></path>
+						</svg>
+						<span>Send feedback</span>
+					</button>
+				</div>
 			</div>
 		</form>
 	`;
 	const form = mount.querySelector<HTMLFormElement>("form")!;
+	const header = form.querySelector<HTMLDivElement>(".prompt__header")!;
+	header.title = elementSummary(context);
 	const textarea = form.querySelector<HTMLTextAreaElement>("textarea")!;
-	form.addEventListener("submit", (event) => {
-		event.preventDefault();
+	const submitButton = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+	const updateSubmitState = (): void => {
+		submitButton.disabled = textarea.value.trim().length === 0;
+	};
+	const submitAnnotation = (): boolean => {
 		const instruction = textarea.value.trim();
 		if (!instruction) {
 			textarea.focus();
-			return;
+			return false;
 		}
 		const payload: BrowserAnnotationPageSubmitPayload = { instruction, context };
 		ipcRenderer.send("browser:annotation:submit", payload);
 		setEnabled(false, "disabled");
+		return true;
+	};
+	form.addEventListener("submit", (event) => {
+		event.preventDefault();
+		submitAnnotation();
 	});
-	form.querySelector<HTMLButtonElement>('[data-action="cancel"]')?.addEventListener("click", () => {
-		setEnabled(false, "cancel");
+	textarea.addEventListener("input", updateSubmitState);
+	textarea.addEventListener("keydown", (event) => {
+		if (event.key === "Escape") {
+			event.preventDefault();
+			setEnabled(false, "escape");
+		} else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+			event.preventDefault();
+			submitAnnotation();
+		}
 	});
 	setTimeout(() => textarea.focus(), 0);
 }
@@ -307,10 +471,10 @@ function promptPosition(rect: DOMRect): { left: number; top: number } {
 	return promptPositionForRect(rect, {
 		width: window.innerWidth,
 		height: window.innerHeight,
-		promptWidth: Math.min(380, window.innerWidth - 24),
-		promptHeight: 180,
-		gutter: 12,
-		gap: 8,
+		promptWidth: Math.min(440, window.innerWidth - 28),
+		promptHeight: 178,
+		gutter: 14,
+		gap: 10,
 	});
 }
 
