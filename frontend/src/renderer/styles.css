@@ -741,13 +741,12 @@ button.settings-row-bar {
 	transition-property: opacity;
 	transition-duration: var(--duration-normal);
 
-	&:hover {
+	&:hover:not(:disabled) {
 		opacity: 0.9;
 	}
 
 	&:disabled {
 		cursor: not-allowed;
-		opacity: 0.5;
 	}
 }
 
