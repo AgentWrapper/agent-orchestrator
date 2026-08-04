@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/prereq"
 )
 
 // ensureTmux satisfies the tmux runtime prerequisite before the desktop app is
@@ -76,48 +78,34 @@ func (c *commandContext) installTmux(ctx context.Context, out io.Writer, argv []
 }
 
 func (c *commandContext) haveTmux() bool {
+	// goos is irrelevant here: callers have already excluded Windows, and this
+	// asks the narrower question of whether the binary exists.
 	path, err := c.deps.LookPath("tmux")
 	return err == nil && path != ""
 }
 
 // tmuxInstallCommand returns the install argv for the first known package
-// manager present on PATH, or nil when none of them are.
+// manager present on PATH, or nil when there is none or we cannot get the
+// privilege it needs.
 func (c *commandContext) tmuxInstallCommand(goos string) []string {
-	var candidates [][]string
-	switch goos {
-	case "darwin":
-		candidates = [][]string{{"brew", "install", "tmux"}}
-	case "linux":
-		candidates = [][]string{
-			{"apt-get", "install", "-y", "tmux"},
-			{"dnf", "install", "-y", "tmux"},
-			{"pacman", "-S", "--noconfirm", "tmux"},
-			{"zypper", "install", "-y", "tmux"},
-			{"apk", "add", "tmux"},
-		}
-	default:
+	status := prereq.Tmux(goos, c.deps.LookPath)
+	if len(status.Command) == 0 {
 		return nil
 	}
-	for _, argv := range candidates {
-		if path, err := c.deps.LookPath(argv[0]); err != nil || path == "" {
-			continue
-		}
-		return c.withPrivilege(goos, argv)
-	}
-	return nil
+	return c.withPrivilege(status)
 }
 
-// withPrivilege prefixes sudo for the Linux package managers, which write to
-// system paths. Homebrew must not run as root. It returns nil when the command
-// needs root that we cannot get: an unprivileged account in an image with no
-// sudo (the CLI smoke container is exactly this) would otherwise run a doomed
+// withPrivilege prefixes sudo for the package managers that write to system
+// paths. Homebrew must not run as root. It returns nil when the command needs
+// root that we cannot get: an unprivileged account in an image with no sudo
+// (the CLI smoke container is exactly this) would otherwise run a doomed
 // `apt-get install` and fail on the dpkg lock.
-func (c *commandContext) withPrivilege(goos string, argv []string) []string {
-	if goos != "linux" || os.Geteuid() == 0 {
-		return argv
+func (c *commandContext) withPrivilege(status prereq.Status) []string {
+	if !status.NeedsRoot || os.Geteuid() == 0 {
+		return status.Command
 	}
 	if path, err := c.deps.LookPath("sudo"); err != nil || path == "" {
 		return nil
 	}
-	return append([]string{"sudo"}, argv...)
+	return append([]string{"sudo"}, status.Command...)
 }

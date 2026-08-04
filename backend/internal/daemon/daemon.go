@@ -383,6 +383,7 @@ func Run() error {
 		Browser:             browserService,
 		PreviewServer:       managedPreview,
 		SessionCapabilities: browserAuthority,
+		PrerequisiteRunner:  runPrerequisiteInstall,
 	})
 	if err != nil {
 		stop()

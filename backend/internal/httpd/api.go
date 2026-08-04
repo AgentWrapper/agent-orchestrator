@@ -45,6 +45,7 @@ type APIDeps struct {
 	Browser             controllers.BrowserService
 	PreviewServer       controllers.ManagedPreviewServer
 	SessionCapabilities controllers.SessionCapabilityValidator
+	PrerequisiteRunner  controllers.PrerequisiteRunner
 }
 
 // API owns one controller per resource and is the single Register call the
@@ -65,6 +66,7 @@ type API struct {
 	settings      *controllers.SettingsController
 	dev           *controllers.DevController
 	browser       *controllers.BrowserController
+	prerequisites *controllers.PrerequisitesController
 	events        *EventsController
 }
 
@@ -98,6 +100,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		settings:      &controllers.SettingsController{Svc: deps.Settings},
 		dev:           &controllers.DevController{Import: deps.DevImport},
 		browser:       &controllers.BrowserController{Svc: deps.Browser},
+		prerequisites: &controllers.PrerequisitesController{Runner: deps.PrerequisiteRunner},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
 }
@@ -130,6 +133,7 @@ func (a *API) Register(root chi.Router) {
 			a.settings.Register(r)
 			a.dev.Register(r)
 			a.browser.Register(r)
+			a.prerequisites.Register(r)
 			// Sibling REST controllers plug in here.
 		})
 		// Long-lived streams intentionally bypass the REST timeout middleware.
