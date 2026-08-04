@@ -3691,7 +3691,7 @@ func (s *Server) issueTerminalTicket(w http.ResponseWriter, r *http.Request) {
 	} else if org, ok := orgFromContext(r.Context()); !ok || orgRoleAtLeast(org.Membership.Role, "member") {
 		canOperate = true
 	}
-	if canOperate {
+	if canOperate && (kind == "workspace" || agentTerminalInteractionReady(session)) {
 		scopes = append(scopes, "terminal:operate")
 	}
 	ticket, err := s.store.IssueAccessTicket(
@@ -3736,6 +3736,10 @@ func terminalKind(value string) string {
 	default:
 		return ""
 	}
+}
+
+func agentTerminalInteractionReady(session clouddomain.Session) bool {
+	return session.ActiveTurn == nil || session.ActiveTurn.AttemptCount > 0
 }
 
 func terminalTicketPurpose(kind string) string {

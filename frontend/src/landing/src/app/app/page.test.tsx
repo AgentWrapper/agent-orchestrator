@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -118,6 +119,12 @@ vi.mock("../auth/AuthProvider", () => ({
 
 vi.mock("../auth/PrismLogoGrid", () => ({
   PrismLogoGrid: () => <div aria-label="Loading cloud application" />,
+}));
+
+vi.mock("./CloudTerminal", () => ({
+  CloudTerminal: ({ sessionId }: { sessionId: string }) => (
+    <div data-testid={`cloud-terminal-${sessionId}`} />
+  ),
 }));
 
 const project: CloudProject = {
@@ -1062,6 +1069,56 @@ it("polls a selected connecting worker until runtime capabilities arrive", async
   expect(await screen.findByText("Connecting worker")).toBeVisible();
   await waitFor(() =>
     expect(apiMocks.session).toHaveBeenCalledWith("org-one", "worker-one"),
+  );
+});
+
+it("does not attach a worker terminal until its initial prompt is accepted", async () => {
+  const startingWorker: CloudSession = {
+    ...worker,
+    capabilities: ["runtime.pty.v1"],
+    activeTurn: {
+      id: "turn-one",
+      sessionId: worker.id,
+      userMessageSequence: 1,
+      attemptCount: 0,
+      state: "provisioning",
+      createdAt: "2026-07-30T00:01:00Z",
+      updatedAt: "2026-07-30T00:01:00Z",
+    },
+  };
+  let acceptPrompt!: (value: { session: CloudSession }) => void;
+  apiMocks.sessions.mockResolvedValue({ sessions: [startingWorker] });
+  apiMocks.session.mockReturnValue(
+    new Promise((resolve) => {
+      acceptPrompt = resolve;
+    }),
+  );
+
+  render(<CloudAppPage />);
+
+  const workerEntries = await screen.findAllByText("readme-reader");
+  fireEvent.click(workerEntries[0]);
+
+  expect(await screen.findByText("Starting agent")).toBeVisible();
+  expect(
+    screen.queryByTestId("cloud-terminal-worker-one"),
+  ).not.toBeInTheDocument();
+
+  act(() => {
+    acceptPrompt({
+      session: {
+        ...startingWorker,
+        activeTurn: {
+          ...startingWorker.activeTurn!,
+          attemptCount: 1,
+          state: "running",
+        },
+      },
+    });
+  });
+
+  await waitFor(() =>
+    expect(screen.queryByText("Starting agent")).not.toBeInTheDocument(),
   );
 });
 

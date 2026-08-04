@@ -107,8 +107,10 @@ func (r *agentTerminalReady) markReady() {
 
 func claudeTerminalReady(output string) bool {
 	output = strings.ToLower(output)
-	return strings.Contains(output, "bypass permissions") ||
-		strings.Contains(output, "shift+tab to cycle")
+	return (strings.Contains(output, "bypass") &&
+		strings.Contains(output, "permissions")) ||
+		(strings.Contains(output, "shift+tab") &&
+			strings.Contains(output, "cycle"))
 }
 
 // NewRunner creates a worker runner from bootstrap launch data.
@@ -469,9 +471,6 @@ func (r *Runner) commandLoop(
 				r.dispatchWorkspaceCommand(ctx, command)
 				return nil
 			case "input":
-				if !terminalInputAllowed(agentReady) {
-					return nil
-				}
 				decoded, err := base64.StdEncoding.DecodeString(command.Data)
 				if err != nil {
 					return fmt.Errorf("decode terminal input: %w", err)
@@ -540,10 +539,6 @@ func (r *Runner) commandLoop(
 			backoff *= 2
 		}
 	}
-}
-
-func terminalInputAllowed(agentReady bool) bool {
-	return agentReady
 }
 
 func submitInteractivePrompt(

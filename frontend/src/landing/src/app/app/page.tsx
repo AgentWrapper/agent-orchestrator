@@ -784,6 +784,11 @@ export default function CloudAppPage() {
     selectedOrgRole === "owner" || selectedOrgRole === "admin";
   const terminalRuntimeAvailable =
     selectedSession?.capabilities?.includes("runtime.pty.v1") === true;
+  const initialPromptDelivered =
+    !selectedSession?.activeTurn ||
+    selectedSession.activeTurn.attemptCount > 0;
+  const terminalReadyForDisplay =
+    terminalRuntimeAvailable && initialPromptDelivered;
   const daytonaConnections = connections.filter(
     ({ provider }) => provider === "daytona",
   );
@@ -808,7 +813,7 @@ export default function CloudAppPage() {
       !api ||
       !activeOrgId ||
       !selectedSession ||
-      terminalRuntimeAvailable ||
+      terminalReadyForDisplay ||
       selectedSession.isTerminated
     ) {
       return;
@@ -841,7 +846,7 @@ export default function CloudAppPage() {
     api,
     selectedSession?.id,
     selectedSession?.isTerminated,
-    terminalRuntimeAvailable,
+    terminalReadyForDisplay,
   ]);
 
   useEffect(() => {
@@ -2016,7 +2021,7 @@ export default function CloudAppPage() {
                 loading={loading}
               />
             ) : view === "session" && selectedSession && activeOrgId ? (
-              terminalRuntimeAvailable ? (
+              terminalReadyForDisplay ? (
                 <div className="flex h-full min-h-0 min-w-0">
                   <div className="min-h-0 min-w-0 flex-1">
                     <CloudTerminal
@@ -2439,6 +2444,9 @@ export default function CloudAppPage() {
 
 function CloudRuntimeConnecting({ session }: { session: CloudSession }) {
   const role = session.kind === "orchestrator" ? "orchestrator" : "worker";
+  const deliveringPrompt =
+    session.capabilities?.includes("runtime.pty.v1") === true &&
+    session.activeTurn?.attemptCount === 0;
   return (
     <div
       className="grid h-full min-h-0 place-items-center bg-[#0a0b0d] px-6"
@@ -2454,7 +2462,7 @@ function CloudRuntimeConnecting({ session }: { session: CloudSession }) {
           </div>
           <div className="min-w-0">
             <h2 className="truncate text-sm font-medium text-[#f4f5f7]">
-              Connecting {role}
+              {deliveringPrompt ? "Starting agent" : `Connecting ${role}`}
             </h2>
             <p className="mt-1 truncate text-xs text-[#646a73]">
               {session.displayName} · {session.branch}
@@ -2475,8 +2483,9 @@ function CloudRuntimeConnecting({ session }: { session: CloudSession }) {
           <span>Live chat</span>
         </div>
         <p className="mt-5 text-xs leading-5 text-[#646a73]">
-          AO will open the native chat as soon as the agent runtime is ready.
-          The task keeps starting even if you leave this view.
+          {deliveringPrompt
+            ? "AO is delivering the initial prompt. The terminal will open after the agent accepts it."
+            : "AO will open the native chat as soon as the agent runtime is ready. The task keeps starting even if you leave this view."}
         </p>
       </div>
     </div>
