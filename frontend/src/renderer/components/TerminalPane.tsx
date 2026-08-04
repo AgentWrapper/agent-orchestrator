@@ -399,9 +399,9 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					}
 				/>
 			)}
-			{/* p-2 insets xterm from the pane edges. terminal-surface keeps the
-			    gutter on #101317e7 (opaque plate underneath) so it does not
-			    blend against app chrome. Overlays cover the full padding box. */}
+			{/* p-2 insets xterm from the pane edges. Surface + xterm chrome use
+			    the opaque #101317 plate so the gutter never fringes against app
+			    chrome. Overlays cover the full padding box. */}
 			<div className="relative min-h-0 flex-1 p-2">
 				<XtermTerminal
 					ariaLabel={terminalTarget?.kind === "shell" ? t("terminal.shellAria") : t("terminal.sessionAria")}

@@ -780,7 +780,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				ref={hostRef}
 				aria-label={props.ariaLabel}
 				className={props.className}
-				style={{ height: "100%", overflow: "hidden", width: "100%" }}
+				style={{
+					backgroundColor: "var(--color-bg-terminal-opaque)",
+					height: "100%",
+					overflow: "hidden",
+					width: "100%",
+				}}
 			/>
 			<DropdownMenu modal={false} open={contextMenu.open} onOpenChange={setContextMenuOpen}>
 				<DropdownMenuTrigger asChild>

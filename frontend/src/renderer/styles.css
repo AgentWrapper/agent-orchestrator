@@ -1083,11 +1083,18 @@ textarea,
 	background: var(--color-bg-primary);
 }
 
-/* Opaque plate + translucent token. Without the plate, #101317e7 composites
-   against panel chrome and the p-2 gutter reads as a different color. */
+/* Paint the pane with the opaque RGB of --color-bg-terminal only. The e7 alpha
+   on the token composites against app chrome and left a #111316 fringe in the
+   p-2 gutter / FitAddon leftover strips. */
 .terminal-surface {
 	background-color: var(--color-bg-terminal-opaque);
-	background-image: linear-gradient(var(--color-bg-terminal), var(--color-bg-terminal));
+}
+
+.terminal-surface .xterm,
+.terminal-surface .xterm-viewport,
+.terminal-surface .xterm-screen,
+.terminal-surface .xterm-helpers {
+	background-color: var(--color-bg-terminal-opaque) !important;
 }
 
 @keyframes status-pulse {
