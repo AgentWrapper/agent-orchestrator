@@ -470,7 +470,7 @@ func (c *SessionsController) setPreview(w http.ResponseWriter, r *http.Request) 
 			}
 		} else if existing := strings.TrimSpace(sess.Metadata.PreviewURL); existing != "" {
 			var resolveErr error
-			previewURL, resolveErr = resolvePreviewTarget(r, sessionID(r), sess.Metadata.WorkspacePath, existing)
+			previewURL, resolveErr = resolvePreviewTarget(r, sessionID(r), sess.Metadata.WorkspacePath, strings.TrimSpace(in.WorkingDirectory), existing)
 			if resolveErr != nil {
 				writePreviewResolveError(w, r, resolveErr)
 				return
@@ -481,7 +481,7 @@ func (c *SessionsController) setPreview(w http.ResponseWriter, r *http.Request) 
 		}
 	} else {
 		var resolveErr error
-		previewURL, resolveErr = resolvePreviewTarget(r, sessionID(r), sess.Metadata.WorkspacePath, previewURL)
+		previewURL, resolveErr = resolvePreviewTarget(r, sessionID(r), sess.Metadata.WorkspacePath, strings.TrimSpace(in.WorkingDirectory), previewURL)
 		if resolveErr != nil {
 			writePreviewResolveError(w, r, resolveErr)
 			return
@@ -1050,29 +1050,84 @@ func discoverPreviewEntry(workspacePath string) (string, bool) {
 // that already looks like a URL (an http(s)/file scheme, or a host:port dev
 // server) and for paths that escape the workspace or do not point at a file, so
 // the caller keeps those targets verbatim.
-func resolveLocalPreview(r *http.Request, id domain.SessionID, workspacePath, raw string) (string, bool, error) {
-	if raw == "" || hasURLScheme(raw) {
+func resolveLocalPreview(r *http.Request, id domain.SessionID, workspacePath, workingDirectory, raw string) (string, bool, error) {
+	if raw == "" || hasURLScheme(raw) || !looksLikePreviewPath(raw) {
 		return "", false, nil
 	}
-	entry, ok := previewutil.EntryAtPath(workspacePath, raw)
-	if !ok {
-		return "", false, nil
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", false, errPreviewFileNotFound
 	}
-	resolved, err := previewFileURL(r, id, entry.Path)
-	return resolved, true, err
+	resolvedPath, ok, err := resolvePreviewFilePath(workspacePath, workingDirectory, parsed.Path)
+	if err != nil || !ok {
+		return "", false, err
+	}
+	resolved, err := previewFileURLWithQuery(r, id, resolvedPath, parsed.RawQuery, parsed.Fragment)
+	if err != nil {
+		return "", false, err
+	}
+	return resolved, true, nil
+}
+
+func looksLikeHost(raw string) bool {
+	host := raw
+	if i := strings.IndexAny(raw, "/?#"); i >= 0 {
+		host = raw[:i]
+	}
+	host = strings.TrimSpace(host)
+	if host == "" || strings.Contains(host, "\\") {
+		return false
+	}
+	if strings.HasPrefix(host, "[") && strings.Contains(host, "]") {
+		return true
+	}
+	if strings.Contains(host, ":") {
+		return true
+	}
+	if !strings.Contains(host, ".") {
+		return false
+	}
+	dot := strings.LastIndex(host, ".")
+	if dot <= 0 || dot == len(host)-1 {
+		return false
+	}
+	ext := strings.ToLower(host[dot+1:])
+	if strings.ContainsAny(ext, "0123456789") {
+		return false
+	}
+	if len(ext) < 2 || len(ext) > 24 {
+		return false
+	}
+	switch ext {
+	case "html", "htm", "pdf", "png", "json", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "md", "markdown", "txt", "csv", "xml", "yml", "yaml", "css", "js", "ts", "jsx", "tsx", "map", "ico":
+		return false
+	default:
+		return true
+	}
 }
 
 func looksLikePreviewPath(raw string) bool {
 	if raw == "" || hasURLScheme(raw) {
 		return false
 	}
-	if strings.Contains(raw, "/") || strings.Contains(raw, "\\") {
+	trimmed := strings.TrimSpace(raw)
+	if looksLikeHost(trimmed) {
+		return false
+	}
+	if strings.Contains(trimmed, "\\") || strings.HasPrefix(trimmed, ".") || strings.HasPrefix(trimmed, "/") {
 		return true
 	}
-	if strings.HasPrefix(raw, ".") {
+	parsed, err := url.Parse(trimmed)
+	if err == nil && (parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "") {
+		trimmed = parsed.Path
+	}
+	if looksLikeHost(trimmed) {
+		return false
+	}
+	if strings.Contains(trimmed, "/") {
 		return true
 	}
-	ext := strings.TrimPrefix(strings.ToLower(path.Ext(raw)), ".")
+	ext := strings.TrimPrefix(strings.ToLower(path.Ext(trimmed)), ".")
 	switch ext {
 	case "html", "htm", "pdf", "png", "json", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "md", "markdown", "txt", "csv", "xml", "yml", "yaml", "css", "js", "ts", "jsx", "tsx", "map", "ico":
 		return true
@@ -1081,12 +1136,15 @@ func looksLikePreviewPath(raw string) bool {
 	}
 }
 
-func resolvePreviewTarget(r *http.Request, id domain.SessionID, workspacePath, raw string) (string, error) {
+func resolvePreviewTarget(r *http.Request, id domain.SessionID, workspacePath, workingDirectory, raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
 	if isAbsolutePreviewPath(raw) {
 		return absolutePreviewFileURL(raw)
 	}
-	if resolved, ok, err := resolveLocalPreview(r, id, workspacePath, raw); ok || err != nil {
+	if resolved, ok, err := resolveLocalPreview(r, id, workspacePath, workingDirectory, raw); ok || err != nil {
 		return resolved, err
 	}
 	if looksLikePreviewPath(raw) {
@@ -1150,7 +1208,88 @@ func hasURLScheme(raw string) bool {
 }
 
 func previewFileURL(r *http.Request, id domain.SessionID, entry string) (string, error) {
-	return previewutil.FileURL("http://"+r.Host, id, entry)
+	return previewFileURLWithQuery(r, id, entry, "", "")
+}
+
+func previewFileURLWithQuery(r *http.Request, id domain.SessionID, entry, rawQuery, fragment string) (string, error) {
+	raw, err := previewutil.FileURL("http://"+r.Host, id, entry)
+	if err != nil {
+		return "", err
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	parsed.RawQuery = rawQuery
+	parsed.Fragment = fragment
+	return parsed.String(), nil
+}
+
+func resolvePreviewFilePath(workspacePath, workingDirectory, raw string) (string, bool, error) {
+	workspaceAbs, err := filepath.Abs(workspacePath)
+	if err != nil {
+		return "", false, errPreviewFileNotFound
+	}
+	workspaceAbs, err = filepath.EvalSymlinks(workspaceAbs)
+	if err != nil {
+		return "", false, errPreviewFileNotFound
+	}
+	baseAbs := workspaceAbs
+	workingDirectory = strings.TrimSpace(workingDirectory)
+	if workingDirectory != "" {
+		if filepath.IsAbs(workingDirectory) {
+			baseAbs = filepath.Clean(workingDirectory)
+		} else {
+			baseAbs = filepath.Clean(filepath.Join(workspaceAbs, workingDirectory))
+		}
+		relWD, err := filepath.Rel(workspaceAbs, baseAbs)
+		if err != nil || relWD == ".." || strings.HasPrefix(relWD, ".."+string(filepath.Separator)) {
+			return "", false, errPreviewFileNotFound
+		}
+		baseAbs, err = filepath.EvalSymlinks(baseAbs)
+		if err != nil {
+			return "", false, errPreviewFileNotFound
+		}
+		relWD, err = filepath.Rel(workspaceAbs, baseAbs)
+		if err != nil || relWD == ".." || strings.HasPrefix(relWD, ".."+string(filepath.Separator)) {
+			return "", false, errPreviewFileNotFound
+		}
+	}
+	clean, ok := previewutil.CleanWorkspacePath(raw)
+	if !ok {
+		return "", false, errPreviewFileNotFound
+	}
+	candidate := filepath.Clean(filepath.Join(baseAbs, filepath.FromSlash(clean)))
+	candidate, err = filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return "", false, errPreviewFileNotFound
+	}
+	rel, err := filepath.Rel(workspaceAbs, candidate)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false, errPreviewFileNotFound
+	}
+	info, err := os.Stat(candidate)
+	if err == nil && info.IsDir() {
+		indexPath := filepath.Join(candidate, "index.html")
+		indexPath, err = filepath.EvalSymlinks(indexPath)
+		if err != nil {
+			return "", false, errPreviewFileNotFound
+		}
+		rel, err = filepath.Rel(workspaceAbs, indexPath)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return "", false, errPreviewFileNotFound
+		}
+		entry, ok := previewutil.EntryAtPath(workspacePath, filepath.ToSlash(rel))
+		if !ok {
+			return "", false, errPreviewFileNotFound
+		}
+		return entry.Path, true, nil
+	}
+	entry, ok := previewutil.EntryAtPath(workspacePath, filepath.ToSlash(rel))
+	if !ok {
+		return "", false, errPreviewFileNotFound
+	}
+	return entry.Path, true, nil
 }
 
 func sessionView(s domain.Session) SessionView {
