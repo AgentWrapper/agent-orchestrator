@@ -3,7 +3,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession } from "../types/workspace";
-import { TerminalPane, providerScrollsByKeyboard } from "./TerminalPane";
+import { TerminalPane, keyboardScrollProfileFor, providerScrollsByKeyboard } from "./TerminalPane";
 
 const { postMock, terminalError, terminalState, replaySettled } = vi.hoisted(() => ({
 	postMock: vi.fn(),
@@ -250,6 +250,20 @@ describe("providerScrollsByKeyboard", () => {
 
 	it("is false when the provider is unknown", () => {
 		expect(providerScrollsByKeyboard(undefined)).toBe(false);
+	});
+});
+
+describe("keyboardScrollProfileFor", () => {
+	it("maps keyboard-scroll providers to line-scroll profiles", () => {
+		expect(keyboardScrollProfileFor("grok")).toBe("grok");
+		expect(keyboardScrollProfileFor("opencode")).toBe("opencode");
+		expect(keyboardScrollProfileFor("kilocode")).toBe("kilocode");
+	});
+
+	it("is false for providers that use SGR or local scrollback", () => {
+		expect(keyboardScrollProfileFor("codex")).toBe(false);
+		expect(keyboardScrollProfileFor("claude-code")).toBe(false);
+		expect(keyboardScrollProfileFor(undefined)).toBe(false);
 	});
 });
 

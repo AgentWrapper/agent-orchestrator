@@ -48,15 +48,21 @@ export type XtermTerminalProps = {
 	fontSize?: number;
 	theme: Theme;
 	/**
-	 * The pane app scrolls its transcript by keyboard (PageUp/PageDown) rather
-	 * than acting on SGR wheel reports — e.g. opencode, which enables mouse
-	 * tracking but never scrolls on wheel reports. Routes the wheel to page keys
-	 * on every platform (see the wheel handler), fixing it under a mux too.
+	 * The pane app scrolls its transcript by keyboard rather than SGR wheel
+	 * reports (opencode/kilocode/grok enable mouse tracking but ignore wheel).
+	 * Routes the wheel to history-safe keys on every platform (see the wheel
+	 * handler), fixing it under a mux too.
 	 *
-	 * Do not use bare ArrowUp/ArrowDown for this path: chat TUIs (Grok and
-	 * similar) bind those keys to input-history recall, not viewport scroll.
+	 * Profiles pick provider line-scroll bindings so small rolls move a little
+	 * and large flicks move farther — not one full PageUp/PageDown per notch.
+	 * Do not use bare ArrowUp/ArrowDown: chat TUIs (Grok and similar) bind
+	 * those to prompt input-history recall, not viewport scroll.
+	 *
+	 * - `"grok"` — Ctrl+K / Ctrl+J (Grok line scroll; LF ≠ Enter CR)
+	 * - `"opencode"` / `"kilocode"` — Ctrl+Alt+Y / Ctrl+Alt+E (OpenCode defaults)
+	 * - `true` / `"page"` — PageUp / PageDown (coarse universal fallback)
 	 */
-	paneScrollsByKeyboard?: boolean;
+	paneScrollsByKeyboard?: boolean | "grok" | "opencode" | "kilocode" | "page";
 	/** Terminal construction failed; the owner decides how to surface it. */
 	onError?: (error: unknown) => void;
 	/** Called after a terminal hyperlink is opened in the OS browser. */
@@ -218,20 +224,56 @@ function sgrWheelReport(button: number, count: number): string {
 	return `\x1b[<${button};1;1M`.repeat(count);
 }
 
-// PageUp (CSI 5~) / PageDown (CSI 6~) for pane apps that scroll their transcript
-// by keyboard rather than mouse reports. One page key per wheel event: a page
-// already scrolls a full screen, so scaling by line count would over-scroll.
+// History-safe keyboard scroll encodings for agent TUIs that ignore SGR wheel.
 //
-// Bare ArrowUp/ArrowDown must not be used here. Grok (and many chat CLI TUIs)
-// bind those keys to prompt input-history recall — wheel → ArrowUp re-injects
-// previously sent messages into the input box. PageUp/PageDown scroll the
-// conversation transcript without touching history.
+// Evaluated options (Grok docs + OpenCode keybinds):
+// - Bare ArrowUp/Down: NO — Grok binds them to prompt history recall.
+// - SGR wheel: these agents ignore reports under AO/ConPTY.
+// - PageUp/PageDown: works (incl. Grok with prompt focused) but one key =
+//   one full viewport → every notch jumps a page (the user report).
+// - Grok Ctrl+K/J: official *line* scroll; Ctrl+J is LF (\n), distinct from
+//   Enter CR (\r), so it does not submit the prompt.
+// - OpenCode Ctrl+Alt+Y/E: official messages_line_up/down defaults.
+// - Grok Ctrl+U/D half-page: coarser than line; Ctrl+D is also quit/EOF risk.
+//
+// Prefer provider line keys when known; fall back to page keys for generic
+// alt-buffer paths. Cap repeats so a huge flick cannot flood the PTY.
 const PAGE_UP = "\x1b[5~";
 const PAGE_DOWN = "\x1b[6~";
+// Grok: scroll one line without changing selection (scrollback nav docs).
+const GROK_LINE_UP = "\x0b"; // Ctrl+K
+const GROK_LINE_DOWN = "\n"; // Ctrl+J (LF, not Enter)
+// OpenCode modifyOtherKeys form: CSI 27 ; 7 ; code ~  (7 = ctrl+alt).
+const OPENCODE_LINE_UP = "\x1b[27;7;121~"; // Ctrl+Alt+Y
+const OPENCODE_LINE_DOWN = "\x1b[27;7;101~"; // Ctrl+Alt+E
+const KEYBOARD_SCROLL_MAX_STEPS = 12;
 
-function keyboardScrollReport(lines: number): string {
+export type KeyboardScrollProfile = "grok" | "opencode" | "page";
+
+function resolveKeyboardScrollProfile(
+	value: boolean | "grok" | "opencode" | "kilocode" | "page" | undefined,
+): KeyboardScrollProfile | null {
+	if (!value) return null;
+	if (value === "grok") return "grok";
+	if (value === "opencode" || value === "kilocode") return "opencode";
+	return "page";
+}
+
+/** @internal Exported for unit tests. */
+export function keyboardScrollReport(lines: number, profile: KeyboardScrollProfile = "page"): string {
 	if (lines === 0) return "";
-	return lines < 0 ? PAGE_UP : PAGE_DOWN;
+	// Page keys already move a full viewport — emit one per event (direction
+	// only). Used for generic alt-buffer fallbacks without a provider line map.
+	if (profile === "page") {
+		return lines < 0 ? PAGE_UP : PAGE_DOWN;
+	}
+	// Provider line profiles: one history-safe line key per scrolled line so
+	// small rolls move a little and large flicks move farther.
+	const steps = Math.min(Math.abs(lines), KEYBOARD_SCROLL_MAX_STEPS);
+	if (profile === "grok") {
+		return (lines < 0 ? GROK_LINE_UP : GROK_LINE_DOWN).repeat(steps);
+	}
+	return (lines < 0 ? OPENCODE_LINE_UP : OPENCODE_LINE_DOWN).repeat(steps);
 }
 
 function forceSelectionMode(term: Terminal): void {
@@ -655,11 +697,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			if (lines === 0) return false;
 			// A full-screen TUI that keeps its own transcript and scrolls it only by
 			// keyboard (opencode/grok) ignores wheel/mouse reports on every platform;
-			// route its wheel to PageUp/PageDown (not arrows — those recall prompt
-			// history in chat TUIs). Kept first so those agents are unaffected by
+			// route its wheel to provider line keys when known (proportional, history-
+			// safe — not bare arrows). Kept first so those agents are unaffected by
 			// the buffer-aware paths below.
-			if (callbacksRef.current.paneScrollsByKeyboard) {
-				emitUserInput(keyboardScrollReport(lines), "wheel");
+			const keyboardProfile = resolveKeyboardScrollProfile(callbacksRef.current.paneScrollsByKeyboard);
+			if (keyboardProfile) {
+				emitUserInput(keyboardScrollReport(lines, keyboardProfile), "wheel");
 				return false;
 			}
 			// A normal-buffer pane with mouse tracking off (codex, a plain shell)
@@ -674,11 +717,11 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// reports drive copy-mode or the app. On Windows ConPTY there is no
 			// mux copy-mode safety net — synthetic SGR often no-ops for full-screen
 			// agent TUIs (orchestrator/claude/grok conversation history), while
-			// PageUp/PageDown reliably scroll their transcripts. Prefer page keys
-			// for alt-buffer panes on Windows; keep SGR elsewhere.
+			// page keys reliably scroll their transcripts. Prefer page keys for
+			// alt-buffer panes on Windows; keep SGR elsewhere.
 			if (term.modes.mouseTrackingMode !== "none") {
 				if (isWindowsPlatform() && term.buffer.active.type === "alternate") {
-					emitUserInput(keyboardScrollReport(lines), "wheel");
+					emitUserInput(keyboardScrollReport(lines, "page"), "wheel");
 					return false;
 				}
 				const button = lines < 0 ? SGR_WHEEL_UP : SGR_WHEEL_DOWN;
@@ -687,7 +730,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			}
 			// Alt-buffer pane with mouse tracking off and no keyboard-scroll hint:
 			// no scrollback to move locally, so fall back to page keys (not arrows).
-			emitUserInput(keyboardScrollReport(lines), "wheel");
+			emitUserInput(keyboardScrollReport(lines, "page"), "wheel");
 			return false;
 		});
 		const pasteInput = (event: ClipboardEvent) => {

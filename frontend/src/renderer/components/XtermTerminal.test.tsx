@@ -723,10 +723,9 @@ describe("XtermTerminal", () => {
 		setNavigatorPlatform("Win32");
 		const onInput = vi.fn();
 		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
-		// Full-screen agent TUIs (Grok/orchestrator session transcript) enable mouse
-		// tracking on the alternate screen. Unix can fall back to tmux copy-mode;
-		// Windows ConPTY cannot, so wheel must become page keys — not ArrowUp/
-		// ArrowDown, which Grok binds to prompt input-history recall.
+		// Full-screen agent TUIs enable mouse tracking on the alternate screen.
+		// Unix can fall back to tmux copy-mode; Windows ConPTY cannot, so wheel
+		// becomes page keys — not ArrowUp/ArrowDown (prompt history recall).
 		state.lastTerminal!.modes.mouseTrackingMode = "any";
 		state.lastTerminal!.buffer.active.type = "alternate";
 
@@ -764,28 +763,75 @@ describe("XtermTerminal", () => {
 		expect(onInput).toHaveBeenLastCalledWith("\x1b[<64;1;1M".repeat(3), "wheel");
 	});
 
-	it("sends PageUp/PageDown for keyboard-scroll panes even under a mux (opencode/grok on macOS/Linux)", () => {
+	it("sends proportional Grok line-scroll keys (Ctrl+K/J) for grok keyboard-scroll panes", () => {
 		const onInput = vi.fn();
-		render(<XtermTerminal theme="dark" paneScrollsByKeyboard onReady={(terminal) => terminal.onUserInput(onInput)} />);
-		// Linux (beforeEach) + mouse tracking on: without the paneScrollsByKeyboard
-		// hint this would send SGR reports; the hint forces page keys for agents
-		// whose TUI ignores wheel (opencode, kilocode, grok). Must not emit bare
-		// ArrowUp/ArrowDown — Grok treats those as input-history recall.
+		render(
+			<XtermTerminal theme="dark" paneScrollsByKeyboard="grok" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		// Linux (beforeEach) + mouse tracking on: without the hint this would send
+		// SGR; grok profile uses Ctrl+K/J line keys (Grok docs), not PageUp and not
+		// bare ArrowUp/ArrowDown (prompt history).
 		state.lastTerminal!.modes.mouseTrackingMode = "any";
 
+		// rowHeight = 16.2px; -50px => 3 lines up => 3× Ctrl+K.
+		expect(state.lastTerminal!.wheelHandler!({ deltaY: -50 } as WheelEvent)).toBe(false);
+		expect(onInput).toHaveBeenLastCalledWith("\x0b".repeat(3), "wheel");
+		expect(onInput.mock.calls.at(-1)?.[0]).not.toMatch(/\x1b\[A|\x1b\[B/);
+		expect(onInput.mock.calls.at(-1)?.[0]).not.toMatch(/\x1b\[5~|\x1b\[6~/);
+
+		// +20px => 1 line down => Ctrl+J (LF), not Enter CR and not ArrowDown.
+		expect(state.lastTerminal!.wheelHandler!({ deltaY: 20 } as WheelEvent)).toBe(false);
+		expect(onInput).toHaveBeenLastCalledWith("\n", "wheel");
+		expect(onInput.mock.calls.at(-1)?.[0]).not.toMatch(/\x1b\[A|\x1b\[B|\r/);
+
+		// Line-mode: magnitude is honored (5 notches up => 5× Ctrl+K).
+		expect(state.lastTerminal!.wheelHandler!({ deltaY: -5, deltaMode: 1 } as WheelEvent)).toBe(false);
+		expect(onInput).toHaveBeenLastCalledWith("\x0b".repeat(5), "wheel");
+		expect(state.lastTerminal!.wheelHandler!({ deltaY: 1, deltaMode: 1 } as WheelEvent)).toBe(false);
+		expect(onInput).toHaveBeenLastCalledWith("\n", "wheel");
+	});
+
+	it("sends proportional OpenCode line-scroll keys for opencode/kilocode keyboard-scroll panes", () => {
+		const lineUp = "\x1b[27;7;121~"; // Ctrl+Alt+Y
+		const lineDown = "\x1b[27;7;101~"; // Ctrl+Alt+E
+
+		for (const profile of ["opencode", "kilocode"] as const) {
+			const onInput = vi.fn();
+			const view = render(
+				<XtermTerminal
+					theme="dark"
+					paneScrollsByKeyboard={profile}
+					onReady={(terminal) => terminal.onUserInput(onInput)}
+				/>,
+			);
+			state.lastTerminal!.modes.mouseTrackingMode = "any";
+
+			// -50px => 3 lines up — finer than always-one-page-regardless-of-delta.
+			expect(state.lastTerminal!.wheelHandler!({ deltaY: -50 } as WheelEvent)).toBe(false);
+			expect(onInput).toHaveBeenLastCalledWith(lineUp.repeat(3), "wheel");
+			expect(onInput.mock.calls.at(-1)?.[0]).not.toMatch(/\x1b\[A|\x1b\[B/);
+			expect(onInput.mock.calls.at(-1)?.[0]).not.toMatch(/\x1b\[5~|\x1b\[6~/);
+
+			expect(state.lastTerminal!.wheelHandler!({ deltaY: 20 } as WheelEvent)).toBe(false);
+			expect(onInput).toHaveBeenLastCalledWith(lineDown, "wheel");
+			view.unmount();
+		}
+	});
+
+	it("uses a single PageUp/PageDown when paneScrollsByKeyboard is the coarse page profile", () => {
+		const onInput = vi.fn();
+		render(
+			<XtermTerminal theme="dark" paneScrollsByKeyboard="page" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		state.lastTerminal!.modes.mouseTrackingMode = "any";
+
+		// Direction only — full page already jumps far; do not multiply by |lines|.
 		expect(state.lastTerminal!.wheelHandler!({ deltaY: -50 } as WheelEvent)).toBe(false);
 		expect(onInput).toHaveBeenLastCalledWith("\x1b[5~", "wheel");
 		expect(onInput.mock.calls.at(-1)?.[0]).not.toMatch(/\x1b\[A|\x1b\[B/);
 
-		expect(state.lastTerminal!.wheelHandler!({ deltaY: 20 } as WheelEvent)).toBe(false);
-		expect(onInput).toHaveBeenLastCalledWith("\x1b[6~", "wheel");
-		expect(onInput.mock.calls.at(-1)?.[0]).not.toMatch(/\x1b\[A|\x1b\[B/);
-
-		// Line-mode notches still map to a single page key (direction only).
 		expect(state.lastTerminal!.wheelHandler!({ deltaY: 1, deltaMode: 1 } as WheelEvent)).toBe(false);
 		expect(onInput).toHaveBeenLastCalledWith("\x1b[6~", "wheel");
-		expect(state.lastTerminal!.wheelHandler!({ deltaY: -5, deltaMode: 1 } as WheelEvent)).toBe(false);
-		expect(onInput).toHaveBeenLastCalledWith("\x1b[5~", "wheel");
 	});
 
 	it("routes web links to the AO browser and does not open the system browser", () => {

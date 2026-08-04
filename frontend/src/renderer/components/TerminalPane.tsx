@@ -206,17 +206,27 @@ function reviewerPreviewLines(session: WorkspaceSession | undefined): string[] {
 
 // Agents whose full-screen TUI keeps its own transcript and scrolls it only by
 // keyboard, ignoring SGR wheel reports. The terminal routes the wheel to
-// PageUp/PageDown for these (see XtermTerminal's paneScrollsByKeyboard) — not
+// history-safe provider keys (see XtermTerminal's paneScrollsByKeyboard) — not
 // bare ArrowUp/ArrowDown, which Grok and similar chat TUIs bind to input-history
 // recall. kilocode is a fork of opencode and shares its TUI surface. Grok is the
 // same class of alt-buffer agent TUI: wheel/SGR does not move its conversation
-// transcript, but PageUp/PageDown do (and on Windows the ConPTY path has no mux
-// copy-mode fallback either).
+// transcript under AO/ConPTY, so we synthesize its documented line-scroll keys
+// (and OpenCode's) instead of one full PageUp/PageDown per notch.
 const KEYBOARD_SCROLL_PROVIDERS = new Set(["opencode", "kilocode", "grok"]);
 
 // Whether the given provider's TUI is one of the keyboard-scroll agents above.
 export function providerScrollsByKeyboard(provider?: string): boolean {
 	return provider ? KEYBOARD_SCROLL_PROVIDERS.has(provider) : false;
+}
+
+/** Profile string for XtermTerminal.paneScrollsByKeyboard, or false. */
+export function keyboardScrollProfileFor(
+	provider?: string,
+): false | "grok" | "opencode" | "kilocode" {
+	if (!provider || !KEYBOARD_SCROLL_PROVIDERS.has(provider)) return false;
+	if (provider === "grok") return "grok";
+	if (provider === "kilocode") return "kilocode";
+	return "opencode";
 }
 
 function bannerText(state: TerminalSessionState, t: TFunction, error?: string): string | undefined {
@@ -413,7 +423,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					onError={handleInitError}
 					onLinkOpen={handleLinkOpen}
 					onReady={handleReady}
-					paneScrollsByKeyboard={providerScrollsByKeyboard(provider)}
+					paneScrollsByKeyboard={keyboardScrollProfileFor(provider)}
 					theme={theme}
 				/>
 				{showEmptyState && (
