@@ -28,6 +28,20 @@ type Review struct {
 	UpdatedAt        time.Time `json:"updatedAt"`
 }
 
+// ReviewSession remembers the live/restorable terminal state for one reviewer
+// harness on one worker session. Review remains the active visible reviewer;
+// this table lets switching back to a previous harness restore its own native
+// conversation instead of reusing another harness' terminal.
+type ReviewSession struct {
+	SessionID        SessionID       `json:"sessionId"`
+	ProjectID        ProjectID       `json:"projectId"`
+	Harness          ReviewerHarness `json:"harness"`
+	ReviewerHandleID string          `json:"reviewerHandleId"`
+	AgentSessionID   string          `json:"agentSessionId"`
+	CreatedAt        time.Time       `json:"createdAt"`
+	UpdatedAt        time.Time       `json:"updatedAt"`
+}
+
 // ReviewRun is one review pass against a worker's PR.
 type ReviewRun struct {
 	ID        string    `json:"id"`

@@ -290,6 +290,16 @@ type ReviewRun struct {
 	BatchID        string
 }
 
+type ReviewSession struct {
+	SessionID        string
+	ProjectID        string
+	Harness          string
+	ReviewerHandleID string
+	AgentSessionID   string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
 type Session struct {
 	ID                     domain.SessionID
 	ProjectID              domain.ProjectID

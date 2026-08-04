@@ -1168,6 +1168,16 @@ function ReviewsSection({
 	}, [session.id, session.reviewerHarness]);
 	const saveReviewer = useMutation({
 		mutationFn: async (harness: ReviewerHarness | "") => {
+			const activeReviewerHandle = reviewsQuery.data?.reviewerHandleId?.trim();
+			if (activeReviewerHandle) {
+				const { data, error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/kill", {
+					params: { path: { sessionId: session.id } },
+				});
+				if (error) throw new Error(apiErrorMessage(error, t("inspector.unableKillReviewSession")));
+				if (data) {
+					queryClient.setQueryData(["session-reviews", session.id], data);
+				}
+			}
 			const { error } = await apiClient.PUT("/api/v1/sessions/{sessionId}/reviewer", {
 				params: { path: { sessionId: session.id } },
 				body: { harness: harness || undefined },
@@ -1175,6 +1185,7 @@ function ReviewsSection({
 			if (error) throw new Error(apiErrorMessage(error, "Unable to save reviewer"));
 		},
 		onSuccess: () => {
+			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		},
 	});
@@ -1585,20 +1596,35 @@ function ReviewPanel({
 	// reviewed earlier by claude-code and another running under codex, taking the
 	// first run reported the wrong agent as the one working. Prefer the run
 	// actually in flight, then the newest recorded one.
-	const runningRun = openReviewStates.find((review) => review.status === "running")?.latestRun;
+	const selectedHarness = reviewerOverride || reviewerHarnessFallback(session, config);
+	const selectedRuns = runs
+		.filter((run) => openPRURLs.has(run.prUrl) && run.harness === selectedHarness)
+		.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+	const runningRun = openReviewStates.find(
+		(review) => review.status === "running" && review.latestRun?.harness === selectedHarness,
+	)?.latestRun;
 	const newestRun = openReviewStates
 		.map((review) => review.latestRun)
-		.filter((run): run is NonNullable<typeof run> => Boolean(run))
+		.filter((run): run is NonNullable<typeof run> => {
+			if (!run) return false;
+			return run.harness === selectedHarness;
+		})
 		.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-	const latest = runningRun ?? newestRun;
-	const harness = latest?.harness || reviewerHarnessFallback(session, config);
+	const latest = runningRun ?? selectedRuns[0] ?? newestRun;
+	const harness = selectedHarness;
 	const projectDefaultLabel = t("newTask.projectDefault");
-	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
-	const reviewHasRun = reviewRunning || Boolean(latest);
+	const reviewRunning = openReviewStates.some(
+		(reviewState) => reviewState.status === "running" && reviewState.latestRun?.harness === selectedHarness,
+	);
+	const reviewHasRun = reviewRunning || selectedRuns.length > 0 || Boolean(latest);
 	const hasReviewerSession = reviewerHandleId.trim() !== "";
-	const hasReviewSessionHistory = openReviewStates.some((reviewState) => reviewState.latestRun || reviewState.previousRun);
+	const hasReviewSessionHistory = selectedRuns.length > 0;
 	const canRestoreReviewSession = !hasReviewerSession && hasReviewSessionHistory;
-	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
+	const runAction = isTriggering
+		? t("inspector.review.reviewing")
+		: reviewHasRun
+			? t("inspector.review.rerun")
+			: t("inspector.review.run");
 	// Every recorded pass per PR, so each reviewer keeps its own tab. Falls back
 	// to the state's own runs against a daemon that predates the runs field.
 	const runsByPR = new Map<string, ReviewRunFacts[]>();
@@ -1659,7 +1685,7 @@ function ReviewPanel({
 							defaultHarness={harness}
 							defaultOptionLabel={harness ? `${projectDefaultLabel} (${harness})` : projectDefaultLabel}
 							defaultTriggerLabel={harness || projectDefaultLabel}
-							disabled={reviewRunning}
+							disabled={isKilling || isRestoring || isTriggering || isCancelling}
 							installed={agentCatalog?.installed}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
 							supported={agentCatalog?.supported}
@@ -2044,16 +2070,6 @@ function reviewVerdict(reviewState: PRReviewState): {
 			return { label: appI18n.t("inspector.review.notRun"), tone: "neutral" };
 	}
 	return { label: appI18n.t("inspector.review.notRun"), tone: "neutral" };
-}
-
-function reviewSessionRunAction(reviewStates: PRReviewState[], isTriggering: boolean): string {
-	if (isTriggering || reviewStates.some((reviewState) => reviewState.status === "running")) {
-		return appI18n.t("inspector.review.reviewing");
-	}
-	if (reviewStates.some((reviewState) => reviewState.status === "changes_requested" || reviewState.latestRun)) {
-		return appI18n.t("inspector.review.rerun");
-	}
-	return appI18n.t("inspector.review.run");
 }
 
 function BrowserView({

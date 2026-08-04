@@ -30,6 +30,38 @@ func (q *Queries) CancelRunningReviewRunsBySession(ctx context.Context, arg Canc
 	return result.RowsAffected()
 }
 
+const cancelRunningReviewRunsBySessionAndHarness = `-- name: CancelRunningReviewRunsBySessionAndHarness :execrows
+UPDATE review_run SET status = 'cancelled', body = ? WHERE session_id = ? AND harness = ? AND status = 'running' AND verdict = ''
+`
+
+type CancelRunningReviewRunsBySessionAndHarnessParams struct {
+	Body      string
+	SessionID domain.SessionID
+	Harness   domain.ReviewerHarness
+}
+
+func (q *Queries) CancelRunningReviewRunsBySessionAndHarness(ctx context.Context, arg CancelRunningReviewRunsBySessionAndHarnessParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelRunningReviewRunsBySessionAndHarness, arg.Body, arg.SessionID, arg.Harness)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const clearReviewSessionHandle = `-- name: ClearReviewSessionHandle :exec
+UPDATE review_session SET reviewer_handle_id = '', updated_at = CURRENT_TIMESTAMP WHERE session_id = ? AND harness = ?
+`
+
+type ClearReviewSessionHandleParams struct {
+	SessionID string
+	Harness   string
+}
+
+func (q *Queries) ClearReviewSessionHandle(ctx context.Context, arg ClearReviewSessionHandleParams) error {
+	_, err := q.db.ExecContext(ctx, clearReviewSessionHandle, arg.SessionID, arg.Harness)
+	return err
+}
+
 const clearReviewerHandle = `-- name: ClearReviewerHandle :exec
 UPDATE review SET reviewer_handle_id = '', updated_at = CURRENT_TIMESTAMP WHERE session_id = ?
 `
@@ -165,6 +197,31 @@ func (q *Queries) GetReviewRunBySessionPRSHAAndHarness(ctx context.Context, arg 
 		&i.GithubReviewID,
 		&i.DeliveredAt,
 		&i.BatchID,
+	)
+	return i, err
+}
+
+const getReviewSession = `-- name: GetReviewSession :one
+SELECT session_id, project_id, harness, reviewer_handle_id, agent_session_id, created_at, updated_at
+FROM review_session WHERE session_id = ? AND harness = ?
+`
+
+type GetReviewSessionParams struct {
+	SessionID string
+	Harness   string
+}
+
+func (q *Queries) GetReviewSession(ctx context.Context, arg GetReviewSessionParams) (ReviewSession, error) {
+	row := q.db.QueryRowContext(ctx, getReviewSession, arg.SessionID, arg.Harness)
+	var i ReviewSession
+	err := row.Scan(
+		&i.SessionID,
+		&i.ProjectID,
+		&i.Harness,
+		&i.ReviewerHandleID,
+		&i.AgentSessionID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -412,7 +469,7 @@ ON CONFLICT (session_id) DO UPDATE SET
     harness = excluded.harness,
     pr_url = excluded.pr_url,
     reviewer_handle_id = excluded.reviewer_handle_id,
-    agent_session_id = CASE WHEN excluded.agent_session_id != '' THEN excluded.agent_session_id ELSE review.agent_session_id END,
+    agent_session_id = excluded.agent_session_id,
     updated_at = excluded.updated_at
 `
 
@@ -435,6 +492,39 @@ func (q *Queries) UpsertReview(ctx context.Context, arg UpsertReviewParams) erro
 		arg.ProjectID,
 		arg.Harness,
 		arg.PRURL,
+		arg.ReviewerHandleID,
+		arg.AgentSessionID,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
+const upsertReviewSession = `-- name: UpsertReviewSession :exec
+INSERT INTO review_session (session_id, project_id, harness, reviewer_handle_id, agent_session_id, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (session_id, harness) DO UPDATE SET
+    project_id = excluded.project_id,
+    reviewer_handle_id = excluded.reviewer_handle_id,
+    agent_session_id = CASE WHEN excluded.agent_session_id != '' THEN excluded.agent_session_id ELSE review_session.agent_session_id END,
+    updated_at = excluded.updated_at
+`
+
+type UpsertReviewSessionParams struct {
+	SessionID        string
+	ProjectID        string
+	Harness          string
+	ReviewerHandleID string
+	AgentSessionID   string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+func (q *Queries) UpsertReviewSession(ctx context.Context, arg UpsertReviewSessionParams) error {
+	_, err := q.db.ExecContext(ctx, upsertReviewSession,
+		arg.SessionID,
+		arg.ProjectID,
+		arg.Harness,
 		arg.ReviewerHandleID,
 		arg.AgentSessionID,
 		arg.CreatedAt,

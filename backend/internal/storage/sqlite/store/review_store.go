@@ -49,6 +49,42 @@ func (s *Store) ClearReviewerHandle(ctx context.Context, id domain.SessionID) er
 	return s.qw.ClearReviewerHandle(ctx, id)
 }
 
+// UpsertReviewSession records the live/restorable reviewer session for one
+// harness on a worker session.
+func (s *Store) UpsertReviewSession(ctx context.Context, r domain.ReviewSession) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.qw.UpsertReviewSession(ctx, gen.UpsertReviewSessionParams{
+		SessionID:        string(r.SessionID),
+		ProjectID:        string(r.ProjectID),
+		Harness:          string(r.Harness),
+		ReviewerHandleID: r.ReviewerHandleID,
+		AgentSessionID:   r.AgentSessionID,
+		CreatedAt:        r.CreatedAt,
+		UpdatedAt:        r.UpdatedAt,
+	})
+}
+
+// GetReviewSession returns the saved reviewer session for one harness.
+func (s *Store) GetReviewSession(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness) (domain.ReviewSession, bool, error) {
+	row, err := s.qr.GetReviewSession(ctx, gen.GetReviewSessionParams{SessionID: string(id), Harness: string(harness)})
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.ReviewSession{}, false, nil
+	}
+	if err != nil {
+		return domain.ReviewSession{}, false, fmt.Errorf("get review session %s harness %s: %w", id, harness, err)
+	}
+	return reviewSessionFromRow(row), true, nil
+}
+
+// ClearReviewSessionHandle removes only the runtime handle for one harness'
+// reviewer pane, preserving its native agent session id for later restore.
+func (s *Store) ClearReviewSessionHandle(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.qw.ClearReviewSessionHandle(ctx, gen.ClearReviewSessionHandleParams{SessionID: string(id), Harness: string(harness)})
+}
+
 // InsertReviewRun records a new review pass. A unique-constraint hit on the
 // (session_id, pr_url, target_sha) index (migration 0020) is surfaced as the sentinel
 // domain.ErrDuplicateReviewRun so the engine can fall back to the existing run.
@@ -114,6 +150,18 @@ func (s *Store) CancelRunningReviewRunsBySession(ctx context.Context, sessionID 
 	return s.qw.CancelRunningReviewRunsBySession(ctx, gen.CancelRunningReviewRunsBySessionParams{
 		Body:      body,
 		SessionID: sessionID,
+	})
+}
+
+// CancelRunningReviewRunsBySessionAndHarness marks currently running review
+// passes for a single reviewer harness as cancelled.
+func (s *Store) CancelRunningReviewRunsBySessionAndHarness(ctx context.Context, sessionID domain.SessionID, harness domain.ReviewerHarness, body string) (int64, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.qw.CancelRunningReviewRunsBySessionAndHarness(ctx, gen.CancelRunningReviewRunsBySessionAndHarnessParams{
+		Body:      body,
+		SessionID: sessionID,
+		Harness:   harness,
 	})
 }
 
@@ -219,6 +267,18 @@ func reviewFromGetReviewBySessionRow(r gen.GetReviewBySessionRow) domain.Review 
 		ProjectID:        r.ProjectID,
 		Harness:          r.Harness,
 		PRURL:            r.PRURL,
+		ReviewerHandleID: r.ReviewerHandleID,
+		AgentSessionID:   r.AgentSessionID,
+		CreatedAt:        r.CreatedAt,
+		UpdatedAt:        r.UpdatedAt,
+	}
+}
+
+func reviewSessionFromRow(r gen.ReviewSession) domain.ReviewSession {
+	return domain.ReviewSession{
+		SessionID:        domain.SessionID(r.SessionID),
+		ProjectID:        domain.ProjectID(r.ProjectID),
+		Harness:          domain.ReviewerHarness(r.Harness),
 		ReviewerHandleID: r.ReviewerHandleID,
 		AgentSessionID:   r.AgentSessionID,
 		CreatedAt:        r.CreatedAt,

@@ -165,7 +165,7 @@ function renderWithQuery(children: ReactNode, workspaces?: WorkspaceSummary[], s
 	};
 }
 
-function mockCommonGets(_unusedRuns: unknown[] = [], reviewerHandleId = "", reviews: unknown[] = []) {
+function mockCommonGets(runs: unknown[] = [], reviewerHandleId = "", reviews: unknown[] = []) {
 	getMock.mockImplementation(async (path: string) => {
 		if (path === "/api/v1/usage/sessions/{sessionId}") {
 			return { data: usageTelemetry(), error: undefined };
@@ -178,7 +178,7 @@ function mockCommonGets(_unusedRuns: unknown[] = [], reviewerHandleId = "", revi
 			return { data: { sessionId: "sess-1", files: [], truncated: false }, error: undefined };
 		}
 		if (path === "/api/v1/sessions/{sessionId}/reviews") {
-			return { data: { reviewerHandleId, reviews } };
+			return { data: { reviewerHandleId, reviews, runs } };
 		}
 		if (path === "/api/v1/projects/{id}") {
 			return {
@@ -1225,6 +1225,7 @@ describe("SessionInspector summary reviews", () => {
 				reviewerHandleId: "",
 				reviewerHarness: "codex",
 				reviews: [reviewState(3, "up_to_date")],
+				runs: [approvedReview],
 			},
 		});
 
@@ -1254,6 +1255,7 @@ describe("SessionInspector summary reviews", () => {
 				reviewerHandleId: "reviewer-pane",
 				reviewerHarness: "codex",
 				reviews: [reviewState(3, "up_to_date")],
+				runs: [approvedReview],
 			},
 		});
 
@@ -1606,8 +1608,15 @@ describe("SessionInspector summary reviews", () => {
 	});
 
 	it("persists the chosen reviewer for the session and uses it for the run", async () => {
-		mockCommonGets([], "reviewer-pane", [reviewState(3, "needs_review", "sha-1")]);
-		postMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [] }, response: { status: 201 } });
+		const needsReview = reviewState(3, "needs_review", "sha-1");
+		mockCommonGets([approvedReview], "reviewer-pane", [needsReview]);
+		postMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/sessions/{sessionId}/reviews/kill") {
+				mockCommonGets([approvedReview], "", [needsReview]);
+				return { data: { reviewerHandleId: "", reviewerHarness: "codex", reviews: [needsReview], runs: [approvedReview] } };
+			}
+			return { data: { reviewerHandleId: "opencode-pane", reviews: [], runs: [] }, response: { status: 201 } };
+		});
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
@@ -1615,11 +1624,17 @@ describe("SessionInspector summary reviews", () => {
 		await userEvent.click(await screen.findByRole("button", { name: /Select reviewer agent/ }));
 		await userEvent.click(await screen.findByRole("menuitem", { name: /opencode/ }));
 		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/kill", {
+				params: { path: { sessionId: "sess-1" } },
+			}),
+		);
+		await waitFor(() =>
 			expect(putMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviewer", {
 				params: { path: { sessionId: "sess-1" } },
 				body: { harness: "opencode" },
 			}),
 		);
+		expect(screen.queryByRole("button", { name: "Kill review session" })).not.toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: "Run review" }));
 
 		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/trigger", {
@@ -1703,7 +1718,7 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.getByText("Reviewable change 3")).toBeInTheDocument();
 	});
 
-	it("locks the reviewer choice while one is running", async () => {
+	it("keeps the reviewer choice available while one is running", async () => {
 		const running = {
 			...reviewState(3, "running", "sha-1"),
 			latestRun: { ...approvedReview, id: "run-live", harness: "codex", status: "running", verdict: "" },
@@ -1713,10 +1728,8 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
-		// AO runs one reviewer per worker, so a second harness cannot start
-		// alongside it. Say so rather than silently ignoring the choice.
 		expect(screen.getByText("Review in progress · codex")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: /Select reviewer agent/ })).toBeDisabled();
+		expect(screen.getByRole("button", { name: /Select reviewer agent/ })).toBeEnabled();
 	});
 
 	it("hides the previous verdict after the current head review completes", async () => {
@@ -1761,8 +1774,9 @@ describe("SessionInspector summary reviews", () => {
 	});
 
 	it("cancels the running review instead of allowing rerun", async () => {
+		const runningReview = { ...approvedReview, id: "run-live", status: "running", verdict: "", targetSha: "abc123" };
 		mockCommonGets([approvedReview], "reviewer-pane", [
-			reviewState(3, "running", "abc123"),
+			{ ...reviewState(3, "running", "abc123"), latestRun: runningReview },
 			reviewState(4, "up_to_date", "def456"),
 		]);
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
