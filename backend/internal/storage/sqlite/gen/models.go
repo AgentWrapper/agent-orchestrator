@@ -22,15 +22,16 @@ type ChangeLog struct {
 }
 
 type Notification struct {
-	ID        string
-	SessionID domain.SessionID
-	ProjectID domain.ProjectID
-	PRURL     string
-	Type      domain.NotificationType
-	Title     string
-	Body      string
-	Status    domain.NotificationStatus
-	CreatedAt time.Time
+	ID         string
+	SessionID  domain.SessionID
+	ProjectID  domain.ProjectID
+	PRURL      string
+	Type       domain.NotificationType
+	Title      string
+	Body       string
+	Status     domain.NotificationStatus
+	CreatedAt  time.Time
+	ResolvedAt sql.NullTime
 }
 
 type PR struct {
@@ -190,6 +191,7 @@ type Session struct {
 	DiffBaseSha        string
 	DiffBaseRef        string
 	Model              string
+	ReviewerHarness    domain.ReviewerHarness
 }
 
 type SessionCleanupFact struct {

@@ -59,8 +59,11 @@ type SessionRecord struct {
 	// project config, or when the project's resolved model is pinned at spawn so
 	// `ao session get` can report what the session actually launched with. Empty
 	// means the session used the agent's default model.
-	Model    string   `json:"model,omitempty"`
-	Activity Activity `json:"activity"`
+	Model string `json:"model,omitempty"`
+	// ReviewerHarness is this session's preferred reviewer. Empty delegates to
+	// the project configuration.
+	ReviewerHarness ReviewerHarness `json:"reviewerHarness,omitempty" enum:"claude-code,codex,opencode"`
+	Activity        Activity        `json:"activity"`
 	// FirstSignalAt is when the FIRST agent hook callback arrived for the
 	// current spawn/restore: raw signal receipt, independent of the derived
 	// activity state. Zero means no hook has ever reported, which deriveStatus

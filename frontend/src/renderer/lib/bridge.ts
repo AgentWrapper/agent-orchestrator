@@ -1,4 +1,5 @@
 import type { AoBridge } from "../../preload";
+import { coerceLocale } from "../../shared/ui-locale";
 export type { FeatureBuild } from "../../main/feature-builds";
 
 export const aoBridge: AoBridge =
@@ -15,6 +16,8 @@ export const aoBridge: AoBridge =
 			onNewSessionShortcut: () => () => undefined,
 			onKeyboardShortcutsHelp: () => () => undefined,
 			onNewShellTerminalShortcut: () => () => undefined,
+			onCloseShellTerminalShortcut: () => () => undefined,
+			setCloseShellTerminalShortcutEnabled: () => undefined,
 			onOpenSettingsShortcut: () => () => undefined,
 			onPreviousSessionShortcut: () => () => undefined,
 			onNextSessionShortcut: () => () => undefined,
@@ -141,7 +144,7 @@ export const aoBridge: AoBridge =
 		},
 		uiSettings: {
 			get: async () => ({ locale: "en" as const }),
-			set: async (settings) => ({ locale: settings.locale === "zh-CN" ? ("zh-CN" as const) : ("en" as const) }),
+			set: async (settings) => ({ locale: coerceLocale(settings.locale) }),
 		},
 		keybindings: {
 			get: async () => ({}),
@@ -155,6 +158,7 @@ export const aoBridge: AoBridge =
 			download: async () => undefined,
 			install: async () => undefined,
 			onStatus: () => () => undefined,
+			onTelemetry: () => () => undefined,
 		},
 		featureBuilds: {
 			list: async () => [],

@@ -21,6 +21,7 @@ export function SettingsOptionMenu<T extends string>({
 	triggerClassName,
 	menuClassName,
 	menuItemClassName,
+	menuAlign = "end",
 	"aria-label": ariaLabel,
 }: {
 	value: T;
@@ -33,6 +34,7 @@ export function SettingsOptionMenu<T extends string>({
 	triggerClassName?: string;
 	menuClassName?: string;
 	menuItemClassName?: string;
+	menuAlign?: "start" | "center" | "end";
 	"aria-label": string;
 }) {
 	const selected = options.find((option) => option.value === value);
@@ -63,7 +65,7 @@ export function SettingsOptionMenu<T extends string>({
 			    be real utilities so twMerge drops DropdownMenuContent's bg-popover, border-border,
 			    and rounded-lg. */}
 			<DropdownMenuContent
-				align="end"
+				align={menuAlign}
 				className={cn(
 					"settings-menu-surface overflow-y-auto! overflow-x-hidden! max-h-select-menu-max! rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu",
 					menuClassName,
