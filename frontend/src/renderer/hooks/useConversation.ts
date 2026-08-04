@@ -13,6 +13,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { useCallback } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
+import { workspaceQueryKey } from "./useWorkspaceQuery";
 import type {
 	ActivityKind,
 	ApprovalMode,
@@ -211,6 +212,21 @@ export function useConversationCommands(sessionId: string | undefined) {
 		onSuccess: invalidate,
 	});
 
+	const resume = useMutation({
+		mutationFn: async () => {
+			const { data, error, response } = await apiClient.POST(
+				"/api/v1/sessions/{sessionId}/resume-agent",
+				{ params: { path: { sessionId: sessionId as string } } },
+			);
+			if (error) throw new Error(apiErrorMessage(error, `Failed to resume agent (${response.status})`));
+			return data;
+		},
+		onSuccess: () => {
+			invalidate();
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		},
+	});
+
 	/**
 	 * Summarize earlier history to reclaim context.
 	 *
@@ -317,7 +333,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 
 	return {
 		send: (input: string | ConversationSendInput) =>
-			send.mutate(typeof input === "string" ? { text: input } : input),
+			send.mutateAsync(typeof input === "string" ? { text: input } : input),
 		resolve: (requestId: string, decisionId: string) => resolve.mutate({ requestId, decisionId }),
 		resolveInput: (
 			requestId: string,
@@ -325,6 +341,9 @@ export function useConversationCommands(sessionId: string | undefined) {
 			content?: Record<string, unknown>,
 		) => resolveInput.mutateAsync({ requestId, action, content }),
 		interrupt: () => interrupt.mutate(),
+		resumeAgent: () => resume.mutateAsync(),
+		resumingAgent: resume.isPending,
+		resumeError: resume.error ? apiErrorMessage(resume.error) : undefined,
 		compact: () => compact.mutate(),
 		chooseSettings: (settings: TurnSettings) => chooseSettings.mutate(settings),
 		/** A compaction is in flight provider-side and takes seconds, so it reads as

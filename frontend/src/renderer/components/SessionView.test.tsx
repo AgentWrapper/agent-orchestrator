@@ -97,7 +97,14 @@ const { workspaces, workspaceQueryState, panels, shellTerminalsState } = vi.hois
 // platform hides the shell topbar, SessionView mounts it in-panel.)
 vi.mock("./ShellTopbar", () => ({ ShellTopbar: () => null }));
 vi.mock("./chat/SessionChatSurface", () => ({
-	SessionChatSurface: () => <div data-testid="chat-surface">chat surface</div>,
+	SessionChatSurface: ({ onOpenShell }: { onOpenShell?: () => void }) => (
+		<div data-testid="chat-surface">
+			chat surface
+			<button type="button" onClick={onOpenShell}>
+				open shell from chat
+			</button>
+		</div>
+	),
 }));
 vi.mock("./CenterPane", () => ({
 	CenterPane: ({
@@ -357,6 +364,9 @@ describe("SessionView", () => {
 		shellTerminalsState.data = [];
 		navigateMock.mockReset();
 		openShellTerminalMock.mockReset();
+		for (const session of workspaces.flatMap((workspace) => workspace.sessions)) {
+			delete session.mode;
+		}
 	});
 
 	// Regression: shell terminals are an app-wide list, so without a per-session
@@ -457,6 +467,33 @@ describe("SessionView", () => {
 
 		fireEvent.click(screen.getByRole("button", { name: "new terminal" }));
 		expect(openShellTerminalMock).toHaveBeenCalledWith({ projectId: "proj-1", sessionId: "sess-2" }, expect.anything());
+	});
+
+	it("shows a shell opened from chat and returns to the chat agent tab", () => {
+		const session = workspaces[0]!.sessions.find((candidate) => candidate.id === "sess-1")!;
+		session.mode = "chat";
+		const shell = {
+			handleId: "sh-chat",
+			projectId: "proj-1",
+			sessionId: "sess-1",
+			title: "chat shell",
+			workingDir: "/p",
+			createdAt: "2026-08-04T00:00:00Z",
+		};
+		openShellTerminalMock.mockImplementation((_input, options) => {
+			shellTerminalsState.data = [shell];
+			options.onSuccess(shell);
+		});
+
+		render(<SessionView sessionId="sess-1" />);
+		expect(screen.getByText("chat surface")).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: "open shell from chat" }));
+		expect(screen.getByText("terminal center")).toBeInTheDocument();
+		expect(screen.getByTestId("shell-tabs")).toHaveTextContent("chat shell");
+
+		fireEvent.click(screen.getByRole("button", { name: "select agent tab" }));
+		expect(screen.getByText("chat surface")).toBeInTheDocument();
 	});
 
 	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS

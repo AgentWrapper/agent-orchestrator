@@ -12,7 +12,17 @@
  * has scrolled away from.
  */
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	memo,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+	type KeyboardEvent as ReactKeyboardEvent,
+	type PointerEvent as ReactPointerEvent,
+	type WheelEvent as ReactWheelEvent,
+} from "react";
 import {
 	Archive,
 	ArrowDown,
@@ -76,7 +86,10 @@ export interface ChatWorkspaceProps {
 	hasOlder?: boolean;
 	loadingOlder?: boolean;
 	onLoadOlder?: () => void;
-	onSend?: (text: string, attachments?: { mimeType: string; data: string }[]) => void;
+	onSend?: (
+		text: string,
+		attachments?: { mimeType: string; data: string }[],
+	) => void | Promise<unknown>;
 	onDecide?: (requestId: string, decisionId: string) => void;
 	onResolveInput?: (
 		requestId: string,
@@ -84,6 +97,13 @@ export interface ChatWorkspaceProps {
 		content?: Record<string, unknown>,
 	) => Promise<unknown> | void;
 	onInterrupt?: () => void;
+	commandError?: string;
+	onResumeAgent?: () => void;
+	resumingAgent?: boolean;
+	resumeError?: string;
+	onOpenShell?: () => void;
+	openingShell?: boolean;
+	shellError?: string;
 	/** A send or decision is in flight. */
 	busy?: boolean;
 	/** The provider's model catalog. Empty hides the model control. */
@@ -149,6 +169,13 @@ export function ChatWorkspace({
 	onDecide,
 	onResolveInput,
 	onInterrupt,
+	commandError,
+	onResumeAgent,
+	resumingAgent,
+	resumeError,
+	onOpenShell,
+	openingShell,
+	shellError,
 	busy,
 	models,
 	onChooseSettings,
@@ -211,7 +238,15 @@ export function ChatWorkspace({
 			{snapshot.account ? (
 				<ReauthBanner account={snapshot.account} harness={snapshot.harness} />
 			) : null}
-			<ControllerBanner controller={snapshot.controller} />
+			<ControllerBanner
+				controller={snapshot.controller}
+				onResume={onResumeAgent}
+				resuming={resumingAgent}
+				resumeError={resumeError}
+				onOpenShell={onOpenShell}
+				openingShell={openingShell}
+				shellError={shellError}
+			/>
 			{snapshot.threadState ? <ThreadStateBanner threadState={snapshot.threadState} /> : null}
 			<McpServerBanner
 				servers={brokenServers}
@@ -244,6 +279,7 @@ export function ChatWorkspace({
 					) : null}
 					<ChatComposer
 						onSend={(text, attachments) => onSend?.(text, attachments)}
+						commandError={commandError}
 						settings={
 							onChooseSettings || onChooseConfigOption ? (
 								<TurnSettingsBar
@@ -539,8 +575,20 @@ function CompactButton({
  */
 function ControllerBanner({
 	controller,
+	onResume,
+	resuming,
+	resumeError,
+	onOpenShell,
+	openingShell,
+	shellError,
 }: {
 	controller: { state: ControllerState; error?: string };
+	onResume?: () => void;
+	resuming?: boolean;
+	resumeError?: string;
+	onOpenShell?: () => void;
+	openingShell?: boolean;
+	shellError?: string;
 }) {
 	if (controller.state === "ready" || controller.state === "busy") return null;
 
@@ -553,22 +601,50 @@ function ControllerBanner({
 	if (!shown) return null;
 
 	return (
-		<div className="flex shrink-0 items-start gap-2.5 border-b border-border bg-surface px-4 py-2.5">
+		<div
+			role={controller.state === "stopped" ? "alert" : "status"}
+			aria-atomic="true"
+			className="flex shrink-0 items-start gap-2.5 border-b border-border bg-surface px-4 py-2.5"
+		>
 			{controller.state === "connecting" ? (
 				<Loader2 aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 animate-spin text-muted-foreground" />
 			) : (
 				<TriangleAlert aria-hidden="true" className={cn("mt-0.5 size-3.5 shrink-0", shown.tone)} />
 			)}
-			<div className="flex min-w-0 flex-col gap-0.5">
+			<div className="flex min-w-0 flex-1 flex-col gap-0.5">
 				<strong className={cn("text-xs font-medium", shown.tone)}>{shown.title}</strong>
 				{controller.error ? (
 					<span className="text-[11px] leading-snug text-muted-foreground">{controller.error}</span>
 				) : null}
 				{controller.state === "stopped" ? (
-					<span className="text-[11px] leading-snug text-muted-foreground">
-						History is kept. The conversation can be resumed, or you can open a shell in the
-						worktree.
-					</span>
+					<>
+						<span className="text-[11px] leading-snug text-muted-foreground">
+							History is kept. Resume the agent or open a shell in the same worktree.
+						</span>
+						{resumeError || shellError ? (
+							<span className="text-[11px] leading-snug text-destructive">
+								{resumeError ?? shellError}
+							</span>
+						) : null}
+						<div className="mt-1.5 flex flex-wrap gap-2">
+							{onResume ? (
+								<Button type="button" size="sm" variant="outline" onClick={onResume} disabled={resuming}>
+									{resuming ? "Resuming…" : "Resume agent"}
+								</Button>
+							) : null}
+							{onOpenShell ? (
+								<Button
+									type="button"
+									size="sm"
+									variant="ghost"
+									onClick={onOpenShell}
+									disabled={openingShell}
+								>
+									{openingShell ? "Opening shell…" : "Open shell"}
+								</Button>
+							) : null}
+						</div>
+					</>
 				) : null}
 			</div>
 		</div>
@@ -608,7 +684,18 @@ function Timeline({
 	onRollback?: (turnId: string) => void;
 }) {
 	const scroller = useRef<HTMLDivElement>(null);
+	const scrollContent = useRef<HTMLDivElement>(null);
+	const scrollTrack = useRef<HTMLDivElement>(null);
+	const drag = useRef<{ pointerId: number; startY: number; startScrollTop: number } | null>(null);
 	const [pinned, setPinned] = useState(true);
+	const [hoveredMarker, setHoveredMarker] = useState<number | null>(null);
+	const [scrollbar, setScrollbar] = useState({
+		visible: false,
+		top: 0,
+		height: 40,
+		percent: 0,
+		markers: [] as Array<{ top: number; scrollTop: number; visible: boolean }>,
+	});
 	const queued = useMemo(() => queuedTurnIds(snapshot), [snapshot]);
 	const decide = useStableCallback(onDecide);
 	const resolveInput = useStableCallback(onResolveInput);
@@ -618,18 +705,179 @@ function Timeline({
 	const items = useStableList(readable, itemKey, sameContent);
 	const grouped = useMemo(() => groupByTurn({ ...snapshot, items }), [snapshot, items]);
 	const groups = useStableList(grouped, groupKey, sameGroup);
+	const previews = useMemo(() => groups.map(groupPreview), [groups]);
+
+	const updateScrollbar = useCallback(() => {
+		const node = scroller.current;
+		const track = scrollTrack.current;
+		if (!node || !track) return;
+
+		const maxScroll = Math.max(0, node.scrollHeight - node.clientHeight);
+		const visible = maxScroll > 1;
+		const trackHeight = track.clientHeight;
+		const height = visible
+			? Math.max(40, trackHeight * (node.clientHeight / node.scrollHeight))
+			: trackHeight;
+		const travel = Math.max(0, trackHeight - height);
+		const fraction = maxScroll > 0 ? Math.min(1, Math.max(0, node.scrollTop / maxScroll)) : 0;
+		const viewportRect = node.getBoundingClientRect();
+		const anchors = Array.from(
+			scrollContent.current?.querySelectorAll<HTMLElement>("[data-chat-scroll-anchor]") ?? [],
+		);
+		const markerGap = anchors.length > 1 ? Math.min(18, (trackHeight - 12) / (anchors.length - 1)) : 0;
+		const markerStart = (trackHeight - markerGap * Math.max(0, anchors.length - 1)) / 2;
+		const markers = anchors.map((anchor, index) => {
+			const rect = anchor.getBoundingClientRect();
+			const contentY = rect.top - viewportRect.top + node.scrollTop + rect.height / 2;
+			return {
+				top: markerStart + index * markerGap,
+				scrollTop: Math.min(maxScroll, Math.max(0, contentY - node.clientHeight / 2)),
+				visible: contentY >= node.scrollTop && contentY <= node.scrollTop + node.clientHeight,
+			};
+		});
+		const next = {
+			visible,
+			top: travel * fraction,
+			height,
+			percent: Math.round(fraction * 100),
+			markers,
+		};
+		setScrollbar((current) =>
+			current.visible === next.visible &&
+			Math.abs(current.top - next.top) < 0.5 &&
+			Math.abs(current.height - next.height) < 0.5 &&
+			current.percent === next.percent &&
+			current.markers.length === next.markers.length &&
+			current.markers.every((marker, index) => {
+				const candidate = next.markers[index];
+				return (
+					candidate !== undefined &&
+					Math.abs(marker.top - candidate.top) < 0.5 &&
+					Math.abs(marker.scrollTop - candidate.scrollTop) < 0.5 &&
+					marker.visible === candidate.visible
+				);
+			})
+				? current
+				: next,
+		);
+	}, []);
 
 	useEffect(() => {
 		if (!pinned) return;
 		const node = scroller.current;
-		if (node) node.scrollTop = node.scrollHeight;
-	}, [pinned, snapshot.latestSequence]);
+		if (node) {
+			node.scrollTop = node.scrollHeight;
+			updateScrollbar();
+		}
+	}, [pinned, snapshot.latestSequence, updateScrollbar]);
+
+	useEffect(() => {
+		updateScrollbar();
+		if (typeof ResizeObserver === "undefined") return;
+		const observer = new ResizeObserver(updateScrollbar);
+		if (scroller.current) observer.observe(scroller.current);
+		if (scrollContent.current) observer.observe(scrollContent.current);
+		return () => observer.disconnect();
+	}, [groups.length, updateScrollbar]);
 
 	function onScroll() {
 		const node = scroller.current;
 		if (!node) return;
 		const distance = node.scrollHeight - node.scrollTop - node.clientHeight;
 		setPinned(distance < 64);
+		updateScrollbar();
+	}
+
+	function setScrollFromTrack(clientY: number) {
+		const node = scroller.current;
+		const track = scrollTrack.current;
+		if (!node || !track) return;
+		const rect = track.getBoundingClientRect();
+		const travel = Math.max(1, track.clientHeight - scrollbar.height);
+		const top = Math.min(travel, Math.max(0, clientY - rect.top - scrollbar.height / 2));
+		node.scrollTop = (top / travel) * Math.max(0, node.scrollHeight - node.clientHeight);
+		updateScrollbar();
+	}
+
+	function onScrollbarPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+		if (!scrollbar.visible) return;
+		const track = scrollTrack.current;
+		const node = scroller.current;
+		if (!track || !node) return;
+		const marker = (event.target as HTMLElement).closest<HTMLElement>("[data-chat-scroll-marker]");
+		if (marker?.dataset.scrollTarget) {
+			node.scrollTop = Number(marker.dataset.scrollTarget);
+			onScroll();
+			return;
+		}
+		setScrollFromTrack(event.clientY);
+		drag.current = {
+			pointerId: event.pointerId,
+			startY: event.clientY,
+			startScrollTop: node.scrollTop,
+		};
+		event.currentTarget.setPointerCapture(event.pointerId);
+	}
+
+	function onScrollbarPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+		const active = drag.current;
+		const node = scroller.current;
+		const track = scrollTrack.current;
+		if (!node || !track) return;
+		if (!active) {
+			const pointerY = event.clientY - track.getBoundingClientRect().top;
+			let nearest = 0;
+			for (let index = 1; index < scrollbar.markers.length; index += 1) {
+				if (
+					Math.abs(scrollbar.markers[index]!.top - pointerY) <
+					Math.abs(scrollbar.markers[nearest]!.top - pointerY)
+				) {
+					nearest = index;
+				}
+			}
+			if (scrollbar.markers.length > 0) setHoveredMarker(nearest);
+			return;
+		}
+		if (active.pointerId !== event.pointerId) return;
+		const travel = Math.max(1, track.clientHeight - scrollbar.height);
+		const maxScroll = Math.max(0, node.scrollHeight - node.clientHeight);
+		node.scrollTop = active.startScrollTop + ((event.clientY - active.startY) / travel) * maxScroll;
+		updateScrollbar();
+	}
+
+	function stopScrollbarDrag(event: ReactPointerEvent<HTMLDivElement>) {
+		if (drag.current?.pointerId !== event.pointerId) return;
+		drag.current = null;
+		if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+			event.currentTarget.releasePointerCapture(event.pointerId);
+		}
+	}
+
+	function onScrollbarWheel(event: ReactWheelEvent<HTMLDivElement>) {
+		const node = scroller.current;
+		if (!node) return;
+		event.preventDefault();
+		node.scrollTop += event.deltaY;
+		onScroll();
+	}
+
+	function onScrollbarKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+		const node = scroller.current;
+		if (!node) return;
+		const maxScroll = Math.max(0, node.scrollHeight - node.clientHeight);
+		const page = Math.max(48, node.clientHeight * 0.85);
+		const next: Record<string, number> = {
+			ArrowUp: node.scrollTop - 48,
+			ArrowDown: node.scrollTop + 48,
+			PageUp: node.scrollTop - page,
+			PageDown: node.scrollTop + page,
+			Home: 0,
+			End: maxScroll,
+		};
+		if (!(event.key in next)) return;
+		event.preventDefault();
+		node.scrollTop = Math.min(maxScroll, Math.max(0, next[event.key]!));
+		updateScrollbar();
 	}
 
 	if (items.length === 0) {
@@ -641,12 +889,12 @@ function Timeline({
 			<div
 				ref={scroller}
 				onScroll={onScroll}
-				className="h-full overflow-y-auto px-4 py-4"
+				className="chat-scroll-viewport h-full overflow-y-auto px-4 py-4"
 				role="log"
 				aria-live="polite"
 				aria-label="Conversation"
 			>
-				<div className="mx-auto flex max-w-3xl flex-col gap-5">
+				<div ref={scrollContent} className="mx-auto flex max-w-3xl flex-col gap-5">
 					{hasOlder ? (
 						<div className="flex justify-center pb-1">
 							<Button
@@ -663,21 +911,100 @@ function Timeline({
 						</div>
 					) : null}
 					{groups.map((group) => (
-						<TurnGroup
-							key={group.key}
-							group={group}
-							onDecide={decide}
-							onResolveInput={resolveInput}
-							onRollback={rollback}
+						<div key={group.key} data-chat-scroll-anchor="">
+							<TurnGroup
+								group={group}
+								onDecide={decide}
+								onResolveInput={resolveInput}
+								onRollback={rollback}
 							// Only a turn the provider actually accepted can be undone: a turn it
 							// never saw holds no history to discard, and the daemon refuses it
 							// rather than hiding rows the agent still remembers.
-							canRollback={Boolean(onRollback && group.turnId && group.rollbackable)}
-							busy={busy}
-							queued={Boolean(group.turnId && queued.has(group.turnId))}
-						/>
+								canRollback={Boolean(onRollback && group.turnId && group.rollbackable)}
+								busy={busy}
+								queued={Boolean(group.turnId && queued.has(group.turnId))}
+							/>
+						</div>
 					))}
 				</div>
+			</div>
+
+			<div
+				ref={scrollTrack}
+				role="scrollbar"
+				tabIndex={scrollbar.visible ? 0 : -1}
+				aria-label="Conversation scrollbar"
+				aria-orientation="vertical"
+				aria-valuemin={0}
+				aria-valuemax={100}
+				aria-valuenow={scrollbar.percent}
+				onPointerDown={onScrollbarPointerDown}
+				onPointerMove={onScrollbarPointerMove}
+				onPointerUp={stopScrollbarDrag}
+				onPointerCancel={stopScrollbarDrag}
+				onWheel={onScrollbarWheel}
+				onKeyDown={onScrollbarKeyDown}
+				onFocus={() => {
+					if (scrollbar.markers.length === 0) return;
+					setHoveredMarker(
+						Math.min(
+							scrollbar.markers.length - 1,
+							Math.round((scrollbar.percent / 100) * (scrollbar.markers.length - 1)),
+						),
+					);
+				}}
+				onBlur={() => setHoveredMarker(null)}
+				onPointerLeave={() => setHoveredMarker(null)}
+				className={cn(
+					"group/scroll absolute inset-y-3 right-1 z-10 w-5 touch-none rounded-full outline-none transition-opacity focus-visible:ring-1 focus-visible:ring-logo-accent/60",
+					scrollbar.visible ? "cursor-pointer opacity-100" : "pointer-events-none opacity-0",
+				)}
+			>
+				<div className="absolute inset-0 cursor-grab group-active/scroll:cursor-grabbing">
+					{scrollbar.markers.map((marker, index) => {
+						const distance = hoveredMarker === null ? Number.POSITIVE_INFINITY : Math.abs(index - hoveredMarker);
+						return (
+							<span
+								key={index}
+								data-chat-scroll-marker=""
+								data-scroll-target={marker.scrollTop}
+								onPointerEnter={() => setHoveredMarker(index)}
+								className="chat-scroll-marker-hit"
+								style={{ top: marker.top }}
+							>
+								<span
+									aria-hidden="true"
+									className={cn(
+										"chat-scroll-marker",
+										marker.visible && "chat-scroll-marker-visible",
+										distance === 0 && "chat-scroll-marker-active",
+										distance === 1 && "chat-scroll-marker-adjacent",
+										distance === 2 && "chat-scroll-marker-near",
+									)}
+								/>
+							</span>
+						);
+					})}
+				</div>
+
+				{hoveredMarker !== null && scrollbar.markers[hoveredMarker] && previews[hoveredMarker] ? (
+					<div
+						role="tooltip"
+						className="chat-scroll-preview pointer-events-none absolute right-full z-20 mr-3 w-80 rounded-xl border border-border-strong bg-raised px-3.5 py-3 shadow-lg"
+						style={{
+							top: `clamp(4rem, ${scrollbar.markers[hoveredMarker].top}px, calc(100% - 4rem))`,
+						}}
+					>
+						<strong className="line-clamp-1 text-sm font-medium leading-snug text-foreground">
+							{previews[hoveredMarker].title}
+						</strong>
+						{previews[hoveredMarker].detail ? (
+							<p className="mt-1.5 line-clamp-3 text-xs leading-relaxed text-muted-foreground">
+								{previews[hoveredMarker].detail}
+							</p>
+						) : null}
+					</div>
+				) : null}
 			</div>
 
 			{!pinned ? (
@@ -887,6 +1214,41 @@ type TimelineGroup = {
 	rollbackable?: boolean;
 };
 
+type GroupPreview = { title: string; detail?: string };
+
+/** A turn-sized, plain-text preview for the minimap hover card. */
+function groupPreview(group: TimelineGroup): GroupPreview {
+	const userMessage = group.items.find(
+		(item) => item.kind === "message" && item.role === "user" && item.origin === "human",
+	);
+	const assistantMessage = [...group.items].reverse().find(
+		(item) => item.kind === "message" && item.role === "assistant" && item.text.trim() !== "",
+	);
+	const firstActivity = group.items.find(
+		(item): item is ConversationActivity => item.kind === "activity",
+	);
+	const title = previewText(
+		userMessage?.kind === "message" ? userMessage.text : firstActivity?.summary || "Conversation update",
+		120,
+	);
+	const detailSource =
+		assistantMessage?.kind === "message"
+			? assistantMessage.text
+			: firstActivity?.detail?.text || firstActivity?.detail?.output || firstActivity?.summary;
+	const detail = detailSource ? previewText(detailSource, 240) : undefined;
+	return { title, detail: detail && detail !== title ? detail : undefined };
+}
+
+function previewText(value: string, limit: number): string {
+	const plain = value
+		.replace(/```[\s\S]*?```/g, " code sample ")
+		.replace(/\[([^\]]+)]\([^)]*\)/g, "$1")
+		.replace(/[*_`#>~]+/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+	return plain.length > limit ? `${plain.slice(0, limit - 1).trimEnd()}…` : plain;
+}
+
 /**
  * Group items by the turn that produced them, so a completed turn can be closed
  * off with its outcome.
@@ -1012,6 +1374,11 @@ function LiveTurnBar({
 
 	return (
 		<div className="flex items-center gap-2.5 rounded-md border border-border bg-surface px-3 py-2">
+			{blocked ? (
+				<span role="alert" className="sr-only">
+					The agent is waiting for your decision.
+				</span>
+			) : null}
 			{blocked ? (
 				<TriangleAlert aria-hidden="true" className="size-3.5 shrink-0 text-warning" />
 			) : (

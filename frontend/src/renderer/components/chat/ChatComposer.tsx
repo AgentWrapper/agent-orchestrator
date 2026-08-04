@@ -87,8 +87,9 @@ export function ChatComposer({
 	canSteer,
 	steerPending,
 	steerRefusal,
+	commandError,
 }: {
-	onSend: (text: string, attachments?: ImageAttachmentPayload[]) => void;
+	onSend: (text: string, attachments?: ImageAttachmentPayload[]) => void | Promise<unknown>;
 	/** The next-turn controls, rendered inline. Omitted in the fixture preview. */
 	settings?: ReactNode;
 	/** A send is in flight. */
@@ -120,6 +121,8 @@ export function ChatComposer({
 	steerPending?: boolean;
 	/** Why the last steer was refused. */
 	steerRefusal?: string;
+	/** A failed send, approval, interrupt, or settings mutation. */
+	commandError?: string;
 }) {
 	const [text, setText] = useState("");
 	const [caret, setCaret] = useState(0);
@@ -146,6 +149,7 @@ export function ChatComposer({
 	const filePicker = useRef<HTMLInputElement>(null);
 	/** Where the caret should land once React has committed the new text. */
 	const pendingCaret = useRef<number | null>(null);
+	const stagedDelivery = useRef<{ signature: string; paths: string[] } | null>(null);
 	const menuId = useId();
 
 	const images = useImageAttachments();
@@ -236,18 +240,35 @@ export function ChatComposer({
 			// Staged before the send so a failed write is reported instead of a
 			// message that claims attachments the agent cannot open.
 			let paths: string[];
+			const signature = images.attachments.map((image) => image.id).join(":");
 			try {
-				paths = await onStageAttachments(images.toPayload());
+				if (stagedDelivery.current?.signature === signature) {
+					paths = stagedDelivery.current.paths;
+				} else {
+					paths = await onStageAttachments(images.toPayload());
+					stagedDelivery.current = { signature, paths };
+				}
 			} catch {
 				setSendError("The images could not be attached. Nothing was sent.");
 				return;
 			}
-			const message = withAttachmentReferences(body, paths);
-			if (nativeImages) onSend(message, images.toPayload());
-			else onSend(message);
+			try {
+				const message = withAttachmentReferences(body, paths);
+				if (nativeImages) await onSend(message, images.toPayload());
+				else await onSend(message);
+			} catch {
+				setSendError("Message not sent. Your draft and attachments were kept so you can retry.");
+				return;
+			}
+			stagedDelivery.current = null;
 			images.clear();
 		} else {
-			onSend(body);
+			try {
+				await onSend(body);
+			} catch {
+				setSendError("Message not sent. Your draft was kept so you can retry.");
+				return;
+			}
 		}
 
 		applyText("", 0);
@@ -335,7 +356,7 @@ export function ChatComposer({
 		void images.addFiles(files);
 	}
 
-	const attachmentError = images.error ?? sendError;
+	const attachmentError = images.error ?? sendError ?? commandError;
 
 	return (
 		<form

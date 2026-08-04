@@ -1,9 +1,16 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatWorkspace } from "./ChatWorkspace";
 import { OriginMessage } from "./ChatTimelineItems";
-import { chatFixture, chatFixtureEmpty, chatFixtureLongHistory } from "../../lib/chat-fixture";
+import {
+	chatFixture,
+	chatFixtureEmpty,
+	chatFixtureLongHistory,
+	chatFixtureMcpFailed,
+	chatFixtureSettled,
+	chatFixtureThreadError,
+} from "../../lib/chat-fixture";
 import type { ConversationMessage, ConversationSnapshot } from "../../types/conversation";
 
 const writeText = vi.fn(async (_text: string) => undefined);
@@ -37,6 +44,87 @@ describe("ChatWorkspace timeline", () => {
 		render(<ChatWorkspace snapshot={chatFixture} />);
 		const composer = screen.getByLabelText("Message the agent").closest("form");
 		expect(composer?.parentElement).toHaveClass("mx-auto", "w-full", "max-w-3xl");
+	});
+
+	it("offers real recovery actions when the controller stops", async () => {
+		const user = userEvent.setup();
+		const resume = vi.fn();
+		const openShell = vi.fn();
+		render(
+			<ChatWorkspace
+				snapshot={{ ...chatFixtureSettled, controller: { state: "stopped" } }}
+				onResumeAgent={resume}
+				onOpenShell={openShell}
+			/>,
+		);
+
+		expect(screen.getByRole("alert")).toHaveTextContent("The agent controller stopped");
+		await user.click(screen.getByRole("button", { name: "Resume agent" }));
+		await user.click(screen.getByRole("button", { name: "Open shell" }));
+		expect(resume).toHaveBeenCalledOnce();
+		expect(openShell).toHaveBeenCalledOnce();
+	});
+
+	it("announces thread and tool-server failures", () => {
+		const { rerender } = render(<ChatWorkspace snapshot={chatFixtureThreadError} />);
+		expect(screen.getByRole("alert")).toHaveTextContent("thread hit an internal error");
+
+		rerender(<ChatWorkspace snapshot={chatFixtureMcpFailed} />);
+		expect(screen.getByRole("status")).toHaveTextContent(/tool servers? did not start/);
+	});
+
+	it("provides an interactive conversation minimap", () => {
+		render(<ChatWorkspace snapshot={chatFixtureLongHistory(8)} />);
+		const log = screen.getByRole("log");
+		const scrollbar = screen.getByRole("scrollbar", { name: "Conversation scrollbar" });
+		stubGeometry(log, { scrollHeight: 4000, clientHeight: 800, scrollTop: 1000 });
+		stubGeometry(scrollbar, { scrollHeight: 800, clientHeight: 800, scrollTop: 0 });
+
+		fireEvent.scroll(log);
+		expect(scrollbar).toHaveAttribute("aria-valuenow", "31");
+		const markers = Array.from(
+			scrollbar.querySelectorAll<HTMLElement>("[data-chat-scroll-marker]"),
+		);
+		expect(markers.length).toBeGreaterThan(1);
+		expect(Number.parseFloat(markers[1]!.style.top) - Number.parseFloat(markers[0]!.style.top)).toBeLessThanOrEqual(
+			18,
+		);
+
+		fireEvent.wheel(scrollbar, { deltaY: 200 });
+		expect(log.scrollTop).toBe(1200);
+		expect(scrollbar).toHaveAttribute("aria-valuenow", "38");
+
+		fireEvent.keyDown(scrollbar, { key: "End" });
+		expect(log.scrollTop).toBe(3200);
+		expect(scrollbar).toHaveAttribute("aria-valuenow", "100");
+	});
+
+	it("previews the request and response for a hovered conversation marker", () => {
+		render(<ChatWorkspace snapshot={chatFixtureLongHistory(4)} />);
+		const log = screen.getByRole("log");
+		const scrollbar = screen.getByRole("scrollbar", { name: "Conversation scrollbar" });
+		stubGeometry(log, { scrollHeight: 2400, clientHeight: 600, scrollTop: 0 });
+		stubGeometry(scrollbar, { scrollHeight: 600, clientHeight: 600, scrollTop: 0 });
+		fireEvent.scroll(log);
+
+		const markers = Array.from(
+			scrollbar.querySelectorAll<HTMLElement>("[data-chat-scroll-marker]"),
+		);
+		expect(markers.length).toBeGreaterThan(2);
+		fireEvent.pointerEnter(markers[0]!);
+
+		const preview = screen.getByRole("tooltip");
+		expect(preview).toHaveTextContent("Wire the snapshot endpoint into the handler (round 1)");
+		expect(preview).toHaveTextContent("Done. conversation now returns the durable snapshot");
+		expect(markers[0]!.querySelector(".chat-scroll-marker")).toHaveClass(
+			"chat-scroll-marker-active",
+		);
+		expect(markers[1]!.querySelector(".chat-scroll-marker")).toHaveClass(
+			"chat-scroll-marker-adjacent",
+		);
+
+		fireEvent.pointerLeave(scrollbar);
+		expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 	});
 
 	it("explains itself instead of showing an empty scroller", () => {

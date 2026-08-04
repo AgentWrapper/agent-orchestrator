@@ -9,8 +9,6 @@ import { SessionFilesView } from "./SessionFilesView";
 import { SessionInspector } from "./SessionInspector";
 import { ShellTopbar } from "./ShellTopbar";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
-import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-store";
-import { useShell } from "../lib/shell-context";
 import { useBrowserView } from "../hooks/useBrowserView";
 import {
 	useCloseShellTerminal,
@@ -20,11 +18,14 @@ import {
 } from "../hooks/useShellTerminals";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
+import { apiErrorMessage } from "../lib/api-client";
 import { hidesShellTopbar } from "../lib/platform";
+import { useShell } from "../lib/shell-context";
 import { cn } from "../lib/utils";
-import { isOrchestratorSession, sessionIsActive } from "../types/workspace";
-import type { TerminalTarget } from "../types/terminal";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
+import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-store";
+import type { TerminalTarget } from "../types/terminal";
+import { isOrchestratorSession, sessionIsActive } from "../types/workspace";
 
 const INSPECTOR_MIN_PERCENT = 22;
 const INSPECTOR_MAX_PERCENT = 45;
@@ -402,7 +403,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					    chat surface. Exactly one controller exists per session, so exactly
 					    one surface may render it. */}
 					{showChatSurface ? (
-						<SessionChatSurface session={session} />
+						<SessionChatSurface
+							session={session}
+							onOpenShell={addShellTerminal}
+							openingShell={openShellTerminal.isPending}
+							shellError={
+								openShellTerminal.error ? apiErrorMessage(openShellTerminal.error) : undefined
+							}
+						/>
 					) : (
 						<CenterPane
 							daemonReady={daemonStatus.state === "ready"}
