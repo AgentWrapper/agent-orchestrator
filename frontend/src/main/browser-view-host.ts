@@ -478,6 +478,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const rendererOwnersByViewId = new Map<string, Set<number>>();
 	const tabsByWebContentsId = new Map<number, BrowserEntry>();
 	const ipcDisposers: Array<() => void> = [];
+	let disposePromise: Promise<void> | null = null;
 	// viewId of the panel that most recently held focus; cleared when it is hidden or destroyed.
 	let lastFocusedViewId: string | null = null;
 	const forgetIfFocused = (viewId: string): void => {
@@ -1337,12 +1338,16 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				setAgentBrowserActivity(session, action, false, commandId, "finished", agentTabId);
 			}
 		},
-		dispose: async () => {
-			ipcDisposers.splice(0).forEach((dispose) => dispose());
-			await options.agentBrowserRuntime?.dispose();
-			for (const viewId of [...entries.keys()]) {
-				destroy(viewId);
-			}
+		dispose: () => {
+			if (disposePromise) return disposePromise;
+			disposePromise = (async () => {
+				ipcDisposers.splice(0).forEach((dispose) => dispose());
+				await options.agentBrowserRuntime?.dispose();
+				for (const viewId of [...entries.keys()]) {
+					destroy(viewId);
+				}
+			})();
+			return disposePromise;
 		},
 		destroy,
 		destroyAll: () => {

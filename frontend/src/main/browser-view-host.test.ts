@@ -1273,6 +1273,33 @@ describe("dispose after the window is destroyed", () => {
 		expect(removeChildView).not.toHaveBeenCalled();
 		expect(view.webContents.close).not.toHaveBeenCalled();
 	});
+
+	it("deduplicates host disposal while runtime cleanup is in flight", async () => {
+		let release!: () => void;
+		const runtimeDispose = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const runtime = {
+			runAction: vi.fn(async () => ({})),
+			screenshot: vi.fn(async () => ({
+				data: "",
+				width: 1,
+				height: 1,
+				untrustedExternalContent: true as const,
+			})),
+			devtoolsEndpoint: vi.fn(async () => "ws://127.0.0.1:1/fixture"),
+			closeSession: vi.fn(async () => undefined),
+			dispose: vi.fn(() => runtimeDispose),
+		} as unknown as import("./agent-browser-runtime").AgentBrowserRuntime;
+		const { host } = setupHost(runtime);
+
+		const first = host.dispose();
+		const second = host.dispose();
+		expect(second).toBe(first);
+		expect(runtime.dispose).toHaveBeenCalledTimes(1);
+		release();
+		await first;
+	});
 });
 
 describe("getLastFocusedPanelContents", () => {

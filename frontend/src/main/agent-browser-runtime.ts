@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { AgentBrowserCDPBridge, type AgentBrowserTargetProvider } from "./agent-browser-cdp-bridge";
 
@@ -9,6 +9,12 @@ const MAX_ARGUMENT_CHARS = 16_384;
 const MAX_OUTPUT_BYTES = 1 << 20;
 const MAX_SCREENSHOT_BYTES = 5 << 20;
 const COMMAND_TIMEOUT_MS = 60_000;
+const CLOSE_TIMEOUT_MS = 10_000;
+const BRIDGE_CLOSE_TIMEOUT_MS = 5_000;
+export const BROWSER_RUNTIME_RECLAIM_GRACE_MS = 15 * 60_000;
+const RUNTIME_OWNER_MARKER = "AO_BROWSER_RUNTIME_V1";
+const RUNTIME_OWNER_FILE = "owner.json";
+const RUNTIME_ROOT_PATTERN = /^run-(\d+)-([0-9a-f]{12})$/;
 
 const ALLOWED_COMMANDS = new Set([
 	"open",
@@ -69,18 +75,32 @@ export type AgentBrowserRunResult = {
 	untrustedExternalContent: true;
 };
 
-type NativeProcessResult = Pick<AgentBrowserRunResult, "stdout" | "stderr" | "exitCode">;
+export type NativeProcessResult = Pick<AgentBrowserRunResult, "stdout" | "stderr" | "exitCode">;
 
 export type AgentBrowserRuntimeOptions = {
 	binaryPath: string;
 	dataDir: string;
 	log?: (message: string) => void;
+	/** Internal seams used by lifecycle tests; production uses the defaults. */
+	processRunner?: NativeProcessRunner;
+	bridgeFactory?: (provider: AgentBrowserTargetProvider) => AgentBrowserBridge;
+	processAlive?: (pid: number) => boolean;
 };
 
 export type AgentBrowserJSONResult = Record<string, unknown>;
 
+export type AgentBrowserBridge = Pick<AgentBrowserCDPBridge, "start" | "close" | "endpointForTarget">;
+
+export type NativeProcessRunner = (
+	binaryPath: string,
+	args: string[],
+	environment: NodeJS.ProcessEnv,
+	signal?: AbortSignal,
+	timeoutMs?: number,
+) => Promise<NativeProcessResult>;
+
 type SessionRuntime = {
-	bridge: AgentBrowserCDPBridge;
+	bridge: AgentBrowserBridge;
 	endpoint: string;
 	streamDisabled: boolean;
 	namespace: string;
@@ -88,12 +108,37 @@ type SessionRuntime = {
 	configPath: string;
 };
 
+type RuntimeOwner = {
+	marker: typeof RUNTIME_OWNER_MARKER;
+	pid: number;
+	startedAt: string;
+	token: string;
+};
+
 export class AgentBrowserRuntime {
 	private readonly sessions = new Map<string, SessionRuntime>();
+	private readonly initializing = new Map<string, Promise<SessionRuntime>>();
+	private readonly closing = new Map<string, Promise<void>>();
 	private readonly log: (message: string) => void;
+	private readonly processRunner: NativeProcessRunner;
+	private readonly bridgeFactory: (provider: AgentBrowserTargetProvider) => AgentBrowserBridge;
+	private readonly processAlive: (pid: number) => boolean;
+	private runtimeRootPromise: Promise<void> | null = null;
+	private runtimeRoot: string | null = null;
+	private disposed = false;
+	private disposePromise: Promise<void> | null = null;
 
 	constructor(private readonly options: AgentBrowserRuntimeOptions) {
 		this.log = options.log ?? (() => undefined);
+		this.processRunner = options.processRunner ?? runNativeProcess;
+		this.bridgeFactory = options.bridgeFactory ?? ((provider) => new AgentBrowserCDPBridge(provider));
+		this.processAlive = options.processAlive ?? defaultProcessAlive;
+	}
+
+	/** Reclaim confirmed-dead run roots before the browser UI is created. */
+	async prepare(): Promise<void> {
+		if (this.disposed) throw runtimeError("AGENT_BROWSER_RUNTIME_CLOSED", "Browser automation runtime is closed");
+		await scavengeBrowserRuntime(this.options.dataDir, this.processAlive, this.log);
 	}
 
 	async run(
@@ -102,12 +147,14 @@ export class AgentBrowserRuntime {
 		provider: AgentBrowserTargetProvider,
 		signal?: AbortSignal,
 	): Promise<AgentBrowserRunResult> {
+		if (this.disposed) throw runtimeError("AGENT_BROWSER_RUNTIME_CLOSED", "Browser automation runtime is closed");
 		await this.assertBinary();
 		validateAgentBrowserArguments(args);
 		const runtime = await this.ensureSession(sessionId, provider);
+		await this.touchRuntimeRoot();
 		const environment = this.environment(runtime);
 		if (!runtime.streamDisabled) {
-			const disabled = await runNativeProcess(
+			const disabled = await this.processRunner(
 				this.options.binaryPath,
 				["stream", "disable"],
 				environment,
@@ -121,7 +168,7 @@ export class AgentBrowserRuntime {
 			}
 			runtime.streamDisabled = true;
 		}
-		const result = await runNativeProcess(this.options.binaryPath, args, environment, signal);
+		const result = await this.processRunner(this.options.binaryPath, args, environment, signal);
 		if (result.exitCode !== 0) {
 			throw runtimeError(
 				"AGENT_BROWSER_COMMAND_FAILED",
@@ -149,6 +196,7 @@ export class AgentBrowserRuntime {
 		signal?: AbortSignal,
 	): Promise<{ data: string; width: number; height: number; untrustedExternalContent: true }> {
 		const runtime = await this.ensureSession(sessionId, provider);
+		await this.touchRuntimeRoot();
 		const directory = await mkdtemp(path.join(runtime.runtimeDir, "screenshot-"));
 		const target = path.join(directory, "screenshot.png");
 		try {
@@ -160,7 +208,7 @@ export class AgentBrowserRuntime {
 			const { width, height } = pngDimensions(image);
 			return { data: image.toString("base64"), width, height, untrustedExternalContent: true };
 		} finally {
-			await rm(directory, { recursive: true, force: true });
+			await removePath(directory, this.log, "screenshot directory");
 		}
 	}
 
@@ -175,56 +223,171 @@ export class AgentBrowserRuntime {
 		provider: AgentBrowserTargetProvider,
 	): Promise<string> {
 		const runtime = await this.ensureSession(sessionId, provider);
+		await this.touchRuntimeRoot();
 		return runtime.bridge.endpointForTarget(targetId);
 	}
 
 	async closeSession(sessionId: string): Promise<void> {
-		const runtime = this.sessions.get(sessionId);
-		if (!runtime) return;
-		this.sessions.delete(sessionId);
+		const existing = this.closing.get(sessionId);
+		if (existing) return existing;
+		const cleanup = this.closeSessionInternal(sessionId);
+		this.closing.set(sessionId, cleanup);
 		try {
-			await runNativeProcess(
-				this.options.binaryPath,
-				["close"],
-				this.environment(runtime),
-				undefined,
-				10_000,
-			);
-		} catch (error) {
-			this.log(`agent-browser close failed for ${sessionId}: ${String(error)}`);
+			await cleanup;
 		} finally {
-			await runtime.bridge.close();
-			await rm(runtime.runtimeDir, { recursive: true, force: true });
+			if (this.closing.get(sessionId) === cleanup) this.closing.delete(sessionId);
+			await this.removeRuntimeRootIfIdle();
 		}
 	}
 
 	async dispose(): Promise<void> {
-		await Promise.all([...this.sessions.keys()].map((sessionId) => this.closeSession(sessionId)));
+		if (this.disposePromise) return this.disposePromise;
+		this.disposed = true;
+		this.disposePromise = (async () => {
+			const sessionIds = new Set([...this.sessions.keys(), ...this.initializing.keys(), ...this.closing.keys()]);
+			await Promise.all([...sessionIds].map((sessionId) => this.closeSession(sessionId)));
+			await Promise.all([...this.closing.values()]);
+			await this.removeRuntimeRootIfIdle();
+		})();
+		return this.disposePromise;
 	}
 
 	private async ensureSession(
 		sessionId: string,
 		provider: AgentBrowserTargetProvider,
 	): Promise<SessionRuntime> {
+		if (this.disposed) throw runtimeError("AGENT_BROWSER_RUNTIME_CLOSED", "Browser automation runtime is closed");
 		const existing = this.sessions.get(sessionId);
 		if (existing) return existing;
-		const bridge = new AgentBrowserCDPBridge(provider);
-		const endpoint = await bridge.start();
-		const namespace = `${sessionNamespace(sessionId)}-${randomBytes(6).toString("hex")}`;
-		const runtimeDir = path.join(this.options.dataDir, namespace);
-		const configPath = path.join(runtimeDir, "config.json");
-		await mkdir(runtimeDir, { recursive: true });
-		await writeFile(configPath, "{}\n", "utf8");
-		const runtime = {
-			bridge,
-			endpoint,
-			streamDisabled: false,
-			namespace,
-			runtimeDir,
-			configPath,
-		};
-		this.sessions.set(sessionId, runtime);
-		return runtime;
+		if (this.closing.has(sessionId)) {
+			throw runtimeError("AGENT_BROWSER_SESSION_CLOSING", "Browser session is closing");
+		}
+		const pending = this.initializing.get(sessionId);
+		if (pending) return pending;
+		const creation = this.createSession(sessionId, provider);
+		this.initializing.set(sessionId, creation);
+		try {
+			const runtime = await creation;
+			if (this.disposed || this.closing.has(sessionId)) {
+				await this.closeRuntime(sessionId, runtime);
+				throw runtimeError("AGENT_BROWSER_SESSION_CLOSING", "Browser session is closing");
+			}
+			this.sessions.set(sessionId, runtime);
+			return runtime;
+		} finally {
+			if (this.initializing.get(sessionId) === creation) this.initializing.delete(sessionId);
+			await this.removeRuntimeRootIfIdle();
+		}
+	}
+
+	private async createSession(sessionId: string, provider: AgentBrowserTargetProvider): Promise<SessionRuntime> {
+		await this.ensureRuntimeRoot();
+		const bridge = this.bridgeFactory(provider);
+		let runtimeDir: string | undefined;
+		try {
+			const endpoint = await bridge.start();
+			const namespace = `${sessionNamespace(sessionId)}-${randomBytes(6).toString("hex")}`;
+			runtimeDir = path.join(this.runtimeRoot!, namespace);
+			const configPath = path.join(runtimeDir, "config.json");
+			await mkdir(runtimeDir, { recursive: true });
+			await writeFile(configPath, "{}\n", "utf8");
+			return { bridge, endpoint, streamDisabled: false, namespace, runtimeDir, configPath };
+		} catch (error) {
+			try {
+				await closeBridgeWithTimeout(bridge);
+			} catch (closeError) {
+				this.log(`agent-browser bridge cleanup failed during startup: ${String(closeError)}`);
+			}
+			if (runtimeDir) await removePath(runtimeDir, this.log, "failed session directory");
+			throw error;
+		}
+	}
+
+	private async closeSessionInternal(sessionId: string): Promise<void> {
+		const pending = this.initializing.get(sessionId);
+		if (pending) {
+			try {
+				await pending;
+			} catch {
+				return;
+			}
+		}
+		const runtime = this.sessions.get(sessionId);
+		if (!runtime) return;
+		this.sessions.delete(sessionId);
+		await this.closeRuntime(sessionId, runtime);
+	}
+
+	private async closeRuntime(sessionId: string, runtime: SessionRuntime): Promise<void> {
+		try {
+			await this.processRunner(
+				this.options.binaryPath,
+				["close"],
+				this.environment(runtime),
+				undefined,
+				CLOSE_TIMEOUT_MS,
+			);
+		} catch (error) {
+			this.log(`agent-browser close failed for ${sessionId}: ${String(error)}`);
+		}
+		try {
+			await closeBridgeWithTimeout(runtime.bridge);
+		} catch (error) {
+			this.log(`agent-browser bridge close failed for ${sessionId}: ${String(error)}`);
+		} finally {
+			await removePath(runtime.runtimeDir, this.log, `session directory for ${sessionId}`);
+		}
+	}
+
+	private async ensureRuntimeRoot(): Promise<void> {
+		if (this.runtimeRootPromise) return this.runtimeRootPromise;
+		this.runtimeRootPromise = (async () => {
+			await this.prepare();
+			await mkdir(this.options.dataDir, { recursive: true });
+			const rootName = `run-${process.pid}-${randomBytes(6).toString("hex")}`;
+			const root = path.join(this.options.dataDir, rootName);
+			await mkdir(root, { recursive: false });
+			const owner: RuntimeOwner = {
+				marker: RUNTIME_OWNER_MARKER,
+				pid: process.pid,
+				startedAt: new Date().toISOString(),
+				token: randomBytes(16).toString("hex"),
+			};
+			try {
+				await writeFile(path.join(root, RUNTIME_OWNER_FILE), `${JSON.stringify(owner)}\n`, {
+					encoding: "utf8",
+					flag: "wx",
+				});
+			} catch (error) {
+				await removePath(root, this.log, "failed runtime root");
+				throw error;
+			}
+			this.runtimeRoot = root;
+		})();
+		try {
+			await this.runtimeRootPromise;
+		} catch (error) {
+			this.runtimeRootPromise = null;
+			throw error;
+		}
+	}
+
+	private async removeRuntimeRootIfIdle(): Promise<void> {
+		if (!this.runtimeRoot || this.sessions.size > 0 || this.initializing.size > 0 || this.closing.size > 0) return;
+		const root = this.runtimeRoot;
+		this.runtimeRoot = null;
+		this.runtimeRootPromise = null;
+		await removePath(root, this.log, "runtime root");
+	}
+
+	private async touchRuntimeRoot(): Promise<void> {
+		if (!this.runtimeRoot) return;
+		try {
+			const now = new Date();
+			await utimes(path.join(this.runtimeRoot, RUNTIME_OWNER_FILE), now, now);
+		} catch (error) {
+			this.log(`agent-browser runtime heartbeat failed: ${String(error)}`);
+		}
 	}
 
 	private environment(runtime: SessionRuntime): NodeJS.ProcessEnv {
@@ -257,6 +420,95 @@ export class AgentBrowserRuntime {
 				`AO's browser automation component was not found at ${this.options.binaryPath}. Reinstall or rebuild the desktop app.`,
 			);
 		}
+	}
+}
+
+export async function scavengeBrowserRuntime(
+	dataDir: string,
+	processAlive: (pid: number) => boolean = defaultProcessAlive,
+	log: (message: string) => void = () => undefined,
+): Promise<void> {
+	let entries;
+	try {
+		entries = await readdir(dataDir, { withFileTypes: true });
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+		log(`agent-browser runtime scan failed: ${String(error)}`);
+		return;
+	}
+
+	const removals: Promise<void>[] = [];
+	for (const entry of entries) {
+		if (!entry.isDirectory()) continue;
+		const match = RUNTIME_ROOT_PATTERN.exec(entry.name);
+		if (!match) continue;
+		const runDir = path.join(dataDir, entry.name);
+		const ownerPath = path.join(runDir, RUNTIME_OWNER_FILE);
+		let owner: RuntimeOwner;
+		try {
+			owner = JSON.parse(await readFile(ownerPath, "utf8")) as RuntimeOwner;
+		} catch {
+			// An unmarked directory may belong to another process that is between
+			// mkdir and owner-marker creation. Preserve it rather than guessing.
+			continue;
+		}
+		if (!validRuntimeOwner(owner, match[1])) continue;
+		if (processAlive(owner.pid)) continue;
+		try {
+			const ownerStat = await stat(ownerPath);
+			if (Date.now() - ownerStat.mtimeMs < BROWSER_RUNTIME_RECLAIM_GRACE_MS) continue;
+		} catch (error) {
+			log(`agent-browser runtime scan skipped ${entry.name}: ${String(error)}`);
+			continue;
+		}
+		removals.push(removePath(runDir, log, `stale runtime root ${entry.name}`));
+	}
+	await Promise.all(removals);
+}
+
+function validRuntimeOwner(value: unknown, expectedPid: string): value is RuntimeOwner {
+	if (!isRecord(value)) return false;
+	return (
+		value.marker === RUNTIME_OWNER_MARKER &&
+		numberIsInteger(value.pid) &&
+		String(value.pid) === expectedPid &&
+		typeof value.startedAt === "string" &&
+		/^[0-9a-f]{32}$/.test(String(value.token))
+	);
+}
+
+function numberIsInteger(value: unknown): value is number {
+	return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function defaultProcessAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "EPERM";
+	}
+}
+
+async function removePath(target: string, log: (message: string) => void, label: string): Promise<void> {
+	try {
+		await rm(target, { recursive: true, force: true, maxRetries: 4, retryDelay: 100 });
+	} catch (error) {
+		log(`agent-browser ${label} cleanup failed: ${String(error)}`);
+	}
+}
+
+async function closeBridgeWithTimeout(bridge: AgentBrowserBridge): Promise<void> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		await Promise.race([
+			bridge.close(),
+			new Promise<never>((_, reject) => {
+				timer = setTimeout(() => reject(new Error("bridge close timed out")), BRIDGE_CLOSE_TIMEOUT_MS);
+			}),
+		]);
+	} finally {
+		if (timer) clearTimeout(timer);
 	}
 }
 

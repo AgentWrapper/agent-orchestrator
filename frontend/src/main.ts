@@ -117,6 +117,11 @@ let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
 let daemonOutput = "";
 let browserViewHost: BrowserViewHost | null = null;
+const browserCleanupPromises = new Set<Promise<void>>();
+let browserQuitCleanupPromise: Promise<void> | null = null;
+let browserCleanupComplete = false;
+let browserQuitRequested = false;
+let createWindowPromise: Promise<void> | null = null;
 let browserRuntimeLink: BrowserRuntimeLinkHandle | null = null;
 let keybindingOverrides: KeybindingOverrides = {};
 let keybindingRecordingActive = false;
@@ -253,9 +258,44 @@ function buildWindowsAppMenu(): Menu {
 	);
 }
 
-function createWindow(): void {
-	void browserViewHost?.dispose();
+async function disposeBrowserViewHost(): Promise<void> {
+	const host = browserViewHost;
 	browserViewHost = null;
+	if (!host) return;
+	const cleanup = Promise.resolve()
+		.then(() => host.dispose())
+		.catch((error) => {
+			console.error("browser host cleanup failed:", error);
+		});
+	browserCleanupPromises.add(cleanup);
+	void cleanup.then(
+		() => browserCleanupPromises.delete(cleanup),
+		() => browserCleanupPromises.delete(cleanup),
+	);
+	await cleanup;
+}
+
+async function disposeAllBrowserViewHosts(): Promise<void> {
+	for (;;) {
+		if (browserViewHost) await disposeBrowserViewHost();
+		const pending = [...browserCleanupPromises];
+		if (pending.length === 0 && !browserViewHost) return;
+		if (pending.length > 0) await Promise.all(pending);
+	}
+}
+
+async function createWindowInternal(): Promise<void> {
+	await disposeAllBrowserViewHosts();
+	const agentBrowserRuntime = new AgentBrowserRuntime({
+		binaryPath: resolveAgentBrowserBinaryPath(),
+		dataDir: path.join(app.getPath("userData"), "browser-runtime"),
+		log: (message) => console.log(`AO: ${message}`),
+	});
+	await agentBrowserRuntime.prepare();
+	if (browserQuitRequested) {
+		await agentBrowserRuntime.dispose();
+		return;
+	}
 	mainWindow = new BrowserWindow({
 		width: 1320,
 		height: 860,
@@ -358,11 +398,7 @@ function createWindow(): void {
 		isMac,
 		getKeybindingOverrides: () => keybindingOverrides,
 		isKeybindingRecording: () => keybindingRecordingActive,
-		agentBrowserRuntime: new AgentBrowserRuntime({
-			binaryPath: resolveAgentBrowserBinaryPath(),
-			dataDir: path.join(app.getPath("userData"), "browser-runtime"),
-			log: (message) => console.log(`AO: ${message}`),
-		}),
+		agentBrowserRuntime,
 	});
 	if (daemonStatus.state === "ready") establishBrowserRuntimeLink();
 
@@ -394,10 +430,24 @@ function createWindow(): void {
 		browserRuntimeLink?.dispose();
 		browserRuntimeLink = null;
 		keybindingRecordingActive = false;
-		void browserViewHost?.dispose();
-		browserViewHost = null;
+		void disposeBrowserViewHost();
 		mainWindow = null;
 	});
+}
+
+function createWindow(): Promise<void> {
+	if (createWindowPromise) return createWindowPromise;
+	const pending = createWindowInternal();
+	createWindowPromise = pending;
+	void pending.then(
+		() => {
+			if (createWindowPromise === pending) createWindowPromise = null;
+		},
+		() => {
+			if (createWindowPromise === pending) createWindowPromise = null;
+		},
+	);
+	return pending;
 }
 
 function resolveAgentBrowserBinaryPath(): string {
@@ -1571,13 +1621,13 @@ app.whenReady().then(async () => {
 
 	registerRendererProtocol();
 	applyRuntimeAppIcon();
-	createWindow();
+	await createWindow();
 	void startDaemon();
 	initAutoUpdates();
 
 	app.on("activate", () => {
 		if (BrowserWindow.getAllWindows().length === 0) {
-			createWindow();
+			void createWindow().catch((error) => console.error("failed to recreate main window:", error));
 		}
 	});
 });
@@ -1586,21 +1636,21 @@ app.whenReady().then(async () => {
 // self-stops ~5s after the last client (this process) drops its connection.
 // The supervisorLink fd is NOT explicitly closed on quit; the OS closes it when
 // the process exits for any reason (Cmd+Q, crash, SIGKILL). Sessions survive.
-let browserCleanupComplete = false;
 app.on("before-quit", (event) => {
+	browserQuitRequested = true;
 	browserRuntimeLink?.dispose();
 	browserRuntimeLink = null;
-	if (!browserCleanupComplete && browserViewHost) {
+	if (!browserCleanupComplete) {
 		event.preventDefault();
-		const host = browserViewHost;
-		browserViewHost = null;
-		void host.dispose().finally(() => {
-			browserCleanupComplete = true;
-			app.quit();
-		});
+		if (!browserQuitCleanupPromise) {
+			browserQuitCleanupPromise = disposeAllBrowserViewHosts().finally(() => {
+				browserCleanupComplete = true;
+				browserQuitCleanupPromise = null;
+				app.quit();
+			});
+		}
 		return;
 	}
-	browserViewHost = null;
 });
 
 // Last resort: if the OS-native supervisor link is not actually connected
