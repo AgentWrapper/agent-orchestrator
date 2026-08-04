@@ -18,13 +18,13 @@ type Summary struct {
 
 // Project is the full read-model returned by GET /api/v1/projects/{id}.
 type Project struct {
-	ID             domain.ProjectID      `json:"id"`
-	Name           string                `json:"name"`
-	Kind           domain.ProjectKind    `json:"kind" enum:"single_repo,workspace,scratch"`
-	Path           string                `json:"path"`
-	Repo           string                `json:"repo"`
-	DefaultBranch  string                `json:"defaultBranch"`
-	Agent          string                `json:"agent,omitempty"`
+	ID            domain.ProjectID   `json:"id"`
+	Name          string             `json:"name"`
+	Kind          domain.ProjectKind `json:"kind" enum:"single_repo,workspace,scratch"`
+	Path          string             `json:"path"`
+	Repo          string             `json:"repo"`
+	DefaultBranch string             `json:"defaultBranch"`
+	Agent         string             `json:"agent,omitempty"`
 	// Archived is true when the project was soft-removed. GET still returns
 	// archived projects so clients can restore/view them.
 	Archived       bool                  `json:"archived"`
