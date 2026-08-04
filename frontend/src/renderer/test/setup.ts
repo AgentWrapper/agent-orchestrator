@@ -175,6 +175,7 @@ if (typeof window !== "undefined") {
 		notifications: {
 			show: async () => undefined,
 			onClick: () => () => undefined,
+			setBadge: async () => undefined,
 		},
 		appState: {
 			getMigration: async () => ({ status: "pending" }),

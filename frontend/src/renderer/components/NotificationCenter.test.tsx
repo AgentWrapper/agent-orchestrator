@@ -299,7 +299,7 @@ describe("NotificationCenter", () => {
 		expect(screen.queryByRole("button", { name: "Mark notification read" })).not.toBeInTheDocument();
 		expect(screen.getByText("Checkout flow needs input")).toBeInTheDocument();
 		expect(screen.getByText("Checkout flow needs input").className).toContain("font-medium");
-		expect(screen.getByRole("link", { name: "PR #67 is ready to merge" }).className).toContain("font-medium");
+		expect(screen.getByText("PR #67 is ready to merge").className).toContain("font-medium");
 		expect(screen.getByText("Docs sweep needs input").className).not.toContain("font-medium");
 	});
 
@@ -472,20 +472,14 @@ describe("NotificationCenter", () => {
 		});
 	});
 
-	// A PR row navigates to the session like any other, but its title stays a
-	// real link so the PR itself is still one click away.
-	it("opens the PR from its title and the session from the surrounding row", async () => {
+	// A PR row navigates to its owning session like any other row. The title is
+	// no longer a separate link, so clicking it never opens the PR in a browser.
+	it("opens the session from a PR row title without opening the PR in a browser", async () => {
 		renderNotificationCenter();
 		await clickOpen();
 
-		const titleLink = screen.getByRole("link", { name: "PR #67 is ready to merge" });
-		expect(titleLink).toHaveAttribute("href", "https://github.com/acme/app/pull/67");
-		await userEvent.click(titleLink);
-		expect(window.open).toHaveBeenCalledWith("https://github.com/acme/app/pull/67", "_blank", "noopener,noreferrer");
-		expect(navigateMock).not.toHaveBeenCalled();
-
-		await clickOpen();
-		await userEvent.click(screen.getByText("Checkout flow has no known blocking CI or review feedback."));
+		await userEvent.click(screen.getByText("PR #67 is ready to merge"));
+		expect(window.open).not.toHaveBeenCalled();
 		expect(navigateMock).toHaveBeenCalledWith({
 			to: "/projects/$projectId/sessions/$sessionId",
 			params: { projectId: "proj-1", sessionId: "sess-2" },

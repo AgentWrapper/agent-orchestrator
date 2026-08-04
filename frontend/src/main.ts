@@ -1449,6 +1449,17 @@ ipcMain.handle("notifications:show", (_event, notification: { id: string; title:
 	toast.show();
 });
 
+// Mirror the renderer's unread notification count onto the OS dock (macOS) or
+// taskbar badge, so the number is visible while the app is in the background.
+ipcMain.handle("notifications:setBadge", (_event, count: number) => {
+	const n = Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
+	if (process.platform === "darwin") {
+		app.dock?.setBadge(n > 0 ? String(n) : "");
+	} else {
+		app.setBadgeCount(n);
+	}
+});
+
 // Auto-update only runs for packaged builds reading the GitHub Releases feed
 // (see forge.config.ts publishers). In dev there is no feed, so it is skipped.
 // A live updater additionally requires a signed + notarized build — see
