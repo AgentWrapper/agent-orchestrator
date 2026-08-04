@@ -857,18 +857,20 @@ button.settings-row-bar {
 
 @utility import-close-button {
 	position: absolute;
-	top: var(--space-3);
-	right: var(--space-3);
+	top: var(--size-import-modal-padding);
+	right: var(--size-import-modal-padding);
 	z-index: calc(var(--z-chrome) + 1);
 	display: grid;
-	width: calc(var(--spacing) * 5);
-	height: calc(var(--spacing) * 5);
+	width: var(--size-control-md);
+	height: var(--size-control-md);
 	place-items: center;
+	border-radius: var(--radius-md);
 	color: var(--color-text-import-muted);
-	transition-property: color;
+	transition-property: color, background-color;
 	transition-duration: var(--duration-normal);
 
 	&:hover {
+		background-color: var(--color-interactive-hover);
 		color: var(--color-text-import-title);
 	}
 

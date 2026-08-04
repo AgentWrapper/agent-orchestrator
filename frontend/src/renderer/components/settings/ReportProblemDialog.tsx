@@ -10,6 +10,7 @@ import {
 	type ReportProblemOutput,
 } from "../../lib/report-problem";
 import { aoBridge } from "../../lib/bridge";
+import { Button } from "../ui/button";
 import {
 	Dialog,
 	DialogClose,
@@ -237,21 +238,21 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 
 				<div className={settingsDialogFooterClass}>
 					<DialogClose asChild>
-						<button type="button" className="settings-footer-button">
+						<Button type="button" variant="footer">
 							{t("report.cancel")}
-						</button>
+						</Button>
 					</DialogClose>
-					<button
+					<Button
 						type="button"
-						className="settings-footer-button border-transparent bg-settings-accent text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+						variant="footer-primary"
 						disabled={!canSubmit}
 						onClick={() => {
 							if (!canSubmit) return;
-							void copyDraft()
+							void copyDraft();
 						}}
 					>
 						{destination.action}
-					</button>
+					</Button>
 				</div>
 			</DialogContent>
 		</Dialog>

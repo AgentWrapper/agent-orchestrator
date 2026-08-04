@@ -397,11 +397,15 @@
 	--color-text-import-muted: var(--muted-foreground);
 	--color-bg-import-card: var(--card);
 	--color-bg-import-card-hover: var(--accent);
-	--color-bg-import-illustration: var(--color-bg-import-modal);
+	--color-bg-import-illustration: var(--color-bg-import-chip);
 	--color-bg-import-chip: var(--secondary);
 	--shadow-import-modal: 0 0 0 1px var(--border), var(--elevation-md);
 	--size-import-modal-max: 896px;
 	--size-import-folder-dialog: 640px;
+	/* Shared equal edge inset for modal header/body/footer sections. */
+	--size-modal-padding: var(--space-6);
+	--size-import-modal-padding: var(--space-8);
+	--size-import-dialog-padding: var(--size-modal-padding);
 	--size-import-mode-card-min: 252px;
 	--size-import-mode-card-min-sm: 292px;
 	--size-import-mode-illustration: 178px;

@@ -420,17 +420,11 @@ export function CommandPalette() {
 						{pendingDismiss !== null && (
 							<div className="mx-3 mt-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-foreground">
 								<p className="text-muted-foreground">{t("command.discardDraft")}</p>
-								<div className="mt-2 flex justify-end gap-2">
-									<Button type="button" variant="ghost" size="sm" onClick={() => setPendingDismiss(null)}>
+								<div className="mt-2 flex justify-end gap-3">
+									<Button type="button" variant="footer" onClick={() => setPendingDismiss(null)}>
 										{t("command.keepEditing")}
 									</Button>
-									<Button
-										type="button"
-										variant="outline"
-										size="sm"
-										className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
-										onClick={confirmDiscard}
-									>
+									<Button type="button" variant="footer" className="text-destructive" onClick={confirmDiscard}>
 										{t("command.discard")}
 									</Button>
 								</div>
