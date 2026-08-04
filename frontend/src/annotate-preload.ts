@@ -15,6 +15,7 @@ let selectedContext: BrowserAnnotationContext | null = null;
 let host: HTMLDivElement | null = null;
 let shadow: ShadowRoot | null = null;
 let viewportResizeObserver: ResizeObserver | null = null;
+let hintFadeTimer: NodeJS.Timeout | null = null;
 
 const PROMPT_GUTTER = 14;
 const PROMPT_GAP = 10;
@@ -38,6 +39,7 @@ function setEnabled(next: boolean, cancelReason: BrowserAnnotationCancelReason):
 	enabled = next;
 	selectedElement = null;
 	selectedContext = null;
+	if (hintFadeTimer) clearTimeout(hintFadeTimer);
 	if (enabled) {
 		ensureOverlay();
 		installListeners();
@@ -326,6 +328,7 @@ function ensureOverlay(): ShadowRoot {
 				position: fixed;
 				left: 12px;
 				bottom: 12px;
+				max-width: calc(100vw - 36px);
 				border-radius: 6px;
 				background: #15171b;
 				color: #c9d1d9;
@@ -334,10 +337,20 @@ function ensureOverlay(): ShadowRoot {
 				box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 				pointer-events: none;
 				animation: prompt-in 140ms ease-out;
+				word-wrap: break-word;
+				overflow-wrap: break-word;
+				white-space: normal;
+			}
+			.hint-fade-out {
+				animation: hint-fade-out 300ms ease-in forwards !important;
 			}
 			@keyframes prompt-in {
 				from { opacity: 0; transform: translateY(4px) scale(0.985); }
 				to { opacity: 1; transform: translateY(0) scale(1); }
+			}
+			@keyframes hint-fade-out {
+				from { opacity: 1; }
+				to { opacity: 0; }
 			}
 			@media (prefers-reduced-motion: reduce) {
 				.highlight,
@@ -362,6 +375,15 @@ function renderHint(): void {
 	const mount = root.querySelector<HTMLDivElement>(".mount");
 	if (!mount) return;
 	mount.innerHTML = `<div class="hint">Click an element to annotate. Press Esc to cancel.</div>`;
+
+	if (hintFadeTimer) clearTimeout(hintFadeTimer);
+	hintFadeTimer = setTimeout(() => {
+		const hintElement = root.querySelector<HTMLDivElement>(".hint");
+		if (hintElement) {
+			hintElement.classList.add("hint-fade-out");
+		}
+		hintFadeTimer = null;
+	}, 3000);
 }
 
 function renderHighlight(element: Element, locked: boolean): void {
