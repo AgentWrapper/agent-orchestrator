@@ -24,7 +24,7 @@ import {
 	type WorkspaceSummary,
 	workerSessions,
 } from "../types/workspace";
-import { getSessionDotView } from "../lib/session-presentation";
+import { getAgentActivityView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -127,11 +127,17 @@ function useSelection() {
 	};
 }
 
-// Activity controls motion; live PR context controls color. Keep the indicator
-// at a full 8px so state stays legible in the dense session list.
+// The shared activity resolver controls both color and motion. PR/CI state is
+// presented on cards and board lanes instead of repainting this activity dot.
 function SessionStatusDot({ session }: { session: WorkspaceSession }) {
-	const dot = getSessionDotView(session);
-	return <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", dot.className)} data-session-status="" />;
+	const activity = getAgentActivityView(session.activity);
+	return (
+		<span
+			aria-hidden="true"
+			className={cn("size-2 shrink-0 rounded-full", activity.indicatorClassName)}
+			data-session-status=""
+		/>
+	);
 }
 
 // Built on shadcn's sidebar primitives (components/ui/sidebar): the provider in
@@ -367,15 +373,13 @@ export function Sidebar({
 
 			{/* Footer — Settings opens the global settings page directly.
 			    Top hairline matches the board Archive `border-t border-border-strong`.
-			    Row height matches Archive (`h-row-md`). Bottom margin is the shell
-			    inset plus the center-panel surface's 1px border so the hairline
-			    meets Archive (Archive sits inside that bordered surface). */}
+			    Row height matches Archive (`h-row-md`). On macOS the sidebar is
+			    already height-clamped beside the inset center surface, so only its
+			    1px border needs compensating here. */}
 			<SidebarFooter
 				className={cn(
 					"relative mt-auto gap-0 overflow-hidden border-t border-border-strong px-2 !py-0 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:border-t-0 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:!pb-0 group-data-[collapsible=icon]:!pt-1.5",
-					isMac
-						? "mb-[calc(var(--size-center-panel-inset-mac)+1px)]"
-						: "mb-[calc(var(--size-center-panel-bottom-inset)+1px)]",
+					isMac ? "mb-px" : "mb-[calc(var(--size-center-panel-bottom-inset)+1px)]",
 				)}
 			>
 				{/* Always-present daemon status mirror for the smoke suite: no visible

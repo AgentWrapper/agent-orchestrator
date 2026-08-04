@@ -1041,7 +1041,8 @@ describe("Sidebar", () => {
 		// Padding is always reserved for the action cluster (not hover-gated)
 		expect(projectRow).toHaveClass("pr-sidebar-project-actions");
 		expect(actionCluster).toHaveAttribute("data-project-actions");
-		expect(actionCluster).toHaveClass("right-0.5");
+		expect(actionCluster).toHaveClass("right-0.5", "gap-px");
+		expect(within(actionCluster as HTMLElement).getAllByRole("button")).toHaveLength(3);
 		expect(screen.getByLabelText("Project actions for Project One")).not.toHaveClass("opacity-0");
 	});
 
@@ -1096,7 +1097,7 @@ describe("Sidebar", () => {
 		expect(window.localStorage.getItem("ao-sidebar-w")).toBe(String(expandedWidth));
 	});
 
-	it("animates active sidebar dots using their PR context color", () => {
+	it("renders active activity as pulsing blue regardless of PR context", () => {
 		renderSidebar({
 			workspaces: [
 				{
@@ -1168,12 +1169,12 @@ describe("Sidebar", () => {
 		expect(workingDot).toHaveClass("animate-status-pulse");
 
 		const ciFailedDot = sessionDot("ci failed task");
-		expect(ciFailedDot).toHaveClass("bg-status-needs-you");
+		expect(ciFailedDot).toHaveClass("bg-status-working");
 		expect(ciFailedDot).toHaveClass("animate-status-pulse");
 
-		expect(sessionDot("review task")).toHaveClass("bg-status-in-review", "animate-status-pulse");
-		expect(sessionDot("ready task")).toHaveClass("bg-status-ready", "animate-status-pulse");
-		expect(sessionDot("merged task")).toHaveClass("bg-status-merged", "animate-status-pulse");
+		expect(sessionDot("review task")).toHaveClass("bg-status-working", "animate-status-pulse");
+		expect(sessionDot("ready task")).toHaveClass("bg-status-working", "animate-status-pulse");
+		expect(sessionDot("merged task")).toHaveClass("bg-status-working", "animate-status-pulse");
 	});
 
 	it("renders a static gray dot for idle activity across session statuses", () => {
