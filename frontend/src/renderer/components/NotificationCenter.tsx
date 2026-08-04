@@ -233,12 +233,6 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 			});
 	}, [ackRetryNonce, markAllMutate, open, t, unreadQuery.isLoading, visibleUnreadKey]);
 
-	// Mirror the unread count onto the OS dock/taskbar badge so the number is
-	// visible even when the app is in the background.
-	useEffect(() => {
-		void aoBridge.notifications.setBadge(unreadCount);
-	}, [unreadCount]);
-
 	const setPanelOpen = (nextOpen: boolean) => {
 		setOpen(nextOpen);
 		if (!nextOpen) {

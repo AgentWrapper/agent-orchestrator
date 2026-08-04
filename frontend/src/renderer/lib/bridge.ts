@@ -135,7 +135,6 @@ export const aoBridge: AoBridge =
 			setBadge: async () => undefined,
 			devBounce: async () => undefined,
 			onClick: () => () => undefined,
-			setBadge: async () => undefined,
 		},
 		tray: {
 			setAttentionState: () => undefined,

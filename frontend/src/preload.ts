@@ -245,7 +245,6 @@ const api = {
 				ipcRenderer.off("notifications:click", wrapped);
 			};
 		},
-		setBadge: (count: number) => ipcRenderer.invoke("notifications:setBadge", count) as Promise<void>,
 	},
 	tray: {
 		setAttentionState: (state: TrayAttentionState) => ipcRenderer.send(TRAY_SET_ATTENTION_STATE_CHANNEL, state),

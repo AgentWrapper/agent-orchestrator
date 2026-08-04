@@ -1560,17 +1560,6 @@ ipcMain.handle("notifications:setBadge", (_event, count: number) => {
 	return { ok: true };
 });
 
-// Mirror the renderer's unread notification count onto the OS dock (macOS) or
-// taskbar badge, so the number is visible while the app is in the background.
-ipcMain.handle("notifications:setBadge", (_event, count: number) => {
-	const n = Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
-	if (process.platform === "darwin") {
-		app.dock?.setBadge(n > 0 ? String(n) : "");
-	} else {
-		app.setBadgeCount(n);
-	}
-});
-
 ipcMain.on(TRAY_SET_ATTENTION_STATE_CHANNEL, (event, state) => trayLifecycle.handleSetAttentionState(event, state));
 
 ipcMain.on(TRAY_RENDERER_READY_CHANNEL, (event) => trayLifecycle.handleRendererReady(event));
