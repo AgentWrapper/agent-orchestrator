@@ -196,6 +196,7 @@ describe("annotate preload", () => {
 		expect(primaryAction).toBeTruthy();
 		expect(primaryAction?.disabled).toBe(true);
 		expect(textarea).not.toBeNull();
+		expect(root.querySelector("style")?.textContent).toContain("@media (max-width: 420px)");
 
 		textarea!.value = "Make this button easier to notice.";
 		textarea!.dispatchEvent(

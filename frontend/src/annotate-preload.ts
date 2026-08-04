@@ -408,17 +408,18 @@ function ensureOverlay(): ShadowRoot {
 					animation: none;
 				}
 			}
-			@media (max-width: 360px) {
+			@media (max-width: 420px) {
 				.prompt__footer {
 					align-items: stretch;
 					flex-direction: column;
 				}
 				.actions {
 					order: 1;
-					width: 100%;
+					align-self: flex-end;
 				}
 				.prompt__meta {
 					order: 2;
+					width: 100%;
 					margin-right: 0;
 				}
 			}
