@@ -102,7 +102,9 @@ const prStateLabelKeys: Record<SessionPRSummary["state"], MessageKey> = {
 
 const inspectorShellClass = "@container/inspector flex h-full min-h-0 flex-col overflow-hidden";
 
-const inspectorBodyClass = "min-h-0 flex-1 overflow-y-auto p-3 pb-4 @max-[300px]/inspector:px-2.5";
+const inspectorBodyBaseClass = "min-h-0 flex-1";
+
+const inspectorScrollableBodyClass = "overflow-y-auto p-3 pb-4 @max-[300px]/inspector:px-2.5";
 
 const inspectorEmptyClass = "text-xs text-settings-muted leading-normal";
 
@@ -175,7 +177,7 @@ export function SessionInspector({
 	if (!session) {
 		return (
 			<aside className={inspectorShellClass} aria-label={t("inspector.aria")}>
-				<div className={inspectorBodyClass}>
+				<div className={cn(inspectorBodyBaseClass, inspectorScrollableBodyClass)}>
 					<p className={inspectorEmptyClass}>{t("inspector.loadingSession")}</p>
 				</div>
 			</aside>
@@ -221,13 +223,14 @@ export function SessionInspector({
 
 			<div
 				className={cn(
-					inspectorBodyClass,
-					// The Browser tab renders its own bordered panel edge-to-edge, so
-					// drop the body padding for it (except when popped out, where the
-					// body only holds the "return to panel" empty state).
+					inspectorBodyBaseClass,
+					view !== "browser" && view !== "files" && inspectorScrollableBodyClass,
+					// Browser and Files own their viewport spacing. Keep their body
+					// padding out of the class list entirely so a shorthand `p-3`
+					// cannot win over `p-0` through generated utility ordering.
 					view === "browser" &&
 						!browserPoppedOut &&
-						"p-0 overflow-hidden [&>[role=tabpanel]]:border-0 [&>[role=tabpanel]]:rounded-none",
+						"session-inspector__body--browser p-0 overflow-hidden [&>[role=tabpanel]]:border-0 [&>[role=tabpanel]]:rounded-none",
 					view === "files" && "p-0 overflow-hidden [&>[role=tabpanel]]:h-full",
 				)}
 			>

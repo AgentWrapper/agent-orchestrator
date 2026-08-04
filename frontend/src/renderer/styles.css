@@ -1655,6 +1655,12 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	border-radius: 0;
 }
 
+.session-inspector__body--browser .browser-panel__viewport {
+	margin: 0;
+	border-radius: 0;
+	box-shadow: none;
+}
+
 /* Inspector resize handle (shadcn resizable separator, AO visual): a 7px
  * transparent grab strip whose centered 1px line lights accent on hover, drag
  * (rrp sets data-separator="active"), and keyboard focus. */

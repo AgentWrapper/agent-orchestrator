@@ -179,6 +179,17 @@ afterEach(() => {
 });
 
 describe("SessionInspector tabs", () => {
+	it("gives the Browser viewport the full inspector body without the default content gutter", async () => {
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		const tablist = screen.getByRole("tablist");
+		await userEvent.click(screen.getByRole("tab", { name: "Browser" }));
+
+		const body = tablist.nextElementSibling;
+		expect(body).toHaveClass("session-inspector__body--browser", "p-0", "overflow-hidden");
+		expect(body).not.toHaveClass("p-3", "pb-4", "@max-[300px]/inspector:px-2.5");
+	});
+
 	it("sizes rail tabs to their labels instead of stretching across the inspector", () => {
 		renderWithQuery(<SessionInspector session={session([])} />);
 

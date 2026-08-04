@@ -231,6 +231,14 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
+	it("removes the primitive footer padding so Settings aligns with the board archive row", () => {
+		renderSidebar();
+
+		const footer = document.querySelector('[data-sidebar="footer"]');
+		expect(footer).toHaveClass("!py-0");
+		expect(screen.getAllByRole("button", { name: "Settings" })[0]).toHaveClass("h-row-md");
+	});
+
 	it("keeps only the expanded Settings control keyboard-accessible while expanded", () => {
 		renderSidebar();
 
@@ -965,6 +973,15 @@ describe("Sidebar", () => {
 		await user.type(input, "polish login{Enter}");
 
 		await waitFor(() => expect(renameSessionMock).toHaveBeenCalledWith("proj-1-1", "polish login"));
+	});
+
+	it("aligns the session status dot with the project label column", () => {
+		const workspaceWithSession = { ...workspace, sessions: [session] };
+		renderSidebar({ workspaces: [workspaceWithSession] });
+
+		const sessionItem = screen.getByLabelText("Open fix login").closest("li");
+		expect(sessionItem).toHaveClass("pl-4.5");
+		expect(sessionItem).not.toHaveClass("pl-7");
 	});
 
 	it("caps the inline rename input at 20 characters", async () => {

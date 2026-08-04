@@ -372,7 +372,7 @@ export function Sidebar({
 			    meets Archive (Archive sits inside that bordered surface). */}
 			<SidebarFooter
 				className={cn(
-					"relative mt-auto gap-0 overflow-hidden border-t border-border-strong px-2 pb-0 pt-0 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:border-t-0 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pb-0 group-data-[collapsible=icon]:pt-1.5",
+					"relative mt-auto gap-0 overflow-hidden border-t border-border-strong px-2 !py-0 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:border-t-0 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:!pb-0 group-data-[collapsible=icon]:!pt-1.5",
 					isMac
 						? "mb-[calc(var(--size-center-panel-inset-mac)+1px)]"
 						: "mb-[calc(var(--size-center-panel-bottom-inset)+1px)]",
@@ -740,7 +740,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 
 	if (isEditing) {
 		return (
-			<SidebarMenuSubItem className="pl-7">
+			<SidebarMenuSubItem className="pl-4.5">
 				<div className="relative flex h-8 w-full items-center gap-2 rounded-lg px-2.5 py-0">
 					<SessionDot session={session} />
 					<input
@@ -769,7 +769,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 	}
 
 	return (
-		<SidebarMenuSubItem className="pl-7">
+		<SidebarMenuSubItem className="pl-4.5">
 			<button
 				aria-current={active ? "page" : undefined}
 					aria-label={t("shell.openSession", { title: session.title })}
