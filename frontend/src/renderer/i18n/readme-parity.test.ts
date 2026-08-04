@@ -4,13 +4,13 @@ import { describe, expect, it } from "vitest";
 
 const repositoryRoot = path.resolve(process.cwd(), "..");
 const translatedReadmes = {
-	"README.zh-CN.md": "下载",
-	"README.ja.md": "ダウンロード",
-	"README.ko.md": "다운로드",
-	"README.es.md": "Descargar",
-	"README.fr.md": "Télécharger",
-	"README.de.md": "Herunterladen",
-	"README.pt-BR.md": "Baixar",
+	"docs/readme/README.zh-CN.md": "下载",
+	"docs/readme/README.ja.md": "ダウンロード",
+	"docs/readme/README.ko.md": "다운로드",
+	"docs/readme/README.es.md": "Descargar",
+	"docs/readme/README.fr.md": "Télécharger",
+	"docs/readme/README.de.md": "Herunterladen",
+	"docs/readme/README.pt-BR.md": "Baixar",
 } as const;
 const readmeFiles = ["README.md", ...Object.keys(translatedReadmes)];
 
@@ -26,13 +26,23 @@ function headingLevels(markdown: string): number[] {
 	return [...markdown.matchAll(/^(#{1,6})\s+/gm)].map((match) => match[1].length);
 }
 
-function operationalTargets(markdown: string): string[] {
+function repositoryTarget(file: string, target: string): string {
+	if (/^(?:[a-z]+:|#)/i.test(target)) return target;
+	return path.posix.normalize(path.posix.join(path.posix.dirname(file), target));
+}
+
+function isReadmeTarget(target: string): boolean {
+	return target === "README.md" || /^docs\/readme\/README\.[\w-]+\.md$/.test(target);
+}
+
+function operationalTargets(markdown: string, file: string): string[] {
 	const markdownLinks = [...markdown.matchAll(/!?\[[^\]]*\]\(([^)\s]+)(?:\s+[^)]*)?\)/g)].map(
 		(match) => match[1],
 	);
 	const htmlTargets = [...markdown.matchAll(/\b(?:href|src)="([^"]+)"/g)].map((match) => match[1]);
 	return [...markdownLinks, ...htmlTargets]
-		.filter((target) => !/^README(?:\.[\w-]+)?\.md$/.test(target))
+		.map((target) => repositoryTarget(file, target))
+		.filter((target) => !isReadmeTarget(target))
 		.sort();
 }
 
@@ -48,11 +58,12 @@ describe("translated README parity", () => {
 			const translated = readReadme(file);
 			expect(codeBlocks(translated)).toEqual(codeBlocks(english));
 			expect(headingLevels(translated)).toEqual(headingLevels(english));
-			expect(operationalTargets(translated)).toEqual(operationalTargets(english));
+			expect(operationalTargets(translated, file)).toEqual(operationalTargets(english, "README.md"));
 			expect(translated.split(`[${downloadLabel}](`)).toHaveLength(7);
 			expect(translated).not.toContain("[Download](");
 			for (const sibling of readmeFiles) {
-				if (sibling !== file) expect(translated, `${file} does not link to ${sibling}`).toContain(`(${sibling})`);
+				const target = path.posix.relative(path.posix.dirname(file), sibling);
+				if (sibling !== file) expect(translated, `${file} does not link to ${sibling}`).toContain(`(${target})`);
 			}
 		});
 	}
