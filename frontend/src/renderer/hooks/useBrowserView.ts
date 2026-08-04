@@ -95,8 +95,6 @@ export function resetConsumedPreviewTriggersForTest(): void {
 }
 
 const HIDDEN_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 };
-const VISUAL_TRANSITION_DURATION_MS = 240;
-const VISUAL_TRANSITION_CAPTURE_TIMEOUT_MS = 120;
 
 // The native WebContentsView is a window-level overlay, so DOM `overflow:
 // hidden` never clips it — it paints wherever the slot's bounding box lands.
@@ -197,33 +195,6 @@ export function useBrowserView({
 		window.clearTimeout(mirrorTimerRef.current);
 		mirrorTimerRef.current = null;
 	}, []);
-
-	const showVisualTransition = useCallback(
-		async (kind: BrowserVisualTransition["kind"], timeoutCapture = true) => {
-			const id = viewIdRef.current;
-			if (!id || !hasNativeBrowser || !hasUrlRef.current) return;
-			const capture = window.ao?.browser.capture?.(id).catch(() => "");
-			if (!capture) return;
-			let timeoutId: number | null = null;
-			const snapshotUrl = timeoutCapture
-				? await Promise.race([
-						capture,
-						new Promise<string>((resolve) => {
-							timeoutId = window.setTimeout(() => resolve(""), VISUAL_TRANSITION_CAPTURE_TIMEOUT_MS);
-						}),
-					])
-				: await capture;
-			if (timeoutId !== null) window.clearTimeout(timeoutId);
-			if (!snapshotUrl || viewIdRef.current !== id) return;
-			clearVisualTransitionTimer();
-			setVisualTransition({ kind, snapshotUrl });
-			visualTransitionTimerRef.current = window.setTimeout(() => {
-				visualTransitionTimerRef.current = null;
-				setVisualTransition(null);
-			}, VISUAL_TRANSITION_DURATION_MS);
-		},
-		[clearVisualTransitionTimer, hasNativeBrowser],
-	);
 
 	const measureAndSend = useCallback(() => {
 		// measureAndSend runs both from the scheduleMeasure() rAF callback and as a
