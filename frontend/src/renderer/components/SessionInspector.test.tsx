@@ -1180,20 +1180,24 @@ describe("SessionInspector summary reviews", () => {
 		}
 	};
 
-	it("triggers a review without opening the reviewer terminal directly", async () => {
-		mockCommonGets([], "", [reviewState(3, "needs_review")]);
+	it("re-runs a review and selects the reviewer terminal", async () => {
+		mockCommonGets([approvedReview], "reviewer-pane", [reviewState(3, "up_to_date")]);
 		const runningReview = { ...approvedReview, status: "running", verdict: "", body: "" };
+		const onSelectReviewerTerminal = vi.fn();
 		postMock.mockResolvedValue({
 			response: { status: 201 },
 			data: {
 				reviewerHandleId: "reviewer-pane",
+				reviewerHarness: "codex",
 				reviews: [{ ...reviewState(3, "running"), latestRun: runningReview }],
 			},
 		});
-		const view = renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		const view = renderWithQuery(
+			<SessionInspector onSelectReviewerTerminal={onSelectReviewerTerminal} session={session([pr(3, "open")])} />,
+		);
 		await openReviewsSection();
 
-		await userEvent.click(await screen.findByRole("button", { name: /run review/i }));
+		await userEvent.click(await screen.findByRole("button", { name: "Re-run review" }));
 
 		await waitFor(() =>
 			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/trigger", {
@@ -1205,6 +1209,7 @@ describe("SessionInspector summary reviews", () => {
 				reviewerHandleId: "reviewer-pane",
 			}),
 		);
+		expect(onSelectReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-pane", harness: "codex" });
 		expect(screen.queryByRole("button", { name: "Open terminal" })).not.toBeInTheDocument();
 	});
 

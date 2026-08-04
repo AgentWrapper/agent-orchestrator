@@ -39,8 +39,8 @@ func TestRegistryMatchesDomainVocabulary(t *testing.T) {
 				if spec.Mode != ports.ReviewCancelInput {
 					t.Errorf("reviewer harness %q cancel mode = %q, want %q", h, spec.Mode, ports.ReviewCancelInput)
 				}
-				if spec.Input != "\x1b" {
-					t.Errorf("reviewer harness %q cancel input = %q, want escape", h, spec.Input)
+				if len(spec.Inputs) != 2 || spec.Inputs[0] != "\x1b" || spec.Inputs[1] != "\x1b" {
+					t.Errorf("reviewer harness %q cancel inputs = %#v, want double escape", h, spec.Inputs)
 				}
 			default:
 				if spec.Mode != ports.ReviewCancelInterrupt {

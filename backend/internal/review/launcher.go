@@ -399,10 +399,31 @@ func (l *agentLauncher) Cancel(ctx context.Context, handleID string, harness dom
 		}
 		return l.runtime.SendMessage(ctx, ports.RuntimeHandle{ID: handleID}, message)
 	case ports.ReviewCancelInput:
-		if spec.Input == "" {
+		inputs := spec.Inputs
+		if len(inputs) == 0 && spec.Input != "" {
+			inputs = []string{spec.Input}
+		}
+		if len(inputs) == 0 {
 			return fmt.Errorf("reviewer adapter %q returned empty cancel input", harness)
 		}
-		return l.runtime.SendInput(ctx, ports.RuntimeHandle{ID: handleID}, spec.Input)
+		for i, input := range inputs {
+			if input == "" {
+				return fmt.Errorf("reviewer adapter %q returned empty cancel input", harness)
+			}
+			if err := l.runtime.SendInput(ctx, ports.RuntimeHandle{ID: handleID}, input); err != nil {
+				return err
+			}
+			if i < len(inputs)-1 && spec.InputDelay > 0 {
+				timer := time.NewTimer(spec.InputDelay)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return ctx.Err()
+				case <-timer.C:
+				}
+			}
+		}
+		return nil
 	case ports.ReviewCancelInterrupt:
 		interrupts := spec.Interrupts
 		if interrupts <= 0 {

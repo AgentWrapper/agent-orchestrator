@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -44,6 +45,8 @@ type ReviewCancelSpec struct {
 	Interrupts int
 	Message    string
 	Input      string
+	Inputs     []string
+	InputDelay time.Duration
 }
 
 // ReviewerCanceller is implemented by reviewer adapters that explicitly define

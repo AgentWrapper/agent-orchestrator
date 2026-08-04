@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -268,7 +269,7 @@ func TestReviewMessageReturnsTaskPrompt(t *testing.T) {
 	}
 }
 
-func TestReviewCancelSendsEscapeInput(t *testing.T) {
+func TestReviewCancelSendsDoubleEscapeInput(t *testing.T) {
 	spec, err := (&Reviewer{}).ReviewCancel(context.Background())
 	if err != nil {
 		t.Fatalf("ReviewCancel: %v", err)
@@ -276,8 +277,11 @@ func TestReviewCancelSendsEscapeInput(t *testing.T) {
 	if spec.Mode != ports.ReviewCancelInput {
 		t.Fatalf("cancel mode = %q, want %q", spec.Mode, ports.ReviewCancelInput)
 	}
-	if spec.Input != "\x1b" {
-		t.Fatalf("input = %q, want escape", spec.Input)
+	if len(spec.Inputs) != 2 || spec.Inputs[0] != "\x1b" || spec.Inputs[1] != "\x1b" {
+		t.Fatalf("inputs = %#v, want double escape", spec.Inputs)
+	}
+	if spec.InputDelay != 150*time.Millisecond {
+		t.Fatalf("input delay = %s, want 150ms", spec.InputDelay)
 	}
 }
 

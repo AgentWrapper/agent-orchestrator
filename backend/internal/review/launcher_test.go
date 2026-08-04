@@ -132,6 +132,7 @@ type fakeCancellableReviewer struct {
 	interrupts int
 	message    string
 	input      string
+	inputs     []string
 }
 
 type fakeRestoringReviewer struct {
@@ -159,7 +160,7 @@ func (f *fakeCancellableReviewer) ReviewCancel(context.Context) (ports.ReviewCan
 	if mode == "" {
 		mode = ports.ReviewCancelInterrupt
 	}
-	return ports.ReviewCancelSpec{Mode: mode, Interrupts: f.interrupts, Message: f.message, Input: f.input}, nil
+	return ports.ReviewCancelSpec{Mode: mode, Interrupts: f.interrupts, Message: f.message, Input: f.input, Inputs: f.inputs}, nil
 }
 
 type fakeReviewerForPreflight struct {
@@ -511,7 +512,7 @@ func TestLauncherCancelCanSendReviewerMessage(t *testing.T) {
 }
 
 func TestLauncherCancelCanSendReviewerInput(t *testing.T) {
-	reviewer := &fakeCancellableReviewer{mode: ports.ReviewCancelInput, input: "\x1b"}
+	reviewer := &fakeCancellableReviewer{mode: ports.ReviewCancelInput, inputs: []string{"\x1b", "\x1b"}}
 	rt := &fakeRuntime{}
 	l := newTestLauncher(t, reviewer, rt)
 
@@ -527,8 +528,8 @@ func TestLauncherCancelCanSendReviewerInput(t *testing.T) {
 	if len(rt.sentMsgs) != 0 {
 		t.Fatalf("sent messages = %#v, want none", rt.sentMsgs)
 	}
-	if rt.sentTo != "review-mer-1" || len(rt.sentInputs) != 1 || rt.sentInputs[0] != "\x1b" {
-		t.Fatalf("sent input to %q inputs=%#v, want escape", rt.sentTo, rt.sentInputs)
+	if rt.sentTo != "review-mer-1" || len(rt.sentInputs) != 2 || rt.sentInputs[0] != "\x1b" || rt.sentInputs[1] != "\x1b" {
+		t.Fatalf("sent input to %q inputs=%#v, want double escape", rt.sentTo, rt.sentInputs)
 	}
 }
 

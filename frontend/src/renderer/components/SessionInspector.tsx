@@ -157,6 +157,7 @@ export function SessionInspector({
 	browserView,
 	view: viewProp,
 	onViewChange,
+	onSelectReviewerTerminal,
 }: {
 	session?: WorkspaceSession;
 	browserPoppedOut?: boolean;
@@ -169,6 +170,7 @@ export function SessionInspector({
 	/** Controlled active tab. Omit to let the inspector own its own selection. */
 	view?: InspectorView;
 	onViewChange?: (view: InspectorView) => void;
+	onSelectReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 }) {
 	const { t } = useTranslation();
 	const [internalView, setInternalView] = useState<InspectorView>("summary");
@@ -246,7 +248,9 @@ export function SessionInspector({
 					view === "files" && "p-0 overflow-hidden [&>[role=tabpanel]]:h-full",
 				)}
 			>
-				{view === "summary" ? <SummaryView session={session} /> : null}
+				{view === "summary" ? (
+					<SummaryView onSelectReviewerTerminal={onSelectReviewerTerminal} session={session} />
+				) : null}
 				{view === "browser" ? (
 					<BrowserView
 						browserPoppedOut={browserPoppedOut}
@@ -299,8 +303,10 @@ function Section({
 }
 
 function SummaryView({
+	onSelectReviewerTerminal,
 	session,
 }: {
+	onSelectReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 	session: WorkspaceSession;
 }) {
 	const { t } = useTranslation();
@@ -332,7 +338,7 @@ function SummaryView({
 				</div>
 			</Section>
 
-			{hasPRs ? <ReviewsSection session={session} /> : null}
+			{hasPRs ? <ReviewsSection onSelectReviewerTerminal={onSelectReviewerTerminal} session={session} /> : null}
 
 			{showCompletion ? <CompletionControls session={session} /> : null}
 
@@ -1118,8 +1124,10 @@ type AgentInfo = components["schemas"]["AgentInfo"];
 type AgentCatalog = { supported?: AgentInfo[]; installed?: AgentInfo[]; authorized?: AgentInfo[] };
 
 function ReviewsSection({
+	onSelectReviewerTerminal,
 	session,
 }: {
+	onSelectReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 	session: WorkspaceSession;
 }) {
 	const { t } = useTranslation();
@@ -1215,6 +1223,14 @@ function ReviewsSection({
 		onSuccess: ({ data, reused }) => {
 			if (data) {
 				queryClient.setQueryData(["session-reviews", session.id], data);
+				const handleId = data.reviewerHandleId?.trim();
+				if (handleId) {
+					const returnedHarness = data.reviews?.find((review) => review.latestRun)?.latestRun?.harness;
+					onSelectReviewerTerminal?.({
+						handleId,
+						harness: returnedHarness || reviewerOverride || reviewerHarnessFallback(session, projectConfigQuery.data),
+					});
+				}
 			}
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			const started = data?.reviews?.find((review) => review.status === "running" && review.latestRun);

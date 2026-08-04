@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	workeragent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/opencode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/agentrestore"
@@ -121,7 +122,8 @@ func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInv
 // append Enter.
 func (r *Reviewer) ReviewCancel(context.Context) (ports.ReviewCancelSpec, error) {
 	return ports.ReviewCancelSpec{
-		Mode:  ports.ReviewCancelInput,
-		Input: "\x1b",
+		Mode:       ports.ReviewCancelInput,
+		Inputs:     []string{"\x1b", "\x1b"},
+		InputDelay: 150 * time.Millisecond,
 	}, nil
 }
