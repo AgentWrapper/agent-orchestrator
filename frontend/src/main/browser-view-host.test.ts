@@ -165,6 +165,7 @@ function setupHost() {
 function setupTabHost() {
 	const constructorOptions: Array<{ webPreferences: { partition?: string } }> = [];
 	const handlers = new Map<string, InvokeHandler>();
+	const eventHandlers = new Map<string, EventHandler>();
 	const sent: Array<{ channel: string; payload: unknown }> = [];
 	const views: Array<{
 		webContents: {
@@ -272,9 +273,9 @@ function setupTabHost() {
 		} as never,
 		ipcMain: {
 			handle: (channel: string, fn: InvokeHandler) => handlers.set(channel, fn),
-			on: () => undefined,
+			on: (channel: string, fn: EventHandler) => eventHandlers.set(channel, fn),
 			removeHandler: () => undefined,
-			off: () => undefined,
+			off: (channel: string) => eventHandlers.delete(channel),
 		} as never,
 		shell: { openExternal: async () => undefined },
 		WebContentsView: function (options: { webPreferences: { partition?: string } }) {
@@ -286,7 +287,9 @@ function setupTabHost() {
 	});
 	const invoke = (channel: string, ...args: unknown[]) =>
 		handlers.get(channel)!({ sender: { id: 1 } }, ...args) as Promise<unknown>;
-	return { constructorOptions, host, invoke, sent, views };
+	const emit = (channel: string, ...args: unknown[]) =>
+		eventHandlers.get(channel)!({ sender: { id: 1, getZoomFactor: () => 1 } }, ...args);
+	return { constructorOptions, emit, host, invoke, sent, views };
 }
 
 describe("new-session shortcut forwarding", () => {
@@ -834,7 +837,7 @@ describe("agent browser runtime", () => {
 	});
 
 	it("keeps stable logical tab IDs, separate targets, and the selected tab active", async () => {
-		const { host, views } = setupTabHost();
+		const { emit, host, invoke, views } = setupTabHost();
 		await host.execute("sess-1", "open", { url: "http://localhost:3000" });
 		await host.execute("sess-1", "snapshot");
 		const created = (await host.execute("sess-1", "tab-new", {
@@ -858,11 +861,28 @@ describe("agent browser runtime", () => {
 			expect.objectContaining({ id: "t2", url: "http://localhost:4173/", active: true }),
 		]);
 		expect(views).toHaveLength(2);
+		const ensured = (await invoke("browser:ensure", "sess-1")) as BrowserNavState;
+		emit("browser:setBounds", {
+			viewId: ensured.viewId,
+			rect: { x: 10, y: 20, width: 320, height: 240 },
+			visible: true,
+		});
 
 		await host.execute("sess-1", "tab-select", { tabId: "t1" });
 		const current = (await host.execute("sess-1", "get", { property: "url" })) as { value: string };
 		expect(current.value).toBe("http://localhost:3000/");
 		expect(views[1].setVisible).toHaveBeenLastCalledWith(false);
+		await host.execute("sess-1", "tab-select", { tabId: "t2" });
+		await host.execute("sess-1", "tab-select", { tabId: "t1" });
+		await host.execute("sess-1", "tab-select", { tabId: "t2" });
+		expect(views[0].setVisible).toHaveBeenLastCalledWith(false);
+		expect(views[0].setBounds).toHaveBeenLastCalledWith({
+			x: -10_000,
+			y: -10_000,
+			width: 1280,
+			height: 720,
+		});
+		expect(views[1].setVisible).toHaveBeenLastCalledWith(true);
 		await expect(host.execute("sess-1", "click", { ref: "e1" })).rejects.toMatchObject({
 			code: "STALE_REFERENCE",
 		});
