@@ -256,7 +256,10 @@
 
 	--animate-status-pulse: status-pulse 1.8s ease-in-out infinite;
 	--animate-overlay-in: overlay-in 150ms ease-out;
-	--animate-modal-in: modal-in 150ms ease-out;
+	--animate-modal-in: modal-in 180ms ease-out;
+	--animate-modal-out: modal-out 100ms cubic-bezier(0.4, 0, 1, 1);
+	--animate-popover-in: popover-in 180ms ease-out;
+	--animate-popover-out: popover-out 100ms cubic-bezier(0.4, 0, 1, 1);
 }
 
 /* Full-viewport modal/sheet scrim — dim + blur everything behind pop panels. */
@@ -1164,11 +1167,56 @@ textarea,
 @keyframes modal-in {
 	from {
 		opacity: 0;
-		scale: 0.95;
+		scale: 0.96;
+		filter: blur(4px);
 	}
 	to {
 		opacity: 1;
 		scale: 1;
+		filter: blur(0px);
+	}
+}
+
+@keyframes modal-out {
+	from {
+		opacity: 1;
+		scale: 1;
+		filter: blur(0px);
+	}
+	to {
+		opacity: 0;
+		scale: 0.97;
+		filter: blur(2px);
+	}
+}
+
+@keyframes popover-in {
+	from {
+		opacity: 0;
+		scale: 0.96;
+		translate: 0 -6px;
+		filter: blur(4px);
+	}
+	to {
+		opacity: 1;
+		scale: 1;
+		translate: 0 0;
+		filter: blur(0px);
+	}
+}
+
+@keyframes popover-out {
+	from {
+		opacity: 1;
+		scale: 1;
+		translate: 0 0;
+		filter: blur(0px);
+	}
+	to {
+		opacity: 0;
+		scale: 0.97;
+		translate: 0 -4px;
+		filter: blur(2px);
 	}
 }
 
