@@ -84,6 +84,12 @@ var remoteCommandTokens = map[string]struct{}{
 }
 
 var remotePayloadAllowlist = map[string]map[string]struct{}{
+	// Reported by the LAN listener on the first authenticated request per
+	// transport per day (httpd/mobile_connect_telemetry.go). "transport" is a
+	// closed vocabulary — lan / tailscale / loopback / other — never an address.
+	"ao.mobile.device_connected": {
+		"transport": {},
+	},
 	"ao.app.active": {
 		"actor_type":   {},
 		"channel":      {},

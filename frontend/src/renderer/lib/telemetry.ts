@@ -480,6 +480,17 @@ export async function sanitizeRendererProperties(
 			if (properties?.phase === "check" || properties?.phase === "download") safe.phase = properties.phase;
 			if (properties?.trigger === "automatic" || properties?.trigger === "manual") safe.trigger = properties.trigger;
 			break;
+		case "ao.renderer.mobile_connect_opened":
+			// Whether the bridge was already on when the modal opened separates
+			// "came to set this up" from "came back to re-scan the QR".
+			if (typeof properties?.bridge_enabled === "boolean") safe.bridge_enabled = properties.bridge_enabled;
+			break;
+		case "ao.renderer.mobile_bridge_toggled":
+			// The host, port, and connection password in the QR never leave the
+			// machine: only the direction of the switch and whether it worked.
+			if (typeof properties?.enabled === "boolean") safe.enabled = properties.enabled;
+			if (properties?.outcome === "succeeded" || properties?.outcome === "failed") safe.outcome = properties.outcome;
+			break;
 	}
 	return safe;
 }

@@ -100,6 +100,36 @@ describe("telemetry sanitizers", () => {
 		expect(bogus.phase).toBeUndefined();
 	});
 
+	it("reports the mobile connect open with only the bridge state", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.mobile_connect_opened", {
+			bridge_enabled: true,
+			// Everything the QR encodes is in scope for leaking here, so it is all
+			// passed in deliberately and must all be dropped.
+			host: "192.168.1.20",
+			port: 3011,
+			password: "hunter2secret",
+		});
+		expect(safe).toEqual({ bridge_enabled: true });
+	});
+
+	it("reports the bridge toggle without the pairing payload", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.mobile_bridge_toggled", {
+			enabled: true,
+			outcome: "succeeded",
+			password: "hunter2secret",
+			host: "192.168.1.20",
+		});
+		expect(safe).toEqual({ enabled: true, outcome: "succeeded" });
+	});
+
+	it("drops an unrecognised toggle outcome rather than forwarding it", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.mobile_bridge_toggled", {
+			enabled: false,
+			outcome: "kind-of-worked",
+		});
+		expect(safe).toEqual({ enabled: false });
+	});
+
 	it("disables every billable PostHog product AO does not consume", () => {
 		const config = buildPostHogConfig("ins_stable-install-id");
 
