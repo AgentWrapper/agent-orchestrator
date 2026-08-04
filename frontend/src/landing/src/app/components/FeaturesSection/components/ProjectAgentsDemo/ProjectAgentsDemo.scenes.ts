@@ -1,174 +1,57 @@
-export type ProjectAgentId = "codex" | "cursor" | "claude-code";
-
 export type CursorTarget =
 	| "board-idle"
-	| "project-row"
-	| "project-actions"
-	| "project-settings"
+	| "new-project"
+	| "new-project-row"
+	| "mode-picker"
+	| "project-kind"
+	| "modal"
 	| "worker-trigger"
 	| "worker-cursor"
 	| "orchestrator-trigger"
 	| "orchestrator-claude"
-	| "save";
+	| "create-and-start";
 
 export type ProjectAgentsScene = {
 	id: string;
 	duration: number;
 	target: CursorTarget;
-	view: "board" | "settings";
-	worker: ProjectAgentId;
-	orchestrator: ProjectAgentId;
 	click?: boolean;
-	projectHover?: boolean;
-	actionsMenu?: boolean;
-	openMenu?: "worker" | "orchestrator";
-	hoverAgent?: ProjectAgentId;
-	saveState?: "idle" | "saving" | "saved";
+	newProjectHover?: boolean;
+	modePicker?: boolean;
+	modal?: boolean;
+	openMenu?: "worker" | "orch" | null;
+	menuHover?: string | null;
+	worker: string;
+	orch: string;
+	busy?: boolean;
+	created?: boolean;
 	reset?: boolean;
 };
 
-const BOARD_DEFAULTS = {
-	view: "board",
-	worker: "codex",
-	orchestrator: "codex",
-} as const;
-
-const SETTINGS_DEFAULTS = {
-	view: "settings",
-	worker: "codex",
-	orchestrator: "codex",
-	saveState: "idle",
-} as const;
+const IDLE = { worker: "codex", orch: "codex" } as const;
 
 export const PROJECT_AGENT_SCENES: readonly ProjectAgentsScene[] = [
-	{ id: "board-idle", duration: 900, target: "board-idle", ...BOARD_DEFAULTS },
-	{
-		id: "project-hover",
-		duration: 700,
-		target: "project-row",
-		projectHover: true,
-		...BOARD_DEFAULTS,
-	},
-	{
-		id: "actions-click",
-		duration: 450,
-		target: "project-actions",
-		click: true,
-		projectHover: true,
-		...BOARD_DEFAULTS,
-	},
-	{
-		id: "settings-click",
-		duration: 1_100,
-		target: "project-settings",
-		click: true,
-		projectHover: true,
-		actionsMenu: true,
-		...BOARD_DEFAULTS,
-	},
-	{ id: "settings-open", duration: 850, target: "worker-trigger", ...SETTINGS_DEFAULTS },
-	{
-		id: "worker-click",
-		duration: 450,
-		target: "worker-trigger",
-		click: true,
-		openMenu: "worker",
-		...SETTINGS_DEFAULTS,
-	},
-	{
-		id: "worker-hover",
-		duration: 650,
-		target: "worker-cursor",
-		openMenu: "worker",
-		hoverAgent: "cursor",
-		...SETTINGS_DEFAULTS,
-	},
-	{
-		id: "worker-pick",
-		duration: 450,
-		target: "worker-cursor",
-		click: true,
-		openMenu: "worker",
-		hoverAgent: "cursor",
-		...SETTINGS_DEFAULTS,
-		worker: "cursor",
-	},
-	{
-		id: "orchestrator-click",
-		duration: 650,
-		target: "orchestrator-trigger",
-		click: true,
-		openMenu: "orchestrator",
-		...SETTINGS_DEFAULTS,
-		worker: "cursor",
-	},
-	{
-		id: "orchestrator-hover",
-		duration: 650,
-		target: "orchestrator-claude",
-		openMenu: "orchestrator",
-		hoverAgent: "claude-code",
-		...SETTINGS_DEFAULTS,
-		worker: "cursor",
-	},
-	{
-		id: "orchestrator-pick",
-		duration: 450,
-		target: "orchestrator-claude",
-		click: true,
-		openMenu: "orchestrator",
-		hoverAgent: "claude-code",
-		...SETTINGS_DEFAULTS,
-		worker: "cursor",
-		orchestrator: "claude-code",
-	},
-	{
-		id: "save-hover",
-		duration: 700,
-		target: "save",
-		...SETTINGS_DEFAULTS,
-		worker: "cursor",
-		orchestrator: "claude-code",
-	},
-	{
-		id: "save-click",
-		duration: 450,
-		target: "save",
-		click: true,
-		...SETTINGS_DEFAULTS,
-		worker: "cursor",
-		orchestrator: "claude-code",
-	},
-	{
-		id: "saving",
-		duration: 900,
-		target: "save",
-		...SETTINGS_DEFAULTS,
-		worker: "cursor",
-		orchestrator: "claude-code",
-		saveState: "saving",
-	},
-	{
-		id: "saved",
-		duration: 1_800,
-		target: "save",
-		...SETTINGS_DEFAULTS,
-		worker: "cursor",
-		orchestrator: "claude-code",
-		saveState: "saved",
-	},
-	{
-		id: "reset",
-		duration: 500,
-		target: "board-idle",
-		reset: true,
-		...BOARD_DEFAULTS,
-	},
+	{ id: "board-idle", duration: 900, target: "board-idle", ...IDLE },
+	{ id: "new-project-hover", duration: 600, target: "new-project", newProjectHover: true, ...IDLE },
+	{ id: "new-project-click", duration: 450, target: "new-project", click: true, newProjectHover: true, ...IDLE },
+	{ id: "mode-picker-open", duration: 700, target: "mode-picker", modePicker: true, ...IDLE },
+	{ id: "project-kind-click", duration: 700, target: "project-kind", click: true, modePicker: true, ...IDLE },
+	{ id: "modal-open", duration: 700, target: "modal", modal: true, ...IDLE },
+	{ id: "worker-open", duration: 600, target: "worker-trigger", modal: true, click: true, openMenu: "worker", ...IDLE },
+	{ id: "worker-hover", duration: 650, target: "worker-cursor", modal: true, openMenu: "worker", menuHover: "cursor", ...IDLE },
+	{ id: "worker-pick", duration: 450, target: "worker-cursor", modal: true, click: true, openMenu: "worker", menuHover: "cursor", worker: "cursor", orch: "codex" },
+	{ id: "orch-open", duration: 600, target: "orchestrator-trigger", modal: true, click: true, openMenu: "orch", worker: "cursor", orch: "codex" },
+	{ id: "orch-hover", duration: 650, target: "orchestrator-claude", modal: true, openMenu: "orch", menuHover: "claude-code", worker: "cursor", orch: "codex" },
+	{ id: "orch-pick", duration: 450, target: "orchestrator-claude", modal: true, click: true, openMenu: "orch", menuHover: "claude-code", worker: "cursor", orch: "claude-code" },
+	{ id: "create-hover", duration: 550, target: "create-and-start", modal: true, worker: "cursor", orch: "claude-code" },
+	{ id: "creating", duration: 900, target: "create-and-start", modal: true, click: true, busy: true, worker: "cursor", orch: "claude-code" },
+	{ id: "created", duration: 1_300, target: "new-project-row", modal: false, created: true, worker: "cursor", orch: "claude-code" },
+	{ id: "reset", duration: 550, target: "board-idle", reset: true, ...IDLE },
 ];
 
-export const SAVED_PROJECT_AGENT_SCENE = PROJECT_AGENT_SCENES.find(
-	(scene) => scene.saveState === "saved",
-)!;
+export function sceneClockKey(scene: Pick<ProjectAgentsScene, "id">) {
+	return scene.id;
+}
 
 type Rect = Pick<DOMRect, "left" | "top" | "width" | "height">;
 

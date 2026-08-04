@@ -2,35 +2,40 @@ import { describe, expect, test } from "vitest";
 import {
 	cursorPositionForRects,
 	PROJECT_AGENT_SCENES,
+	sceneClockKey,
 } from "./ProjectAgentsDemo.scenes";
 
 describe("Feature 4 project-agent choreography", () => {
-	test("clicks through existing project settings instead of project creation", () => {
+	test("creates a new project through the compact real frontend flow", () => {
 		const clickTargets = PROJECT_AGENT_SCENES.filter((scene) => scene.click).map(
 			(scene) => scene.target,
 		);
 
 		expect(clickTargets).toEqual([
-			"project-actions",
-			"project-settings",
+			"new-project",
+			"project-kind",
 			"worker-trigger",
 			"worker-cursor",
 			"orchestrator-trigger",
 			"orchestrator-claude",
-			"save",
+			"create-and-start",
 		]);
-		expect(PROJECT_AGENT_SCENES.some((scene) => scene.target === "create-project")).toBe(false);
 	});
 
-	test("keeps selected agents through the saved state", () => {
-		const saved = PROJECT_AGENT_SCENES.find((scene) => scene.saveState === "saved");
+	test("keeps selected agents while creating the project", () => {
+		const saving = PROJECT_AGENT_SCENES.find((scene) => scene.busy);
 
-		expect(saved).toMatchObject({
-			view: "settings",
+		expect(saving).toMatchObject({
 			worker: "cursor",
-			orchestrator: "claude-code",
-			target: "save",
+			orch: "claude-code",
+			target: "create-and-start",
 		});
+	});
+
+	test("ends with the newly created project ready in the sidebar", () => {
+		const created = PROJECT_AGENT_SCENES.find((scene) => scene.created);
+
+		expect(created).toMatchObject({ target: "new-project-row", modal: false });
 	});
 
 	test("places the cursor tip at the measured target center", () => {
@@ -41,5 +46,13 @@ describe("Feature 4 project-agent choreography", () => {
 			x: 24,
 			y: 23.333333333333332,
 		});
+	});
+
+	test("reschedules the clock when adjacent scenes share a duration", () => {
+		const settingsClick = PROJECT_AGENT_SCENES.find((scene) => scene.id === "project-kind-click")!;
+		const modalOpen = PROJECT_AGENT_SCENES.find((scene) => scene.id === "modal-open")!;
+
+		expect(settingsClick.duration).toBe(modalOpen.duration);
+		expect(sceneClockKey(settingsClick)).not.toBe(sceneClockKey(modalOpen));
 	});
 });
