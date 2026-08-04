@@ -8,6 +8,7 @@ package claudecode
 
 import (
 	"context"
+	"time"
 
 	workeragent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/agentrestore"
@@ -135,7 +136,13 @@ func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInv
 }
 
 // ReviewCancel stops the active Claude Code reviewer turn while preserving the
-// terminal pane for inspection.
+// terminal pane for inspection. Claude Code treats Ctrl-C as an exit path in
+// common TUI states, so use Escape to interrupt active execution without
+// tearing down the harness.
 func (r *Reviewer) ReviewCancel(context.Context) (ports.ReviewCancelSpec, error) {
-	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelInterrupt, Interrupts: 2}, nil
+	return ports.ReviewCancelSpec{
+		Mode:       ports.ReviewCancelInput,
+		Inputs:     []string{"\x1b", "\x1b"},
+		InputDelay: 150 * time.Millisecond,
+	}, nil
 }

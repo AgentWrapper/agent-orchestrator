@@ -35,7 +35,7 @@ func TestRegistryMatchesDomainVocabulary(t *testing.T) {
 				if spec.Message == "" {
 					t.Errorf("reviewer harness %q cancel message is empty", h)
 				}
-			case domain.ReviewerOpenCode:
+			case domain.ReviewerClaudeCode, domain.ReviewerOpenCode:
 				if spec.Mode != ports.ReviewCancelInput {
 					t.Errorf("reviewer harness %q cancel mode = %q, want %q", h, spec.Mode, ports.ReviewCancelInput)
 				}

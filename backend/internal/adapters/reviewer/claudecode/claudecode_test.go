@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -174,6 +175,22 @@ func TestReviewRestoreCommandAllowsAdapterFallbackWithoutNativeSessionID(t *test
 	}
 	if _, ok := agent.gotRestore.Session.Metadata[ports.MetadataKeyAgentSessionID]; ok {
 		t.Fatalf("restore metadata should not invent native id: %#v", agent.gotRestore.Session.Metadata)
+	}
+}
+
+func TestReviewCancelSendsDoubleEscapeInput(t *testing.T) {
+	spec, err := (&Reviewer{}).ReviewCancel(context.Background())
+	if err != nil {
+		t.Fatalf("ReviewCancel: %v", err)
+	}
+	if spec.Mode != ports.ReviewCancelInput {
+		t.Fatalf("cancel mode = %q, want %q", spec.Mode, ports.ReviewCancelInput)
+	}
+	if len(spec.Inputs) != 2 || spec.Inputs[0] != "\x1b" || spec.Inputs[1] != "\x1b" {
+		t.Fatalf("inputs = %#v, want double escape", spec.Inputs)
+	}
+	if spec.InputDelay != 150*time.Millisecond {
+		t.Fatalf("input delay = %s, want 150ms", spec.InputDelay)
 	}
 }
 
