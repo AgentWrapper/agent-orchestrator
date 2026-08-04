@@ -1,462 +1,438 @@
-# ACP Migration Plan: AllBeingsFuture concepts → AO main (fenzhi architecture)
+# Plan: Migrate ABF ACP **streaming output** into Agent Orchestrator
 
-**Status:** planning deliverable (docs only)  
-**Date:** 2026-08-04  
-**Target branch base:** current `main` (no Chat API / no `chatdriver` today)  
-**Authoritative design reference:** Desktop `fenzhi` (`/Users/zhongshengjieweilai/Desktop/fenzhi`)  
-**Capability / product-reference source:** Desktop `AllBeingsFuture` (`/Users/zhongshengjieweilai/Desktop/AllBeingsFuture`)  
-
-This plan is intentionally **implementation-free**. It tells implementer workers what to port, in what order, and what not to copy.
+**Status:** planning (docs only) — scope corrected 2026-08-04  
+**Primary goal:** Bring AllBeingsFuture’s **normalized ACP stream pipeline** (events + sequence + consumer reduce) into this repo — **not** a full Chat product, provider matrix, or packaging port.  
+**Source of truth (streaming):** Desktop `AllBeingsFuture`  
+**Design fit (boundaries only):** Desktop `fenzhi` — Chat/protocol events stay in the daemon; renderer never imports ACP SDKs.  
+**Target base:** current AO `main` (no Chat API / no stream surface today).
 
 ---
 
-## 1. Executive summary
+## 0. Scope correction (authoritative)
 
-| Source | Role in this migration |
+| In scope | Out of scope |
 | --- | --- |
-| **fenzhi** | **Primary port target.** Go daemon owns ACP lifecycle, domain conversation model, Chat service/controller, HTTP API, SQLite durability, CDC updates, and desktop chat UI. SDK: `github.com/coder/acp-go-sdk`. |
-| **AllBeingsFuture (ABF)** | **Capability and contract reference.** Normalized streaming UX concepts, permission mediation, package-resolve heuristics, test matrices, and docs about ACP v1 mapping. **Do not** lift ABF’s Electron-main ACP transport into AO product. |
-| **AO main today** | TUI/terminal agent sessions only. No `ports.Chat*`, no `chatdriver`, no conversation tables, no conversation HTTP routes, no chat renderer surface. |
+| Normalized stream **event types** and envelope (`sequence`, `sessionId`, source) | Full fenzhi chat product (compaction, steer, skills, config options, models, MCP reload, packaging) |
+| **Backend normalizer**: provider/adapter events → sequenced stream events | Porting ABF Electron-main ACP TypeScript as the product transport |
+| **Emission path** to the renderer over AO daemon HTTP (SSE or dedicated stream) | Full provider matrix (Claude/Codex/Droid/OpenCode bindings, `acp-runtime` packaging) |
+| **Frontend reducer** + minimal timeline that renders the stream | Wholesale ABF conversation UI, missions, stickers, virtualization product chrome |
+| Unit tests for normalizer + reducer parity with ABF | Replacing TUI sessions; remote ACP transports; experimental ACP v2 |
 
-**Design decision (settled):** Prefer **fenzhi’s Go backend ACP stack** over porting ABF’s TypeScript Electron ACP adapter as-is. Map ABF product capabilities into AO ports/events; keep daemon protocol logic out of the Electron renderer.
+**One-sentence product slice:**  
+*An AO session can push ACP-shaped activity as sequenced `AgentStreamEvent`s from the daemon; the desktop renderer reduces them into a live timeline (text, thinking, tools, plan, permission, terminal states) without speaking ACP itself.*
 
 ---
 
-## 2. Architecture mapping table
-
-Status key for **main today**:
-
-- **absent** — not present on main  
-- **partial** — related surface exists but Chat/ACP is missing  
-- **present (fenzhi only)** — exists fully in fenzhi; copy path is known  
-
-| ABF component | AO (fenzhi) component | Status on main | Migration action |
-| --- | --- | --- | --- |
-| Electron main `@agentclientprotocol/sdk` + `electron/bridge/adapters/acp.ts` | `backend/internal/adapters/chatdriver/acp/*` + `github.com/coder/acp-go-sdk` | **absent** | Port fenzhi ACP package; do not port Node SDK into product daemon |
-| `electron/bridge/acp-package-resolve.ts` | Provider binding probe/launch (`claudeacp`, `nativeacp`, …) + existing agent plugins’ `ResolveBinary` | **partial** (agent plugins exist; no Chat binding) | Port fenzhi bindings; optionally reuse ABF **heuristics** only if a binding needs path discovery AO plugins lack |
-| `BridgeManager` + adapter registry | `chatdriver/registry` + daemon wiring of `ChatDriverRegistry` | **absent** | Port registry + wire in `daemon` |
-| `BridgeEvent` (adapter-internal) | `ports.ChatEvent` + domain activity/message projection | **absent** | Port fenzhi port + projector; ABF BridgeEvent is conceptual only |
-| `StreamNormalizer` → sequenced `AgentStreamEvent` | Chat **controller** projects provider events → durable rows; clients get snapshot + CDC (not IPC stream of raw deltas) | **absent** | Port fenzhi service/controller + storage; do **not** reintroduce ABF IPC sequence protocol as product wire format |
-| `agent:stream` IPC envelope (`sessionId`, `sequence`, …) | Loopback HTTP conversation snapshot + SQLite CDC change_log (existing AO pattern) | **partial** (CDC exists; no conversation entities) | Extend CDC/triggers for conversation tables; frontend consumes daemon API |
-| `agent:permission:respond` IPC | `POST .../conversation/approvals/{requestId}/resolve` | **absent** | Port HTTP + service path |
-| `ProcessService.StopProcess` cancel | `POST .../conversation/interrupt` + driver `session/cancel` | **partial** (session kill exists; not Chat interrupt) | Port Chat interrupt; keep session terminate separate |
-| Renderer `agentStreamCore` / `agentStreamTypes.ts` | `frontend/.../components/chat/*` + `hooks/useConversation.ts` + domain-aligned TS types from OpenAPI | **absent** | Port fenzhi chat UI; map ABF UX ideas (permission card, plan, tool status) into fenzhi components—not ABF CSS/layout wholesale |
-| Legacy CLI parsers (`electron/parser/*`) | **Out of Chat path.** AO TUI mode already uses terminal adapters | **present** (TUI) | Non-goal for Chat; TUI remains default session mode |
-| ABF provider profiles (`acp`, `claude-sdk`, `codex-appserver`, …) | Harness + `SessionMode` (`tui` \| `chat`) + driver registry | **partial** (harnesses exist; no mode column) | Add `SessionMode`; Chat drivers for selected harnesses |
-| ABF SQLite chat messages in Electron | `conversations` / `conversation_turns` / `messages` / `activities` (+ later migrations) | **absent** | Port fenzhi migrations (re-numbered after main head) |
-| ABF clean-room ACP v1 docs | This plan + optional `docs/` architecture note after ship | **absent** | Keep product docs AO-native; cite public ACP schema only |
-
-### 2.1 Layer ownership (target AO)
+## 1. ABF streaming pipeline (what we are migrating)
 
 ```text
-Renderer (Electron)
-  SessionChatSurface · ChatComposer · approvals/plans/tools UI
-  useConversation → HTTP + CDC
-  NEVER imports acp-go-sdk / Node ACP SDK / provider wire DTOs
-        │  loopback HTTP (127.0.0.1, unauthenticated)
+Provider adapter (ACP or legacy)
+        │  BridgeEvent  (adapter-internal, not wire to UI)
         ▼
-Daemon (Go)
-  httpd/controllers/conversations*.go
-  service/chat (Service + Controller)
-  ports.ChatDriver / ChatConversation / ChatEvent
-  adapters/chatdriver/{acp,claudeacp,nativeacp,droidacp,opencodeacp,codexappserver,registry}
-  storage/sqlite conversation* + CDC triggers
-        │  stdio NDJSON JSON-RPC (or Codex app-server)
+AgentStreamNormalizer  (sequence++, map kinds, tool output diff)
+        │  AgentStreamEvent  (provider-neutral, sequenced)
         ▼
-Provider process (user-installed CLI / packaged bridge only where fenzhi already does)
+IPC agent:stream  ──▶  parseAgentStreamEvent
+        │
+        ▼
+AgentStreamBatcher  (rAF coalesce text/thinking/tool progress)
+        │
+        ▼
+reduceAgentStreamEvent  (pure)  ──▶  messages + AgentSessionStreamState
+        │
+        ▼
+Conversation / activity UI
 ```
 
-Hard rules from `AGENTS.md` remain binding: loopback unauthenticated; CLI thin HTTP client; no daemon protocol in renderer; `~/.ao` only for app state.
+### Canonical source files (ABF)
+
+| Layer | Path |
+| --- | --- |
+| Architecture | `docs/acp-architecture.md` (StreamNormalizer, envelope, mapping) |
+| Renderer contract | `frontend/docs/acp-renderer-streaming.md` |
+| Wire types | `frontend/src/types/agentStreamTypes.ts` |
+| Normalizer | `electron/services/agent-stream-normalizer.ts` (+ `electron/tests/agent-stream-normalizer.test.ts`) |
+| Main-side types twin | `electron/services/agent-stream-types.ts` (keep in sync with frontend types) |
+| Pure reducer | `frontend/src/core/chat/agentStreamCore.ts` (+ tests) |
+| Coalesce/batch | `frontend/src/core/chat/agentStreamBatch.ts` (+ tests) |
+| Parse/IPC respond | `frontend/src/hooks/agentStreamIpc.ts` |
+| Producer only | `electron/bridge/adapters/acp.ts` → emits `BridgeEvent`; normalizer is the seam |
+
+### Load-bearing ABF rules (must preserve semantics)
+
+1. **`sequence`**: per local `sessionId`, start at `0`, strictly increasing for every emitted stream event; consumer ignores `sequence <= lastSequence` (replay-safe).  
+2. **Append-only deltas**: `text_delta.delta`, `tool_update.resultDelta` / `output.text` never carry cumulative text.  
+3. **Plan = full replace** snapshot each event.  
+4. **Thinking**: ACP chunks as `mode: 'delta'`; legacy may `replace` (reducer supports both).  
+5. **Tool updates**: ACP replacement content is **diffed** against previous full text before emitting `resultDelta`.  
+6. **Terminal events**: `done` | `error` | `cancelled` finalize partial bubbles, clear permission UI, end the turn stream.  
+7. **Permission**: surface only request (not outcome) as `permission_request`; respond out-of-band with `{ sessionId, requestId, optionId }`.  
+8. **Silence fail-open** (ABF product): after ~12s without stream events while “active”, legacy paths may resume — in AO this becomes “prefer stream while active, then fall back to snapshot/CDC” if both exist.  
+9. **No ACP SDK in renderer.**
 
 ---
 
-## 3. Capability gap analysis
+## 2. Event type map: ABF → AO wire
 
-### 3.1 ABF capability → fenzhi coverage
+### 2.1 Recommended AO product wire (streaming MVP)
 
-| Capability | ABF | fenzhi design | Gap vs main | Notes for AO port |
-| --- | --- | --- | --- | --- |
-| Stable ACP v1 stdio client | Yes (TS SDK) | Yes (Go SDK `acp-go-sdk` v0.13.5 in fenzhi) | Main missing | Pin SDK version in `backend/go.mod` when porting |
-| `initialize` / protocolVersion gate | Yes | Yes | Main missing | Reject non-v1; no experimental v2 |
-| `session/new` + resume (`session/load` or resume capability) | Yes | Yes (resume required for production floor) | Main missing | Production floor: streaming + approvals + interrupt + resume |
-| Prompt turn + streaming text | Yes | `message.delta` / `message.completed` | Main missing | Durable message rows + in-place delta mutation |
-| Thinking / reasoning | Yes (`thinking_update`) | `reasoning.delta` + `ActivityKindReasoning` | Main missing | Hideable reasoning |
-| Tool calls | Yes | activities (`command`, `mcp_tool`, …) | Main missing | Prefer typed activities over free-form tool blobs |
-| Plans | Yes | `turn.plan` + plan activity | Main missing | Full snapshot replace semantics (ABF + fenzhi agree) |
-| Permissions / approvals | Yes | `approval.requested` / resolve API | Main missing | Provider-offered decision options only (`ErrChatDecisionNotOffered`) |
-| Cancel in-flight turn | Yes | interrupt | Main missing | Map late stop → `ErrChatNoActiveTurn` (ordinary, not 500) |
-| Legacy + native dual path | Yes (explicit) | Chat vs TUI session modes | TUI only on main | Keep TUI default; Chat opt-in per session |
-| Sequenced live stream IPC | Yes | **Different:** durable sequence + CDC | Main has CDC only | Do not clone ABF IPC sequence as API; follow fenzhi |
-| Compaction | Weak / optional | First-class capability + API | Main missing | Later phase OK |
-| Steer mid-turn | No (ABF) | `ChatSteerer` + API | Main missing | Codex-first; optional for ACP agents |
-| Config options / models / skills | Partial status messages in ABF docs | First-class list/set APIs | Main missing | Phase after core chat |
-| Usage / rate limits / diffs / MCP reload | Partial | Full port surfaces in fenzhi | Main missing | Phase after core chat |
-| Nested agents / elicitation / images | Partial product | Capabilities modeled in ports | Main missing | Capability-gated; do not block MVP |
-| Package resolve for packaged ACP adapters | Yes (Node) | `frontend/acp-runtime` + `claudeacp` runtime resolve | Main missing | Port fenzhi packaging, not ABF resolve wholesale |
-| Fake ACP agent tests | Yes (`fixtures/fake-acp-agent.ts`) | Go unit tests + e2e chat suite | Main missing | Prefer fenzhi Go tests; ABF fixture ideas only |
+**Keep the ABF `AgentStreamEvent` discriminated union as the cross-process contract**, with one transport change:
 
-### 3.2 What ABF has that fenzhi already covers (port fenzhi, not ABF code)
-
-- Provider-neutral streaming UX (text, thinking, tools, plan, permissions, terminal turn states).
-- Permission request/response mediation with cancel-on-stop.
-- Native ACP process lifecycle (init → session → prompt → cancel → teardown).
-- MCP server injection into session setup (stdio/http/sse negotiation).
-- Separation of renderer from ACP SDK.
-
-### 3.3 What ABF has that is still product/design work on top of fenzhi
-
-- ABF-specific supervisor/child mission product model (out of scope for Chat MVP).
-- ABF proprietary conversation UI (layout, stickers, virtualization details)—**do not wholesale copy**.
-- ABF package-resolve edge cases for multi-layout Electron packaging—audit against AO forge packaging only if Claude ACP runtime packaging fails.
-- ABF dual “legacy adapter still emits BridgeEvent” path—AO already has TUI mode; no need for a second legacy chat normalizer in process.
-
-### 3.4 What fenzhi has that ABF does not (bring intentionally)
-
-- Separate **Chat port** from Agent/Runtime (no keystroke “send”).
-- Durable conversation model (messages ≠ activities; conversation-scoped immutable sequence).
-- Production capability floor for mutating workspace Chat sessions.
-- Steer, compaction, rollback, fork, rename, config options, skills, MCP reload, usage/rate limits as first-class optional interfaces.
-- Codex **app-server** driver (`codexappserver`) as a non-ACP machine protocol beside ACP.
-- Full HTTP OpenAPI surface under `/api/v1/sessions/{sessionId}/conversation/*`.
-- Backend e2e suite (`backend/e2e/chat_*.go`).
-
----
-
-## 4. Main baseline (facts to preserve)
-
-As of this plan’s research against the worktree’s then-current main lineage:
-
-| Area | Main state |
+| ABF transport | AO transport (target) |
 | --- | --- |
-| `backend/internal/ports/` | No `chat.go` / `chat_steer.go` |
-| `backend/internal/adapters/chatdriver/` | **Does not exist** |
-| `backend/internal/service/chat/` | **Does not exist** |
-| `backend/internal/domain/conversation.go` / `sessionmode.go` | **Do not exist** |
-| SQLite migrations | Head around `0042_review_run_unique_per_harness.sql` (no conversation migrations) |
-| HTTP DTOs / OpenAPI | No conversation operations |
-| Frontend | No `renderer/components/chat/` |
-| Agent plugins | TUI launch/auth already exist for many harnesses (reuse for Chat probe/launch) |
-| CDC | Present for sessions etc.; extend for conversation tables via triggers |
+| Electron IPC `agent:stream` push | Daemon **SSE** (preferred) or WebSocket on loopback HTTP |
+| `agent:permission:respond` invoke | `POST` on a session-scoped approval route (minimal) |
+| Envelope fields on every event | Same: `sessionId`, `sequence`, optional `timestamp`, optional `source` |
 
-fenzhi conversation migrations start at `0041_chat_session_mode.sql` through `0051_...`. On main they must be **re-numbered** after the live head (never edit already-merged migrations).
+**Do not** invent a second parallel event vocabulary in the renderer. Backend may use an internal adapter event type (ABF `BridgeEvent` or fenzhi `ports.ChatEvent`), but the **daemon→UI stream frame** should be ABF-compatible `AgentStreamEvent` JSON so the reducer ports almost verbatim.
 
----
+Optional later: a thin alias layer if AO OpenAPI wants `camelCase` DTO names — keep field-level parity with ABF types.
 
-## 5. File-level port list
+### 2.2 `AgentStreamEvent` union (AO wire — copy semantics)
 
-### 5.1 Primary port from fenzhi (authoritative)
-
-Port in dependency order. Paths are relative to repo root; source tree is fenzhi.
-
-#### Phase A — domain + ports (no process I/O)
-
-| fenzhi path | Notes |
-| --- | --- |
-| `backend/internal/domain/sessionmode.go` (+ test) | `tui` / `chat`; default `tui` |
-| `backend/internal/domain/conversation.go` | Durable model + plan types |
-| `backend/internal/ports/chat.go` | ChatDriver, events, capabilities, errors |
-| `backend/internal/ports/chat_steer.go` | Optional steerer |
-
-#### Phase B — storage
-
-| fenzhi path | Notes |
-| --- | --- |
-| `backend/internal/storage/sqlite/migrations/0041_chat_session_mode.sql` … `0051_*.sql` | Re-number as `00NN+` on main |
-| `backend/internal/storage/sqlite/queries/conversations.sql` (+ session column queries) | sqlc source |
-| `backend/internal/storage/sqlite/store/conversation_store.go` (+ history store tests) | |
-| Generated `gen/*` via `npm run sqlc` only | Do not hand-edit gen |
-
-#### Phase C — chatdriver adapters
-
-| fenzhi path | Notes |
-| --- | --- |
-| `backend/internal/adapters/chatdriver/acp/*.go` | Lifecycle + mapping; owns ACP |
-| `backend/internal/adapters/chatdriver/registry/*` | |
-| `backend/internal/adapters/chatdriver/claudeacp/*` | Claude via packaged ACP runtime + `CLAUDE_CODE_EXECUTABLE` |
-| `backend/internal/adapters/chatdriver/nativeacp/*` | Shared native binding helper |
-| `backend/internal/adapters/chatdriver/droidacp/*` | |
-| `backend/internal/adapters/chatdriver/opencodeacp/*` | |
-| `backend/internal/adapters/chatdriver/codexappserver/*` | Non-ACP; keep as parallel driver |
-
-#### Phase D — service + session manager hooks
-
-| fenzhi path | Notes |
-| --- | --- |
-| `backend/internal/service/chat/*` | Service, controller, history, steer, skills |
-| `backend/internal/session_manager/chat_spawn.go` (+ tests, attachments) | Spawn path for Chat mode |
-| Session status derivation updates that treat Chat activity | e.g. fenzhi `service/session/status.go` Chat exemption patterns |
-| Daemon wiring of registry + chat service | Follow fenzhi `daemon` patterns |
-
-#### Phase E — HTTP + OpenAPI + CLI (if any)
-
-| fenzhi path | Notes |
-| --- | --- |
-| `backend/internal/httpd/controllers/conversations*.go` (+ tests) | |
-| `backend/internal/httpd/controllers/dto.go` conversation DTOs | |
-| `backend/internal/httpd/apispec/specgen/build.go` operations | Then `npm run api` |
-| CLI only if fenzhi exposes chat commands still desired | Thin HTTP; mirror DTOs; table tests |
-
-#### Phase F — frontend
-
-| fenzhi path | Notes |
-| --- | --- |
-| `frontend/src/renderer/components/chat/**` | AO design system / DESIGN.md |
-| `frontend/src/renderer/hooks/useConversation.ts` (+ test) | |
-| `frontend/src/renderer/types/conversation.ts` | Prefer OpenAPI-generated types where possible |
-| Session surface integration (mode toggle / chat panel entry) | Surgical; do not restyle board |
-| `frontend/acp-runtime/**` + `frontend/scripts/build-acp-runtime.mjs` | Packaged Claude ACP adapter runtime only |
-
-#### Phase G — tests & packaging
-
-| fenzhi path | Notes |
-| --- | --- |
-| `backend/e2e/chat_*.go` + `harness_test.go` | Bring after API stable |
-| Unit tests colocated with adapters/service | Port with code |
-| `backend/go.mod` / `go.sum` | Add `github.com/coder/acp-go-sdk` |
-
-### 5.2 Selective concepts from ABF (not wholesale file ports)
-
-Use as **requirements and test ideas**, re-implement inside fenzhi shapes:
-
-| ABF path | Extract | Re-home in AO |
+| `type` | Payload | Semantics |
 | --- | --- | --- |
-| `docs/acp-architecture.md` | Lifecycle diagram, security notes, capability honesty (no fs/terminal client caps until implemented) | This plan + future `docs/` architecture section |
-| `frontend/docs/acp-renderer-streaming.md` | Event semantics (append-only deltas, plan replace, terminal events) | Verify fenzhi projector + UI match; do not invent ABF IPC on daemon |
-| `electron/bridge/adapters/acp.ts` | Mapping table ACP v1 → UI concepts; permission cancel-on-destroy; MCP capability assert | Cross-check `chatdriver/acp/client.go` + conversation mapping |
-| `electron/bridge/types.ts` | BridgeEvent kind inventory for gap checklist | Already covered by `ports.ChatEventKind` |
-| `frontend/src/types/agentStreamTypes.ts` | Product UX event set | Ensure fenzhi UI covers parity items needed for MVP |
-| `electron/bridge/acp-package-resolve.ts` | Candidate node_modules roots / unpack heuristics | Only if AO desktop packaging of `acp-runtime` needs it |
-| `electron/tests/acp-*.ts` | Cases: handshake fail, permission respond, cancel, package resolve | Port as Go tests / e2e assertions |
-| `electron/services/agent-stream-normalizer.ts` | Diff tool_call_update replacement content into deltas | Confirm fenzhi activity projection does equivalent |
+| `text_delta` | `itemId`, `delta` | Append-only assistant text |
+| `thinking_update` | `itemId`, `text`, `mode?: 'delta' \| 'replace'` | Reasoning stream |
+| `tool_call` | `toolCallId`, `title`, `name?`, `input?` | Tool creation |
+| `tool_update` | `toolCallId`, `status`, optional fields, `resultDelta?`, `output?`, `error?` | Progress/result; deltas append-only |
+| `plan` | `title?`, `entries[]` | Full plan replace |
+| `status` | `status: starting \| running \| waiting \| idle`, `message?` | App lifecycle (not ACP v2) |
+| `permission_request` | `request: { requestId, toolCallId?, title, description?, options[] }` | Blocks until resolve/cancel |
+| `done` | `stopReason?` | Terminal success |
+| `error` | `message` | Terminal failure |
+| `cancelled` | `reason?` | Terminal cancel |
 
-**Explicit non-ports from ABF:** `electron/parser/*` legacy log parsers for Chat; proprietary mission/team UI; stickers; ABF Zustand stores; ABF IPC channel names.
+Envelope on every event:
+
+```ts
+{ sessionId: string; sequence: number; timestamp?: string;
+  source?: { kind: 'native-acp-v1' | 'legacy-adapter'; provider?: string } }
+```
+
+### 2.3 Internal producer map (BridgeEvent / ACP → stream)
+
+From ABF normalizer (`AgentStreamNormalizer.normalize`):
+
+| Input (`BridgeEvent.event`) | Output stream `type` | Notes |
+| --- | --- | --- |
+| `delta` + text | `text_delta` | empty text → drop |
+| `thinking` | `thinking_update` `mode: 'delta'` | |
+| `tool` `!isUpdate` | `tool_call` | |
+| `tool` `isUpdate` | `tool_update` | diff output → `resultDelta` |
+| `plan` | `plan` | empty remove → `entries: []` |
+| `permission` without outcome | `permission_request` | outcomes dropped |
+| `status` phase | `status` | ignore non-UI phases (e.g. `ready`) |
+| `done` / cancel stopReason | `done` or `cancelled` | clear tool output cache |
+| `error` | `error` | clear tool output cache |
+| `agent_task` | *(drop)* | out of stream MVP |
+
+### 2.4 Optional mapping through fenzhi `ports.ChatEvent` (if Chat stack lands later)
+
+Use only as an **adapter-internal** intermediate. Streaming MVP does **not** require durable conversation tables.
+
+| ABF stream | fenzhi `ChatEventKind` (internal) |
+| --- | --- |
+| `text_delta` | `message.delta` |
+| `thinking_update` | `reasoning.delta` |
+| `tool_call` / `tool_update` | `activity.started` / `activity.completed` (+ `command.output.delta`) |
+| `plan` | `turn.plan` |
+| `permission_request` | `approval.requested` |
+| `status` | `controller.state` / turn lifecycle |
+| `done` / `cancelled` / `error` | `turn.completed` + `TurnState*` / `error` |
+
+If both exist: **normalizer emits AgentStreamEvent for live UI**; durable projector may separately consume ChatEvents. Do not force the renderer to reduce ChatEvent kinds.
+
+### 2.5 ACP v1 notification → BridgeEvent (producer side, reference)
+
+From ABF docs (implement in Go or TS adapter behind the normalizer):
+
+| ACP v1 | Bridge / stream |
+| --- | --- |
+| `agent_message_chunk` text | `delta` → `text_delta` |
+| `agent_thought_chunk` text | `thinking` → `thinking_update` delta |
+| `tool_call` | `tool` create → `tool_call` |
+| `tool_call_update` | `tool` update → `tool_update` (diff content) |
+| `plan` | `plan` → `plan` |
+| `session/request_permission` | `permission` → `permission_request` |
+| prompt `stopReason` | `done` / `cancelled` |
+| transport failure | `error` |
 
 ---
 
-## 6. Phased PR breakdown
+## 3. Backend: normalizer + emission path
 
-Keep **one concern per PR**. Conventional commits. Each PR should leave main green.
-
-### PR-0 — Docs (this document)
-
-- **Scope:** `docs/plans/acp-migration-from-abf-fenzhi.md` only  
-- **Exit:** Team agrees architecture (fenzhi primary, ABF concepts only)
-
-### PR-1 — Backend core: domain, ports, schema foundation
-
-- Add `SessionMode`, conversation domain types, `ports.Chat*`  
-- Migration(s) for: `sessions.mode`, `provider_conversation_id`, core `conversations` / turns / messages / activities tables + CDC triggers  
-- Store interfaces + sqlc  
-- **No** live provider process required  
-- **Tests:** domain pure tests; store tests with sqlite  
-- **Success:** can create Chat-mode session row + empty conversation snapshot in tests
-
-### PR-2 — Chat service/controller (fake driver)
-
-- `service/chat` with in-memory/fake `ChatDriver`  
-- Project events to durable rows; approvals; interrupt  
-- Session manager spawn hook for Chat (still fake driver)  
-- **Tests:** controller unit tests from fenzhi (trimmed)  
-- **Success:** send message → deltas persist → interrupt → approval resolve against fake
-
-### PR-3 — Provider-neutral ACP driver + registry
-
-- Port `chatdriver/acp` + registry  
-- Wire daemon  
-- Fake ACP agent or recorded pipes in unit tests  
-- **Success:** ACP handshake + turn + permission + cancel against fake process
-
-### PR-4 — Provider bindings (split if needed)
-
-Recommended sub-order:
-
-1. **codexappserver** (often highest product value; non-ACP) **or** **claudeacp** (ACP + packaged runtime)—product owner picks first ship harness  
-2. `nativeacp` + `opencodeacp` + `droidacp`  
-3. Packaging: `frontend/acp-runtime` for Claude bridge  
-
-Each binding reuses existing agent plugin `ResolveBinary` / `AuthStatus`.
-
-**Success per binding:** `Probe` works; Start/Resume/SendTurn/Interrupt/approvals green in unit or gated live tests.
-
-### PR-5 — HTTP API + OpenAPI + typed client
-
-- Controllers + DTOs  
-- `npm run api` → commit `openapi.yaml` + `frontend/src/api/schema.ts`  
-- Map port errors to stable API error codes  
-- Optional thin CLI conversation commands if product wants them  
-- **Tests:** httptest controller tests; api drift tests  
-
-### PR-6 — Frontend chat surface
-
-- Port fenzhi chat components + `useConversation`  
-- Session inspector / workbench entry for Chat mode  
-- Approvals, plans, tools, interrupt, composer  
-- Follow `DESIGN.md` / agent-orchestrator look; no ABF skin  
-- **Tests:** component tests; smoke e2e if feasible  
-
-### PR-7 — Hardening: advanced capabilities + e2e
-
-- Compaction, steer, models/config options, skills, usage, diffs, MCP reload as prioritized  
-- Port fenzhi `backend/e2e/chat_*.go`  
-- Docs: architecture note + STATUS.md  
-
-### Suggested dependency graph
+### 3.1 Placement in AO
 
 ```text
-PR-0 docs
-  └─▶ PR-1 domain/schema
-        └─▶ PR-2 service (fake)
-              ├─▶ PR-3 acp core
-              │     └─▶ PR-4 bindings (+ packaging)
-              └─▶ PR-5 HTTP/OpenAPI ──▶ PR-6 frontend
-                                        └─▶ PR-7 e2e/advanced
+[optional] ACP process adapter (later PR / sibling)
+        │  internal events (Bridge-like or ChatEvent)
+        ▼
+backend normalizer (NEW)  — sequence allocator per sessionId
+        │  AgentStreamEvent JSON
+        ▼
+session stream hub (NEW)  — fan-out, optional ring buffer for reconnect
+        │
+        ▼
+httpd SSE  GET /api/v1/sessions/{sessionId}/agent-stream
+        │  (loopback 127.0.0.1, unauthenticated — existing AO rule)
+        ▼
+renderer EventSource → parse → batch → reduce → timeline
 ```
 
-PR-3 and PR-5 can partially parallelize after PR-2 if API contracts are frozen from fenzhi DTOs early—prefer freezing OpenAPI from fenzhi shapes in PR-5 only after service methods stabilize.
+**Boundary rules (fenzhi-aligned):**
+
+- Normalizer + sequence + permission correlation live in the **daemon**, not Electron main, not renderer.  
+- Renderer does not import `acp-go-sdk` or Node ACP SDK.  
+- CLI stays a thin HTTP client if any stream debug command is added later.
+
+### 3.2 Why not only existing `/api/v1/events` CDC?
+
+Main already has CDC SSE (`GET /api/v1/events`) for **durable row changes** (`session_updated`, PR facts, …). High-frequency token deltas do **not** belong as one SQLite change_log row per token:
+
+| Approach | Fit for streaming MVP |
+| --- | --- |
+| **Dedicated agent-stream SSE** (recommended) | Matches ABF push semantics; sequence owned by stream hub; no DB write per delta |
+| CDC after durable projection | Good for **final** message/activity rows once Chat storage exists; too slow/heavy for live typing |
+| Terminal websocket mux | Wrong abstraction (bytes/PTY), not typed agent events |
+
+**MVP recommendation:** new session-scoped SSE for live `AgentStreamEvent`. Optionally later, CDC invalidates a conversation snapshot after terminal turn.
+
+### 3.3 Backend components to add (minimal)
+
+| Component | Responsibility |
+| --- | --- |
+| `AgentStreamEvent` DTO (Go) | Mirror ABF JSON field names |
+| `StreamNormalizer` | Port ABF normalizer logic (sequence, tool diff, kind map) |
+| `StreamHub` | Per-session subscribers, last-N ring buffer, configure source kind |
+| `EventsController` route or new controller | `GET .../agent-stream?afterSequence=` |
+| Permission resolve handler | Minimal POST; completes parked permission in producer |
+| Fake producer (tests / demo) | Inject synthetic Bridge-like events without real ACP |
+
+### 3.4 Sequence + reconnect
+
+- Server allocates sequence; clients send `afterSequence` (or SSE `Last-Event-ID` if framed that way).  
+- Replay from ring buffer only (`sequence > after`); never re-send cumulative text.  
+- On hub clear/session destroy: clients reset `lastSequence` or receive a stream-reset control event (pick one policy in implementation; prefer explicit `status: idle` + client reset on session change).
+
+### 3.5 What **not** to build in streaming PRs
+
+- Full `chatdriver` provider matrix, `acp-runtime` packaging, conversation SQLite schema, steer/compaction/skills APIs.  
+Those may land in **other** migrations; streaming must demo with a **fake producer** or a single thin ACP fake process.
 
 ---
 
-## 7. Event / API contract mapping (ABF stream → AO Chat)
+## 4. Frontend: reducer + timeline
 
-Implementers should treat the **right-hand column** as product truth.
+### 4.1 Port as pure modules (high fidelity)
 
-| ABF `AgentStreamEvent` | AO `ports.ChatEvent` / domain | HTTP / UI effect |
+| ABF module | AO target (suggested) | Notes |
 | --- | --- | --- |
-| `text_delta` | `message.delta` | Mutate assistant message in place |
-| `thinking_update` | `reasoning.delta` / reasoning activity | Collapsible reasoning |
-| `tool_call` / `tool_update` | `activity.started` / `activity.completed` (+ command output deltas) | Tool/command cards |
-| `plan` | `turn.plan` | Replace plan UI |
-| `permission_request` | `approval.requested` | Approval card; resolve via POST |
-| `status` | `controller.state` + turn state | Banners / busy |
-| `done` / `cancelled` / `error` | `turn.completed` + `TurnState*` / `error` | Finalize turn |
-| IPC `sequence` | Conversation `sequence` on rows + CDC | Client applies by sequence; no ABF IPC |
+| `agentStreamTypes.ts` | `frontend/src/renderer/lib/agent-stream/types.ts` (or `shared/`) | Source of truth types |
+| `agentStreamCore.ts` | `.../agent-stream/reduce.ts` | Pure reduce; **port tests** |
+| `agentStreamBatch.ts` | `.../agent-stream/batch.ts` | Coalesce text/thinking/tool progress |
+| `agentStreamIpc.ts` parse | `.../agent-stream/parse.ts` | Drop Electron invoke; keep parse |
+| Permission respond | thin API client POST | No `window.electronAPI` |
+| Stream subscribe | `EventSource` helper (pattern from `event-transport.ts` / workspace events) | |
+
+### 4.2 Reducer contract (must keep)
+
+From ABF `reduceAgentStreamEvent` behavior (tests are the spec):
+
+- Ignore `sequence <= lastSequence`.  
+- Stamp `lastEventAt`; silence timeout fail-open helpers.  
+- Append text into partial assistant bubble by `itemId`; open **new** bubble after tools / after terminal even if itemId reuses.  
+- Thinking delta vs replace.  
+- Tool call + update correlation (`toolCallId`); progressive stdout merge.  
+- Plan replace; clear plan on terminal/idle.  
+- Permission set/clear on terminal.  
+- Phase machine: `idle → running → waiting_permission → cancelling → done|error|cancelled`.
+
+### 4.3 Minimal timeline UI (demo-only chrome)
+
+Only enough surface to **prove the stream**:
+
+- Scrollable list of reduced messages (assistant text, thinking collapsed, tool cards).  
+- Plan panel when `stream.plan` set.  
+- Permission buttons when `stream.permission` set.  
+- Status/phase indicator + Stop (calls interrupt/cancel stub).  
+
+Use existing AO shadcn / DESIGN.md primitives. **Do not** port ABF ConversationView layout, stickers, or virtualization product work unless a stream demo is blocked without them.
+
+### 4.4 Integration point
+
+- Session inspector or a dedicated “Agent stream” panel when a session is selected.  
+- Hook: `useAgentStream(sessionId)` → EventSource + batcher + reduce into local React state (or a small store).  
+- No dependency on Chat-mode session flag for MVP if fake producer is session-scoped for any session id used in tests.
 
 ---
 
-## 8. Risks
+## 5. Phased PRs (streaming only)
 
-1. **Schema renumbering / migration collision** — fenzhi `0041+` collides with main’s non-chat migrations; must resequence and retest empty + upgrade DBs.  
-2. **SDK version skew** — `acp-go-sdk` vs ABF Node SDK vs provider agents; negotiate only stable v1; pin and test handshake failures.  
-3. **Resume semantics** — silent new conversation after daemon restart is forbidden (`ErrChatResumeFailed`); UI must force recovery choice.  
-4. **Dual mode confusion** — Chat vs TUI on same harness; mode immutable per session; status derivation and “send” paths must not cross.  
-5. **Packaging Claude ACP runtime** — Node bridge packaging (`acp-runtime`) can break desktop updates if not integrated into forge build.  
-6. **Permission consent bugs** — inventing decision options or auto-allow-always without policy is a security defect.  
-7. **Scope creep from ABF UI** — copying ABF conversation chrome violates AO design system and delays ship.  
-8. **Codex app-server vs ACP** — two machine protocols; keep separate packages; do not force Codex through ACP if fenzhi uses app-server.  
-9. **CDC lag / projector races** — deferred turn start (fenzhi `ChatDeferredTurnStarter`) must be preserved to avoid event loss.  
-10. **Live provider flakiness** — gate live tests; keep fake/unit coverage as merge gate.
+Keep PRs small; conventional commits; one concern each.
 
----
+### PR-S0 — Docs (this plan)
 
-## 9. Non-goals
+- Rewrite plan around streaming-only goal.  
+- **Exit:** team aligned on wire = ABF `AgentStreamEvent` over daemon SSE.
 
-- Porting ABF Electron-main ACP TypeScript stack as AO’s product transport.  
-- Putting ACP SDK or provider wire parsing in the renderer.  
-- Adopting experimental ACP v2 / remote HTTP-WS ACP in the first ship.  
-- Replacing TUI mode or forcing all harnesses to Chat.  
-- Wholesale ABF UI, mission/team/sticker product surfaces.  
-- Auto-accept permissions by default.  
-- Advertising client `fs` / `terminal` ACP capabilities until AO implements them safely (fenzhi deliberately refuses).  
-- Editing already-merged SQLite migrations.  
-- npm-as-primary distribution changes.  
-- Implementing the full stack in the planning session (this PR).
+### PR-S1 — Shared stream types + pure reducer/batcher (frontend-first OK)
 
----
+- Port `AgentStreamEvent` types, `parseAgentStreamEvent`, `reduceAgentStreamEvent`, batch/coalesce.  
+- Port ABF unit tests (vitest) with AO paths.  
+- **No** UI chrome beyond optional story/fixture if needed for tests.  
+- **Success:** tests green for sequence ignore, text append, tools, plan, permission clear, terminal flush.
 
-## 10. Success criteria
+### PR-S2 — Backend normalizer + hub + SSE
 
-### MVP (after PR-1…PR-6 for at least one harness)
+- Go DTO + normalizer ported from ABF rules (table-driven tests).  
+- In-memory hub + `GET /api/v1/sessions/{sessionId}/agent-stream`.  
+- Fake producer endpoint or test-only inject for e2e (e.g. internal test helper, or `POST .../agent-stream/fixtures` behind build tag / debug).  
+- **Success:** curl/EventSource receives strictly increasing sequences; tool diff correct; permission event shape valid.
 
-- [ ] Session can be created with `mode=chat` for a supported harness; default remains `tui`.  
-- [ ] Daemon owns provider process; renderer only uses loopback HTTP + CDC.  
-- [ ] User can send a message, see streaming assistant text, tools/activities, and plans.  
-- [ ] User can resolve a permission request with only provider-offered options.  
-- [ ] User can interrupt a turn; late interrupt is a soft error, not a crash.  
-- [ ] Daemon restart resumes provider conversation or surfaces resume failure—never silent empty thread.  
-- [ ] Production floor capabilities enforced before workspace-mutating Chat.  
-- [ ] OpenAPI + `schema.ts` committed and drift-clean.  
-- [ ] `go test` for touched packages and relevant e2e/unit gates green.  
-- [ ] No ACP protocol logic in Electron renderer; no `~/Library/Application Support` state.
+### PR-S3 — Frontend wire-up + minimal timeline
 
-### Full fenzhi parity (PR-7+)
+- EventSource client + batcher + reduce into UI.  
+- Permission POST + cancel/stop stub.  
+- Session panel demo.  
+- **Success:** running fake producer updates timeline live; replay afterSequence works; no ACP SDK in renderer.
 
-- [ ] Codex app-server + Claude ACP + at least one native ACP harness.  
-- [ ] Steer/compaction/config options/skills/usage as capability-gated UI.  
-- [ ] Backend e2e chat suite ported and running in CI where feasible.
+### PR-S4 — Thin real producer (optional, still not full product)
+
+- Single path that feeds the normalizer from a real or fake ACP stdio process **or** from fenzhi-style ChatEvent bridge if Chat lands.  
+- Still **not** multi-provider packaging.  
+- **Success:** one end-to-end native-acp-v1 source kind in `source` field.
+
+### Dependency graph
+
+```text
+PR-S0 docs
+  ├─▶ PR-S1 frontend pure stream modules + tests
+  └─▶ PR-S2 backend normalizer + SSE
+        └─▶ PR-S3 UI wire-up (needs S1 + S2)
+              └─▶ PR-S4 optional real producer
+```
+
+S1 and S2 can parallelize after S0.
 
 ---
 
-## 11. Recommended worker spawn order
+## 6. File-level port list (streaming)
 
-1. **Backend domain/schema worker** — PR-1  
-2. **Backend chat service worker** — PR-2 (depends on 1)  
-3. **Backend ACP driver worker** — PR-3 (depends on 2)  
-4. **Backend provider binding worker(s)** — PR-4 (depends on 3; can fan out per harness)  
-5. **Backend HTTP/OpenAPI worker** — PR-5 (depends on 2; ideally after 3 method freeze)  
-6. **Frontend chat UI worker** — PR-6 (depends on 5)  
-7. **E2E/hardening worker** — PR-7 (depends on 4+6)
+### From ABF (primary for stream logic)
 
-Do **not** start frontend before OpenAPI exists. Do **not** start provider live tests before fake-driver controller is green.
+| Source | Action |
+| --- | --- |
+| `frontend/src/types/agentStreamTypes.ts` | Port types |
+| `frontend/src/core/chat/agentStreamCore.ts` + tests | Port pure reduce |
+| `frontend/src/core/chat/agentStreamBatch.ts` + tests | Port batch/coalesce |
+| `frontend/src/hooks/agentStreamIpc.ts` | Port **parse** only; rehome permission to HTTP |
+| `electron/services/agent-stream-normalizer.ts` + tests | Reimplement in **Go** (or shared test vectors) |
+| `electron/services/agent-stream-types.ts` | Ensure parity with frontend types |
+| `frontend/docs/acp-renderer-streaming.md` | Condense into this plan / short AO stream doc later |
+| `docs/acp-architecture.md` §§4–5 | Mapping + permission rules |
+| `electron/bridge/types.ts` | Internal producer event shape reference |
+| `electron/bridge/adapters/acp.ts` | Producer mapping reference only |
 
----
+### From fenzhi (boundary / emission reference only)
 
-## 12. Explicit next actions for implementer workers
+| Source | Use |
+| --- | --- |
+| `backend/internal/ports/chat.go` event kinds | Optional internal intermediate; not required for MVP wire |
+| `service/chat` controller event loop | Pattern for serializing per-session emit |
+| Chat UI components | **Not** required; steal patterns only if timeline needs a card |
+| Full chatdriver / migrations / OpenAPI conversation surface | **Non-goal** for this plan |
 
-1. Confirm product **first ship harness** (Claude ACP vs Codex app-server).  
-2. Diff fenzhi vs main for session spawn/status/daemon wiring and list exact merge conflicts expected (main has moved past some fenzhi bases).  
-3. Land PR-1 with renumbered migrations; run `npm run sqlc`.  
-4. Port `ports/chat.go` verbatim in spirit (keep comments that encode rules).  
-5. Introduce fake driver before real ACP process code.  
-6. Port `chatdriver/acp` with `acp-go-sdk`; refuse client fs/terminal caps.  
-7. Wire registry in daemon; keep loopback bind unchanged.  
-8. Generate API; only then port fenzhi chat UI.  
-9. Add packaging for `acp-runtime` if Claude is first ship.  
-10. Track STATUS.md once MVP merges.
+### Main AO reuse
 
----
-
-## 13. Reference inventory (read-only sources)
-
-### fenzhi
-
-- `backend/internal/ports/chat.go`, `chat_steer.go`  
-- `backend/internal/adapters/chatdriver/**`  
-- `backend/internal/service/chat/**`  
-- `backend/internal/domain/conversation.go`, `sessionmode.go`  
-- `backend/internal/httpd/controllers/conversations*.go`  
-- `backend/internal/storage/sqlite/migrations/0041_chat_session_mode.sql` … `0051_*`  
-- `frontend/src/renderer/components/chat/**`, `hooks/useConversation.ts`  
-- `frontend/acp-runtime/package.json`  
-- `backend/e2e/chat_*.go`  
-- `backend/go.mod` → `github.com/coder/acp-go-sdk`
-
-### AllBeingsFuture
-
-- `docs/acp-architecture.md`  
-- `frontend/docs/acp-renderer-streaming.md`  
-- `electron/bridge/adapters/acp.ts`  
-- `electron/bridge/acp-package-resolve.ts`  
-- `electron/bridge/types.ts`  
-- `frontend/src/types/agentStreamTypes.ts`  
-- `electron/tests/acp-*.ts`
-
-### Public ACP
-
-- Stable schema: https://github.com/agentclientprotocol/agent-client-protocol (`schema/v1`)  
-- Go SDK: `github.com/coder/acp-go-sdk`  
-- Do not use experimental v2 product paths
+| Existing | Use |
+| --- | --- |
+| `frontend/src/renderer/lib/event-transport.ts` | EventSource reconnect patterns |
+| `backend/internal/httpd/events.go` | SSE write helpers / style |
+| Loopback daemon + typed API client generation | If stream route is OpenAPI-registered |
 
 ---
 
-## 14. Open decisions (need product/orchestrator input)
+## 7. Risks
+
+1. **Confusing stream SSE with CDC** — token spam must not hit `change_log`.  
+2. **Sequence policy on reconnect** — wrong reset causes blank or duplicated text.  
+3. **Tool output diff bugs** — replacement vs delta mismatches explode UI.  
+4. **Permission correlation** — requestId must match parked RPC; invalid optionId must not consume request.  
+5. **Scope creep** — full Chat stack / multi-provider packaging derails the stream demo.  
+6. **Dual state** — if snapshot polling is added later, enforce ABF “prefer stream while active” rules.  
+7. **Batching latency** — preserve ABF immediate flush for terminal/permission/plan; only batch high-frequency deltas.
+
+---
+
+## 8. Non-goals (explicit)
+
+- Full Chat session mode, conversation SQLite schema, OpenAPI conversation CRUD.  
+- Multi-provider Chat drivers (`claudeacp`, `codexappserver`, …) and desktop `acp-runtime` packaging.  
+- Porting ABF Electron ACP adapter as AO’s runtime.  
+- ACP SDK or provider parsing in the renderer.  
+- Experimental ACP v2 / remote HTTP ACP.  
+- ABF proprietary conversation chrome (missions, stickers, full virtualization product).  
+- Replacing TUI terminal sessions.  
+- Steer, compaction, skills, model pickers, MCP reload UIs — unless a stream event cannot be demoed without a stub control.
+
+---
+
+## 9. Success criteria (streaming MVP)
+
+- [ ] Documented map ABF stream types ↔ AO SSE JSON is implemented 1:1 for the union above.  
+- [ ] Backend allocates monotonic `sequence` per session; clients drop duplicates/replays.  
+- [ ] Normalizer tool output is append-only `resultDelta` (diffed).  
+- [ ] Frontend pure reducer + batcher tests ported and green.  
+- [ ] Minimal timeline shows text, thinking, tools, plan, permission, and terminal states from a fake producer.  
+- [ ] Permission resolve round-trip works over HTTP.  
+- [ ] Renderer has zero ACP SDK dependency.  
+- [ ] Loopback-only daemon path; no new authenticated network listener.
+
+---
+
+## 10. Recommended worker spawn order
+
+1. **Docs** — this plan (S0).  
+2. **Frontend stream core** — types + reduce + batch + tests (S1).  
+3. **Backend stream** — normalizer + hub + SSE + tests (S2).  
+4. **Frontend integration** — EventSource + minimal timeline + permission POST (S3).  
+5. **Optional producer** — thin ACP or fixture feeder (S4).
+
+Avoid parallel edits to the same files: S1 owns `frontend/.../agent-stream/*`; S2 owns `backend/.../agentstream/*` (or similar); S3 only wires them.
+
+---
+
+## 11. Explicit next actions for implementers
+
+1. Freeze wire JSON: commit ABF-compatible `AgentStreamEvent` TypeScript + matching Go struct tags.  
+2. Land **PR-S1** with ABF reducer/batcher tests as the behavioral spec.  
+3. Land **PR-S2** with table tests for normalizer (text, thinking, tool diff, plan, permission drop-on-outcome, terminal).  
+4. Add SSE route + ring buffer; document `afterSequence` query.  
+5. Wire **PR-S3** demo panel; use fake producer only until S4.  
+6. Do **not** start packaging/provider matrix under this plan’s PRs.
+
+---
+
+## 12. Open decisions (streaming-specific)
 
 | Decision | Options | Recommendation |
 | --- | --- | --- |
-| First Chat harness | Claude ACP / Codex app-server / OpenCode native | Codex if app-server stability is known in fenzhi; else Claude if desktop packaging ready |
-| Default mode for new sessions | Always `tui` / opt-in Chat / harness-default | Keep **default `tui`** (fenzhi) |
-| CLI conversation commands | HTTP-only first / add `ao chat` subset | HTTP-only first; CLI later if needed |
-| How much of fenzhi advanced capabilities in MVP | Core stream+approve+interrupt+resume only / full parity | **Core first**; advanced in PR-7 |
+| Live transport | Session SSE vs WS vs reuse CDC | **Session SSE** |
+| SSE event name | `agent_stream` vs unnamed `message` | Named `agent_stream` + JSON body |
+| Fake producer | Debug HTTP inject vs test-only | Debug inject behind non-prod or explicit flag for demo |
+| Where types live | `renderer/lib` vs `shared` | `shared` if main process ever needs parse; else renderer + Go DTO |
+| Permission route | New minimal path vs wait for Chat approvals API | Minimal `POST .../agent-stream/permissions/{requestId}/resolve` for MVP |
 
 ---
 
-*End of plan. Implementation must follow `AGENTS.md` hard rules and keep changes surgical per PR.*
+## 13. Relationship to earlier “full Chat stack” thinking
+
+An earlier draft of this file planned a wholesale fenzhi Chat/ACP product port. That is **superseded** for the active migration goal:
+
+- **Streaming output path** (this document) ships first and stands alone.  
+- Full Chat durability/drivers/OpenAPI may still use fenzhi later; they must **consume or bridge into** this stream contract rather than invent a second live UI event language.
+
+---
+
+*Implementation must follow `AGENTS.md` hard rules. Plan-only session: no stream stack code in the docs PR beyond this file.*
