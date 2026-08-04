@@ -168,33 +168,32 @@ describe("annotate preload", () => {
 		expect(payload.context.selector).toBe("button#first");
 	});
 
-	it("renders the refined prompt affordances and submits from the primary action", () => {
+	it("renders a compact auto-growing prompt and submits from the embedded action", () => {
 		const first = elementWithBounds("first", { left: 12, top: 24, width: 120, height: 40 });
 
 		dispatchPageEvent(first, "click");
 
 		const root = overlayRoot();
-		const promptMeta = root.querySelector(".prompt__meta");
+		const form = root.querySelector<HTMLFormElement>("form");
 		const textarea = root.querySelector<HTMLTextAreaElement>("textarea");
-		const primaryAction = Array.from(root.querySelectorAll<HTMLButtonElement>("button")).find(
-			(button) => button.textContent?.trim() === "Send" && button.type === "submit",
-		);
+		const primaryAction = root.querySelector<HTMLButtonElement>('button[type="submit"]');
 
 		expect(root.querySelector(".prompt__header")).toBeNull();
 		expect(fontMocks.families).toContain("Geist Variable");
 		expect(fontMocks.families).toContain("Geist Mono Variable");
 		expect(fontMocks.add).toHaveBeenCalledTimes(2);
-		expect(promptMeta).not.toBeNull();
-		expect(promptMeta).toHaveAttribute("aria-label", "Command or Control plus Enter to send. Escape to cancel.");
-		expect(Array.from(promptMeta!.querySelectorAll("kbd"), (key) => key.textContent)).toEqual([
-			"⌘/Ctrl + Enter",
-			"Esc",
-		]);
+		expect(form).toHaveAttribute("aria-label", "Annotate selection");
+		expect(root.querySelector(".prompt__meta")).toBeNull();
+		expect(root.querySelector(".prompt__footer")).toBeNull();
 		expect(root.querySelector('[data-action="cancel"]')).toBeNull();
 		expect(primaryAction).toBeTruthy();
+		expect(primaryAction).toHaveAttribute("aria-label", "Send annotation");
+		expect(primaryAction).toHaveAttribute("title", "Send (⌘/Ctrl + Enter)");
 		expect(primaryAction?.disabled).toBe(true);
 		expect(textarea).not.toBeNull();
-		expect(root.querySelector("style")?.textContent).toContain("@media (max-width: 420px)");
+		expect(textarea).toHaveAttribute("rows", "1");
+		expect(textarea).toHaveAttribute("placeholder", "Describe the change…");
+		expect(root.querySelector("style")?.textContent).toContain("max-height: 104px");
 
 		textarea!.value = "Make this button easier to notice.";
 		textarea!.dispatchEvent(

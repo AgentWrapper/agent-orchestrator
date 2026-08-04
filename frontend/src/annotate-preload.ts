@@ -205,161 +205,89 @@ function ensureOverlay(): ShadowRoot {
 			}
 			.prompt {
 				position: fixed;
-				width: min(440px, calc(100vw - 28px));
+				width: min(360px, calc(100vw - 28px));
 				box-sizing: border-box;
-				border: 1px solid color-mix(in oklch, var(--ao-border) 70%, transparent);
-				border-radius: var(--ao-radius-md);
+				border: 1px solid color-mix(in oklch, var(--ao-border) 85%, transparent);
+				border-radius: 12px;
 				background: var(--ao-surface);
 				color: var(--ao-foreground);
-				box-shadow: 0 18px 52px rgba(0, 0, 0, 0.48);
-				padding: 8px 12px;
+				box-shadow: 0 10px 30px rgba(0, 0, 0, 0.38);
+				padding: 5px;
 				font: 13px/1.5 var(--ao-font-sans);
 				font-weight: 400;
 				pointer-events: auto;
 				animation: prompt-in 140ms ease-out;
+				transition:
+					border-color 120ms ease,
+					box-shadow 120ms ease;
+			}
+			.prompt:focus-within {
+				border-color: color-mix(in oklch, var(--ao-ring) 80%, transparent);
+				box-shadow:
+					0 0 0 3px color-mix(in oklch, var(--ao-ring) 24%, transparent),
+					0 10px 30px rgba(0, 0, 0, 0.38);
 			}
 			.prompt textarea {
 				display: block;
 				width: 100%;
-				min-height: 80px;
+				height: 32px;
+				min-height: 32px;
+				max-height: 104px;
 				box-sizing: border-box;
-				resize: vertical;
-				border: 1px solid var(--ao-input);
-				border-radius: 6px;
-				background: var(--ao-background);
+				resize: none;
+				border: 0;
+				border-radius: 8px;
+				background: transparent;
 				color: var(--ao-foreground);
 				caret-color: var(--ao-foreground);
-				padding: 8px 10px;
+				padding: 6px 40px 6px 9px;
 				font-family: var(--ao-font-sans);
 				font-size: var(--ao-text-xs);
-				line-height: 1.5;
+				line-height: 20px;
 				font-weight: 400;
 				outline: none;
-				transition:
-					border-color 120ms ease,
-					box-shadow 120ms ease,
-					background 120ms ease;
+				overflow-y: hidden;
 			}
 			.prompt textarea::placeholder {
 				color: var(--ao-passive);
 			}
-			.prompt textarea:focus,
-			.prompt textarea:focus-visible {
-				border-color: var(--ao-ring);
-				box-shadow: 0 0 0 3px color-mix(in oklch, var(--ao-ring) 30%, transparent);
-			}
-			.prompt__footer {
-				display: flex;
-				align-items: center;
-				justify-content: flex-end;
-				flex-wrap: nowrap;
-				gap: 6px;
-				margin-top: 8px;
-			}
-			.prompt__meta {
-				display: flex;
-				flex: 1 1 auto;
-				height: var(--ao-control-md);
-				align-items: center;
-				gap: 6px;
-				margin-right: auto;
-				min-width: 0;
-				color: var(--ao-passive);
-				font-family: var(--ao-font-sans);
-				font-size: var(--ao-text-xs);
-				line-height: 1.5;
-				font-weight: 400;
-			}
-			.prompt__shortcut {
+			.prompt button[type="submit"] {
+				position: absolute;
+				right: 8px;
+				bottom: 7px;
 				display: inline-flex;
-				height: 100%;
-				align-items: center;
-				gap: 4px;
-				white-space: nowrap;
-			}
-			.prompt__shortcut > span {
-				display: inline-flex;
-				height: 18px;
-				align-items: center;
-				line-height: 1;
-			}
-			.prompt__shortcut + .prompt__shortcut::before {
-				content: "·";
-				color: color-mix(in oklch, var(--ao-passive) 55%, transparent);
-				line-height: 1;
-			}
-			.prompt__shortcut kbd {
-				display: inline-flex;
-				min-height: 18px;
+				width: 28px;
+				height: 28px;
 				align-items: center;
 				justify-content: center;
-				border: 1px solid color-mix(in oklch, var(--ao-passive) 35%, transparent);
-				border-radius: 4px;
-				background: color-mix(in oklch, var(--ao-muted) 55%, transparent);
-				padding: 0 5px;
-				color: color-mix(in oklch, var(--ao-foreground) 78%, transparent);
-				font-family: var(--ao-font-mono);
-				font-size: 10px;
-				line-height: 1;
-				box-shadow: inset 0 -1px 0 color-mix(in oklch, var(--ao-passive) 20%, transparent);
-			}
-			.actions {
-				display: flex;
-				flex: 0 0 auto;
-				align-items: center;
-				justify-content: flex-end;
-				gap: 6px;
-				margin: 0;
-			}
-			.actions button {
-				display: inline-flex;
-				flex-shrink: 0;
-				height: var(--ao-control-md);
-				align-items: center;
-				justify-content: center;
-				gap: 6px;
-				border-radius: 6px;
+				border-radius: 999px;
 				border: 1px solid transparent;
-				background: transparent;
-				color: var(--ao-foreground);
-				padding: 0 10px;
-				font-family: var(--ao-font-sans);
-				font-size: var(--ao-text-xs);
-				line-height: 1;
-				font-weight: 400;
-				white-space: nowrap;
+				background: var(--ao-primary);
+				color: var(--ao-primary-foreground);
+				padding: 0;
 				transition:
 					background 120ms ease,
-					border-color 120ms ease,
+					opacity 120ms ease,
 					transform 120ms ease;
 			}
-			.actions button:hover {
-				background: color-mix(in oklch, var(--ao-muted) 50%, transparent);
+			.prompt button[type="submit"]:hover {
+				background: color-mix(in oklch, var(--ao-primary) 82%, transparent);
 			}
-			.actions button:active {
+			.prompt button[type="submit"]:active {
 				transform: translateY(1px);
 			}
-			.actions button:focus-visible {
+			.prompt button[type="submit"]:focus-visible {
 				outline: none;
 				border-color: var(--ao-ring);
 				box-shadow: 0 0 0 3px color-mix(in oklch, var(--ao-ring) 30%, transparent);
 			}
-			.actions button:disabled {
-				opacity: 0.5;
+			.prompt button[type="submit"]:disabled {
+				opacity: 0.32;
 				pointer-events: none;
 			}
-			.actions button[type="submit"] {
-				background: var(--ao-primary);
-				color: var(--ao-primary-foreground);
-			}
-			.actions button[type="submit"]:hover {
-				background: color-mix(in oklch, var(--ao-primary) 80%, transparent);
-				color: var(--ao-primary-foreground);
-			}
-			.actions svg {
+			.prompt button[type="submit"] svg {
 				width: var(--ao-icon-sm);
 				height: var(--ao-icon-sm);
-				flex-shrink: 0;
 				stroke: currentColor;
 				stroke-width: 2;
 				stroke-linecap: round;
@@ -385,28 +313,13 @@ function ensureOverlay(): ShadowRoot {
 			}
 			@media (prefers-reduced-motion: reduce) {
 				.highlight,
-				.prompt textarea,
-				.actions button {
+				.prompt,
+				.prompt button[type="submit"] {
 					transition: none;
 				}
 				.prompt,
 				.hint {
 					animation: none;
-				}
-			}
-			@media (max-width: 420px) {
-				.prompt__footer {
-					align-items: stretch;
-					flex-direction: column;
-				}
-				.actions {
-					order: 1;
-					align-self: flex-end;
-				}
-				.prompt__meta {
-					order: 2;
-					width: 100%;
-					margin-right: 0;
 				}
 			}
 			</style>
@@ -442,32 +355,30 @@ function renderPrompt(element: Element, context: BrowserAnnotationContext): void
 	const mount = root.querySelector<HTMLDivElement>(".mount");
 	if (!mount) return;
 	mount.innerHTML = `
-		<form class="prompt">
-			
-			<textarea aria-label="Annotation request" placeholder="Describe to agent what you want to change..."></textarea>
-			<div class="prompt__footer">
-				<div class="prompt__meta" aria-label="Command or Control plus Enter to send. Escape to cancel.">
-					<span class="prompt__shortcut"><kbd>⌘/Ctrl + Enter</kbd><span>Send</span></span>
-					<span class="prompt__shortcut"><kbd>Esc</kbd><span>Cancel</span></span>
-				</div>
-				<div class="actions">
-					<button disabled type="submit">
-						<svg viewBox="0 0 24 24" aria-hidden="true">
-							<path d="m22 2-7 20-4-9-9-4Z"></path>
-							<path d="M22 2 11 13"></path>
-						</svg>
-						<span>Send</span>
-					</button>
-				</div>
-			</div>
+		<form class="prompt" aria-label="Annotate selection">
+			<textarea rows="1" aria-label="Annotation request" placeholder="Describe the change…"></textarea>
+			<button disabled type="submit" aria-label="Send annotation" title="Send (⌘/Ctrl + Enter)">
+				<svg viewBox="0 0 24 24" aria-hidden="true">
+					<path d="M12 19V5"></path>
+					<path d="m5 12 7-7 7 7"></path>
+				</svg>
+			</button>
 		</form>
 	`;
 	const form = mount.querySelector<HTMLFormElement>("form")!;
 	repositionPrompt(element);
 	const textarea = form.querySelector<HTMLTextAreaElement>("textarea")!;
 	const submitButton = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+	const resizeTextarea = (): void => {
+		textarea.style.height = "0px";
+		const height = Math.min(104, Math.max(32, textarea.scrollHeight));
+		textarea.style.height = `${height}px`;
+		textarea.style.overflowY = textarea.scrollHeight > 104 ? "auto" : "hidden";
+		repositionPrompt(element);
+	};
 	const updateSubmitState = (): void => {
 		submitButton.disabled = textarea.value.trim().length === 0;
+		resizeTextarea();
 	};
 	const submitAnnotation = (): boolean => {
 		const instruction = textarea.value.trim();
@@ -506,10 +417,10 @@ function repositionPrompt(element: Element): void {
 	const layoutHeight = Math.min(window.innerHeight, documentHeight > 0 ? documentHeight : window.innerHeight);
 	const viewportWidth = Math.min(layoutWidth, window.visualViewport?.width ?? layoutWidth);
 	const viewportHeight = Math.min(layoutHeight, window.visualViewport?.height ?? layoutHeight);
-	const promptWidth = Math.max(0, Math.min(440, viewportWidth - 28));
+	const promptWidth = Math.max(0, Math.min(360, viewportWidth - 28));
 	form.style.width = `${promptWidth}px`;
 	const measuredHeight = form.getBoundingClientRect().height;
-	const { left, top } = promptPosition(element.getBoundingClientRect(), promptWidth, measuredHeight || 178, {
+	const { left, top } = promptPosition(element.getBoundingClientRect(), promptWidth, measuredHeight || 44, {
 		width: viewportWidth,
 		height: viewportHeight,
 	});
