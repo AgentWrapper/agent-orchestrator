@@ -68,9 +68,12 @@ func TestBackupCreateRestore_HappyPath(t *testing.T) {
 	}
 
 	// Wipe durable state; leave an ephemeral file that must survive restore.
+	// Use MaxInt32 so processalive.Alive is false (low PIDs like 42 are often
+	// live on Linux CI and would trip refuseIfDaemonRunning).
+	const ephemeralPID = `{"pid":2147483647}`
 	_ = os.Remove(filepath.Join(stateDir, "app-state.json"))
 	_ = os.RemoveAll(filepath.Join(stateDir, "data"))
-	if err := os.WriteFile(filepath.Join(stateDir, "running.json"), []byte(`{"pid":42}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(stateDir, "running.json"), []byte(ephemeralPID), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -97,7 +100,7 @@ func TestBackupCreateRestore_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(runBody) != `{"pid":42}` {
+	if string(runBody) != ephemeralPID {
 		t.Fatalf("running.json = %q, want local ephemeral preserved", runBody)
 	}
 }
