@@ -29,7 +29,7 @@ import {
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { readKeybindingOverrides, writeKeybindingOverrides } from "./main/keybinding-settings";
-import { readUiSettings, writeUiSettings, type UiSettings } from "./main/ui-settings";
+import { coerceUiSettings, readUiSettings, writeUiSettings, type UiSettings } from "./main/ui-settings";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
@@ -43,6 +43,7 @@ import type { DaemonStatus } from "./shared/daemon-status";
 import { attachAppShortcuts } from "./main/app-shortcuts";
 import {
 	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
+	SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL,
 	type KeybindingOverrides,
 } from "./shared/shortcuts";
 import {
@@ -119,6 +120,7 @@ let browserViewHost: BrowserViewHost | null = null;
 let browserRuntimeLink: BrowserRuntimeLinkHandle | null = null;
 let keybindingOverrides: KeybindingOverrides = {};
 let keybindingRecordingActive = false;
+let closeShellTerminalShortcutEnabled = false;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
 
@@ -319,6 +321,7 @@ function createWindow(): void {
 		false,
 		() => keybindingOverrides,
 		() => keybindingRecordingActive,
+		(id) => id !== "close-shell-terminal" || closeShellTerminalShortcutEnabled,
 	);
 
 	browserViewHost = createBrowserViewHost({
@@ -331,6 +334,7 @@ function createWindow(): void {
 		isMac,
 		getKeybindingOverrides: () => keybindingOverrides,
 		isKeybindingRecording: () => keybindingRecordingActive,
+		isCloseShellTerminalShortcutEnabled: () => closeShellTerminalShortcutEnabled,
 	});
 	if (daemonStatus.state === "ready") establishBrowserRuntimeLink();
 
@@ -399,12 +403,25 @@ let shellEnvPromise: Promise<void> | null = null;
 
 // Telemetry defaults stamped on the daemon env on every platform; explicit env
 // always wins.
+//
+// Unpackaged builds keep local event recording but never export to PostHog: a
+// dev loop or a CI job driving the real app would otherwise bill production
+// events and inflate install/DAU counts. Set AO_TELEMETRY_REMOTE explicitly to
+// exercise the export path from a dev build.
 function telemetryOverrides(): Record<string, string> {
 	return {
 		AO_TELEMETRY_EVENTS: process.env.AO_TELEMETRY_EVENTS ?? "on",
-		AO_TELEMETRY_REMOTE: process.env.AO_TELEMETRY_REMOTE ?? "posthog",
+		AO_TELEMETRY_REMOTE: process.env.AO_TELEMETRY_REMOTE ?? (isDev ? "off" : "posthog"),
 		AO_TELEMETRY_POSTHOG_KEY: process.env.AO_TELEMETRY_POSTHOG_KEY ?? DEFAULT_POSTHOG_PROJECT_KEY,
 		AO_TELEMETRY_POSTHOG_HOST: process.env.AO_TELEMETRY_POSTHOG_HOST ?? DEFAULT_POSTHOG_HOST,
+		// The daemon binary has no version of its own that release tooling sets,
+		// so without this every daemon event lands unattributable to a release.
+		AO_TELEMETRY_APP_VERSION: process.env.AO_TELEMETRY_APP_VERSION ?? app.getVersion(),
+		// Kill switch: forwarded so a noisy stream can be silenced by env on an
+		// install that already exists, without shipping a new build.
+		...(process.env.AO_TELEMETRY_DISABLED_EVENTS
+			? { AO_TELEMETRY_DISABLED_EVENTS: process.env.AO_TELEMETRY_DISABLED_EVENTS }
+			: {}),
 	};
 }
 
@@ -1238,6 +1255,10 @@ ipcMain.handle("theme:set", (_event, preference: "light" | "dark" | "system") =>
 // Renderer calls this when focus lands on real shell UI (not the titlebar menu), so menu:action's panel fallback below doesn't go stale.
 ipcMain.on("shell:focus", () => browserViewHost?.forgetLastFocusedPanel());
 
+ipcMain.on(SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, (_event, enabled: unknown) => {
+	closeShellTerminalShortcutEnabled = enabled === true;
+});
+
 // Backs the custom title-bar menu (WindowTitlebar). Each item maps to the same
 // action the native default menu would have performed.
 ipcMain.handle("menu:action", (_event, action: string) => {
@@ -1296,7 +1317,7 @@ ipcMain.handle("menu:action", (_event, action: string) => {
 	}
 });
 ipcMain.handle("telemetry:getBootstrap", () =>
-	buildTelemetryBootstrap(process.env, app.getVersion(), process.platform),
+	buildTelemetryBootstrap(process.env, app.getVersion(), process.platform, os.homedir(), app.isPackaged),
 );
 async function chooseDirectory(title: string): Promise<string | null> {
 	const options: OpenDialogOptions = {
@@ -1375,7 +1396,7 @@ ipcMain.handle("uiSettings:get", async (): Promise<UiSettings> => {
 });
 ipcMain.handle("uiSettings:set", async (_event, settings: UiSettings): Promise<UiSettings> => {
 	const runFile = runFilePath();
-	if (!runFile) return { locale: settings?.locale === "zh-CN" ? "zh-CN" : "en" };
+	if (!runFile) return coerceUiSettings(settings);
 	return writeUiSettings(path.dirname(runFile), settings);
 });
 

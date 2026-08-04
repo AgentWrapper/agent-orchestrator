@@ -8,10 +8,12 @@ import type { ReactNode } from "react";
 export function SettingsSection({
 	title,
 	sectionId,
+	titleHidden,
 	children,
 }: {
 	title: string;
 	sectionId?: string;
+	titleHidden?: boolean;
 	children: ReactNode;
 }) {
 	return (
@@ -20,7 +22,9 @@ export function SettingsSection({
 			data-testid={sectionId ? "settings-section" : undefined}
 			data-section={sectionId}
 		>
-			<h2 className="text-xs font-bold uppercase leading-4 tracking-settings-section text-settings-muted">{title}</h2>
+			{!titleHidden && (
+				<h2 className="text-xs font-bold uppercase leading-4 tracking-settings-section text-settings-muted">{title}</h2>
+			)}
 			<div className="flex w-full flex-col gap-1.5">{children}</div>
 		</section>
 	);
