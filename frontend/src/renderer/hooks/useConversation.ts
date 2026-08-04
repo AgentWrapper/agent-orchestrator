@@ -147,9 +147,12 @@ export function useConversation(sessionId: string | undefined): ConversationQuer
 /** Commands against a conversation. Each refetches the snapshot on success. */
 export function useConversationCommands(sessionId: string | undefined) {
 	const queryClient = useQueryClient();
-	const invalidate = useCallback(() => {
+	const invalidate = useCallback(async () => {
 		if (sessionId) {
-			void queryClient.invalidateQueries({ queryKey: conversationQueryKey(sessionId) });
+			// Keep the mutation pending until the active conversation has refreshed. A
+			// queued message or landed steer should be visible before the composer clears,
+			// otherwise the action looks dropped even though the daemon accepted it.
+			await queryClient.invalidateQueries({ queryKey: conversationQueryKey(sessionId) });
 		}
 	}, [queryClient, sessionId]);
 

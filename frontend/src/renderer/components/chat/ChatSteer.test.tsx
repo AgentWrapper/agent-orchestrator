@@ -22,42 +22,42 @@ describe("ChatComposer steering", () => {
 		expect(screen.getByRole("button", { name: "Queue for next" })).toBeInTheDocument();
 	});
 
-	it("says which one Enter is armed with", () => {
+	it("defaults Enter to the durable queue path used by ao send", () => {
 		composer();
-		expect(screen.getByText("Enter to steer")).toBeInTheDocument();
+		expect(screen.getByText("Enter to queue")).toBeInTheDocument();
 	});
 
-	it("steers by default, because a correction that waits is a correction wasted", async () => {
+	it("queues by default while a turn is running", async () => {
 		const onSteer = vi.fn().mockResolvedValue(undefined);
 		const onSend = vi.fn();
 		composer({ onSteer, onSend });
 
 		await userEvent.type(screen.getByRole("combobox"), "use the unit tests only{Enter}");
-		expect(onSteer).toHaveBeenCalledWith("use the unit tests only");
-		expect(onSend).not.toHaveBeenCalled();
+		expect(onSend).toHaveBeenCalledWith("use the unit tests only");
+		expect(onSteer).not.toHaveBeenCalled();
 	});
 
-	it("queues instead once the user picks that", async () => {
+	it("steers once the user explicitly picks that", async () => {
 		const onSteer = vi.fn().mockResolvedValue(undefined);
 		const onSend = vi.fn();
 		composer({ onSteer, onSend });
 
-		await userEvent.click(screen.getByRole("button", { name: "Queue for next" }));
-		expect(screen.getByText("Enter to queue")).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Steer this turn" }));
+		expect(screen.getByText("Enter to steer")).toBeInTheDocument();
 
 		await userEvent.type(screen.getByRole("combobox"), "and then ship it{Enter}");
-		expect(onSend).toHaveBeenCalledWith("and then ship it");
-		expect(onSteer).not.toHaveBeenCalled();
+		expect(onSteer).toHaveBeenCalledWith("and then ship it");
+		expect(onSend).not.toHaveBeenCalled();
 	});
 
 	it("marks the armed destination for assistive tech", async () => {
 		composer();
-		expect(screen.getByRole("button", { name: "Steer this turn" })).toHaveAttribute(
+		expect(screen.getByRole("button", { name: "Queue for next" })).toHaveAttribute(
 			"aria-pressed",
 			"true",
 		);
-		await userEvent.click(screen.getByRole("button", { name: "Queue for next" }));
-		expect(screen.getByRole("button", { name: "Queue for next" })).toHaveAttribute(
+		await userEvent.click(screen.getByRole("button", { name: "Steer this turn" }));
+		expect(screen.getByRole("button", { name: "Steer this turn" })).toHaveAttribute(
 			"aria-pressed",
 			"true",
 		);
@@ -74,6 +74,7 @@ describe("ChatComposer steering", () => {
 		composer({ onSteer });
 
 		const field = screen.getByRole("combobox");
+		await userEvent.click(screen.getByRole("button", { name: "Steer this turn" }));
 		await userEvent.type(field, "stop after the tests{Enter}");
 		// Still in the box: the turn is already running, so a refusal is a real
 		// possibility and clearing early would lose what the user typed.
@@ -85,8 +86,13 @@ describe("ChatComposer steering", () => {
 		const onSteer = vi.fn().mockRejectedValue(new Error("not steerable"));
 		composer({ onSteer });
 		const field = screen.getByRole("combobox");
+		await userEvent.click(screen.getByRole("button", { name: "Steer this turn" }));
 		await userEvent.type(field, "actually, skip it{Enter}");
 		expect(field).toHaveValue("actually, skip it");
+		expect(screen.getByRole("button", { name: "Queue for next" })).toHaveAttribute(
+			"aria-pressed",
+			"true",
+		);
 	});
 
 	it("reports the daemon's refusal without a second message of its own", () => {

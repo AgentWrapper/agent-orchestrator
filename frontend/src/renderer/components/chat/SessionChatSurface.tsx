@@ -105,6 +105,7 @@ export function SessionChatSurface({
 	return (
 		<ChatWorkspace
 			snapshot={snapshot}
+			sessionRole={session.kind}
 			interfaceAction={interfaceAction}
 			controllerTransitioning={controllerTransitioning}
 			hasOlder={hasOlder}

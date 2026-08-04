@@ -40,6 +40,18 @@ beforeEach(() => {
 });
 
 describe("ChatWorkspace timeline", () => {
+	it("uses the same role-aware chat chrome for workers and orchestrators", () => {
+		const view = render(<ChatWorkspace snapshot={chatFixture} sessionRole="worker" />);
+
+		expect(screen.getByLabelText("Chat")).toHaveAttribute("data-session-role", "worker");
+		expect(screen.getByText("Worker")).toBeInTheDocument();
+
+		view.rerender(<ChatWorkspace snapshot={chatFixture} sessionRole="orchestrator" />);
+
+		expect(screen.getByLabelText("Chat")).toHaveAttribute("data-session-role", "orchestrator");
+		expect(screen.getByText("Orchestrator")).toBeInTheDocument();
+	});
+
 	it("keeps the composer aligned to the readable conversation width", () => {
 		render(<ChatWorkspace snapshot={chatFixture} />);
 		const composer = screen.getByLabelText("Message the agent").closest("form");
@@ -285,10 +297,17 @@ describe("ChatWorkspace message actions", () => {
 	});
 
 	it("offers no copy on a message that is still arriving", () => {
-		render(<ChatWorkspace snapshot={chatFixture} />);
-		// The fixture's last assistant message is mid-stream; half a message is not
-		// what the reader means by "copy this".
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items = snapshot.items.filter((item) => item.sequence <= 12);
+		render(<ChatWorkspace snapshot={snapshot} />);
+		// The latest assistant message is mid-stream; half a message is not what the
+		// reader means by "copy this".
 		const streaming = screen.getByLabelText("still writing").closest("div");
 		expect(streaming?.querySelector('[aria-label*="Copy message"]')).toBeNull();
+	});
+
+	it("does not leave a writing caret behind prose followed by tool activity", () => {
+		render(<ChatWorkspace snapshot={chatFixture} />);
+		expect(screen.queryByLabelText("still writing")).not.toBeInTheDocument();
 	});
 });

@@ -29,6 +29,7 @@
 
 import {
 	useCallback,
+	useEffect,
 	useId,
 	useLayoutEffect,
 	useMemo,
@@ -137,13 +138,12 @@ export function ChatComposer({
 	/**
 	 * What Enter does while the agent is working.
 	 *
-	 * Steering is the better answer when a turn is live — the correction reaches the
-	 * work in flight instead of waiting behind it — so it is the default. But it is a
-	 * different thing to do with the user's words, and quietly changing what Enter
-	 * means would be worse than the queueing it replaces. So the choice is drawn, and
-	 * the send hint names whichever one is armed.
+	 * Queueing is the safe default and matches `ao send`: the daemon records the
+	 * message durably and dispatches it when the current turn finishes. Steering is
+	 * timing-sensitive and changes the running turn, so it stays an explicit choice.
+	 * The send hint names whichever destination is armed.
 	 */
-	const [delivery, setDelivery] = useState<"steer" | "queue">("steer");
+	const [delivery, setDelivery] = useState<"steer" | "queue">("queue");
 
 	const textarea = useRef<HTMLTextAreaElement>(null);
 	const filePicker = useRef<HTMLInputElement>(null);
@@ -176,6 +176,12 @@ export function ChatComposer({
 	// Enter is still pointing at.
 	const steering = Boolean(canSteer && onSteer) && delivery === "steer";
 	const canSend = (text.trim().length > 0 || staged) && !busy && !disabled && !steerPending;
+
+	// A steer choice belongs to one running turn. Once that turn disappears, return
+	// Enter to the durable queue path so the next turn cannot be steered by accident.
+	useEffect(() => {
+		if (!canSteer) setDelivery("queue");
+	}, [canSteer]);
 
 	/**
 	 * Write text and caret back into the field.
@@ -227,7 +233,9 @@ export function ChatComposer({
 				await onSteer(body);
 			} catch {
 				// The refusal is the daemon's typed answer and the surface renders it from
-				// `steerRefusal`; saying it twice here would be two messages for one event.
+				// `steerRefusal`; keep the draft, but arm the reliable queue path for the
+				// next Enter in case the turn ended while the user was typing.
+				setDelivery("queue");
 				return;
 			}
 			applyText("", 0);
@@ -369,7 +377,7 @@ export function ChatComposer({
 			onDragLeave={() => setDragging(false)}
 			onDrop={onDrop}
 			className={cn(
-				"relative flex flex-col gap-2 rounded-xl border bg-surface p-2.5 shadow-sm transition-colors focus-within:border-logo-accent/45",
+				"cursor-chat-composer relative flex flex-col gap-2 rounded-[10px] border p-2.5 transition-[background,border-color,box-shadow]",
 				dragging ? "border-logo-accent" : "border-border-strong",
 			)}
 		>
@@ -440,7 +448,7 @@ export function ChatComposer({
 									? "Ask the agent…  /  for skills, @ for files"
 									: "Ask the agent…  @ for files"
 				}
-				className="max-h-48 min-h-[3.5rem] w-full resize-none bg-transparent px-1.5 py-1.5 text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
+				className="max-h-48 min-h-[3.25rem] w-full resize-none bg-transparent px-1.5 py-1.5 text-sm leading-relaxed text-foreground outline-none placeholder:text-passive disabled:opacity-50"
 			/>
 
 			{attachmentError ? (
@@ -563,7 +571,7 @@ function DeliveryChoice({
 			aria-label="Where this message goes while the agent is working"
 			className="flex items-center gap-1 px-1.5"
 		>
-			{(["steer", "queue"] as const).map((option) => (
+			{(["queue", "steer"] as const).map((option) => (
 				<button
 					key={option}
 					type="button"

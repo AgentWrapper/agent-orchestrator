@@ -111,7 +111,7 @@ export function HumanMessage({
 			    the agent has not seen it, and the timeline should not imply it has. */}
 			<div
 				className={cn(
-					"w-fit max-w-[min(78%,560px)] whitespace-pre-wrap rounded-[10px] border px-3 py-2.5 text-sm leading-[1.55]",
+					"cursor-chat-human-message w-fit max-w-[min(78%,560px)] whitespace-pre-wrap rounded-[10px] border px-3 py-2.5 text-sm leading-[1.55]",
 					queued
 						? "border-dashed border-border-strong bg-transparent text-muted-foreground"
 						: "border-border bg-raised text-foreground",
@@ -141,7 +141,7 @@ export function OriginMessage({ message }: { message: ConversationMessage }) {
 		: message.text;
 
 	return (
-		<div className="rounded-md border border-border border-l-2 border-l-logo-accent/60 bg-surface/60 px-3.5 py-2.5">
+		<div className="cursor-chat-origin-message rounded-md border border-border border-l-2 border-l-logo-accent/60 px-3.5 py-2.5">
 			<div className="mb-1.5 flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
 				<CircleAlert aria-hidden="true" className="size-3.5 shrink-0 text-logo-accent" />
 				<span className="truncate">{message.senderLabel ?? message.origin}</span>
@@ -178,19 +178,33 @@ export function OriginMessage({ message }: { message: ConversationMessage }) {
 export function AssistantMessage({
 	message,
 	showCopy = false,
+	showStreamingIndicator = message.streaming,
 }: {
 	message: ConversationMessage;
 	/** Only the final answer of a finished turn owns the turn's copy action. */
 	showCopy?: boolean;
+	/** Only the newest item can still be visibly writing; older streaming fragments
+	 * are waiting on a tool rather than missing content. */
+	showStreamingIndicator?: boolean;
 }) {
+	const visiblyStreaming = message.streaming && showStreamingIndicator;
+	const hasText = message.text.trim().length > 0;
 	return (
-		<div className="group/message relative">
+		<div className={cn("group/message relative", visiblyStreaming && hasText && "chat-assistant-streaming")}>
 			<ChatMarkdown text={message.text} streaming={message.streaming} />
-			{message.streaming ? (
-				<span
-					aria-label="still writing"
-					className="ml-0.5 inline-block h-4 w-[2px] translate-y-0.5 animate-pulse bg-accent align-baseline"
-				/>
+			{visiblyStreaming ? (
+				hasText ? (
+					<span aria-label="still writing" className="sr-only" />
+				) : (
+					<span
+						role="status"
+						aria-label="still writing"
+						className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground"
+					>
+						<Loader2 aria-hidden="true" className="size-3 animate-spin" />
+						Writing…
+					</span>
+				)
 			) : showCopy ? (
 				// One action for the completed answer, not one after every prose fragment
 				// the provider emitted while working.

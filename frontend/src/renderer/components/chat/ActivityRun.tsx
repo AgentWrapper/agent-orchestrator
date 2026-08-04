@@ -73,7 +73,7 @@ export function ActivityRun({ activities }: { activities: ConversationActivity[]
 			</button>
 
 			{open ? (
-				<div className="mt-0.5 flex flex-col overflow-hidden rounded-lg border border-border bg-surface/40">
+				<div className="cursor-chat-activity-panel mt-0.5 flex flex-col overflow-hidden rounded-md border border-border">
 					{hierarchy.map((node) => <ActivityTree key={node.activity.id} node={node} />)}
 				</div>
 			) : null}

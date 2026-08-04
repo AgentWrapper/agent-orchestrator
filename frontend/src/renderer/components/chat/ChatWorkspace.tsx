@@ -32,6 +32,7 @@ import {
 	Square,
 	TriangleAlert,
 	Undo2,
+	Workflow,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { sameContent, useStableList } from "../../lib/stable-list";
@@ -83,6 +84,8 @@ import {
 
 export interface ChatWorkspaceProps {
 	snapshot: ConversationSnapshot;
+	/** The AO role using this shared conversation surface. */
+	sessionRole?: "worker" | "orchestrator";
 	/** Session-level actions owned above the conversation surface. */
 	interfaceAction?: ReactNode;
 	/** Suppress a transient stopped snapshot while a mode handoff installs Chat. */
@@ -167,6 +170,7 @@ export interface ChatWorkspaceProps {
 
 export function ChatWorkspace({
 	snapshot,
+	sessionRole = "worker",
 	interfaceAction,
 	controllerTransitioning,
 	hasOlder,
@@ -226,11 +230,13 @@ export function ChatWorkspace({
 	return (
 		<section
 			aria-label="Chat"
-			className="flex h-full min-h-0 flex-col bg-background"
+			className="cursor-chat-surface flex h-full min-h-0 flex-col"
 			data-session-mode={snapshot.mode}
+			data-session-role={sessionRole}
 		>
 			<ChatHeader
 				snapshot={snapshot}
+				sessionRole={sessionRole}
 				onCompact={onCompact}
 				compacting={compacting}
 				compactUnavailable={compactUnavailable}
@@ -275,7 +281,7 @@ export function ChatWorkspace({
 				onRollback={rollbackTarget}
 			/>
 
-			<div className="shrink-0 border-t border-border px-4 py-3">
+			<div className="cursor-chat-composer-dock shrink-0 px-4 pb-3 pt-2">
 				<div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
 					{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
 					{turn ? (
@@ -468,6 +474,7 @@ function readableItems(snapshot: ConversationSnapshot): ConversationItem[] {
 function ChatHeader({
 	snapshot,
 	interfaceAction,
+	sessionRole,
 	onCompact,
 	compacting,
 	compactUnavailable,
@@ -475,22 +482,31 @@ function ChatHeader({
 }: {
 	snapshot: ConversationSnapshot;
 	interfaceAction?: ReactNode;
+	sessionRole: "worker" | "orchestrator";
 	onCompact?: () => void;
 	compacting?: boolean;
 	compactUnavailable?: string;
 	turnInFlight?: boolean;
 }) {
+	const RoleIcon = sessionRole === "orchestrator" ? Workflow : MessageSquare;
+	const roleLabel = sessionRole === "orchestrator" ? "Orchestrator" : "Worker";
 	return (
-		<header className="flex h-toolbar shrink-0 items-center gap-3 border-b border-border px-4">
-			<MessageSquare aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-			<div className="flex min-w-0 items-baseline gap-2">
+		<header className="cursor-chat-header flex shrink-0 items-center gap-3 px-3.5">
+			<span className="cursor-chat-role-icon grid size-7 shrink-0 place-items-center rounded-md">
+				<RoleIcon aria-hidden="true" className="size-3.5" />
+			</span>
+			<div className="flex min-w-0 flex-col gap-0.5">
 				{/* The thread's own name when it has one. The daemon also pushes it into
 				    the session's display name, so the sidebar and this header agree
 				    without either deriving a label of its own. */}
-				<strong className="truncate text-sm font-medium text-foreground" title={snapshot.title}>
+				<strong className="truncate text-[13px] font-medium leading-tight text-foreground" title={snapshot.title}>
 					{snapshot.title || snapshot.sessionId}
 				</strong>
-				<span className="shrink-0 text-xs text-muted-foreground">{snapshot.harness}</span>
+				<span className="flex items-center gap-1.5 text-[10.5px] leading-none text-muted-foreground">
+					<span className="cursor-chat-role-label">{roleLabel}</span>
+					<span aria-hidden="true">·</span>
+					<span>{snapshot.harness}</span>
+				</span>
 			</div>
 			<div className="ml-auto flex shrink-0 items-center gap-2">
 				{/* Current state from the snapshot, not a timeline event: the provider
@@ -511,7 +527,7 @@ function ChatHeader({
 				{interfaceAction}
 				{/* The mode is a durable session fact, so it is stated rather than
 				    implied by which surface happens to be open. */}
-				<span className="rounded border border-border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+				<span className="cursor-chat-mode-badge rounded-sm px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide">
 					chat
 				</span>
 			</div>
@@ -907,12 +923,12 @@ function Timeline({
 			<div
 				ref={scroller}
 				onScroll={onScroll}
-				className="chat-scroll-viewport h-full overflow-y-auto px-4 py-4"
+				className="chat-scroll-viewport cursor-chat-timeline h-full overflow-y-auto px-4 py-5"
 				role="log"
 				aria-live="polite"
 				aria-label="Conversation"
 			>
-				<div ref={scrollContent} className="mx-auto flex max-w-3xl flex-col gap-5">
+				<div ref={scrollContent} className="mx-auto flex max-w-3xl flex-col gap-4.5">
 					{hasOlder ? (
 						<div className="flex justify-center pb-1">
 							<Button
@@ -974,7 +990,7 @@ function Timeline({
 				onBlur={() => setHoveredMarker(null)}
 				onPointerLeave={() => setHoveredMarker(null)}
 				className={cn(
-					"group/scroll absolute inset-y-3 right-1 z-10 w-5 touch-none rounded-full outline-none transition-opacity focus-visible:ring-1 focus-visible:ring-logo-accent/60",
+					"group/scroll absolute inset-y-3 right-1 z-10 w-4 touch-none rounded-full outline-none transition-opacity focus-visible:ring-1 focus-visible:ring-logo-accent/60",
 					scrollbar.visible ? "cursor-pointer opacity-100" : "pointer-events-none opacity-0",
 				)}
 			>
@@ -1071,8 +1087,9 @@ const TurnGroup = memo(function TurnGroup({
 				.reverse()
 				.find((item) => item.kind === "message" && item.role === "assistant")?.id
 		: undefined;
+	const latestItemId = group.items.at(-1)?.id;
 	return (
-		<div className="flex flex-col gap-3">
+		<div className="flex flex-col gap-2.5">
 			{runs.map((run) =>
 				run.kind === "activities" ? (
 					<ActivityRun
@@ -1090,6 +1107,7 @@ const TurnGroup = memo(function TurnGroup({
 						busy={busy}
 						queued={queued}
 						showCopy={run.items[0]?.id === copyableMessageId}
+						showStreamingIndicator={group.live && run.items[0]?.id === latestItemId}
 					/>
 				),
 			)}
@@ -1120,6 +1138,7 @@ function TimelineItem({
 	busy,
 	queued,
 	showCopy,
+	showStreamingIndicator,
 }: {
 	item: ConversationItem;
 	onDecide?: (requestId: string, decisionId: string) => void;
@@ -1132,9 +1151,20 @@ function TimelineItem({
 	queued?: boolean;
 	/** This is the final assistant response of a turn that has finished. */
 	showCopy?: boolean;
+	/** This message is the live edge of its turn, rather than an earlier fragment
+	 * followed by tool activity. */
+	showStreamingIndicator?: boolean;
 }) {
 	if (item.kind === "message") {
-		if (item.role === "assistant") return <AssistantMessage message={item} showCopy={showCopy} />;
+		if (item.role === "assistant") {
+			return (
+				<AssistantMessage
+					message={item}
+					showCopy={showCopy}
+					showStreamingIndicator={showStreamingIndicator}
+				/>
+			);
+		}
 		// A user-role message that did not come from this human is an automation or
 		// worker relay, and is attributed differently.
 		if (item.origin === "human") return <HumanMessage message={item} queued={queued} />;
