@@ -212,35 +212,27 @@ describe("CenterPane toolbar session label", () => {
 	});
 
 	it("shows reviewer as its own active harness tab", () => {
-		render(
-			<CenterPane
-				session={worker}
-				reviewerTerminal={{ handleId: "review-sess-1", harness: "codex" }}
-				terminalTarget={{ kind: "reviewer", handleId: "review-sess-1", harness: "codex" }}
-				theme="dark"
-				daemonReady
-			/>,
-		);
+		renderCenterPane({
+			session: worker,
+			reviewerTerminal: { handleId: "review-sess-1", harness: "codex" },
+			terminalTarget: { kind: "reviewer", handleId: "review-sess-1", harness: "codex" },
+		});
 
-		expect(screen.getByRole("button", { name: "Reviewer" })).toHaveAttribute("aria-current", "true");
-		expect(screen.getByRole("button", { name: "do the thing" })).not.toHaveAttribute("aria-current", "true");
-		expect(screen.getByRole("button", { name: "Reviewer" }).querySelector("img")).toHaveAttribute("src");
+		expect(screen.getByRole("tab", { name: "Reviewer" })).toHaveAttribute("aria-current", "true");
+		expect(screen.getByRole("tab", { name: /^do the thing/ })).not.toHaveAttribute("aria-current", "true");
+		expect(screen.getByRole("tab", { name: "Reviewer" }).querySelector("img")).toHaveAttribute("src");
 		expect(screen.queryByRole("button", { name: "Back to agent" })).not.toBeInTheDocument();
 	});
 
 	it("opens reviewer from the tab strip when a reviewer handle exists", () => {
 		const onSelectReviewerTerminal = vi.fn();
-		render(
-			<CenterPane
-				session={worker}
-				reviewerTerminal={{ handleId: "review-sess-1", harness: "codex" }}
-				onSelectReviewerTerminal={onSelectReviewerTerminal}
-				theme="dark"
-				daemonReady
-			/>,
-		);
+		renderCenterPane({
+			session: worker,
+			reviewerTerminal: { handleId: "review-sess-1", harness: "codex" },
+			onSelectReviewerTerminal,
+		});
 
-		fireEvent.click(screen.getByRole("button", { name: "Reviewer" }));
+		fireEvent.click(screen.getByRole("tab", { name: "Reviewer" }));
 		expect(onSelectReviewerTerminal).toHaveBeenCalledWith({ handleId: "review-sess-1", harness: "codex" });
 	});
 
