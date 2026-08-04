@@ -185,7 +185,7 @@ func (s *Server) resyncGitHubBinding(
 	if !s.isConfiguredGitHubInstallation(installation) {
 		return errors.New("GitHub installation does not belong to configured App")
 	}
-	_, err = s.bindAndSyncGitHubInstallation(
+	err = s.bindAndSyncGitHubInstallation(
 		ctx,
 		binding.OrgID,
 		binding.InstalledByUserID,

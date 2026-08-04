@@ -11,11 +11,15 @@ import (
 )
 
 type fakeSubscriber struct {
-	ch chan domain.NotificationRecord
+	ch chan domain.NotificationEvent
 }
 
-func (f *fakeSubscriber) Subscribe(domain.ProjectID) (<-chan domain.NotificationRecord, func()) {
+func (f *fakeSubscriber) Subscribe(domain.ProjectID) (<-chan domain.NotificationEvent, func()) {
 	return f.ch, func() {}
+}
+
+func created(rec domain.NotificationRecord) domain.NotificationEvent {
+	return domain.NotificationEvent{Kind: domain.NotificationCreated, Record: rec}
 }
 
 type fakeDeviceStore struct {
@@ -93,7 +97,7 @@ func (f *fakeSender) waitSent(t *testing.T) {
 }
 
 func TestDispatcherSendsToAllDevicesWithDataBlob(t *testing.T) {
-	sub := &fakeSubscriber{ch: make(chan domain.NotificationRecord, 1)}
+	sub := &fakeSubscriber{ch: make(chan domain.NotificationEvent, 1)}
 	store := &fakeDeviceStore{devices: []mobilebridge.PushDevice{
 		{Token: "ExponentPushToken[a]"},
 		{Token: "ExponentPushToken[b]"},
@@ -105,7 +109,7 @@ func TestDispatcherSendsToAllDevicesWithDataBlob(t *testing.T) {
 	defer cancel()
 	go d.Run(ctx)
 
-	sub.ch <- domain.NotificationRecord{
+	sub.ch <- created(domain.NotificationRecord{
 		ID:        "ntf_1",
 		SessionID: "sess_9",
 		ProjectID: "proj_7",
@@ -113,7 +117,7 @@ func TestDispatcherSendsToAllDevicesWithDataBlob(t *testing.T) {
 		Type:      domain.NotificationNeedsInput,
 		Title:     "sess needs input",
 		Body:      "The agent is waiting for your response.",
-	}
+	})
 	sender.waitSent(t)
 
 	sender.mu.Lock()
@@ -136,7 +140,7 @@ func TestDispatcherSendsToAllDevicesWithDataBlob(t *testing.T) {
 }
 
 func TestDispatcherPrunesDeadTokens(t *testing.T) {
-	sub := &fakeSubscriber{ch: make(chan domain.NotificationRecord, 1)}
+	sub := &fakeSubscriber{ch: make(chan domain.NotificationEvent, 1)}
 	store := &fakeDeviceStore{devices: []mobilebridge.PushDevice{
 		{Token: "ExponentPushToken[live]"},
 		{Token: "ExponentPushToken[dead]"},
@@ -151,7 +155,7 @@ func TestDispatcherPrunesDeadTokens(t *testing.T) {
 	defer cancel()
 	go d.Run(ctx)
 
-	sub.ch <- domain.NotificationRecord{ID: "ntf_1", Type: domain.NotificationNeedsInput, Title: "t", Body: "b"}
+	sub.ch <- created(domain.NotificationRecord{ID: "ntf_1", Type: domain.NotificationNeedsInput, Title: "t", Body: "b"})
 	sender.waitSent(t)
 
 	// Give dispatch() a beat to finish the prune after Send returned.
@@ -173,7 +177,7 @@ func TestDispatcherPrunesDeadTokens(t *testing.T) {
 }
 
 func TestDispatcherNoDevicesIsNoop(t *testing.T) {
-	sub := &fakeSubscriber{ch: make(chan domain.NotificationRecord, 1)}
+	sub := &fakeSubscriber{ch: make(chan domain.NotificationEvent, 1)}
 	store := &fakeDeviceStore{}
 	sender := newFakeSender(nil)
 	d := NewDispatcher(sub, store, sender, nil)
@@ -182,7 +186,7 @@ func TestDispatcherNoDevicesIsNoop(t *testing.T) {
 	defer cancel()
 	go d.Run(ctx)
 
-	sub.ch <- domain.NotificationRecord{ID: "ntf_1", Type: domain.NotificationNeedsInput, Title: "t", Body: "b"}
+	sub.ch <- created(domain.NotificationRecord{ID: "ntf_1", Type: domain.NotificationNeedsInput, Title: "t", Body: "b"})
 	// No devices → sender must never be called. Give the loop a moment.
 	time.Sleep(100 * time.Millisecond)
 	sender.mu.Lock()
@@ -192,13 +196,37 @@ func TestDispatcherNoDevicesIsNoop(t *testing.T) {
 	}
 }
 
+// Resolution events exist so open dashboards can drop a row. Nothing new
+// happened for the user, so a phone must not buzz for one.
+func TestDispatcherIgnoresResolvedEvents(t *testing.T) {
+	sub := &fakeSubscriber{ch: make(chan domain.NotificationEvent, 1)}
+	store := &fakeDeviceStore{devices: []mobilebridge.PushDevice{{Token: "ExponentPushToken[a]"}}}
+	sender := newFakeSender([]Ticket{{Status: "ok"}})
+	d := NewDispatcher(sub, store, sender, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go d.Run(ctx)
+
+	sub.ch <- domain.NotificationEvent{
+		Kind:   domain.NotificationResolved,
+		Record: domain.NotificationRecord{ID: "ntf_1", Type: domain.NotificationNeedsInput, Title: "t", Body: "b"},
+	}
+	time.Sleep(100 * time.Millisecond)
+	sender.mu.Lock()
+	defer sender.mu.Unlock()
+	if sender.sent {
+		t.Fatal("sender was called for a resolution event")
+	}
+}
+
 func TestDispatcherSweepPrunesOnReceipt(t *testing.T) {
 	store := &fakeDeviceStore{devices: []mobilebridge.PushDevice{{Token: "ExponentPushToken[dead]"}}}
 	sender := newFakeSender(nil)
 	dead := Receipt{Status: "error"}
 	dead.Details.Error = "DeviceNotRegistered"
 	sender.receipts = map[string]Receipt{"tk1": dead}
-	d := NewDispatcher(&fakeSubscriber{ch: make(chan domain.NotificationRecord)}, store, sender, nil)
+	d := NewDispatcher(&fakeSubscriber{ch: make(chan domain.NotificationEvent)}, store, sender, nil)
 
 	base := time.Now()
 	d.clock = func() time.Time { return base }
@@ -222,7 +250,7 @@ func TestDispatcherSweepPrunesOnReceipt(t *testing.T) {
 func TestDispatcherSweepSkipsFreshAndDropsExpired(t *testing.T) {
 	store := &fakeDeviceStore{}
 	sender := newFakeSender(nil)
-	d := NewDispatcher(&fakeSubscriber{ch: make(chan domain.NotificationRecord)}, store, sender, nil)
+	d := NewDispatcher(&fakeSubscriber{ch: make(chan domain.NotificationEvent)}, store, sender, nil)
 
 	base := time.Now()
 	d.clock = func() time.Time { return base }

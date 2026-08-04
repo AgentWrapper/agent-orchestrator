@@ -68,7 +68,7 @@ func TestGitHubStoreIntegrationIsolationRevocationAndAtomicConfirmation(t *testi
 	installationID := integrationGitHubID()
 	installation := integrationGitHubInstallationInput(installationID)
 	repository := integrationGitHubRepository(repositoryID)
-	stateA := createPendingIntegrationAttempt(t, ctx, store, orgA, clouddomain.UserID(userA), installation, 1, nil)
+	stateA := createPendingIntegrationAttempt(ctx, t, store, orgA, clouddomain.UserID(userA), installation, 1, nil)
 	if _, err := store.ConfirmGitHubInstallation(ctx, orgA, clouddomain.UserID(userA), stateA, GitHubInstallationConfirmation{
 		Installation: installation,
 		Repositories: []clouddomain.GitHubRepository{repository},
@@ -106,7 +106,7 @@ func TestGitHubStoreIntegrationIsolationRevocationAndAtomicConfirmation(t *testi
 		t.Fatalf("cross-org active grant error = %v, want ErrGitHubRepositoryGrantNotFound", err)
 	}
 
-	stateB := createPendingIntegrationAttempt(t, ctx, store, orgB, clouddomain.UserID(userB), installation, 1, nil)
+	stateB := createPendingIntegrationAttempt(ctx, t, store, orgB, clouddomain.UserID(userB), installation, 1, nil)
 	if _, err := store.ConfirmGitHubInstallation(ctx, orgB, clouddomain.UserID(userB), stateB, GitHubInstallationConfirmation{
 		Installation: installation,
 		Repositories: []clouddomain.GitHubRepository{repository},
@@ -128,8 +128,8 @@ func TestGitHubStoreIntegrationIsolationRevocationAndAtomicConfirmation(t *testi
 	rollbackInstallation := integrationGitHubInstallationInput(rollbackInstallationID)
 	rollbackRepository := integrationGitHubRepository(rollbackRepositoryID)
 	rollbackState := createPendingIntegrationAttempt(
-		t,
 		ctx,
+		t,
 		store,
 		orgA,
 		clouddomain.UserID(userA),
@@ -197,8 +197,8 @@ func TestGitHubStoreIntegrationIsolationRevocationAndAtomicConfirmation(t *testi
 	concurrentInstallation := integrationGitHubInstallationInput(integrationGitHubID())
 	concurrentRepository := integrationGitHubRepository(concurrentRepositoryID)
 	concurrentState := createPendingIntegrationAttempt(
-		t,
 		ctx,
+		t,
 		store,
 		orgA,
 		clouddomain.UserID(userA),
@@ -244,8 +244,8 @@ func TestGitHubStoreIntegrationIsolationRevocationAndAtomicConfirmation(t *testi
 }
 
 func createPendingIntegrationAttempt(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	store *Store,
 	orgID clouddomain.OrgID,
 	userID clouddomain.UserID,

@@ -3,6 +3,7 @@ import { PostHog } from "posthog-js/dist/module.full.no-external";
 import {
 	buildPostHogConfig,
 	buildTelemetryContext,
+	isDeniedEvent,
 	postHogEventName,
 	reserveCapture,
 	reserveDailyActiveCapture,
@@ -40,6 +41,62 @@ describe("telemetry sanitizers", () => {
 			distinctID: "ins_stable-install-id",
 			isIdentifiedID: false,
 		});
+	});
+
+	// The daemon enforces the same list on its own sink, but renderer events go
+	// straight to PostHog, so the policy has to be honoured here too or the kill
+	// switch only covers half the producers.
+	it("honours the supervisor deny list, by either internal or exported name", () => {
+		expect(isDeniedEvent("ao.app.active", ["ao.v2.app.active"])).toBe(true);
+		expect(isDeniedEvent("ao.app.active", ["ao.app.active"])).toBe(true);
+		expect(isDeniedEvent("ao.app.active", ["  AO.V2.APP.ACTIVE  "])).toBe(true);
+		expect(isDeniedEvent("ao.renderer.route_viewed", ["ao.renderer.*"])).toBe(true);
+		expect(isDeniedEvent("$exception", ["$exception"])).toBe(true);
+
+		expect(isDeniedEvent("ao.session.spawned", ["ao.renderer.*"])).toBe(false);
+		expect(isDeniedEvent("ao.app.active", [])).toBe(false);
+		// A bare "*" must not silence everything by accident.
+		expect(isDeniedEvent("ao.app.active", ["", "  ", "*"])).toBe(false);
+	});
+
+	it("allowlists only enum-like fields on update events", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.update_failed", {
+			to_version: "0.11.2",
+			error_category: "network",
+			phase: "download",
+			trigger: "automatic",
+			// Must be dropped: raw updater text can carry feed URLs and local paths.
+			message: "EACCES /Users/someone/Library/Caches/ao-updater",
+			stack: "at Object.<anonymous>",
+		});
+		expect(safe).toEqual({
+			to_version: "0.11.2",
+			error_category: "network",
+			phase: "download",
+			trigger: "automatic",
+		});
+
+		// An unrecognized phase is not passed through as-is.
+		const bogus = await sanitizeRendererProperties("ao.renderer.update_failed", { phase: "sideload" });
+		expect(bogus.phase).toBeUndefined();
+	});
+
+	it("disables every billable PostHog product AO does not consume", () => {
+		const config = buildPostHogConfig("ins_stable-install-id");
+
+		// Replay is billed per recording, so it escapes the per-name rate limits
+		// in this module entirely. Disabling it client-side means the project-side
+		// toggle cannot switch it back on for shipped builds.
+		expect(config.disable_session_recording).toBe(true);
+		// AO reads no flags and ships no surveys, and /flags requests are billed
+		// per request, so any request here is cost for data nothing reads.
+		expect(config.advanced_disable_flags).toBe(true);
+		expect(config.disable_surveys).toBe(true);
+		// Already-disabled capture paths that would otherwise autocapture volume.
+		expect(config.autocapture).toBe(false);
+		expect(config.capture_pageview).toBe(false);
+		expect(config.capture_exceptions).toBe(false);
+		expect(config.capture_performance).toBe(false);
 	});
 
 	it("emits the stable AO installation id without creating a person profile", () => {

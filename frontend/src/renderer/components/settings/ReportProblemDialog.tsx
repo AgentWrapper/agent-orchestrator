@@ -1,4 +1,5 @@
 import { RadioGroup } from "radix-ui";
+import { useTranslation } from "react-i18next";
 import { X } from "lucide-react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
@@ -63,18 +64,20 @@ const DEFAULT_DIAGNOSTICS: ReportProblemDiagnostics = {
 	routeSurface: "unknown",
 };
 
-const DESTINATIONS: {
+type DestinationOption = {
 	value: ReportProblemOutput;
 	label: string;
 	action: string;
 	icon: (props: DestinationIconProps) => ReactNode;
-}[] = [
-		{ value: "github", label: "GitHub", action: "Copy & Create GitHub Issue", icon: GithubIcon },
-		{ value: "discord", label: "Discord", action: "Copy & Open Discord", icon: DiscordIcon },
-		{ value: "email", label: "Email", action: "Copy & Open Email", icon: EmailIcon },
-	];
+};
 
 export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogProps) {
+	const { t } = useTranslation();
+	const destinations: DestinationOption[] = [
+		{ value: "github", label: t("report.github"), action: t("report.githubAction"), icon: GithubIcon },
+		{ value: "discord", label: t("report.discord"), action: t("report.discordAction"), icon: DiscordIcon },
+		{ value: "email", label: t("report.email"), action: t("report.emailAction"), icon: EmailIcon },
+	];
 	const titleId = useId();
 	const detailsId = useId();
 	const titleRef = useRef<HTMLInputElement>(null);
@@ -85,7 +88,7 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 	const [copyError, setCopyError] = useState<string | null>(null);
 	const [diagnostics, setDiagnostics] = useState<ReportProblemDiagnostics>(DEFAULT_DIAGNOSTICS);
 
-	const copiedLabel = DESTINATIONS.find((option) => option.value === copiedOutput)?.label;
+	const copiedLabel = destinations.find((option) => option.value === copiedOutput)?.label;
 
 	useEffect(() => {
 		if (!open) {
@@ -107,7 +110,7 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 
 	const input = { summary, details };
 	const draft = formatReportProblemDraft(input, diagnostics, selectedOutput);
-	const destination = DESTINATIONS.find((option) => option.value === selectedOutput) ?? DESTINATIONS[0];
+	const destination = destinations.find((option) => option.value === selectedOutput) ?? destinations[0];
 	const canSubmit = summary.trim().length > 0 && details.trim().length > 0;
 
 	const clearStatus = () => {
@@ -130,7 +133,7 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 			setDetails("");
 			setSelectedOutput("github");
 		} catch (err) {
-			setCopyError(err instanceof Error ? err.message : "Could not copy report draft");
+			setCopyError(err instanceof Error ? err.message : t("report.copyFailed"));
 			setCopiedOutput(null);
 		}
 	};
@@ -157,24 +160,24 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 					<button
 						type="button"
 						className="settings-dialog-close-button settings-close-button"
-						aria-label="Close report dialog"
-						title="Close (Esc)"
+						aria-label={t("report.close")}
+						title={t("report.closeEsc")}
 					>
 						<X className="size-5" aria-hidden="true" />
 					</button>
 				</DialogClose>
 
 				<div className={settingsDialogHeaderClass}>
-					<DialogTitle className="settings-dialog-title">Report a problem</DialogTitle>
+					<DialogTitle className="settings-dialog-title">{t("report.title")}</DialogTitle>
 					<DialogDescription className="text-control leading-4 text-settings-muted">
-						Found an issue? Tell us what happened.
+						{t("report.subtitle")}
 					</DialogDescription>
 				</div>
 
 				<div className={settingsDialogBodyClass}>
 					<div className="flex flex-col gap-1.5">
 						<label className="settings-field-label" htmlFor={titleId}>
-							Title
+							{t("report.titleLabel")}
 						</label>
 						<input
 							ref={titleRef}
@@ -185,13 +188,13 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 								setSummary(event.target.value);
 								clearStatus();
 							}}
-							placeholder="Brief Title"
+							placeholder={t("report.titlePlaceholder")}
 						/>
 					</div>
 
 					<div className="flex flex-col gap-1.5">
 						<label className="settings-field-label" htmlFor={detailsId}>
-							What happened?
+							{t("report.whatHappened")}
 						</label>
 						<textarea
 							id={detailsId}
@@ -201,7 +204,7 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 								setDetails(event.target.value);
 								clearStatus();
 							}}
-							placeholder="Share what happened, what you expected, and how to reproduce it."
+							placeholder={t("report.detailsPlaceholder")}
 						/>
 					</div>
 
@@ -211,10 +214,10 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 							setSelectedOutput(value as ReportProblemOutput);
 							clearStatus();
 						}}
-						aria-label="Report destination"
+						aria-label={t("report.destination")}
 						className="settings-segment self-start"
 					>
-						{DESTINATIONS.map((option) => (
+						{destinations.map((option) => (
 							<RadioGroup.Item key={option.value} value={option.value} className="settings-segment-item">
 								<option.icon className="size-icon-sm" aria-hidden="true" />
 								{option.label}
@@ -228,14 +231,14 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 						</p>
 					)}
 					{copiedLabel && !copyError && (
-						<p className="text-caption leading-4 text-success">{copiedLabel} draft copied.</p>
+						<p className="text-caption leading-4 text-success">{t("report.draftCopied", { label: copiedLabel })}</p>
 					)}
 				</div>
 
 				<div className={settingsDialogFooterClass}>
 					<DialogClose asChild>
 						<button type="button" className="settings-footer-button">
-							Cancel
+							{t("report.cancel")}
 						</button>
 					</DialogClose>
 					<button

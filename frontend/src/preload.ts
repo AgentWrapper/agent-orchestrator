@@ -1,15 +1,24 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL, type KeybindingOverrides } from "./shared/shortcuts";
+import { CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL, FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL, SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, type KeybindingOverrides } from "./shared/shortcuts";
 import type {
 	BrowserAgentActivityState,
 	BrowserNavState,
 	BrowserRect,
 	BrowserTabsState,
 } from "./main/browser-view-host";
+import {
+	TRAY_OPEN_SESSION_CHANNEL,
+	TRAY_RENDERER_READY_CHANNEL,
+	TRAY_SET_ATTENTION_STATE_CHANNEL,
+	type TrayAttentionState,
+	type TrayOpenSessionTarget,
+} from "./shared/tray";
 import type { DaemonStatus } from "./shared/daemon-status";
 import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
+import type { UpdateOutcome } from "./shared/update-telemetry";
+import type { UiSettings } from "./main/ui-settings";
 import type { UpdateCheckOptions } from "./main/auto-updater";
 import type { FeatureBuild } from "./main/feature-builds";
 import type {
@@ -74,7 +83,7 @@ const api = {
 				ipcRenderer.off(KEYBOARD_SHORTCUTS_HELP_CHANNEL, wrapped);
 			};
 		},
-		// Fired by the main process when Ctrl+Shift+` is pressed in any web contents,
+		// Fired by the main process when ⌘T / Ctrl+T is pressed in any web contents,
 		// including while focus is inside a terminal pane.
 		onNewShellTerminalShortcut: (listener: () => void) => {
 			const wrapped = () => listener();
@@ -82,6 +91,16 @@ const api = {
 			return () => {
 				ipcRenderer.off(NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, wrapped);
 			};
+		},
+		onCloseShellTerminalShortcut: (listener: () => void) => {
+			const wrapped = () => listener();
+			ipcRenderer.on(CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL, wrapped);
+			return () => {
+				ipcRenderer.off(CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL, wrapped);
+			};
+		},
+		setCloseShellTerminalShortcutEnabled: (enabled: boolean) => {
+			ipcRenderer.send(SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, enabled);
 		},
 		onOpenSettingsShortcut: (listener: () => void) => {
 			const wrapped = () => listener();
@@ -225,6 +244,17 @@ const api = {
 			};
 		},
 	},
+	tray: {
+		setAttentionState: (state: TrayAttentionState) => ipcRenderer.send(TRAY_SET_ATTENTION_STATE_CHANNEL, state),
+			onOpenSession: (listener: (target: TrayOpenSessionTarget) => void) => {
+				const wrapped = (_event: Electron.IpcRendererEvent, target: TrayOpenSessionTarget) => listener(target);
+				ipcRenderer.on(TRAY_OPEN_SESSION_CHANNEL, wrapped);
+				ipcRenderer.send(TRAY_RENDERER_READY_CHANNEL);
+			return () => {
+				ipcRenderer.off(TRAY_OPEN_SESSION_CHANNEL, wrapped);
+			};
+		},
+	},
 	appState: {
 		getMigration: () => ipcRenderer.invoke("appState:getMigration") as Promise<MigrationState>,
 		setMigration: (migration: MigrationState) =>
@@ -233,6 +263,10 @@ const api = {
 	updateSettings: {
 		get: () => ipcRenderer.invoke("updateSettings:get") as Promise<UpdateSettings>,
 		set: (settings: UpdateSettings) => ipcRenderer.invoke("updateSettings:set", settings) as Promise<void>,
+	},
+	uiSettings: {
+		get: () => ipcRenderer.invoke("uiSettings:get") as Promise<UiSettings>,
+		set: (settings: UiSettings) => ipcRenderer.invoke("uiSettings:set", settings) as Promise<UiSettings>,
 	},
 	keybindings: {
 		get: () => ipcRenderer.invoke("keybindings:get") as Promise<KeybindingOverrides>,
@@ -251,6 +285,15 @@ const api = {
 			ipcRenderer.on("updates:status", wrapped);
 			return () => {
 				ipcRenderer.off("updates:status", wrapped);
+			};
+		},
+		// Separate from onStatus: the main process suppresses the *status* for
+		// automatic failures but still reports the outcome here.
+		onTelemetry: (listener: (outcome: UpdateOutcome) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, outcome: UpdateOutcome) => listener(outcome);
+			ipcRenderer.on("updates:telemetry", wrapped);
+			return () => {
+				ipcRenderer.off("updates:telemetry", wrapped);
 			};
 		},
 	},

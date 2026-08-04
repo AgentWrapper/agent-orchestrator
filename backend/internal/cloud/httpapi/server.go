@@ -135,10 +135,10 @@ type Server struct {
 
 // WithMaxActiveSandboxesPerOrg rejects new session creation once an org has
 // too many non-deleted sandboxes. A value of 0 disables the guard.
-func WithMaxActiveSandboxesPerOrg(max int) Option {
+func WithMaxActiveSandboxesPerOrg(limit int) Option {
 	return func(server *Server) {
-		if max >= 0 {
-			server.maxActiveSandboxesPerOrg = max
+		if limit >= 0 {
+			server.maxActiveSandboxesPerOrg = limit
 		}
 	}
 }

@@ -787,6 +787,7 @@ func (r *Runner) configureWorkerGitCredential(ctx context.Context, helperPath st
 		{"config", "--local", "--replace-all", "credential.useHttpPath", "true"},
 	}
 	for _, arguments := range commands {
+		// #nosec G702 -- git is fixed and each value is passed as a discrete argument without a shell.
 		command := exec.CommandContext(ctx, "git", append([]string{"-C", r.workspaceDir}, arguments...)...)
 		if output, err := command.CombinedOutput(); err != nil {
 			return fmt.Errorf(

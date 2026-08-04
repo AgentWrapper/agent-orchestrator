@@ -565,7 +565,7 @@ func (s *Server) syncGitHub(w http.ResponseWriter, r *http.Request) {
 			s.internalError(w, r, "load GitHub installation for sync", errors.New("GitHub installation does not belong to configured App"))
 			return
 		}
-		if _, err := s.bindAndSyncGitHubInstallation(
+		if err := s.bindAndSyncGitHubInstallation(
 			r.Context(),
 			org.Organization.ID,
 			binding.InstalledByUserID,
@@ -752,22 +752,23 @@ func (s *Server) bindAndSyncGitHubInstallation(
 	orgID clouddomain.OrgID,
 	userID clouddomain.UserID,
 	installation cloudgithubapp.Installation,
-) ([]clouddomain.GitHubRepositoryGrant, error) {
+) error {
 	input, err := githubInstallationInput(installation)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if _, err := s.githubStore.BindGitHubInstallation(ctx, orgID, userID, input); err != nil {
-		return nil, err
+		return err
 	}
 	if input.Status == "suspended" {
-		return []clouddomain.GitHubRepositoryGrant{}, nil
+		return nil
 	}
 	repositories, err := s.githubApp.client.ListInstallationRepositories(ctx, installation.ID)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return s.syncKnownGitHubRepositories(ctx, orgID, installation.ID, repositories)
+	_, err = s.syncKnownGitHubRepositories(ctx, orgID, installation.ID, repositories)
+	return err
 }
 
 func (s *Server) syncKnownGitHubRepositories(

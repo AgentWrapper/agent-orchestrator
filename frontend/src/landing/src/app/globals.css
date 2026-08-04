@@ -131,6 +131,20 @@
   }
 }
 
+/* Match the desktop app: marketing chrome is not selectable. */
+body {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input,
+textarea,
+[contenteditable="true"],
+.prose {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 /*
  * Blog code blocks - force dark theme
  * Note: !important is required to override Shiki's inline styles

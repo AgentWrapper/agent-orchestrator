@@ -11,7 +11,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -92,10 +91,7 @@ func signJWT(key *rsa.PrivateKey, claims appJWTClaims) (string, error) {
 	}
 
 	encoding := base64.RawURLEncoding
-	unsigned := strings.Join([]string{
-		encoding.EncodeToString(header),
-		encoding.EncodeToString(payload),
-	}, ".")
+	unsigned := encoding.EncodeToString(header) + "." + encoding.EncodeToString(payload)
 	digest := sha256.Sum256([]byte(unsigned))
 	signature, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, digest[:])
 	if err != nil {

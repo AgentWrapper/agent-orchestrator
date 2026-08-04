@@ -10,6 +10,9 @@ import (
 	"syscall"
 	"time"
 
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
+
 	cloudauth "github.com/aoagents/agent-orchestrator/backend/internal/cloud/auth"
 	cloudconfig "github.com/aoagents/agent-orchestrator/backend/internal/cloud/config"
 	cloudevents "github.com/aoagents/agent-orchestrator/backend/internal/cloud/events"
@@ -27,8 +30,6 @@ import (
 	cloudsecrets "github.com/aoagents/agent-orchestrator/backend/internal/cloud/secrets"
 	cloudworker "github.com/aoagents/agent-orchestrator/backend/internal/cloud/worker"
 	cloudworkerhub "github.com/aoagents/agent-orchestrator/backend/internal/cloud/workerhub"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
-	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
 )
 
 func main() {

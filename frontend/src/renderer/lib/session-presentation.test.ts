@@ -3,7 +3,6 @@ import {
 	attentionZone,
 	getAgentActivityView,
 	getAttentionZoneView,
-	getSessionDotView,
 	getSessionStatusView,
 	getSessionTimelinePillView,
 	isAgentActivityWorking,
@@ -39,14 +38,18 @@ const openPr: WorkspaceSession["prs"][number] = {
 
 describe("session presentation", () => {
 	it.each([
-		["active", "Working", true],
-		["idle", "Idle", false],
-		["waiting_input", "Input Needed", false],
-		["blocked", "Awaiting Decision", false],
-		["exited", "Exited", false],
-		["unknown", "Unknown", false],
-	] as const)("maps %s agent activity to %s", (state, label, breathe) => {
-		expect(getAgentActivityView({ state, lastActivityAt: "" })).toMatchObject({ label, breathe });
+		["active", "Working", true, "bg-status-working animate-status-pulse"],
+		["idle", "Idle", false, "bg-status-idle"],
+		["waiting_input", "Input Needed", false, "bg-status-needs-you"],
+		["blocked", "Awaiting Decision", false, "bg-status-needs-you"],
+		["exited", "Exited", false, "bg-status-exited"],
+		["unknown", "Unknown", false, "bg-status-unknown"],
+	] as const)("maps %s agent activity to %s", (state, label, breathe, indicatorClassName) => {
+		expect(getAgentActivityView({ state, lastActivityAt: "" })).toMatchObject({
+			label,
+			breathe,
+			indicatorClassName,
+		});
 	});
 
 	it("uses raw agent activity, not session status, for working indicators", () => {
@@ -105,91 +108,12 @@ describe("session presentation", () => {
 		expect(getAttentionZoneView(status)).toMatchObject({ zone, label });
 	});
 
-	it.each([
-		["without a PR", undefined, "bg-status-working"],
-		["with an open PR", "pr_open", "bg-status-in-review"],
-		["with a draft PR", "draft", "bg-status-in-review"],
-		["with pending review", "review_pending", "bg-status-in-review"],
-		["with failing CI", "ci_failed", "bg-status-needs-you"],
-		["with requested changes", "changes_requested", "bg-status-needs-you"],
-		["with an approved PR", "approved", "bg-status-ready"],
-		["with a mergeable PR", "mergeable", "bg-status-ready"],
-		["with a merged PR", "merged", "bg-status-merged"],
-	] as const)("colors and animates an active sidebar session %s", (_label, scmStatus, expectedClass) => {
-		const dot = getSessionDotView(
-			sessionWith({
-				activity: { state: "active", lastActivityAt: "" },
-				scmStatus,
-			}),
-		);
+	it("keeps activity indicator color independent from PR and CI presentation", () => {
+		const active = getAgentActivityView({ state: "active", lastActivityAt: "" });
+		const idle = getAgentActivityView({ state: "idle", lastActivityAt: "" });
 
-		expect(dot?.className).toContain(expectedClass);
-		expect(dot?.className).toContain("animate-status-pulse");
-	});
-
-	it.each([
-		["an open PR", { ...openPr }, "bg-status-in-review"],
-		["a draft PR", { ...openPr, state: "draft" }, "bg-status-in-review"],
-		["pending review", { ...openPr, review: "review_required" }, "bg-status-in-review"],
-		["failing CI", { ...openPr, ci: "failing" }, "bg-status-needs-you"],
-		["requested changes", { ...openPr, review: "changes_requested" }, "bg-status-needs-you"],
-		["an approved PR", { ...openPr, review: "approved" }, "bg-status-ready"],
-		["a mergeable PR", { ...openPr, mergeability: "mergeable" }, "bg-status-ready"],
-		["a merged PR", { ...openPr, state: "merged" }, "bg-status-merged"],
-	] as const)(
-		"derives the active sidebar color from %s when an older daemon omits scmStatus",
-		(_label, pr, expectedClass) => {
-			const dot = getSessionDotView(
-				sessionWith({
-					activity: { state: "active", lastActivityAt: "" },
-					prs: [pr],
-				}),
-			);
-
-			expect(dot?.className).toContain(expectedClass);
-			expect(dot?.className).toContain("animate-status-pulse");
-		},
-	);
-
-	it("prefers the daemon's stack-aware scmStatus over the compatibility fallback", () => {
-		const dot = getSessionDotView(
-			sessionWith({
-				activity: { state: "active", lastActivityAt: "" },
-				scmStatus: "review_pending",
-				prs: [{ ...openPr, ci: "failing" }],
-			}),
-		);
-
-		expect(dot?.className).toContain("bg-status-in-review");
-		expect(dot?.className).not.toContain("bg-status-needs-you");
-	});
-
-	it("keeps a static gray sidebar dot while the agent is idle", () => {
-		const dot = getSessionDotView(
-			sessionWith({
-				status: "draft",
-				scmStatus: "draft",
-				activity: { state: "idle", lastActivityAt: "" },
-				prs: [{ ...openPr, state: "draft" }],
-			}),
-		);
-
-		expect(dot.className).toBe("bg-status-idle");
-		expect(dot.className).not.toContain("animate-status-pulse");
-	});
-
-	it.each([
-		["waiting_input", "bg-status-needs-you"],
-		["blocked", "bg-status-needs-you"],
-		["exited", "bg-status-exited"],
-		["unknown", "bg-status-unknown"],
-	] as const)("keeps the raw %s activity tone when the agent is not active", (state, expectedClass) => {
-		expect(getSessionDotView(sessionWith({ activity: { state, lastActivityAt: "" }, prs: [openPr] }))?.className).toBe(
-			expectedClass,
-		);
-		expect(
-			getSessionDotView(sessionWith({ activity: { state, lastActivityAt: "" }, prs: [openPr] }))?.className,
-		).not.toContain("animate-status-pulse");
+		expect(active.indicatorClassName).toBe("bg-status-working animate-status-pulse");
+		expect(idle.indicatorClassName).toBe("bg-status-idle");
 	});
 
 	it("uses a muted accent treatment for In Review instead of idle gray", () => {

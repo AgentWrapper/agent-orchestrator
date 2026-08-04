@@ -16,14 +16,22 @@ import (
 type CredentialOperation string
 
 const (
-	OperationObserve             CredentialOperation = "observe"
-	OperationIssueRead           CredentialOperation = "issue-read"
-	OperationPullRequestRead     CredentialOperation = "pull-request-read"
-	OperationPullRequestWrite    CredentialOperation = "pull-request-write"
-	OperationMerge               CredentialOperation = "merge"
+	// OperationObserve permits read-only repository observation.
+	OperationObserve CredentialOperation = "observe"
+	// OperationIssueRead permits reading issue metadata.
+	OperationIssueRead CredentialOperation = "issue-read"
+	// OperationPullRequestRead permits reading pull-request metadata.
+	OperationPullRequestRead CredentialOperation = "pull-request-read"
+	// OperationPullRequestWrite permits creating or updating pull requests.
+	OperationPullRequestWrite CredentialOperation = "pull-request-write"
+	// OperationMerge permits merging pull requests.
+	OperationMerge CredentialOperation = "merge"
+	// OperationResolveReviewThread permits resolving pull-request review threads.
 	OperationResolveReviewThread CredentialOperation = "resolve-review-thread"
-	OperationGitUploadPack       CredentialOperation = "git-upload-pack"
-	OperationGitReceivePack      CredentialOperation = "git-receive-pack"
+	// OperationGitUploadPack permits Git fetch and clone transport.
+	OperationGitUploadPack CredentialOperation = "git-upload-pack"
+	// OperationGitReceivePack permits Git push transport.
+	OperationGitReceivePack CredentialOperation = "git-receive-pack"
 )
 
 var (

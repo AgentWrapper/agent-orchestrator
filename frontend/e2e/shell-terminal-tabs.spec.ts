@@ -24,9 +24,9 @@ test("opens, selects, and closes standalone shell terminals from the tab strip",
 	// Scoped to the terminal panel: the sidebar carries the same session name.
 	const sessionTab = page
 		.getByTestId("terminal")
-		.getByRole("button", { name: "Build screenshot-ready dashboard data" });
+		.getByRole("tab", { name: /^Build screenshot-ready dashboard data/ });
 	await sessionTab.click();
-	await expect(sessionTab).toHaveAttribute("aria-current", "true");
+	await expect(sessionTab).toHaveAttribute("aria-selected", "true");
 
 	// Closing a shell removes exactly its own tab.
 	await closeButtons.last().click();

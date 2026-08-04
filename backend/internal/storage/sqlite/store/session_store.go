@@ -92,6 +92,21 @@ func (s *Store) SetSessionTerminateOnPRMerge(ctx context.Context, id domain.Sess
 	return rows > 0, nil
 }
 
+// SetSessionReviewerHarness persists the reviewer preference for one session.
+func (s *Store) SetSessionReviewerHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness, updatedAt time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.SetSessionReviewerHarness(ctx, gen.SetSessionReviewerHarnessParams{
+		ReviewerHarness: harness,
+		UpdatedAt:       updatedAt,
+		ID:              id,
+	})
+	if err != nil {
+		return false, fmt.Errorf("set reviewer harness for %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
 // DeleteSession removes a session row, but only if it is still in seed state
 // (no workspace, no runtime handle, no agent session id, no prompt, and not
 // already terminated). Rows that have observable spawn output are immutable
@@ -206,12 +221,13 @@ func mapSessionRows(rows []gen.Session) []domain.SessionRecord {
 
 func rowToRecord(row gen.Session) domain.SessionRecord {
 	return domain.SessionRecord{
-		ID:          row.ID,
-		ProjectID:   row.ProjectID,
-		IssueID:     row.IssueID,
-		Kind:        row.Kind,
-		Harness:     row.Harness,
-		DisplayName: row.DisplayName,
+		ID:              row.ID,
+		ProjectID:       row.ProjectID,
+		IssueID:         row.IssueID,
+		Kind:            row.Kind,
+		Harness:         row.Harness,
+		ReviewerHarness: row.ReviewerHarness,
+		DisplayName:     row.DisplayName,
 		Activity: domain.Activity{
 			State:          row.ActivityState,
 			LastActivityAt: row.ActivityLastAt,
@@ -247,6 +263,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		IssueID:            rec.IssueID,
 		Kind:               rec.Kind,
 		Harness:            rec.Harness,
+		ReviewerHarness:    rec.ReviewerHarness,
 		DisplayName:        rec.DisplayName,
 		ActivityState:      activity.State,
 		ActivityLastAt:     activity.LastActivityAt,
@@ -277,6 +294,7 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		IssueID:            rec.IssueID,
 		Kind:               rec.Kind,
 		Harness:            rec.Harness,
+		ReviewerHarness:    rec.ReviewerHarness,
 		DisplayName:        rec.DisplayName,
 		ActivityState:      activity.State,
 		ActivityLastAt:     activity.LastActivityAt,

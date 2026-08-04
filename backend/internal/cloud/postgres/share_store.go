@@ -645,9 +645,14 @@ func (s *Store) ListSharedProjectGrants(ctx context.Context, userID string) ([]S
 }
 
 var (
-	ErrProjectShareLinkNotFound     = errors.New("cloud project share link not found")
-	ErrProjectShareGrantNotFound    = errors.New("cloud project share grant not found")
-	ErrProjectShareSelfRedeem       = errors.New("cannot redeem own project share link")
-	ErrProjectShareUnauthorized     = errors.New("cloud project share link is restricted")
+	// ErrProjectShareLinkNotFound means the requested project share link does not exist.
+	ErrProjectShareLinkNotFound = errors.New("cloud project share link not found")
+	// ErrProjectShareGrantNotFound means the requested project share grant does not exist.
+	ErrProjectShareGrantNotFound = errors.New("cloud project share grant not found")
+	// ErrProjectShareSelfRedeem means the link creator attempted to redeem their own link.
+	ErrProjectShareSelfRedeem = errors.New("cannot redeem own project share link")
+	// ErrProjectShareUnauthorized means the current user is not an eligible link recipient.
+	ErrProjectShareUnauthorized = errors.New("cloud project share link is restricted")
+	// ErrProjectShareInvalidRecipient means the requested recipient email is invalid.
 	ErrProjectShareInvalidRecipient = errors.New("cloud project share recipient is invalid")
 )

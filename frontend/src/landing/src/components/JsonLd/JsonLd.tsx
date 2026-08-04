@@ -3,6 +3,8 @@ import { COMPANY } from "@ao/shared/constants";
 const ORGANIZATION_ID = `${COMPANY.MARKETING_URL}/#organization`;
 const WEBSITE_ID = `${COMPANY.MARKETING_URL}/#website`;
 const SOFTWARE_ID = `${COMPANY.MARKETING_URL}/#software`;
+const PRODUCT_DESCRIPTION =
+	"Open-source desktop application and local CLI (ao) to run 10+ parallel AI coding agents in isolated Git worktrees without file conflicts or API proxying.";
 
 function serializeJsonLd(schema: unknown): string {
 	const json = JSON.stringify(schema);
@@ -42,7 +44,7 @@ export function OrganizationJsonLd() {
 		name: COMPANY.NAME,
 		url: COMPANY.MARKETING_URL,
 		logo: `${COMPANY.MARKETING_URL}/ao-logo.svg`,
-		description: "Run 10+ parallel coding agents on your machine",
+		description: PRODUCT_DESCRIPTION,
 		email: supportEmail,
 		contactPoint: {
 			"@type": "ContactPoint",
@@ -84,7 +86,7 @@ export function SoftwareApplicationJsonLd() {
 			price: "0",
 			priceCurrency: "USD",
 		},
-		description: "Run 10+ parallel coding agents on your machine",
+		description: PRODUCT_DESCRIPTION,
 		url: COMPANY.MARKETING_URL,
 	};
 
@@ -227,7 +229,7 @@ export function HomeWebPageJsonLd() {
 		"@type": "WebPage",
 		"@id": COMPANY.MARKETING_URL,
 		url: COMPANY.MARKETING_URL,
-		name: `${COMPANY.NAME}, Run 10+ parallel coding agents on your machine`,
+		name: `${COMPANY.NAME}, ${PRODUCT_DESCRIPTION}`,
 		isPartOf: {
 			"@type": "WebSite",
 			"@id": WEBSITE_ID,

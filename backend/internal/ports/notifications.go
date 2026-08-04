@@ -25,3 +25,17 @@ type NotificationIntent struct {
 	Provider           string
 	Repo               string
 }
+
+// NotificationResolution is the lifecycle-to-notification-producer contract for
+// closing notifications whose underlying issue went away. Lifecycle fills it
+// after the durable fact that resolves the issue is written — the session left
+// the needs-input family, the PR stopped waiting on a merge.
+//
+// PRURL wins when set (a PR-scoped notification can outlive its session's
+// activity churn); otherwise the resolution is scoped to SessionID.
+type NotificationResolution struct {
+	Type       domain.NotificationType
+	SessionID  domain.SessionID
+	PRURL      string
+	ResolvedAt time.Time
+}

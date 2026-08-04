@@ -188,6 +188,17 @@ describe("BrowserPanel", () => {
 		expect(hookState.navigate).toHaveBeenCalledWith("localhost:5173");
 	});
 
+	it("keeps the URL input editable while the browser is maximized", async () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut session={session} />);
+		const input = screen.getByRole("textbox", { name: /browser url/i });
+
+		await userEvent.clear(input);
+		await userEvent.type(input, "http://localhost:4173/");
+
+		expect(input).toHaveValue("http://localhost:4173/");
+	});
+
 	it("threads the session preview URL into the browser view (which drives navigation)", () => {
 		render(
 			<BrowserPanel

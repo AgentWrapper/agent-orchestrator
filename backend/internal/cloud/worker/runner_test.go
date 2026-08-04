@@ -18,13 +18,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
+	"github.com/creack/pty"
+
 	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 	cloudpostgres "github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
 	cloudworkerhub "github.com/aoagents/agent-orchestrator/backend/internal/cloud/workerhub"
 	shareddomain "github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-	"github.com/coder/websocket"
-	"github.com/creack/pty"
 )
 
 func TestPrepareClaudeCloudExperienceSkipsFirstRunPrompts(t *testing.T) {

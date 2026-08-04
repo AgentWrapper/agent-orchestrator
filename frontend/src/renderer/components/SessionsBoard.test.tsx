@@ -3,6 +3,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
+import { appI18n } from "../i18n";
 
 const { navigateMock, notificationShowMock, postMock, workspaceQueryMock, boardActionsInPanelMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
@@ -75,6 +76,43 @@ beforeEach(() => {
 });
 
 describe("SessionsBoard", () => {
+	it("localizes dynamic card actions and pull request lifecycle labels", async () => {
+		await appI18n.changeLanguage("zh-CN");
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({
+						id: "s-localized",
+						title: "localized worker",
+						status: "pr_open",
+						prs: [
+							{
+								url: "https://github.com/acme/repo/pull/42",
+								number: 42,
+								state: "open",
+								ci: "passing",
+								review: "approved",
+								mergeability: "mergeable",
+								reviewComments: false,
+								updatedAt: "2026-01-01T00:00:00Z",
+							},
+						],
+					}),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		try {
+			renderBoard("p1");
+			expect(screen.getByRole("button", { name: "终止 localized worker" })).toBeInTheDocument();
+			expect(screen.getByLabelText("#42 已打开")).toHaveTextContent("已打开");
+		} finally {
+			await appI18n.changeLanguage("en");
+		}
+	});
+
 	it("does not show an agent setup warning on the board", () => {
 		renderBoard();
 
@@ -214,6 +252,50 @@ describe("SessionsBoard", () => {
 		expect(terminateButton.querySelector("svg")).toHaveClass("lucide-trash-2");
 		expect(within(idleCard).getByText("Idle").parentElement).toHaveClass("flex", "justify-between");
 		expect(within(idleCard).getByText("brand-font-pipeline")).toHaveClass("font-semibold", "line-clamp-2");
+	});
+
+	it("pulses the shared activity indicator on an actively working session card", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({
+						id: "s-active",
+						title: "active-card-task",
+						status: "working",
+						activity: { state: "active", lastActivityAt: "2026-01-01T00:00:00Z" },
+					}),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+		const card = screen.getByText("active-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
+		const working = within(card).getByText("Working").closest("span") as HTMLElement;
+		expect(working.querySelector("span")).toHaveClass("bg-status-working", "animate-status-pulse");
+	});
+
+	it("keeps a spawning card labeled Working when raw activity has not become active", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({
+						id: "s-spawning",
+						title: "spawning-card-task",
+						status: "working",
+						activity: { state: "exited", lastActivityAt: "2026-01-01T00:00:00Z" },
+					}),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+		const card = screen.getByText("spawning-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
+		expect(within(card).getByText("Working")).toBeInTheDocument();
+		expect(within(card).queryByText("Exited")).not.toBeInTheDocument();
 	});
 
 	it("uses distinct card badge tones for idle, no signal, and draft PR sessions", () => {
@@ -578,8 +660,20 @@ describe("SessionsBoard", () => {
 	});
 
 	it("shows a static archive card with a persistent restore action", async () => {
+		const archivedSession = terminatedSession();
+		const mergedPr = archivedSession.prs[0];
+		if (!mergedPr) throw new Error("Archived-session fixture requires a pull request");
+		archivedSession.prs = [
+			{
+				...mergedPr,
+				number: 41,
+				state: "open",
+				url: "https://github.com/example/radic/pull/41",
+			},
+			mergedPr,
+		];
 		workspaceQueryMock.mockReturnValue({
-			data: [workspaceWithSessions([terminatedSession()])],
+			data: [workspaceWithSessions([archivedSession])],
 			isError: false,
 			isSuccess: true,
 		});
@@ -592,6 +686,8 @@ describe("SessionsBoard", () => {
 		expect(archive).toHaveClass("board-scrollbar", "overflow-y-auto");
 		const terminatedCard = within(archive).getByText("dead worker").closest<HTMLElement>("[role='listitem']");
 		expect(terminatedCard).not.toBeNull();
+		expect(terminatedCard).toHaveAttribute("data-testid", "board-session-card");
+		expect(terminatedCard).not.toHaveClass("min-h-28");
 		expect(within(terminatedCard!).queryByRole("button", { name: "Open dead worker" })).not.toBeInTheDocument();
 		expect(within(terminatedCard!).getByText("Terminated")).toBeInTheDocument();
 		// Agent shown as its brand logo with an accessible name (not a text label).
@@ -600,7 +696,15 @@ describe("SessionsBoard", () => {
 		expect(screen.getByText("github:INT-17")).toBeInTheDocument();
 		const prStatus = screen.getByLabelText("#42 merged");
 		expect(prStatus).toHaveTextContent("PR#42merged");
-		const divider = terminatedCard!.querySelector(".mx-3.my-px.h-px.bg-border");
+		const openPrStatus = screen.getByLabelText("#41 open");
+		expect(openPrStatus.parentElement).toBe(prStatus.parentElement);
+		expect(prStatus.parentElement).toHaveClass("flex-wrap");
+		expect(within(terminatedCard!).getByRole("link", { name: "#42" })).toHaveAttribute(
+			"href",
+			"https://github.com/example/radic/pull/42",
+		);
+		expect(within(terminatedCard!).getByRole("button", { name: "Copy branch ao/dead-worker" })).toBeInTheDocument();
+		const divider = terminatedCard!.querySelector("div[aria-hidden='true'].h-px.bg-border");
 		expect(divider).not.toBeNull();
 		expect(divider!.compareDocumentPosition(prStatus) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
 		expect(
@@ -625,7 +729,7 @@ describe("SessionsBoard", () => {
 		const archive = screen.getByRole("list", { name: "Archived sessions" });
 		expect(archive).toHaveClass("grid");
 		const restore = screen.getByRole("button", { name: "Restore dead worker" });
-		expect(restore.parentElement).toContainElement(screen.getByText("Terminated"));
+		expect(restore.closest("[role='listitem']")).toContainElement(screen.getByText("Terminated"));
 		expect(screen.queryByRole("button", { name: "Open dead worker" })).not.toBeInTheDocument();
 	});
 

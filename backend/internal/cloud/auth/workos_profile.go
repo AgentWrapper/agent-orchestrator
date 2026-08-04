@@ -57,7 +57,7 @@ func newWorkOSProfileResolver(
 		}
 
 		requestURL := baseURL + "/user_management/users/" + url.PathEscape(subject)
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, http.NoBody)
 		if err != nil {
 			return ExternalProfile{}, fmt.Errorf("create WorkOS user request: %w", err)
 		}
@@ -66,7 +66,7 @@ func newWorkOSProfileResolver(
 		if err != nil {
 			return ExternalProfile{}, fmt.Errorf("get WorkOS user: %w", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if resp.StatusCode != http.StatusOK {
 			return ExternalProfile{}, fmt.Errorf("get WorkOS user: unexpected status %d", resp.StatusCode)
 		}

@@ -378,7 +378,7 @@ func readPrivateKeyFile(path string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open AO_GITHUB_APP_PRIVATE_KEY_PATH: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	privateKey, err := io.ReadAll(io.LimitReader(file, maxGitHubPrivateKeyBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read AO_GITHUB_APP_PRIVATE_KEY_PATH: %w", err)
@@ -391,10 +391,12 @@ func readPrivateKeyFile(path string) ([]byte, error) {
 
 func validateGitHubPrivateKeyPEM(privateKeyPEM []byte) error {
 	block, rest := pem.Decode(privateKeyPEM)
-	if block == nil || len(strings.TrimSpace(string(rest))) != 0 {
+	if block == nil || strings.TrimSpace(string(rest)) != "" {
 		return errors.New("AO_GITHUB_APP_PRIVATE_KEY_PATH must contain exactly one PEM private key")
 	}
-	if x509.IsEncryptedPEMBlock(block) {
+	if block.Type == "ENCRYPTED PRIVATE KEY" ||
+		strings.Contains(strings.ToUpper(block.Headers["Proc-Type"]), "ENCRYPTED") ||
+		block.Headers["DEK-Info"] != "" {
 		return errors.New("AO_GITHUB_APP_PRIVATE_KEY_PATH must contain an unencrypted RSA private key")
 	}
 	var key any

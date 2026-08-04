@@ -18,6 +18,6 @@ test("uses the same centered settings-dialog layout as nearby app dialogs", () =
 
 	const dialog = screen.getByRole("dialog", { name: "Kill session?" });
 
-	expect(dialog).toHaveClass("left-[50%]", "top-[50%]", "z-overlay", "bg-settings-dialog", "p-0");
+	expect(dialog).toHaveClass("left-[50%]", "top-[50%]", "z-overlay", "bg-popover", "p-0");
 	expect(screen.getByRole("button", { name: "Confirm kill" }).querySelector("svg")).toBeNull();
 });
