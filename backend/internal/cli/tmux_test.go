@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -25,67 +26,111 @@ func lookPathFor(available ...string) func(string) (string, error) {
 	}
 }
 
+// openDevNull returns /dev/null as an *os.File, standing in for the stdin a
+// process gets from `docker run` without -i.
+func openDevNull(t *testing.T) *os.File {
+	t.Helper()
+	f, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatalf("open %s: %v", os.DevNull, err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	return f
+}
+
+// fakeTerminal makes the prompt paths reachable without a real tty: it returns
+// a reader holding the typed answer and forces the terminal check to accept it.
+func fakeTerminal(t *testing.T, answer string) io.Reader {
+	t.Helper()
+	prev := stdinIsInteractive
+	stdinIsInteractive = func(io.Reader) bool { return true }
+	t.Cleanup(func() { stdinIsInteractive = prev })
+	return strings.NewReader(answer)
+}
+
 func TestEnsureTmuxSkipsWhenSatisfied(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		goos      string
 		available []string
 	}{
-		{"tmux already installed", "linux", []string{"tmux", "apt-get"}},
+		{"tmux already installed", "linux", []string{"tmux", "apt-get", "sudo"}},
 		{"windows uses conpty", "windows", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			out := &bytes.Buffer{}
 			c := &commandContext{deps: Deps{
 				LookPath:       lookPathFor(tc.available...),
 				RunInteractive: func(context.Context, string, ...string) error { t.Fatal("must not install"); return nil },
 			}.withDefaults()}
-			if err := c.ensureTmux(context.Background(), tc.goos, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-				t.Fatalf("ensureTmux: %v", err)
+			c.ensureTmux(context.Background(), tc.goos, &bytes.Buffer{}, out)
+			if out.Len() != 0 {
+				t.Fatalf("expected no output, got %q", out.String())
 			}
 		})
 	}
 }
 
-func TestEnsureTmuxNonInteractiveReportsCommand(t *testing.T) {
+// A missing tmux must never fail `ao start`: the launcher's job is to open the
+// desktop app, which is still usable without a session runtime.
+func TestEnsureTmuxWarnsWithoutInstalling(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		available []string
+		want      string
+	}{
+		{"non-interactive stdin", []string{"apt-get", "sudo"}, "sudo apt-get install -y tmux"},
+		{"no package manager", nil, "install it with your package manager"},
+		{"unprivileged with no sudo", []string{"apt-get"}, "install it with your package manager"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.name == "unprivileged with no sudo" && os.Geteuid() == 0 {
+				t.Skip("running as root, so apt-get needs no sudo")
+			}
+			out := &bytes.Buffer{}
+			c := &commandContext{deps: Deps{
+				LookPath:       lookPathFor(tc.available...),
+				RunInteractive: func(context.Context, string, ...string) error { t.Fatal("must not install"); return nil },
+			}.withDefaults()}
+
+			// A bytes.Buffer is not a terminal, so no prompt may be issued.
+			c.ensureTmux(context.Background(), "linux", &bytes.Buffer{}, out)
+			if !strings.Contains(out.String(), "Warning: tmux is not in PATH") {
+				t.Fatalf("expected a warning, got %q", out.String())
+			}
+			if !strings.Contains(out.String(), tc.want) {
+				t.Fatalf("output %q should mention %q", out.String(), tc.want)
+			}
+		})
+	}
+}
+
+// Regression: /dev/null is a character device, so the old stdin check called it
+// a terminal. `docker run` without -i hands a process exactly that, and the
+// prompt then answered itself with the default and ran a package install.
+func TestEnsureTmuxTreatsDevNullAsNonInteractive(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no /dev/null")
+	}
+	out := &bytes.Buffer{}
 	c := &commandContext{deps: Deps{
 		LookPath:       lookPathFor("apt-get", "sudo"),
 		RunInteractive: func(context.Context, string, ...string) error { t.Fatal("must not install"); return nil },
 	}.withDefaults()}
 
-	// A bytes.Buffer is not a terminal, so no prompt may be issued.
-	err := c.ensureTmux(context.Background(), "linux", &bytes.Buffer{}, &bytes.Buffer{})
-	if err == nil {
-		t.Fatal("expected an error when tmux is missing")
+	c.ensureTmux(context.Background(), "linux", openDevNull(t), out)
+	if strings.Contains(out.String(), "Install it now") {
+		t.Fatalf("prompted on a non-terminal stdin: %q", out.String())
 	}
-	if !strings.Contains(err.Error(), "apt-get install -y tmux") {
-		t.Fatalf("error should name the install command, got %q", err)
-	}
-}
-
-func TestEnsureTmuxWithoutPackageManager(t *testing.T) {
-	c := &commandContext{deps: Deps{LookPath: lookPathFor()}.withDefaults()}
-
-	err := c.ensureTmux(context.Background(), "linux", &bytes.Buffer{}, &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "no supported package manager") {
-		t.Fatalf("expected a no-package-manager error, got %v", err)
+	if !strings.Contains(out.String(), "Warning: tmux is not in PATH") {
+		t.Fatalf("expected a warning, got %q", out.String())
 	}
 }
 
-// TestEnsureTmuxInteractiveInstalls drives the full prompt-and-install path.
-// /dev/null is a character device, so stdinIsInteractive accepts it, and it
-// reads as immediate EOF, which confirm() treats as the default (yes).
 func TestEnsureTmuxInteractiveInstalls(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("no /dev/null to stand in for a terminal")
-	}
-	stdin, err := os.Open(os.DevNull)
-	if err != nil {
-		t.Fatalf("open %s: %v", os.DevNull, err)
-	}
-	defer func() { _ = stdin.Close() }()
-
 	installed := false
 	var ran []string
+	out := &bytes.Buffer{}
 	c := &commandContext{deps: Deps{
 		LookPath: func(file string) (string, error) {
 			if file == "tmux" && !installed {
@@ -100,15 +145,42 @@ func TestEnsureTmuxInteractiveInstalls(t *testing.T) {
 		},
 	}.withDefaults()}
 
-	out := &bytes.Buffer{}
-	if err := c.ensureTmux(context.Background(), "darwin", stdin, out); err != nil {
-		t.Fatalf("ensureTmux: %v", err)
-	}
+	c.ensureTmux(context.Background(), "darwin", fakeTerminal(t, ""), out)
 	if got := strings.Join(ran, " "); got != "brew install tmux" {
 		t.Fatalf("ran %q, want brew install tmux", got)
 	}
-	if !strings.Contains(out.String(), "tmux installed.") {
-		t.Fatalf("expected success output, got %q", out.String())
+	if !strings.Contains(out.String(), "Install it now") || !strings.Contains(out.String(), "tmux installed.") {
+		t.Fatalf("expected a prompt and a success line, got %q", out.String())
+	}
+}
+
+func TestEnsureTmuxDeclinedInstallWarns(t *testing.T) {
+	out := &bytes.Buffer{}
+	c := &commandContext{deps: Deps{
+		LookPath:       lookPathFor("brew"),
+		RunInteractive: func(context.Context, string, ...string) error { t.Fatal("must not install"); return nil },
+	}.withDefaults()}
+
+	c.ensureTmux(context.Background(), "darwin", fakeTerminal(t, "n\n"), out)
+	if !strings.Contains(out.String(), "Warning: tmux is not in PATH") {
+		t.Fatalf("expected a warning after declining, got %q", out.String())
+	}
+}
+
+// A failed install warns rather than aborting the launch.
+func TestEnsureTmuxFailedInstallWarns(t *testing.T) {
+	out := &bytes.Buffer{}
+	c := &commandContext{deps: Deps{
+		LookPath:       lookPathFor("brew"),
+		RunInteractive: func(context.Context, string, ...string) error { return errors.New("exit status 100") },
+	}.withDefaults()}
+
+	c.ensureTmux(context.Background(), "darwin", fakeTerminal(t, ""), out)
+	if !strings.Contains(out.String(), "exit status 100") {
+		t.Fatalf("expected the install failure to be reported, got %q", out.String())
+	}
+	if !strings.Contains(out.String(), "Warning: tmux is not in PATH") {
+		t.Fatalf("expected a warning after a failed install, got %q", out.String())
 	}
 }
 
@@ -151,12 +223,12 @@ func TestTmuxInstallCommand(t *testing.T) {
 	}{
 		{"darwin uses homebrew", "darwin", []string{"brew"}, "brew install tmux"},
 		{"darwin without homebrew", "darwin", nil, ""},
-		{"linux prefers apt-get", "linux", []string{"apt-get", "dnf"}, "apt-get install -y tmux"},
-		{"linux falls back to dnf", "linux", []string{"dnf"}, "dnf install -y tmux"},
-		{"linux falls back to pacman", "linux", []string{"pacman"}, "pacman -S --noconfirm tmux"},
-		{"linux falls back to zypper", "linux", []string{"zypper"}, "zypper install -y tmux"},
-		{"linux falls back to apk", "linux", []string{"apk"}, "apk add tmux"},
-		{"linux without a package manager", "linux", nil, ""},
+		{"linux prefers apt-get", "linux", []string{"apt-get", "dnf", "sudo"}, "apt-get install -y tmux"},
+		{"linux falls back to dnf", "linux", []string{"dnf", "sudo"}, "dnf install -y tmux"},
+		{"linux falls back to pacman", "linux", []string{"pacman", "sudo"}, "pacman -S --noconfirm tmux"},
+		{"linux falls back to zypper", "linux", []string{"zypper", "sudo"}, "zypper install -y tmux"},
+		{"linux falls back to apk", "linux", []string{"apk", "sudo"}, "apk add tmux"},
+		{"linux without a package manager", "linux", []string{"sudo"}, ""},
 		{"unsupported platform", "plan9", []string{"apt-get", "brew"}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -177,7 +249,7 @@ func TestTmuxInstallCommand(t *testing.T) {
 	}
 }
 
-// Homebrew refuses to run as root, and macOS has no sudo step here.
+// Homebrew refuses to run as root, and macOS needs no sudo step here.
 func TestTmuxInstallCommandNeverSudoesHomebrew(t *testing.T) {
 	c := &commandContext{deps: Deps{LookPath: lookPathFor("brew", "sudo")}.withDefaults()}
 	if got := strings.Join(c.tmuxInstallCommand("darwin"), " "); got != "brew install tmux" {
@@ -185,7 +257,7 @@ func TestTmuxInstallCommandNeverSudoesHomebrew(t *testing.T) {
 	}
 }
 
-func TestTmuxInstallCommandSudoesLinuxWhenAvailable(t *testing.T) {
+func TestTmuxInstallCommandNeedsRootOnLinux(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("running as root, so no sudo prefix is expected")
 	}
@@ -193,9 +265,10 @@ func TestTmuxInstallCommandSudoesLinuxWhenAvailable(t *testing.T) {
 	if got := strings.Join(c.tmuxInstallCommand("linux"), " "); got != "sudo apt-get install -y tmux" {
 		t.Fatalf("got %q, want a sudo-prefixed invocation", got)
 	}
-	// Without sudo on PATH (a root-only container image) the bare command stands.
+	// Unprivileged with no sudo: the install is impossible, so offer nothing
+	// rather than run apt-get into a dpkg permission error.
 	c = &commandContext{deps: Deps{LookPath: lookPathFor("apt-get")}.withDefaults()}
-	if got := strings.Join(c.tmuxInstallCommand("linux"), " "); got != "apt-get install -y tmux" {
-		t.Fatalf("got %q, want a bare invocation when sudo is absent", got)
+	if got := c.tmuxInstallCommand("linux"); got != nil {
+		t.Fatalf("got %q, want no command when root is unreachable", got)
 	}
 }
