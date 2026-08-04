@@ -440,6 +440,7 @@
 	"settings.project.kind.workspace": "workspace",
 	"settings.project.modelOverride": "Model override",
 	"settings.project.name": "Project name",
+	"settings.project.settings": "Project Settings",
 	"settings.project.nameRequired": "Project name is required.",
 	"settings.project.path": "path",
 	"settings.project.permissionAcceptEdits": "Accept edits",

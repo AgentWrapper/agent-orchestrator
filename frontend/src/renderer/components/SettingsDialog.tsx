@@ -1,8 +1,8 @@
-import { Bot, CircleHelp, GitBranch, Inbox, MonitorCog, RefreshCw, Settings2, Wrench, X } from "lucide-react";
+import { CircleHelp, RefreshCw, Settings2, Wrench, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { GlobalSettingsForm, type GlobalSettingsSection } from "./GlobalSettingsForm";
-import { ProjectSettingsForm, type ProjectSettingsSection } from "./ProjectSettingsForm";
+import { ProjectSettingsForm } from "./ProjectSettingsForm";
 import {
 	Dialog,
 	DialogClose,
@@ -39,23 +39,14 @@ export function SettingsDialog() {
 		{ id: "help", label: t("settings.help"), icon: CircleHelp },
 	];
 
-	const projectSections: Array<{ id: ProjectSettingsSection; label: string; icon: typeof Settings2 }> = [
-		{ id: "general", label: t("settings.general"), icon: MonitorCog },
-		{ id: "agents", label: t("settings.project.agents"), icon: Bot },
-		{ id: "workflow", label: t("settings.project.workflow"), icon: GitBranch },
-		{ id: "intake", label: t("settings.project.intake"), icon: Inbox },
-	];
-
 	const isProjectSettings = displaySettings?.scope === "project";
 	const [activeSection, setActiveSection] = useState<Exclude<GlobalSettingsSection, "all">>("general");
-	const [activeProjectSection, setActiveProjectSection] = useState<ProjectSettingsSection>("general");
 	const activeLabel = isProjectSettings
-		? (projectSections.find((s) => s.id === activeProjectSection)?.label ?? t("settings.general"))
+		? t("settings.project.settings")
 		: (globalSections.find((section) => section.id === activeSection)?.label ?? t("settings.general"));
 
 	useEffect(() => {
 		if (settingsModal?.scope === "global") setActiveSection("general");
-		if (settingsModal?.scope === "project") setActiveProjectSection("general");
 	}, [settingsModal]);
 
 	return (
@@ -72,27 +63,17 @@ export function SettingsDialog() {
 						<aside className="flex w-48 shrink-0 flex-col border-r border-(--color-border-settings-dialog-header) bg-card">
 							<p className="px-3 pb-1 pt-3 text-2xs font-semibold uppercase tracking-wider text-muted-foreground/60">{t("settings.title")}</p>
 							<nav aria-label={t("settings.navSectionsAria")} className="flex flex-col gap-0.5 p-2 pt-0">
-						{isProjectSettings ? (
-								projectSections.map(({ id, label, icon }) => (
-									<SettingsNavItem
-										active={activeProjectSection === id}
-										icon={icon}
-										key={id}
-										label={label}
-										onClick={() => setActiveProjectSection(id)}
-									/>
-								))
-							) : (
-								globalSections.map(({ id, label, icon }) => (
-									<SettingsNavItem
-										active={activeSection === id}
-										icon={icon}
-										key={id}
-										label={label}
-										onClick={() => setActiveSection(id)}
-									/>
-								))
-							)}
+					{isProjectSettings ? null : (
+							globalSections.map(({ id, label, icon }) => (
+								<SettingsNavItem
+									active={activeSection === id}
+									icon={icon}
+									key={id}
+									label={label}
+									onClick={() => setActiveSection(id)}
+								/>
+							))
+						)}
 							</nav>
 						</aside>
 
@@ -111,9 +92,9 @@ export function SettingsDialog() {
 								</DialogClose>
 							</DialogHeader>
 					<div className={cn(settingsDialogBodyClass, "flex-1 overflow-y-auto px-6 pt-5")}>
-						{displaySettings?.scope === "project" ? (
-							<ProjectSettingsForm projectId={displaySettings.projectId} section={activeProjectSection} />
-						) : (
+					{displaySettings?.scope === "project" ? (
+						<ProjectSettingsForm projectId={displaySettings.projectId} />
+					) : (
 							<GlobalSettingsForm section={activeSection} />
 						)}
 							</div>

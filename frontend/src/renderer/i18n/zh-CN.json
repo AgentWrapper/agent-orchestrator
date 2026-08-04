@@ -874,5 +874,6 @@
 ,
 	"settings.developer": "开发者",
 	"settings.help": "帮助",
-	"settings.navSectionsAria": "设置分区"
+	"settings.navSectionsAria": "设置分区",
+	"settings.project.settings": "项目设置"
 }

@@ -902,5 +902,6 @@
 	"files.count_other": "{{count}} files",
 	"files.pathCopied": "Path copied",
 	"files.refresh": "Refresh files",
-	"files.searchPlaceholder": "Search changed files"
+	"files.searchPlaceholder": "Search changed files",
+	"settings.project.settings": "Configuración del proyecto"
 }
