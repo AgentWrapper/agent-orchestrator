@@ -15,6 +15,7 @@ let selectedElement: Element | null = null;
 let selectedContext: BrowserAnnotationContext | null = null;
 let host: HTMLDivElement | null = null;
 let shadow: ShadowRoot | null = null;
+let viewportResizeObserver: ResizeObserver | null = null;
 
 ipcRenderer.on("browser:annotation:setMode", (_event, input: { enabled?: boolean }) => {
 	setEnabled(Boolean(input?.enabled), "disabled");
@@ -49,6 +50,12 @@ function installListeners(): void {
 	document.addEventListener("keydown", handleKeyDown, true);
 	window.addEventListener("scroll", refreshHighlight, true);
 	window.addEventListener("resize", refreshHighlight, true);
+	window.visualViewport?.addEventListener("resize", refreshHighlight);
+	window.visualViewport?.addEventListener("scroll", refreshHighlight);
+	if (typeof ResizeObserver !== "undefined") {
+		viewportResizeObserver = new ResizeObserver(refreshHighlight);
+		viewportResizeObserver.observe(document.documentElement);
+	}
 }
 
 function removeListeners(): void {
@@ -58,6 +65,10 @@ function removeListeners(): void {
 	document.removeEventListener("keydown", handleKeyDown, true);
 	window.removeEventListener("scroll", refreshHighlight, true);
 	window.removeEventListener("resize", refreshHighlight, true);
+	window.visualViewport?.removeEventListener("resize", refreshHighlight);
+	window.visualViewport?.removeEventListener("scroll", refreshHighlight);
+	viewportResizeObserver?.disconnect();
+	viewportResizeObserver = null;
 }
 
 function handlePointerMove(event: PointerEvent): void {
@@ -98,6 +109,7 @@ function handleKeyDown(event: KeyboardEvent): void {
 function refreshHighlight(): void {
 	if (!enabled || !selectedElement) return;
 	renderHighlight(selectedElement, Boolean(selectedContext));
+	if (selectedContext) repositionPrompt(selectedElement);
 }
 
 function annotationTarget(target: EventTarget | null): Element | null {
@@ -259,17 +271,51 @@ function ensureOverlay(): ShadowRoot {
 				margin-top: 8px;
 			}
 			.prompt__meta {
+				display: flex;
 				flex: 1 1 auto;
+				height: var(--ao-control-md);
+				align-items: center;
+				gap: 6px;
 				margin-right: auto;
 				min-width: 0;
-				overflow: hidden;
 				color: var(--ao-passive);
 				font-family: var(--ao-font-sans);
 				font-size: var(--ao-text-xs);
 				line-height: 1.5;
 				font-weight: 400;
+			}
+			.prompt__shortcut {
+				display: inline-flex;
+				height: 100%;
+				align-items: center;
+				gap: 4px;
 				white-space: nowrap;
-				text-overflow: ellipsis;
+			}
+			.prompt__shortcut > span {
+				display: inline-flex;
+				height: 18px;
+				align-items: center;
+				line-height: 1;
+			}
+			.prompt__shortcut + .prompt__shortcut::before {
+				content: "·";
+				color: color-mix(in oklch, var(--ao-passive) 55%, transparent);
+				line-height: 1;
+			}
+			.prompt__shortcut kbd {
+				display: inline-flex;
+				min-height: 18px;
+				align-items: center;
+				justify-content: center;
+				border: 1px solid color-mix(in oklch, var(--ao-passive) 35%, transparent);
+				border-radius: 4px;
+				background: color-mix(in oklch, var(--ao-muted) 55%, transparent);
+				padding: 0 5px;
+				color: color-mix(in oklch, var(--ao-foreground) 78%, transparent);
+				font-family: var(--ao-font-mono);
+				font-size: 10px;
+				line-height: 1;
+				box-shadow: inset 0 -1px 0 color-mix(in oklch, var(--ao-passive) 20%, transparent);
 			}
 			.actions {
 				display: flex;
@@ -374,9 +420,6 @@ function ensureOverlay(): ShadowRoot {
 				.prompt__meta {
 					order: 2;
 					margin-right: 0;
-					overflow: visible;
-					white-space: normal;
-					text-overflow: clip;
 				}
 			}
 			</style>
@@ -411,14 +454,15 @@ function renderPrompt(element: Element, context: BrowserAnnotationContext): void
 	const root = ensureOverlay();
 	const mount = root.querySelector<HTMLDivElement>(".mount");
 	if (!mount) return;
-	const rect = element.getBoundingClientRect();
-	const { left, top } = promptPosition(rect);
 	mount.innerHTML = `
-		<form class="prompt" style="left: ${left}px; top: ${top}px;">
+		<form class="prompt">
 			<div class="prompt__header">Annotate on selected components</div>
 			<textarea aria-label="Annotation request" placeholder="Describe to agent what you want to change..."></textarea>
 			<div class="prompt__footer">
-				<div class="prompt__meta">⌘/Ctrl + Enter to send · Esc to cancel</div>
+				<div class="prompt__meta" aria-label="Command or Control plus Enter to send. Escape to cancel.">
+					<span class="prompt__shortcut"><kbd>⌘/Ctrl + Enter</kbd><span>Send</span></span>
+					<span class="prompt__shortcut"><kbd>Esc</kbd><span>Cancel</span></span>
+				</div>
 				<div class="actions">
 					<button disabled type="submit">
 						<svg viewBox="0 0 24 24" aria-hidden="true">
@@ -432,6 +476,7 @@ function renderPrompt(element: Element, context: BrowserAnnotationContext): void
 		</form>
 	`;
 	const form = mount.querySelector<HTMLFormElement>("form")!;
+	repositionPrompt(element);
 	const header = form.querySelector<HTMLDivElement>(".prompt__header")!;
 	header.title = elementSummary(context);
 	const textarea = form.querySelector<HTMLTextAreaElement>("textarea")!;
@@ -467,12 +512,37 @@ function renderPrompt(element: Element, context: BrowserAnnotationContext): void
 	setTimeout(() => textarea.focus(), 0);
 }
 
-function promptPosition(rect: DOMRect): { left: number; top: number } {
+function repositionPrompt(element: Element): void {
+	const form = shadow?.querySelector<HTMLFormElement>(".prompt");
+	if (!form) return;
+	const documentWidth = document.documentElement.clientWidth;
+	const documentHeight = document.documentElement.clientHeight;
+	const layoutWidth = Math.min(window.innerWidth, documentWidth > 0 ? documentWidth : window.innerWidth);
+	const layoutHeight = Math.min(window.innerHeight, documentHeight > 0 ? documentHeight : window.innerHeight);
+	const viewportWidth = Math.min(layoutWidth, window.visualViewport?.width ?? layoutWidth);
+	const viewportHeight = Math.min(layoutHeight, window.visualViewport?.height ?? layoutHeight);
+	const promptWidth = Math.max(0, Math.min(440, viewportWidth - 28));
+	form.style.width = `${promptWidth}px`;
+	const measuredHeight = form.getBoundingClientRect().height;
+	const { left, top } = promptPosition(element.getBoundingClientRect(), promptWidth, measuredHeight || 178, {
+		width: viewportWidth,
+		height: viewportHeight,
+	});
+	form.style.left = `${left}px`;
+	form.style.top = `${top}px`;
+}
+
+function promptPosition(
+	rect: DOMRect,
+	promptWidth: number,
+	promptHeight: number,
+	viewport = { width: window.innerWidth, height: window.innerHeight },
+): { left: number; top: number } {
 	return promptPositionForRect(rect, {
-		width: window.innerWidth,
-		height: window.innerHeight,
-		promptWidth: Math.min(440, window.innerWidth - 28),
-		promptHeight: 178,
+		width: viewport.width,
+		height: viewport.height,
+		promptWidth,
+		promptHeight,
 		gutter: 14,
 		gap: 10,
 	});

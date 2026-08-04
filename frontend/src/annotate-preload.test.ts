@@ -187,8 +187,11 @@ describe("annotate preload", () => {
 		expect(fontMocks.families).toContain("Geist Mono Variable");
 		expect(fontMocks.add).toHaveBeenCalledTimes(2);
 		expect(promptMeta).not.toBeNull();
-		expect(promptMeta!.textContent).toContain("Ctrl + Enter to send");
-		expect(promptMeta!.textContent).toContain("Esc to cancel");
+		expect(promptMeta).toHaveAttribute("aria-label", "Command or Control plus Enter to send. Escape to cancel.");
+		expect(Array.from(promptMeta!.querySelectorAll("kbd"), (key) => key.textContent)).toEqual([
+			"⌘/Ctrl + Enter",
+			"Esc",
+		]);
 		expect(root.querySelector('[data-action="cancel"]')).toBeNull();
 		expect(primaryAction).toBeTruthy();
 		expect(primaryAction?.disabled).toBe(true);
@@ -213,5 +216,31 @@ describe("annotate preload", () => {
 
 		expect(electronMocks.send).toHaveBeenCalledWith("browser:annotation:cancel", { reason: "escape" });
 		expect(document.querySelector("[data-ao-annotation-root]")).toBeNull();
+	});
+
+	it("reflows and repositions an open prompt when the browser viewport narrows", () => {
+		const originalWidth = window.innerWidth;
+		const originalVisualViewport = window.visualViewport;
+		const first = elementWithBounds("first", { left: 700, top: 24, width: 120, height: 40 });
+
+		dispatchPageEvent(first, "click");
+		const root = overlayRoot();
+		const textarea = root.querySelector<HTMLTextAreaElement>("textarea")!;
+		const form = root.querySelector<HTMLFormElement>("form")!;
+		textarea.value = "Keep this feedback while resizing.";
+
+		Object.defineProperty(window, "innerWidth", { configurable: true, value: 520 });
+		Object.defineProperty(window, "visualViewport", {
+			configurable: true,
+			value: { width: 320, height: window.innerHeight },
+		});
+		window.dispatchEvent(new Event("resize"));
+
+		expect(form.style.width).toBe("292px");
+		expect(form.style.left).toBe("14px");
+		expect(textarea.value).toBe("Keep this feedback while resizing.");
+
+		Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+		Object.defineProperty(window, "visualViewport", { configurable: true, value: originalVisualViewport });
 	});
 });
