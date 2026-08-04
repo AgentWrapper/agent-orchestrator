@@ -3,6 +3,7 @@
 import {
   Bell,
   Building2,
+  ChevronDown,
   ChevronRight,
   Check,
   ChevronsUpDown,
@@ -2970,29 +2971,33 @@ function CloudSettings({
                 <Plus className="size-3.5 shrink-0" />
                 <span className="min-w-0 flex-1 truncate">Add organization</span>
               </button>
-              {organizations.map(({ organization, membership }) => (
-                <button
-                  key={organization.id}
-                  type="button"
-                  className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm ${
-                    settingsPanel === "org" && organization.id === selectedOrgId
-                      ? "bg-white/[0.08] text-white"
-                      : "text-white/55 hover:bg-white/[0.04] hover:text-white"
-                  }`}
-                  onClick={() => {
-                    onSelectOrg(organization.id);
-                    setSettingsPanel("org");
-                  }}
-                >
-                  <Building2 className="size-3.5 shrink-0" />
-                  <span className="min-w-0 flex-1 truncate">
-                    {organization.displayName}
-                  </span>
-                  <span className="font-mono text-[9px] uppercase text-white/30">
-                    {membership.role}
-                  </span>
-                </button>
-              ))}
+              {organizations.map(({ organization, membership }) => {
+                const selected = organization.id === selectedOrgId;
+                return (
+                  <button
+                    key={organization.id}
+                    type="button"
+                    className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm ${
+                      selected
+                        ? "bg-white/[0.08] text-white"
+                        : "text-white/55 hover:bg-white/[0.04] hover:text-white"
+                    }`}
+                    aria-current={selected ? "true" : undefined}
+                    onClick={() => {
+                      onSelectOrg(organization.id);
+                      setSettingsPanel("org");
+                    }}
+                  >
+                    <Building2 className="size-3.5 shrink-0" />
+                    <span className="min-w-0 flex-1 truncate">
+                      {organization.displayName}
+                    </span>
+                    <span className="font-mono text-[9px] uppercase text-white/30">
+                      {membership.role}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
           <div>
@@ -3269,51 +3274,58 @@ function CloudSettings({
                   </div>
                   <div className="divide-y divide-white/[0.06] rounded-lg border border-white/[0.08] bg-[#111317]">
                     {orgMembers.length > 0 ? (
-                      orgMembers.map((member) => (
-                        <div
-                          key={member.membership.id}
-                          className="flex items-center gap-3 px-3 py-2 text-sm"
-                        >
-                          <div className="grid size-7 shrink-0 place-items-center rounded-md border border-white/[0.08] bg-[#1a1c22] text-[11px] uppercase text-white/55">
-                            {(member.user.displayName || member.user.email).charAt(0)}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-white/80">
-                              {member.user.displayName || member.user.email}
-                            </p>
-                            <p className="truncate text-xs text-white/35">
-                              {member.user.email}
-                            </p>
-                          </div>
-                          <select
-                            className="h-8 rounded-md border border-white/[0.08] bg-[#0c0d10] px-2 text-xs text-white outline-none focus:border-[#4d8dff] disabled:opacity-45"
-                            value={member.membership.role}
-                            disabled={
-                              !canAdminOrg ||
-                              loading ||
-                              member.user.id === currentUser?.id
-                            }
-                            aria-label={`Role for ${member.user.email}`}
-                            onChange={(event) => {
-                              if (!selectedOrgId) return;
-                              const role = event.target
-                                .value as CloudOrgMembership["role"];
-                              void run(() =>
-                                api.updateOrgMemberRole(
-                                  selectedOrgId,
-                                  member.user.id,
-                                  { role },
-                                ),
-                              );
-                            }}
+                      orgMembers.map((member) => {
+                        const isCurrentUser = member.user.id === currentUser?.id;
+                        const canChangeRole = canAdminOrg && !isCurrentUser;
+                        return (
+                          <div
+                            key={member.membership.id}
+                            className="flex items-center gap-3 px-3 py-2 text-sm"
                           >
-                            <option value="owner">Owner</option>
-                            <option value="admin">Admin</option>
-                            <option value="member">Member</option>
-                            <option value="viewer">Viewer</option>
-                          </select>
-                        </div>
-                      ))
+                            <div className="grid size-7 shrink-0 place-items-center rounded-md border border-white/[0.08] bg-[#1a1c22] text-[11px] uppercase text-white/55">
+                              {(member.user.displayName || member.user.email).charAt(0)}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-white/80">
+                                {member.user.displayName || member.user.email}
+                              </p>
+                              <p className="truncate text-xs text-white/35">
+                                {member.user.email}
+                              </p>
+                            </div>
+                            <select
+                              className="h-8 rounded-md border border-white/[0.08] bg-[#0c0d10] px-2 text-xs text-white outline-none focus:border-[#4d8dff] disabled:opacity-45"
+                              value={member.membership.role}
+                              disabled={!canChangeRole || loading}
+                              title={
+                                isCurrentUser
+                                  ? "You cannot change your own role."
+                                  : canAdminOrg
+                                    ? "Change this member's role."
+                                    : "Only owners and admins can change roles."
+                              }
+                              aria-label={`Role for ${member.user.email}`}
+                              onChange={(event) => {
+                                if (!selectedOrgId) return;
+                                const role = event.target
+                                  .value as CloudOrgMembership["role"];
+                                void run(() =>
+                                  api.updateOrgMemberRole(
+                                    selectedOrgId,
+                                    member.user.id,
+                                    { role },
+                                  ),
+                                );
+                              }}
+                            >
+                              <option value="owner">Owner</option>
+                              <option value="admin">Admin</option>
+                              <option value="member">Member</option>
+                              <option value="viewer">Viewer</option>
+                            </select>
+                          </div>
+                        );
+                      })
                     ) : (
                       <p className="px-3 py-3 text-sm text-white/35">
                         No active members were found for this organization.
@@ -3420,6 +3432,21 @@ function CloudSettings({
           ) : null}
           {settingsPanel === "agents" ? (
           <div className="space-y-8">
+            {selectedOrg ? (
+              <div className="flex items-center justify-between rounded-lg border border-white/[0.08] bg-[#111317] px-3 py-2">
+                <div className="min-w-0">
+                  <p className="text-xs uppercase tracking-[0.08em] text-white/30">
+                    Configuring providers for
+                  </p>
+                  <p className="mt-0.5 truncate text-sm text-white/85">
+                    {selectedOrg.organization.displayName}
+                  </p>
+                </div>
+                <span className="font-mono text-[10px] uppercase text-white/35">
+                  {selectedOrg.membership.role}
+                </span>
+              </div>
+            ) : null}
             <GitHubConnectionSettings
               api={api}
               connection={githubConnection}
@@ -3725,42 +3752,58 @@ function RepositoryGrants({
 }: {
   repositories: CloudGitHubGrantedRepository[];
 }) {
+  const [open, setOpen] = useState(false);
+
   return (
-    <div>
-      <div className="mb-2 flex items-center gap-2">
-        <p className="text-xs text-white/55">Repository grants</p>
-        <span className="ml-auto font-mono text-[10px] uppercase text-white/30">
+    <div className="rounded-lg border border-white/[0.08] bg-[#111317]">
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-white/[0.03]"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <ChevronDown
+          className={`size-3.5 shrink-0 text-white/35 transition-transform ${
+            open ? "" : "-rotate-90"
+          }`}
+        />
+        <span className="min-w-0 flex-1 text-xs font-medium text-white/60">
+          Repository grants
+        </span>
+        <span className="font-mono text-[10px] uppercase text-white/30">
           {repositories.length}
         </span>
-      </div>
-      {repositories.length > 0 ? (
-        <div className="divide-y divide-white/[0.06] rounded-lg border border-white/[0.08] bg-[#111317]">
-          {repositories.map((repository) => (
-            <a
-              key={repository.repository.id}
-              href={repository.repository.htmlUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center gap-2 px-3 py-2 text-sm text-white/70 transition-colors hover:bg-white/[0.03] hover:text-white"
-            >
-              <FolderGit2 className="size-3.5 shrink-0 text-white/40" />
-              <span className="min-w-0 flex-1 truncate">
-                {repository.repository.fullName}
-              </span>
-              {repository.repository.private ? (
-                <span className="font-mono text-[9px] uppercase text-white/30">
-                  Private
+      </button>
+      {open ? (
+        repositories.length > 0 ? (
+          <div className="max-h-80 divide-y divide-white/[0.06] overflow-y-auto border-t border-white/[0.08]">
+            {repositories.map((repository) => (
+              <a
+                key={repository.repository.id}
+                href={repository.repository.htmlUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-2 px-3 py-2 text-sm text-white/70 transition-colors hover:bg-white/[0.03] hover:text-white"
+              >
+                <FolderGit2 className="size-3.5 shrink-0 text-white/40" />
+                <span className="min-w-0 flex-1 truncate">
+                  {repository.repository.fullName}
                 </span>
-              ) : null}
-              <ExternalLink className="size-3 shrink-0 text-white/25" />
-            </a>
-          ))}
-        </div>
-      ) : (
-        <p className="text-xs leading-5 text-white/35">
-          No repositories are currently granted.
-        </p>
-      )}
+                {repository.repository.private ? (
+                  <span className="font-mono text-[9px] uppercase text-white/30">
+                    Private
+                  </span>
+                ) : null}
+                <ExternalLink className="size-3 shrink-0 text-white/25" />
+              </a>
+            ))}
+          </div>
+        ) : (
+          <p className="border-t border-white/[0.08] px-3 py-2 text-xs leading-5 text-white/35">
+            No repositories are currently granted.
+          </p>
+        )
+      ) : null}
     </div>
   );
 }

@@ -21,13 +21,13 @@ export const CLOUD_AGENTS: ReadonlyArray<CloudAgentOption> = [
     credentialTypes: [
       {
         id: "oauth_token",
-        label: "Claude setup token",
-        placeholder: "Token from `claude setup-token`",
+        label: "Claude access token",
+        placeholder: "Run `claude setup-token` and paste the token here",
       },
       {
         id: "api_key",
         label: "Anthropic API key",
-        placeholder: "Anthropic API key",
+        placeholder: "Paste your Anthropic API key, for example sk-ant-...",
       },
     ],
   },

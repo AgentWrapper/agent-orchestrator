@@ -619,6 +619,10 @@ it("shows GitHub App accounts, grants, and owner controls", async () => {
   const gitHubSection = within(account.closest("section")!);
   expect(account).toBeVisible();
   expect(gitHubSection.getByText(/1 granted repositor/)).toBeVisible();
+  expect(
+    gitHubSection.queryByText("aoagents/agent-orchestrator"),
+  ).not.toBeInTheDocument();
+  fireEvent.click(gitHubSection.getByRole("button", { name: /Repository grants/ }));
   expect(gitHubSection.getByText("aoagents/agent-orchestrator")).toBeVisible();
   expect(gitHubSection.getByRole("link", { name: /Configure/ })).toHaveAttribute(
     "href",
@@ -908,6 +912,38 @@ it("shows and updates the organization credential source in org settings", async
   );
 });
 
+it("opens provider settings for the selected organization from manage keys", async () => {
+  apiMocks.me.mockResolvedValue({
+    sandboxProvider: "daytona",
+    organizations: [
+      {
+        ...ownerOrg,
+        organization: {
+          ...ownerOrg.organization,
+          kind: "team",
+          displayName: "Team One",
+        },
+      },
+    ],
+  });
+
+  render(<CloudAppPage />);
+
+  fireEvent.click(await screen.findByRole("button", { name: /Settings/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "Manage keys" }));
+
+  expect(
+    await screen.findByRole("heading", { name: "Provider connections" }),
+  ).toBeVisible();
+  expect(screen.getByText("Configuring providers for")).toBeVisible();
+  expect(screen.getAllByText("Team One")[0]).toBeVisible();
+  expect(
+    screen
+      .getAllByRole("button", { name: /Team One/ })
+      .some((button) => button.getAttribute("aria-current") === "true"),
+  ).toBe(true);
+});
+
 it("lets org admins change another member's role", async () => {
   apiMocks.orgMembers.mockResolvedValue({
     members: [
@@ -955,6 +991,8 @@ it("lets org admins change another member's role", async () => {
   render(<CloudAppPage />);
 
   fireEvent.click(await screen.findByRole("button", { name: /Settings/ }));
+  expect(await screen.findByLabelText("Role for user@example.com")).toBeDisabled();
+  expect(screen.getByLabelText("Role for viewer@example.com")).not.toBeDisabled();
   fireEvent.change(await screen.findByLabelText("Role for viewer@example.com"), {
     target: { value: "member" },
   });
