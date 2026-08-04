@@ -1024,5 +1024,12 @@
 	"newTask.task": "Task",
 	"newTask.taskPlaceholder": "Describe the change, constraints, and expected verification.",
 	"newTask.model": "Model",
-	"newTask.taskRequired": "Task is required."
+	"newTask.taskRequired": "Task is required.",
+	"prereq.tmux.body": "tmux est nécessaire pour exécuter les sessions d'agents et n'est pas installé.",
+	"prereq.install": "Installer tmux",
+	"prereq.installing": "Installation…",
+	"prereq.copyCommand": "Copier la commande",
+	"prereq.copied": "Copié",
+	"prereq.recheck": "Vérifier à nouveau",
+	"prereq.installFailed": "Impossible d'installer tmux"
 }

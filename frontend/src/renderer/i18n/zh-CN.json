@@ -990,5 +990,12 @@
 	"newTask.task": "Task",
 	"newTask.taskPlaceholder": "Describe the change, constraints, and expected verification.",
 	"newTask.model": "Model",
-	"newTask.taskRequired": "Task is required."
+	"newTask.taskRequired": "Task is required.",
+	"prereq.tmux.body": "运行代理会话需要 tmux，但尚未安装。",
+	"prereq.install": "安装 tmux",
+	"prereq.installing": "正在安装…",
+	"prereq.copyCommand": "复制命令",
+	"prereq.copied": "已复制",
+	"prereq.recheck": "重新检查",
+	"prereq.installFailed": "无法安装 tmux"
 }

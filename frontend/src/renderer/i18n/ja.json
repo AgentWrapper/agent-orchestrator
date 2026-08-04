@@ -1008,5 +1008,12 @@
 	"newTask.task": "Task",
 	"newTask.taskPlaceholder": "Describe the change, constraints, and expected verification.",
 	"newTask.model": "Model",
-	"newTask.taskRequired": "Task is required."
+	"newTask.taskRequired": "Task is required.",
+	"prereq.tmux.body": "エージェントセッションの実行には tmux が必要ですが、インストールされていません。",
+	"prereq.install": "tmux をインストール",
+	"prereq.installing": "インストール中…",
+	"prereq.copyCommand": "コマンドをコピー",
+	"prereq.copied": "コピーしました",
+	"prereq.recheck": "再確認",
+	"prereq.installFailed": "tmux をインストールできませんでした"
 }

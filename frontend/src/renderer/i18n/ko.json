@@ -1008,5 +1008,12 @@
 	"newTask.task": "Task",
 	"newTask.taskPlaceholder": "Describe the change, constraints, and expected verification.",
 	"newTask.model": "Model",
-	"newTask.taskRequired": "Task is required."
+	"newTask.taskRequired": "Task is required.",
+	"prereq.tmux.body": "에이전트 세션을 실행하려면 tmux가 필요하지만 설치되어 있지 않습니다.",
+	"prereq.install": "tmux 설치",
+	"prereq.installing": "설치 중…",
+	"prereq.copyCommand": "명령 복사",
+	"prereq.copied": "복사됨",
+	"prereq.recheck": "다시 확인",
+	"prereq.installFailed": "tmux를 설치하지 못했습니다"
 }
