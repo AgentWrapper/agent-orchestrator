@@ -779,6 +779,8 @@ export default function CloudAppPage() {
     selectedOrgRole === "admin" ||
     selectedOrgRole === "member" ||
     selectedOrgRole === "editor";
+  const canAdminSelectedOrg =
+    selectedOrgRole === "owner" || selectedOrgRole === "admin";
   const terminalRuntimeAvailable =
     selectedSession?.capabilities?.includes("runtime.pty.v1") === true;
   const daytonaConnections = connections.filter(
@@ -1007,11 +1009,11 @@ export default function CloudAppPage() {
   const deleteSelectedWorkerMachine = async () => {
     if (!api || !activeOrgId || !selectedSession || selectedSession.kind !== "worker") return;
     const confirmed = window.confirm(
-      `Delete ${selectedSession.displayName}'s cloud session, machine, and workspace volume?\n\nThis removes the worker from the board after the control plane tears down its sandbox.`,
+      `Delete ${selectedSession.displayName}'s cloud session, machine, and workspace volume?\n\nThis stops the worker and removes its Postgres records.`,
     );
     if (!confirmed) return;
     const deleted = await run(() =>
-      api.setDesiredState(activeOrgId, selectedSession.id, "deleted"),
+      api.deleteSession(activeOrgId, selectedSession.id),
     );
     if (!deleted) return;
     setActiveChatSessionIds((current) => {
@@ -1021,6 +1023,36 @@ export default function CloudAppPage() {
     });
     setSelectedSessionId(null);
     setView("board");
+  };
+
+  const deleteProject = async (project: CloudProject) => {
+    if (!api || !selectedOrgId || selectedShare || !canAdminSelectedOrg) return;
+    const confirmed = window.confirm(
+      `Delete ${project.displayName}?\n\nThis stops every project session and removes the project, workers, shares, turns, and related Postgres records. This cannot be undone.`,
+    );
+    if (!confirmed) return;
+    const deleted = await run(() => api.deleteProject(selectedOrgId, project.id));
+    if (!deleted) return;
+    removeWorkspaceSnapshots(
+      new Set(
+        sessions
+          .filter(({ projectId }) => projectId !== project.id)
+          .map(({ id }) => id),
+      ),
+    );
+    setActiveChatSessionIds((current) => {
+      const next = new Set(current);
+      for (const session of sessions) {
+        if (session.projectId === project.id) next.delete(session.id);
+      }
+      return next;
+    });
+    setProjectMenuOpenId(null);
+    if (selectedProjectId === project.id) {
+      setSelectedProjectId(null);
+      setSelectedSessionId(null);
+      setView("board");
+    }
   };
 
   const createProjectShareLink = async () => {
@@ -1450,6 +1482,16 @@ export default function CloudAppPage() {
                           <ExternalLink className="size-3.5" />
                           Share project
                         </button>
+                        {canAdminSelectedOrg ? (
+                          <button
+                            type="button"
+                            className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-[#ef6b6b] hover:bg-[#ef6b6b]/10"
+                            onClick={() => void deleteProject(project)}
+                          >
+                            <Trash2 className="size-3.5" />
+                            Delete project
+                          </button>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>

@@ -537,6 +537,13 @@ export class CloudAPI {
     });
   }
 
+  async deleteProject(orgId: string, projectId: string) {
+    return this.request<void>(
+      this.orgPath(orgId, `/projects/${encodeURIComponent(projectId)}`),
+      { method: "DELETE" },
+    );
+  }
+
   async createProjectShareLink(
     orgId: string,
     projectId: string,
@@ -655,6 +662,13 @@ export class CloudAPI {
     return this.request<{ ok: boolean; state: string }>(
       this.orgPath(orgId, `/sessions/${encodeURIComponent(sessionId)}/desired-state`),
       { method: "POST", body: { state } },
+    );
+  }
+
+  async deleteSession(orgId: string, sessionId: string) {
+    return this.request<void>(
+      this.orgPath(orgId, `/sessions/${encodeURIComponent(sessionId)}`),
+      { method: "DELETE" },
     );
   }
 

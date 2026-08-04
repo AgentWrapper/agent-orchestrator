@@ -25,6 +25,7 @@ import (
 	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 	cloudevents "github.com/aoagents/agent-orchestrator/backend/internal/cloud/events"
 	cloudpostgres "github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
+	cloudsandbox "github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandbox"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandbox/daytona"
 	cloudlocalgh "github.com/aoagents/agent-orchestrator/backend/internal/cloud/scm/localgh"
 	cloudsecrets "github.com/aoagents/agent-orchestrator/backend/internal/cloud/secrets"
@@ -54,6 +55,7 @@ type store interface {
 	CreateProject(context.Context, clouddomain.AccountID, cloudpostgres.CreateProjectInput) (clouddomain.Project, error)
 	ListProjects(context.Context, clouddomain.AccountID) ([]clouddomain.Project, error)
 	GetProject(context.Context, clouddomain.AccountID, clouddomain.ProjectID) (clouddomain.Project, error)
+	DeleteProject(context.Context, clouddomain.AccountID, clouddomain.ProjectID) error
 	CreateProjectShareLink(context.Context, cloudpostgres.CreateProjectShareLinkInput) (cloudpostgres.ProjectShareLink, error)
 	RedeemProjectShareLink(context.Context, string, string) (cloudpostgres.SharedProjectGrant, error)
 	ListSharedProjectGrants(context.Context, string) ([]cloudpostgres.SharedProjectGrant, error)
@@ -64,6 +66,7 @@ type store interface {
 	CreateSession(context.Context, clouddomain.AccountID, cloudpostgres.CreateSessionInput) (cloudpostgres.CreateSessionResult, error)
 	ListSessions(context.Context, clouddomain.AccountID) ([]clouddomain.Session, error)
 	GetSession(context.Context, clouddomain.AccountID, clouddomain.SessionID) (clouddomain.Session, error)
+	DeleteSession(context.Context, clouddomain.AccountID, clouddomain.SessionID) error
 	GetActiveTurn(context.Context, clouddomain.AccountID, clouddomain.SessionID) (*clouddomain.Turn, error)
 	GetLatestTurn(context.Context, clouddomain.AccountID, clouddomain.SessionID) (*clouddomain.Turn, error)
 	TransitionActiveTurn(context.Context, clouddomain.AccountID, clouddomain.SessionID, string, string) (*clouddomain.Turn, error)
@@ -97,6 +100,10 @@ type store interface {
 	MarkReviewThreadResolved(context.Context, clouddomain.AccountID, clouddomain.SessionID, string) error
 }
 
+type sandboxProviderResolver interface {
+	Resolve(context.Context, clouddomain.Sandbox) (cloudsandbox.Provider, error)
+}
+
 // Server serves the authenticated AO Cloud HTTP and WebSocket APIs.
 type Server struct {
 	store                    store
@@ -111,6 +118,7 @@ type Server struct {
 	daytonaAPIURL            string
 	daytonaTarget            string
 	workerHub                *cloudworkerhub.Hub
+	sandboxProviders         sandboxProviderResolver
 	workerRPC                *workerRPCBroker
 	previewTokens            *previewTokenStore
 	workerReplayWait         time.Duration
@@ -132,6 +140,14 @@ func WithMaxActiveSandboxesPerOrg(max int) Option {
 		if max >= 0 {
 			server.maxActiveSandboxesPerOrg = max
 		}
+	}
+}
+
+// WithSandboxProviderResolver allows destructive API paths to tear down provider
+// resources before deleting durable rows.
+func WithSandboxProviderResolver(resolver sandboxProviderResolver) Option {
+	return func(server *Server) {
+		server.sandboxProviders = resolver
 	}
 }
 
@@ -286,9 +302,11 @@ func (s *Server) routes() http.Handler {
 			// uses the explicit /orgs/{orgId}/... routes below.
 			protected.Get("/projects", s.listProjects)
 			protected.Post("/projects", s.createProject)
+			protected.Delete("/projects/{projectId}", s.deleteProject)
 			protected.Get("/sessions", s.listSessions)
 			protected.Post("/sessions", s.createSession)
 			protected.Get("/sessions/{sessionId}", s.getSession)
+			protected.Delete("/sessions/{sessionId}", s.deleteSession)
 			protected.Get("/sessions/{sessionId}/active-turn", s.activeTurn)
 			protected.Post("/sessions/{sessionId}/desired-state", s.setDesiredState)
 			protected.Get("/sessions/{sessionId}/chat-events", s.chatEvents)
@@ -318,6 +336,7 @@ func (s *Server) routes() http.Handler {
 				org.Post("/invitations/{invitationId}/revoke", s.revokeInvitation)
 				org.Get("/projects", s.listProjects)
 				org.With(s.requireOrgRole("member")).Post("/projects", s.createProject)
+				org.With(s.requireOrgRole("admin")).Delete("/projects/{projectId}", s.deleteProject)
 				org.With(s.requireOrgRole("member")).Get("/projects/{projectId}/shares", s.listProjectShareAccess)
 				org.With(s.requireOrgRole("member")).Post("/projects/{projectId}/shares", s.createProjectShareLink)
 				org.With(s.requireOrgRole("member")).Patch("/projects/{projectId}/shares/grants/{grantId}", s.updateProjectShareGrant)
@@ -326,6 +345,7 @@ func (s *Server) routes() http.Handler {
 				org.Get("/sessions", s.listSessions)
 				org.With(s.requireOrgRole("member")).Post("/sessions", s.createSession)
 				org.Get("/sessions/{sessionId}", s.getSession)
+				org.With(s.requireOrgRole("member")).Delete("/sessions/{sessionId}", s.deleteSession)
 				org.Get("/sessions/{sessionId}/active-turn", s.activeTurn)
 				org.With(s.requireOrgRole("member")).Post("/sessions/{sessionId}/desired-state", s.setDesiredState)
 				org.Get("/sessions/{sessionId}/chat-events", s.chatEvents)
@@ -1887,6 +1907,100 @@ func (s *Server) setDesiredState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "state": input.State})
+}
+
+func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
+	account, session, ok := s.authorizedSession(w, r, "delete cloud session")
+	if !ok {
+		return
+	}
+	if session.Kind != "worker" {
+		writeError(w, r, http.StatusConflict, "PROJECT_DELETE_REQUIRED", "Remove the project to delete its orchestrator.")
+		return
+	}
+	if err := s.deleteSessionSandbox(r.Context(), account.ID, session.ID); err != nil {
+		s.internalError(w, r, "delete session sandbox", err)
+		return
+	}
+	if err := s.store.DeleteSession(r.Context(), account.ID, session.ID); err != nil {
+		if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
+			writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The cloud session does not exist.")
+			return
+		}
+		s.internalError(w, r, "delete cloud session", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
+	account, _ := accountFromContext(r.Context())
+	account.ID = tenantAccountIDFromContext(r.Context())
+	projectID := clouddomain.ProjectID(chi.URLParam(r, "projectId"))
+	if projectID == "" {
+		writeError(w, r, http.StatusBadRequest, "PROJECT_ID_REQUIRED", "projectId is required.")
+		return
+	}
+	if _, err := s.store.GetProject(r.Context(), account.ID, projectID); err != nil {
+		if errors.Is(err, cloudpostgres.ErrProjectNotFound) {
+			writeError(w, r, http.StatusNotFound, "PROJECT_NOT_FOUND", "The cloud project does not exist.")
+			return
+		}
+		s.internalError(w, r, "load project for deletion", err)
+		return
+	}
+	sessions, err := s.store.ListSessions(r.Context(), account.ID)
+	if err != nil {
+		s.internalError(w, r, "list project sessions for deletion", err)
+		return
+	}
+	for _, session := range sessions {
+		if session.ProjectID != projectID {
+			continue
+		}
+		if err := s.deleteSessionSandbox(r.Context(), account.ID, session.ID); err != nil {
+			s.internalError(w, r, "delete project session sandbox", err)
+			return
+		}
+	}
+	if err := s.store.DeleteProject(r.Context(), account.ID, projectID); err != nil {
+		if errors.Is(err, cloudpostgres.ErrProjectNotFound) {
+			writeError(w, r, http.StatusNotFound, "PROJECT_NOT_FOUND", "The cloud project does not exist.")
+			return
+		}
+		s.internalError(w, r, "delete cloud project", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) deleteSessionSandbox(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+) error {
+	sandbox, err := s.store.GetSandbox(ctx, accountID, sessionID)
+	if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if sandbox.ProviderEnvironmentID == "" {
+		return nil
+	}
+	if s.sandboxProviders == nil {
+		return errors.New("sandbox provider resolver is not configured")
+	}
+	provider, err := s.sandboxProviders.Resolve(ctx, sandbox)
+	if err != nil {
+		return err
+	}
+	if err := provider.Delete(ctx, cloudsandbox.ID(sandbox.ProviderEnvironmentID)); err != nil &&
+		!errors.Is(err, cloudsandbox.ErrNotFound) {
+		return err
+	}
+	return nil
 }
 
 func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {

@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -40,6 +41,10 @@ export function AuthProvider({
   const [session, setSession] = useState<CloudAuthSession | null>(null);
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [error, setError] = useState<string | null>(null);
+  const sessionRef = useRef<CloudAuthSession | null>(null);
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
 
   useEffect(() => {
     if (authMode === "workos" && env.NEXT_PUBLIC_WEB_URL) {
@@ -62,9 +67,10 @@ export function AuthProvider({
 
     let active = true;
     const restore = async () => {
+      let restored: CloudAuthSession | null = null;
       try {
         const stored = window.localStorage.getItem(cloudSessionKey);
-        const restored = stored ? (JSON.parse(stored) as CloudAuthSession) : null;
+        restored = stored ? (JSON.parse(stored) as CloudAuthSession) : null;
         if (authMode === "workos") {
           const workOSSession = await restoreWorkOSSession();
           if (!active) return;
@@ -97,6 +103,14 @@ export function AuthProvider({
         setStatus("authenticated");
       } catch {
         if (!active) return;
+        if (authMode === "workos") {
+          const fallback = sessionRef.current ?? restored;
+          if (fallback) {
+            setSession(fallback);
+            setStatus("authenticated");
+            return;
+          }
+        }
         window.localStorage.removeItem(cloudSessionKey);
         setSession(null);
         setStatus("unauthenticated");

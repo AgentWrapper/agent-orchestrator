@@ -102,6 +102,38 @@ it("checks the server session when AuthKit briefly reports unauthenticated", asy
   expect(mocks.restoreWorkOSSession).toHaveBeenCalledOnce();
 });
 
+it("keeps the cached WorkOS session when validation transiently fails", async () => {
+  mocks.authMode = "workos";
+  window.localStorage.setItem(
+    "ao-cloud-session",
+    JSON.stringify({
+      accessToken: "cached-workos-token",
+      authProvider: "workos",
+      user: {
+        id: "workos-user",
+        email: "developer@example.com",
+        displayName: "Developer",
+      },
+    }),
+  );
+  mocks.restoreWorkOSSession.mockRejectedValue(new Error("temporary validation failure"));
+
+  render(
+    <AuthProvider workOSStatus="authenticated">
+      <AuthState />
+    </AuthProvider>,
+  );
+
+  await waitFor(() =>
+    expect(
+      screen.getByText("authenticated:developer@example.com"),
+    ).toBeVisible(),
+  );
+  expect(window.localStorage.getItem("ao-cloud-session")).toContain(
+    "cached-workos-token",
+  );
+});
+
 it("refreshes WorkOS sessions when the window regains focus", async () => {
   mocks.authMode = "workos";
   mocks.restoreWorkOSSession.mockResolvedValue({

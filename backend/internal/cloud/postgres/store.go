@@ -487,6 +487,41 @@ func (s *Store) GetProject(
 	return project, nil
 }
 
+// DeleteProject removes one account-owned project and all dependent cloud rows.
+func (s *Store) DeleteProject(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	projectID clouddomain.ProjectID,
+) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete cloud project: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM ao_session_issue_links
+		WHERE session_id IN (
+			SELECT id FROM ao_sessions WHERE org_id = $1 AND project_id = $2
+		)
+	`, accountID, projectID); err != nil {
+		return fmt.Errorf("delete project issue links: %w", err)
+	}
+	tag, err := tx.Exec(ctx, `
+		DELETE FROM ao_projects
+		WHERE org_id = $1 AND id = $2
+	`, accountID, projectID)
+	if err != nil {
+		return fmt.Errorf("delete cloud project: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrProjectNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete cloud project: %w", err)
+	}
+	return nil
+}
+
 // CreateSessionInput contains the durable settings for a new session.
 type CreateSessionInput struct {
 	IdempotencyKey           string
@@ -919,7 +954,7 @@ func (s *Store) GetSession(
 	return session, nil
 }
 
-// DeleteSession removes one account-owned worker session and all dependent cloud rows.
+// DeleteSession removes one account-owned session and all dependent cloud rows.
 func (s *Store) DeleteSession(
 	ctx context.Context,
 	accountID clouddomain.AccountID,
@@ -927,7 +962,7 @@ func (s *Store) DeleteSession(
 ) error {
 	tag, err := s.pool.Exec(ctx, `
 		DELETE FROM ao_sessions
-		WHERE org_id = $1 AND id = $2 AND kind = 'worker'
+		WHERE org_id = $1 AND id = $2
 	`, accountID, sessionID)
 	if err != nil {
 		return fmt.Errorf("delete cloud session: %w", err)

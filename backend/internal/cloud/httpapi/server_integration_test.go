@@ -391,6 +391,32 @@ func TestAuthenticatedProjectAndIdempotentSessionFlow(t *testing.T) {
 	if deletedWorkerBody.Session.Status != "idle" || deletedWorkerBody.Session.ActiveTurn != nil {
 		t.Fatalf("deleted worker state = status %q turn %#v, want idle with no active turn", deletedWorkerBody.Session.Status, deletedWorkerBody.Session.ActiveTurn)
 	}
+	hardDeleteWorker := requestJSON(
+		t,
+		server,
+		http.MethodDelete,
+		"/api/cloud/v1/sessions/"+firstBody.Session.ID,
+		"user-one",
+		nil,
+		nil,
+	)
+	defer hardDeleteWorker.Body.Close()
+	if hardDeleteWorker.StatusCode != http.StatusNoContent {
+		t.Fatalf("hard delete worker status = %d, want 204", hardDeleteWorker.StatusCode)
+	}
+	deletedWorkerMissing := requestJSON(
+		t,
+		server,
+		http.MethodGet,
+		"/api/cloud/v1/sessions/"+firstBody.Session.ID,
+		"user-one",
+		nil,
+		nil,
+	)
+	defer deletedWorkerMissing.Body.Close()
+	if deletedWorkerMissing.StatusCode != http.StatusNotFound {
+		t.Fatalf("hard deleted worker get status = %d, want 404", deletedWorkerMissing.StatusCode)
+	}
 
 	otherUser := requestJSON(
 		t,
@@ -404,6 +430,41 @@ func TestAuthenticatedProjectAndIdempotentSessionFlow(t *testing.T) {
 	defer otherUser.Body.Close()
 	if otherUser.StatusCode != http.StatusNotFound {
 		t.Fatalf("cross-user session status = %d, want 404", otherUser.StatusCode)
+	}
+	deleteProject := requestJSON(
+		t,
+		server,
+		http.MethodDelete,
+		"/api/cloud/v1/projects/"+projectBody.Project.ID,
+		"user-one",
+		nil,
+		nil,
+	)
+	defer deleteProject.Body.Close()
+	if deleteProject.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete project status = %d, want 204", deleteProject.StatusCode)
+	}
+	listAfterProjectDelete := requestJSON(
+		t,
+		server,
+		http.MethodGet,
+		"/api/cloud/v1/projects",
+		"user-one",
+		nil,
+		nil,
+	)
+	defer listAfterProjectDelete.Body.Close()
+	if listAfterProjectDelete.StatusCode != http.StatusOK {
+		t.Fatalf("list projects after delete status = %d, want 200", listAfterProjectDelete.StatusCode)
+	}
+	var listAfterProjectDeleteBody struct {
+		Projects []clouddomain.Project `json:"projects"`
+	}
+	if err := json.NewDecoder(listAfterProjectDelete.Body).Decode(&listAfterProjectDeleteBody); err != nil {
+		t.Fatalf("decode projects after delete: %v", err)
+	}
+	if len(listAfterProjectDeleteBody.Projects) != 0 {
+		t.Fatalf("projects after delete = %d, want 0", len(listAfterProjectDeleteBody.Projects))
 	}
 }
 

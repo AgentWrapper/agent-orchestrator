@@ -19,6 +19,8 @@ const apiMocks = vi.hoisted(() => ({
   projects: vi.fn(),
   sessions: vi.fn(),
   sessionSCM: vi.fn(),
+  workspaceDiff: vi.fn(),
+  workspaceFiles: vi.fn(),
   repositories: vi.fn(),
   githubConnection: vi.fn(),
   startGitHubInstall: vi.fn(),
@@ -32,6 +34,8 @@ const apiMocks = vi.hoisted(() => ({
   updateProjectShareGrant: vi.fn(),
   revokeProjectShareGrant: vi.fn(),
   revokeProjectShareLink: vi.fn(),
+  deleteProject: vi.fn(),
+  deleteSession: vi.fn(),
   sharedProjects: vi.fn(),
   invitations: vi.fn(),
   orgInvitations: vi.fn(),
@@ -62,6 +66,8 @@ vi.mock("@/lib/cloud-api", () => ({
     projects = apiMocks.projects;
     sessions = apiMocks.sessions;
     sessionSCM = apiMocks.sessionSCM;
+    workspaceDiff = apiMocks.workspaceDiff;
+    workspaceFiles = apiMocks.workspaceFiles;
     repositories = apiMocks.repositories;
     githubConnection = apiMocks.githubConnection;
     startGitHubInstall = apiMocks.startGitHubInstall;
@@ -75,6 +81,8 @@ vi.mock("@/lib/cloud-api", () => ({
     updateProjectShareGrant = apiMocks.updateProjectShareGrant;
     revokeProjectShareGrant = apiMocks.revokeProjectShareGrant;
     revokeProjectShareLink = apiMocks.revokeProjectShareLink;
+    deleteProject = apiMocks.deleteProject;
+    deleteSession = apiMocks.deleteSession;
     sharedProjects = apiMocks.sharedProjects;
     invitations = apiMocks.invitations;
     orgInvitations = apiMocks.orgInvitations;
@@ -133,6 +141,20 @@ const orchestrator: CloudSession = {
   createdAt: "2026-07-30T00:00:00Z",
 };
 
+const worker: CloudSession = {
+  id: "worker-one",
+  projectId: project.id,
+  kind: "worker",
+  harness: "claude-code",
+  displayName: "readme-reader",
+  branch: "ao/readme-reader",
+  activityState: "idle",
+  status: "idle",
+  runtimeConnected: true,
+  isTerminated: false,
+  createdAt: "2026-07-30T00:01:00Z",
+};
+
 const ownerOrg = {
   organization: {
     id: "org-one",
@@ -167,6 +189,8 @@ beforeEach(() => {
   apiMocks.projects.mockResolvedValue({ projects: [project] });
   apiMocks.sessions.mockResolvedValue({ sessions: [] });
   apiMocks.sessionSCM.mockResolvedValue({ scm: null });
+  apiMocks.workspaceDiff.mockResolvedValue({ entries: [], summary: "" });
+  apiMocks.workspaceFiles.mockResolvedValue({ entries: [] });
   apiMocks.providerConnections.mockResolvedValue({
     providerConnections: [
       {
@@ -215,6 +239,8 @@ beforeEach(() => {
   apiMocks.updateProjectShareGrant.mockResolvedValue({ grant: { id: "grant-one" } });
   apiMocks.revokeProjectShareGrant.mockResolvedValue(undefined);
   apiMocks.revokeProjectShareLink.mockResolvedValue(undefined);
+  apiMocks.deleteProject.mockResolvedValue(undefined);
+  apiMocks.deleteSession.mockResolvedValue(undefined);
   apiMocks.sharedProjects.mockResolvedValue({ shares: [] });
 });
 
@@ -964,4 +990,36 @@ it("updates the current user's profile name from settings", async () => {
       displayName: "Nihal",
     }),
   );
+});
+
+it("deletes a worker session from the session header", async () => {
+  apiMocks.sessions.mockResolvedValue({ sessions: [worker] });
+  const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+  render(<CloudAppPage />);
+
+  const workerEntries = await screen.findAllByText("readme-reader");
+  fireEvent.click(workerEntries[0]);
+  fireEvent.click(await screen.findByLabelText("Delete readme-reader machine"));
+
+  await waitFor(() =>
+    expect(apiMocks.deleteSession).toHaveBeenCalledWith("org-one", "worker-one"),
+  );
+  expect(confirmSpy).toHaveBeenCalled();
+  confirmSpy.mockRestore();
+});
+
+it("deletes a project from the project menu", async () => {
+  const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+  render(<CloudAppPage />);
+
+  fireEvent.click(await screen.findByLabelText("More actions for AO"));
+  fireEvent.click(await screen.findByText("Delete project"));
+
+  await waitFor(() =>
+    expect(apiMocks.deleteProject).toHaveBeenCalledWith("org-one", "project-one"),
+  );
+  expect(confirmSpy).toHaveBeenCalled();
+  confirmSpy.mockRestore();
 });
