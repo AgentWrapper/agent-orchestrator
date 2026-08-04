@@ -6,6 +6,7 @@ import { haptics } from "./haptics";
 import { projectSheetRoute } from "./sheetResult";
 import { useApp } from "./store";
 import { useTheme, useThemedStyles } from "./ThemeProvider";
+import { useT } from "./i18n";
 
 // Scopes the board to one project (or All). A header row — label, current
 // scope, overflow button — rather than the horizontal pill row it replaced: the
@@ -16,6 +17,7 @@ import { useTheme, useThemedStyles } from "./ThemeProvider";
 // app instead of two controls that drift apart.
 export function ProjectSwitcher() {
 	const t = useTheme();
+	const tr = useT();
 	const styles = useThemedStyles(makeStyles);
 	const { projects, activeProjectId, setActiveProject } = useApp();
 	const router = useRouter();
@@ -28,7 +30,7 @@ export function ProjectSwitcher() {
 	return (
 		<>
 			<View style={styles.row}>
-				<Text style={styles.label}>PROJECTS</Text>
+				<Text style={styles.label}>{tr("project.switcher")}</Text>
 				<Pressable
 					onPress={() => {
 						haptics.tap();
@@ -39,10 +41,10 @@ export function ProjectSwitcher() {
 					hitSlop={10}
 					style={({ pressed }) => [styles.trigger, pressed && styles.triggerPressed]}
 					accessibilityRole="button"
-					accessibilityLabel="Change active project"
+					accessibilityLabel={tr("project.changeA11y")}
 				>
 					<Text style={[styles.value, active && { color: t.blue }]} numberOfLines={1}>
-						{active?.name ?? "All projects"}
+						{active?.name ?? tr("common.allProjects")}
 					</Text>
 					{/* A chevron, not an overflow "…": this changes a value rather than
 					    revealing a menu of actions. */}

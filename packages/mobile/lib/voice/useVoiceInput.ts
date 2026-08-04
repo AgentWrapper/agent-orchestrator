@@ -1,3 +1,4 @@
+import { enT } from "../i18n";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState } from "react-native";
 import { haptics } from "../haptics";
@@ -133,7 +134,7 @@ export function useVoiceInput({
 			if (!mountedRef.current) return;
 			if (!granted) {
 				setPhase("denied");
-				setError("Microphone access is off. Enable it in Settings to dictate.");
+				setError(enT("session.voice.micOff"));
 				return;
 			}
 

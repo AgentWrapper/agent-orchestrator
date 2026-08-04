@@ -129,7 +129,7 @@ describe("theme-aware helpers", () => {
 
 	it("falls back to the raw status for an unrecognised value", () => {
 		expect(statusVisual(darkTheme, "something_new").label).toBe("something_new");
-		expect(statusVisual(darkTheme, null).label).toBe("unknown");
+		expect(statusVisual(darkTheme, null).label).toBe("Unknown");
 	});
 
 	// Regression: these four had no case, so the board rendered the wire value

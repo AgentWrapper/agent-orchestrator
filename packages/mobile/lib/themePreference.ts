@@ -1,3 +1,4 @@
+import { enT, type TFunction } from "./i18n";
 // Which theme the user asked for, and what that resolves to right now. Pure —
 // no React Native or storage imports — so the rules are unit-testable; the
 // AsyncStorage half lives in themeStore.ts, the same split as
@@ -36,13 +37,13 @@ export function resolveScheme(preference: ThemePreference, systemScheme: ColorSc
 }
 
 /** Label for the settings row's value slot. */
-export function preferenceLabel(preference: ThemePreference): string {
+export function preferenceLabel(preference: ThemePreference, tr: TFunction = enT): string {
 	switch (preference) {
 		case "light":
-			return "Light";
+			return tr("theme.light");
 		case "dark":
-			return "Dark";
+			return tr("theme.dark");
 		default:
-			return "System";
+			return tr("theme.system");
 	}
 }

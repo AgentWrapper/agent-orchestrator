@@ -5,6 +5,7 @@
 // Mirrors the desktop's frontend/src/renderer/lib/agent-select-options.ts, which
 // is the only place either app decides what "available" means.
 import type { AgentCatalog, AgentInfo } from "./api";
+import { enT, type TFunction } from "./i18n";
 
 /** What the row says about an agent, and whether it can be chosen. */
 export type AgentAvailability = "authorized" | "auth-unknown" | "needs-auth" | "needs-install";
@@ -49,14 +50,14 @@ export function isSelectable(availability: AgentAvailability): boolean {
 }
 
 /** Row status text. Healthy agents get none — only problems are worth saying. */
-export function statusLabel(availability: AgentAvailability): string {
+export function statusLabel(availability: AgentAvailability, tr: TFunction = enT): string {
 	switch (availability) {
 		case "auth-unknown":
-			return "Auth unknown";
+			return tr("agent.authUnknown");
 		case "needs-auth":
-			return "Needs auth";
+			return tr("agent.needsAuth");
 		case "needs-install":
-			return "Needs install";
+			return tr("agent.needsInstall");
 		default:
 			return "";
 	}
@@ -70,7 +71,7 @@ const RANK: Record<AgentAvailability, number> = {
 };
 
 /** The catalog as a picker list: usable agents first, then by priority, then label. */
-export function rankAgents(catalog: AgentCatalog | null | undefined): RankedAgent[] {
+export function rankAgents(catalog: AgentCatalog | null | undefined, tr: TFunction = enT): RankedAgent[] {
 	if (!catalog) return [];
 	return catalog.supported
 		.map((agent) => {
@@ -78,7 +79,7 @@ export function rankAgents(catalog: AgentCatalog | null | undefined): RankedAgen
 			return {
 				...agent,
 				availability,
-				status: statusLabel(availability),
+				status: statusLabel(availability, tr),
 				selectable: isSelectable(availability),
 				rank: RANK[availability],
 			};

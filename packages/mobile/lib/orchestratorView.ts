@@ -2,6 +2,7 @@
 // imports — so the lifecycle mapping is unit-testable, the same split as
 // prView.ts / pushStatus.ts.
 import type { DashboardSession, OrchestratorLink } from "./api";
+import { enT, type TFunction } from "./i18n";
 import { attentionOf } from "./sessionStatus";
 import { statusVisual, type Theme } from "./theme";
 
@@ -25,14 +26,17 @@ export function orchestratorState(link: OrchestratorLink | null | undefined): Or
 export function orchestratorStatus(
 	t: Theme,
 	link: OrchestratorLink | null | undefined,
+	tr: TFunction = enT,
 ): { label: string; color: string; breathing: boolean } {
 	const state = orchestratorState(link);
-	if (state === "missing") return { label: "Not started", color: t.textFaint, breathing: false };
-	if (state === "stopped") return { label: "Stopped", color: t.textTertiary, breathing: false };
+	if (state === "missing") return { label: tr("status.notStarted"), color: t.textFaint, breathing: false };
+	if (state === "stopped") return { label: tr("status.stopped"), color: t.textTertiary, breathing: false };
 	// Running: defer to the shared status vocabulary so the orchestrator speaks
 	// the same language as a session card.
-	const v = link?.status ? statusVisual(t, link.status) : null;
-	return v ? { label: v.label, color: v.color, breathing: !!v.breathing } : { label: "Online", color: t.blue, breathing: false };
+	const v = link?.status ? statusVisual(t, link.status, tr) : null;
+	return v
+		? { label: v.label, color: v.color, breathing: !!v.breathing }
+		: { label: tr("status.online"), color: t.blue, breathing: false };
 }
 
 export type LaunchIntent = { clean: boolean; label: string; confirm: boolean };
@@ -51,10 +55,10 @@ export type LaunchIntent = { clean: boolean; label: string; confirm: boolean };
  * orchestrator. Stop coordinating new work now") and replaced. That is worth a
  * confirmation, which it never had.
  */
-export function launchIntent(state: OrchestratorState): LaunchIntent {
-	if (state === "running") return { clean: true, label: "Restart orchestrator", confirm: true };
+export function launchIntent(state: OrchestratorState, tr: TFunction = enT): LaunchIntent {
+	if (state === "running") return { clean: true, label: tr("orchestrator.restartLabel"), confirm: true };
 	// Nothing live to retire, so the cheap ensure is also the correct call.
-	return { clean: false, label: "Start orchestrator", confirm: false };
+	return { clean: false, label: tr("orchestrator.start"), confirm: false };
 }
 
 /** Worker sessions bucketed by attention zone, for the card's pills. */

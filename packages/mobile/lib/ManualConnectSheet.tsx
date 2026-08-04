@@ -6,13 +6,14 @@ import { DEFAULT_CONFIG, loadConfig, saveConfig, type ServerConfig } from "./con
 import {
 	classifyConnectionFailure,
 	describeConnectionFailure,
-	LOCAL_NETWORK_HINT,
+	localNetworkHint,
 	type ConnectionErrorCopy,
 } from "./connectionError";
 import type { Theme } from "./theme";
 import { haptics } from "./haptics";
 import { Button, SHEET_SCROLL_CONTENT, SheetHeader, SheetScreen } from "./ui";
 import { useTheme, useThemedStyles } from "./ThemeProvider";
+import { useT } from "./i18n";
 
 // The typing fallback behind the QR scanner: Tailscale users and anyone whose
 // desktop isn't in front of them. Deliberately narrower than the Settings form —
@@ -22,6 +23,7 @@ import { useTheme, useThemedStyles } from "./ThemeProvider";
 // to make someone test and save as separate acts.
 export function ManualConnectSheet({ onConnected }: { onConnected: () => void }) {
 	const t = useTheme();
+	const tr = useT();
 	const styles = useThemedStyles(makeStyles);
 	const [cfg, setCfg] = useState<ServerConfig>(DEFAULT_CONFIG);
 	const [busy, setBusy] = useState(false);
@@ -55,11 +57,15 @@ export function ManualConnectSheet({ onConnected }: { onConnected: () => void })
 			haptics.warning();
 			const status = e instanceof ApiError ? e.status : undefined;
 			setFailure(
-				describeConnectionFailure(classifyConnectionFailure(status), {
-					host: target.host,
-					port: target.httpPort,
-					platform: Platform.OS,
-				}),
+				describeConnectionFailure(
+					classifyConnectionFailure(status),
+					{
+						host: target.host,
+						port: target.httpPort,
+						platform: Platform.OS,
+					},
+					tr,
+				),
 			);
 		} finally {
 			setBusy(false);
@@ -69,26 +75,26 @@ export function ManualConnectSheet({ onConnected }: { onConnected: () => void })
 	const form = (
 		<>
 			<Field
-				label="HOST"
+				label={tr("connect.host")}
 				value={cfg.host}
 				onChangeText={set("host")}
-				placeholder="192.168.x.x  or  my-pc.tailXXXX.ts.net"
+				placeholder={tr("connect.hostPlaceholder")}
 				autoCapitalize="none"
 				autoCorrect={false}
 				keyboardType="url"
 			/>
-			<Field label="API PORT" value={cfg.httpPort} onChangeText={set("httpPort")} keyboardType="number-pad" />
+			<Field label={tr("connect.apiPort")} value={cfg.httpPort} onChangeText={set("httpPort")} keyboardType="number-pad" />
 			<Field
-				label="PASSWORD"
+				label={tr("connect.password")}
 				value={cfg.password}
 				onChangeText={set("password")}
-				placeholder="Connection password"
+				placeholder={tr("connect.passwordPlaceholder")}
 				autoCapitalize="none"
 				secureTextEntry
 			/>
 
 			<View style={styles.toggleRow}>
-				<Text style={styles.toggleLabel}>Use TLS (https / wss)</Text>
+				<Text style={styles.toggleLabel}>{tr("connect.useTls")}</Text>
 				<Switch
 					value={!!cfg.secure}
 					onValueChange={(v) => setCfg((prev) => ({ ...prev, secure: v }))}
@@ -103,9 +109,9 @@ export function ManualConnectSheet({ onConnected }: { onConnected: () => void })
 						<Text style={styles.errorText}>{failure.message}</Text>
 						{failure.showLocalNetworkHint ? (
 							<>
-								<Text style={[styles.errorText, { marginTop: 6 }]}>{LOCAL_NETWORK_HINT}</Text>
+								<Text style={[styles.errorText, { marginTop: 6 }]}>{localNetworkHint(tr)}</Text>
 								<Button
-									title="Open settings"
+									title={tr("common.openSettings")}
 									variant="ghost"
 									icon="settings"
 									onPress={() => Linking.openSettings()}
@@ -118,7 +124,7 @@ export function ManualConnectSheet({ onConnected }: { onConnected: () => void })
 			) : null}
 
 			<Button
-				title="Connect"
+				title={tr("common.connect")}
 				icon="link"
 				loading={busy}
 				disabled={!cfg.host.trim()}
@@ -140,8 +146,8 @@ export function ManualConnectSheet({ onConnected }: { onConnected: () => void })
 				keyboardShouldPersistTaps="handled"
 			>
 				<SheetHeader
-					title="Connect manually"
-					subtitle="Enter your computer's address from AO → Settings → Connect Mobile."
+					title={tr("connect.manualTitle")}
+					subtitle={tr("connect.manualSubtitle")}
 				/>
 				{form}
 			</ScrollView>
@@ -150,7 +156,7 @@ export function ManualConnectSheet({ onConnected }: { onConnected: () => void })
 
 	// iOS lifts a presented form sheet over the keyboard by itself.
 	return (
-		<SheetScreen title="Connect manually" subtitle="Enter your computer's address from AO → Settings → Connect Mobile.">
+		<SheetScreen title={tr("connect.manualTitle")} subtitle={tr("connect.manualSubtitle")}>
 			{form}
 		</SheetScreen>
 	);

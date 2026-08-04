@@ -16,6 +16,7 @@ import {
 } from "./prView";
 import { useTheme, useThemedStyles } from "./ThemeProvider";
 import { cardShell, IconButton } from "./ui";
+import { useT } from "./i18n";
 
 // One PR, complete. Everything the daemon knows is on the card — there is no
 // detail screen behind it, because for most PRs the detail was four rows and two
@@ -35,21 +36,24 @@ export function PRCard({
 	summary?: SessionPRSummary;
 }) {
 	const t = useTheme();
+	const tr = useT();
 	const styles = useThemedStyles(makeStyles);
 	const router = useRouter();
 	// The rich summary reports `draft` as a state of its own; the board facts fold
 	// it into "open" and leave only the isDraft flag for prLifecycle to recover.
-	const state = summary ? stateVisualOf(t, summary.state as PRLifecycle) : prStateVisual(t, pr);
+	const state = summary
+		? stateVisualOf(t, summary.state as PRLifecycle, tr)
+		: prStateVisual(t, pr, tr);
 
-	const title = summary?.title?.trim() || prTitle(pr, sessionTitle(session));
+	const title = summary?.title?.trim() || prTitle(pr, sessionTitle(session), tr);
 	const branches = summary ? [summary.sourceBranch, summary.targetBranch].filter(Boolean).join(" → ") : "";
 	const meta = [branches, summary?.author].filter(Boolean).join(" · ");
 	const hasDiff = !!summary && (summary.changedFiles > 0 || summary.additions > 0 || summary.deletions > 0);
 
 	// With the rich summary we can say all three things; without it, fall back to
 	// the single worst-thing line the board facts support.
-	const atoms = summary ? prStatusAtoms(summary) : [prSummaryLine(pr)];
-	const blockers = summary ? prBlockerLine(summary) : null;
+	const atoms = summary ? prStatusAtoms(summary, tr) : [prSummaryLine(pr, tr)];
+	const blockers = summary ? prBlockerLine(summary, 2, tr) : null;
 
 	return (
 		<View style={styles.card}>
@@ -76,7 +80,9 @@ export function PRCard({
 			{hasDiff && summary ? (
 				<View style={styles.diff}>
 					<Text style={styles.diffFiles}>
-						{summary.changedFiles} {summary.changedFiles === 1 ? "file" : "files"}
+						{tr(summary.changedFiles === 1 ? "common.files_one" : "common.files_other", {
+							count: summary.changedFiles,
+						})}
 					</Text>
 					<Text style={[styles.diffNum, { color: t.green }]}>+{summary.additions}</Text>
 					<Text style={[styles.diffNum, { color: t.red }]}>−{summary.deletions}</Text>
@@ -96,7 +102,7 @@ export function PRCard({
 				<View style={styles.actions}>
 					<IconButton
 						icon="terminal"
-						label="Open session"
+						label={tr("prs.openSession")}
 						onPress={() =>
 							router.push({
 								pathname: "/session/[id]",
@@ -106,7 +112,7 @@ export function PRCard({
 					/>
 					<IconButton
 						icon="external-link"
-						label="Open in GitHub"
+						label={tr("prs.openGitHub")}
 						onPress={() => {
 							void openGitHub(summary?.htmlUrl || summary?.url || pr.url);
 						}}

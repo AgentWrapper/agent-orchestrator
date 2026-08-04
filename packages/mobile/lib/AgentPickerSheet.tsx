@@ -6,6 +6,7 @@ import { haptics } from "./haptics";
 import type { Theme } from "./theme";
 import { useTheme, useThemedStyles } from "./ThemeProvider";
 import { SHEET_SCROLL_CONTENT, SheetHeader } from "./ui";
+import { useT } from "./i18n";
 
 // Picks the agent CLI that will run a session.
 //
@@ -34,6 +35,7 @@ export function AgentPickerSheet({
 	error?: string | null;
 }) {
 	const t = useTheme();
+	const tr = useT();
 	const s = useThemedStyles(makeStyles);
 
 	return (
@@ -43,17 +45,17 @@ export function AgentPickerSheet({
 			keyExtractor={(a) => a.id}
 			contentContainerStyle={SHEET_SCROLL_CONTENT}
 			ListEmptyComponent={
-				<Text style={s.empty}>No agents reported. Check that AO is running on your computer, then refresh.</Text>
+				<Text style={s.empty}>{tr("agent.empty")}</Text>
 			}
 			ListHeaderComponent={
 				<>
 					<SheetHeader
-						title="Agent"
-						subtitle="The CLI that runs this session."
+						title={tr("agent.sheetTitle")}
+						subtitle={tr("agent.sheetSubtitle")}
 						right={
 							<Pressable
 								accessibilityRole="button"
-								accessibilityLabel="Refresh agent list"
+								accessibilityLabel={tr("agent.refreshA11y")}
 								accessibilityState={{ disabled: refreshing }}
 								disabled={refreshing}
 								hitSlop={8}
@@ -68,7 +70,7 @@ export function AgentPickerSheet({
 								) : (
 									<>
 										<Feather name="refresh-cw" size={13} color={t.blue} />
-										<Text style={s.refreshText}>Refresh</Text>
+										<Text style={s.refreshText}>{tr("common.refresh")}</Text>
 									</>
 								)}
 							</Pressable>

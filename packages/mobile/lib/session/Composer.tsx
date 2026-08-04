@@ -5,6 +5,7 @@ import type { VoiceMode, VoiceState } from "../voice/types";
 import { useTheme, useThemedStyles, useThemeState } from "../ThemeProvider";
 import type { Theme } from "../theme";
 import type { SendTarget } from "./sendRoute";
+import { useT } from "../i18n";
 
 // One field, one send button. The normal route sends a message to the agent; the
 // terminal route is an explicit escape hatch for prompts that need a literal
@@ -32,6 +33,7 @@ export function Composer({
 	onDismissKeyboard: () => void;
 }) {
 	const t = useTheme();
+	const tr = useT();
 	const { scheme } = useThemeState();
 	const styles = useThemedStyles(makeStyles);
 	const canSend = !!value.trim() && !sending;
@@ -43,7 +45,7 @@ export function Composer({
 					style={styles.input}
 					value={value}
 					onChangeText={onChangeText}
-					placeholder={target === "terminal" ? "Send to terminal..." : "Message the agent..."}
+					placeholder={target === "terminal" ? tr("session.composer.terminal") : tr("session.composer.agent")}
 					placeholderTextColor={t.textFaint}
 					multiline
 					keyboardAppearance={scheme}
@@ -53,7 +55,7 @@ export function Composer({
 				/>
 				<Pressable
 					accessibilityRole="button"
-					accessibilityLabel={target === "terminal" ? "Switch to chat" : "Switch to terminal"}
+					accessibilityLabel={target === "terminal" ? tr("session.composer.switchChat") : tr("session.composer.switchTerminal")}
 					accessibilityState={{ selected: target === "terminal" }}
 					onPress={() => onTargetChange(target === "terminal" ? "agent" : "terminal")}
 					hitSlop={6}
@@ -74,7 +76,7 @@ export function Composer({
 				{keyboardVisible ? (
 					<Pressable
 						accessibilityRole="button"
-						accessibilityLabel="Hide keyboard"
+						accessibilityLabel={tr("session.composer.hideKeyboard")}
 						onPress={onDismissKeyboard}
 						hitSlop={8}
 						style={({ pressed }) => [styles.dismiss, pressed && { opacity: 0.6 }]}

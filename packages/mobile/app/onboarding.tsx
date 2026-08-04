@@ -7,8 +7,10 @@ import { Button, NumberedStep } from "../lib/ui";
 import MASCOT from "../assets/mascot.png";
 import { useThemedStyles } from "../lib/ThemeProvider";
 import type { Theme } from "../lib/theme";
+import { useT } from "../lib/i18n";
 
 export default function OnboardingScreen() {
+	const tr = useT();
 	const styles = useThemedStyles(makeStyles);
 	const router = useRouter();
 	const insets = useSafeAreaInsets();
@@ -28,7 +30,7 @@ export default function OnboardingScreen() {
 					<Text style={styles.brandName}>AO</Text>
 				</View>
 				<Pressable onPress={skip} hitSlop={12} accessibilityRole="button">
-					<Text style={styles.skip}>Skip</Text>
+					<Text style={styles.skip}>{tr("onboarding.skip")}</Text>
 				</Pressable>
 			</View>
 
@@ -38,13 +40,10 @@ export default function OnboardingScreen() {
 				showsVerticalScrollIndicator={false}
 			>
 				<View style={styles.hero}>
-					<Text style={styles.title}>Connect your desktop</Text>
-					<Text style={styles.lede}>
-						Pair with AO on your computer to check on your agents, jump into any terminal, and drive work from your
-						phone.
-					</Text>
+					<Text style={styles.title}>{tr("onboarding.title")}</Text>
+					<Text style={styles.lede}>{tr("onboarding.lede")}</Text>
 					<Button
-						title="Pair Desktop"
+						title={tr("onboarding.pairDesktop")}
 						icon="maximize"
 						onPress={() => router.push("/pair?from=onboarding")}
 						style={styles.cta}
@@ -52,23 +51,23 @@ export default function OnboardingScreen() {
 				</View>
 
 				<View style={styles.how}>
-					<Text style={styles.howLabel}>HOW IT WORKS</Text>
+					<Text style={styles.howLabel}>{tr("onboarding.how")}</Text>
 					<NumberedStep
 						n={1}
-						title="Open AO on your computer"
-						hint="Go to Settings → Connect Mobile and turn it on."
+						title={tr("onboarding.step1Title")}
+						hint={tr("onboarding.step1Hint")}
 					/>
 					<View style={styles.divider} />
 					<NumberedStep
 						n={2}
-						title="Scan the code"
-						hint="Tap Pair Desktop above and point at the QR code on your screen."
+						title={tr("onboarding.step2Title")}
+						hint={tr("onboarding.step2Hint")}
 					/>
 					<View style={styles.divider} />
 					<NumberedStep
 						n={3}
-						title="You're connected"
-						hint="Your sessions appear here, and you can drive them from your phone."
+						title={tr("onboarding.step3Title")}
+						hint={tr("onboarding.step3Hint")}
 					/>
 				</View>
 			</ScrollView>

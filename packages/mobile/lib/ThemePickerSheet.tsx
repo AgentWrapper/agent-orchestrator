@@ -1,6 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { haptics } from "./haptics";
+import { useT } from "./i18n";
 import type { Theme } from "./theme";
 import { useTheme, useThemedStyles } from "./ThemeProvider";
 import { preferenceLabel, type ThemePreference } from "./themePreference";
@@ -8,11 +9,17 @@ import { SheetScreen } from "./ui";
 
 // Light / Dark / System, in the same order and with the same labels as the
 // desktop app's Theme dropdown, so the two describe the setting identically.
-const OPTIONS: { value: ThemePreference; icon: keyof typeof Feather.glyphMap; hint: string }[] = [
-	{ value: "light", icon: "sun", hint: "Always light" },
-	{ value: "dark", icon: "moon", hint: "Always dark" },
-	{ value: "system", icon: "smartphone", hint: "Follow device settings" },
-];
+const OPTION_ICONS: Record<ThemePreference, keyof typeof Feather.glyphMap> = {
+	light: "sun",
+	dark: "moon",
+	system: "smartphone",
+};
+const OPTION_HINT_KEYS = {
+	light: "theme.hint.light",
+	dark: "theme.hint.dark",
+	system: "theme.hint.system",
+} as const;
+const OPTIONS: ThemePreference[] = ["light", "dark", "system"];
 
 export function ThemePickerSheet({
 	onClose,
@@ -25,16 +32,17 @@ export function ThemePickerSheet({
 	onSelect: (p: ThemePreference) => void;
 }) {
 	const t = useTheme();
+	const tr = useT();
 	const s = useThemedStyles(makeStyles);
 
 	return (
-		<SheetScreen title="Theme" subtitle="Applies across the whole app.">
+		<SheetScreen title={tr("theme.title")} subtitle={tr("theme.subtitle")}>
 			<View style={{ paddingTop: 8 }}>
-				{OPTIONS.map((o) => {
-					const selected = preference === o.value;
+				{OPTIONS.map((value) => {
+					const selected = preference === value;
 					return (
 						<Pressable
-							key={o.value}
+							key={value}
 							accessibilityRole="button"
 							accessibilityState={{ selected }}
 							onPress={() => {
@@ -48,15 +56,15 @@ export function ThemePickerSheet({
 								// which never navigates. The other sheets hand their choice to
 								// a caller that might, and onClose is router.back() — so there,
 								// selecting first risks back() popping the destination.
-								onSelect(o.value);
+								onSelect(value);
 								onClose();
 							}}
 							style={({ pressed }) => [s.option, pressed && s.optionPressed]}
 						>
-							<Feather name={o.icon} size={17} color={selected ? t.blue : t.textTertiary} />
+							<Feather name={OPTION_ICONS[value]} size={17} color={selected ? t.blue : t.textTertiary} />
 							<View style={{ flex: 1 }}>
-								<Text style={[s.label, selected && { color: t.blue }]}>{preferenceLabel(o.value)}</Text>
-								<Text style={s.hint}>{o.hint}</Text>
+								<Text style={[s.label, selected && { color: t.blue }]}>{preferenceLabel(value, tr)}</Text>
+								<Text style={s.hint}>{tr(OPTION_HINT_KEYS[value])}</Text>
 							</View>
 							{selected ? <Feather name="check" size={17} color={t.blue} /> : null}
 						</Pressable>

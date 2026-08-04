@@ -10,6 +10,7 @@ import { toneColor } from "./prView";
 import { statusVisual, type Theme } from "./theme";
 import { useTheme, useThemedStyles } from "./ThemeProvider";
 import { cardShell, cardShellPressed, Dot } from "./ui";
+import { useT } from "./i18n";
 
 // One session on the board, following the desktop board card's anatomy: agent
 // mark and title, a branch line, a hairline, then a footer of status + relative
@@ -27,14 +28,15 @@ export function SessionCard({
 	showProject?: boolean;
 }) {
 	const t = useTheme();
+	const tr = useT();
 	const styles = useThemedStyles(makeStyles);
 	const router = useRouter();
 
-	const v = statusVisual(t, session.status);
+	const v = statusVisual(t, session.status, tr);
 	const title = sessionTitle(session);
 	const branch = showBranch(session.branch, title) ? session.branch : null;
-	const prs = prLine(session);
-	const when = relativeTime(session.lastActivityAt);
+	const prs = prLine(session, tr);
+	const when = relativeTime(session.lastActivityAt, Date.now(), tr);
 	// Only a real tracker reference earns a chip; a hand-typed task name does
 	// not, matching desktop.
 	const issue = trackerIssueId(session.issueId);

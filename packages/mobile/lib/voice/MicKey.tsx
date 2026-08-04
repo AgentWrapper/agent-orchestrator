@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { Animated, Pressable, StyleSheet, View } from "react-native";
 import type { Theme } from "../theme";
 import { haptics } from "../haptics";
+import { useT } from "../i18n";
 import type { VoiceMode, VoiceState } from "./types";
 import { useTheme, useThemedStyles } from "../ThemeProvider";
 
@@ -41,6 +42,7 @@ export function MicKey({
 	onPressOut(): void;
 }) {
 	const t = useTheme();
+	const tr = useT();
 	const styles = useThemedStyles(makeStyles);
 	const live = state === "recording" || state === "starting";
 	const latched = live && mode === "latched";
@@ -89,10 +91,10 @@ export function MicKey({
 				accessibilityRole="button"
 				accessibilityLabel={
 					unavailable
-						? "Dictation unavailable on this device"
+						? tr("session.voice.unavailable")
 						: latched
-							? "Stop dictating"
-							: "Hold to dictate, or double-tap for hands-free"
+							? tr("session.voice.stop")
+							: tr("session.voice.hold")
 				}
 				accessibilityState={{ busy: live, disabled }}
 				disabled={disabled}

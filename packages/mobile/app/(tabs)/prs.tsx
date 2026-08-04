@@ -12,6 +12,7 @@ import { usePRSummaries } from "../../lib/usePRSummaries";
 import { useTabScrollToTop } from "../../lib/useTabScrollToTop";
 import { Button, EmptyState, Pill, ScreenHeader } from "../../lib/ui";
 import { useTheme, useThemedStyles } from "../../lib/ThemeProvider";
+import { useT } from "../../lib/i18n";
 
 type Filter = "open" | "merged" | "all";
 
@@ -26,6 +27,7 @@ const inBucket = (filter: Filter, life: ReturnType<typeof prLifecycle>) => {
 
 export default function PRsScreen() {
 	const t = useTheme();
+	const tr = useT();
 	const styles = useThemedStyles(makeStyles);
 	const insets = useSafeAreaInsets();
 	const { configured, loading, error, errorStatus, connection, config, refresh } = useApp();
@@ -49,12 +51,16 @@ export default function PRsScreen() {
 	const summaries = usePRSummaries(sessionIds);
 	const failure = useMemo(
 		() =>
-			describeConnectionFailure(classifyConnectionFailure(errorStatus ?? undefined), {
-				host: config?.host ?? "",
-				port: config?.httpPort ?? "",
-				platform: Platform.OS,
-			}),
-		[errorStatus, config?.host, config?.httpPort],
+			describeConnectionFailure(
+				classifyConnectionFailure(errorStatus ?? undefined),
+				{
+					host: config?.host ?? "",
+					port: config?.httpPort ?? "",
+					platform: Platform.OS,
+				},
+				tr,
+			),
+		[errorStatus, config?.host, config?.httpPort, tr],
 	);
 
 	const onRefresh = async () => {
@@ -69,7 +75,7 @@ export default function PRsScreen() {
 		return (
 			<View style={styles.screen}>
 				<View style={{ height: insets.top }} />
-				<EmptyState icon="git-pull-request" title="No server" message="Connect to AO in Settings." />
+				<EmptyState icon="git-pull-request" title={tr("common.noServer")} message={tr("common.connectInSettings")} />
 			</View>
 		);
 	}
@@ -83,14 +89,20 @@ export default function PRsScreen() {
 	return (
 		<View style={styles.screen}>
 			<View style={{ height: insets.top }} />
-			<ScreenHeader title="Pull Requests" status={connection} />
+			<ScreenHeader title={tr("prs.title")} status={connection} />
 			<ProjectSwitcher />
 
 			<View style={styles.filters}>
 				{(["open", "merged", "all"] as Filter[]).map((f) => (
 					<Pill
 						key={f}
-						label={`${f[0].toUpperCase() + f.slice(1)} ${counts[f]}`}
+						label={
+							f === "open"
+								? tr("prs.filterOpen", { count: counts.open })
+								: f === "merged"
+									? tr("prs.filterMerged", { count: counts.merged })
+									: tr("prs.filterAll", { count: counts.all })
+						}
 						active={filter === f}
 						onPress={() => setFilter(f)}
 					/>
@@ -113,13 +125,13 @@ export default function PRsScreen() {
 								icon="wifi-off"
 								title={failure.title}
 								message={failure.message}
-								action={<Button title="Retry" icon="refresh-cw" variant="ghost" onPress={onRefresh} />}
+								action={<Button title={tr("common.retry")} icon="refresh-cw" variant="ghost" onPress={onRefresh} />}
 							/>
 						) : (
 							<EmptyState
 								icon="git-pull-request"
-								title="No pull requests"
-								message={filter === "open" ? "No open PRs right now." : "Nothing here yet."}
+								title={tr("prs.empty")}
+								message={filter === "open" ? tr("prs.emptyOpen") : tr("prs.emptyOther")}
 							/>
 						)
 					) : (

@@ -6,6 +6,7 @@ import { rankAgents } from "../../lib/agentPicker";
 import { getAgents, refreshAgents } from "../../lib/api";
 import { haptics } from "../../lib/haptics";
 import { releaseSheetResult, takeSheetResult } from "../../lib/sheetResult";
+import { useT } from "../../lib/i18n";
 import { useApp } from "../../lib/store";
 
 // The agent picker, as a native form sheet.
@@ -16,6 +17,7 @@ import { useApp } from "../../lib/store";
 // only to label the trigger row and seed the default.
 export default function AgentSheetRoute() {
 	const router = useRouter();
+	const tr = useT();
 	const { config } = useApp();
 	const { resultKey, selected } = useLocalSearchParams<{ resultKey?: string; selected?: string }>();
 
@@ -35,7 +37,7 @@ export default function AgentSheetRoute() {
 				setError(null);
 			})
 			.catch((e) => {
-				if (!cancelled) setError(agentErrorCopy(e));
+				if (!cancelled) setError(agentErrorCopy(e, tr));
 			});
 		return () => {
 			cancelled = true;
@@ -51,13 +53,13 @@ export default function AgentSheetRoute() {
 			haptics.success();
 		} catch (e) {
 			haptics.error();
-			setError(agentErrorCopy(e));
+			setError(agentErrorCopy(e, tr));
 		} finally {
 			setRefreshing(false);
 		}
 	}
 
-	const agents = useMemo(() => rankAgents(catalog), [catalog]);
+	const agents = useMemo(() => rankAgents(catalog, tr), [catalog, tr]);
 
 	return (
 		<AgentPickerSheet

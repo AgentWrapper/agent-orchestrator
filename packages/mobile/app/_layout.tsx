@@ -2,6 +2,7 @@ import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { Platform } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { LocaleProvider, useT } from "../lib/i18n";
 import { OnboardingGate } from "../lib/OnboardingGate";
 import { PushManager } from "../lib/PushManager";
 import { AppProvider } from "../lib/store";
@@ -10,8 +11,8 @@ import { ThemeProvider, useTheme, useThemeState } from "../lib/ThemeProvider";
 // Sheet routes, and how tall each is allowed to be.
 //
 // The two scrolling lists need a real height to scroll within, so they take
-// explicit detents — `fitToContents` cannot measure a scroll view. The theme
-// sheet renders a plain view, so it wraps its content exactly.
+// explicit detents — `fitToContents` cannot measure a scroll view. Theme and
+// language sheets render plain views, so they wrap their content exactly.
 //
 // `sheets/connect` is registered separately below: it is the only one with text
 // inputs, so its heights are chosen around the keyboard.
@@ -19,6 +20,7 @@ const SHEET_ROUTES = [
 	{ name: "sheets/project", detents: [0.5, 0.95] },
 	{ name: "sheets/agent", detents: [0.5, 0.95] },
 	{ name: "sheets/theme", detents: "fitToContents" },
+	{ name: "sheets/language", detents: "fitToContents" },
 ] as const;
 
 // The manual-connect form — the only sheet with text inputs, and the only one
@@ -49,17 +51,20 @@ export default function RootLayout() {
 	// consume a provider its own component renders.
 	return (
 		<SafeAreaProvider>
-			<ThemeProvider>
-				<AppProvider>
-					<Shell />
-				</AppProvider>
-			</ThemeProvider>
+			<LocaleProvider>
+				<ThemeProvider>
+					<AppProvider>
+						<Shell />
+					</AppProvider>
+				</ThemeProvider>
+			</LocaleProvider>
 		</SafeAreaProvider>
 	);
 }
 
 function Shell() {
 	const t = useTheme();
+	const tr = useT();
 	const { scheme } = useThemeState();
 	return (
 		<>
@@ -77,15 +82,18 @@ function Shell() {
 				}}
 			>
 				<Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-				<Stack.Screen name="session/[id]" options={{ title: "Terminal", headerBackTitle: "Back" }} />
-				<Stack.Screen name="spawn" options={{ presentation: "modal", title: "New agent" }} />
+				<Stack.Screen
+					name="session/[id]"
+					options={{ title: tr("session.terminal"), headerBackTitle: tr("session.back") }}
+				/>
+				<Stack.Screen name="spawn" options={{ presentation: "modal", title: tr("spawn.title") }} />
 				{/* Reachable from Settings and from the board's bell, so naming either one
 				    in the back label would be wrong half the time. "minimal" drops the
 				    label entirely and leaves the bare chevron. */}
 				<Stack.Screen
 					name="notifications"
 					options={{
-						title: "Notifications",
+						title: tr("notifications.title"),
 						headerBackButtonDisplayMode: "minimal",
 					}}
 				/>

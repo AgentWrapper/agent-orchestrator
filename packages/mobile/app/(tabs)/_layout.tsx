@@ -2,10 +2,12 @@ import { Feather } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { haptics } from "../../lib/haptics";
+import { useT } from "../../lib/i18n";
 import { useTheme } from "../../lib/ThemeProvider";
 
 export default function TabsLayout() {
 	const t = useTheme();
+	const tr = useT();
 	const insets = useSafeAreaInsets();
 	return (
 		<Tabs
@@ -35,28 +37,28 @@ export default function TabsLayout() {
 			<Tabs.Screen
 				name="index"
 				options={{
-					title: "Agents",
+					title: tr("tabs.agents"),
 					tabBarIcon: ({ color, size }) => <Feather name="activity" size={size - 2} color={color} />,
 				}}
 			/>
 			<Tabs.Screen
 				name="orchestrator"
 				options={{
-					title: "Orchestrator",
+					title: tr("tabs.orchestrator"),
 					tabBarIcon: ({ color, size }) => <Feather name="share-2" size={size - 2} color={color} />,
 				}}
 			/>
 			<Tabs.Screen
 				name="prs"
 				options={{
-					title: "PRs",
+					title: tr("tabs.prs"),
 					tabBarIcon: ({ color, size }) => <Feather name="git-pull-request" size={size - 2} color={color} />,
 				}}
 			/>
 			<Tabs.Screen
 				name="settings"
 				options={{
-					title: "Settings",
+					title: tr("tabs.settings"),
 					tabBarIcon: ({ color, size }) => <Feather name="settings" size={size - 2} color={color} />,
 				}}
 			/>

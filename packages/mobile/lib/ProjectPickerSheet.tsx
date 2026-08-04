@@ -5,6 +5,7 @@ import type { Theme } from "./theme";
 import { haptics } from "./haptics";
 import { SHEET_SCROLL_CONTENT, SheetHeader } from "./ui";
 import { useTheme, useThemedStyles } from "./ThemeProvider";
+import { useT } from "./i18n";
 
 // Picks the active project — the filter behind `useVisibleSessions()` (Agents +
 // PRs) and the default project in the spawn screen.
@@ -20,8 +21,8 @@ export function ProjectPickerSheet({
 	activeProjectId,
 	onSelect,
 	includeAll = true,
-	title = "Active project",
-	subtitle = "Scopes the Agents and PRs tabs.",
+	title,
+	subtitle,
 }: {
 	/** Dismisses the sheet route. */
 	onClose: () => void;
@@ -33,7 +34,10 @@ export function ProjectPickerSheet({
 	title?: string;
 	subtitle?: string;
 }) {
+	const tr = useT();
 	const s = useThemedStyles(makeS);
+	const resolvedTitle = title ?? tr("project.sheetTitle");
+	const resolvedSubtitle = subtitle ?? tr("project.sheetSubtitle");
 	function choose(id: string) {
 		haptics.select();
 		// Dismiss before reporting the choice: the caller may navigate, and a
@@ -45,7 +49,7 @@ export function ProjectPickerSheet({
 	// "All projects" is just another row, so the list is one flat data array and
 	// the header can live inside it — see SheetHeader for why that matters.
 	const rows: Row[] = [
-		...(includeAll ? [{ id: ALL_PROJECTS, label: "All projects", icon: "layers" as const }] : []),
+		...(includeAll ? [{ id: ALL_PROJECTS, label: tr("common.allProjects"), icon: "layers" as const }] : []),
 		...projects.map((p) => ({
 			id: p.id,
 			label: p.name,
@@ -60,8 +64,8 @@ export function ProjectPickerSheet({
 			data={rows}
 			keyExtractor={(r) => r.id}
 			contentContainerStyle={SHEET_SCROLL_CONTENT}
-			ListHeaderComponent={<SheetHeader title={title} subtitle={subtitle} />}
-			ListEmptyComponent={<Text style={s.empty}>No projects yet. Add one from the AO dashboard on your computer.</Text>}
+			ListHeaderComponent={<SheetHeader title={resolvedTitle} subtitle={resolvedSubtitle} />}
+			ListEmptyComponent={<Text style={s.empty}>{tr("project.empty")}</Text>}
 			renderItem={({ item }) => (
 				<Option
 					label={item.label}

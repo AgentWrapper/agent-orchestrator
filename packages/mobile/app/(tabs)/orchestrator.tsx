@@ -12,11 +12,13 @@ import { attentionMetaFor, type AttentionLevel, type Theme } from "../../lib/the
 import { useTheme, useThemedStyles } from "../../lib/ThemeProvider";
 import { useTabScrollToTop } from "../../lib/useTabScrollToTop";
 import { Button, cardShell, Dot, EmptyState, IconButton, ScreenHeader } from "../../lib/ui";
+import { useT } from "../../lib/i18n";
 
 const ZONE_ORDER: AttentionLevel[] = ["merge", "respond", "review", "pending", "working", "done"];
 
 export default function OrchestratorScreen() {
 	const t = useTheme();
+	const tr = useT();
 	const styles = useThemedStyles(makeStyles);
 	const insets = useSafeAreaInsets();
 	const { configured, loading, error, errorStatus, connection, config, projects, sessions, orchestrators, refresh } =
@@ -26,12 +28,16 @@ export default function OrchestratorScreen() {
 	const scrollRef = useTabScrollToTop<ScrollView>();
 	const failure = useMemo(
 		() =>
-			describeConnectionFailure(classifyConnectionFailure(errorStatus ?? undefined), {
-				host: config?.host ?? "",
-				port: config?.httpPort ?? "",
-				platform: Platform.OS,
-			}),
-		[errorStatus, config?.host, config?.httpPort],
+			describeConnectionFailure(
+				classifyConnectionFailure(errorStatus ?? undefined),
+				{
+					host: config?.host ?? "",
+					port: config?.httpPort ?? "",
+					platform: Platform.OS,
+				},
+				tr,
+			),
+		[errorStatus, config?.host, config?.httpPort, tr],
 	);
 
 	const onRefresh = async () => {
@@ -45,7 +51,7 @@ export default function OrchestratorScreen() {
 		return (
 			<View style={styles.screen}>
 				<View style={{ height: insets.top }} />
-				<EmptyState icon="share-2" title="No server" message="Connect to AO in Settings." />
+				<EmptyState icon="share-2" title={tr("common.noServer")} message={tr("common.connectInSettings")} />
 			</View>
 		);
 	}
@@ -53,7 +59,7 @@ export default function OrchestratorScreen() {
 	return (
 		<View style={styles.screen}>
 			<View style={{ height: insets.top }} />
-			<ScreenHeader title="Orchestrator" status={connection} />
+			<ScreenHeader title={tr("orchestrator.title")} status={connection} />
 
 			{loading && projects.length === 0 ? (
 				<View style={styles.center}>
@@ -73,10 +79,10 @@ export default function OrchestratorScreen() {
 								icon="wifi-off"
 								title={failure.title}
 								message={failure.message}
-								action={<Button title="Retry" icon="refresh-cw" variant="ghost" onPress={onRefresh} />}
+								action={<Button title={tr("common.retry")} icon="refresh-cw" variant="ghost" onPress={onRefresh} />}
 							/>
 						) : (
-							<EmptyState icon="folder" title="No projects" message="Add a project in AO to get started." />
+							<EmptyState icon="folder" title={tr("orchestrator.noProjects")} message={tr("orchestrator.noProjectsMessage")} />
 						)
 					) : (
 						projects.map((p) => {
@@ -110,14 +116,15 @@ function OrchestratorCard({
 	workers: DashboardSession[];
 }) {
 	const t = useTheme();
+	const tr = useT();
 	const styles = useThemedStyles(makeStyles);
 	const router = useRouter();
 	const { launchConductor, setActiveProject } = useApp();
 	const [busy, setBusy] = useState(false);
 
 	const state = orchestratorState(link);
-	const status = orchestratorStatus(t, link);
-	const intent = launchIntent(state);
+	const status = orchestratorStatus(t, link, tr);
+	const intent = launchIntent(state, tr);
 	const zones = zoneCounts(workers);
 
 	const openTerminal = (id: string) => router.push({ pathname: "/session/[id]", params: { id, projectId } });
@@ -140,11 +147,11 @@ function OrchestratorCard({
 			// Human copy, not raw daemon prose — this screen was the last place in
 			// the app still surfacing "409 Conflict - …" to a user.
 			const httpStatus = e instanceof ApiError ? e.status : undefined;
-			const { title, message } = describeConnectionFailure(classifyConnectionFailure(httpStatus), {
-				host: "",
-				port: "",
-				platform: Platform.OS,
-			});
+			const { title, message } = describeConnectionFailure(
+				classifyConnectionFailure(httpStatus),
+				{ host: "", port: "", platform: Platform.OS },
+				tr,
+			);
 			Alert.alert(title, message);
 		} finally {
 			setBusy(false);
@@ -158,14 +165,10 @@ function OrchestratorCard({
 		}
 		// clean:true retires the running orchestrator with a notice telling it to
 		// stop coordinating work. That deserves a question first.
-		Alert.alert(
-			"Restart orchestrator?",
-			`The orchestrator for ${projectName} will be retired and replaced with a fresh one. Its workers keep running.`,
-			[
-				{ text: "Cancel", style: "cancel" },
-				{ text: "Restart", style: "destructive", onPress: () => void runLaunch() },
-			],
-		);
+		Alert.alert(tr("orchestrator.restartTitle"), tr("orchestrator.restartMessage", { name: projectName }), [
+			{ text: tr("common.cancel"), style: "cancel" },
+			{ text: tr("orchestrator.restart"), style: "destructive", onPress: () => void runLaunch() },
+		]);
 	};
 
 	const running = state === "running";
@@ -193,12 +196,16 @@ function OrchestratorCard({
 			{workers.length > 0 ? (
 				<View style={styles.zones}>
 					{ZONE_ORDER.filter((z) => zones[z]).map((z) => {
-						const m = attentionMetaFor(t)[z];
+						const m = attentionMetaFor(t, tr)[z];
 						return (
 							<Pressable
 								key={z}
 								accessibilityRole="button"
-								accessibilityLabel={`${zones[z]} ${m.label} in ${projectName}. Opens the board.`}
+								accessibilityLabel={tr("orchestrator.zoneA11y", {
+									count: zones[z],
+									label: m.label,
+									project: projectName,
+								})}
 								onPress={openZone}
 								style={({ pressed }) => [styles.zonePill, { backgroundColor: m.tint }, pressed && { opacity: 0.6 }]}
 							>
@@ -213,12 +220,12 @@ function OrchestratorCard({
 
 			<View style={styles.footer}>
 				<Text style={styles.workers}>
-					{workers.length} worker{workers.length === 1 ? "" : "s"}
+					{tr(workers.length === 1 ? "common.workers_one" : "common.workers_other", { count: workers.length })}
 				</Text>
 				{running ? (
 					<View style={styles.actions}>
-						<IconButton icon="rotate-ccw" label="Restart orchestrator" loading={busy} onPress={onLaunch} />
-						<IconButton icon="terminal" label="Open orchestrator" onPress={() => link && openTerminal(link.id)} />
+						<IconButton icon="rotate-ccw" label={tr("orchestrator.restartA11y")} loading={busy} onPress={onLaunch} />
+						<IconButton icon="terminal" label={tr("orchestrator.openA11y")} onPress={() => link && openTerminal(link.id)} />
 					</View>
 				) : (
 					<Pressable
@@ -228,7 +235,7 @@ function OrchestratorCard({
 						onPress={onLaunch}
 						style={({ pressed }) => [styles.start, pressed && { opacity: 0.85 }, busy && { opacity: 0.5 }]}
 					>
-						<Text style={styles.startText}>{busy ? "Starting…" : intent.label}</Text>
+						<Text style={styles.startText}>{busy ? tr("common.starting") : intent.label}</Text>
 					</Pressable>
 				)}
 			</View>

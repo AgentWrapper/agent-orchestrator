@@ -8,6 +8,7 @@
 import type { DashboardPR, DashboardSession } from "./api";
 import { prLifecycle, type Tone } from "./prView";
 import { attentionOf } from "./sessionStatus";
+import { enT, type TFunction } from "./i18n";
 import type { Theme } from "./theme";
 
 /** The four board columns, as desktop names them. */
@@ -45,16 +46,16 @@ export function boardZoneOf(session: DashboardSession): BoardZone {
 	}
 }
 
-export function zoneMeta(t: Theme, zone: BoardZone): { label: string; color: string } {
+export function zoneMeta(t: Theme, zone: BoardZone, tr: TFunction = enT): { label: string; color: string } {
 	switch (zone) {
 		case "merge":
-			return { label: "Ready to merge", color: t.green };
+			return { label: tr("zone.readyToMerge"), color: t.green };
 		case "action":
-			return { label: "Needs you", color: t.amber };
+			return { label: tr("zone.needsYou"), color: t.amber };
 		case "pending":
-			return { label: "In review", color: t.textTertiary };
+			return { label: tr("zone.inReview"), color: t.textTertiary };
 		default:
-			return { label: "Working", color: t.orange };
+			return { label: tr("zone.working"), color: t.orange };
 	}
 }
 
@@ -81,6 +82,7 @@ export type BoardSection = { zone: BoardZone; label: string; color: string; data
 export function groupSessions(
 	t: Theme,
 	sessions: DashboardSession[],
+	tr: TFunction = enT,
 ): { sections: BoardSection[]; archived: DashboardSession[] } {
 	const live: DashboardSession[] = [];
 	const archived: DashboardSession[] = [];
@@ -96,7 +98,7 @@ export function groupSessions(
 
 	const sections = BOARD_ZONES.filter((z) => byZone.get(z)?.length).map((zone) => ({
 		zone,
-		...zoneMeta(t, zone),
+		...zoneMeta(t, zone, tr),
 		data: byZone.get(zone) ?? [],
 	}));
 
@@ -154,7 +156,7 @@ export function trackerIssueId(issueId?: string | null): string | null {
  * `PR #12, #13 open`. Returns null when the session has no PR, so the card
  * renders nothing rather than an empty row.
  */
-export function prLine(session: DashboardSession): { text: string; tone: Tone } | null {
+export function prLine(session: DashboardSession, tr: TFunction = enT): { text: string; tone: Tone } | null {
 	const list: DashboardPR[] = session.prs?.length ? session.prs : session.pr ? [session.pr] : [];
 	const real = list.filter((pr) => pr?.number > 0);
 	if (real.length === 0) return null;
@@ -168,7 +170,23 @@ export function prLine(session: DashboardSession): { text: string; tone: Tone } 
 		else groups.set(life, [pr.number]);
 	}
 
-	const parts = [...groups.entries()].map(([life, nums]) => `${nums.map((n) => `#${n}`).join(", ")} ${life}`);
+	const lifeLabel = (life: string) => {
+		switch (life) {
+			case "open":
+				return tr("prs.lifecycle.open");
+			case "merged":
+				return tr("prs.lifecycle.merged");
+			case "closed":
+				return tr("prs.lifecycle.closed");
+			case "draft":
+				return tr("prs.lifecycle.draft");
+			default:
+				return life;
+		}
+	};
+	const parts = [...groups.entries()].map(
+		([life, nums]) => `${nums.map((n) => `#${n}`).join(", ")} ${lifeLabel(life)}`,
+	);
 	// One tone for the whole line: the worst lifecycle present.
 	const lifecycles = [...groups.keys()];
 	const tone: Tone = lifecycles.includes("closed")
@@ -178,5 +196,5 @@ export function prLine(session: DashboardSession): { text: string; tone: Tone } 
 			: lifecycles.includes("merged")
 				? "neutral"
 				: "passive";
-	return { text: `PR ${parts.join(" · ")}`, tone };
+	return { text: tr("prs.line", { parts: parts.join(" · ") }), tone };
 }

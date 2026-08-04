@@ -14,6 +14,7 @@ import type { Theme } from "../../lib/theme";
 import { useTheme, useThemedStyles } from "../../lib/ThemeProvider";
 import { useTabScrollToTop } from "../../lib/useTabScrollToTop";
 import { Button, EmptyState, HeaderIconButton, ScreenHeader, SectionHeader } from "../../lib/ui";
+import { useT } from "../../lib/i18n";
 
 // The archive rides along as one more section so it scrolls with the board
 // rather than being pinned like desktop's strip — a phone has no room for a
@@ -22,6 +23,7 @@ type ListSection = BoardSection | { zone: "archive"; label: string; color: strin
 
 export default function FleetScreen() {
 	const t = useTheme();
+	const tr = useT();
 	const styles = useThemedStyles(makeStyles);
 	const router = useRouter();
 	const insets = useSafeAreaInsets();
@@ -35,7 +37,7 @@ export default function FleetScreen() {
 
 	const listRef = useTabScrollToTop<SectionList<DashboardSession, ListSection>>();
 
-	const { sections, archived } = useMemo(() => groupSessions(t, sessions), [t, sessions]);
+	const { sections, archived } = useMemo(() => groupSessions(t, sessions, tr), [t, sessions, tr]);
 
 	// The archive is the last section, rendered only when expanded so a collapsed
 	// strip costs nothing to scroll past.
@@ -43,20 +45,24 @@ export default function FleetScreen() {
 		if (archived.length === 0) return sections;
 		return [
 			...sections,
-			{ zone: "archive" as const, label: "Archive", color: t.textFaint, data: archiveOpen ? archived : [] },
+			{ zone: "archive" as const, label: tr("common.archive"), color: t.textFaint, data: archiveOpen ? archived : [] },
 		];
-	}, [sections, archived, archiveOpen, t]);
+	}, [sections, archived, archiveOpen, t, tr]);
 
 	// Turn the poll's raw failure ("401 - missing or invalid connection password")
 	// into the same human copy the pairing screens use, keyed on the cause.
 	const failure = useMemo(
 		() =>
-			describeConnectionFailure(classifyConnectionFailure(errorStatus ?? undefined), {
-				host: config?.host ?? "",
-				port: config?.httpPort ?? "",
-				platform: Platform.OS,
-			}),
-		[errorStatus, config?.host, config?.httpPort],
+			describeConnectionFailure(
+				classifyConnectionFailure(errorStatus ?? undefined),
+				{
+					host: config?.host ?? "",
+					port: config?.httpPort ?? "",
+					platform: Platform.OS,
+				},
+				tr,
+			),
+		[errorStatus, config?.host, config?.httpPort, tr],
 	);
 
 	const counts = useMemo(() => {
@@ -103,9 +109,9 @@ export default function FleetScreen() {
 					// chosen to move past it. This says what is missing and offers the
 					// one action that fixes it, going straight to the scanner rather
 					// than sending them to Settings to hunt for a field.
-					title="No desktop paired"
-					message="Scan the pairing code from AO → Settings → Connect Mobile to drive your agents from here."
-					action={<Button title="Scan pairing code" icon="maximize" onPress={() => router.push("/pair")} />}
+					title={tr("agents.noDesktop")}
+					message={tr("agents.noDesktopMessage")}
+					action={<Button title={tr("agents.scanPairing")} icon="maximize" onPress={() => router.push("/pair")} />}
 				/>
 			</View>
 		);
@@ -115,13 +121,13 @@ export default function FleetScreen() {
 		<View style={styles.screen}>
 			<View style={{ height: insets.top }} />
 			<ScreenHeader
-				title="Agents"
+				title={tr("agents.title")}
 				subtitle={config?.host}
 				status={connection}
 				right={
 					<HeaderIconButton
 						icon="bell"
-						label="Notifications"
+						label={tr("agents.notifications")}
 						badge={notificationsUnread}
 						onPress={() => router.navigate("/notifications")}
 					/>
@@ -129,9 +135,9 @@ export default function FleetScreen() {
 			/>
 
 			<View style={styles.stats}>
-				<Stat n={counts.working} label="working" color={t.orange} onPress={() => jumpTo("working")} />
-				<Stat n={counts.needsYou} label="need you" color={t.amber} onPress={() => jumpTo("action")} />
-				<Stat n={counts.mergeable} label="mergeable" color={t.green} onPress={() => jumpTo("merge")} />
+				<Stat n={counts.working} label={tr("stat.working")} color={t.orange} onPress={() => jumpTo("working")} />
+				<Stat n={counts.needsYou} label={tr("stat.needYou")} color={t.amber} onPress={() => jumpTo("action")} />
+				<Stat n={counts.mergeable} label={tr("stat.mergeable")} color={t.green} onPress={() => jumpTo("merge")} />
 			</View>
 
 			<ProjectSwitcher />
@@ -164,20 +170,20 @@ export default function FleetScreen() {
 								message={failure.message}
 								action={
 									<View style={styles.errorActions}>
-										<Button title="Retry" icon="refresh-cw" variant="ghost" onPress={onRefresh} />
+										<Button title={tr("common.retry")} icon="refresh-cw" variant="ghost" onPress={onRefresh} />
 										{/* Re-scanning is the only fix for a rotated password, and the
 										    fastest one for a moved/renamed host — so it belongs beside
 										    Retry rather than three taps away in Settings. */}
-										<Button title="Scan" icon="maximize" onPress={() => router.push("/pair")} />
+										<Button title={tr("common.scan")} icon="maximize" onPress={() => router.push("/pair")} />
 									</View>
 								}
 							/>
 						) : (
 							<EmptyState
 								icon="moon"
-								title="No active agents"
-								message="Spawn a worker to put your fleet to work."
-								action={<Button title="New agent" icon="plus" onPress={() => router.push("/spawn")} />}
+								title={tr("agents.noActive")}
+								message={tr("agents.noActiveMessage")}
+								action={<Button title={tr("agents.newAgent")} icon="plus" onPress={() => router.push("/spawn")} />}
 							/>
 						)
 					}
@@ -200,12 +206,13 @@ export default function FleetScreen() {
 
 function ArchiveHeader({ count, open, onToggle }: { count: number; open: boolean; onToggle: () => void }) {
 	const t = useTheme();
+	const tr = useT();
 	const styles = useThemedStyles(makeStyles);
 	return (
 		<Pressable
 			accessibilityRole="button"
 			accessibilityState={{ expanded: open }}
-			accessibilityLabel={`Archive, ${count} session${count === 1 ? "" : "s"}`}
+			accessibilityLabel={tr(count === 1 ? "common.archiveCount" : "common.archiveCount_other", { count })}
 			onPress={() => {
 				haptics.tap();
 				onToggle();
@@ -213,7 +220,7 @@ function ArchiveHeader({ count, open, onToggle }: { count: number; open: boolean
 			style={({ pressed }) => [styles.archiveHeader, pressed && { opacity: 0.6 }]}
 		>
 			<Feather name={open ? "chevron-down" : "chevron-right"} size={14} color={t.textTertiary} />
-			<Text style={styles.archiveLabel}>ARCHIVE</Text>
+			<Text style={styles.archiveLabel}>{tr("agents.archive")}</Text>
 			<Text style={styles.archiveCount}>{count}</Text>
 		</Pressable>
 	);

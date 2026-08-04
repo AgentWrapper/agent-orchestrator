@@ -1,3 +1,5 @@
+import { enT, type TFunction } from "../i18n";
+
 // When a message to the agent should be re-sent down the terminal instead.
 //
 // There are two channels to a session and they are not interchangeable. The
@@ -54,6 +56,17 @@ export function terminalPayload(text: string): string {
 }
 
 /** Shown once after an automatic reroute, so the switch is never silent. */
-export const REROUTED_NOTICE = "Agent was paused on a prompt — sent straight to the terminal.";
-export const TERMINAL_MODE_NOTICE = "Sending composer text straight to the terminal.";
-export const TERMINAL_UNAVAILABLE_NOTICE = "Terminal is not connected yet — text was not sent.";
+export function reroutedNotice(tr: TFunction = enT): string {
+	return tr("session.rerouted");
+}
+export function terminalModeNotice(tr: TFunction = enT): string {
+	return tr("session.terminalMode");
+}
+export function terminalUnavailableNotice(tr: TFunction = enT): string {
+	return tr("session.terminalUnavailable");
+}
+
+/** @deprecated Prefer the functions above so notices follow the active locale. */
+export const REROUTED_NOTICE = reroutedNotice(enT);
+export const TERMINAL_MODE_NOTICE = terminalModeNotice(enT);
+export const TERMINAL_UNAVAILABLE_NOTICE = terminalUnavailableNotice(enT);

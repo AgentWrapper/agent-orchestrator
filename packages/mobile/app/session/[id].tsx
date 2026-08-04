@@ -14,16 +14,17 @@ import { Composer } from "../../lib/session/Composer";
 import { dockInset } from "../../lib/session/keyboardInset";
 import { KeyRow } from "../../lib/session/KeyRow";
 import {
-	REROUTED_NOTICE,
+	reroutedNotice,
 	routeForSend,
 	terminalPayload,
-	TERMINAL_MODE_NOTICE,
-	TERMINAL_UNAVAILABLE_NOTICE,
+	terminalModeNotice,
+	terminalUnavailableNotice,
 	type SendTarget,
 } from "../../lib/session/sendRoute";
 import { useApp } from "../../lib/store";
 import { useVoiceInput } from "../../lib/voice/useVoiceInput";
 import { useTheme, useThemedStyles, useThemeState } from "../../lib/ThemeProvider";
+import { useT } from "../../lib/i18n";
 
 const FONT_SIZE = 12;
 
@@ -491,11 +492,11 @@ const TERMINAL_ENHANCE_JS = `
 true;
 `;
 
-const statusLabel: Record<MuxStatus, string> = {
-	connecting: "connecting...",
-	open: "live",
-	closed: "disconnected",
-	error: "error",
+const muxStatusKey: Record<MuxStatus, "session.mux.connecting" | "session.mux.live" | "session.mux.disconnected" | "session.mux.error"> = {
+	connecting: "session.mux.connecting",
+	open: "session.mux.live",
+	closed: "session.mux.disconnected",
+	error: "session.mux.error",
 };
 const statusColorFor = (t: Theme): Record<MuxStatus, string> => ({
 	connecting: t.attention,
@@ -506,6 +507,7 @@ const statusColorFor = (t: Theme): Record<MuxStatus, string> => ({
 
 export default function TerminalScreen() {
 	const t = useTheme();
+	const tr = useT();
 	const { scheme } = useThemeState();
 	const styles = useThemedStyles(makeStyles);
 	const params = useLocalSearchParams<{ id: string; projectId?: string }>();
@@ -648,11 +650,11 @@ export default function TerminalScreen() {
 			headerLeft: () => (
 				<Pressable onPress={leave} hitSlop={12} style={styles.headerBack}>
 					<Feather name="chevron-left" size={22} color={t.blue} />
-					<Text style={styles.headerBackText}>Back</Text>
+					<Text style={styles.headerBackText}>{tr("session.back")}</Text>
 				</Pressable>
 			),
 		});
-	}, [navigation, id, leave]);
+	}, [navigation, id, leave, tr, t.blue, styles.headerBack, styles.headerBackText]);
 
 	// Load config, then connect the mux socket.
 	useEffect(() => {
@@ -670,7 +672,7 @@ export default function TerminalScreen() {
 				},
 				onTerminalExited: (tid, code) => {
 					if (tid === id) {
-						setBanner(`Session exited (code ${code})`);
+						setBanner(tr("session.exited", { code }));
 						setNotFound(true);
 					}
 				},
@@ -813,10 +815,10 @@ export default function TerminalScreen() {
 				muxRef.current.sendInput(id, terminalPayload(text), projectId);
 				haptics.success();
 				setMsg("");
-				setBanner(TERMINAL_MODE_NOTICE);
+				setBanner(terminalModeNotice(tr));
 			} else {
 				haptics.error();
-				setBanner(TERMINAL_UNAVAILABLE_NOTICE);
+				setBanner(terminalUnavailableNotice(tr));
 			}
 			return;
 		}
@@ -835,7 +837,7 @@ export default function TerminalScreen() {
 				haptics.success();
 				setMsg("");
 				setSendTarget("terminal");
-				setBanner(REROUTED_NOTICE);
+				setBanner(reroutedNotice(tr));
 			} else {
 				haptics.error();
 				setBanner(`Send failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -1030,7 +1032,7 @@ export default function TerminalScreen() {
 		<View style={[styles.screen, kbHeight > 0 && { paddingBottom: kbHeight }]}>
 			<View style={styles.statusBar}>
 				<View style={[styles.statusDot, { backgroundColor: statusColorFor(t)[status] }]} />
-				<Text style={styles.statusText}>{statusLabel[status]}</Text>
+				<Text style={styles.statusText}>{tr(muxStatusKey[status])}</Text>
 				{size && !dead && (
 					<Text style={styles.dims}>
 						{size.cols}x{size.rows}

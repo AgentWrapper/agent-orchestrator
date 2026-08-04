@@ -20,9 +20,11 @@ import { useApp } from "../lib/store";
 import type { Theme } from "../lib/theme";
 import { useTheme, useThemedStyles } from "../lib/ThemeProvider";
 import { Button, SettingsGroup, SettingsRow } from "../lib/ui";
+import { useT } from "../lib/i18n";
 
 export default function SpawnModal() {
 	const t = useTheme();
+	const tr = useT();
 	const styles = useThemedStyles(makeStyles);
 	const router = useRouter();
 	const { projects, activeProjectId, config, spawn } = useApp();
@@ -56,12 +58,12 @@ export default function SpawnModal() {
 				if (cancelled) return;
 				setCatalog(c);
 				setCatalogError(null);
-				setHarness((h) => h || (defaultAgent(rankAgents(c)) ?? ""));
+				setHarness((h) => h || (defaultAgent(rankAgents(c, tr)) ?? ""));
 			})
 			.catch((e) => {
 				// Previously swallowed into `catalog = null`, which left an empty
 				// picker and no way to tell the daemon was unreachable.
-				if (!cancelled) setCatalogError(agentErrorCopy(e));
+				if (!cancelled) setCatalogError(agentErrorCopy(e, tr));
 			})
 			.finally(() => {
 				if (!cancelled) setLoading(false);
@@ -73,7 +75,7 @@ export default function SpawnModal() {
 
 	// Refreshing the catalog moved into the agent sheet route, which owns its own
 	// copy of it — see app/sheets/agent.tsx.
-	const agents = useMemo(() => rankAgents(catalog), [catalog]);
+	const agents = useMemo(() => rankAgents(catalog, tr), [catalog, tr]);
 	const selectedAgent = agents.find((a) => a.id === harness);
 	const project = projects.find((p) => p.id === projectId);
 
@@ -83,7 +85,7 @@ export default function SpawnModal() {
 		// worse than a message naming what is missing.
 		if (!name.trim() || !prompt.trim()) {
 			haptics.error();
-			setError("Name and task are required.");
+			setError(tr("spawn.required"));
 			return;
 		}
 		setBusy(true);
@@ -112,7 +114,7 @@ export default function SpawnModal() {
 			});
 		} catch (e) {
 			haptics.error();
-			setError(spawnErrorCopy(e));
+			setError(spawnErrorCopy(e, tr));
 			setBusy(false);
 		}
 	};
@@ -120,15 +122,13 @@ export default function SpawnModal() {
 	return (
 		<KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
 			<ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
-				<Text style={styles.lead}>
-					Spawn a worker agent. It gets its own isolated workspace, then starts on the task you give it.
-				</Text>
+				<Text style={styles.lead}>{tr("spawn.lead")}</Text>
 
-				<SettingsGroup footer="Agent availability is cached.">
+				<SettingsGroup footer={tr("spawn.agentsCached")}>
 					<SettingsRow
 						icon="folder"
-						label="Project"
-						value={project?.name ?? "Choose a project"}
+						label={tr("spawn.project")}
+						value={project?.name ?? tr("spawn.chooseProject")}
 						onPress={() =>
 							router.push(
 								projectSheetRoute({
@@ -136,16 +136,16 @@ export default function SpawnModal() {
 									onSelect: setProjectId,
 									// "All projects" is a filter — there is nothing to spawn into.
 									includeAll: false,
-									title: "Project",
-									subtitle: "Where this agent gets its workspace.",
+									title: tr("spawn.project"),
+									subtitle: tr("spawn.projectSubtitle"),
 								}),
 							)
 						}
 					/>
 					<SettingsRow
 						icon="cpu"
-						label="Agent"
-						value={loading ? "Loading…" : (selectedAgent?.label ?? "Choose an agent")}
+						label={tr("spawn.agent")}
+						value={loading ? tr("common.loading") : (selectedAgent?.label ?? tr("spawn.chooseAgent"))}
 						// The collapsed row carries the mark too, as desktop's trigger does.
 						leading={selectedAgent ? <AgentLogo harness={selectedAgent.id} size={20} /> : undefined}
 						disabled={loading}
@@ -155,24 +155,24 @@ export default function SpawnModal() {
 
 				{catalogError ? <Text style={styles.warn}>{catalogError}</Text> : null}
 
-				<Text style={styles.label}>NAME</Text>
+				<Text style={styles.label}>{tr("spawn.name")}</Text>
 				<TextInput
 					style={styles.input}
 					value={name}
 					onChangeText={setName}
-					placeholder="e.g. fix flaky login test"
+					placeholder={tr("spawn.namePlaceholder")}
 					placeholderTextColor={t.textFaint}
 					autoCapitalize="sentences"
 					returnKeyType="next"
 				/>
-				<Text style={styles.hint}>What this session is called on the board.</Text>
+				<Text style={styles.hint}>{tr("spawn.nameHint")}</Text>
 
-				<Text style={styles.label}>TASK</Text>
+				<Text style={styles.label}>{tr("spawn.task")}</Text>
 				<TextInput
 					style={[styles.input, styles.textarea]}
 					value={prompt}
 					onChangeText={setPrompt}
-					placeholder="e.g. Fix the flaky login test and open a PR"
+					placeholder={tr("spawn.taskPlaceholder")}
 					placeholderTextColor={t.textFaint}
 					multiline
 					autoCapitalize="sentences"
@@ -181,14 +181,14 @@ export default function SpawnModal() {
 				{error ? <Text style={styles.error}>{error}</Text> : null}
 
 				<Button
-					title="Spawn agent"
+					title={tr("spawn.submit")}
 					icon="zap"
 					loading={busy}
 					onPress={onSpawn}
 					disabled={!projectId}
 					style={{ marginTop: 20 }}
 				/>
-				<Button title="Cancel" variant="ghost" onPress={() => router.back()} style={{ marginTop: 10 }} />
+				<Button title={tr("spawn.cancel")} variant="ghost" onPress={() => router.back()} style={{ marginTop: 10 }} />
 			</ScrollView>
 
 		</KeyboardAvoidingView>
@@ -198,13 +198,13 @@ export default function SpawnModal() {
 // Human copy for a failed spawn, matching every other screen. This one used to
 // render `e.message` — the wire string, e.g. "401 - missing or invalid
 // connection password".
-function spawnErrorCopy(e: unknown): string {
+function spawnErrorCopy(e: unknown, tr: import("../lib/i18n").TFunction): string {
 	const status = e instanceof ApiError ? e.status : undefined;
-	const { title, message } = describeConnectionFailure(classifyConnectionFailure(status), {
-		host: "",
-		port: "",
-		platform: Platform.OS,
-	});
+	const { title, message } = describeConnectionFailure(
+		classifyConnectionFailure(status),
+		{ host: "", port: "", platform: Platform.OS },
+		tr,
+	);
 	return `${title} ${message}`;
 }
 

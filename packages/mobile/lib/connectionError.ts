@@ -7,6 +7,8 @@
 // with a rotated password to "check you're on the same Wi-Fi" sends them to
 // debug the wrong thing.
 
+import { enT, type TFunction } from "./i18n";
+
 export type ConnectionFailure =
 	| "not-ao-qr" // the scanned code wasn't an AO pairing payload
 	| "unreachable" // nothing answered (DNS failure, refused, timeout)
@@ -85,6 +87,7 @@ export type ConnectionErrorCopy = {
 export function describeConnectionFailure(
 	reason: ConnectionFailure,
 	target: { host: string; port: string; platform: "ios" | "android" | string },
+	t: TFunction = enT,
 ): ConnectionErrorCopy {
 	// Only surfaced when the phone never reached the host at all, and only on
 	// iOS, where a denied Local Network prompt produces exactly this symptom.
@@ -94,24 +97,22 @@ export function describeConnectionFailure(
 	switch (reason) {
 		case "not-ao-qr":
 			return {
-				title: "Not an AO pairing code",
-				message: "That QR code isn't an AO pairing code.",
+				title: t("connection.notAoQr.title"),
+				message: t("connection.notAoQr.message"),
 				showLocalNetworkHint: false,
 			};
 		case "unreachable":
 			return {
-				title: "Your desktop disconnected",
-				message:
-					`Reached nothing at ${target.host}:${target.port}. ` +
-					"Is Connect Mobile still on, and is your phone on the same Wi-Fi?",
+				title: t("connection.unreachable.title"),
+				message: t("connection.unreachable.message", { host: target.host, port: target.port }),
 				showLocalNetworkHint,
 			};
 		case "auth":
 			// The connection itself worked, so "disconnected" would be wrong here —
 			// and re-scanning is the actual fix, not retrying the same password.
 			return {
-				title: "Your desktop rejected the password",
-				message: "That password was rotated. Re-scan the code on your computer.",
+				title: t("connection.auth.title"),
+				message: t("connection.auth.message"),
 				showLocalNetworkHint: false,
 			};
 		case "rate-limited":
@@ -119,21 +120,23 @@ export function describeConnectionFailure(
 			// clears it automatically. Saying so stops people from power-cycling
 			// things that were never the problem.
 			return {
-				title: "Too many attempts",
-				message:
-					"Your computer locked this device out after too many failed attempts. " +
-					"It clears on its own in about a minute — check the password, then try again.",
+				title: t("connection.rateLimited.title"),
+				message: t("connection.rateLimited.message"),
 				showLocalNetworkHint: false,
 			};
 		case "server-error":
 			return {
-				title: "Your desktop returned an error",
-				message: `${target.host}:${target.port} answered, but with an error. Check the AO logs on your computer.`,
+				title: t("connection.serverError.title"),
+				message: t("connection.serverError.message", { host: target.host, port: target.port }),
 				showLocalNetworkHint: false,
 			};
 	}
 }
 
 /** The extra line shown when {@link ConnectionErrorCopy.showLocalNetworkHint} is set. */
-export const LOCAL_NETWORK_HINT =
-	"If you denied the Local Network prompt, enable it in Settings › Privacy & Security › Local Network › AO.";
+export function localNetworkHint(t: TFunction = enT): string {
+	return t("connection.localNetworkHint");
+}
+
+/** @deprecated Prefer {@link localNetworkHint} so the string follows the active locale. */
+export const LOCAL_NETWORK_HINT = localNetworkHint(enT);

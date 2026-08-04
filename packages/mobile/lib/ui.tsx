@@ -14,6 +14,7 @@ import {
 	type ViewStyle,
 } from "react-native";
 import { haptics } from "./haptics";
+import { useT } from "./i18n";
 import type { ConnStatus } from "./store";
 import { statusVisual, type Theme } from "./theme";
 import { useTheme, useThemedStyles } from "./ThemeProvider";
@@ -99,8 +100,9 @@ export function Pill({
 
 export function StatusBadge({ status }: { status?: string | null }) {
 	const t = useTheme();
+	const tr = useT();
 	const s = useThemedStyles(makeStyles);
-	const v = statusVisual(t, status);
+	const v = statusVisual(t, status, tr);
 	return (
 		<View style={s.badge}>
 			<Dot color={v.color} breathing={v.breathing} size={8} />

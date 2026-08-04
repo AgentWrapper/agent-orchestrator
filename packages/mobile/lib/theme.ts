@@ -22,6 +22,8 @@
 // keep rendering dark while compiling cleanly; without one, `tsc` names every
 // call site that still needs the hook.
 
+import { enT, type TFunction } from "./i18n";
+
 export type Theme = {
 	bgBase: string;
 	bgSide: string;
@@ -255,15 +257,15 @@ export type AttentionLevel = "merge" | "action" | "respond" | "review" | "pendin
 
 export type AttentionMeta = { label: string; color: string; tint: string; order: number };
 
-export function attentionMetaFor(t: Theme): Record<string, AttentionMeta> {
+export function attentionMetaFor(t: Theme, tr: TFunction = enT): Record<string, AttentionMeta> {
 	return {
-		merge: { label: "Ready to merge", color: t.green, tint: t.tintGreen, order: 0 },
-		action: { label: "Needs you", color: t.amber, tint: t.tintAmber, order: 1 },
-		respond: { label: "Needs you", color: t.amber, tint: t.tintAmber, order: 1 },
-		review: { label: "Review", color: t.red, tint: t.tintRed, order: 2 },
-		pending: { label: "In review", color: t.textTertiary, tint: t.bgSubtle, order: 3 },
-		working: { label: "Working", color: t.orange, tint: t.tintOrange, order: 4 },
-		done: { label: "Done", color: t.textTertiary, tint: t.bgSubtle, order: 5 },
+		merge: { label: tr("zone.readyToMerge"), color: t.green, tint: t.tintGreen, order: 0 },
+		action: { label: tr("zone.needsYou"), color: t.amber, tint: t.tintAmber, order: 1 },
+		respond: { label: tr("zone.needsYou"), color: t.amber, tint: t.tintAmber, order: 1 },
+		review: { label: tr("zone.review"), color: t.red, tint: t.tintRed, order: 2 },
+		pending: { label: tr("zone.inReview"), color: t.textTertiary, tint: t.bgSubtle, order: 3 },
+		working: { label: tr("zone.working"), color: t.orange, tint: t.tintOrange, order: 4 },
+		done: { label: tr("zone.done"), color: t.textTertiary, tint: t.bgSubtle, order: 5 },
 	};
 }
 
@@ -271,55 +273,55 @@ export type StatusVisual = { color: string; label: string; breathing?: boolean }
 
 // One status maps to one dot color and short label. Mirrors AO's getStatusSpec so
 // the phone speaks the same visual language as the dashboard.
-export function statusVisual(t: Theme, status?: string | null): StatusVisual {
+export function statusVisual(t: Theme, status?: string | null, tr: TFunction = enT): StatusVisual {
 	switch (status) {
 		case "spawning":
-			return { color: t.blue, label: "Starting" };
+			return { color: t.blue, label: tr("status.starting") };
 		case "working":
-			return { color: t.orange, label: "Working", breathing: true };
+			return { color: t.orange, label: tr("status.working"), breathing: true };
 		case "detecting":
-			return { color: t.orange, label: "Detecting", breathing: true };
+			return { color: t.orange, label: tr("status.detecting"), breathing: true };
 		case "needs_input":
-			return { color: t.amber, label: "Needs input" };
+			return { color: t.amber, label: tr("status.needsInput") };
 		case "changes_requested":
-			return { color: t.amber, label: "Changes req." };
+			return { color: t.amber, label: tr("status.changesReq") };
 		case "stuck":
-			return { color: t.red, label: "Stuck" };
+			return { color: t.red, label: tr("status.stuck") };
 		case "errored":
-			return { color: t.red, label: "Crashed" };
+			return { color: t.red, label: tr("status.crashed") };
 		case "ci_failed":
-			return { color: t.red, label: "CI failed" };
+			return { color: t.red, label: tr("status.ciFailed") };
 		case "pr_open":
-			return { color: t.textSecondary, label: "PR open" };
+			return { color: t.textSecondary, label: tr("status.prOpen") };
 		case "review_pending":
-			return { color: t.textSecondary, label: "In review" };
+			return { color: t.textSecondary, label: tr("status.inReview") };
 		case "approved":
-			return { color: t.green, label: "Approved" };
+			return { color: t.green, label: tr("status.approved") };
 		case "mergeable":
-			return { color: t.green, label: "Mergeable" };
+			return { color: t.green, label: tr("status.mergeable") };
 		case "merged":
-			return { color: t.green, label: "Merged" };
+			return { color: t.green, label: tr("status.merged") };
 		case "done":
-			return { color: t.green, label: "Done" };
+			return { color: t.green, label: tr("status.done") };
 		case "idle":
-			return { color: t.textTertiary, label: "Idle" };
+			return { color: t.textTertiary, label: tr("status.idle") };
 		// Without these four the wire value leaks into the UI verbatim — the board
 		// was rendering a literal "no_signal". Labels from desktop's
 		// sessionStatusViews so the two apps say the same words.
 		case "no_signal":
-			return { color: t.textTertiary, label: "No signal" };
+			return { color: t.textTertiary, label: tr("status.noSignal") };
 		case "exited":
-			return { color: t.red, label: "Exited" };
+			return { color: t.red, label: tr("status.exited") };
 		case "draft":
-			return { color: t.textSecondary, label: "Draft PR" };
+			return { color: t.textSecondary, label: tr("status.draftPr") };
 		case "unknown":
-			return { color: t.textTertiary, label: "Unknown" };
+			return { color: t.textTertiary, label: tr("status.unknown") };
 		case "cleanup":
-			return { color: t.textTertiary, label: "Cleanup" };
+			return { color: t.textTertiary, label: tr("status.cleanup") };
 		case "killed":
 		case "terminated":
-			return { color: t.textFaint, label: "Terminated" };
+			return { color: t.textFaint, label: tr("status.terminated") };
 		default:
-			return { color: t.textTertiary, label: status ?? "unknown" };
+			return { color: t.textTertiary, label: status ?? tr("status.unknown") };
 	}
 }

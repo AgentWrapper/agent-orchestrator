@@ -10,7 +10,7 @@ import { loadConfig, saveConfig, type ServerConfig } from "../lib/config";
 import {
 	classifyConnectionFailure,
 	describeConnectionFailure,
-	LOCAL_NETWORK_HINT,
+	localNetworkHint,
 	type ConnectionErrorCopy,
 } from "../lib/connectionError";
 import type { Theme } from "../lib/theme";
@@ -21,9 +21,11 @@ import { connectSheetRoute } from "../lib/sheetResult";
 import { useApp } from "../lib/store";
 import { Button, NumberedStep } from "../lib/ui";
 import { useTheme, useThemedStyles } from "../lib/ThemeProvider";
+import { useT } from "../lib/i18n";
 
 export default function PairScreen() {
 	const t = useTheme();
+	const tr = useT();
 	const styles = useThemedStyles(makeStyles);
 	const router = useRouter();
 	const insets = useSafeAreaInsets();
@@ -76,7 +78,7 @@ export default function PairScreen() {
 		if (!parsed) {
 			if (rejected.current !== data) {
 				rejected.current = data;
-				setFailure(describeConnectionFailure("not-ao-qr", { host: "", port: "", platform: Platform.OS }));
+				setFailure(describeConnectionFailure("not-ao-qr", { host: "", port: "", platform: Platform.OS }, tr));
 			}
 			return;
 		}
@@ -104,11 +106,15 @@ export default function PairScreen() {
 			haptics.warning();
 			const status = e instanceof ApiError ? e.status : undefined;
 			setFailure(
-				describeConnectionFailure(classifyConnectionFailure(status), {
-					host: target.host,
-					port: target.httpPort,
-					platform: Platform.OS,
-				}),
+				describeConnectionFailure(
+					classifyConnectionFailure(status),
+					{
+						host: target.host,
+						port: target.httpPort,
+						platform: Platform.OS,
+					},
+					tr,
+				),
 			);
 			setBusy(false);
 		}
@@ -135,9 +141,9 @@ export default function PairScreen() {
 			</View>
 
 			<View style={styles.steps}>
-				<NumberedStep n={1} title="Open AO on your computer" compact />
-				<NumberedStep n={2} title="Go to Settings → Connect Mobile" compact />
-				<NumberedStep n={3} title="Scan the QR code" compact />
+				<NumberedStep n={1} title={tr("pair.step1")} compact />
+				<NumberedStep n={2} title={tr("pair.step2")} compact />
+				<NumberedStep n={3} title={tr("pair.step3")} compact />
 			</View>
 
 			<View style={styles.viewfinder}>
@@ -175,15 +181,15 @@ export default function PairScreen() {
 					<View style={{ flex: 1 }}>
 						<Text style={styles.errorText}>{failure.message}</Text>
 						{failure.showLocalNetworkHint ? (
-							<Text style={[styles.errorText, { marginTop: 6 }]}>{LOCAL_NETWORK_HINT}</Text>
+							<Text style={[styles.errorText, { marginTop: 6 }]}>{localNetworkHint(tr)}</Text>
 						) : null}
 						<View style={styles.errorActions}>
 							{/* Re-arms the scanner; without it a failed scan is a dead end,
 							    since the camera intentionally stops after one attempt. */}
-							<Button title="Try again" variant="ghost" icon="refresh-cw" onPress={retry} />
+							<Button title={tr("common.tryAgain")} variant="ghost" icon="refresh-cw" onPress={retry} />
 							{failure.showLocalNetworkHint ? (
 								<Button
-									title="Open settings"
+									title={tr("common.openSettings")}
 									variant="ghost"
 									icon="settings"
 									onPress={() => Linking.openSettings()}
@@ -202,7 +208,7 @@ export default function PairScreen() {
 				accessibilityRole="button"
 			>
 				<Feather name="edit-3" size={15} color={t.textSecondary} />
-				<Text style={styles.manualText}>Enter details manually</Text>
+				<Text style={styles.manualText}>{tr("pair.manual")}</Text>
 			</Pressable>
 		</View>
 	);
@@ -223,28 +229,27 @@ function CameraGate({
 	onRequest: () => void;
 }) {
 	const t = useTheme();
+	const tr = useT();
 	const styles = useThemedStyles(makeStyles);
 	if (loading) {
 		return (
 			<View style={styles.gate}>
-				<Text style={styles.gateHint}>Starting camera…</Text>
+				<Text style={styles.gateHint}>{tr("pair.startingCamera")}</Text>
 			</View>
 		);
 	}
 	return (
 		<View style={styles.gate}>
 			<Feather name="camera-off" size={24} color={t.textTertiary} />
-			<Text style={styles.gateTitle}>Camera access needed</Text>
+			<Text style={styles.gateTitle}>{tr("pair.cameraNeeded")}</Text>
 			<Text style={styles.gateHint}>
-				{canAskAgain
-					? "AO uses the camera only to read the pairing QR code on your desktop."
-					: "Camera access is turned off for AO. Enable it in system settings, or enter your details manually below."}
+				{canAskAgain ? tr("pair.cameraHintAsk") : tr("pair.cameraHintDenied")}
 			</Text>
 			{canAskAgain ? (
-				<Button title="Allow camera" icon="camera" onPress={onRequest} style={{ marginTop: 18 }} />
+				<Button title={tr("pair.allowCamera")} icon="camera" onPress={onRequest} style={{ marginTop: 18 }} />
 			) : (
 				<Button
-					title="Open settings"
+					title={tr("common.openSettings")}
 					variant="ghost"
 					icon="settings"
 					onPress={() => Linking.openSettings()}

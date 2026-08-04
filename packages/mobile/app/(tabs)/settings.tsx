@@ -19,6 +19,7 @@ import { useApp } from "../../lib/store";
 import { useTabScrollToTop } from "../../lib/useTabScrollToTop";
 import { Dot, ScreenHeader, SettingsGroup, SettingsRow, SettingsToggle } from "../../lib/ui";
 import { useTheme, useThemedStyles, useThemeState } from "../../lib/ThemeProvider";
+import { LOCALE_NATIVE_LABELS, useLocale, useT } from "../../lib/i18n";
 
 const ISSUES_URL = "https://github.com/AgentWrapper/agent-orchestrator/issues/new";
 
@@ -29,6 +30,8 @@ export default function SettingsScreen() {
 	const router = useRouter();
 	const { reloadConfig, projects, connection, activeProjectId, setActiveProject } = useApp();
 	const scrollRef = useTabScrollToTop<ScrollView>();
+	const tr = useT();
+	const { locale } = useLocale();
 
 	const [cfg, setCfg] = useState<ServerConfig>(DEFAULT_CONFIG);
 	const [loaded, setLoaded] = useState(false);
@@ -60,7 +63,7 @@ export default function SettingsScreen() {
 	return (
 		<View style={styles.screen}>
 			<View style={{ height: insets.top }} />
-			<ScreenHeader title="Settings" status={connection} />
+			<ScreenHeader title={tr("settings.title")} status={connection} />
 			<ScrollView
 				ref={scrollRef}
 				contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
@@ -68,11 +71,11 @@ export default function SettingsScreen() {
 			>
 				<ConnectionSection cfg={cfg} paired={paired} connection={connection} />
 
-				<SettingsGroup title="Projects" footer="Scopes the Agents and PRs tabs.">
+				<SettingsGroup title={tr("settings.projects")} footer={tr("settings.projectsFooter")}>
 					<SettingsRow
 						icon="folder"
-						label="Active project"
-						value={activeProject?.name ?? "All projects"}
+						label={tr("settings.activeProject")}
+						value={activeProject?.name ?? tr("common.allProjects")}
 						onPress={() =>
 							router.push(
 								projectSheetRoute({
@@ -89,12 +92,18 @@ export default function SettingsScreen() {
 					/>
 				</SettingsGroup>
 
-				<SettingsGroup title="Appearance">
+				<SettingsGroup title={tr("settings.appearance")}>
 					<SettingsRow
 						icon="moon"
-						label="Theme"
-						value={preferenceLabel(preference)}
+						label={tr("settings.theme")}
+						value={preferenceLabel(preference, tr)}
 						onPress={() => router.push("/sheets/theme")}
+					/>
+					<SettingsRow
+						icon="globe"
+						label={tr("settings.language")}
+						value={LOCALE_NATIVE_LABELS[locale]}
+						onPress={() => router.push("/sheets/language")}
 					/>
 				</SettingsGroup>
 
@@ -126,6 +135,7 @@ function ConnectionSection({
 	connection: string;
 }) {
 	const t = useTheme();
+	const tr = useT();
 	const router = useRouter();
 	const [testing, setTesting] = useState(false);
 	const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -145,15 +155,22 @@ function ConnectionSection({
 		try {
 			const count = await pingServer(cfg);
 			haptics.success();
-			setResult({ ok: true, msg: `Connected — ${count} session${count === 1 ? "" : "s"}` });
+			setResult({
+				ok: true,
+				msg: tr(count === 1 ? "common.connectedSessions" : "common.connectedSessions_other", { count }),
+			});
 		} catch (e) {
 			haptics.error();
 			const status = e instanceof ApiError ? e.status : undefined;
-			const { title } = describeConnectionFailure(classifyConnectionFailure(status), {
-				host: cfg.host,
-				port: cfg.httpPort,
-				platform: Platform.OS,
-			});
+			const { title } = describeConnectionFailure(
+				classifyConnectionFailure(status),
+				{
+					host: cfg.host,
+					port: cfg.httpPort,
+					platform: Platform.OS,
+				},
+				tr,
+			);
 			setResult({ ok: false, msg: title });
 		} finally {
 			setTesting(false);
@@ -161,20 +178,17 @@ function ConnectionSection({
 	}
 
 	return (
-		<SettingsGroup
-			title="Connection"
-			footer="Your PC's Tailscale name / 100.x address, or its LAN IP on the same Wi-Fi."
-		>
+		<SettingsGroup title={tr("settings.connection")} footer={tr("settings.connectionFooter")}>
 			<SettingsRow
 				icon="link"
-				label="Connect AO"
-				value={paired ? `${cfg.host}:${cfg.httpPort}` : "Not connected"}
+				label={tr("settings.connectAo")}
+				value={paired ? `${cfg.host}:${cfg.httpPort}` : tr("settings.notConnected")}
 				leading={paired ? <Dot color={dotColor} size={7} breathing={connection === "connecting"} /> : undefined}
 				onPress={() => router.navigate("/pair")}
 			/>
 			<SettingsRow
 				icon="activity"
-				label="Test connection"
+				label={tr("settings.testConnection")}
 				value={result?.msg}
 				valueColor={result ? (result.ok ? t.green : t.red) : undefined}
 				loading={testing}
@@ -191,6 +205,7 @@ function ConnectionSection({
 // footer that explains where it currently stands.
 function NotificationsSection() {
 	const router = useRouter();
+	const tr = useT();
 	const { config, connection } = useApp();
 	const [status, setStatus] = useState<PushStatus | null>(null);
 	const [busy, setBusy] = useState(false);
@@ -207,17 +222,16 @@ function NotificationsSection() {
 	useFocusEffect(useCallback(() => refresh(), [refresh]));
 	useEffect(() => refresh(), [connection, refresh]);
 
-	const toggle = describePushToggle(status, config);
+	const toggle = describePushToggle(status, config, tr);
 
 	async function onToggle(next: boolean) {
 		// A permanent denial can only be undone in system settings; the OS will
 		// not let the app prompt again, so say so rather than failing silently.
 		if (toggle.blocked) {
-			Alert.alert(
-				"Notifications are blocked",
-				"Allow notifications for AO in your system settings, then come back.",
-				[{ text: "Not now", style: "cancel" }, { text: "Open settings", onPress: openNotificationSettings }],
-			);
+			Alert.alert(tr("settings.notificationsBlockedTitle"), tr("settings.notificationsBlockedMessage"), [
+				{ text: tr("common.notNow"), style: "cancel" },
+				{ text: tr("common.openSettings"), onPress: openNotificationSettings },
+			]);
 			return;
 		}
 		setBusy(true);
@@ -232,7 +246,7 @@ function NotificationsSection() {
 					haptics.success();
 				} else {
 					haptics.error();
-					const { title, message } = describeRegisterFailure(result.reason, Platform.OS, result.status);
+					const { title, message } = describeRegisterFailure(result.reason, Platform.OS, result.status, tr);
 					Alert.alert(title, message);
 				}
 			}
@@ -243,21 +257,22 @@ function NotificationsSection() {
 	}
 
 	return (
-		<SettingsGroup title="Notifications" footer={toggle.footer}>
+		<SettingsGroup title={tr("settings.notifications")} footer={toggle.footer}>
 			<SettingsToggle
 				icon="bell"
-				label="Agent notifications"
+				label={tr("settings.agentNotifications")}
 				value={toggle.value}
 				disabled={toggle.disabled}
 				busy={busy}
 				onValueChange={onToggle}
 			/>
-			<SettingsRow icon="clock" label="History" onPress={() => router.navigate("/notifications")} />
+			<SettingsRow icon="clock" label={tr("settings.history")} onPress={() => router.navigate("/notifications")} />
 		</SettingsGroup>
 	);
 }
 
 function AboutSection({ onForget }: { onForget: () => Promise<void> }) {
+	const tr = useT();
 	const [forgetting, setForgetting] = useState(false);
 
 	const build: BuildInfo = {
@@ -277,13 +292,10 @@ function AboutSection({ onForget }: { onForget: () => Promise<void> }) {
 	}
 
 	function confirmForget() {
-		Alert.alert(
-			"Disconnect & forget server?",
-			"This device will stop receiving notifications and the saved address and password will be removed.",
-			[
-				{ text: "Cancel", style: "cancel" },
+		Alert.alert(tr("settings.disconnectTitle"), tr("settings.disconnectMessage"), [
+				{ text: tr("common.cancel"), style: "cancel" },
 				{
-					text: "Disconnect",
+					text: tr("settings.disconnectConfirm"),
 					style: "destructive",
 					onPress: async () => {
 						setForgetting(true);
@@ -299,12 +311,12 @@ function AboutSection({ onForget }: { onForget: () => Promise<void> }) {
 	}
 
 	return (
-		<SettingsGroup title="About">
-			<SettingsRow icon="info" label="Version" value={formatVersion(build)} />
-			<SettingsRow icon="mail" label="Report a problem" onPress={report} />
+		<SettingsGroup title={tr("settings.about")}>
+			<SettingsRow icon="info" label={tr("settings.version")} value={formatVersion(build)} />
+			<SettingsRow icon="mail" label={tr("settings.reportProblem")} onPress={report} />
 			<SettingsRow
 				icon="power"
-				label="Disconnect & forget server"
+				label={tr("settings.disconnect")}
 				destructive
 				loading={forgetting}
 				onPress={confirmForget}

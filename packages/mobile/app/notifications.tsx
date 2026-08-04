@@ -14,6 +14,7 @@ import { notificationTarget, notificationVisual, relativeTime } from "../lib/not
 import { useApp } from "../lib/store";
 import { Dot, EmptyState } from "../lib/ui";
 import { useTheme, useThemedStyles } from "../lib/ThemeProvider";
+import { useT } from "../lib/i18n";
 
 const PAGE_SIZE = 50;
 
@@ -22,6 +23,7 @@ const PAGE_SIZE = 50;
 // to afterwards.
 export default function NotificationsScreen() {
 	const t = useTheme();
+	const tr = useT();
 	const styles = useThemedStyles(makeStyles);
 	const router = useRouter();
 	const { config } = useApp();
@@ -57,7 +59,7 @@ export default function NotificationsScreen() {
 				setNextCursor(page.nextCursor);
 				setUnreadCount(page.unreadCount);
 			} catch (e) {
-				setError(e instanceof Error ? e.message : "Could not load notifications.");
+				setError(e instanceof Error ? e.message : tr("notifications.loadErrorFallback"));
 			} finally {
 				setLoading(false);
 				setRefreshing(false);
@@ -102,12 +104,12 @@ export default function NotificationsScreen() {
 		<View style={styles.screen}>
 			<Stack.Screen
 				options={{
-					title: "Notifications",
-					headerBackTitle: "Settings",
+					title: tr("notifications.title"),
+					headerBackTitle: tr("tabs.settings"),
 					headerRight: () =>
 						unreadCount > 0 ? (
 							<Pressable onPress={markAll} hitSlop={10}>
-								<Text style={styles.headerAction}>Mark all read</Text>
+								<Text style={styles.headerAction}>{tr("notifications.markAll")}</Text>
 							</Pressable>
 						) : null,
 				}}
@@ -145,10 +147,8 @@ export default function NotificationsScreen() {
 					ListEmptyComponent={
 						<EmptyState
 							icon={error ? "alert-circle" : "bell"}
-							title={error ? "Couldn't load notifications" : "Nothing yet"}
-							message={
-								error ?? "Alerts about agents that need you and PRs that are ready will show up here."
-							}
+							title={error ? tr("notifications.loadError") : tr("notifications.empty")}
+							message={error ?? tr("notifications.emptyMessage")}
 						/>
 					}
 					renderItem={({ item }) => <NotificationRow item={item} onPress={() => open(item)} />}
@@ -160,8 +160,9 @@ export default function NotificationsScreen() {
 
 function NotificationRow({ item, onPress }: { item: NotificationRecord; onPress: () => void }) {
 	const t = useTheme();
+	const tr = useT();
 	const styles = useThemedStyles(makeStyles);
-	const v = notificationVisual(t, item.type);
+	const v = notificationVisual(t, item.type, tr);
 	const unread = item.status === "unread";
 	return (
 		<Pressable onPress={onPress} style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}>
@@ -174,7 +175,7 @@ function NotificationRow({ item, onPress }: { item: NotificationRecord; onPress:
 						{item.title || v.label}
 					</Text>
 					{unread ? <Dot color={t.blue} size={7} /> : null}
-					<Text style={styles.time}>{relativeTime(item.createdAt)}</Text>
+					<Text style={styles.time}>{relativeTime(item.createdAt, Date.now(), tr)}</Text>
 				</View>
 				{item.body ? (
 					<Text style={styles.body} numberOfLines={2}>
