@@ -83,6 +83,7 @@ export function CloudTerminal({
       sessionId,
       kind,
     );
+    persistentConnection.resize(terminal.rows, terminal.cols);
     const unsubscribe = persistentConnection.subscribe((event) => {
       if (event.type === "state") {
         setConnection(event.state);

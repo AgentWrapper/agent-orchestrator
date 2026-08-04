@@ -3893,18 +3893,18 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		case command := <-clientCommands:
-			if !canOperateTerminal {
-				_ = writeTerminalMessage(ctx, socket, terminalServerMessage{
-					Type:    "error",
-					Message: "Terminal is read-only for viewers.",
-				})
-				continue
-			}
 			workerCommand, err := validateTerminalCommand(command)
 			if err != nil {
 				_ = writeTerminalMessage(ctx, socket, terminalServerMessage{
 					Type:    "error",
 					Message: err.Error(),
+				})
+				continue
+			}
+			if !terminalCommandAllowed(canOperateTerminal, workerCommand) {
+				_ = writeTerminalMessage(ctx, socket, terminalServerMessage{
+					Type:    "error",
+					Message: "Terminal is read-only for viewers.",
 				})
 				continue
 			}
@@ -3923,6 +3923,10 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+func terminalCommandAllowed(canOperate bool, command cloudworkerhub.Command) bool {
+	return canOperate || command.Type == "resize"
 }
 
 func validateTerminalCommand(command terminalClientCommand) (cloudworkerhub.Command, error) {

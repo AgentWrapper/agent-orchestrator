@@ -123,8 +123,8 @@ class CloudTerminalConnection {
       socket.addEventListener("open", () => {
         if (this.socket !== socket || this.closed) return;
         this.setState("connected");
+        this.sendResize();
         if (this.canOperate) {
-          this.sendResize();
           while (this.pendingInput.length > 0) {
             const input = this.pendingInput.shift();
             if (input) this.sendInput(input);
@@ -203,7 +203,7 @@ class CloudTerminalConnection {
   };
 
   private sendResize() {
-    if (!this.canOperate || this.socket?.readyState !== WebSocket.OPEN) return;
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
     this.socket.send(JSON.stringify({ type: "resize", ...this.size }));
   }
 }

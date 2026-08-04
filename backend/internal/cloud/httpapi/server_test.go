@@ -13,6 +13,7 @@ import (
 
 	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 	cloudworker "github.com/aoagents/agent-orchestrator/backend/internal/cloud/worker"
+	cloudworkerhub "github.com/aoagents/agent-orchestrator/backend/internal/cloud/workerhub"
 )
 
 func TestProjectShareRoles(t *testing.T) {
@@ -29,6 +30,18 @@ func TestProjectShareRoles(t *testing.T) {
 	}
 	if orgRoleAtLeast("editor", "admin") {
 		t.Fatal("project editors must not receive organization admin access")
+	}
+}
+
+func TestReadOnlyTerminalAllowsResizeButRejectsInput(t *testing.T) {
+	if !terminalCommandAllowed(false, cloudworkerhub.Command{Type: "resize"}) {
+		t.Fatal("read-only terminal rejected resize")
+	}
+	if terminalCommandAllowed(false, cloudworkerhub.Command{Type: "input"}) {
+		t.Fatal("read-only terminal allowed input")
+	}
+	if !terminalCommandAllowed(true, cloudworkerhub.Command{Type: "input"}) {
+		t.Fatal("editable terminal rejected input")
 	}
 }
 
