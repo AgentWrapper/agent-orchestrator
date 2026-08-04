@@ -226,6 +226,15 @@ func TestNonClaudeTerminalReadyImmediately(t *testing.T) {
 	}
 }
 
+func TestTerminalInputAllowedAfterAgentReady(t *testing.T) {
+	if terminalInputAllowed(false) {
+		t.Fatal("terminal input allowed before agent readiness")
+	}
+	if !terminalInputAllowed(true) {
+		t.Fatal("terminal input blocked after agent readiness")
+	}
+}
+
 func TestStreamOutputRetriesWithoutStoppingPTYDrain(t *testing.T) {
 	calls := 0
 	runner := &Runner{

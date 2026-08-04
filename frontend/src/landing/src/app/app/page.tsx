@@ -804,6 +804,47 @@ export default function CloudAppPage() {
     .join(",");
 
   useEffect(() => {
+    if (
+      !api ||
+      !activeOrgId ||
+      !selectedSession ||
+      terminalRuntimeAvailable ||
+      selectedSession.isTerminated
+    ) {
+      return;
+    }
+    let cancelled = false;
+    const pollSelectedSession = async () => {
+      try {
+        const { session: freshSession } = await api.session(
+          activeOrgId,
+          selectedSession.id,
+        );
+        if (cancelled) return;
+        setSessions((current) =>
+          current.map((cloudSession) =>
+            cloudSession.id === freshSession.id ? freshSession : cloudSession,
+          ),
+        );
+      } catch {
+        // The full app refresh still owns user-visible errors.
+      }
+    };
+    void pollSelectedSession();
+    const timer = window.setInterval(() => void pollSelectedSession(), 1_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [
+    activeOrgId,
+    api,
+    selectedSession?.id,
+    selectedSession?.isTerminated,
+    terminalRuntimeAvailable,
+  ]);
+
+  useEffect(() => {
     if (!api || !activeOrgId || visibleSessions.length === 0) {
       setSessionSCM({});
       return;

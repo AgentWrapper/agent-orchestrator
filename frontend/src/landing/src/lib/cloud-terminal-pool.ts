@@ -235,9 +235,6 @@ export function syncCloudTerminalConnections(
   if (poolAPI && poolAPI !== api) clearCloudTerminalConnections();
   poolAPI = api;
   const active = new Set(sessionIds);
-  for (const sessionId of sessionIds) {
-    ensureCloudTerminalConnection(api, orgId, sessionId);
-  }
   for (const [key, connection] of connections) {
     const [, sessionId] = key.split(":");
     if (active.has(sessionId)) continue;

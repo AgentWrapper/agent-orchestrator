@@ -623,6 +623,12 @@ export class CloudAPI {
     );
   }
 
+  async session(orgId: string, sessionId: string) {
+    return this.request<{ session: CloudSession }>(
+      this.orgPath(orgId, `/sessions/${encodeURIComponent(sessionId)}`),
+    );
+  }
+
   async activeTurn(orgId: string, sessionId: string) {
     return this.request<{ turn: CloudTurn | null }>(
       this.orgPath(orgId, `/sessions/${encodeURIComponent(sessionId)}/active-turn`),

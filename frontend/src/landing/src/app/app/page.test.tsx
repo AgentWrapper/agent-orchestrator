@@ -18,6 +18,7 @@ const apiMocks = vi.hoisted(() => ({
   me: vi.fn(),
   projects: vi.fn(),
   sessions: vi.fn(),
+  session: vi.fn(),
   sessionSCM: vi.fn(),
   workspaceDiff: vi.fn(),
   workspaceFiles: vi.fn(),
@@ -65,6 +66,7 @@ vi.mock("@/lib/cloud-api", () => ({
     me = apiMocks.me;
     projects = apiMocks.projects;
     sessions = apiMocks.sessions;
+    session = apiMocks.session;
     sessionSCM = apiMocks.sessionSCM;
     workspaceDiff = apiMocks.workspaceDiff;
     workspaceFiles = apiMocks.workspaceFiles;
@@ -188,6 +190,7 @@ beforeEach(() => {
   });
   apiMocks.projects.mockResolvedValue({ projects: [project] });
   apiMocks.sessions.mockResolvedValue({ sessions: [] });
+  apiMocks.session.mockResolvedValue({ session: worker });
   apiMocks.sessionSCM.mockResolvedValue({ scm: null });
   apiMocks.workspaceDiff.mockResolvedValue({ entries: [], summary: "" });
   apiMocks.workspaceFiles.mockResolvedValue({ entries: [] });
@@ -1045,6 +1048,21 @@ it("deletes a worker session from the session header", async () => {
   );
   expect(confirmSpy).toHaveBeenCalled();
   confirmSpy.mockRestore();
+});
+
+it("polls a selected connecting worker until runtime capabilities arrive", async () => {
+  apiMocks.sessions.mockResolvedValue({ sessions: [worker] });
+  apiMocks.session.mockResolvedValue({ session: worker });
+
+  render(<CloudAppPage />);
+
+  const workerEntries = await screen.findAllByText("readme-reader");
+  fireEvent.click(workerEntries[0]);
+
+  expect(await screen.findByText("Connecting worker")).toBeVisible();
+  await waitFor(() =>
+    expect(apiMocks.session).toHaveBeenCalledWith("org-one", "worker-one"),
+  );
 });
 
 it("deletes a project from the project menu", async () => {

@@ -469,6 +469,9 @@ func (r *Runner) commandLoop(
 				r.dispatchWorkspaceCommand(ctx, command)
 				return nil
 			case "input":
+				if !terminalInputAllowed(agentReady) {
+					return nil
+				}
 				decoded, err := base64.StdEncoding.DecodeString(command.Data)
 				if err != nil {
 					return fmt.Errorf("decode terminal input: %w", err)
@@ -537,6 +540,10 @@ func (r *Runner) commandLoop(
 			backoff *= 2
 		}
 	}
+}
+
+func terminalInputAllowed(agentReady bool) bool {
+	return agentReady
 }
 
 func submitInteractivePrompt(
