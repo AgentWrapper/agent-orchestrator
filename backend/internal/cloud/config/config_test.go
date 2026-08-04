@@ -37,6 +37,9 @@ func TestLoadRequiresCloudSecrets(t *testing.T) {
 	if cfg.SandboxProvider != "daytona" {
 		t.Fatalf("SandboxProvider = %q", cfg.SandboxProvider)
 	}
+	if cfg.MaxActiveSandboxesPerOrg != 10 {
+		t.Fatalf("MaxActiveSandboxesPerOrg = %d", cfg.MaxActiveSandboxesPerOrg)
+	}
 	if cfg.AuthMode != "local" {
 		t.Fatalf("AuthMode = %q", cfg.AuthMode)
 	}
@@ -45,6 +48,34 @@ func TestLoadRequiresCloudSecrets(t *testing.T) {
 	}
 	if len(cfg.EncryptionKey) != 32 {
 		t.Fatalf("EncryptionKey length = %d", len(cfg.EncryptionKey))
+	}
+}
+
+func TestLoadReadsSandboxQuota(t *testing.T) {
+	t.Setenv("AO_DATABASE_URL", "postgres://example")
+	t.Setenv("AO_SANDBOX_PROVIDER", "docker")
+	t.Setenv("AO_MAX_ACTIVE_SANDBOXES_PER_ORG", "3")
+	t.Setenv("AO_ENCRYPTION_KEY", "0000000000000000000000000000000000000000000000000000000000000000")
+	t.Setenv("AO_WORKER_SIGNING_KEY", "1111111111111111111111111111111111111111111111111111111111111111")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.MaxActiveSandboxesPerOrg != 3 {
+		t.Fatalf("MaxActiveSandboxesPerOrg = %d", cfg.MaxActiveSandboxesPerOrg)
+	}
+}
+
+func TestLoadRejectsInvalidSandboxQuota(t *testing.T) {
+	t.Setenv("AO_DATABASE_URL", "postgres://example")
+	t.Setenv("AO_SANDBOX_PROVIDER", "docker")
+	t.Setenv("AO_MAX_ACTIVE_SANDBOXES_PER_ORG", "-1")
+	t.Setenv("AO_ENCRYPTION_KEY", "0000000000000000000000000000000000000000000000000000000000000000")
+	t.Setenv("AO_WORKER_SIGNING_KEY", "1111111111111111111111111111111111111111111111111111111111111111")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() error = nil, want invalid sandbox quota")
 	}
 }
 

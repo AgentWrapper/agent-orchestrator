@@ -82,6 +82,12 @@ import { CloudInspector, type CloudInspectorTab } from "./CloudInspector";
 import { CloudTerminal } from "./CloudTerminal";
 
 type View = "board" | "session" | "settings";
+type SettingsPanelName =
+  | "profile"
+  | "notifications"
+  | "createOrg"
+  | "org"
+  | "agents";
 
 interface SessionInspectorState {
   open: boolean;
@@ -234,9 +240,6 @@ export default function CloudAppPage() {
   const [connections, setConnections] = useState<ProviderConnection[]>([]);
   const [agentCredentialsMode, setAgentCredentialsMode] =
     useState<AgentCredentialsMode>("custom");
-  const [sandboxProvider, setSandboxProvider] = useState<"daytona" | "fly">(
-    "daytona",
-  );
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
     null,
   );
@@ -277,9 +280,7 @@ export default function CloudAppPage() {
   const [shareAccessLoading, setShareAccessLoading] = useState(false);
   const [shareLink, setShareLink] = useState("");
   const [shareCopied, setShareCopied] = useState(false);
-  const [settingsPanelTarget, setSettingsPanelTarget] = useState<
-    "profile" | "notifications" | "createOrg" | "org" | "agents" | "sandbox"
-  >(() =>
+  const [settingsPanelTarget, setSettingsPanelTarget] = useState<SettingsPanelName>(() =>
     typeof window !== "undefined" &&
     new URLSearchParams(window.location.search).get("settings") === "github"
       ? "agents"
@@ -658,7 +659,6 @@ export default function CloudAppPage() {
         setGitHubConnection(githubData);
         setOrgMembers(orgMemberData.members);
         setOrgInvitations(orgInvitationData.invitations);
-        setSandboxProvider(runtimeData.sandboxProvider);
         setError(null);
       } catch (refreshError) {
         setError(
@@ -1927,7 +1927,6 @@ export default function CloudAppPage() {
                 connections={connections}
                 githubConnection={githubConnection}
                 agentCredentialsMode={agentCredentialsMode}
-                sandboxProvider={sandboxProvider}
                 initialPanel={settingsPanelTarget}
                 run={run}
                 loading={loading}
@@ -2807,7 +2806,6 @@ function CloudSettings({
   connections,
   githubConnection,
   agentCredentialsMode,
-  sandboxProvider,
   initialPanel,
   run,
   loading,
@@ -2825,12 +2823,10 @@ function CloudSettings({
   connections: ProviderConnection[];
   githubConnection: CloudGitHubConnection | null;
   agentCredentialsMode: AgentCredentialsMode;
-  sandboxProvider: "daytona" | "fly";
-  initialPanel: "profile" | "notifications" | "createOrg" | "org" | "agents" | "sandbox";
+  initialPanel: SettingsPanelName;
   run: (operation: () => Promise<unknown>) => Promise<unknown>;
   loading: boolean;
 }) {
-  const [apiKey, setAPIKey] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"admin" | "member" | "viewer">(
     "member",
@@ -2838,9 +2834,7 @@ function CloudSettings({
   const [profileName, setProfileName] = useState(
     currentUser?.displayName ?? "",
   );
-  const [settingsPanel, setSettingsPanel] = useState<
-    "profile" | "notifications" | "createOrg" | "org" | "agents" | "sandbox"
-  >(() =>
+  const [settingsPanel, setSettingsPanel] = useState<SettingsPanelName>(() =>
     typeof window !== "undefined" &&
     new URLSearchParams(window.location.search).get("settings") === "github"
       ? "agents"
@@ -2853,7 +2847,6 @@ function CloudSettings({
     selectedOrg?.organization.displayName ?? "",
   );
   const [newOrgName, setNewOrgName] = useState("");
-  const [target, setTarget] = useState<"us" | "eu">("us");
   useEffect(() => {
     setOrgName(selectedOrg?.organization.displayName ?? "");
   }, [selectedOrg?.organization.displayName]);
@@ -2877,9 +2870,6 @@ function CloudSettings({
           provider !== "daytona" && validationState === "valid",
       )
       .map((connection) => [connection.provider, connection]),
-  );
-  const daytonaConnections = connections.filter(
-    ({ provider }) => provider === "daytona",
   );
   return (
     <div className="grid h-full min-h-0 grid-cols-[240px_minmax(0,1fr)] bg-[#0a0b0d]">
@@ -2973,12 +2963,6 @@ function CloudSettings({
                 icon={KeyRound}
                 label="Provider connections"
                 onClick={() => setSettingsPanel("agents")}
-              />
-              <SettingsNavItem
-                active={settingsPanel === "sandbox"}
-                icon={Cloud}
-                label="Sandbox provider"
-                onClick={() => setSettingsPanel("sandbox")}
               />
             </div>
           </div>
@@ -3494,80 +3478,6 @@ function CloudSettings({
             </SettingsPanel>
           </div>
           ) : null}
-          {settingsPanel === "sandbox" ? (
-          <SettingsPanel
-            title={sandboxProvider === "fly" ? "Fly Machines" : "Daytona"}
-            description={
-              sandboxProvider === "fly"
-                ? "AO Cloud provisions one isolated Fly Machine and persistent volume per session."
-                : "Credentials are validated by AO Cloud, encrypted outside session environments, and never returned to this browser."
-            }
-          >
-            {!canAdminOrg || !selectedOrgId ? (
-              <p className="text-sm leading-6 text-white/45">
-                Only organization admins can change sandbox provider settings.
-              </p>
-            ) : sandboxProvider === "fly" ? (
-              <div className="flex items-center rounded-lg border border-white/10 bg-[#15171b] px-3 py-2 text-sm">
-                <span>Deployment-managed connection</span>
-                <span className="ml-auto font-mono text-[10px] uppercase text-[#9ad97a]">
-                  Active
-                </span>
-              </div>
-            ) : (
-              <>
-                {daytonaConnections.map((connection) => (
-                  <div
-                    key={connection.id}
-                    className="mb-3 flex items-center border border-white/10 bg-[#15171b] px-3 py-2 text-sm"
-                  >
-                    <span>{connection.label}</span>
-                    <span className="ml-auto font-mono text-[10px] uppercase text-[#74b98a]">
-                      {connection.validationState}
-                    </span>
-                  </div>
-                ))}
-                <form
-                  className="space-y-3"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    void run(() =>
-                      api.connectDaytona(selectedOrgId, {
-                        label: "personal",
-                        apiKey,
-                        apiUrl: "https://app.daytona.io/api",
-                        target,
-                      }),
-                    ).then(() => setAPIKey(""));
-                  }}
-                >
-                  <input
-                    className={field}
-                    type="password"
-                    value={apiKey}
-                    onChange={(event) => setAPIKey(event.target.value)}
-                    placeholder="Daytona API key"
-                    autoComplete="off"
-                    required
-                  />
-                  <select
-                    className={field}
-                    value={target}
-                    onChange={(event) =>
-                      setTarget(event.target.value as "us" | "eu")
-                    }
-                  >
-                    <option value="us">United States</option>
-                    <option value="eu">Europe</option>
-                  </select>
-                  <button className={primaryButton} type="submit">
-                    Save and validate
-                  </button>
-                </form>
-              </>
-            )}
-          </SettingsPanel>
-          ) : null}
         </div>
       </div>
     </div>
@@ -3847,9 +3757,7 @@ function SettingsNavItem({
   );
 }
 
-function settingsTitle(
-  panel: "profile" | "notifications" | "createOrg" | "org" | "agents" | "sandbox",
-) {
+function settingsTitle(panel: SettingsPanelName) {
   switch (panel) {
     case "profile":
       return "Profile";
@@ -3859,17 +3767,13 @@ function settingsTitle(
       return "Add organization";
     case "agents":
       return "Provider connections";
-    case "sandbox":
-      return "Sandbox provider";
     case "org":
     default:
       return "Organization settings";
   }
 }
 
-function settingsDescription(
-  panel: "profile" | "notifications" | "createOrg" | "org" | "agents" | "sandbox",
-) {
+function settingsDescription(panel: SettingsPanelName) {
   switch (panel) {
     case "profile":
       return "Manage how your account appears in local AO Cloud.";
@@ -3879,8 +3783,6 @@ function settingsDescription(
       return "Create a team workspace that can own projects, workers, and credentials.";
     case "agents":
       return "Manage coding-agent credentials for the selected organization.";
-    case "sandbox":
-      return "Manage sandbox provider credentials for the selected organization.";
     case "org":
     default:
       return "Manage the selected organization, invitations, and role-aware permissions.";

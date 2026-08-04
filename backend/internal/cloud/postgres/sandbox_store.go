@@ -203,6 +203,23 @@ func (s *Store) GetSandbox(
 	return sandbox, err
 }
 
+// CountActiveSandboxes returns the number of org sandboxes that still occupy
+// capacity. Deleted sandboxes no longer count toward the hosted quota.
+func (s *Store) CountActiveSandboxes(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+) (int, error) {
+	var count int
+	if err := s.pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM ao_sandboxes
+		WHERE org_id = $1 AND desired_state <> 'deleted'
+	`, accountID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count active sandboxes: %w", err)
+	}
+	return count, nil
+}
+
 // RegisterWorkerBootstrap records the epoch authorized by a successful
 // bootstrap exchange without claiming that the worker runtime is ready.
 func (s *Store) RegisterWorkerBootstrap(

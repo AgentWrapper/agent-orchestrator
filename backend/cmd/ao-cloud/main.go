@@ -196,6 +196,7 @@ func run(log *slog.Logger) error {
 			Client:            githubAppClient,
 			RepositoryRefresh: repositoryRefresh,
 		}),
+		cloudhttp.WithMaxActiveSandboxesPerOrg(cfg.MaxActiveSandboxesPerOrg),
 	)
 	if cfg.GitHubAuthMode == "github-app" {
 		go func() {

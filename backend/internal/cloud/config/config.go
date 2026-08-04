@@ -24,38 +24,39 @@ const (
 
 // Config contains the AO Cloud process configuration.
 type Config struct {
-	ListenAddr             string
-	PublicURL              string
-	WebPublicURL           string
-	AuthMode               string
-	AuthProvider           string
-	AuthIssuer             string
-	AuthAudience           string
-	AuthJWKSURL            string
-	WorkOSAPIKey           string
-	AllowExternalSignup    bool
-	DatabaseURL            string
-	DatabaseDirectURL      string
-	SandboxProvider        string
-	DaytonaAPIURL          string
-	DaytonaAPIKey          string
-	DaytonaTarget          string
-	DaytonaWorkerSnapshot  string
-	DockerWorkerImage      string
-	EncryptionKey          []byte
-	WorkerSigningKey       []byte
-	ReconcileInterval      time.Duration
-	ShutdownTimeout        time.Duration
-	AllowLocalGitHub       bool
-	GitHubToken            string
-	GitHubAuthMode         string
-	GitHubAppID            int64
-	GitHubAppClientID      string
-	GitHubAppSlug          string
-	GitHubAppPrivateKeyPEM []byte
-	GitHubAppWebhookSecret string
-	GitHubAppStateSecret   string
-	WorkerBinaryPath       string
+	ListenAddr               string
+	PublicURL                string
+	WebPublicURL             string
+	AuthMode                 string
+	AuthProvider             string
+	AuthIssuer               string
+	AuthAudience             string
+	AuthJWKSURL              string
+	WorkOSAPIKey             string
+	AllowExternalSignup      bool
+	DatabaseURL              string
+	DatabaseDirectURL        string
+	SandboxProvider          string
+	DaytonaAPIURL            string
+	DaytonaAPIKey            string
+	DaytonaTarget            string
+	DaytonaWorkerSnapshot    string
+	MaxActiveSandboxesPerOrg int
+	DockerWorkerImage        string
+	EncryptionKey            []byte
+	WorkerSigningKey         []byte
+	ReconcileInterval        time.Duration
+	ShutdownTimeout          time.Duration
+	AllowLocalGitHub         bool
+	GitHubToken              string
+	GitHubAuthMode           string
+	GitHubAppID              int64
+	GitHubAppClientID        string
+	GitHubAppSlug            string
+	GitHubAppPrivateKeyPEM   []byte
+	GitHubAppWebhookSecret   string
+	GitHubAppStateSecret     string
+	WorkerBinaryPath         string
 }
 
 // Load reads, defaults, and validates AO Cloud configuration from the environment.
@@ -82,40 +83,45 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 	}
+	maxActiveSandboxesPerOrg, err := envInt("AO_MAX_ACTIVE_SANDBOXES_PER_ORG", 10)
+	if err != nil {
+		return Config{}, err
+	}
 
 	cfg := Config{
-		ListenAddr:             envOr("AO_CLOUD_LISTEN_ADDR", "127.0.0.1:3010"),
-		PublicURL:              strings.TrimRight(envOr("AO_CLOUD_PUBLIC_URL", "http://127.0.0.1:3010"), "/"),
-		WebPublicURL:           strings.TrimRight(envOr("AO_WEB_PUBLIC_URL", "http://127.0.0.1:5174"), "/"),
-		AuthMode:               envOr("AO_CLOUD_AUTH_MODE", "local"),
-		AuthProvider:           strings.TrimSpace(os.Getenv("AO_CLOUD_AUTH_PROVIDER")),
-		AuthIssuer:             strings.TrimRight(strings.TrimSpace(os.Getenv("AO_CLOUD_AUTH_ISSUER")), "/"),
-		AuthAudience:           strings.TrimSpace(os.Getenv("AO_CLOUD_AUTH_AUDIENCE")),
-		AuthJWKSURL:            strings.TrimSpace(os.Getenv("AO_CLOUD_AUTH_JWKS_URL")),
-		WorkOSAPIKey:           strings.TrimSpace(os.Getenv("WORKOS_API_KEY")),
-		AllowExternalSignup:    envBool("AO_CLOUD_ALLOW_PUBLIC_SIGNUP", false),
-		DatabaseURL:            os.Getenv("AO_DATABASE_URL"),
-		DatabaseDirectURL:      strings.TrimSpace(os.Getenv("AO_DATABASE_DIRECT_URL")),
-		SandboxProvider:        envOr("AO_SANDBOX_PROVIDER", "docker"),
-		DaytonaAPIURL:          strings.TrimRight(envOr("AO_DAYTONA_API_URL", "https://app.daytona.io/api"), "/"),
-		DaytonaAPIKey:          os.Getenv("AO_DAYTONA_API_KEY"),
-		DaytonaTarget:          envOr("AO_DAYTONA_TARGET", "us"),
-		DaytonaWorkerSnapshot:  strings.TrimSpace(os.Getenv("AO_DAYTONA_WORKER_SNAPSHOT")),
-		DockerWorkerImage:      envOr("AO_DOCKER_WORKER_IMAGE", "ao-cloud-worker:local"),
-		EncryptionKey:          encryptionKey,
-		WorkerSigningKey:       workerSigningKey,
-		ReconcileInterval:      2 * time.Second,
-		ShutdownTimeout:        15 * time.Second,
-		AllowLocalGitHub:       gitHubAuthMode == "local-gh",
-		GitHubToken:            strings.TrimSpace(os.Getenv("AO_LOCAL_GITHUB_TOKEN")),
-		GitHubAuthMode:         gitHubAuthMode,
-		GitHubAppID:            gitHubAppID,
-		GitHubAppClientID:      strings.TrimSpace(os.Getenv("AO_GITHUB_APP_CLIENT_ID")),
-		GitHubAppSlug:          strings.TrimSpace(os.Getenv("AO_GITHUB_APP_SLUG")),
-		GitHubAppPrivateKeyPEM: gitHubAppPrivateKey,
-		GitHubAppWebhookSecret: strings.TrimSpace(os.Getenv("AO_GITHUB_APP_WEBHOOK_SECRET")),
-		GitHubAppStateSecret:   strings.TrimSpace(os.Getenv("AO_GITHUB_APP_STATE_SECRET")),
-		WorkerBinaryPath:       strings.TrimSpace(os.Getenv("AO_WORKER_BINARY_PATH")),
+		ListenAddr:               envOr("AO_CLOUD_LISTEN_ADDR", "127.0.0.1:3010"),
+		PublicURL:                strings.TrimRight(envOr("AO_CLOUD_PUBLIC_URL", "http://127.0.0.1:3010"), "/"),
+		WebPublicURL:             strings.TrimRight(envOr("AO_WEB_PUBLIC_URL", "http://127.0.0.1:5174"), "/"),
+		AuthMode:                 envOr("AO_CLOUD_AUTH_MODE", "local"),
+		AuthProvider:             strings.TrimSpace(os.Getenv("AO_CLOUD_AUTH_PROVIDER")),
+		AuthIssuer:               strings.TrimRight(strings.TrimSpace(os.Getenv("AO_CLOUD_AUTH_ISSUER")), "/"),
+		AuthAudience:             strings.TrimSpace(os.Getenv("AO_CLOUD_AUTH_AUDIENCE")),
+		AuthJWKSURL:              strings.TrimSpace(os.Getenv("AO_CLOUD_AUTH_JWKS_URL")),
+		WorkOSAPIKey:             strings.TrimSpace(os.Getenv("WORKOS_API_KEY")),
+		AllowExternalSignup:      envBool("AO_CLOUD_ALLOW_PUBLIC_SIGNUP", false),
+		DatabaseURL:              os.Getenv("AO_DATABASE_URL"),
+		DatabaseDirectURL:        strings.TrimSpace(os.Getenv("AO_DATABASE_DIRECT_URL")),
+		SandboxProvider:          envOr("AO_SANDBOX_PROVIDER", "docker"),
+		DaytonaAPIURL:            strings.TrimRight(envOr("AO_DAYTONA_API_URL", "https://app.daytona.io/api"), "/"),
+		DaytonaAPIKey:            os.Getenv("AO_DAYTONA_API_KEY"),
+		DaytonaTarget:            envOr("AO_DAYTONA_TARGET", "us"),
+		DaytonaWorkerSnapshot:    strings.TrimSpace(os.Getenv("AO_DAYTONA_WORKER_SNAPSHOT")),
+		MaxActiveSandboxesPerOrg: maxActiveSandboxesPerOrg,
+		DockerWorkerImage:        envOr("AO_DOCKER_WORKER_IMAGE", "ao-cloud-worker:local"),
+		EncryptionKey:            encryptionKey,
+		WorkerSigningKey:         workerSigningKey,
+		ReconcileInterval:        2 * time.Second,
+		ShutdownTimeout:          15 * time.Second,
+		AllowLocalGitHub:         gitHubAuthMode == "local-gh",
+		GitHubToken:              strings.TrimSpace(os.Getenv("AO_LOCAL_GITHUB_TOKEN")),
+		GitHubAuthMode:           gitHubAuthMode,
+		GitHubAppID:              gitHubAppID,
+		GitHubAppClientID:        strings.TrimSpace(os.Getenv("AO_GITHUB_APP_CLIENT_ID")),
+		GitHubAppSlug:            strings.TrimSpace(os.Getenv("AO_GITHUB_APP_SLUG")),
+		GitHubAppPrivateKeyPEM:   gitHubAppPrivateKey,
+		GitHubAppWebhookSecret:   strings.TrimSpace(os.Getenv("AO_GITHUB_APP_WEBHOOK_SECRET")),
+		GitHubAppStateSecret:     strings.TrimSpace(os.Getenv("AO_GITHUB_APP_STATE_SECRET")),
+		WorkerBinaryPath:         strings.TrimSpace(os.Getenv("AO_WORKER_BINARY_PATH")),
 	}
 	if cfg.AuthMode == "workos" {
 		workOSClientID := strings.TrimSpace(os.Getenv("WORKOS_CLIENT_ID"))
@@ -167,6 +173,9 @@ func (c Config) Validate() error {
 	}
 	if len(c.WorkerSigningKey) < 32 {
 		return errors.New("AO_WORKER_SIGNING_KEY must decode to at least 32 bytes")
+	}
+	if c.MaxActiveSandboxesPerOrg < 0 {
+		return errors.New("AO_MAX_ACTIVE_SANDBOXES_PER_ORG must be greater than or equal to 0")
 	}
 	switch c.AuthMode {
 	case "local":
@@ -261,6 +270,18 @@ func envBool(name string, fallback bool) bool {
 	default:
 		return fallback
 	}
+}
+
+func envInt(name string, fallback int) (int, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be an integer: %w", name, err)
+	}
+	return value, nil
 }
 
 func decodeKey(name string) ([]byte, error) {

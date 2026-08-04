@@ -99,29 +99,40 @@ type store interface {
 
 // Server serves the authenticated AO Cloud HTTP and WebSocket APIs.
 type Server struct {
-	store               store
-	events              *cloudevents.Service
-	auth                cloudauth.Authenticator
-	localAuth           *cloudauth.LocalAuthenticator
-	workerTokens        *cloudworker.TokenManager
-	secretCipher        *cloudsecrets.Cipher
-	agentCredentials    *agentCredentialValidator
-	sandboxProvider     string
-	daytonaAPIURL       string
-	daytonaTarget       string
-	workerHub           *cloudworkerhub.Hub
-	workerRPC           *workerRPCBroker
-	previewTokens       *previewTokenStore
-	workerReplayWait    time.Duration
-	workerWriteWait     time.Duration
-	localGitHub         *cloudlocalgh.Client
-	githubStore         githubStore
-	githubApp           *githubAppRuntime
-	webOrigin           string
-	webOriginHost       string
-	allowExternalSignup bool
-	log                 *slog.Logger
-	handler             http.Handler
+	store                    store
+	events                   *cloudevents.Service
+	auth                     cloudauth.Authenticator
+	localAuth                *cloudauth.LocalAuthenticator
+	workerTokens             *cloudworker.TokenManager
+	secretCipher             *cloudsecrets.Cipher
+	agentCredentials         *agentCredentialValidator
+	sandboxProvider          string
+	maxActiveSandboxesPerOrg int
+	daytonaAPIURL            string
+	daytonaTarget            string
+	workerHub                *cloudworkerhub.Hub
+	workerRPC                *workerRPCBroker
+	previewTokens            *previewTokenStore
+	workerReplayWait         time.Duration
+	workerWriteWait          time.Duration
+	localGitHub              *cloudlocalgh.Client
+	githubStore              githubStore
+	githubApp                *githubAppRuntime
+	webOrigin                string
+	webOriginHost            string
+	allowExternalSignup      bool
+	log                      *slog.Logger
+	handler                  http.Handler
+}
+
+// WithMaxActiveSandboxesPerOrg rejects new session creation once an org has
+// too many non-deleted sandboxes. A value of 0 disables the guard.
+func WithMaxActiveSandboxesPerOrg(max int) Option {
+	return func(server *Server) {
+		if max >= 0 {
+			server.maxActiveSandboxesPerOrg = max
+		}
+	}
 }
 
 // New creates an AO Cloud API server.
@@ -145,25 +156,26 @@ func New(
 	}
 	localAuth, _ := auth.(*cloudauth.LocalAuthenticator)
 	server := &Server{
-		store:               store,
-		events:              events,
-		auth:                auth,
-		localAuth:           localAuth,
-		workerTokens:        workerTokens,
-		secretCipher:        secretCipher,
-		agentCredentials:    newAgentCredentialValidator(nil),
-		sandboxProvider:     sandboxProvider,
-		daytonaAPIURL:       strings.TrimRight(daytonaAPIURL, "/"),
-		daytonaTarget:       daytonaTarget,
-		workerHub:           workerHub,
-		workerRPC:           newWorkerRPCBroker(),
-		previewTokens:       newPreviewTokenStore(),
-		workerReplayWait:    20 * time.Second,
-		workerWriteWait:     10 * time.Second,
-		localGitHub:         localGitHub,
-		webOrigin:           strings.TrimRight(webOrigin, "/"),
-		allowExternalSignup: allowExternalSignup,
-		log:                 log,
+		store:                    store,
+		events:                   events,
+		auth:                     auth,
+		localAuth:                localAuth,
+		workerTokens:             workerTokens,
+		secretCipher:             secretCipher,
+		agentCredentials:         newAgentCredentialValidator(nil),
+		sandboxProvider:          sandboxProvider,
+		maxActiveSandboxesPerOrg: 10,
+		daytonaAPIURL:            strings.TrimRight(daytonaAPIURL, "/"),
+		daytonaTarget:            daytonaTarget,
+		workerHub:                workerHub,
+		workerRPC:                newWorkerRPCBroker(),
+		previewTokens:            newPreviewTokenStore(),
+		workerReplayWait:         20 * time.Second,
+		workerWriteWait:          10 * time.Second,
+		localGitHub:              localGitHub,
+		webOrigin:                strings.TrimRight(webOrigin, "/"),
+		allowExternalSignup:      allowExternalSignup,
+		log:                      log,
 	}
 	server.githubStore, _ = store.(githubStore)
 	for _, option := range options {
@@ -1490,16 +1502,17 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		credential.Secret = ""
 	}
 	result, err := s.store.CreateSession(r.Context(), account.ID, cloudpostgres.CreateSessionInput{
-		IdempotencyKey:       idempotencyKey,
-		ProjectID:            input.ProjectID,
-		Kind:                 input.Kind,
-		Harness:              input.Harness,
-		DisplayName:          input.DisplayName,
-		Branch:               strings.TrimSpace(input.Branch),
-		Prompt:               input.Prompt,
-		Resource:             input.Resource,
-		Provider:             s.sandboxProvider,
-		ProviderConnectionID: providerConnectionID(s.sandboxProvider, input.ProviderConnectionID),
+		IdempotencyKey:           idempotencyKey,
+		ProjectID:                input.ProjectID,
+		Kind:                     input.Kind,
+		Harness:                  input.Harness,
+		DisplayName:              input.DisplayName,
+		Branch:                   strings.TrimSpace(input.Branch),
+		Prompt:                   input.Prompt,
+		Resource:                 input.Resource,
+		Provider:                 s.sandboxProvider,
+		ProviderConnectionID:     providerConnectionID(s.sandboxProvider, input.ProviderConnectionID),
+		MaxActiveSandboxesPerOrg: s.maxActiveSandboxesPerOrg,
 	})
 	if errors.Is(err, cloudpostgres.ErrIdempotencyConflict) {
 		writeError(w, r, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "Idempotency-Key was already used for another command.")
@@ -1515,6 +1528,19 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if errors.Is(err, cloudpostgres.ErrActiveOrchestrator) {
 		writeError(w, r, http.StatusConflict, "ORCHESTRATOR_EXISTS", "This project already has an active orchestrator.")
+		return
+	}
+	if errors.Is(err, cloudpostgres.ErrSandboxQuotaExceeded) {
+		writeError(
+			w,
+			r,
+			http.StatusConflict,
+			"SANDBOX_QUOTA_EXCEEDED",
+			fmt.Sprintf(
+				"This organization already has %d active sandboxes. Delete a worker machine to make room before starting another one.",
+				s.maxActiveSandboxesPerOrg,
+			),
+		)
 		return
 	}
 	if err != nil {
@@ -2250,15 +2276,16 @@ func (s *Server) workerCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := s.store.CreateSession(r.Context(), claims.AccountID, cloudpostgres.CreateSessionInput{
-		IdempotencyKey:       idempotencyKey,
-		ProjectID:            parent.ProjectID,
-		Kind:                 "worker",
-		Harness:              input.Harness,
-		DisplayName:          input.DisplayName,
-		Prompt:               input.Prompt,
-		Resource:             parentSandbox.ResourceProfile,
-		Provider:             parentSandbox.Provider,
-		ProviderConnectionID: parentSandbox.ProviderConnectionID,
+		IdempotencyKey:           idempotencyKey,
+		ProjectID:                parent.ProjectID,
+		Kind:                     "worker",
+		Harness:                  input.Harness,
+		DisplayName:              input.DisplayName,
+		Prompt:                   input.Prompt,
+		Resource:                 parentSandbox.ResourceProfile,
+		Provider:                 parentSandbox.Provider,
+		ProviderConnectionID:     parentSandbox.ProviderConnectionID,
+		MaxActiveSandboxesPerOrg: s.maxActiveSandboxesPerOrg,
 	})
 	if errors.Is(err, cloudpostgres.ErrIdempotencyConflict) {
 		writeError(w, r, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "Idempotency-Key was already used for another command.")
@@ -2266,6 +2293,19 @@ func (s *Server) workerCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if errors.Is(err, cloudpostgres.ErrProviderConnectionNotFound) {
 		writeError(w, r, http.StatusBadRequest, "PROVIDER_CONNECTION_NOT_FOUND", "The orchestrator sandbox provider connection is unavailable.")
+		return
+	}
+	if errors.Is(err, cloudpostgres.ErrSandboxQuotaExceeded) {
+		writeError(
+			w,
+			r,
+			http.StatusConflict,
+			"SANDBOX_QUOTA_EXCEEDED",
+			fmt.Sprintf(
+				"This organization already has %d active sandboxes. Delete a worker machine to make room before starting another one.",
+				s.maxActiveSandboxesPerOrg,
+			),
+		)
 		return
 	}
 	if err != nil {

@@ -489,16 +489,17 @@ func (s *Store) GetProject(
 
 // CreateSessionInput contains the durable settings for a new session.
 type CreateSessionInput struct {
-	IdempotencyKey       string
-	ProjectID            clouddomain.ProjectID
-	Kind                 string
-	Harness              string
-	DisplayName          string
-	Branch               string
-	Prompt               string
-	Resource             clouddomain.ResourceProfile
-	Provider             string
-	ProviderConnectionID string
+	IdempotencyKey           string
+	ProjectID                clouddomain.ProjectID
+	Kind                     string
+	Harness                  string
+	DisplayName              string
+	Branch                   string
+	Prompt                   string
+	Resource                 clouddomain.ResourceProfile
+	Provider                 string
+	ProviderConnectionID     string
+	MaxActiveSandboxesPerOrg int `json:"-"`
 }
 
 // CreateSessionResult contains the session creation receipt and resources.
@@ -600,6 +601,19 @@ func (s *Store) CreateSession(
 			return CreateSessionResult{}, ErrActiveOrchestrator
 		}
 		return CreateSessionResult{}, fmt.Errorf("insert session: %w", err)
+	}
+	if input.MaxActiveSandboxesPerOrg > 0 {
+		var activeSandboxes int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*)
+			FROM ao_sandboxes
+			WHERE org_id = $1 AND desired_state <> 'deleted'
+		`, accountID).Scan(&activeSandboxes); err != nil {
+			return CreateSessionResult{}, fmt.Errorf("count active sandboxes: %w", err)
+		}
+		if activeSandboxes >= input.MaxActiveSandboxesPerOrg {
+			return CreateSessionResult{}, ErrSandboxQuotaExceeded
+		}
 	}
 	session.Status = string(deriveCloudStatus(session, nil))
 	if _, err := tx.Exec(ctx, `
@@ -776,6 +790,7 @@ func loadCreateSessionResult(
 	if err != nil {
 		return CreateSessionResult{}, fmt.Errorf("load command receipt: %w", err)
 	}
+	expectedInput.MaxActiveSandboxesPerOrg = 0
 	var existingInput CreateSessionInput
 	if receipt.Kind != "session.create" ||
 		json.Unmarshal(payloadRaw, &existingInput) != nil ||
@@ -1678,6 +1693,8 @@ var (
 	ErrSessionNotFound = errors.New("cloud session not found")
 	// ErrActiveOrchestrator indicates that a project already has a live orchestrator.
 	ErrActiveOrchestrator = errors.New("cloud project already has an active orchestrator")
+	// ErrSandboxQuotaExceeded indicates the org has no room for another sandbox.
+	ErrSandboxQuotaExceeded = errors.New("cloud sandbox quota exceeded")
 	// ErrInvalidTicket indicates that an access ticket is invalid or expired.
 	ErrInvalidTicket = errors.New("cloud access ticket is invalid or expired")
 	// ErrIdempotencyConflict indicates that a key was already used for another command.
