@@ -58,28 +58,34 @@ var shippedMigrations = map[int64]string{
 	38: "0038_orchestrator_reengagement.sql",
 	39: "0039_drop_orchestrator_reengagement.sql",
 	40: "0040_add_session_diff_base.sql",
+	41: "0041_notification_resolution.sql",
+	42: "0042_review_run_unique_per_harness.sql",
 }
 
-// burnedVersion reports version numbers that must never be (re)used: they are
-// recorded as applied in goose_db_version on real installs even though this
-// repository ships no migration with that number, so a new file claiming one
-// would be skipped silently there.
+// burnedVersion reports version numbers that must never be (re)used: they
+// shipped in a release and were then deleted, so real installs have them
+// recorded as applied while this repository ships no file with that number. A
+// new file claiming one would be skipped silently there.
 //
 //   - 22 shipped in a nightly (#2412) and was deleted by the revert.
-//   - 41-51 were claimed by fork/branch builds (pipelines feature branches;
-//     a field Windows profile has 40-46 recorded, see #3475/#3476).
 //
-// New migrations start at 52.
+// Beware of the adjacent hazard this cannot catch: at least one field profile
+// has versions 40 through 46 recorded as applied by a foreign build
+// (#3475/#3476), so migrations numbered up to 0046 are skipped there entirely.
+// Any such migration whose schema the generated queries depend on must add a
+// schemaRepairs entry in db.go.
 func burnedVersion(v int64) bool {
-	return v == 22 || (v >= 41 && v <= 51)
+	return v == 22
 }
 
-const nextFreeMigrationVersion = 52
-
-// TestMigrationVersionsAreNotBurned enforces the version ledger: every
-// shipped migration keeps its exact filename, no file claims a burned or
-// already-shipped number, and new migrations start at nextFreeMigrationVersion.
-func TestMigrationVersionsAreNotBurned(t *testing.T) {
+// TestMigrationVersionLedger enforces the append-only migration ledger: every
+// migration file has exactly one entry in shippedMigrations (adding a
+// migration means appending its entry in the same change, where a review can
+// see the claimed number), no shipped file is renamed or deleted, and no file
+// reuses a burned number. Renumbering or deleting a released migration is what
+// produces silently-skipped migrations and unexplainable 500s months later
+// (issue #3475).
+func TestMigrationVersionLedger(t *testing.T) {
 	entries, err := migrationsFS.ReadDir("migrations")
 	if err != nil {
 		t.Fatalf("read migrations dir: %v", err)
@@ -98,23 +104,23 @@ func TestMigrationVersionsAreNotBurned(t *testing.T) {
 		present[version] = e.Name()
 
 		if burnedVersion(version) {
-			t.Errorf("migration %q claims burned version %d: that number is recorded as applied on real installs, so this file would be skipped silently there; use %d or later",
-				e.Name(), version, nextFreeMigrationVersion)
+			t.Errorf("migration %q claims burned version %d: that number is recorded as applied on real installs, so this file would be skipped silently there; use a fresh number",
+				e.Name(), version)
 			continue
 		}
 		shipped, ok := shippedMigrations[version]
 		switch {
 		case ok && shipped != e.Name():
-			t.Errorf("shipped migration version %d was renamed from %q to %q: installs that already applied it will never run the new file", version, shipped, e.Name())
-		case !ok && version < nextFreeMigrationVersion:
-			t.Errorf("migration %q claims unshipped version %d below the next free version %d; renumber it to %d or later and add it to shippedMigrations once released",
-				e.Name(), version, nextFreeMigrationVersion, nextFreeMigrationVersion)
+			t.Errorf("migration version %d was renamed from %q to %q: installs that already applied it will never run the new file", version, shipped, e.Name())
+		case !ok:
+			t.Errorf("migration %q (version %d) is not in the shippedMigrations ledger; append it in the same change so the claimed number is reviewed",
+				e.Name(), version)
 		}
 	}
 
 	for version, name := range shippedMigrations {
 		if _, ok := present[version]; !ok {
-			t.Errorf("shipped migration %q (version %d) was deleted: installs that have not applied it yet will silently miss its schema", name, version)
+			t.Errorf("ledgered migration %q (version %d) was deleted: installs that have not applied it yet will silently miss its schema, and the number is burned for reuse", name, version)
 		}
 	}
 }
@@ -196,13 +202,20 @@ INSERT INTO projects (
 	if err := migrate(db); err != nil {
 		t.Fatalf("repeat migrate on repaired schema: %v", err)
 	}
-	var columns int
-	if err := db.QueryRow(
-		`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name IN ('diff_base_sha', 'diff_base_ref')`,
-	).Scan(&columns); err != nil {
-		t.Fatal(err)
-	}
-	if columns != 2 {
-		t.Fatalf("diff-base columns = %d, want exactly 2", columns)
+	for table, want := range map[string][]string{
+		"sessions":      {"diff_base_sha", "diff_base_ref", "reviewer_harness"},
+		"notifications": {"resolved_at"},
+	} {
+		for _, column := range want {
+			var columns int
+			if err := db.QueryRow(
+				`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, column,
+			).Scan(&columns); err != nil {
+				t.Fatal(err)
+			}
+			if columns != 1 {
+				t.Fatalf("%s.%s count = %d, want exactly 1 after repair", table, column, columns)
+			}
+		}
 	}
 }
