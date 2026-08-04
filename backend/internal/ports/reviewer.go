@@ -28,6 +28,10 @@ const (
 	// ReviewCancelInterrupt sends the terminal interrupt key sequence to the
 	// reviewer process while preserving the terminal pane.
 	ReviewCancelInterrupt ReviewCancelMode = "interrupt"
+	// ReviewCancelMessage sends an in-band message to the reviewer process. Use
+	// this for harnesses where Ctrl-C exits the TUI instead of cancelling only
+	// the active turn.
+	ReviewCancelMessage ReviewCancelMode = "message"
 )
 
 // ReviewCancelSpec is the adapter-selected cancellation behavior for a running
@@ -35,6 +39,7 @@ const (
 type ReviewCancelSpec struct {
 	Mode       ReviewCancelMode
 	Interrupts int
+	Message    string
 }
 
 // ReviewerCanceller is implemented by reviewer adapters that explicitly define

@@ -26,10 +26,20 @@ func TestRegistryMatchesDomainVocabulary(t *testing.T) {
 			t.Errorf("reviewer harness %q does not implement cancellation", h)
 		} else if spec, err := canceller.ReviewCancel(context.Background()); err != nil {
 			t.Errorf("reviewer harness %q cancel spec: %v", h, err)
-		} else if spec.Mode != ports.ReviewCancelInterrupt {
-			t.Errorf("reviewer harness %q cancel mode = %q, want %q", h, spec.Mode, ports.ReviewCancelInterrupt)
-		} else if spec.Interrupts != 2 {
-			t.Errorf("reviewer harness %q cancel interrupts = %d, want 2", h, spec.Interrupts)
+		} else if h == domain.ReviewerOpenCode {
+			if spec.Mode != ports.ReviewCancelMessage {
+				t.Errorf("reviewer harness %q cancel mode = %q, want %q", h, spec.Mode, ports.ReviewCancelMessage)
+			}
+			if spec.Message == "" {
+				t.Errorf("reviewer harness %q cancel message is empty", h)
+			}
+		} else {
+			if spec.Mode != ports.ReviewCancelInterrupt {
+				t.Errorf("reviewer harness %q cancel mode = %q, want %q", h, spec.Mode, ports.ReviewCancelInterrupt)
+			}
+			if spec.Interrupts != 2 {
+				t.Errorf("reviewer harness %q cancel interrupts = %d, want 2", h, spec.Interrupts)
+			}
 		}
 		registered[h] = true
 	}
