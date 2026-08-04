@@ -1135,7 +1135,6 @@ function ReviewPanel({
 		.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 	const latest = runningRun ?? newestRun;
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
-	const selectedReviewer = reviewerOverride || harness;
 	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
 	const reviewHasRun = reviewRunning || Boolean(latest);
@@ -1147,12 +1146,19 @@ function ReviewPanel({
 	// Every recorded pass per PR, so each reviewer keeps its own tab. Falls back
 	// to the state's own runs against a daemon that predates the runs field.
 	const runsByPR = new Map<string, ReviewRunFacts[]>();
-	for (const run of runs) {
+	for (const run of runs.filter(
+		(run) => (run.status === "complete" || run.status === "delivered") && Boolean(run.body?.trim()),
+	)) {
 		runsByPR.set(run.prUrl, [...(runsByPR.get(run.prUrl) ?? []), run]);
 	}
 	if (runs.length === 0) {
 		for (const state of openReviewStates) {
-			const fallback = [state.latestRun, state.previousRun].filter(Boolean) as ReviewRunFacts[];
+			const fallback = [state.latestRun, state.previousRun].filter(
+				(run): run is ReviewRunFacts =>
+					Boolean(run) &&
+					(run!.status === "complete" || run!.status === "delivered") &&
+					Boolean(run!.body?.trim()),
+			);
 			if (fallback.length > 0) runsByPR.set(state.prUrl, fallback);
 		}
 	}
@@ -1162,7 +1168,7 @@ function ReviewPanel({
 		openReviewStates.every((reviewState) => reviewState.status === "ineligible");
 
 	return (
-			<div className="mb-2.5 flex flex-col">
+		<div className="mb-2.5 flex flex-col">
 				<Section surface title={t("inspector.review.run")}>
 					{error ? (
 						<p className="m-0 rounded-md border border-error/28 bg-error/8 px-2.5 py-2 text-sm-md leading-normal text-error">
@@ -1222,7 +1228,7 @@ function ReviewPanel({
 							) : null}
 						</div>
 					</div>
-				</div>
+					</div>
 				{reviewRunning ? (
 					<div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
 							<Loader2 aria-hidden="true" className="size-icon-sm shrink-0 animate-spin text-muted-foreground" />
@@ -1249,10 +1255,8 @@ function ReviewPanel({
 								<ReviewerRuns
 									reviewState={reviewState}
 									runs={runsByPR.get(reviewState.prUrl) ?? []}
-									reviewer={selectedReviewer}
-									hasAnyRuns={(runsByPR.get(reviewState.prUrl)?.length ?? 0) > 0}
 								/>
-						</ReviewDisclosure>
+							</ReviewDisclosure>
 					))
 					)}
 				</div>
@@ -1352,20 +1356,13 @@ function githubVerdict(verdict: string): { label: string; tone: "neutral" | "run
 function ReviewerRuns({
 	reviewState,
 	runs,
-	reviewer,
-	hasAnyRuns,
 }: {
 	reviewState: PRReviewState;
 	runs: ReviewRunFacts[];
-	reviewer: string;
-	hasAnyRuns: boolean;
 }) {
-	if (runs.length === 0 && hasAnyRuns) {
-		return <p className={cn(inspectorEmptyClass, "m-0")}>{`${reviewer} has not reviewed this PR yet.`}</p>;
+	if (runs.length === 0) {
+		return <p className={cn(inspectorEmptyClass, "m-0")}>No past review summaries yet.</p>;
 	}
-	// Preserve the current-commit state when the only available run belongs to
-	// an older SHA. History must not make stale findings look current.
-	if (!reviewState.latestRun || runs.length === 0) return <AoReviewRow reviewState={reviewState} />;
 	return (
 		<ReviewRunList
 			reviewState={reviewState}
@@ -1484,92 +1481,6 @@ function aoReviewMeta(reviewState: PRReviewState): string {
 		return appI18n.t("inspector.notRunMeta", { number: reviewState.prNumber });
 	}
 	return `#${reviewState.prNumber}`;
-}
-
-function AoReviewRow({ reviewState }: { reviewState: PRReviewState }) {
-	const displayRun = reviewState.latestRun ?? reviewState.previousRun;
-	// With no run against the current head we fall back to the last one, which is
-	// a verdict on code that has since changed. Rendering it plainly made a stale
-	// "Changes requested" look like it still applied to the new commit, so the
-	// live state leads and the old verdict is explicitly marked as previous.
-	const isStale = !reviewState.latestRun && Boolean(reviewState.previousRun);
-	const verdict = displayRun && !isStale ? runReviewVerdict(displayRun) : reviewVerdict(reviewState);
-	const previousVerdict = isStale && displayRun ? runReviewVerdict(displayRun) : undefined;
-	// A cancelled run's body is the cancellation reason, not review findings, and
-	// the badge above already says "Cancelled" — rendering it as the summary made
-	// the row state the same thing twice.
-	const isTerminatedRun = displayRun?.status === "cancelled" || displayRun?.status === "failed";
-	const summary = isTerminatedRun ? undefined : displayRun?.body?.trim();
-	const reviewUrl = aoReviewCommentUrl(displayRun);
-	const reviewLinkLabel = reviewState.latestRun
-		? appI18n.t("inspector.viewReview")
-		: appI18n.t("inspector.viewPreviousReview");
-	return (
-		<div className={cn("flex min-w-0 flex-col gap-1.5", reviewState.status === "ineligible" && "opacity-70")}>
-			<span className="inline-flex min-w-0 items-center gap-2">
-				{displayRun ? (
-					<span className="inline-flex min-w-0 items-center gap-1 text-micro font-medium text-muted-foreground">
-						<AgentAvatar
-							className="size-icon-sm shrink-0"
-							decorative
-							provider={displayRun.harness || "reviewer"}
-						/>
-						<span className="truncate">{displayRun.harness || "reviewer"}</span>
-					</span>
-				) : null}
-				<VerdictBadge
-					label={isStale ? "Not run on this commit" : verdict.label}
-					tone={isStale ? "neutral" : verdict.tone}
-				/>
-			</span>
-			{previousVerdict ? (
-				<p className="m-0 inline-flex min-w-0 items-center gap-1.5 text-2xs text-passive">
-					<span className="shrink-0">Previous:</span>
-					<span className={cn("inline-flex min-w-0 items-center gap-1.5", reviewerVerdictTone[previousVerdict.tone])}>
-						<span className="size-1.5 shrink-0 rounded-full bg-current opacity-60" />
-						<span className="truncate">{previousVerdict.label}</span>
-					</span>
-				</p>
-			) : null}
-			{summary ? (
-				<p className="m-0 whitespace-pre-wrap break-words text-2xs leading-relaxed text-muted-foreground">{summary}</p>
-			) : null}
-			{reviewUrl ? (
-				<a
-					className="inline-flex items-center gap-0.5 self-start text-2xs font-medium text-passive no-underline transition-colors hover:text-foreground"
-					href={reviewUrl}
-					target="_blank"
-					rel="noopener noreferrer"
-				>
-					{reviewLinkLabel}
-					<ArrowUpRight aria-hidden="true" className="size-3 shrink-0" />
-				</a>
-			) : null}
-		</div>
-	);
-}
-
-function runReviewVerdict(run: NonNullable<PRReviewState["latestRun"]>): {
-	label: string;
-	tone: "neutral" | "running" | "success" | "danger";
-} {
-	if (run.status === "failed") {
-		return { label: appI18n.t("inspector.review.failed"), tone: "danger" };
-	}
-	if (run.status === "cancelled") {
-		return { label: appI18n.t("inspector.review.cancelled"), tone: "neutral" };
-	}
-	if (run.status === "running") {
-		return { label: appI18n.t("inspector.review.reviewing"), tone: "running" };
-	}
-	switch (run.verdict) {
-		case "approved":
-			return { label: appI18n.t("inspector.review.approved"), tone: "success" };
-		case "changes_requested":
-			return { label: appI18n.t("inspector.review.changesRequested"), tone: "danger" };
-		default:
-			return { label: appI18n.t("inspector.review.notRun"), tone: "neutral" };
-	}
 }
 
 // GitHub anchors a posted review at #pullrequestreview-<id> on the PR page; we

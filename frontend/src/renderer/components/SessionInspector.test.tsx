@@ -791,7 +791,7 @@ describe("SessionInspector reviews tab", () => {
 
 		expect(await screen.findByText("Reviewable change 3")).toBeInTheDocument();
 		expect(screen.getByText("#3 · Not run")).toBeInTheDocument();
-		expect(screen.getAllByText("Not run")).toHaveLength(2);
+		expect(screen.getAllByText("Not run")).toHaveLength(1);
 	});
 
 	it("shows eligible and up-to-date open PR review rows", async () => {
@@ -882,11 +882,11 @@ describe("SessionInspector reviews tab", () => {
 	});
 
 	it.each([
-		["needs_review", "changes_requested", "Not run on this commit", "Run review", true],
-		["running", "approved", "Reviewing...", "Cancel review", true],
+		["needs_review", "changes_requested", "Not run", "Run review"],
+		["running", "approved", "Reviewing...", "Cancel review"],
 	] as const)(
 		"keeps the current AO review state clear while the current head is %s",
-		async (status, previousVerdict, runLabel, actionLabel, showsPreviousRun) => {
+		async (status, previousVerdict, runLabel, actionLabel) => {
 			const current = {
 				...reviewState(3, status, "sha-current"),
 				previousRun: {
@@ -914,23 +914,13 @@ describe("SessionInspector reviews tab", () => {
 			await openReviewsTab();
 
 			expect(await screen.findAllByText(runLabel)).not.toHaveLength(0);
-			if (showsPreviousRun) {
-				expect(screen.getByText("Previous review summary with actionable detail.")).toBeInTheDocument();
-				if (status === "needs_review") {
-					expect(screen.queryByText("#3 · Not run")).not.toBeInTheDocument();
-					expect(screen.getByText(/^#3 · /)).toBeInTheDocument();
-					// The head moved on, so the old verdict must be labelled as previous
-					// rather than presented as the state of the current commit.
-					expect(screen.getByText(/Previous:/)).toBeInTheDocument();
-					expect(screen.getByText("Changes requested")).toBeInTheDocument();
-				} else {
-					expect(screen.getByText("earlier pass")).toBeInTheDocument();
-				}
-				expect(screen.getByRole("link", { name: status === "needs_review" ? "View previous review" : "View review" })).toHaveAttribute(
-					"href",
-					"https://example.com/pr/3#pullrequestreview-98765",
-				);
-			}
+			expect(screen.getByText("Previous review summary with actionable detail.")).toBeInTheDocument();
+			expect(screen.queryByText(/Previous:/)).not.toBeInTheDocument();
+			expect(screen.queryByText("Changes requested")).not.toBeInTheDocument();
+			expect(screen.getByRole("link", { name: "View review" })).toHaveAttribute(
+				"href",
+				"https://example.com/pr/3#pullrequestreview-98765",
+			);
 			// A run in flight gets its own live strip naming the harness, not just a
 			// word on the button.
 			if (status === "running") {
@@ -1185,8 +1175,9 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsTab();
 
-		expect(await screen.findAllByText("Cancelled")).toHaveLength(2);
+		expect(await screen.findAllByText("Cancelled")).toHaveLength(1);
 		expect(screen.queryByText("Failed")).not.toBeInTheDocument();
+		expect(screen.queryByText("reviewer crashed")).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeEnabled();
 	});
 
