@@ -131,6 +131,10 @@ vi.mock("../hooks/useAgentsQuery", () => ({
 	agentsQueryKey: ["agents"],
 	agentsQueryOptions: {},
 	refreshAgents: vi.fn(),
+	// The shell reports the install's agent inventory once per launch, so the
+	// mock has to answer this too. Undefined data means the hook reports nothing,
+	// which keeps these shortcut tests free of telemetry side effects.
+	useAgentsQuery: () => ({ data: undefined }),
 }));
 
 vi.mock("../components/NotificationCenter", () => ({ NotificationRuntime: () => null }));

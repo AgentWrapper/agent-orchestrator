@@ -59,6 +59,25 @@ describe("telemetry sanitizers", () => {
 		expect(isDeniedEvent("ao.app.active", ["", "  ", "*"])).toBe(false);
 	});
 
+	it("allowlists only counts and the fixed agent-id list on agent inventory", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.agents_available", {
+			installed_count: 2,
+			authorized_count: 1,
+			supported_count: 23,
+			authorized_agents: "claude-code,codex",
+			// Must be dropped: never part of the contract, and a future caller could
+			// pass a path or a label by mistake.
+			binary_path: "/Users/someone/.local/bin/codex",
+			label: "Codex (someone's machine)",
+		});
+		expect(safe).toEqual({
+			installed_count: 2,
+			authorized_count: 1,
+			supported_count: 23,
+			authorized_agents: "claude-code,codex",
+		});
+	});
+
 	it("allowlists only enum-like fields on update events", async () => {
 		const safe = await sanitizeRendererProperties("ao.renderer.update_failed", {
 			to_version: "0.11.2",

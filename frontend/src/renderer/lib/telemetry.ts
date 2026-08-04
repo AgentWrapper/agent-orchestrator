@@ -454,6 +454,17 @@ export async function sanitizeRendererProperties(
 				safe.reason = properties.reason;
 			}
 			break;
+		case "ao.renderer.agents_available": {
+			// Counts and a fixed-vocabulary id list only. Agent ids come from AO's own
+			// registry, never from user input, so they carry no user data.
+			for (const key of ["installed_count", "authorized_count", "supported_count"] as const) {
+				if (typeof properties?.[key] === "number") safe[key] = properties[key];
+			}
+			if (typeof properties?.authorized_agents === "string") {
+				safe.authorized_agents = properties.authorized_agents;
+			}
+			break;
+		}
 		case "ao.renderer.session_state_unknown":
 			if (properties?.field === "status" || properties?.field === "activity") safe.field = properties.field;
 			if (properties?.reason === "missing" || properties?.reason === "unrecognized") safe.reason = properties.reason;
