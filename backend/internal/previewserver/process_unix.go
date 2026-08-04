@@ -47,17 +47,13 @@ func previewGroupHasMembers(pid int) bool {
 	return aoprocess.Command("pgrep", "-g", strconv.Itoa(pid)).Run() == nil
 }
 
-// signalPreviewGroup delivers sig to pid's process group only after
-// re-verifying that the number still identifies the process AO launched:
-//
-//   - The leader still exists: its start time must match the recorded one
-//     verbatim, otherwise the PID was recycled and nothing is sent.
-//   - The leader is gone (exited and reaped) but the group still has members:
-//     POSIX reserves a PGID while its group lives and membership is only
-//     inherited from the leader, so the members are AO's orphaned descendants
-//     (the ones that ignored SIGTERM) and the group signal is what reaps them.
-//   - Neither: nothing of AO's remains. A signal could only ever hit a
-//     recycled PID, so nothing is sent.
+// signalPreviewGroup delivers sig to pid's process group only while the group
+// leader is still alive and its kernel start time matches the recorded one
+// verbatim. Anything less is not proof that the group is AO's preview: once
+// the leader is gone the number may already have been recycled, and a group
+// kill on a recycled PID can take down an unrelated family (a tmux server and
+// every agent session in it, issue #3475). A descendant that survives its
+// leader is deliberately leaked rather than guessed at.
 //
 // ponytail: the verify-then-kill pair is not atomic; without pidfd-style
 // primitives a recycle in that microsecond window is untestable and accepted.
@@ -68,12 +64,12 @@ func signalPreviewGroup(pid int, recordedStart string, sig syscall.Signal) error
 	if recordedStart == "" {
 		return errStalePreviewPID
 	}
-	if current := previewProcessStartTime(pid); current != "" {
-		if current != recordedStart {
-			return errStalePreviewPID
-		}
-	} else if !previewGroupHasMembers(pid) {
-		return nil
+	current := previewProcessStartTime(pid)
+	if current == "" {
+		return nil // leader gone: nothing provably AO's remains
+	}
+	if current != recordedStart {
+		return errStalePreviewPID
 	}
 	err := syscall.Kill(-pid, sig)
 	if errors.Is(err, syscall.ESRCH) {

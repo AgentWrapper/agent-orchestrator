@@ -386,10 +386,10 @@ func (m *Manager) stop(ctx context.Context, sessionID domain.SessionID) (Status,
 	}
 	select {
 	case <-done:
-		// The root may exit before descendants that ignored SIGTERM. The kill
-		// re-verifies the launch identity, so even after Wait has completed it
-		// only ever reaps AO's own orphaned group, never a recycled PID.
-		_ = forceKillPreviewProcess(cmd, startTime)
+		// The root has exited and been reaped. Descendants that ignored
+		// SIGTERM may survive it, but the PID no longer provably belongs to
+		// AO's preview, so nothing is killed: a leaked preview process is
+		// safer than a group kill landing on a recycled PID (issue #3475).
 	case <-ctx.Done():
 		go m.forceStopAfterGrace(sessionID, run, cmd, startTime, done)
 		return m.Status(sessionID), ctx.Err()
@@ -484,15 +484,10 @@ func (m *Manager) Close() {
 
 func (m *Manager) waitForExit(sessionID domain.SessionID, run *serverRun) {
 	err := run.cmd.Wait()
-	m.mu.Lock()
-	unexpectedExit := !run.stopping
-	m.mu.Unlock()
-	if unexpectedExit {
-		// Wait has returned, so the PID is back in the OS pool. The kill
-		// re-verifies the launch identity first: it reaps descendants the dead
-		// root left in its process group and refuses recycled PIDs.
-		_ = forceKillPreviewProcess(run.cmd, run.startTime)
-	}
+	// Wait has returned, so the PID is back in the OS pool and no longer
+	// provably AO's. No escalation happens here: descendants the dead root
+	// left behind are leaked rather than group-killed on a number that may
+	// already belong to something else (issue #3475).
 	m.mu.Lock()
 	if m.runs[sessionID] == run {
 		run.cmd = nil
@@ -542,7 +537,7 @@ func (m *Manager) failAndStop(
 		_ = terminatePreviewProcess(cmd, startTime)
 		select {
 		case <-run.done:
-			_ = forceKillPreviewProcess(cmd, startTime)
+			// Reaped: the PID is no longer provably AO's, nothing to escalate.
 		case <-time.After(3 * time.Second):
 			_ = forceKillPreviewProcess(cmd, startTime)
 		}
@@ -816,7 +811,7 @@ func (m *Manager) forceStopAfterGrace(
 ) {
 	select {
 	case <-done:
-		_ = forceKillPreviewProcess(cmd, startTime)
+		// Reaped: the PID is no longer provably AO's, nothing to escalate.
 	case <-time.After(5 * time.Second):
 		_ = forceKillPreviewProcess(cmd, startTime)
 		select {

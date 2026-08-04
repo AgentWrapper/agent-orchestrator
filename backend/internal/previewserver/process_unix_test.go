@@ -157,10 +157,11 @@ func TestSignalPreviewGroupKillsVerifiedGroup(t *testing.T) {
 		"verified preview group was not killed")
 }
 
-// The stop path's post-exit escalation exists for descendants that ignored
-// SIGTERM. After the root is reaped its group lives on, and POSIX reserves the
-// PGID while it does, so the verified kill must still reap those orphans.
-func TestForceKillReapsOrphanedGroupAfterRootIsReaped(t *testing.T) {
+// Once the root is reaped, the PID no longer provably belongs to AO's
+// preview, so no group kill may happen even though descendants survive: a
+// leaked preview process is safer than a group kill landing on a recycled
+// PID. The orphan must still be alive after the escalation call.
+func TestForceKillLeaksOrphanedGroupAfterRootIsReaped(t *testing.T) {
 	cmd := previewCommand("/bin/sh", "-c", "sleep 60 & sleep 1")
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -181,8 +182,10 @@ func TestForceKillReapsOrphanedGroupAfterRootIsReaped(t *testing.T) {
 	if err := forceKillPreviewProcess(cmd, startTime); err != nil {
 		t.Fatalf("forceKillPreviewProcess: %v", err)
 	}
-	waitUntil(t, 2*time.Second, func() bool { return !previewGroupHasMembers(pid) },
-		"orphaned group member survived the verified escalation")
+	time.Sleep(100 * time.Millisecond)
+	if !previewGroupHasMembers(pid) {
+		t.Fatal("post-exit escalation killed the orphaned group; it must leak rather than signal an unverifiable PID")
+	}
 }
 
 func waitUntil(t *testing.T, timeout time.Duration, done func() bool, message string) {
