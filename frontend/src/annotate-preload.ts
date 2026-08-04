@@ -457,7 +457,7 @@ function renderPrompt(element: Element, context: BrowserAnnotationContext): void
 	if (!mount) return;
 	mount.innerHTML = `
 		<form class="prompt">
-			<div class="prompt__header">Annotate on selected components</div>
+			
 			<textarea aria-label="Annotation request" placeholder="Describe to agent what you want to change..."></textarea>
 			<div class="prompt__footer">
 				<div class="prompt__meta" aria-label="Command or Control plus Enter to send. Escape to cancel.">
@@ -470,7 +470,7 @@ function renderPrompt(element: Element, context: BrowserAnnotationContext): void
 							<path d="m22 2-7 20-4-9-9-4Z"></path>
 							<path d="M22 2 11 13"></path>
 						</svg>
-						<span>Send feedback</span>
+						<span>Send</span>
 					</button>
 				</div>
 			</div>
