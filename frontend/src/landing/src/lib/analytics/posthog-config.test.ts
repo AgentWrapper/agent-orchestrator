@@ -26,15 +26,21 @@ describe("marketing PostHog host", () => {
 describe("marketing PostHog config", () => {
   const config = buildMarketingPostHogConfig(DEFAULT_MARKETING_POSTHOG_HOST, undefined);
 
-  // These two are the opposite of the desktop app on purpose. The app disables
-  // both because its DOM holds source code, prompts, and terminal output; this
-  // site is public copy, so heatmaps and replay are the point.
-  it("enables autocapture and session replay for the marketing site", () => {
-    expect(config.autocapture).toBe(true);
-    expect(config.disable_session_recording).toBe(false);
+  // AO records no sessions on any surface, by product decision. This is the
+  // guard against replay being switched on by an edit that looks unrelated.
+  it("never enables session replay", () => {
+    expect(config.disable_session_recording).toBe(true);
   });
 
-  it("masks visitor input in replays", () => {
+  // Autocapture is not recording: it captures clicks and element text, not a
+  // replay of the screen. It stays on for public marketing copy.
+  it("keeps autocapture on for the marketing site", () => {
+    expect(config.autocapture).toBe(true);
+  });
+
+  // Kept dormant so a future narrow opt-in starts from masked inputs rather
+  // than whatever the defaults happen to be that week.
+  it("keeps input masking configured even while recording is off", () => {
     expect(config.session_recording?.maskAllInputs).toBe(true);
     expect(config.session_recording?.blockSelector).toBe("[data-ph-no-record]");
   });

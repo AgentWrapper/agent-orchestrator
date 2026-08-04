@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useState } from "react";
+import { track } from "@/lib/analytics";
 
 const MUX_PLAYBACK_ID =
 	process.env.NEXT_PUBLIC_MUX_PLAYBACK_ID ??
@@ -53,7 +54,12 @@ export function VideoSection() {
 						) : (
 							<button
 								type="button"
-								onClick={() => setPlaying(true)}
+								onClick={() => {
+									// Only the start. Watch time lives inside the Mux iframe and is not
+									// readable from this page, so a duration here would be invented.
+									track("video_started", { video: "demo", placement: "see_it" });
+									setPlaying(true);
+								}}
 								aria-label={`Play video: ${VIDEO_TITLE}`}
 								className="group absolute inset-0 cursor-pointer"
 							>
