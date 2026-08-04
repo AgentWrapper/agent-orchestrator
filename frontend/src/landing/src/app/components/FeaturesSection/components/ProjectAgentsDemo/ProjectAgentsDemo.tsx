@@ -4,62 +4,46 @@ import { AnimatePresence, motion } from "motion/react";
 import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronRight, FolderGit2, FolderOpen, GitBranch, GitPullRequest, Info, LayoutDashboard, MoreVertical, Network, PanelLeft, Pin, Plus, Search, Settings, X } from "lucide-react";
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
+import { featurePreviewTokens } from "../FeaturePreviewShell";
 import { cursorPositionForRects, PROJECT_AGENT_SCENES, sceneClockKey, type CursorTarget, type ProjectAgentsScene } from "./ProjectAgentsDemo.scenes";
+import { PROJECT_AGENT_MENU_OPTIONS, PROJECT_AGENTS_VISUAL_CONTRACT, type ProjectAgentMenuOption } from "./ProjectAgentsDemo.visual";
 
 /* ------------------------------------------------------------------ */
 /* Visual tokens — resolved from the desktop app's dark theme          */
 /* (frontend/src/styles/tokens.css).                                   */
 /* ------------------------------------------------------------------ */
 const T = {
-	bg: "oklch(0.185 0.006 285.885)", // --background
-	sidebar: "oklch(0.155 0.005 285.823)", // --sidebar
-	card: "oklch(0.24 0.008 285.885)", // --card / --color-bg-agents-sheet
-	popover: "oklch(0.24 0.008 285.885)", // --popover
-	fg: "oklch(0.985 0 0)", // --foreground
-	mut: "oklch(0.705 0.015 286.067)", // --muted-foreground
-	faint: "oklch(0.442 0.017 285.786)", // --color-text-passive
-	blue: "#4f8afa", // primary action (matches the shipped modal)
-	line: "oklch(1 0 0 / 7%)", // --border
-	line2: "oklch(1 0 0 / 4%)", // --input / --color-border-strong
-	input: "oklch(1 0 0 / 4%)", // --input / sheet control bg
-	hover: "color-mix(in oklch, oklch(0.985 0 0) 4%, transparent)", // interactive-hover
-	selected: "oklch(0.274 0.006 286.033)", // --sidebar-accent
+	bg: "var(--preview-background)",
+	sidebar: "var(--preview-sidebar)",
+	card: "var(--preview-card)",
+	popover: "var(--preview-card)",
+	fg: "var(--preview-foreground)",
+	mut: "var(--preview-muted-foreground)",
+	faint: "var(--preview-passive)",
+	blue: "var(--preview-primary)",
+	primaryFg: "var(--preview-primary-foreground)",
+	line: "var(--preview-border)",
+	line2: "var(--preview-border-strong)",
+	input: "var(--preview-input)",
+	hover: "var(--preview-sidebar-hover)",
+	selected: "var(--preview-sidebar-accent)",
 	success: "#4ade80",
 	warning: "#fb923c",
-	scrim: "color-mix(in oklch, oklch(0.185 0.006 285.885) 85%, transparent)", // --color-scrim
+	scrim: "color-mix(in oklch, var(--preview-background) 85%, transparent)",
 } as const;
+
+const V = PROJECT_AGENTS_VISUAL_CONTRACT;
 
 /* ------------------------------------------------------------------ */
 /* Agent catalog — ranked like buildRankedAgentOptions(): authorized   */
 /* first (priority order), unauthorized last and disabled.             */
 /* ------------------------------------------------------------------ */
-type AgentDef = {
-	id: string;
-	label: string;
-	icon: string;
-	status: "" | "Needs auth";
-};
+const AGENTS = PROJECT_AGENT_MENU_OPTIONS;
 
-const AGENTS: readonly AgentDef[] = [
-	{ id: "claude-code", label: "Claude Code", icon: "/app-icons/coverage-claude-code.svg", status: "" },
-	{ id: "codex", label: "Codex", icon: "/app-icons/coverage-codex.svg", status: "" },
-	{ id: "cursor", label: "Cursor", icon: "/app-icons/coverage-cursor.svg", status: "" },
-	{ id: "opencode", label: "OpenCode", icon: "/app-icons/coverage-opencode.svg", status: "" },
-	{ id: "aider", label: "Aider", icon: "/app-icons/coverage-aider.png", status: "" },
-	{ id: "goose", label: "Goose", icon: "/app-icons/coverage-goose.svg", status: "Needs auth" },
-] as const;
-
-function agentById(id: string): AgentDef {
-	return AGENTS.find((a) => a.id === id) ?? AGENTS[1]!;
+function agentById(id: string): ProjectAgentMenuOption {
+	return AGENTS.find((agent) => agent.id === id) ?? AGENTS[1]!;
 }
 
-/* ------------------------------------------------------------------ */
-/* Scene machine — the whole showcase is driven from this table.       */
-/* Cursor coordinates are % of the demo surface (≈570 × 360).          */
-/* ------------------------------------------------------------------ */
-/* ------------------------------------------------------------------ */
-/* Small presentational pieces                                         */
-/* ------------------------------------------------------------------ */
 function AgentIcon({ src, size = 15 }: { src: string; size?: number }) {
 	return (
 		<Image
@@ -74,72 +58,72 @@ function AgentIcon({ src, size = 15 }: { src: string; size?: number }) {
 	);
 }
 
-/* Boxed select trigger — the create-sheet "stacked" variant. */
 function AgentSelectTrigger({ agentId, active, target }: { agentId: string; active: boolean; target: CursorTarget }) {
 	const agent = agentById(agentId);
 	return (
 		<div
 			data-cursor-target={target}
-			className="flex h-8 w-full items-center gap-2 rounded-md px-2.5"
+			className="flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-[12px]"
 			style={{
+				height: V.agentSelect.triggerHeight,
 				background: T.input,
-				border: `1px solid ${active ? "rgba(255,255,255,0.22)" : T.line}`,
-				boxShadow: active ? "0 0 0 3px rgba(255,255,255,0.08)" : "none",
+				borderColor: T.line,
+				boxShadow: V.agentSelect.activeTriggerGlow && active ? "0 0 0 2px color-mix(in oklch, var(--preview-primary) 24%, transparent)" : "none",
 			}}
 		>
 			<AgentIcon src={agent.icon} />
-			<span className="min-w-0 flex-1 truncate text-left text-[12px]" style={{ color: T.fg }}>
-				{agent.label}
-			</span>
-			<ChevronDown className="size-[13px] shrink-0 opacity-60" style={{ color: T.mut }} aria-hidden="true" />
+			<span className="min-w-0 flex-1 truncate text-left font-medium" style={{ color: T.fg }}>{agent.label}</span>
+			<ChevronDown className="size-[13px] shrink-0 opacity-50" style={{ color: T.mut }} aria-hidden="true" />
 		</div>
 	);
 }
 
-function AgentMenu({ currentValue, hoverId, side, targetAgent }: { currentValue: string; hoverId: string | null | undefined; side: "left" | "right"; targetAgent: "cursor" | "claude-code" }) {
+function AgentMenu({ currentValue, hoverId, side, targetAgent }: { currentValue: string; hoverId: string | null | undefined; side: "left" | "right"; targetAgent: "codex" | "claude-code" }) {
 	return (
 		<motion.div
 			initial={{ opacity: 0, y: -4, scale: 0.98 }}
 			animate={{ opacity: 1, y: 0, scale: 1 }}
 			exit={{ opacity: 0, y: -3, scale: 0.98 }}
-			transition={{ duration: 0.12, ease: [0.2, 0, 0, 1] }}
-			className="absolute top-[72px] z-30 w-[calc(50%-30px)] overflow-hidden rounded-[9px] p-1"
+			transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
+			className="absolute z-30 flex flex-col overflow-hidden rounded-lg border"
 			style={{
-				[side]: 20,
-				background: T.popover,
-				border: `1px solid ${T.line2}`,
-				boxShadow: "0 12px 32px rgba(0,0,0,0.48), 0 0 0 1px rgba(255,255,255,0.025)",
+				[side]: 24,
+				top: V.agentSelect.menuTop,
+				width: "calc((100% - 64px) / 2)",
+				maxHeight: V.agentSelect.menuMaxHeight,
+				background: T.card,
+				borderColor: T.line,
+				boxShadow: "0 12px 30px rgba(0,0,0,0.42)",
 			}}
 		>
-			{AGENTS.map((agent) => {
-				const selected = agent.id === currentValue;
-				const hovered = agent.id === hoverId;
-				const disabled = agent.status !== "";
-				return (
-					<div
-						key={agent.id}
-						data-cursor-target={agent.id === targetAgent ? (targetAgent === "cursor" ? "worker-cursor" : "orchestrator-claude") : undefined}
-						className="flex h-6 items-center gap-2 rounded-[6px] px-2"
-						style={{
-							background: hovered ? T.selected : selected ? T.hover : "transparent",
-							opacity: disabled ? 0.5 : 1,
-						}}
-					>
-						<AgentIcon src={agent.icon} />
-						<span
-							className="min-w-0 flex-1 truncate text-[11.5px] leading-none"
-							style={{ color: hovered || selected ? T.fg : T.mut }}
+			<div className="min-h-0 flex-1 overflow-hidden p-1">
+				{AGENTS.map((agent) => {
+					const selected = agent.id === currentValue;
+					const hovered = agent.id === hoverId;
+					const statusColor = agent.statusTone === "warning" ? T.warning : T.faint;
+					return (
+						<div
+							key={agent.id}
+							data-cursor-target={agent.id === targetAgent ? (targetAgent === "codex" ? "worker-cursor" : "orchestrator-claude") : undefined}
+							className="flex w-full items-center rounded-md text-[11px] leading-4 outline-none"
+							style={{
+								background: hovered ? T.hover : selected ? T.selected : "transparent",
+								opacity: agent.disabled ? 0.42 : 1,
+								padding: `${V.agentSelect.itemPaddingY}px ${V.agentSelect.itemPaddingX}px`,
+							}}
 						>
-							{agent.label}
-						</span>
-						{agent.status ? (
-							<span className="shrink-0 rounded-full px-1.5 py-0.5 text-[8px] leading-none" style={{ color: T.warning, background: "rgba(251,146,60,0.1)" }}>
-								{agent.status}
+							<span className="flex min-w-0 w-full items-center" style={{ gap: V.agentSelect.contentGap }}>
+								<AgentIcon src={agent.icon} size={V.agentSelect.menuIconSize} />
+								<span className="min-w-0 flex-1 truncate" style={{ color: selected || hovered ? T.fg : T.mut }}>{agent.label}</span>
+								<span className="flex shrink-0 justify-end" style={{ width: V.agentSelect.trailingColumnWidth }}>
+									{agent.status ? <span className="text-[9px]" style={{ color: statusColor }}>{agent.status}</span> : null}
+								</span>
 							</span>
-						) : null}
-					</div>
-				);
-			})}
+						</div>
+					);
+				})}
+			</div>
+
 		</motion.div>
 	);
 }
@@ -150,10 +134,10 @@ function DemoCursor({ x, y, pressed, clickId }: { x: number; y: number; pressed:
 			className="pointer-events-none absolute z-40"
 			initial={false}
 			animate={{ left: `${x}%`, top: `${y}%` }}
-			transition={{ type: "spring", stiffness: 380, damping: 34, mass: 0.65 }}
+			transition={{ type: "spring", stiffness: 240, damping: 30, mass: 0.8 }}
 			style={{ width: 0, height: 0 }}
 		>
-			<motion.div animate={{ scale: pressed ? 0.76 : 1 }} transition={{ duration: 0.1 }}>
+			<motion.div animate={{ scale: pressed ? 0.86 : 1 }} transition={{ duration: 0.16 }}>
 				<svg
 					width="18"
 					height="18"
@@ -171,15 +155,15 @@ function DemoCursor({ x, y, pressed, clickId }: { x: number; y: number; pressed:
 				</svg>
 			</motion.div>
 			<AnimatePresence>
-				{clickId > 0 ? (
+				{V.agentSelect.clickFeedback && clickId > 0 ? (
 					<motion.span
 						key={clickId}
 						initial={{ opacity: 0.9, scale: 0.25 }}
-						animate={{ opacity: 0, scale: 1.8 }}
+						animate={{ opacity: 0, scale: 1.55 }}
 						exit={{ opacity: 0 }}
-						transition={{ duration: 0.5, ease: "easeOut" }}
-						className="absolute -left-[14px] -top-[14px] size-7 rounded-full"
-						style={{ border: `2px solid ${T.fg}`, boxShadow: "0 0 0 4px rgba(255,255,255,0.16)" }}
+						transition={{ duration: 0.7, ease: "easeOut" }}
+						className="absolute -left-[13px] -top-[13px] size-6 rounded-full"
+						style={{ border: `1px solid ${T.fg}` }}
 					/>
 				) : null}
 			</AnimatePresence>
@@ -269,7 +253,7 @@ function LegacyBoardView({ plusHover, started }: { plusHover: boolean; started: 
 								<div
 									key={card}
 									className="rounded-[10px] px-2.5 py-2 text-[10.5px]"
-									style={{ background: T.card, border: `1px solid ${T.line2}`, color: T.mut, opacity: 0.7 }}
+									style={{ background: T.card, border: `1px solid ${T.line}`, color: T.mut, opacity: 0.7 }}
 								>
 									{card}
 								</div>
@@ -287,15 +271,22 @@ function LegacyBoardView({ plusHover, started }: { plusHover: boolean; started: 
 /* ------------------------------------------------------------------ */
 function BoardView({ scene }: { scene: ProjectAgentsScene }) {
 	return (
-		<div className="flex h-full overflow-hidden rounded-[18px] border" style={{ borderColor: T.line, background: T.sidebar }}>
+		<div className="flex h-full overflow-hidden" style={{ background: T.sidebar }}>
 			<aside className="relative flex w-[184px] shrink-0 flex-col text-[11px]" style={{ background: T.sidebar, color: T.mut }}>
-				<div className="flex h-8 items-center gap-2 px-3">
-					<div className="flex items-center gap-1.5 pr-1"><span className="size-2.5 rounded-full bg-[#ff5f57]" /><span className="size-2.5 rounded-full bg-[#ffbd2e]" /><span className="size-2.5 rounded-full bg-[#28c840]" /></div>
-					<PanelLeft className="size-3.5" style={{ color: T.faint }} aria-hidden="true" />
-					<ArrowLeft className="size-3.5 opacity-40" style={{ color: T.faint }} aria-hidden="true" />
-					<ArrowRight className="size-3.5 opacity-40" style={{ color: T.faint }} aria-hidden="true" />
+				<div
+					className="flex shrink-0 items-center gap-2 px-3"
+					style={{ height: V.agentSelect.sidebarChromeHeight, color: T.faint }}
+				>
+					<div className="flex items-center gap-1.5" aria-hidden="true">
+						<span className="size-2.5 rounded-full bg-[#ff5f57]" />
+						<span className="size-2.5 rounded-full bg-[#ffbd2e]" />
+						<span className="size-2.5 rounded-full bg-[#28c840]" />
+					</div>
+					<PanelLeft className="ml-1 size-3.5" aria-hidden="true" />
+					<ArrowLeft className="ml-2 size-3 opacity-40" aria-hidden="true" />
+					<ArrowRight className="size-3 opacity-40" aria-hidden="true" />
 				</div>
-				<div className="flex items-center gap-1.5 px-3 pb-2">
+				<div className="flex shrink-0 items-center gap-1.5 px-3" style={{ height: V.agentSelect.sidebarBrandRowHeight }}>
 					<img src="/ao-logo.svg" alt="" className="size-5 rounded-md" draggable="false" />
 					<span className="truncate text-[12px] font-bold tracking-tight" style={{ color: T.fg }}>Agent Orchestrator</span>
 				</div>
@@ -332,7 +323,10 @@ function BoardView({ scene }: { scene: ProjectAgentsScene }) {
 			</aside>
 			<div className="min-w-0 flex-1 p-[2px]" style={{ background: T.sidebar }}>
 				<div className="flex h-full flex-col overflow-hidden rounded-[16px]" style={{ background: T.bg }}>
-					<div className="flex h-10 items-center gap-2 border-b px-3" style={{ borderColor: T.line2 }}>
+					<div
+						className="flex shrink-0 items-center gap-2 border-b px-3"
+						style={{ height: V.agentSelect.contentHeaderHeight, borderColor: T.line2 }}
+					>
 						<span className="text-[12px] font-semibold" style={{ color: T.fg }}>agent-orchestrator</span>
 					</div>
 					<div data-cursor-target="board-idle" className="grid min-h-0 flex-1 grid-cols-2">
@@ -367,17 +361,56 @@ function ProjectKindDialog({ projectActive }: { projectActive: boolean }) {
 				data-cursor-target="mode-picker"
 				initial={{ opacity: 0, scale: 0.96 }}
 				animate={{ opacity: 1, scale: 1 }}
-				className="absolute left-1/2 top-1/2 flex w-[min(410px,calc(100%-28px))] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-[14px] border p-5"
-				style={{ background: T.card, borderColor: T.line, boxShadow: "0 18px 50px rgba(0,0,0,.48)" }}
+				className="absolute left-1/2 top-1/2 flex max-w-[calc(100%-24px)] -translate-x-1/2 -translate-y-1/2 flex-col rounded-[12px] border"
+				style={{
+					width: V.importPicker.width,
+					padding: V.importPicker.panelPadding,
+					gap: V.importPicker.panelGap,
+					background: T.popover,
+					borderColor: T.line,
+					boxShadow: "0 0 0 1px var(--preview-border), 0 12px 32px rgba(0,0,0,.42)",
+				}}
 			>
 				<div className="relative pr-7">
-					<div className="text-[15px] font-semibold" style={{ color: T.fg }}>Import to Agent Orchestrator</div>
-					<div className="mt-1 text-[10.5px]" style={{ color: T.mut }}>What would you like to import?</div>
+					<div className="text-[15px] font-bold leading-5" style={{ color: T.fg }}>Import to Agent Orchestrator</div>
+					<div className="mt-1 text-[11px] leading-4" style={{ color: T.mut }}>What are you importing?</div>
 					<X className="absolute right-0 top-0 size-4" style={{ color: T.mut }} />
 				</div>
-				<div className="grid grid-cols-2 gap-3">
-					<div className="flex min-h-[116px] flex-col rounded-[12px] border p-3" style={{ background: T.input, borderColor: T.line, color: T.fg }}><div className="rounded-md border border-dashed p-2" style={{ borderColor: T.line }}><div className="flex items-center gap-1.5 text-[8px]" style={{ color: T.mut }}><FolderOpen className="size-3" />my-workspace/</div><div className="mt-1.5 flex gap-1"><span className="rounded px-1.5 py-1 text-[7px]" style={{ background: T.selected }}>web-app</span><span className="rounded px-1.5 py-1 text-[7px]" style={{ background: T.selected }}>api</span></div></div><div className="mt-auto pt-2 text-[12px] font-semibold">Workspace</div><div className="mt-0.5 text-[8.5px]" style={{ color: T.mut }}>A folder containing projects.</div></div>
-					<div data-cursor-target="project-kind" className="flex min-h-[116px] flex-col rounded-[12px] border p-3" style={{ background: projectActive ? T.selected : T.input, borderColor: T.line, color: T.fg }}><div className="flex h-10 items-center justify-center"><span className="flex items-center rounded-md border px-2.5 py-2 text-[9px]" style={{ borderColor: T.line, background: T.selected }}><span className="mr-1.5 size-1.5 rounded-full bg-[#60a5fa]" />web-app <span className="ml-1" style={{ color: T.mut }}>· main</span></span></div><div className="mt-auto pt-2 text-[12px] font-semibold">Project</div><div className="mt-0.5 text-[8.5px]" style={{ color: T.mut }}>A single Git repository.</div></div>
+				<div className="grid grid-cols-2" style={{ gap: V.importPicker.cardGap }}>
+					<div
+						className="flex flex-col rounded-[12px] border"
+						style={{ minHeight: V.importPicker.cardMinHeight, padding: V.importPicker.cardPadding, paddingBottom: V.importPicker.cardPaddingBottom, gap: V.importPicker.cardGap, background: T.bg, borderColor: T.line, color: T.fg }}
+					>
+						<div className="flex w-full flex-col items-start gap-2 rounded-lg border border-dashed px-2.5 pt-2.5" style={{ height: V.importPicker.illustrationHeight, paddingBottom: V.agentSelect.workspaceIllustrationPaddingBottom, background: T.popover, borderColor: T.line }}>
+							<div className="flex items-center gap-1.5 text-[10px]" style={{ color: T.mut }}><FolderOpen className="size-3" />my-workspace/</div>
+							<div className="flex w-full flex-col" style={{ gap: V.agentSelect.workspaceRepoListGap }}>
+								{["web-app", "api-server", "shared-libs"].map((repo) => (
+									<span key={repo} className="flex w-full items-center rounded px-2 text-[8px] font-semibold" style={{ paddingTop: V.agentSelect.workspaceRepoRowPaddingY, paddingBottom: V.agentSelect.workspaceRepoRowPaddingY, background: T.selected }}>
+										<span className="mr-1.5 size-1 rounded-full" style={{ background: T.blue }} />{repo}
+									</span>
+								))}
+							</div>
+						</div>
+						<div className="mt-auto flex flex-col items-start gap-1">
+							<div className="text-[13px] font-bold">Workspace</div>
+							<div className="text-[10px] leading-[14px]" style={{ minHeight: V.importPicker.descriptionMinHeight, color: T.mut }}>Several Git repos that live under one parent folder.</div>
+						</div>
+					</div>
+					<div
+						data-cursor-target="project-kind"
+						className="flex flex-col rounded-[12px] border"
+						style={{ minHeight: V.importPicker.cardMinHeight, padding: V.importPicker.cardPadding, paddingBottom: V.importPicker.cardPaddingBottom, gap: V.importPicker.cardGap, background: projectActive ? T.selected : T.bg, borderColor: T.line, color: T.fg }}
+					>
+						<div className="flex items-center justify-center" style={{ height: V.importPicker.illustrationHeight }}>
+							<span className="flex h-[31px] items-center rounded-lg border px-2.5 text-[10px]" style={{ borderColor: T.line, background: T.selected }}>
+								<span className="mr-1.5 size-1.5 rounded-full bg-[#60a5fa]" /><strong>web-app</strong><span className="ml-1" style={{ color: T.mut }}>&middot; main</span>
+							</span>
+						</div>
+						<div className="mt-auto flex flex-col items-start gap-1 text-left">
+							<div className="text-[13px] font-bold">Project</div>
+							<div className="text-[10px] leading-[14px]" style={{ minHeight: V.importPicker.descriptionMinHeight, color: T.mut }}>A single Git repository - tracked in a single codebase.</div>
+						</div>
+					</div>
 				</div>
 			</motion.div>
 		</motion.div>
@@ -419,25 +452,25 @@ function ProjectAgentsModal({
 				animate={{ opacity: 1, scale: 1 }}
 				exit={{ opacity: 0, scale: 0.97 }}
 				transition={{ duration: 0.15, ease: [0.2, 0, 0, 1] }}
-				className="absolute left-1/2 top-1/2 w-[min(440px,calc(100%-24px))] -translate-x-1/2 -translate-y-1/2 rounded-[14px]"
+				className="absolute left-1/2 top-1/2 min-h-[280px] w-[min(480px,calc(100%-32px))] -translate-x-1/2 -translate-y-1/2 rounded-[12px]"
 				style={{
 					background: T.card,
 					border: `1px solid ${T.line}`,
-					boxShadow: "0 0 0 1px rgba(255,255,255,0.04), 0 8px 24px rgba(0,0,0,0.4)",
+					boxShadow: "0 0 0 1px rgba(255,255,255,0.04), 0 18px 52px rgba(0,0,0,0.48)",
 				}}
 			>
 				{/* Header */}
-				<div className="flex items-start justify-between gap-3 border-b px-5 py-3.5" style={{ borderColor: T.line }}>
+				<div className="flex items-start justify-between gap-4 border-b px-6 py-5" style={{ borderColor: T.line }}>
 					<div className="min-w-0">
-						<div className="text-[14px] font-semibold" style={{ color: T.fg }}>
+						<div className="text-[15px] font-semibold" style={{ color: T.fg }}>
 							Project agents
 						</div>
-						<div className="mt-0.5 truncate text-[11px]" style={{ color: T.mut }}>
-							/Users/abc/Downloads/test-component
+						<div className="mt-1 break-all text-[12px]" style={{ color: T.mut }}>
+							C:\Users\Lenovo\Desktop\agent-orchestrator
 						</div>
 					</div>
 					<span
-						className="grid size-6 shrink-0 place-items-center rounded-md"
+						className="grid size-7 shrink-0 place-items-center rounded-md"
 						style={{ color: T.mut, opacity: busy ? 0.5 : 1 }}
 					>
 						<X className="size-4" aria-hidden="true" />
@@ -445,17 +478,17 @@ function ProjectAgentsModal({
 				</div>
 
 				{/* Form */}
-				<div className="relative flex flex-col gap-3 px-5 py-3.5">
+				<div className="relative flex flex-col gap-5 px-6 py-5">
 					{/* Agent fields */}
-					<div className="grid grid-cols-2 gap-3">
+					<div className="grid grid-cols-2 gap-4">
 						<div className="flex flex-col gap-1.5">
-							<span className="text-[11px] font-medium" style={{ color: T.fg }}>
+							<span className="text-[11px] font-medium" style={{ color: T.mut }}>
 								Worker agent
 							</span>
 							<AgentSelectTrigger agentId={worker} active={openMenu === "worker"} target="worker-trigger" />
 						</div>
 						<div className="flex flex-col gap-1.5">
-							<span className="text-[11px] font-medium" style={{ color: T.fg }}>
+							<span className="text-[11px] font-medium" style={{ color: T.mut }}>
 								Orchestrator agent
 							</span>
 							<AgentSelectTrigger agentId={orch} active={openMenu === "orch"} target="orchestrator-trigger" />
@@ -463,9 +496,8 @@ function ProjectAgentsModal({
 					</div>
 
 					{/* Cache / refresh row */}
-					<div className="flex items-center justify-between text-[11px]">
-						<span style={{ color: T.mut }}>Agent availability is cached.</span>
-						<span style={{ color: T.fg }}>Refresh agents</span>
+					<div className="flex items-center justify-end border-b pb-5 text-[11px]" style={{ borderColor: T.line }}>
+						<span className="font-medium" style={{ color: T.fg }}>Refresh agents</span>
 					</div>
 
 					{/* Issue intake */}
@@ -496,7 +528,7 @@ function ProjectAgentsModal({
 									className="overflow-hidden"
 								>
 									<div className="flex flex-col gap-1.5 pt-2.5">
-										<span className="text-[11px] font-medium" style={{ color: T.fg }}>
+										<span className="text-[11px] font-medium" style={{ color: T.mut }}>
 											Assignee
 										</span>
 										<div
@@ -514,26 +546,26 @@ function ProjectAgentsModal({
 					</div>
 
 					{/* Footer */}
-					<div className="mt-0.5 flex items-center justify-end gap-2 border-t pt-3.5" style={{ borderColor: T.line }}>
+					<div className="mt-8 flex items-center justify-end gap-2">
 						<span
 							className="ml-auto inline-flex h-[30px] items-center rounded-md px-3 text-[12px]"
-							style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.fg, opacity: busy ? 0.5 : 1 }}
+							style={{ background: "transparent", color: T.fg, opacity: busy ? 0.5 : 1 }}
 						>
 							Cancel
 						</span>
 						<span
 							data-cursor-target="create-and-start"
 							className="inline-flex h-[30px] items-center rounded-md px-3 text-[12px] font-medium text-white"
-							style={{ background: T.blue, opacity: busy ? 0.65 : 1 }}
+							style={{ background: T.fg, color: T.bg, opacity: busy ? 0.65 : 1 }}
 						>
-							{busy ? "Creating…" : "Create and start"}
+							{busy ? "Creating..." : "Create and start"}
 						</span>
 					</div>
 
 					{/* Dropdowns — rendered inside the panel so they scale with it */}
 					<AnimatePresence>
 						{openMenu === "worker" ? (
-							<AgentMenu key="worker" currentValue={worker} hoverId={menuHover} side="left" targetAgent="cursor" />
+							<AgentMenu key="worker" currentValue={worker} hoverId={menuHover} side="left" targetAgent="codex" />
 						) : openMenu === "orch" ? (
 							<AgentMenu key="orch" currentValue={orch} hoverId={menuHover} side="right" targetAgent="claude-code" />
 						) : null}
@@ -621,14 +653,16 @@ export function ProjectAgentsDemo() {
 	/* Static reduced-motion frame: the filled modal. */
 	if (reducedMotion) {
 		return (
+
 				<div
 					className="relative h-[352px] w-full overflow-hidden rounded-[18px] sm:h-[380px]"
+					style={featurePreviewTokens}
 					role="img"
-					aria-label="Project agents dialog with Cursor as worker agent and Claude Code as orchestrator agent."
+					aria-label="Project agents dialog with Codex as worker agent and Claude Code as orchestrator agent."
 				>
 					<BoardView scene={PROJECT_AGENT_SCENES[0]!} />
 					<ProjectAgentsModal
-						worker="cursor"
+						worker="codex"
 						orch="claude-code"
 						intake={false}
 						assignee=""
@@ -637,13 +671,16 @@ export function ProjectAgentsDemo() {
 						menuHover={null}
 					/>
 				</div>
+
 		);
 	}
 
 	return (
+
 			<div
 				ref={rootRef}
 				className="relative h-[352px] w-full overflow-hidden rounded-[18px] font-sans select-none sm:h-[380px]"
+				style={featurePreviewTokens}
 				role="img"
 				aria-label="Demo: creating a new project and selecting its worker and orchestrator agents."
 			>
@@ -672,5 +709,6 @@ export function ProjectAgentsDemo() {
 					clickId={scene.click ? sceneIndex : 0}
 				/>
 			</div>
+
 	);
 }
