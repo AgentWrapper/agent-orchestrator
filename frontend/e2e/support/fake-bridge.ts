@@ -100,7 +100,6 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 				browser: {
 					ensure: async (sessionId: string) => navState(`preview:${sessionId}`),
 					setBounds: () => undefined,
-					setAgentStatus: async () => undefined,
 					navigate: async ({ viewId }: { viewId: string }) => navState(viewId),
 					clear: async (viewId: string) => navState(viewId),
 					capture: async () => null,
@@ -485,7 +484,6 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				browser: {
 					ensure: async (sessionId: string) => navState(`preview:${sessionId}`),
 					setBounds: () => undefined,
-					setAgentStatus: async () => undefined,
 					navigate: async ({ viewId, url }: { viewId: string; url: string }) =>
 						state.browserError ? navState(viewId, "", state.browserError) : navState(viewId, url),
 					clear: async (viewId: string) => navState(viewId),

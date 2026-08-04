@@ -76,11 +76,6 @@ export type BrowserAgentActivityState = {
 	commandId?: string;
 };
 
-export type BrowserAgentStatusInput = {
-	viewId: string;
-	active: boolean;
-};
-
 export type BrowserDevToolsState = {
 	viewId: string;
 	open: boolean;
@@ -224,8 +219,6 @@ type BrowserSessionEntry = {
 	parked: boolean;
 	networkTabId?: string;
 	agentBrowserCommands: number;
-	agentStatusActive: boolean;
-	agentStatusQueue: Promise<void>;
 	devtools?: {
 		window: BrowserDevToolsWindowLike;
 		targetTabId: string;
@@ -293,130 +286,6 @@ const UNTRUSTED_END = "<<<END UNTRUSTED EXTERNAL CONTENT>>>";
 // The human-facing address bar may open local preview files. Agent commands use
 // normalizeAgentBrowserURL below, which permits only explicit HTTP(S) targets.
 const ALLOWED_PROTOCOLS = new Set(["http:", "https:", "file:"]);
-const AGENT_STATUS_HOST_ID = "__ao_agent_working_pill__";
-const AGENT_STATUS_MARKUP = `
-<style>
-  :host {
-    all: initial;
-    position: fixed;
-    right: 8px;
-    bottom: 10px;
-    z-index: 2147483647;
-    display: flex;
-    align-items: flex-end;
-    justify-content: flex-end;
-    width: 110px;
-    height: 26px;
-    pointer-events: none;
-  }
-  .status {
-    box-sizing: border-box;
-    display: inline-flex;
-    align-items: center;
-    justify-content: flex-start;
-    gap: 4px;
-    width: 110px;
-    min-width: 110px;
-    height: 26px;
-    padding: 0 5px 0 8px;
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 999px;
-    background: rgba(20, 24, 30, 0.74);
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(255, 255, 255, 0.03);
-    backdrop-filter: blur(8px);
-    color: rgba(255, 255, 255, 0.84);
-    font: 600 11px/1.1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    white-space: nowrap;
-    pointer-events: none;
-    user-select: none;
-    -webkit-user-select: none;
-    overflow: hidden;
-    animation: ao-agent-working-collapse 3s cubic-bezier(0.22, 1, 0.36, 1) 180ms forwards;
-  }
-  .label {
-    flex: 0 0 auto;
-    max-width: 86px;
-    overflow: hidden;
-    opacity: 1;
-    animation: ao-agent-working-label-collapse 3s cubic-bezier(0.22, 1, 0.36, 1) 180ms forwards;
-  }
-  .dot {
-    width: 12px;
-    height: 7px;
-    flex: 0 0 auto;
-    border-radius: 999px;
-    background: #75d69b;
-    box-shadow: 0 0 0 3px rgba(117, 214, 155, 0.16);
-    animation: ao-agent-working-breathe 2.4s ease-in-out infinite;
-  }
-  @keyframes ao-agent-working-collapse {
-    0%, 64% {
-      width: 110px;
-      min-width: 110px;
-      height: 26px;
-      padding: 0 5px 0 8px;
-      gap: 4px;
-      border-color: rgba(255, 255, 255, 0.14);
-      background: rgba(20, 24, 30, 0.74);
-      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(255, 255, 255, 0.03);
-    }
-    100% {
-      width: 12px;
-      min-width: 12px;
-      height: 7px;
-      padding: 0;
-      gap: 0;
-      border-color: transparent;
-      background: transparent;
-      box-shadow: none;
-    }
-  }
-  @keyframes ao-agent-working-label-collapse {
-    0%, 64% {
-      max-width: 86px;
-      opacity: 1;
-    }
-    100% {
-      max-width: 0;
-      opacity: 0;
-    }
-  }
-  @keyframes ao-agent-working-breathe {
-    0%, 100% {
-      opacity: 0.88;
-      box-shadow: 0 0 0 3px rgba(117, 214, 155, 0.14);
-    }
-    50% {
-      opacity: 0.58;
-      box-shadow: 0 0 0 5px rgba(117, 214, 155, 0.04);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .status { animation: ao-agent-working-collapse 0s 2.3s forwards; }
-    .label { animation: ao-agent-working-label-collapse 0s 2.3s forwards; }
-    .dot { animation: none; }
-  }
-</style>
-<div class="status" role="presentation"><span class="label">Agent working</span><span class="dot" aria-hidden="true"></span></div>`;
-
-function agentStatusScript(active: boolean): string {
-	return `(() => {
-  const hostId = ${JSON.stringify(AGENT_STATUS_HOST_ID)};
-  const existing = document.getElementById(hostId);
-  if (!${active ? "true" : "false"}) {
-    existing?.remove();
-    return;
-  }
-  if (existing || !document.documentElement) return;
-  const host = document.createElement("div");
-  host.id = hostId;
-  host.setAttribute("aria-hidden", "true");
-  const shadow = host.attachShadow({ mode: "closed" });
-  shadow.innerHTML = ${JSON.stringify(AGENT_STATUS_MARKUP)};
-  document.documentElement.appendChild(host);
-})()`;
-}
-
 export function normalizeBrowserURL(input: string): URL {
 	const raw = input.trim();
 	if (raw === "") {
@@ -501,32 +370,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			...(phase ? { phase } : {}),
 			...(commandId ? { commandId } : {}),
 		} satisfies BrowserAgentActivityState);
-	};
-	const enqueueAgentStatus = (
-		session: BrowserSessionEntry,
-		active: boolean,
-		target: BrowserEntry | undefined = active ? activeEntry(session) : undefined,
-	): Promise<void> => {
-		const targets = active ? (target ? [target] : [activeEntry(session)]) : [...session.tabs.values()];
-		const update = async (): Promise<void> => {
-			await Promise.all(
-				targets.map(async (entry) => {
-					const executeJavaScript = entry.view.webContents.executeJavaScript;
-					if (!executeJavaScript) return;
-					try {
-						await executeJavaScript.call(entry.view.webContents, agentStatusScript(active));
-					} catch {
-						// The page may be between documents or the view may be closing.
-					}
-				}),
-			);
-		};
-		const next = session.agentStatusQueue.then(update, update);
-		session.agentStatusQueue = next.then(
-			() => undefined,
-			() => undefined,
-		);
-		return next;
 	};
 	const applyBrowserViewBounds = (view: BrowserViewLike, bounds: BrowserRect, visible?: boolean): void => {
 		view.setBounds(bounds);
@@ -641,9 +484,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			() => entries.get(session.viewId)?.activeTabId === entry.tabId,
 			() => applySessionBounds(session, entry),
 			() => pushTabsState(options, session),
-			() => {
-				if (session.agentStatusActive) void enqueueAgentStatus(session, true, entry);
-			},
 		);
 		wireAutomationEvents(view.webContents, entry);
 		// The preview is a separate WebContentsView, so renderer-window keydown
@@ -694,8 +534,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				visible: false,
 				parked: false,
 				agentBrowserCommands: 0,
-				agentStatusActive: false,
-				agentStatusQueue: Promise.resolve(),
 			};
 			entries.set(viewId, session);
 			viewIdsBySessionId.set(sessionId, viewId);
@@ -744,7 +582,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		}
 		session.activeTabId = tabId;
 		applySessionBounds(session, next);
-		if (session.agentStatusActive) void enqueueAgentStatus(session, true, next);
 		pushNavState(options, next);
 		if (notify) pushTabsState(options, session, { kind: "selected", tabId });
 		if (session.devtools) pushDevToolsState(session);
@@ -1119,14 +956,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const session = ensureSession(sessionId, event.sender.id);
 		pushDevToolsState(session);
 		return pushNavState(options, activeEntry(session));
-	});
-	handle("browser:setAgentStatus", (event, input: BrowserAgentStatusInput) => {
-		if (!input || typeof input.viewId !== "string" || typeof input.active !== "boolean") return;
-		if (!isRendererOwned(event, input.viewId)) return;
-		const session = entries.get(input.viewId);
-		if (!session) return;
-		session.agentStatusActive = input.active;
-		return enqueueAgentStatus(session, input.active);
 	});
 	on("browser:setBounds", (event, input: BrowserBoundsInput) => {
 		if (isRendererOwned(event, input.viewId)) setBounds(input, event.sender.getZoomFactor());
@@ -1522,7 +1351,6 @@ function wireNavEvents(
 	isActive: () => boolean,
 	syncActiveBounds: () => void,
 	syncTabs: () => void,
-	syncAgentStatus: () => void,
 ): void {
 	const update = () => {
 		syncTabs();
@@ -1530,7 +1358,6 @@ function wireNavEvents(
 	};
 	contents.on("did-navigate", () => {
 		if (isActive()) syncActiveBounds();
-		syncAgentStatus();
 		update();
 	});
 	contents.on("did-navigate-in-page", update);
@@ -1540,7 +1367,6 @@ function wireNavEvents(
 		update();
 	});
 	contents.on("did-stop-loading", () => {
-		syncAgentStatus();
 		update();
 	});
 	contents.on("did-fail-load", (_event, errorCode, errorDescription) => {

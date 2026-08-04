@@ -269,7 +269,7 @@ describe("BrowserPanel", () => {
 		expect(hookState.closeTab).toHaveBeenCalledWith("t1");
 	});
 
-	it("identifies the tab currently being used by the agent", async () => {
+	it("does not expose agent activity in the tabs menu", async () => {
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
 		hookState.tabs = [
 			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
@@ -278,16 +278,12 @@ describe("BrowserPanel", () => {
 		hookState.activeTabId = "t2";
 		hookState.agentBrowserActive = true;
 		hookState.agentBrowserActivity = { active: true, action: "click", phase: "started", tabId: "t1" };
-		const { rerender } = render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
 		await userEvent.click(screen.getByRole("button", { name: "Browser tabs (2)" }));
 
-		expect(screen.getByTestId("browser-agent-tab-t1")).toHaveTextContent("Agent");
-		expect(screen.queryByTestId("browser-agent-tab-t2")).not.toBeInTheDocument();
-
-		hookState.agentBrowserActive = false;
-		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 		expect(screen.queryByTestId("browser-agent-tab-t1")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("browser-agent-tab-t2")).not.toBeInTheDocument();
 	});
 
 	it("renders a rounded native mirror viewport without edge-cropping", () => {
@@ -378,7 +374,7 @@ describe("BrowserPanel", () => {
 		expect(hookState.setAnnotationMode).toHaveBeenCalledWith(true);
 	});
 
-	it("shows the bottom browser activity pill, not general worker activity text", () => {
+	it("does not show an agent-working status pill", () => {
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
 		const first = render(
 			<BrowserPanel
@@ -412,13 +408,11 @@ describe("BrowserPanel", () => {
 		);
 
 		expect(screen.getByRole("button", { name: /annotate/i })).toBeEnabled();
-		const status = screen.getByTestId("browser-agent-status");
-		expect(status).toHaveTextContent("Agent working");
-		expect(status).toHaveClass("browser-panel__agent-status");
-		expect(screen.getByTestId("browser-toolbar")).not.toHaveTextContent("Agent working");
+		expect(screen.queryByTestId("browser-agent-status")).not.toBeInTheDocument();
+		expect(screen.queryByText("Agent working")).not.toBeInTheDocument();
 	});
 
-	it("does not render browser activity text in the toolbar", () => {
+	it("does not render browser activity text anywhere in the panel", () => {
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
 		hookState.agentBrowserActive = true;
 		hookState.agentBrowserActivity = { active: true, action: "click", phase: "started" };
@@ -427,7 +421,8 @@ describe("BrowserPanel", () => {
 
 		expect(screen.queryByText("Agent clicking")).not.toBeInTheDocument();
 		expect(screen.queryByText("Agent using browser")).not.toBeInTheDocument();
-		expect(screen.getByTestId("browser-agent-status")).toBeInTheDocument();
+		expect(screen.queryByText("Agent working")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("browser-agent-status")).not.toBeInTheDocument();
 	});
 
 	it("renders a captured transition frame over the native browser slot", () => {

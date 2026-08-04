@@ -51,7 +51,6 @@ function setupBridge() {
 			isLoading: false,
 		})),
 		setBounds: vi.fn(),
-		setAgentStatus: vi.fn(async () => undefined),
 		capture: vi.fn(async (): Promise<BrowserMirrorFrame> => ({
 			dataUrl: "data:image/jpeg;base64,snapshot",
 			pixelWidth: 640,
@@ -240,11 +239,9 @@ describe("useBrowserView", () => {
 			bridge.emitActivity({ viewId: "42:sess-1", active: false, action: "snapshot" });
 		});
 		expect(result.current.agentBrowserActive).toBe(true);
-		expect(bridge.setAgentStatus).toHaveBeenLastCalledWith({ viewId: "42:sess-1", active: true });
 
 		rerender({ agentWorking: false });
 		await waitFor(() => expect(result.current.agentBrowserActive).toBe(false));
-		expect(bridge.setAgentStatus).toHaveBeenLastCalledWith({ viewId: "42:sess-1", active: false });
 	});
 	it("holds a captured frame while selecting a tab so the native handoff does not flash", async () => {
 		const bridge = setupBridge();

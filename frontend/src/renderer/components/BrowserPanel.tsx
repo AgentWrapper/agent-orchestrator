@@ -249,8 +249,6 @@ export function BrowserPanelView({
 		openDevTools = async () => undefined,
 		closeDevTools = async () => undefined,
 		prepareForOverlay,
-		agentBrowserActive,
-		agentBrowserActivity,
 		visualTransition,
 		annotationMode,
 		setAnnotationMode,
@@ -264,7 +262,6 @@ export function BrowserPanelView({
 	const canPopOut = poppedOut || Boolean(navState.url);
 	const canRetryAnnotation = status === "error" && queuedCount > 0;
 	const canUseDevTools = hasNativeBrowser && Boolean(viewId);
-	const agentWorkingTabId = agentBrowserActive ? (agentBrowserActivity?.tabId ?? activeTabId) : "";
 	const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
 	const tabsMenuWarmupRef = useRef<Promise<void> | null>(null);
 
@@ -497,7 +494,6 @@ export function BrowserPanelView({
 						<DropdownMenuLabel>{t("browser.tabs")}</DropdownMenuLabel>
 						{tabs.map((tab) => {
 							const label = browserTabLabel(tab.title, tab.url);
-							const agentWorkingOnTab = agentWorkingTabId === tab.id;
 							return (
 								<div className="flex min-w-0 items-center gap-0.5" key={tab.id}>
 									<DropdownMenuItem
@@ -511,17 +507,6 @@ export function BrowserPanelView({
 										<span className="min-w-0 flex-1">
 											<span className="flex min-w-0 items-center gap-1.5">
 												<span className="min-w-0 flex-1 truncate text-xs text-foreground">{label.title}</span>
-												{agentWorkingOnTab ? (
-													<span
-														aria-label={t("browser.agentWorkingOnTab")}
-														className="browser-panel__agent-tab-indicator"
-														data-testid={`browser-agent-tab-${tab.id}`}
-														title={t("browser.agentWorkingOnTab")}
-													>
-														<span aria-hidden="true" className="browser-panel__agent-tab-dot" />
-														{t("browser.agent")}
-													</span>
-												) : null}
 											</span>
 											<span className="block truncate font-mono text-caption text-passive">{label.subtitle}</span>
 										</span>
@@ -616,17 +601,6 @@ export function BrowserPanelView({
 					>
 						{navState.error}
 					</p>
-				) : null}
-				{agentBrowserActive ? (
-					<div
-						className="browser-panel__agent-status"
-						data-testid="browser-agent-status"
-						role="status"
-						aria-live="polite"
-					>
-						<span className="browser-panel__agent-status-label">{t("browser.agentWorking")}</span>
-						<span aria-hidden="true" className="browser-panel__agent-status-dot" />
-					</div>
 				) : null}
 			</div>
 		</div>

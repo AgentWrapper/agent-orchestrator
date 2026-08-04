@@ -203,14 +203,6 @@ export function useBrowserView({
 		clearAgentBrowserFallback();
 		setAgentBrowserActive(false);
 	}, [clearAgentBrowserFallback]);
-	const setNativeAgentStatus = useCallback(
-		(id: string, active: boolean) => {
-			if (!hasNativeBrowser || !id) return;
-			const pending = window.ao?.browser.setAgentStatus?.({ viewId: id, active });
-			void pending?.catch(() => undefined);
-		},
-		[hasNativeBrowser],
-	);
 
 	const scheduleAgentBrowserFallback = useCallback(() => {
 		clearAgentBrowserFallback();
@@ -243,12 +235,6 @@ export function useBrowserView({
 			clearAgentBrowserActivity();
 		}
 	}, [agentWorking, clearAgentBrowserActivity, clearAgentBrowserFallback]);
-
-	useEffect(() => {
-		const id = viewIdRef.current;
-		if (!id || id !== viewId) return;
-		setNativeAgentStatus(id, agentBrowserActive);
-	}, [agentBrowserActive, setNativeAgentStatus, viewId]);
 
 	useEffect(() => {
 		hasUrlRef.current = Boolean(navState.url);
@@ -451,7 +437,6 @@ export function useBrowserView({
 			agentBrowserLeaseRef.current = false;
 			const id = viewIdRef.current;
 			if (id) {
-				setNativeAgentStatus(id, false);
 				if (annotationModeRef.current) {
 					void window.ao?.browser.setAnnotationMode({ viewId: id, enabled: false });
 					setAnnotationModeState(false);
@@ -467,7 +452,6 @@ export function useBrowserView({
 		scheduleSettleMeasure,
 		sendHiddenBounds,
 		sessionId,
-		setNativeAgentStatus,
 	]);
 
 	useEffect(() => {
@@ -789,7 +773,6 @@ export function useBrowserView({
 		overlayOpenRef.current = false;
 		modalOpenRef.current = false;
 		setMirrorFrame(null);
-		setNativeAgentStatus(id, false);
 		clearMirrorTimer();
 		setVisualTransition(null);
 		clearVisualTransitionTimer();
@@ -804,7 +787,6 @@ export function useBrowserView({
 		clearMirrorTimer,
 		clearVisualTransitionTimer,
 		sendHiddenBounds,
-		setNativeAgentStatus,
 	]);
 
 	// Termination invalidates the complete session-owned browser, including all

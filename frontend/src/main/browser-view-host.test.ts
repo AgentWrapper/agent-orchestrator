@@ -630,19 +630,6 @@ describe("agent browser runtime", () => {
 		});
 	});
 
-	it("injects a standalone green agent pill without a badge or label", async () => {
-		const { invoke, webContents } = setupHost();
-		const state = (await invoke("browser:ensure", "sess-1")) as BrowserNavState;
-
-		await invoke("browser:setAgentStatus", { viewId: state.viewId, active: true });
-
-		const script = webContents.executeJavaScript.mock.calls.at(-1)?.[0] as string;
-		expect(script).toContain("ao-agent-working-breathe");
-		expect(script).toContain("Agent working");
-		expect(script).toContain("status");
-		expect(script).not.toContain("badge");
-});
-
 	it("rejects local files and implicit searches from agent-originated navigation", async () => {
 		const { host, webContents } = setupHost();
 
