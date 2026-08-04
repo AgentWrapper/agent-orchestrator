@@ -6,7 +6,7 @@
 // raw JSON string cannot represent.
 //
 //   ch "terminal" — per-pane byte stream keyed by an opaque runtime handle id
-//     client → open{id,cols,rows} | data{id,data} | resize{id,cols,rows} | close{id}
+//     client → open{id,cols,rows} | data{id,data} | resize{id,cols,rows,force?} | close{id}
 //     server → opened{id} | data{id,data} | exited{id} | error{id?,error}
 //   ch "system"   — ping/pong liveness
 //
@@ -49,8 +49,15 @@ export function dataFrame(id: string, bytes: Uint8Array): string {
 	return JSON.stringify({ ch: "terminal", type: "data", id, data: bytesToBase64(bytes) });
 }
 
-export function resizeFrame(id: string, cols: number, rows: number): string {
-	return JSON.stringify({ ch: "terminal", type: "resize", id, cols, rows });
+export function resizeFrame(id: string, cols: number, rows: number, force = false): string {
+	return JSON.stringify({
+		ch: "terminal",
+		type: "resize",
+		id,
+		cols,
+		rows,
+		...(force ? { force: true } : {}),
+	});
 }
 
 export function closeFrame(id: string): string {
@@ -89,7 +96,8 @@ export type TerminalMux = {
 	open: (id: string, cols: number, rows: number) => void;
 	/** Forward user-originated keyboard/paste data to the pane. */
 	sendInput: (id: string, input: string) => void;
-	resize: (id: string, cols: number, rows: number) => void;
+	/** Resize normally, or explicitly re-signal an unchanged grid for recovery. */
+	resize: (id: string, cols: number, rows: number, force?: boolean) => void;
 	close: (id: string) => void;
 	onData: (id: string, listener: DataListener) => () => void;
 	onExit: (id: string, listener: ExitListener) => () => void;
@@ -235,8 +243,8 @@ export function createTerminalMux(url: string, WebSocketImpl: typeof WebSocket =
 			const bytes = encoder.encode(input);
 			send(dataFrame(id, bytes));
 		},
-		resize: (id, cols, rows) => {
-			send(resizeFrame(id, cols, rows));
+		resize: (id, cols, rows, force) => {
+			send(resizeFrame(id, cols, rows, force));
 		},
 		close: (id) => {
 			send(closeFrame(id));
@@ -339,8 +347,10 @@ export function createTerminalMuxPool(createMux: () => TerminalMux): TerminalMux
 			sendInput: (id, input) => {
 				if (!released && !connection.closed && !connection.disposed) connection.mux.sendInput(id, input);
 			},
-			resize: (id, cols, rows) => {
-				if (!released && !connection.closed && !connection.disposed) connection.mux.resize(id, cols, rows);
+			resize: (id, cols, rows, force) => {
+				if (!released && !connection.closed && !connection.disposed) {
+					connection.mux.resize(id, cols, rows, force);
+				}
 			},
 			close: (id) => {
 				if (!released && !connection.closed && !connection.disposed) connection.mux.close(id);

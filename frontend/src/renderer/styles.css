@@ -1706,14 +1706,12 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	color: var(--fg);
 }
 
-/* Collapse/expand animation for the inspector panel: rrp v4 drives panel
- * sizes via flex-grow, which is animatable. Suppress it while the separator
- * is actively dragged so resizing tracks the pointer 1:1. */
+/* Do not animate the inspector's flex-grow. The sibling is a live xterm WebGL
+ * surface: interpolating this value makes ResizeObserver fit the terminal at
+ * every intermediate width, reallocating the renderer and eventually causing
+ * a PTY/SIGWINCH repaint. The inspector still opens and closes atomically, and
+ * direct separator drags remain interactive. */
 .session-split #inspector[data-panel] {
-	transition: flex-grow 0.2s linear;
-}
-
-.session-split:has([data-separator="active"]) #inspector[data-panel] {
 	transition: none;
 }
 

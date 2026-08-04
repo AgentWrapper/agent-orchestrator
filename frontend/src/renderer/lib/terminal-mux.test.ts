@@ -35,6 +35,12 @@ describe("terminal-mux framing", () => {
 
 	it("carries cols/rows on resize and id on close", () => {
 		expect(JSON.parse(resizeFrame("s", 120, 40))).toMatchObject({ type: "resize", cols: 120, rows: 40 });
+		expect(JSON.parse(resizeFrame("s", 120, 40, true))).toMatchObject({
+			type: "resize",
+			cols: 120,
+			rows: 40,
+			force: true,
+		});
 		expect(JSON.parse(closeFrame("s"))).toEqual({ ch: "terminal", type: "close", id: "s" });
 	});
 

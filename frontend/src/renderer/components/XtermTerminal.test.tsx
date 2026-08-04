@@ -173,6 +173,7 @@ describe("XtermTerminal", () => {
 				await preparation;
 			});
 			expect(state.lastTerminal!.scrollToBottom).toHaveBeenCalled();
+			expect(state.lastTerminal!.refresh).not.toHaveBeenCalled();
 		} finally {
 			vi.useRealTimers();
 			vi.unstubAllGlobals();

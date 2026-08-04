@@ -76,19 +76,28 @@ export type XtermTerminalProps = {
 // glyphs themselves onto a fixed cell grid; the DOM renderer does not, so TUI
 // borders would drift. Loaded after open().
 function loadRenderer(term: Terminal): void {
+	let fallbackLoaded = false;
+	const loadCanvasFallback = () => {
+		if (fallbackLoaded) return;
+		fallbackLoaded = true;
+		try {
+			term.loadAddon(new CanvasAddon());
+		} catch (error) {
+			console.warn("xterm: WebGL and canvas renderers unavailable; box-drawing may drift", error);
+		}
+	};
 	try {
 		const webgl = new WebglAddon();
-		webgl.onContextLoss(() => webgl.dispose());
+		webgl.onContextLoss(() => {
+			webgl.dispose();
+			loadCanvasFallback();
+		});
 		term.loadAddon(webgl);
 		return;
 	} catch {
 		// WebGL context unavailable — fall through to the canvas renderer.
 	}
-	try {
-		term.loadAddon(new CanvasAddon());
-	} catch (error) {
-		console.warn("xterm: WebGL and canvas renderers unavailable; box-drawing may drift", error);
-	}
+	loadCanvasFallback();
 }
 
 // xterm palette tracks the app theme (see lib/terminal-themes.ts + tokens.css).
@@ -551,7 +560,54 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				// trigger retries.
 			}
 		};
-		fitRef.current = fitTerminal;
+		// ResizeObserver fires for every intermediate box during native fullscreen,
+		// sidebar drags and other animated application layout. Fitting on every
+		// callback repeatedly reallocates xterm's WebGL surface. Keep only the
+		// latest proposal and commit once the box has been quiet, with a cap so a
+		// continuously moving window cannot postpone the terminal forever.
+		const FIT_QUIET_MS = 120;
+		const FIT_CAP_MS = 500;
+		let fitQuietTimer: ReturnType<typeof setTimeout> | null = null;
+		let fitCapTimer: ReturnType<typeof setTimeout> | null = null;
+		let fitAllowsHidden = false;
+		let disposed = false;
+		const fitSettledListeners = new Set<() => void>();
+		const flushScheduledFit = () => {
+			if (disposed) return;
+			if (fitQuietTimer !== null) {
+				clearTimeout(fitQuietTimer);
+				fitQuietTimer = null;
+			}
+			if (fitCapTimer !== null) {
+				clearTimeout(fitCapTimer);
+				fitCapTimer = null;
+			}
+			if (fitAllowsHidden || callbacksRef.current.isVisible !== false) {
+				try {
+					fit.fit();
+				} catch {
+					// The next observer/window event retries if the host is transiently
+					// unmeasurable (for example while entering fullscreen).
+				}
+			}
+			fitAllowsHidden = false;
+			for (const listener of [...fitSettledListeners]) listener();
+			fitSettledListeners.clear();
+		};
+		const scheduleStableFit = (allowHidden = false, onSettled?: () => void) => {
+			if (disposed) return;
+			if (!allowHidden && callbacksRef.current.isVisible === false) return;
+			fitAllowsHidden ||= allowHidden;
+			if (onSettled) fitSettledListeners.add(onSettled);
+			if (fitQuietTimer !== null) clearTimeout(fitQuietTimer);
+			fitQuietTimer = setTimeout(flushScheduledFit, FIT_QUIET_MS);
+			if (fitCapTimer === null) fitCapTimer = setTimeout(flushScheduledFit, FIT_CAP_MS);
+		};
+		// While activation preparation is pending, observer/window events must keep
+		// extending the same quiet window even though the container is intentionally
+		// hidden behind the cover. A normally parked terminal still ignores them.
+		const scheduleVisibleFit = () => scheduleStableFit(fitAllowsHidden);
+		fitRef.current = scheduleVisibleFit;
 
 		const raf = requestAnimationFrame(fitTerminal);
 		// 50/250ms catch the common settle; 600/1200ms are a session-bounded
@@ -561,11 +617,11 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// firing the PTY resize that makes the pane repaint cleanly (clearing
 		// any ghost frame). fit() is idempotent: a no-op when the grid is already
 		// right, so a correct terminal never reflows.
-		const settleTimers = [50, 250, 600, 1200].map((ms) => window.setTimeout(fitTerminal, ms));
+		const settleTimers = [50, 250, 600, 1200].map((ms) => window.setTimeout(scheduleVisibleFit, ms));
 		if (document.fonts?.ready) {
-			void document.fonts.ready.then(fitTerminal);
+			void document.fonts.ready.then(() => scheduleStableFit());
 		}
-		const observer = new ResizeObserver(fitTerminal);
+		const observer = new ResizeObserver(scheduleVisibleFit);
 		observer.observe(host);
 
 		// Recovery re-fit that does NOT depend on the host box changing size.
@@ -623,7 +679,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// OS window resize and monitor/DPR changes also alter the true cell box
 		// without touching the host's height:100% box, so the ResizeObserver above
 		// misses them. Listen on window directly as a session-long recovery path.
-		window.addEventListener("resize", fitTerminal);
+		window.addEventListener("resize", scheduleVisibleFit);
 
 		// Do not replace this with term.onData. xterm's raw data stream can include
 		// terminal-generated control responses during attach/repaint; forwarding
@@ -750,14 +806,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			return new Promise((resolve) => {
 				let firstFrame: number | null = null;
 				let paintFrame: number | null = null;
-				let renderListener: { dispose: () => void } | null = null;
-				let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
 				let finished = false;
 				const finish = () => {
 					if (finished) return;
 					finished = true;
-					renderListener?.dispose();
-					if (fallbackTimer !== null) clearTimeout(fallbackTimer);
 					if (firstFrame !== null) cancelAnimationFrame(firstFrame);
 					if (paintFrame !== null) cancelAnimationFrame(paintFrame);
 					if (cancelActivationPreparation === finish) cancelActivationPreparation = null;
@@ -766,16 +818,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				cancelActivationPreparation = finish;
 
 				const finishAcrossPaintFrames = () => {
-					renderListener?.dispose();
-					renderListener = null;
-					if (fallbackTimer !== null) {
-						clearTimeout(fallbackTimer);
-						fallbackTimer = null;
-					}
+					if (finished) return;
+					showLatestOutput();
 					firstFrame = requestAnimationFrame(() => {
 						firstFrame = null;
-						// Reconcile again after fit/reflow has rendered, then keep the
-						// container hidden through one paint boundary.
+						// Reconcile after the settled fit, then remain hidden through a
+						// second frame so Chromium composites the final viewport.
 						showLatestOutput();
 						paintFrame = requestAnimationFrame(() => {
 							paintFrame = null;
@@ -783,21 +831,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 						});
 					});
 				};
-				renderListener = term.onRender(finishAcrossPaintFrames);
-				// Renderer suspension, a temporarily zero-sized slot, or a no-op
-				// refresh must not leave the retained pane hidden forever.
-				fallbackTimer = setTimeout(finishAcrossPaintFrames, 250);
-				// The container has already moved into its real slot but remains
-				// hidden. Fit locally now; useTerminalSession suppresses the emitted
-				// PTY resize until the terminal becomes fully visible.
-				try {
-					fit.fit();
-				} catch {
-					// A subsequent render/visibility fit retries if the slot is not
-					// measurable during this layout pass.
-				}
-				showLatestOutput();
-				term.refresh(0, Math.max(0, term.rows - 1));
+				// The container is in its real slot but remains hidden. Wait for its
+				// dimensions to settle (including fullscreen/sidebar transitions), fit
+				// once, and avoid the old unconditional full-grid refresh.
+				scheduleStableFit(true, finishAcrossPaintFrames);
 			});
 		};
 
@@ -826,14 +863,18 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		callbacksRef.current.onReady?.(handle);
 
 		return () => {
+			disposed = true;
 			delete (host as DevXtermHost).__aoXtermForTest;
 			termRef.current = null;
 			fitRef.current = null;
 			cancelAnimationFrame(raf);
 			for (const timer of settleTimers) window.clearTimeout(timer);
+			if (fitQuietTimer !== null) clearTimeout(fitQuietTimer);
+			if (fitCapTimer !== null) clearTimeout(fitCapTimer);
+			fitSettledListeners.clear();
 			observer.disconnect();
 			stabilizer.dispose();
-			window.removeEventListener("resize", fitTerminal);
+			window.removeEventListener("resize", scheduleVisibleFit);
 			host.removeEventListener("copy", copyInput);
 			window.removeEventListener("keydown", copyShortcut, true);
 			selectionChange.dispose();
@@ -866,10 +907,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		const becameVisible = visible && !wasVisibleRef.current;
 		wasVisibleRef.current = visible;
 		if (!becameVisible) return;
-		// Run after the retained frame has been revealed. A fit can emit a PTY
-		// resize/SIGWINCH, and preparation has no authoritative remote repaint
-		// acknowledgement, so hidden/preparing phases stay transport-inert.
-		fitRef.current?.();
+		// Activation preparation already fitted the terminal after the slot became
+		// stable. Publish that grid without fitting a second time after reveal.
 		const term = termRef.current;
 		if (term) callbacksRef.current.onVisibleSize?.(term.cols, term.rows);
 	}, [props.isVisible]);

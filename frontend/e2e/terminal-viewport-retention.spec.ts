@@ -42,6 +42,7 @@ const handleC = `${sessionC.id}/terminal_0`;
 const handleD = `${sessionD.id}/terminal_0`;
 const handleE = `${sessionE.id}/terminal_0`;
 const handleF = `${sessionF.id}/terminal_0`;
+const orchestratorHandle = "fake-proj-orchestrator/terminal_0";
 
 const longReplay = [
 	"\x1b[?25l",
@@ -188,6 +189,7 @@ async function installHarness(page: Page): Promise<void> {
 		[handleD]: "D short replay",
 		[handleE]: "E short replay",
 		[handleF]: "F short replay",
+		[orchestratorHandle]: "Orchestrator ready",
 	});
 	await page.goto(`/#/projects/fake-proj/sessions/${sessionA.id}`);
 	await expect(activeTerminal(page)).toBeVisible();
@@ -362,14 +364,14 @@ test.describe("retained terminal viewport", () => {
 		const aResizesBeforeReturn = (await muxStats(page)).resizes[handleA]?.length ?? 0;
 
 		// Exercise the same rapid return seen in 04.30.04, including output in
-		// the return commit. Activation publishes exactly one visible resize so
-		// the retained PTY catches up to the locally refitted parked grid.
+		// the return commit. The retained terminal returns to its already-published
+		// grid, so activation must not manufacture another PTY/SIGWINCH repaint.
 		await openSession(page, sessionA.title);
 		await expect
 			.poll(async () => (await muxStats(page)).resizes[handleA]?.length ?? 0)
-			.toBe(aResizesBeforeReturn + 1);
+			.toBe(aResizesBeforeReturn);
 		const afterReturn = await muxStats(page);
-		expect(afterReturn.resizePhases[handleA]?.slice(aResizesBeforeReturn)).toEqual(["visible"]);
+		expect(afterReturn.resizePhases[handleA]?.slice(aResizesBeforeReturn) ?? []).toEqual([]);
 		await page.evaluate((handleId) => {
 			window.__aoFakeTerminalMux!.emit(handleId, "\r\nA output during return");
 		}, handleA);
@@ -390,6 +392,29 @@ test.describe("retained terminal viewport", () => {
 		expect(stats.opens[handleA]).toBe(1);
 		expect(stats.closes[handleA] ?? 0).toBe(0);
 		await expect(page.locator("[data-terminal-cache-key]:not([aria-hidden='true'])")).toHaveCount(1);
+	});
+
+	test("does not republish stable grids across warmed orchestrator-worker switches", async ({
+		page,
+	}) => {
+		await installHarness(page);
+		await openSession(page, "Project orchestrator");
+		await openSession(page, sessionA.title);
+
+		const before = await muxStats(page);
+		const workerResizes = before.resizes[handleA]?.length ?? 0;
+		const orchestratorResizes = before.resizes[orchestratorHandle]?.length ?? 0;
+
+		for (let index = 0; index < 3; index += 1) {
+			await openSession(page, "Project orchestrator");
+			await openSession(page, sessionA.title);
+		}
+
+		const after = await muxStats(page);
+		expect(after.resizes[handleA]?.length ?? 0).toBe(workerResizes);
+		expect(after.resizes[orchestratorHandle]?.length ?? 0).toBe(orchestratorResizes);
+		expect(after.opens[handleA]).toBe(1);
+		expect(after.opens[orchestratorHandle]).toBe(1);
 	});
 
 	test("handles empty and short replay, blocks hidden input, and retains xterm through reconnect", async ({ page }) => {

@@ -1015,7 +1015,20 @@ function AttachedTerminal({
 
 	useEffect(() => {
 		if (!terminal) return;
-		return attach(terminal);
+		let current = true;
+		let detach: (() => void) | undefined;
+		// A new xterm starts at its constructor default (80×24). Opening the PTY
+		// before FitAddon has measured its real slot makes full-screen worker TUIs
+		// redraw once at 80×24 and again at the actual grid. Settle that first fit
+		// before attaching so the daemon receives only the authoritative size.
+		void terminal.prepareForActivation().then(() => {
+			if (!current) return;
+			detach = attach(terminal);
+		});
+		return () => {
+			current = false;
+			detach?.();
+		};
 	}, [terminal, handleId, attach, attachSession?.id]);
 
 	if (initFailed) {

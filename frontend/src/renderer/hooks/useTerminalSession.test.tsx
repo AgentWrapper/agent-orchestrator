@@ -248,8 +248,8 @@ describe("useTerminalSession", () => {
 		act(() => muxes[0].emitOpened("handle-1"));
 		const initialResizes = muxes[0].resizes.length;
 
-		// Queue resize work while visible, then park the terminal before either
-		// stage fires. Hiding must cancel both the debounce and re-assert.
+		// Queue resize work while visible, then park the terminal before the
+		// debounce fires. Hiding must cancel the pending publication.
 		terminal.emitResize(120, 40);
 		view.rerender({ daemonReady: true, isVisible: false });
 		terminal.typeKeys("hidden input");
@@ -288,23 +288,27 @@ describe("useTerminalSession", () => {
 		expect(muxes[0].resizes.slice(initialResizes)).toEqual([["handle-1", 132, 47]]);
 	});
 
-	it("collapses a drag's burst of grid changes into one trailing PTY resize, then re-asserts it", () => {
+	it("collapses a drag's burst into one resize and does not re-send the settled grid", () => {
 		const { terminal, muxes } = setup();
-		const initialResizes = muxes[0].resizes.length; // connect() sends the opening size
+		const initialResizes = muxes[0].resizes.length;
 		terminal.emitResize(100, 30);
 		terminal.emitResize(110, 34);
 		terminal.emitResize(120, 40);
 		act(() => void vi.advanceTimersByTime(100));
 		expect(muxes[0].resizes.slice(initialResizes)).toEqual([["handle-1", 120, 40]]);
-		// The settled grid goes out once more: paired with the backend's explicit
-		// SIGWINCH (pty_unix.go) it re-syncs a zellij client that lost the
-		// original update, which otherwise kept the session laid out for the old
-		// size until the next real grid change.
 		act(() => void vi.advanceTimersByTime(250));
-		expect(muxes[0].resizes.slice(initialResizes)).toEqual([
-			["handle-1", 120, 40],
-			["handle-1", 120, 40],
-		]);
+		expect(muxes[0].resizes.slice(initialResizes)).toEqual([["handle-1", 120, 40]]);
+	});
+
+	it("deduplicates the same visible grid across independent synchronization paths", () => {
+		const { terminal, muxes } = setup();
+		const initialResizes = muxes[0].resizes.length;
+		terminal.emitResize(120, 40);
+		act(() => void vi.advanceTimersByTime(100));
+		terminal.emitResize(120, 40);
+		act(() => void vi.advanceTimersByTime(100));
+
+		expect(muxes[0].resizes.slice(initialResizes)).toEqual([["handle-1", 120, 40]]);
 	});
 
 	it("does not forward input until the server opens the current attachment", () => {
@@ -316,16 +320,15 @@ describe("useTerminalSession", () => {
 		expect(muxes[0].inputs).toEqual([["handle-1", "ready\r"]]);
 	});
 
-	it("a new resize burst supersedes a pending re-assert", () => {
+	it("forwards each distinct settled grid once", () => {
 		const { terminal, muxes } = setup();
 		const initialResizes = muxes[0].resizes.length;
 		terminal.emitResize(100, 30);
-		act(() => void vi.advanceTimersByTime(100)); // settles -> sent, re-assert pending
-		terminal.emitResize(120, 40); // user keeps dragging before the re-assert fires
+		act(() => void vi.advanceTimersByTime(100));
+		terminal.emitResize(120, 40);
 		act(() => void vi.advanceTimersByTime(100 + 250));
 		expect(muxes[0].resizes.slice(initialResizes)).toEqual([
 			["handle-1", 100, 30],
-			["handle-1", 120, 40],
 			["handle-1", 120, 40],
 		]);
 	});
@@ -518,7 +521,7 @@ describe("useTerminalSession", () => {
 			expect(terminal.lines).toContain("second");
 		});
 
-		it("holds the resize re-assert while a replay burst is still in flight", () => {
+		it("does not duplicate a settled resize while replay is in flight", () => {
 			const { terminal, muxes } = setup();
 			const initial = muxes[0].resizes.length;
 			act(() => muxes[0].emitOpened("handle-1"));
@@ -533,19 +536,11 @@ describe("useTerminalSession", () => {
 			}
 			expect(muxes[0].resizes.slice(initial)).toEqual([["handle-1", 120, 40]]);
 
-			// Re-assert would normally be 250ms after the settle; while buffering
-			// it waits, because its SIGWINCH repaint would flash just after the
-			// cover lifts.
 			act(() => void vi.advanceTimersByTime(30)); // quiet window elapses -> flush
 			expect(muxes[0].resizes.slice(initial)).toEqual([["handle-1", 120, 40]]);
 
-			// The flush re-arms it rather than dropping it: losing the re-assert
-			// would leave the pane laid out for the old grid.
 			act(() => void vi.advanceTimersByTime(250));
-			expect(muxes[0].resizes.slice(initial)).toEqual([
-				["handle-1", 120, 40],
-				["handle-1", 120, 40],
-			]);
+			expect(muxes[0].resizes.slice(initial)).toEqual([["handle-1", 120, 40]]);
 		});
 
 		it("keeps the gate armed when the server acks slowly, instead of spending the cap on the handshake", () => {
@@ -584,12 +579,12 @@ describe("useTerminalSession", () => {
 			expect(terminal.lines).toEqual(["prompt$ ", "l"]);
 		});
 
-		it("does not re-assert a stale grid after a newer resize supersedes a deferred one", () => {
+		it("does not resend a stale grid after a newer resize supersedes it", () => {
 			const { terminal, muxes } = setup();
 			const initial = muxes[0].resizes.length;
 			act(() => muxes[0].emitOpened("handle-1"));
 
-			// Resize A settles while a burst is in flight, so its re-assert defers.
+			// Resize A settles while a burst is in flight.
 			terminal.emitResize(120, 40);
 			for (let elapsed = 0; elapsed < 150; elapsed += 30) {
 				act(() => muxes[0].emitData("handle-1", "x"));
@@ -597,16 +592,15 @@ describe("useTerminalSession", () => {
 			}
 			expect(muxes[0].resizes.slice(initial)).toEqual([["handle-1", 120, 40]]);
 
-			// The user keeps dragging: B must supersede A's pending re-assert.
+			// The user keeps dragging: B must supersede A as the final grid.
 			terminal.emitResize(100, 30);
 			act(() => void vi.advanceTimersByTime(100)); // B settles
-			act(() => void vi.advanceTimersByTime(300)); // flush + B's re-assert
+			act(() => void vi.advanceTimersByTime(300)); // replay flushes
 
 			// A's stale 120x40 must never be sent again — landing it after B would
 			// cost a SIGWINCH repaint at the wrong size just as the cover lifts.
 			expect(muxes[0].resizes.slice(initial)).toEqual([
 				["handle-1", 120, 40],
-				["handle-1", 100, 30],
 				["handle-1", 100, 30],
 			]);
 		});
@@ -628,10 +622,43 @@ describe("useTerminalSession", () => {
 			expect(view.result.current.replaySettled).toBe(false);
 			act(() => void vi.advanceTimersByTime(180));
 			expect(view.result.current.replaySettled).toBe(true);
-			// Never accumulate an unbounded single write.
+			// Never hand xterm one unbounded parser task, even when the replay gate
+			// collected a full megabyte before flushing.
 			for (const line of terminal.lines) {
-				expect(line.length).toBeLessThanOrEqual(1024 * 1024 + 64 * 1024);
+				expect(line.length).toBeLessThanOrEqual(256 * 1024);
 			}
+		});
+
+		it("preserves wire order when output arrives between bounded replay writes", () => {
+			const { terminal, muxes } = setup();
+			act(() => muxes[0].emitOpened("handle-1"));
+			const replay = "a".repeat(300 * 1024);
+			act(() => muxes[0].emitData("handle-1", replay));
+
+			// The quiet flush writes the first bounded batch and yields before the
+			// remainder. A live PTY frame arriving in that yield must queue behind it.
+			act(() => void vi.advanceTimersByTime(60));
+			expect(terminal.lines).toEqual(["a".repeat(256 * 1024)]);
+			act(() => muxes[0].emitData("handle-1", "TAIL"));
+			act(() => void vi.advanceTimersByTime(0));
+
+			expect(terminal.lines.join("")).toBe(`${replay}TAIL`);
+		});
+
+		it("queues an unfinished replay before an exit marker and attachment teardown", () => {
+			const { terminal, muxes } = setup();
+			act(() => muxes[0].emitOpened("handle-1"));
+			const replay = "a".repeat(300 * 1024);
+			act(() => muxes[0].emitData("handle-1", replay));
+			act(() => void vi.advanceTimersByTime(60));
+
+			// Exit lands while the next replay batch is waiting for its event-loop
+			// turn. The unwritten remainder must be submitted before the marker and
+			// before teardown invalidates this attachment's generation.
+			act(() => muxes[0].emitExit("handle-1"));
+			const output = terminal.lines.join("");
+			expect(output.startsWith(replay)).toBe(true);
+			expect(output).toContain("[process exited]");
 		});
 
 		it("lifts the cover when the attachment is torn down with no reconnect scheduled", () => {
