@@ -616,6 +616,7 @@ func (s *Server) listOrgMembers(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) updateOrgMemberRole(w http.ResponseWriter, r *http.Request) {
 	org, _ := orgFromContext(r.Context())
+	principal, _ := cloudauth.PrincipalFromContext(r.Context())
 	targetUserID := strings.TrimSpace(chi.URLParam(r, "userId"))
 	if targetUserID == "" {
 		writeError(w, r, http.StatusBadRequest, "INVALID_MEMBER", "Member user id is required.")
@@ -636,6 +637,37 @@ func (s *Server) updateOrgMemberRole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusForbidden, "ORG_ROLE_REQUIRED", "Only organization owners can grant owner role.")
 		return
 	}
+	members, err := s.store.ListOrgMembers(r.Context(), org.Organization.ID)
+	if err != nil {
+		s.internalError(w, r, "list org members for role update", err)
+		return
+	}
+	var target clouddomain.OrgMember
+	ownerCount := 0
+	targetFound := false
+	for _, member := range members {
+		if member.Membership.Role == "owner" {
+			ownerCount++
+		}
+		if string(member.User.ID) == targetUserID {
+			target = member
+			targetFound = true
+		}
+	}
+	if !targetFound {
+		writeError(w, r, http.StatusNotFound, "MEMBER_NOT_FOUND", "The organization member does not exist.")
+		return
+	}
+	if status, code, message, ok := validateOrgMemberRoleUpdate(
+		principal.UserID,
+		org.Membership.Role,
+		target,
+		ownerCount,
+		input.Role,
+	); !ok {
+		writeError(w, r, status, code, message)
+		return
+	}
 	member, err := s.store.UpdateOrgMemberRole(r.Context(), org.Organization.ID, targetUserID, input.Role)
 	if errors.Is(err, cloudpostgres.ErrOrgMembershipNotFound) {
 		writeError(w, r, http.StatusNotFound, "MEMBER_NOT_FOUND", "The organization member does not exist.")
@@ -646,6 +678,25 @@ func (s *Server) updateOrgMemberRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"member": member})
+}
+
+func validateOrgMemberRoleUpdate(
+	principalUserID string,
+	actorRole string,
+	target clouddomain.OrgMember,
+	ownerCount int,
+	nextRole string,
+) (int, string, string, bool) {
+	if string(target.User.ID) == principalUserID {
+		return http.StatusForbidden, "ORG_ROLE_REQUIRED", "You cannot change your own organization role.", false
+	}
+	if target.Membership.Role == "owner" && actorRole != "owner" {
+		return http.StatusForbidden, "ORG_ROLE_REQUIRED", "Only organization owners can change another owner's role.", false
+	}
+	if target.Membership.Role == "owner" && nextRole != "owner" && ownerCount <= 1 {
+		return http.StatusConflict, "LAST_OWNER_REQUIRED", "An organization must keep at least one owner.", false
+	}
+	return 0, "", "", true
 }
 
 func (s *Server) listMyInvitations(w http.ResponseWriter, r *http.Request) {

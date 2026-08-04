@@ -1,8 +1,12 @@
 # AO Cloud Design
 
-Status: proposed rebuild design. This is the source of truth for the intended
-AO Cloud product direction, not a description of the currently deployed test
-vertical slice.
+Status: implemented local Cloud foundation plus hosted-production design.
+
+The control plane, PostgreSQL schema, organization authorization, WorkOS JWT
+boundary, GitHub App install/webhook flow, worker transport, and browser Cloud
+surface are implemented in this repository and exercised locally. This document
+distinguishes those implemented foundations from hosted deployment, enterprise
+hardening, and operational work that remain to be done.
 
 ## Non-negotiable boundary
 
@@ -60,19 +64,23 @@ design.
 
 ## Current cloud schema
 
-The existing PostgreSQL schema is a useful starting point. These are separate
+The current PostgreSQL schema is organization-scoped. These are separate
 tables, linked with foreign keys:
 
 | Table | Current responsibility |
 | --- | --- |
-| `ao_accounts` | One external authenticated user maps to one cloud account. |
-| `ao_projects` | Registered repository projects, owned by `account_id`. |
+| `ao_accounts` | Legacy compatibility mapping from pre-organization Cloud accounts to personal organizations. |
+| `ao_users` | Durable AO user mapped to a local or external identity-provider subject. |
+| `ao_organizations` | AO tenant: personal, team, or enterprise workspace. |
+| `ao_org_memberships` | User-to-organization role (`owner`, `admin`, `member`, or `viewer`). |
+| `ao_org_invitations` | Durable invitation lifecycle. |
+| `ao_projects` | Registered repository projects, owned by `org_id`. |
 | `ao_sessions` | Orchestrator and worker sessions: kind, harness, branch, activity, termination, and native agent session ID. |
 | `ao_commands` | Idempotent command receipts, results, and failures. |
 | `ao_session_sequences` | Allocates the next ordered event sequence for each session. |
 | `ao_events` | Append-only, replayable lifecycle, chat, terminal, and worker events. |
 | `ao_turns` | One durable user-message-to-agent-response run, including its state, worker epoch, attempts, and completion/failure. |
-| `ao_sandboxes` | The session-to-provider-environment mapping, desired/observed lifecycle state, retry lease, resource profile, and last error. |
+| `ao_sandboxes` | Session-to-provider-environment mapping, desired/observed lifecycle state, retry lease, resource profile, and last error. |
 | `ao_worker_connections` | The current worker identity, epoch, capabilities, and heartbeat timestamps for a sandbox. |
 | `ao_provider_connections` | Encrypted Daytona and coding-agent provider connection metadata. |
 | `ao_access_tickets` | One-time, short-lived worker bootstrap, terminal, and preview access grants. |
@@ -84,26 +92,33 @@ tables, linked with foreign keys:
 | `ao_github_repositories` | Canonical GitHub repository identity and metadata. |
 | `ao_github_repository_grants` | Durable intervals in which an installation grants an AO organization access to a repository. |
 | `ao_github_webhook_deliveries` | Signed, deduplicated, retryable GitHub webhook inbox. |
+| `ao_org_provider_settings` | Organization policy for custom versus personal-default agent credentials. |
+| `ao_project_share_links` | Revocable, expiring project/session share links. |
+| `ao_project_share_grants` | Durable project access granted after a share link is redeemed. |
+| `ao_project_share_link_recipients` | Optional email or organization restriction for a share link. |
 
 The main relationships are:
 
 ```text
-account → projects → sessions
+user → organization memberships → organizations
+organization → projects → sessions
 session → commands, events, turns, sandbox, worker connection, access tickets
 sandbox → provider connection
 session → pull requests → PR checks
 organization → GitHub installations → repository grants → GitHub repositories
 GitHub webhook deliveries → installation/repository reconciliation
+project/session share links → redeemed user grants
 ```
 
-The rebuild must replace the single-user `account_id` ownership model with
-organization, membership, role, repository-grant, quota, and tenant-scoped
-audit ownership. Existing event, turn, command, sandbox, and worker-fencing
-semantics should be retained where they remain valid.
+Migration `00008_cloud_org_auth.sql` backfills legacy accounts into personal
+organizations and adds non-null `org_id` ownership to tenant-owned lifecycle,
+SCM, provider, worker, ticket, and audit records. The remaining schema work is
+operational policy: quotas, retention, billing/entitlements, and production RLS
+enforcement.
 
 ## Components
 
-### 1. Cloud web app (new)
+### 1. Cloud web app
 
 The zero-install browser product for every cloud project.
 
@@ -121,13 +136,15 @@ The zero-install browser product for every cloud project.
   client makes “cloud orchestrator plus cloud workers” a real standalone
   product rather than a remote mode of the desktop app.
 
-### 2. Ingress and authentication gateway — WorkOS (grows)
+### 2. Ingress and authentication gateway — WorkOS
 
-The TLS front door and first multi-tenant enforcement point.
+WorkOS is the hosted identity provider; the control plane remains the
+authorization gateway.
 
-- Runs at the public ingress for the control plane, initially on Azure
-  Container Apps.
-- Verifies WorkOS access-token JWTs on every browser request and resolves the
+- A deployment-owned TLS ingress routes browser traffic to the control plane.
+  WorkOS does not run that ingress.
+- In `workos` auth mode, the Go control plane verifies WorkOS access-token JWTs
+  against WorkOS JWKS and resolves the
   authenticated AO user, active organization, role, and tenant scope before
   application handlers run.
 - Enforces CORS, request limits, origin policy, and short-lived tickets for
@@ -159,8 +176,8 @@ WorkOS proves identity; AO owns authorization and resource ownership.
 
 ### 4. GitHub App installation and credential boundary
 
-The GitHub App is AO Cloud's hosted repository authority. Local email/password
-development remains a separate explicit mode that uses the host `gh`
+The GitHub App implementation is AO Cloud's hosted repository authority. Local
+development remains a separate explicit `local-gh` mode that uses the host `gh`
 credential.
 
 - An AO organization owner/admin starts an expiring, signed, single-use install
@@ -177,12 +194,24 @@ credential.
   in control-plane memory and are not included in worker bootstrap data,
   persisted in sandboxes, or logged. The App private key remains
   control-plane-only.
+- SCM observation uses the smallest required App token scope for the core PR
+  read path (`pull_requests:read`) and treats check-run/review-thread reads as
+  optional enrichment. A missing optional GitHub permission must not prevent AO
+  from recording the claimed PR number, title, and mergeability.
+- Workers that need `gh pr ...` commands use the worker-only
+  `/worker/github-token` broker path to obtain a short-lived repository-scoped
+  App token for that operation. They do not receive a reusable GitHub token at
+  bootstrap.
 - The chosen installation flow does not use GitHub user OAuth or request user
   authorization. AO proves which AO owner/admin initiated and confirmed the
   signed attempt and that the installation belongs to the configured App, but
   cannot cryptographically prove the same GitHub human clicked Install. The AO
   initiator is responsible for confirming the GitHub account and repository
   selection.
+
+The implementation still needs a real GitHub App registration, production
+secrets, public callback/webhook URLs, and hosted end-to-end verification before
+it can serve a customer organization.
 
 ### 5. Control-plane API service (grows substantially)
 
@@ -224,6 +253,10 @@ isolated sandbox per active AO session.
 - Starts a headless AO worker in each sandbox. The worker clones authorized
   repositories, runs one selected harness, reports heartbeats/events, and
   connects outward to the control plane.
+- Worker Git credentials are configured idempotently when a sandbox is created
+  or restored. Repeated starts must replace old helper config rather than crash
+  on duplicate `credential.helper` values, so control-plane restarts can bring
+  existing Docker/Daytona workspaces back online.
 - The sandbox owns execution; the supervisor owns compute lifecycle. Session
   activity remains a separate durable control-plane concern.
 - **Why:** Sandboxes run arbitrary agent and user code, so they are disposable
@@ -328,5 +361,9 @@ connecting directly to a worker:
   independently.
 - Permanent credentials never enter browser bundles, logs, reusable snapshots,
   or worker images.
+- Project sharing is a CP authorization feature, not a repository grant. Share
+  links may be open to anyone with the link or restricted to specific emails or
+  organizations; redeemed grants are project-scoped and use only `viewer` or
+  `editor`.
 - Cloud UI mirrors the applicable AO experience, but it never pretends that
   local-only desktop capabilities exist.

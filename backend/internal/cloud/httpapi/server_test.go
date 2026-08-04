@@ -81,6 +81,73 @@ func TestRefreshClaimedPullRequestRefreshesGitHubAppProject(t *testing.T) {
 	}
 }
 
+func TestValidateOrgMemberRoleUpdateProtectsOwnerInvariants(t *testing.T) {
+	target := clouddomain.OrgMember{
+		User:       clouddomain.User{ID: "target-user"},
+		Membership: clouddomain.OrgMembership{Role: "owner"},
+	}
+	for _, test := range []struct {
+		name       string
+		principal  string
+		actorRole  string
+		target     clouddomain.OrgMember
+		ownerCount int
+		nextRole   string
+		wantStatus int
+		wantOK     bool
+	}{
+		{
+			name:       "admin cannot change owner",
+			principal:  "admin-user",
+			actorRole:  "admin",
+			target:     target,
+			ownerCount: 2,
+			nextRole:   "member",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "last owner cannot be demoted",
+			principal:  "owner-two",
+			actorRole:  "owner",
+			target:     target,
+			ownerCount: 1,
+			nextRole:   "admin",
+			wantStatus: http.StatusConflict,
+		},
+		{
+			name:       "member cannot change own role",
+			principal:  "target-user",
+			actorRole:  "admin",
+			target:     clouddomain.OrgMember{User: clouddomain.User{ID: "target-user"}, Membership: clouddomain.OrgMembership{Role: "member"}},
+			ownerCount: 1,
+			nextRole:   "viewer",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "owner can change another owner when another remains",
+			principal:  "owner-two",
+			actorRole:  "owner",
+			target:     target,
+			ownerCount: 2,
+			nextRole:   "admin",
+			wantOK:     true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			status, _, _, ok := validateOrgMemberRoleUpdate(
+				test.principal,
+				test.actorRole,
+				test.target,
+				test.ownerCount,
+				test.nextRole,
+			)
+			if ok != test.wantOK || status != test.wantStatus {
+				t.Fatalf("validateOrgMemberRoleUpdate() = (%d, %t), want (%d, %t)", status, ok, test.wantStatus, test.wantOK)
+			}
+		})
+	}
+}
+
 func TestActivityTurnTransitions(t *testing.T) {
 	for _, test := range []struct {
 		event         string

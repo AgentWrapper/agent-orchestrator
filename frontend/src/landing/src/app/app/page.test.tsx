@@ -712,6 +712,14 @@ it("shows invitation status, inviter, and settings notification badge", async ()
         role: "member",
         status: "pending",
       },
+      {
+        id: "invite-decline",
+        orgId: "org-three",
+        email: "other@example.com",
+        invitedByEmail: "admin@example.com",
+        role: "viewer",
+        status: "pending",
+      },
     ],
   });
   apiMocks.orgInvitations.mockResolvedValue({
@@ -731,15 +739,42 @@ it("shows invitation status, inviter, and settings notification badge", async ()
 
   const settings = await screen.findByRole("button", { name: /Settings/ });
   expect(
-    await screen.findByLabelText("2 settings notifications"),
+    await screen.findByLabelText("3 settings notifications"),
   ).toBeVisible();
   fireEvent.click(settings);
 
   expect(await screen.findByText("Organization settings")).toBeVisible();
   expect(screen.getByText("teammate@example.com")).toBeVisible();
   expect(screen.getByText("pending")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
+  await waitFor(() =>
+    expect(apiMocks.revokeInvitation).toHaveBeenCalledWith(
+      "org-one",
+      "invite-out",
+    ),
+  );
   fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
   expect(await screen.findByText("Invited by owner@example.com")).toBeVisible();
+  const incomingInvite = screen.getByText("user@example.com as member")
+    .parentElement?.parentElement;
+  if (!incomingInvite) {
+    throw new Error("incoming invitation card not found");
+  }
+  fireEvent.click(within(incomingInvite).getByRole("button", { name: "Accept" }));
+  await waitFor(() =>
+    expect(apiMocks.acceptInvitation).toHaveBeenCalledWith("invite-in"),
+  );
+  const declinedInvite = screen.getByText("other@example.com as viewer")
+    .parentElement?.parentElement;
+  if (!declinedInvite) {
+    throw new Error("declined invitation card not found");
+  }
+  fireEvent.click(
+    within(declinedInvite).getByRole("button", { name: "Decline" }),
+  );
+  await waitFor(() =>
+    expect(apiMocks.declineInvitation).toHaveBeenCalledWith("invite-decline"),
+  );
 });
 
 it("creates a new organization from settings", async () => {
