@@ -263,7 +263,11 @@ export function SessionFilesView({
 						aria-label={t("files.search")}
 						className="h-8 pl-8 font-mono text-xs"
 						onChange={(event) => setFilter(event.target.value)}
-						placeholder={t("files.searchCountPlaceholder", { count: changedCount })}
+						placeholder={
+							filesQuery.isPending
+								? t("files.loading")
+								: t("files.searchCountPlaceholder", { count: changedCount })
+						}
 						value={filter}
 					/>
 				</label>

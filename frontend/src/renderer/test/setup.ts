@@ -177,6 +177,10 @@ if (typeof window !== "undefined") {
 			onClick: () => () => undefined,
 			setBadge: async () => undefined,
 		},
+		tray: {
+			setAttentionState: () => undefined,
+			onOpenSession: () => () => undefined,
+		},
 		appState: {
 			getMigration: async () => ({ status: "pending" }),
 			setMigration: async () => undefined,

@@ -2,10 +2,12 @@ import type { TFunction } from "i18next";
 import {
 	attentionZone,
 	attentionZoneOrder,
+	isOrchestratorSession,
 	openPRs,
 	sessionIsActive,
 	sessionNeedsAttention,
 	workerSessions,
+	type AttentionZone,
 	type WorkspaceSession,
 	type WorkspaceSummary,
 } from "../types/workspace";
@@ -24,6 +26,8 @@ export type CommandAction =
 	| { kind: "open-new-task"; projectId: string }
 	| { kind: "open-new-project" }
 	| { kind: "open-orchestrator"; projectId: string }
+	| { kind: "open-session-actions"; sessionId: string }
+	| { kind: "resume-session"; projectId: string; sessionId: string }
 	| { kind: "copy-branch"; branch: string }
 	| { kind: "toggle-theme" };
 
@@ -36,6 +40,7 @@ export type CommandItem = {
 	disabled?: boolean;
 	disabledReason?: string;
 	searchOnly?: boolean;
+	zone?: AttentionZone;
 	action?: CommandAction;
 };
 
@@ -87,6 +92,18 @@ type SessionCommandGroup = Extract<CommandGroupId, "attention" | "sessions">;
 
 const SESSION_ID_PREFIX: Record<SessionCommandGroup, string> = { attention: "attention", sessions: "session" };
 
+export type WorkspaceSessionContext = {
+	workspace: WorkspaceSummary;
+	session: WorkspaceSession;
+};
+
+function jumpTarget(workspace: WorkspaceSummary, session: WorkspaceSession): NavigateTarget {
+	return {
+		to: "/projects/$projectId/sessions/$sessionId",
+		params: { projectId: workspace.id, sessionId: session.id },
+	};
+}
+
 function sessionCommand(
 	workspace: WorkspaceSummary,
 	session: WorkspaceSession,
@@ -97,21 +114,56 @@ function sessionCommand(
 		group,
 		title: session.title,
 		subtitle: workspace.name,
+		zone: attentionZone(session),
 		keywords: [workspace.name, session.branch ?? "", session.issueId ?? ""],
-		action: {
-			kind: "navigate",
-			target: {
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId: workspace.id, sessionId: session.id },
-			},
-		},
+		action: { kind: "open-session-actions", sessionId: session.id },
 	};
 }
 
-function findSession(workspaces: WorkspaceSummary[], sessionId: string): WorkspaceSession | undefined {
+export function buildSessionActions(
+	workspace: WorkspaceSummary,
+	session: WorkspaceSession,
+	t: TFunction = appI18n.t,
+): CommandItem[] {
+	const items: CommandItem[] = [];
+
+	items.push({
+		id: `session-action:jump:${session.id}`,
+		group: "current",
+		title: t("command.jumpToSession"),
+		keywords: ["open", "go", "view", session.title],
+		action: { kind: "navigate", target: jumpTarget(workspace, session) },
+	});
+
+	if (!sessionIsActive(session) && !isOrchestratorSession(session)) {
+		items.push({
+			id: `session-action:resume:${session.id}`,
+			group: "current",
+			title: t("command.resumeAgent"),
+			subtitle: t("command.resumeAgentSubtitle"),
+			keywords: ["restore", "restart", "retry", "resume", session.title],
+			action: { kind: "resume-session", projectId: workspace.id, sessionId: session.id },
+		});
+	}
+
+	if (session.branch && !isOrchestratorSession(session) && !isSyntheticBranch(session)) {
+		items.push({
+			id: `session-action:copy-branch:${session.id}`,
+			group: "current",
+			title: t("command.copyBranch"),
+			subtitle: session.branch,
+			keywords: ["branch", "git", session.branch, session.title],
+			action: { kind: "copy-branch", branch: session.branch },
+		});
+	}
+
+	return items;
+}
+
+export function findSession(workspaces: WorkspaceSummary[], sessionId: string): WorkspaceSessionContext | undefined {
 	for (const workspace of workspaces) {
 		const match = workspace.sessions.find((session) => session.id === sessionId);
-		if (match) return match;
+		if (match) return { workspace, session: match };
 	}
 	return undefined;
 }
@@ -123,7 +175,7 @@ export function buildCommands(ctx: CommandPaletteContext, t: TFunction = appI18n
 	const currentProject = currentProjectId
 		? workspaces.find((workspace) => workspace.id === currentProjectId)
 		: undefined;
-	const currentSession = currentSessionId ? findSession(workspaces, currentSessionId) : undefined;
+	const currentSession = currentSessionId ? findSession(workspaces, currentSessionId)?.session : undefined;
 	const isProjectRestarting = Boolean(currentProject && restartingProjectIds?.has(currentProject.id));
 
 	items.push({
@@ -166,7 +218,7 @@ export function buildCommands(ctx: CommandPaletteContext, t: TFunction = appI18n
 	}
 
 	const currentBranch = currentSession?.branch;
-	if (currentSession && currentBranch && currentSession.kind !== "orchestrator" && !isSyntheticBranch(currentSession)) {
+	if (currentSession && currentBranch && !isOrchestratorSession(currentSession) && !isSyntheticBranch(currentSession)) {
 		items.push({
 			id: "current-copy-branch",
 			group: "current",
@@ -289,12 +341,20 @@ export function matchScore(query: string, item: CommandItem): number {
 	return 0;
 }
 
+function isAttentionItem(item: CommandItem): boolean {
+	return item.zone === "action" || item.zone === "merge";
+}
+
+function attentionRank(item: CommandItem): number {
+	return item.zone ? attentionZoneOrder.indexOf(item.zone) : attentionZoneOrder.length;
+}
+
 export function filterCommands(items: CommandItem[], query: string): CommandItem[] {
 	if (!query.trim()) return items.filter((item) => !item.searchOnly);
 	return items
 		.map((item, index) => ({ item, index, score: matchScore(query, item) }))
 		.filter((entry) => entry.score > 0)
-		.sort((a, b) => b.score - a.score || a.index - b.index)
+		.sort((a, b) => b.score - a.score || attentionRank(a.item) - attentionRank(b.item) || a.index - b.index)
 		.map((entry) => entry.item);
 }
 
@@ -315,12 +375,27 @@ export function groupCommands(
 		.filter((group) => group.items.length > 0);
 }
 
+export type DisplayGroup = { id: string; label: string; items: CommandItem[] };
+
+export const MAX_ATTENTION_SEARCH_RESULTS = Math.floor(MAX_SEARCH_RESULTS / 2);
+
 export function visibleForQuery(items: CommandItem[], query: string): CommandItem[] {
 	const ranked = filterCommands(items, query);
-	return query.trim() ? ranked.slice(0, MAX_SEARCH_RESULTS) : ranked;
-}
+	if (!query.trim()) return ranked;
 
-export type DisplayGroup = { id: string; label: string; items: CommandItem[] };
+	const attentionRanked = ranked.filter(isAttentionItem);
+	const nonAttentionRanked = ranked.filter((item) => !isAttentionItem(item));
+
+	const attention = attentionRanked.slice(0, MAX_ATTENTION_SEARCH_RESULTS);
+	const attentionIds = new Set(attention.map((item) => item.id));
+	const rest = nonAttentionRanked.slice(0, MAX_SEARCH_RESULTS - attention.length);
+
+	const backfillBudget = MAX_SEARCH_RESULTS - attention.length - rest.length;
+	const backfill =
+		backfillBudget > 0 ? attentionRanked.filter((item) => !attentionIds.has(item.id)).slice(0, backfillBudget) : [];
+
+	return [...attention, ...rest, ...backfill];
+}
 
 export function displayGroups(items: CommandItem[], query: string, t: TFunction = appI18n.t): DisplayGroup[] {
 	// Keep matches under their category headings (Cursor-style), including while typing.

@@ -190,6 +190,7 @@ type Session struct {
 	TerminateOnPRMerge bool
 	DiffBaseSha        string
 	DiffBaseRef        string
+	ReviewerHarness    domain.ReviewerHarness
 }
 
 type SessionCleanupFact struct {

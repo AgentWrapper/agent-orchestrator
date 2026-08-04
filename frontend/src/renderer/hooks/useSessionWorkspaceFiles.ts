@@ -1,6 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { subscribeWorkspaceFileChanges } from "../lib/workspace-file-events";
 
 export type WorkspaceCompareMode = "base" | "head_fallback";
 export type WorkspaceFileSummary = components["schemas"]["WorkspaceFileSummary"] & {
@@ -21,7 +23,7 @@ async function fetchSessionWorkspaceFiles(sessionId: string, errorMessage: strin
 }
 
 // Shared so SessionFilesView (full fetch + polling) and SessionInspector
-// (cache-only read for the tab count) always resolve to the same cache entry.
+// (eager fetch + live invalidation) always resolve to the same cache entry.
 export function sessionWorkspaceFilesQueryOptions(sessionId: string, errorMessage = "Unable to load workspace files") {
 	return {
 		queryKey: sessionWorkspaceFilesQueryKey(sessionId),
@@ -34,15 +36,22 @@ export function isChangedWorkspaceFile(file: WorkspaceFileSummary): boolean {
 	return file.status !== "unmodified";
 }
 
-// Cache-only: never fetches on its own (enabled: false), so it costs nothing
-// until SessionFilesView's own polling query (same key) has populated the
-// cache. Returns undefined before that ever happens, distinguishing "never
-// checked" from "checked, nothing changed" (which resolves to 0).
+// Keep the lightweight summary query warm while the inspector is open. The
+// Files view then mounts against current cache data instead of flashing a
+// misleading zero while its first request starts.
 export function useSessionWorkspaceFilesChangedCount(sessionId: string | undefined): number | undefined {
+	const queryClient = useQueryClient();
 	const query = useQuery({
 		...sessionWorkspaceFilesQueryOptions(sessionId ?? ""),
-		enabled: false,
+		enabled: Boolean(sessionId),
+		// Live invalidations keep the inactive tab fresh; polling starts only
+		// when the full Files view is visible.
+		refetchInterval: false,
 		select: (data: WorkspaceFilesResponse) => data.files.filter(isChangedWorkspaceFile).length,
 	});
+	useEffect(() => {
+		if (!sessionId) return;
+		return subscribeWorkspaceFileChanges(sessionId, queryClient);
+	}, [queryClient, sessionId]);
 	return sessionId ? query.data : undefined;
 }
