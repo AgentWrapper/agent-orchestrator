@@ -288,7 +288,10 @@ async function createWindowInternal(): Promise<void> {
 	await disposeAllBrowserViewHosts();
 	const agentBrowserRuntime = new AgentBrowserRuntime({
 		binaryPath: resolveAgentBrowserBinaryPath(),
-		dataDir: path.join(app.getPath("userData"), "browser-runtime"),
+		// Agent Browser creates Unix sockets below each run root. Keep this base
+		// deliberately short so the namespace/session suffix stays below macOS's
+		// 103-byte sockaddr_un limit; all AO state remains under ~/.ao.
+		dataDir: path.join(os.homedir(), ".ao", ...(app.isPackaged ? ["br"] : ["dev", "br"])),
 		log: (message) => console.log(`AO: ${message}`),
 	});
 	await agentBrowserRuntime.prepare();

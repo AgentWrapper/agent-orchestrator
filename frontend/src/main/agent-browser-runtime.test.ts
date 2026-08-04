@@ -1,15 +1,19 @@
 import { EventEmitter } from "node:events";
-import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
 	AgentBrowserRuntime,
+	AGENT_BROWSER_UNIX_SOCKET_PATH_MAX_BYTES,
 	BROWSER_RUNTIME_RECLAIM_GRACE_MS,
+	agentBrowserSocketPath,
 	nativeArgumentsForAction,
 	scavengeBrowserRuntime,
 	validateAgentBrowserArguments,
 } from "./agent-browser-runtime";
+
+const shortTempDir = process.platform === "win32" ? os.tmpdir() : "/tmp";
 
 describe("agent-browser command policy", () => {
 	it("allows the focused semantic workflow", () => {
@@ -87,9 +91,11 @@ describe("agent-browser runtime lifecycle", () => {
 	async function fixture(overrides: {
 		start?: () => Promise<string>;
 		close?: () => Promise<void>;
+		platform?: NodeJS.Platform;
 		processRunner?: (...args: unknown[]) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
+		socketDir?: string;
 	} = {}) {
-		const dataDir = await mkdtemp(path.join(os.tmpdir(), "ao-browser-runtime-test-"));
+		const dataDir = await mkdtemp(path.join(shortTempDir, "ao-browser-runtime-test-"));
 		const bridge = {
 			start: vi.fn(overrides.start ?? (async () => "ws://127.0.0.1:1/fixture")),
 			close: vi.fn(overrides.close ?? (async () => undefined)),
@@ -101,6 +107,8 @@ describe("agent-browser runtime lifecycle", () => {
 		const runtime = new AgentBrowserRuntime({
 			binaryPath: process.execPath,
 			dataDir,
+			...(overrides.socketDir ? { socketDir: overrides.socketDir } : {}),
+			...(overrides.platform ? { platform: overrides.platform } : {}),
 			bridgeFactory: () => bridge,
 			processRunner: processRunner as never,
 			processAlive: () => false,
@@ -126,6 +134,45 @@ describe("agent-browser runtime lifecycle", () => {
 			expect(await readdir(dataDir)).toEqual([]);
 		} finally {
 			await cleanup(dataDir);
+		}
+	});
+
+	it("uses a private explicit socket directory and a bounded namespace", async () => {
+		const { dataDir, processRunner, runtime } = await fixture();
+		try {
+			await runtime.run("session-1", ["snapshot"], provider);
+			const environment = (processRunner.mock.calls[0] as unknown[])[2] as NodeJS.ProcessEnv;
+			const namespace = environment.AGENT_BROWSER_NAMESPACE!;
+			const socketDir = environment.AGENT_BROWSER_SOCKET_DIR!;
+			expect(socketDir).toContain(path.join(dataDir, "r-"));
+			expect(socketDir).toMatch(/[\\/]s$/);
+			expect(namespace).toMatch(/^ao-[0-9a-f]{4}-[0-9a-f]{12}$/);
+			const socketPath = agentBrowserSocketPath(socketDir, namespace);
+			expect(Buffer.byteLength(socketPath, "utf8")).toBeLessThanOrEqual(
+				process.platform === "win32" ? Number.MAX_SAFE_INTEGER : AGENT_BROWSER_UNIX_SOCKET_PATH_MAX_BYTES,
+			);
+			if (process.platform !== "win32") {
+				expect((await stat(socketDir)).mode & 0o777).toBe(0o700);
+			}
+		} finally {
+			await runtime.dispose();
+			await cleanup(dataDir);
+		}
+	});
+
+	it("rejects an oversized Unix socket path before starting the bridge", async () => {
+		const socketBase = await mkdtemp(path.join(os.tmpdir(), "ao-browser-runtime-long-path-test-"));
+		const socketDir = path.join(socketBase, "x".repeat(120));
+		const { dataDir, runtime, bridge } = await fixture({ platform: "darwin", socketDir });
+		try {
+			await expect(runtime.devtoolsEndpoint("session-1", "t1", provider)).rejects.toMatchObject({
+				code: "AGENT_BROWSER_START_FAILED",
+			});
+			expect(bridge.start).not.toHaveBeenCalled();
+		} finally {
+			await runtime.dispose();
+			await cleanup(dataDir);
+			await cleanup(socketBase);
 		}
 	});
 
@@ -186,18 +233,24 @@ describe("agent-browser runtime lifecycle", () => {
 		const dataDir = await mkdtemp(path.join(os.tmpdir(), "ao-browser-scavenge-test-"));
 		try {
 			const dead = path.join(dataDir, "run-101-aaaaaaaaaaaa");
+			const shortDead = path.join(dataDir, "r-eeeeeeeeee");
 			const alive = path.join(dataDir, "run-202-bbbbbbbbbbbb");
 			const malformed = path.join(dataDir, "run-303-cccccccccccc");
 			const empty = path.join(dataDir, "run-404-dddddddddddd");
 			const legacy = path.join(dataDir, "ao-legacy-session");
-			await Promise.all([mkdir(dead), mkdir(alive), mkdir(malformed), mkdir(empty), mkdir(legacy)]);
+			await Promise.all([mkdir(dead), mkdir(shortDead), mkdir(alive), mkdir(malformed), mkdir(empty), mkdir(legacy)]);
 			const deadOwnerPath = path.join(dead, "owner.json");
+			const shortDeadOwnerPath = path.join(shortDead, "owner.json");
 			await writeFile(
 				deadOwnerPath,
 				JSON.stringify({ marker: "AO_BROWSER_RUNTIME_V1", pid: 101, startedAt: new Date().toISOString(), token: "a".repeat(32) }),
 			);
+			await writeFile(
+				shortDeadOwnerPath,
+				JSON.stringify({ marker: "AO_BROWSER_RUNTIME_V1", pid: 101, startedAt: new Date().toISOString(), token: "e".repeat(32) }),
+			);
 			const staleAt = new Date(Date.now() - BROWSER_RUNTIME_RECLAIM_GRACE_MS - 1_000);
-			await utimes(deadOwnerPath, staleAt, staleAt);
+			await Promise.all([utimes(deadOwnerPath, staleAt, staleAt), utimes(shortDeadOwnerPath, staleAt, staleAt)]);
 			await writeFile(
 				path.join(alive, "owner.json"),
 				JSON.stringify({ marker: "AO_BROWSER_RUNTIME_V1", pid: 202, startedAt: new Date().toISOString(), token: "b".repeat(32) }),
@@ -265,7 +318,7 @@ describe.skipIf(!nativeBinary)("agent-browser native compatibility", () => {
 		};
 		const runtime = new AgentBrowserRuntime({
 			binaryPath: nativeBinary!,
-			dataDir: path.join(os.tmpdir(), "ao-agent-browser-native-test"),
+			dataDir: path.join(shortTempDir, "ao-agent-browser-native-test"),
 		});
 		try {
 			const result = await runtime.runAction("native-fixture", "get", { property: "url" }, provider);

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { access, mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { AgentBrowserCDPBridge, type AgentBrowserTargetProvider } from "./agent-browser-cdp-bridge";
 
@@ -14,7 +14,9 @@ const BRIDGE_CLOSE_TIMEOUT_MS = 5_000;
 export const BROWSER_RUNTIME_RECLAIM_GRACE_MS = 15 * 60_000;
 const RUNTIME_OWNER_MARKER = "AO_BROWSER_RUNTIME_V1";
 const RUNTIME_OWNER_FILE = "owner.json";
-const RUNTIME_ROOT_PATTERN = /^run-(\d+)-([0-9a-f]{12})$/;
+const RUNTIME_ROOT_PATTERN = /^(?:run-(\d+)-[0-9a-f]{12}|r-[0-9a-f]{10})$/;
+/** Agent Browser's Unix preflight uses the macOS-sized 103-byte limit on all Unix builds. */
+export const AGENT_BROWSER_UNIX_SOCKET_PATH_MAX_BYTES = 103;
 
 const ALLOWED_COMMANDS = new Set([
 	"open",
@@ -80,8 +82,11 @@ export type NativeProcessResult = Pick<AgentBrowserRunResult, "stdout" | "stderr
 export type AgentBrowserRuntimeOptions = {
 	binaryPath: string;
 	dataDir: string;
+	/** Internal seam for testing path validation; production derives a per-run private directory. */
+	socketDir?: string;
 	log?: (message: string) => void;
 	/** Internal seams used by lifecycle tests; production uses the defaults. */
+	platform?: NodeJS.Platform;
 	processRunner?: NativeProcessRunner;
 	bridgeFactory?: (provider: AgentBrowserTargetProvider) => AgentBrowserBridge;
 	processAlive?: (pid: number) => boolean;
@@ -123,6 +128,9 @@ export class AgentBrowserRuntime {
 	private readonly processRunner: NativeProcessRunner;
 	private readonly bridgeFactory: (provider: AgentBrowserTargetProvider) => AgentBrowserBridge;
 	private readonly processAlive: (pid: number) => boolean;
+	private readonly platform: NodeJS.Platform;
+	private readonly socketDirOverride?: string;
+	private socketDir: string | null = null;
 	private runtimeRootPromise: Promise<void> | null = null;
 	private runtimeRoot: string | null = null;
 	private disposed = false;
@@ -133,6 +141,8 @@ export class AgentBrowserRuntime {
 		this.processRunner = options.processRunner ?? runNativeProcess;
 		this.bridgeFactory = options.bridgeFactory ?? ((provider) => new AgentBrowserCDPBridge(provider));
 		this.processAlive = options.processAlive ?? defaultProcessAlive;
+		this.platform = options.platform ?? process.platform;
+		this.socketDirOverride = options.socketDir;
 	}
 
 	/** Reclaim confirmed-dead run roots before the browser UI is created. */
@@ -282,14 +292,15 @@ export class AgentBrowserRuntime {
 
 	private async createSession(sessionId: string, provider: AgentBrowserTargetProvider): Promise<SessionRuntime> {
 		await this.ensureRuntimeRoot();
+		const namespace = `${sessionNamespace(sessionId)}-${randomBytes(6).toString("hex")}`;
+		assertAgentBrowserSocketPath(this.socketDir!, namespace, this.platform);
 		const bridge = this.bridgeFactory(provider);
 		let runtimeDir: string | undefined;
 		try {
 			const endpoint = await bridge.start();
-			const namespace = `${sessionNamespace(sessionId)}-${randomBytes(6).toString("hex")}`;
 			runtimeDir = path.join(this.runtimeRoot!, namespace);
 			const configPath = path.join(runtimeDir, "config.json");
-			await mkdir(runtimeDir, { recursive: true });
+			await mkdir(runtimeDir, { recursive: true, mode: 0o700 });
 			await writeFile(configPath, "{}\n", "utf8");
 			return { bridge, endpoint, streamDisabled: false, namespace, runtimeDir, configPath };
 		} catch (error) {
@@ -343,10 +354,10 @@ export class AgentBrowserRuntime {
 		if (this.runtimeRootPromise) return this.runtimeRootPromise;
 		this.runtimeRootPromise = (async () => {
 			await this.prepare();
-			await mkdir(this.options.dataDir, { recursive: true });
-			const rootName = `run-${process.pid}-${randomBytes(6).toString("hex")}`;
+			await ensurePrivateDirectory(this.options.dataDir);
+			const rootName = `r-${randomBytes(5).toString("hex")}`;
 			const root = path.join(this.options.dataDir, rootName);
-			await mkdir(root, { recursive: false });
+			await mkdir(root, { recursive: false, mode: 0o700 });
 			const owner: RuntimeOwner = {
 				marker: RUNTIME_OWNER_MARKER,
 				pid: process.pid,
@@ -358,6 +369,9 @@ export class AgentBrowserRuntime {
 					encoding: "utf8",
 					flag: "wx",
 				});
+				const socketDir = this.socketDirOverride ?? path.join(root, "s");
+				await ensurePrivateDirectory(socketDir);
+				this.socketDir = socketDir;
 			} catch (error) {
 				await removePath(root, this.log, "failed runtime root");
 				throw error;
@@ -378,6 +392,7 @@ export class AgentBrowserRuntime {
 		this.runtimeRoot = null;
 		this.runtimeRootPromise = null;
 		await removePath(root, this.log, "runtime root");
+		this.socketDir = null;
 	}
 
 	private async touchRuntimeRoot(): Promise<void> {
@@ -401,6 +416,7 @@ export class AgentBrowserRuntime {
 			USERPROFILE: runtime.runtimeDir,
 			AGENT_BROWSER_CONFIG: runtime.configPath,
 			AGENT_BROWSER_CDP: runtime.endpoint,
+			AGENT_BROWSER_SOCKET_DIR: this.socketDir!,
 			AGENT_BROWSER_SESSION: runtime.namespace,
 			AGENT_BROWSER_NAMESPACE: runtime.namespace,
 			AGENT_BROWSER_CONTENT_BOUNDARIES: "1",
@@ -466,12 +482,12 @@ export async function scavengeBrowserRuntime(
 	await Promise.all(removals);
 }
 
-function validRuntimeOwner(value: unknown, expectedPid: string): value is RuntimeOwner {
+function validRuntimeOwner(value: unknown, expectedPid?: string): value is RuntimeOwner {
 	if (!isRecord(value)) return false;
 	return (
 		value.marker === RUNTIME_OWNER_MARKER &&
 		numberIsInteger(value.pid) &&
-		String(value.pid) === expectedPid &&
+		(!expectedPid || String(value.pid) === expectedPid) &&
 		typeof value.startedAt === "string" &&
 		/^[0-9a-f]{32}$/.test(String(value.token))
 	);
@@ -496,6 +512,11 @@ async function removePath(target: string, log: (message: string) => void, label:
 	} catch (error) {
 		log(`agent-browser ${label} cleanup failed: ${String(error)}`);
 	}
+}
+
+async function ensurePrivateDirectory(target: string): Promise<void> {
+	await mkdir(target, { recursive: true, mode: 0o700 });
+	if (process.platform !== "win32") await chmod(target, 0o700);
 }
 
 async function closeBridgeWithTimeout(bridge: AgentBrowserBridge): Promise<void> {
@@ -782,7 +803,23 @@ function assertHTTPURL(raw: string): void {
 }
 
 function sessionNamespace(sessionId: string): string {
-	return `ao-${createHash("sha256").update(sessionId).digest("hex").slice(0, 20)}`;
+	return `ao-${createHash("sha256").update(sessionId).digest("hex").slice(0, 4)}`;
+}
+
+export function agentBrowserSocketPath(socketDir: string, namespace: string): string {
+	return path.join(socketDir, "namespaces", namespace, "run", `${namespace}.sock`);
+}
+
+function assertAgentBrowserSocketPath(socketDir: string, namespace: string, platform: NodeJS.Platform): void {
+	if (platform === "win32") return;
+	const socketPath = agentBrowserSocketPath(socketDir, namespace);
+	const byteLength = Buffer.byteLength(socketPath, "utf8");
+	if (byteLength > AGENT_BROWSER_UNIX_SOCKET_PATH_MAX_BYTES) {
+		throw runtimeError(
+			"AGENT_BROWSER_START_FAILED",
+			`Agent Browser socket path is ${byteLength} bytes; Unix supports at most ${AGENT_BROWSER_UNIX_SOCKET_PATH_MAX_BYTES}. AO needs a shorter socket directory.`,
+		);
+	}
 }
 
 function runtimeError(code: string, message: string): Error & { code: string } {
