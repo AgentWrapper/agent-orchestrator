@@ -62,6 +62,7 @@ import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store"
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
+import { AgentAvatar } from "./AgentAvatar";
 import { ResizeHandle } from "./ResizeHandle";
 import { isMacPlatform } from "../lib/platform";
 
@@ -127,11 +128,28 @@ function useSelection() {
 	};
 }
 
-// Activity controls motion; live PR context controls an active session's
-// color. Idle activity remains visible as a static gray dot.
-function SessionDot({ session }: { session: WorkspaceSession }) {
+// Keep agent identity and live state in one compact slot. The 12px provider
+// mark replaces the old standalone dot; its 6px status badge preserves the
+// same activity/SCM color and motion without moving the approved text column.
+function SessionAgentMark({ session }: { session: WorkspaceSession }) {
 	const dot = getSessionDotView(session);
-	return <span aria-hidden="true" className={cn("mt-px h-1.5 w-1.5 shrink-0 rounded-full", dot.className)} />;
+	return (
+		<span
+			aria-hidden="true"
+			className="relative size-3 shrink-0"
+			data-session-agent={session.provider}
+			title={session.provider}
+		>
+			<AgentAvatar className="size-3!" decorative provider={session.provider} />
+			<span
+				className={cn(
+					"absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full ring-1 ring-sidebar",
+					dot.className,
+				)}
+				data-session-status=""
+			/>
+		</span>
+	);
 }
 
 // Built on shadcn's sidebar primitives (components/ui/sidebar): the provider in
@@ -741,8 +759,8 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 	if (isEditing) {
 		return (
 			<SidebarMenuSubItem className="pl-4.5">
-				<div className="relative flex h-8 w-full items-center gap-2 rounded-lg px-2.5 py-0">
-					<SessionDot session={session} />
+				<div className="relative flex h-8 w-full items-center gap-0.5 rounded-lg px-2.5 py-0">
+					<SessionAgentMark session={session} />
 					<input
 							aria-label={t("shell.renameSession", { title: session.title })}
 						autoFocus
@@ -774,14 +792,14 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 				aria-current={active ? "page" : undefined}
 					aria-label={t("shell.openSession", { title: session.title })}
 				className={cn(
-					"relative flex h-8 w-full items-center gap-2 rounded-lg px-2.5 py-0 pr-7 text-left text-sm outline-hidden transition-[background-color,color]",
+					"relative flex h-8 w-full items-center gap-0.5 rounded-lg px-2.5 py-0 pr-7 text-left text-sm outline-hidden transition-[background-color,color]",
 					"hover:bg-interactive-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
 					active && "bg-interactive-active text-foreground",
 				)}
 				onClick={onOpen}
 				type="button"
 			>
-				<SessionDot session={session} />
+				<SessionAgentMark session={session} />
 				<span className="min-w-0 flex-1">
 					<span className={cn("block truncate", active ? "text-foreground" : "text-muted-foreground")}>
 						{session.title}

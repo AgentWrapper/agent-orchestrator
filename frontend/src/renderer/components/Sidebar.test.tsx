@@ -975,13 +975,18 @@ describe("Sidebar", () => {
 		await waitFor(() => expect(renameSessionMock).toHaveBeenCalledWith("proj-1-1", "polish login"));
 	});
 
-	it("aligns the session status dot with the project label column", () => {
+	it("aligns the compact agent mark with the project label column", () => {
 		const workspaceWithSession = { ...workspace, sessions: [session] };
 		renderSidebar({ workspaces: [workspaceWithSession] });
 
 		const sessionItem = screen.getByLabelText("Open fix login").closest("li");
 		expect(sessionItem).toHaveClass("pl-4.5");
 		expect(sessionItem).not.toHaveClass("pl-7");
+		const agentMark = screen.getByLabelText("Open fix login").querySelector('[data-session-agent="claude-code"]');
+		expect(agentMark).toHaveClass("size-3");
+		expect(agentMark?.querySelector("img")).toHaveClass("size-3!");
+		expect(agentMark?.querySelector("img")).toHaveAttribute("aria-hidden", "true");
+		expect(agentMark?.querySelector("[data-session-status]")).toBeInTheDocument();
 	});
 
 	it("caps the inline rename input at 20 characters", async () => {
@@ -1122,7 +1127,7 @@ describe("Sidebar", () => {
 		});
 
 		const sessionDot = (title: string) =>
-			screen.getByLabelText(`Open ${title}`).querySelector<HTMLElement>("span.rounded-full");
+			screen.getByLabelText(`Open ${title}`).querySelector<HTMLElement>("[data-session-status]");
 
 		expect(sessionDot("idle task")).toHaveClass("bg-status-idle");
 		expect(sessionDot("idle task")).not.toHaveClass("animate-status-pulse");
@@ -1167,8 +1172,8 @@ describe("Sidebar", () => {
 
 		const idleActivityDot = screen
 			.getByLabelText("Open idle activity task")
-			.querySelector<HTMLElement>("span.rounded-full");
-		const idleDraftDot = screen.getByLabelText("Open idle draft task").querySelector<HTMLElement>("span.rounded-full");
+			.querySelector<HTMLElement>("[data-session-status]");
+		const idleDraftDot = screen.getByLabelText("Open idle draft task").querySelector<HTMLElement>("[data-session-status]");
 
 		expect(idleActivityDot).toHaveClass("bg-status-idle");
 		expect(idleDraftDot).toHaveClass("bg-status-idle");
