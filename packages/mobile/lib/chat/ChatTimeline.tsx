@@ -18,6 +18,15 @@ import { useTheme, useThemedStyles } from "../ThemeProvider";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { HighlightedCodeText } from "./HighlightedCodeText";
 import { caretNotation, commandOutputText } from "./ansi";
+import {
+	humanizeInputName,
+	initialInputValue,
+	inputOptions,
+	missingRequiredInputs,
+	safeHttpURL,
+	toggleInputValue,
+	validateInput,
+} from "./elicitationModel";
 import type {
 	ConversationActivity,
 	ConversationItem,
@@ -27,10 +36,14 @@ import type {
 	InputProperty,
 } from "./types";
 import {
+	activityHierarchy,
+	activityNodesRunning,
 	activityStartsExpanded,
 	canRollbackTurn,
+	countActivityNodes,
 	groupConversationByTurn,
 	readableConversationItems,
+	type ActivityNode,
 	type ConversationGroup,
 } from "./timelineModel";
 
@@ -42,7 +55,8 @@ export function ChatTimeline({
 	snapshot,
 	loadingOlder,
 	onLoadOlder,
-	actionPending,
+	approvalPending,
+	inputPending,
 	onDecide,
 	onResolveInput,
 	onRollback,
@@ -52,9 +66,10 @@ export function ChatTimeline({
 	snapshot: ConversationSnapshot;
 	loadingOlder: boolean;
 	onLoadOlder(): void;
-	actionPending: boolean;
-	onDecide(requestId: string, decisionId: string): void;
-	onResolveInput(requestId: string, action: "accept" | "decline" | "cancel", content?: Record<string, unknown>): void;
+	approvalPending: boolean;
+	inputPending: boolean;
+	onDecide(requestId: string, decisionId: string): Promise<void>;
+	onResolveInput(requestId: string, action: "accept" | "decline" | "cancel", content?: Record<string, unknown>): Promise<void>;
 	onRollback(turnId: string): Promise<number>;
 	jumpToSequence?: number;
 	onJumpHandled?(): void;
@@ -122,7 +137,8 @@ export function ChatTimeline({
 				renderItem={({ item: group }) => <ConversationTurnGroup
 					group={group}
 					snapshot={snapshot}
-					actionPending={actionPending}
+					approvalPending={approvalPending}
+					inputPending={inputPending}
 					onDecide={onDecide}
 					onResolveInput={onResolveInput}
 					onRollback={onRollback}
@@ -133,32 +149,35 @@ export function ChatTimeline({
 	);
 }
 
-function ConversationTurnGroup({ group, snapshot, actionPending, onDecide, onResolveInput, onRollback }: {
+function ConversationTurnGroup({ group, snapshot, approvalPending, inputPending, onDecide, onResolveInput, onRollback }: {
 	group: ConversationGroup;
 	snapshot: ConversationSnapshot;
-	actionPending: boolean;
-	onDecide(requestId: string, decisionId: string): void;
-	onResolveInput(requestId: string, action: "accept" | "decline" | "cancel", content?: Record<string, unknown>): void;
+	approvalPending: boolean;
+	inputPending: boolean;
+	onDecide(requestId: string, decisionId: string): Promise<void>;
+	onResolveInput(requestId: string, action: "accept" | "decline" | "cancel", content?: Record<string, unknown>): Promise<void>;
 	onRollback(turnId: string): Promise<number>;
 }) {
 	const rows = activityRuns(group.items);
 	return <View>{rows.map((row) => row.kind === "activities"
 		? <ActivityRun key={row.key} activities={row.items} />
-		: <TimelineItem key={row.key} item={row.items[0]} actionPending={actionPending} onDecide={onDecide} onResolveInput={onResolveInput} />)}
+		: <TimelineItem key={row.key} item={row.items[0]} approvalPending={approvalPending} inputPending={inputPending} onDecide={onDecide} onResolveInput={onResolveInput} />)}
 		{group.turn ? <TurnSummary turn={group.turn} onRollback={canRollbackTurn(snapshot, group.turn) ? onRollback : undefined} /> : null}
 	</View>;
 }
 
 const TimelineItem = memo(function TimelineItem({
 	item,
-	actionPending,
+	approvalPending,
+	inputPending,
 	onDecide,
 	onResolveInput,
 }: {
 	item: ConversationItem;
-	actionPending: boolean;
-	onDecide(requestId: string, decisionId: string): void;
-	onResolveInput(requestId: string, action: "accept" | "decline" | "cancel", content?: Record<string, unknown>): void;
+	approvalPending: boolean;
+	inputPending: boolean;
+	onDecide(requestId: string, decisionId: string): Promise<void>;
+	onResolveInput(requestId: string, action: "accept" | "decline" | "cancel", content?: Record<string, unknown>): Promise<void>;
 }) {
 	const styles = useThemedStyles(makeStyles);
 	if (item.kind === "message") {
@@ -186,10 +205,10 @@ const TimelineItem = memo(function TimelineItem({
 		);
 	}
 	if (item.activityKind === "approval") {
-		return <ApprovalCard activity={item} busy={actionPending} onDecide={onDecide} />;
+		return <ApprovalCard activity={item} busy={approvalPending} onDecide={onDecide} />;
 	}
 	if (item.activityKind === "user_input") {
-		return <UserInputCard activity={item} busy={actionPending} onResolve={onResolveInput} />;
+		return <UserInputCard activity={item} busy={inputPending} onResolve={onResolveInput} />;
 	}
 	if (item.activityKind === "system" && item.detail?.event === "compaction") {
 		return <CompactionMarker activity={item} />;
@@ -407,43 +426,32 @@ function ActivityRun({ activities }: { activities: ConversationActivity[] }) {
 	</View>;
 }
 
-type ActivityNode = { activity: ConversationActivity; children: ActivityNode[] };
-
 function ActivityTree({ node }: { node: ActivityNode }) {
 	const styles = useThemedStyles(makeStyles);
-	return <View><ActivityRow activity={node.activity} />{node.children.length ? <View style={styles.subagent}><Text style={styles.subagentLabel}>SUBAGENT · {countActivityNodes(node.children)} {countActivityNodes(node.children) === 1 ? "STEP" : "STEPS"}</Text>{node.children.map((child) => <ActivityTree key={child.activity.id} node={child} />)}</View> : null}</View>;
+	return <View><ActivityRow activity={node.activity} />{node.children.length ? <NestedAgentRun nodes={node.children} /> : null}</View>;
 }
 
-function activityHierarchy(activities: ConversationActivity[]): ActivityNode[] {
-	const byProvider = new Map<string, ActivityNode>();
-	const nodes = activities.map((activity) => {
-		const node = { activity, children: [] } satisfies ActivityNode;
-		if (activity.providerItemId) byProvider.set(activity.providerItemId, node);
-		return node;
-	});
-	const roots: ActivityNode[] = [];
-	for (const node of nodes) {
-		const parent = node.activity.detail?.parentProviderItemId ? byProvider.get(node.activity.detail.parentProviderItemId) : undefined;
-		if (parent && !activityCycle(node, parent, byProvider)) parent.children.push(node);
-		else roots.push(node);
-	}
-	return roots;
-}
-
-function activityCycle(node: ActivityNode, parent: ActivityNode, byProvider: Map<string, ActivityNode>): boolean {
-	const visited = new Set<ActivityNode>([node]);
-	let current: ActivityNode | undefined = parent;
-	while (current) {
-		if (visited.has(current)) return true;
-		visited.add(current);
-		const parentId: string | undefined = current.activity.detail?.parentProviderItemId;
-		current = parentId ? byProvider.get(parentId) : undefined;
-	}
-	return false;
-}
-
-function countActivityNodes(nodes: ActivityNode[]): number {
-	return nodes.reduce((count, node) => count + 1 + countActivityNodes(node.children), 0);
+function NestedAgentRun({ nodes }: { nodes: ActivityNode[] }) {
+	const t = useTheme();
+	const styles = useThemedStyles(makeStyles);
+	const [open, setOpen] = useState(false);
+	const count = countActivityNodes(nodes);
+	const running = activityNodesRunning(nodes);
+	return <View style={styles.subagent}>
+		<Pressable
+			accessibilityRole="button"
+			accessibilityLabel={`${open ? "Hide" : "Show"} subagent work, ${count} ${count === 1 ? "step" : "steps"}`}
+			accessibilityState={{ expanded: open }}
+			onPress={() => setOpen((value) => !value)}
+			style={styles.subagentHeader}
+		>
+			<Feather name="git-branch" size={12} color={t.textTertiary} />
+			<Text style={styles.subagentLabel}>SUBAGENT · {count} {count === 1 ? "STEP" : "STEPS"}</Text>
+			{running ? <ActivityIndicator size="small" color={t.textTertiary} /> : null}
+			<Feather name={open ? "chevron-down" : "chevron-right"} size={12} color={t.textFaint} />
+		</Pressable>
+		{open ? nodes.map((child) => <ActivityTree key={child.activity.id} node={child} />) : null}
+	</View>;
 }
 
 function summarizeActivities(activities: ConversationActivity[]): string {
@@ -581,52 +589,70 @@ function ChangedFiles({ turn }: { turn: ConversationTurn }) {
 	</View>;
 }
 
-function ApprovalCard({ activity, busy, onDecide }: { activity: ConversationActivity; busy: boolean; onDecide(requestId: string, decisionId: string): void }) {
+function ApprovalCard({ activity, busy, onDecide }: { activity: ConversationActivity; busy: boolean; onDecide(requestId: string, decisionId: string): Promise<void> }) {
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
+	const [submitting, setSubmitting] = useState<string>();
+	const [submitError, setSubmitError] = useState<string>();
 	const pending = activity.status === "pending";
 	return <View style={[styles.requestCard, pending && { borderColor: t.amber }]}>
 		<View style={styles.requestTitle}><Feather name="shield" size={15} color={pending ? t.amber : t.textTertiary} /><Text style={styles.requestHeading}>{pending ? "Approval required" : "Approval resolved"}</Text>{activity.requestId ? <Text style={styles.requestId}>req {activity.requestId}</Text> : null}</View>
 		{activity.detail?.reason ? <Text style={styles.requestCopy}>{activity.detail.reason}</Text> : null}
 		<Text selectable style={styles.requestCommand}>{activity.detail?.command ?? activity.summary}</Text>
 		{activity.detail?.cwd ? <LabelValue label="cwd" value={activity.detail.cwd} /> : null}
-		{pending ? (activity.decisions?.length ? <View style={styles.actions}>{activity.decisions.map((decision, index) => <Action key={decision.id} label={decision.label} primary={index === 0} disabled={busy || !activity.requestId} onPress={() => onDecide(activity.requestId ?? "", decision.id)} />)}</View> : <Text style={[styles.partial, { color: t.amber }]}>The agent offered no decisions AO can present. Open diagnostics from the host.</Text>) : <Text style={styles.partial}>Already answered. This card is kept for the record.</Text>}
+		{pending ? (activity.decisions?.length ? <View style={styles.actions}>{activity.decisions.map((decision, index) => <Action key={decision.id} label={submitting === decision.id ? "Sending…" : decision.label} primary={index === 0} disabled={busy || Boolean(submitting) || !activity.requestId} onPress={() => {
+			setSubmitting(decision.id);
+			setSubmitError(undefined);
+			void onDecide(activity.requestId ?? "", decision.id).catch((cause) => setSubmitError(cause instanceof Error ? cause.message : String(cause))).finally(() => setSubmitting(undefined));
+		}} />)}</View> : <Text style={[styles.partial, { color: t.amber }]}>The agent offered no decisions AO can present. Open diagnostics from the host.</Text>) : <Text style={styles.partial}>Already answered. This card is kept for the record.</Text>}
+		{submitError ? <Text accessibilityRole="alert" style={styles.validation}>{submitError}</Text> : null}
 	</View>;
 }
 
-function UserInputCard({ activity, busy, onResolve }: { activity: ConversationActivity; busy: boolean; onResolve(requestId: string, action: "accept" | "decline" | "cancel", content?: Record<string, unknown>): void }) {
+function UserInputCard({ activity, busy, onResolve }: { activity: ConversationActivity; busy: boolean; onResolve(requestId: string, action: "accept" | "decline" | "cancel", content?: Record<string, unknown>): Promise<void> }) {
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
 	const schema = activity.detail?.schema;
 	const [values, setValues] = useState<Record<string, unknown>>(() => Object.fromEntries(Object.entries(schema?.properties ?? {}).map(([key, property]) => [key, initialInputValue(property)])));
 	const [validationError, setValidationError] = useState<string>();
+	const [submitting, setSubmitting] = useState(false);
+	const [submitError, setSubmitError] = useState<string>();
 	const pending = activity.status === "pending";
 	const url = activity.detail?.inputMode === "url" ? safeHttpURL(activity.detail.url) : undefined;
+	const resolve = async (action: "accept" | "decline" | "cancel", content?: Record<string, unknown>) => {
+		if (submitting || !activity.requestId) return;
+		setSubmitting(true);
+		setSubmitError(undefined);
+		try { await onResolve(activity.requestId, action, content); }
+		catch (cause) { setSubmitError(cause instanceof Error ? cause.message : String(cause)); }
+		finally { setSubmitting(false); }
+	};
 	const submit = () => {
-		const missing = (schema?.required ?? []).filter((name) => values[name] === undefined || values[name] === null || values[name] === "" || (Array.isArray(values[name]) && values[name].length === 0));
+		const missing = missingRequiredInputs(schema?.required, values);
 		if (missing.length) { setValidationError(`Complete ${missing.join(", ")} before continuing.`); return; }
 		for (const [name, property] of Object.entries(schema?.properties ?? {})) {
 			const problem = validateInput(property, values[name]);
-			if (problem) { setValidationError(`${property.title || humanize(name)} ${problem}.`); return; }
+			if (problem) { setValidationError(`${property.title || humanizeInputName(name)} ${problem}.`); return; }
 		}
 		setValidationError(undefined);
-		onResolve(activity.requestId ?? "", "accept", values);
+		void resolve("accept", values);
 	};
 	return <View style={[styles.requestCard, pending && { borderColor: t.blue }]}>
 		<View style={styles.requestTitle}><Feather name="message-square" size={15} color={pending ? t.blue : t.textTertiary} /><Text style={styles.requestHeading}>{schema?.title || (pending ? "Agent needs input" : "Input resolved")}</Text></View>
 		<Text style={styles.requestCopy}>{activity.detail?.message || schema?.description || activity.summary}</Text>
 		{pending && activity.detail?.inputMode === "url" ? <View style={styles.urlBox}><Text selectable style={styles.urlText}>{url?.href ?? "The provider supplied an unsafe or invalid URL."}</Text></View> : null}
 		{pending && activity.detail?.inputMode !== "url" && schema?.properties ? <View style={styles.form}>{Object.entries(schema.properties).map(([name, property]) => <InputField key={name} name={name} property={property} required={schema.required?.includes(name) ?? false} value={values[name]} onChange={(value) => { setValidationError(undefined); setValues((old) => ({ ...old, [name]: value })); }} />)}</View> : null}
-		{validationError ? <Text style={styles.validation}>{validationError}</Text> : null}
+		{validationError ? <Text accessibilityRole="alert" style={styles.validation}>{validationError}</Text> : null}
+		{submitError ? <Text accessibilityRole="alert" style={styles.validation}>{submitError}</Text> : null}
 		{pending && activity.requestId ? <View style={styles.actions}>
-			<Action label="Cancel" disabled={busy} onPress={() => onResolve(activity.requestId ?? "", "cancel")} />
-			<Action label={activity.detail?.inputMode === "url" ? "Decline" : "Skip"} disabled={busy} onPress={() => onResolve(activity.requestId ?? "", "decline")} />
-			{activity.detail?.inputMode === "url" ? <Action label="Open link" primary disabled={busy || !url} onPress={() => {
+			<Action label="Cancel" disabled={busy || submitting} onPress={() => void resolve("cancel")} />
+			<Action label={activity.detail?.inputMode === "url" ? "Decline" : "Skip"} disabled={busy || submitting} onPress={() => void resolve("decline")} />
+			{activity.detail?.inputMode === "url" ? <Action label={submitting ? "Opening…" : "Open link"} primary disabled={busy || submitting || !url} onPress={() => {
 				if (!url) return;
 				void Linking.openURL(url.href)
-					.then(() => onResolve(activity.requestId ?? "", "accept"))
+					.then(() => resolve("accept"))
 					.catch(() => setValidationError("This link could not be opened on this device."));
-			}} /> : <Action label="Continue" primary disabled={busy} onPress={submit} />}
+			}} /> : <Action label={submitting ? "Sending…" : "Continue"} primary disabled={busy || submitting} onPress={submit} />}
 		</View> : pending ? <Text style={[styles.partial, { color: t.amber }]}>This request has no provider identity, so AO cannot answer it safely. Open diagnostics on the host.</Text> : <Text style={styles.partial}>Already answered. This card is kept for the record.</Text>}
 	</View>;
 }
@@ -634,7 +660,7 @@ function UserInputCard({ activity, busy, onResolve }: { activity: ConversationAc
 function InputField({ name, property, required, value, onChange }: { name: string; property: InputProperty; required: boolean; value: unknown; onChange(value: unknown): void }) {
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
-	const label = `${property.title || humanize(name)}${required ? " *" : ""}`;
+	const label = `${property.title || humanizeInputName(name)}${required ? " *" : ""}`;
 	if (property.type === "boolean") return <View style={styles.switchRow}><Text style={styles.inputLabel}>{label}</Text><Switch accessibilityLabel={label} value={Boolean(value)} onValueChange={onChange} trackColor={{ true: t.blue }} /></View>;
 	const options = inputOptions(property);
 	if (options.length) {
@@ -661,47 +687,6 @@ function InputField({ name, property, required, value, onChange }: { name: strin
 	</View>;
 }
 
-function initialInputValue(property: InputProperty): unknown {
-	if (property.default !== undefined) return property.default;
-	if (property.type === "array") return [];
-	if (property.type === "boolean") return false;
-	return "";
-}
-
-function inputOptions(property: InputProperty): Array<{ value: string; label: string; description?: string }> {
-	const candidates = property.oneOf ?? property.items?.anyOf;
-	if (candidates?.length) {
-		return candidates.flatMap((candidate) => typeof candidate.const === "string"
-			? [{ value: candidate.const, label: candidate.title || candidate.const, description: candidate.description }]
-			: []);
-	}
-	return (property.enum ?? []).flatMap((value) => typeof value === "string"
-		? [{ value, label: value }]
-		: []);
-}
-
-function toggleInputValue(values: unknown[], value: string): string[] {
-	const strings = values.filter((item): item is string => typeof item === "string");
-	return strings.includes(value) ? strings.filter((item) => item !== value) : [...strings, value];
-}
-
-function validateInput(property: InputProperty, value: unknown): string | undefined {
-	if (typeof value === "string") {
-		if (property.minLength !== undefined && value.length < property.minLength) return `must be at least ${property.minLength} characters`;
-		if (property.maxLength !== undefined && value.length > property.maxLength) return `must be at most ${property.maxLength} characters`;
-	}
-	if ((property.type === "number" || property.type === "integer") && typeof value === "number") {
-		if (!Number.isFinite(value)) return "must be a number";
-		if (property.type === "integer" && !Number.isInteger(value)) return "must be a whole number";
-		if (property.minimum !== undefined && value < property.minimum) return `must be at least ${property.minimum}`;
-		if (property.maximum !== undefined && value > property.maximum) return `must be at most ${property.maximum}`;
-	}
-	return undefined;
-}
-
-function humanize(value: string): string {
-	return value.replace(/_/g, " ").replace(/^./, (letter) => letter.toUpperCase());
-}
 
 function CompactionMarker({ activity }: { activity: ConversationActivity }) {
 	const styles = useThemedStyles(makeStyles);
@@ -784,8 +769,6 @@ function activityMeta(activity: ConversationActivity): { icon: keyof typeof Feat
 
 function elapsed(start?: string, end?: string): string | undefined { if (!start || !end) return undefined; const ms = Date.parse(end) - Date.parse(start); if (!Number.isFinite(ms) || ms < 0) return undefined; const seconds = Math.round(ms / 1000); return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`; }
 function formatTokens(value: number): string { return value >= 1_000 ? `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}k` : String(value); }
-function safeHttpURL(value: unknown): URL | undefined { if (typeof value !== "string") return undefined; try { const url = new URL(value); return url.protocol === "https:" || url.protocol === "http:" ? url : undefined; } catch { return undefined; } }
-
 const makeStyles = (t: Theme) => StyleSheet.create({
 	timelineWrap: { flex: 1, position: "relative", backgroundColor: t.bgBase },
 	list: { flex: 1, backgroundColor: t.bgBase },
@@ -832,7 +815,8 @@ const makeStyles = (t: Theme) => StyleSheet.create({
 	runFailed: { color: t.red, fontSize: 10, fontWeight: "600" },
 	runDetail: { marginBottom: 7, borderRadius: 10, borderWidth: 1, borderColor: t.borderSubtle, backgroundColor: t.bgSubtle, paddingHorizontal: 9, paddingVertical: 3 },
 	subagent: { marginLeft: 20, marginBottom: 5, borderLeftWidth: 1, borderLeftColor: t.borderStrong, paddingLeft: 8 },
-	subagentLabel: { color: t.textFaint, fontSize: 8, letterSpacing: 0.8, paddingTop: 5 },
+	subagentHeader: { minHeight: 34, flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 6 },
+	subagentLabel: { flex: 1, color: t.textFaint, fontSize: 8, letterSpacing: 0.8 },
 	detailCopy: { color: t.textSecondary, fontSize: 13, lineHeight: 19 },
 	labelValue: { flexDirection: "row", gap: 9 },
 	detailLabel: { width: 30, color: t.textFaint, fontSize: 11, fontFamily: t.fontMono },

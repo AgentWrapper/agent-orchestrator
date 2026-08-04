@@ -24,7 +24,8 @@ import { getWorkspacePaths, openSessionShell } from "./api";
 import { ChatComposer } from "./ChatComposer";
 import { ChatSettingsModal } from "./ChatSettingsModal";
 import { ChatTimeline } from "./ChatTimeline";
-import { contextReadout, elapsedLabel, quotaWarning, resetLabel } from "./conversationChrome";
+import { contextReadout, elapsedLabel, mcpServerFailureLabel, quotaWarning, resetLabel } from "./conversationChrome";
+import { conversationActionUnsupported } from "./conversationErrors";
 import { conversationMarkers, type ConversationMarker } from "./timelineModel";
 import { brokenMcpServers, can } from "./types";
 import { useMobileConversation } from "./useConversation";
@@ -106,6 +107,9 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 	const rolledBack = snapshot.turns.filter((turn) => turn.rolledBack).length;
 	const quota = quotaWarning(snapshot.rateLimits);
 	const markers = conversationMarkers(snapshot);
+	const compactSupported = can(snapshot, "compaction") && !conversationActionUnsupported("compact", conversation.actionCodes.compact);
+	const mcpReloadSupported = can(snapshot, "mcp_reload") && !conversationActionUnsupported("mcp", conversation.actionCodes.mcp);
+	const steerUnsupported = conversationActionUnsupported("steer", conversation.actionCodes.steer);
 
 	return (
 		<KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={Platform.OS === "ios" ? 86 : 0}>
@@ -114,8 +118,8 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 				refreshing={conversation.refreshing}
 				compacting={conversation.pendingActions.includes("compact")}
 				onRefresh={() => void conversation.refresh()}
-				onCompact={can(snapshot, "compaction") ? () => void conversation.compact().catch(() => {}) : undefined}
-				compactDisabled={active || snapshot.controller.state === "stopped" || conversation.actionPending}
+				onCompact={compactSupported ? () => void conversation.compact().catch(() => {}) : undefined}
+				compactDisabled={active || snapshot.controller.state === "stopped" || conversation.pendingActions.includes("compact")}
 			/>
 			<ConversationBanners
 				snapshot={snapshot}
@@ -124,6 +128,7 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 				terminated={terminated}
 				mcpReloading={conversation.pendingActions.includes("mcp")}
 				mcpError={conversation.actionErrors.mcp}
+				mcpReloadSupported={mcpReloadSupported}
 				turnInFlight={active}
 				onResume={() => void resume()}
 				onReload={() => void conversation.reloadMcp().catch(() => {})}
@@ -138,9 +143,10 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 				snapshot={snapshot}
 				loadingOlder={conversation.loadingOlder}
 				onLoadOlder={() => void conversation.loadOlder()}
-				actionPending={conversation.actionPending}
-				onDecide={(requestId, decisionId) => void conversation.resolveApproval(requestId, decisionId).catch(() => {})}
-				onResolveInput={(requestId, action, content) => void conversation.resolveInput(requestId, action, content).catch(() => {})}
+				approvalPending={conversation.pendingActions.includes("approval")}
+				inputPending={conversation.pendingActions.includes("input")}
+				onDecide={conversation.resolveApproval}
+				onResolveInput={conversation.resolveInput}
 				onRollback={conversation.rollback}
 				jumpToSequence={jumpToSequence}
 				onJumpHandled={() => setJumpToSequence(undefined)}
@@ -153,6 +159,7 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 				filePaths={filePaths}
 				filePathsTruncated={filePathsTruncated}
 				configOptions={conversation.configOptions}
+				steerUnavailable={steerUnsupported}
 				pending={conversation.pendingSends.some((item) => item.state === "sending")}
 				error={conversation.actionError}
 				onSend={conversation.send}
@@ -166,7 +173,7 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 				snapshot={snapshot}
 				models={conversation.models}
 				options={conversation.configOptions}
-				disabled={snapshot.controller.state === "stopped" || conversation.actionPending}
+				disabled={snapshot.controller.state === "stopped" || conversation.pendingActions.includes("settings") || conversation.pendingActions.includes("config")}
 				error={conversation.actionErrors.settings ?? conversation.actionErrors.config}
 				onSettings={(settings) => void conversation.chooseSettings(settings).catch(() => {})}
 				onOption={(id, value) => void conversation.setConfigOption(id, value).catch(() => {})}
@@ -178,6 +185,8 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 				openingShell={openingShell}
 				compacting={conversation.pendingActions.includes("compact")}
 				mcpReloading={conversation.pendingActions.includes("mcp")}
+				compactSupported={compactSupported}
+				mcpReloadSupported={mcpReloadSupported}
 				onMap={() => { setMenuOpen(false); setMapOpen(true); }}
 				onOpenShell={() => void openShell()}
 				onPreview={() => { setMenuOpen(false); router.push({ pathname: "/preview/[id]", params: { id: session.id, title, previewUrl: "previewUrl" in session ? session.previewUrl ?? undefined : undefined } }); }}
@@ -208,15 +217,15 @@ function ChatMetaBar({ snapshot, refreshing, compacting, onRefresh, onCompact, c
 	return <View style={styles.meta}><View style={[styles.dot, { backgroundColor: stateColor }]} /><Text style={styles.harness}>{snapshot.harness || "agent"}</Text><Text style={styles.mode}>CHAT</Text><View style={{ flex: 1 }} />{context?.percent !== undefined ? <View accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: context.percent }} accessibilityLabel="Context window used" style={styles.usage}><View style={[styles.usageFill, { width: contextFillWidth, backgroundColor: contextColor }]} /></View> : null}{context?.percent !== undefined ? <Text style={[styles.percent, { color: contextColor }]}>{context.percent}%</Text> : context ? <Text style={styles.percent}>{formatTokens(context.tokens)} tokens</Text> : null}{onCompact ? <Pressable accessibilityRole="button" accessibilityLabel={compacting ? "Compacting conversation history" : compactDisabled ? "Compact after the current turn finishes" : "Compact conversation history"} accessibilityState={{ disabled: compactDisabled, busy: compacting }} disabled={compactDisabled} hitSlop={9} onPress={onCompact}>{compacting ? <ActivityIndicator size="small" color={t.textTertiary} /> : <Feather name="archive" size={13} color={compactDisabled ? t.textFaint : t.textTertiary} />}</Pressable> : null}<Pressable accessibilityRole="button" accessibilityLabel="Refresh conversation" hitSlop={9} onPress={onRefresh}><Feather name="refresh-cw" size={13} color={t.textTertiary} style={refreshing ? { opacity: 0.4 } : undefined} /></Pressable></View>;
 }
 
-function ConversationBanners({ snapshot, brokenServers, resuming, terminated, mcpReloading, mcpError, turnInFlight, onResume, onReload, onOpenShell }: { snapshot: NonNullable<ReturnType<typeof useMobileConversation>["snapshot"]>; brokenServers: ReturnType<typeof brokenMcpServers>; resuming: boolean; terminated: boolean; mcpReloading: boolean; mcpError?: string; turnInFlight: boolean; onResume(): void; onReload(): void; onOpenShell(): void }) {
+function ConversationBanners({ snapshot, brokenServers, resuming, terminated, mcpReloading, mcpError, mcpReloadSupported, turnInFlight, onResume, onReload, onOpenShell }: { snapshot: NonNullable<ReturnType<typeof useMobileConversation>["snapshot"]>; brokenServers: ReturnType<typeof brokenMcpServers>; resuming: boolean; terminated: boolean; mcpReloading: boolean; mcpError?: string; mcpReloadSupported: boolean; turnInFlight: boolean; onResume(): void; onReload(): void; onOpenShell(): void }) {
 	const thread = snapshot.threadState;
 	const signIn = signInCommand(snapshot.harness);
 	return <>
-		{snapshot.account?.reauthRequiredAt ? <InlineBanner tone="danger" icon="key" text={`${snapshot.account.reauthReason || "The provider rejected this session's credentials."} ${signIn ? `Run “${signIn}” on the AO host, then try again.` : "Sign in with the agent's CLI on the AO host, then try again."} AO holds no credentials of its own.`} action="Open shell" onPress={onOpenShell} /> : null}
-		{snapshot.controller.state === "stopped" ? <InlineBanner tone="danger" icon="power" text={terminated ? "This AO session is terminated. Its conversation and worktree are preserved." : snapshot.controller.error || "The agent controller is stopped."} action={terminated ? (resuming ? "Restoring…" : "Restore session") : can(snapshot, "resume") ? (resuming ? "Resuming…" : "Resume agent") : "Open shell"} secondary={terminated || can(snapshot, "resume") ? "Shell" : undefined} onPress={terminated || can(snapshot, "resume") ? (resuming ? undefined : onResume) : onOpenShell} onSecondary={terminated || can(snapshot, "resume") ? onOpenShell : undefined} /> : null}
+		{snapshot.account?.reauthRequiredAt ? <InlineBanner tone="danger" icon="key" text={`${snapshot.account.reauthReason || "The provider rejected this session's credentials."} ${signIn ? `Run “${signIn}” on the AO host, then try again.` : "Sign in with the agent's CLI on the AO host, then try again."} AO holds no credentials of its own. The worktree is untouched.`} action="Open shell" onPress={onOpenShell} /> : null}
+		{snapshot.controller.state === "stopped" ? <InlineBanner tone="danger" icon="power" text={terminated ? "This AO session is terminated. Its conversation and worktree are preserved." : snapshot.controller.error || "The agent controller is stopped."} action={terminated ? (resuming ? "Restoring…" : "Restore session") : (resuming ? "Resuming…" : "Resume agent")} secondary="Shell" onPress={resuming ? undefined : onResume} onSecondary={onOpenShell} /> : null}
 		{snapshot.controller.state === "recovering" || snapshot.controller.state === "connecting" ? <InlineBanner tone="warning" icon="loader" text={snapshot.controller.state === "recovering" ? "Reconnecting to the agent…" : "Starting the agent controller…"} /> : null}
 		{thread?.status === "system_error" ? <InlineBanner tone="danger" icon="alert-triangle" text={`The provider reports an internal fault in this thread; AO's connection may still be healthy. The conversation and worktree are kept.${thread.waitingOn?.length ? ` Waiting on: ${thread.waitingOn.join(", ")}.` : ""}`} /> : thread?.status === "closed" ? <InlineBanner tone="warning" icon="alert-triangle" text={`The provider closed this thread. AO kept its history, but the agent no longer holds it.${thread.waitingOn?.length ? ` Waiting on: ${thread.waitingOn.join(", ")}.` : ""}`} /> : null}
-		{brokenServers.length ? <InlineBanner tone="warning" icon="tool" text={`${brokenServers.map((server) => `${server.name}${server.failureReason || server.error ? ` (${server.failureReason || server.error})` : ""}`).join(", ")} did not start. The agent has none of their tools and will not say so—it works around them silently.${mcpError ? ` Reload failed: ${mcpError}` : ""}`} action={can(snapshot, "mcp_reload") && !turnInFlight ? (mcpReloading ? "Reloading…" : "Reload") : undefined} onPress={mcpReloading ? undefined : onReload} /> : null}
+		{brokenServers.length ? <InlineBanner tone="warning" icon="tool" text={`${brokenServers.map(mcpServerFailureLabel).join(", ")} did not start. The agent has none of their tools and will not say so—it works around them silently.${mcpError ? ` Reload failed: ${mcpError}` : ""}`} action={mcpReloadSupported && !turnInFlight ? (mcpReloading ? "Reloading…" : "Reload") : undefined} onPress={mcpReloading ? undefined : onReload} /> : null}
 	</>;
 }
 
@@ -240,7 +249,7 @@ function InlineBanner({ tone, icon, text, action, secondary, onPress, onSecondar
 	return <View style={[styles.banner, { backgroundColor: fill }]}><Feather name={icon} size={13} color={color} /><Text style={styles.bannerText}>{text}</Text>{secondary ? <Pressable hitSlop={7} onPress={onSecondary}><Text style={styles.bannerSecondary}>{secondary}</Text></Pressable> : null}{action ? <Pressable hitSlop={7} onPress={onPress}><Text style={[styles.bannerAction, { color }]}>{action}</Text></Pressable> : null}</View>;
 }
 
-function ConversationMenu({ visible, onClose, snapshot, openingShell, compacting, mcpReloading, onMap, onOpenShell, onPreview, onPullRequests, onSettings, onCompact, onReload, onRename }: { visible: boolean; onClose(): void; snapshot: NonNullable<ReturnType<typeof useMobileConversation>["snapshot"]>; openingShell: boolean; compacting: boolean; mcpReloading: boolean; onMap(): void; onOpenShell(): void; onPreview(): void; onPullRequests(): void; onSettings(): void; onCompact(): void; onReload(): void; onRename(title: string): void }) {
+function ConversationMenu({ visible, onClose, snapshot, openingShell, compacting, mcpReloading, compactSupported, mcpReloadSupported, onMap, onOpenShell, onPreview, onPullRequests, onSettings, onCompact, onReload, onRename }: { visible: boolean; onClose(): void; snapshot: NonNullable<ReturnType<typeof useMobileConversation>["snapshot"]>; openingShell: boolean; compacting: boolean; mcpReloading: boolean; compactSupported: boolean; mcpReloadSupported: boolean; onMap(): void; onOpenShell(): void; onPreview(): void; onPullRequests(): void; onSettings(): void; onCompact(): void; onReload(): void; onRename(title: string): void }) {
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
 	const [renaming, setRenaming] = useState(false);
@@ -256,8 +265,8 @@ function ConversationMenu({ visible, onClose, snapshot, openingShell, compacting
 			<MenuRow icon="git-pull-request" label="Pull requests" hint="Review CI, feedback and merge state" onPress={onPullRequests} />
 			<MenuRow icon="sliders" label="Turn settings" hint="Model, effort, approvals and provider options" onPress={onSettings} />
 			{can(snapshot, "rename") ? <MenuRow icon="edit-2" label="Rename" onPress={() => setRenaming(true)} /> : null}
-			{can(snapshot, "compaction") ? <MenuRow icon="archive" label={compacting ? "Compacting history…" : "Compact history"} hint={turnInFlight ? "Available after the current turn finishes" : snapshot.compactedAt ? `Last compacted ${new Date(snapshot.compactedAt).toLocaleString()}` : "Summarize older context without changing files"} disabled={turnInFlight || compacting} onPress={onCompact} /> : null}
-			{can(snapshot, "mcp_reload") ? <MenuRow icon="refresh-cw" label={mcpReloading ? "Reloading MCP servers…" : "Reload MCP servers"} hint={turnInFlight ? "Available after the current turn finishes" : undefined} disabled={turnInFlight || mcpReloading} onPress={onReload} /> : null}
+			{compactSupported ? <MenuRow icon="archive" label={compacting ? "Compacting history…" : "Compact history"} hint={turnInFlight ? "Available after the current turn finishes" : snapshot.compactedAt ? `Last compacted ${new Date(snapshot.compactedAt).toLocaleString()}` : "Summarize older context without changing files"} disabled={turnInFlight || compacting} onPress={onCompact} /> : null}
+			{mcpReloadSupported ? <MenuRow icon="refresh-cw" label={mcpReloading ? "Reloading MCP servers…" : "Reload MCP servers"} hint={turnInFlight ? "Available after the current turn finishes" : undefined} disabled={turnInFlight || mcpReloading} onPress={onReload} /> : null}
 			{snapshot.usage ? <View style={styles.rateBox}><Text style={styles.rateTitle}>Context and usage</Text><Text style={styles.rateText}>{formatTokens(snapshot.usage.contextUsed)} / {formatTokens(snapshot.usage.contextWindow)} context · {formatTokens(snapshot.usage.inputTokens)} in · {formatTokens(snapshot.usage.outputTokens)} out{snapshot.usage.cachedTokens ? ` · ${formatTokens(snapshot.usage.cachedTokens)} cached` : ""}{snapshot.usage.cost != null ? ` · ${snapshot.usage.currency || "$"}${snapshot.usage.cost.toFixed(4)}` : ""}</Text></View> : null}
 			{snapshot.rateLimits ? <View style={styles.rateBox}><Text style={styles.rateTitle}>{snapshot.rateLimits.planLabel || "Rate limits"}</Text><Text style={styles.rateText}>Primary: {Math.round(snapshot.rateLimits.primaryUsedPercent)}% used{formatReset(snapshot.rateLimits.primaryResetsInSeconds)}{snapshot.rateLimits.secondaryUsedPercent >= 0 ? ` · Secondary: ${Math.round(snapshot.rateLimits.secondaryUsedPercent)}%${formatReset(snapshot.rateLimits.secondaryResetsInSeconds)}` : ""}</Text></View> : null}
 		</ScrollView>}

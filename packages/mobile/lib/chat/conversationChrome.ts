@@ -1,4 +1,4 @@
-import type { ConversationRateLimits, ConversationUsage } from "./types";
+import type { ConversationRateLimits, ConversationUsage, McpServer } from "./types";
 
 export type Severity = "normal" | "warn" | "critical";
 
@@ -59,4 +59,9 @@ export function resetLabel(seconds?: number): string | undefined {
 	if (seconds < 3600) return `${Math.ceil(seconds / 60)}m`;
 	if (seconds < 86_400) return `${Math.ceil(seconds / 3600)}h`;
 	return `${Math.ceil(seconds / 86_400)}d`;
+}
+
+export function mcpServerFailureLabel(server: McpServer): string {
+	const details = [server.failureReason, server.error].filter((value): value is string => Boolean(value?.trim()));
+	return `${server.name}${details.length ? ` (${details.join(": ")})` : ""}`;
 }

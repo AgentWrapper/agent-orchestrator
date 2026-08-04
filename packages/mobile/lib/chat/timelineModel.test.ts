@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activityStartsExpanded, canRollbackTurn, conversationMarkers, groupConversationByTurn, readableConversationItems } from "./timelineModel";
+import { activityHierarchy, activityNodesRunning, activityStartsExpanded, canRollbackTurn, conversationMarkers, countActivityNodes, groupConversationByTurn, readableConversationItems } from "./timelineModel";
 import type { ConversationActivity, ConversationSnapshot } from "./types";
 
 function snapshot(): ConversationSnapshot {
@@ -65,6 +65,26 @@ describe("mobile Chat timeline model", () => {
 		expect(activityStartsExpanded(running)).toBe(false);
 		running.status = "failed";
 		expect(activityStartsExpanded(running)).toBe(true);
+	});
+
+	it("builds nested provider work without hiding or looping malformed events", () => {
+		const parent = activity("command", 1, "t1");
+		parent.providerItemId = "parent";
+		const child = activity("command", 2, "t1");
+		child.providerItemId = "child";
+		child.detail = { parentProviderItemId: "parent" };
+		const orphan = activity("command", 3, "t1");
+		orphan.detail = { parentProviderItemId: "missing" };
+		const roots = activityHierarchy([parent, child, orphan]);
+		expect(roots.map((node) => node.activity.id)).toEqual([parent.id, orphan.id]);
+		expect(roots[0].children[0].activity.id).toBe(child.id);
+		expect(countActivityNodes(roots)).toBe(3);
+		child.status = "running";
+		expect(activityNodesRunning(roots)).toBe(true);
+
+		parent.detail = { parentProviderItemId: "child" };
+		expect(activityHierarchy([parent, child])).toHaveLength(2);
+		expect(countActivityNodes(activityHierarchy([parent, child]))).toBe(2);
 	});
 });
 

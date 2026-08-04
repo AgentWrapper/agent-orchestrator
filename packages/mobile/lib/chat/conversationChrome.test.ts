@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { contextReadout, elapsedLabel, quotaWarning, resetLabel } from "./conversationChrome";
+import { contextReadout, elapsedLabel, mcpServerFailureLabel, quotaWarning, resetLabel } from "./conversationChrome";
 
 describe("mobile Chat conversation chrome", () => {
 	it("uses the same context thresholds and visible minimum as desktop", () => {
@@ -19,5 +19,10 @@ describe("mobile Chat conversation chrome", () => {
 	it("formats live turn and reset durations without wall-clock assumptions", () => {
 		expect(elapsedLabel("2026-08-05T00:00:00Z", Date.parse("2026-08-05T00:02:03Z"))).toBe("2m 3s");
 		expect(resetLabel(172_800)).toBe("2d");
+	});
+
+	it("keeps both the MCP failure class and provider diagnostic", () => {
+		expect(mcpServerFailureLabel({ name: "github", status: "failed", failureReason: "auth", error: "token expired" }))
+			.toBe("github (auth: token expired)");
 	});
 });

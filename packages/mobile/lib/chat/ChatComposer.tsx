@@ -35,6 +35,7 @@ export function ChatComposer({
 	filePaths,
 	filePathsTruncated,
 	configOptions,
+	steerUnavailable,
 	pending,
 	error,
 	onSend,
@@ -48,6 +49,7 @@ export function ChatComposer({
 	filePaths: string[];
 	filePathsTruncated?: boolean;
 	configOptions?: ChatConfigOption[];
+	steerUnavailable?: boolean;
 	pending?: boolean;
 	error?: string;
 	onSend(text: string, attachments?: ChatImage[], resources?: ChatResource[]): Promise<void>;
@@ -67,7 +69,7 @@ export function ChatComposer({
 	const [localError, setLocalError] = useState<string>();
 	const [submitting, setSubmitting] = useState(false);
 	const active = snapshot.turns.some((turn) => turn.state === "running");
-	const canSteer = snapshot.capabilities?.includes("steer") && active;
+	const canSteer = snapshot.capabilities?.includes("steer") && !steerUnavailable && active;
 	const canEmbedFiles = snapshot.capabilities?.includes("embedded_context");
 	const steerEligible = canSteer && delivery === "steer" && attachments.length === 0;
 	const stopped = snapshot.controller.state === "stopped";

@@ -1,4 +1,4 @@
-import { authHeaders, httpBase, type ServerConfig } from "./config";
+import { authHeaders, httpBase, normalizeServerHost, type ServerConfig } from "./config";
 import type { AttentionLevel } from "./theme";
 
 // ---- Types (subset of AO's DashboardSession we use on the phone) ------------
@@ -380,7 +380,9 @@ export function mobileReachablePreviewURL(raw: string | undefined, aoHost: strin
 		const url = new URL(raw);
 		if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
 		if (["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname)) {
-			url.hostname = aoHost.includes(":") && !aoHost.startsWith("[") ? `[${aoHost}]` : aoHost;
+			const host = normalizeServerHost(aoHost);
+			if (!host) return undefined;
+			url.hostname = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 		}
 		return url;
 	} catch {

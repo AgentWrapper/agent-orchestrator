@@ -21,6 +21,11 @@ export type ConversationMarker = {
 	state?: ConversationTurn["state"];
 };
 
+export type ActivityNode = {
+	activity: ConversationActivity;
+	children: ActivityNode[];
+};
+
 /** Keep conversation signal while removing provider telemetry/noise. */
 export function readableConversationItems(snapshot: ConversationSnapshot): ConversationItem[] {
 	const plannedTurns = new Set(snapshot.turns.filter((turn) => turn.plan?.steps.length).map((turn) => turn.id));
@@ -90,6 +95,47 @@ export function activityStartsExpanded(activity: ConversationActivity): boolean 
 		detail?.output || detail?.result || detail?.error || detail?.patchOutput,
 	);
 	return activity.status === "failed" || liveBody;
+}
+
+/**
+ * Reconstruct provider-owned nested agent work without inventing new lifecycle
+ * state. Unknown parents and malformed cycles remain visible as roots.
+ */
+export function activityHierarchy(activities: ConversationActivity[]): ActivityNode[] {
+	const byProvider = new Map<string, ActivityNode>();
+	const nodes = activities.map((activity) => {
+		const node = { activity, children: [] } satisfies ActivityNode;
+		if (activity.providerItemId) byProvider.set(activity.providerItemId, node);
+		return node;
+	});
+	const roots: ActivityNode[] = [];
+	for (const node of nodes) {
+		const parentId = node.activity.detail?.parentProviderItemId;
+		const parent = parentId ? byProvider.get(parentId) : undefined;
+		if (parent && !activityCycle(node, parent, byProvider)) parent.children.push(node);
+		else roots.push(node);
+	}
+	return roots;
+}
+
+export function countActivityNodes(nodes: ActivityNode[]): number {
+	return nodes.reduce((count, node) => count + 1 + countActivityNodes(node.children), 0);
+}
+
+export function activityNodesRunning(nodes: ActivityNode[]): boolean {
+	return nodes.some((node) => node.activity.status === "running" || activityNodesRunning(node.children));
+}
+
+function activityCycle(node: ActivityNode, parent: ActivityNode, byProvider: Map<string, ActivityNode>): boolean {
+	const visited = new Set<ActivityNode>([node]);
+	let current: ActivityNode | undefined = parent;
+	while (current) {
+		if (visited.has(current)) return true;
+		visited.add(current);
+		const parentId: string | undefined = current.activity.detail?.parentProviderItemId;
+		current = parentId ? byProvider.get(parentId) : undefined;
+	}
+	return false;
 }
 
 function previewText(value: string, limit: number): string {

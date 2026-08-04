@@ -25,7 +25,7 @@ import {
 } from "./api";
 import type { ChatConfigOption, ChatImage, ChatModel, ChatResource, ChatSkill, ConversationSnapshot, TurnSettings } from "./types";
 import { discardHistoricalPages } from "./snapshot";
-import { conversationActionError } from "./conversationErrors";
+import { conversationActionError, conversationErrorCode } from "./conversationErrors";
 
 const REFRESH_DEBOUNCE_MS = 120;
 const RECONNECT_MIN_MS = 1_000;
@@ -63,10 +63,10 @@ export type MobileConversation = {
 	configOptions: ChatConfigOption[];
 	skills: ChatSkill[];
 	pendingSends: PendingSend[];
-	actionPending: boolean;
 	pendingActions: readonly ConversationAction[];
 	actionError?: string;
 	actionErrors: Partial<Record<ConversationAction, string>>;
+	actionCodes: Partial<Record<ConversationAction, string>>;
 	refresh(): Promise<void>;
 	loadOlder(): Promise<void>;
 	send(text: string, attachments?: ChatImage[], resources?: ChatResource[]): Promise<void>;
@@ -101,6 +101,7 @@ export function useMobileConversation(
 	const [pendingActions, setPendingActions] = useState<ConversationAction[]>([]);
 	const [actionError, setActionError] = useState<string>();
 	const [actionErrors, setActionErrors] = useState<Partial<Record<ConversationAction, string>>>({});
+	const [actionCodes, setActionCodes] = useState<Partial<Record<ConversationAction, string>>>({});
 	const mounted = useRef(true);
 	const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -238,6 +239,7 @@ export function useMobileConversation(
 			setPendingActions((old) => old.includes(kind) ? old : [...old, kind]);
 			setActionError(undefined);
 			setActionErrors((old) => ({ ...old, [kind]: undefined }));
+			setActionCodes((old) => ({ ...old, [kind]: undefined }));
 			try {
 				const result = await action();
 				if (resetHistoricalPages) setPages(discardHistoricalPages);
@@ -247,6 +249,7 @@ export function useMobileConversation(
 				const message = conversationActionError(cause);
 				setActionError(message);
 				setActionErrors((old) => ({ ...old, [kind]: message }));
+				setActionCodes((old) => ({ ...old, [kind]: conversationErrorCode(cause) }));
 				throw new Error(message);
 			} finally {
 				setPendingActions((old) => old.filter((candidate) => candidate !== kind));
@@ -311,10 +314,10 @@ export function useMobileConversation(
 		configOptions,
 		skills,
 		pendingSends,
-		actionPending: pendingActions.length > 0,
 		pendingActions,
 		actionError,
 		actionErrors,
+		actionCodes,
 		refresh,
 		loadOlder,
 		send,
