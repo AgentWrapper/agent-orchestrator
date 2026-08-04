@@ -100,6 +100,34 @@ describe("telemetry sanitizers", () => {
 		expect(bogus.phase).toBeUndefined();
 	});
 
+	it("reports a support submission with only the destination and outcome", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.support_submitted", {
+			destination: "discord",
+			outcome: "succeeded",
+			// Everything the dialog collects is passed in deliberately: the user's own
+			// bug report, and the diagnostics block that carries machine state.
+			summary: "crashes when I open my repo",
+			details: "stack trace from /Users/me/work/secret-client",
+			diagnostics: { platform: "darwin", appVersion: "0.11.2" },
+		});
+		expect(safe).toEqual({ destination: "discord", outcome: "succeeded" });
+	});
+
+	it("drops an unrecognised support destination rather than forwarding it", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.support_submitted", {
+			destination: "mailto:founder@example.com",
+			outcome: "failed",
+		});
+		expect(safe).toEqual({ outcome: "failed" });
+	});
+
+	it("reports the support open with no properties at all", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.support_opened", {
+			summary: "everything is broken",
+		});
+		expect(safe).toEqual({});
+	});
+
 	it("reports the mobile connect open with only the bridge state", async () => {
 		const safe = await sanitizeRendererProperties("ao.renderer.mobile_connect_opened", {
 			bridge_enabled: true,

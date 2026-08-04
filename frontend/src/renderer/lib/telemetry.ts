@@ -485,6 +485,17 @@ export async function sanitizeRendererProperties(
 			// "came to set this up" from "came back to re-scan the QR".
 			if (typeof properties?.bridge_enabled === "boolean") safe.bridge_enabled = properties.bridge_enabled;
 			break;
+		case "ao.renderer.support_opened":
+			break;
+		case "ao.renderer.support_submitted":
+			// The report's summary, details, and diagnostics block are the user's own
+			// words and machine state. Only the chosen destination and whether the
+			// hand-off worked are reported.
+			if (properties?.destination === "github" || properties?.destination === "discord" || properties?.destination === "email") {
+				safe.destination = properties.destination;
+			}
+			if (properties?.outcome === "succeeded" || properties?.outcome === "failed") safe.outcome = properties.outcome;
+			break;
 		case "ao.renderer.mobile_bridge_toggled":
 			// The host, port, and connection password in the QR never leave the
 			// machine: only the direction of the switch and whether it worked.
