@@ -145,16 +145,26 @@ func (f *fakeConversation) decisionFor(id string) (ports.ChatDecision, bool) {
 // fakeDriver hands back whatever conversation double the test supplied, so a
 // scenario can replace how the provider ANSWERS without reimplementing how it
 // streams.
-type fakeDriver struct{ conv ports.ChatConversation }
+type fakeDriver struct {
+	conv      ports.ChatConversation
+	startCfg  *ports.ChatStartConfig
+	resumeCfg *ports.ChatResumeConfig
+}
 
 func (d fakeDriver) Harness() domain.AgentHarness { return domain.HarnessCodex }
 func (d fakeDriver) Probe(context.Context) (ports.ChatCapabilities, error) {
 	return productionCaps(), nil
 }
-func (d fakeDriver) Start(context.Context, ports.ChatStartConfig) (ports.ChatConversation, error) {
+func (d fakeDriver) Start(_ context.Context, cfg ports.ChatStartConfig) (ports.ChatConversation, error) {
+	if d.startCfg != nil {
+		*d.startCfg = cfg
+	}
 	return d.conv, nil
 }
-func (d fakeDriver) Resume(context.Context, ports.ChatResumeConfig) (ports.ChatConversation, error) {
+func (d fakeDriver) Resume(_ context.Context, cfg ports.ChatResumeConfig) (ports.ChatConversation, error) {
+	if d.resumeCfg != nil {
+		*d.resumeCfg = cfg
+	}
 	return d.conv, nil
 }
 
@@ -169,6 +179,34 @@ func productionCaps() ports.ChatCapabilities {
 		ports.ChatCapabilityApprovals: true,
 		ports.ChatCapabilityInterrupt: true,
 		ports.ChatCapabilityResume:    true,
+	}
+}
+
+func TestServicePassesRecomputedSystemPromptToResume(t *testing.T) {
+	st := openStore(t)
+	conv := newFakeConversation()
+	var resumed ports.ChatResumeConfig
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv, resumeCfg: &resumed}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return "conversation-resume" },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	workspace := t.TempDir()
+	dataDir := t.TempDir()
+	_, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		DataDir: dataDir, WorkspacePath: workspace, ProviderConversationID: "thread-1",
+		SystemPrompt: "Recomputed AO orchestrator instructions",
+	})
+	if err != nil {
+		t.Fatalf("Start resume: %v", err)
+	}
+	if resumed.ProviderConversationID != "thread-1" || resumed.DataDir != dataDir || resumed.WorkspacePath != workspace ||
+		resumed.SystemPrompt != "Recomputed AO orchestrator instructions" {
+		t.Fatalf("resume config = %#v", resumed)
 	}
 }
 

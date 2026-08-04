@@ -203,7 +203,7 @@ func TestACPDriverDefersPromptUntilDurableTurnBinding(t *testing.T) {
 			ports.ChatCapabilityInterrupt: true, ports.ChatCapabilityResume: true,
 		},
 		Probe: func(context.Context) error { return nil },
-		Launch: func(context.Context, string, map[string]string) (Launch, error) {
+		Launch: func(context.Context, LaunchConfig) (Launch, error) {
 			return Launch{Command: "fake"}, nil
 		},
 		NewSessionMeta: func(ports.ChatStartConfig) map[string]any {
@@ -312,7 +312,7 @@ func TestACPDriverNegotiatesRichClientCapabilitiesAndNativePromptContent(t *test
 		Harness:      domain.HarnessClaudeCode,
 		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
 		Probe:        func(context.Context) error { return nil },
-		Launch: func(context.Context, string, map[string]string) (Launch, error) {
+		Launch: func(context.Context, LaunchConfig) (Launch, error) {
 			return Launch{Command: "fake"}, nil
 		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -385,6 +385,38 @@ func TestACPDriverNegotiatesRichClientCapabilitiesAndNativePromptContent(t *test
 	}
 }
 
+func TestACPDriverReappliesLaunchContextWhenResuming(t *testing.T) {
+	agent := &fakeAgent{}
+	var got LaunchConfig
+	driver := New(Config{
+		Harness:      domain.HarnessOpenCode,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch: func(_ context.Context, cfg LaunchConfig) (Launch, error) {
+			got = cfg
+			return Launch{Command: "fake"}, nil
+		},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+
+	workspace := t.TempDir()
+	conv, err := driver.Resume(context.Background(), ports.ChatResumeConfig{
+		SessionID:              "worker-1",
+		ProviderConversationID: "provider-session-1",
+		WorkspacePath:          workspace,
+		Env:                    map[string]string{"KEEP": "yes"},
+		SystemPrompt:           "Recomputed AO instructions",
+	})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	defer conv.Close()
+	if got.SessionID != "worker-1" || got.WorkspacePath != workspace ||
+		got.Env["KEEP"] != "yes" || got.SystemPrompt != "Recomputed AO instructions" {
+		t.Fatalf("launch config = %#v", got)
+	}
+}
+
 func TestACPDriverParksAndResolvesStructuredElicitation(t *testing.T) {
 	request := acpsdk.NewUnstableCreateElicitationRequestForm(acpsdk.UnstableElicitationSchema{
 		Type:       acpsdk.UnstableElicitationSchemaTypeObject,
@@ -397,7 +429,7 @@ func TestACPDriverParksAndResolvesStructuredElicitation(t *testing.T) {
 		Harness:      domain.HarnessClaudeCode,
 		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
 		Probe:        func(context.Context) error { return nil },
-		Launch:       func(context.Context, string, map[string]string) (Launch, error) { return Launch{Command: "fake"}, nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	driver.spawn = fakeSpawn(agent)
 
@@ -472,7 +504,7 @@ func TestACPDriverPreservesNestedToolAndTerminalMetadata(t *testing.T) {
 		Harness:      domain.HarnessClaudeCode,
 		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
 		Probe:        func(context.Context) error { return nil },
-		Launch:       func(context.Context, string, map[string]string) (Launch, error) { return Launch{Command: "fake"}, nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	driver.spawn = fakeSpawn(agent)
 	opened, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
@@ -537,7 +569,7 @@ func TestACPDriverMapsCostRateLimitsAndAuthRecovery(t *testing.T) {
 		Harness:      domain.HarnessClaudeCode,
 		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
 		Probe:        func(context.Context) error { return nil },
-		Launch:       func(context.Context, string, map[string]string) (Launch, error) { return Launch{Command: "fake"}, nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	driver.spawn = fakeSpawn(agent)
 	opened, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
@@ -614,7 +646,7 @@ func TestACPDriverExposesAndMutatesAdvertisedConfigOptions(t *testing.T) {
 		Harness:      domain.HarnessClaudeCode,
 		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
 		Probe:        func(context.Context) error { return nil },
-		Launch: func(context.Context, string, map[string]string) (Launch, error) {
+		Launch: func(context.Context, LaunchConfig) (Launch, error) {
 			return Launch{Command: "fake"}, nil
 		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -665,7 +697,7 @@ func TestACPDriverExposesDynamicAvailableCommandsAsSkills(t *testing.T) {
 		Harness:      domain.HarnessClaudeCode,
 		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
 		Probe:        func(context.Context) error { return nil },
-		Launch: func(context.Context, string, map[string]string) (Launch, error) {
+		Launch: func(context.Context, LaunchConfig) (Launch, error) {
 			return Launch{Command: "fake"}, nil
 		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -743,7 +775,7 @@ func TestACPDriverMapsAdvertisedSteeringOntoAO(t *testing.T) {
 		Harness:      domain.HarnessClaudeCode,
 		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
 		Probe:        func(context.Context) error { return nil },
-		Launch: func(context.Context, string, map[string]string) (Launch, error) {
+		Launch: func(context.Context, LaunchConfig) (Launch, error) {
 			return Launch{Command: "fake"}, nil
 		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))

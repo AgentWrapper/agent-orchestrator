@@ -151,6 +151,10 @@ func MissingProductionCapabilities(caps ChatCapabilities) []ChatCapability {
 // ChatStartConfig is what a driver needs to open a new provider conversation.
 type ChatStartConfig struct {
 	SessionID domain.SessionID
+	// DataDir is AO's state root. Provider bindings may write process-scoped
+	// configuration beneath it, but must never use the worktree or an OS-default
+	// application-data directory for AO-owned state.
+	DataDir string
 	// WorkspacePath is the session worktree. Always absolute: app-server-style
 	// drivers resolve a relative path against their own process directory.
 	WorkspacePath string
@@ -178,11 +182,15 @@ type ChatStartConfig struct {
 type ChatResumeConfig struct {
 	SessionID              domain.SessionID
 	ProviderConversationID string
+	DataDir                string
 	WorkspacePath          string
 	Env                    map[string]string
 	Permissions            PermissionMode
-	AdditionalDirectories  []string
-	MCPServers             []ChatMCPServerConfig
+	// SystemPrompt is recomputed by the session manager on restore and reapplied
+	// to the provider process. It is not persisted in the conversation transcript.
+	SystemPrompt          string
+	AdditionalDirectories []string
+	MCPServers            []ChatMCPServerConfig
 }
 
 // ChatMCPServerConfig is the provider-neutral session-setup shape for a tool

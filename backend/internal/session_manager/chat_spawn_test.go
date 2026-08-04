@@ -24,6 +24,7 @@ func newChatManager(chat ChatLauncher) (*Manager, *fakeStore, *fakeRuntime) {
 		Messenger: &fakeMessenger{},
 		Chat:      chat,
 		Lifecycle: &fakeLCM{store: st},
+		DataDir:   "/ao-test-data",
 		LookPath:  lookPath,
 	})
 	return m, st, rt
@@ -186,6 +187,9 @@ func TestChatSpawnStartsControllerAndNoRuntime(t *testing.T) {
 	start := launcher.started[0]
 	if start.WorkspacePath == "" {
 		t.Error("controller started with no workspace path")
+	}
+	if start.DataDir != "/ao-test-data" {
+		t.Errorf("controller data dir = %q, want manager-owned data dir", start.DataDir)
 	}
 	// The controller must receive the session env, which is what carries the
 	// HookPATH pin in production and is how the agent's own shell commands find

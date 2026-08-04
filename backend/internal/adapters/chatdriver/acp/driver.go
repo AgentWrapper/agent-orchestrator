@@ -20,13 +20,26 @@ import (
 
 const handshakeTimeout = 60 * time.Second
 
-// Launch describes one ACP agent process. Command is normally a packaged
-// protocol adapter; provider-native executables belong in Env so the adapter
-// uses the same user installation as AO's TUI adapter.
+// Launch describes one ACP agent process. Command may be either AO's packaged
+// protocol bridge or the exact user-installed provider executable resolved by
+// the existing agent plugin.
 type Launch struct {
 	Command string
 	Args    []string
 	Env     map[string]string
+}
+
+// LaunchConfig is the resolved AO session context a provider binding may use to
+// construct its process. It intentionally contains no install mechanism: binary
+// ownership stays with the existing agent plugin.
+type LaunchConfig struct {
+	SessionID     domain.SessionID
+	DataDir       string
+	WorkspacePath string
+	Env           map[string]string
+	Model         string
+	Permissions   ports.PermissionMode
+	SystemPrompt  string
 }
 
 // Config binds one harness to an ACP agent implementation.
@@ -34,7 +47,7 @@ type Config struct {
 	Harness      domain.AgentHarness
 	Capabilities ports.ChatCapabilities
 	Probe        func(context.Context) error
-	Launch       func(context.Context, string, map[string]string) (Launch, error)
+	Launch       func(context.Context, LaunchConfig) (Launch, error)
 	// NewSessionMeta carries adapter-defined ACP extensions. It is deliberately
 	// scoped to session/new; resume must recover the provider's existing state.
 	NewSessionMeta func(ports.ChatStartConfig) map[string]any
@@ -87,7 +100,10 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 	if !filepath.IsAbs(cfg.WorkspacePath) {
 		return nil, fmt.Errorf("workspace path must be absolute, got %q", cfg.WorkspacePath)
 	}
-	conv, init, err := d.connect(ctx, cfg.WorkspacePath, cfg.Env)
+	conv, init, err := d.connect(ctx, LaunchConfig{
+		SessionID: cfg.SessionID, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath,
+		Env: cfg.Env, Model: cfg.Model, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +163,10 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 	if !filepath.IsAbs(cfg.WorkspacePath) {
 		return nil, fmt.Errorf("workspace path must be absolute, got %q", cfg.WorkspacePath)
 	}
-	conv, init, err := d.connect(ctx, cfg.WorkspacePath, cfg.Env)
+	conv, init, err := d.connect(ctx, LaunchConfig{
+		SessionID: cfg.SessionID, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath,
+		Env: cfg.Env, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -195,17 +214,16 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 
 func (d *Driver) connect(
 	ctx context.Context,
-	workspace string,
-	env map[string]string,
+	cfg LaunchConfig,
 ) (*conversation, acpsdk.InitializeResponse, error) {
-	launch, err := d.cfg.Launch(ctx, workspace, env)
+	launch, err := d.cfg.Launch(ctx, cfg)
 	if err != nil {
 		return nil, acpsdk.InitializeResponse{}, err
 	}
 	if launch.Command == "" {
 		return nil, acpsdk.InitializeResponse{}, fmt.Errorf("%w: ACP launch command is empty", ports.ErrChatDriverUnavailable)
 	}
-	proc, err := d.spawn(launch, workspace)
+	proc, err := d.spawn(launch, cfg.WorkspacePath)
 	if err != nil {
 		return nil, acpsdk.InitializeResponse{}, fmt.Errorf("%w: launch ACP agent: %w", ports.ErrChatDriverUnavailable, err)
 	}

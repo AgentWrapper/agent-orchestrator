@@ -64,7 +64,7 @@ func New(plugin claudePlugin, log *slog.Logger) ports.ChatDriver {
 			}
 			return nil
 		},
-		Launch: func(ctx context.Context, _ string, sessionEnv map[string]string) (acpdriver.Launch, error) {
+		Launch: func(ctx context.Context, cfg acpdriver.LaunchConfig) (acpdriver.Launch, error) {
 			runtimeLaunch, err := resolveRuntime(ctx)
 			if err != nil {
 				return acpdriver.Launch{}, fmt.Errorf("%w: %w", ports.ErrChatDriverUnavailable, err)
@@ -73,8 +73,8 @@ func New(plugin claudePlugin, log *slog.Logger) ports.ChatDriver {
 			if err != nil {
 				return acpdriver.Launch{}, fmt.Errorf("%w: %w", ports.ErrChatDriverUnavailable, err)
 			}
-			env := make(map[string]string, len(sessionEnv)+1)
-			for key, value := range sessionEnv {
+			env := make(map[string]string, len(cfg.Env)+1)
+			for key, value := range cfg.Env {
 				env[key] = value
 			}
 			// This is the line that prevents the adapter's optional native Claude

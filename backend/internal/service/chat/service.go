@@ -86,6 +86,7 @@ type StartConfig struct {
 	SessionID             domain.SessionID
 	ProjectID             domain.ProjectID
 	Harness               domain.AgentHarness
+	DataDir               string
 	WorkspacePath         string
 	Env                   map[string]string
 	Model                 string
@@ -154,15 +155,18 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		conv, err = driver.Resume(ctx, ports.ChatResumeConfig{
 			SessionID:              cfg.SessionID,
 			ProviderConversationID: cfg.ProviderConversationID,
+			DataDir:                cfg.DataDir,
 			WorkspacePath:          cfg.WorkspacePath,
 			Env:                    cfg.Env,
 			Permissions:            cfg.Permissions,
+			SystemPrompt:           cfg.SystemPrompt,
 			AdditionalDirectories:  cfg.AdditionalDirectories,
 			MCPServers:             cfg.MCPServers,
 		})
 	} else {
 		conv, err = driver.Start(ctx, ports.ChatStartConfig{
 			SessionID:             cfg.SessionID,
+			DataDir:               cfg.DataDir,
 			WorkspacePath:         cfg.WorkspacePath,
 			Env:                   cfg.Env,
 			Model:                 cfg.Model,
@@ -472,6 +476,7 @@ func (s *Service) StartChat(ctx context.Context, cfg ChatStartRequest) (ChatStar
 		SessionID:              cfg.SessionID,
 		ProjectID:              cfg.ProjectID,
 		Harness:                cfg.Harness,
+		DataDir:                cfg.DataDir,
 		WorkspacePath:          cfg.WorkspacePath,
 		Env:                    cfg.Env,
 		Model:                  cfg.Model,
@@ -496,6 +501,7 @@ type ChatStartRequest struct {
 	SessionID             domain.SessionID
 	ProjectID             domain.ProjectID
 	Harness               domain.AgentHarness
+	DataDir               string
 	WorkspacePath         string
 	Env                   map[string]string
 	Model                 string

@@ -48,6 +48,7 @@ type ChatStart struct {
 	SessionID     domain.SessionID
 	ProjectID     domain.ProjectID
 	Harness       domain.AgentHarness
+	DataDir       string
 	WorkspacePath string
 	// Env carries the HookPATH-pinned PATH, which is how the agent's own shell
 	// commands find `ao`. An orchestrator delegates by running `ao spawn`, so
@@ -100,6 +101,7 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 		SessionID:             id,
 		ProjectID:             in.cfg.ProjectID,
 		Harness:               in.cfg.Harness,
+		DataDir:               m.dataDir,
 		WorkspacePath:         in.workspace.Path,
 		Env:                   env,
 		Model:                 agentConfig.Model,
@@ -254,6 +256,7 @@ func (m *Manager) resumeChatController(
 		SessionID:             rec.ID,
 		ProjectID:             rec.ProjectID,
 		Harness:               rec.Harness,
+		DataDir:               m.dataDir,
 		WorkspacePath:         ws.Path,
 		Env:                   m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env),
 		Model:                 agentConfig.Model,

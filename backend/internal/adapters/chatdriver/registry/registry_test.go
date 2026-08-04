@@ -12,12 +12,17 @@ import (
 //
 // Registration is the whole capability gate — a harness with no driver here cannot
 // run chat mode — so the shipped set is a release decision, not an implementation
-// detail. Codex uses its native app-server and Claude uses ACP; every remaining
-// harness is still deliberately TUI-only.
-func TestShippedDriversAreCodexAndClaude(t *testing.T) {
+// detail. Codex uses its native app-server; Claude, OpenCode, and Droid use the
+// reusable ACP transport. Every remaining harness is still deliberately TUI-only.
+func TestShippedChatDrivers(t *testing.T) {
 	r := Build(nil)
 
-	for _, harness := range []domain.AgentHarness{domain.HarnessCodex, domain.HarnessClaudeCode} {
+	for _, harness := range []domain.AgentHarness{
+		domain.HarnessCodex,
+		domain.HarnessClaudeCode,
+		domain.HarnessOpenCode,
+		domain.HarnessDroid,
+	} {
 		if !r.SupportsChat(harness) {
 			t.Errorf("%s has no chat driver", harness)
 		}

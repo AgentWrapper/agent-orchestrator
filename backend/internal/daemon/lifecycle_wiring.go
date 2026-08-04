@@ -353,6 +353,7 @@ func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStar
 		SessionID:              cfg.SessionID,
 		ProjectID:              cfg.ProjectID,
 		Harness:                cfg.Harness,
+		DataDir:                cfg.DataDir,
 		WorkspacePath:          cfg.WorkspacePath,
 		Env:                    cfg.Env,
 		Model:                  cfg.Model,
