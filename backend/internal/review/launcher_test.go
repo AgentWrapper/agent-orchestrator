@@ -498,7 +498,7 @@ func TestLauncherPreflightRejectsUnauthenticatedReviewer(t *testing.T) {
 	if err == nil || !errors.Is(err, ports.ErrReviewerNotAuthenticated) {
 		t.Fatalf("err = %v, want reviewer auth sentinel", err)
 	}
-	for _, want := range []string{"Greptile CLI is not authenticated", "greptile login", "retry"} {
+	for _, want := range []string{"greptile CLI is not authenticated", "greptile login", "retry"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("err = %q, want %q", err, want)
 		}

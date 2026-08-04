@@ -62,6 +62,7 @@ type LaunchSpec struct {
 
 // ReviewCompletion is one asynchronously completed one-shot review. Err is set
 // when the CLI failed before producing a usable result.
+//nolint:revive // the explicit completion type name is part of the launcher API.
 type ReviewCompletion struct {
 	RunID     string
 	PRURL     string
@@ -217,15 +218,15 @@ func (l *agentLauncher) Preflight(ctx context.Context, harness domain.ReviewerHa
 		// Keep the executable name and the platform diagnostic while wrapping
 		// the typed port sentinel used by the service/controller mapping.
 		if harness == domain.ReviewerGreptile {
-			return fmt.Errorf("Greptile CLI is not installed (binary not found). Install it, then run greptile login and retry: %w", ports.ErrAgentBinaryNotFound)
+			return fmt.Errorf("greptile CLI is not installed (binary not found). Install it, then run greptile login and retry: %w", ports.ErrAgentBinaryNotFound)
 		}
-		return fmt.Errorf("reviewer binary %q not found: %v: %w", bin, err, ports.ErrAgentBinaryNotFound)
+		return fmt.Errorf("reviewer binary %q not found: %w: %w", bin, err, ports.ErrAgentBinaryNotFound)
 	}
 	if checker, ok := reviewer.(ports.ReviewerAuthChecker); ok {
 		status, _ := checker.AuthStatus(ctx)
 		if status == ports.AgentAuthStatusUnauthorized {
 			if harness == domain.ReviewerGreptile {
-				return fmt.Errorf("Greptile CLI is not authenticated. Run greptile login and retry: %w", ports.ErrReviewerNotAuthenticated)
+				return fmt.Errorf("greptile CLI is not authenticated. Run greptile login and retry: %w", ports.ErrReviewerNotAuthenticated)
 			}
 			return fmt.Errorf("reviewer %q is not authenticated: %w", harness, ports.ErrReviewerNotAuthenticated)
 		}

@@ -471,10 +471,10 @@ func envAssignments(extra map[string]string) []string {
 
 func commandFailure(err error, stderr string) error {
 	if errors.Is(err, exec.ErrNotFound) {
-		return fmt.Errorf("Greptile CLI is not installed. Install it, then run greptile login and retry: %w", ports.ErrAgentBinaryNotFound)
+		return fmt.Errorf("greptile CLI is not installed. Install it, then run greptile login and retry: %w", ports.ErrAgentBinaryNotFound)
 	}
 	if status, ok := greptileAuthStatusFromOutput([]byte(stderr)); ok && status == ports.AgentAuthStatusUnauthorized {
-		return errors.New("Greptile CLI is not authenticated. Run greptile login and retry.")
+		return errors.New("greptile CLI is not authenticated. Run greptile login and retry")
 	}
 	detail := redactGreptileText(strings.TrimSpace(stderr))
 	if detail == "" {
@@ -552,7 +552,7 @@ func writeTerminalResult(path string, result terminalResult) error {
 		return fmt.Errorf("create greptile result temp file: %w", err)
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	defer func() { _ = os.Remove(tmpName) }()
 	if err := tmp.Chmod(0o600); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("protect greptile result temp file: %w", err)
@@ -591,7 +591,7 @@ func writeJSONFile(path string, value any) error {
 		return err
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	defer func() { _ = os.Remove(tmpName) }()
 	if err := tmp.Chmod(0o600); err != nil {
 		_ = tmp.Close()
 		return err

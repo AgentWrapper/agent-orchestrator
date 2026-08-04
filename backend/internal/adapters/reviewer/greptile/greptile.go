@@ -27,8 +27,10 @@ var _ ports.TerminalOneShotReviewer = Adapter{}
 var _ ports.ReviewerCanceller = Adapter{}
 var _ ports.ReviewerBinaryResolver = Adapter{}
 
+// New returns a Greptile CLI reviewer adapter.
 func New() Adapter { return Adapter{} }
 
+// Harness returns the reviewer harness identifier for Greptile.
 func (Adapter) Harness() domain.ReviewerHarness { return domain.ReviewerGreptile }
 
 // ResolveBinary checks the same executable name used by ReviewCommand. This
@@ -51,6 +53,7 @@ var greptileBinarySpec = binaryutil.BinarySpec{
 	},
 }
 
+// ReviewCommand builds the non-interactive Greptile review command.
 func (Adapter) ReviewCommand(_ context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
 	argv := []string{"greptile", "review", "--json"}
 	if branch := targetBranch(inv); branch != "" {
@@ -59,6 +62,7 @@ func (Adapter) ReviewCommand(_ context.Context, inv ports.ReviewInvocation) (por
 	return ports.ReviewCommandSpec{Argv: argv}, nil
 }
 
+// ReviewMessage rejects follow-up messages because Greptile runs once per review.
 func (Adapter) ReviewMessage(context.Context, ports.ReviewInvocation) (string, error) {
 	return "", errors.New("greptile is a one-shot reviewer and does not accept review messages")
 }
@@ -88,6 +92,7 @@ type cliComment struct {
 	Suggestion    *string `json:"suggestion"`
 }
 
+// ParseReviewResult converts Greptile's JSON output into AO's review result.
 func (Adapter) ParseReviewResult(output []byte) (ports.ReviewResult, error) {
 	var review cliReview
 	decoder := json.NewDecoder(bytes.NewReader(output))

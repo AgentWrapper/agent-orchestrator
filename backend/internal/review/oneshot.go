@@ -156,7 +156,7 @@ func (l *agentLauncher) runTerminalBatch(ctx context.Context, handleID string, j
 					if l.onComplete != nil {
 						completions := make([]ReviewCompletion, 0, len(tasks))
 						for _, task := range tasks {
-							completions = append(completions, ReviewCompletion{RunID: task.RunID, PRURL: task.PRURL, TargetSHA: task.TargetSHA, Err: fmt.Errorf("Greptile terminal ended before publishing a complete result")})
+						completions = append(completions, ReviewCompletion{RunID: task.RunID, PRURL: task.PRURL, TargetSHA: task.TargetSHA, Err: fmt.Errorf("greptile terminal ended before publishing a complete result")})
 						}
 						l.onComplete(ctx, spec.WorkerID, completions)
 					}
@@ -293,7 +293,7 @@ func (l *agentLauncher) RecoverTerminalReviews(ctx context.Context) error {
 			workerID := domain.SessionID(workerEntry.Name())
 			if request.WorkerID != "" && request.WorkerID != workerID {
 				if firstErr == nil {
-					firstErr = fmt.Errorf("Greptile terminal request worker id %q does not match its path", request.WorkerID)
+					firstErr = fmt.Errorf("greptile terminal request worker id %q does not match its path", request.WorkerID)
 				}
 				return nil
 			}
@@ -395,7 +395,7 @@ func (l *agentLauncher) RecoverTerminalReviews(ctx context.Context) error {
 			if l.onComplete != nil {
 				completions := make([]ReviewCompletion, 0, len(request.Tasks))
 				for _, task := range request.Tasks {
-					completions = append(completions, ReviewCompletion{RunID: task.RunID, PRURL: task.PRURL, TargetSHA: task.TargetSHA, Err: fmt.Errorf("Greptile terminal ended before publishing a complete result")})
+				completions = append(completions, ReviewCompletion{RunID: task.RunID, PRURL: task.PRURL, TargetSHA: task.TargetSHA, Err: fmt.Errorf("greptile terminal ended before publishing a complete result")})
 				}
 				l.onComplete(ctx, workerID, completions)
 			}
@@ -428,8 +428,11 @@ func (l *agentLauncher) maybeCleanupTerminalReview(resultPath string, workerID d
 		return nil
 	}
 	resultInfo, err := os.Lstat(resultPath)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
 		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect Greptile terminal result for cleanup: %w", err)
 	}
 	if resultInfo.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("refusing to clean symlinked Greptile terminal result")

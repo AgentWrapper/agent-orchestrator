@@ -197,7 +197,7 @@ func TestPrepareTerminalRequestRejectsDurablePathReuse(t *testing.T) {
 
 func TestCommandFailureClassifiesMissingAuthentication(t *testing.T) {
 	err := commandFailure(errors.New("exit status 1"), "error: Not signed in. Run `greptile login`.")
-	if got, want := err.Error(), "Greptile CLI is not authenticated. Run greptile login and retry."; got != want {
+	if got, want := err.Error(), "greptile CLI is not authenticated. Run greptile login and retry"; got != want {
 		t.Fatalf("error = %q, want %q", got, want)
 	}
 }
