@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Keyboard, Mail } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { ConnectMobileModal } from "./ConnectMobileModal";
@@ -10,14 +10,26 @@ import { SettingsSection } from "./settings/SettingsSection";
 import { UpdatesSection } from "./settings/UpdatesSection";
 import { DevSettingsSection } from "./settings/DevSettingsSection";
 import { KeyboardShortcutsSettingsDialog } from "./settings/KeyboardShortcutsSettingsDialog";
+import { useUiStore } from "../stores/ui-store";
 
 export type GlobalSettingsSection = "general" | "updates" | "developer" | "help" | "all";
 
 export function GlobalSettingsForm({ section = "all" }: { section?: GlobalSettingsSection }) {
 	const { t } = useTranslation();
+	const closeSettings = useUiStore((s) => s.closeSettings);
 	const [mobileOpen, setMobileOpen] = useState(false);
 	const [reportProblemOpen, setReportProblemOpen] = useState(false);
 	const [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false);
+
+	useEffect(() => {
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === "Escape" && !mobileOpen && !reportProblemOpen && !keyboardShortcutsOpen) {
+				closeSettings();
+			}
+		};
+		document.addEventListener("keydown", onKey);
+		return () => document.removeEventListener("keydown", onKey);
+	}, [closeSettings, mobileOpen, reportProblemOpen, keyboardShortcutsOpen]);
 	// One section per page means the dialog header already names it, so the
 	// page's leading heading would just repeat that title.
 	const leadingTitleHidden = section !== "all";

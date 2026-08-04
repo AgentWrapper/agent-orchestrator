@@ -193,12 +193,15 @@ describe("GlobalSettingsForm", () => {
 
 	it("closes settings with Escape", async () => {
 		const user = userEvent.setup();
+		useUiStore.getState().openGlobalSettings();
 		renderForm();
 		await screen.findByLabelText("Settings");
 
 		await user.keyboard("{Escape}");
 
-		expect(navigateMock).toHaveBeenCalledWith({ to: "/" });
+		// Settings are now a modal — Escape closes via the store, not navigation
+		expect(useUiStore.getState().settingsModal).toBeNull();
+		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
 	it("lets an open settings dialog consume Escape first", async () => {
