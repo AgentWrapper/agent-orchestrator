@@ -16,6 +16,13 @@ let host: HTMLDivElement | null = null;
 let shadow: ShadowRoot | null = null;
 let viewportResizeObserver: ResizeObserver | null = null;
 
+const PROMPT_GUTTER = 14;
+const PROMPT_GAP = 10;
+const PROMPT_MAX_HEIGHT = 360;
+const PROMPT_COMPACT_CHROME_HEIGHT = 10;
+const PROMPT_EXPANDED_CHROME_HEIGHT = 48;
+const TEXTAREA_MIN_HEIGHT = 32;
+
 ipcRenderer.on("browser:annotation:setMode", (_event, input: { enabled?: boolean }) => {
 	setEnabled(Boolean(input?.enabled), "disabled");
 });
@@ -232,7 +239,7 @@ function ensureOverlay(): ShadowRoot {
 				width: 100%;
 				height: 32px;
 				min-height: 32px;
-				max-height: 104px;
+				max-height: var(--ao-prompt-textarea-max-height, 350px);
 				box-sizing: border-box;
 				resize: none;
 				border: 0;
@@ -240,13 +247,34 @@ function ensureOverlay(): ShadowRoot {
 				background: transparent;
 				color: var(--ao-foreground);
 				caret-color: var(--ao-foreground);
-				padding: 6px 40px 6px 9px;
+				padding: 6px 9px;
 				font-family: var(--ao-font-sans);
 				font-size: var(--ao-text-xs);
 				line-height: 20px;
 				font-weight: 400;
 				outline: none;
 				overflow-y: hidden;
+				scrollbar-width: none;
+				-ms-overflow-style: none;
+			}
+			.prompt:not(.prompt--expanded) textarea {
+				padding-right: 40px;
+			}
+			.prompt--expanded {
+				padding-bottom: 43px;
+			}
+			.prompt--expanded::after {
+				content: "";
+				position: absolute;
+				left: 0;
+				right: 0;
+				bottom: 42px;
+				height: 1px;
+				background: color-mix(in oklch, var(--ao-border) 85%, transparent);
+				pointer-events: none;
+			}
+			.prompt textarea::-webkit-scrollbar {
+				display: none;
 			}
 			.prompt textarea::placeholder {
 				color: var(--ao-passive);
@@ -369,16 +397,9 @@ function renderPrompt(element: Element, context: BrowserAnnotationContext): void
 	repositionPrompt(element);
 	const textarea = form.querySelector<HTMLTextAreaElement>("textarea")!;
 	const submitButton = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
-	const resizeTextarea = (): void => {
-		textarea.style.height = "0px";
-		const height = Math.min(104, Math.max(32, textarea.scrollHeight));
-		textarea.style.height = `${height}px`;
-		textarea.style.overflowY = textarea.scrollHeight > 104 ? "auto" : "hidden";
-		repositionPrompt(element);
-	};
 	const updateSubmitState = (): void => {
 		submitButton.disabled = textarea.value.trim().length === 0;
-		resizeTextarea();
+		repositionPrompt(element);
 	};
 	const submitAnnotation = (): boolean => {
 		const instruction = textarea.value.trim();
@@ -408,17 +429,49 @@ function renderPrompt(element: Element, context: BrowserAnnotationContext): void
 	setTimeout(() => textarea.focus(), 0);
 }
 
-function repositionPrompt(element: Element): void {
-	const form = shadow?.querySelector<HTMLFormElement>(".prompt");
-	if (!form) return;
+function currentViewport(): { width: number; height: number } {
 	const documentWidth = document.documentElement.clientWidth;
 	const documentHeight = document.documentElement.clientHeight;
 	const layoutWidth = Math.min(window.innerWidth, documentWidth > 0 ? documentWidth : window.innerWidth);
 	const layoutHeight = Math.min(window.innerHeight, documentHeight > 0 ? documentHeight : window.innerHeight);
-	const viewportWidth = Math.min(layoutWidth, window.visualViewport?.width ?? layoutWidth);
-	const viewportHeight = Math.min(layoutHeight, window.visualViewport?.height ?? layoutHeight);
+	return {
+		width: Math.min(layoutWidth, window.visualViewport?.width ?? layoutWidth),
+		height: Math.min(layoutHeight, window.visualViewport?.height ?? layoutHeight),
+	};
+}
+
+function setPromptHeightLimit(form: HTMLFormElement, element: Element, chromeHeight: number): number {
+	const viewportHeight = currentViewport().height;
+	const rect = element.getBoundingClientRect();
+	const spaceAbove = rect.top - PROMPT_GAP - PROMPT_GUTTER;
+	const spaceBelow = viewportHeight - PROMPT_GUTTER - rect.bottom - PROMPT_GAP;
+	const availablePromptHeight = Math.max(spaceAbove, spaceBelow);
+	const promptMaxHeight = Math.max(
+		TEXTAREA_MIN_HEIGHT + chromeHeight,
+		Math.min(PROMPT_MAX_HEIGHT, availablePromptHeight),
+	);
+	const textareaMaxHeight = promptMaxHeight - chromeHeight;
+	form.style.setProperty("--ao-prompt-textarea-max-height", `${textareaMaxHeight}px`);
+	return textareaMaxHeight;
+}
+
+function repositionPrompt(element: Element): void {
+	const form = shadow?.querySelector<HTMLFormElement>(".prompt");
+	if (!form) return;
+	const { width: viewportWidth, height: viewportHeight } = currentViewport();
 	const promptWidth = Math.max(0, Math.min(360, viewportWidth - 28));
 	form.style.width = `${promptWidth}px`;
+	const textarea = form.querySelector<HTMLTextAreaElement>("textarea");
+	if (textarea) {
+		textarea.style.height = "0px";
+		const expanded = textarea.scrollHeight > TEXTAREA_MIN_HEIGHT;
+		form.classList.toggle("prompt--expanded", expanded);
+		const chromeHeight = expanded ? PROMPT_EXPANDED_CHROME_HEIGHT : PROMPT_COMPACT_CHROME_HEIGHT;
+		const textareaMaxHeight = setPromptHeightLimit(form, element, chromeHeight);
+		const height = Math.min(textareaMaxHeight, Math.max(TEXTAREA_MIN_HEIGHT, textarea.scrollHeight));
+		textarea.style.height = `${height}px`;
+		textarea.style.overflowY = textarea.scrollHeight > textareaMaxHeight ? "auto" : "hidden";
+	}
 	const measuredHeight = form.getBoundingClientRect().height;
 	const { left, top } = promptPosition(element.getBoundingClientRect(), promptWidth, measuredHeight || 44, {
 		width: viewportWidth,
@@ -439,8 +492,8 @@ function promptPosition(
 		height: viewport.height,
 		promptWidth,
 		promptHeight,
-		gutter: 14,
-		gap: 10,
+		gutter: PROMPT_GUTTER,
+		gap: PROMPT_GAP,
 	});
 }
 

@@ -193,7 +193,9 @@ describe("annotate preload", () => {
 		expect(textarea).not.toBeNull();
 		expect(textarea).toHaveAttribute("rows", "1");
 		expect(textarea).toHaveAttribute("placeholder", "Describe the change…");
-		expect(root.querySelector("style")?.textContent).toContain("max-height: 104px");
+		expect(root.querySelector("style")?.textContent).toContain(
+			"max-height: var(--ao-prompt-textarea-max-height, 350px)",
+		);
 
 		textarea!.value = "Make this button easier to notice.";
 		textarea!.dispatchEvent(
@@ -204,6 +206,48 @@ describe("annotate preload", () => {
 			"browser:annotation:submit",
 			expect.objectContaining({ instruction: "Make this button easier to notice." }),
 		);
+	});
+
+	it("grows long comments to a viewport-aware limit with invisible scrolling", () => {
+		const first = elementWithBounds("first", { left: 12, top: 24, width: 120, height: 40 });
+		dispatchPageEvent(first, "click");
+
+		const root = overlayRoot();
+		const form = root.querySelector<HTMLFormElement>("form")!;
+		const textarea = root.querySelector<HTMLTextAreaElement>("textarea")!;
+		Object.defineProperty(textarea, "scrollHeight", { configurable: true, value: 900 });
+		textarea.value = "A very long annotation";
+		textarea.dispatchEvent(new Event("input", { bubbles: true }));
+
+		expect(form).toHaveClass("prompt--expanded");
+		expect(textarea.style.height).toBe("312px");
+		expect(textarea.style.overflowY).toBe("auto");
+		expect(form.style.getPropertyValue("--ao-prompt-textarea-max-height")).toBe("312px");
+		expect(root.querySelector("style")?.textContent).toContain("padding: 6px 9px");
+		expect(root.querySelector("style")?.textContent).toContain("padding-bottom: 43px");
+		expect(root.querySelector("style")?.textContent).toContain(".prompt--expanded::after");
+		expect(root.querySelector("style")?.textContent).toContain("scrollbar-width: none");
+		expect(root.querySelector("style")?.textContent).toContain("textarea::-webkit-scrollbar");
+	});
+
+	it("uses the room above for a selected element near the viewport bottom", () => {
+		const originalHeight = window.innerHeight;
+		Object.defineProperty(window, "innerHeight", { configurable: true, value: 500 });
+		const first = elementWithBounds("first", { left: 12, top: 420, width: 120, height: 40 });
+		dispatchPageEvent(first, "click");
+
+		const root = overlayRoot();
+		const form = root.querySelector<HTMLFormElement>("form")!;
+		const textarea = root.querySelector<HTMLTextAreaElement>("textarea")!;
+		Object.defineProperty(textarea, "scrollHeight", { configurable: true, value: 900 });
+		textarea.value = "A very long annotation";
+		textarea.dispatchEvent(new Event("input", { bubbles: true }));
+
+		expect(form).toHaveClass("prompt--expanded");
+		expect(textarea.style.height).toBe("312px");
+		expect(Number.parseFloat(form.style.top)).toBeLessThan(420);
+
+		Object.defineProperty(window, "innerHeight", { configurable: true, value: originalHeight });
 	});
 
 	it("keeps prompt controls active for escape", () => {
