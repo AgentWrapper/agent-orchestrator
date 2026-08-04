@@ -114,7 +114,7 @@ beforeEach(() => {
 });
 
 describe("ProjectSettingsForm", () => {
-	it("closes project settings with the close button", async () => {
+	it("does not have its own close button (dialog handles closing)", async () => {
 		mockProject({
 			id: "proj-1",
 			name: "Project One",
@@ -129,13 +129,14 @@ describe("ProjectSettingsForm", () => {
 		});
 
 		renderSettings();
+		await screen.findByText("Identity");
 
-		await userEvent.click(await screen.findByRole("button", { name: "Close settings" }));
-
-		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
+		// Close button is now in SettingsDialog, not in the form itself
+		expect(screen.queryByRole("button", { name: "Close settings" })).not.toBeInTheDocument();
+		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
-	it("closes project settings with Escape", async () => {
+	it("does not navigate on Escape (dialog handles closing)", async () => {
 		mockProject({
 			id: "proj-1",
 			name: "Project One",
@@ -150,11 +151,12 @@ describe("ProjectSettingsForm", () => {
 		});
 
 		renderSettings();
-		await screen.findByLabelText("Settings");
+		await screen.findByText("Identity");
 
 		await userEvent.keyboard("{Escape}");
 
-		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
+		// Escape is handled by the Radix Dialog in SettingsDialog, not the form
+		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
 	it("atomically saves the project display name and config without changing its stable ID", async () => {

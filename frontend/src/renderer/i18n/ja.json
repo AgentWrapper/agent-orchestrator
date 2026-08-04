@@ -890,5 +890,14 @@
 	"files.pathCopied": "Path copied",
 	"files.refresh": "Refresh files",
 	"files.searchPlaceholder": "Search changed files",
-	"settings.project.settings": "プロジェクト設定"
+	"settings.project.settings": "プロジェクト設定",
+	"settings.dialogDescription": "Manage {{section}} settings.",
+	"settings.project.dialogDescription": "Manage this project's settings.",
+	"settings.dev.title": "Dev Settings",
+	"settings.dev.fixtureSessionsLabel": "Fixture sessions per zone",
+	"settings.dev.fixtureCountAria": "Fixture count",
+	"settings.dev.activitySpreadLabel": "Activity spread (min)",
+	"settings.dev.activitySpreadAria": "Activity spread in minutes",
+	"settings.dev.resetDefaultsLabel": "Reset defaults",
+	"settings.dev.resetReload": "Reset & Reload"
 }

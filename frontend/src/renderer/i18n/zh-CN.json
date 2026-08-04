@@ -402,10 +402,7 @@
 	"settings.connectMobile": "连接手机",
 	"settings.developerMode": "开发者模式",
 	"settings.general": "通用",
-	"settings.developer": "开发者",
 	"settings.getHelp": "获取帮助",
-	"settings.help": "帮助",
-	"settings.navSectionsAria": "设置分类",
 	"settings.keyboardShortcuts": "键盘快捷键",
 	"settings.language": "语言",
 	"settings.language.de": "Deutsch",
@@ -869,11 +866,18 @@
 	"zone.done": "已终止",
 	"zone.merge": "可合并",
 	"zone.pending": "评审中",
-	"zone.working": "工作中"
-
-,
+	"zone.working": "工作中",
 	"settings.developer": "开发者",
 	"settings.help": "帮助",
 	"settings.navSectionsAria": "设置分区",
-	"settings.project.settings": "项目设置"
+	"settings.project.settings": "项目设置",
+	"settings.dialogDescription": "管理{{section}}设置。",
+	"settings.project.dialogDescription": "管理此项目的设置。",
+	"settings.dev.title": "开发者设置",
+	"settings.dev.fixtureSessionsLabel": "每区夹具会话数",
+	"settings.dev.fixtureCountAria": "夹具数量",
+	"settings.dev.activitySpreadLabel": "活动分布（分钟）",
+	"settings.dev.activitySpreadAria": "活动分布（分钟）",
+	"settings.dev.resetDefaultsLabel": "重置默认值",
+	"settings.dev.resetReload": "重置并重新加载"
 }

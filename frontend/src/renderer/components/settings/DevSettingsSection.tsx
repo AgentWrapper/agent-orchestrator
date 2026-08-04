@@ -1,4 +1,5 @@
 import { Beaker, Dice5, PaintBucket } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useUiStore } from "../../stores/ui-store";
 import { IS_DEV } from "../../lib/is-dev";
 import { Input } from "../ui/input";
@@ -7,14 +8,15 @@ import { SettingsSection } from "./SettingsSection";
 
 /** Dev-only settings for controlling board fixtures and UI test data. */
 export function DevSettingsSection({ titleHidden }: { titleHidden?: boolean }) {
+	const { t } = useTranslation();
 	const devSettings = useUiStore((state) => state.devSettings);
 	const setDevSettings = useUiStore((state) => state.setDevSettings);
 
 	if (!IS_DEV) return null;
 
 	return (
-		<SettingsSection title="Dev Settings" sectionId="dev-settings" titleHidden={titleHidden}>
-			<SettingsRow icon={Dice5} label="Fixture sessions per zone">
+		<SettingsSection title={t("settings.dev.title")} sectionId="dev-settings" titleHidden={titleHidden}>
+			<SettingsRow icon={Dice5} label={t("settings.dev.fixtureSessionsLabel")}>
 				<Input
 					type="number"
 					min={0}
@@ -26,11 +28,11 @@ export function DevSettingsSection({ titleHidden }: { titleHidden?: boolean }) {
 							fixtureCount: Math.max(0, Math.min(20, Number(e.target.value) || 0)),
 						})
 					}
-					aria-label="Fixture count"
+					aria-label={t("settings.dev.fixtureCountAria")}
 					className="w-20 text-right tabular-nums"
 				/>
 			</SettingsRow>
-			<SettingsRow icon={PaintBucket} label="Activity spread (min)">
+			<SettingsRow icon={PaintBucket} label={t("settings.dev.activitySpreadLabel")}>
 				<Input
 					type="number"
 					min={5}
@@ -43,11 +45,11 @@ export function DevSettingsSection({ titleHidden }: { titleHidden?: boolean }) {
 							randomSpreadMinutes: Math.max(5, Math.min(480, Number(e.target.value) || 5)),
 						})
 					}
-					aria-label="Activity spread in minutes"
+					aria-label={t("settings.dev.activitySpreadAria")}
 					className="w-20 text-right tabular-nums"
 				/>
 			</SettingsRow>
-			<SettingsRow icon={Beaker} label="Reset defaults">
+			<SettingsRow icon={Beaker} label={t("settings.dev.resetDefaultsLabel")}>
 				<button
 					type="button"
 					className="rounded-md border border-input bg-transparent px-3 py-1 text-xs font-medium text-foreground hover:bg-interactive-hover transition-colors"
@@ -56,7 +58,7 @@ export function DevSettingsSection({ titleHidden }: { titleHidden?: boolean }) {
 						window.location.reload();
 					}}
 				>
-					Reset &amp; Reload
+					{t("settings.dev.resetReload")}
 				</button>
 			</SettingsRow>
 		</SettingsSection>

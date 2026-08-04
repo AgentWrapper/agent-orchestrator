@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import {
 	Bot,
@@ -33,8 +32,6 @@ import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeNeedsRule } from "./IntakeFields";
 import { ReviewerSelect } from "./ReviewerSelect";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
-import { SettingsPageShell } from "./settings/SettingsPageShell";
-import { SettingsPanel } from "./settings/SettingsPanel";
 import { SettingsRow } from "./settings/SettingsRow";
 import { SettingsSection } from "./settings/SettingsSection";
 
@@ -49,9 +46,7 @@ const projectQueryKey = (id: string) => ["project", id] as const;
 
 export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 	const { t } = useTranslation();
-	const navigate = useNavigate();
 	const queryClient = useQueryClient();
-	const closeSettings = () => navigate({ to: "/projects/$projectId", params: { projectId } });
 
 	const query = useQuery({
 		queryKey: projectQueryKey(projectId),
@@ -66,24 +61,22 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 	});
 
 	return (
-		<SettingsPageShell>
-			<SettingsPanel onClose={closeSettings} subtitle={query.data?.path}>
-				{query.isLoading ? (
-					<p className="text-sm text-settings-muted">{t("settings.project.loading")}</p>
-				) : query.isError || !query.data ? (
-					<p className="text-sm text-error">
-						{query.error instanceof Error ? query.error.message : t("settings.project.loadFailed")}
-					</p>
-				) : (
-					<SettingsBody
-						key={projectId}
-						project={query.data}
-						onSaved={() => queryClient.invalidateQueries({ queryKey: workspaceQueryKey })}
-						projectId={projectId}
-					/>
-				)}
-			</SettingsPanel>
-		</SettingsPageShell>
+		<>
+			{query.isLoading ? (
+				<p className="text-sm text-settings-muted">{t("settings.project.loading")}</p>
+			) : query.isError || !query.data ? (
+				<p className="text-sm text-error">
+					{query.error instanceof Error ? query.error.message : t("settings.project.loadFailed")}
+				</p>
+			) : (
+				<SettingsBody
+					key={projectId}
+					project={query.data}
+					onSaved={() => queryClient.invalidateQueries({ queryKey: workspaceQueryKey })}
+					projectId={projectId}
+				/>
+			)}
+		</>
 	);
 }
 

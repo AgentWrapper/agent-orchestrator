@@ -1,20 +1,16 @@
 import { create } from "zustand";
 import type { TerminalTarget } from "../types/terminal";
 import {
-	applyDocumentThemeStyle,
 	readStoredThemePreference,
-	readStoredThemeStyle,
 	resolveTheme,
 	systemTheme,
 	themeStorageKey,
-	themeStyleStorageKey,
 	type Theme,
 	type ThemePreference,
-	type ThemeStyle,
 } from "../lib/theme";
 
-export type { Theme, ThemePreference, ThemeStyle } from "../lib/theme";
-export { readStoredThemePreference, readStoredThemeStyle, resolveTheme } from "../lib/theme";
+export type { Theme, ThemePreference } from "../lib/theme";
+export { readStoredThemePreference, resolveTheme } from "../lib/theme";
 
 export type SettingsModal =
 	| { scope: "global" }
@@ -55,8 +51,6 @@ type UiState = {
 	isCommandPaletteOpen: boolean;
 	settingsModal: SettingsModal | null;
 	themePreference: ThemePreference;
-	/** Visual palette, independent of the light/dark themePreference above. */
-	themeStyle: ThemeStyle;
 	/** Resolved light/dark for React consumers; may track OS while preference is system. */
 	resolvedTheme: Theme;
 	/** When true, developer-only surfaces (e.g. Feature Releases) are revealed. Default off. */
@@ -92,7 +86,6 @@ type UiState = {
 	devSettings: DevSettings;
 	setWorkbenchTab: (tab: WorkbenchTab) => void;
 	setThemePreference: (theme: ThemePreference) => void;
-	setThemeStyle: (style: ThemeStyle) => void;
 	openGlobalSettings: () => void;
 	openProjectSettings: (projectId: string) => void;
 	closeSettings: () => void;
@@ -155,7 +148,6 @@ function inspectorState(sessions: Record<string, InspectorSessionState>, session
 }
 
 const initialThemePreference = readStoredThemePreference();
-const initialThemeStyle = readStoredThemeStyle();
 
 export const useUiStore = create<UiState>((set) => ({
 	workbenchTab: "changes",
@@ -164,7 +156,6 @@ export const useUiStore = create<UiState>((set) => ({
 	isCommandPaletteOpen: false,
 	settingsModal: null,
 	themePreference: initialThemePreference,
-	themeStyle: initialThemeStyle,
 	resolvedTheme: resolveTheme(initialThemePreference),
 	developerMode: initialDeveloperMode(),
 	restartingProjectIds: new Set<string>(),
@@ -180,11 +171,6 @@ export const useUiStore = create<UiState>((set) => ({
 	setThemePreference: (themePreference) => {
 		getLocalStorage()?.setItem(themeStorageKey, themePreference);
 		set({ themePreference, resolvedTheme: resolveTheme(themePreference) });
-	},
-	setThemeStyle: (themeStyle) => {
-		getLocalStorage()?.setItem(themeStyleStorageKey, themeStyle);
-		applyDocumentThemeStyle(themeStyle);
-		set({ themeStyle });
 	},
 	openGlobalSettings: () => set({ settingsModal: { scope: "global" } }),
 	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),

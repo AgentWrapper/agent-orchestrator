@@ -460,6 +460,12 @@ function ShellLayout() {
 		const handlePointerMove = (event: PointerEvent) => {
 			const target = event.target instanceof Element ? event.target : null;
 			const isInSidebarPortal = Boolean(target?.closest('[role="dialog"], [role="listbox"], [role="menu"]'));
+			// TitlebarNav / WindowTitlebar sit above the peek in z-order; keep the
+			// preview open while the pointer is on those controls so hover→click
+			// to pin still works.
+			const isInTitlebarChrome = Boolean(
+				target?.closest("[data-slot='titlebar-nav'], .window-titlebar"),
+			);
 			const sidebar = document.querySelector<HTMLElement>('[data-slot="sidebar-container"]');
 			const bounds = sidebar?.getBoundingClientRect();
 			const isInSidebar = Boolean(
@@ -470,7 +476,7 @@ function ShellLayout() {
 				event.clientY <= bounds.bottom,
 			);
 
-			if (isInSidebar || isInSidebarPortal) {
+			if (isInSidebar || isInSidebarPortal || isInTitlebarChrome) {
 				cancelSidebarPeekClose();
 				return;
 			}
@@ -616,7 +622,7 @@ function ShellLayout() {
 			{/* Shell chrome: Win/Linux hang the sidebar under a topbar. macOS uses a
           titlebar strip above the off-canvas sidebar. Session and board actions
           render inside the center panel when the shell topbar is hidden. */}
-			<div className={cn("flex h-screen min-h-0 flex-col bg-sidebar text-foreground", isWindows && "platform-windows", isLinux && "platform-linux")}>
+			<div className={cn("flex h-screen min-h-0 flex-col bg-sidebar text-foreground", isWindows && "platform-windows", isLinux && "platform-linux", isFullScreen && "native-fullscreen")}>
 				{/* Windows-only custom title bar (sidebar toggle + File/Edit/View/…
             menu); paints the chrome the frameless window drops. Renders null on
             macOS/Linux. */}

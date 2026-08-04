@@ -904,5 +904,14 @@
 	"files.refresh": "Refresh files",
 	"files.searchPlaceholder": "Search changed files",
 	"settings.project.settings": "Paramètres du projet",
-	"files.count_many": "{{count}} fichiers"
+	"files.count_many": "{{count}} fichiers",
+	"settings.dialogDescription": "Manage {{section}} settings.",
+	"settings.project.dialogDescription": "Manage this project's settings.",
+	"settings.dev.title": "Dev Settings",
+	"settings.dev.fixtureSessionsLabel": "Fixture sessions per zone",
+	"settings.dev.fixtureCountAria": "Fixture count",
+	"settings.dev.activitySpreadLabel": "Activity spread (min)",
+	"settings.dev.activitySpreadAria": "Activity spread in minutes",
+	"settings.dev.resetDefaultsLabel": "Reset defaults",
+	"settings.dev.resetReload": "Reset & Reload"
 }
