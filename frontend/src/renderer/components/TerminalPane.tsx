@@ -933,6 +933,26 @@ function AttachedTerminal({
 		shellTerminalHandleId,
 		onOutput: watchLinks ? handleOutput : undefined,
 	});
+	// xterm's write callback means the replay has been parsed, not that the
+	// browser has painted its final viewport. Keep the first-load cover mounted
+	// through the same render/paint preparation used when activating a retained
+	// terminal; otherwise large TUI replays can visibly repaint from their first
+	// row immediately after the loading cover disappears.
+	const [replayPaintPending, setReplayPaintPending] = useState(!replaySettled);
+	useLayoutEffect(() => {
+		if (!replaySettled) {
+			setReplayPaintPending(true);
+			return;
+		}
+		if (!replayPaintPending || !terminal) return;
+		let current = true;
+		void terminal.prepareForActivation().then(() => {
+			if (current) setReplayPaintPending(false);
+		});
+		return () => {
+			current = false;
+		};
+	}, [replayPaintPending, replaySettled, terminal]);
 	const handleId = shellTerminalHandleId ?? attachSession?.terminalHandleId;
 	const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : session?.provider;
 	const isSessionActive = session ? sessionIsActive(session) : false;
@@ -1039,7 +1059,9 @@ function AttachedTerminal({
 	// otherwise pull it straight back down, and the "reattaching" banner already
 	// explains that window better than a blank overlay does.
 	const showReplayCover =
-		Boolean(handleId) && !replaySettled && (state === "connecting" || state === "attached");
+		Boolean(handleId) &&
+		(!replaySettled || replayPaintPending) &&
+		(state === "connecting" || state === "attached");
 	const showEndedState = state === "exited" || canRestoreSession;
 	const emptyStateTitle = session ? t("terminal.startingSession") : "Agent Orchestrator";
 	const emptyStateMessage = session

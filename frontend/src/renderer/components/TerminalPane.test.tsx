@@ -19,6 +19,7 @@ const {
 	attachMock,
 	getMock,
 	postMock,
+	prepareForActivationMock,
 	terminalError,
 	terminalState,
 	replaySettled,
@@ -31,6 +32,7 @@ const {
 		attachMock: vi.fn(() => vi.fn()),
 		getMock: vi.fn(async (_path: string, _options: unknown) => ({ data: undefined })),
 		postMock: vi.fn(),
+		prepareForActivationMock: vi.fn(async (): Promise<void> => undefined),
 		terminalError: { value: undefined as string | undefined },
 		terminalState: { value: "idle" },
 		replaySettled: { value: true },
@@ -72,7 +74,7 @@ vi.mock("./XtermTerminal", () => ({
 				write: vi.fn((_data, done) => done?.()),
 				writeln: vi.fn(),
 				showLatestOutput: vi.fn(),
-				prepareForActivation: vi.fn(async () => undefined),
+				prepareForActivation: prepareForActivationMock,
 				onUserInput: vi.fn(() => disposable),
 				onResize: vi.fn(() => disposable),
 			});
@@ -131,6 +133,8 @@ beforeEach(() => {
 	terminalOutputHandlers.clear();
 	terminalSessionOptions.length = 0;
 	attachMock.mockClear();
+	prepareForActivationMock.mockReset();
+	prepareForActivationMock.mockResolvedValue(undefined);
 	xtermMounts.value = 0;
 	xtermUnmounts.value = 0;
 	useUiStore.setState({ inspectorSessions: {} });
@@ -288,6 +292,38 @@ describe("TerminalPane replay cover", () => {
 		replaySettled.value = true;
 		const view = renderPane({ ...worker, terminalHandleId: "term-1" });
 		try {
+			expect(screen.queryByTestId("terminal-replay-cover")).not.toBeInTheDocument();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("keeps the cover through the first complete replay paint", async () => {
+		let finishPaint: (() => void) | undefined;
+		prepareForActivationMock.mockImplementation(
+			() => new Promise<void>((resolve) => {
+				finishPaint = resolve;
+			}),
+		);
+		replaySettled.value = false;
+		const view = renderPane({ ...worker, terminalHandleId: "term-1" });
+		try {
+			await waitFor(() => expect(screen.getByTestId("terminal-replay-cover")).toBeInTheDocument());
+			replaySettled.value = true;
+			view.rerender(
+				<QueryClientProvider client={view.queryClient}>
+					<TerminalPane
+						daemonReady
+						fontSize={12}
+						session={{ ...worker, terminalHandleId: "term-1" }}
+						theme="dark"
+					/>
+				</QueryClientProvider>,
+			);
+			expect(screen.getByTestId("terminal-replay-cover")).toBeInTheDocument();
+			expect(prepareForActivationMock).toHaveBeenCalled();
+
+			await act(async () => finishPaint?.());
 			expect(screen.queryByTestId("terminal-replay-cover")).not.toBeInTheDocument();
 		} finally {
 			view.restore();
