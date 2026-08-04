@@ -6,6 +6,7 @@ import { CenterPanelShell } from "../components/CenterPanelShell";
 import { DaemonFailureBanner } from "../components/DaemonFailureBanner";
 import { NotificationRuntime } from "../components/NotificationCenter";
 import { GlobalNewTaskDialog } from "../components/GlobalNewTaskDialog";
+import { SettingsDialog } from "../components/SettingsDialog";
 import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
 import { KeyboardShortcutsSettingsDialog } from "../components/settings/KeyboardShortcutsSettingsDialog";
 import { ShellTopbar } from "../components/ShellTopbar";
@@ -605,6 +606,7 @@ function ShellLayout() {
 			<SessionTopbarProvider>
 			<NotificationRuntime />
 			<GlobalNewTaskDialog />
+			<SettingsDialog />
 			<KeyboardShortcutsDialog
 				open={isKeyboardShortcutsOpen}
 				onOpenChange={setIsKeyboardShortcutsOpen}
@@ -655,7 +657,7 @@ function ShellLayout() {
 				>
 					{routeParams.sessionId ? (
 						<SessionTopbarHost
-							className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden bg-sidebar"
+							className="relative z-chrome flex h-session-topbar w-full shrink-0 overflow-hidden bg-sidebar"
 							data-testid="session-topbar-host"
 						/>
 					) : null}

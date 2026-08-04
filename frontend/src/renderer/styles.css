@@ -167,13 +167,16 @@
 	--duration-fast: var(--duration-fast);
 	--duration-normal: var(--duration-normal);
 
+	/* Motion — press-feedback scale for interactive elements */
+	--scale-press: 0.97;
+
 	/* Layout — toolbar offset for fixed sidebar below topbar */
 	--spacing-toolbar: var(--size-toolbar);
 	--spacing-window-titlebar: var(--size-window-titlebar);
 	--spacing-titlebar-content-offset: var(--size-titlebar-content-offset);
 	--spacing-titlebar-cluster-left: var(--size-titlebar-cluster-left);
 	/* Fullscreen has no traffic lights — park the cluster at the panel inset. */
-	--spacing-titlebar-cluster-left-fullscreen: var(--size-center-panel-inset-mac);
+	--spacing-titlebar-cluster-left-fullscreen: var(--size-center-panel-inset);
 	--spacing-traffic-light-clearance: var(--size-traffic-light-clearance);
 	--spacing-traffic-light-clearance-fullscreen: var(--size-traffic-light-clearance-fullscreen);
 	--spacing-control-xs: var(--size-control-xs);
@@ -186,12 +189,14 @@
 	--spacing-control-board: var(--size-control-board);
 	--spacing-table-head: var(--size-table-head);
 	--spacing-inspector-tabs: var(--size-inspector-tabs);
+	--spacing-session-topbar: var(--size-session-topbar);
 	--spacing-browser-url: var(--size-browser-url);
 	--spacing-browser-min: var(--size-browser-min);
 	--spacing-dot-sm: var(--size-dot-sm);
 	--spacing-content-max: var(--size-content-max);
 	--spacing-flex-min: var(--size-flex-min);
 	--spacing-shell-tab-min: var(--size-shell-tab-min);
+	--spacing-shell-tab-connected: var(--size-shell-tab-connected);
 	--spacing-shell-tab-max: var(--size-shell-tab-max);
 	--spacing-board-empty: var(--size-board-empty);
 	--spacing-preview-content: var(--size-preview-content);
@@ -253,9 +258,15 @@
 	--color-interactive-hover: var(--bridge-interactive-hover);
 	--color-interactive-active: var(--bridge-interactive-active);
 
+	--ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+	--ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+
 	--animate-status-pulse: status-pulse 1.8s ease-in-out infinite;
-	--animate-overlay-in: overlay-in 150ms ease-out;
-	--animate-modal-in: modal-in 150ms ease-out;
+	--animate-overlay-in: overlay-in 130ms var(--ease-out);
+	--animate-modal-in: modal-in 180ms var(--ease-out);
+	/* Exits are shorter than entries: the system is responding, not deciding. */
+	--animate-overlay-out: overlay-out 90ms ease-in;
+	--animate-modal-out: modal-out 100ms cubic-bezier(0.4, 0, 1, 1);
 }
 
 /* Full-viewport modal/sheet scrim — dim + blur everything behind pop panels. */
@@ -415,7 +426,7 @@
 	padding-left: var(--size-center-panel-inline-inset);
 }
 
-/* macOS: inset on all sides except left (flush with sidebar). */
+/* macOS + Linux: inset on all sides except left (flush with sidebar). */
 .center-panel-shell.center-panel-shell--mac {
 	padding-top: var(--size-center-panel-inset-mac);
 	padding-right: var(--size-center-panel-inset-mac);
@@ -495,10 +506,10 @@
 	--sidebar-chrome-offset: var(--size-traffic-light-clearance);
 }
 [data-topbar-offset="session"] {
-	--sidebar-chrome-offset: var(--size-inspector-tabs);
+	--sidebar-chrome-offset: var(--size-session-topbar);
 }
 .platform-windows [data-topbar-offset="session"] {
-	--sidebar-chrome-offset: calc(var(--size-window-titlebar) + var(--size-inspector-tabs));
+	--sidebar-chrome-offset: calc(var(--size-window-titlebar) + var(--size-session-topbar));
 }
 
 /* On macOS the titlebar controls stay fixed when the sidebar is off-canvas.
@@ -568,9 +579,29 @@ button.settings-row-bar {
 	transition-duration: var(--duration-fast);
 }
 
+.review-run-controls-container {
+	container-type: inline-size;
+}
+
+.review-run-controls {
+	flex-wrap: nowrap;
+}
+
+@container (max-width: 28rem) {
+	.review-run-controls {
+		align-items: flex-start;
+		flex-direction: column;
+	}
+
+	.review-run-agent-select {
+		width: 100%;
+	}
+}
+
 @utility settings-menu-surface {
 	display: flex;
-	width: min(var(--size-settings-menu-width), calc(100vw - 2rem));
+	width: max-content;
+	max-width: min(var(--size-settings-menu-width), calc(100vw - 2rem));
 	min-width: var(--size-settings-menu-min-width);
 	max-height: var(--size-select-menu-max);
 	flex-direction: column;
@@ -586,6 +617,7 @@ button.settings-row-bar {
 }
 
 @utility settings-agent-menu-surface {
+	width: var(--size-settings-agent-menu-min-width);
 	min-width: var(--size-settings-agent-menu-min-width);
 	padding: var(--space-3);
 	gap: var(--space-2);
@@ -1141,6 +1173,15 @@ textarea,
 	}
 }
 
+@keyframes overlay-out {
+	from {
+		opacity: 1;
+	}
+	to {
+		opacity: 0;
+	}
+}
+
 @keyframes modal-in {
 	from {
 		opacity: 0;
@@ -1149,6 +1190,17 @@ textarea,
 	to {
 		opacity: 1;
 		scale: 1;
+	}
+}
+
+@keyframes modal-out {
+	from {
+		opacity: 1;
+		scale: 1;
+	}
+	to {
+		opacity: 0;
+		scale: 0.95;
 	}
 }
 
@@ -1604,6 +1656,12 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 .session-inspector__body--browser .browser-panel {
 	border: 0;
 	border-radius: 0;
+}
+
+.session-inspector__body--browser .browser-panel__viewport {
+	margin: 0;
+	border-radius: 0;
+	box-shadow: none;
 }
 
 /* Inspector resize handle (shadcn resizable separator, AO visual): a 7px
@@ -2612,4 +2670,17 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	.browser-panel__toolbar button:not(:disabled):active {
 		transform: none;
 	}
+}
+
+/* Reviewer picker menu: the agent list needs more room than the default option
+   menu so harness names are not truncated mid-word. */
+@utility reviews-agent-menu-surface {
+	min-width: 13rem;
+	padding: var(--space-1_5);
+	gap: var(--space-1);
+}
+
+@utility reviews-agent-menu-item {
+	padding-inline: var(--space-2_5);
+	padding-block: var(--space-2);
 }

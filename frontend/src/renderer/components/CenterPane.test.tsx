@@ -78,7 +78,12 @@ describe("CenterPane toolbar session label", () => {
 
 		const sessionTab = screen.getByRole("tab", { name: /^do the thing/ });
 		expect(sessionTab).toHaveAttribute("aria-selected", "true");
-		expect(sessionTab.parentElement).toHaveClass("self-stretch", "bg-overlay");
+		expect(sessionTab.parentElement).toHaveClass(
+			"self-stretch",
+			"bg-overlay",
+			"after:h-0.5",
+			"after:bg-foreground/80",
+		);
 		expect(sessionTab.parentElement).not.toHaveClass("session-primary-tab");
 		expect(sessionTab.parentElement).not.toHaveClass("rounded-md");
 		expect(sessionTab).toHaveAccessibleName("do the thing · Working");
@@ -201,12 +206,13 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.getByText("No session")).toBeInTheDocument();
 	});
 
-	it("uses the inspector tab height for the terminal header", () => {
+	it("uses the padded session topbar height for the terminal header", () => {
 		renderCenterPane({ session: worker });
 
 		const tablist = screen.getByRole("tablist", { name: "Open terminals" });
-		const header = tablist.closest(".h-inspector-tabs");
-		expect(header).toHaveClass("h-inspector-tabs");
+		const header = tablist.closest(".h-session-topbar");
+		expect(header).toHaveClass("h-session-topbar");
+		expect(screen.getByTestId("session-workspace-topbar")).toHaveClass("py-1");
 		expect(tablist.parentElement).toHaveClass("h-full");
 	});
 
@@ -263,7 +269,7 @@ describe("CenterPane toolbar session label", () => {
 		for (const tab of screen.getAllByTitle(/^\/tmp\/ws/)) {
 			expect(tab.parentElement).toHaveClass(
 				"min-w-shell-tab-min",
-				"w-[calc(var(--spacing-shell-tab-max)+var(--spacing-control-sm)+2rem)]",
+				"w-shell-tab-connected",
 			);
 			expect(tab.parentElement).not.toHaveClass("min-w-16", "shrink-0");
 			expect(tab).toHaveClass("min-w-0", "w-full");
