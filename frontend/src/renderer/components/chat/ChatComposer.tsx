@@ -348,7 +348,7 @@ export function ChatComposer({
 			onDragLeave={() => setDragging(false)}
 			onDrop={onDrop}
 			className={cn(
-				"relative flex flex-col gap-2 rounded-lg border bg-surface p-2 focus-within:border-logo-accent/45",
+				"relative flex flex-col gap-2 rounded-xl border bg-surface p-2.5 shadow-sm transition-colors focus-within:border-logo-accent/45",
 				dragging ? "border-logo-accent" : "border-border-strong",
 			)}
 		>
@@ -419,7 +419,7 @@ export function ChatComposer({
 									? "Ask the agent…  /  for skills, @ for files"
 									: "Ask the agent…  @ for files"
 				}
-				className="max-h-48 min-h-[3.25rem] w-full resize-none bg-transparent px-1.5 py-1 text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
+				className="max-h-48 min-h-[3.5rem] w-full resize-none bg-transparent px-1.5 py-1.5 text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
 			/>
 
 			{attachmentError ? (
@@ -441,60 +441,76 @@ export function ChatComposer({
 				<DeliveryChoice value={delivery} onChange={setDelivery} disabled={steerPending} />
 			) : null}
 
-			<div className="flex items-center gap-2">
-				{settings}
-				{canAttach ? (
-					<>
-						<input
-							ref={filePicker}
-							type="file"
-							accept="image/png,image/jpeg,image/gif,image/webp,image/bmp"
-							multiple
-							hidden
-							onChange={(event) => {
-								void images.addFiles(Array.from(event.target.files ?? []));
-								// Cleared so picking the same file twice still fires a change.
-								event.target.value = "";
-							}}
-						/>
-						<Button
-							type="button"
-							variant="ghost"
-							size="sm"
-							disabled={disabled}
-							onClick={() => filePicker.current?.click()}
-							aria-label="Attach an image"
-							title="Attach an image"
-							className="h-6 px-1.5"
-						>
-							<Paperclip aria-hidden="true" className="size-3.5 text-muted-foreground" />
-						</Button>
-					</>
-				) : null}
-				<span className="ml-auto text-[11px] text-muted-foreground">
-					{menuOpen
-						? "Enter to insert"
-						: steering
-							? "Enter to steer"
-							: willQueue
-								? "Enter to queue"
-								: "Enter to send"}
-				</span>
-				<Button
-					type="submit"
-					size="icon-sm"
-					disabled={!canSend}
-					aria-label={steering ? "Steer the running turn" : "Send message"}
-					className="border-logo-accent bg-logo-accent text-logo-accent-foreground hover:bg-logo-accent-bright focus-visible:ring-logo-accent/45"
+			<div className="flex min-h-8 items-end justify-between gap-3">
+				<div
+					role="group"
+					aria-label="Message tools"
+					className="flex min-w-0 flex-1 flex-wrap items-center gap-1"
 				>
-					{steerPending ? (
-						<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
-					) : steering ? (
-						<CornerDownRight aria-hidden="true" className="size-3.5" />
-					) : (
-						<ArrowUp aria-hidden="true" className="size-3.5" />
-					)}
-				</Button>
+					{canAttach ? (
+						<>
+							<input
+								ref={filePicker}
+								type="file"
+								accept="image/png,image/jpeg,image/gif,image/webp,image/bmp"
+								multiple
+								hidden
+								onChange={(event) => {
+									void images.addFiles(Array.from(event.target.files ?? []));
+									// Cleared so picking the same file twice still fires a change.
+									event.target.value = "";
+								}}
+							/>
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								disabled={disabled}
+								onClick={() => filePicker.current?.click()}
+								aria-label="Attach an image"
+								title="Attach an image"
+								className="size-8 shrink-0 p-0"
+							>
+								<Paperclip aria-hidden="true" className="size-4 text-muted-foreground" />
+							</Button>
+						</>
+					) : null}
+					{canAttach && settings ? (
+						<span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />
+					) : null}
+					{settings}
+				</div>
+
+				<div
+					role="group"
+					aria-label="Send message controls"
+					className="flex shrink-0 items-center gap-2"
+				>
+					<span className="hidden text-[11px] text-muted-foreground sm:inline">
+						{menuOpen
+							? "Enter to insert"
+							: steering
+								? "Enter to steer"
+								: willQueue
+									? "Enter to queue"
+									: "Enter to send"}
+					</span>
+					<Button
+						type="submit"
+						size="icon-sm"
+						disabled={!canSend}
+						aria-label={steering ? "Steer the running turn" : "Send message"}
+						className="size-8 rounded-lg border-logo-accent bg-logo-accent text-logo-accent-foreground hover:bg-logo-accent-bright focus-visible:ring-logo-accent/45"
+					>
+						{steerPending ? (
+							<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
+						) : steering ? (
+							<CornerDownRight aria-hidden="true" className="size-3.5" />
+						) : (
+							<ArrowUp aria-hidden="true" className="size-3.5" />
+						)}
+					</Button>
+				</div>
 			</div>
 		</form>
 	);

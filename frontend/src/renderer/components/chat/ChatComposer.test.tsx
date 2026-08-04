@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
@@ -28,6 +28,24 @@ const png = (name = "shot.png") =>
 /* ---- the keyboard contract the composer already had ---------------------- */
 
 describe("send keys", () => {
+	it("separates secondary message tools from the primary send action", () => {
+		render(
+			<ChatComposer
+				onSend={vi.fn()}
+				onStageAttachments={vi.fn().mockResolvedValue([])}
+				settings={<button type="button">Model</button>}
+			/>,
+		);
+
+		const tools = screen.getByRole("group", { name: "Message tools" });
+		expect(within(tools).getByRole("button", { name: "Attach an image" })).toBeInTheDocument();
+		expect(within(tools).getByRole("button", { name: "Model" })).toBeInTheDocument();
+
+		const actions = screen.getByRole("group", { name: "Send message controls" });
+		expect(within(actions).getByRole("button", { name: "Send message" })).toBeInTheDocument();
+		expect(within(actions).getByText("Enter to send")).toBeInTheDocument();
+	});
+
 	it("uses the AO logo palette for the send control", async () => {
 		const { field } = renderComposer();
 		const send = screen.getByRole("button", { name: "Send message" });

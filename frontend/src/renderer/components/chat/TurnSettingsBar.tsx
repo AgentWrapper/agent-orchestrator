@@ -103,8 +103,8 @@ export function TurnSettingsBar({
 	const approvalLabel = APPROVAL_COPY[settings.approvalMode ?? "default"].label;
 
 	return (
-		<div className="flex min-w-0 flex-col gap-0.5">
-			<div className="flex flex-wrap items-center gap-1">
+		<div role="group" aria-label="Turn settings" className="flex min-w-0 flex-col gap-0.5">
+			<div className="flex flex-wrap items-center gap-0.5">
 				{onChange && models.length > 0 ? (
 				<Picker
 					icon={Cpu}
@@ -424,9 +424,9 @@ function Picker({
 					disabled={disabled}
 					aria-label={title}
 					title={title}
-					className="h-6 gap-1.5 px-1.5"
+					className="h-8 gap-1.5 px-2"
 				>
-					<Icon aria-hidden="true" className="size-3.5 text-muted-foreground" />
+					<Icon aria-hidden="true" className="size-4 text-muted-foreground" />
 					<span className="max-w-[13ch] truncate text-[11px]">{label}</span>
 					{badge}
 					<ChevronUp aria-hidden="true" className="size-3 text-muted-foreground" />
